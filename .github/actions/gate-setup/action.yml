@@ -27,9 +27,11 @@ inputs:
     default: 'true'
   postgres:
     description: >-
-      apt-install postgresql-16 + sqlite3 + brotli for the live tests. The
-      workspace live tests, the T3 app tier, and the T1 falsifiers need a real
-      PostgreSQL; steps set SKY_POSTGRES_BIN themselves. The sky crate's
+      Resolve PostgreSQL (scripts/ci/resolve-postgres.sh: the image's own, or
+      the distribution default, whatever its major) and make sure sqlite3 +
+      brotli are present, for the live tests. The workspace live tests, the T3
+      app tier, and the T1 falsifiers need a real PostgreSQL; the resolver
+      exports SKY_POSTGRES_BIN (and SKY_PG_MAJOR) to every later step. The sky crate's
       precompress tests need the brotli tool (live_gate Need::Brotli).
     required: false
     default: 'false'
@@ -78,7 +80,7 @@ runs:
     # out to a real `go build`, and an unpinned toolchain silently tests
     # whatever Go the runner image ships. cache:false — the Go cache is managed
     # explicitly below so the BUILD cache (not just the module cache) is warm.
-    - uses: actions/setup-go@v5
+    - uses: actions/setup-go@v7
       with:
         go-version: '1.26'
         cache: false
@@ -103,7 +105,7 @@ runs:
     # are tried in order (most specific first), so a same-release warm entry
     # still wins when one exists; `go-linux-` is the always-available floor.
     - name: Cache Go build + module cache (keep it WARM across releases)
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: |
           ${{ github.workspace }}/.gocache
@@ -137,12 +139,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
-        for b in initdb pg_ctl postgres; do
-          [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
-            echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
-        done
+        bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
+        bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
 
     # `scripts/build.sh` installs the compiler at `sky-out/sky` — the binary
     # BOTH the codegen build+run sweep and the app-driving harness gates need,

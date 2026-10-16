@@ -61,14 +61,14 @@ jobs:
       # ~742 MiB.
       GO_CACHE_BUDGET_MB: '6144'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -153,17 +153,17 @@ jobs:
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
       GO_CACHE_BUDGET_MB: '6144'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -311,7 +311,7 @@ jobs:
       # the runner, so both had to be re-derived by hand.
       - name: Upload failure evidence (diffs, server logs, build logs)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: web-runtime-evidence
           path: |
@@ -371,14 +371,14 @@ jobs:
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
       GO_CACHE_BUDGET_MB: '6144'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -476,14 +476,14 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -514,12 +514,8 @@ jobs:
       - name: PostgreSQL binaries for the embedded-cluster e2e tests
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 postgresql-16-pgvector sqlite3 brotli
-          for b in initdb pg_ctl postgres psql; do
-            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
-              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
-          done
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh" --pgvector
+          bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
       - name: 'Gate — Layer-2 app tier (harness tier T3)'
         run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- harness --tier t3
       # The heavy real-DB e2e leg carried by `#[ignore]` in the `sky` crate's
@@ -532,7 +528,6 @@ jobs:
       # Go FAIL loudly rather than skip.
       - name: 'Gate — heavy real-DB e2e leg (test-sky #[ignore]d tests)'
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         # The Android emulator test needs a running emulator: the release
         # workflow's gate-native-android job runs it.
@@ -582,9 +577,9 @@ jobs:
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
       GO_CACHE_BUDGET_MB: '6144'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
@@ -596,7 +591,7 @@ jobs:
         with:
           neovim: true
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -666,7 +661,7 @@ jobs:
     env:
       PLATFORM: linux-amd64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # `runner` is NOT one of the contexts a job-level `env:` may use, and the
       # penalty is not a warning: GitHub refuses to parse the whole FILE. Both
@@ -732,7 +727,7 @@ jobs:
 
       - name: Upload the SBOM
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-sbom-linux-amd64
           path: ${{ runner.temp }}/bundles/*/sbom.json
@@ -752,7 +747,7 @@ jobs:
     timeout-minutes: 60
     steps:
       # Full history: the flake reads the commit for its `+g<rev>` version.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
@@ -770,19 +765,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
           shared-key: sky-linux
           save-if: 'false'
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache the Sky Go build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.sky/go-build
@@ -791,14 +786,14 @@ jobs:
           key: build-perf-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
           restore-keys: build-perf-linux-
       - name: Install brotli, jq and time
-        run: sudo apt-get update -q && sudo apt-get install -y -q brotli jq time
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" brotli jq time
       - name: Build and install the compiler (sky-out/sky)
         run: bash scripts/build.sh
       - name: 'Gate — build speed within budget (medians of 3, budget x 1.5)'
         run: bash scripts/bench-build.sh --reps 3 --cases "app skyshop" --out build-perf.json --write-budget build-budget.proposed.json --budget docs/perf/build-budget.json
       - name: Keep the measurements
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-perf-nightly
           path: |

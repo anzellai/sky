@@ -93,8 +93,8 @@ impl Need {
         match self {
             Need::Postgres => {
                 "install PostgreSQL and point SKY_POSTGRES_BIN at its `bin` directory \
-                 (`brew install postgresql@16`, or `apt-get install postgresql-16` whose \
-                 binaries land in /usr/lib/postgresql/16/bin and are NOT on PATH), or run \
+                 (`brew install postgresql@16`, or `apt-get install postgresql` whose \
+                 binaries land in /usr/lib/postgresql/<major>/bin and are NOT on PATH), or run \
                  `sky db provision --embed`"
             }
             Need::Go => "install a Go toolchain (the compiler shells out to a real `go build`)",

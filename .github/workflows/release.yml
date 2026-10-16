@@ -12,27 +12,42 @@ on:
 permissions:
   contents: write
 
+env:
+  # THE GLIBC FLOOR: the oldest glibc a released Linux binary may need. It
+  # defines the oldest supported Linux: Debian 12, Ubuntu 22.04, RHEL 9 and
+  # newer. The Linux build legs run on the current Ubuntu runners and build
+  # with cargo-zigbuild against `<triple>.<floor>`, so the runner's own glibc
+  # never leaks into the binary. The `glibc floor` step in each Linux leg
+  # fails the build if a binary needs a newer symbol version than this.
+  # Raise it only on purpose: it drops every distribution below it.
+  SKY_GLIBC_FLOOR: '2.35'
+
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
   # ────────────────────────────────────────────────────────────────
-  # Cross-platform build. Each target is built natively on its own
-  # runner (keeps the existing glibc floor + provides Go per-runner for
-  # the sky-ffi-inspect asset). Cross-compile is deliberately avoided.
+  # Cross-platform build. Each target is built on a runner of its own
+  # architecture (provides Go per-runner for the sky-ffi-inspect asset). The
+  # Linux legs pin their glibc with cargo-zigbuild rather than with an old
+  # runner image (see SKY_GLIBC_FLOOR above).
   # ────────────────────────────────────────────────────────────────
   build:
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Linux binaries build on Ubuntu 22.04 (glibc 2.35), NOT 24.04 (glibc
-          # 2.39), for PORTABILITY: a binary links against the build host's
-          # glibc and only runs where glibc is at least that new. A 2.39 binary
-          # fails on Debian Bookworm (2.36), Ubuntu 22.04, RHEL 9, and the
-          # golang:1.26-bookworm Docker base ("version GLIBC_2.39 not found").
-          # 2.35 runs on everything from Bookworm onward.
+          # Linux binaries build on the CURRENT Ubuntu runners (ubuntu-latest,
+          # ubuntu-24.04-arm; GitHub has no ubuntu-latest-arm label), so a
+          # breaking image change shows up early. Their glibc is NOT the
+          # runner's: a binary linked normally needs the build host's glibc
+          # (a 24.04 host gives 2.39, which fails on Debian 12, Ubuntu 22.04
+          # and RHEL 9 with "version GLIBC_2.39 not found"). `rust-target`
+          # makes the leg build with `cargo zigbuild --target
+          # <rust-target>.$SKY_GLIBC_FLOOR`, which links against that glibc
+          # version instead, and the leg then proves it (objdump + a run in
+          # debian:12) before it uploads anything.
           # `timeout` is PER LEG: `timeout-minutes` applies to each matrix job
           # separately, and a single number sized for Windows would leave the
           # three Unix legs effectively unbounded. Basis: a cache-cold
@@ -41,13 +56,15 @@ jobs:
           # filesystem + linker make Rust builds ~2x slower. Values are 1.5x of
           # each leg's own estimate. Erring generous on the release path: a false
           # red here blocks a tag, and these legs run only on `push: tags`.
-          - os: ubuntu-22.04
+          - os: ubuntu-latest
             artifact: sky-linux-x64
             ext: ''
+            rust-target: x86_64-unknown-linux-gnu
             timeout: 30
-          - os: ubuntu-22.04-arm
+          - os: ubuntu-24.04-arm
             artifact: sky-linux-arm64
             ext: ''
+            rust-target: aarch64-unknown-linux-gnu
             timeout: 30
           - os: macos-latest
             artifact: sky-darwin-arm64
@@ -62,7 +79,7 @@ jobs:
     timeout-minutes: ${{ matrix.timeout }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Before any build: the tag, the one version source
       # (`[workspace.package] version` in rust/Cargo.toml, which `sky
@@ -86,7 +103,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: true
@@ -101,6 +118,42 @@ jobs:
         with:
           workspaces: rust
 
+      # The Linux legs link against SKY_GLIBC_FLOOR, not the runner's glibc.
+      # Both tools are pinned: zig from its PyPI wheel (the files.pythonhosted.org
+      # CDN, checked against the sha256 below), cargo-zigbuild by exact crate
+      # version with its own Cargo.lock.
+      - name: Install zig and cargo-zigbuild (Linux glibc floor)
+        if: matrix.rust-target != ''
+        shell: bash
+        env:
+          CARGO_ZIGBUILD_VERSION: '0.23.4'
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64)
+              wheel_url='https://files.pythonhosted.org/packages/db/81/f9f5c7fd68d80b8edff2a641a1c95ac4125356387d298374227040b8e1e8/ziglang-0.15.2-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.musllinux_1_1_x86_64.whl'
+              wheel_sha256='806316453d1ede7174ed3fefb8e5348154629089c3bb5fe812dfd0e172fac130'
+              ;;
+            aarch64)
+              wheel_url='https://files.pythonhosted.org/packages/53/7d/8c277208250ffa72f12a10f52dfc1d45850f08244093065b40c5f4628260/ziglang-0.15.2-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl'
+              wheel_sha256='edc0aa60ec964a4cf462d40f68d7de242ddf37fd9a80f2afaee6397059463230'
+              ;;
+            *)
+              echo "::error::no pinned zig for $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+          dir="$RUNNER_TEMP/zig-0.15.2"
+          mkdir -p "$dir"
+          curl -fsSL --retry 5 --retry-all-errors -o "$dir/zig.whl" "$wheel_url"
+          echo "$wheel_sha256  $dir/zig.whl" | sha256sum -c -
+          (cd "$dir" && unzip -q zig.whl 'ziglang/*' && rm -f zig.whl)
+          chmod +x "$dir/ziglang/zig"
+          echo "$dir/ziglang" >> "$GITHUB_PATH"
+          "$dir/ziglang/zig" version
+          cargo install --locked "cargo-zigbuild@${CARGO_ZIGBUILD_VERSION}"
+          cargo zigbuild --version
+
       - name: Build sky compiler (cargo)
         shell: bash
         working-directory: rust
@@ -111,8 +164,24 @@ jobs:
           # version, so the binary prints exactly `sky v<tag>` (the smoke test
           # below checks it).
           export SKY_GIT_REV=""
-          cargo build --release --locked -p sky
           mkdir -p ../dist
+          if [ -n "${{ matrix.rust-target }}" ]; then
+            # Linux: link against the glibc floor, not the runner's glibc. The
+            # executable path comes from cargo's own JSON report, for the same
+            # reason as cargo_bin_path below.
+            target="${{ matrix.rust-target }}.${SKY_GLIBC_FLOOR}"
+            echo "building for $target"
+            cargo zigbuild --release --locked -p sky --target "$target" --message-format=json > "$RUNNER_TEMP/sky-build.json"
+            src=$(tr ',' '\n' < "$RUNNER_TEMP/sky-build.json" | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | grep -v '^null$' | tail -1)
+            if [ -z "$src" ] || [ ! -f "$src" ]; then
+              echo "::error::cargo zigbuild reported no sky executable (got '${src:-<empty>}')" >&2
+              exit 1
+            fi
+            cp "$src" "../dist/${{ matrix.artifact }}${{ matrix.ext }}"
+            chmod +x "../dist/${{ matrix.artifact }}${{ matrix.ext }}"
+            exit 0
+          fi
+          cargo build --release --locked -p sky
           # Ask CARGO which file it produced. This is the artefact users
           # download, and a hardcoded target path silently ships an OLDER
           # binary wherever CARGO_TARGET_DIR is set — the `cp` cannot fail,
@@ -191,6 +260,63 @@ jobs:
           fi
           echo "version OK: $REPORTED == $TAG_VERSION"
 
+      # THE GLIBC FLOOR, proved on the binaries this leg is about to upload.
+      # (a) No dynamic symbol may need a GLIBC_x.y above SKY_GLIBC_FLOOR. A
+      #     static binary (sky-ffi-inspect is pure Go) needs no glibc at all.
+      # (b) The binary must run in debian:12, the oldest distribution the
+      #     floor names, on this leg's own architecture.
+      # Both sit before Package and upload, so a binary that fails them never
+      # reaches the publish job.
+      - name: Linux binaries need no glibc above SKY_GLIBC_FLOOR
+        if: matrix.rust-target != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          floor="$SKY_GLIBC_FLOOR"
+          bad=0
+          for bin in "dist/${{ matrix.artifact }}" "dist/sky-ffi-inspect-${{ matrix.artifact }}"; do
+            if [ ! -f "$bin" ]; then
+              echo "::error::$bin was not built" >&2
+              exit 1
+            fi
+            # Captured first: `readelf | grep -q` under pipefail can fail on
+            # SIGPIPE and would read as "static".
+            headers=$(readelf -l "$bin")
+            if ! grep -q 'Requesting program interpreter' <<<"$headers"; then
+              echo "$bin: statically linked, needs no glibc"
+              echo "- \`$(basename "$bin")\`: static, no glibc" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            syms=$(objdump -T "$bin")
+            need=$(printf '%s\n' "$syms" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sed 's/^GLIBC_//' | sort -uV | tail -1 || true)
+            if [ -z "$need" ]; then
+              echo "::error::$bin is dynamically linked but objdump found no GLIBC symbol versions" >&2
+              exit 1
+            fi
+            top=$(printf '%s\n%s\n' "$floor" "$need" | sort -V | tail -1)
+            echo "$bin: needs glibc $need (floor $floor)"
+            echo "- \`$(basename "$bin")\`: needs GLIBC_$need (floor $floor)" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$top" != "$floor" ]; then
+              echo "::error::$bin needs GLIBC_$need, above the floor $floor. These symbols are too new:" >&2
+              printf '%s\n' "$syms" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sed 's/^GLIBC_//' | sort -uV | while read -r v; do
+                if [ "$(printf '%s\n%s\n' "$floor" "$v" | sort -V | tail -1)" != "$floor" ]; then
+                  printf '%s\n' "$syms" | grep -F "GLIBC_$v" | sed 's/^/  /' >&2 || true
+                fi
+              done
+              bad=1
+            fi
+          done
+          exit "$bad"
+
+      - name: sky --version runs in debian:12 (the floor's oldest distribution)
+        if: matrix.rust-target != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          out=$(docker run --rm -v "$PWD/dist:/dist:ro" debian:12 "/dist/${{ matrix.artifact }}" --version)
+          echo "debian:12 ($(uname -m)): $out"
+          echo "- debian:12 on $(uname -m): \`$out\`" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Package
         shell: bash
         run: |
@@ -218,7 +344,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           # Exactly one of these two exists per matrix leg (.zip on Windows,
@@ -340,7 +466,7 @@ jobs:
     # rounded to 25.
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: core
@@ -354,7 +480,6 @@ jobs:
       - name: Workspace tests (every crate except sky)
         working-directory: rust
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo test --workspace --exclude sky --locked
 
@@ -392,7 +517,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: core-sky
@@ -405,7 +530,6 @@ jobs:
       - name: sky crate tests, slice 1/9 (nextest)
         working-directory: rust
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:1/9
       - name: Bound the Go caches before save
@@ -417,7 +541,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: core-sky
@@ -430,7 +554,6 @@ jobs:
       - name: sky crate tests, slice 2/9 (nextest)
         working-directory: rust
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:2/9
       - name: Bound the Go caches before save
@@ -442,7 +565,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: core-sky
@@ -455,7 +578,6 @@ jobs:
       - name: sky crate tests, slice 3/9 (nextest)
         working-directory: rust
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:3/9
       - name: Bound the Go caches before save
@@ -467,7 +589,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: core-sky
@@ -480,7 +602,6 @@ jobs:
       - name: sky crate tests, slice 4/9 (nextest)
         working-directory: rust
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:4/9
       - name: Bound the Go caches before save
@@ -492,7 +613,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: core-sky
@@ -505,7 +626,6 @@ jobs:
       - name: sky crate tests, slice 5/9 (nextest)
         working-directory: rust
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:5/9
       - name: Bound the Go caches before save
@@ -517,7 +637,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: core-sky
@@ -530,7 +650,6 @@ jobs:
       - name: sky crate tests, slice 6/9 (nextest)
         working-directory: rust
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:6/9
       - name: Bound the Go caches before save
@@ -542,7 +661,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: core-sky
@@ -555,7 +674,6 @@ jobs:
       - name: sky crate tests, slice 7/9 (nextest)
         working-directory: rust
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:7/9
       - name: Bound the Go caches before save
@@ -567,7 +685,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: core-sky
@@ -580,7 +698,6 @@ jobs:
       - name: sky crate tests, slice 8/9 (nextest)
         working-directory: rust
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:8/9
       - name: Bound the Go caches before save
@@ -592,7 +709,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: core-sky
@@ -605,7 +722,6 @@ jobs:
       - name: sky crate tests, slice 9/9 (nextest)
         working-directory: rust
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:9/9
       - name: Bound the Go caches before save
@@ -619,7 +735,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: corpus
@@ -687,7 +803,7 @@ jobs:
     # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
     timeout-minutes: 95
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: core
@@ -695,8 +811,6 @@ jobs:
           neovim: 'true'
       - name: Gate harness (T1 shard 1/4 — conformance and verify-cli) with proof requirement
         working-directory: rust
-        env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
         run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only conformance,verify-cli
       - name: Bound the Go caches before save
         if: always()
@@ -710,7 +824,7 @@ jobs:
     # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
     timeout-minutes: 100
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: core
@@ -718,8 +832,6 @@ jobs:
           neovim: 'true'
       - name: Gate harness (T1 shard 2/4 — sky-verify, sky-suites, lsp) with proof requirement
         working-directory: rust
-        env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
         run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only sky-verify,sky-suites,lsp
       - name: Bound the Go caches before save
         if: always()
@@ -733,7 +845,7 @@ jobs:
     # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
     timeout-minutes: 135
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: core
@@ -741,8 +853,6 @@ jobs:
           neovim: 'true'
       - name: Gate harness (T1 shard 3/4 — Layer-2 apps and CLI verbs) with proof requirement
         working-directory: rust
-        env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
         run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only apps-bundled,cli-verbs,apps-ledger,apps-dispatch,apps-dispatch-destructive,apps-relay,config-matrix,build-growth-linear
       - name: Bound the Go caches before save
         if: always()
@@ -756,7 +866,7 @@ jobs:
     # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
     timeout-minutes: 155
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: core
@@ -764,8 +874,6 @@ jobs:
           neovim: 'true'
       - name: Gate harness (T1 shard 4/4 — corpus, runtime safety, census) with proof requirement
         working-directory: rust
-        env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
         run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only roundtrip,reject,shared-world,corpus-manifest,corpus-reject,corpus-emit-shape,analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index,periodic-loops-recover-per-cycle,live-time-every-mutex-survives-a-panic,jobs-complete-failure-is-reported,coverage-ledger,config-surface,kernel-members,config-migration,config-migrate
       - name: Bound the Go caches before save
         if: always()
@@ -787,7 +895,7 @@ jobs:
         shard: [0, 1, 2]
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           # All shards share one Go cache family so the build-run cache warms
@@ -827,7 +935,7 @@ jobs:
     env:
       GO_CACHE_BUDGET_MB: '4096'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: t2
@@ -854,7 +962,7 @@ jobs:
     env:
       GO_CACHE_BUDGET_MB: '4096'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: t2
@@ -882,7 +990,7 @@ jobs:
     # T3 needs a REAL PostgreSQL. This service mirrors nightly-sweep.yml's
     # `harness-t3` job VERBATIM (same image, credentials, health-check) so the
     # DSN the gates read is the one that job already proves works. It is
-    # ADDITIONAL to the apt-installed postgresql-16 (via the composite): that one
+    # ADDITIONAL to the runner's PostgreSQL (resolved by the composite): that one
     # backs the shared-cluster live tests via SKY_POSTGRES_BIN (each spins up its
     # own cluster in a temp dir); this container backs the T3 DSN on
     # localhost:5432.
@@ -901,7 +1009,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: app
@@ -924,15 +1032,12 @@ jobs:
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --tier t4
 
-      # `ai_memory_pg_flow` needs the pgvector extension in the apt cluster the
-      # gate-setup composite installs (it installs postgresql-16 only). The
-      # nightly job installs the same package for the same test.
+      # `ai_memory_pg_flow` needs the pgvector extension in the PostgreSQL the
+      # gate-setup composite resolved (it does not install pgvector). The
+      # resolver installs `postgresql-<major>-pgvector` for the major it found
+      # and fails if vector.control is absent. The nightly job does the same.
       - name: pgvector for the real-DB e2e leg
-        run: |
-          set -euo pipefail
-          sudo apt-get install -y -qq postgresql-16-pgvector
-          [ -f /usr/share/postgresql/16/extension/vector.control ] || {
-            echo "::error::pgvector did not install (no vector.control)" >&2; exit 1; }
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh" --pgvector
 
       # The heavy real-DB e2e leg: the `#[ignore]`d sky-crate tests (nightly
       # harness-t3 runs the same line). They drive real clusters, so they sit
@@ -940,7 +1045,6 @@ jobs:
       - name: Heavy real-DB e2e leg (sky crate `#[ignore]`d tests)
         working-directory: rust
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         # The Android emulator test runs in gate-native-android (it needs a
         # running emulator); skip it here by name.
@@ -972,7 +1076,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: falsifiers-1
@@ -991,7 +1095,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: falsifiers-2
@@ -1014,7 +1118,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 65
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: falsifiers-3
@@ -1066,7 +1170,7 @@ jobs:
     env:
       GO_CACHE_BUDGET_MB: '4096'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: t2
@@ -1098,7 +1202,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: app
@@ -1122,7 +1226,7 @@ jobs:
     env:
       GO_CACHE_BUDGET_MB: '6144'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: sweep
@@ -1140,7 +1244,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: falsifiers-7
@@ -1161,7 +1265,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: falsifiers-8
@@ -1182,7 +1286,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: falsifiers-9
@@ -1216,20 +1320,15 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: PostgreSQL binaries for the embedded supervisor
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16
-          for b in initdb pg_ctl postgres; do
-            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
-              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
-          done
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
       - name: Postgres session-store integration tests
         working-directory: runtime-go
         env:
@@ -1237,7 +1336,7 @@ jobs:
         run: CGO_ENABLED=0 go test -tags integration ./rt/ -run Postgres -v
       # The rt tests that run the embedded browser clients need node; a
       # missing one fails them (runtime-go/rt/live_gate_test.go).
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: rt tests under the race detector, with a live PostgreSQL
@@ -1245,7 +1344,6 @@ jobs:
         # The DSN-gated live tests fail, never skip, without it (G-8,
         # runtime-go/rt/live_gate_test.go); the job's postgres service is it.
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
         run: CGO_ENABLED=1 go test -race -timeout 20m ./rt/... -count=1
       # Every Go test package under tools/ runs here
@@ -1278,11 +1376,11 @@ jobs:
     env:
       GO_CACHE_BUDGET_MB: '6144'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: web
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: Install Playwright + its browser, sqlite3, python3-venv
@@ -1361,7 +1459,7 @@ jobs:
         run: scripts/console-controls-e2e.sh
       - name: Upload failure evidence (diffs, server logs, build logs)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-web-evidence
           path: |
@@ -1387,14 +1485,12 @@ jobs:
     env:
       GO_CACHE_BUDGET_MB: '6144'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: example-e2e
       - name: Install jq, lsof, sqlite3
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq jq lsof sqlite3
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" jq lsof sqlite3
       - name: Example behavioural contracts
         run: scripts/example-e2e.sh
       - name: Bound the Go caches before save
@@ -1432,7 +1528,7 @@ jobs:
       # bounded before save so it never evicts the other release caches.
       GO_CACHE_BUDGET_MB: '6144'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           # All shards share one Go cache family so the FFI cache is warmed
@@ -1488,9 +1584,9 @@ jobs:
     # universal-link gate 62 s, the Android release 36 s). 1.5x.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: true
@@ -1530,9 +1626,9 @@ jobs:
     # system-dialog test). About 1.5x.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: true
@@ -1583,7 +1679,7 @@ jobs:
             cd rust && cargo test -p sky --locked --test native_shell_flow android_emulator -- --ignored --test-threads=1
       - name: Upload the emulator evidence
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-emulator-evidence
           path: native-evidence
@@ -1606,7 +1702,7 @@ jobs:
     timeout-minutes: 60
     steps:
       # Full history: the flake reads the commit for its `+g<rev>` version.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
@@ -1681,9 +1777,9 @@ jobs:
       # Checkout is required so the CHANGELOG + release-notes extractor are on
       # disk — `sky upgrade` prints the Release body verbatim, so it MUST be the
       # curated CHANGELOG section, never GitHub's auto-generated commit list.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -1739,7 +1835,7 @@ jobs:
           cat checksums.txt
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: 'release/*'
 
@@ -1752,7 +1848,7 @@ jobs:
           cat NOTES.md
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body_path: NOTES.md
           files: release/*
@@ -1770,14 +1866,14 @@ jobs:
     # 1.5x ≈ 20. `continue-on-error` means a hit here won't fail the release.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v4
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -1786,7 +1882,7 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile

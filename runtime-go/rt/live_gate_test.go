@@ -85,8 +85,8 @@ func requirePgBinDir(t *testing.T) string {
 	dir := livePgBinDir()
 	requireLive(t, "PostgreSQL binaries (initdb, pg_ctl, postgres)",
 		"install PostgreSQL and point SKY_POSTGRES_BIN at its `bin` directory "+
-			"(`brew install postgresql@16`, or `apt-get install postgresql-16`, whose binaries "+
-			"land in /usr/lib/postgresql/16/bin and are NOT on PATH)", dir != "")
+			"(`brew install postgresql@16`, or `apt-get install postgresql`, whose binaries "+
+			"land in /usr/lib/postgresql/<major>/bin and are NOT on PATH)", dir != "")
 	return dir
 }
 
