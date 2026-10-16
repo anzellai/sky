@@ -46,14 +46,14 @@
     },
     "ai-device-ios-sim": {
       "inputs_files": 3,
-      "inputs_hash": "b9996135012057956c303d24f0555a237f33c7c8",
+      "inputs_hash": "dcf5a450d8c1b9758953423f88dd63c349ddfcbc",
       "mutation": "ai-device-ios-sim.shell-ignores-the-ai-ops",
       "mutations": [
         "ai-device-ios-sim.shell-ignores-the-ai-ops"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1792181778
+      "proven_at_unix": 1792187976
     },
     "ai-device-no-silent-fallback": {
       "inputs_files": 882,
@@ -68,14 +68,14 @@
     },
     "ai-device-partition": {
       "inputs_files": 3,
-      "inputs_hash": "07e64bcc255de2babbbf0eace56b44daccbf898d",
+      "inputs_hash": "95d7199f1ae4b385f4ca2d6140fa50914509bb58",
       "mutation": "ai-device-partition.server-side-device",
       "mutations": [
         "ai-device-partition.server-side-device"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1792179964
+      "proven_at_unix": 1792187976
     },
     "ai-device-privacy": {
       "inputs_files": 1575,
@@ -296,7 +296,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1792184474
+      "proven_at_unix": 1792187979
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -484,14 +484,14 @@
     },
     "coverage-ledger": {
       "inputs_files": 4593,
-      "inputs_hash": "ed02bb68f7f12969f29442a3f74e12db15fe5045",
+      "inputs_hash": "a26876f45e50dbf399c66ef8b5b48c25f0b4e0dd",
       "mutation": "coverage-ledger.drop-a-sole-owner-import",
       "mutations": [
         "coverage-ledger.drop-a-sole-owner-import"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1792177988
+      "proven_at_unix": 1792187979
     },
     "erasure-path-uses-an-index": {
       "inputs_files": 882,

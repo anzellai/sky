@@ -989,7 +989,16 @@ async function runEmbedded() {
   // Sign out
   await check("sign-out: ends the console session", async () => {
     navigating(5000);
-    await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded" }), clickText("Sign out")]);
+    // Signing out can start two navigations: the sign-out request's redirect
+    // and the console noticing its live channel closed. The browser then
+    // aborts the first (net::ERR_ABORTED), which is not a failure: what must
+    // hold is the login form, checked next, and the goto below.
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: "domcontentloaded" }).catch((e) => {
+        if (!/ERR_ABORTED|frame was detached/.test(String(e && e.message))) throw e;
+      }),
+      clickText("Sign out"),
+    ]);
     await waitFor("login form", async () => ({ ok: (await page.locator("input[name=token]").count()) === 1 }));
     navigating();
     await page.goto(PAGE_ORIGIN + BASE, { waitUntil: "domcontentloaded" });
