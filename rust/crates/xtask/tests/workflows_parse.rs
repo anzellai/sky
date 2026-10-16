@@ -1524,9 +1524,12 @@ fn every_go_test_package_under_tools_runs_in_ci() {
 }
 
 /// The browser-tier jobs whose steps each run long e2e scripts, as
-/// (workflow file, job id).
-const BROWSER_TIER_JOBS: [(&str, &str); 2] = [
-    ("release.yml", "gate-web"),
+/// (workflow file, job id). The release splits the tier across four jobs.
+const BROWSER_TIER_JOBS: [(&str, &str); 5] = [
+    ("release.yml", "gate-web-1"),
+    ("release.yml", "gate-web-2"),
+    ("release.yml", "gate-web-3"),
+    ("release.yml", "gate-web-4"),
     ("nightly-sweep.yml", "web-runtime"),
 ];
 
@@ -1561,6 +1564,7 @@ fn every_browser_tier_gate_step_has_its_own_bound() {
         "/../../../.github/workflows"
     ));
     let mut missing = Vec::new();
+    let mut per_file: std::collections::BTreeMap<&str, usize> = Default::default();
     for (file, job_id) in BROWSER_TIER_JOBS {
         let text = std::fs::read_to_string(dir.join(file))
             .unwrap_or_else(|e| panic!("cannot read {file}: {e}"));
@@ -1597,8 +1601,15 @@ fn every_browser_tier_gate_step_has_its_own_bound() {
             }
         }
         assert!(
-            gate_steps >= 10,
-            "{file} {job_id}: only {gate_steps} gate-script steps found; the scanner is wrong"
+            gate_steps >= 1,
+            "{file} {job_id}: no gate-script steps found; the scanner is wrong"
+        );
+        *per_file.entry(file).or_default() += gate_steps;
+    }
+    for (file, n) in &per_file {
+        assert!(
+            *n >= 10,
+            "{file}: only {n} browser-tier gate-script steps found; the scanner is wrong"
         );
     }
     assert!(

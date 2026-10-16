@@ -164,7 +164,7 @@ jobs:
     # runs): 40. nav-e2e adds two fixture builds in two browsers: 50.
     # console-controls-e2e adds ~8 min: 65.
     # Each long step also carries its own timeout-minutes (as in release.yml
-    # gate-web), so a hung script fails its own named step with its log.
+    # gate-web-*), so a hung script fails its own named step with its log.
     timeout-minutes: 65
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
@@ -181,6 +181,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
+      # The one writer of the Playwright browser cache (on main); the release
+      # gate-web-* jobs restore it (.github/actions/playwright-setup).
+      - name: Restore the Playwright browsers
+        id: pw-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - name: Cache Go build + module cache
         id: go-cache
         uses: actions/cache/restore@v6
@@ -344,6 +352,12 @@ jobs:
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh
+      - name: Save the Playwright browsers (main only)
+        if: always() && github.ref == 'refs/heads/main' && steps.pw-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
   # ── Behavioural corpus (harness tier T2) ────────────────────────────────────
   #

@@ -1330,42 +1330,138 @@ jobs:
           (cd "$GITHUB_WORKSPACE/tools/sky-ffi-inspect" && CGO_ENABLED=0 go test ./... -count=1)
           (cd "$GITHUB_WORKSPACE/tools/skyliveload" && CGO_ENABLED=0 go test ./... -count=1)
 
-  # gate-web — the browser tier and the e2e scripts: every Sky.Live /
+  # gate-web-1..4 — the browser tier and the e2e scripts: every Sky.Live /
   # Http.Server example driven in real Chromium (verify-all-web.sh, incl. the
   # console e2e, ui-showcase and the resilience holds), the Sky.Spa wasm client
   # e2e, the terminal loops in a pty, DOM identity, the Sky.Live client and the
-  # Std.Ui forms. Mirrors nightly-sweep.yml's `web-runtime` job; before this job
-  # none of it ran at a release.
-  gate-web:
+  # Std.Ui forms. Mirrors nightly-sweep.yml's `web-runtime` job; before these
+  # jobs none of it ran at a release.
+  #
+  # SPLIT FOUR WAYS. As one job (`gate-web`) its fifteen steps ran one after
+  # another for 41 minutes (release run 38764879819: console live 579 s, Spa Msg
+  # order 376 s, verify-all-web 353 s, Spa wasm 284 s, canvas 187 s, CSP 122 s,
+  # live client 113 s, controls 91 s, the rest under 45 s each), the longest
+  # job of the release. The scripts share nothing but the installed compiler
+  # and the browsers: each builds its own fixtures and frees its own ports. So
+  # they are packed longest-first into four jobs of about 8-10 minutes of
+  # scripts each. Every script still runs, exactly once, in a job `release:`
+  # needs: `e2e_scripts_are_gated.rs` checks that every scripts/*-e2e.sh runs in
+  # a gating job and in only one, and `workflows_parse.rs` pins the four jobs.
+  #
+  # Each step keeps its own timeout-minutes, about twice its slowest green run
+  # (bfc8a16c, 7292ef57, 218f4d21), so a hung script fails its own named step,
+  # with its log, instead of the job being cancelled at the job limit with no
+  # log at all (run 36942837671, step 7). The job limit is the summed step
+  # limits plus ~15 min of setup.
+  gate-web-1:
     runs-on: ubuntu-latest
-    # The nightly job budgets 25 min for the tier; the e2e scripts build their
-    # fixtures on top. 45 keeps ~1.5x.
-    # console-live-e2e adds ~11 min: 60. nav-e2e adds two fixture builds and
-    # two browsers: 70. spa-resilience-e2e adds ~5 min (it waits out the real
-    # 30 s timeout and 60 s retry budget): 80. console-controls-e2e adds
-    # ~8 min (a fixture build, the hub daemon build, six browser runs): 95.
-    # Each long step also carries its own timeout-minutes, about twice its
-    # slowest green run (bfc8a16c, 7292ef57, 218f4d21). A hung script then
-    # fails its own named step, with its log, instead of the whole job being
-    # cancelled at the job limit with no log at all (run 36942837671, step 7).
-    timeout-minutes: 95
-    env:
-      GO_CACHE_BUDGET_MB: '6144'
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
-      - uses: actions/setup-node@v7
+      - uses: ./.github/actions/playwright-setup
+      - uses: ./.github/actions/install-caddy
+      - name: Sky Console live data + reconnect e2e (direct + behind Caddy)
+        timeout-minutes: 22
+        run: scripts/console-live-e2e.sh
+      - name: Sky.Live without cookies e2e (header session transport, strict CSP)
+        timeout-minutes: 5
+        run: scripts/header-session-e2e.sh
+      - name: Std.Ui forms + keydown + pub/sub e2e (Sky.Live + Sky.Spa)
+        timeout-minutes: 5
+        run: scripts/ui-forms-e2e.sh
+      - name: Upload failure evidence (diffs, server logs, build logs)
+        if: failure()
+        uses: actions/upload-artifact@v7
         with:
-          node-version: '22'
-      - name: Install Playwright + its browser, sqlite3, python3-venv
-        timeout-minutes: 10
-        run: |
-          npm ci --no-audit --no-fund || npm install --no-audit --no-fund
-          npx playwright install --with-deps chromium
-          command -v sqlite3 >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3; }
+          name: release-web-evidence-1
+          path: |
+            .skycache/ui-showcase-diffs/**
+            .skycache/verify/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  gate-web-2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/gate-setup
+      - uses: ./.github/actions/playwright-setup
+      - uses: ./.github/actions/install-caddy
       - name: Browser runtime verification (Sky.Live + Http.Server + resilience)
         timeout-minutes: 15
         run: scripts/verify-all-web.sh
+      - name: Strict Content-Security-Policy e2e (Console, Sky.Live, Sky.Spa)
+        timeout-minutes: 8
+        run: scripts/csp-e2e.sh
+      - name: Sky Console controls e2e (every control; embedded, dev, hub; Chromium + WebKit)
+        timeout-minutes: 25
+        # Every tab, range chip, level toggle, search, pivot, console link,
+        # auto-refresh and sign-in/out, with the rows, the URL, the read's
+        # parameters and the server's answer asserted.
+        run: scripts/console-controls-e2e.sh
+      - name: Widget islands e2e (Sky.Live + Sky.Spa, strict CSP)
+        timeout-minutes: 5
+        run: scripts/islands-e2e.sh
+      - name: Upload failure evidence (diffs, server logs, build logs)
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-web-evidence-2
+          path: |
+            .skycache/ui-showcase-diffs/**
+            .skycache/verify/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  gate-web-3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/gate-setup
+      - uses: ./.github/actions/playwright-setup
+      - name: Sky.Spa Msg order + client WebSocket + sign-out e2e (Chromium + WebKit, strict CSP)
+        timeout-minutes: 18
+        # Each Msg runs once, in arrival order, as on Sky.Live; RPCs overlap; the
+        # wasm client holds its own WebSocket; a sky_sid cookie copied before
+        # sign-out is refused after it; a transiently failing request is re-sent
+        # by the runtime (offline, 503 + Retry-After, a hung request, a hidden
+        # page).
+        run: |
+          set -euo pipefail
+          scripts/spa-rpc-order-e2e.sh
+          scripts/spa-websocket-e2e.sh
+          scripts/session-revocation-e2e.sh
+          scripts/spa-resilience-e2e.sh
+      - name: Std.Ui canvas, text wrapping + terminal e2e (Sky.Live + Sky.Spa, strict CSP)
+        timeout-minutes: 10
+        # The terminal-race case runs vim in the terminal, in Chromium and WebKit.
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" vim
+          scripts/ui-canvas-terminal-e2e.sh
+      - name: Terminal loops pty e2e (terminal:tui + terminal:cli)
+        timeout-minutes: 5
+        run: scripts/tui-e2e.sh
+      - name: Upload failure evidence (diffs, server logs, build logs)
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-web-evidence-3
+          path: |
+            .skycache/ui-showcase-diffs/**
+            .skycache/verify/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  gate-web-4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/gate-setup
+      - uses: ./.github/actions/playwright-setup
       - name: Sky.Spa wasm client e2e (restore, stale handlers, RPC consistency, examples)
         timeout-minutes: 18
         run: |
@@ -1375,76 +1471,25 @@ jobs:
           scripts/spa-rpc-consistency-e2e.sh
           scripts/spa-examples-e2e.sh
           scripts/spa-client-crypto-e2e.sh
-      - name: Terminal loops pty e2e (terminal:tui + terminal:cli)
-        timeout-minutes: 5
-        run: scripts/tui-e2e.sh
-      - name: Sky.Spa + Sky.Live DOM identity e2e
-        timeout-minutes: 5
-        run: scripts/spa-vdom-identity-e2e.sh
       - name: Sky.Live client e2e (handler addressing, input authority)
         timeout-minutes: 6
         run: scripts/live-client-e2e.sh
-      - name: Widget islands e2e (Sky.Live + Sky.Spa, strict CSP)
+      - name: Sky.Spa + Sky.Live DOM identity e2e
         timeout-minutes: 5
-        run: scripts/islands-e2e.sh
-      - name: Std.Ui canvas, text wrapping + terminal e2e (Sky.Live + Sky.Spa, strict CSP)
-        timeout-minutes: 10
-        # The terminal-race case runs vim in the terminal, in Chromium and WebKit.
-        run: |
-          npx playwright install --with-deps webkit
-          command -v vim >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq vim; }
-          scripts/ui-canvas-terminal-e2e.sh
+        run: scripts/spa-vdom-identity-e2e.sh
       - name: Std.Nav e2e (pushUrl / replaceUrl / clearFragment, Sky.Live + Sky.Spa, Chromium + WebKit, strict CSP)
         timeout-minutes: 5
-        # WebKit was installed by the step above.
         run: scripts/nav-e2e.sh
-      - name: Sky.Spa Msg order + client WebSocket + sign-out e2e (Chromium + WebKit, strict CSP)
-        timeout-minutes: 18
-        # Each Msg runs once, in arrival order, as on Sky.Live; RPCs overlap; the
-        # wasm client holds its own WebSocket; a sky_sid cookie copied before
-        # sign-out is refused after it; a transiently failing request is re-sent
-        # by the runtime (offline, 503 + Retry-After, a hung request, a hidden
-        # page). WebKit was installed above.
-        run: |
-          set -euo pipefail
-          scripts/spa-rpc-order-e2e.sh
-          scripts/spa-websocket-e2e.sh
-          scripts/session-revocation-e2e.sh
-          scripts/spa-resilience-e2e.sh
-      - name: Sky.Live without cookies e2e (header session transport, strict CSP)
-        timeout-minutes: 5
-        run: scripts/header-session-e2e.sh
-      - name: Std.Ui forms + keydown + pub/sub e2e (Sky.Live + Sky.Spa)
-        timeout-minutes: 5
-        run: scripts/ui-forms-e2e.sh
-      - uses: ./.github/actions/install-caddy
-      - name: Strict Content-Security-Policy e2e (Console, Sky.Live, Sky.Spa)
-        timeout-minutes: 8
-        run: scripts/csp-e2e.sh
-      - name: Sky Console live data + reconnect e2e (direct + behind Caddy)
-        timeout-minutes: 22
-        run: scripts/console-live-e2e.sh
-      - name: Sky Console controls e2e (every control; embedded, dev, hub; Chromium + WebKit)
-        timeout-minutes: 25
-        # Every tab, range chip, level toggle, search, pivot, console link,
-        # auto-refresh and sign-in/out, with the rows, the URL, the read's
-        # parameters and the server's answer asserted. WebKit was installed
-        # above; sqlite3 by the Playwright step; openssl ships on the runner.
-        run: scripts/console-controls-e2e.sh
       - name: Upload failure evidence (diffs, server logs, build logs)
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: release-web-evidence
+          name: release-web-evidence-4
           path: |
             .skycache/ui-showcase-diffs/**
             .skycache/verify/**
           if-no-files-found: ignore
           retention-days: 14
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
 
   # gate-example-e2e — the behavioural contracts in `examples/*/e2e.json`
   # (`scripts/example-e2e.sh`): CLI steps, HTTP requests and Sky.Live event
@@ -1762,7 +1807,10 @@ jobs:
       - gate-falsifiers-8
       - gate-falsifiers-9
       - gate-race
-      - gate-web
+      - gate-web-1
+      - gate-web-2
+      - gate-web-3
+      - gate-web-4
       - gate-example-e2e
       - gate-sweep
       - gate-native
