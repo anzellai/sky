@@ -2343,7 +2343,7 @@ fn linux_release_binaries_link_against_the_glibc_floor_and_prove_it() {
         );
         let os = leg["os"].as_str().unwrap_or("");
         assert!(
-            os == "ubuntu-latest" || os == "ubuntu-26.04" || os == "ubuntu-24.04-arm", // TEMPORARY: 26.04 for the image-move check
+            os == "ubuntu-latest" || os == "ubuntu-24.04-arm",
             "{artifact}: the Linux legs run on the current runners (ubuntu-latest / \
              ubuntu-24.04-arm); the glibc floor comes from zigbuild, not an old image. Got {os:?}"
         );

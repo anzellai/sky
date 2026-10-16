@@ -247,7 +247,7 @@ jobs:
     name: Publish bundles
     needs: build
     if: startsWith(github.ref, 'refs/tags/postgres-bundle-v') || inputs.publish
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write

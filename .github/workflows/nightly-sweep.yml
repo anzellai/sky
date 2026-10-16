@@ -40,7 +40,7 @@ jobs:
   # `inputs.only` is empty and both conditions hold.
   example-sweep:
     if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "example-sweep"]'), inputs.only) }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # The one job that was already bounded. Kept at 90: a clean-slate rebuild of
     # all 55 examples INCLUDING the FFI/Std.Db ones (skyshop's cold `sky install`
     # over 76k Stripe symbols alone is 60-120 s) runs ~60 min, and 1.5x of that
@@ -138,7 +138,7 @@ jobs:
   # only a browser can see.
   web-runtime:
     if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "web-runtime"]'), inputs.only) }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # The tier measures ~10 min locally (10 checks incl. two ~80s resilience
     # holds and the console e2e). 1.5x = 15; 25 leaves room for a cold Go cache
     # and browser download, still far inside the 90-min T3 ceiling.
@@ -360,7 +360,7 @@ jobs:
   # replaces, which was no execution anywhere.
   behaviour-corpus:
     if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "behaviour-corpus"]'), inputs.only) }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # Killed at 25 min on its first real run. 45 gives a cold-cache run room
     # while staying far inside the 90-min T3 ceiling. Raised in v0.27.0 with
     # the corpus gate's budget (4000 s, 468 behavioural cases); the job limit
@@ -452,7 +452,7 @@ jobs:
   # that job already proves works.
   harness-t3:
     if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "harness-t3"]'), inputs.only) }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # T3's ceiling is 90 min; these are app builds plus Postgres round-trips.
     timeout-minutes: 60
     env:
@@ -567,7 +567,7 @@ jobs:
   # job past the 90-min T3 ceiling.
   falsifier-verification:
     if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "falsifier-verification"]'), inputs.only) }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # T1 falsification runs ~22 gates twice; `lsp` (Neovim ×2) and the app builds
     # dominate. 90 is the T3 nightly ceiling; if a real run approaches it, the
     # answer is to shard by gate, not to raise the ceiling.
@@ -659,7 +659,7 @@ jobs:
   # close it.
   postgres-bundle-licence:
     if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "postgres-bundle-licence"]'), inputs.only) }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # The publication matrix budgets 45 for the same build on the same runner
     # class, with the same reasoning (10-20 min native + two extensions, ~2x).
     timeout-minutes: 45
@@ -746,7 +746,7 @@ jobs:
   # workflow runs the same script as `gate-nix`, which also checks the tag.
   nix:
     if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "nix"]'), inputs.only) }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # A cold `cargo build --release -p sky` in the sandbox (~20 min on a
     # 4-core runner) plus the inspector and the store downloads. About 2x.
     timeout-minutes: 60
@@ -767,7 +767,7 @@ jobs:
   # factor. xtask workflows_parse pins this invocation.
   build-perf:
     if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "build-perf"]'), inputs.only) }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7

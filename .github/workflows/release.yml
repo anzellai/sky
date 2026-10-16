@@ -56,7 +56,7 @@ jobs:
           # filesystem + linker make Rust builds ~2x slower. Values are 1.5x of
           # each leg's own estimate. Erring generous on the release path: a false
           # red here blocks a tag, and these legs run only on `push: tags`.
-          - os: ubuntu-26.04
+          - os: ubuntu-latest
             artifact: sky-linux-x64
             ext: ''
             rust-target: x86_64-unknown-linux-gnu
@@ -418,7 +418,7 @@ jobs:
   # the build if any of it is disabled again or drops out of `release: needs:`.
   # ────────────────────────────────────────────────────────────────
   verify-ci-green:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Require the tagged commit's per-commit ci-green to be SUCCESS
@@ -453,7 +453,7 @@ jobs:
           exit 1
 
   gate-core:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # Workspace tests EXCEPT the `sky` crate, which runs in gate-core-sky-1..9.
     # They took ~37 min on the runner at v0.25.18 (run 36122173135), so the
     # corpus gates + coerce-floor + doc examples that used to follow them here
@@ -514,7 +514,7 @@ jobs:
   # edge of that margin, so nine. Timeout stays 30.
   # The heavy `#[ignore]`d legs run in gate-app (`-- --ignored`), unchanged.
   gate-core-sky-1:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -538,7 +538,7 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   gate-core-sky-2:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -562,7 +562,7 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   gate-core-sky-3:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -586,7 +586,7 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   gate-core-sky-4:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -610,7 +610,7 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   gate-core-sky-5:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -634,7 +634,7 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   gate-core-sky-6:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -658,7 +658,7 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   gate-core-sky-7:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -682,7 +682,7 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   gate-core-sky-8:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -706,7 +706,7 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   gate-core-sky-9:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -732,7 +732,7 @@ jobs:
   # gate-corpus — the corpus gates, coerce-floor and the live-doc examples,
   # split out of gate-core (see its comment) so both finish inside a ceiling.
   gate-corpus:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -797,7 +797,7 @@ jobs:
   # parallel. `workflows_parse::the_release_workflow_is_the_full_suite` fails if
   # a T1 gate is in no shard. The harness prints each gate's verdict as it ends.
   gate-t1-1:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # The harness runs this job's gates one after another: their summed budget
     # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
     # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
@@ -818,7 +818,7 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   gate-t1-2:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # The harness runs this job's gates one after another: their summed budget
     # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
     # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
@@ -839,7 +839,7 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   gate-t1-3:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # The harness runs this job's gates one after another: their summed budget
     # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
     # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
@@ -860,7 +860,7 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   gate-t1-4:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # The harness runs this job's gates one after another: their summed budget
     # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
     # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
@@ -888,7 +888,7 @@ jobs:
   # dropped. Moved out of gate-core, where it was the step that overran 44 min.
   # Measured locally: a shard is ~3-4 min cold, ~20 s warm — well inside 30.
   gate-buildrun:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -925,7 +925,7 @@ jobs:
   # shard flag, so it stays one gate; the OTHER four T2 gates run in
   # gate-t2-rest. `--require-proofs` matches the rigor of the T1 line.
   gate-t2-corpus:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # The gate budget is 4000 s (registry.rs, 468 behavioural cases); the job
     # needs setup on top, so the job limit stays above the gate budget.
     # The harness runs this job's gates one after another: their summed budget
@@ -954,7 +954,7 @@ jobs:
   # tier. spa-diff-fuzz + apps-fieldbook drive the installed compiler
   # (sky-out/sky), which the composite installs. `--require-proofs` retained.
   gate-t2-rest:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # The harness runs this job's gates one after another: their summed budget
     # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
     # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
@@ -983,7 +983,7 @@ jobs:
   # 76k-symbol FFI benchmark) is the pre-release tier whose whole purpose is to
   # run exactly here.
   gate-app:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # T3 + T4 (the 76k-symbol FFI benchmark) + the heavy `#[ignore]`d real-DB
     # leg the nightly runs with a 90-min ceiling. 75 keeps ~1.5x over the three.
     timeout-minutes: 75
@@ -1073,7 +1073,7 @@ jobs:
   # gate-falsifiers-1 — the corpus + conformance + sky-suites falsifiers. Pure
   # compiler / stdlib / sqlite; needs neither Neovim nor PostgreSQL.
   gate-falsifiers-1:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -1092,7 +1092,7 @@ jobs:
   # gate-falsifiers-2 — the CLI / LSP / config falsifiers. Needs Neovim for the
   # `lsp` gate's mutation; no PostgreSQL.
   gate-falsifiers-2:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -1115,7 +1115,7 @@ jobs:
   # census checks (§0.2.1 step 2) run in no per-commit job, so a release is the
   # only place they are gated — they ride here.
   gate-falsifiers-3:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 65
     steps:
       - uses: actions/checkout@v7
@@ -1165,7 +1165,7 @@ jobs:
   # and the timeout follows docs/ci-test-architecture-v2.md §8.2 instead: 1.5x
   # the ~57 min measured ≈ 86, rounded to 90.
   gate-falsifiers-4:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
       GO_CACHE_BUDGET_MB: '4096'
@@ -1185,7 +1185,7 @@ jobs:
   # Group 5 — the rest of T2 and all of T3. The T3 gates need the PostgreSQL
   # service (the same container and DSN as gate-app).
   gate-falsifiers-5:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     services:
       postgres:
@@ -1221,7 +1221,7 @@ jobs:
   # Group 6 — T4, the 76k-symbol FFI benchmark. Its baseline and its mutated run
   # each drive a cold `sky install` of the Stripe/Firebase surface.
   gate-falsifiers-6:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
       GO_CACHE_BUDGET_MB: '6144'
@@ -1241,7 +1241,7 @@ jobs:
   # gate-falsifiers-7 — split out of group 3, which ran past its 30-minute
   # ceiling once the Layer-2 app gates and the runtime-safety gates shared a job.
   gate-falsifiers-7:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -1262,7 +1262,7 @@ jobs:
   # passed a 45-min ceiling on the runner (run 36122173135) though they take
   # ~5 min on a laptop.
   gate-falsifiers-8:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -1283,7 +1283,7 @@ jobs:
   # 24 of 30 (release run 36643630048). conformance (520 s) and config-matrix
   # (254 s) move here: ~13 min of proofs + ~5 min setup. Timeout 1.5x ≈ 30.
   gate-falsifiers-9:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -1303,7 +1303,7 @@ jobs:
   # Mirrors rust-ci's `integration-postgres` (which explains why `-race` needs
   # cgo and why the embedded-supervisor tests need real binaries on the runner).
   gate-race:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
       postgres:
@@ -1361,7 +1361,7 @@ jobs:
   # Std.Ui forms. Mirrors nightly-sweep.yml's `web-runtime` job; before this job
   # none of it ran at a release.
   gate-web:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # The nightly job budgets 25 min for the tier; the e2e scripts build their
     # fixtures on top. 45 keeps ~1.5x.
     # console-live-e2e adds ~11 min: 60. nav-e2e adds two fixture builds and
@@ -1478,7 +1478,7 @@ jobs:
   # ran in no workflow before v0.27.0 (G-9); the script refuses to pass when
   # fewer contracts ran than exist.
   gate-example-e2e:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # 17 clean builds (13-skyshop's cold FFI install is the long pole) plus the
     # contract steps. 60.
     timeout-minutes: 60
@@ -1512,7 +1512,7 @@ jobs:
   # that path and refuses a stale one via require_fresh_compiler), and it does
   # the per-example FFI `sky install` itself.
   gate-sweep:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -1619,7 +1619,7 @@ jobs:
   # wait for the package manager and the launcher, turn the animations off and
   # dismiss a focused system dialog before each app step.
   gate-native-android:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # A cold `cargo test -p sky` build (~15 min), the emulator boot (~3 min,
     # up to the 15 min boot timeout below) and the four emulator tests
     # (220-250 s measured locally after a cold boot, plus up to 85 s for the
@@ -1696,7 +1696,7 @@ jobs:
   # installed beside `sky` must inspect a real Go package. The nightly runs the
   # same script (nightly-sweep.yml `nix`).
   gate-nix:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # A cold `cargo build --release -p sky` in the sandbox (~20 min on a
     # 4-core runner) plus the inspector and the store downloads. About 2x.
     timeout-minutes: 60
@@ -1761,7 +1761,7 @@ jobs:
       - gate-native
       - gate-native-android
       - gate-nix
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # `id-token` + `attestations` let the job sign a build-provenance
     # attestation for every published asset (F-9): `gh attestation verify
     # <file> -R anzellai/sky` then proves the file came from this workflow.
@@ -1858,7 +1858,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   docker:
     needs: release
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     continue-on-error: true
     # The Dockerfile compiles nothing — it apt-installs curl/git and downloads
     # the released binary. Cost is the arm64 leg under QEMU emulation (~5-8 min)

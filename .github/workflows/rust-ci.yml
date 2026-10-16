@@ -113,7 +113,7 @@ jobs:
   # saving, so dependencies are shared but the ~15 local crates are still
   # rebuilt per job. Check the "Cache restored from key" lines on run 1.
   setup:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # v2 §8.1 budgets setup at <= 6 min (<= 3 cache-warm). 1.5x = 9; 12 leaves
     # headroom for a fully cache-cold run after a lockfile bump.
     timeout-minutes: 12
@@ -150,7 +150,7 @@ jobs:
   #    this crate is the bulk of the old 30-min test step; on its own runner) ──
   test-ty:
     needs: setup
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # The 1857 s (~31 min) figure this job was sized against is STALE. It was
     # measured before the per-case cost was fixed, when every corpus case
     # rebuilt the stdlib world from scratch: 1293 ms/case x ~1400 cases ~= 1810 s,
@@ -192,7 +192,7 @@ jobs:
   # ── Every other crate's tests + clippy + doctests ───────────────────────────
   test-rest:
     needs: setup
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # Not separately measured. Reasoned: clippy --all-targets (~6 min debug) +
     # workspace-minus-ty tests incl. `project`'s real `go build` integration
     # tests (~10 min) + doctests (~2 min) ≈ 20 min. 1.5x = 30.
@@ -327,7 +327,7 @@ jobs:
   # setup` (same reasoning as `build-corpus`); all nine shards are in
   # SETUP_INDEPENDENT_JOBS.
   test-sky:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
@@ -375,7 +375,7 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   test-sky-2:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
@@ -419,7 +419,7 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   test-sky-3:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
@@ -468,7 +468,7 @@ jobs:
   # to ~3/4 of the load with no coverage change. Registered in
   # SETUP_INDEPENDENT_JOBS + ci-green `needs` below, exactly like the other three.
   test-sky-4:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
@@ -522,7 +522,7 @@ jobs:
   # shards cut each shard's serial share to ~5/7 of that, with no coverage
   # change. Registered in SETUP_INDEPENDENT_JOBS + ci-green `needs` below.
   test-sky-5:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
@@ -567,7 +567,7 @@ jobs:
 
   # test-sky shard 6/9 (see test-sky-5 for why the shard count grew).
   test-sky-6:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
@@ -612,7 +612,7 @@ jobs:
 
   # test-sky shard 7/9 (see test-sky-5 for why the shard count grew).
   test-sky-7:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
@@ -664,7 +664,7 @@ jobs:
   # seven-shard figure, with no coverage change. The ceiling is NOT raised.
   # Registered in SETUP_INDEPENDENT_JOBS + ci-green `needs` below.
   test-sky-8:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
@@ -709,7 +709,7 @@ jobs:
 
   # test-sky shard 9/9 (see test-sky-8 for why the shard count grew to nine).
   test-sky-9:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
@@ -755,7 +755,7 @@ jobs:
   # ── Accept-side parity gates (infer dominates ~13m) ─────────────────────────
   parity-accept:
     needs: setup
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # infer ~13 min (this file's own header) + debug `cargo build --workspace`
     # ~4 min + roundtrip/resolve/divergences/s8 ~3 min ≈ 20 min. 1.5x = 30.
     timeout-minutes: 30
@@ -782,7 +782,7 @@ jobs:
   # ── Reject-side parity + fmt (reject dominates ~16m) ────────────────────────
   parity-reject:
     needs: setup
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # reject measured 780 s DEBUG (74 s release — this job builds debug, so the
     # debug number is the one that applies) + fmt gate + debug workspace build
     # ≈ 20 min. 1.5x = 30. Drop this to ~12 if the gates ever build --release.
@@ -812,7 +812,7 @@ jobs:
   # still covered. Both remain setup-dependent; the chain drops to setup + ~395s.
   repro:
     needs: setup
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -828,7 +828,7 @@ jobs:
 
   repro-2:
     needs: setup
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -845,7 +845,7 @@ jobs:
   # ── Codegen emit + go build + runtime (needs Go; cached) ────────────────────
   codegen-build:
     needs: setup
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # Now: workspace build + coerce-floor + the console drift check (run
     # 36615007321: 129 s + 131 s + 49 s of 630 s, the rest was the rt tests that
     # moved to `runtime-rt`). The 45 min bound is kept only as a runaway
@@ -937,7 +937,7 @@ jobs:
   # the coverage is unchanged. The release workflow runs the rt suite too
   # (`go test -race ./rt/...` in its gate jobs).
   runtime-rt:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # ~320 s measured as a step (plus checkout + cache restore). 1.5x ≈ 9;
     # 15 leaves room for a Go-cache-cold run.
     timeout-minutes: 15
@@ -1008,7 +1008,7 @@ jobs:
     # much earlier — this is a real wall-clock saving, not a formula trick.
     # It is listed in `SETUP_INDEPENDENT_JOBS` so the budget assertion accounts
     # for it correctly.
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # SHARD 0 of 3. The whole corpus was ~76s workspace build + ~59s cache restore
     # + ~544s build-run + the four runtime gates (~90s WARM) ≈ 13 min — the slowest
     # setup-independent job, and the one whose per-example `go build` variance kept
@@ -1076,7 +1076,7 @@ jobs:
   # SETUP_INDEPENDENT_JOBS, and a matrix leg reports as "build-corpus (1)" (with a
   # space) — the same reason repro/repro-2 + macos-determinism/-2 are separate.
   build-corpus-2:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # 18, matching build-corpus: a shard is ~600-730s (the fixed costs do not
     # shard), and 12 killed a 729s run.
     timeout-minutes: 18
@@ -1123,7 +1123,7 @@ jobs:
   # Byte-identical to build-corpus but `--shard=2/3`. Separate named job, not a
   # `matrix` leg, for the SETUP_INDEPENDENT_JOBS exact-match reason above.
   build-corpus-3:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 18
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
@@ -1194,7 +1194,7 @@ jobs:
   # render gates are NOT sharded (two fixed tests) and run on shard 0 only, so
   # they execute exactly once.
   erasure-fuzz:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # ~90s workspace build + ~60s cache restore + HALF the case sweep + the two
     # std_app render gates (~80s). ~1.5x margin like the corpus jobs.
     timeout-minutes: 20
@@ -1242,7 +1242,7 @@ jobs:
   # in SETUP_INDEPENDENT_JOBS, and a matrix leg reports as "erasure-fuzz (1)" with
   # a space. Does NOT re-run the two std_app render gates (shard 0 owns them).
   erasure-fuzz-2:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
@@ -1289,7 +1289,7 @@ jobs:
   # push, and `ci-green` requires this job like any other.
   behaviour-docs:
     needs: setup
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # ~81s workspace build + ~167s conformance (incl. the release sky build) +
     # ~48s doc-examples + ~3 min for the release-mode deep-expression tests
     # (the 12,000-field LSP codec alone is ~45 s) ≈ 8 min. 1.5x = 12, rounded
@@ -1408,7 +1408,7 @@ jobs:
   # `coverage-ledger --check` step below.
   config-gates:
     needs: setup
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # ~60s cache restore + ~90s release `sky` (cache-warm) + ~50s config-matrix
     # + ~112s cli-verbs+analytics + three sub-second checks ≈ 6 min. 1.5x with
     # runner variance ≈ 9; 12 leaves headroom for a cold `cargo test` compile.
@@ -1496,7 +1496,7 @@ jobs:
   # depends on, the job says so and succeeds without measuring. It does not
   # `needs: setup` (it builds the compiler in release itself).
   build-perf:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # The linux-x86_64 budget is seeded from rust-ci run 38764872817 (see
     # docs/perf/build-budget.json). With the 50-field measure the whole job
     # took 11.6 minutes in run 38833457153 (8.5 of them measuring); 40 bounds
@@ -1600,7 +1600,7 @@ jobs:
   # ── Editor-parity (Neovim) + fuzzer (small; isolated setup) ─────────────────
   lsp-fuzz:
     needs: setup
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # "small; isolated setup" per this file's header. Reasoned: nvim setup ~1 min
     # + debug workspace build ~4 min + lsp 49 cases (debug `sky`) ~5.5 min + fuzz
     # ~4 min ≈ 14.5 min. The 32 corpus cases added ~35% to the lsp gate (measured:
@@ -1656,7 +1656,7 @@ jobs:
   # and about a minute. The macOS leg bills at 10x for that minute; the thing
   # it protects is the licence of every artifact this project publishes.
   licence-gate-linux:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # Compiles ~30 tiny fixture objects and runs the scanner over each; well
     # under a minute observed locally. 5 is a runaway bound, not an estimate.
     timeout-minutes: 5
@@ -1693,7 +1693,7 @@ jobs:
   # decode) was never tested against a live engine. A `postgres:16` service
   # container + the `integration`-tagged tests close that gap.
   integration-postgres:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # No Rust build at all: checkout + setup-go + postgres:16 service health-wait
     # + one `go test -run Postgres` over the rt package ≈ 5 min. The apt install
     # of the PostgreSQL binaries and the full `-race` pass over rt add roughly
@@ -2119,7 +2119,7 @@ jobs:
     # upstream job failed, and a skipped required check is treated as neutral by
     # branch protection — the exact false-green shape this fan-in exists to stop.
     if: always()
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
