@@ -144,6 +144,10 @@ for pkg in $(printf '%s\n' "$mine" | cut -f1 | LC_ALL=C sort -u); do
       }' "$timings.log" >> "$timings"
   [ "$rc" = 0 ] || status="$rc"
 done
+# Informational only: the test verdict is $status, and a failure in the
+# summary must not change it (an early `head` exit SIGPIPEs `sort` under
+# pipefail, which failed rust-ci run 38909685332 after every test passed).
 echo "go-test-shard: the 25 slowest tests of this shard (go-test-durations.tsv lines):"
-LC_ALL=C sort -t "$(printf '\t')" -k3,3gr "$timings" | head -25 | sed 's/^/  /'
+LC_ALL=C sort -t "$(printf '\t')" -k3,3 -g -r "$timings" > "$timings.log" 2>/dev/null || true
+sed -n '1,25s/^/  /p' "$timings.log" || true
 exit "$status"
