@@ -307,7 +307,8 @@ fn every_e2e_script_runs_in_exactly_one_release_gate_job() {
                 r.lines().any(|l| {
                     let l = l.trim();
                     !l.starts_with('#')
-                        && l.split_whitespace().any(|t| t == call || t.ends_with(&format!("/{call}")))
+                        && l.split_whitespace()
+                            .any(|t| t == call || t.ends_with(&format!("/{call}")))
                 })
             })
             .map(|(j, _)| j.as_str())

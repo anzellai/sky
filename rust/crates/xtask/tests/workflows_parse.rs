@@ -1214,6 +1214,66 @@ fn the_release_workflow_is_the_full_suite() {
          {uncovered:?} — add each to one of the gate-falsifiers-* `--only` lists"
     );
 
+    // 4b. A gate's proof may be split across jobs by `--mutation` (the corpus
+    //     gate: one job per mutation). Then the union of the mutations those
+    //     lines apply must be every mutation the gate declares, or half the
+    //     proof would run nowhere while each job reports PROVEN.
+    let mut declared: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    let mut current: Option<String> = None;
+    for line in registry.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("name: \"") {
+            current = rest.split('"').next().map(str::to_string);
+        } else if let Some(rest) = t.strip_prefix("id: \"") {
+            if let (Some(g), Some(id)) = (&current, rest.split('"').next()) {
+                declared.entry(g.clone()).or_default().push(id.to_string());
+            }
+        }
+    }
+    assert!(
+        declared.get("corpus").is_some_and(|m| m.len() >= 2),
+        "registry mutation parse found {:?} for corpus",
+        declared.get("corpus")
+    );
+    let mut applied: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for r in &runs {
+        for line in r.lines().filter(|l| l.contains("--verify-falsifiers")) {
+            let toks: Vec<&str> = line.split_whitespace().collect();
+            let list = |flag: &str| -> Vec<String> {
+                toks.iter()
+                    .position(|t| *t == flag)
+                    .map(|i| toks[i + 1].split(',').map(str::to_string).collect())
+                    .unwrap_or_default()
+            };
+            let filter = list("--mutation");
+            for gate in list("--only") {
+                let all = declared.get(&gate).cloned().unwrap_or_default();
+                let named: Vec<String> =
+                    all.iter().filter(|m| filter.contains(m)).cloned().collect();
+                let ran = if named.is_empty() { all } else { named };
+                applied.entry(gate).or_default().extend(ran);
+            }
+        }
+    }
+    let mut half_proven = Vec::new();
+    for (gate, ids) in &declared {
+        if !covered.iter().any(|c| c == gate) {
+            continue;
+        }
+        let missing: Vec<&String> = ids
+            .iter()
+            .filter(|id| !applied.get(gate).is_some_and(|a| a.contains(id)))
+            .collect();
+        if !missing.is_empty() {
+            half_proven.push(format!("{gate}: {missing:?}"));
+        }
+    }
+    assert!(
+        half_proven.is_empty(),
+        "declared mutation(s) that no release falsifier job applies:\n  {}",
+        half_proven.join("\n  ")
+    );
+
     // 5. The T1 harness runs in shards (`--tier t1 --only <list>`). A shard list
     //    is hand-written, so a gate added to T1 later would run in NO release job
     //    and the release would look green without it. A `--tier t1` line with no
@@ -2481,8 +2541,13 @@ fn cache_discipline_problems(file: &str, doc: &serde_yaml::Value) -> Vec<String>
                 ));
             }
         }
-        if with["cache-to"].as_str().is_some_and(|c| c.contains("type=gha")) {
-            problems.push(format!("{at}: a docker `type=gha` cache-to saves on every ref"));
+        if with["cache-to"]
+            .as_str()
+            .is_some_and(|c| c.contains("type=gha"))
+        {
+            problems.push(format!(
+                "{at}: a docker `type=gha` cache-to saves on every ref"
+            ));
         }
     }
     problems

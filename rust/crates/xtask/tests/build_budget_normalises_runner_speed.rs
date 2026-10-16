@@ -91,7 +91,8 @@ fn report(speed: f64, ref_speed: Option<f64>, slow_key: Option<(&str, f64)>) -> 
         "runs": [],
     });
     if let Some(rs) = ref_speed {
-        r["reference"] = json!({ "packages": PKGS, "wall_s": REF_S * rs, "cpu_s": REF_S * rs * 3.0 });
+        r["reference"] =
+            json!({ "packages": PKGS, "wall_s": REF_S * rs, "cpu_s": REF_S * rs * 3.0 });
     }
     r
 }
@@ -166,10 +167,7 @@ fn a_slow_runner_passes_and_a_slow_sky_fails() {
         &report(1.6, Some(1.6), Some(("app50-web/cold", 1.6))),
         &b,
     );
-    assert!(
-        !ok,
-        "a regression on a slow runner must still fail:\n{out}"
-    );
+    assert!(!ok, "a regression on a slow runner must still fail:\n{out}");
     assert!(out.contains("OVER app50-web/cold"), "{out}");
 
     // The absolute slack still guards sub-second builds against jitter: a warm
@@ -190,14 +188,24 @@ fn the_comparison_refuses_what_it_cannot_normalise() {
     let dir = scratch().join("refuse");
     std::fs::create_dir_all(&dir).unwrap();
 
-    let (ok, out) = compare(&dir, "no-ref", &report(1.0, None, None), &budget(PKGS, true));
+    let (ok, out) = compare(
+        &dir,
+        "no-ref",
+        &report(1.0, None, None),
+        &budget(PKGS, true),
+    );
     assert!(
         !ok && out.contains("NO-REFERENCE"),
         "a report without a reference workload must fail, never fall back to an \
          absolute comparison:\n{out}"
     );
 
-    let (ok, out) = compare(&dir, "no-ratio", &report(1.0, Some(1.0), None), &budget(PKGS, false));
+    let (ok, out) = compare(
+        &dir,
+        "no-ratio",
+        &report(1.0, Some(1.0), None),
+        &budget(PKGS, false),
+    );
     assert!(
         !ok && out.contains("NO-RATIO"),
         "a budget without ratios must fail until it is re-seeded:\n{out}"
