@@ -122,6 +122,14 @@ the parent's table gives the wall-clock of each leg. `sky check --timings` works
 the same way. Use it to see where a slow build spends its time before you report
 it.
 
+Under the table, `note: front end: N source load(s), M type check(s)` counts
+how many times the process loaded a program's sources and type-checked its
+modules. A build runs the front end once for each program it compiles. A direct
+`Spa.app` entry is checked once, and the split analyses that same checked
+program, so the parent reports one of each. A `--target web:app` build checks
+your own entry and then splits the client entry it derives from it, which is a
+second program, so the parent reports two of each.
+
 ```bash
 sky build --timings --target web:app src/Main.sky
 ```
@@ -131,45 +139,153 @@ is deterministic, so an unchanged module is never recompiled. A client build
 keeps each leg's `sky-out/` between builds, so a rebuild whose Go did not change
 does not re-link the backend or the wasm client either. The `.gz` / `.br`
 variants in `dist/` are cached by the SHA-256 of the file they compress (in
-`~/.cache/sky/precompress`, or under `$XDG_CACHE_HOME`), so brotli-11 runs only
-when the wasm bytes change. `sky run` does not write them at all: its backend
-serves the bundle itself and compresses on the fly.
+`~/.cache/sky/precompress`, or under `$XDG_CACHE_HOME`), so brotli runs only
+when the wasm bytes change. The bundle's assets (the wasm, `wasm_exec.js`, the
+boot script) are compressed at once, gzip and brotli each, and in a client
+build the parent `sky build` compresses them while the backend leg is still
+building, when the available memory holds both (brotli is counted at 64 MB,
+three times the input, and 190 MB per part it compresses at once). The `.gz`
+is the bytes of `gzip -9`. The `.br` is written by `sky` itself (the `brotli`
+crate, no tool needed): quality 11 with a 16 MB window, a large file split
+into up to 8 parts of 6 MB or more that are compressed at once, each part
+able to refer back into the parts before it. On a 52 MB wasm that is 26 s
+against 81 s for `brotli -q 11`, for a file 0.3% larger; any brotli decoder
+reads it. A cached result is used only after it decompresses to the file.
+`sky run` and `sky watch` do not write them at all: their backend serves the
+bundle itself and compresses on the fly.
+
+**`--precompress=max|fast|off`** (or `SKY_PRECOMPRESS=max|fast|off`; the flag
+wins) sets how much work goes into the `.gz` / `.br`:
+
+| Level | brotli | gzip | 52 MB wasm: time, `.br` size |
+|---|---|---|---|
+| `max` (default) | quality 11, parallel | `-9` | 26 s, 2.77 MB |
+| `fast` | quality 9, one thread | `-6` | ~1.5 s, 3.25 MB (+18%) |
+| `off` | none | none | 0 s; the server compresses on the fly |
+
+Use `fast` (or `off`) for a quick edit-rebuild loop of a production-shaped
+build, and `max` for what you deploy. `max` starts up to 8 brotli parts at
+once (1.56 GB peak on a 52 MB wasm). When the available memory is known and
+holds less than that need (64 MB, three times the input and 190 MB per part)
+plus 1 GB kept free, the build warns and writes the `fast` variants instead.
+The number of parts depends only on the file's length, so `max` bytes are the
+same on every machine: a machine short of memory writes `fast` bytes under the
+`fast` name and cache key, and the manifest records `"level": "fast"`. `--no-precompress` is `--precompress=off`.
+An unknown level is an error. Every level first removes the `.br` / `.gz` of
+each asset it manages (the wasm, `wasm_exec.js`, the boot script) and the
+manifest, so `off` leaves none behind. The build then lists what it wrote in
+`dist/sky-precompress.json`: each asset's size and SHA-256, and those of its
+`.br` / `.gz`. The Sky backend serves a `.br` / `.gz` itself only when a
+request accepts it and the manifest lists it with the size and SHA-256 the
+files still have (hashed once per file version per process). The manifest is
+read by the backend and is not served: a request for it is answered as for a
+file that does not exist (404, or the app's NotFound page on the Sky.Spa `/`
+mount). A Range request
+that accepts the encoding ranges over that file, with Content-Encoding on the
+206; anything else gets the raw file, gzipped on the fly. A `.gz` / `.br`
+that the build did not write (one committed in an app's own static dir) is
+never served.
+
+A new directory reuses the cache too. Every `go build` Sky runs passes
+`-trimpath`, so a compiled package's cache key does not include the directory
+it was compiled in: the same program in a new checkout, a CI runner's workspace,
+each leg of a client build, or a desktop shell compiles no package again. One
+effect on the built app: a panic stack trace names files by module path
+(`sky-app/main.go`, `sky-app/rt/live.go`) instead of the build machine's
+absolute path. Function names and line numbers are unchanged, and a `go build`
+error still names `./main.go:LINE:COL`. `--no-trimpath` (or
+`SKY_GO_TRIMPATH=0`) builds without it. `sky run --profile` builds without it on
+its own, because `pprof -list` / `pprof -http` source views and Delve find the
+sources by the absolute paths in the binary.
 
 Serial or parallel legs. A leg needs its own `sky` process (which stays in
 memory while its `go build` runs) plus its largest Go compile. The backend and
 frontend legs of a client build run in parallel only when the machine's
 available memory holds both legs' `sky` and Go peaks plus a 1 GB reserve;
 otherwise they run one after the other. Available memory is
-`free + inactive + speculative` pages on macOS (`vm_stat`) and `MemAvailable` on
-Linux, capped by the cgroup's remaining limit in a container. The plan
+`free + inactive + speculative` pages on macOS (`vm_stat`), `MemAvailable` on
+Linux, capped by the cgroup's remaining limit in a container, `free + inactive`
+pages on FreeBSD (`sysctl`), and the available physical memory on Windows
+(`GlobalMemoryStatusEx`). The plan
 estimates each leg from the size of its generated sources, and raises each
 figure to the peak the leg measured on a previous build when that was more
 (each leg keeps the largest it has seen in its own `sky-out/`,
-`.sky-front-peak-bytes` and `.sky-go-peak-bytes`; a record from a compiler
+`.sky-front-peak-bytes` and `.sky-go-peak-bytes`, which covers `main`'s compile
+and the link; a record from a compiler
 before v0.25.18 is ignored). When memory cannot be read, the legs run serially.
 `SKY_BUILD_SERIAL=1` forces serial and `SKY_BUILD_PARALLEL=1` forces parallel.
 The build prints its decision in the `== building … ==` line and in the
 `--timings` report.
 
+An app whose backend renders the first page (SSR) names the frontend's
+`main.<hash>.wasm` in that page, and the hash exists only once the frontend
+leg has built. The backend gets the name through its generated
+`sky-out/skybuildinfo` package (a small package of its own), not through its
+`main` package. So in parallel the backend leg builds while the frontend leg
+builds, `main` included; when the frontend ends, the parent writes the name to
+the backend leg's standard input (a pipe that belongs to this build alone), and
+the backend recompiles only that small package and links (the `--timings` rows
+`go build (native, before the frontend's wasm name)` and `wait for the
+frontend's wasm name`). A build whose frontend did not change links nothing
+new. Serially, the frontend builds first and the backend reads the name as it
+starts. If the frontend fails, or its thread in the parent ends early, the
+backend is still built, without a name: its page then finds the wasm by
+scanning `../frontend/dist` at run time, as before. If the parent `sky build`
+exits (Ctrl-C, a crash), the pipe closes and the backend stops waiting at once,
+with an error. The wait ends at most 600 s after the backend leg started. A
+backend built on its own (`cd .split/backend && sky build`) keeps the name its
+last build linked.
+
+The wasm client links a constant build stamp (nothing in the browser reads
+it), so its bytes, and its `main.<hash>.wasm` name, depend on the app's source
+only: a new commit does not change them, the `.gz` / `.br` cache hits, browsers
+keep their cached copy, and the backend has no new name to link. The server
+still reports the commit and build time at `/_sky/buildinfo`.
+
 Go compile parallelism. `go build` compiles up to one package per CPU at the
-same time, and the compile of a large app's generated `main` package is the
-largest process in a build (about 2.2 GB for a 22k-line app). So `sky build`
-passes `go build -p <n>` when the available memory does not hold one such
-compile per CPU plus the 1 GB reserve, with `n` the number of compiles it does
-hold (at least 1). The per-compile peak is an estimate from the size of the
-generated `main.go`, raised to the largest Go process measured on the project's
-previous builds (`sky-out/.sky-go-peak-bytes`) when that was more. Unknown memory builds one package at a time. When a
-client build runs its legs in parallel, it sets each leg's `-p` from the memory
-both legs share. `SKY_GO_BUILD_JOBS=<n>` sets `-p <n>` yourself (`auto` decides
-as above), and a `-p` already in `GOFLAGS` is kept. The decision is printed
-under the `--timings` table as `go build: -p …`.
+same time. Inside one `go build` the generated `main` package always compiles
+alone (every other package is one of its dependencies), so a limit on `-p`
+protects no memory from `main`: it only limits the dependency compiles that run
+beside one another. So `sky build` sizes `-p` from the dependency compiles: the
+largest one (the generated `sky-out/skyffi` package for a project with large Go
+FFI bindings, estimated from its size, else about 0.7 GB, or the largest
+dependency peak measured on an earlier build of the project,
+`sky-out/.sky-go-dep-peak-bytes`) plus as many others of about 0.25 GB each as
+the available memory holds after the 1 GB reserve (measured at Go's default
+`-p 8` on darwin/arm64, the compiles beside the largest one average about 0.1
+GB). When that is one per CPU, Go keeps its default. Below 6 GB of room (an 8
+GB machine) the 0.25 GB figure is not trusted: each other compile counts about
+0.7 GB and `-p` is at most 4. A 16 GB machine keeps Go's default. The
+generated `skyffi` package is a special case: it imports the runtime and every
+bound Go package, so Go compiles it after all of them, and only the console
+package and the build stamp can compile beside it, whatever `-p` is. It must
+fit with the console compile beside it (else `-p 1`), and `-p` is sized from
+the ordinary compiles that run before it. Each `go
+build` is measured on its own (its own child process, never the largest of
+every child before it), and a build records a dependency peak only when its
+dependencies compiled and its `main` did not (Go's action graph says which
+ran), so a cache hit, a `main` compile, or a build that compiled only the build
+stamp package never sets it. Unknown memory builds one package at a time. When a client build runs its legs in parallel, it sets each leg's `-p`
+from the memory both legs share. `--go-jobs <n>` (or `SKY_GO_BUILD_JOBS=<n>`)
+sets `-p <n>` yourself (`auto` decides as above), and a `-p` already in
+`GOFLAGS` is kept. The decision is printed under the `--timings` table as
+`go build: -p …`.
+
+Further build-speed changes were studied and not made in v0.27.9: one Go
+package per Sky module, a parallel front end with a cached stdlib world, a
+linear unifier, one front-end load on the `--target web:app` path, and `fast`
+brotli by default for edit rebuilds. `docs/perf/build-speed-decisions.md`
+records, for each, what was measured, the expected gain, the risk and what
+would make it worth doing.
 
 Build identity. The app's version, commit and build time are automatic: no
 flag, no environment variable, no CI step. `sky build` writes them into
 generated Go source (the `sky-out/skybuildinfo/` package), so any `go build`
 of `sky-out/` carries them, including your own cross-compile
 (`CGO_ENABLED=0 GOOS=linux go build .`). They are resolved once, at the project
-root, and every leg of the build embeds the same values. The commit is, first
+root, and every server leg of the build embeds the same values (a Sky.Spa
+wasm client links a constant stamp, so that its bytes depend on the source
+only). The commit is, first
 match wins: `SKY_BUILD_COMMIT` (optional override); `git rev-parse HEAD` in the
 project directory or any parent; the commit variable your CI sets by default
 (`GITHUB_SHA`, `CI_COMMIT_SHA`, `BITBUCKET_COMMIT`, `CIRCLE_SHA1`,
@@ -231,6 +347,11 @@ client is 100 % pure UI**), so a database/file/secret/auth value or function can
 **never** reach the browser — it is a build failure if it could (a fail-closed
 guard over every kernel family). Server branches become generated RPC endpoints;
 `Cmd.publish` fans out to subscribed clients over SSE (server→client push).
+
+The entry is a `Std.Spa` app (`main = Spa.app …`) or a `Std.App` app (`main =
+App.run app`). A `Std.App` entry is split as `sky build --target web:app` splits
+it: the `Spa.app` entry is synthesised from the `App` value and staged under
+`.skyapp/spa-split/`, and your `src/` is not changed.
 
 - **bare** — generates `shared/`, `backend/`, `frontend/` and prints the build
   commands.
@@ -663,8 +784,11 @@ without ever touching the cache your other Go projects rely on.
 - **Warm the cache** with `sky doctor --warm-cache` — it compiles the runtime for
   native and js/wasm so the first real build is fast instead of a cold compile.
   `sky upgrade` runs this automatically for the new version.
-- **Size is bounded.** The cache is pruned when it grows past a cap (default
-  10 GB, set `SKY_GO_CACHE_MAX_GB` to change it), so it never fills your disk.
+- **Size is bounded.** When the cache grows past a cap (default 10 GB, set
+  `SKY_GO_CACHE_MAX_GB` to change it), Sky removes the least recently used
+  entries until it is at 80% of the cap, so it never fills your disk and the
+  objects your recent builds use stay. (Before v0.27.9 it emptied the whole
+  cache, and the next build compiled everything again.)
 - **Shared safely across versions.** A new compiler embeds a new runtime, and
   its objects get new content-addressed keys, so two `sky` versions (an
   installed release and a dev build, or an upgrade while an editor still runs
@@ -673,6 +797,53 @@ without ever touching the cache your other Go projects rely on.
   the size cap.
 - **Escape hatch.** Set your own `GOCACHE` and Sky uses it as-is and manages
   nothing (its size and lifetime become yours to control).
+
+#### Caching builds in CI
+
+A CI job starts with empty caches unless it restores them, and a cold build of
+an app compiles the runtime and every Go dependency. Cache these three paths:
+
+| Path | What it holds |
+|---|---|
+| `~/.sky/go-build` | Sky's Go build cache (or your `GOCACHE`, when you set one) |
+| `~/go/pkg/mod` | the Go module cache (`go env GOMODCACHE`) |
+| `~/.cache/sky/precompress` | the `.gz` / `.br` results of a client build (`$XDG_CACHE_HOME/sky/precompress` when that is set) |
+
+`actions/setup-go`'s built-in cache saves `~/.cache/go-build` (Go's default
+build cache), which Sky does not use: turn it off (`cache: false`) and cache the
+paths above. Key the cache on the runner OS and a hash of `sky.toml` and
+`sky.lock` (add the Go and Sky versions when your workflow pins them, so an
+upgrade starts a new cache instead of growing the old one); a prefix of that
+key is a safe fallback, because every cache entry is keyed on its content. The
+checkout path does not matter: every `go build` Sky runs passes `-trimpath`.
+
+```yaml
+- uses: actions/setup-go@v5
+  with:
+    go-version: "1.26"   # the Go your app builds with
+    cache: false
+- uses: actions/cache@v4
+  with:
+    path: |
+      ~/.sky/go-build
+      ~/go/pkg/mod
+      ~/.cache/sky/precompress
+    key: sky-${{ runner.os }}-${{ hashFiles('sky.toml', 'sky.lock') }}-${{ github.sha }}
+    restore-keys: |
+      sky-${{ runner.os }}-${{ hashFiles('sky.toml', 'sky.lock') }}-
+      sky-${{ runner.os }}-
+```
+
+A restored build cache is trusted as compiled code: `go build` links what it
+finds there. Never restore a cache that an untrusted job could write (a pull
+request from a fork, another repository, a shared self-hosted runner) into a job
+that builds a release or holds deploy secrets. GitHub Actions does not give a
+pull request's caches to the default branch, but other CI systems may share one
+cache across all jobs; key protected builds separately there.
+
+On a runner with little memory, `--go-jobs <n>` (or `SKY_GO_BUILD_JOBS=<n>`)
+caps how many packages `go build` compiles at once, and `SKY_BUILD_SERIAL=1`
+builds a client app's two legs one after the other.
 
 Exit codes: `0` clean, `1` warnings, `2` errors. CI-friendly.
 

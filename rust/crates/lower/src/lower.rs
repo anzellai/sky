@@ -4,7 +4,8 @@
 //! server/TUI/webview backends are reported as out of scope.
 
 use crate::goty::{
-    sky_ty_to_go, sky_ty_to_go_in, sky_ty_to_go_params, Nominal, NominalKind, TypeEnv,
+    sky_ty_ref_to_go_in, sky_ty_to_go, sky_ty_to_go_in, sky_ty_to_go_params, Nominal, NominalKind,
+    TypeEnv,
 };
 use crate::ir::*;
 use crate::kernel::{alias_go_name, kernel_go_name};
@@ -570,8 +571,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         // callers as `any` — matching the `any` Go signature `lower_def` emits —
         // so the caller widens its argument instead of coercing it DOWN to a
         // closed struct (which would drop the row-carried fields).
-        let collides = |t: &Ty| match sky_ty_to_go(t, &env) {
-            GoTy::Named(n, _) => goty_names_non_model_record(&n, &record_fields, &env),
+        let collides = |t: &Ty| match &sky_ty_to_go(t, &env) {
+            GoTy::Named(n, _) => goty_names_non_model_record(n, &record_fields, &env),
             _ => false,
         };
         let (rp_params, _rp_result) = row_poly_flags(&e.body, &e.types, &collides);
@@ -613,8 +614,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             .sig
             .as_ref()
             .map(|s| sig_result_after(s, e.body.params.len()));
-        let collides = |t: &Ty| match sky_ty_to_go(t, &env) {
-            GoTy::Named(n, _) => goty_names_non_model_record(&n, &record_fields, &env),
+        let collides = |t: &Ty| match &sky_ty_to_go(t, &env) {
+            GoTy::Named(n, _) => goty_names_non_model_record(n, &record_fields, &env),
             _ => false,
         };
         let (_rp_params, rp_result) = row_poly_flags(&e.body, &e.types, &collides);
@@ -872,6 +873,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             variadic_kernels: &cfg.variadic_kernels,
             cur_module: e.module_name.clone(),
             cur_def: d,
+            goty_memo: HashMap::new(),
+            goty_ref_memo: HashMap::new(),
             def_span: def_spans.get(&d).copied(),
             cur_span: None,
             tco: None,
@@ -1584,7 +1587,8 @@ fn import_module_map(db: &dyn SkyDb, m: base::ModuleId) -> HashMap<String, Strin
 /// by the type's final segment. Bare names and unmapped qualifiers pass through
 /// unchanged.
 fn requalify_ty(t: &Ty, map: &HashMap<String, String>) -> Ty {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         Ty::App(name, args) => {
             let args: Vec<Ty> = args.iter().map(|a| requalify_ty(a, map)).collect();
             let n = name.as_str();
@@ -1609,7 +1613,7 @@ fn requalify_ty(t: &Ty, map: &HashMap<String, String>) -> Ty {
             ext.clone(),
         ),
         other => other.clone(),
-    }
+    })
 }
 
 #[allow(clippy::type_complexity)]
@@ -2133,7 +2137,8 @@ fn emit_type_decl(
 }
 
 fn collect_named(t: &GoTy, out: &mut Vec<String>) {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         GoTy::Named(n, args) => {
             if !n.starts_with("rt.") {
                 out.push(n.clone());
@@ -2164,7 +2169,7 @@ fn collect_named(t: &GoTy, out: &mut Vec<String>) {
             }
         }
         _ => {}
-    }
+    })
 }
 
 fn capitalize(s: &str) -> String {
@@ -2224,32 +2229,35 @@ fn rune_lit(s: &str) -> GoExpr {
 /// be resolved to a single Go type after the qualifier is dropped, so a union
 /// carrying it as a variant field is NOT sealed.
 fn ty_refs_ambiguous(t: &Ty, ambiguous: &HashSet<String>, declares: &dyn Fn(&str) -> bool) -> bool {
-    let rec = |x: &Ty| ty_refs_ambiguous(x, ambiguous, declares);
-    match t {
-        Ty::App(n, args) => {
-            // Compare the BARE head. `ambiguous` holds bare names, while a
-            // reference can arrive module-qualified — from
-            // `ast_type_to_ty_qualified` (always could) and now from the checker
-            // for unions too. Comparing the full name would silently make this
-            // set inert and seal the very unions the floor exists to protect.
-            //
-            // A BARE reference to a type the DECLARING module itself declares is
-            // not ambiguous: the variant field is resolved with that module as
-            // `cur_mod` (`emit_type_decl`, `ctor_field_gotys`), which prefers the
-            // module's own declaration, exactly as its function bodies do. Without
-            // this, any same-named type ANYWHERE in the program unsealed the union:
-            // `Std.Ai.Train`'s `Snapshot` put `examples/18-job-queue`'s `Msg`
-            // (`HistoryLoaded (Result Error (List Snapshot))`, its own `Snapshot`)
-            // back on the `rt.SkyADT` bag, three new narrowings in `update`.
-            let base = ty::nominal::base(n.as_str());
-            let bare_local = n.as_str() == base && declares(base);
-            (ambiguous.contains(base) && !bare_local) || args.iter().any(rec)
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        let rec = |x: &Ty| ty_refs_ambiguous(x, ambiguous, declares);
+        match t {
+            Ty::App(n, args) => {
+                // Compare the BARE head. `ambiguous` holds bare names, while a
+                // reference can arrive module-qualified — from
+                // `ast_type_to_ty_qualified` (always could) and now from the checker
+                // for unions too. Comparing the full name would silently make this
+                // set inert and seal the very unions the floor exists to protect.
+                //
+                // A BARE reference to a type the DECLARING module itself declares is
+                // not ambiguous: the variant field is resolved with that module as
+                // `cur_mod` (`emit_type_decl`, `ctor_field_gotys`), which prefers the
+                // module's own declaration, exactly as its function bodies do. Without
+                // this, any same-named type ANYWHERE in the program unsealed the union:
+                // `Std.Ai.Train`'s `Snapshot` put `examples/18-job-queue`'s `Msg`
+                // (`HistoryLoaded (Result Error (List Snapshot))`, its own `Snapshot`)
+                // back on the `rt.SkyADT` bag, three new narrowings in `update`.
+                let base = ty::nominal::base(n.as_str());
+                let bare_local = n.as_str() == base && declares(base);
+                (ambiguous.contains(base) && !bare_local) || args.iter().any(rec)
+            }
+            Ty::Fun(a, b) => rec(a) || rec(b),
+            Ty::Tuple(xs) => xs.iter().any(rec),
+            Ty::Record(fs, _) => fs.iter().any(|(_, x)| rec(x)),
+            _ => false,
         }
-        Ty::Fun(a, b) => rec(a) || rec(b),
-        Ty::Tuple(xs) => xs.iter().any(rec),
-        Ty::Record(fs, _) => fs.iter().any(|(_, x)| rec(x)),
-        _ => false,
-    }
+    })
 }
 
 // ---- per-def lowering context ------------------------------------------
@@ -2349,6 +2357,19 @@ struct Ctx<'a> {
     /// The `DefId` of the def currently being lowered — identifies self-calls
     /// for the tail-call optimiser.
     cur_def: DefId,
+    /// `goty` of a recorded type, by its reference into `types`, with the
+    /// nominal names it registered in `used_types`. `types`, `env` and
+    /// `cur_module` are fixed for a `Ctx`'s life, and `goty` at the top level is
+    /// a pure function of the type, the env and the module (its context-tainted
+    /// record-guard results are never produced at the top level, where no record
+    /// is mid-resolution), so a hit is exactly what a fresh call returns.
+    /// Expressions of one def share few distinct types: this turns "goty per
+    /// expression" (an owned rebuild plus a walk of the whole type each time)
+    /// into "goty per distinct type".
+    goty_memo: HashMap<ty::tytable::TyRef, (GoTy, Vec<String>)>,
+    /// The per-node memo `sky_ty_ref_to_go_in` fills while serving `goty_memo`
+    /// misses (children of the types asked for, shared across them).
+    goty_ref_memo: HashMap<ty::tytable::TyRef, GoTy>,
     /// Set while lowering a tail-recursive def body in the TCO statement path.
     /// `Some` iff the enclosing def qualified for TCO (see `is_tail_recursive`);
     /// a saturated self-call reached in tail position under this context becomes
@@ -2403,10 +2424,37 @@ impl<'a> Ctx<'a> {
     }
 
     fn expr_ty(&mut self, e: ExprId) -> GoTy {
-        match self.types.expr(e) {
-            Some(t) => self.goty(&t),
+        match self.types.expr_ref(e) {
+            Some(r) => self.goty_ref(r),
             None => GoTy::Any,
         }
+    }
+
+    /// `goty` of the recorded type at `r` in `self.types`, memoised per
+    /// reference (see `goty_memo`).
+    fn goty_ref(&mut self, r: ty::tytable::TyRef) -> GoTy {
+        if let Some((gt, names)) = self.goty_memo.get(&r) {
+            for n in names {
+                if !self.used_types.contains(n) {
+                    self.used_types.insert(n.clone());
+                }
+            }
+            return gt.clone();
+        }
+        let gt = sky_ty_ref_to_go_in(
+            self.types.table(),
+            r,
+            self.env,
+            Some(&self.cur_module),
+            &mut self.goty_ref_memo,
+        );
+        let mut names = Vec::new();
+        collect_named(&gt, &mut names);
+        for n in &names {
+            self.used_types.insert(n.clone());
+        }
+        self.goty_memo.insert(r, (gt.clone(), names));
+        gt
     }
 
     /// The recorded Sky type of an expression node, resolving a `Var(Local)`
@@ -2432,10 +2480,10 @@ impl<'a> Ctx<'a> {
     /// parameter returns `None` and keeps the untagged call: its narrowing
     /// (`rt.Coerce`) already fails loudly on a wrong shape.
     fn topic_payload_kind(&self, decoder: ExprId) -> Option<&'static str> {
-        let Ty::Fun(param, _) = self.sky_ty_of(decoder)? else {
+        let Ok((param, _)) = self.sky_ty_of(decoder)?.into_fun() else {
             return None;
         };
-        match &*param {
+        match &param {
             Ty::App(n, a) if a.is_empty() => match ty::nominal::base(n.as_str()) {
                 "String" => Some("String"),
                 "Int" => Some("Int"),
@@ -2484,7 +2532,7 @@ impl<'a> Ctx<'a> {
         if args.len() != arity {
             return None;
         }
-        let key_ty = match self.sky_ty_of(args[dict_arg])? {
+        let key_ty = match &self.sky_ty_of(args[dict_arg])? {
             Ty::App(dict, dargs)
                 if ty::nominal::base(dict.as_str()) == "Dict" && dargs.len() == 2 =>
             {
@@ -2528,8 +2576,8 @@ impl<'a> Ctx<'a> {
     }
 
     fn local_ty(&mut self, l: LocalId) -> GoTy {
-        match self.types.local(l) {
-            Some(t) => self.goty(&t),
+        match self.types.local_ref(l) {
+            Some(r) => self.goty_ref(r),
             None => GoTy::Any,
         }
     }
@@ -2761,21 +2809,46 @@ impl<'a> Ctx<'a> {
                     }
                 }
             }
+            // The initialiser is its OWN named function, and the accessor
+            // passes it by name:
+            //
+            //   var X__caf rt.LazyCaf[T]
+            //   func X__cafInit() T { <original body> }
+            //   func X() T { return X__caf.Get(X__cafInit) }
+            //
+            // Never `X__caf.Get(func() T { <body> })`. The accessor is a
+            // one-line function, so the Go inliner copies it into every
+            // caller; a closure literal inside it was copied with it, and so
+            // was every closure nested in the body. A codec CAF referenced
+            // from ~200 places was compiled ~200 times (a generated Sky.Spa
+            // backend at 200 Model fields: 100,681 compiled functions,
+            // 82,216 of them copies of one initialiser). Go inlines only
+            // direct calls, so a function passed by name is compiled once.
+            // Laziness, once-only evaluation and the session-stamp clearing
+            // are LazyCaf.Get's, unchanged.
             let caf_var = format!("{go_name}__caf");
+            let init_name = format!("{go_name}__cafInit");
             let cell_ty = GoTy::Named("rt.LazyCaf".to_string(), vec![ret_ty.clone()]);
-            // compute := func() T { <original body> }
-            let compute = GoExpr::new(
-                GoExprKind::FuncLit(Vec::new(), ret_ty.clone(), body),
+            let init = GoFuncDecl {
+                name: init_name.clone(),
+                type_params: Vec::new(),
+                params: Vec::new(),
+                ret: ret_ty.clone(),
+                body,
+                doc: None,
+            };
+            // {caf_var}.Get({init_name})
+            let init_ref = GoExpr::new(
+                GoExprKind::Ident(init_name),
                 GoTy::Func(Vec::new(), Box::new(ret_ty.clone())),
             );
-            // {caf_var}.Get(compute)
             let cell_ident = GoExpr::new(GoExprKind::Ident(caf_var.clone()), cell_ty.clone());
             let get_sel = GoExpr::new(
                 GoExprKind::Selector(Box::new(cell_ident), "Get".to_string()),
                 GoTy::Any,
             );
             let get_call = GoExpr::new(
-                GoExprKind::Call(Box::new(get_sel), vec![compute]),
+                GoExprKind::Call(Box::new(get_sel), vec![init_ref]),
                 ret_ty.clone(),
             );
             let accessor = GoFuncDecl {
@@ -2786,7 +2859,11 @@ impl<'a> Ctx<'a> {
                 body: vec![GoStmt::Return(Some(get_call))],
                 doc: None,
             };
-            return vec![GoItem::Var(caf_var, cell_ty, None), GoItem::Func(accessor)];
+            return vec![
+                GoItem::Var(caf_var, cell_ty, None),
+                GoItem::Func(init),
+                GoItem::Func(accessor),
+            ];
         }
 
         vec![GoItem::Func(GoFuncDecl {
@@ -3278,7 +3355,7 @@ impl<'a> Ctx<'a> {
         if let Some(sp) = self.body.expr_span(e) {
             self.cur_span = Some(sp);
         }
-        let out = self.lower_expr_at(e, expected);
+        let out = base::ensure_stack(|| self.lower_expr_at(e, expected));
         self.cur_span = prev;
         out
     }
@@ -3717,8 +3794,11 @@ impl<'a> Ctx<'a> {
     /// is itself a func: a nested closure collects the rest. Mirrors
     /// [`Self::curry_apply_ok`] step by step.
     fn curry_apply(&mut self, callee: GoExpr, mut pending: Vec<GoExpr>, slot_ret: &GoTy) -> GoExpr {
-        let GoTy::Func(cps, cr) = callee.ty.clone() else {
-            return self.eta_narrow(callee, slot_ret);
+        // Clone the parts: `GoTy` implements `Drop`, so a pattern cannot move
+        // out of it.
+        let (cps, cr) = match &callee.ty {
+            GoTy::Func(cps, cr) => (cps.clone(), cr.clone()),
+            _ => return self.eta_narrow(callee, slot_ret),
         };
         if pending.len() >= cps.len() {
             let rest = pending.split_off(cps.len());
@@ -3798,31 +3878,34 @@ impl<'a> Ctx<'a> {
     /// expression carries its own returns, which belong to that IIFE's result
     /// type, not to this function's.
     fn coerce_tail_returns(&mut self, body: Vec<GoStmt>, to: &GoTy) -> Vec<GoStmt> {
-        body.into_iter()
-            .map(|s| match s {
-                GoStmt::Return(Some(e)) => GoStmt::Return(Some(self.eta_narrow(e, to))),
-                GoStmt::If(c, t, e) => GoStmt::If(
-                    c,
-                    self.coerce_tail_returns(t, to),
-                    self.coerce_tail_returns(e, to),
-                ),
-                GoStmt::IfTypeAssert {
-                    binder,
-                    ok,
-                    subj,
-                    ty,
-                    then,
-                } => GoStmt::IfTypeAssert {
-                    binder,
-                    ok,
-                    subj,
-                    ty,
-                    then: self.coerce_tail_returns(then, to),
-                },
-                GoStmt::Loop(b) => GoStmt::Loop(self.coerce_tail_returns(b, to)),
-                other => other,
-            })
-            .collect()
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            body.into_iter()
+                .map(|s| match s {
+                    GoStmt::Return(Some(e)) => GoStmt::Return(Some(self.eta_narrow(e, to))),
+                    GoStmt::If(c, t, e) => GoStmt::If(
+                        c,
+                        self.coerce_tail_returns(t, to),
+                        self.coerce_tail_returns(e, to),
+                    ),
+                    GoStmt::IfTypeAssert {
+                        binder,
+                        ok,
+                        subj,
+                        ty,
+                        then,
+                    } => GoStmt::IfTypeAssert {
+                        binder,
+                        ok,
+                        subj,
+                        ty,
+                        then: self.coerce_tail_returns(then, to),
+                    },
+                    GoStmt::Loop(b) => GoStmt::Loop(self.coerce_tail_returns(b, to)),
+                    other => other,
+                })
+                .collect()
+        })
     }
 
     fn lower_expr_inner(&mut self, e: ExprId, actual: &GoTy, expected: &GoTy) -> GoExpr {
@@ -3838,13 +3921,14 @@ impl<'a> Ctx<'a> {
             Expr::Binop { op, lhs, rhs, .. } => self.lower_binop(op.as_str(), *lhs, *rhs, actual),
             Expr::Negate(inner) => {
                 let x = self.lower_expr(*inner, actual);
+                let ty = x.ty.clone();
                 GoExpr::new(
                     GoExprKind::Binary(
                         GoBin::Sub,
-                        Box::new(GoExpr::new(GoExprKind::IntLit(0), x.ty.clone())),
-                        Box::new(x.clone()),
+                        Box::new(GoExpr::new(GoExprKind::IntLit(0), ty.clone())),
+                        Box::new(x),
                     ),
-                    x.ty,
+                    ty,
                 )
             }
             Expr::If { arms, els } => self.lower_if(arms, *els, actual),
@@ -4731,7 +4815,7 @@ impl<'a> Ctx<'a> {
                 .iter()
                 .enumerate()
                 .map(|(i, a)| {
-                    let slot = ftys.get(i).unwrap_or(&GoTy::Any);
+                    let slot = ftys.get(i).unwrap_or(&GO_ANY);
                     self.container_record_slot = from_container && matches!(slot, GoTy::Struct(_));
                     let x = self.lower_expr(*a, slot);
                     self.container_record_slot = false;
@@ -5444,10 +5528,7 @@ impl<'a> Ctx<'a> {
                         .unwrap_or_else(|| self.expr_ty(*last)),
                     _ => self.expr_ty(*last),
                 };
-                match src_ty {
-                    GoTy::Slice(e) => Some(*e),
-                    _ => None,
-                }
+                src_ty.into_slice().ok()
             } else {
                 None
             };
@@ -5558,7 +5639,7 @@ impl<'a> Ctx<'a> {
             if largs.len() > arity {
                 return self.over_apply(c, largs, arity, &ret_goty);
             }
-        } else if let GoTy::Func(ps, cod) = c.ty.clone() {
+        } else if let Ok((ps, cod)) = c.ty.clone().into_func() {
             // Under-application of a func VALUE (not a top-level Def, so `go_arity`
             // is None) — e.g. a nested-curried return applied STEPWISE:
             // `((makeAdder 1) 2) 3`, where `makeAdder 1` is a `func(int,int) int`
@@ -5569,7 +5650,6 @@ impl<'a> Ctx<'a> {
             // stepwise companion to the `lower_lambda` spine-collapse.)
             let arity = ps.len();
             if !largs.is_empty() && largs.len() < arity {
-                let cod = *cod;
                 return self.make_partial(c, largs, &Some(ps), &cod, arity);
             }
         }
@@ -5626,9 +5706,8 @@ impl<'a> Ctx<'a> {
         let rest: Vec<GoExpr> = it.collect();
         let mut idx = 0;
         while idx < rest.len() {
-            match cur.clone() {
-                GoTy::Func(ps, cod) => {
-                    let cod = *cod;
+            match cur.clone().into_func() {
+                Ok((ps, cod)) => {
                     let n = ps.len().max(1);
                     let end = (idx + n).min(rest.len());
                     let batch: Vec<GoExpr> = rest[idx..end]
@@ -5653,7 +5732,7 @@ impl<'a> Ctx<'a> {
                     cur = cod;
                     idx += n;
                 }
-                _ => {
+                Err(_) => {
                     let ea = self.coerce_if_needed(rest[idx].clone(), &GoTy::Any);
                     call = GoExpr::new(GoExprKind::Call(Box::new(call), vec![ea]), GoTy::Any);
                     cur = GoTy::Any;
@@ -6160,7 +6239,8 @@ impl<'a> Ctx<'a> {
     /// kernel call is dropped; a narrowing of any other value (a user def, a
     /// literal, an FFI return) is kept.
     fn kernel_to_kernel(e: GoExpr) -> GoExpr {
-        match e.kind {
+        let (kind, ty) = e.into_parts();
+        match kind {
             GoExprKind::Coerce {
                 inner,
                 from: GoTy::Any,
@@ -6172,7 +6252,7 @@ impl<'a> Ctx<'a> {
             {
                 *inner
             }
-            kind => GoExpr { kind, ty: e.ty },
+            kind => GoExpr { kind, ty },
         }
     }
 
@@ -6230,8 +6310,10 @@ impl<'a> Ctx<'a> {
         // Lower the field value; peel the `any(…)` widen a func-into-`any` slot
         // adds so we see the concrete function value + its Go func type.
         let mut target = self.lower_expr(field, &GoTy::Any);
-        while let GoExprKind::Widen(inner) = target.kind {
-            target = *inner;
+        while let GoExprKind::Widen(_) = &target.kind {
+            if let GoExprKind::Widen(inner) = target.take_kind() {
+                target = *inner;
+            }
         }
         // Determine param types + call style. An uncurried n-ary Go func
         // (`func(A, B) R` — how 2-arg Sky funcs emit) is called in one go; a
@@ -6242,10 +6324,10 @@ impl<'a> Ctx<'a> {
                 let mut ins = Vec::new();
                 let mut cur = target.ty.clone();
                 for _ in 0..arity {
-                    match cur {
-                        GoTy::Func(i, out) if i.len() == 1 => {
+                    match cur.into_func() {
+                        Ok((i, out)) if i.len() == 1 => {
                             ins.push(i[0].clone());
-                            cur = *out;
+                            cur = out;
                         }
                         _ => return None,
                     }
@@ -6473,10 +6555,9 @@ impl<'a> Ctx<'a> {
             // runtime twin matches that order (see `List_foldlElemFirstT`), so
             // the callback needs no permuting wrapper.
             "rt.List_foldlElemFirstT" => {
-                let GoTy::Slice(a) = self.probe_goty(args[2]) else {
+                let Ok(a) = self.probe_goty(args[2]).into_slice() else {
                     return None;
                 };
-                let a = *a;
                 let b = self.probe_goty(args[1]);
                 if !provable(&a) || !provable(&b) {
                     return None;
@@ -6496,10 +6577,9 @@ impl<'a> Ctx<'a> {
             }
             // any pred list
             "rt.List_anyT" => {
-                let GoTy::Slice(a) = self.probe_goty(args[1]) else {
+                let Ok(a) = self.probe_goty(args[1]).into_slice() else {
                     return None;
                 };
-                let a = *a;
                 if !provable(&a) {
                     return None;
                 }
@@ -6538,10 +6618,10 @@ impl<'a> Ctx<'a> {
         // one Go will index. `make_partial` hard-codes its remaining params to
         // `any` (a partially applied top-level def — 23% of the corpus census),
         // so the callback's own param type is NOT a reliable source for it.
-        let GoTy::Slice(elem) = xs.ty.clone() else {
+        let Ok(elem) = xs.ty.clone().into_slice() else {
             return erased(self, f, xs);
         };
-        let GoTy::Func(f_ps, f_r) = f.ty.clone() else {
+        let Ok((f_ps, f_r)) = f.ty.clone().into_func() else {
             return erased(self, f, xs);
         };
         if !provable(&elem) {
@@ -6568,7 +6648,7 @@ impl<'a> Ctx<'a> {
         {
             return erased(self, f, xs);
         }
-        let elem = (*elem).clone();
+        let elem = elem.clone();
 
         // Per-HOF: the callback shape to prove, the Go type arguments, and the
         // result type. `out` is what the typed helper returns — asserted below
@@ -6578,7 +6658,7 @@ impl<'a> Ctx<'a> {
                 if f_ps.len() != 1 || !provable(&f_r) {
                     return erased(self, f, xs);
                 }
-                let b = (*f_r).clone();
+                let b = f_r.clone();
                 (
                     GoTy::Func(vec![elem.clone()], Box::new(b.clone())),
                     vec![elem.clone(), b.clone()],
@@ -6590,7 +6670,7 @@ impl<'a> Ctx<'a> {
                 // nothing extra to prove — but the LOWERED callback must already
                 // say so. One that came back `any`-returning is a callback the
                 // lowering could not type, not one this may retype.
-                if f_ps.len() != 1 || *f_r != GoTy::Bare(Prim::Bool) {
+                if f_ps.len() != 1 || f_r != GoTy::Bare(Prim::Bool) {
                     return erased(self, f, xs);
                 }
                 (
@@ -6604,7 +6684,7 @@ impl<'a> Ctx<'a> {
                 // the NOMINAL is what proves `B`: the erased helper recovers it
                 // with `MaybeCoerce[any]` plus a reflect fallback for a typed
                 // `SkyMaybe[T]`, and neither is needed once `B` is named.
-                let GoTy::Named(n, margs) = &*f_r else {
+                let GoTy::Named(n, margs) = &f_r else {
                     return erased(self, f, xs);
                 };
                 // `B` may be `any` — a `List.filterMap : … -> List any` (the
@@ -6624,7 +6704,7 @@ impl<'a> Ctx<'a> {
                 }
                 let b = margs[0].clone();
                 (
-                    GoTy::Func(vec![elem.clone()], Box::new((*f_r).clone())),
+                    GoTy::Func(vec![elem.clone()], Box::new(f_r.clone())),
                     vec![elem.clone(), b.clone()],
                     GoTy::Slice(Box::new(b)),
                 )
@@ -6636,7 +6716,7 @@ impl<'a> Ctx<'a> {
                 if f_ps.len() != 2 || !provable(&f_r) {
                     return erased(self, f, xs);
                 }
-                let b = (*f_r).clone();
+                let b = f_r.clone();
                 (
                     GoTy::Func(
                         vec![GoTy::Bare(Prim::Int), elem.clone()],
@@ -7109,12 +7189,15 @@ impl<'a> Ctx<'a> {
     /// `expr_children`, the canonical complete child enumerator, so a new AST
     /// node that adds a child there is covered here too.
     fn body_references_def(&self, e: ExprId, def: DefId) -> bool {
-        if matches!(&self.body.exprs[e], Expr::Var(Res::Def(d)) if *d == def) {
-            return true;
-        }
-        self.expr_children(e)
-            .into_iter()
-            .any(|c| self.body_references_def(c, def))
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            if matches!(&self.body.exprs[e], Expr::Var(Res::Def(d)) if *d == def) {
+                return true;
+            }
+            self.expr_children(e)
+                .into_iter()
+                .any(|c| self.body_references_def(c, def))
+        })
     }
 
     /// True when the subtree rooted at `e` contains a record UPDATE whose base
@@ -7123,17 +7206,20 @@ impl<'a> Ctx<'a> {
     /// carry a full-record update without dropping fields. Does NOT descend into
     /// nested lambdas (a different param binds `pid` there).
     fn param_is_updated(&self, e: ExprId, pid: LocalId) -> bool {
-        if let Expr::Update { base, .. } = &self.body.exprs[e] {
-            if matches!(&self.body.exprs[*base], Expr::Var(Res::Local(l)) if *l == pid) {
-                return true;
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            if let Expr::Update { base, .. } = &self.body.exprs[e] {
+                if matches!(&self.body.exprs[*base], Expr::Var(Res::Local(l)) if *l == pid) {
+                    return true;
+                }
             }
-        }
-        if matches!(&self.body.exprs[e], Expr::Lambda { .. }) {
-            return false;
-        }
-        self.expr_children(e)
-            .into_iter()
-            .any(|c| self.param_is_updated(c, pid))
+            if matches!(&self.body.exprs[e], Expr::Lambda { .. }) {
+                return false;
+            }
+            self.expr_children(e)
+                .into_iter()
+                .any(|c| self.param_is_updated(c, pid))
+        })
     }
 
     /// The first "fresh-value" kernel (`Uuid.v4` / entropy `Random.*` /
@@ -7144,34 +7230,37 @@ impl<'a> Ctx<'a> {
     /// value — the footgun that silently gave colliding UUIDs / a frozen clock
     /// after CAF memoisation landed.
     fn find_fresh_value_kernel(&self, e: ExprId) -> Option<(String, String)> {
-        match &self.body.exprs[e] {
-            // Direct kernel reference (rare at user sites).
-            Expr::Var(Res::Kernel { module, func })
-                if is_fresh_value_kernel(module.as_str(), func.as_str()) =>
-            {
-                return Some((module.as_str().to_string(), func.as_str().to_string()));
-            }
-            // The usual case: `Uuid.v4` is a `Res::Def` to the stdlib alias
-            // whose body is `Ffi.kernel "Uuid_v4"` — resolve it to the symbol.
-            Expr::Var(Res::Def(d)) => {
-                if let Some(sym) = self.kernel_alias.get(d) {
-                    if let Some((m, f)) = fresh_value_symbol_parts(sym) {
-                        return Some((m, f));
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            match &self.body.exprs[e] {
+                // Direct kernel reference (rare at user sites).
+                Expr::Var(Res::Kernel { module, func })
+                    if is_fresh_value_kernel(module.as_str(), func.as_str()) =>
+                {
+                    return Some((module.as_str().to_string(), func.as_str().to_string()));
+                }
+                // The usual case: `Uuid.v4` is a `Res::Def` to the stdlib alias
+                // whose body is `Ffi.kernel "Uuid_v4"` — resolve it to the symbol.
+                Expr::Var(Res::Def(d)) => {
+                    if let Some(sym) = self.kernel_alias.get(d) {
+                        if let Some((m, f)) = fresh_value_symbol_parts(sym) {
+                            return Some((m, f));
+                        }
                     }
                 }
+                _ => {}
             }
-            _ => {}
-        }
-        // A fresh-value call inside a lambda fires per-call; skip that subtree.
-        if matches!(&self.body.exprs[e], Expr::Lambda { .. }) {
-            return None;
-        }
-        for c in self.expr_children(e) {
-            if let Some(hit) = self.find_fresh_value_kernel(c) {
-                return Some(hit);
+            // A fresh-value call inside a lambda fires per-call; skip that subtree.
+            if matches!(&self.body.exprs[e], Expr::Lambda { .. }) {
+                return None;
             }
-        }
-        None
+            for c in self.expr_children(e) {
+                if let Some(hit) = self.find_fresh_value_kernel(c) {
+                    return Some(hit);
+                }
+            }
+            None
+        })
     }
 
     /// Every child expression, for a NON-tail (`inTail = false`) walk. Includes
@@ -7185,16 +7274,19 @@ impl<'a> Ctx<'a> {
     /// omits, the param is widened to `any` so the access routes through
     /// `rt.Field` instead of emitting `v.Field` on a struct that lacks it.
     fn fields_read_on_local(&self, e: ExprId, param: LocalId, out: &mut HashSet<String>) {
-        if let Expr::Access(base, field) = &self.body.exprs[e] {
-            if let Expr::Var(Res::Local(l)) = &self.body.exprs[*base] {
-                if *l == param {
-                    out.insert(field.as_str().to_string());
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            if let Expr::Access(base, field) = &self.body.exprs[e] {
+                if let Expr::Var(Res::Local(l)) = &self.body.exprs[*base] {
+                    if *l == param {
+                        out.insert(field.as_str().to_string());
+                    }
                 }
             }
-        }
-        for c in self.expr_children(e) {
-            self.fields_read_on_local(c, param, out);
-        }
+            for c in self.expr_children(e) {
+                self.fields_read_on_local(c, param, out);
+            }
+        })
     }
 
     fn expr_children(&self, e: ExprId) -> Vec<ExprId> {
@@ -7250,7 +7342,8 @@ impl<'a> Ctx<'a> {
     /// (`if`/`case`/`let` bodies) recurse in tail; every other node breaks tail
     /// context and its children are walked NON-tail (arg positions never count).
     fn count_tail_self(&self, e: ExprId, def: DefId, arity: usize, in_tail: bool) -> usize {
-        match &self.body.exprs[e] {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match &self.body.exprs[e] {
             Expr::If { arms, els } if in_tail => {
                 arms.iter()
                     .map(|(_, b)| self.count_tail_self(*b, def, arity, true))
@@ -7275,46 +7368,51 @@ impl<'a> Ctx<'a> {
                 .iter()
                 .map(|c| self.count_tail_self(*c, def, arity, false))
                 .sum(),
-        }
+        })
     }
 
     /// Count self-references in NON-tail position. Any self-call that is not a
     /// saturated tail call (wrong arity, or outside tail position) counts —
     /// a non-zero result disqualifies TCO.
     fn count_nontail_self(&self, e: ExprId, def: DefId, arity: usize, in_tail: bool) -> usize {
-        match &self.body.exprs[e] {
-            Expr::If { arms, els } if in_tail => {
-                arms.iter()
-                    .map(|(_, b)| self.count_nontail_self(*b, def, arity, true))
-                    .sum::<usize>()
-                    + self.count_nontail_self(*els, def, arity, true)
-            }
-            Expr::Let { body, .. } if in_tail => self.count_nontail_self(*body, def, arity, true),
-            Expr::Case { branches, .. } if in_tail => branches
-                .iter()
-                .map(|b| self.count_nontail_self(b.body, def, arity, true))
-                .sum(),
-            // Saturated tail call: don't count, but walk its args non-tail.
-            Expr::Call(callee, args)
-                if in_tail && self.is_self_call(*callee, def) && args.len() == arity =>
-            {
-                args.iter()
-                    .map(|a| self.count_nontail_self(*a, def, arity, false))
-                    .sum()
-            }
-            // Any other self-call (non-tail position, or wrong arity): count it.
-            Expr::Call(callee, args) if self.is_self_call(*callee, def) => {
-                1 + args
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            match &self.body.exprs[e] {
+                Expr::If { arms, els } if in_tail => {
+                    arms.iter()
+                        .map(|(_, b)| self.count_nontail_self(*b, def, arity, true))
+                        .sum::<usize>()
+                        + self.count_nontail_self(*els, def, arity, true)
+                }
+                Expr::Let { body, .. } if in_tail => {
+                    self.count_nontail_self(*body, def, arity, true)
+                }
+                Expr::Case { branches, .. } if in_tail => branches
                     .iter()
-                    .map(|a| self.count_nontail_self(*a, def, arity, false))
-                    .sum::<usize>()
+                    .map(|b| self.count_nontail_self(b.body, def, arity, true))
+                    .sum(),
+                // Saturated tail call: don't count, but walk its args non-tail.
+                Expr::Call(callee, args)
+                    if in_tail && self.is_self_call(*callee, def) && args.len() == arity =>
+                {
+                    args.iter()
+                        .map(|a| self.count_nontail_self(*a, def, arity, false))
+                        .sum()
+                }
+                // Any other self-call (non-tail position, or wrong arity): count it.
+                Expr::Call(callee, args) if self.is_self_call(*callee, def) => {
+                    1 + args
+                        .iter()
+                        .map(|a| self.count_nontail_self(*a, def, arity, false))
+                        .sum::<usize>()
+                }
+                _ => self
+                    .expr_children(e)
+                    .iter()
+                    .map(|c| self.count_nontail_self(*c, def, arity, false))
+                    .sum(),
             }
-            _ => self
-                .expr_children(e)
-                .iter()
-                .map(|c| self.count_nontail_self(*c, def, arity, false))
-                .sum(),
-        }
+        })
     }
 
     /// Lower `e` at a TAIL position of a TCO'd def, pushing statements into
@@ -7323,36 +7421,39 @@ impl<'a> Ctx<'a> {
     /// scoping IIFE); a saturated self-call becomes a `continue` jump; every
     /// other leaf is a `return`.
     fn lower_tail_stmts(&mut self, e: ExprId, ret: &GoTy, out: &mut Vec<GoStmt>) {
-        match self.body.exprs[e].clone() {
-            Expr::If { arms, els } => self.build_tail_if_chain(&arms, els, ret, out),
-            Expr::Let { defs, body } => {
-                // Pre-register binders (forward refs). Def RHSs are lowered
-                // normally — a self-call in a let-RHS stays a recursive call
-                // (correct; only tail-position calls become jumps).
-                for d in &defs {
-                    for (bn, lid) in &d.binders {
-                        let _ = self.fresh_local_named(*lid, Some(bn.as_str()));
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            match self.body.exprs[e].clone() {
+                Expr::If { arms, els } => self.build_tail_if_chain(&arms, els, ret, out),
+                Expr::Let { defs, body } => {
+                    // Pre-register binders (forward refs). Def RHSs are lowered
+                    // normally — a self-call in a let-RHS stays a recursive call
+                    // (correct; only tail-position calls become jumps).
+                    for d in &defs {
+                        for (bn, lid) in &d.binders {
+                            let _ = self.fresh_local_named(*lid, Some(bn.as_str()));
+                        }
+                    }
+                    for d in &defs {
+                        self.lower_let_def(d, out);
+                    }
+                    self.lower_tail_stmts(body, ret, out);
+                }
+                Expr::Case {
+                    subject, branches, ..
+                } => {
+                    self.emit_case(subject, &branches, ret, true, out);
+                }
+                _ => {
+                    if let Some(js) = self.try_tail_jump(e) {
+                        out.extend(js);
+                    } else {
+                        let g = self.lower_expr(e, ret);
+                        out.push(GoStmt::Return(Some(g)));
                     }
                 }
-                for d in &defs {
-                    self.lower_let_def(d, out);
-                }
-                self.lower_tail_stmts(body, ret, out);
             }
-            Expr::Case {
-                subject, branches, ..
-            } => {
-                self.emit_case(subject, &branches, ret, true, out);
-            }
-            _ => {
-                if let Some(js) = self.try_tail_jump(e) {
-                    out.extend(js);
-                } else {
-                    let g = self.lower_expr(e, ret);
-                    out.push(GoStmt::Return(Some(g)));
-                }
-            }
-        }
+        })
     }
 
     /// The tail-position `if`-chain of a TCO'd def: like `build_if_chain`, but
@@ -7420,7 +7521,8 @@ impl<'a> Ctx<'a> {
     /// dependency edge (degrading to source order — the prior behaviour), never a
     /// crash, but every `Expr` variant is covered here.
     fn collect_local_refs(&self, e: ExprId, out: &mut HashSet<LocalId>) {
-        match &self.body.exprs[e] {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match &self.body.exprs[e] {
             Expr::Var(Res::Local(l)) => {
                 out.insert(*l);
             }
@@ -7480,7 +7582,7 @@ impl<'a> Ctx<'a> {
                     self.collect_local_refs(b.body, out);
                 }
             }
-        }
+        })
     }
 
     /// Return the emission order of a `let` group's defs so each def is emitted
@@ -7829,7 +7931,6 @@ impl<'a> Ctx<'a> {
         // (which is a *subset* record when only some fields are read/written).
         // Take the base's own lowered type as the block/`_u` type; the outer
         // `lower_expr` coerces the block to the caller's `expected` if needed.
-        let base_sky_ty = self.sky_ty_of(base);
         let b = self.lower_expr(base, &GoTy::Any);
         let uty = b.ty.clone();
         // A ROW-POLYMORPHIC base (`bump r = { r | age = … }`, base lowers to
@@ -7885,8 +7986,11 @@ impl<'a> Ctx<'a> {
         // check≢build hole). Read the declared field types straight from the base's
         // inferred Sky record type so the update coerces each field exactly like a
         // record literal does.
+        //
+        // Read only here: `sky_ty_of` rebuilds the base's whole record type, and
+        // the common case (a nominal base) never needs it.
         if field_tys.is_empty() {
-            if let Some(Ty::Record(fs, _)) = base_sky_ty {
+            if let Some(Ty::Record(fs, _)) = &self.sky_ty_of(base) {
                 field_tys = fs
                     .iter()
                     .map(|(n, t)| (capitalize(n.as_str()), t.clone()))
@@ -9304,8 +9408,8 @@ fn caf_lambda_row_poly_ty(body: &Body, types: &BodyTypes) -> Option<Ty> {
     // The result: an open record carrying the shared row → `any`; a tuple keeps
     // its shape with each such record ELEMENT erased (`rt.T2[any, Cmd]`), so the
     // `( { model | … }, cmd )` literal is built without narrowing its record.
-    let ret = match ret {
-        Ty::Tuple(xs) => Ty::Tuple(
+    let ret = match ret.into_tuple() {
+        Ok(xs) => Ty::Tuple(
             xs.into_iter()
                 .map(|x| {
                     if record_ext_name(Some(&x)).is_some_and(shared) {
@@ -9317,11 +9421,11 @@ fn caf_lambda_row_poly_ty(body: &Body, types: &BodyTypes) -> Option<Ty> {
                 })
                 .collect(),
         ),
-        r if record_ext_name(Some(&r)).is_some_and(shared) => {
+        Err(r) if record_ext_name(Some(&r)).is_some_and(shared) => {
             changed = true;
             any()
         }
-        r => r,
+        Err(r) => r,
     };
     if !changed {
         return None;
@@ -9994,7 +10098,8 @@ impl ListHof {
 /// Recursive, because a `Named`'s type arguments and a `Slice`'s element are
 /// just as capable of being erased as the outer type is.
 fn provable(t: &GoTy) -> bool {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         GoTy::Any | GoTy::TyVar(_) | GoTy::Struct(_) => false,
         GoTy::Bare(_) | GoTy::Unit => true,
         GoTy::Slice(e) => provable(e),
@@ -10002,7 +10107,7 @@ fn provable(t: &GoTy) -> bool {
         GoTy::Tuple(es) => es.iter().all(provable),
         GoTy::Named(_, args) => args.iter().all(provable),
         GoTy::Func(ps, r) => ps.iter().all(provable) && provable(r),
-    }
+    })
 }
 
 /// Narrow an operand of a Go string `+` to `string`. A statically-`string`
@@ -10066,45 +10171,48 @@ fn tuple_type_args(t: &GoTy) -> String {
 /// only — expressions are always proper IR nodes (keeps `codegen` a leaf, no
 /// crate cycle). Mirrors `codegen::render_ty`.
 fn render_goty(t: &GoTy) -> String {
-    match t {
-        GoTy::Bare(p) => p.go_name().to_string(),
-        GoTy::Unit => "struct{}".to_string(),
-        GoTy::Any => "any".to_string(),
-        GoTy::Named(n, args) if args.is_empty() => n.clone(),
-        GoTy::Named(n, args) => {
-            let a: Vec<String> = args.iter().map(render_goty).collect();
-            format!("{n}[{}]", a.join(", "))
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        match t {
+            GoTy::Bare(p) => p.go_name().to_string(),
+            GoTy::Unit => "struct{}".to_string(),
+            GoTy::Any => "any".to_string(),
+            GoTy::Named(n, args) if args.is_empty() => n.clone(),
+            GoTy::Named(n, args) => {
+                let a: Vec<String> = args.iter().map(render_goty).collect();
+                format!("{n}[{}]", a.join(", "))
+            }
+            GoTy::Slice(t) => format!("[]{}", render_goty(t)),
+            GoTy::Map(k, v) => format!("map[{}]{}", render_goty(k), render_goty(v)),
+            GoTy::Func(ps, r) => {
+                let a: Vec<String> = ps.iter().map(render_goty).collect();
+                format!("func({}) {}", a.join(", "), render_goty(r))
+            }
+            // Tuples render as the runtime `rt.TN[…]` generic instantiation with
+            // each element's concrete Go type (typed-tuple codegen). A
+            // `GoTy::Any` element renders to `"any"`, so a floor/type-var position
+            // stays `any` (partial typing, e.g. `rt.T2[any, int]`). Phase 0
+            // hardened the runtime reflection sites to accept these typed shapes.
+            GoTy::Tuple(xs) => match xs.len() {
+                // Typed structs `rt.T2`..`rt.T9`; arity ≥10 → slice-backed
+                // `rt.SkyTupleN` (must match codegen::render_tuple_ty + lower_tuple).
+                2..=9 => format!(
+                    "rt.T{}[{}]",
+                    xs.len(),
+                    xs.iter().map(render_goty).collect::<Vec<_>>().join(", ")
+                ),
+                _ => "rt.SkyTupleN".to_string(),
+            },
+            GoTy::TyVar(n) => n.clone(),
+            GoTy::Struct(fs) => {
+                let parts: Vec<String> = fs
+                    .iter()
+                    .map(|(n, t)| format!("{} {}", n.as_str(), render_goty(t)))
+                    .collect();
+                format!("struct{{ {} }}", parts.join("; "))
+            }
         }
-        GoTy::Slice(t) => format!("[]{}", render_goty(t)),
-        GoTy::Map(k, v) => format!("map[{}]{}", render_goty(k), render_goty(v)),
-        GoTy::Func(ps, r) => {
-            let a: Vec<String> = ps.iter().map(render_goty).collect();
-            format!("func({}) {}", a.join(", "), render_goty(r))
-        }
-        // Tuples render as the runtime `rt.TN[…]` generic instantiation with
-        // each element's concrete Go type (typed-tuple codegen). A
-        // `GoTy::Any` element renders to `"any"`, so a floor/type-var position
-        // stays `any` (partial typing, e.g. `rt.T2[any, int]`). Phase 0
-        // hardened the runtime reflection sites to accept these typed shapes.
-        GoTy::Tuple(xs) => match xs.len() {
-            // Typed structs `rt.T2`..`rt.T9`; arity ≥10 → slice-backed
-            // `rt.SkyTupleN` (must match codegen::render_tuple_ty + lower_tuple).
-            2..=9 => format!(
-                "rt.T{}[{}]",
-                xs.len(),
-                xs.iter().map(render_goty).collect::<Vec<_>>().join(", ")
-            ),
-            _ => "rt.SkyTupleN".to_string(),
-        },
-        GoTy::TyVar(n) => n.clone(),
-        GoTy::Struct(fs) => {
-            let parts: Vec<String> = fs
-                .iter()
-                .map(|(n, t)| format!("{} {}", n.as_str(), render_goty(t)))
-                .collect();
-            format!("struct{{ {} }}", parts.join("; "))
-        }
-    }
+    })
 }
 
 #[cfg(test)]
@@ -10337,13 +10445,16 @@ mod tco_tests {
 
     /// Recursively test whether any `GoStmt` in `body` (or nested) matches `f`.
     fn any_stmt(body: &[GoStmt], f: &dyn Fn(&GoStmt) -> bool) -> bool {
-        body.iter().any(|s| {
-            f(s) || match s {
-                GoStmt::Loop(b) => any_stmt(b, f),
-                GoStmt::If(_, t, e) => any_stmt(t, f) || any_stmt(e, f),
-                GoStmt::IfTypeAssert { then, .. } => any_stmt(then, f),
-                _ => false,
-            }
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            body.iter().any(|s| {
+                f(s) || match s {
+                    GoStmt::Loop(b) => any_stmt(b, f),
+                    GoStmt::If(_, t, e) => any_stmt(t, f) || any_stmt(e, f),
+                    GoStmt::IfTypeAssert { then, .. } => any_stmt(then, f),
+                    _ => false,
+                }
+            })
         })
     }
 

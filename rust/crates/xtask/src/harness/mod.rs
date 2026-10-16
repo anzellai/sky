@@ -160,6 +160,10 @@ usage: xtask harness [options]
                                  window. Every other gate is CARRIED and reported so.
   --all                          with --verify-falsifiers: re-prove every selected gate,
                                  carrying nothing (nightly and release use this)
+  --mutation <id[,id...]>        with --verify-falsifiers and --only: a gate that declares
+                                 one of these mutations applies only those (after its
+                                 baseline), so one gate's proof can be split across CI
+                                 jobs. A partial run records no proof.
   --explain-inputs <gate>        print the files and digest a gate's proof depends on
   --list                         print the registry and exit
   -h, --help
@@ -175,6 +179,7 @@ struct Opts {
     fail_fast: bool,
     verify_falsifiers: bool,
     all: bool,
+    mutations: Vec<String>,
     explain_inputs: Option<String>,
     list: bool,
     help: bool,
@@ -218,6 +223,12 @@ impl Opts {
                 "--fail-fast" => o.fail_fast = true,
                 "--verify-falsifiers" => o.verify_falsifiers = true,
                 "--all" => o.all = true,
+                "--mutation" => o.mutations.extend(
+                    value(args, &mut i, "--mutation")?
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty()),
+                ),
                 "--explain-inputs" => {
                     o.explain_inputs = Some(value(args, &mut i, "--explain-inputs")?)
                 }
@@ -232,6 +243,32 @@ impl Opts {
         // exiting 0 on an unknown subcommand.
         if o.all && !o.verify_falsifiers {
             return Err("--all only applies to --verify-falsifiers".into());
+        }
+        // A mutation id that names nothing must be an ERROR for the same reason:
+        // an empty filter would silently run every mutation, or none.
+        if !o.mutations.is_empty() {
+            if !o.verify_falsifiers {
+                return Err("--mutation only applies to --verify-falsifiers".into());
+            }
+            for id in &o.mutations {
+                let owner = GATES
+                    .iter()
+                    .find(|g| g.mutations.as_slice().iter().any(|m| m.id == id));
+                match owner {
+                    None => {
+                        return Err(format!(
+                            "unknown mutation `{id}` (see `xtask harness --list`)"
+                        ))
+                    }
+                    Some(g) if !o.only.iter().any(|n| n == g.name) => {
+                        return Err(format!(
+                            "--mutation `{id}` belongs to gate `{}`, which --only must name",
+                            g.name
+                        ))
+                    }
+                    Some(_) => {}
+                }
+            }
         }
         for name in o.only.iter().chain(o.explain_inputs.iter()) {
             if registry::find(name).is_none() {
@@ -707,7 +744,8 @@ fn run_falsifiers(o: &Opts, root: &Path) -> i32 {
         // trace of which gate was slow.
         eprintln!("harness: proving {} …", g.name);
         let started = std::time::Instant::now();
-        let reports = falsify::verify_gate(g, &fopts, &mut generation);
+        let reports =
+            falsify::verify_gate(with_mutations(g, &o.mutations), &fopts, &mut generation);
         for r in &reports {
             eprintln!(
                 "harness: {} / {} -> {} ({}s)",
@@ -740,11 +778,28 @@ fn run_falsifiers(o: &Opts, root: &Path) -> i32 {
         );
     }
 
-    let bad: Vec<&falsify::FalsifyReport> = all.iter().filter(|r| !r.as_declared).collect();
+    // A `--mutation` run applies only some of a gate's mutations. That is half a
+    // proof: recording it would replace a full record with one that lists only
+    // the mutations this run applied. So such a gate records nothing; its
+    // verdict still counts below, and the release runs every half.
+    let partial: Vec<&'static str> = GATES
+        .iter()
+        .filter(|g| mutations_to_run(g, &o.mutations).len() < g.mutations.as_slice().len())
+        .map(|g| g.name)
+        .collect();
+    let (recordable, unrecorded): (Vec<_>, Vec<_>) =
+        all.into_iter().partition(|r| !partial.contains(&r.gate));
+    for g in &partial {
+        if unrecorded.iter().any(|r| r.gate == *g) {
+            println!("  partial    {g}: --mutation applied a subset; no proof recorded");
+        }
+    }
     // Record proofs BEFORE deciding, so a partial run still banks what it proved.
-    if let Err(e) = Proofs::record(root, &all, &digests) {
+    if let Err(e) = Proofs::record(root, &recordable, &digests) {
         eprintln!("xtask harness: cannot write {PROOF_LEDGER}: {e}");
     }
+    let all: Vec<falsify::FalsifyReport> = recordable.into_iter().chain(unrecorded).collect();
+    let bad: Vec<&falsify::FalsifyReport> = all.iter().filter(|r| !r.as_declared).collect();
 
     println!(
         "\nRE-RUN {} gate(s), CARRIED {} gate(s){}",
@@ -896,6 +951,54 @@ fn recorded_mutations_declared(e: &serde_json::Value, g: &Gate) -> bool {
         .unwrap_or_default();
     // A legacy single-mutation record only vouches for a single-mutation gate.
     declared.len() == 1 && declared[0] == one
+}
+
+/// The mutations of `gate` a falsifier run applies: all of them, or, when the
+/// `--mutation` filter names any of the gate's own ids, exactly those.
+///
+/// It exists so one gate's proof can be split across CI jobs. The `corpus`
+/// gate's proof is a cold baseline plus two mutated runs, each a build and run
+/// of every behavioural case (1,256 s in one job, release run 38764879819).
+/// One job per mutation runs the baseline twice but halves the longest job. A
+/// partial run never records a proof (see `run_falsifiers`).
+fn mutations_to_run(gate: &Gate, filter: &[String]) -> Vec<registry::Mutation> {
+    let all = gate.mutations.as_slice();
+    let named: Vec<registry::Mutation> = all
+        .iter()
+        .filter(|m| filter.iter().any(|f| f == m.id))
+        .copied()
+        .collect();
+    if named.is_empty() {
+        all.to_vec()
+    } else {
+        named
+    }
+}
+
+/// `gate`, or, when `--mutation` narrows its mutations, a copy of it that
+/// declares only those. The falsifier runner (`falsify.rs`, a proof input of
+/// every gate) is unchanged: it is handed a gate whose declared set is the
+/// filtered one. The copy lives for the rest of the process, as a registry
+/// entry does.
+fn with_mutations(gate: &'static Gate, filter: &[String]) -> &'static Gate {
+    let ms = mutations_to_run(gate, filter);
+    if ms.len() == gate.mutations.as_slice().len() {
+        return gate;
+    }
+    let ms: &'static [registry::Mutation] = Box::leak(ms.into_boxed_slice());
+    Box::leak(Box::new(Gate {
+        name: gate.name,
+        tier: gate.tier,
+        // The selection already kept this gate for the platform the run is on,
+        // and the runner never reads `platforms`; the copy names that one.
+        platforms: registry::Platforms::new(Box::leak(Box::new([Platform::current()]))),
+        budget_s: gate.budget_s,
+        expected: gate.expected,
+        mutations: registry::Mutations::new(ms),
+        expect: gate.expect,
+        body: gate.body,
+        summary: gate.summary,
+    }))
 }
 
 /// The gates a falsifier run considers, in registry order.
@@ -1488,5 +1591,75 @@ mod proof_ledger_location_tests {
         );
 
         std::env::remove_var(PROOF_LEDGER_ENV);
+    }
+}
+
+#[cfg(test)]
+mod mutation_filter_tests {
+    use super::*;
+
+    fn args(s: &str) -> Vec<String> {
+        s.split_whitespace().map(str::to_string).collect()
+    }
+
+    /// `--mutation` must name a real mutation of a gate `--only` selects, and
+    /// only applies to a falsifier run. Each misuse is an error, never a silent
+    /// run of every mutation (or of none).
+    #[test]
+    fn a_mutation_filter_must_name_a_selected_gates_mutation() {
+        assert!(Opts::parse(&args(
+            "--verify-falsifiers --all --only corpus-1 --mutation corpus-1.wrong-expected-value"
+        ))
+        .is_ok());
+        for bad in [
+            "--verify-falsifiers --only corpus-1 --mutation corpus-1.no-such-mutation",
+            "--verify-falsifiers --only reject --mutation corpus-1.wrong-expected-value",
+            "--verify-falsifiers --mutation corpus-1.wrong-expected-value",
+            "--only corpus-1 --mutation corpus-1.wrong-expected-value",
+        ] {
+            assert!(Opts::parse(&args(bad)).is_err(), "accepted: {bad}");
+        }
+    }
+
+    /// The two halves of a split proof are the whole proof: each filter picks
+    /// exactly its own mutation, their union is every declared mutation, and a
+    /// gate the filter does not name runs all of its mutations.
+    #[test]
+    fn the_halves_of_a_split_proof_cover_every_mutation_once() {
+        let corpus = registry::find("corpus-1").expect("corpus-1 is registered");
+        let declared: Vec<&str> = corpus.mutations.as_slice().iter().map(|m| m.id).collect();
+        assert!(declared.len() >= 2, "corpus-1 declares {declared:?}");
+        let mut union: Vec<&str> = Vec::new();
+        for id in &declared {
+            let ran: Vec<&str> = mutations_to_run(corpus, &[id.to_string()])
+                .iter()
+                .map(|m| m.id)
+                .collect();
+            assert_eq!(
+                with_mutations(corpus, &[id.to_string()])
+                    .mutations
+                    .as_slice()
+                    .len(),
+                1
+            );
+            assert_eq!(ran, vec![*id]);
+            union.extend(ran);
+        }
+        union.sort();
+        let mut want = declared.clone();
+        want.sort();
+        assert_eq!(union, want);
+
+        let reject = registry::find("reject").expect("reject is registered");
+        assert_eq!(
+            mutations_to_run(reject, &["corpus-1.wrong-expected-value".into()]).len(),
+            reject.mutations.as_slice().len(),
+            "a gate the filter does not name runs every mutation"
+        );
+        assert_eq!(
+            mutations_to_run(corpus, &[]).len(),
+            declared.len(),
+            "no filter runs every mutation"
+        );
     }
 }

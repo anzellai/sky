@@ -1,0 +1,124 @@
+module Main exposing (main)
+
+-- Auto-split INPUT whose wire types the split must name exactly, because one
+-- annotated builder (`spaModelWireFields_`) is shared by every whole-model
+-- request: an `any` or a free type variable in it is one fixed type for all of
+-- them, and the backend fails `[E2012]` at each use.
+--
+-- * `Paged a` takes a type parameter and is used at two types in the Model and
+--   as a Msg argument, with no app codec. Before the fix the split wrote the
+--   bare `Paged` (leaving `a` free); now each use is `Paged Item` /
+--   `Paged String` with its own auto-derived codec.
+-- * `productListCodec` has no type annotation. Before the fix the split named
+--   its type by rendering the solved type, which writes a record as `any`, so
+--   the Model wire held `products : List any`; now it is `List Product`.
+-- * `Data.presetCodec` is annotated, but a doc comment with a colon sits above
+--   it. The annotation reader split at that colon, lost the surface, and the
+--   split composed `Codec.list presetCodec` with the type `List any`. The Model
+--   holds `Preset` as `List`, `Maybe`, `List (Maybe _)`, `Maybe (List _)` and
+--   `Dict String _`, each a codec the split composes over `presetCodec`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.File as File
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+import Std.Codec as Codec exposing (Codec)
+import Sky.Core.Dict as Dict exposing (Dict)
+import Types exposing (Preset)
+import Data
+
+type alias Paged a =
+    { entries : List a
+    , page : Int
+    }
+
+type alias Item =
+    { id : Int
+    , label : String
+    }
+
+type alias Product =
+    { sku : String
+    , price : Int
+    }
+
+productCodec : Codec Product
+productCodec =
+    Codec.object Product
+        |> Codec.field "sku" .sku Codec.string
+        |> Codec.field "price" .price Codec.int
+        |> Codec.buildObject
+
+productListCodec =
+    Codec.list productCodec
+
+type alias Model =
+    { status : String
+    , items : Paged Item
+    , names : Paged String
+    , products : List Product
+    , hits : List Preset
+    , pick : Maybe Preset
+    , slots : List (Maybe Preset)
+    , groups : Maybe (List Preset)
+    , byCode : Dict String Preset
+    }
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { status = "", items = { entries = [], page = 0 }, names = { entries = [], page = 0 }, products = [], hits = [], pick = Nothing, slots = [], groups = Nothing, byCode = Dict.empty }, Cmd.none )
+
+type Msg
+    = Draft String
+    | Save (Paged Item)
+
+
+-- Reads the whole Model opaquely, so a server arm that calls it sends the
+-- whole Model with its Msg arguments (`Codec.inline` of `spaModelWireFields_`).
+stamp : Model -> String
+stamp m =
+    List.length [ m ] |> String.fromInt
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Draft s ->
+            ( { model | status = s }, Cmd.none )
+
+        Save p ->
+            let
+                _ = Task.run (File.writeFile "audit.txt" (stamp model ++ String.fromInt p.page))
+            in
+                ( { model | items = p, status = String.fromInt (List.length p.entries + List.length model.products + List.length model.hits + Dict.size model.byCode) }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column [ Ui.spacing 8 ] [ Ui.text ("status: " ++ model.status) ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

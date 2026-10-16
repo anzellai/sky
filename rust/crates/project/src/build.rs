@@ -274,6 +274,74 @@ fn assemble_and_emit_with(
     progress: bool,
     scope: AppScope,
 ) -> Result<Emitted, BuildFailure> {
+    assemble_and_emit_loaded(
+        repo_root,
+        example_dir,
+        extra_dirs,
+        entry_module,
+        progress,
+        scope,
+    )
+    .map(|(emitted, loaded)| {
+        // Free the db here, before the caller uses the emitted program, as
+        // this function did when it owned the db.
+        drop(loaded);
+        emitted
+    })
+}
+
+/// A program the front half of a build loaded and checked: the source db, and
+/// what the Sky.Spa split needs to analyse the SAME db instead of loading and
+/// type-checking the program a second time (see [`front_half_loaded`]).
+///
+/// `split_entry` and `split_check_ids` are chosen by exactly the rule
+/// [`load_source_db`] applies (the project's own modules, in load order, the
+/// LAST module named like the entry), so a split over this db sees the module
+/// list a fresh [`load_source_db`] would hand it.
+pub struct LoadedProgram {
+    pub(crate) db: skydb::SkyDatabase,
+    pub(crate) split_entry: Option<base::ModuleId>,
+    pub(crate) split_check_ids: Vec<base::ModuleId>,
+    /// `ty::check_modules(&db, &checked_ids)`, the front half's own check.
+    pub(crate) checked: ty::CheckOutput,
+    pub(crate) checked_ids: Vec<base::ModuleId>,
+    /// False when the project has Sky dependencies (registry packages or path
+    /// dependencies): [`load_source_db`] then builds its FFI trust and its
+    /// dependency check over a different module list, so the split loads its
+    /// own db.
+    pub(crate) reusable_for_split: bool,
+}
+
+impl LoadedProgram {
+    /// The db, entry and module list for the Sky.Spa split, and the front
+    /// half's check when it is the check the split would run itself (the same
+    /// module list over this same db). `None` when this db is not the one a
+    /// fresh [`load_source_db`] builds.
+    pub(crate) fn for_split(
+        self,
+    ) -> Option<(
+        skydb::SkyDatabase,
+        base::ModuleId,
+        Vec<base::ModuleId>,
+        Option<ty::CheckOutput>,
+    )> {
+        if !self.reusable_for_split {
+            return None;
+        }
+        let entry = self.split_entry?;
+        let checked = (self.checked_ids == self.split_check_ids).then_some(self.checked);
+        Some((self.db, entry, self.split_check_ids, checked))
+    }
+}
+
+fn assemble_and_emit_loaded(
+    repo_root: &Path,
+    example_dir: &Path,
+    extra_dirs: &[PathBuf],
+    entry_module: Option<&str>,
+    progress: bool,
+    scope: AppScope,
+) -> Result<(Emitted, LoadedProgram), BuildFailure> {
     // ---- assemble the source db (stdlib + example src) ----
     // Stage A/B (doc 01, doc 12): a salsa db holds the source set as `SourceFile`
     // inputs and the `parse` leaf query memoises each module's CST. Every parse
@@ -291,6 +359,7 @@ fn assemble_and_emit_with(
         return Err(problem.into());
     }
     let t_load = crate::timings::phase("load sources (stdlib + app)");
+    crate::timings::count_source_load();
     let mut db = skydb::SkyDatabase::with_kernel();
     let mut next_id: u32 = 0;
     let stdlib = load_dir(&db, &mut next_id, &repo_root.join("sky-stdlib"));
@@ -366,6 +435,7 @@ fn assemble_and_emit_with(
     dep_files.extend(registry.iter().map(|(_, _, p)| p.clone()));
     let mut dep_locals = registry;
     dep_locals.extend(path_locals);
+    let has_sky_dependencies = !dep_locals.is_empty();
 
     let source_root = configured_source_root(&example_dir);
     let mut roots = vec![example_dir.join(&source_root)];
@@ -410,6 +480,9 @@ fn assemble_and_emit_with(
     }
     let mut entry = None;
     let mut check_ids: Vec<base::ModuleId> = Vec::new();
+    // The entry and module list `load_source_db` picks (see `LoadedProgram`).
+    let mut split_entry = None;
+    let mut split_check_ids: Vec<base::ModuleId> = Vec::new();
     // Parse-error gate accumulator (`[E0001]` class). Collected HERE, in the
     // app-module loop, reading each app module's parse (from the tracked `parse`
     // query, keyed by its `SourceFile` input) BEFORE `&mut db` registration — the
@@ -473,6 +546,16 @@ fn assemble_and_emit_with(
         path_map.insert(base::FileId(id.index()), display_path(example_dir, &p));
         if registry_paths.contains(&p) {
             registry_mods.insert(id.index());
+        }
+        if !dep_files.contains(&p) {
+            split_check_ids.push(id);
+            let named_entry = match entry_module {
+                Some(want) => n == want,
+                None => n == "Main" || n.ends_with(".Main") || n == "main",
+            };
+            if named_entry {
+                split_entry = Some(id);
+            }
         }
         // Every module in this loop (the project's own `src/`, any `extra_dirs`
         // like `tests/`, the path dependencies and the fetched `.skydeps`
@@ -566,8 +649,15 @@ fn assemble_and_emit_with(
     surface.set_trust(trust);
     db.set_ffi_surface(std::sync::Arc::new(surface));
     let t_check = crate::timings::phase("canonicalise + typecheck");
+    let counters_start = ty::counters::snapshot();
+    crate::timings::count_type_check();
     let mut checked = ty::check_modules(&db, &check_ids);
     t_check.end();
+    let counters_checked = ty::counters::snapshot();
+    crate::timings::note(format!(
+        "typecheck counters: {}",
+        counters_checked.since(&counters_start)
+    ));
     // Since v0.27.0 a fetched `.skydeps` package is checked like the project's
     // own code (it was trusted before). A diagnostic in one says so and links
     // the migration entry.
@@ -831,6 +921,10 @@ fn assemble_and_emit_with(
     let abi_diags =
         crate::abi_guard::check_abi_symbols(&source, crate::abi_guard::runtime_exports(repo_root));
     t_lower.end();
+    crate::timings::note(format!(
+        "lower counters: {}",
+        ty::counters::snapshot().since(&counters_checked)
+    ));
     if !abi_diags.is_empty() {
         return Err(render_diags(&abi_diags, &sources));
     }
@@ -866,7 +960,7 @@ fn assemble_and_emit_with(
     // path dependency whose API changed, so it names the surface and the verb
     // that regenerates it.
     warnings.extend(outdated_surface_warnings(example_dir));
-    Ok(Emitted {
+    let emitted = Emitted {
         source,
         registry,
         ffi_used: prog.ffi_used.clone(),
@@ -874,7 +968,25 @@ fn assemble_and_emit_with(
         located_warnings,
         migration_hint,
         console_needed: prog.console_needed,
-    })
+    };
+    let loaded = LoadedProgram {
+        db,
+        split_entry,
+        split_check_ids,
+        // The split reads the verdict and the diagnostics, never the per-def
+        // types, so those are not carried.
+        checked: ty::CheckOutput {
+            def_types: Vec::new(),
+            ..checked
+        },
+        checked_ids: check_ids,
+        // Only the plain load (no extra source roots, the whole app) builds
+        // the db `load_source_db` builds.
+        reusable_for_split: !has_sky_dependencies
+            && extra_dirs.is_empty()
+            && matches!(scope, AppScope::All),
+    };
+    Ok((emitted, loaded))
 }
 
 /// Resolve a lowering diagnostic against the build's sources. A leading
@@ -965,6 +1077,31 @@ pub fn front_half_errors(
     ) {
         Ok(_) => Vec::new(),
         Err(f) => f.diagnostics,
+    }
+}
+
+/// [`front_half_errors`], keeping what it loaded: on success, the checked
+/// program, which `spa_split::generate_with` analyses instead of loading and
+/// type-checking the app again. The diagnostics on failure are the same values
+/// [`front_half_errors`] returns.
+pub fn front_half_loaded(
+    repo_root: &Path,
+    example_dir: &Path,
+    entry_module: Option<&str>,
+) -> Result<LoadedProgram, Vec<diagnostics::Reported>> {
+    match assemble_and_emit_loaded(
+        repo_root,
+        example_dir,
+        &[],
+        entry_module,
+        false,
+        AppScope::All,
+    ) {
+        Ok((emitted, loaded)) => {
+            drop(emitted);
+            Ok(loaded)
+        }
+        Err(f) => Err(f.diagnostics),
     }
 }
 
@@ -1223,8 +1360,23 @@ fn build_inner(
     // manual cross-compile, a Dockerfile, a custom CI. Resolved at the user's
     // project root (or pinned there by the parent `sky` for a generated split /
     // Std.App leg); stable across no-change rebuilds (build_stamp.rs).
-    let stamp = crate::build_stamp::resolve_build_stamp(&opts.example_dir);
-    if let Err(e) = crate::build_stamp::write_go_stamp(&out_dir, &stamp) {
+    //
+    // A wasm client links a constant stamp instead (build_stamp::client_stamp):
+    // nothing under GOOS=js reads it, and a per-commit value would change the
+    // wasm bytes, and so its content-hashed name, on every commit.
+    let stamp = if opts.wasm {
+        crate::build_stamp::client_stamp()
+    } else {
+        crate::build_stamp::resolve_build_stamp(&opts.example_dir)
+    };
+    // A Sky.Spa SSR backend keeps the wasm name its last build linked: until
+    // the new one arrives when its parent hands one over (spa_wasm_handoff.rs),
+    // so a build whose frontend did not change links nothing new, and for good
+    // when it is built on its own (`cd .split/backend && sky build`).
+    let linked_wasm = kept_spa_wasm_name(&out_dir);
+    if let Err(e) =
+        crate::build_stamp::write_go_stamp_with(&out_dir, &stamp, linked_wasm.as_deref())
+    {
         report.emitted = false;
         report.note = format!("write {}: {e}", crate::build_stamp::STAMP_GO_FILE);
         return report;
@@ -1282,12 +1434,17 @@ fn build_inner(
             Ok(()) => report.go_build_ok = true,
             Err(e) => report.go_build_stderr = e,
         }
-        crate::go_jobs::record_peaks(&out_dir);
         return report;
     }
     let t_go = crate::timings::phase("go build (native)");
-    let go_result = run_go_build_detecting_cgo(&out_dir, &source, &bin_name, jobs_arg);
-    crate::go_jobs::record_peaks(&out_dir);
+    let go_result = match crate::spa_wasm_handoff::get() {
+        // A Sky.Spa SSR backend leg built beside its frontend leg: build
+        // first, then link the frontend's wasm name (spa_wasm_handoff.rs).
+        Some(wait) => {
+            build_awaiting_wasm_name(&out_dir, &source, &bin_name, jobs_arg, &stamp, wait)
+        }
+        None => run_go_build_detecting_cgo(&out_dir, &source, &bin_name, jobs_arg),
+    };
     match go_result {
         Ok(outcome) => {
             report.go_build_ok = outcome.ok;
@@ -1355,29 +1512,35 @@ struct GoBuildOutcome {
 /// has full reflect, so no de-reflection is needed; the bundle is larger but runs
 /// in any browser / WKWebView / Android WebView.
 fn run_wasm_build(out_dir: &Path, jobs: Option<&str>) -> Result<(), String> {
-    // `-ldflags=-s -w` strips the symbol table (`-s`) and DWARF (`-w`). A
-    // browser never reads either, and for GOARCH=wasm they are pure download
-    // weight — the client is delivered over the wire, so this is the one target
-    // where stripping is unambiguously right. (Passed as a SINGLE argv element
-    // so `-s -w` is the flag VALUE, not two separate build flags.)
-    let mut cmd = Command::new("go");
-    cmd.current_dir(out_dir)
-        .env("GOOS", "js")
-        .env("GOARCH", "wasm")
-        .arg("build")
-        .args(jobs)
-        .args(["-ldflags=-s -w", "-o", "main.wasm", "."]);
-    // Same isolated, bounded Sky build cache as the native build. The wasm build
-    // is a SEPARATE cache namespace (GOOS=js/GOARCH=wasm), so it never shared the
-    // constrained-HOME fallback before — apply it here too.
-    crate::go_cache::apply(&mut cmd);
+    // The one Go command builder (go_cmd.rs): `-trimpath`, Sky's GOFLAGS,
+    // `-ldflags=-s -w`, GOOS=js GOARCH=wasm, and Sky's isolated, bounded build
+    // cache. The wasm build is a SEPARATE cache namespace (GOOS=js/GOARCH=wasm).
+    // `-debug-actiongraph` tells `go_jobs::record_peaks` which packages
+    // compiled; it is not part of any cache key.
+    let graph = crate::go_jobs::action_graph_flag(out_dir);
+    let cmd = crate::go_cmd::GoBuild {
+        dir: out_dir,
+        target: crate::go_cmd::Target::Wasm,
+        jobs,
+        output: Some(std::ffi::OsStr::new("main.wasm")),
+        packages: &["."],
+        extra: &[graph.as_str()],
+    }
+    .command();
     // Hold the cache shared for the whole build: a concurrent clean waits.
     let _cache = crate::go_cache::hold_shared();
-    let out = cmd
-        .output()
+    let out = run_bounded(cmd, GO_BUILD_TIMEOUT)
         .map_err(|e| format!("failed to run `go build` (GOOS=js GOARCH=wasm): {e}"))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+    crate::go_jobs::record_peaks(out_dir, out.peak_rss);
+    if out.timed_out {
+        return Err(format!(
+            "go build (GOOS=js GOARCH=wasm) exceeded {}s and was killed — the Go toolchain hung. Partial stderr:\n{}",
+            GO_BUILD_TIMEOUT.as_secs(),
+            out.stderr.trim_end()
+        ));
+    }
+    if !out.status.is_some_and(|s| s.success()) {
+        return Err(out.stderr);
     }
     let goroot = Command::new("go")
         .args(["env", "GOROOT"])
@@ -1405,6 +1568,56 @@ fn run_wasm_build(out_dir: &Path, jobs: Option<&str>) -> Result<(), String> {
     std::fs::copy(src, &dest)
         .map_err(|e| format!("copy wasm_exec.js -> {}: {e}", dest.display()))?;
     Ok(())
+}
+
+/// The frontend's wasm name an SSR backend's build writes into its stamp
+/// package before any new name arrives: the one its last build linked. Kept
+/// whether or not a parent hands a new one over, so a backend built on its
+/// own (`cd .split/backend && sky build`) still names its frontend's wasm.
+fn kept_spa_wasm_name(out_dir: &Path) -> Option<String> {
+    crate::build_stamp::linked_spa_wasm_name(out_dir)
+}
+
+/// The native build of a Sky.Spa SSR backend leg that runs beside its frontend
+/// leg (see `spa_wasm_handoff`). When the frontend's wasm name is not there
+/// yet, a first `go build` without it compiles everything, `main` included,
+/// while the frontend builds. Then it waits for the name, writes it into the
+/// small `skybuildinfo` package, and builds again: that package and the link.
+/// A failed first build is the result (the name cannot fix it). A frontend
+/// that did not build delivers no name, and the backend's SSR page then scans
+/// the dist, as when the frontend failed before.
+fn build_awaiting_wasm_name(
+    out_dir: &Path,
+    source: &str,
+    bin_name: &str,
+    jobs: Option<&str>,
+    stamp: &crate::build_stamp::AppBuildStamp,
+    wait: &crate::spa_wasm_handoff::Await,
+) -> Result<GoBuildOutcome, String> {
+    use crate::spa_wasm_handoff::{self as handoff, Delivered};
+    if handoff::ready(wait).is_none() {
+        let t = crate::timings::phase("go build (native, before the frontend's wasm name)");
+        let first = run_go_build_detecting_cgo(out_dir, source, bin_name, jobs)?;
+        t.end();
+        if !first.ok {
+            return Ok(first);
+        }
+    }
+    let t = crate::timings::phase("wait for the frontend's wasm name");
+    let delivered = handoff::wait(wait, GO_BUILD_TIMEOUT)?;
+    t.end();
+    let name = match &delivered {
+        Delivered::Name(n) => Some(n.as_str()),
+        Delivered::Failed => None,
+    };
+    crate::build_stamp::write_go_stamp_with(out_dir, stamp, name).map_err(|e| {
+        format!(
+            "write {}/{}: {e}",
+            crate::build_stamp::STAMP_PKG,
+            crate::build_stamp::STAMP_PKG
+        )
+    })?;
+    run_go_build_detecting_cgo(out_dir, source, bin_name, jobs)
 }
 
 /// Run `go build` with static-first cgo detection. `source` is the emitted
@@ -1474,54 +1687,38 @@ struct GoBuildAttempt {
     stderr: String,
 }
 
-/// `GOFLAGS` for `go build`. Preserves whatever the user set (so a container's
-/// `-buildvcs=false` survives — the old hard-coded `GOFLAGS=-mod=mod` OVERWROTE
-/// the env, so Go then tried to VCS-stamp a Go-workspace synthetic parent repo
-/// and failed), then forces the two Sky always needs: `-mod=mod` (Sky manages
-/// the emitted `go.mod`) and `-buildvcs=false` (the emitted Go is generated —
-/// there is never a source revision to stamp, and stamping breaks inside odd
-/// git/workspace boundaries). Sky's values replace any conflicting user `-mod=`
-/// / `-buildvcs=`; every other user flag is kept.
-fn sky_build_goflags() -> String {
-    sky_build_goflags_from(&std::env::var("GOFLAGS").unwrap_or_default())
-}
-
-fn sky_build_goflags_from(existing: &str) -> String {
-    let mut flags: Vec<String> = existing
-        .split_whitespace()
-        .filter(|f| !f.starts_with("-mod=") && !f.starts_with("-buildvcs="))
-        .map(String::from)
-        .collect();
-    flags.push("-mod=mod".to_string());
-    flags.push("-buildvcs=false".to_string());
-    flags.join(" ")
-}
-
 fn run_go_build_once(
     out_dir: &Path,
     cgo: &str,
     bin_name: &str,
     jobs: Option<&str>,
 ) -> Result<GoBuildAttempt, String> {
-    let mut cmd = Command::new("go");
     // No `-ldflags` for the build identity: it is Go source (the `skybuildinfo` package,
     // build_stamp.rs), so a plain `go build` of sky-out carries it too.
-    cmd.arg("build").args(jobs);
-    cmd.arg("-o")
-        .arg(bin_name)
-        .arg(".")
-        .current_dir(out_dir)
-        .env("GOFLAGS", sky_build_goflags())
-        .env("CGO_ENABLED", cgo);
-    // Route `go build` through Sky's isolated, size-bounded build cache
-    // (~/.sky/go-build), honouring an explicit user GOCACHE, and keep the
-    // unwritable-$HOME module-cache fallback (#7). All no-ops on a normal setup
-    // with a user GOCACHE; otherwise Sky owns and bounds its own cache
-    // (go_cache.rs). No-op / default on any failure.
-    crate::go_cache::apply(&mut cmd);
+    // The one Go command builder (go_cmd.rs): `-trimpath`, Sky's GOFLAGS (the
+    // user's, plus `-mod=mod -buildvcs=false`), the explicit CGO_ENABLED, and
+    // Sky's isolated, size-bounded build cache (~/.sky/go-build, honouring an
+    // explicit user GOCACHE, with the unwritable-$HOME module-cache fallback).
+    // `-debug-actiongraph` tells `go_jobs::record_peaks` which packages
+    // compiled; it is not part of any cache key.
+    let graph = crate::go_jobs::action_graph_flag(out_dir);
+    let cmd = crate::go_cmd::GoBuild {
+        dir: out_dir,
+        target: crate::go_cmd::Target::Native { cgo: cgo == "1" },
+        jobs,
+        output: Some(std::ffi::OsStr::new(bin_name)),
+        packages: &["."],
+        extra: &[graph.as_str()],
+    }
+    .command();
     // Hold the cache shared for the whole build: a concurrent clean waits.
     let _cache = crate::go_cache::hold_shared();
-    match run_bounded(cmd, GO_BUILD_TIMEOUT) {
+    let ran = run_bounded(cmd, GO_BUILD_TIMEOUT);
+    // Each `go build` records its own peak with its own action graph
+    // (go_jobs::record_peaks): the cgo retry and a Sky.Spa SSR backend's
+    // second build never inherit the first one's.
+    crate::go_jobs::record_peaks(out_dir, ran.as_ref().ok().and_then(|b| b.peak_rss));
+    match ran {
         Ok(b) if b.timed_out => Err(format!(
             "go build (CGO_ENABLED={cgo}) exceeded {}s and was killed — the Go toolchain hung (stuck linker / module fetch). Partial stderr:\n{}",
             GO_BUILD_TIMEOUT.as_secs(),
@@ -1542,6 +1739,9 @@ struct BoundedOutcome {
     status: Option<std::process::ExitStatus>,
     stderr: String,
     timed_out: bool,
+    /// The child's own peak resident set, its descendants included
+    /// (`memory::wait_child`); `None` where the platform does not say.
+    peak_rss: Option<u64>,
 }
 
 /// Spawn `cmd`, drain its stderr on a background thread, and wait up to
@@ -1549,7 +1749,11 @@ struct BoundedOutcome {
 /// is piped-and-dropped so a chatty child can't block on a full pipe. Returns
 /// the exit status (or `timed_out`) plus captured stderr.
 fn run_bounded(mut cmd: Command, timeout: Duration) -> std::io::Result<BoundedOutcome> {
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    // No stdin: a Sky.Spa SSR backend leg reads its wasm-name handoff from its
+    // own stdin (spa_wasm_handoff.rs), and no Go tool reads one.
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -1558,26 +1762,30 @@ fn run_bounded(mut cmd: Command, timeout: Duration) -> std::io::Result<BoundedOu
 
     let deadline = Instant::now() + timeout;
     loop {
-        match child.try_wait()? {
-            Some(status) => {
+        match crate::memory::try_wait_child(&mut child)? {
+            Some(exit) => {
                 let _ = out_h.join();
                 let stderr = err_h.join().unwrap_or_default();
                 return Ok(BoundedOutcome {
-                    status: Some(status),
+                    status: Some(exit.status),
                     stderr,
                     timed_out: false,
+                    peak_rss: exit.peak_rss,
                 });
             }
             None => {
                 if Instant::now() >= deadline {
                     let _ = child.kill();
-                    let _ = child.wait();
+                    let peak_rss = crate::memory::wait_child(&mut child)
+                        .ok()
+                        .and_then(|e| e.peak_rss);
                     let _ = out_h.join();
                     let stderr = err_h.join().unwrap_or_default();
                     return Ok(BoundedOutcome {
                         status: None,
                         stderr,
                         timed_out: true,
+                        peak_rss,
                     });
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -2713,6 +2921,13 @@ fn inject_ffi_deps(
     let go_mod = out_dir.join("go.mod");
     let existing = std::fs::read_to_string(&go_mod).unwrap_or_default();
 
+    // The `go get` list, in order: `module@spec` for a declared module (the
+    // sky.toml pin must win), or the bare path (`@latest`) for an undeclared
+    // one that the inherited go.mod does not already require.
+    let mut fetches: Vec<String> = Vec::new();
+    // `(module, version)` for each fetch pinned to an exact version.
+    let mut pins: Vec<(String, String)> = Vec::new();
+    let mut all_exact = true;
     for path in &paths {
         // Longest declared import-path prefix wins (module root over subpackage).
         let matched = declared
@@ -2722,14 +2937,18 @@ fn inject_ffi_deps(
 
         match matched {
             Some((module, spec)) => {
-                let target = format!("{module}@{}", crate::ffi_ops::spec_or_latest(spec));
-                // `go get module@<spec>` edits go.mod (up- OR down-grade), writes
-                // go.sum, and downloads — overriding any inherited require.
-                let _ = Command::new("go")
-                    .args(["get", &target])
-                    .current_dir(out_dir)
-                    .env("GOFLAGS", "-mod=mod")
-                    .output();
+                let spec = crate::ffi_ops::spec_or_latest(spec);
+                let target = format!("{module}@{spec}");
+                // Two used paths under one module fetch it once.
+                if fetches.contains(&target) {
+                    continue;
+                }
+                fetches.push(target);
+                if crate::go_get_memo::exact_version(spec) {
+                    pins.push((module.clone(), spec.to_string()));
+                } else {
+                    all_exact = false;
+                }
             }
             None => {
                 // Undeclared transitive: leave an existing require untouched;
@@ -2740,12 +2959,56 @@ fn inject_ffi_deps(
                 warnings.push(format!(
                     "ffi go.mod: {path} used but not declared in sky.toml [\"go.dependencies\"]; resolving @latest"
                 ));
-                let _ = Command::new("go")
-                    .args(["get", path])
-                    .current_dir(out_dir)
-                    .env("GOFLAGS", "-mod=mod")
-                    .output();
+                fetches.push(path.clone());
+                all_exact = false;
             }
+        }
+    }
+    if fetches.is_empty() {
+        return Ok(());
+    }
+
+    // With every fetch pinned exactly and no Go path dependency, the go.mod /
+    // go.sum these `go get`s produce are known from their inputs: reuse them
+    // (go_get_memo.rs). A floating spec re-resolves on every build, as before.
+    let memo_key = (all_exact && local.is_empty())
+        .then(crate::go_get_memo::go_version)
+        .flatten()
+        .map(|v| {
+            // The starting go.sum is an input too: `go get` keeps its lines.
+            let sum = std::fs::read_to_string(out_dir.join("go.sum")).unwrap_or_default();
+            crate::go_get_memo::key(
+                &existing,
+                &sum,
+                &pins,
+                &v,
+                &crate::go_get_memo::env_inputs(),
+            )
+        });
+    if let Some(k) = &memo_key {
+        if crate::go_get_memo::restore(out_dir, k) {
+            crate::timings::note("go get: skipped (the exact pins' go.mod/go.sum are known)");
+            return Ok(());
+        }
+    }
+
+    let mut all_ok = true;
+    for target in &fetches {
+        // `go get module@<spec>` edits go.mod (up- OR down-grade), writes
+        // go.sum, and downloads — overriding any inherited require. A failure
+        // surfaces in the `go build` that follows, as before.
+        let ok = Command::new("go")
+            .args(["get", target])
+            .current_dir(out_dir)
+            .env("GOFLAGS", "-mod=mod")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        all_ok &= ok;
+    }
+    if let Some(k) = &memo_key {
+        let after = std::fs::read_to_string(&go_mod).unwrap_or_default();
+        if all_ok && crate::go_get_memo::requires_all(&after, &pins) {
+            crate::go_get_memo::store(out_dir, k);
         }
     }
     Ok(())
@@ -3136,6 +3399,7 @@ pub(crate) fn load_source_db(
     example_dir: &Path,
     entry_module: Option<&str>,
 ) -> Result<(skydb::SkyDatabase, base::ModuleId, Vec<base::ModuleId>), String> {
+    crate::timings::count_source_load();
     let mut db = skydb::SkyDatabase::with_kernel();
     let mut next_id: u32 = 0;
     let stdlib = load_dir(&db, &mut next_id, &repo_root.join("sky-stdlib"));
@@ -3207,6 +3471,7 @@ pub(crate) fn load_source_db(
     path_mods.retain(|(m, _)| !check_ids.contains(m));
     if !path_mods.is_empty() {
         let ids: Vec<base::ModuleId> = path_mods.iter().map(|(m, _)| *m).collect();
+        crate::timings::count_type_check();
         let checked = ty::check_modules(&db, &ids);
         let errors: Vec<diagnostics::Diagnostic> = checked
             .diagnostics
@@ -3864,23 +4129,23 @@ mod embed_bundle_tests {
 mod sky_toml_tests {
     use super::{
         accepted_config_keys, configured_bin_name, configured_source_root, db_driver_conflict,
-        driver_for_dsn, read_sky_toml_config, sky_build_goflags_from, sky_toml_flag,
-        sky_toml_section_key, unknown_config_keys,
+        driver_for_dsn, read_sky_toml_config, sky_toml_flag, sky_toml_section_key,
+        unknown_config_keys,
     };
 
     #[test]
     fn goflags_preserve_user_flags_and_force_mod_and_buildvcs() {
         // Empty env → just Sky's two required flags.
-        assert_eq!(sky_build_goflags_from(""), "-mod=mod -buildvcs=false");
+        assert_eq!(crate::go_cmd::goflags_from(""), "-mod=mod -buildvcs=false");
         // A user's -buildvcs=false is honoured (dedup — Sky forces it anyway);
         // an unrelated flag is kept.
         assert_eq!(
-            sky_build_goflags_from("-buildvcs=false -tags netgo"),
+            crate::go_cmd::goflags_from("-buildvcs=false -tags netgo"),
             "-tags netgo -mod=mod -buildvcs=false"
         );
         // A conflicting user -mod / -buildvcs is replaced by Sky's values.
         assert_eq!(
-            sky_build_goflags_from("-mod=vendor -buildvcs=true"),
+            crate::go_cmd::goflags_from("-mod=vendor -buildvcs=true"),
             "-mod=mod -buildvcs=false"
         );
     }
@@ -5054,5 +5319,51 @@ mod stdlib_parse_tests {
             !text.contains("error-recovery"),
             "still an internal error:\n{text}"
         );
+    }
+}
+
+#[cfg(test)]
+mod go_build_child_tests {
+    //! Each `go build` child measured on its own; an SSR backend's wasm name kept.
+    use super::*;
+
+    /// S1: `run_bounded` reports the peak of ITS child. Before, the peak came
+    /// from `getrusage(RUSAGE_CHILDREN)` after the build, the largest child the
+    /// process had ever waited for, so a second, small `go build` reported the
+    /// first one's peak.
+    #[test]
+    #[cfg(unix)]
+    fn each_bounded_child_reports_its_own_peak() {
+        let dd = |mb: u64| {
+            let mut c = Command::new("dd");
+            c.args([
+                "if=/dev/zero",
+                "of=/dev/null",
+                &format!("bs={}", mb << 20),
+                "count=1",
+            ]);
+            c
+        };
+        let big = run_bounded(dd(300), Duration::from_secs(60)).unwrap();
+        let small = run_bounded(dd(1), Duration::from_secs(60)).unwrap();
+        assert!(big.status.is_some_and(|s| s.success()));
+        assert!(big.peak_rss.unwrap() >= 300 << 20, "{:?}", big.peak_rss);
+        let small = small.peak_rss.unwrap();
+        assert!(small < 100 << 20, "the second child reported {small} bytes");
+    }
+
+    /// N3: a backend built on its own (`cd .split/backend && sky build`, no
+    /// parent handing a name over) keeps the wasm name its last build linked.
+    #[test]
+    fn a_backend_built_alone_keeps_its_linked_wasm_name() {
+        let d = std::env::temp_dir().join(format!("sky-keptwasm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        assert!(crate::spa_wasm_handoff::get().is_none());
+        assert_eq!(kept_spa_wasm_name(&d), None);
+        let s = crate::build_stamp::client_stamp();
+        crate::build_stamp::write_go_stamp_with(&d, &s, Some("main.0a1b.wasm")).unwrap();
+        assert_eq!(kept_spa_wasm_name(&d).as_deref(), Some("main.0a1b.wasm"));
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

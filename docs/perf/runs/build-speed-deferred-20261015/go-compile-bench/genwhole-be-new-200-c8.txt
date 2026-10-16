@@ -1,0 +1,28 @@
+commit: go1.26.1
+goos: darwin
+goarch: arm64
+BenchmarkCompile:main:fe:init                       1        436500 ns/op      0.01 %
+BenchmarkCompile:main:fe:loadsys                    1        358291 ns/op      0.01 %
+BenchmarkCompile:main:fe:parse                      1     462090125 ns/op     15.00 %    33391 lines    72261 lines/s
+BenchmarkCompile:main:fe:pgo-load-profile           1          1125 ns/op      0.00 %
+BenchmarkCompile:main:fe:devirtualize-and-inline    1     256878250 ns/op      8.34 %
+BenchmarkCompile:main:fe:escapes                    1      84496167 ns/op      2.74 %
+BenchmarkCompile:main:fe:subtotal                   1     804260458 ns/op     26.11 %
+BenchmarkCompile:main:be:compilefuncs               1    2044233500 ns/op     66.35 %    13021 funcs     6370 funcs/s
+BenchmarkCompile:main:be:dumpobj                    1     232344292 ns/op      7.54 %
+BenchmarkCompile:main:be:subtotal                   1    2276577792 ns/op     73.89 %
+BenchmarkCompile:main:total                         1    3080838250 ns/op    100.00 %
+commit: go1.26.1
+goos: darwin
+goarch: arm64
+BenchmarkCompile:main:fe:init                       1        479875 ns/op      0.02 %
+BenchmarkCompile:main:fe:loadsys                    1        342709 ns/op      0.01 %
+BenchmarkCompile:main:fe:parse                      1     454317750 ns/op     14.96 %    33391 lines    73497 lines/s
+BenchmarkCompile:main:fe:pgo-load-profile           1           875 ns/op      0.00 %
+BenchmarkCompile:main:fe:devirtualize-and-inline    1     273660291 ns/op      9.01 %
+BenchmarkCompile:main:fe:escapes                    1      86032459 ns/op      2.83 %
+BenchmarkCompile:main:fe:subtotal                   1     814833959 ns/op     26.83 %
+BenchmarkCompile:main:be:compilefuncs               1    1989666958 ns/op     65.51 %    13021 funcs     6544 funcs/s
+BenchmarkCompile:main:be:dumpobj                    1     232900917 ns/op      7.67 %
+BenchmarkCompile:main:be:subtotal                   1    2222567875 ns/op     73.17 %
+BenchmarkCompile:main:total                         1    3037401834 ns/op    100.00 %

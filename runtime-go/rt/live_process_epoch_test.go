@@ -28,7 +28,7 @@ func helloPayloadOf(t *testing.T) map[string]any {
 	defer srv.Close()
 	req, _ := http.NewRequest("GET", srv.URL, nil)
 	req.AddCookie(&http.Cookie{Name: "sky_sid", Value: "sid-epoch"})
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), sseStreamTestDeadline)
 	defer cancel()
 	resp, err := http.DefaultClient.Do(req.WithContext(ctx))
 	if err != nil {
@@ -52,7 +52,7 @@ func helloPayloadOf(t *testing.T) map[string]any {
 			return hp
 		}
 	}
-	t.Fatal("no hello event in the SSE stream")
+	t.Fatalf("no hello event in the SSE stream within %v", sseStreamTestDeadline)
 	return nil
 }
 

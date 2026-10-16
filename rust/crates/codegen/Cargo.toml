@@ -9,3 +9,7 @@ workspace = true
 [dependencies]
 base = { path = "../base" }
 lower = { path = "../lower" }
+
+[dev-dependencies]
+hir = { path = "../hir" }
+syntax = { path = "../syntax" }

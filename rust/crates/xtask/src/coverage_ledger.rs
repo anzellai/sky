@@ -476,6 +476,19 @@ static CROSS_CUTTING: &[CrossSurface] = &[
 /// product, and giving them product surfaces would let harness self-tests
 /// count as product coverage.
 static GATE_SURFACES: &[(&str, &[&str])] = &[
+    // Build speed, counted. The growth guard splits and emits the `xtask
+    // bench-gen` app (a Std.App web app) at N and 2N; the new-directory guard
+    // builds a project twice in two directories and counts Go compiles.
+    (
+        "build-growth-linear",
+        &[
+            "compiler.lower-emit-shape",
+            "cli.spa-split",
+            "stdlib.Std.Spa",
+            "stdlib.Std.App",
+        ],
+    ),
+    ("build-new-dir-compiles-nothing", &["cli.build"]),
     // The editor surface. `lsp` moved from CI_SURFACES (scored `Asserted`, the
     // "runs on every push but has not migrated into the harness" tier) into the
     // registry on 2026-08-12, so it now carries a declared falsifying mutation
@@ -2107,7 +2120,7 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
                     new.push(Ev::new(
                         format!(
                             "{} (counted assertions, run by a release job: gate-core-sky \
-                             for a flow test, gate-web / gate-example-e2e for an e2e \
+                             for a flow test, gate-web-1..4 / gate-example-e2e for an e2e \
                              script; not a registered harness gate, so no falsifier)",
                             u.id
                         ),

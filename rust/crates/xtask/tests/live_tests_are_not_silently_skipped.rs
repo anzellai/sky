@@ -87,6 +87,7 @@ const GATED_BY: &[&str] = &[
 const NETWORK_SITES: &[&str] = &[
     "crates/sky/tests/cli_verb_flow.rs",
     "crates/sky/tests/ffi_verb_flow.rs",
+    "crates/sky/tests/go_build_cache_flow.rs",
 ];
 
 /// Where each delegating spelling in [`GATED_BY`] is proved to gate. See

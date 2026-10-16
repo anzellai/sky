@@ -1350,7 +1350,7 @@ fn issue166_record_update_on_annotated_param_keeps_full_record() {
 /// the call-site harvest — the update narrowed to the subset of updated fields,
 /// dropping `items` (an ADT → nil interface → `Unreachable` panic at the next
 /// `case`). The fix harvests the CONCRETE record each direct caller passes
-/// (`callsite_param_records_query`, demanded when `body_updates_a_param`) and
+/// (`callsite_param_records_query`, demanded when `wants_callsite_harvest`) and
 /// closes the open row to it. This guards the consumer-chasing path specifically:
 /// the ONLY difference from the annotated test is the missing `handle : M -> …`.
 #[test]

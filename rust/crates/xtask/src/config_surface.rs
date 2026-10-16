@@ -225,7 +225,7 @@ const NON_LITERAL_PREFIXED_READS: &[(&str, &str)] = &[
     ),
     (
         "runtime-go/rt/spa_server_settings.go",
-        "Spa_applyServerSettings (v0.28.0) writes the builder layer of the Sky.Spa \
+        "Spa_applyServerSettings (v0.27.9) writes the builder layer of the Sky.Spa \
          split backend from App.applyServerConfig: the suffix is a parameter, but \
          every caller passes a literal from the closed set in Std.App \
          (LIVE_STORE / LIVE_TTL / LIVE_IDLE_EVICT / LIVE_MAX_BODY_BYTES), each \

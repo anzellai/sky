@@ -2633,6 +2633,15 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// override in the app's head. Empty string when app didn't
 	// supply `head` — byte-identical to pre-v0.15.58 output.
 	headExtra := renderAppHead(app.head, model)
+	// An unknown path renders the app's NotFound page with 404, not 200 (a
+	// "soft 404" is indexed as a real page and reads as healthy to a probe).
+	// The body is the full page: it boots the client and its session like any
+	// page, so the user can navigate away, and a sky-nav fetch patches it in
+	// (the client accepts a 404 that carries X-Sky-View). Declared routes, and
+	// the implicit "/" of a route-less app, stay 200.
+	if !routed && app.notFound != nil {
+		w.WriteHeader(http.StatusNotFound)
+	}
 	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s<style>%s</style></head><body><div id=\"sky-root\">%s</div>%s%s</body></html>", baseMeta, headExtra, liveBaseCSS, body, livePageScripts(sid, app.bannerCfg, csrfToken, app.basePath, initialView, pageTab, pageToken), devBanner)
 }
 
@@ -4876,16 +4885,23 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	releaseStreamDeadlines(w, "live-sse")
 
 	// Phase 1 fan-out: this connection joins the session's live set.
-	// Start the relay (once) + register a private outbound channel
+	// Register a private outbound channel + start the relay (once)
 	// BEFORE the reconnect-resync below, so no concurrent dispatch /
 	// push slips through a gap between the resync snapshot and the loop
 	// starting — the client seq guard drops any pre-resync frame whose
 	// seq ≤ the resync's, and every later frame applies in order. The
 	// per-tab id (query param `tab`, client-generated once per page)
 	// lets the dispatch path exclude this tab from its own broadcast.
+	//
+	// Register FIRST, then start the relay. A frame pushed before the
+	// session's first connection (an `init` command's result, a dispatch
+	// error banner) waits in sess.sseCh until the relay starts. Started
+	// first, the relay could drain it while no connection was registered
+	// yet and fan it out to nobody: the frame was lost on a scheduling
+	// race. TestHandleSSE_FrameQueuedBeforeFirstConnectionIsDelivered.
 	tab := r.URL.Query().Get("tab")
-	sess.ensureSSERelay()
 	connID, sseOut, resyncCh := sess.registerSSEConn(tab)
+	sess.ensureSSERelay()
 	defer sess.unregisterSSEConn(connID)
 	kickCh := sess.sseConnKicked(connID)
 

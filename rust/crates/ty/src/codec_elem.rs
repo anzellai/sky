@@ -49,8 +49,7 @@
 
 use crate::Ty;
 use base::Span;
-use hir::{Body, Expr, ExprId, Res, SkyDb};
-use std::collections::HashMap;
+use hir::{Body, Expr, Res, SkyDb};
 
 /// The Std.Codec `auto`-family functions whose LAST argument is a reflection
 /// witness. `auto`/`autoCamel` take the witness as their only argument;
@@ -103,15 +102,18 @@ fn collection_free_elem(t: &Ty) -> Option<&'static str> {
 /// collections or function positions, because an element that cannot decode
 /// cannot decode wherever it is written.
 pub fn first_undeterminable(t: &Ty) -> Option<&'static str> {
-    if let Some(kind) = collection_free_elem(t) {
-        return Some(kind);
-    }
-    match t {
-        Ty::App(_, args) | Ty::Tuple(args) => args.iter().find_map(first_undeterminable),
-        Ty::Record(fields, _) => fields.iter().find_map(|(_, ft)| first_undeterminable(ft)),
-        Ty::Fun(a, b) => first_undeterminable(a).or_else(|| first_undeterminable(b)),
-        Ty::Var(_) | Ty::Unit | Ty::Error => None,
-    }
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        if let Some(kind) = collection_free_elem(t) {
+            return Some(kind);
+        }
+        match t {
+            Ty::App(_, args) | Ty::Tuple(args) => args.iter().find_map(first_undeterminable),
+            Ty::Record(fields, _) => fields.iter().find_map(|(_, ft)| first_undeterminable(ft)),
+            Ty::Fun(a, b) => first_undeterminable(a).or_else(|| first_undeterminable(b)),
+            Ty::Var(_) | Ty::Unit | Ty::Error => None,
+        }
+    })
 }
 
 /// One offending `Codec.auto`-family call.
@@ -175,7 +177,7 @@ fn codec_family(callee: &Expr, sky: &dyn SkyDb) -> Option<(String, String)> {
 /// genuinely-free element remains an internal flex var.
 pub fn scan_body(
     body: &Body,
-    expr_ty: &HashMap<ExprId, Ty>,
+    expr_ty: &crate::tytable::ExprTypes<'_>,
     sky: &dyn SkyDb,
     def_name: &str,
     out: &mut CodecElemScan,
@@ -199,7 +201,7 @@ pub fn scan_body(
         let Some(ty) = expr_ty.get(&witness) else {
             continue;
         };
-        if let Some(kind) = first_undeterminable(ty) {
+        if let Some(kind) = first_undeterminable(&ty) {
             // Prefer the witness's own span (the record literal the user edits);
             // fall back to the whole call.
             let span = body.expr_span(witness).or_else(|| body.expr_span(eid));

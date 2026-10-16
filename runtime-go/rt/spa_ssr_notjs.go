@@ -83,16 +83,19 @@ func Spa_ssrWasmName(dir any) string {
 	return "main.wasm"
 }
 
-// Spa_ssrWasmNameBuilt is Spa_ssrWasmName with the name the build baked into
-// the backend. The auto-split build writes the frontend's `main.<hash>.wasm`
-// into the generated backend source before it builds the backend, so the SSR
-// page names the right wasm when the backend runs where `../frontend/dist` is
-// not reachable (a slot directory behind a proxy that serves the wasm from
-// the dist). An empty `built` (a split generated without --build) falls back
-// to scanning `dir`.
+// Spa_ssrWasmNameBuilt is Spa_ssrWasmName with the name the build gave the
+// backend, so the SSR page names the right wasm when the backend runs where
+// `../frontend/dist` is not reachable (a slot directory behind a proxy that
+// serves the wasm from the dist). In order: a name baked into the generated
+// backend source (`built`), then the name the auto-split build linked into
+// the backend's `skybuildinfo` package (SetSpaBuiltWasmName), then a scan of
+// `dir` (a split generated without --build).
 func Spa_ssrWasmNameBuilt(built, dir any) string {
 	if b := strings.TrimSpace(AsString(built)); b != "" {
 		return b
+	}
+	if spaLinkedWasmName != "" {
+		return spaLinkedWasmName
 	}
 	return Spa_ssrWasmName(dir)
 }
@@ -125,6 +128,23 @@ func Spa_ssrResolveModel(routesV, notFound, model, path any) any {
 		page = notFound
 	}
 	return RecordUpdate(model, map[string]any{"Page": page})
+}
+
+// Spa_ssrStatus is the `Ffi.kernel "Spa_ssrStatus"` alias the generated
+// ssrHandler wraps its page in (`Server.withStatus`): 404 when the app has
+// routes, none matches path and it has a notFound page (the page
+// Spa_ssrResolveModel renders for path), else 200. The body is the full SSR
+// page either way, so the wasm client boots and the user can navigate away.
+// Before v0.27.9 the NotFound page was sent with 200 (a "soft 404").
+func Spa_ssrStatus(routesV, notFound, path any) int {
+	routes := asSpaRoutes(routesV)
+	if len(routes) == 0 || notFound == nil {
+		return 200
+	}
+	if _, ok := spaResolveRoutes(routes, AsString(path)); ok {
+		return 200
+	}
+	return 404
 }
 
 // Spa_ssrSettle drives the data-resolved SSR step (design §4.2): it runs the

@@ -457,7 +457,7 @@ pub static GATES: &[Gate] = &[
                               `Destructured`, spa-async-leaves' `IfWrap`, …) then sends the \
                               request where the direct update's command is `Cmd.none`, so the \
                               client-leg send comparison must go red (Sky.Live sends nothing \
-                              there; this replaces the v0.28.0 none-leaf-sends-rpc mutation, \
+                              there; this replaces the v0.27.9 none-leaf-sends-rpc mutation, \
                               whose emitter the planned arm subsumes)",
                 kind: MutationKind::ReplaceOnce {
                     path: "rust/crates/project/src/spa_partition.rs",
@@ -670,15 +670,18 @@ pub static GATES: &[Gate] = &[
     // (`corpus::shard_slice`, interleaved like `repro --shard`), so the four
     // are disjoint and their union is the corpus.
     //
-    // Budget: 139 cases × 11.4 s ≈ 1,590 s, which is 44 % of 3600 s. A shard
-    // reaches 50 % at about 158 cases (about 630 behavioural cases in all).
-    // Add a shard (`corpus::SHARDS`, this list, the workflows) before that,
-    // rather than raising the budget.
+    // Budget: the v0.27.9 build-speed work took the per-case cost from about
+    // 11.4 s to about 0.8 s on a runner (the whole corpus, 530 cases, in 422 s:
+    // release run 38922351710), so a 139-case shard needs about 110 s. 1200 s
+    // keeps about ten times that, and the four together hold the 4000 s the
+    // single gate had. CI runs the four in one job (release.yml
+    // `gate-t2-corpus`). If a shard nears half its budget, give each shard
+    // its own job before raising the budget.
     Gate {
         name: "corpus-1",
         tier: Tier::T2,
         platforms: UNIX,
-        budget_s: 3600,
+        budget_s: 1200,
         expected: bodies::corpus_shard_expected(0),
         expect: Expect::Falsifiable,
         summary: "behavioural corpus shard 0 of 4: each case built + run; values compared \
@@ -690,7 +693,7 @@ pub static GATES: &[Gate] = &[
         name: "corpus-2",
         tier: Tier::T2,
         platforms: UNIX,
-        budget_s: 3600,
+        budget_s: 1200,
         expected: bodies::corpus_shard_expected(1),
         expect: Expect::Falsifiable,
         summary: "behavioural corpus shard 1 of 4: each case built + run; values compared \
@@ -702,7 +705,7 @@ pub static GATES: &[Gate] = &[
         name: "corpus-3",
         tier: Tier::T2,
         platforms: UNIX,
-        budget_s: 3600,
+        budget_s: 1200,
         expected: bodies::corpus_shard_expected(2),
         expect: Expect::Falsifiable,
         summary: "behavioural corpus shard 2 of 4: each case built + run; values compared \
@@ -714,7 +717,7 @@ pub static GATES: &[Gate] = &[
         name: "corpus-4",
         tier: Tier::T2,
         platforms: UNIX,
-        budget_s: 3600,
+        budget_s: 1200,
         expected: bodies::corpus_shard_expected(3),
         expect: Expect::Falsifiable,
         summary: "behavioural corpus shard 3 of 4: each case built + run; values compared \
@@ -813,6 +816,56 @@ pub static GATES: &[Gate] = &[
             },
         }]),
         body: bodies::cli_verbs,
+    },
+    // ---- build speed: counted guards (wall time is the `build-perf` CI job) ---
+    Gate {
+        name: "build-growth-linear",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        // ~10 s of split + emit (no `go build`); the ceiling is for the
+        // `cargo test` compile on a cold CI target dir.
+        budget_s: 600,
+        expected: bodies::BUILD_GROWTH_LINEAR_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the build-speed benchmark app at N and 2N fields grows generated Sky and emitted Go linearly",
+        // The mutation brings back the shape the wire dedupe removed: every
+        // whole-model arm with Msg args declares its own copy of the Model's
+        // field list. Generated Sky then grows as arms x fields (measured
+        // 2.54x from N=80 to N=160, against 1.80x without it).
+        mutations: Mutations::new(&[Mutation {
+            id: "build-growth.one-model-wire-per-arm",
+            description: "declare a new SpaModelWire for every whole-model arm instead \
+                          of reusing the one for the same Model shape; the split's \
+                          generated lines must exceed the linear bound",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/project/src/spa_split.rs",
+                from: "        if let Some(found) = self.models.get(&key) {\n            return found.clone();\n        }\n        let n = self.models.len();",
+                to: "        let n = self.model_decls.len();",
+            },
+        }]),
+        body: bodies::build_growth_linear,
+    },
+    Gate {
+        name: "build-new-dir-compiles-nothing",
+        tier: Tier::T2,
+        platforms: UNIX,
+        // Two `go build`s of a small Sky.Live app, the second a cache hit,
+        // plus the `cargo test` compile.
+        budget_s: 900,
+        expected: bodies::BUILD_NEW_DIR_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a copy of a built project in a new directory compiles zero Go packages",
+        mutations: Mutations::new(&[Mutation {
+            id: "build-new-dir.no-trimpath",
+            description: "build without -trimpath: Go keys each package on its absolute \
+                          directory again, and the copy recompiles every package",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/project/src/go_cmd.rs",
+                from: "cmd.current_dir(self.dir).args(self.args(trimpath()));",
+                to: "cmd.current_dir(self.dir).args(self.args(false));",
+            },
+        }]),
+        body: bodies::build_new_dir_compiles_nothing,
     },
     Gate {
         name: "apps-ledger",

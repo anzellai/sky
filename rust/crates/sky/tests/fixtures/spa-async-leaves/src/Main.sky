@@ -2,7 +2,7 @@ module Main exposing (main)
 
 -- Sky.Spa: a server arm whose own model write the client can compute runs
 -- ASYNC (`Spa.rpc`): the client makes the write when the Msg runs, as Sky.Live
--- does, and only the command crosses the wire. Before v0.28.0 only a direct
+-- does, and only the command crosses the wire. Before v0.27.9 only a direct
 -- `( model, cmd )` tuple did; every arm below held later Msgs for the whole
 -- request (`Spa.rpcHold`), so the page froze (docs/skyspa/auto-split.md).
 --

@@ -1114,7 +1114,9 @@ Why those numbers:
   which consults **cgroup v2 → cgroup v1 → `/proc/meminfo` → macOS `sysctl`**
   in that order. `/proc/meminfo` is not namespaced, so a 512 MB container on a
   64 GB node reads 64 GB; a limit derived from it would inherit exactly that
-  bug.
+  bug. On macOS the runtime runs `/usr/sbin/sysctl` by its absolute path (then
+  PATH), so a process started with an empty or short PATH (a systemd unit, a
+  launchd job) still detects its memory.
 
 **An explicit `GOGC` or `GOMEMLIMIT` in the environment always wins**, and
 setting one does not suppress the other. The decision — including a decision to
@@ -1542,7 +1544,8 @@ The configure line excludes, at minimum: `--without-readline` (GPL),
 `--without-systemd` (LGPL), and the `--without-perl --without-python
 --without-tcl` procedural languages. OpenSSL is 3.x only (Apache-2.0; the
 pre-3.0 dual licence is messier). zlib, lz4, zstd, ICU and libxml2 are
-permissive and may be linked.
+permissive and may be linked, as is xxHash (BSD-2-Clause), which newer
+distributions' lz4 links as a separate library.
 
 ### Extensions
 

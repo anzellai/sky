@@ -203,7 +203,7 @@ the split picks the kind from the arm (`runtime-go/rt/spa_rpcqueue.go`):
 - **Async** (`Spa.rpc`) — the arm's own model write is empty or reads no server
   data. The client runs that write itself when the Msg runs, exactly as Sky.Live
   does, and sends the request at once. The arm may reach its `( model, cmd )`
-  tuples through `case`, `if`, `let` and helper calls (v0.28.0; before, only a
+  tuples through `case`, `if`, `let` and helper calls (v0.27.9; before, only a
   tuple written directly in the arm): the client runs the arm as written, with
   each command that needs the server replaced by the request, and a branch
   that returns `Cmd.none` sends no request and gets no `Applied<Msg>`, as
@@ -283,14 +283,14 @@ Per-arm guarantees, in one list:
   effect twice);
 - the request carries every model field the server branch reads, also a field
   read through a value derived from the model (`let m2 = { model | n = 0 } in
-  if m2.flag …`), so the backend takes the branch Sky.Live takes (v0.28.0);
+  if m2.flag …`), so the backend takes the branch Sky.Live takes (v0.27.9);
 - a branch that returns `Cmd.none` dispatches nothing, as on Sky.Live. When the
   client runs the arm itself (an async arm, above: `if model.flag then ( model,
   Cmd.perform t Got ) else ( model, Cmd.none )`), it runs the arm's conditions
   and sends no request on a `Cmd.none` branch, and gets no `Applied<Msg>`. When
   the `Cmd.none` sits where the client cannot see it (a guard helper's reject
   path, a hold arm), the request goes out and the backend answers that no task
-  ran; the client dispatches nothing. Before v0.28.0 that answer was an `Err`,
+  ran; the client dispatches nothing. Before v0.27.9 that answer was an `Err`,
   and the client ran `Got (Err …)`;
 - an async arm's client copy is checked: the frontend build compiles it, and a
   copy that does not compile makes that arm hold, with a note, instead of
@@ -421,7 +421,11 @@ The names read exactly like the web target:
   route an id your app rejects to `App.withNotFound`.
 - `App.withRoutes routes` — resolves `location.pathname` on mount, on an
   intercepted internal-link click, and on Back/Forward, setting `model.page`.
-- `App.withNotFound page` — the page shown when nothing matches.
+- `App.withNotFound page` — the page shown when nothing matches. The backend's
+  server-rendered first paint of such a path is sent with HTTP 404 (the full
+  page, which boots the client); a path that matches a route is 200. A
+  client-side navigation to an unknown route renders the page in the browser
+  and sends no request.
 - `App.withOnNavigate (page -> msg)` — fired after the route is applied, so the
   app can run an effect per navigation.
 
@@ -538,7 +542,9 @@ is the same for every build and its name changes only when the loader
 changes. The `#sky-model` seed stays a `<script type="application/json">`
 block, which a browser never executes. The backend serves
 `/spa-boot.<hash>.js` itself, from memory, so the SSR page boots whether or not
-the backend can reach `dist/`. A static host (nginx, Caddy, a CDN) that serves
+the backend can reach `dist/`. It sends brotli to a client that accepts `br`
+(about 16 kB for the 59 kB script, built into the runtime) and gzip to one that
+accepts only gzip, with `Vary: Accept-Encoding`. A static host (nginx, Caddy, a CDN) that serves
 the `dist/index.html` shell can serve the dist copy: the bytes are the same.
 `'wasm-unsafe-eval'` is required because it allows
 `WebAssembly.instantiateStreaming`. It does not allow JS `eval`. Set
@@ -555,7 +561,7 @@ contract for each asset the SSR page and `dist/index.html` name:
 | Path | Who serves it |
 |---|---|
 | `/`, every app route, `/_rpc/*`, `/_sky/sub` | The backend. These must reach it. |
-| `/spa-boot.<hash>.js` (the wasm loader) | The backend, from memory. A static host may also serve the dist copy. |
+| `/spa-boot.<hash>.js` (the wasm loader) | The backend, from memory (brotli or gzip). A static host may also serve the dist copy. |
 | `/_sky/console/…`, `/_sky/console-shell.<hash>.js` | The backend, from memory (the Sky Console). |
 | `/main.<hash>.wasm`, `/wasm_exec.js` | A `dist/` file. The backend serves it from `../frontend/dist` when that directory is reachable from its working directory. Otherwise the static host must serve both. The SSR page names the wasm from a value `sky build` writes into the backend, so the backend does not need the dist to name it. |
 | `/index.html` (the static shell) | A `dist/` file, as above. The SSR page at `/` does not need it. |

@@ -348,7 +348,6 @@ func serverRouteMux(routeList []any) (mux *http.ServeMux, rootFiles http.Handler
 			if len(stripPattern) > 1 && stripPattern[len(stripPattern)-1] == '/' {
 				stripPattern = stripPattern[:len(stripPattern)-1]
 			}
-			var files http.Handler = http.StripPrefix(stripPattern, http.FileServer(http.Dir(route.StaticDir)))
 			// A file missing from a sub-path mount falls back to the `/` static
 			// mount at the same URL path. The Sky.Spa backend mounts the app's
 			// declared static dir live (`Server.static "/static" "public"`, for
@@ -357,12 +356,11 @@ func serverRouteMux(routeList []any) (mux *http.ServeMux, rootFiles http.Handler
 			// and the dist, but not the backend's own copy of the static dir, got
 			// a 404 for every committed asset (/static/app.js as text/plain) until
 			// it copied them by hand.
+			fallbackRoot := ""
 			if pattern != "/" {
-				if root := rootStaticDir(routeList); root != "" {
-					files = staticFallThrough(files, http.StripPrefix("/", http.FileServer(http.Dir(root))))
-				}
+				fallbackRoot = rootStaticDir(routeList)
 			}
-			fileHandler := gzipStatic(files)
+			fileHandler := staticMount(stripPattern, route.StaticDir, fallbackRoot)
 			// SPA NotFound fallback (Server.staticNotFound): a request that maps to
 			// a REAL file is still served by the file server (200); only a genuine
 			// 404 falls through to the Sky handler, which SSRs the app's NotFound

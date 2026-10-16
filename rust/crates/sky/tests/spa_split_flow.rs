@@ -93,6 +93,11 @@ fn auto_record_codec_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-auto-record-codec/src/Main.sky")
 }
 
+fn wire_type_names_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-wire-type-names/src/Main.sky")
+}
+
 fn bare_adt_wire_fixture_entry() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-bare-adt-wire/src/Main.sky")
 }
@@ -310,6 +315,35 @@ fn generates_a_buildable_split_with_no_server_leak_into_the_client() {
 
 /// Read-set completeness for a model-DERIVED value threaded into a helper.
 ///
+/// The field lines of the generated wire record `name` in `shared`, following a
+/// one-line alias to the record that owns the shape (`type alias BReq =\n
+/// AReq`) and expanding an embedded whole model (`spaWholeModel_ :
+/// SpaModelWire_`) into the Model fields it carries.
+fn wire_record_fields(shared: &str, name: &str) -> String {
+    let start = shared
+        .find(&format!("type alias {name} =\n"))
+        .unwrap_or_else(|| panic!("type alias {name} missing:\n{shared}"));
+    let block = &shared[start..];
+    let end = block.find("\n\n").unwrap_or(block.len());
+    let block = &block[..end];
+    let body = block.lines().skip(1).collect::<Vec<_>>().join("\n");
+    let trimmed = body.trim();
+    if !trimmed.starts_with('{') {
+        return wire_record_fields(shared, trimmed);
+    }
+    let mut out = String::new();
+    for line in body.lines() {
+        let field = line.trim().trim_start_matches(['{', ',']).trim();
+        if let Some(model_ty) = field.strip_prefix("spaWholeModel_ : ") {
+            out.push_str(&wire_record_fields(shared, model_ty.trim()));
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
 /// Regression for a silent-wrong-answer bug found in shop-app prod: a SERVER
 /// branch `SetRegion` computed shipping through
 /// `recomputeTotals (clear { model | region = r })`, where `recomputeTotals` reads
@@ -357,10 +391,7 @@ fn derived_model_threaded_into_helper_keeps_the_read_in_the_request() {
             shared.contains(&format!("type alias {req}")),
             "{req} must exist (branch must be a SERVER RPC):\n{shared}"
         );
-        let start = shared.find(&format!("type alias {req}")).unwrap();
-        let block = &shared[start..];
-        let end = block.find("\n\n").unwrap_or(block.len());
-        let block = &block[..end];
+        let block = wire_record_fields(&shared, req);
         for field in ["n :", "scale :", "log :"] {
             assert!(
                 block.contains(field),
@@ -371,8 +402,8 @@ fn derived_model_threaded_into_helper_keeps_the_read_in_the_request() {
     }
 
     // And the backend handler must reconstruct the model from the wire payload
-    // (`m = { … = p.… }`), NOT from a fresh `init ()`, so the branch runs against
-    // the client's real state.
+    // (the embedded whole model, `m = p.spaWholeModel_`), NOT from a fresh
+    // `init ()`, so the branch runs against the client's real state.
     let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
     let hstart = back
         .find("setScaleHandler")
@@ -381,9 +412,9 @@ fn derived_model_threaded_into_helper_keeps_the_read_in_the_request() {
     let hend = hblock.find("Task.succeed").unwrap_or(hblock.len());
     let hblock = &hblock[..hend];
     assert!(
-        hblock.contains("n = p.n"),
-        "setScaleHandler must rebuild the model from the payload (n = p.n), not \
-         init ():\n{hblock}"
+        hblock.contains("m =\n                    p.spaWholeModel_"),
+        "setScaleHandler must rebuild the model from the payload (p.spaWholeModel_), \
+         not init ():\n{hblock}"
     );
 
     // Msg-arg / Model-field NAME COLLISION: `SetScaleArg scale` binds an arg named
@@ -1812,6 +1843,104 @@ fn auto_derives_a_record_codec_for_a_plain_record_wire_field() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// Every generated wire type is closed: no `any`, no free type variable. Since
+/// the wire dedupe, one annotated builder (`spaModelWireFields_`) is shared by
+/// every whole-model request with Msg args, so an open type there is one fixed
+/// type for all of them (the value restriction) and the backend failed
+/// `[E2012]` ("the one type of `a`") at each `Codec.inline` use. The fixture
+/// has the two shapes that left a type open:
+///
+/// * a record alias with a type parameter (`Paged a`) used at two types in the
+///   Model and as a Msg argument, with no app codec: the split wrote the bare
+///   `Paged`, leaving `a` free. Each use now gets its own codec, named with its
+///   argument (`Paged Item`, `Paged String`).
+/// * an unannotated codec binding (`productListCodec = Codec.list
+///   productCodec`): the split named its type with `render_ty`, which writes a
+///   record as `any`, so the Model wire held `products : List any`. It is now
+///   `List Product`.
+/// * an annotated codec in another module (`Data.presetCodec`) under a doc
+///   comment holding a colon: the annotation reader split at the comment's
+///   colon, lost the surface, and every codec the split composes over it
+///   (`Codec.list`, `Codec.maybe`, `Codec.dict`, nested) carried `any`.
+#[test]
+fn generated_wire_types_name_every_type_they_hold() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let output = Command::new(SKY)
+        .args([
+            "spa-split",
+            wire_type_names_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sky spa-split");
+    assert!(
+        output.status.success(),
+        "sky spa-split must split an app whose wire holds these types, got:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    for want in [
+        "blankPaged_Item_ : Paged Item",
+        "autoPaged_ItemCodec_ : Codec (Paged Item)",
+        "autoPaged_StringCodec_ : Codec (Paged String)",
+        "items : Paged Item",
+        "names : Paged String",
+        "type alias Item =",
+        "products : List Product",
+        "hits : List Preset",
+        "pick : Maybe Preset",
+        "slots : List (Maybe Preset)",
+        "groups : Maybe (List Preset)",
+        "byCode : Dict String Preset",
+    ] {
+        assert!(
+            shared.contains(want),
+            "Shared must name each use of `Paged` with its argument (`{want}`):\n{shared}"
+        );
+    }
+    for line in shared.lines() {
+        let t = line.trim_end();
+        if t.trim_start().starts_with("--") {
+            continue;
+        }
+        assert!(
+            !t.ends_with(": Paged") && !t.ends_with("Codec Paged"),
+            "no generated annotation may name `Paged` without its argument (`{t}`):\n{shared}"
+        );
+        assert!(
+            !t.split(|c: char| !c.is_alphanumeric() && c != '_')
+                .any(|w| w == "any"),
+            "no generated type may hold `any` (`{t}`):\n{shared}"
+        );
+    }
+
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&out);
+        return;
+    }
+    for (leg, args) in [
+        ("backend", vec!["check", "src/Main.sky"]),
+        ("frontend", vec!["check", "--target", "web", "src/Main.sky"]),
+    ] {
+        let run = Command::new(SKY)
+            .args(&args)
+            .current_dir(out.join(leg))
+            .output()
+            .expect("run sky check");
+        assert!(
+            run.status.success(),
+            "the {leg} of the split must type-check and build:\n{}{}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// The auto-derive fails CLOSED, with an actionable message, when the wire field
 /// is a BARE top-level data-carrying union. `Codec.auto` has no decode/rebuild
 /// path for a bare ADT (only a record's FIELDS decode an ADT), so the split must
@@ -2897,8 +3026,12 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
             "SSR-P1: the generated backend must carry the SSR route piece `{needle}`:\n{backend}"
         );
     }
-    // v0.25.20: the build wrote the frontend's wasm name into the backend, so the
-    // SSR page names it without reading ../frontend/dist at run time.
+    // v0.25.20: the build gives the backend the frontend's wasm name, so the SSR
+    // page names it without reading ../frontend/dist at run time. Since
+    // v0.27.9 the name is linked into the backend's small `skybuildinfo`
+    // package (rt.SetSpaBuiltWasmName), not written into its Sky source: the
+    // backend's `main` stays the same when the frontend changes, and the
+    // backend leg can build while the frontend leg builds.
     let dist = proj.join(".skyapp/web-app/.split/frontend/dist");
     let wasm = std::fs::read_dir(&dist)
         .expect("frontend dist")
@@ -2907,8 +3040,16 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
         .find(|n| n.starts_with("main.") && n.ends_with(".wasm"))
         .expect("a main.<hash>.wasm in the dist");
     assert!(
-        backend.contains(&format!("spaBuiltWasmName_ =\n    \"{wasm}\"")),
-        "the build must bake the dist's {wasm} into the backend:\n{backend}"
+        backend.contains("spaBuiltWasmName_ =\n    \"\""),
+        "the backend's Sky source keeps its empty wasm-name binding:\n{backend}"
+    );
+    let stamp_pkg = std::fs::read_to_string(
+        proj.join(".skyapp/web-app/.split/backend/sky-out/skybuildinfo/skybuildinfo.go"),
+    )
+    .unwrap_or_default();
+    assert!(
+        stamp_pkg.contains(&format!("rt.SetSpaBuiltWasmName(\"{wasm}\")")),
+        "the build must link the dist's {wasm} into the backend:\n{stamp_pkg}\n{log}"
     );
     // The SSR route must be registered BEFORE the static fallthrough so asset
     // GETs (main.<hash>.wasm, wasm_exec.js) still reach the file server.
@@ -2947,6 +3088,181 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
     assert!(
         dist_has_wasm(&proj.join(".skyapp/web-app/.split/frontend/dist")),
         "frontend wasm must be staged:\n{log}"
+    );
+    // The served page names the linked wasm with no dist in reach: run the
+    // backend binary from a directory with no ../frontend/dist.
+    let away = proj.join("away").join("slot");
+    std::fs::create_dir_all(&away).unwrap();
+    std::fs::copy(
+        proj.join(".skyapp/web-app/.split/backend/sky-out/app"),
+        away.join("app"),
+    )
+    .unwrap();
+    let port = free_port();
+    let log_path = away.join("server.log");
+    let server = ChildGroup::spawn(
+        Command::new(away.join("app"))
+            .current_dir(&away)
+            .env("PORT", port.to_string())
+            .stdout(std::fs::File::create(&log_path).unwrap())
+            .stderr(std::process::Stdio::null()),
+    )
+    .unwrap();
+    assert!(
+        wait_for_spa_backend(&log_path, 120),
+        "the backend did not start:\n{}",
+        std::fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    let jar = away.join("jar");
+    let page = curl_get_jar(port, "/", &jar);
+    assert!(
+        page.contains(&format!("/{wasm}")),
+        "the SSR page must load {wasm} without a dist:\n{page}"
+    );
+    drop(server);
+
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// S2 + N3 + N4 (v0.27.9 build-speed review). One SSR web:app, built with
+/// the legs forced in parallel (`SKY_BUILD_PARALLEL=1`, whatever the memory
+/// plan says), so the backend builds while the frontend builds and links the
+/// wasm name it is handed:
+///   * S2: two builds of the same source with a different commit and built-at
+///     give a byte-identical wasm with the same hashed name (the client links
+///     a constant stamp), while the server's `/_sky/buildinfo` reports the new
+///     commit;
+///   * N4: after a change to the app, the rebuild links the NEW wasm name in
+///     place of the old one;
+///   * N3: the backend built on its own (`cd .split/backend && sky build`)
+///     keeps the name its last build linked.
+#[ignore = "heavy: three web:app builds; nightly + release gate-app via --ignored; per-commit legs: project build_stamp the_client_stamp_is_the_same_for_every_commit + build a_backend_built_alone_keeps_its_linked_wasm_name + spa_wasm_handoff::tests"]
+#[test]
+fn spa_ssr_wasm_name_is_content_derived_and_relinked_on_change() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&ssr_app_fixture_dir(), &proj);
+    let split = proj.join(".skyapp/web-app/.split");
+    let build = |commit: &str, epoch: &str| -> String {
+        let out = Command::new(SKY)
+            .args([
+                "build",
+                "--target",
+                "web:app",
+                "--no-precompress",
+                "src/Main.sky",
+            ])
+            .current_dir(&proj)
+            .env("SKY_BUILD_PARALLEL", "1")
+            .env_remove("SKY_BUILD_SERIAL")
+            .env("SKY_BUILD_COMMIT", commit)
+            .env("SKY_BUILD_EPOCH", epoch)
+            .output()
+            .expect("run sky build --target web:app");
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(out.status.success(), "the build failed:\n{log}");
+        assert!(
+            log.contains(
+                "the SSR backend links the frontend's wasm name when the frontend is built"
+            ),
+            "the legs must run in parallel (forced):\n{log}"
+        );
+        log
+    };
+    let wasm = || -> (String, Vec<u8>) {
+        let dist = split.join("frontend/dist");
+        let name = std::fs::read_dir(&dist)
+            .expect("frontend dist")
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .find(|n| n.starts_with("main.") && n.ends_with(".wasm"))
+            .expect("a main.<hash>.wasm in the dist");
+        let bytes = std::fs::read(dist.join(&name)).unwrap();
+        (name, bytes)
+    };
+    let linked = || -> String {
+        std::fs::read_to_string(split.join("backend/sky-out/skybuildinfo/skybuildinfo.go"))
+            .unwrap_or_default()
+    };
+
+    build("aaaaaaaaaaaa", "1700000000");
+    let (name1, bytes1) = wasm();
+    assert!(linked().contains(&format!("rt.SetSpaBuiltWasmName(\"{name1}\")")));
+
+    // S2: another commit and built-at, same source.
+    build("bbbbbbbbbbbb", "1800000000");
+    let (name2, bytes2) = wasm();
+    assert_eq!(
+        name2, name1,
+        "the wasm name must not change with the commit"
+    );
+    assert!(
+        bytes2 == bytes1,
+        "the wasm bytes must not change with the commit"
+    );
+    // The server keeps the real stamp.
+    let port = free_port();
+    let log_path = proj.join("server.log");
+    let server = ChildGroup::spawn(
+        Command::new(split.join("backend/sky-out/app"))
+            .current_dir(split.join("backend"))
+            .env("PORT", port.to_string())
+            .stdout(std::fs::File::create(&log_path).unwrap())
+            .stderr(std::process::Stdio::null()),
+    )
+    .unwrap();
+    assert!(
+        wait_for_spa_backend(&log_path, 120),
+        "the backend did not start:\n{}",
+        std::fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    let info = curl_get_jar(port, "/_sky/buildinfo", &proj.join("jar"));
+    assert!(
+        info.contains("bbbbbbbbbbbb"),
+        "/_sky/buildinfo must carry the new commit:\n{info}"
+    );
+    drop(server);
+
+    // N4: change the app; the rebuild links the new name over the old one.
+    let main = proj.join("src/Main.sky");
+    let src = std::fs::read_to_string(&main).unwrap();
+    std::fs::write(
+        &main,
+        src.replace("Sky SSR fixture — n = ", "Sky SSR fixture (changed) — n = "),
+    )
+    .unwrap();
+    build("bbbbbbbbbbbb", "1800000000");
+    let (name3, _) = wasm();
+    assert_ne!(name3, name1, "a changed frontend has a new wasm name");
+    let stamp = linked();
+    assert!(
+        stamp.contains(&format!("rt.SetSpaBuiltWasmName(\"{name3}\")")),
+        "the rebuild must link the new name {name3} (was {name1}):\n{stamp}"
+    );
+
+    // N3: the backend built on its own keeps the linked name.
+    let out = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(split.join("backend"))
+        .output()
+        .expect("sky build in .split/backend");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        linked().contains(&format!("rt.SetSpaBuiltWasmName(\"{name3}\")")),
+        "a backend built alone must keep {name3}:\n{}",
+        linked()
     );
 
     let _ = std::fs::remove_dir_all(&proj);
@@ -3764,6 +4080,8 @@ fn spa_deep_link_ssr_references_root_absolute_assets() {
 /// shell and SSRs the NotFound page (`data-sky-ssr` + the NotFound view) exactly
 /// as a known route would, while a request that maps to a REAL asset still serves
 /// the file. RED before the fix (a plain `Server.static` catch-all → 404).
+/// v0.27.9: the NotFound page is sent with 404 (the page body, booting the
+/// client), and declared routes stay 200; RED before (200 for every path).
 #[test]
 #[cfg(unix)]
 fn spa_unknown_deep_path_ssrs_the_not_found_page() {
@@ -3794,6 +4112,10 @@ fn spa_unknown_deep_path_ssrs_the_not_found_page() {
     assert!(
         !backend.contains("Server.static \"/\" \"../frontend/dist\""),
         "an SSR+routed app must NOT emit a bare Server.static catch-all:\n{backend}"
+    );
+    assert!(
+        backend.contains("Server.withStatus ssrStatus_ <| Server.html"),
+        "a routed SSR page must carry its route status (404 for NotFound):\n{backend}"
     );
 
     if !required(Need::Go, have_go()) {
@@ -3826,16 +4148,24 @@ fn spa_unknown_deep_path_ssrs_the_not_found_page() {
     }
     let unknown_status = curl_status_ctype(port, "/some/unknown/deep/path");
     let unknown_body = curl_body_p(port, "/some/unknown/deep/path");
+    let root_status = curl_status_ctype(port, "/");
+    let post_status = curl_status_ctype(port, "/blog/hello-world");
     let asset = curl_status_ctype(port, "/wasm_exec.js");
     child.kill();
     let _ = std::fs::remove_dir_all(&proj);
 
-    // An unmatched deep path SSRs the NotFound page — 200, not a bare 404.
+    // An unmatched deep path SSRs the NotFound page, sent with 404 (v0.27.9;
+    // it was a soft 200 before), not a bare file-server 404.
     let (code, ctype) = unknown_status.expect("GET unknown path should answer");
     assert_eq!(
-        code, 200,
-        "unmatched path must SSR NotFound (200), got {code} ({ctype})"
+        code, 404,
+        "unmatched path must SSR NotFound with 404, got {code} ({ctype})"
     );
+    // Declared routes stay 200.
+    for (path, st) in [("/", root_status), ("/blog/hello-world", post_status)] {
+        let (c, t) = st.unwrap_or_else(|| panic!("GET {path} should answer"));
+        assert_eq!(c, 200, "declared route {path} must stay 200, got {c} ({t})");
+    }
     assert!(
         ctype.starts_with("text/html"),
         "the NotFound SSR must be text/html, got {ctype}"
@@ -9521,9 +9851,734 @@ fn a_spa_backend_names_the_config_binding_that_set_an_unused_store() {
     );
 }
 
+/// How many record codec chains in `shared` (a `Codec.object` through the next
+/// blank line) name every field in `fields`.
+fn codec_chains_with_fields(shared: &str, fields: &[&str]) -> usize {
+    shared
+        .split("\n\n")
+        .filter(|chunk| chunk.contains("Codec.object"))
+        .filter(|chunk| {
+            fields
+                .iter()
+                .all(|f| chunk.contains(&format!("Codec.field \"{f}\" .{f} ")))
+        })
+        .count()
+}
+
+/// The whole-model wire app for the dedupe tests: every server branch passes the
+/// model (or a value derived from it) to a helper that does a pure-typed server
+/// read, so each request carries the WHOLE model; `Tag1`/`Tag2` share one Msg-arg
+/// shape, `Label` and `SetScale` have their own (`SetScale scale` collides with
+/// the Model's `scale` field).
+const WHOLE_MODEL_WIRE_APP: &str = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.System as System
+import Sky.Core.String as String
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+
+type alias Model =
+    { n : Int
+    , scale : Int
+    , log : String
+    }
+
+
+type Msg
+    = Bump
+    | Save1
+    | Save2
+    | Save3
+    | Tag1 Int
+    | Tag2 Int
+    | Label String
+    | SetScale Int
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0, scale = 1, log = "" }, Cmd.none )
+
+
+recompute : Model -> Model
+recompute m =
+    { m | log = System.getenvOr "SKY_WIRE_DEDUPE_UNSET_" (String.fromInt (m.n * m.scale)) }
+
+
+stampLog : String -> Model -> Model
+stampLog s m =
+    { m | log = System.getenvOr "SKY_WIRE_DEDUPE_UNSET_" (s ++ String.fromInt m.n) }
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Bump ->
+            ( { model | n = model.n + 1 }, Cmd.none )
+
+        Save1 ->
+            ( recompute model, Cmd.none )
+
+        Save2 ->
+            ( recompute { model | n = model.n + 1 }, Cmd.none )
+
+        Save3 ->
+            ( recompute (recompute model), Cmd.none )
+
+        Tag1 k ->
+            ( recompute { model | n = k }, Cmd.none )
+
+        Tag2 k ->
+            ( recompute { model | n = k + 1 }, Cmd.none )
+
+        Label s ->
+            ( stampLog s model, Cmd.none )
+
+        SetScale scale ->
+            ( recompute { model | scale = scale }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout []
+        (Ui.column [ Ui.spacing 8 ]
+            [ Ui.text (String.fromInt model.n ++ " " ++ model.log)
+            , Ui.button [] { onPress = Just Bump, label = Ui.text "bump" }
+            , Ui.button [] { onPress = Just Save1, label = Ui.text "s1" }
+            , Ui.button [] { onPress = Just Save2, label = Ui.text "s2" }
+            , Ui.button [] { onPress = Just Save3, label = Ui.text "s3" }
+            , Ui.button [] { onPress = Just (Tag1 4), label = Ui.text "t1" }
+            , Ui.button [] { onPress = Just (Tag2 4), label = Ui.text "t2" }
+            , Ui.button [] { onPress = Just (Label "x"), label = Ui.text "l" }
+            , Ui.button [] { onPress = Just (SetScale 3), label = Ui.text "sc" }
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )
+"#;
+
+/// Build speed (generated wire size): every server branch that reads or writes
+/// the whole Model used to get its own request/response record with a full
+/// `Codec.object … |> Codec.field …` chain over EVERY Model field, so `Shared`
+/// grew with branches × fields and both legs type-checked and lowered each
+/// chain (a 100-branch app spent 31 s in typecheck and 35 s in lowering). The
+/// Model's fields are now declared once (`SpaModelWire_`); a whole-model branch
+/// with Msg args embeds it (`Codec.inline`), and records with the same ordered
+/// field list share one declaration. The wire JSON is unchanged: the e2e leg
+/// posts the FLAT JSON the previous compiler's client sent and reads back the
+/// same flat response.
+#[test]
+fn whole_model_branches_share_one_model_wire_codec() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch_std_app("spa-wire-dedupe", WHOLE_MODEL_WIRE_APP);
+    let out = proj.join(".split");
+    let status = Command::new(SKY)
+        .args(["spa-split", "src/Main.sky", "--out", ".split"])
+        .current_dir(&proj)
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "sky spa-split should succeed");
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+
+    // Five whole-model requests (Save2, Save3, Tag1, Tag2, SetScale), ONE
+    // field list for the Model.
+    assert_eq!(
+        codec_chains_with_fields(&shared, &["log", "n", "scale"]),
+        1,
+        "the Model's fields must be declared once in Shared, not once per \
+         whole-model branch:\n{shared}"
+    );
+    assert!(
+        shared.contains("type alias SpaModelWire_ =")
+            && shared.contains("|> Codec.inline .spaWholeModel_ spaModelWireFields_")
+            && shared.contains("type alias Save2Req =\n    SpaModelWire_"),
+        "whole-model requests share the one Model wire:\n{shared}"
+    );
+    // Same ordered shape → one declaration, the repeat is an alias.
+    assert!(
+        shared.contains("type alias Tag2Req =\n    Tag1Req")
+            && shared.contains("tag2ReqCodec =\n    tag1ReqCodec"),
+        "Tag2's request has Tag1's shape and must alias it:\n{shared}"
+    );
+    for req in ["Save2Req", "Save3Req", "Tag1Req", "Tag2Req", "SetScaleReq"] {
+        let fields = wire_record_fields(&shared, req);
+        for field in ["n :", "scale :", "log :"] {
+            assert!(
+                fields.contains(field),
+                "{req} must still carry the whole model (`{field}`):\n{fields}"
+            );
+        }
+    }
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    assert!(
+        front.contains("{ spaWholeModel_ = model, spaMsgArg_scale = scale }"),
+        "SetScale sends the model plus the collision-renamed arg:\n{front}"
+    );
+
+    // ── Go-gated e2e: the server reads the same flat JSON and answers it. ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+
+    // The CLIENT leg encodes the request the server reads. Build the request
+    // expression each `rpcHold` in the generated frontend writes (the
+    // `spaWholeModel_` embed for Tag1/Tag2/SetScale), encode it with the
+    // generated Shared codec in a native probe, and compare the bytes with the
+    // flat JSON the previous compiler's client sent.
+    let client_cases = [
+        ("Save2", r#"{"log":"z","n":2,"scale":3}"#),
+        ("Tag1", r#"{"log":"","n":2,"scale":3,"k":5}"#),
+        ("Tag2", r#"{"log":"","n":2,"scale":3,"k":5}"#),
+        ("Label", r#"{"n":2,"s":"a"}"#),
+        (
+            "SetScale",
+            r#"{"log":"","n":2,"scale":3,"spaMsgArg_scale":7}"#,
+        ),
+    ];
+    let mut encodes = Vec::new();
+    for (msg, _) in &client_cases {
+        let call = format!("\"/_rpc/{msg}\" ");
+        let at = front
+            .find(&call)
+            .unwrap_or_else(|| panic!("the frontend posts {msg}:\n{front}"));
+        let rest = &front[at + call.len()..];
+        let end = rest
+            .find(&format!(" Applied{msg}"))
+            .unwrap_or_else(|| panic!("the {msg} request ends at Applied{msg}:\n{rest}"));
+        let codec = {
+            let mut c = msg.chars();
+            let first = c.next().unwrap().to_ascii_lowercase();
+            format!("{first}{}ReqCodec", c.as_str())
+        };
+        // Save2 sends a model whose `log` is "z"; the rest send log "".
+        let log = if *msg == "Save2" { "z" } else { "" };
+        encodes.push(format!(
+            "enc{msg} : String\nenc{msg} =\n    let\n        model =\n            {{ log = \"{log}\", n = 2, scale = 3 }}\n\n        k =\n            5\n\n        s =\n            \"a\"\n\n        scale =\n            7\n    in\n    Codec.toJson {codec} {}\n\n\n",
+            &rest[..end]
+        ));
+    }
+    let probe_dir = proj.join("client-probe");
+    std::fs::create_dir_all(probe_dir.join("src")).unwrap();
+    std::fs::write(
+        probe_dir.join("sky.toml"),
+        "name = \"client-probe\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::copy(
+        out.join("frontend/src/Shared.sky"),
+        probe_dir.join("src/Shared.sky"),
+    )
+    .unwrap();
+    // The SSR `sky-model` seed and the client's saved model are
+    // `Codec.toJson (Codec.auto m) m` of the app's Model. Go lowering gives
+    // every record alias with one field set one struct, declared in the order
+    // of the first alias it meets, and `Codec.auto` writes keys in struct
+    // order. A wire record with the Model's fields declared in chain order
+    // (`log` first) re-ordered the seed. The probe declares the Model in a
+    // module that imports `Shared`, as an app's `Types` module does.
+    let types_src = "module Types exposing (Model, encSeed)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Codec as Codec\n\
+         import Shared exposing (..)\n\n\n\
+         type alias Model =\n    { n : Int\n    , scale : Int\n    , log : String\n    }\n\n\n\
+         seedModel : Model\nseedModel =\n    { n = 2, scale = 3, log = \"\" }\n\n\n\
+         encSeed : String\nencSeed =\n    Codec.toJson (Codec.auto seedModel) seedModel\n";
+    let mut names: Vec<String> = client_cases
+        .iter()
+        .map(|(msg, _)| format!("enc{msg}"))
+        .collect();
+    names.push("encSeed".to_string());
+    std::fs::write(
+        probe_dir.join("src/Main.sky"),
+        format!(
+            "module Main exposing (main)\n\n\
+             import Sky.Core.Prelude exposing (..)\n\
+             import Sky.Core.String as String\n\
+             import Std.Codec as Codec\n\
+             import Std.Log exposing (println)\n\
+             import Shared exposing (..)\n\
+             import Types exposing (encSeed)\n\n\n\
+             {}\
+             main =\n    println (String.join \"\\n\" [ {} ])\n",
+            encodes.join(""),
+            names.join(", ")
+        ),
+    )
+    .unwrap();
+    std::fs::write(probe_dir.join("src/Types.sky"), types_src).unwrap();
+    let probe = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&probe_dir)
+        .output()
+        .expect("run sky build (client probe)");
+    assert!(
+        probe.status.success(),
+        "the client-encode probe must build:\n{}{}\n{}",
+        String::from_utf8_lossy(&probe.stdout),
+        String::from_utf8_lossy(&probe.stderr),
+        std::fs::read_to_string(probe_dir.join("src/Main.sky")).unwrap_or_default()
+    );
+    let ran = Command::new(probe_dir.join("sky-out/app"))
+        .current_dir(&probe_dir)
+        .output()
+        .expect("run the client-encode probe");
+    let encoded = String::from_utf8_lossy(&ran.stdout).to_string();
+    let lines: Vec<&str> = encoded.lines().collect();
+    assert_eq!(
+        lines.len(),
+        client_cases.len() + 1,
+        "one encoded request per case, then the seed:\n{encoded}"
+    );
+    assert_eq!(
+        lines[client_cases.len()],
+        r#"{"n":2,"scale":3,"log":""}"#,
+        "the Model seed keeps the Model's declaration order"
+    );
+    for ((msg, want), got) in client_cases.iter().zip(lines) {
+        assert_eq!(
+            got, *want,
+            "the client's {msg} request must encode to the flat JSON"
+        );
+    }
+
+    // The frontend leg (wasm) compiles the `spaWholeModel_ = model` requests.
+    let frontend = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .output()
+        .expect("run sky build --target web (frontend)");
+    assert!(
+        frontend.status.success(),
+        "the whole-model wire frontend must build to wasm:\n{}{}",
+        String::from_utf8_lossy(&frontend.stdout),
+        String::from_utf8_lossy(&frontend.stderr)
+    );
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "the frontend build must stage a content-hashed main.<hash>.wasm"
+    );
+
+    let backend_dir = out.join("backend");
+    let built = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&backend_dir)
+        .output()
+        .expect("run sky build (backend)");
+    assert!(
+        built.status.success(),
+        "the whole-model wire backend must build:\n{}{}",
+        String::from_utf8_lossy(&built.stdout),
+        String::from_utf8_lossy(&built.stderr)
+    );
+    std::fs::create_dir_all(backend_dir.join("data")).unwrap();
+    let port = free_port();
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let child = ChildGroup::spawn(
+        Command::new(backend_dir.join("sky-out/app"))
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the whole-model wire backend");
+    assert!(
+        wait_for_spa_backend(&log_path, 80),
+        "backend never reported listening on :{port}"
+    );
+    // (path, flat request JSON as the previous compiler's client wrote it, the
+    // exact flat response JSON).
+    let cases = [
+        (
+            "/_rpc/Save2",
+            r#"{"log":"z","n":2,"scale":3}"#,
+            r#"{"log":"9","n":3}"#,
+        ),
+        (
+            "/_rpc/Save3",
+            r#"{"log":"z","n":2,"scale":3}"#,
+            r#"{"log":"6"}"#,
+        ),
+        (
+            "/_rpc/Tag1",
+            r#"{"log":"","n":2,"scale":3,"k":5}"#,
+            r#"{"log":"15","n":5}"#,
+        ),
+        (
+            "/_rpc/Tag2",
+            r#"{"log":"","n":2,"scale":3,"k":5}"#,
+            r#"{"log":"18","n":6}"#,
+        ),
+        ("/_rpc/Label", r#"{"n":2,"s":"a"}"#, r#"{"log":"a2"}"#),
+        (
+            "/_rpc/SetScale",
+            r#"{"log":"","n":2,"scale":3,"spaMsgArg_scale":7}"#,
+            r#"{"log":"14","scale":7}"#,
+        ),
+    ];
+    let mut results = Vec::new();
+    for (path, req, _) in &cases {
+        results.push(curl_post_status_body(port, path, req));
+    }
+    // A request without a Model field is refused, not defaulted.
+    let missing = curl_post_status_body(port, "/_rpc/Tag1", r#"{"log":"","n":2,"k":5}"#);
+    drop(child);
+    let _ = std::fs::remove_dir_all(&proj);
+    for ((path, _, want), got) in cases.iter().zip(results) {
+        let (code, body) = got.unwrap_or_else(|| panic!("POST {path} should return"));
+        assert_eq!(code, 200, "POST {path}: body {body:?}");
+        assert_eq!(body.trim(), *want, "POST {path} answered different JSON");
+    }
+    let (code, body) = missing.expect("POST /_rpc/Tag1 (missing field) should return");
+    assert_ne!(
+        code, 200,
+        "a request missing `scale` must be refused: {body:?}"
+    );
+}
+
+/// The whole-model app scaled to `n` field groups: Model fields `fK`, a pure
+/// `EditK String` arm and a server `SaveK` arm (a pure-typed server read) that
+/// hands the whole model to an opaque helper, so its request is the whole model.
+fn scaled_whole_model_app(n: usize) -> String {
+    let mut fields = String::from("    { base : String\n");
+    let mut inits = String::from("base = \"\"");
+    let mut ctors = String::from("    = Noop\n");
+    let mut arms = String::from("        Noop ->\n            ( model, Cmd.none )\n\n");
+    let mut buttons = Vec::new();
+    for k in 1..=n {
+        fields.push_str(&format!("    , f{k} : String\n"));
+        inits.push_str(&format!(", f{k} = \"\""));
+        ctors.push_str(&format!("    | Edit{k} String\n    | Save{k}\n"));
+        arms.push_str(&format!(
+            "        Edit{k} s ->\n            ( {{ model | f{k} = s }}, Cmd.none )\n\n\
+             \x20       Save{k} ->\n            ( {{ model | base = System.getenvOr \"SKY_WIRE_GROWTH_UNSET_\" (\"{k}\" ++ stamp model) }}, Cmd.none )\n\n"
+        ));
+        buttons.push(format!(
+            "Ui.button [] {{ onPress = Just Save{k}, label = Ui.text model.f{k} }}"
+        ));
+    }
+    fields.push_str("    }\n");
+    format!(
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.System as System\n\
+         import Sky.Core.String as String\n\
+         import Sky.Core.List as List\n\
+         import Std.Spa as Spa\n\
+         import Std.Cmd as Cmd\n\
+         import Std.Sub as Sub\n\
+         import Std.Ui as Ui\n\
+         import Std.Html exposing (Html)\n\n\n\
+         type alias Model =\n{fields}\n\n\
+         type Msg\n{ctors}\n\n\
+         init : () -> ( Model, Cmd Msg )\n\
+         init _ =\n    ( {{ {inits} }}, Cmd.none )\n\n\n\
+         stamp : Model -> String\n\
+         stamp m =\n    String.fromInt (List.length [ m ])\n\n\n\
+         update : Msg -> Model -> ( Model, Cmd Msg )\n\
+         update msg model =\n    case msg of\n{arms}\n\
+         view : Model -> Html Msg\n\
+         view model =\n    Ui.layout [] (Ui.column [] [ {buttons} ])\n\n\n\
+         subscriptions : Model -> Sub Msg\n\
+         subscriptions _ =\n    Sub.none\n\n\n\
+         main : Task Error ()\n\
+         main =\n    Spa.app (Spa.config {{ init = init, update = update, view = view, subscriptions = subscriptions }})\n",
+        buttons = buttons.join(", ")
+    )
+}
+
+/// Build speed (growth guard): the generated wire must grow LINEARLY with the
+/// app. Each `SaveK` branch reads the whole model, so when every
+/// whole-model branch carried its own copy of the Model's field list, `Shared`
+/// grew with branches × fields — doubling the app roughly quadrupled it (N=50
+/// to 100: 13.6k to 47k lines on the grill app). The bound below allows the
+/// linear per-branch alias lines and fails on any per-branch field list.
+/// Falsifier: render each whole-model record in full again (no `WireShapes`
+/// dedupe in `gen_shared`) and the N=100 ratio exceeds the bound.
+#[test]
+fn generated_wire_grows_linearly_with_whole_model_branches() {
+    let mut shared_lines = Vec::new();
+    for n in [25usize, 50, 100] {
+        let proj = scratch_std_app("spa-wire-growth", &scaled_whole_model_app(n));
+        let status = Command::new(SKY)
+            .args(["spa-split", "src/Main.sky", "--out", ".split"])
+            .current_dir(&proj)
+            .status()
+            .expect("run sky spa-split");
+        assert!(status.success(), "sky spa-split should succeed at N={n}");
+        let user = std::fs::read_to_string(proj.join("src/Main.sky")).unwrap();
+        let shared = std::fs::read_to_string(proj.join(".split/shared/Shared.sky")).unwrap();
+        let _ = std::fs::remove_dir_all(&proj);
+        let (u, s) = (user.lines().count(), shared.lines().count());
+        // One field list for the Model, whatever the branch count.
+        assert_eq!(
+            codec_chains_with_fields(&shared, &["base", "f1", &format!("f{n}")]),
+            1,
+            "N={n}: the Model's fields must be declared once:\n{shared}"
+        );
+        shared_lines.push((n, u, s));
+    }
+    for (n, u, s) in &shared_lines {
+        assert!(
+            *s <= 4 * *u,
+            "N={n}: generated Shared has {s} lines for {u} user lines; the wire must \
+             stay linear in the app (all: {shared_lines:?})"
+        );
+    }
+    for w in shared_lines.windows(2) {
+        let ((n0, _, s0), (n1, _, s1)) = (w[0], w[1]);
+        assert!(
+            (s1 as f64) < 2.3 * (s0 as f64),
+            "Shared grew from {s0} lines (N={n0}) to {s1} (N={n1}): more than linear"
+        );
+    }
+}
+
+/// `sky spa-split` on a `Std.App` entry (`main = App.run app`) splits the
+/// `Spa.app` entry synthesised from the `App` value, as `sky build --target
+/// web:app` does, so both generated projects compile. It used to split the raw
+/// entry, which imports `Std.App` and not `Std.Spa`: the generated code named
+/// `Spa.reportRpcFailure` and the other `Spa.*` helpers without importing them,
+/// and `sky spa-split --build` failed with [E1001] in code the user never wrote.
+#[test]
+fn a_std_app_entry_splits_into_projects_that_compile() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/app-console-auth/src/Main.sky");
+    let proj = scratch_std_app(
+        "spa-split-std-app",
+        &std::fs::read_to_string(fixture).unwrap(),
+    );
+    let out = Command::new(SKY)
+        .args(["spa-split", "src/Main.sky", "--out", ".split"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky spa-split");
+    assert!(
+        out.status.success(),
+        "sky spa-split should succeed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for leg in ["backend", "frontend"] {
+        if let Err(e) = project::emit_example_source(&repo_root(), &proj.join(".split").join(leg)) {
+            panic!("the split's {leg} must compile:\n{e}");
+        }
+    }
+    // The synthesised entry is staged beside the build's own, never in `src/`.
+    let src = std::fs::read_to_string(proj.join("src/Main.sky")).unwrap();
+    assert!(
+        !src.contains("Spa.app"),
+        "the user's entry must not be rewritten"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A whole-model server branch whose Model holds an ENUM (a union of nullary
+/// constructors) with no `Codec` is refused, and the refusal names it as an
+/// enum with the `Codec.enum` binding that fixes it. It used to call every bare
+/// union "data-carrying", which an enum is not, and gave no enum codec.
+#[test]
+fn a_bare_enum_wire_field_is_refused_as_an_enum() {
+    let src = "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.Task as Task\n\
+         import Sky.Core.File as File\n\
+         import Sky.Core.List as List\n\
+         import Sky.Core.String as String\n\
+         import Std.Spa as Spa\n\
+         import Std.Cmd as Cmd\n\
+         import Std.Sub as Sub\n\
+         import Std.Ui as Ui\n\
+         import Std.Html exposing (Html)\n\n\n\
+         type Page\n    = Home\n    | Settings\n\n\n\
+         type alias Model =\n    { page : Page, saved : Int }\n\n\n\
+         type Msg\n    = Save\n\n\n\
+         init : () -> ( Model, Cmd Msg )\n\
+         init _ =\n    ( { page = Home, saved = 0 }, Cmd.none )\n\n\n\
+         stamp : Model -> String\n\
+         stamp m =\n    String.fromInt (List.length [ m ])\n\n\n\
+         update : Msg -> Model -> ( Model, Cmd Msg )\n\
+         update msg model =\n    case msg of\n        Save ->\n            let\n                _ =\n                    Task.run (File.writeFile \"saved.txt\" (stamp model))\n            in\n            ( { model | saved = model.saved + 1 }, Cmd.none )\n\n\n\
+         view : Model -> Html Msg\n\
+         view model =\n    Ui.layout [] (Ui.text (String.fromInt model.saved))\n\n\n\
+         subscriptions : Model -> Sub Msg\n\
+         subscriptions _ =\n    Sub.none\n\n\n\
+         main : Task Error ()\n\
+         main =\n    Spa.app (Spa.config { init = init, update = update, view = view, subscriptions = subscriptions })\n";
+    let proj = scratch_std_app("spa-enum-wire", src);
+    let out = Command::new(SKY)
+        .args(["spa-split", "src/Main.sky", "--out", ".split"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky spa-split");
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(
+        !out.status.success(),
+        "a bare enum on the wire must be refused"
+    );
+    assert!(
+        err.contains("an enum included") && err.contains("Codec.enum"),
+        "the refusal must name the enum and its codec:\n{err}"
+    );
+    assert!(
+        !err.contains("data-carrying"),
+        "an enum is not a data-carrying union:\n{err}"
+    );
+}
+
+// ── The front end runs once per Sky.Spa build ────────────────────────────────
+
+/// The `note: front end: …` line of the PARENT's `SKY_TIMINGS` table (the one
+/// headed `sky <verb> in <dir>/`; each split leg prints its own table under
+/// its own directory).
+fn parent_front_end_note(stderr: &str, verb: &str, dir: &std::path::Path) -> String {
+    let name = dir.file_name().unwrap().to_string_lossy().to_string();
+    let header = format!("sky timings (sky {verb} in {name}/):");
+    let at = stderr
+        .rfind(&header)
+        .unwrap_or_else(|| panic!("no `{header}` table in:\n{stderr}"));
+    stderr[at..]
+        .lines()
+        .take_while(|l| !l.trim().is_empty())
+        .find_map(|l| l.trim().strip_prefix("note: front end: "))
+        .map(str::to_string)
+        .unwrap_or_else(|| panic!("no front-end note in the parent table:\n{}", &stderr[at..]))
+}
+
+/// Every generated source file (`.sky` + `sky.toml`) of a split, by path
+/// relative to the split dir. Build outputs (`sky-out`, `dist`) are left out.
+fn split_sources(dir: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+    fn walk(
+        root: &std::path::Path,
+        d: &std::path::Path,
+        out: &mut std::collections::BTreeMap<String, String>,
+    ) {
+        for e in std::fs::read_dir(d).unwrap() {
+            let p = e.unwrap().path();
+            let n = p.file_name().unwrap().to_string_lossy().to_string();
+            if p.is_dir() {
+                if !matches!(
+                    n.as_str(),
+                    "sky-out" | "dist" | ".skycache" | "node_modules"
+                ) {
+                    walk(root, &p, out);
+                }
+            } else if n.ends_with(".sky") || n == "sky.toml" {
+                let rel = p.strip_prefix(root).unwrap().to_string_lossy().to_string();
+                out.insert(rel, std::fs::read_to_string(&p).unwrap());
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    walk(dir, dir, &mut out);
+    out
+}
+
+/// `sky build` on a direct `Spa.app` entry checks the app's own source first
+/// (its front half: parse, types, lowering) and then splits it. The split
+/// used to load the sources into a second db and type-check the whole
+/// program again (twice, when a continuation stays on the server), so the
+/// parent ran the front end two or three times for one program. It now
+/// analyses the db the front half loaded: one load, one check. `sky check`
+/// runs the split analysis over that same db too, then its own build of the
+/// app (two of each). The split the build writes is byte-identical to the one
+/// a fresh `sky spa-split` writes.
+#[test]
+fn a_direct_spa_build_runs_the_front_end_once() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(fixture_entry().parent().unwrap().parent().unwrap(), &proj);
+
+    let check = Command::new(SKY)
+        .args(["check", "src/Main.sky"])
+        .current_dir(&proj)
+        .env("SKY_TIMINGS", "1")
+        .output()
+        .expect("run sky check");
+    let check_err = String::from_utf8_lossy(&check.stderr).to_string();
+    assert!(check.status.success(), "sky check failed:\n{check_err}");
+    assert_eq!(
+        parent_front_end_note(&check_err, "check", &proj),
+        "2 source load(s), 2 type check(s)",
+        "`sky check` on a Spa entry: the front half (reused by the split \
+         analysis) and the ordinary check"
+    );
+
+    let build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&proj)
+        .env("SKY_TIMINGS", "1")
+        .output()
+        .expect("run sky build");
+    let build_err = String::from_utf8_lossy(&build.stderr).to_string();
+    assert!(
+        build.status.success(),
+        "sky build failed:\n{}{build_err}",
+        String::from_utf8_lossy(&build.stdout)
+    );
+    assert_eq!(
+        parent_front_end_note(&build_err, "build", &proj),
+        "1 source load(s), 1 type check(s)",
+        "the split must analyse the db the front half loaded"
+    );
+
+    // The reused db writes exactly the split a fresh load writes.
+    let fresh = scratch();
+    let _ = std::fs::remove_dir_all(&fresh);
+    let split = Command::new(SKY)
+        .args([
+            "spa-split",
+            "src/Main.sky",
+            "--out",
+            fresh.to_str().unwrap(),
+        ])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky spa-split");
+    assert!(split.status.success(), "sky spa-split failed");
+    let built = split_sources(&proj.join(".split"));
+    let generated = split_sources(&fresh);
+    assert!(!built.is_empty(), "the build wrote no split");
+    assert_eq!(
+        built.keys().collect::<Vec<_>>(),
+        generated.keys().collect::<Vec<_>>(),
+        "same files"
+    );
+    for (rel, text) in &built {
+        assert_eq!(text, &generated[rel], "{rel} differs from a fresh split");
+    }
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 // ── `init`'s command reaches server-only bindings ───────────────────────────
 //
-// Regression (v0.28.0, found building examples/72-ai-support-desk with
+// Regression (v0.27.9, found building a database-backed app with
 // `--target web:app`): `update` arms that return `Cmd.perform <server task>
 // ToMsg` were rewritten into an RPC, but `init` was copied into the wasm client
 // verbatim, so its `Cmd.perform loadTickets Loaded` named a binding the
@@ -9829,7 +10884,7 @@ fn init_in_a_sibling_module_reaching_server_bindings_runs_through_an_init_rpc() 
     let _ = std::fs::remove_dir_all(&proj);
 }
 
-/// Configuration is code (v0.28.0): the split backend honours the app's
+/// Configuration is code (v0.27.9): the split backend honours the app's
 /// `App.withConfig (WebConfig { store = … })` and `App.withBase`, as the
 /// Sky.Live build does (operator env > code > default). Before, the App→Spa
 /// synthesis dropped both builders, so the backend took its session store only
@@ -9930,25 +10985,163 @@ fn a_spa_backend_honours_the_store_the_app_names_with_with_config() {
     );
 }
 
+/// A `--target web:app` backend run as a deploy runs it: the binary and its
+/// `sky.toml` in `<root>/backend` (the working directory), the client in
+/// `<root>/frontend/dist`, and NOT the build's `backend/<static>` copy. The
+/// app's `App.withConfig` names a port, `static` and `staticUrl`. The backend
+/// listens on the operator's `PORT`, never the code's port; `/brand/<file>`
+/// serves the committed file (from `dist/brand`, the deploy's only copy); the
+/// page and the wasm serve; and the build's precompress manifest does not.
+#[test]
+fn a_spa_backend_with_code_static_config_serves_in_the_deploy_layout() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-deeplink"),
+        &proj,
+    );
+    let logo = "<svg xmlns=\"http://www.w3.org/2000/svg\"><title>brand-logo</title></svg>";
+    std::fs::create_dir_all(proj.join("brand")).unwrap();
+    std::fs::write(proj.join("brand/logo.svg"), logo).unwrap();
+    let code_port = free_port();
+    let main = proj.join("src/Main.sky");
+    let src = std::fs::read_to_string(&main).unwrap();
+    let from = "        |> App.withNotFound NotFoundPage\n";
+    assert_eq!(src.matches(from).count(), 1);
+    std::fs::write(
+        &main,
+        src.replacen(
+            from,
+            &format!(
+                "{from}        |> App.withConfig (App.WebConfig {{ App.webDefaults | port = {code_port}, inputMode = Just \"debounce\", static = Just \"brand\", staticUrl = Just \"/brand\" }})\n"
+            ),
+            1,
+        ),
+    )
+    .unwrap();
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let split = proj.join(".skyapp/web-app/.split");
+    let dist = split.join("frontend/dist");
+    assert!(
+        dist.join("brand/logo.svg").is_file(),
+        "the build copies the static dir into dist"
+    );
+    // The deploy layout.
+    let root = proj.join("deploy-root");
+    std::fs::create_dir_all(root.join("backend")).unwrap();
+    std::fs::copy(split.join("backend/sky-out/app"), root.join("backend/app")).unwrap();
+    std::fs::copy(
+        split.join("backend/sky.toml"),
+        root.join("backend/sky.toml"),
+    )
+    .unwrap();
+    copy_tree(&dist, &root.join("frontend/dist"));
+    assert!(!root.join("backend/brand").exists());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            root.join("backend/app"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
+    let wasm = std::fs::read_dir(&dist)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .find(|n| n.starts_with("main.") && n.ends_with(".wasm"))
+        .expect("a hashed wasm in dist");
+    let port = free_port();
+    let stdout = root.join("server.log");
+    let stderr = root.join("server.err");
+    let child = ChildGroup::spawn(
+        Command::new(root.join("backend/app"))
+            .current_dir(root.join("backend"))
+            .env("PORT", port.to_string())
+            .env("SKY_CONSOLE_AUTH", "off")
+            .env_remove("ENV")
+            .env_remove("SKY_LIVE_PORT")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&stdout).unwrap())
+            .stderr(std::fs::File::create(&stderr).unwrap()),
+    )
+    .expect("start the split backend");
+    let up = wait_for_spa_backend(&stdout, 120);
+    let logs = || {
+        format!(
+            "{}{}",
+            std::fs::read_to_string(&stdout).unwrap_or_default(),
+            std::fs::read_to_string(&stderr).unwrap_or_default()
+        )
+    };
+    assert!(up, "the split backend did not start:\n{}", logs());
+    let page = curl_status_ctype(port, "/");
+    let brand = curl_status_ctype(port, "/brand/logo.svg");
+    let brand_body = curl_body_p(port, "/brand/logo.svg");
+    let wasm_st = curl_status_ctype(port, &format!("/{wasm}"));
+    let manifest = curl_body_p(port, "/sky-precompress.json");
+    let code_port_bound = std::net::TcpStream::connect(("127.0.0.1", code_port)).is_ok();
+    let all = logs();
+    drop(child);
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(
+        all.contains(&format!(":{port}")),
+        "the backend listens on the operator's PORT:\n{all}"
+    );
+    assert!(
+        !code_port_bound,
+        "the code's `port` must not be bound when PORT is set:\n{all}"
+    );
+    let (code, ctype) = page.expect("GET /");
+    assert!(
+        code == 200 && ctype.starts_with("text/html"),
+        "GET /: {code} {ctype}"
+    );
+    let (code, ctype) = brand.expect("GET /brand/logo.svg");
+    assert!(
+        code == 200 && ctype.starts_with("image/svg+xml"),
+        "GET /brand/logo.svg: {code} {ctype}"
+    );
+    assert_eq!(
+        brand_body.as_deref(),
+        Some(logo),
+        "the committed brand file"
+    );
+    let (code, ctype) = wasm_st.expect("GET the wasm");
+    assert!(
+        code == 200 && ctype == "application/wasm",
+        "GET /{wasm}: {code} {ctype}"
+    );
+    assert!(
+        !manifest.unwrap_or_default().contains("sha256"),
+        "the build's precompress manifest is not served"
+    );
+}
+
 fn readset_noneleaf_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-readset-noneleaf")
 }
 
-/// The block of a generated `type alias <name> =` up to the next blank line.
-fn alias_block<'a>(shared: &'a str, name: &str) -> &'a str {
-    let Some(start) = shared.find(&format!("type alias {name} =")) else {
-        return "";
-    };
-    let block = &shared[start..];
-    let end = block.find("\n\n").unwrap_or(block.len());
-    &block[..end]
-}
-
-/// The field names of a generated record alias block (`{ a : T, b : U }`).
-fn alias_fields(block: &str) -> Vec<String> {
-    block
+/// The field names in the field lines [`wire_record_fields`] returns
+/// (`{ a : T`, `, b : U`).
+fn wire_fields(lines: &str) -> Vec<String> {
+    lines
         .lines()
-        .skip(1)
         .filter_map(|l| {
             let l = l.trim().trim_start_matches(['{', ',']).trim();
             l.split_once(" :").map(|(n, _)| n.trim().to_string())
@@ -10017,10 +11210,11 @@ fn readset_through_derived_locals_and_none_leaf_sends_no_rpc() {
         ("DestructuredReq", "flag"),
         ("CaseOfReq", "flag"),
     ] {
-        let block = alias_block(&shared, req);
-        assert!(!block.is_empty(), "{req} must exist:\n{shared}");
+        // One wire record per shape: `req` may be a one-line alias of the
+        // record that owns its shape, or embed the whole model.
+        let block = wire_record_fields(&shared, req);
         assert!(
-            alias_fields(block).iter().any(|f| f == field),
+            wire_fields(&block).iter().any(|f| f == field),
             "{req} must carry `{field}`: the branch reads it through a model-derived \
              local, and without it the backend rebuilds it from `init ()`:\n{block}"
         );
@@ -10040,7 +11234,7 @@ fn readset_through_derived_locals_and_none_leaf_sends_no_rpc() {
     // "No task ran" is its own answer: an empty `result` list, which the
     // client maps to `( model, Cmd.none )`.
     for resp in ["GatedResp", "GuardedResp", "ByModeResp", "CaseOfResp"] {
-        let block = alias_block(&shared, resp);
+        let block = wire_record_fields(&shared, resp);
         assert!(
             block.contains("result : List (Result Error String)"),
             "{resp} must answer `result : List (Result Error String)`:\n{block}"
@@ -10128,7 +11322,7 @@ fn readset_noneleaf_backend_takes_the_live_branch_and_sends_no_false_err() {
         ]
     };
     let post = |ctor: &str, m: &[(&'static str, String)]| -> String {
-        let fields = alias_fields(alias_block(&shared, &format!("{ctor}Req")));
+        let fields = wire_fields(&wire_record_fields(&shared, &format!("{ctor}Req")));
         let body = fields
             .iter()
             .map(|f| {
@@ -10314,7 +11508,7 @@ fn arm_rpc_kind(arm: &str) -> &'static str {
     }
 }
 
-/// Sky.Spa (v0.28.0): a server arm whose model write the client can compute
+/// Sky.Spa (v0.27.9): a server arm whose model write the client can compute
 /// runs ASYNC through `case` / `if` / `let` and helpers, not only as a direct
 /// `( model, cmd )` tuple. The client runs the arm as written, with each command
 /// half that needs the server replaced by the RPC (bound once, `spaRpc_`), and
@@ -10560,7 +11754,7 @@ fn async_app_fixture_dir() -> PathBuf {
 /// A `Std.App` app whose `update` sits in a sibling module laid out with
 /// two-space indentation: `Pick` (a helper) and `Toggle` (a `case`) run async
 /// under `--target web:app`, and both trees build. The client arms, written at
-/// column 8 in the generated `update`, move right as a block (before v0.28.0
+/// column 8 in the generated `update`, move right as a block (before v0.27.9
 /// their bodies stayed at column 6 and the generated `update` did not parse).
 #[test]
 #[cfg(unix)]

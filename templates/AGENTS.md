@@ -241,8 +241,10 @@ both, since `query`/`migrate` overlap; qualified is the intended usage.
 `Codec.auto blank` derives the codec from a **zero-value witness** record:
 scalars → columns, `Maybe` → nullable, `List`/nested-record → JSON blob, nullary
 enums → readable names. **Data-carrying ADTs** need an explicit codec — build one
-with `Codec.object`/`Codec.field`/`Codec.buildObject` (records) or
-`Codec.taggedUnion`/`Codec.var0..3` (ADTs). Run `sky doc Std.Codec` for those.
+with `Codec.object`/`Codec.field`/`Codec.buildObject` (records; `Codec.inline
+.part partFields` writes an embedded record's fields flat, beside the outer
+record's own, with no nested object) or `Codec.taggedUnion`/`Codec.var0..3`
+(ADTs). Run `sky doc Std.Codec` for those.
 
 ### Schema migrations — committed files, no live DB needed
 
@@ -568,6 +570,20 @@ sky package --release --target mobile:ios   # signed store artefact → sky-out/
 sky package --release --target mobile:ios --upload testflight   # + validate and upload to TestFlight (SKY_ASC_KEY_ID/ISSUER_ID/KEY_PATH)
 ```
 
+**Build speed and CI caches.** Every `go build` Sky runs passes `-trimpath`, so
+a project's compiled packages are reused from any directory; a panic stack
+trace then names files by module path (`sky-app/main.go`). `--no-trimpath` (or
+`SKY_GO_TRIMPATH=0`) builds without it, and `sky run --profile` always does. In CI, cache
+`~/.sky/go-build` (Sky's Go build cache), `~/go/pkg/mod` (Go modules) and
+`~/.cache/sky/precompress` (the `.gz` / `.br` bundle results), keyed on the OS
+and a hash of `sky.toml` + `sky.lock`. `actions/setup-go`'s own cache saves
+`~/.cache/go-build`, which Sky does not use (`cache: false`). Never restore a
+cache an untrusted job (a fork's pull request) can write into a release or
+deploy job: a build cache is trusted as compiled code. Pin Go FFI modules to
+exact versions (`"v1.6.0"`, not `"latest"`) and a rebuild skips `go get`. On a
+small runner, `--go-jobs <n>` caps parallel compiles. Details: `docs/tooling/cli.md`
+("Caching builds in CI").
+
 **Sky.Spa entries auto-split.** Building the same `App.app` source to a client
 target (`--target web:app` · `desktop:mac` · `tablet:ipad` · `mobile:ios`)
 synthesises a Spa app and runs the Sky.Spa auto-split: `sky build src/Main.sky`
@@ -619,10 +635,17 @@ real unhandled one. A `Dict k v` field crosses the wire through `Codec.dict`.
 raw (~2.5 MB brotli), so it MUST be served compressed or the first paint drags on
 a small host. `sky build` does the compressing for you: it writes the hashed
 `main.<hash>.wasm` into `frontend/dist` and precompresses it (and `wasm_exec.js`)
-to `.gz` (always) and `.br` (brotli-11, when the `brotli` tool is on the build
-machine — `brew install brotli` / `apt install brotli`; the build warns once and
-falls back to gzip otherwise). The `.br`/`.gz` sit in `dist` UNUSED until your
-static host serves them, so configure content-negotiation at the edge:
+to `.gz` (gzip -9) and `.br` (brotli quality 11, written by `sky` itself; no
+`brotli` tool needed). For a quicker edit-rebuild loop, `sky build
+--precompress=fast` (brotli 9: seconds instead of tens of seconds, ~18% larger)
+or `--precompress=off` (none, and it removes an earlier build's; also
+`SKY_PRECOMPRESS=fast|off`); deploy a `max` (default) build. On a machine short
+of memory `max` warns and writes the `fast` files instead. The Sky backend serves them itself: a request
+that accepts `br` (else `gzip`) gets the `.br` (else `.gz`) file next to the
+asset when the build's `dist/sky-precompress.json` lists it and the files still
+match it (a Range request ranges over that file); anything else, including a
+`.gz` you committed in your own static dir, gets the raw file, gzipped on the
+fly. A separate static host in front must be told to use them:
 
 - **Caddy** (what the reference deploys use): `file_server { precompressed br gzip }`
   on the `*.wasm` + `wasm_exec.js` routes — Caddy's own `encode` has no brotli, so
@@ -782,7 +805,7 @@ sign-in) if you run more than one replica. Key per-session data by
 - **WebSocket from a Task, Live inside a Task program**: outside a TEA loop read a socket with `WebSocket.receive` / `receiveWithin ms` / `forEachMessage` (one reader per socket: a Sub or a Task, not both). A server that needs the frame type uses `Ws.withOnFrame` (`Text` / `Binary`). A `web:app` client holds its own socket over the browser WebSocket API (`WebSocket.connect "/ws"` is same-origin; serve it with `App.api "GET /ws"` and `Ws.upgrade`), and runs every Msg once, in arrival order, with several server RPCs in flight together. A server arm whose model write reads no server data runs async (the client makes the write at once, also through `case` / `if` / `let` and top-level helpers called with all their arguments), and its `Cmd.none` branch sends no request and dispatches nothing, as on Sky.Live; an arm whose write needs server data holds later Msgs until it answers, and the build's `holds later Msgs` note names it and the change that makes it async. To run a Sky.Live UI next to other work, `App.withEmbedded` the app and `Task.spawn (App.run app)`: no signal handler, no process exit, a failure to start is its Task's `Err`. To stop it again, `App.serve app` returns an `App.Running` once listening (`App.address` gives `host:port`, port `0` picks a free one) and `App.stop` stops it gracefully. Each served app has its own session cookie (`sky_sid_<name>`): name it with `App.withName "<name>"` (port 0 with a durable store needs the name).
 - **No cookies** (a native shell or web view that drops `Set-Cookie`): `App.withSessionTransport HeaderToken` carries the Sky.Live session in the `X-Sky-Session` header (the header is the CSRF defence; the server stores only a hash of the token). Sky.Live only; a full page reload starts a new session.
 - **Dev Host guard + WebSocket origins**: outside production a loopback server refuses a `Host` that is not `localhost` / `*.localhost` / a loopback IP (anti DNS rebinding); a dev proxy name, a Codespaces URL or a LAN name needs `SKY_ALLOWED_HOSTS` (comma list, `*.app.github.dev` wildcards) or `SKY_PUBLIC_URL`. In production a loopback bind is not access control: put the proxy in front of it. A desktop window mounts no console unless `SKY_CONSOLE_AUTH` names a mode. A `Sky.Http.Server.WebSocket` upgrade needs `Ws.withOriginPatterns [...]` in production (403 without it); outside production only same-host, loopback and `SKY_ALLOWED_HOSTS` origins pass.
-- **Sky.Live resilience (automatic)**: an explicitly-configured `store` (postgres/sqlite/redis) that can't connect at boot **fails loud in production** (the app refuses to start) instead of silently using memory — so make sure `DATABASE_URL` is reachable, or set `SKY_LIVE_STORE=memory` to opt in to in-memory sessions. `/_sky/readyz` returns 503 when the store/DB is down. Keep `view` a **pure** function of the model (no `Time.now`/`Random` in `view`); enable `SKY_LIVE_VIEW_DETERMINISM_CHECK=1` in dev to catch violations.
+- **Sky.Live resilience (automatic)**: an explicitly-configured `store` (postgres/sqlite/redis) that can't connect at boot **fails loud in production** (the app refuses to start) instead of silently using memory — so make sure `DATABASE_URL` is reachable, or set `SKY_LIVE_STORE=memory` to opt in to in-memory sessions. `/_sky/readyz` returns 503 when the store/DB is down. Point health checks at `/_sky/healthz` or `/_sky/readyz`, never at a path your app does not declare: the `App.withNotFound` page is sent with HTTP 404, so a probe on `/healthz` fails unless the app declares it. Keep `view` a **pure** function of the model (no `Time.now`/`Random` in `view`); enable `SKY_LIVE_VIEW_DETERMINISM_CHECK=1` in dev to catch violations.
 
 When a signature or module is unclear, run `sky doc <Module>` — it is complete
 and current. This file is not.

@@ -55,6 +55,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"sky-app/rt/periodic"
 )
 
 // Consumer modes (procHandle.owner).
@@ -100,6 +102,18 @@ type procHandle struct {
 	cmd *exec.Cmd
 	pid int
 	pty *os.File // PTY master, nil without a PTY
+	// ptySlave is the parent's copy of the PTY slave, held until the child
+	// has exited and the master has read every byte the child queued
+	// (releasePtySlave). Closing it right after Start made the child's exit
+	// the slave's last close, and on macOS that can discard output the
+	// master has not read yet: a short-lived child (`tty`) lost its whole
+	// output under load.
+	ptySlave     *os.File
+	ptySlaveOnce sync.Once
+	// ptyQueued reads how many bytes the child queued on the slave that the
+	// master has not read yet. Nil means ptyQueuedOutput; a test sets it to
+	// drive releasePtySlave without a real PTY.
+	ptyQueued func(*os.File) int
 
 	// stdinMu orders writes. stdinClosed is atomic, and shutdown closes the
 	// descriptor WITHOUT stdinMu: a write blocked on a full pipe holds the
@@ -335,7 +349,10 @@ func spawnProcess(s procSpec) (*procHandle, any) {
 			return nil, ErrUnavailable("Process.spawn: " + err.Error())
 		}
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
-		childSide = []*os.File{slave}
+		// Not in childSide: the parent keeps the slave until the child's
+		// output is read (ptySlave), so the child's exit is never its last
+		// close.
+		h.ptySlave = slave
 		h.pty = master
 		h.stdin = master
 		sources[procStreamStdout] = master
@@ -365,6 +382,9 @@ func spawnProcess(s procSpec) (*procHandle, any) {
 	if err := cmd.Start(); err != nil {
 		closeAll(childSide)
 		closeAll(sources[:])
+		if h.ptySlave != nil {
+			h.ptySlave.Close()
+		}
 		if h.stdin != nil && !s.pty {
 			h.stdin.Close()
 		}
@@ -410,6 +430,9 @@ func spawnProcess(s procSpec) (*procHandle, any) {
 		h.mu.Unlock()
 		close(h.exited)
 		h.wakeRings()
+		// The child is gone: once the master has read what it queued,
+		// close the parent's slave so the master's read reaches EOF.
+		h.releasePtySlave()
 		select {
 		case <-pumpsDone:
 		case <-time.After(procExitGrace):
@@ -435,6 +458,53 @@ func spawnProcess(s procSpec) (*procHandle, any) {
 		sess.addOwned(h.ownedKey(), func() { h.shutdown() })
 	}
 	return h, nil
+}
+
+// releasePtySlave closes the parent's PTY slave once the master has read
+// every byte the exited child queued (ptyQueuedOutput), or after
+// procExitGrace at the latest, so a reader that never comes cannot hold the
+// exit. The slave's last close then reaches an empty queue: nothing is
+// discarded, and the master's read returns EOF (or EIO). A grandchild that
+// still holds the slave keeps the master open, as before.
+//
+// The wait runs on the reaper goroutine, which nobody joins, so each poll is
+// one periodic.Guard cycle: a panic in a poll is recovered and reported, and
+// it ends the wait (the queue cannot be read, so there is nothing left to
+// wait for). The deferred close runs on every path, so the slave is never
+// leaked and the master always reaches EOF.
+func (h *procHandle) releasePtySlave() {
+	if h.ptySlave == nil {
+		return
+	}
+	defer h.closePtySlave()
+	probe := h.ptyQueued
+	if probe == nil {
+		probe = ptyQueuedOutput
+	}
+	deadline := time.Now().Add(procExitGrace)
+	for time.Now().Before(deadline) {
+		queued := 0
+		periodic.Guard("process.pty-drain", periodicReport, func() error {
+			queued = probe(h.ptySlave)
+			return nil
+		})
+		if queued <= 0 {
+			return
+		}
+		select {
+		case <-h.closedCh:
+			return
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
+// closePtySlave closes the parent's PTY slave once. Idempotent.
+func (h *procHandle) closePtySlave() {
+	if h.ptySlave == nil {
+		return
+	}
+	h.ptySlaveOnce.Do(func() { h.ptySlave.Close() })
 }
 
 func (h *procHandle) ownedKey() string { return fmt.Sprintf("process:%d", h.id) }
@@ -490,6 +560,7 @@ func (h *procHandle) shutdown() {
 		for _, c := range h.readers {
 			c.Close()
 		}
+		h.closePtySlave()
 		if h.pty != nil {
 			h.pty.Close()
 		}

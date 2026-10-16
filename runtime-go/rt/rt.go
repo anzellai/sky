@@ -413,6 +413,22 @@ func ResultCoerce[E any, A any](src any) SkyResult[E, A] {
 		return Err[E, A](r.ErrValue)
 	}
 	// Generic fallback via reflect: any SkyResult[X, Y] shape.
+	if tag, okField, errField, found := reflectResultFields(src); found {
+		if tag == 0 {
+			return Ok[E, A](coerceInner[A](okField.Interface()))
+		}
+		return Err[E, A](coerceInner[E](errField.Interface()))
+	}
+	// Non-SkyResult source: treat as a bare Ok value.
+	return Ok[E, A](coerceInner[A](src))
+}
+
+// reflectResultFields reads the Tag / OkValue / ErrValue fields of any
+// SkyResult[X, Y] by reflect; `found` is false for any other value. It is the
+// reflect fallback of ResultCoerce, kept out of the generic body so that it is
+// compiled once here and not once per instantiation in the app's package (see
+// coerceInner).
+func reflectResultFields(src any) (tag int64, okField, errField reflect.Value, found bool) {
 	rv := reflect.ValueOf(src)
 	if rv.Kind() == reflect.Struct {
 		tagField := rv.FieldByName("Tag")
@@ -420,14 +436,10 @@ func ResultCoerce[E any, A any](src any) SkyResult[E, A] {
 		errField := rv.FieldByName("ErrValue")
 		if tagField.IsValid() && okField.IsValid() && errField.IsValid() &&
 			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
-			if tagField.Int() == 0 {
-				return Ok[E, A](coerceInner[A](okField.Interface()))
-			}
-			return Err[E, A](coerceInner[E](errField.Interface()))
+			return tagField.Int(), okField, errField, true
 		}
 	}
-	// Non-SkyResult source: treat as a bare Ok value.
-	return Ok[E, A](coerceInner[A](src))
+	return 0, reflect.Value{}, reflect.Value{}, false
 }
 
 // ResultCoerceOk reconstructs a SkyResult[E, A] from an any-erased source,
@@ -469,23 +481,42 @@ func MaybeCoerce[A any](src any) SkyMaybe[A] {
 	if m, ok := src.(SkyMaybe[A]); ok {
 		return m
 	}
+	if tag, justField, found := reflectMaybeFields(src); found {
+		if tag == 0 {
+			return Just[A](coerceInner[A](justField.Interface()))
+		}
+		return Nothing[A]()
+	}
+	return Nothing[A]()
+}
+
+// reflectMaybeFields reads the Tag / JustValue fields of any SkyMaybe[X] by
+// reflect; `found` is false for any other value. MaybeCoerce's reflect
+// fallback, compiled once here (see reflectResultFields).
+func reflectMaybeFields(src any) (tag int64, justField reflect.Value, found bool) {
 	rv := reflect.ValueOf(src)
 	if rv.Kind() == reflect.Struct {
 		tagField := rv.FieldByName("Tag")
 		justField := rv.FieldByName("JustValue")
 		if tagField.IsValid() && justField.IsValid() &&
 			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
-			if tagField.Int() == 0 {
-				return Just[A](coerceInner[A](justField.Interface()))
-			}
-			return Nothing[A]()
+			return tagField.Int(), justField, true
 		}
 	}
-	return Nothing[A]()
+	return 0, reflect.Value{}, false
 }
 
 // coerceInner type-asserts `v` to T, with a `T`-typed zero fallback
 // when the value is nil (e.g. `Nothing`'s zero-value JustValue field).
+//
+// Only the two assertions are generic. Everything past them is the
+// non-generic coerceInnerSlow, compiled ONCE in this package. Go compiles a
+// generic function once per distinct type shape, in the package that uses it,
+// and every Sky record alias is its own shape (its field names and `sky:` tags
+// are part of the struct type). The reflect fallback used to be part of this
+// body, so a Sky.Spa client with 400 record types compiled it 400 times in its
+// own package: 3.9 s of the 10.8 s the wasm frontend spent in SSA at 200 Model
+// fields (docs/rust-rewrite/08-go-codegen.md §3, "Generic runtime helpers").
 func coerceInner[T any](v any) T {
 	if v == nil {
 		var zero T
@@ -494,9 +525,19 @@ func coerceInner[T any](v any) T {
 	if cast, ok := v.(T); ok {
 		return cast
 	}
-	var zeroT T
-	if tv, ok := any(zeroT).(skyTaskValue); ok {
-		return tv.skyTaskWith(taskNodeFor(v)).(T)
+	var zero T
+	return coerceInnerSlow(v, any(zero)).(T)
+}
+
+// coerceInnerSlow is coerceInner past its fast path. `z` is the target's zero
+// value boxed as `any` (`any(zero T)`), so `reflect.TypeOf(z)` is exactly the
+// `reflect.TypeOf(zero)` the generic body read (nil for an interface target)
+// and `z.(skyTaskValue)` is exactly `any(zero).(skyTaskValue)`. It returns the
+// narrowed value boxed; the caller's `.(T)` is the assertion the generic body
+// made at each return, so a mismatch panics with the same TypeAssertionError.
+func coerceInnerSlow(v any, z any) any {
+	if tv, ok := z.(skyTaskValue); ok {
+		return tv.skyTaskWith(taskNodeFor(v))
 	}
 	// Belt-and-suspenders (conformance finding C1): a bare string can
 	// never soundly narrow to an ADT. This arises when a decode path
@@ -509,9 +550,10 @@ func coerceInner[T any](v any) T {
 	// never reach here; this only catches anomalous raw-string→ADT
 	// coercions so a decode path can never panic the runtime.
 	if s, ok := v.(string); ok {
-		var zero T
-		if zt := reflect.TypeOf(zero); zt != nil && zt == reflect.TypeOf(SkyADT{}) {
-			if e, ok := makeError(10, "Unexpected", s).(T); ok {
+		if zt := reflect.TypeOf(z); zt != nil && zt == reflect.TypeOf(SkyADT{}) {
+			// T is exactly SkyADT here, so `.(T)` holds iff the dynamic
+			// type is SkyADT.
+			if e := makeError(10, "Unexpected", s); reflect.TypeOf(e) == zt {
 				return e
 			}
 		}
@@ -528,8 +570,7 @@ func coerceInner[T any](v any) T {
 		tagField := rv.FieldByName("Tag")
 		if tagField.IsValid() &&
 			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
-			var zero T
-			zt := reflect.TypeOf(zero)
+			zt := reflect.TypeOf(z)
 			if zt != nil && zt.Kind() == reflect.Struct {
 				// SkyMaybe[T]: fields Tag + JustValue
 				justField := rv.FieldByName("JustValue")
@@ -560,7 +601,7 @@ func coerceInner[T any](v any) T {
 							}
 						}
 					}
-					return out.Interface().(T)
+					return out.Interface()
 				}
 				// SkyResult[E, A]: fields Tag + OkValue + ErrValue
 				okField := rv.FieldByName("OkValue")
@@ -611,15 +652,14 @@ func coerceInner[T any](v any) T {
 							}
 						}
 					}
-					return out.Interface().(T)
+					return out.Interface()
 				}
 			}
 		}
 	}
 	// Slice convert: []any source, []X target — rebuild slice element-wise.
 	if rv.Kind() == reflect.Slice {
-		var zero T
-		zt := reflect.TypeOf(zero)
+		zt := reflect.TypeOf(z)
 		if zt != nil && zt.Kind() == reflect.Slice {
 			elemT := zt.Elem()
 			n := rv.Len()
@@ -635,16 +675,15 @@ func coerceInner[T any](v any) T {
 					out.Index(i).Set(narrowed)
 				}
 			}
-			return out.Interface().(T)
+			return out.Interface()
 		}
 	}
 	// Map convert: map[K]any source, map[K]X target.
 	if rv.Kind() == reflect.Map {
-		var zero T
-		zt := reflect.TypeOf(zero)
+		zt := reflect.TypeOf(z)
 		if zt != nil && zt.Kind() == reflect.Map {
 			out := coerceMapValue(rv, zt)
-			return out.Interface().(T)
+			return out.Interface()
 		}
 		// v0.15.47 — map[string]any source, record-struct target.
 		// New kernels (Csv_parse, Cache_stats) return map[string]any
@@ -655,7 +694,7 @@ func coerceInner[T any](v any) T {
 			rv.Type().Key().Kind() == reflect.String {
 			narrowed := narrowMapToStruct(rv, zt)
 			if narrowed.IsValid() {
-				return narrowed.Interface().(T)
+				return narrowed.Interface()
 			}
 		}
 	}
@@ -668,11 +707,9 @@ func coerceInner[T any](v any) T {
 	// int] boundary because the inner func(any) any can't be type-
 	// asserted to func(int) int.
 	if rv.Kind() == reflect.Func {
-		var zero T
-		zt := reflect.TypeOf(zero)
+		zt := reflect.TypeOf(z)
 		if zt != nil && zt.Kind() == reflect.Func {
-			adapted := makeFuncAdapter[T](rv, zt)
-			return adapted.(T)
+			return adaptFuncValue(rv, zt).Interface()
 		}
 	}
 	// Numeric convert: a kernel can hand back int64 where typed
@@ -680,10 +717,9 @@ func coerceInner[T any](v any) T {
 	// same value, different Go width. reflect.Convert bridges them
 	// rather than panicking on the strict assertion below.
 	if isNumericKind(rv.Kind()) {
-		var zero T
-		zt := reflect.TypeOf(zero)
+		zt := reflect.TypeOf(z)
 		if zt != nil && isNumericKind(zt.Kind()) {
-			return rv.Convert(zt).Interface().(T)
+			return rv.Convert(zt).Interface()
 		}
 	}
 	// v0.17 Cause H Step 4 — typed-tuple narrowing for coerceInner.
@@ -698,8 +734,7 @@ func coerceInner[T any](v any) T {
 	// MUST come BEFORE narrowStructToStruct (which skips T2/T3 by
 	// design — it's meant for record aliases).
 	if rv.Kind() == reflect.Struct {
-		var zero T
-		zt := reflect.TypeOf(zero)
+		zt := reflect.TypeOf(z)
 		if zt != nil && zt.Kind() == reflect.Struct {
 			ztStr := zt.String()
 			// Narrow every fixed-arity typed tuple `rt.T2`..`rt.T9`: walk V0..Vn
@@ -718,7 +753,7 @@ func coerceInner[T any](v any) T {
 						out.Field(i).Set(narrowed)
 					}
 				}
-				return out.Interface().(T)
+				return out.Interface()
 			}
 		}
 	}
@@ -730,11 +765,10 @@ func coerceInner[T any](v any) T {
 	// guards live in narrowStructToStruct (skip Tag/V0-shaped ADT
 	// and tuple containers).
 	if rv.Kind() == reflect.Struct {
-		var zero T
-		zt := reflect.TypeOf(zero)
+		zt := reflect.TypeOf(z)
 		if zt != nil && zt.Kind() == reflect.Struct {
 			if narrowed, ok := narrowStructToStruct(rv, zt); ok {
-				return narrowed.Interface().(T)
+				return narrowed.Interface()
 			}
 		}
 	}
@@ -747,18 +781,18 @@ func coerceInner[T any](v any) T {
 	// typesWithDeps and sanitiseTypedElem should prevent wrong-
 	// typed routes from being emitted in the first place; if a
 	// panic fires here, that's a soundness gap to investigate.
-	if cast, ok := v.(T); ok {
-		return cast
-	}
+	//
+	// (The generic coerceInner made that assertion before calling here, and
+	// `v` is never reassigned, so it cannot hold here.)
+	//
 	// Construct a descriptive panic so the bug is easy to track
 	// down. Includes both source kind (rv) and target type (zt)
 	// when reflect can determine them.
-	var zero T
 	srcDesc := "<nil>"
 	if v != nil {
 		srcDesc = reflect.TypeOf(v).String()
 	}
-	targetDesc := reflect.TypeOf(zero).String()
+	targetDesc := reflect.TypeOf(z).String()
 	if targetDesc == "" {
 		targetDesc = "<unknown>"
 	}
@@ -6239,11 +6273,63 @@ func Coerce[T any](v any) T {
 	if t, ok := v.(T); ok {
 		return t
 	}
+	var zero T
+	r, how := coerceHead(v, any(zero))
+	switch how {
+	case coerceDone:
+		return r.(T)
+	case coerceZero:
+		return zero
+	case coerceUnwrapped:
+		if t, ok := r.(T); ok {
+			return t
+		}
+		v = r
+	}
+	r, how = coerceTail(v, any(zero), reflect.TypeOf((*T)(nil)).Elem())
+	if how == coerceZero {
+		return zero
+	}
+	return r.(T)
+}
+
+// coerceStep says what the generic Coerce shell does with a value its
+// non-generic steps (coerceHead, coerceTail) hand back.
+type coerceStep int
+
+const (
+	// coerceDone: the value is the result; the shell asserts it to T.
+	coerceDone coerceStep = iota
+	// coerceZero: the result is T's zero value.
+	coerceZero
+	// coerceUnwrapped: the value is the source with a Result/Maybe wrapper
+	// taken off; the shell returns it if it holds T, else continues with it.
+	coerceUnwrapped
+	// coerceContinue: no step applied; continue with the same value.
+	coerceContinue
+)
+
+// coerceHead is Coerce from its fast path up to the nil check, and coerceTail
+// is the rest. They are the generic body that Coerce used to be, split where
+// the body made a comma-ok assertion to T (which only the generic shell can
+// make). `z` is `any(zero T)`, so `reflect.TypeOf(z)` and `z.(I)` are exactly
+// the `reflect.TypeOf(zero)` / `any(zero).(I)` the generic body read, and
+// `exact` is `reflect.TypeOf((*T)(nil)).Elem()`. Every value returned with
+// coerceDone is what the generic body asserted to T at that return, so a
+// mismatch panics in the shell with the same TypeAssertionError, and the
+// final panic message is unchanged (`%T` of `z` is `%T` of `zero`).
+//
+// Why split: Go compiles a generic function once per type shape, in the
+// package that instantiates it, and every Sky record alias is its own shape.
+// The reflect fallback inside this body was compiled once per record type in
+// the APP's package: in a Sky.Spa client with 400 record types, rt.Coerce,
+// rt.coerceInner and rt.makeFuncAdapter instances took 8.3 s of the 10.8 s the
+// wasm frontend spent in SSA. Non-generic, it compiles once, here.
+func coerceHead(v any, z any) (any, coerceStep) {
 	// A Task target: the same conversion TaskCoerceT makes — a SkyTask of
 	// another instantiation keeps its node (free), anything else is a leaf.
-	var taskZero T
-	if tv, ok := any(taskZero).(skyTaskValue); ok {
-		return tv.skyTaskWith(taskNodeFor(v)).(T)
+	if tv, ok := z.(skyTaskValue); ok {
+		return tv.skyTaskWith(taskNodeFor(v)), coerceDone
 	}
 	// Unit (`struct{}`) is the zero-information type — coercing ANY value to it
 	// is trivially valid, there is nothing to narrow. In particular a
@@ -6251,9 +6337,8 @@ func Coerce[T any](v any) T {
 	// ResultCoerceOk to `Coerce[struct{}](okPayload)`, and that payload is `nil`
 	// (Unit carries no value) — so without this the Unit case would panic on
 	// well-typed Sky code. Return the unit value.
-	var unitZero T
-	if _, isUnit := any(unitZero).(struct{}); isUnit {
-		return unitZero
+	if _, isUnit := z.(struct{}); isUnit {
+		return nil, coerceZero
 	}
 	// Fix A for docs/parametric-record-aliases-bugs.md Surface 2:
 	// function-targeted Coerce must always go via makeFuncAdapter
@@ -6266,10 +6351,9 @@ func Coerce[T any](v any) T {
 	if v != nil {
 		rv0 := reflect.ValueOf(v)
 		if rv0.IsValid() && rv0.Kind() == reflect.Func {
-			var zero T
-			tt := reflect.TypeOf(zero)
+			tt := reflect.TypeOf(z)
 			if tt != nil && tt.Kind() == reflect.Func {
-				return makeFuncAdapter[T](rv0, tt).(T)
+				return adaptFuncValue(rv0, tt).Interface(), coerceDone
 			}
 		}
 	}
@@ -6285,8 +6369,7 @@ func Coerce[T any](v any) T {
 		if rvSrc := reflect.ValueOf(v); rvSrc.IsValid() && rvSrc.Kind() == reflect.Struct {
 			if rvSrc.FieldByName("Tag").IsValid() && rvSrc.FieldByName("OkValue").IsValid() ||
 				rvSrc.FieldByName("Tag").IsValid() && rvSrc.FieldByName("JustValue").IsValid() {
-				var zeroT T
-				targetTy := reflect.TypeOf(zeroT)
+				targetTy := reflect.TypeOf(z)
 				isResultTarget := false
 				if targetTy != nil {
 					tyStr := targetTy.String()
@@ -6294,35 +6377,36 @@ func Coerce[T any](v any) T {
 						strings.HasPrefix(tyStr, "rt.SkyMaybe[")
 				}
 				if !isResultTarget {
-					u := unwrapAny(v)
-					if t, ok := u.(T); ok {
-						return t
-					}
-					v = u
+					// The shell returns `u` if it holds T, else continues
+					// with `v = u`.
+					return unwrapAny(v), coerceUnwrapped
 				}
 			}
 		}
 	}
-	var zero T
+	return v, coerceContinue
+}
+
+func coerceTail(v any, z any, exact reflect.Type) (any, coerceStep) {
 	// nil passes through for pointer/interface/slice/map/func targets.
 	// Sky's `js "nil"` produces Go nil; typed FFI wrappers may need to
 	// pass nil as a *Config or similar pointer arg.
 	if v == nil {
-		targetTy := reflect.TypeOf((*T)(nil)).Elem()
+		targetTy := exact
 		switch targetTy.Kind() {
 		case reflect.Ptr, reflect.Interface, reflect.Slice,
 			reflect.Map, reflect.Func, reflect.Chan:
-			return zero
+			return nil, coerceZero
 		}
 	}
 	rv := reflect.ValueOf(v)
-	targetTy := reflect.TypeOf(zero)
+	targetTy := reflect.TypeOf(z)
 
 	if rv.IsValid() && targetTy != nil {
 		// Numeric-widening (safe subset).
 		if rv.Type().ConvertibleTo(targetTy) {
 			if safeReflectConvert(rv.Kind(), targetTy.Kind()) {
-				return rv.Convert(targetTy).Interface().(T)
+				return rv.Convert(targetTy).Interface(), coerceDone
 			}
 		}
 		// Slice coercion: []any → []ConcreteT. Sky lists are
@@ -6341,7 +6425,7 @@ func Coerce[T any](v any) T {
 		// FFI that takes a Go callback (mux.HandleFunc, http.Handle,
 		// fyne callbacks, etc.) panics at the typed-arg boundary.
 		if rv.Kind() == reflect.Func && targetTy.Kind() == reflect.Func {
-			return makeFuncAdapter[T](rv, targetTy).(T)
+			return adaptFuncValue(rv, targetTy).Interface(), coerceDone
 		}
 		if rv.Kind() == reflect.Slice && targetTy.Kind() == reflect.Slice {
 			n := rv.Len()
@@ -6374,7 +6458,7 @@ func Coerce[T any](v any) T {
 					"rt.Coerce: slice element [%d]: cannot convert %T to %v",
 					i, elem, elemTy))
 			}
-			return out.Interface().(T)
+			return out.Interface(), coerceDone
 		}
 		// Map coercion: map[string]any → map[string]V. Walk values
 		// element-by-element, converting each via the same rules as
@@ -6406,7 +6490,7 @@ func Coerce[T any](v any) T {
 					"rt.Coerce: map value [%v]: cannot convert %T to %v",
 					k.Interface(), elem, valTy))
 			}
-			return out.Interface().(T)
+			return out.Interface(), coerceDone
 		}
 		// Pointer ↔ value auto-adapt. FFI constructors return `*T` via
 		// `new(pkg.T)` (builder chain-friendly), but consuming APIs may
@@ -6420,16 +6504,16 @@ func Coerce[T any](v any) T {
 		if rv.Kind() == reflect.Ptr && !rv.IsNil() {
 			elem := rv.Elem()
 			if elem.Type().AssignableTo(targetTy) {
-				return elem.Interface().(T)
+				return elem.Interface(), coerceDone
 			}
 			if elem.Type().ConvertibleTo(targetTy) && safeReflectConvert(elem.Kind(), targetTy.Kind()) {
-				return elem.Convert(targetTy).Interface().(T)
+				return elem.Convert(targetTy).Interface(), coerceDone
 			}
 		}
 		if targetTy.Kind() == reflect.Ptr && rv.Type().AssignableTo(targetTy.Elem()) {
 			p := reflect.New(targetTy.Elem())
 			p.Elem().Set(rv)
-			return p.Interface().(T)
+			return p.Interface(), coerceDone
 		}
 		// v0.13.x #158 — map→struct narrowing. Source: `map[string]any`
 		// (the runtime shape of Db.query rows, Firestore snapshots,
@@ -6442,7 +6526,7 @@ func Coerce[T any](v any) T {
 		// types (typed maps, typed slices) round-trip too.
 		if rv.Kind() == reflect.Map && targetTy.Kind() == reflect.Struct &&
 			rv.Type().Key().Kind() == reflect.String {
-			return narrowMapToStruct(rv, targetTy).Interface().(T)
+			return narrowMapToStruct(rv, targetTy).Interface(), coerceDone
 		}
 		// v0.16.3 #467 — struct→struct cross-shape narrowing for the
 		// user-facing Coerce[T] surface. Mirrors coerceInner's branch
@@ -6477,12 +6561,12 @@ func Coerce[T any](v any) T {
 						out.Field(i).Set(narrowed)
 					}
 				}
-				return out.Interface().(T)
+				return out.Interface(), coerceDone
 			}
 		}
 		if rv.Kind() == reflect.Struct && targetTy.Kind() == reflect.Struct {
 			if narrowed, ok := narrowStructToStruct(rv, targetTy); ok {
-				return narrowed.Interface().(T)
+				return narrowed.Interface(), coerceDone
 			}
 		}
 		// v0.16.3 #461 — SkySet → map[any]V narrowing. Sky's typed Go
@@ -6496,7 +6580,7 @@ func Coerce[T any](v any) T {
 		// build the typed map. Mirrors `asSkyResponse` for the
 		// rt.SkyResponse → typed-alias-struct case.
 		if narrowed, ok := skySetToMap(v, targetTy); ok {
-			return narrowed.Interface().(T)
+			return narrowed.Interface(), coerceDone
 		}
 	}
 	// REACHABLE-FROM-SKY in two shapes:
@@ -6508,7 +6592,7 @@ func Coerce[T any](v any) T {
 	//     HM checker never narrowed — that's a COMPILER-BUG-CONTRACT
 	//     (would file a soundness bug), also classified `CoerceFailure`
 	//     so the user sees the actionable "report this" hint.
-	panic(fmt.Sprintf("rt.Coerce: expected %T, got %T (%v)", zero, v, v))
+	panic(fmt.Sprintf("rt.Coerce: expected %T, got %T (%v)", z, v, v))
 }
 
 // CoerceFuncSlot is the reflect last-resort tail of codegen's func-slot

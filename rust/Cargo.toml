@@ -52,6 +52,10 @@ serde_json = "1"
 include_dir = "0.7"
 # sky-lsp — async LSP scaffolding (doc 10)
 tower-lsp = "0.20"
+# base — grow the stack on demand in the recursive expression walkers, so a
+# deep left-nested `|>` / binop spine is safe on any thread (an LSP worker
+# has 2 MiB). The same crate rustc uses for this (`ensure_sufficient_stack`).
+stacker = "0.1"
 
 [workspace.lints.clippy]
 all = "warn"

@@ -5,7 +5,8 @@
 //!
 //! Available memory is `free + inactive + speculative` pages on macOS
 //! (`vm_stat`), `MemAvailable` on Linux, capped by the cgroup's remaining limit
-//! when one is set. `None` when it cannot be read — callers treat that as "no
+//! when one is set, `free + inactive` pages on FreeBSD (`sysctl`), and
+//! `GlobalMemoryStatusEx`'s available physical memory on Windows. `None` when it cannot be read — callers treat that as "no
 //! room", because a slower build is recoverable and an out-of-memory one is not.
 
 use std::path::Path;
@@ -126,28 +127,138 @@ pub fn available_memory() -> Option<u64> {
             (h, c) => h.or(c),
         };
     }
+    if cfg!(target_os = "freebsd") {
+        let out = std::process::Command::new("sysctl")
+            .args([
+                "-n",
+                "hw.pagesize",
+                "vm.stats.vm.v_free_count",
+                "vm.stats.vm.v_inactive_count",
+            ])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        return parse_freebsd_sysctl(&String::from_utf8_lossy(&out.stdout));
+    }
+    windows_available_memory()
+}
+
+/// `sysctl -n hw.pagesize vm.stats.vm.v_free_count vm.stats.vm.v_inactive_count`
+/// output (one number per line) → `(free + inactive) * page size` bytes.
+pub fn parse_freebsd_sysctl(text: &str) -> Option<u64> {
+    let mut it = text.lines().map(|l| l.trim().parse::<u64>().ok());
+    let page = it.next()??;
+    let free = it.next()??;
+    let inactive = it.next()??;
+    free.checked_add(inactive)?.checked_mul(page)
+}
+
+/// Available physical memory (`GlobalMemoryStatusEx`'s `ullAvailPhys`).
+#[cfg(windows)]
+fn windows_available_memory() -> Option<u64> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    // SAFETY: an all-zero MEMORYSTATUSEX is a valid value of the plain C struct.
+    let mut m: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+    m.dwLength = u32::try_from(std::mem::size_of::<MEMORYSTATUSEX>()).ok()?;
+    // SAFETY: `m` is a live, correctly sized MEMORYSTATUSEX with `dwLength`
+    // set, as the API requires; it writes only into it.
+    let ok = unsafe { GlobalMemoryStatusEx(&mut m) };
+    (ok != 0 && m.ullAvailPhys > 0).then_some(m.ullAvailPhys)
+}
+
+#[cfg(not(windows))]
+fn windows_available_memory() -> Option<u64> {
     None
 }
 
-/// The largest max RSS among this process's waited-for children and their
-/// descendants, in bytes. After `go build` returns, that is the largest Go tool
-/// process it ran (`compile` / `link` — the `go` command itself is small).
+/// The outcome of one waited-for child: its exit status, and the largest
+/// resident set of that child or any descendant it waited for, in bytes.
+///
+/// Measured for THIS child only (`wait4`'s own resource usage), never with
+/// `getrusage(RUSAGE_CHILDREN)`: that is the maximum over every child the
+/// process has ever waited for, so a build that runs `go build` twice (the
+/// cgo retry, a Sky.Spa SSR backend's second build that compiles only its
+/// stamp package) would report the FIRST build's peak as the second one's.
+#[derive(Debug, Clone, Copy)]
+pub struct ChildExit {
+    pub status: std::process::ExitStatus,
+    /// `None` where the platform does not report it.
+    pub peak_rss: Option<u64>,
+}
+
+/// [`ChildExit`] if `child` has exited (reaping it), `None` while it runs.
+/// After `Some`, `child` must not be waited for or killed again: it is
+/// reaped, and its pid may belong to another process.
 #[cfg(unix)]
-pub fn children_peak_rss() -> Option<u64> {
-    use nix::sys::resource::{getrusage, UsageWho};
-    let max = getrusage(UsageWho::RUSAGE_CHILDREN).ok()?.max_rss();
-    let max = u64::try_from(max).ok().filter(|m| *m > 0)?;
-    // macOS reports bytes, Linux kilobytes.
-    Some(if cfg!(target_os = "macos") {
-        max
-    } else {
-        max * 1024
-    })
+pub fn try_wait_child(child: &mut std::process::Child) -> std::io::Result<Option<ChildExit>> {
+    wait4(child, libc::WNOHANG)
 }
 
+/// [`try_wait_child`], blocking until the child exits.
+#[cfg(unix)]
+pub fn wait_child(child: &mut std::process::Child) -> std::io::Result<ChildExit> {
+    wait4(child, 0)?.ok_or_else(|| std::io::Error::other("wait4 returned no child"))
+}
+
+#[cfg(unix)]
+fn wait4(
+    child: &mut std::process::Child,
+    options: libc::c_int,
+) -> std::io::Result<Option<ChildExit>> {
+    use std::os::unix::process::ExitStatusExt;
+    let pid = libc::pid_t::try_from(child.id()).map_err(std::io::Error::other)?;
+    loop {
+        let mut status: libc::c_int = 0;
+        // SAFETY: an all-zero `rusage` is a valid value of the plain C struct.
+        let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
+        // SAFETY: `wait4` writes only through the two pointers, which point at
+        // the live locals above; `pid` is this process's own unreaped child
+        // (std never reaps it behind our back: we never call its `wait`).
+        let r = unsafe { libc::wait4(pid, &mut status, options, &mut ru) };
+        if r == 0 {
+            return Ok(None);
+        }
+        if r < 0 {
+            let e = std::io::Error::last_os_error();
+            if e.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(e);
+        }
+        let max = u64::try_from(ru.ru_maxrss).ok().filter(|m| *m > 0);
+        // macOS reports bytes; Linux and the BSDs kilobytes.
+        let peak_rss = max.map(|m| {
+            if cfg!(target_os = "macos") {
+                m
+            } else {
+                m.saturating_mul(1024)
+            }
+        });
+        return Ok(Some(ChildExit {
+            status: std::process::ExitStatus::from_raw(status),
+            peak_rss,
+        }));
+    }
+}
+
+/// [`try_wait_child`] where the platform reports no child peak.
 #[cfg(not(unix))]
-pub fn children_peak_rss() -> Option<u64> {
-    None
+pub fn try_wait_child(child: &mut std::process::Child) -> std::io::Result<Option<ChildExit>> {
+    Ok(child.try_wait()?.map(|status| ChildExit {
+        status,
+        peak_rss: None,
+    }))
+}
+
+/// [`wait_child`] where the platform reports no child peak.
+#[cfg(not(unix))]
+pub fn wait_child(child: &mut std::process::Child) -> std::io::Result<ChildExit> {
+    Ok(ChildExit {
+        status: child.wait()?,
+        peak_rss: None,
+    })
 }
 
 #[cfg(test)]
@@ -177,6 +288,52 @@ mod tests {
         );
         assert_eq!(cgroup_headroom("max\n", "123\n"), None);
         assert_eq!(cgroup_headroom("9223372036854771712", "1"), None);
+    }
+
+    #[test]
+    fn freebsd_sysctl_counts_free_and_inactive_pages() {
+        assert_eq!(
+            parse_freebsd_sysctl("4096\n100000\n50000\n"),
+            Some(150_000 * 4096)
+        );
+        assert_eq!(parse_freebsd_sysctl("4096\n100000\n"), None);
+        assert_eq!(parse_freebsd_sysctl("x\n1\n2\n"), None);
+    }
+
+    /// Windows and FreeBSD read their available memory (`-p 1` otherwise,
+    /// for every build). Windows CI and FreeBSD have no runner here, so this
+    /// test runs where the code does.
+    #[test]
+    #[cfg(any(windows, target_os = "freebsd"))]
+    fn available_memory_is_known_on_windows_and_freebsd() {
+        assert!(available_memory().is_some_and(|b| b > 0));
+    }
+
+    /// One child's peak is that child's, not the largest of every child this
+    /// process waited for before it (`getrusage(RUSAGE_CHILDREN)`).
+    #[test]
+    #[cfg(unix)]
+    fn a_childs_peak_is_its_own() {
+        let run = |mb: u64| -> u64 {
+            // `dd` allocates (and fills) one buffer of `bs` bytes.
+            let mut c = std::process::Command::new("dd")
+                .args([
+                    "if=/dev/zero",
+                    "of=/dev/null",
+                    &format!("bs={}", mb << 20),
+                    "count=1",
+                ])
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let e = wait_child(&mut c).unwrap();
+            assert!(e.status.success());
+            e.peak_rss.unwrap()
+        };
+        let big = run(300);
+        let small = run(1);
+        assert!(big >= 300 << 20, "{big}");
+        assert!(small < 100 << 20, "the second child reported {small} bytes");
     }
 
     #[test]

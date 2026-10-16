@@ -46,3 +46,8 @@ func procOpenPTY(cols, rows int) (master, slave *os.File, err error) {
 	}
 	return master, slave, nil
 }
+
+// ptyQueuedOutput: Linux keeps the bytes the child wrote for the master after
+// the slave's last close (the master reads them, then EIO), so there is
+// nothing to wait for before the parent closes its slave.
+func ptyQueuedOutput(*os.File) int { return 0 }

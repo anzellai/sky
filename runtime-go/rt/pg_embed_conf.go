@@ -101,7 +101,9 @@ func detectRAMBytesFrom(read fileRead, darwin bool, sysctl func() (uint64, bool)
 
 // sysctlMemsize is the macOS source: there is no /proc, and no cgroup either.
 func sysctlMemsize() (uint64, bool) {
-	out, err := runCapture("sysctl", "-n", "hw.memsize")
+	// By absolute path first: with a stripped PATH a bare "sysctl" is not
+	// found (system_tool.go).
+	out, err := runCapture(systemTool("sysctl", sysctlPaths...), "-n", "hw.memsize")
 	if err != nil {
 		return 0, false
 	}

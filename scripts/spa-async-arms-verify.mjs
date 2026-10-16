@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // scripts/spa-async-arms-verify.mjs
 //
-// Browser e2e for Sky.Spa async arms (v0.28.0): a server arm whose own model
+// Browser e2e for Sky.Spa async arms (v0.27.9): a server arm whose own model
 // write the client can compute runs ASYNC through `case` / `if` / `let` and
 // helpers, so the page shows that write while the server call runs, as Sky.Live
-// does. Before v0.28.0 only a direct `( model, cmd )` tuple did; examples/72's
+// does. Before v0.27.9 only a direct `( model, cmd )` tuple did; a support desk's
 // `Select` froze the page for the whole model call.
 //
 // Drives rust/crates/sky/tests/fixtures/spa-async-arms, built for --target

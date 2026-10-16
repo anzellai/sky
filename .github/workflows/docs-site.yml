@@ -39,11 +39,14 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
+          # Restore the release-profile cache the nightly writes on main.
+          shared-key: sky-gates-linux
+          save-if: 'false'
       - name: Build sky
         working-directory: rust
         run: cargo build --release -p sky --locked
@@ -56,9 +59,12 @@ jobs:
         run: |
           source scripts/lib/cargo-target.sh
           SKY_BIN="$(cargo_bin_path "$PWD/rust" sky --release)" scripts/build-docs-site.sh _site
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
+          # v4+ drops dotfiles by default. build-docs-site.sh writes
+          # `_site/.nojekyll`, and v3 shipped it, so keep shipping it.
+          include-hidden-files: true
       - id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

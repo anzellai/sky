@@ -2,7 +2,7 @@
 
 Started 2026-10-11. Branch `feat/std-ai-lifecycle`. Design: `docs/design/std-ai-lifecycle.md`.
 Private context (cloud project, budget): `.claude/AUTONOMOUS_GOAL.private.md` (gitignored).
-The previous mandate (single v0.27.0 release) is complete: v0.27.0 to v0.27.8 shipped.
+The previous mandates are complete: the single v0.27.0 release (v0.27.0 to v0.27.8 shipped) and the build-speed mandate (shipped in v0.27.9).
 
 ## The user's goal, verbatim
 
@@ -15,6 +15,13 @@ The previous mandate (single v0.27.0 release) is complete: v0.27.0 to v0.27.8 sh
 > if you have questions you need answered from me, ask now, otherwise please proceed 100% e2e.
 >
 > when you stop, it's only when you're genuinely stuck, or e2e fully implemented, tested + ready for me to test
+
+## Shipping scope decisions (user, 2026-10-16)
+
+- SageMaker is not supported yet in v0.28.0. It stays a typed `InvalidSetting` refusal with a clear message, and it is planned for about a month later. The docs and the testing guide say "not supported yet" in plain words.
+- Device engine: llama.cpp on every target is the accepted default, because it is simple and just works. Experts must be able to configure or swap the engine: the builders expose the engine choice and its settings (model file, quantisation, context, threads or GPU layers, endpoint).
+- llama-server bundle: Sky should build its own. A pinned, hash-checked upstream download is acceptable for v0.28.0 only if building our own is too much for now. After the merge is green, assess the work to build our own llama-server bundles for linux x64/arm64, darwin arm64 and windows x64, reusing `ai-device-bundles.yml`. If the work is moderate, implement it (pinned source, checksums, licence scan, a workflows_parse pin) and switch the pins to our release. If it is large, report the estimate and keep the upstream pins.
+- GCP live run: the user authorised a live GCP and GPU run. The coordinator runs it after the merge is green, not the merge agent.
 
 ## The user's binding decisions
 

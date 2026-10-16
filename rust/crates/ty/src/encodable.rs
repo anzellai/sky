@@ -53,49 +53,52 @@ fn walk(
     db: &dyn hir::SkyDb,
     seen: &mut HashSet<String>,
 ) -> Option<Unencodable> {
-    let bad = |t: &Ty, reason: &str| {
-        Some(Unencodable {
-            offending: t.render(),
-            reason: reason.to_string(),
-        })
-    };
-    match t {
-        Ty::Fun(..) => bad(t, "a function"),
-        Ty::Var(_) | Ty::Unit | Ty::Error => None,
-        Ty::Tuple(xs) => xs.iter().find_map(|x| walk(x, world, db, seen)),
-        Ty::Record(fs, _) => fs.iter().find_map(|(_, x)| walk(x, world, db, seen)),
-        Ty::App(n, args) => {
-            let name = n.as_str();
-            match (name, args.len()) {
-                ("Int" | "Float" | "String" | "Char" | "Bool", 0) => return None,
-                ("List" | "Maybe" | "Set", 1) | ("Result" | "Dict", 2) => {
-                    return args.iter().find_map(|x| walk(x, world, db, seen));
-                }
-                _ => {}
-            }
-            if name.starts_with(crate::variance::WEAK_PREFIX) {
-                return None;
-            }
-            match classify(world, db, name) {
-                Nominal::Denied(kind) => bad(t, kind),
-                Nominal::Closures => bad(t, "its values hold functions"),
-                Nominal::Opaque { encodable: true } | Nominal::Unknown => None,
-                Nominal::Opaque { encodable: false } => {
-                    bad(t, "an opaque type the encoder cannot see inside")
-                }
-                Nominal::Union(ctors) => {
-                    if !seen.insert(t.render()) {
-                        return None;
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        let bad = |t: &Ty, reason: &str| {
+            Some(Unencodable {
+                offending: t.render(),
+                reason: reason.to_string(),
+            })
+        };
+        match t {
+            Ty::Fun(..) => bad(t, "a function"),
+            Ty::Var(_) | Ty::Unit | Ty::Error => None,
+            Ty::Tuple(xs) => xs.iter().find_map(|x| walk(x, world, db, seen)),
+            Ty::Record(fs, _) => fs.iter().find_map(|(_, x)| walk(x, world, db, seen)),
+            Ty::App(n, args) => {
+                let name = n.as_str();
+                match (name, args.len()) {
+                    ("Int" | "Float" | "String" | "Char" | "Bool", 0) => return None,
+                    ("List" | "Maybe" | "Set", 1) | ("Result" | "Dict", 2) => {
+                        return args.iter().find_map(|x| walk(x, world, db, seen));
                     }
-                    ctors.iter().find_map(|(_, s)| {
-                        payload(s, args)
-                            .into_iter()
-                            .find_map(|p| walk(&p, world, db, seen))
-                    })
+                    _ => {}
+                }
+                if name.starts_with(crate::variance::WEAK_PREFIX) {
+                    return None;
+                }
+                match classify(world, db, name) {
+                    Nominal::Denied(kind) => bad(t, kind),
+                    Nominal::Closures => bad(t, "its values hold functions"),
+                    Nominal::Opaque { encodable: true } | Nominal::Unknown => None,
+                    Nominal::Opaque { encodable: false } => {
+                        bad(t, "an opaque type the encoder cannot see inside")
+                    }
+                    Nominal::Union(ctors) => {
+                        if !seen.insert(t.render()) {
+                            return None;
+                        }
+                        ctors.iter().find_map(|(_, s)| {
+                            payload(s, args)
+                                .into_iter()
+                                .find_map(|p| walk(&p, world, db, seen))
+                        })
+                    }
                 }
             }
         }
-    }
+    })
 }
 
 /// The payload types of one constructor, its type parameters replaced by
@@ -119,7 +122,8 @@ fn payload(scheme: &Scheme, args: &[Ty]) -> Vec<Ty> {
 }
 
 fn subst(t: &Ty, map: &HashMap<Name, Ty>) -> Ty {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         Ty::Var(v) => map.get(v).cloned().unwrap_or_else(|| t.clone()),
         Ty::Fun(a, b) => Ty::Fun(Box::new(subst(a, map)), Box::new(subst(b, map))),
         Ty::App(n, xs) => Ty::App(n.clone(), xs.iter().map(|x| subst(x, map)).collect()),
@@ -129,5 +133,5 @@ fn subst(t: &Ty, map: &HashMap<Name, Ty>) -> Ty {
             e.clone(),
         ),
         Ty::Unit | Ty::Error => t.clone(),
-    }
+    })
 }

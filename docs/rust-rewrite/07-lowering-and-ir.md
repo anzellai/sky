@@ -318,6 +318,19 @@ callback field keeps its typed callee parameter (`func(Msg) …`, never
 record aliases", with the subset-record case falling out of ordinary
 `GoTy::TyVar` unification rather than synthesised TVars.
 
+**Per reference, not per expression.** The lowerer asks for an expression's or
+a local's type by its reference into the def's `TyTable` (`BodyTypes::expr_ref`)
+and maps it once per distinct reference (`Ctx::goty_ref`, memo per `Ctx`: one
+def, one table, one env, one module). `sky_ty_ref_to_go_in` walks the table node
+by node: a function, tuple or application node gets its Go type from its head
+and its children's Go types, as `go_ty_uncached` computes at the top level, where
+no record is mid-resolution; a record node is rebuilt and resolved by the owned
+path, so record resolution and its cycle guard are unchanged. `app_to_go` takes
+its arguments as a lazy callback shared by both paths. A def whose expressions
+have many distinct types sharing large tails (a `Codec` pipeline) therefore
+costs the size of its table, not the sum of its types. `lower/tests/goty_ref.rs`
+compares the two paths on every node of a table of D1/D2 shapes.
+
 Structs (data records), sealed-interface ADTs, and iota enums are all chosen
 here from the alias/union classification (the Rust port of `classifyAlias`,
 `Go/Record.hs:458`, and `shouldEmitSealedIface`). **Sealed-interface ADT
@@ -539,3 +552,33 @@ which also let the console build with inlining on again.
 `rust/crates/sky/tests/go_compile_shape.rs` pins both: no emitted function nests
 closures more than 10 deep, and the build's largest Go process stays under a
 measured budget.
+
+### A CAF's initialiser is a named function, never a closure in its accessor
+
+A zero-parameter top-level binding (a CAF) is memoised through `rt.LazyCaf`
+(`runtime-go/rt/lazycaf.go`). `lower_def` (CAF memoisation, in
+`rust/crates/lower/src/lower.rs`) emits it as three items:
+
+```go
+var X__caf rt.LazyCaf[T]
+func X__cafInit() T { <the binding's body> }
+func X() T { return X__caf.Get(X__cafInit) }
+```
+
+It used to be `func X() T { return X__caf.Get(func() T { <body> }) }`. The
+accessor is a one-line function, so Go inlines it into every caller, and the
+closure literal, with every closure nested in it, was copied and compiled once
+per call site. A Sky.Spa backend's Model wire codec is one CAF that every RPC
+codec reads, so a generated backend at 200 Model fields compiled 100,681
+functions, 82,216 of them copies of that one initialiser (62 s and 6.1 GB in
+`go build`). Go inlines only direct calls, so a function passed by name is
+compiled once. The accessor stays small and is still inlined.
+
+Laziness, once-only evaluation and the session-stamp clearing all stay in
+`LazyCaf.Get`, unchanged. A self-referential binding is still never memoised.
+A profile or stack frame in `X__cafInit` reports as the binding `X`
+(`demangleFrame` in `runtime-go/rt/profile.go`), as the closure `X.func1` did.
+`rust/crates/codegen/tests/caf_accessor_shape.rs` pins the emitted shape.
+`rust/crates/sky/tests/caf_inline_scale_flow.rs` counts the Go back end's
+compiled functions (`-gcflags=sky-app=-bench`) for one CAF read by `n` and `2n`
+functions, and fails when the count grows more than 2.3 times.

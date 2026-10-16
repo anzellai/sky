@@ -5,9 +5,9 @@ module Main exposing (main)
 -- holds open until it releases it, so every check is ordered, never timed.
 --
 --   select  `Select 1` reaches the server only through a helper's command (the
---           examples/72 shape). While the model call is held, the page shows
+--           support-desk shape). While the model call is held, the page shows
 --           the selection and the busy label, and typed text applies at once,
---           as on Sky.Live (before v0.28.0 the web:app page froze).
+--           as on Sky.Live (before v0.27.9 the web:app page froze).
 --   saved   `Select 2` takes the helper's `Cmd.none` branch: no request.
 --   hold    `HoldPick` writes a server value into the model, so it holds
 --           later Msgs: the negative control (Sky.Live shows its write at

@@ -198,6 +198,29 @@ func TestSpaSSRWasmName_prefersTheBuiltName(t *testing.T) {
 	}
 }
 
+// The name the build linked into the backend's skybuildinfo package
+// (SetSpaBuiltWasmName) is used when no name is baked into the source, ahead
+// of the dist scan; a baked name still wins.
+func TestSpaSSRWasmName_usesTheLinkedName(t *testing.T) {
+	prev := spaLinkedWasmName
+	t.Cleanup(func() { spaLinkedWasmName = prev })
+	dist := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dist, "main.feedfacecafe.wasm"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	SetSpaBuiltWasmName("main.0a0b0c0d0e0f.wasm")
+	if got := Spa_ssrWasmNameBuilt("", dist); got != "main.0a0b0c0d0e0f.wasm" {
+		t.Fatalf("the linked name must win over the dist scan, got %q", got)
+	}
+	if got := Spa_ssrWasmNameBuilt("main.0123456789ab.wasm", dist); got != "main.0123456789ab.wasm" {
+		t.Fatalf("a baked name must win over the linked one, got %q", got)
+	}
+	SetSpaBuiltWasmName("")
+	if got := Spa_ssrWasmNameBuilt("", dist); got != "main.feedfacecafe.wasm" {
+		t.Fatalf("no name → scan the dist, got %q", got)
+	}
+}
+
 // The Sky.Spa backend mounts the declared static dir live at /static AND the
 // dist at /. A committed file that is only in dist/static (the deploy shipped
 // the binary and the dist, not the backend's own copy) must still serve.

@@ -412,8 +412,7 @@ func buildLiveServerFor(cfg any, embedded, served bool) (ls *liveServer, err err
 		if !strings.HasSuffix(prefix, "/") {
 			prefix += "/"
 		}
-		mux.Handle(prefix,
-			gzipStatic(http.StripPrefix(prefix, http.FileServer(http.Dir(app.staticDir)))))
+		mux.Handle(prefix, staticMount(prefix, app.staticDir, ""))
 	}
 	// API handler dispatcher — matches method + pattern before page handler.
 	mux.HandleFunc("/", app.dispatchRoot)

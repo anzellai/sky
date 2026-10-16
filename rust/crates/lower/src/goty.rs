@@ -142,6 +142,79 @@ pub fn sky_ty_to_go_in(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>) -> GoTy {
     go_ty(t, env, cur_mod, &empty)
 }
 
+/// [`sky_ty_to_go_in`] of the type at `r` in `table`, read node by node
+/// instead of rebuilt. `memo` maps a reference to its Go type; it must be used
+/// with ONE table, env and `cur_mod` only (the lowerer keeps one per def).
+///
+/// Equal by construction to `sky_ty_to_go_in(&table.get(r), env, cur_mod)`.
+/// At the top level no record is mid-resolution and there are no type params,
+/// so the Go type of a function, tuple or application node is a pure function
+/// of its head and its children's Go types — exactly what `go_ty_uncached`
+/// computes for it — and each child is lowered here the same way. A record
+/// node is rebuilt and handed to the owned path whole: its resolution (field
+/// matching, the cycle guard, `go_ty`'s cache) is unchanged. A distinct type
+/// costs O(1) beyond its children, so a def whose expressions have many
+/// distinct types that share large tails (a `Codec` pipeline) costs the size
+/// of its table, not the sum of its types' sizes.
+pub fn sky_ty_ref_to_go_in(
+    table: &ty::tytable::TyTable,
+    r: ty::tytable::TyRef,
+    env: &TypeEnv,
+    cur_mod: Option<&str>,
+    memo: &mut HashMap<ty::tytable::TyRef, GoTy>,
+) -> GoTy {
+    // A type is as deep as a curried constructor's arity (one arrow per field of
+    // a record constructor): grow the stack on demand rather than overflow it.
+    base::ensure_stack(|| sky_ty_ref_to_go_guarded(table, r, env, cur_mod, memo))
+}
+
+fn sky_ty_ref_to_go_guarded(
+    table: &ty::tytable::TyTable,
+    r: ty::tytable::TyRef,
+    env: &TypeEnv,
+    cur_mod: Option<&str>,
+    memo: &mut HashMap<ty::tytable::TyRef, GoTy>,
+) -> GoTy {
+    use ty::tytable::TyView;
+    if let Some(g) = memo.get(&r) {
+        return g.clone();
+    }
+    ty::counters::GOTY_NODES.bump();
+    let empty: HashMap<Name, GoTy> = HashMap::new();
+    let g = match table.view(r) {
+        TyView::App(name, args) => app_to_go_with(
+            name.as_str(),
+            args.len(),
+            &mut |i| sky_ty_ref_to_go_in(table, args[i], env, cur_mod, memo),
+            env,
+            cur_mod,
+        ),
+        TyView::Fun(a, b) => {
+            // Collapse the curried spine into an N-ary Go func (`go_ty_uncached`).
+            let mut ps = vec![sky_ty_ref_to_go_in(table, a, env, cur_mod, memo)];
+            let mut ret = b;
+            while let TyView::Fun(x, y) = table.view(ret) {
+                ps.push(sky_ty_ref_to_go_in(table, x, env, cur_mod, memo));
+                ret = y;
+            }
+            GoTy::Func(
+                ps,
+                Box::new(sky_ty_ref_to_go_in(table, ret, env, cur_mod, memo)),
+            )
+        }
+        TyView::Tuple(xs) => GoTy::Tuple(
+            xs.iter()
+                .map(|x| sky_ty_ref_to_go_in(table, *x, env, cur_mod, memo))
+                .collect(),
+        ),
+        TyView::Unit => GoTy::Unit,
+        TyView::Var(_) | TyView::Error => GoTy::Any,
+        TyView::Record(..) => go_ty(&table.get(r), env, cur_mod, &empty),
+    };
+    memo.insert(r, g.clone());
+    g
+}
+
 /// Map a Sky type to Go, resolving the given type-param `Ty::Var`s to a
 /// caller-supplied target `GoTy` (a Go generic `GoTy::TyVar("T1")` when emitting
 /// a parametric alias's decl; the concrete instantiation `GoTy::Named("Msg")`
@@ -183,6 +256,18 @@ pub fn sky_ty_to_go_params(
 /// as before, so the emitted Go stays byte-for-byte identical. See
 /// `TypeEnv::goty_cache`.
 fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, GoTy>) -> GoTy {
+    ty::counters::GOTY_NODES.bump();
+    // A type is as deep as a curried constructor's arity; grow the stack on
+    // demand rather than overflow it.
+    base::ensure_stack(|| go_ty_guarded(t, env, cur_mod, params))
+}
+
+fn go_ty_guarded(
+    t: &Ty,
+    env: &TypeEnv,
+    cur_mod: Option<&str>,
+    params: &HashMap<Name, GoTy>,
+) -> GoTy {
     // A parametric record's Go type depends on `params`; never cache those. Guard
     // hits inside still propagate to `MIN_GUARD_HIT`, so an ancestor that DOES
     // cache correctly sees this subtree's context dependence.
@@ -456,21 +541,26 @@ fn go_ty_uncached(
 /// var that the caller HAS bound (a parametric alias instantiation) is resolved
 /// and does not count.
 fn has_unresolved(t: &Ty, params: &HashMap<Name, GoTy>) -> bool {
-    match t {
-        Ty::Var(n) => !params.contains_key(n),
-        Ty::Error => true,
-        Ty::App(n, args) => {
-            matches!(
-                n.as_str(),
-                "number" | "comparable" | "appendable" | "compappend"
-            ) || args.iter().any(|a| has_unresolved(a, params))
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        match t {
+            Ty::Var(n) => !params.contains_key(n),
+            Ty::Error => true,
+            Ty::App(n, args) => {
+                matches!(
+                    n.as_str(),
+                    "number" | "comparable" | "appendable" | "compappend"
+                ) || args.iter().any(|a| has_unresolved(a, params))
+            }
+            Ty::Fun(a, b) => has_unresolved(a, params) || has_unresolved(b, params),
+            Ty::Tuple(xs) => xs.iter().any(|x| has_unresolved(x, params)),
+            // An OPEN row is itself missing information about the rest of the record.
+            Ty::Record(fs, ext) => {
+                ext.is_some() || fs.iter().any(|(_, ft)| has_unresolved(ft, params))
+            }
+            Ty::Unit => false,
         }
-        Ty::Fun(a, b) => has_unresolved(a, params) || has_unresolved(b, params),
-        Ty::Tuple(xs) => xs.iter().any(|x| has_unresolved(x, params)),
-        // An OPEN row is itself missing information about the rest of the record.
-        Ty::Record(fs, ext) => ext.is_some() || fs.iter().any(|(_, ft)| has_unresolved(ft, params)),
-        Ty::Unit => false,
-    }
+    })
 }
 
 thread_local! {
@@ -790,7 +880,8 @@ fn instantiate_structural(
 /// inferred field type, binding any template `Ty::Var` that is one of the
 /// alias's type params. First binding wins (deterministic).
 fn unify_param(tmpl: &Ty, concrete: &Ty, param_vars: &[Name], bound: &mut HashMap<Name, Ty>) {
-    match (tmpl, concrete) {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match (tmpl, concrete) {
         (Ty::Var(v), c) if param_vars.contains(v) => {
             bound.entry(v.clone()).or_insert_with(|| c.clone());
         }
@@ -817,7 +908,7 @@ fn unify_param(tmpl: &Ty, concrete: &Ty, param_vars: &[Name], bound: &mut HashMa
             }
         }
         _ => {}
-    }
+    })
 }
 
 fn app_to_go(
@@ -827,7 +918,26 @@ fn app_to_go(
     cur_mod: Option<&str>,
     params: &HashMap<Name, GoTy>,
 ) -> GoTy {
-    let go = |t: &Ty| go_ty(t, env, cur_mod, params);
+    app_to_go_with(
+        name,
+        args.len(),
+        &mut |i| go_ty(&args[i], env, cur_mod, params),
+        env,
+        cur_mod,
+    )
+}
+
+/// [`app_to_go`] over an application of `n_args` arguments whose Go types
+/// `go_arg(i)` yields on demand. The arguments are only ever lowered, never
+/// inspected, so the same decision serves an owned `Ty` and a table node
+/// ([`sky_ty_ref_to_go_in`]).
+fn app_to_go_with(
+    name: &str,
+    n_args: usize,
+    go_arg: &mut dyn FnMut(usize) -> GoTy,
+    env: &TypeEnv,
+    cur_mod: Option<&str>,
+) -> GoTy {
     // KERNEL-OPAQUE HANDLES WIN OVER EVERY NOMINAL LOOKUP, qualified or not.
     //
     // These names denote a runtime handle (a `JsonDecoder`, a JSON `Value`, a
@@ -873,8 +983,8 @@ fn app_to_go(
             }
             // Parametric record alias referenced qualified (`Counter.Cfg Msg`):
             // propagate the type args (see the bare-name path below).
-            if n.kind == NominalKind::Record && n.type_arity > 0 && n.type_arity == args.len() {
-                return GoTy::Named(n.go_name.clone(), args.iter().map(&go).collect());
+            if n.kind == NominalKind::Record && n.type_arity > 0 && n.type_arity == n_args {
+                return GoTy::Named(n.go_name.clone(), (0..n_args).map(&mut *go_arg).collect());
             }
             return GoTy::Named(n.go_name.clone(), vec![]);
         }
@@ -882,7 +992,7 @@ fn app_to_go(
     } else {
         name
     };
-    match (bare, args.len()) {
+    match (bare, n_args) {
         ("Int", 0) => GoTy::Bare(Prim::Int),
         ("Float", 0) => GoTy::Bare(Prim::Float),
         ("String", 0) => GoTy::Bare(Prim::Str),
@@ -892,10 +1002,16 @@ fn app_to_go(
         // numeric-flex default → int (Sky's `number` defaults to Int).
         ("number", 0) => GoTy::Bare(Prim::Int),
         ("comparable" | "appendable" | "compappend", 0) => GoTy::Any,
-        ("List", 1) => GoTy::Slice(Box::new(go(&args[0]))),
-        ("Maybe", 1) => GoTy::Named("rt.SkyMaybe".into(), vec![go(&args[0])]),
-        ("Result", 2) => GoTy::Named("rt.SkyResult".into(), vec![go(&args[0]), go(&args[1])]),
-        ("Task", 2) => GoTy::Named("rt.SkyTask".into(), vec![go(&args[0]), go(&args[1])]),
+        ("List", 1) => GoTy::Slice(Box::new(go_arg(0))),
+        ("Maybe", 1) => GoTy::Named("rt.SkyMaybe".into(), vec![go_arg(0)]),
+        ("Result", 2) => {
+            let a = go_arg(0);
+            GoTy::Named("rt.SkyResult".into(), vec![a, go_arg(1)])
+        }
+        ("Task", 2) => {
+            let a = go_arg(0);
+            GoTy::Named("rt.SkyTask".into(), vec![a, go_arg(1)])
+        }
         // A Sky `Dict k v` is ALWAYS stored as `map[string]V` at runtime — keys are
         // stringified (`rt.Dict_empty() any` returns `map[string]any`; an `Int`-keyed
         // dict stores key `"0"`). The oracle renders every dict key as `string`
@@ -903,7 +1019,7 @@ fn app_to_go(
         // `rt.AsMapT[V]` which returns `map[string]V`. Rendering the key as `goty(k)`
         // (e.g. `map[int]V`) never matches that runtime shape and panics under
         // `rt.Coerce` — so pin the Go key type to `string`.
-        ("Dict", 2) => GoTy::Map(Box::new(GoTy::Bare(Prim::Str)), Box::new(go(&args[1]))),
+        ("Dict", 2) => GoTy::Map(Box::new(GoTy::Bare(Prim::Str)), Box::new(go_arg(1))),
         // `Cmd` / `Sub` / `Decoder` / `Value` are handled by the kernel-opaque
         // pre-check at the top of this function, which fires for the qualified
         // form as well. Kept unreachable-but-listed would be a lie; they are
@@ -953,8 +1069,8 @@ fn app_to_go(
                 // the correct partial `Cfg_R[any]`. Guard on an exact arity
                 // match; a mismatch (shouldn't happen for a well-typed program)
                 // falls through to the erased bare name.
-                if n.kind == NominalKind::Record && n.type_arity > 0 && n.type_arity == args.len() {
-                    return GoTy::Named(n.go_name.clone(), args.iter().map(&go).collect());
+                if n.kind == NominalKind::Record && n.type_arity > 0 && n.type_arity == n_args {
+                    return GoTy::Named(n.go_name.clone(), (0..n_args).map(&mut *go_arg).collect());
                 }
                 // Other user nominal types stay NON-generic in the M4 runtime
                 // representation: sealed ADT → `rt.SkyADT` bag (`Fields []any`),
@@ -964,7 +1080,7 @@ fn app_to_go(
                 // generic-erase floor, doc 07 §6 class 8); the arg types'
                 // reachability is driven by the variant use sites in
                 // `emit_type_decl`, so dropping them here is safe.
-                let _ = go; // ADT/non-parametric args intentionally erased
+                // ADT/non-parametric args intentionally erased: `go_arg` unused.
                 GoTy::Named(n.go_name.clone(), vec![])
             } else {
                 // Unknown nominal (FFI type, unmodelled) → erase to any.

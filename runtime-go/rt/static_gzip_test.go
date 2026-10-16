@@ -124,3 +124,47 @@ func TestGzipStaticSkipsHeadAndPost(t *testing.T) {
 		}
 	}
 }
+
+// `*, gzip;q=0` refuses gzip: the explicit entry wins over the wildcard,
+// wherever it stands. The old parser returned at the `*` and gzipped for a
+// client that had refused gzip.
+func TestGzipStaticWildcardDoesNotOverrideAnExplicitRefusal(t *testing.T) {
+	body := bytes.Repeat([]byte("wasm-bytes-highly-compressible "), 400)
+	for _, ae := range []string{"*, gzip;q=0", "*;q=1, gzip; q=0.000", "gzip;q=0, *"} {
+		rec := doGzipReq(fakeStatic("application/wasm", body, 200), "GET", ae, "")
+		if got := rec.Header().Get("Content-Encoding"); got != "" {
+			t.Fatalf("Accept-Encoding %q: Content-Encoding = %q, want none", ae, got)
+		}
+		if !bytes.Equal(rec.Body.Bytes(), body) {
+			t.Fatalf("Accept-Encoding %q: body altered", ae)
+		}
+	}
+}
+
+func TestAcceptsCoding(t *testing.T) {
+	cases := []struct {
+		accept, coding string
+		want           bool
+	}{
+		{"gzip", "gzip", true},
+		{"GZIP;Q=0.5", "gzip", true},
+		{"br, gzip", "br", true},
+		{"", "gzip", false},
+		{"deflate", "gzip", false},
+		{"*", "gzip", true},
+		{"*;q=0", "gzip", false},
+		{"*, gzip;q=0", "gzip", false},
+		{"gzip;q=0, *", "gzip", false},
+		{"*;q=0, gzip", "gzip", true},
+		{"br;q=0, gzip", "br", false},
+		{"gzip;q=0.0001", "gzip", true},
+		{"gzip;q=0.", "gzip", false},
+		{"gzip;q=nonsense", "gzip", false},
+		{"identity", "gzip", false},
+	}
+	for _, c := range cases {
+		if got := acceptsCoding(c.accept, c.coding); got != c.want {
+			t.Errorf("acceptsCoding(%q, %q) = %v, want %v", c.accept, c.coding, got, c.want)
+		}
+	}
+}

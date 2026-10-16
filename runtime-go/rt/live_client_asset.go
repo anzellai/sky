@@ -2094,6 +2094,13 @@ function __skyResizeImage(file, maxW, maxH, cb) {
 // Expose programmatic dispatch for custom JS integrations (e.g. Firebase
 // auth callbacks that need to send a Msg after the SDK resolves).
 window.__sky_send = function(id, value, opts) { __skySend(id, value, opts); };
+// __skyIsPage: a page fetch answer the client patches in. A 2xx, or the app's
+// NotFound page, which the server sends with 404 and its render id
+// (X-Sky-View). Any other answer (a plain 404 "session not found", a 5xx) is
+// not a page: the caller falls back to a real navigation.
+function __skyIsPage(r) {
+  return r.ok || (r.status === 404 && !!r.headers.get("X-Sky-View"));
+}
 // sky-nav: intercept clicks on <a sky-nav ...> links so navigation is a
 // client-side fetch + innerHTML swap instead of a full page reload.
 // Falls back to normal navigation on modifier keys (cmd/ctrl/shift/alt),
@@ -2119,7 +2126,7 @@ document.addEventListener("click", function(ev) {
       __skyAdoptToken(r);
       var navSid = r.headers.get("X-Sky-Sid");
       if (navSid) __skySid = navSid;
-      // r.ok check is load-bearing. Without it, a 404 body like
+      // The page check is load-bearing. Without it, a 404 body like
       // "session not found" (server lost our session_id store
       // entry — TTL expiry, store-restart, store-config change,
       // cross-deploy cookie collision) would be passed verbatim
@@ -2129,7 +2136,7 @@ document.addEventListener("click", function(ev) {
       // re-runs the app's init. Apps gate on session presence
       // (Maybe Session in Model) so the reload lands cleanly on
       // whatever surface their init is configured to render.
-      if (!r.ok) { window.location.href = href; return; }
+      if (!__skyIsPage(r)) { window.location.href = href; return; }
       return r.text().then(function(t) {
         // Push the URL BEFORE patching. __skyPatch runs the data-sky-path
         // sync handler, which pushes a new entry whenever location.pathname
@@ -2155,7 +2162,7 @@ window.addEventListener("popstate", function() {
       // Same r.ok gate as the sky-nav click path. Without it,
       // Back/Forward to a URL after the server lost our session
       // renders the 404 body as the whole page.
-      if (!r.ok) { window.location.href = window.location.href; return; }
+      if (!__skyIsPage(r)) { window.location.href = window.location.href; return; }
       return r.text().then(function(t) {
         __skyPatch(t);
         var nv = r.headers.get("X-Sky-View");
@@ -2198,7 +2205,7 @@ function __skyNavApply(url, replace) {
       __skyAdoptToken(r);
       var navSid = r.headers.get("X-Sky-Sid");
       if (navSid) __skySid = navSid;
-      if (!r.ok) { reload(); return; }
+      if (!__skyIsPage(r)) { reload(); return; }
       return r.text().then(function(t) {
         move();
         __skyPatch(t);

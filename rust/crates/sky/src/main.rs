@@ -54,13 +54,23 @@ mod native_pkg;
 mod plist;
 mod precompress;
 mod private_fs;
+mod shell_inputs;
 mod split_diag;
 mod store_upload;
 mod target;
 mod version_notice;
 mod xmlmini;
 
+/// The compiler runs on the main thread. A deep expression (a long `|>`
+/// pipeline, a generated record codec with one step per field) does not need a
+/// large stack: every recursive expression and type walker (resolve, infer,
+/// unify, read-back and the type table, lowering, `goty`, emit) grows its stack
+/// on demand through `base::ensure_stack`.
 fn main() -> ExitCode {
+    sky_main()
+}
+
+fn sky_main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     // Hidden worker: refresh the update-check cache, then exit. Spawned detached
@@ -98,6 +108,41 @@ fn main() -> ExitCode {
     if timed && args.iter().any(|a| a == "--timings") {
         std::env::set_var("SKY_TIMINGS", "1");
     }
+    // The Go build flags (`--no-trimpath`, `--go-jobs N`) of build / check /
+    // run. Like `--timings`, each is carried as an environment variable so
+    // every child `sky build` (Sky.Spa legs, a Std.App entry, a desktop
+    // shell) builds the same way; they are removed from the arguments here.
+    let args = if matches!(
+        args.first().map(String::as_str),
+        Some("build" | "check" | "run")
+    ) {
+        match take_go_build_flags(&args) {
+            Ok((rest, env)) => {
+                for (k, v) in env {
+                    std::env::set_var(k, v);
+                }
+                rest
+            }
+            Err(e) => {
+                eprintln!("sky {}: {e}", args[0]);
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        args
+    };
+    // Internal: a Sky.Spa SSR backend leg's wasm-name handoff (passed by the
+    // parent build only): the name arrives on stdin
+    // (project::spa_wasm_handoff).
+    let args = if args.first().map(String::as_str) == Some("build") {
+        let (rest, wait) = take_spa_await_flag(&args);
+        if wait {
+            project::spa_wasm_handoff::set(project::spa_wasm_handoff::listen(std::io::stdin()));
+        }
+        rest
+    } else {
+        args
+    };
     let started = std::time::Instant::now();
     let code = dispatch(&args);
     if timed {
@@ -109,6 +154,75 @@ fn main() -> ExitCode {
         project::timings::report(&format!("sky {verb} in {here}/"), started.elapsed());
     }
     code
+}
+
+/// Remove the Go build flags from a build / check / run argument list, and
+/// return the environment they set (see `project::go_cmd` and
+/// `project::go_jobs`). Pure, so it is unit-tested.
+fn take_go_build_flags(
+    args: &[String],
+) -> Result<(Vec<String>, Vec<(&'static str, String)>), String> {
+    let mut rest = Vec::with_capacity(args.len());
+    let mut env = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let jobs = if a == "--go-jobs" {
+            Some(
+                it.next()
+                    .ok_or("--go-jobs needs a value: a whole number >= 1, or `auto`")?
+                    .clone(),
+            )
+        } else {
+            a.strip_prefix("--go-jobs=").map(str::to_string)
+        };
+        if let Some(n) = jobs {
+            // Checked here, so a bad value fails before any work starts.
+            project::go_jobs::parse_user(Some(&n))?;
+            env.push((project::go_jobs::ENV_JOBS, n));
+        } else if a == "--no-trimpath" {
+            env.push((project::go_cmd::ENV_TRIMPATH, "0".to_string()));
+        } else {
+            rest.push(a.clone());
+        }
+    }
+    Ok((rest, env))
+}
+
+/// Remove the internal wasm-name handoff flag a Sky.Spa parent passes its
+/// SSR backend leg (`--spa-await-wasm-name-on-stdin`); `true` when it was
+/// there. Pure, so it is unit-tested.
+fn take_spa_await_flag(args: &[String]) -> (Vec<String>, bool) {
+    let flag = project::spa_wasm_handoff::FLAG;
+    let found = args.iter().any(|a| a == flag);
+    (args.iter().filter(|a| *a != flag).cloned().collect(), found)
+}
+
+/// Run a Sky.Spa SSR backend leg with its wasm-name handoff on its stdin
+/// (project::spa_wasm_handoff): spawn it with [`project::spa_wasm_handoff::FLAG`]
+/// and a piped stdin, hand the pipe to `tx` (which writes a delivery already
+/// made), and collect its output.
+fn run_with_handoff(
+    mut c: Command,
+    tx: &project::spa_wasm_handoff::Sender,
+) -> std::io::Result<std::process::Output> {
+    c.arg(project::spa_wasm_handoff::FLAG)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = c.spawn()?;
+    if let Some(stdin) = child.stdin.take() {
+        if let Err(e) = tx.attach(stdin) {
+            eprintln!("sky build: could not hand the frontend's wasm name to the backend leg: {e}");
+        }
+    }
+    child.wait_with_output()
+}
+
+/// The environment a `sky run` build needs for `--profile`: no `-trimpath`,
+/// so `pprof -list` / `pprof -http` source views and Delve find the sources
+/// by the absolute paths the binary records.
+fn profiling_build_env(profiling: bool) -> Option<(&'static str, &'static str)> {
+    profiling.then_some((project::go_cmd::ENV_TRIMPATH, "0"))
 }
 
 fn dispatch(args: &[String]) -> ExitCode {
@@ -2074,6 +2188,7 @@ fn check_std_app_split(
         entry_module_name(&synth_entry).as_deref(),
         static_mount,
         Some(project_dir),
+        None,
     )
 }
 
@@ -3393,6 +3508,7 @@ fn build_std_app(
     embed: bool,
     out_override: Option<&str>,
     run: bool,
+    compress_level: precompress::Level,
 ) -> ExitCode {
     let user_module = match entry_module_name(entry_file) {
         Some(m) => m,
@@ -3501,9 +3617,10 @@ fn build_std_app(
             embed,
             true,
             static_mount,
-            !run,
+            compress_level,
             builder_app_url.as_deref(),
             Some(project_dir),
+            None,
         ) {
             Ok(od) => {
                 let t_static = project::timings::phase("stage static assets (dist + backend)");
@@ -3770,29 +3887,23 @@ fn build_std_app(
     }
 }
 
-/// Write the built frontend's wasm file name into the generated backend source
-/// (see `project::spa_split::bake_built_wasm_name`). A dist with no wasm, or a
-/// source already baked, leaves the backend on its run-time dist scan.
-fn bake_backend_wasm_name(backend_main: &Path, dist: &Path) {
-    let Some(name) = project::spa_split::built_wasm_name(dist) else {
+/// Write the built frontend's `sky-ai-engine` meta content into the generated
+/// backend source (see `project::spa_split::bake_built_ai_engine`), so the
+/// server-rendered page names the same Std.Ai.Device engines as the
+/// frontend's own `index.html`. A dist with no engine, or a source already
+/// baked, leaves the backend as it is. The wasm name itself is not baked here:
+/// it reaches the backend's `skybuildinfo` package (`spa_wasm_handoff`).
+fn bake_backend_ai_engine(backend_main: &Path, dist: &Path) {
+    let Some(content) = project::spa_split::built_ai_engine(dist) else {
         return;
     };
     let Ok(src) = std::fs::read_to_string(backend_main) else {
         return;
     };
-    let mut out = project::spa_split::bake_built_wasm_name(&src, &name);
-    // Std.Ai.Device: the engines the frontend leg staged, for the
-    // server-rendered page's `sky-ai-engine` meta.
-    if let Some(content) = project::spa_split::built_ai_engine(dist) {
-        let base = out.clone().unwrap_or_else(|| src.clone());
-        if let Some(b) = project::spa_split::bake_built_ai_engine(&base, &content) {
-            out = Some(b);
-        }
-    }
-    if let Some(baked) = out {
+    if let Some(baked) = project::spa_split::bake_built_ai_engine(&src, &content) {
         if let Err(e) = std::fs::write(backend_main, baked) {
             eprintln!(
-                "sky spa-split --build: could not write the wasm name into {}: {e}",
+                "sky spa-split --build: could not write the AI engine names into {}: {e}",
                 backend_main.display()
             );
         }
@@ -3837,20 +3948,34 @@ fn check_spa_split(
     entry_module: Option<&str>,
     static_mount: Option<(String, String)>,
     user_project: Option<&Path>,
+    // The program the caller's front half already loaded and checked from
+    // `analysed`, which the split analyses instead of loading it again.
+    loaded: Option<project::LoadedProgram>,
 ) -> Result<(), ExitCode> {
     let scratch =
         private_fs::private_dir_in(&std::env::temp_dir(), "sky-check-split-").map_err(|e| {
             eprintln!("sky check: {e}");
             ExitCode::FAILURE
         })?;
-    let result = project::spa_split::generate(
-        repo_root,
-        analysed,
-        entry_module,
-        &scratch.join("split"),
-        None,
-        static_mount,
-    );
+    let result = match loaded {
+        Some(loaded) => project::spa_split::generate_with(
+            repo_root,
+            analysed,
+            entry_module,
+            loaded,
+            &scratch.join("split"),
+            None,
+            static_mount,
+        ),
+        None => project::spa_split::generate(
+            repo_root,
+            analysed,
+            entry_module,
+            &scratch.join("split"),
+            None,
+            static_mount,
+        ),
+    };
     let _ = std::fs::remove_dir_all(&scratch);
     match result {
         Ok(_) => Ok(()),
@@ -3888,9 +4013,9 @@ fn spa_split_and_build(
     // the split sees has dropped the declaration (the `--target web:app` synth
     // entry). `None` → `generate` reads it from its own entry + `sky.toml`.
     static_mount: Option<(String, String)>,
-    // Write the `.gz` / `.br` bundle variants (false for a `sky run`, whose
-    // backend serves the bundle itself).
-    precompress: bool,
+    // How to write the `.gz` / `.br` bundle variants (`Off` for a `sky run`,
+    // whose backend serves the bundle itself).
+    compress_level: precompress::Level,
     // `App.withAppUrl`, read from the Std.App entry, for the frontend leg's
     // native shell (`None` for a direct Spa entry, which has no such builder).
     builder_app_url: Option<&str>,
@@ -3899,17 +4024,33 @@ fn spa_split_and_build(
     // error the split reports in derived or generated code is then mapped
     // back to the construct the user wrote (`split_diag`).
     user_project: Option<&Path>,
+    // The program the caller's front half already loaded and checked from
+    // `project_dir` (`project::front_half_loaded`): the split analyses it
+    // instead of loading and type-checking the app a second time.
+    loaded: Option<project::LoadedProgram>,
 ) -> Result<PathBuf, ExitCode> {
     let user_root = user_project.unwrap_or(project_dir);
     let t_split = project::timings::phase("spa split (partition + generate)");
-    let report = match project::spa_split::generate(
-        repo_root,
-        project_dir,
-        entry_module,
-        out_dir,
-        broker,
-        static_mount,
-    ) {
+    let generated = match loaded {
+        Some(loaded) => project::spa_split::generate_with(
+            repo_root,
+            project_dir,
+            entry_module,
+            loaded,
+            out_dir,
+            broker,
+            static_mount,
+        ),
+        None => project::spa_split::generate(
+            repo_root,
+            project_dir,
+            entry_module,
+            out_dir,
+            broker,
+            static_mount,
+        ),
+    };
+    let report = match generated {
         Ok(r) => r,
         Err(e) => {
             report_split_failure(&e, project_dir, user_project);
@@ -3991,23 +4132,43 @@ fn spa_split_and_build(
     // In parallel, each leg's `go build -p` is set here, from the memory both
     // legs share; a user's own SKY_GO_BUILD_JOBS reaches the legs unchanged.
     //
-    // An SSR backend names the frontend's `main.<hash>.wasm` in its page. The
-    // name is baked into the backend source (spaBuiltWasmName_) so the backend
-    // does not have to reach `../frontend/dist` at run time (a slot directory
-    // behind a proxy that serves the wasm itself). That needs the frontend
-    // built first, so an SSR split builds its legs in order: frontend, then
-    // backend.
+    // An SSR backend names the frontend's `main.<hash>.wasm` in its page, so
+    // it does not have to reach `../frontend/dist` at run time (a slot
+    // directory behind a proxy that serves the wasm itself). The name is
+    // linked into the backend's small `skybuildinfo` package when the
+    // frontend has built (project::spa_wasm_handoff): beside the frontend
+    // when memory allows, else after it.
     let backend_main = backend_dir.join("src").join("Main.sky");
+    // A web bundle (no native shell) is compressed here, in the parent, all
+    // assets at once, and alongside the backend leg when that is still
+    // building; a native shell's frontend child compresses its own bundle.
+    let parent_compresses = compress_level != precompress::Level::Off
+        && app_url::Shell::from_frontend_shell(target).is_none();
     let bake_wasm_name = std::fs::read_to_string(&backend_main)
         .map(|s| project::spa_split::needs_built_wasm_name(&s))
         .unwrap_or(false);
     let leg_go_jobs = plan
         .go_jobs
-        .filter(|_| !bake_wasm_name && std::env::var_os(project::go_jobs::ENV_JOBS).is_none());
-    let leg_reason = if bake_wasm_name {
-        "in order: frontend, then backend (the SSR page names the frontend's wasm)".to_string()
-    } else {
-        plan.reason.to_string()
+        .filter(|_| std::env::var_os(project::go_jobs::ENV_JOBS).is_none());
+    // The SSR backend gets the frontend's wasm name on its stdin, written when
+    // the frontend leg ends (project::spa_wasm_handoff): in parallel, the
+    // backend builds meanwhile and only links the name at the end. The pipe
+    // belongs to this build alone, and closes if this process dies.
+    let handoff = bake_wasm_name.then(project::spa_wasm_handoff::Sender::new);
+    // Std.Ai.Device: the SSR page also names the browser engines the
+    // frontend leg stages (`sky-ai-engine`). Those names are baked into the
+    // backend's Sky source, so its build waits for the frontend leg.
+    let bake_ai_engine = bake_wasm_name && project_uses_ai_device(&frontend_dir);
+    let leg_reason = match (bake_wasm_name, plan.parallel && !bake_ai_engine) {
+        (true, true) => format!(
+            "{} — the SSR backend links the frontend's wasm name when the frontend is built",
+            plan.reason
+        ),
+        (true, false) => format!(
+            "in order: frontend, then backend (the SSR page names the frontend's wasm); {}",
+            plan.reason
+        ),
+        (false, _) => plan.reason.to_string(),
     };
     project::timings::note(format!("legs: {leg_reason}"));
     println!(
@@ -4024,7 +4185,7 @@ fn spa_split_and_build(
     // In `--format json` mode each leg runs with `--format json` too, and its
     // diagnostics are relayed (see `report_leg`).
     let json_leg = json_out::active();
-    let build_backend = || {
+    let run_backend = |tx: Option<&project::spa_wasm_handoff::Sender>| {
         let mut c = Command::new(sky_ref);
         c.arg("build");
         if embed {
@@ -4037,10 +4198,15 @@ fn spa_split_and_build(
             c.env(project::go_jobs::ENV_JOBS, n.to_string());
         }
         let t = project::timings::phase("backend leg (child sky build, native)");
-        let out = c.arg("src/Main.sky").current_dir(&backend_dir).output();
+        c.arg("src/Main.sky").current_dir(&backend_dir);
+        let out = match tx {
+            Some(tx) => run_with_handoff(c, tx),
+            None => c.output(),
+        };
         t.end();
         out
     };
+    let build_backend = || run_backend(handoff.as_ref());
     let build_frontend = || {
         let t = project::timings::phase("frontend leg (child sky build, wasm)");
         let mut c = Command::new(sky_ref);
@@ -4051,9 +4217,14 @@ fn spa_split_and_build(
         if let Some(u) = builder_app_url {
             c.arg(format!("{}{u}", app_url::BUILDER_FLAG));
         }
-        if !precompress {
-            c.arg("--no-precompress");
-        }
+        // The parent compresses a web bundle itself (below), so the child
+        // never does; a native shell's child keeps compressing its own, at
+        // the parent's level (the flag wins over the child's environment).
+        c.arg(if parent_compresses {
+            precompress::Level::Off.flag()
+        } else {
+            compress_level.flag()
+        });
         if let Some(v) = ai_web_engine_arg() {
             c.args(["--ai-web-engine", v]);
         }
@@ -4067,6 +4238,32 @@ fn spa_split_and_build(
         t.end();
         out
     };
+    let frontend_ok =
+        |r: &std::io::Result<std::process::Output>| matches!(r, Ok(o) if o.status.success());
+    let compress_dist = || {
+        let t = project::timings::phase("precompress dist (parent, all assets at once)");
+        precompress_assets(
+            &dist_precompress_targets(&frontend_dir.join("dist")),
+            compress_level,
+        );
+        t.end();
+    };
+    // Deliver the frontend's wasm name (or `failed`) to the backend leg. A
+    // write error means the backend child has already exited; its own output
+    // (reported below) says why.
+    let deliver_name = |frontend: &std::io::Result<std::process::Output>| {
+        let Some(tx) = &handoff else { return };
+        use project::spa_wasm_handoff::Delivered;
+        let what = if frontend_ok(frontend) {
+            project::spa_split::built_wasm_name(&frontend_dir.join("dist"))
+                .map_or(Delivered::Failed, Delivered::Name)
+        } else {
+            Delivered::Failed
+        };
+        if let Err(e) = tx.deliver(what) {
+            eprintln!("sky build: could not hand the frontend's wasm name to the backend leg: {e}");
+        }
+    };
     let t_legs = project::timings::phase("both legs (wall)");
     // `--ai-embed <slot>`: the native shell carries the slot's model and
     // adapter. The backend is built first and resolves them as it would serve
@@ -4077,46 +4274,106 @@ fn spa_split_and_build(
     let ai_embed_ready = match AI_EMBED.get() {
         None => None,
         Some(slot) => {
-            let backend = build_backend();
-            match &backend {
-                Ok(out) if out.status.success() => {
-                    let bin = backend_dir.join("sky-out").join("app");
-                    let st = Command::new(&bin)
-                        .arg("--sky-ai-export")
-                        .arg(slot)
-                        .arg(&embed_dir)
-                        .current_dir(&backend_dir)
-                        .status();
-                    if !matches!(st, Ok(s) if s.success()) {
-                        eprintln!("sky build --ai-embed {slot}: the server could not export the slot's files (see above)");
-                        return Err(ExitCode::FAILURE);
-                    }
+            // No wasm name to wait for: this build only exports the slot.
+            let backend = run_backend(None);
+            if frontend_ok(&backend) {
+                let bin = backend_dir.join("sky-out").join("app");
+                let st = Command::new(&bin)
+                    .arg("--sky-ai-export")
+                    .arg(slot)
+                    .arg(&embed_dir)
+                    .current_dir(&backend_dir)
+                    .status();
+                if !matches!(st, Ok(s) if s.success()) {
+                    eprintln!("sky build --ai-embed {slot}: the server could not export the slot's files (see above)");
+                    return Err(ExitCode::FAILURE);
                 }
-                _ => {}
             }
             Some(backend)
         }
     };
     let (backend_res, frontend_res) = if let Some(backend) = ai_embed_ready {
         let frontend = build_frontend();
-        if bake_wasm_name && matches!(&frontend, Ok(out) if out.status.success()) {
-            bake_backend_wasm_name(&backend_main, &frontend_dir.join("dist"));
+        let built = frontend_ok(&frontend);
+        deliver_name(&frontend);
+        if built && parent_compresses {
+            compress_dist();
+        }
+        if bake_wasm_name && built {
+            // The SSR page names the frontend's wasm and engines: build the
+            // backend again, now that both exist.
+            bake_backend_ai_engine(&backend_main, &frontend_dir.join("dist"));
             (Ok(build_backend()), Ok(frontend))
         } else {
             (Ok(backend), Ok(frontend))
         }
+    } else if bake_wasm_name && plan.parallel && !bake_ai_engine {
+        std::thread::scope(|s| {
+            let b = s.spawn(build_backend);
+            let f = s.spawn(|| {
+                // Delivers `failed` if this thread ends before it delivers.
+                let _guard = handoff.as_ref().map(|tx| tx.guard());
+                let r = build_frontend();
+                deliver_name(&r);
+                if parent_compresses && frontend_ok(&r) {
+                    compress_dist();
+                }
+                r
+            });
+            (b.join(), f.join())
+        })
     } else if bake_wasm_name {
         let frontend = build_frontend();
-        if matches!(&frontend, Ok(out) if out.status.success()) {
-            bake_backend_wasm_name(&backend_main, &frontend_dir.join("dist"));
+        let built = frontend_ok(&frontend);
+        // Held, and written as the backend child starts.
+        deliver_name(&frontend);
+        if built && bake_ai_engine {
+            // Std.Ai.Device: the engine names exist only once the frontend
+            // leg staged them, and they are Sky source in the backend.
+            bake_backend_ai_engine(&backend_main, &frontend_dir.join("dist"));
         }
-        (Ok(build_backend()), Ok(frontend))
+        if built && parent_compresses {
+            // Compress while the backend builds, when memory holds both.
+            let brotli = leg_plan::brotli_need(
+                &dist_precompress_targets(&frontend_dir.join("dist")),
+                compress_level,
+            );
+            if leg_plan::compression_beside(backend_need, brotli, leg_plan::available_memory()) {
+                project::timings::note("precompress: beside the backend leg".to_string());
+                let backend = std::thread::scope(|s| {
+                    let b = s.spawn(build_backend);
+                    compress_dist();
+                    b.join()
+                });
+                (backend, Ok(frontend))
+            } else {
+                project::timings::note("precompress: after the backend leg (memory)".to_string());
+                let backend = build_backend();
+                compress_dist();
+                (Ok(backend), Ok(frontend))
+            }
+        } else {
+            (Ok(build_backend()), Ok(frontend))
+        }
     } else if !plan.parallel {
-        (Ok(build_backend()), Ok(build_frontend()))
+        let backend = build_backend();
+        let frontend = build_frontend();
+        if parent_compresses && frontend_ok(&frontend) {
+            compress_dist();
+        }
+        (Ok(backend), Ok(frontend))
     } else {
         std::thread::scope(|s| {
             let b = s.spawn(build_backend);
-            let f = s.spawn(build_frontend);
+            // The frontend's memory is free once its child exits; its
+            // compression fits in what the plan counted for that leg.
+            let f = s.spawn(|| {
+                let r = build_frontend();
+                if parent_compresses && frontend_ok(&r) {
+                    compress_dist();
+                }
+                r
+            });
             (b.join(), f.join())
         })
     };
@@ -4525,6 +4782,65 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
     }
 }
 
+/// A `Std.App` entry staged for `sky spa-split`: see [`std_app_split_input`].
+struct StdAppSplitInput {
+    /// The staged project holding the synthesised `Spa.app` entry.
+    staged: PathBuf,
+    entry_module: Option<String>,
+    /// The user's own entry source (static declarations are read from it).
+    entry_src: String,
+    static_mount: Option<(String, String)>,
+    builder_app_url: Option<String>,
+}
+
+/// For `sky spa-split` on a `Std.App` entry (`main = App.run app`): check the
+/// user's own source, synthesise the `Spa.app` entry from the `App` value and
+/// stage it under `<project>/.skyapp/spa-split/`, exactly as `sky build
+/// --target web:app` stages `.skyapp/web-app/`. `Ok(None)` for any other entry
+/// (a `Std.Spa` entry is split as written).
+fn std_app_split_input(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_file: &Path,
+    tgt: Option<target::Target>,
+) -> Result<Option<StdAppSplitInput>, ExitCode> {
+    let entry_src = std::fs::read_to_string(entry_file).unwrap_or_default();
+    let imports_spa = entry_src
+        .lines()
+        .any(|l| l.trim_start().starts_with("import Std.Spa"));
+    if imports_spa || !uses_app_run(&entry_src) {
+        return Ok(None);
+    }
+    if std_app_user_errors(repo_root, project_dir, entry_file, "spa-split") {
+        return Err(ExitCode::FAILURE);
+    }
+    let synthesized = synthesize_spa_source(&entry_src, false).map_err(|e| {
+        eprintln!("sky spa-split: cannot derive the client build from your `App` value:\n  {e}");
+        ExitCode::FAILURE
+    })?;
+    let builder_app_url = match tgt {
+        Some(tgt) => std_app_builder_url(&entry_src, tgt).map_err(|e| {
+            eprintln!("sky spa-split --target {}: {e}", tgt.canonical());
+            ExitCode::FAILURE
+        })?,
+        None => None,
+    };
+    let staged = project_dir.join(".skyapp").join("spa-split");
+    let src_to = stage_std_app_derived(project_dir, &staged)?;
+    let synth_entry = src_to.join(entry_file.file_name().unwrap_or_default());
+    if let Err(e) = std::fs::write(&synth_entry, synthesized) {
+        eprintln!("sky spa-split: write synthesised Spa entry: {e}");
+        return Err(ExitCode::FAILURE);
+    }
+    Ok(Some(StdAppSplitInput {
+        entry_module: entry_module_name(&synth_entry),
+        static_mount: project::spa_split::declared_static_mount(&entry_src, project_dir),
+        staged,
+        entry_src,
+        builder_app_url,
+    }))
+}
+
 fn cmd_spa_split(args: &[String]) -> ExitCode {
     let (positional, out) = parse_out(args);
     // `--build` (or `--target <t>`, which implies build): after generating, build
@@ -4539,6 +4855,7 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
     // Same target model + normalisation as `sky build` (see cmd_build): parse
     // `family[:variant]`, reject a non-frontend-shell target, rebind to the
     // legacy shell string for the split engine.
+    let mut parsed_split_target = None;
     let split_target = if let Some(t) = &split_target {
         let tgt = match target::Target::parse(t) {
             Ok(tgt) => tgt,
@@ -4547,6 +4864,7 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
+        parsed_split_target = Some(tgt);
         match tgt.frontend_shell() {
             Some(shell) => Some(shell.to_string()),
             None => {
@@ -4600,25 +4918,80 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
     project::build_stamp::pin_build_stamp(&project_dir);
     let target = split_target.as_deref().unwrap_or("web");
     let embed = args.iter().any(|a| a == "--embed");
-    let od = match spa_split_and_build(
-        &repo_root,
-        &project_dir,
-        entry_module_name(file).as_deref(),
-        &out_dir,
-        broker_url.as_deref(),
-        target,
-        embed,
-        do_build,
-        // Direct `sky spa-split`: the entry still carries its static declaration,
-        // so `generate` reads the mount itself.
-        None,
-        true,
-        None,
-        None,
+    let compress_level = match precompress::Level::from_args(
+        args,
+        std::env::var(precompress::ENV).ok().as_deref(),
     ) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("sky spa-split: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    // A `Std.App` entry is split the way `sky build --target web:app` splits
+    // it: from the `Spa.app` entry synthesised from its `App` value. The raw
+    // entry imports `Std.App`, not `Std.Spa`, so a split of it named `Spa.*`
+    // without importing it and its two projects did not build.
+    let std_app = match std_app_split_input(&repo_root, &project_dir, file, parsed_split_target) {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
+    let od = match &std_app {
+        Some(app) => spa_split_and_build(
+            &repo_root,
+            &app.staged,
+            app.entry_module.as_deref(),
+            &out_dir,
+            broker_url.as_deref(),
+            target,
+            embed,
+            do_build,
+            app.static_mount.clone(),
+            compress_level,
+            app.builder_app_url.as_deref(),
+            Some(&project_dir),
+            None,
+        ),
+        None => spa_split_and_build(
+            &repo_root,
+            &project_dir,
+            entry_module_name(file).as_deref(),
+            &out_dir,
+            broker_url.as_deref(),
+            target,
+            embed,
+            do_build,
+            // Direct `sky spa-split`: the entry still carries its static
+            // declaration, so `generate` reads the mount itself.
+            None,
+            compress_level,
+            None,
+            None,
+            None,
+        ),
+    };
+    let od = match od {
         Ok(od) => od,
         Err(code) => return code,
     };
+    if let (Some(app), true) = (&std_app, do_build) {
+        // As `sky build --target web:app` does: the synthesised entry dropped
+        // the app's static declaration, so its assets come from the user's
+        // own project.
+        let staged =
+            project::spa_split::stage_declared_static_into_dist(&app.entry_src, &project_dir, &od)
+                .and_then(|()| {
+                    project::spa_split::stage_declared_static_into_backend(
+                        &app.entry_src,
+                        &project_dir,
+                        &od,
+                    )
+                });
+        if let Err(e) = staged {
+            eprintln!("sky spa-split: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
     if !do_build {
         println!("\nBuild: (cd {} && sky build --target web frontend/src/Main.sky) && (cd {} && sky build backend/src/Main.sky)", od.display(), od.display());
         println!("  or re-run with --build (native backend + web frontend) / --target <t> (frontend shell).");
@@ -4670,10 +5043,19 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     // (GOOS=js GOARCH=wasm) + drops wasm_exec.js; `--target <t>` bundles that
     // client for a delivery surface (web / desktop / ios / android). See
     // `cmd_build_target`.
-    // `--no-precompress`: skip the `.gz` / `.br` bundle variants. Internal — the
-    // `sky run` path passes it to its frontend leg, whose backend serves the
-    // bundle itself and never reads them.
-    let precompress = !args.iter().any(|a| a == "--no-precompress");
+    // `--precompress=max|fast|off` (else SKY_PRECOMPRESS, else max): how much
+    // work goes into the `.gz` / `.br` bundle variants. `--no-precompress` is
+    // `--precompress=off`.
+    let precompress_level = match precompress::Level::from_args(
+        args,
+        std::env::var(precompress::ENV).ok().as_deref(),
+    ) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("sky build: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let wasm = args.iter().any(|a| a == "--wasm");
     let target = args
         .iter()
@@ -4804,6 +5186,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
             embed,
             out_override.as_deref(),
             false,
+            precompress_level,
         );
     }
 
@@ -4889,17 +5272,20 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         && !explicit_wasm
         && is_spa_app_entry(file)
         && !is_generated_split_project(&project_dir)
-        && project::front_half_errors(&repo_root, &project_dir, entry_module_name(file).as_deref())
-            .is_empty()
     {
-        if let Err(code) = check_spa_split(
-            &repo_root,
-            &project_dir,
-            entry_module_name(file).as_deref(),
-            None,
-            None,
-        ) {
-            return code;
+        if let Ok(loaded) =
+            project::front_half_loaded(&repo_root, &project_dir, entry_module_name(file).as_deref())
+        {
+            if let Err(code) = check_spa_split(
+                &repo_root,
+                &project_dir,
+                entry_module_name(file).as_deref(),
+                None,
+                None,
+                Some(loaded),
+            ) {
+                return code;
+            }
         }
     }
     if !check_only
@@ -4913,19 +5299,21 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         // parse, types, lowering). An error there is reported against `src/…`,
         // where the user can fix it, instead of surfacing later from a
         // generated split project. Both output modes print these same values.
-        let front = project::front_half_errors(
+        let loaded = match project::front_half_loaded(
             &repo_root,
             &project_dir,
             entry_module_name(file).as_deref(),
-        );
-        if !front.is_empty() {
-            for d in &front {
-                json_out::diagnostic(d);
+        ) {
+            Ok(loaded) => loaded,
+            Err(front) => {
+                for d in &front {
+                    json_out::diagnostic(d);
+                }
+                let rendered: Vec<&str> = front.iter().map(|d| d.rendered.as_str()).collect();
+                eprintln!("sky build: {}", rendered.join("\n"));
+                return ExitCode::FAILURE;
             }
-            let rendered: Vec<&str> = front.iter().map(|d| d.rendered.as_str()).collect();
-            eprintln!("sky build: {}", rendered.join("\n"));
-            return ExitCode::FAILURE;
-        }
+        };
         return match spa_split_and_build(
             &repo_root,
             &project_dir,
@@ -4937,9 +5325,10 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
             true,
             // Direct Spa entry: `generate` reads the static mount from the entry.
             None,
-            precompress,
+            precompress_level,
             builder_app_url.as_deref(),
             None,
+            Some(loaded),
         ) {
             Ok(od) => {
                 let entry = positional
@@ -5069,7 +5458,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
             t,
             &project_dir,
             &out_dir,
-            precompress,
+            precompress_level,
             shell_app_url.as_ref(),
         );
     }
@@ -5085,14 +5474,14 @@ fn cmd_build_target(
     target: &str,
     project_dir: &Path,
     out_dir: &Path,
-    precompress: bool,
+    compress_level: precompress::Level,
     app_url: Option<&app_url::AppUrl>,
 ) -> ExitCode {
     // (Platform toolchains for ios/android were verified in cmd_build before the
     // build ran — see the --target parse block there.)
     // Stage the servable bundle (shared by every surface).
     let dist = project_dir.join("dist");
-    if let Err(e) = stage_web_bundle(out_dir, &dist, precompress) {
+    if let Err(e) = stage_web_bundle(out_dir, &dist, compress_level) {
         eprintln!("sky build --target {target}: {e}");
         return ExitCode::FAILURE;
     }
@@ -5224,7 +5613,11 @@ fn cmd_build_target(
 /// one app's wasm to another. A content-addressed name changes whenever the bytes
 /// change, so the cache is always correct (and the file can be cached forever).
 /// `index.html` is regenerated every build to point at the current hash.
-fn stage_web_bundle(out_dir: &Path, dist: &Path, precompress: bool) -> Result<(), String> {
+fn stage_web_bundle(
+    out_dir: &Path,
+    dist: &Path,
+    compress_level: precompress::Level,
+) -> Result<(), String> {
     let t_stage = project::timings::phase("stage dist bundle (hash + copy)");
     std::fs::create_dir_all(dist).map_err(|e| format!("create {}: {e}", dist.display()))?;
 
@@ -5321,72 +5714,143 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path, precompress: bool) -> Result<()
     std::fs::write(dist.join("index.html"), index).map_err(|e| format!("write index.html: {e}"))?;
     t_stage.end();
 
-    // Precompress the wasm + loader so a static host / Caddy can serve them with
-    // `precompressed br gzip` — brotli-11 is ~27% smaller than gzip on wasm. gzip
-    // is near-universal; brotli is optional (warned + skipped if the tool is
-    // absent, leaving the gzip fallback). Skipped for a `sky run` build: its
-    // backend serves the bundle itself (gzip on the fly) and never reads the
-    // `.gz` / `.br` files, so brotli-11 there is pure wait.
-    if precompress {
-        let cache = precompress::default_cache_dir();
-        precompress_web_asset(&dist.join(&wasm_name), cache.as_deref());
-        precompress_web_asset(&dist.join("wasm_exec.js"), cache.as_deref());
-        precompress_web_asset(&dist.join(&boot_name), cache.as_deref());
-        for e in std::fs::read_dir(dist).into_iter().flatten().flatten() {
-            let n = e.file_name().to_string_lossy().into_owned();
-            if n.starts_with("sky-ai-")
-                && (n.ends_with(".wasm") || n.ends_with(".mjs") || n.ends_with(".js"))
-            {
-                precompress_web_asset(&e.path(), cache.as_deref());
-            }
-        }
-    }
+    // Precompress the wasm, its loader glue, the boot script and the
+    // Std.Ai.Device browser engines so the Sky backend (from the manifest
+    // this writes) or a static host (`precompressed br gzip`) can send them:
+    // brotli-11 is ~27% smaller than gzip on wasm. Every level first removes
+    // these assets' earlier `.br` / `.gz` and the manifest, so `off` (a `sky
+    // run` build, whose backend gzips on the fly, or a split's child leg,
+    // whose parent compresses afterwards) leaves none behind.
+    let mut targets = vec![
+        dist.join(&wasm_name),
+        dist.join("wasm_exec.js"),
+        dist.join(&boot_name),
+    ];
+    targets.extend(ai_engine_precompress_targets(dist));
+    precompress_assets(&targets, compress_level);
     Ok(())
 }
 
-/// Precompress one dist asset into `<file>.gz` (gzip -9) and, when the `brotli`
-/// tool is installed, `<file>.br` (brotli -11). Both are content-negotiated by a
-/// `file_server { precompressed br gzip }`; the raw file remains for clients that
-/// accept neither. Missing tools are non-fatal: gzip is warned once, brotli is
-/// warned once with the install hint, and the build proceeds with whatever
-/// compression is available (down to raw).
+/// The assets of a staged `dist/` that are precompressed: the hashed wasm, its
+/// loader glue and the boot script (see [`stage_web_bundle`]).
+fn dist_precompress_targets(dist: &Path) -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if let Some(w) = project::spa_split::built_wasm_name(dist) {
+        v.push(dist.join(w));
+    }
+    v.push(dist.join("wasm_exec.js"));
+    v.push(dist.join(spa_boot_name()));
+    v.extend(ai_engine_precompress_targets(dist));
+    v
+}
+
+/// The Std.Ai.Device browser engine files a frontend leg staged in `dist`
+/// (`sky-ai-*.wasm` / `.mjs` / `.js`), sorted, for precompression.
+fn ai_engine_precompress_targets(dist: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = std::fs::read_dir(dist)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            n.starts_with("sky-ai-")
+                && (n.ends_with(".wasm") || n.ends_with(".mjs") || n.ends_with(".js"))
+        })
+        .map(|e| e.path())
+        .collect();
+    v.sort();
+    v
+}
+
+/// Precompress `files` (all in one `dist/`) at `level`, each in its own
+/// thread (gzip and brotli of each at once too), then list what was written
+/// in the manifest the Sky backend serves from (`precompress::MANIFEST`).
+/// Every level first removes the files' earlier variants and the manifest,
+/// so `off` leaves nothing stale. `max` becomes `fast`, with a warning, when
+/// the available memory does not hold its parallel brotli
+/// (`leg_plan::precompress_level_within`). Each file is its own input, and
+/// the cache stores each result under its own temporary name
+/// (`precompress::compress`).
+fn precompress_assets(files: &[PathBuf], level: precompress::Level) {
+    precompress::remove_variants(files);
+    if level == precompress::Level::Off {
+        return;
+    }
+    let need = leg_plan::brotli_need(files, precompress::Level::Max);
+    let available = leg_plan::available_memory();
+    let level = match leg_plan::precompress_level_within(level, need, available) {
+        l if l == level => l,
+        l => {
+            let msg = format!(
+                "--precompress=max needs about {} MB of memory for this bundle and {} MB is \
+                 available: writing the `{}` variants instead (brotli quality 9, gzip -6; the \
+                 .br is about 18% larger). Free memory and rebuild for the smallest files.",
+                need >> 20,
+                available.unwrap_or(0) >> 20,
+                l.name()
+            );
+            eprintln!("sky build: {msg}");
+            project::timings::note(format!("precompress: {msg}"));
+            l
+        }
+    };
+    let Some(codecs) = level.codecs() else {
+        return;
+    };
+    let cache = precompress::default_cache_dir();
+    let cache = cache.as_deref();
+    std::thread::scope(|s| {
+        for f in files {
+            s.spawn(move || precompress_web_asset(f, cache, codecs, level));
+        }
+    });
+    if let Err(e) = precompress::write_manifest(files, level) {
+        eprintln!(
+            "sky build: could not write {}: {e}. The Sky backend serves the raw files, \
+             gzipped on the fly.",
+            precompress::MANIFEST
+        );
+    }
+}
+
+/// Precompress one dist asset into `<file>.gz` (gzip) and `<file>.br` (brotli,
+/// in process). Both are content-negotiated by the Sky backend's static mounts
+/// and by a `file_server { precompressed br gzip }`; the raw file remains for
+/// clients that accept neither. A missing `gzip` is non-fatal: it is warned
+/// once and the build proceeds.
 ///
-/// The two tools run concurrently, and each result is cached under the input's
+/// The two run concurrently, and each result is cached under the input's
 /// content hash (`precompress::compress`), so an unchanged wasm is never
 /// compressed twice.
-fn precompress_web_asset(file: &Path, cache: Option<&Path>) {
+fn precompress_web_asset(
+    file: &Path,
+    cache: Option<&Path>,
+    (gzip, brotli): (precompress::Codec, precompress::Codec),
+    level: precompress::Level,
+) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static BROTLI_WARNED: AtomicBool = AtomicBool::new(false);
     static GZIP_WARNED: AtomicBool = AtomicBool::new(false);
     if !file.is_file() {
         return;
     }
-    let timed = |tool: &precompress::Tool, label: &'static str, hit: &'static str| {
+    let timed = |codec: &precompress::Codec, what: &str| {
         let start = Instant::now();
-        let outcome = precompress::compress(file, tool, cache);
-        let label = if outcome == precompress::Outcome::CacheHit {
-            hit
+        let outcome = precompress::compress(file, codec, cache);
+        let hit = if outcome == precompress::Outcome::CacheHit {
+            " (cached)"
         } else {
-            label
+            ""
         };
-        project::timings::record(label, start.elapsed());
+        project::timings::record(
+            &format!("precompress {what} ({}){hit}", level.name()),
+            start.elapsed(),
+        );
         outcome
     };
     let (gz, br) = std::thread::scope(|s| {
-        let gz = s.spawn(|| {
-            timed(
-                &precompress::GZIP,
-                "precompress gzip -9",
-                "precompress gzip -9 (cached)",
-            )
-        });
-        let br = s.spawn(|| {
-            timed(
-                &precompress::BROTLI,
-                "precompress brotli -11",
-                "precompress brotli -11 (cached)",
-            )
-        });
+        let gz = s.spawn(|| timed(&gzip, "gzip"));
+        let br = s.spawn(|| timed(&brotli, "brotli"));
         (
             gz.join().unwrap_or(precompress::Outcome::Failed),
             br.join().unwrap_or(precompress::Outcome::Failed),
@@ -5394,15 +5858,15 @@ fn precompress_web_asset(file: &Path, cache: Option<&Path>) {
     });
     if gz == precompress::Outcome::Failed && !GZIP_WARNED.swap(true, Ordering::Relaxed) {
         eprintln!(
-            "sky build: `gzip` not available — serving the wasm uncompressed. \
-             Install gzip (or let your host compress on the fly) for smaller transfers."
+            "sky build: `gzip` not available — no `.gz` variant was written. \
+             Install gzip (or let your host compress on the fly) for clients without brotli."
         );
     }
     if br == precompress::Outcome::Failed && !BROTLI_WARNED.swap(true, Ordering::Relaxed) {
         eprintln!(
-            "sky build: `brotli` not found — the wasm client is served gzip-compressed \
-             (the fallback). Install `brotli` for a ~27% smaller download (Homebrew: \
-             `brew install brotli`; Debian/Ubuntu: `apt install brotli`)."
+            "sky build: brotli compression of {} failed — no `.br` variant was written; \
+             clients get the `.gz` (or an on-the-fly gzip) instead.",
+            file.display()
         );
     }
 }
@@ -5434,31 +5898,35 @@ fn build_desktop_shell(
 ) -> Result<PathBuf, String> {
     let id = resolve_bundle_identity(project_dir)?;
     let app = &id.display_name;
-    // The shell PROJECT is generated in a temp dir, NOT under `out_dir`: the
-    // project resolver refuses a sky.toml nested inside a `sky-out/` build tree
-    // ("no .sky under src/"). Build there, then copy the binary into `out_dir`
-    // so the user's project tree stays clean and the artifact lands under
-    // sky-out with everything else.
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let shell =
-        std::env::temp_dir().join(format!("sky-desktop-shell-{}-{stamp}", std::process::id()));
+    // The shell PROJECT is generated outside `out_dir` (the project resolver
+    // refuses a sky.toml nested inside a `sky-out/` build tree: "no .sky under
+    // src/"), in a directory of its own per app project that stays between
+    // builds (`desktop_shell_dir`), so a rebuild finds its `sky-out/` and Go
+    // re-links nothing that did not change. Its files are written only when
+    // their bytes change. Two builds of the same project take turns: the lock
+    // is held for the shell's build and the copy of its binary.
+    let shell = desktop_shell_dir(&bundled::cache_root(), project_dir);
     std::fs::create_dir_all(shell.join("src"))
         .map_err(|e| format!("create {}: {e}", shell.display()))?;
+    let _lock = lock_exclusive(&shell.join(".lock"))?;
+    // Which project this shell is for, and when it was last used: the
+    // pruning of the other shells reads both.
+    mark_desktop_shell_use(&shell, project_dir);
+    if let Some(root) = shell.parent() {
+        prune_desktop_shells(root, &shell, DESKTOP_SHELLS_KEEP);
+    }
     let shell_name = format!("{}-desktop", sanitize_pkg_segment(app));
-    std::fs::write(
-        shell.join("sky.toml"),
-        format!("name = \"{shell_name}\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n"),
+    write_if_changed(
+        &shell.join("sky.toml"),
+        &format!("name = \"{shell_name}\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n"),
     )
     .map_err(|e| format!("write sky.toml: {e}"))?;
     // `app` (the display name) goes into a Sky string literal — escape it so a
     // name containing `"` or `\` can't break the generated source.
     let title = sky_str_escape(&format!("{app} — Desktop"));
-    std::fs::write(
-        shell.join("src").join("Main.sky"),
-        render_desktop_shell(&title, url),
+    write_if_changed(
+        &shell.join("src").join("Main.sky"),
+        &render_desktop_shell(&title, url),
     )
     .map_err(|e| format!("write Main.sky: {e}"))?;
 
@@ -5471,7 +5939,6 @@ fn build_desktop_shell(
         .status()
         .map_err(|e| format!("run `sky build` on the desktop shell: {e}"))?;
     if !status.success() {
-        let _ = std::fs::remove_dir_all(&shell);
         return Err("the desktop shell failed to build (see the errors above)".to_string());
     }
     let bin_name = project::configured_bin_name(&shell);
@@ -5483,7 +5950,7 @@ fn build_desktop_shell(
     let _ = std::fs::remove_file(&dest);
     std::fs::copy(&built, &dest)
         .map_err(|e| format!("copy the desktop binary to {}: {e}", dest.display()))?;
-    let _ = std::fs::remove_dir_all(&shell);
+    drop(_lock);
     // `--ai-embed`: the slot's files beside the binary, in sky-ai/.
     let _ = std::fs::remove_dir_all(dest_dir.join("sky-ai"));
     copy_ai_embedded(&dest_dir.join("sky-ai"), &ai_embedded_files(project_dir)?)?;
@@ -5491,6 +5958,107 @@ fn build_desktop_shell(
         return package_macos_release(project_dir, out_dir, &dest, &id, &release_dir);
     }
     Ok(dest)
+}
+
+/// The desktop shell project's directory for the app project at
+/// `project_dir`: `<cache>/desktop-shell/<sha256 of the canonical path, 16 hex>`.
+/// The same project (however its path is written) always gets the same
+/// directory, and two projects never share one.
+fn desktop_shell_dir(cache_root: &Path, project_dir: &Path) -> PathBuf {
+    let canonical = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let h = db_provision::sha256_hex(canonical.to_string_lossy().as_bytes());
+    cache_root.join("desktop-shell").join(&h[..16])
+}
+
+/// How many desktop shell directories to keep (each holds a built shell and
+/// its emitted Go, tens of MB).
+const DESKTOP_SHELLS_KEEP: usize = 8;
+
+/// The file in a desktop shell directory naming its app project (canonical
+/// path). Its mtime is the shell's last use.
+const DESKTOP_SHELL_PROJECT: &str = ".project";
+
+/// Record that the shell at `shell` serves `project_dir`, now.
+fn mark_desktop_shell_use(shell: &Path, project_dir: &Path) {
+    let canonical = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let f = shell.join(DESKTOP_SHELL_PROJECT);
+    let _ = std::fs::write(&f, canonical.to_string_lossy().as_bytes());
+}
+
+/// Remove desktop shell directories under `root` (`<cache>/desktop-shell`),
+/// never `current` and never one another build holds locked: first those
+/// whose app project no longer exists, then the least recently used beyond
+/// `keep` (`current` counted). Best-effort.
+fn prune_desktop_shells(root: &Path, current: &Path, keep: usize) {
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return;
+    };
+    let mut live: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+    for e in rd.flatten() {
+        let dir = e.path();
+        if !dir.is_dir() || dir == current {
+            continue;
+        }
+        let marker = dir.join(DESKTOP_SHELL_PROJECT);
+        let project_gone = std::fs::read_to_string(&marker)
+            .map(|p| !Path::new(p.trim()).exists())
+            .unwrap_or(false);
+        if project_gone {
+            remove_unlocked_shell(&dir);
+            continue;
+        }
+        let used = std::fs::metadata(&marker)
+            .or_else(|_| std::fs::metadata(&dir))
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        live.push((used, dir));
+    }
+    live.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, dir) in live.into_iter().skip(keep.saturating_sub(1)) {
+        remove_unlocked_shell(&dir);
+    }
+}
+
+/// Remove a desktop shell directory unless a build holds its lock.
+fn remove_unlocked_shell(dir: &Path) {
+    let lock = dir.join(".lock");
+    let held = match std::fs::OpenOptions::new().write(true).open(&lock) {
+        Ok(f) => match f.try_lock() {
+            Ok(()) => Some(f),
+            Err(_) => return,
+        },
+        Err(_) => None,
+    };
+    let _ = std::fs::remove_dir_all(dir);
+    drop(held);
+}
+
+/// An exclusive lock on `path` (created if absent), held until the returned
+/// file is dropped. Blocks while another process holds it.
+fn lock_exclusive(path: &Path) -> Result<std::fs::File, String> {
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|e| format!("open {}: {e}", path.display()))?;
+    f.lock()
+        .map_err(|e| format!("lock {}: {e}", path.display()))?;
+    Ok(f)
+}
+
+/// Write `text` to `path` unless it already holds exactly those bytes, so an
+/// unchanged generated file keeps its mtime.
+fn write_if_changed(path: &Path, text: &str) -> std::io::Result<()> {
+    if std::fs::read(path).is_ok_and(|b| b == text.as_bytes()) {
+        return Ok(());
+    }
+    std::fs::write(path, text)
 }
 
 /// `sky package --release --target desktop:mac`: wrap the desktop shell binary
@@ -6529,6 +7097,22 @@ fn build_android_apk(
     out_dir: &Path,
     url: &app_url::AppUrl,
 ) -> Result<PathBuf, String> {
+    build_android_apk_in(project_dir, out_dir, url, &shell_inputs::ToolEnv::process())
+}
+
+/// [`build_android_apk`] with its tools run in `env`. The shell project stays
+/// in `<out>/android` between builds and its files are written only when their
+/// bytes change. The debug APK build (aapt2, javac, d8, zipalign, apksigner)
+/// runs only when an input differs from the last complete build: the sources,
+/// the resources and manifest, the library jars, the build script, the debug
+/// keystore or the toolchain (see `shell_inputs`). Two builds of the same
+/// project take turns: the lock is held until the APK is built.
+fn build_android_apk_in(
+    project_dir: &Path,
+    out_dir: &Path,
+    url: &app_url::AppUrl,
+    env: &shell_inputs::ToolEnv,
+) -> Result<PathBuf, String> {
     let id = resolve_bundle_identity(project_dir)?;
     let package = &id.bundle_id;
     let pkg_path = package.replace('.', "/");
@@ -6548,6 +7132,17 @@ fn build_android_apk(
     std::fs::create_dir_all(&java_dir)
         .map_err(|e| format!("create {}: {e}", java_dir.display()))?;
     std::fs::create_dir_all(&res_dir).map_err(|e| format!("create {}: {e}", res_dir.display()))?;
+    let _lock = lock_exclusive(&root.join(".lock"))?;
+    // The Java sources this build writes. Any other `.java` file under the
+    // source root (a native extension removed since the last build, the
+    // activity of an earlier bundle id) is removed, so it is not compiled in.
+    let java_root = root.join("app/src/main/java");
+    let mut java_files = std::collections::BTreeSet::new();
+    let mut put_java = |path: PathBuf, text: &str| -> Result<(), String> {
+        shell_inputs::write_bytes_if_changed(&path, text.as_bytes())?;
+        java_files.insert(path);
+        Ok(())
+    };
 
     // App icon → mipmap-<density>/ic_launcher.png; the manifest points at it only
     // when we actually generated the mipmaps (else Android uses its default).
@@ -6556,7 +7151,17 @@ fn build_android_apk(
             generate_android_icons(&icon, &res_root)?;
             "\n        android:icon=\"@mipmap/ic_launcher\""
         }
-        None => "",
+        None => {
+            // No icon now: the mipmaps of an earlier build's icon go.
+            if let Ok(rd) = std::fs::read_dir(&res_root) {
+                for e in rd.flatten() {
+                    if e.file_name().to_string_lossy().starts_with("mipmap-") {
+                        let _ = std::fs::remove_dir_all(e.path());
+                    }
+                }
+            }
+            ""
+        }
     };
 
     // Native permissions (Bundle.withPermission / withUsage): manifest
@@ -6592,12 +7197,15 @@ fn build_android_apk(
     // for exactly that host; https permits no cleartext.
     let (cleartext_attr, network_config) = app_url::android_cleartext(url);
     let xml_dir = res_root.join("xml");
-    let _ = std::fs::remove_file(xml_dir.join("network_security_config.xml"));
-    if let Some(cfg) = &network_config {
-        std::fs::create_dir_all(&xml_dir)
-            .map_err(|e| format!("create {}: {e}", xml_dir.display()))?;
-        std::fs::write(xml_dir.join("network_security_config.xml"), cfg)
-            .map_err(|e| format!("write network_security_config.xml: {e}"))?;
+    match &network_config {
+        Some(cfg) => shell_inputs::write_bytes_if_changed(
+            &xml_dir.join("network_security_config.xml"),
+            cfg.as_bytes(),
+        )?,
+        None => {
+            let _ = std::fs::remove_file(xml_dir.join("network_security_config.xml"));
+            let _ = std::fs::remove_dir(&xml_dir);
+        }
     }
 
     // Bundle.AssociatedDomain on Android: an `applinks:` domain becomes an
@@ -6612,97 +7220,32 @@ fn build_android_apk(
              build leaves it out (it applies to the Apple builds)."
         );
     }
-    std::fs::write(
-        root.join("app/src/main/AndroidManifest.xml"),
-        render_android_manifest(&AndroidManifestParts {
-            package,
-            label: &id.display_name,
-            version_name: &id.short_version,
-            version_code: &version_code,
-            icon_attr,
-            cleartext_attr: &cleartext_attr,
-            uses_permissions: &manifest_perms,
-            links: &links,
-        }),
-    )
-    .map_err(|e| format!("write AndroidManifest.xml: {e}"))?;
-    std::fs::write(
-        res_dir.join("strings.xml"),
-        render_android_strings(&id.display_name, &links),
-    )
-    .map_err(|e| format!("write strings.xml: {e}"))?;
-    std::fs::write(
-        java_dir.join("MainActivity.java"),
-        render_android_main_activity(package, url)
-            .replace("{{LINK_HOSTS}}", &native_pkg::link_host_literals(&links))
-            .replace("{{PERMISSION_IMPORTS}}", &perm_imports)
-            .replace("{{WEBCHROME}}", &webchrome)
-            .replace("{{RUNTIME_REQUEST}}", &runtime_request)
-            .replace(
-                "{{WEBVIEW_DEBUG}}",
-                if release.is_some() { "false" } else { "true" },
-            ),
-    )
-    .map_err(|e| format!("write MainActivity.java: {e}"))?;
-
-    // Std.Native.scanCode: the camera scanner and its ZXing decoder, only for
-    // an app that calls it (a pinned jar from Maven Central, verified by its
-    // SHA-256 and cached); every other app gets a stub and no extra jar.
-    let perm_dir = root.join("app/src/main/java/sky/perm");
-    std::fs::create_dir_all(&perm_dir)
-        .map_err(|e| format!("create {}: {e}", perm_dir.display()))?;
-    std::fs::write(
-        perm_dir.join("SkyPermissions.java"),
-        ANDROID_PERMISSIONS_JAVA,
-    )
-    .map_err(|e| format!("write SkyPermissions.java: {e}"))?;
-    // Std.Ai.Device: llama.cpp in the shell when the app uses device slots and
-    // the engine is installed (`sky ai provision --device android`): the JNI
-    // library per ABI, stored uncompressed and 16 KB aligned.
-    let ai_dir = root.join("app/src/main/java/sky/ai");
-    std::fs::create_dir_all(&ai_dir).map_err(|e| format!("create {}: {e}", ai_dir.display()))?;
-    let ai_native = project_uses_ai_device(project_dir) && ai_device::installed("android");
-    if project_uses_ai_device(project_dir) && !ai_native {
+    // Std.Ai.Device: llama.cpp in the shell when the app uses device slots
+    // and the engine is installed (`sky ai provision --device android`).
+    let uses_ai_device = project_uses_ai_device(project_dir);
+    let ai_native = uses_ai_device && ai_device::installed("android");
+    if uses_ai_device && !ai_native {
         eprintln!(
             "note: Std.Ai.Device: the Android shell runs device slots in the web worker or on the server; {}",
             ai_device::not_provisioned("android")
         );
     }
-    let _ = std::fs::remove_file(ai_dir.join("SkyLlama.java"));
-    std::fs::write(
-        ai_dir.join("SkyAi.java"),
-        if ai_native {
-            ANDROID_AI_JAVA
-        } else {
-            ANDROID_AI_STUB_JAVA
-        },
-    )
-    .map_err(|e| format!("write SkyAi.java: {e}"))?;
-    let jni = root.join("app/jniLibs");
-    let _ = std::fs::remove_dir_all(&jni);
-    if ai_native {
-        std::fs::write(ai_dir.join("SkyLlama.java"), ANDROID_AI_LLAMA_JAVA)
-            .map_err(|e| format!("write SkyLlama.java: {e}"))?;
-        for abi in ["arm64-v8a", "x86_64"] {
-            let d = jni.join("lib").join(abi);
-            std::fs::create_dir_all(&d).map_err(|e| format!("create {}: {e}", d.display()))?;
-            let src = ai_device::engine_dir("android")
-                .join(abi)
-                .join("libskyllama.so");
-            std::fs::copy(&src, d.join("libskyllama.so"))
-                .map_err(|e| format!("copy {}: {e}", src.display()))?;
-        }
-    }
+    let mut manifest = render_android_manifest(&AndroidManifestParts {
+        package,
+        label: &id.display_name,
+        version_name: &id.short_version,
+        version_code: &version_code,
+        icon_attr,
+        cleartext_attr: &cleartext_attr,
+        uses_permissions: &manifest_perms,
+        links: &links,
+    });
     if ai_native {
         // The libraries load in place from the APK, never extracted.
-        let mf = root.join("app/src/main/AndroidManifest.xml");
-        let text =
-            std::fs::read_to_string(&mf).map_err(|e| format!("read {}: {e}", mf.display()))?;
         // ACCESS_NETWORK_STATE (a normal permission, no prompt): a download
         // waits for an unmetered network unless the slot allows metered.
-        std::fs::write(
-            &mf,
-            text.replacen(
+        manifest = manifest
+            .replacen(
                 "android:supportsRtl=\"true\">",
                 "android:supportsRtl=\"true\"\n        android:extractNativeLibs=\"false\">",
                 1,
@@ -6712,60 +7255,107 @@ fn build_android_apk(
                 "<uses-permission android:name=\"android.permission.INTERNET\" />\n    \
                  <uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" />",
                 1,
-            ),
-        )
-        .map_err(|e| format!("write {}: {e}", mf.display()))?;
+            );
     }
+    write_if_changed(&root.join("app/src/main/AndroidManifest.xml"), &manifest)
+        .map_err(|e| format!("write AndroidManifest.xml: {e}"))?;
+    write_if_changed(
+        &res_dir.join("strings.xml"),
+        &render_android_strings(&id.display_name, &links),
+    )
+    .map_err(|e| format!("write strings.xml: {e}"))?;
+    put_java(
+        java_dir.join("MainActivity.java"),
+        &render_android_main_activity(package, url)
+            .replace("{{LINK_HOSTS}}", &native_pkg::link_host_literals(&links))
+            .replace("{{PERMISSION_IMPORTS}}", &perm_imports)
+            .replace("{{WEBCHROME}}", &webchrome)
+            .replace("{{RUNTIME_REQUEST}}", &runtime_request)
+            .replace(
+                "{{WEBVIEW_DEBUG}}",
+                if release.is_some() { "false" } else { "true" },
+            ),
+    )?;
+
+    // Std.Native.scanCode: the camera scanner and its ZXing decoder, only for
+    // an app that calls it (a pinned jar from Maven Central, verified by its
+    // SHA-256 and cached); every other app gets a stub and no extra jar.
+    put_java(
+        java_root.join("sky/perm/SkyPermissions.java"),
+        ANDROID_PERMISSIONS_JAVA,
+    )?;
+    // Std.Ai.Device: llama.cpp in the shell when the app uses device slots and
+    // the engine is installed (`sky ai provision --device android`): the JNI
+    // library per ABI, stored uncompressed and 16 KB aligned.
+    let ai_dir = java_root.join("sky/ai");
+    put_java(
+        ai_dir.join("SkyAi.java"),
+        if ai_native {
+            ANDROID_AI_JAVA
+        } else {
+            ANDROID_AI_STUB_JAVA
+        },
+    )?;
+    let jni = root.join("app/jniLibs");
+    let mut jni_files = std::collections::BTreeSet::new();
+    if ai_native {
+        put_java(ai_dir.join("SkyLlama.java"), ANDROID_AI_LLAMA_JAVA)?;
+        for abi in ["arm64-v8a", "x86_64"] {
+            let src = ai_device::engine_dir("android")
+                .join(abi)
+                .join("libskyllama.so");
+            let dest = jni.join("lib").join(abi).join("libskyllama.so");
+            shell_inputs::copy_if_changed(&src, &dest)?;
+            jni_files.insert(dest);
+        }
+    }
+    shell_inputs::prune_tree(&jni, &jni_files);
+    // `--ai-embed`: the slot's files in the APK's assets, in sky-ai/.
     let assets = root.join("app/src/main/assets");
     let _ = std::fs::remove_dir_all(&assets);
     copy_ai_embedded(&assets.join("sky-ai"), &ai_embedded_files(project_dir)?)?;
-    let scan_dir = root.join("app/src/main/java/sky/scan");
-    std::fs::create_dir_all(&scan_dir)
-        .map_err(|e| format!("create {}: {e}", scan_dir.display()))?;
     let libs = root.join("app/libs");
-    let _ = std::fs::remove_dir_all(&libs);
-    std::fs::create_dir_all(&libs).map_err(|e| format!("create {}: {e}", libs.display()))?;
+    let mut lib_files = std::collections::BTreeSet::new();
     let scans = decl.capabilities.contains("scanCode");
     if scans {
         let jar = native_pkg::zxing_jar()?;
-        std::fs::copy(&jar, libs.join(native_pkg::ZXING_JAR_NAME))
-            .map_err(|e| format!("copy {}: {e}", jar.display()))?;
+        let dest = libs.join(native_pkg::ZXING_JAR_NAME);
+        shell_inputs::copy_if_changed(&jar, &dest)?;
+        lib_files.insert(dest);
     }
-    std::fs::write(
-        scan_dir.join("SkyScanner.java"),
+    shell_inputs::prune_tree(&libs, &lib_files);
+    put_java(
+        java_root.join("sky/scan/SkyScanner.java"),
         if scans {
             ANDROID_SCANNER_JAVA
         } else {
             ANDROID_SCANNER_STUB_JAVA
         },
-    )
-    .map_err(|e| format!("write SkyScanner.java: {e}"))?;
+    )?;
 
     // Native extensions (Std.Native.bridge): the registry + installer + each
     // injected native/android/*.java from the project + its Sky deps, all in
     // package sky.nativeext (javac globs app/src/main/java, so they compile).
-    let ext_java_dir = root.join("app/src/main/java/sky/nativeext");
-    std::fs::create_dir_all(&ext_java_dir)
-        .map_err(|e| format!("create {}: {e}", ext_java_dir.display()))?;
-    std::fs::write(ext_java_dir.join("SkyRegistry.java"), ANDROID_EXT_REGISTRY)
-        .map_err(|e| format!("write SkyRegistry.java: {e}"))?;
+    let ext_java_dir = java_root.join("sky/nativeext");
+    put_java(ext_java_dir.join("SkyRegistry.java"), ANDROID_EXT_REGISTRY)?;
     let java_exts = collect_native_files(project_dir, "android", "java");
     for (stem, path) in &java_exts {
-        std::fs::copy(path, ext_java_dir.join(format!("{stem}.java")))
+        let text = std::fs::read_to_string(path)
             .map_err(|e| format!("copy native/android/{stem}.java: {e}"))?;
+        put_java(ext_java_dir.join(format!("{stem}.java")), &text)?;
     }
     let install_calls: String = java_exts
         .iter()
         .map(|(stem, _)| format!("        {stem}.register();\n"))
         .collect();
-    std::fs::write(
+    put_java(
         ext_java_dir.join("SkyNativeExtInstall.java"),
-        format!(
+        &format!(
             "package sky.nativeext;\n\npublic final class SkyNativeExtInstall {{\n    \
              public static void installAll() {{\n{install_calls}    }}\n}}\n"
         ),
-    )
-    .map_err(|e| format!("write SkyNativeExtInstall.java: {e}"))?;
+    )?;
+    shell_inputs::prune_tree(&java_root, &java_files);
     if !java_exts.is_empty() {
         eprintln!(
             "  native/android: linked {} extension file(s): {}",
@@ -6820,19 +7410,36 @@ fn build_android_apk(
         }
         return Ok(apk);
     }
-    std::fs::write(
-        root.join("build-apk.sh"),
-        ANDROID_BUILD_APK.replace("{{APK}}", &apk_name),
+    write_if_changed(
+        &root.join("build-apk.sh"),
+        &ANDROID_BUILD_APK.replace("{{APK}}", &apk_name),
     )
     .map_err(|e| format!("write build-apk.sh: {e}"))?;
 
-    let status = Command::new("bash")
-        .arg("build-apk.sh")
-        .current_dir(&root)
-        .status()
-        .map_err(|e| format!("run build-apk.sh: {e}"))?;
-    if !status.success() {
-        return Err("the APK build failed (see the errors above)".to_string());
+    let build_dir = root.join("build");
+    let mut inputs = shell_inputs::Inputs::new("android-debug");
+    inputs.tree("app", &root.join("app"));
+    inputs.file("build script", &root.join("build-apk.sh"));
+    shell_inputs::android_tools(&mut inputs, env);
+    let digest = inputs.finish();
+    if shell_inputs::up_to_date(
+        &build_dir,
+        &digest,
+        &[build_dir.join(&apk_name), build_dir.join("signer.txt")],
+    ) {
+        eprintln!("  Android shell unchanged since the last build; aapt2, javac and d8 not run");
+    } else {
+        shell_inputs::clear_stamp(&build_dir);
+        let status = env
+            .command("bash")
+            .arg("build-apk.sh")
+            .current_dir(&root)
+            .status()
+            .map_err(|e| format!("run build-apk.sh: {e}"))?;
+        if !status.success() {
+            return Err("the APK build failed (see the errors above)".to_string());
+        }
+        shell_inputs::mark_built(&build_dir, &digest)?;
     }
     if let Some(file) = write_assetlinks(&root.join("build"), package, &links)? {
         print_assetlinks_note(&file, &links, "debug key");
@@ -7492,6 +8099,22 @@ fn build_ios_app(
     out_dir: &Path,
     url: &app_url::AppUrl,
 ) -> Result<PathBuf, String> {
+    build_ios_app_in(project_dir, out_dir, url, &shell_inputs::ToolEnv::process())
+}
+
+/// [`build_ios_app`] with its tools run in `env`. The shell project stays in
+/// `<out>/ios` between builds and its files are written only when their bytes
+/// change. The simulator build (swiftc, the icons, the ad hoc signature) runs
+/// only when an input differs from the last complete build: the sources, the
+/// Info.plist, the entitlements, the icon, the build script or the toolchain
+/// (see `shell_inputs`). Two builds of the same project take turns: the lock
+/// is held until the app is built.
+fn build_ios_app_in(
+    project_dir: &Path,
+    out_dir: &Path,
+    url: &app_url::AppUrl,
+    env: &shell_inputs::ToolEnv,
+) -> Result<PathBuf, String> {
     let id = resolve_bundle_identity(project_dir)?;
     let name = &id.exe_name;
     let icon_src = bundle_icon_source(project_dir, &id);
@@ -7508,49 +8131,62 @@ fn build_ios_app(
     };
     let release = native_pkg::release_dir();
 
-    let root = out_dir.join("ios");
-    let src = root.join(name);
-    std::fs::create_dir_all(&src).map_err(|e| format!("create {}: {e}", src.display()))?;
-    std::fs::write(
-        src.join("App.swift"),
-        render_ios_app_swift(name, url)
-            .replace(
-                "{{LINK_HOSTS}}",
-                &native_pkg::link_host_literals(&native_pkg::link_domains(&decl.entitlements)),
-            )
-            .replace("{{LOCATION_IMPORT}}", loc_import)
-            .replace("{{LOCATION_MANAGER}}", loc_manager)
-            .replace("{{LOCATION_ONAPPEAR}}", loc_onappear),
-    )
-    .map_err(|e| format!("write App.swift: {e}"))?;
-    std::fs::write(
-        src.join("WebView.swift"),
-        IOS_WEBVIEW_SWIFT.replace(
-            "{{INSPECTABLE}}",
-            if release.is_some() { "false" } else { "true" },
-        ),
-    )
-    .map_err(|e| format!("write WebView.swift: {e}"))?;
-    std::fs::write(src.join("SkyCodeScanner.swift"), IOS_CODE_SCANNER_SWIFT)
-        .map_err(|e| format!("write SkyCodeScanner.swift: {e}"))?;
     // Std.Ai.Device: llama.cpp in the shell when the app uses device slots
     // and the engine is installed (`sky ai provision --device ios`).
-    let ai_native = project_uses_ai_device(project_dir) && ai_device::installed("ios");
-    if project_uses_ai_device(project_dir) && !ai_native {
+    let uses_ai_device = project_uses_ai_device(project_dir);
+    let ai_native = uses_ai_device && ai_device::installed("ios");
+    if uses_ai_device && !ai_native {
         eprintln!(
             "note: Std.Ai.Device: the iOS shell runs device slots in the web worker or on the server; {}",
             ai_device::not_provisioned("ios")
         );
     }
-    std::fs::write(
-        src.join("SkyAi.swift"),
-        if ai_native {
-            IOS_AI_SWIFT
-        } else {
-            IOS_AI_STUB_SWIFT
-        },
-    )
-    .map_err(|e| format!("write SkyAi.swift: {e}"))?;
+
+    let root = out_dir.join("ios");
+    let src = root.join(name);
+    std::fs::create_dir_all(&src).map_err(|e| format!("create {}: {e}", src.display()))?;
+    let _lock = lock_exclusive(&root.join(".lock"))?;
+    prune_ios_shell_root(&root, name);
+    // The shell's source files, written below only when their bytes change;
+    // any other file in the source directory (a native extension removed
+    // since the last build) is removed, so it is not compiled in.
+    let mut sources: Vec<(String, Vec<u8>)> = vec![
+        (
+            "App.swift".to_string(),
+            render_ios_app_swift(name, url)
+                .replace(
+                    "{{LINK_HOSTS}}",
+                    &native_pkg::link_host_literals(&native_pkg::link_domains(&decl.entitlements)),
+                )
+                .replace("{{LOCATION_IMPORT}}", loc_import)
+                .replace("{{LOCATION_MANAGER}}", loc_manager)
+                .replace("{{LOCATION_ONAPPEAR}}", loc_onappear)
+                .into_bytes(),
+        ),
+        (
+            "WebView.swift".to_string(),
+            IOS_WEBVIEW_SWIFT
+                .replace(
+                    "{{INSPECTABLE}}",
+                    if release.is_some() { "false" } else { "true" },
+                )
+                .into_bytes(),
+        ),
+        (
+            "SkyCodeScanner.swift".to_string(),
+            IOS_CODE_SCANNER_SWIFT.as_bytes().to_vec(),
+        ),
+        (
+            "SkyAi.swift".to_string(),
+            if ai_native {
+                IOS_AI_SWIFT
+            } else {
+                IOS_AI_STUB_SWIFT
+            }
+            .as_bytes()
+            .to_vec(),
+        ),
+    ];
     let ai_embedded = ai_embedded_files(project_dir)?;
 
     // Native extensions (Std.Native.bridge): copy each native/ios/*.swift from
@@ -7559,18 +8195,19 @@ fn build_ios_app(
     // Swift handler and the app just imports it.
     let swift_exts = collect_native_files(project_dir, "ios", "swift");
     for (stem, path) in &swift_exts {
-        std::fs::copy(path, src.join(format!("{stem}.swift")))
-            .map_err(|e| format!("copy native/ios/{stem}.swift: {e}"))?;
+        let bytes =
+            std::fs::read(path).map_err(|e| format!("copy native/ios/{stem}.swift: {e}"))?;
+        sources.push((format!("{stem}.swift"), bytes));
     }
     let installer_calls: String = swift_exts
         .iter()
         .map(|(stem, _)| format!("    register{stem}(skyNativeRegistry)\n"))
         .collect();
-    std::fs::write(
-        src.join("SkyNativeExt.swift"),
-        format!("{IOS_EXT_REGISTRY}\nfunc installSkyNativeExtensions() {{\n{installer_calls}}}\n"),
-    )
-    .map_err(|e| format!("write SkyNativeExt.swift: {e}"))?;
+    sources.push((
+        "SkyNativeExt.swift".to_string(),
+        format!("{IOS_EXT_REGISTRY}\nfunc installSkyNativeExtensions() {{\n{installer_calls}}}\n")
+            .into_bytes(),
+    ));
     if !swift_exts.is_empty() {
         eprintln!(
             "  native/ios: linked {} extension file(s): {}",
@@ -7603,11 +8240,17 @@ fn build_ios_app(
         &native_pkg::fragments(&native_dirs, project_dir, "Info.plist.append"),
         project_dir,
     )?);
-    std::fs::write(
-        src.join("Info.plist"),
-        native_pkg::merge_document("Info.plist", &info_layers)?,
-    )
-    .map_err(|e| format!("write Info.plist: {e}"))?;
+    sources.push((
+        "Info.plist".to_string(),
+        native_pkg::merge_document("Info.plist", &info_layers)?.into_bytes(),
+    ));
+    let mut keep = std::collections::BTreeSet::new();
+    for (file, bytes) in &sources {
+        let path = src.join(file);
+        shell_inputs::write_bytes_if_changed(&path, bytes)?;
+        keep.insert(path);
+    }
+    shell_inputs::prune_tree(&src, &keep);
 
     // Entitlements: Bundle.withEntitlement + every native/ios/app.entitlements
     // fragment, merged the same way. A signed release also carries the
@@ -7644,13 +8287,14 @@ fn build_ios_app(
     }
     let ent_has_keys = ent_layers.iter().any(|l| !l.entries.is_empty());
     let ent_path = root.join(format!("{name}.entitlements"));
-    let _ = std::fs::remove_file(&ent_path);
     if ent_has_keys {
-        std::fs::write(
+        write_if_changed(
             &ent_path,
-            native_pkg::merge_document("entitlements", &ent_layers)?,
+            &native_pkg::merge_document("entitlements", &ent_layers)?,
         )
         .map_err(|e| format!("write entitlements: {e}"))?;
+    } else {
+        let _ = std::fs::remove_file(&ent_path);
     }
 
     if let Some(release_dir) = release {
@@ -7680,11 +8324,12 @@ fn build_ios_app(
         .entries;
     let simulated = native_pkg::simulated_entitlements(&id.bundle_id, &requested);
     let sim_ent = root.join(format!("{name}-Simulated.entitlements"));
-    std::fs::write(&sim_ent, plist::render_document(&simulated))
+    write_if_changed(&sim_ent, &plist::render_document(&simulated))
         .map_err(|e| format!("write {}: {e}", sim_ent.display()))?;
     let sim_der = root.join(format!("{name}-Simulated.entitlements.der"));
     let _ = std::fs::remove_file(&sim_der);
-    let derq = Command::new("derq")
+    let derq = env
+        .command("derq")
         .args(["query", "-f", "xml", "-i"])
         .arg(&sim_ent)
         .arg("-o")
@@ -7699,26 +8344,68 @@ fn build_ios_app(
             String::from_utf8_lossy(&derq.stderr).trim()
         ));
     }
-    std::fs::write(
-        root.join("build-app.sh"),
-        IOS_BUILD_APP.replace("{{NAME}}", name).replace(
+    write_if_changed(
+        &root.join("build-app.sh"),
+        &IOS_BUILD_APP.replace("{{NAME}}", name).replace(
             "{{AI_FLAGS}}",
             &ios_ai_flags("ios-arm64-simulator", ai_native),
         ),
     )
     .map_err(|e| format!("write build-app.sh: {e}"))?;
 
-    let status = Command::new("bash")
+    let developer_dir = ios_developer_dir_in(env)?;
+    let build_dir = root.join("build");
+    let app = build_dir.join(format!("{name}.app"));
+    let mut inputs = shell_inputs::Inputs::new("ios-simulator");
+    inputs.tree("sources", &src);
+    inputs.file("build script", &root.join("build-app.sh"));
+    inputs.file("simulated entitlements", &sim_ent);
+    inputs.file("simulated entitlements der", &sim_der);
+    inputs.os("icon", icon_src.as_deref().map(Path::as_os_str));
+    if let Some(icon) = &icon_src {
+        inputs.file("icon bytes", icon);
+    }
+    inputs.text("signature", "ad hoc, no entitlements");
+    // Std.Ai.Device: the linked engine library and the `--ai-embed` files.
+    if ai_native {
+        inputs.tree(
+            "ai engine",
+            &ai_device::engine_dir("ios")
+                .join("SkyLlama.xcframework")
+                .join("ios-arm64-simulator"),
+        );
+    }
+    inputs.text(
+        "ai embedded",
+        &ai_embedded
+            .iter()
+            .map(|(sum, _)| sum.as_str())
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    shell_inputs::ios_tools(&mut inputs, env, &developer_dir);
+    let digest = inputs.finish();
+    if shell_inputs::up_to_date(
+        &build_dir,
+        &digest,
+        &[app.join(name), app.join("Info.plist")],
+    ) {
+        eprintln!("  iOS shell unchanged since the last build; swiftc not run");
+        return Ok(app);
+    }
+    shell_inputs::clear_stamp(&build_dir);
+
+    let status = env
+        .command("bash")
         .arg("build-app.sh")
         .current_dir(&root)
-        .env("DEVELOPER_DIR", ios_developer_dir()?)
+        .env("DEVELOPER_DIR", &developer_dir)
         .env_remove("SDKROOT")
         .status()
         .map_err(|e| format!("run build-app.sh: {e}"))?;
     if !status.success() {
         return Err("the iOS app failed to build (see the errors above)".to_string());
     }
-    let app = root.join("build").join(format!("{name}.app"));
     if let Some(icon) = &icon_src {
         generate_ios_app_icons(icon, &app)?;
     }
@@ -7726,7 +8413,8 @@ fn build_ios_app(
     // Sign the simulator build ad hoc with no entitlements, as Xcode does: the
     // entitlements are in the executable's sections (above), where the
     // simulator reads them. The app must carry a signature for the Keychain.
-    let st = Command::new("codesign")
+    let st = env
+        .command("codesign")
         .args(["--force", "--sign", "-"])
         .arg(&app)
         .status()
@@ -7734,6 +8422,7 @@ fn build_ios_app(
     if !st.success() {
         return Err(format!("codesign --sign - {} failed", app.display()));
     }
+    shell_inputs::mark_built(&build_dir, &digest)?;
     Ok(app)
 }
 
@@ -7771,6 +8460,37 @@ fn copy_ai_embedded(dir: &Path, files: &[(String, PathBuf)]) -> Result<(), Strin
         files.len()
     );
     Ok(())
+}
+
+/// Remove what an earlier build left in the iOS shell directory `root` and
+/// this build does not write: the source directory and entitlements of an
+/// earlier product name. `root` is generated output.
+fn prune_ios_shell_root(root: &Path, name: &str) {
+    let keep = [
+        name.to_string(),
+        "build".to_string(),
+        "release".to_string(),
+        ".lock".to_string(),
+        "build-app.sh".to_string(),
+        "build-release.sh".to_string(),
+        format!("{name}.entitlements"),
+        format!("{name}-Simulated.entitlements"),
+        format!("{name}-Simulated.entitlements.der"),
+    ];
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return;
+    };
+    for e in rd.flatten() {
+        if keep.iter().any(|k| e.file_name() == k.as_str()) {
+            continue;
+        }
+        let p = e.path();
+        if e.file_type().is_ok_and(|t| t.is_dir()) {
+            let _ = std::fs::remove_dir_all(&p);
+        } else {
+            let _ = std::fs::remove_file(&p);
+        }
+    }
 }
 
 /// The Info.plist keys Sky owns for the iOS shell: identity, version, device
@@ -10281,8 +11001,13 @@ fn native_preflight(
 /// both a working Xcode is installed and the build should use it. The chosen
 /// directory is passed to the build scripts explicitly.
 fn ios_developer_dir() -> Result<std::ffi::OsString, String> {
-    pick_ios_developer_dir(std::env::var_os("DEVELOPER_DIR"), |dir| {
-        Command::new("xcrun")
+    ios_developer_dir_in(&shell_inputs::ToolEnv::process())
+}
+
+/// [`ios_developer_dir`] with `xcrun` and `DEVELOPER_DIR` taken from `env`.
+fn ios_developer_dir_in(env: &shell_inputs::ToolEnv) -> Result<std::ffi::OsString, String> {
+    pick_ios_developer_dir(env.var("DEVELOPER_DIR"), |dir| {
+        env.command("xcrun")
             .args(["--sdk", "iphonesimulator", "--show-sdk-path"])
             .env("DEVELOPER_DIR", dir)
             .env_remove("SDKROOT")
@@ -10477,6 +11202,9 @@ fn cmd_run(args: &[String]) -> ExitCode {
         .collect();
     let args = args.as_slice();
     let (args, profile) = parse_profile(args);
+    if let Some((k, v)) = profiling_build_env(profile.is_some()) {
+        std::env::set_var(k, v);
+    }
     // `--open` launches the platform browser at the app's `listening` URL once
     // it is up (web/server apps). A bare boolean; `parse_out` ignores it.
     let open = args.iter().any(|a| a == "--open");
@@ -10543,6 +11271,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
             embed,
             out_override.as_deref(),
             true,
+            precompress::Level::Off,
         );
     }
 
@@ -10572,7 +11301,8 @@ fn cmd_run(args: &[String]) -> ExitCode {
             true,
             // Direct Spa entry: `generate` reads the static mount from the entry.
             None,
-            false,
+            precompress::Level::Off,
+            None,
             None,
             None,
         ) {
@@ -12595,13 +13325,21 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
         // CGO_ENABLED=0: rt/hub transitively imports rt (webview.go, cgo+WebKit
         // on darwin); disabling cgo routes through webview_stub.go and dodges the
         // Apple ld_prime long-symbol assertion. The hub never calls webview.
-        let status = Command::new("go")
-            .args(["build", "-o"])
-            .arg(&hub_bin)
-            .arg("./cmd/sky-hub")
-            .current_dir(&runtime_go)
-            .env("CGO_ENABLED", "0")
-            .status();
+        // Through the one Go command builder (`-trimpath`, Sky's GOFLAGS and
+        // build cache), held shared so a cache clean waits.
+        let _cache = project::go_cache::hold_shared();
+        // Read-only module: `runtime-go/` is not generated, and in a source
+        // checkout its go.mod / go.sum are the repository's own files.
+        let status = project::go_cmd::GoBuild {
+            dir: &runtime_go,
+            target: project::go_cmd::Target::Native { cgo: false },
+            jobs: None,
+            output: Some(hub_bin.as_os_str()),
+            packages: &["./cmd/sky-hub"],
+            extra: &[],
+        }
+        .command_readonly()
+        .status();
         match status {
             Ok(s) if s.success() => {}
             Ok(s) => {
@@ -16577,9 +17315,11 @@ fn parse_out(args: &[String]) -> (Vec<String>, Option<String>) {
             "--upload" | "--ipa" => {
                 it.next();
             }
+            // `--precompress <level>` (sky build / spa-split): consume the
+            // level. precompress::Level::from_args reads it from `args`.
             // `--ai-web-engine <engine>` / `--ai-embed <slot>` (sky build): the
             // Std.Ai.Device build options; cmd_build reads them from `args`.
-            "--ai-web-engine" | "--ai-embed" => {
+            "--precompress" | "--ai-web-engine" | "--ai-embed" => {
                 it.next();
             }
             s if s.starts_with('-') => { /* ignore unknown flags for forward-compat */ }
@@ -17664,6 +18404,427 @@ mod tests {
     }
 
     #[test]
+    fn a_profiling_run_builds_without_trimpath() {
+        // pprof source views and Delve read the absolute source paths a binary
+        // records; `-trimpath` would replace them with module paths.
+        assert_eq!(
+            profiling_build_env(true),
+            Some((project::go_cmd::ENV_TRIMPATH, "0"))
+        );
+        assert!(!project::go_cmd::trimpath_from(Some(
+            profiling_build_env(true).unwrap().1
+        )));
+        assert_eq!(profiling_build_env(false), None);
+    }
+
+    #[test]
+    fn a_project_keeps_one_desktop_shell_dir() {
+        let root = std::env::temp_dir().join(format!("sky-shelldir-{}", std::process::id()));
+        let a = root.join("proj-a");
+        let b = root.join("proj-b");
+        std::fs::create_dir_all(a.join("src")).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let cache = root.join("cache");
+        let da = desktop_shell_dir(&cache, &a);
+        // The same project through another spelling of its path.
+        assert_eq!(desktop_shell_dir(&cache, &a.join("src").join("..")), da);
+        assert_ne!(desktop_shell_dir(&cache, &b), da);
+        assert!(da.starts_with(cache.join("desktop-shell")));
+        // An unchanged file keeps its mtime.
+        std::fs::create_dir_all(&da).unwrap();
+        let f = da.join("sky.toml");
+        write_if_changed(&f, "x").unwrap();
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        std::fs::File::options()
+            .append(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
+        write_if_changed(&f, "x").unwrap();
+        assert_eq!(std::fs::metadata(&f).unwrap().modified().unwrap(), t);
+        write_if_changed(&f, "y").unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "y");
+        // The lock excludes a second holder until it is dropped.
+        let held = lock_exclusive(&da.join(".lock")).unwrap();
+        let other = std::fs::File::open(da.join(".lock")).unwrap();
+        assert!(other.try_lock().is_err());
+        drop(held);
+        assert!(other.try_lock().is_ok());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// N10: desktop shell directories do not pile up. A shell whose app
+    /// project is gone is removed, and beyond the kept count the least
+    /// recently used go; the current shell and a locked one stay.
+    #[test]
+    fn desktop_shell_dirs_are_pruned() {
+        let root = std::env::temp_dir().join(format!("sky-shellprune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let shells = root.join("desktop-shell");
+        let proj = root.join("proj");
+        std::fs::create_dir_all(&proj).unwrap();
+        let mk = |name: &str, project: &Path, age: u64| -> PathBuf {
+            let d = shells.join(name);
+            std::fs::create_dir_all(d.join("sky-out")).unwrap();
+            mark_desktop_shell_use(&d, project);
+            let t = std::time::SystemTime::now() - std::time::Duration::from_secs(age);
+            std::fs::File::options()
+                .append(true)
+                .open(d.join(DESKTOP_SHELL_PROJECT))
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
+            d
+        };
+        let current = mk("current", &proj, 0);
+        let gone = mk("gone", &root.join("deleted-project"), 10);
+        let newer = mk("newer", &proj, 20);
+        let older = mk("older", &proj, 30);
+        let oldest_locked = mk("locked", &proj, 40);
+        let held = lock_exclusive(&oldest_locked.join(".lock")).unwrap();
+        // Keep 2: the current one and the most recent other.
+        prune_desktop_shells(&shells, &current, 2);
+        assert!(current.is_dir());
+        assert!(!gone.exists(), "a shell whose project is gone is removed");
+        assert!(newer.is_dir(), "the most recent other shell is kept");
+        assert!(!older.exists(), "a shell beyond the kept count is removed");
+        assert!(oldest_locked.is_dir(), "a shell in use is never removed");
+        drop(held);
+        // A flock belongs to the open file, and a child another test thread
+        // is spawning shares it until its exec closes it. So the lock can
+        // outlive `drop` for a moment while other tests start processes:
+        // prune again until it is free (bounded).
+        for _ in 0..200 {
+            prune_desktop_shells(&shells, &current, 2);
+            if !oldest_locked.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!oldest_locked.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- Mobile shells: an unchanged shell runs no tool ----
+
+    /// Write an executable shim script.
+    #[cfg(unix)]
+    fn write_tool(path: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, format!("#!/bin/bash\n{body}")).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// A project for the shell builds: an entry with a `bundle` binding.
+    #[cfg(unix)]
+    fn write_shell_project(dir: &Path, id: &str, version: &str, extra: &str) {
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(
+            dir.join("sky.toml"),
+            "name = \"shellapp\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("src/Main.sky"),
+            format!(
+                "module Main exposing (main)\n\nimport Std.Bundle as Bundle\n\n\n\
+                 bundle =\n    Bundle.default\n        |> Bundle.withId \"{id}\"\n        \
+                 |> Bundle.withVersion \"{version}\"{extra}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    /// How many of the shim log's lines start with one of `tools`, then
+    /// empty the log.
+    #[cfg(unix)]
+    fn take_tool_runs(log: &Path, tools: &[&str], skip: &[&str]) -> usize {
+        let text = std::fs::read_to_string(log).unwrap_or_default();
+        let _ = std::fs::remove_file(log);
+        text.lines()
+            .filter(|l| tools.iter().any(|t| l.starts_with(&format!("{t} "))))
+            .filter(|l| !skip.iter().any(|s| l.contains(s)))
+            .count()
+    }
+
+    /// The Android shell is rebuilt only when an input changes. The SDK
+    /// tools and javac are shims on PATH that log each run, so the test runs
+    /// without an Android SDK or a JDK.
+    #[cfg(unix)]
+    #[test]
+    fn an_unchanged_android_shell_runs_no_tool() {
+        let root = std::env::temp_dir().join(format!("sky-android-incr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let log = root.join("tools.log");
+        let bin = root.join("bin");
+        let sdk = root.join("sdk");
+        let bt = sdk.join("build-tools/35.0.0");
+        let lg = log.display().to_string();
+        let out_arg = r#"o=""; prev=""; for a in "$@"; do case "$prev" in -o|--out|--output|-d) o="$a";; esac; prev="$a"; done"#;
+        write_tool(
+            &bin.join("javac"),
+            &format!(
+                "echo \"javac $*\" >> {lg}\n{out_arg}\nmkdir -p \"$o\"; touch \"$o/A.class\"\n"
+            ),
+        );
+        write_tool(&bin.join("zip"), "exit 0\n");
+        write_tool(
+            &bt.join("aapt2"),
+            &format!("echo \"aapt2 $*\" >> {lg}\n{out_arg}\ntouch \"$o\"\nfor a in \"$@\"; do [ \"$p\" = --java ] && mkdir -p \"$a\"; p=\"$a\"; done\n"),
+        );
+        write_tool(
+            &bt.join("d8"),
+            &format!("echo \"d8 $*\" >> {lg}\n{out_arg}\ntouch \"$o/classes.dex\"\n"),
+        );
+        write_tool(
+            &bt.join("zipalign"),
+            &format!("echo \"zipalign $*\" >> {lg}\ncp \"$3\" \"$4\"\n"),
+        );
+        write_tool(
+            &bt.join("apksigner"),
+            &format!(
+                "echo \"apksigner $*\" >> {lg}\nif [ \"$1\" = sign ]; then {out_arg}; touch \"$o\"; \
+                 else echo 'Signer #1 certificate SHA-256 digest: 00'; fi\n"
+            ),
+        );
+        std::fs::write(bt.join("source.properties"), "Pkg.Revision=35.0.0\n").unwrap();
+        let plat = sdk.join("platforms/android-35");
+        std::fs::create_dir_all(&plat).unwrap();
+        std::fs::write(plat.join("android.jar"), "").unwrap();
+        std::fs::write(plat.join("source.properties"), "Pkg.Revision=1\n").unwrap();
+        let home = root.join("home");
+        std::fs::create_dir_all(home.join(".android")).unwrap();
+        std::fs::write(home.join(".android/debug.keystore"), "key-1").unwrap();
+        let env = shell_inputs::ToolEnv::process()
+            .with("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .with("ANDROID_HOME", sdk.as_os_str())
+            .with("HOME", home.as_os_str())
+            .with("JAVA_HOME", root.join("jdk").as_os_str());
+        let proj = root.join("shellapp");
+        let out = proj.join("sky-out");
+        write_shell_project(&proj, "com.example.shell", "1.0", "");
+        let u1 = url(
+            app_url::Shell::Android,
+            None,
+            Some("https://one.example.test/"),
+            None,
+        );
+        let u2 = url(
+            app_url::Shell::Android,
+            None,
+            Some("https://two.example.test/"),
+            None,
+        );
+        let tools = ["aapt2", "javac", "d8"];
+        let build = |u: &app_url::AppUrl| -> usize {
+            let apk = build_android_apk_in(&proj, &out, u, &env).expect("android build");
+            assert!(apk.is_file());
+            take_tool_runs(&log, &tools, &[])
+        };
+
+        let first = build(&u1);
+        assert!(
+            first >= 4,
+            "the first build runs aapt2, javac and d8: {first}"
+        );
+        assert_eq!(build(&u1), 0, "an identical build runs no tool");
+        // Source: the backend address is compiled into MainActivity.
+        assert!(build(&u2) > 0, "a changed source rebuilds");
+        assert_eq!(build(&u2), 0);
+        // Asset: a native extension file is copied into the shell.
+        let ext = proj.join("native/android/Ext.java");
+        std::fs::create_dir_all(ext.parent().unwrap()).unwrap();
+        std::fs::write(
+            &ext,
+            "package sky.nativeext;\nclass Ext { static void register() {} }\n",
+        )
+        .unwrap();
+        assert!(build(&u2) > 0, "an added native file rebuilds");
+        assert_eq!(build(&u2), 0);
+        std::fs::write(
+            &ext,
+            "package sky.nativeext;\nclass Ext { static void register() { } }\n",
+        )
+        .unwrap();
+        assert!(build(&u2) > 0, "a changed native file rebuilds");
+        std::fs::remove_file(&ext).unwrap();
+        assert!(build(&u2) > 0, "a removed native file rebuilds");
+        let copied = out.join("android/app/src/main/java/sky/nativeext/Ext.java");
+        assert!(!copied.exists(), "a removed native file is not compiled in");
+        // Manifest: the version name.
+        write_shell_project(&proj, "com.example.shell", "2.0", "");
+        assert!(build(&u2) > 0, "a changed manifest rebuilds");
+        assert_eq!(build(&u2), 0);
+        // Bundle id: the package, and the old package's sources go.
+        write_shell_project(&proj, "com.example.other", "2.0", "");
+        assert!(build(&u2) > 0, "a changed bundle id rebuilds");
+        assert!(!out
+            .join("android/app/src/main/java/com/example/shell")
+            .exists());
+        assert_eq!(build(&u2), 0);
+        // Signing: the debug keystore.
+        std::fs::write(home.join(".android/debug.keystore"), "key-2").unwrap();
+        assert!(build(&u2) > 0, "a changed signing key rebuilds");
+        assert_eq!(build(&u2), 0);
+        // Tool version: the build-tools revision.
+        std::fs::write(bt.join("source.properties"), "Pkg.Revision=35.0.1\n").unwrap();
+        assert!(build(&u2) > 0, "a changed toolchain rebuilds");
+        assert_eq!(build(&u2), 0);
+        // A lost artefact is rebuilt.
+        std::fs::remove_file(out.join("android/build/shellapp.apk")).unwrap();
+        assert!(build(&u2) > 0, "a missing APK rebuilds");
+        assert_eq!(build(&u2), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The iOS shell is rebuilt only when an input changes. xcrun (and so
+    /// swiftc), derq and codesign are shims on PATH that log each run, so the
+    /// test runs without Xcode.
+    #[cfg(unix)]
+    #[test]
+    fn an_unchanged_ios_shell_runs_no_tool() {
+        let root = std::env::temp_dir().join(format!("sky-ios-incr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let log = root.join("tools.log");
+        let bin = root.join("bin");
+        let dev = root.join("Xcode.app/Contents/Developer");
+        let sdk = dev.join("Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk");
+        std::fs::create_dir_all(&sdk).unwrap();
+        std::fs::write(sdk.join("SDKSettings.json"), "{\"Version\":\"18.0\"}").unwrap();
+        std::fs::write(root.join("Xcode.app/Contents/version.plist"), "16A1").unwrap();
+        let swiftc = dev.join("Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc");
+        write_tool(&swiftc, "exit 0\n");
+        let lg = log.display().to_string();
+        write_tool(
+            &bin.join("xcrun"),
+            &format!(
+                "echo \"xcrun $*\" >> {lg}\n\
+                 case \"$*\" in *--show-sdk-path*) echo {}; exit 0;; *--find*) echo {}; exit 0;; esac\n\
+                 o=\"\"; prev=\"\"; for a in \"$@\"; do [ \"$prev\" = -o ] && o=\"$a\"; prev=\"$a\"; done\n\
+                 mkdir -p \"$(dirname \"$o\")\"; touch \"$o\"\n",
+                sdk.display(),
+                swiftc.display()
+            ),
+        );
+        write_tool(&bin.join("derq"), "cp \"$5\" \"$7\"\n");
+        write_tool(
+            &bin.join("codesign"),
+            &format!("echo \"codesign $*\" >> {lg}\n"),
+        );
+        let env = shell_inputs::ToolEnv::process()
+            .with("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .with("DEVELOPER_DIR", dev.as_os_str());
+        let proj = root.join("shellapp");
+        let out = proj.join("sky-out");
+        write_shell_project(&proj, "com.example.shell", "1.0", "");
+        let u1 = url(
+            app_url::Shell::Ios,
+            None,
+            Some("https://one.example.test/"),
+            None,
+        );
+        let u2 = url(
+            app_url::Shell::Ios,
+            None,
+            Some("https://two.example.test/"),
+            None,
+        );
+        // swiftc runs through `xcrun … swiftc`; a lookup (`--find`,
+        // `--show-sdk-path`) is not a compile.
+        let build = |u: &app_url::AppUrl| -> usize {
+            let app = build_ios_app_in(&proj, &out, u, &env).expect("ios build");
+            assert!(app.join("shellapp").is_file());
+            take_tool_runs(&log, &["xcrun", "codesign"], &["--find", "--show-sdk-path"])
+        };
+
+        assert_eq!(build(&u1), 2, "the first build runs swiftc and codesign");
+        assert_eq!(build(&u1), 0, "an identical build runs no tool");
+        // Source: the backend address is compiled into App.swift.
+        assert_eq!(build(&u2), 2, "a changed source rebuilds");
+        assert_eq!(build(&u2), 0);
+        // Asset: a native extension file is copied into the shell.
+        let ext = proj.join("native/ios/Ext.swift");
+        std::fs::create_dir_all(ext.parent().unwrap()).unwrap();
+        std::fs::write(&ext, "func registerExt(_ r: SkyNativeRegistry) {}\n").unwrap();
+        assert_eq!(build(&u2), 2, "an added native file rebuilds");
+        assert_eq!(build(&u2), 0);
+        std::fs::remove_file(&ext).unwrap();
+        assert_eq!(build(&u2), 2, "a removed native file rebuilds");
+        assert!(
+            !out.join("ios/shellapp/Ext.swift").exists(),
+            "and is not compiled in"
+        );
+        // Info.plist: the version.
+        write_shell_project(&proj, "com.example.shell", "2.0", "");
+        assert_eq!(build(&u2), 2, "a changed Info.plist rebuilds");
+        assert_eq!(build(&u2), 0);
+        // Bundle id.
+        write_shell_project(&proj, "com.example.other", "2.0", "");
+        assert_eq!(build(&u2), 2, "a changed bundle id rebuilds");
+        assert_eq!(build(&u2), 0);
+        // Signing: the entitlements the simulator build carries.
+        write_shell_project(
+            &proj,
+            "com.example.other",
+            "2.0",
+            "\n        |> Bundle.withEntitlement (Bundle.AppGroup \"group.com.example.other\")",
+        );
+        assert_eq!(build(&u2), 2, "changed entitlements rebuild");
+        assert_eq!(build(&u2), 0);
+        // Tool version: another Xcode.
+        std::fs::write(root.join("Xcode.app/Contents/version.plist"), "16B2").unwrap();
+        assert_eq!(build(&u2), 2, "a changed toolchain rebuilds");
+        assert_eq!(build(&u2), 0);
+        // A lost artefact is rebuilt.
+        std::fs::remove_file(out.join("ios/build/shellapp.app/shellapp")).unwrap();
+        assert_eq!(build(&u2), 2, "a missing executable rebuilds");
+        assert_eq!(build(&u2), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_wasm_name_handoff_flag_is_taken_out() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (rest, w) = take_spa_await_flag(&v(&[
+            "build",
+            "--spa-await-wasm-name-on-stdin",
+            "src/Main.sky",
+        ]));
+        assert_eq!(rest, ["build", "src/Main.sky"]);
+        assert!(w);
+        let (rest, w) = take_spa_await_flag(&v(&["build", "a.sky"]));
+        assert_eq!(rest, ["build", "a.sky"]);
+        assert!(!w);
+    }
+
+    #[test]
+    fn go_build_flags_are_taken_out_of_the_arguments() {
+        let args: Vec<String> = ["build", "--no-trimpath", "src/Main.sky"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let (rest, env) = take_go_build_flags(&args).unwrap();
+        assert_eq!(rest, ["build", "src/Main.sky"]);
+        assert_eq!(env, vec![(project::go_cmd::ENV_TRIMPATH, "0".to_string())]);
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (rest, env) =
+            take_go_build_flags(&v(&["build", "--go-jobs", "3", "src/Main.sky"])).unwrap();
+        assert_eq!(rest, ["build", "src/Main.sky"]);
+        assert_eq!(env, vec![(project::go_jobs::ENV_JOBS, "3".to_string())]);
+        let (_, env) = take_go_build_flags(&v(&["run", "--go-jobs=auto"])).unwrap();
+        assert_eq!(env, vec![(project::go_jobs::ENV_JOBS, "auto".to_string())]);
+        for bad in [
+            &["build", "--go-jobs"][..],
+            &["build", "--go-jobs=0"],
+            &["build", "--go-jobs", "x"],
+        ] {
+            assert!(take_go_build_flags(&v(bad)).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
     fn profile_flags_stripped_from_args() {
         // `sky run app.sky --profile --profile-timeout 30s` → the entry file is
         // still the only positional; the profile flags + their values are consumed.
@@ -18484,7 +19645,7 @@ mod tests {
         std::fs::write(out.join("main.wasm"), b"AAAA-wasm-bytes").unwrap();
         std::fs::write(out.join("wasm_exec.js"), b"// go glue").unwrap();
 
-        stage_web_bundle(&out, &dist, false).unwrap();
+        stage_web_bundle(&out, &dist, precompress::Level::Off).unwrap();
 
         let wasm_name = |d: &std::path::Path| -> String {
             std::fs::read_dir(d)
@@ -18543,7 +19704,7 @@ mod tests {
         // Different bytes → different name, and the old wasm is removed (no
         // accumulation): exactly one main.*.wasm remains.
         std::fs::write(out.join("main.wasm"), b"BBBB-different").unwrap();
-        stage_web_bundle(&out, &dist, false).unwrap();
+        stage_web_bundle(&out, &dist, precompress::Level::Off).unwrap();
         let n2 = wasm_name(&dist);
         assert_ne!(n1, n2, "changed content must change the hashed name");
         let count = std::fs::read_dir(&dist)
@@ -18555,6 +19716,114 @@ mod tests {
             })
             .count();
         assert_eq!(count, 1, "old hashed wasm must be pruned");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A scratch `out/` holding a built wasm and Go's `wasm_exec.js`.
+    fn staged_bundle_scratch(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let base = std::env::temp_dir().join(format!(
+            "sky-stage-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let out = base.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("main.wasm"), b"AAAA-wasm-bytes".repeat(500)).unwrap();
+        std::fs::write(
+            out.join("wasm_exec.js"),
+            b"// go glue, first toolchain\n".repeat(50),
+        )
+        .unwrap();
+        (base, out)
+    }
+
+    fn dist_names(dist: &std::path::Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dist)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// `--precompress=off` (and `sky run`, which stages at off) leaves no
+    /// `.br` / `.gz` of any asset it manages, `wasm_exec.js` included, and no
+    /// manifest. Before, off removed only the hashed wasm's and the boot
+    /// script's variants: a `wasm_exec.js.br` from an earlier `max` build
+    /// stayed, newer than a new toolchain's `wasm_exec.js` (copied with
+    /// GOROOT's old mtime), and the backend served the old glue.
+    #[test]
+    fn precompress_off_leaves_no_variant_of_any_asset() {
+        let (base, out) = staged_bundle_scratch("off");
+        let dist = base.join("dist");
+        stage_web_bundle(&out, &dist, precompress::Level::Max).unwrap();
+        let names = dist_names(&dist);
+        for ext in [".br", ".gz"] {
+            assert!(
+                names.contains(&format!("wasm_exec.js{ext}")),
+                "max writes wasm_exec.js{ext}: {names:?}"
+            );
+        }
+        // A new toolchain's glue, older than the sidecars on disk.
+        let fresh = b"// go glue, second toolchain\n".repeat(50);
+        std::fs::write(out.join("wasm_exec.js"), &fresh).unwrap();
+        let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        std::fs::File::options()
+            .append(true)
+            .open(out.join("wasm_exec.js"))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        stage_web_bundle(&out, &dist, precompress::Level::Off).unwrap();
+        let names = dist_names(&dist);
+        assert!(
+            !names
+                .iter()
+                .any(|n| n.ends_with(".br") || n.ends_with(".gz") || n == "sky-precompress.json"),
+            "off left a variant or the manifest: {names:?}"
+        );
+        assert_eq!(std::fs::read(dist.join("wasm_exec.js")).unwrap(), fresh);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The build lists what it wrote in `dist/sky-precompress.json`, which is
+    /// what the Sky backend serves from (runtime-go/rt/static_precompressed.go):
+    /// each asset's size and SHA-256 and those of its `.br` / `.gz`.
+    #[test]
+    fn the_build_lists_its_variants_in_a_manifest() {
+        let (base, out) = staged_bundle_scratch("manifest");
+        let dist = base.join("dist");
+        stage_web_bundle(&out, &dist, precompress::Level::Fast).unwrap();
+        let m: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(dist.join("sky-precompress.json")).expect("a manifest"),
+        )
+        .unwrap();
+        assert_eq!(m["version"], 1);
+        let files = m["files"].as_object().unwrap();
+        let wasm = project::spa_split::built_wasm_name(&dist).unwrap();
+        let mut want = vec![wasm, "wasm_exec.js".to_string(), spa_boot_name()];
+        want.sort();
+        let mut got: Vec<String> = files.keys().cloned().collect();
+        got.sort();
+        assert_eq!(got, want);
+        let sum = |p: &std::path::Path| db_provision::sha256_hex(&std::fs::read(p).unwrap());
+        for (name, e) in files {
+            let p = dist.join(name);
+            assert_eq!(e["sha256"], sum(&p), "{name}");
+            assert_eq!(e["size"], std::fs::metadata(&p).unwrap().len(), "{name}");
+            for (coding, ext) in [("br", "br"), ("gzip", "gz")] {
+                let v = dist.join(format!("{name}.{ext}"));
+                assert_eq!(e["encodings"][coding]["sha256"], sum(&v), "{name}.{ext}");
+                assert_eq!(
+                    e["encodings"][coding]["size"],
+                    std::fs::metadata(&v).unwrap().len()
+                );
+            }
+        }
         let _ = std::fs::remove_dir_all(&base);
     }
 

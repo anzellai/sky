@@ -36,8 +36,14 @@ mod doc;
 mod driver;
 mod ffi_ops;
 pub mod go_cache;
+/// The one `go build` command builder (`-trimpath`, GOFLAGS, cache).
+pub mod go_cmd;
+/// Reuse of the `go get` result for exactly pinned Go FFI modules.
+pub mod go_get_memo;
 /// `go build -p`: how many packages compile at once, from available memory.
 pub mod go_jobs;
+#[cfg(test)]
+mod harvest_identity_tests;
 /// Available memory and the per-project peak records (`go_jobs`, the Sky.Spa
 /// leg plan).
 pub mod memory;
@@ -62,6 +68,8 @@ pub mod spa_diff_harness;
 /// (Phase 1 of the auto-split; no codegen). See the module docstring.
 pub mod spa_partition;
 pub mod spa_split;
+/// The frontend wasm name handed to a Sky.Spa backend leg that is already building.
+pub mod spa_wasm_handoff;
 /// `SKY_TIMINGS=1` / `sky build --timings` — the per-phase wall-clock report.
 pub mod timings;
 
@@ -79,10 +87,10 @@ pub use build::{
     build_example, build_project, build_project_scoped, bundled_source_texts, configured_bin_name,
     configured_source_root, db_driver_conflict, driver_for_dsn, emit_example_source,
     emit_example_warnings, enumerate_dependency_files, enumerate_skydep_files, ffi_trust,
-    ffi_type_surface, front_half_errors, go_diagnostics, is_spa_generated_project,
-    load_ffi_surface, migration_hint_for, offline_db_plan, parse_errors, sky_toml_flag,
-    sky_toml_project_key, sky_toml_section_key, AppScope, BuildOptions, BuildReport, OfflineDbPlan,
-    EMBEDDED_BUNDLE_FILENAME, SPA_GENERATED_KERNEL_PREFIX,
+    ffi_type_surface, front_half_errors, front_half_loaded, go_diagnostics,
+    is_spa_generated_project, load_ffi_surface, migration_hint_for, offline_db_plan, parse_errors,
+    sky_toml_flag, sky_toml_project_key, sky_toml_section_key, AppScope, BuildOptions, BuildReport,
+    LoadedProgram, OfflineDbPlan, EMBEDDED_BUNDLE_FILENAME, SPA_GENERATED_KERNEL_PREFIX,
 };
 /// The structured diagnostic types a [`BuildReport`] carries, re-exported so
 /// the CLI and `testrunner` read them without a second dependency edge.

@@ -1246,6 +1246,8 @@ Changes are coalesced: the runtime waits until the tree is quiet for the
 debounce window and delivers one batch in which each path appears once (a file
 created then written is `Created`; created then deleted is not reported;
 deleted then re-created is `Modified`; a move inside the tree is `Renamed`).
+A batch is checked against the disk when it closes: a file created and already
+gone then is not reported, even when the OS reports its deletion late.
 When the OS queue overflowed, or batches piled up unread, the next batch is
 exactly `[ Overflow ]`: rescan. A file saved by rename (write a temporary
 file, rename it over the original) is `Modified`, and later changes to the new
@@ -1275,6 +1277,12 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   fields' codecs while auto-deriving the rest (a Bool stored 0/1, a custom enum
   format) — no full hand-written codec for a one-field tweak. `toJson` / `fromJson`
   / `fromJsonSafe`; explicit `object`/`field`/`taggedUnion`/`enum` for full control.
+  `Codec.inline .inner innerFields` adds an embedded record's object builder
+  (`ObjectCodec r r`) to an outer one with its keys written flat beside the
+  outer fields, not as a nested object. Each key of one record codec must be
+  unique, across `field` and `inline`: a repeated key cannot be told apart when
+  decoding, so that codec's `fromJson` is an `Err` naming the key (its
+  encoding writes both pairs, unchanged).
   `Codec.dict keyCodec valueCodec` (v0.27) encodes a `Dict` as a JSON array of
   `[key, value]` pairs, so any comparable key round-trips. `Codec.fromJson`
   reads exactly one JSON document: text after it is an `Err` (v0.27). A type

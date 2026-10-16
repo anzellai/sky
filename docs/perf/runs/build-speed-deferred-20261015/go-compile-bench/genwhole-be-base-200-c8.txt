@@ -1,0 +1,42 @@
+commit: go1.26.1
+goos: darwin
+goarch: arm64
+BenchmarkCompile:main:fe:init                       1        491042 ns/op      0.01 %
+BenchmarkCompile:main:fe:loadsys                    1        329291 ns/op      0.01 %
+BenchmarkCompile:main:fe:parse                      1     476888959 ns/op     14.38 %    33391 lines    70018 lines/s
+BenchmarkCompile:main:fe:pgo-load-profile           1           875 ns/op      0.00 %
+BenchmarkCompile:main:fe:devirtualize-and-inline    1     362783791 ns/op     10.94 %
+BenchmarkCompile:main:fe:escapes                    1     103342917 ns/op      3.12 %
+BenchmarkCompile:main:fe:subtotal                   1     943836875 ns/op     28.46 %
+BenchmarkCompile:main:be:compilefuncs               1    2129708958 ns/op     64.23 %    13124 funcs     6162 funcs/s
+BenchmarkCompile:main:be:dumpobj                    1     242267209 ns/op      7.31 %
+BenchmarkCompile:main:be:subtotal                   1    2371976167 ns/op     71.54 %
+BenchmarkCompile:main:total                         1    3315813042 ns/op    100.00 %
+commit: go1.26.1
+goos: darwin
+goarch: arm64
+BenchmarkCompile:main:fe:init                       1        454458 ns/op      0.01 %
+BenchmarkCompile:main:fe:loadsys                    1        341000 ns/op      0.01 %
+BenchmarkCompile:main:fe:parse                      1     472224750 ns/op     14.74 %    33391 lines    70710 lines/s
+BenchmarkCompile:main:fe:pgo-load-profile           1          1084 ns/op      0.00 %
+BenchmarkCompile:main:fe:devirtualize-and-inline    1     351815958 ns/op     10.98 %
+BenchmarkCompile:main:fe:escapes                    1      98834667 ns/op      3.08 %
+BenchmarkCompile:main:fe:subtotal                   1     923671917 ns/op     28.83 %
+BenchmarkCompile:main:be:compilefuncs               1    2006739958 ns/op     62.63 %    13124 funcs     6540 funcs/s
+BenchmarkCompile:main:be:dumpobj                    1     273557583 ns/op      8.54 %
+BenchmarkCompile:main:be:subtotal                   1    2280297541 ns/op     71.17 %
+BenchmarkCompile:main:total                         1    3203969458 ns/op    100.00 %
+commit: go1.26.1
+goos: darwin
+goarch: arm64
+BenchmarkCompile:main:fe:init                       1        465417 ns/op      0.01 %
+BenchmarkCompile:main:fe:loadsys                    1        338958 ns/op      0.01 %
+BenchmarkCompile:main:fe:parse                      1     476873875 ns/op     14.36 %    33391 lines    70021 lines/s
+BenchmarkCompile:main:fe:pgo-load-profile           1          1000 ns/op      0.00 %
+BenchmarkCompile:main:fe:devirtualize-and-inline    1     341093125 ns/op     10.27 %
+BenchmarkCompile:main:fe:escapes                    1     110960292 ns/op      3.34 %
+BenchmarkCompile:main:fe:subtotal                   1     929732667 ns/op     27.99 %
+BenchmarkCompile:main:be:compilefuncs               1    2096735000 ns/op     63.12 %    13124 funcs     6259 funcs/s
+BenchmarkCompile:main:be:dumpobj                    1     295309333 ns/op      8.89 %
+BenchmarkCompile:main:be:subtotal                   1    2392044333 ns/op     72.01 %
+BenchmarkCompile:main:total                         1    3321777000 ns/op    100.00 %

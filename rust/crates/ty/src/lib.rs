@@ -15,6 +15,7 @@ use base::Name;
 
 mod check;
 pub mod codec_elem;
+pub mod counters;
 mod db;
 pub mod dictkey;
 pub mod encodable;
@@ -36,10 +37,13 @@ pub mod variance;
 pub use check::{
     check_modules, check_modules_with_world, BodyTypes, CheckOutput, DefType, TypeErrorKind, Typer,
 };
-pub use db::{compute_body_types, TyDb};
+pub use db::{compute_body_types, compute_body_types_with, TyDb};
+pub use infer::RecordOverlay;
 pub use sig::{
-    body_updates_a_param, callsite_param_records_for, record_alias_fields, update_base_defs,
-    variant_arg_types, variant_arg_types_qualified, World,
+    body_updates_a_param, caller_param_records, callsite_param_records_for, declared_param_record,
+    direct_callees, fold_param_records, record_alias_fields, update_base_defs, variant_arg_types,
+    variant_arg_types_qualified, wants_callsite_harvest, CallerParamRecords, ParamRecordSeen,
+    World,
 };
 pub use unify::{SuperType, UnionFind};
 
@@ -51,7 +55,7 @@ pub struct TyVarId(pub u32);
 /// A canonical / read-back type — what flows on schemes and out of inference.
 /// Mirrors `Sky.AST.Canonical.Type`. `Var("any")` is the per-occurrence
 /// wildcard (see [`is_polymorphic`]).
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Eq, Debug)]
 pub enum Ty {
     /// A quantifier / rigid type-variable *name* at the canonical level.
     Var(Name),
@@ -68,7 +72,117 @@ pub enum Ty {
     Error,
 }
 
+// A type is as deep as a curried constructor is wide: a record of n fields has
+// a constructor `f0 -> f1 -> … -> R` with n arrows, and a generated codec
+// carries it. Derived clone, equality, hashing and drop recurse once per arrow,
+// and the derived clone of a 12,000-field codec's constructor overflowed a
+// 2 MiB LSP worker. Each level goes through `base::ensure_stack` instead. The
+// impls follow the derived ones exactly (same fields, same order, the same
+// variant index hashed as `isize`).
+impl Clone for Ty {
+    fn clone(&self) -> Self {
+        base::ensure_stack(|| match self {
+            Ty::Var(n) => Ty::Var(n.clone()),
+            Ty::Fun(a, b) => Ty::Fun(a.clone(), b.clone()),
+            Ty::App(n, xs) => Ty::App(n.clone(), xs.clone()),
+            Ty::Record(fs, r) => Ty::Record(fs.clone(), r.clone()),
+            Ty::Tuple(xs) => Ty::Tuple(xs.clone()),
+            Ty::Unit => Ty::Unit,
+            Ty::Error => Ty::Error,
+        })
+    }
+}
+
+impl PartialEq for Ty {
+    fn eq(&self, other: &Self) -> bool {
+        base::ensure_stack(|| match (self, other) {
+            (Ty::Var(a), Ty::Var(b)) => a == b,
+            (Ty::Fun(a1, b1), Ty::Fun(a2, b2)) => a1 == a2 && b1 == b2,
+            (Ty::App(n1, x1), Ty::App(n2, x2)) => n1 == n2 && x1 == x2,
+            (Ty::Record(f1, r1), Ty::Record(f2, r2)) => f1 == f2 && r1 == r2,
+            (Ty::Tuple(x1), Ty::Tuple(x2)) => x1 == x2,
+            (Ty::Unit, Ty::Unit) | (Ty::Error, Ty::Error) => true,
+            _ => false,
+        })
+    }
+}
+
+impl std::hash::Hash for Ty {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        base::ensure_stack(|| match self {
+            Ty::Var(n) => {
+                0isize.hash(state);
+                n.hash(state);
+            }
+            Ty::Fun(a, b) => {
+                1isize.hash(state);
+                a.hash(state);
+                b.hash(state);
+            }
+            Ty::App(n, xs) => {
+                2isize.hash(state);
+                n.hash(state);
+                xs.hash(state);
+            }
+            Ty::Record(fs, r) => {
+                3isize.hash(state);
+                fs.hash(state);
+                r.hash(state);
+            }
+            Ty::Tuple(xs) => {
+                4isize.hash(state);
+                xs.hash(state);
+            }
+            Ty::Unit => 5isize.hash(state),
+            Ty::Error => 6isize.hash(state),
+        })
+    }
+}
+
+impl Drop for Ty {
+    fn drop(&mut self) {
+        // Move the children out and drop them inside the guard: the drop glue
+        // that runs after this function then finds only leaves.
+        match self {
+            Ty::Fun(a, b) => {
+                let a = std::mem::replace(&mut **a, Ty::Unit);
+                let b = std::mem::replace(&mut **b, Ty::Unit);
+                base::ensure_stack(move || drop((a, b)));
+            }
+            Ty::App(_, xs) | Ty::Tuple(xs) if !xs.is_empty() => {
+                let xs = std::mem::take(xs);
+                base::ensure_stack(move || drop(xs));
+            }
+            Ty::Record(fs, _) if !fs.is_empty() => {
+                let fs = std::mem::take(fs);
+                base::ensure_stack(move || drop(fs));
+            }
+            _ => {}
+        }
+    }
+}
+
 impl Ty {
+    /// Split `a -> b` into `(a, b)`, or give the type back. `Ty` has a `Drop`
+    /// impl, so a pattern cannot move an arrow's sides out of it; this does.
+    pub fn into_fun(mut self) -> Result<(Ty, Ty), Ty> {
+        match &mut self {
+            Ty::Fun(a, b) => Ok((
+                std::mem::replace(&mut **a, Ty::Unit),
+                std::mem::replace(&mut **b, Ty::Unit),
+            )),
+            _ => Err(self),
+        }
+    }
+
+    /// The elements of a tuple, or the type back (see [`Ty::into_fun`]).
+    pub fn into_tuple(mut self) -> Result<Vec<Ty>, Ty> {
+        match &mut self {
+            Ty::Tuple(xs) => Ok(std::mem::take(xs)),
+            _ => Err(self),
+        }
+    }
+
     pub fn app(name: &str, args: Vec<Ty>) -> Ty {
         Ty::App(Name::new(name), args)
     }
@@ -84,7 +198,8 @@ impl Ty {
     }
 
     fn free_vars_into(&self, out: &mut Vec<Name>) {
-        match self {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match self {
             Ty::Var(n) => {
                 if !out.contains(n) {
                     out.push(n.clone());
@@ -110,7 +225,7 @@ impl Ty {
                 }
             }
             Ty::Unit | Ty::Error => {}
-        }
+        })
     }
 
     /// A compact rendering for spot-checks / hover (not the emission form).
@@ -171,7 +286,8 @@ impl Ty {
 
     /// Visit every type/row variable name in first-appearance order.
     fn for_each_var(&self, f: &mut dyn FnMut(&str)) {
-        match self {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match self {
             Ty::Var(n) => f(n.as_str()),
             Ty::Unit | Ty::Error => {}
             Ty::Fun(a, b) => {
@@ -191,57 +307,62 @@ impl Ty {
                     t.for_each_var(f);
                 }
             }
-        }
+        })
     }
 
     fn render_mapped(&self, map: &std::collections::HashMap<String, String>) -> String {
-        let sub = |n: &Name| -> String {
-            map.get(n.as_str())
-                .cloned()
-                .unwrap_or_else(|| n.as_str().to_string())
-        };
-        match self {
-            Ty::Var(n) => sub(n),
-            Ty::Unit => "()".to_string(),
-            Ty::Error => "?".to_string(),
-            Ty::Fun(a, b) => {
-                let lhs = match a.as_ref() {
-                    Ty::Fun(_, _) => format!("({})", a.render_mapped(map)),
-                    _ => a.render_mapped(map),
-                };
-                format!("{lhs} -> {}", b.render_mapped(map))
-            }
-            // Print the BARE name: a module qualifier is an internal identity
-            // device (`crate::nominal`), not something a signature should carry.
-            // Keeps every rendered signature, snapshot and oracle message
-            // byte-identical to before unions became module-qualified.
-            Ty::App(n, args) if args.is_empty() => nominal::strip(n.as_str()).to_string(),
-            Ty::App(n, args) => {
-                let parts: Vec<String> = args
-                    .iter()
-                    .map(|a| match a {
-                        Ty::App(_, xs) if !xs.is_empty() => format!("({})", a.render_mapped(map)),
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            let sub = |n: &Name| -> String {
+                map.get(n.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| n.as_str().to_string())
+            };
+            match self {
+                Ty::Var(n) => sub(n),
+                Ty::Unit => "()".to_string(),
+                Ty::Error => "?".to_string(),
+                Ty::Fun(a, b) => {
+                    let lhs = match a.as_ref() {
                         Ty::Fun(_, _) => format!("({})", a.render_mapped(map)),
                         _ => a.render_mapped(map),
-                    })
-                    .collect();
-                format!("{} {}", nominal::strip(n.as_str()), parts.join(" "))
-            }
-            Ty::Tuple(xs) => {
-                let parts: Vec<String> = xs.iter().map(|t| t.render_mapped(map)).collect();
-                format!("( {} )", parts.join(", "))
-            }
-            Ty::Record(fields, ext) => {
-                let parts: Vec<String> = fields
-                    .iter()
-                    .map(|(n, t)| format!("{} : {}", n.as_str(), t.render_mapped(map)))
-                    .collect();
-                match ext {
-                    Some(e) => format!("{{ {} | {} }}", sub(e), parts.join(", ")),
-                    None => format!("{{ {} }}", parts.join(", ")),
+                    };
+                    format!("{lhs} -> {}", b.render_mapped(map))
+                }
+                // Print the BARE name: a module qualifier is an internal identity
+                // device (`crate::nominal`), not something a signature should carry.
+                // Keeps every rendered signature, snapshot and oracle message
+                // byte-identical to before unions became module-qualified.
+                Ty::App(n, args) if args.is_empty() => nominal::strip(n.as_str()).to_string(),
+                Ty::App(n, args) => {
+                    let parts: Vec<String> = args
+                        .iter()
+                        .map(|a| match a {
+                            Ty::App(_, xs) if !xs.is_empty() => {
+                                format!("({})", a.render_mapped(map))
+                            }
+                            Ty::Fun(_, _) => format!("({})", a.render_mapped(map)),
+                            _ => a.render_mapped(map),
+                        })
+                        .collect();
+                    format!("{} {}", nominal::strip(n.as_str()), parts.join(" "))
+                }
+                Ty::Tuple(xs) => {
+                    let parts: Vec<String> = xs.iter().map(|t| t.render_mapped(map)).collect();
+                    format!("( {} )", parts.join(", "))
+                }
+                Ty::Record(fields, ext) => {
+                    let parts: Vec<String> = fields
+                        .iter()
+                        .map(|(n, t)| format!("{} : {}", n.as_str(), t.render_mapped(map)))
+                        .collect();
+                    match ext {
+                        Some(e) => format!("{{ {} | {} }}", sub(e), parts.join(", ")),
+                        None => format!("{{ {} }}", parts.join(", ")),
+                    }
                 }
             }
-        }
+        })
     }
 }
 

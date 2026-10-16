@@ -223,11 +223,50 @@ pub struct UnionFind {
     /// callers. A missing `Comparable`/`Number`/`Appendable` is refused
     /// (Elm's rule).
     pub(crate) rigid_needs: Vec<(Name, SuperType)>,
+    /// Reused buffers of the occurs check (no type state: see
+    /// [`OccursScratch`]).
+    occurs_scratch: OccursScratch,
+    /// Record fields copied out by [`UnionFind::content`] (tests only): pins
+    /// that binding a variable moves a structure instead of copying it.
+    #[cfg(test)]
+    record_copies: u64,
+}
+
+/// The occurs check's visited marks and work stack, kept between calls so a
+/// check allocates nothing. A root is visited in the current call when its
+/// mark equals `epoch`; each call bumps `epoch`, which clears every mark at
+/// once. It holds no type information: a clone starts empty, and two stores
+/// that differ only here behave identically.
+#[derive(Default)]
+struct OccursScratch {
+    mark: Vec<u32>,
+    epoch: u32,
+    stack: Vec<TyVarId>,
+}
+
+impl Clone for OccursScratch {
+    fn clone(&self) -> Self {
+        OccursScratch::default()
+    }
+}
+
+/// How [`UnionFind::unify_vars`] first splits a pair of roots.
+#[derive(Clone, Copy)]
+enum Kind {
+    Error,
+    Flex,
+    Other,
 }
 
 impl UnionFind {
     pub fn new() -> Self {
         UnionFind::default()
+    }
+
+    /// Number of variables allocated so far.
+    #[cfg(test)]
+    pub(crate) fn var_count(&self) -> usize {
+        self.slots.len()
     }
 
     /// Allocate a fresh variable with the given content. Deterministic (L4):
@@ -270,7 +309,50 @@ impl UnionFind {
     pub fn content(&mut self, v: TyVarId) -> Content {
         let r = self.find(v);
         match &self.slots[r.0 as usize] {
-            Slot::Root { content, .. } => content.clone(),
+            Slot::Root { content, .. } => {
+                if let Content::Structure(FlatTy::Record(fs, _)) = content {
+                    crate::counters::RECORD_FIELDS.add(fs.len() as u64);
+                    #[cfg(test)]
+                    {
+                        self.record_copies += fs.len() as u64;
+                    }
+                }
+                content.clone()
+            }
+            Slot::Link(_) => Content::Flex,
+        }
+    }
+
+    /// Overwrite a root's content with no checks — builds the cyclic graphs
+    /// the read-back tests need (the unifier only makes them through paths
+    /// that are hard to drive from a test).
+    #[cfg(test)]
+    pub(crate) fn set_content_for_test(&mut self, v: TyVarId, content: Content) {
+        self.set_content(v, content);
+    }
+
+    /// Which of the three cases [`Self::unify_vars`] splits on a ROOT's
+    /// content falls in, read in place (no copy of the content).
+    fn kind(&self, root: TyVarId) -> Kind {
+        match &self.slots[root.0 as usize] {
+            Slot::Root {
+                content: Content::Error,
+                ..
+            } => Kind::Error,
+            Slot::Root {
+                content: Content::Flex,
+                ..
+            }
+            | Slot::Link(_) => Kind::Flex,
+            Slot::Root { .. } => Kind::Other,
+        }
+    }
+
+    /// Move a ROOT's content out, leaving `Flex` behind. Only for a root that
+    /// [`Self::union`] overwrites next, before anything reads it.
+    fn take_content(&mut self, root: TyVarId) -> Content {
+        match &mut self.slots[root.0 as usize] {
+            Slot::Root { content, .. } => std::mem::replace(content, Content::Flex),
             Slot::Link(_) => Content::Flex,
         }
     }
@@ -307,68 +389,122 @@ impl UnionFind {
     /// Does `target`'s representative appear inside the structure reachable
     /// from `v` (other than at `v == target`)? Gates the Flex↔Structure merge
     /// that would otherwise build an infinite type.
+    ///
+    /// A reachability question, so the walk order does not matter: it runs on
+    /// an explicit stack and reads each node's children in place (no copy of a
+    /// record's field map per node, no recursion depth bound by the type's).
+    ///
+    /// The visited set and the stack are the reused [`OccursScratch`]: a mark
+    /// per variable, valid for one call through the epoch. The walk visits
+    /// the same nodes in the same order as a fresh set per call would.
     fn occurs(&mut self, v: TyVarId, target: TyVarId) -> bool {
         let target = self.find(target);
-        let mut seen = std::collections::HashSet::new();
-        self.occurs_in(v, target, &mut seen)
-    }
-
-    fn occurs_in(
-        &mut self,
-        v: TyVarId,
-        target: TyVarId,
-        seen: &mut std::collections::HashSet<TyVarId>,
-    ) -> bool {
-        let r = self.find(v);
-        if r == target {
-            return true;
+        let mut sc = std::mem::take(&mut self.occurs_scratch);
+        sc.epoch = sc.epoch.wrapping_add(1);
+        if sc.epoch == 0 {
+            // The epoch wrapped: old marks could equal a new one.
+            sc.mark.iter_mut().for_each(|m| *m = 0);
+            sc.epoch = 1;
         }
-        if !seen.insert(r) {
-            return false;
+        // The walk allocates no variable, so marks sized now cover it.
+        if sc.mark.len() < self.slots.len() {
+            sc.mark.resize(self.slots.len(), 0);
         }
-        match self.content(r) {
-            Content::Structure(ft) => {
-                let kids = flat_children(&ft);
-                kids.into_iter().any(|k| self.occurs_in(k, target, seen))
+        sc.stack.clear();
+        sc.stack.push(v);
+        let mut found = false;
+        while let Some(x) = sc.stack.pop() {
+            crate::counters::OCCURS_NODES.bump();
+            let r = self.find(x);
+            if r == target {
+                found = true;
+                break;
             }
-            _ => false,
+            let mark = &mut sc.mark[r.0 as usize];
+            if *mark == sc.epoch {
+                continue;
+            }
+            *mark = sc.epoch;
+            if let Slot::Root {
+                content: Content::Structure(ft),
+                ..
+            } = &self.slots[r.0 as usize]
+            {
+                match ft {
+                    FlatTy::App(_, args) => sc.stack.extend(args.iter().copied()),
+                    FlatTy::Fun(a, b) => sc.stack.extend([*a, *b]),
+                    FlatTy::Record(fs, e) => {
+                        sc.stack.extend(fs.values().copied());
+                        sc.stack.extend(e.iter().copied());
+                    }
+                    FlatTy::Tuple(xs) => sc.stack.extend(xs.iter().copied()),
+                    FlatTy::Unit => {}
+                }
+            }
         }
+        self.occurs_scratch = sc;
+        found
     }
 
     // ---- unification (Unify.hs actuallyUnify) ---------------------------
 
     /// Unify `a` and `b`. Returns `Err(Mismatch)` on a genuine clash — the
     /// caller records a diagnostic and commits both vars to `Error` (L7).
+    ///
+    /// A curried function type is as deep as its arity (a record constructor
+    /// with one argument per field), so the recursion through [`Self::unify_flat`]
+    /// grows the stack on demand ([`base::ensure_stack`]).
     pub fn unify(&mut self, a: TyVarId, b: TyVarId) -> Result<(), Mismatch> {
+        base::ensure_stack(|| self.unify_vars(a, b))
+    }
+
+    fn unify_vars(&mut self, a: TyVarId, b: TyVarId) -> Result<(), Mismatch> {
         let ra = self.find(a);
         let rb = self.find(b);
         if ra == rb {
             return Ok(());
         }
-        let ca = self.content(ra);
-        let cb = self.content(rb);
-        match (ca, cb) {
-            (Content::Error, _) | (_, Content::Error) => {
+        // The `Error` and `Flex` cases need no copy of either side: they read
+        // the two contents by kind only, and a `Flex` side's partner content
+        // MOVES into the merged root (`union` overwrites both slots, so the
+        // emptied one is never read). Binding a variable to a large record
+        // used to clone the record's field map, and the same map again for
+        // the `Flex` side's copy of nothing.
+        match (self.kind(ra), self.kind(rb)) {
+            (Kind::Error, _) | (_, Kind::Error) => {
                 self.union(ra, rb, Content::Error);
-                Ok(())
+                return Ok(());
             }
-            (Content::Flex, Content::Flex) => {
+            (Kind::Flex, Kind::Flex) => {
                 self.union(ra, rb, Content::Flex);
-                Ok(())
+                return Ok(());
             }
-            (Content::Flex, other) => {
+            (Kind::Flex, Kind::Other) => {
                 if self.occurs(rb, ra) {
                     return self.infinite(ra, rb);
                 }
+                let other = self.take_content(rb);
                 self.union(ra, rb, other);
-                Ok(())
+                return Ok(());
             }
-            (other, Content::Flex) => {
+            (Kind::Other, Kind::Flex) => {
                 if self.occurs(ra, rb) {
                     return self.infinite(ra, rb);
                 }
+                let other = self.take_content(ra);
                 self.union(ra, rb, other);
-                Ok(())
+                return Ok(());
+            }
+            (Kind::Other, Kind::Other) => {}
+        }
+        // Both sides are rigid, bounded or structured: the arms below consume
+        // owned copies (`unify_flat` / `satisfy` may read either root while
+        // they run, so neither can be emptied first).
+        let ca = self.content(ra);
+        let cb = self.content(rb);
+        match (ca, cb) {
+            (Content::Error, _) | (_, Content::Error) | (Content::Flex, _) | (_, Content::Flex) => {
+                unreachable!("Error and Flex roots are decided above")
             }
             // Two skolems unify only when they are the SAME quantifier
             // (`identity : a -> a` — the body's `x` and the declared result are
@@ -735,8 +871,11 @@ impl UnionFind {
                     Err(Mismatch::new(format!("type mismatch: `{d1}` vs `{d2}`")))
                 }
             }
-            (FlatTy::Record(fs1, e1), FlatTy::Record(fs2, e2)) => {
-                self.unify_records(ra, rb, fs1.clone(), *e1, fs2.clone(), *e2)
+            (FlatTy::Record(..), FlatTy::Record(..)) => {
+                let (FlatTy::Record(fs1, e1), FlatTy::Record(fs2, e2)) = (f1, f2) else {
+                    unreachable!("matched as two records above")
+                };
+                self.unify_records(ra, rb, fs1, e1, fs2, e2)
             }
             _ => {
                 let (d1, d2) = (self.describe_flat(&f1, 0), self.describe_flat(&f2, 0));
@@ -778,12 +917,16 @@ impl UnionFind {
                     if !seen.insert(r) {
                         return (fields, Some(r));
                     }
-                    match self.content(r) {
-                        Content::Structure(FlatTy::Record(fs_inner, ext_inner)) => {
+                    match &self.slots[r.0 as usize] {
+                        Slot::Root {
+                            content: Content::Structure(FlatTy::Record(fs_inner, ext_inner)),
+                            ..
+                        } => {
+                            crate::counters::RECORD_FIELDS.add(fs_inner.len() as u64);
                             for (k, v) in fs_inner {
-                                fields.entry(k).or_insert(v);
+                                fields.entry(k.clone()).or_insert(*v);
                             }
-                            cur = ext_inner;
+                            cur = *ext_inner;
                         }
                         // Flex/super/rigid/error/non-record structure: the row is
                         // still open under `r` (or malformed — leave it to the
@@ -794,6 +937,169 @@ impl UnionFind {
                     }
                 }
             }
+        }
+    }
+
+    /// `unify(base, rec)` where `rec` is a constraint node built for a field
+    /// access or a record update — `{ fields | row }` — and `rec` and `row`
+    /// are FRESH: nothing but `rec` refers to `row`, and nothing refers to
+    /// `rec`. Returns `None` when the fast form does not apply (the base is not
+    /// a closed record holding every field); the caller then runs the general
+    /// `unify`.
+    ///
+    /// When it applies, the union-find ends in the state the general path
+    /// leaves on every node reachable from a live variable, with the same
+    /// variables allocated in the same order, and the same result:
+    ///
+    /// * `unify_records(base, rec)` links `rec` under `base`'s root and keeps
+    ///   the base's content (a closed record whose fields include all of
+    ///   `fields` is its own merge): [`UnionFind::link_fresh`];
+    /// * it unifies each shared field pair in field order, stopping at the
+    ///   first clash. With `fresh_values` (a field ACCESS: each value is a
+    ///   fresh flex var referred to only by `rec`), that unify is a union in
+    ///   which the field keeps its own content and the occurs check cannot
+    ///   fire, so it is a link too; otherwise the general `unify` runs;
+    /// * when the base has fields beyond `fields`, it binds `row` to a fresh
+    ///   record of them. Nothing live refers to `row` (only `rec`'s content
+    ///   did, and `rec` is now a link), so that record is never read: the fast
+    ///   form allocates its variable, to keep later variable ids (and so the
+    ///   `t<id>` names of read-back) identical, without copying the base's
+    ///   field map into it or walking it for the occurs check.
+    ///
+    /// This turns a field access from O(size of the record) into O(log
+    /// fields), and an update into O(updated fields) plus their unifications.
+    pub(crate) fn unify_closed_record_fresh_row(
+        &mut self,
+        base: TyVarId,
+        rec: TyVarId,
+        row: TyVarId,
+        fields: &BTreeMap<Name, TyVarId>,
+        fresh_values: bool,
+    ) -> Option<Result<(), Mismatch>> {
+        let ra = self.find(base);
+        let rb = self.find(rec);
+        if ra == rb {
+            return None;
+        }
+        let (field_vars, has_rest) = match &self.slots[ra.0 as usize] {
+            Slot::Root {
+                content: Content::Structure(FlatTy::Record(fs, None)),
+                ..
+            } => {
+                let mut vs = Vec::with_capacity(fields.len());
+                for n in fields.keys() {
+                    vs.push(*fs.get(n)?);
+                }
+                (vs, fs.len() > fields.len())
+            }
+            _ => return None,
+        };
+        crate::counters::RECORD_FIELDS.add(fields.len() as u64);
+        self.link_fresh(ra, rb);
+        for (fv, (_, val)) in field_vars.into_iter().zip(fields.iter()) {
+            if fresh_values {
+                let r = self.find(fv);
+                self.link_fresh(r, *val);
+            } else if let Err(m) = self.unify(fv, *val) {
+                return Some(Err(m));
+            }
+        }
+        if has_rest {
+            let rest = self.fresh(Content::Structure(FlatTy::Record(BTreeMap::new(), None)));
+            // `union(row, rest, …)`: two rank-0 roots, `row` first.
+            self.link_fresh(row, rest);
+            self.set_content(
+                row,
+                Content::Structure(FlatTy::Record(BTreeMap::new(), None)),
+            );
+        }
+        Some(Ok(()))
+    }
+
+    /// `union(root, child, <root's own content>)` for a `child` that is a
+    /// rank-0 root distinct from `root`: `child` links under `root`, whose
+    /// rank rises to 1 if it was 0 (union by rank). The content stays.
+    fn link_fresh(&mut self, root: TyVarId, child: TyVarId) {
+        let root = self.find(root);
+        let child = self.find(child);
+        debug_assert_ne!(root, child);
+        debug_assert_eq!(self.rank(child), 0, "link_fresh: child must be rank 0");
+        if self.rank(root) == 0 {
+            if let Slot::Root { rank, .. } = &mut self.slots[root.0 as usize] {
+                *rank = 1;
+            }
+        }
+        self.slots[child.0 as usize] = Slot::Link(root);
+    }
+
+    /// The number of nodes of `ty` when `v`'s graph, unfolded along `ty`, IS
+    /// `ty`: at every node of `ty` the class there is a structure with the
+    /// same shape (an identical nominal name, a closed record with the same
+    /// field names, a tuple of the same width, a function, unit). `None` when
+    /// any node differs, or when `ty` holds a type variable, an `Error` or an
+    /// open record — the cases where unifying a fresh instance of `ty` with
+    /// `v` could bind, rename, widen or allocate beyond one node per node of
+    /// `ty`. The walk only reads (and compresses paths).
+    ///
+    /// A match is finite, as `ty` is: every leaf of `ty` matches only a class
+    /// with no children, so a cyclic graph never matches.
+    pub(crate) fn ground_instance_nodes(&mut self, v: TyVarId, ty: &crate::Ty) -> Option<usize> {
+        use crate::Ty;
+        let mut nodes = 0usize;
+        let mut stack: Vec<(TyVarId, &Ty)> = vec![(v, ty)];
+        while let Some((x, t)) = stack.pop() {
+            nodes += 1;
+            let r = self.find(x);
+            let Slot::Root {
+                content: Content::Structure(ft),
+                ..
+            } = &self.slots[r.0 as usize]
+            else {
+                return None;
+            };
+            match (ft, t) {
+                (FlatTy::App(n, args), Ty::App(m, targs))
+                    if n == m && args.len() == targs.len() =>
+                {
+                    stack.extend(args.iter().copied().zip(targs.iter()));
+                }
+                (FlatTy::Fun(a, b), Ty::Fun(ta, tb)) => {
+                    stack.push((*a, &**ta));
+                    stack.push((*b, &**tb));
+                }
+                (FlatTy::Tuple(xs), Ty::Tuple(ts)) if xs.len() == ts.len() => {
+                    stack.extend(xs.iter().copied().zip(ts.iter()));
+                }
+                (FlatTy::Unit, Ty::Unit) => {}
+                (FlatTy::Record(fs, None), Ty::Record(tfs, None)) if fs.len() == tfs.len() => {
+                    // A `Ty` record lists its fields in declaration order.
+                    // Every name must be a field of the class, once: with
+                    // equal lengths that makes the two name sets equal. (A
+                    // repeated name would collapse in `ty_to_var`'s map and
+                    // the unify would then clash, so it never matches.)
+                    if !tfs.windows(2).all(|w| w[0].0 < w[1].0) {
+                        let mut names: Vec<&Name> = tfs.iter().map(|(n, _)| n).collect();
+                        names.sort_unstable();
+                        if names.windows(2).any(|w| w[0] == w[1]) {
+                            return None;
+                        }
+                    }
+                    for (tk, tt) in tfs {
+                        stack.push((*fs.get(tk)?, tt));
+                    }
+                }
+                _ => return None,
+            }
+        }
+        Some(nodes)
+    }
+
+    /// Allocate `n` variables nothing refers to: they keep every later id
+    /// where an elided allocation of `n` fresh nodes would have put it.
+    pub(crate) fn reserve_unreachable(&mut self, n: usize) {
+        self.slots.reserve(n);
+        for _ in 0..n {
+            self.fresh_flex();
         }
     }
 
@@ -812,6 +1118,7 @@ impl UnionFind {
         // both ext vars are still flex (the common case at call time).
         let (fs1, e1) = self.normalize_record(fs1, e1);
         let (fs2, e2) = self.normalize_record(fs2, e2);
+        crate::counters::RECORD_FIELDS.add((fs1.len() + fs2.len()) as u64);
         // shared fields unify pairwise
         let shared: Vec<(TyVarId, TyVarId)> = fs1
             .iter()
@@ -1164,5 +1471,72 @@ mod tests {
         let a = uf.fresh(Content::Rigid(Name::new("a")));
         let b = uf.fresh(Content::Rigid(Name::new("b")));
         assert!(uf.unify(a, b).is_err());
+    }
+    fn record_of(uf: &mut UnionFind, n: usize) -> TyVarId {
+        let int = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        let fields: BTreeMap<Name, TyVarId> =
+            (0..n).map(|i| (Name::new(&format!("f{i}")), int)).collect();
+        uf.fresh(Content::Structure(FlatTy::Record(fields, None)))
+    }
+
+    /// Binding a variable to a record moves the record into the merged root:
+    /// no field map is copied, on either side of the pair, and the variable
+    /// reads back the record.
+    #[test]
+    fn binding_a_variable_moves_the_structure() {
+        for flex_first in [true, false] {
+            let mut uf = UnionFind::new();
+            let rec = record_of(&mut uf, 500);
+            let a = uf.fresh_flex();
+            let before = uf.record_copies;
+            let res = if flex_first {
+                uf.unify(a, rec)
+            } else {
+                uf.unify(rec, a)
+            };
+            assert!(res.is_ok());
+            assert_eq!(uf.record_copies, before, "a record field map was copied");
+            assert!(matches!(
+                uf.content(a),
+                Content::Structure(FlatTy::Record(fs, None)) if fs.len() == 500
+            ));
+            assert_eq!(uf.find(a), uf.find(rec));
+        }
+    }
+
+    /// The occurs check still refuses an infinite type through the moving
+    /// path, and commits both sides to `Error`.
+    #[test]
+    fn occurs_failure_still_commits_error() {
+        let mut uf = UnionFind::new();
+        let a = uf.fresh_flex();
+        let list = uf.fresh(Content::Structure(FlatTy::App(Name::new("List"), vec![a])));
+        assert!(uf.unify(a, list).is_err());
+        assert!(matches!(uf.content(a), Content::Error));
+        assert!(matches!(uf.content(list), Content::Error));
+    }
+
+    /// The occurs check's reused marks: each call sees only its own visits,
+    /// across many calls and across a wrap of the epoch counter.
+    #[test]
+    fn occurs_marks_are_per_call() {
+        let mut uf = UnionFind::new();
+        let a = uf.fresh_flex();
+        let b = uf.fresh_flex();
+        let pair = uf.fresh(Content::Structure(FlatTy::Tuple(vec![a, a])));
+        for _ in 0..3 {
+            assert!(uf.occurs(pair, a));
+            assert!(!uf.occurs(pair, b));
+        }
+        uf.occurs_scratch.epoch = u32::MAX - 1;
+        for _ in 0..4 {
+            assert!(uf.occurs(pair, a));
+            assert!(!uf.occurs(pair, b));
+        }
+        assert!(uf.occurs_scratch.epoch >= 1);
+        // A clone carries no marks and still answers the same.
+        let mut c = uf.clone();
+        assert!(c.occurs(pair, a));
+        assert!(!c.occurs(pair, b));
     }
 }

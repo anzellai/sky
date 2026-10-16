@@ -35,6 +35,46 @@ use rowan::GreenNode;
 pub struct Parse {
     green: GreenNode,
     errors: Vec<Diagnostic>,
+    /// The tree's depth in nodes (see the `Drop` impl).
+    depth: u32,
+}
+
+/// A tree deeper than this is dropped by [`drop_green_flat`].
+const FLAT_DROP_DEPTH: u32 = 512;
+
+// rowan frees a green node's children from inside the parent's drop, so
+// dropping a tree takes a few native frames per level. A left-nested `|>`
+// pipeline or a generated record codec nests one node per step, and dropping
+// the parse of a 20,000-step pipeline overflowed a 2 MiB thread. A deep tree is
+// dropped without that recursion; an ordinary one by rowan as before.
+impl Drop for Parse {
+    fn drop(&mut self) {
+        if self.depth > FLAT_DROP_DEPTH {
+            use rowan::Language;
+            let empty = GreenNode::new(SkyLang::kind_to_raw(SyntaxKind::SourceFile), []);
+            drop_green_flat(std::mem::replace(&mut self.green, empty));
+        }
+    }
+}
+
+/// Drop a green tree with no recursion. Every node is first held in a list,
+/// parents before children; the list is then dropped in that order, so each
+/// node that is freed finds its children still held and frees nothing below
+/// itself. A node shared with a tree that is still alive is only released.
+pub(crate) fn drop_green_flat(root: GreenNode) {
+    let mut held: Vec<GreenNode> = vec![root];
+    let mut i = 0;
+    while i < held.len() {
+        let children: Vec<GreenNode> = held[i]
+            .children()
+            .filter_map(|c| c.into_node())
+            .map(|n| n.to_owned())
+            .collect();
+        held.extend(children);
+        i += 1;
+    }
+    // `Vec` drops its elements front to back: parents first.
+    drop(held);
 }
 
 impl Parse {
@@ -83,8 +123,12 @@ pub fn parse(src: &str, file: FileId) -> Parse {
     let mut p = parser::Parser::new(src, toks, file);
     grammar::source_file(&mut p);
     let (events, errors) = p.finish();
-    let green = event::build_tree(src, &raw, events);
-    Parse { green, errors }
+    let (green, depth) = event::build_tree(src, &raw, events);
+    Parse {
+        green,
+        errors,
+        depth,
+    }
 }
 
 #[cfg(test)]

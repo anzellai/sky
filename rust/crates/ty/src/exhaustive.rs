@@ -19,6 +19,13 @@ pub fn check_body(body: &Body, world: &World) -> Vec<diagnostics::Diagnostic> {
 }
 
 fn walk(body: &Body, world: &World, e: ExprId, out: &mut Vec<diagnostics::Diagnostic>) {
+    // A body is as deep as its longest spine: a left-nested `|>` pipeline or a
+    // generated record codec puts one level here per step. Grow the stack on
+    // demand rather than overflow it (the other expression walkers do the same).
+    base::ensure_stack(|| walk_guarded(body, world, e, out))
+}
+
+fn walk_guarded(body: &Body, world: &World, e: ExprId, out: &mut Vec<diagnostics::Diagnostic>) {
     match &body.exprs[e] {
         Expr::Case { subject, branches } => {
             walk(body, world, *subject, out);

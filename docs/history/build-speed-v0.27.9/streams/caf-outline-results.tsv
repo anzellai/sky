@@ -1,0 +1,38 @@
+new	25	sky-build	rc=0	wall=5.43	user=12.02	maxrss_mb=620
+new	25	go-c8	rc=0	wall=1.99	user=4.83	sys=0.67	maxrss_mb=595	funcs=2973
+new	25	go-c1	rc=0	wall=2.81	user=3.87	sys=0.69	maxrss_mb=609	funcs=2973
+new	50	sky-build	rc=0	wall=39.66	user=65.41	maxrss_mb=1316
+new	50	go-c8	rc=0	wall=2.33	user=5.91	sys=0.79	maxrss_mb=599	funcs=4423
+new	50	go-c1	rc=0	wall=3.43	user=4.77	sys=0.72	maxrss_mb=599	funcs=4423
+new	100	sky-build	rc=0	wall=62.13	user=101.50	maxrss_mb=2410
+new	100	go-c8	rc=0	wall=2.80	user=7.86	sys=0.86	maxrss_mb=639	funcs=7323
+new	100	go-c1	rc=0	wall=4.40	user=6.09	sys=0.73	maxrss_mb=629	funcs=7323
+new	200	sky-build	rc=0	wall=115.07	user=191.93	maxrss_mb=4095
+new	200	go-c8	rc=0	wall=4.62	user=13.08	sys=1.01	maxrss_mb=1111	funcs=13123
+new	200	go-c1	rc=0	wall=7.00	user=10.39	sys=0.87	maxrss_mb=789	funcs=13123
+base	25	sky-build	rc=0	wall=31.38	user=50.30	maxrss_mb=787
+base	25	go-c8	rc=0	wall=2.33	user=5.74	sys=0.85	maxrss_mb=597	funcs=5079
+base	25	go-c1	rc=0	wall=3.38	user=4.62	sys=0.75	maxrss_mb=597	funcs=5079
+base	50	sky-build	rc=0	wall=41.91	user=74.13	maxrss_mb=1336
+base	50	go-c8	rc=0	wall=3.18	user=10.20	sys=0.99	maxrss_mb=904	funcs=10979
+base	50	go-c1	rc=0	wall=5.43	user=7.45	sys=0.77	maxrss_mb=610	funcs=10979
+base	100	sky-build	rc=0	wall=66.24	user=133.82	maxrss_mb=2215
+base	100	go-c8	rc=0	wall=6.30	user=24.31	sys=1.51	maxrss_mb=2238	funcs=30273
+base	100	go-c1	rc=0	wall=11.67	user=16.90	sys=0.91	maxrss_mb=1306	funcs=30273
+base	200	sky-build	rc=0	wall=149.73	user=379.11	maxrss_mb=4617
+base	200	go-c8	rc=0	wall=28.21	user=99.59	sys=12.14	maxrss_mb=4691	funcs=98873
+base	200	go-c1	rc=0	wall=44.82	user=66.53	sys=2.22	maxrss_mb=4118	funcs=98873
+base	100	fe-go	rc=0	wall=7.63	user=25.71	maxrss_mb=2294	funcs=11335
+base	200	fe-go	rc=0	wall=15.55	user=50.28	maxrss_mb=4434	funcs=21435
+new	100	fe-go	rc=0	wall=7.59	user=26.19	maxrss_mb=2405	funcs=11335
+new	200	fe-go	rc=0	wall=14.85	user=51.79	maxrss_mb=4065	funcs=21435
+base	19-skyforum	go-c8	rc=0	wall=1.83	user=4.24	maxrss_mb=592	funcs=1485
+base	19-skyforum	go-c1	rc=0	wall=2.68	user=3.65	maxrss_mb=588	funcs=1485
+new	19-skyforum	go-c8	rc=0	wall=1.86	user=4.14	maxrss_mb=585	funcs=1443
+new	19-skyforum	go-c1	rc=0	wall=2.67	user=3.63	maxrss_mb=581	funcs=1443
+base	13-skyshop	sky-build	rc=0	wall=66.00	user=145.55	maxrss_mb=3877
+base	13-skyshop	go-c8	rc=0	wall=6.69	user=15.25	maxrss_mb=1284	funcs=5269
+base	13-skyshop	go-c1	rc=0	wall=8.02	user=10.86	maxrss_mb=1273	funcs=5269
+new	13-skyshop	sky-build	rc=0	wall=28.94	user=74.67	maxrss_mb=3899
+new	13-skyshop	go-c8	rc=0	wall=4.61	user=12.36	maxrss_mb=1278	funcs=3487
+new	13-skyshop	go-c1	rc=0	wall=6.87	user=9.34	maxrss_mb=1278	funcs=3487

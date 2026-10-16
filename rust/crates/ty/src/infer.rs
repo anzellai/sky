@@ -23,10 +23,12 @@
 //! can come of it.
 
 use crate::sig::World;
+use crate::tytable::{TyNode, TyRef, TyTable, TyTableBuilder};
 use crate::unify::{Content, FlatTy, SuperType, UnionFind};
 use crate::{Scheme, Ty, TyVarId};
 use base::{DefId, Name, Span};
 use hir::{Body, Expr, ExprId, LocalId, PatId, Pattern, Res, SkyDb};
+use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 
 /// A recorded type error (an unify clash). A value, not an exception (L7).
@@ -49,10 +51,11 @@ pub struct TypeError {
 /// at this layer, so a function-returning callee's result contributes to the
 /// count (which is exactly what the arity gate needs).
 fn count_fun_arrows(t: &Ty) -> usize {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         Ty::Fun(_, r) => 1 + count_fun_arrows(r),
         _ => 0,
-    }
+    })
 }
 
 /// Replace leading `Unit` arguments on a scheme's top arrow-spine with fresh
@@ -61,7 +64,8 @@ fn count_fun_arrows(t: &Ty) -> usize {
 /// (e.g. `Task Error ()`) is untouched — only argument positions relax.
 fn relax_unit_arg_spine(s: &Scheme) -> Scheme {
     fn go(ty: &Ty, n: &mut u32) -> Ty {
-        match ty {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match ty {
             Ty::Fun(a, b) => {
                 let arg = if matches!(a.as_ref(), Ty::Unit) {
                     *n += 1;
@@ -72,7 +76,7 @@ fn relax_unit_arg_spine(s: &Scheme) -> Scheme {
                 Ty::Fun(Box::new(arg), Box::new(go(b, n)))
             }
             other => other.clone(),
-        }
+        })
     }
     let mut n = 0;
     Scheme {
@@ -146,6 +150,35 @@ pub struct Infer<'a> {
     /// `Codec.auto`. Read by `World::infer_annotated_bounds`, which adds them
     /// to the scheme callers see.
     pub inferred_bounds: Vec<(Name, SuperType)>,
+    /// Per-def entries that take the place of the world's own in its two
+    /// lowering-only record channels (see [`RecordOverlay`]).
+    overlay: Option<&'a RecordOverlay>,
+    /// Test seam: run every record access / update through the general
+    /// unify, so a test can compare the fast form against it.
+    #[cfg(test)]
+    pub(crate) no_fast_paths: bool,
+    /// D2 / #166 closes skipped as no-ops (tests only).
+    #[cfg(test)]
+    pub(crate) ground_close_skips: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test seam: every `Infer` created on this thread starts with the record
+    /// fast paths off, so a test can build a whole `World` both ways.
+    pub(crate) static FORCE_GENERAL_PATHS: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// Entries for a world's `record_result_sigs` and `callsite_param_records`
+/// that one inference run reads IN PLACE OF the world's own entry for the same
+/// def — what inserting them into a clone of the world would give, without the
+/// clone. The salsa `infer_query` demands these per def; cloning the whole
+/// world for each def that needed one cost O(defs × world size).
+#[derive(Default)]
+pub struct RecordOverlay {
+    pub record_result_sigs: HashMap<DefId, Scheme>,
+    pub callsite_param_records: HashMap<DefId, Vec<Option<Ty>>>,
 }
 
 impl<'a> Infer<'a> {
@@ -170,7 +203,19 @@ impl<'a> Infer<'a> {
             obligations: Vec::new(),
             bound_seen: std::collections::HashSet::new(),
             inferred_bounds: Vec::new(),
+            overlay: None,
+            #[cfg(test)]
+            no_fast_paths: FORCE_GENERAL_PATHS.with(|f| f.get()),
+            #[cfg(test)]
+            ground_close_skips: 0,
         }
+    }
+
+    /// Read `overlay`'s record entries in place of the world's own (see
+    /// [`RecordOverlay`]).
+    pub fn with_overlay(mut self, overlay: Option<&'a RecordOverlay>) -> Self {
+        self.overlay = overlay;
+        self
     }
 
     /// Provide the def's declared scheme so `infer_def_typed` seeds param types
@@ -214,6 +259,23 @@ impl<'a> Infer<'a> {
         self
     }
 
+    /// Drain the recorded per-expression table into one hash-consed table: the
+    /// checker's view of the solved types. One entry per recording, in PUSH
+    /// order (post-order inference, `infer_expr`), an expression recorded
+    /// twice appearing twice — the order and multiplicity the `[E2008]` scan's
+    /// first-seen dedup and the scans' last-wins lookup depend on. Every value
+    /// equals the owned read-back (`recorded_expr_types`, kept as the oracle).
+    /// Empty unless [`Infer::with_record_exprs`] was set.
+    pub fn recorded_expr_table(&mut self) -> (Vec<(ExprId, TyRef)>, TyTable) {
+        let recorded: Vec<(ExprId, TyVarId)> = std::mem::take(&mut self.expr_vars);
+        let mut sink = ReadBackSink::new();
+        let out = recorded
+            .into_iter()
+            .map(|(e, tv)| (e, self.read_back_ref(tv, &mut sink)))
+            .collect();
+        (out, sink.finish())
+    }
+
     /// Drain the recorded per-expression table, reading each type back.
     ///
     /// Read-back is memoised per union-find ROOT: a def's expressions share very
@@ -221,6 +283,7 @@ impl<'a> Infer<'a> {
     /// same root), so this costs strictly less than `infer_def_typed`'s
     /// unconditional per-expression `read_back` — which the build path already
     /// pays for every def. Empty unless [`Infer::with_record_exprs`] was set.
+    #[cfg(test)]
     pub fn recorded_expr_types(&mut self) -> Vec<(ExprId, Ty)> {
         let recorded: Vec<(ExprId, TyVarId)> = std::mem::take(&mut self.expr_vars);
         let mut memo: HashMap<TyVarId, Ty> = HashMap::new();
@@ -263,7 +326,56 @@ impl<'a> Infer<'a> {
     /// the input type-directed lowering (doc 07 §2) consumes. Keyed by `ExprId`
     /// (the arena index): the stable per-expression identity in this HIR, a
     /// cleaner key than a source span for an arena-based IR (see report).
-    pub fn infer_def_typed(
+    ///
+    /// Every recorded type is read straight into one hash-consed [`TyTable`]
+    /// ([`Infer::read_back_ref`]): no owned `Ty` is built per expression. The
+    /// stored values are exactly the owned read-backs the previous form of this
+    /// function returned (`infer_def_typed`, kept as the test oracle); the
+    /// differential test `table_readback_matches_owned_readback` holds them equal.
+    pub(crate) fn infer_def_tables(&mut self, body: &Body) -> TypedTables {
+        let Some((v, param_vars)) = self.infer_def_vars(body) else {
+            return TypedTables::default();
+        };
+        let result = self.read_back(v);
+        // Full inferred signature (tooling-only, see `infer_def_typed`).
+        let signature = {
+            let mut sig = result.clone();
+            for &pv in param_vars.iter().rev() {
+                let pt = self.read_back(pv);
+                sig = Ty::Fun(Box::new(pt), Box::new(sig));
+            }
+            sig
+        };
+        // One drain: one builder and one memo, both dropped when it ends (B3).
+        let mut sink = ReadBackSink::new();
+        let recorded: Vec<(ExprId, TyVarId)> = std::mem::take(&mut self.expr_vars);
+        let mut exprs = HashMap::with_capacity(recorded.len());
+        // Push order, last write wins for a repeated `ExprId` — as the owned
+        // `HashMap::insert` loop did.
+        for (e, tv) in recorded {
+            let r = self.read_back_ref(tv, &mut sink);
+            exprs.insert(e, r);
+        }
+        let recorded_locals: Vec<(LocalId, TyVarId)> = std::mem::take(&mut self.local_vars);
+        let mut locals = HashMap::with_capacity(recorded_locals.len());
+        for (lid, tv) in recorded_locals {
+            let r = self.read_back_ref(tv, &mut sink);
+            locals.insert(lid, r);
+        }
+        TypedTables {
+            result: Some(result),
+            signature: Some(signature),
+            exprs,
+            locals,
+            table: sink.finish(),
+        }
+    }
+
+    /// The owned-tree form of [`Infer::infer_def_tables`]: every recorded type
+    /// read back as its own `Ty`. Kept only as the oracle the table form is
+    /// tested against.
+    #[cfg(test)]
+    pub(crate) fn infer_def_typed(
         &mut self,
         body: &Body,
     ) -> (
@@ -379,13 +491,16 @@ impl<'a> Infer<'a> {
             }
             let mut cur = scheme.ty.clone();
             for &pv in &param_vars {
-                match cur {
-                    Ty::Fun(a, b) => {
+                match cur.into_fun() {
+                    Ok((a, b)) => {
                         let av = self.ty_to_var(&a, &mut sub);
                         self.unify(pv, av);
-                        cur = *b;
+                        cur = b;
                     }
-                    _ => break,
+                    Err(c) => {
+                        cur = c;
+                        break;
+                    }
                 }
             }
             expected_result = Some(self.ty_to_var(&cur, &mut sub));
@@ -492,14 +607,17 @@ impl<'a> Infer<'a> {
         let mut cur = scheme.ty.clone();
         let mut consumed = 0usize;
         for &pv in &param_vars {
-            match cur {
-                Ty::Fun(a, b) => {
+            match cur.into_fun() {
+                Ok((a, b)) => {
                     let av = self.ty_to_var(&a, &mut sub);
                     self.unify(pv, av);
-                    cur = *b;
+                    cur = b;
                     consumed += 1;
                 }
-                _ => break,
+                Err(c) => {
+                    cur = c;
+                    break;
+                }
             }
         }
         // Arity gate (RC1 / audit #4): the body binds MORE top-level params than
@@ -724,7 +842,8 @@ impl<'a> Infer<'a> {
         sub: &mut HashMap<String, TyVarId>,
         holes: &mut Vec<TyVarId>,
     ) -> TyVarId {
-        match ty {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match ty {
             Ty::Var(n) if n.as_str() == "any" => {
                 let v = self.uf.fresh_flex();
                 holes.push(v);
@@ -777,7 +896,7 @@ impl<'a> Infer<'a> {
                 rv
             }
             other => self.ty_to_var(other, sub),
-        }
+        })
     }
 
     /// Every variable name reachable from `v`, spelt as read-back spells it:
@@ -789,29 +908,32 @@ impl<'a> Infer<'a> {
         out: &mut std::collections::HashSet<String>,
         seen: &mut std::collections::HashSet<TyVarId>,
     ) {
-        let r = self.uf.find(v);
-        if !seen.insert(r) {
-            return;
-        }
-        match self.uf.content(r) {
-            Content::Flex => {
-                out.insert(format!("t{}", r.0));
-                out.insert(format!("r{}", r.0));
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            let r = self.uf.find(v);
+            if !seen.insert(r) {
+                return;
             }
-            // Spelt as `read_back_scheme` spells a bounded root.
-            Content::FlexSuper(b) => {
-                out.insert(format!("{}{}", b.label(), r.0));
-            }
-            Content::Rigid(n) => {
-                out.insert(n.as_str().to_string());
-            }
-            Content::Structure(ft) => {
-                for k in crate::unify::flat_children(&ft) {
-                    self.collect_var_names(k, out, seen);
+            match self.uf.content(r) {
+                Content::Flex => {
+                    out.insert(format!("t{}", r.0));
+                    out.insert(format!("r{}", r.0));
                 }
+                // Spelt as `read_back_scheme` spells a bounded root.
+                Content::FlexSuper(b) => {
+                    out.insert(format!("{}{}", b.label(), r.0));
+                }
+                Content::Rigid(n) => {
+                    out.insert(n.as_str().to_string());
+                }
+                Content::Structure(ft) => {
+                    for k in crate::unify::flat_children(&ft) {
+                        self.collect_var_names(k, out, seen);
+                    }
+                }
+                Content::Error => {}
             }
-            Content::Error => {}
-        }
+        })
     }
 
     /// Rebuild `ty` with every hole (see [`Infer::ty_to_var_holes`]) replaced by
@@ -822,7 +944,8 @@ impl<'a> Infer<'a> {
         holes: &mut std::vec::IntoIter<TyVarId>,
         names: &HashMap<Name, Name>,
     ) -> Ty {
-        match ty {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match ty {
             Ty::Var(n) if n.as_str() == "any" => match holes.next() {
                 Some(v) => {
                     let t = self.read_back_scheme(v, true);
@@ -863,7 +986,7 @@ impl<'a> Infer<'a> {
                 }
             }
             other => other.clone(),
-        }
+        })
     }
 
     /// C-2 (v0.27.0): the relaxed value restriction for a top-level CAF.
@@ -1030,6 +1153,73 @@ impl<'a> Infer<'a> {
 
     fn unify(&mut self, a: TyVarId, b: TyVarId) {
         let res = self.uf.unify(a, b);
+        self.finish_unify(res);
+    }
+
+    /// [`Infer::unify`] of `base` with the fresh constraint node `rec =
+    /// { fields | row }` built by a field access or a record update, through
+    /// the unifier's fast form when the base is a closed record holding the
+    /// fields (`UnionFind::unify_closed_record_fresh_row`, same result and the
+    /// same live union-find state), else the general unify.
+    fn unify_record_constraint(
+        &mut self,
+        base: TyVarId,
+        rec: TyVarId,
+        row: TyVarId,
+        fields: &std::collections::BTreeMap<Name, TyVarId>,
+        fresh_values: bool,
+    ) {
+        #[cfg(test)]
+        if self.no_fast_paths {
+            self.unify(base, rec);
+            return;
+        }
+        match self
+            .uf
+            .unify_closed_record_fresh_row(base, rec, row, fields, fresh_values)
+        {
+            Some(res) => self.finish_unify(res),
+            None => self.unify(base, rec),
+        }
+    }
+
+    /// The D2 / #166 close of an update's base `tb` with a fresh instance of
+    /// the declared record `ty` is a no-op when `tb` already IS `ty`: every
+    /// node reachable from `tb` along `ty` is a structure equal to `ty`'s node
+    /// (same nominal names, same closed field sets), and `ty` holds no type
+    /// variable and no `Error` (`UnionFind::ground_instance_nodes`). Then the
+    /// skipped `ty_to_var` + `unify` would have allocated one fresh node per
+    /// node of `ty`, linked each under the matching node of `tb` (a fresh
+    /// node has rank 0, so `tb`'s side stays the root), and re-set each `tb`
+    /// root's content to an equal value. Nothing else refers to the fresh
+    /// nodes. The only other change is a root's rank rising from 0 to 1 on
+    /// structured classes; a rank only decides which member of a class is its
+    /// root, and a structured class never becomes `Flex` again, so the choice
+    /// is never printed (`t<id>` names come only from `Flex` / `FlexSuper`
+    /// roots) and never reaches a `Flex` class's root. The skip reserves the
+    /// same number of variables, so every later id, and so every later `t<id>`
+    /// name, is unchanged. Returns whether it skipped.
+    fn skip_ground_close(&mut self, tb: TyVarId, ty: &Ty) -> bool {
+        #[cfg(test)]
+        if self.no_fast_paths {
+            return false;
+        }
+        match self.uf.ground_instance_nodes(tb, ty) {
+            Some(n) => {
+                self.uf.reserve_unreachable(n);
+                #[cfg(test)]
+                {
+                    self.ground_close_skips += 1;
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Record the outcome of a unification: drain deferred obligations, then
+    /// report a clash.
+    fn finish_unify(&mut self, res: Result<(), crate::unify::Mismatch>) {
         // Obligations the unifier deferred are anchored where they arose.
         self.drain_pending();
         if let Err(m) = res {
@@ -1066,7 +1256,7 @@ impl<'a> Infer<'a> {
         // keeps a parent's span when this node has no recorded range.
         let prev = self.cur_span;
         self.cur_span = body.expr_span(e).or(prev);
-        let tv = self.infer_expr_inner(body, e);
+        let tv = base::ensure_stack(|| self.infer_expr_inner(body, e));
         self.cur_span = prev;
         if self.record_exprs {
             self.expr_vars.push((e, tv));
@@ -1122,8 +1312,8 @@ impl<'a> Infer<'a> {
                 let row = self.uf.fresh_flex();
                 let constraint = self
                     .uf
-                    .fresh(Content::Structure(FlatTy::Record(map, Some(row))));
-                self.unify(tb, constraint);
+                    .fresh(Content::Structure(FlatTy::Record(map.clone(), Some(row))));
+                self.unify_record_constraint(tb, constraint, row, &map, false);
                 // D2 (lowering-path only): if the base is an unannotated sibling
                 // `Res::Def`, it resolved to a fresh flex above, so `tb`'s row
                 // stays open and reads back as the SUBSET of updated fields — but
@@ -1135,10 +1325,20 @@ impl<'a> Infer<'a> {
                 if self.use_inferred {
                     match &body.exprs[*base] {
                         Expr::Var(Res::Def(d)) => {
-                            if let Some(s) = self.world.record_result_sigs.get(d) {
-                                let s = s.clone();
-                                let full = self.instantiate(&s);
-                                self.unify(tb, full);
+                            // Borrowed for the run's lifetime: the overlay and
+                            // the world are fixed while this `Infer` lives, so
+                            // no copy of the scheme is needed per update.
+                            let (world, overlay) = (self.world, self.overlay);
+                            let sig = overlay
+                                .and_then(|o| o.record_result_sigs.get(d))
+                                .or_else(|| world.record_result_sigs.get(d));
+                            if let Some(s) = sig {
+                                // A scheme with quantifiers allocates one
+                                // variable per quantifier first: never skipped.
+                                if !(s.vars.is_empty() && self.skip_ground_close(tb, &s.ty)) {
+                                    let full = self.instantiate(s);
+                                    self.unify(tb, full);
+                                }
                             }
                         }
                         // #166: the base is a PARAM of this def. Close the update's
@@ -1169,48 +1369,27 @@ impl<'a> Infer<'a> {
                                     // harvested into `callsite_param_records`,
                                     // #166). Both give the full record so the
                                     // update's open row closes to it.
-                                    let param_record: Option<Ty> = self
-                                        .world
-                                        .value_sigs
-                                        .get(&def)
-                                        .and_then(|scheme| {
-                                            let mut cur = &scheme.ty;
-                                            for _ in 0..idx {
-                                                match cur {
-                                                    Ty::Fun(_, b) => cur = b,
-                                                    _ => return None,
-                                                }
-                                            }
-                                            match cur {
-                                                // ONLY a CLOSED record from the sig closes
-                                                // the row. An annotated `model : M` gives
-                                                // `Record(_, None)`. An UNANNOTATED param's
-                                                // inferred sig is an OPEN row (the narrow
-                                                // subset of updated fields) — that must NOT
-                                                // win, or it re-narrows the update; fall
-                                                // through to the callsite harvest below.
-                                                Ty::Fun(a, _)
-                                                    if matches!(
-                                                        a.as_ref(),
-                                                        Ty::Record(_, None)
-                                                    ) =>
-                                                {
-                                                    Some((**a).clone())
-                                                }
-                                                _ => None,
-                                            }
-                                        })
-                                        .or_else(|| {
-                                            self.world
-                                                .callsite_param_records
-                                                .get(&def)
-                                                .and_then(|v| v.get(idx))
-                                                .and_then(|o| o.clone())
-                                        });
+                                    let (world, overlay) = (self.world, self.overlay);
+                                    let param_record: Option<&Ty> =
+                                        crate::sig::declared_param_record(world, def, idx).or_else(
+                                            || {
+                                                overlay
+                                                    .and_then(|o| {
+                                                        o.callsite_param_records.get(&def)
+                                                    })
+                                                    .or_else(|| {
+                                                        world.callsite_param_records.get(&def)
+                                                    })
+                                                    .and_then(|v| v.get(idx))
+                                                    .and_then(|o| o.as_ref())
+                                            },
+                                        );
                                     if let Some(rec) = param_record {
-                                        let mut sub: HashMap<String, TyVarId> = HashMap::new();
-                                        let av = self.ty_to_var(&rec, &mut sub);
-                                        self.unify(tb, av);
+                                        if !self.skip_ground_close(tb, rec) {
+                                            let mut sub: HashMap<String, TyVarId> = HashMap::new();
+                                            let av = self.ty_to_var(rec, &mut sub);
+                                            self.unify(tb, av);
+                                        }
                                     }
                                 }
                             }
@@ -1388,8 +1567,8 @@ impl<'a> Infer<'a> {
                 map.insert(field.clone(), fv);
                 let rec = self
                     .uf
-                    .fresh(Content::Structure(FlatTy::Record(map, Some(row))));
-                self.unify(tb, rec);
+                    .fresh(Content::Structure(FlatTy::Record(map.clone(), Some(row))));
+                self.unify_record_constraint(tb, rec, row, &map, true);
                 fv
             }
             Expr::Error => self.uf.fresh_flex(),
@@ -1521,19 +1700,22 @@ impl<'a> Infer<'a> {
         out: &mut Vec<TyVarId>,
         seen: &mut std::collections::HashSet<TyVarId>,
     ) {
-        let r = self.uf.find(v);
-        if !seen.insert(r) {
-            return;
-        }
-        match self.uf.content(r) {
-            Content::Flex | Content::FlexSuper(_) => out.push(r),
-            Content::Structure(ft) => {
-                for k in crate::unify::flat_children(&ft) {
-                    self.collect_flex(k, out, seen);
-                }
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            let r = self.uf.find(v);
+            if !seen.insert(r) {
+                return;
             }
-            Content::Rigid(_) | Content::Error => {}
-        }
+            match self.uf.content(r) {
+                Content::Flex | Content::FlexSuper(_) => out.push(r),
+                Content::Structure(ft) => {
+                    for k in crate::unify::flat_children(&ft) {
+                        self.collect_flex(k, out, seen);
+                    }
+                }
+                Content::Rigid(_) | Content::Error => {}
+            }
+        })
     }
 
     /// A fresh instance of a generalised let binder: copy its type graph,
@@ -1553,53 +1735,56 @@ impl<'a> Infer<'a> {
     }
 
     fn copy_generic(&mut self, v: TyVarId, memo: &mut HashMap<TyVarId, TyVarId>) -> TyVarId {
-        let r = self.uf.find(v);
-        if let Some(&c) = memo.get(&r) {
-            return c;
-        }
-        let out = match self.uf.content(r) {
-            Content::Structure(ft) => {
-                let copied = match &ft {
-                    FlatTy::App(n, args) => {
-                        let a: Vec<TyVarId> =
-                            args.iter().map(|&x| self.copy_generic(x, memo)).collect();
-                        FlatTy::App(n.clone(), a)
-                    }
-                    FlatTy::Fun(a, b) => {
-                        let (a, b) = (*a, *b);
-                        FlatTy::Fun(self.copy_generic(a, memo), self.copy_generic(b, memo))
-                    }
-                    FlatTy::Record(fs, ext) => {
-                        let mut m = std::collections::BTreeMap::new();
-                        for (n, &t) in fs {
-                            m.insert(n.clone(), self.copy_generic(t, memo));
-                        }
-                        let e = ext.map(|e| self.copy_generic(e, memo));
-                        FlatTy::Record(m, e)
-                    }
-                    FlatTy::Tuple(xs) => {
-                        FlatTy::Tuple(xs.iter().map(|&x| self.copy_generic(x, memo)).collect())
-                    }
-                    FlatTy::Unit => FlatTy::Unit,
-                };
-                // Share a sub-graph that holds no quantified var.
-                let old = crate::unify::flat_children(&ft);
-                let new = crate::unify::flat_children(&copied);
-                let unchanged = old.len() == new.len()
-                    && old
-                        .iter()
-                        .zip(&new)
-                        .all(|(&a, &b)| self.uf.find(a) == self.uf.find(b));
-                if unchanged {
-                    r
-                } else {
-                    self.uf.fresh(Content::Structure(copied))
-                }
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            let r = self.uf.find(v);
+            if let Some(&c) = memo.get(&r) {
+                return c;
             }
-            _ => r,
-        };
-        memo.insert(r, out);
-        out
+            let out = match self.uf.content(r) {
+                Content::Structure(ft) => {
+                    let copied = match &ft {
+                        FlatTy::App(n, args) => {
+                            let a: Vec<TyVarId> =
+                                args.iter().map(|&x| self.copy_generic(x, memo)).collect();
+                            FlatTy::App(n.clone(), a)
+                        }
+                        FlatTy::Fun(a, b) => {
+                            let (a, b) = (*a, *b);
+                            FlatTy::Fun(self.copy_generic(a, memo), self.copy_generic(b, memo))
+                        }
+                        FlatTy::Record(fs, ext) => {
+                            let mut m = std::collections::BTreeMap::new();
+                            for (n, &t) in fs {
+                                m.insert(n.clone(), self.copy_generic(t, memo));
+                            }
+                            let e = ext.map(|e| self.copy_generic(e, memo));
+                            FlatTy::Record(m, e)
+                        }
+                        FlatTy::Tuple(xs) => {
+                            FlatTy::Tuple(xs.iter().map(|&x| self.copy_generic(x, memo)).collect())
+                        }
+                        FlatTy::Unit => FlatTy::Unit,
+                    };
+                    // Share a sub-graph that holds no quantified var.
+                    let old = crate::unify::flat_children(&ft);
+                    let new = crate::unify::flat_children(&copied);
+                    let unchanged = old.len() == new.len()
+                        && old
+                            .iter()
+                            .zip(&new)
+                            .all(|(&a, &b)| self.uf.find(a) == self.uf.find(b));
+                    if unchanged {
+                        r
+                    } else {
+                        self.uf.fresh(Content::Structure(copied))
+                    }
+                }
+                _ => r,
+            };
+            memo.insert(r, out);
+            out
+        })
     }
 
     /// End-of-def step for the lowering table: a generalised let binder whose
@@ -2213,57 +2398,60 @@ impl<'a> Infer<'a> {
     }
 
     fn ty_to_var(&mut self, ty: &Ty, sub: &mut HashMap<String, TyVarId>) -> TyVarId {
-        match ty {
-            Ty::Var(n) => {
-                if n.as_str() == "any" {
-                    // wildcard: a fresh var at EVERY occurrence (buildEnv).
-                    return self.uf.fresh_flex();
-                }
-                if let Some(&v) = sub.get(n.as_str()) {
-                    v
-                } else {
-                    let v = self.fresh_for_name(n.as_str());
-                    sub.insert(n.as_str().to_string(), v);
-                    v
-                }
-            }
-            Ty::Fun(a, b) => {
-                let va = self.ty_to_var(a, sub);
-                let vb = self.ty_to_var(b, sub);
-                self.fun(va, vb)
-            }
-            Ty::App(name, args) => {
-                let vs: Vec<TyVarId> = args.iter().map(|a| self.ty_to_var(a, sub)).collect();
-                self.uf
-                    .fresh(Content::Structure(FlatTy::App(name.clone(), vs)))
-            }
-            Ty::Tuple(xs) => {
-                let vs: Vec<TyVarId> = xs.iter().map(|x| self.ty_to_var(x, sub)).collect();
-                self.uf.fresh(Content::Structure(FlatTy::Tuple(vs)))
-            }
-            Ty::Record(fields, ext) => {
-                let mut map = std::collections::BTreeMap::new();
-                for (n, t) in fields {
-                    let v = self.ty_to_var(t, sub);
-                    map.insert(n.clone(), v);
-                }
-                let ext_var = ext.as_ref().map(|e| {
-                    if e.as_str() == "any" {
-                        self.uf.fresh_flex()
-                    } else if let Some(&v) = sub.get(e.as_str()) {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            match ty {
+                Ty::Var(n) => {
+                    if n.as_str() == "any" {
+                        // wildcard: a fresh var at EVERY occurrence (buildEnv).
+                        return self.uf.fresh_flex();
+                    }
+                    if let Some(&v) = sub.get(n.as_str()) {
                         v
                     } else {
-                        let v = self.fresh_for_name(e.as_str());
-                        sub.insert(e.as_str().to_string(), v);
+                        let v = self.fresh_for_name(n.as_str());
+                        sub.insert(n.as_str().to_string(), v);
                         v
                     }
-                });
-                self.uf
-                    .fresh(Content::Structure(FlatTy::Record(map, ext_var)))
+                }
+                Ty::Fun(a, b) => {
+                    let va = self.ty_to_var(a, sub);
+                    let vb = self.ty_to_var(b, sub);
+                    self.fun(va, vb)
+                }
+                Ty::App(name, args) => {
+                    let vs: Vec<TyVarId> = args.iter().map(|a| self.ty_to_var(a, sub)).collect();
+                    self.uf
+                        .fresh(Content::Structure(FlatTy::App(name.clone(), vs)))
+                }
+                Ty::Tuple(xs) => {
+                    let vs: Vec<TyVarId> = xs.iter().map(|x| self.ty_to_var(x, sub)).collect();
+                    self.uf.fresh(Content::Structure(FlatTy::Tuple(vs)))
+                }
+                Ty::Record(fields, ext) => {
+                    let mut map = std::collections::BTreeMap::new();
+                    for (n, t) in fields {
+                        let v = self.ty_to_var(t, sub);
+                        map.insert(n.clone(), v);
+                    }
+                    let ext_var = ext.as_ref().map(|e| {
+                        if e.as_str() == "any" {
+                            self.uf.fresh_flex()
+                        } else if let Some(&v) = sub.get(e.as_str()) {
+                            v
+                        } else {
+                            let v = self.fresh_for_name(e.as_str());
+                            sub.insert(e.as_str().to_string(), v);
+                            v
+                        }
+                    });
+                    self.uf
+                        .fresh(Content::Structure(FlatTy::Record(map, ext_var)))
+                }
+                Ty::Unit => self.uf.fresh(Content::Structure(FlatTy::Unit)),
+                Ty::Error => self.uf.fresh(Content::Error),
             }
-            Ty::Unit => self.uf.fresh(Content::Structure(FlatTy::Unit)),
-            Ty::Error => self.uf.fresh(Content::Error),
-        }
+        })
     }
 
     // ---- read-back (variableToType, Solve.hs:1428) ----------------------
@@ -2302,6 +2490,19 @@ impl<'a> Infer<'a> {
         scheme: bool,
         concretize_super: bool,
     ) -> Ty {
+        // A type is as deep as a curried constructor's arity (one arrow per field of
+        // a record constructor): grow the stack on demand rather than overflow it.
+        base::ensure_stack(|| self.read_back_seen_guarded(v, seen, scheme, concretize_super))
+    }
+
+    fn read_back_seen_guarded(
+        &mut self,
+        v: TyVarId,
+        seen: &mut std::collections::HashSet<TyVarId>,
+        scheme: bool,
+        concretize_super: bool,
+    ) -> Ty {
+        crate::counters::READBACK_NODES.bump();
         let r = self.uf.find(v);
         if !seen.insert(r) {
             return Ty::Error; // cycle guard (anyEquivSeen, Solve.hs:1449)
@@ -2378,7 +2579,193 @@ impl<'a> Infer<'a> {
         seen.remove(&r);
         out
     }
+
+    /// Read `v` back straight into the drain's table. The value stored is the
+    /// one [`Infer::read_back`] returns for `v` (`TyTable::get` of the result
+    /// equals `read_back(v)`), without building an owned tree.
+    ///
+    /// A top-level read of a union-find root already read in this drain is a
+    /// memo hit. The memo holds only UNTAINTED results (see
+    /// [`Infer::read_back_into`]), so a hit is exactly the value a fresh read
+    /// would produce.
+    pub(crate) fn read_back_ref(&mut self, v: TyVarId, sink: &mut ReadBackSink) -> TyRef {
+        let r = self.uf.find(v);
+        if let Some(&t) = sink.memo.get(&r) {
+            return t;
+        }
+        let mut seen = std::collections::HashSet::new();
+        let (t, tainted) = self.read_back_into(v, &mut seen, sink);
+        if !tainted {
+            sink.memo.insert(r, t);
+        }
+        t
+    }
+
+    /// [`Infer::read_back_seen`] (expression-level: `scheme = false`), writing
+    /// nodes into `sink` instead of building a `Ty`. Returns the node and
+    /// whether the read was TAINTED: a frame is tainted when it, or any frame
+    /// below it, met the cycle guard (a root already on `seen`, read back as
+    /// `Error`). A tainted value depends on the path that reached it — the same
+    /// root read from elsewhere can come back different — so it is never
+    /// memoised. An untainted value never met a node on its own path, so it is
+    /// on no cycle, and reading its root again from any other path visits the
+    /// same nodes and builds the same value.
+    fn read_back_into(
+        &mut self,
+        v: TyVarId,
+        seen: &mut std::collections::HashSet<TyVarId>,
+        sink: &mut ReadBackSink,
+    ) -> (TyRef, bool) {
+        // A type is as deep as a curried constructor's arity (one arrow per field of
+        // a record constructor): grow the stack on demand rather than overflow it.
+        base::ensure_stack(|| self.read_back_into_guarded(v, seen, sink))
+    }
+
+    fn read_back_into_guarded(
+        &mut self,
+        v: TyVarId,
+        seen: &mut std::collections::HashSet<TyVarId>,
+        sink: &mut ReadBackSink,
+    ) -> (TyRef, bool) {
+        crate::counters::READBACK_NODES.bump();
+        sink.frames += 1;
+        let r = self.uf.find(v);
+        if seen.contains(&r) {
+            // cycle guard (anyEquivSeen, Solve.hs:1449)
+            return (sink.builder.intern_node(TyNode::Error), true);
+        }
+        if sink.share_subroots {
+            if let Some(&t) = sink.memo.get(&r) {
+                return (t, false);
+            }
+        }
+        seen.insert(r);
+        let mut tainted = false;
+        let node = match self.uf.content(r) {
+            Content::Flex => TyNode::Var(Name::new(&format!("t{}", r.0))),
+            Content::Rigid(n) => TyNode::Var(n),
+            Content::FlexSuper(b) if b.has(SuperType::Number) => {
+                TyNode::App(Name::new("number"), Box::new([]))
+            }
+            Content::FlexSuper(b) if b.has(SuperType::Appendable) => {
+                TyNode::Var(Name::new("appendable"))
+            }
+            Content::FlexSuper(_) => TyNode::Var(Name::new(&format!("t{}", r.0))),
+            Content::Error => TyNode::Error,
+            Content::Structure(ft) => match ft {
+                FlatTy::App(name, args) => {
+                    let mut refs = Vec::with_capacity(args.len());
+                    for a in args {
+                        let (t, ta) = self.read_back_into(a, seen, sink);
+                        tainted |= ta;
+                        refs.push(t);
+                    }
+                    TyNode::App(name, refs.into_boxed_slice())
+                }
+                FlatTy::Fun(a, b) => {
+                    let (ta, xa) = self.read_back_into(a, seen, sink);
+                    let (tb, xb) = self.read_back_into(b, seen, sink);
+                    tainted |= xa | xb;
+                    TyNode::Fun(ta, tb)
+                }
+                FlatTy::Tuple(xs) => {
+                    let mut refs = Vec::with_capacity(xs.len());
+                    for x in xs {
+                        let (t, tx) = self.read_back_into(x, seen, sink);
+                        tainted |= tx;
+                        refs.push(t);
+                    }
+                    TyNode::Tuple(refs.into_boxed_slice())
+                }
+                FlatTy::Unit => TyNode::Unit,
+                FlatTy::Record(fs, ext) => {
+                    // As `read_back_seen`: flatten a resolved-record extension,
+                    // read the fields in map order, then sort by name.
+                    let (fs, ext) = self.uf.normalize_record(fs, ext);
+                    let mut fields: Vec<(Name, TyRef)> = Vec::with_capacity(fs.len());
+                    for (n, t) in fs {
+                        let (tr, tt) = self.read_back_into(t, seen, sink);
+                        tainted |= tt;
+                        fields.push((n, tr));
+                    }
+                    fields.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+                    let ext_name = ext.and_then(|e| match self.uf.content(e) {
+                        Content::Flex | Content::FlexSuper(_) => {
+                            Some(Name::new(&format!("r{}", self.uf.find(e).0)))
+                        }
+                        _ => None,
+                    });
+                    TyNode::Record(fields.into_boxed_slice(), ext_name)
+                }
+            },
+        };
+        seen.remove(&r);
+        let t = sink.builder.intern_node(node);
+        if sink.share_subroots && !tainted {
+            sink.memo.insert(r, t);
+        }
+        (t, tainted)
+    }
 }
+
+/// One def's recorded types, read back into one hash-consed table: what
+/// [`crate::BodyTypes`] is built from.
+#[derive(Default)]
+pub(crate) struct TypedTables {
+    pub(crate) result: Option<Ty>,
+    pub(crate) signature: Option<Ty>,
+    pub(crate) exprs: HashMap<ExprId, TyRef>,
+    pub(crate) locals: HashMap<LocalId, TyRef>,
+    pub(crate) table: TyTable,
+}
+
+/// The state of ONE read-back drain: the table being built and the memo of
+/// roots already read into it. It is created at the start of a drain
+/// (`infer_def_tables`, `infer_def_selected`, the checker's recorded table) and
+/// dropped at its end, never stored on [`Infer`]: an earlier read-back (the
+/// arity gate, the value restriction, `collapse_let_poly`) runs before later
+/// unifications and must not be served from, or feed, a memo (B3).
+pub(crate) struct ReadBackSink {
+    builder: TyTableBuilder,
+    memo: FxHashMap<TyVarId, TyRef>,
+    /// Memoise every untainted sub-root, not only the roots a drain asks for.
+    share_subroots: bool,
+    /// Read-back frames run by this drain (the per-drain view of
+    /// `counters::READBACK_NODES`, safe to read in a parallel test run).
+    pub(crate) frames: u64,
+}
+
+impl ReadBackSink {
+    pub(crate) fn new() -> Self {
+        ReadBackSink {
+            builder: TyTableBuilder::new(),
+            memo: FxHashMap::default(),
+            share_subroots: true,
+            frames: 0,
+        }
+    }
+
+    /// Memoise every untainted sub-root as well (see `share_subroots`).
+    #[cfg(test)]
+    pub(crate) fn with_subroot_sharing(mut self, on: bool) -> Self {
+        self.share_subroots = on;
+        self
+    }
+
+    /// Rebuild the owned type at `r` (the builder keeps every node it stored).
+    #[cfg(test)]
+    pub(crate) fn get(&self, r: TyRef) -> Ty {
+        self.builder.get(r)
+    }
+
+    pub(crate) fn finish(self) -> TyTable {
+        self.builder.finish()
+    }
+}
+
+#[cfg(test)]
+#[path = "infer_readback_tests.rs"]
+mod readback_tests;
 
 /// Every local a pattern binds.
 fn collect_pat_binders(body: &Body, p: PatId, out: &mut std::collections::HashSet<LocalId>) {
@@ -2423,7 +2810,8 @@ fn collect_pat_binders(body: &Body, p: PatId, out: &mut std::collections::HashSe
 /// Every local bound INSIDE expression `e`: lambda parameters, case-branch
 /// patterns, and nested let binders, parameters and destructuring patterns.
 fn collect_expr_binders(body: &Body, e: ExprId, out: &mut std::collections::HashSet<LocalId>) {
-    match &body.exprs[e] {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match &body.exprs[e] {
         Expr::Var(_)
         | Expr::Int(_)
         | Expr::Float(_)
@@ -2495,39 +2883,42 @@ fn collect_expr_binders(body: &Body, e: ExprId, out: &mut std::collections::Hash
                 collect_expr_binders(body, br.body, out);
             }
         }
-    }
+    })
 }
 
 /// ML's syntactic-value test (the value restriction): an expression whose
 /// evaluation cannot run a computation. Only such a let binding generalises.
 pub(crate) fn is_syntactic_value(body: &Body, e: ExprId) -> bool {
-    match &body.exprs[e] {
-        Expr::Lambda { .. }
-        | Expr::Int(_)
-        | Expr::Float(_)
-        | Expr::Str(_)
-        | Expr::Chr(_)
-        | Expr::Bool(_)
-        | Expr::Unit
-        | Expr::Accessor(_)
-        | Expr::Var(_) => true,
-        Expr::Negate(x) => is_syntactic_value(body, *x),
-        Expr::List(xs) | Expr::Tuple(xs) => xs.iter().all(|&x| is_syntactic_value(body, x)),
-        Expr::Record(fs) => fs.iter().all(|(_, x)| is_syntactic_value(body, *x)),
-        // A constructor applied to values builds data; it runs nothing.
-        // `Ffi.kernel "Name"` names a runtime function: it is a reference, and
-        // evaluating it runs nothing either (FINAL-PLAN §1, "varied").
-        Expr::Call(f, args) => match &body.exprs[*f] {
-            Expr::Var(Res::Ctor(_)) => args.iter().all(|&a| is_syntactic_value(body, a)),
-            Expr::Var(Res::Kernel { module, func }) => {
-                module.as_str() == "Ffi"
-                    && func.as_str() == "kernel"
-                    && matches!(args.as_slice(), [a] if matches!(body.exprs[*a], Expr::Str(_)))
-            }
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        match &body.exprs[e] {
+            Expr::Lambda { .. }
+            | Expr::Int(_)
+            | Expr::Float(_)
+            | Expr::Str(_)
+            | Expr::Chr(_)
+            | Expr::Bool(_)
+            | Expr::Unit
+            | Expr::Accessor(_)
+            | Expr::Var(_) => true,
+            Expr::Negate(x) => is_syntactic_value(body, *x),
+            Expr::List(xs) | Expr::Tuple(xs) => xs.iter().all(|&x| is_syntactic_value(body, x)),
+            Expr::Record(fs) => fs.iter().all(|(_, x)| is_syntactic_value(body, *x)),
+            // A constructor applied to values builds data; it runs nothing.
+            // `Ffi.kernel "Name"` names a runtime function: it is a reference, and
+            // evaluating it runs nothing either (FINAL-PLAN §1, "varied").
+            Expr::Call(f, args) => match &body.exprs[*f] {
+                Expr::Var(Res::Ctor(_)) => args.iter().all(|&a| is_syntactic_value(body, a)),
+                Expr::Var(Res::Kernel { module, func }) => {
+                    module.as_str() == "Ffi"
+                        && func.as_str() == "kernel"
+                        && matches!(args.as_slice(), [a] if matches!(body.exprs[*a], Expr::Str(_)))
+                }
+                _ => false,
+            },
             _ => false,
-        },
-        _ => false,
-    }
+        }
+    })
 }
 
 /// The MAXIMAL expansive sub-expressions of `e`: walk through the value
@@ -2536,28 +2927,31 @@ pub(crate) fn is_syntactic_value(body: &Body, e: ExprId) -> bool {
 /// not itself a syntactic value. Lambdas are values and their bodies are not
 /// walked (they run only when called). Empty iff `e` is a syntactic value.
 fn collect_expansive(body: &Body, e: ExprId, out: &mut Vec<ExprId>) {
-    if is_syntactic_value(body, e) {
-        return;
-    }
-    match &body.exprs[e] {
-        Expr::Negate(x) => collect_expansive(body, *x, out),
-        Expr::List(xs) | Expr::Tuple(xs) => {
-            for &x in xs {
-                collect_expansive(body, x, out);
-            }
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        if is_syntactic_value(body, e) {
+            return;
         }
-        Expr::Record(fs) => {
-            for (_, x) in fs {
-                collect_expansive(body, *x, out);
+        match &body.exprs[e] {
+            Expr::Negate(x) => collect_expansive(body, *x, out),
+            Expr::List(xs) | Expr::Tuple(xs) => {
+                for &x in xs {
+                    collect_expansive(body, x, out);
+                }
             }
-        }
-        Expr::Call(f, args) if matches!(body.exprs[*f], Expr::Var(Res::Ctor(_))) => {
-            for &a in args {
-                collect_expansive(body, a, out);
+            Expr::Record(fs) => {
+                for (_, x) in fs {
+                    collect_expansive(body, *x, out);
+                }
             }
+            Expr::Call(f, args) if matches!(body.exprs[*f], Expr::Var(Res::Ctor(_))) => {
+                for &a in args {
+                    collect_expansive(body, a, out);
+                }
+            }
+            _ => out.push(e),
         }
-        _ => out.push(e),
-    }
+    })
 }
 
 /// The defs of one `let`, grouped into strongly connected components of their
@@ -2591,34 +2985,37 @@ fn let_def_groups(body: &Body, defs: &[hir::LocalDef]) -> Vec<Vec<usize>> {
     }
     impl Tarjan<'_> {
         fn visit(&mut self, v: usize) {
-            self.index[v] = Some(self.next);
-            self.low[v] = self.next;
-            self.next += 1;
-            self.stack.push(v);
-            self.on_stack[v] = true;
-            for k in 0..self.edges[v].len() {
-                let w = self.edges[v][k];
-                match self.index[w] {
-                    None => {
-                        self.visit(w);
-                        self.low[v] = self.low[v].min(self.low[w]);
-                    }
-                    Some(iw) if self.on_stack[w] => self.low[v] = self.low[v].min(iw),
-                    Some(_) => {}
-                }
-            }
-            if Some(self.low[v]) == self.index[v] {
-                let mut group = Vec::new();
-                while let Some(w) = self.stack.pop() {
-                    self.on_stack[w] = false;
-                    group.push(w);
-                    if w == v {
-                        break;
+            // One level per level of the tree it walks: grow the stack on demand.
+            base::ensure_stack(|| {
+                self.index[v] = Some(self.next);
+                self.low[v] = self.next;
+                self.next += 1;
+                self.stack.push(v);
+                self.on_stack[v] = true;
+                for k in 0..self.edges[v].len() {
+                    let w = self.edges[v][k];
+                    match self.index[w] {
+                        None => {
+                            self.visit(w);
+                            self.low[v] = self.low[v].min(self.low[w]);
+                        }
+                        Some(iw) if self.on_stack[w] => self.low[v] = self.low[v].min(iw),
+                        Some(_) => {}
                     }
                 }
-                group.sort_unstable();
-                self.out.push(group);
-            }
+                if Some(self.low[v]) == self.index[v] {
+                    let mut group = Vec::new();
+                    while let Some(w) = self.stack.pop() {
+                        self.on_stack[w] = false;
+                        group.push(w);
+                        if w == v {
+                            break;
+                        }
+                    }
+                    group.sort_unstable();
+                    self.out.push(group);
+                }
+            })
         }
     }
     let n = defs.len();
@@ -2642,7 +3039,8 @@ fn let_def_groups(body: &Body, defs: &[hir::LocalDef]) -> Vec<Vec<usize>> {
 /// Every `Res::Local` referenced in expression `e` (including nested lets,
 /// lambdas and case branches).
 fn collect_local_refs(body: &Body, e: ExprId, out: &mut Vec<LocalId>) {
-    match &body.exprs[e] {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match &body.exprs[e] {
         Expr::Var(Res::Local(l)) => out.push(*l),
         Expr::Var(_)
         | Expr::Int(_)
@@ -2700,7 +3098,7 @@ fn collect_local_refs(body: &Body, e: ExprId, out: &mut Vec<LocalId>) {
                 collect_local_refs(body, br.body, out);
             }
         }
-    }
+    })
 }
 
 #[cfg(test)]
@@ -2773,7 +3171,8 @@ mod tests {
 
 /// Does `t` contain the wildcard `any` anywhere (a type or a record row)?
 pub(crate) fn ty_contains_any(t: &Ty) -> bool {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         Ty::Var(n) => n.as_str() == "any",
         Ty::Fun(a, b) => ty_contains_any(a) || ty_contains_any(b),
         Ty::App(_, xs) | Ty::Tuple(xs) => xs.iter().any(ty_contains_any),
@@ -2782,5 +3181,5 @@ pub(crate) fn ty_contains_any(t: &Ty) -> bool {
                 || fs.iter().any(|(_, t)| ty_contains_any(t))
         }
         Ty::Unit | Ty::Error => false,
-    }
+    })
 }

@@ -50,7 +50,7 @@
 //!   equal and change only the branch: `if model.flag then ( model,
 //!   Cmd.perform t Got ) else ( model, Cmd.none )`;
 //! * for an async arm the client runs itself
-//!   ([`crate::spa_partition::ClientModelPlan`], v0.28.0), the CLIENT leg,
+//!   ([`crate::spa_partition::ClientModelPlan`], v0.27.9), the CLIENT leg,
 //!   built by the split's own emitter ([`crate::spa_split::client_arm_body`]):
 //!   the client must send the request (`rpc`) exactly where the direct leg's
 //!   command is not `Cmd.none`, and, when the arm makes its own model write in
@@ -143,7 +143,7 @@ pub struct CheckableBranch {
 /// What the harness compares for a [`ClientArm`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClientLegCheck {
-    /// An async arm that makes its own model write in the client (v0.28.0):
+    /// An async arm that makes its own model write in the client (v0.27.9):
     /// the client's model must be the direct leg's model (the split applies no
     /// write-set from the server for it), and the client sends the request
     /// exactly where the direct leg's command is not `Cmd.none`.

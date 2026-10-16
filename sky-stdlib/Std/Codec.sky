@@ -47,6 +47,7 @@ module Std.Codec exposing
     , map
     , object
     , field
+    , inline
     , buildObject
     , auto
     , autoCamel
@@ -445,14 +446,103 @@ field name getter (Codec fc) (ObjectCodec o) =
         }
 
 
+-- | Add every field of another record's object builder to this one, flat:
+-- the embedded record's JSON keys sit inline, in their order, beside this
+-- record's own fields (no nested object). `getter` reads the embedded record.
+-- Keys must not repeat across the two records: `buildObject` gives a
+-- codec with a repeated key a decoder that fails (see `buildObject`).
+--
+--     pointFields : ObjectCodec Point Point
+--     pointFields =
+--         Codec.object Point
+--             |> Codec.field "x" .x Codec.int
+--             |> Codec.field "y" .y Codec.int
+--
+--     pinCodec : Codec Pin
+--     pinCodec =
+--         Codec.object Pin
+--             |> Codec.inline .at pointFields
+--             |> Codec.field "label" .label Codec.string
+--             |> Codec.buildObject
+--
+--     -- { at = { x = 1, y = 2 }, label = "a" } encodes as {"x":1,"y":2,"label":"a"}
+inline : (a -> r) -> ObjectCodec r r -> ObjectCodec a (r -> b) -> ObjectCodec a b
+inline getter (ObjectCodec inner) (ObjectCodec o) =
+    ObjectCodec
+        { encFields = \rec -> o.encFields rec ++ inner.encFields (getter rec)
+        , decValue = codecAndMap inner.decValue o.decValue
+        , cols = o.cols ++ inner.cols
+        }
+
+
 -- | Finish a record codec.
+--
+-- Each field needs its own JSON key. When two fields (or an inlined record and
+-- the record around it) share a key, decoding cannot tell them apart, so the
+-- codec's decoder fails with an `Err` naming the key rather than read one
+-- value into both fields. Encoding is unchanged: it writes both pairs.
 buildObject : ObjectCodec a a -> Codec a
 buildObject (ObjectCodec o) =
     Codec
         { enc = \rec -> E.object (o.encFields rec)
-        , dec = o.decValue
+        , dec = objectDecoder o.cols o.decValue
         , shp = SRecord o.cols
         }
+
+
+-- | A record codec's decoder: `dec`, or a decoder that always fails when two
+-- of the codec's keys are the same. Checked once, when the codec is built.
+objectDecoder : List ( String, ColType ) -> Decoder a -> Decoder a
+objectDecoder cols dec =
+    case repeatedKey cols cols of
+
+        Just key ->
+            D.fail
+                ("Codec.buildObject: the JSON key \"" ++ key
+                    ++ "\" is used by two fields of one record codec; give each field its own key")
+
+        Nothing ->
+            dec
+
+
+-- | The first key in `cols` (read in order) that an earlier column already
+-- used, if any. `all` is the whole column list and `cols` a suffix of it: a
+-- key occurs before `cols` exactly when it occurs more often in `all` than in
+-- `cols`.
+--
+-- Written as plain recursion over the typed column list, with no `Dict` and no
+-- `::` accumulator: the Dict and List kernels return Go `any`, and every
+-- record codec in an app would then carry runtime narrowings for a check that
+-- needs none (docs/rust-rewrite/14-runtime-narrowing-taxonomy.md, R5).
+repeatedKey : List ( String, ColType ) -> List ( String, ColType ) -> Maybe String
+repeatedKey all cols =
+    case cols of
+
+        [] ->
+            Nothing
+
+        ( key, _ ) :: rest ->
+            if keyCount key all 0 > keyCount key cols 0 then
+                Just key
+
+            else
+                repeatedKey all rest
+
+
+-- | How many columns in `cols` use `key`, added to `n`.
+keyCount : String -> List ( String, ColType ) -> Int -> Int
+keyCount key cols n =
+    case cols of
+
+        [] ->
+            n
+
+        ( k, _ ) :: rest ->
+            if k == key then
+                keyCount key rest (n + 1)
+
+            else
+                keyCount key rest n
 
 
 -- ── Derivation ───────────────────────────────────────────────────────────────

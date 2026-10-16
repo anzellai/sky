@@ -831,7 +831,7 @@ func commandLooksLikePostgres(cmd string) bool {
 }
 
 func processCommand(pid int) (string, bool) {
-	out, err := exec.Command("ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+	out, err := exec.Command(systemTool("ps", psPaths...), "-o", "command=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
 		return "", false
 	}

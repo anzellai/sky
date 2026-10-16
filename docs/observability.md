@@ -107,8 +107,10 @@ CI step. The same values are served at `/_sky/buildinfo`:
 ```
 
 The identity is resolved once, at the project root (the directory with your
-`sky.toml`), and every leg of the build (both halves of a `web:app` split, a
-Std.App target) embeds the same values.
+`sky.toml`), and every server leg of the build (the backend of a `web:app`
+split, a Std.App target) embeds the same values. A Sky.Spa wasm client links a
+constant stamp instead: nothing in the browser reads it, and a per-commit value
+would change the client's bytes and its hashed file name on every commit.
 
 - **Commit**, first match wins: `SKY_BUILD_COMMIT` (optional override, source
   `override`); `git rev-parse HEAD` in the project directory or any parent

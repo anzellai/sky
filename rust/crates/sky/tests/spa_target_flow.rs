@@ -605,8 +605,8 @@ fn inode(p: &std::path::Path) -> u64 {
 ///     its longest symbol name ~200 bytes).
 /// Before the fix every rebuild wiped `.skyapp/web-app/`, re-linked both legs
 /// and re-ran brotli-11 on the multi-MB wasm (measured: 19 s warm, most of it
-/// brotli). A second part pins the internal `--no-precompress` flag the
-/// `sky run` path passes to its frontend leg.
+/// brotli). A second part pins `--precompress=off` and its alias
+/// `--no-precompress` (what `sky run` passes its frontend leg).
 ///
 /// Heavy (two full web:app builds + a wasm build) — #[ignore]d for the T1
 /// budget; nightly via `--ignored`. Per-commit legs: the `precompress::tests`
@@ -665,7 +665,7 @@ fn web_app_no_change_rebuild_reuses_outputs() {
         "a no-change rebuild must not re-link the wasm client:\n{second}"
     );
     assert!(
-        second.contains("precompress gzip -9 (cached)"),
+        second.contains("precompress gzip (max) (cached)"),
         "a no-change rebuild must take the .gz from the content cache:\n{second}"
     );
     let dist = split.join("frontend").join("dist");
@@ -677,25 +677,93 @@ fn web_app_no_change_rebuild_reuses_outputs() {
     };
     assert!(has(".wasm.gz"), "the cached .gz must be staged into dist/");
 
-    // `--no-precompress` (what `sky run` passes its frontend leg) stages the
-    // bundle without the `.gz` / `.br` variants.
+    // `--precompress=off` and its alias `--no-precompress` (what `sky run`
+    // passes its frontend leg) stage the bundle without the `.gz` / `.br`.
     let web = scratch("noprecompress");
-    build_timed(
-        &web,
-        &["--target", "web", "--no-precompress", "src/Main.sky"],
+    for flag in ["--precompress=off", "--no-precompress"] {
+        build_timed(&web, &["--target", "web", flag, "src/Main.sky"]);
+        let variants: Vec<String> = std::fs::read_dir(web.join("dist"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".gz") || n.ends_with(".br"))
+            .collect();
+        assert!(
+            variants.is_empty(),
+            "{flag} must not write .gz / .br: {variants:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&web);
+}
+
+/// A `--target web:app` bundle is compressed by the parent build, every asset
+/// at once and beside the backend leg (v0.27.9): before, the frontend child
+/// compressed its three assets one after another, and an SSR backend waited
+/// for all of it. Each `.gz` / `.br` must still decompress to its asset.
+///
+/// Heavy (a full web:app build) — #[ignore]d for the T1 budget; nightly via
+/// `--ignored`. Per-commit legs: `precompress::tests` (parallel stores, hit
+/// check, bytes equal to the tools) and `leg_plan::tests`.
+#[cfg(unix)]
+#[ignore = "heavy web:app build; nightly via --ignored; per-commit legs: sky precompress::tests + leg_plan::tests"]
+#[test]
+fn web_app_bundle_is_precompressed_by_the_parent() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let have_brotli = Command::new("brotli").arg("--version").output().is_ok();
+    let dir = scratch("parentzip");
+    std::fs::write(dir.join("src").join("Main.sky"), RPC_ERROR_APP).unwrap();
+    let out = build_timed(&dir, &["--target", "web:app", "src/Main.sky"]);
+    assert!(
+        out.contains("precompress dist (parent, all assets at once)"),
+        "the parent must compress the bundle:\n{out}"
     );
-    let variants: Vec<String> = std::fs::read_dir(web.join("dist"))
+    let dist = dir
+        .join(".skyapp")
+        .join("web-app")
+        .join(".split")
+        .join("frontend")
+        .join("dist");
+    let names: Vec<String> = std::fs::read_dir(&dist)
         .unwrap()
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.ends_with(".gz") || n.ends_with(".br"))
         .collect();
-    assert!(
-        variants.is_empty(),
-        "--no-precompress must not write .gz / .br: {variants:?}"
-    );
+    let assets: Vec<&String> = names
+        .iter()
+        .filter(|n| {
+            (n.starts_with("main.") && n.ends_with(".wasm"))
+                || *n == "wasm_exec.js"
+                || (n.starts_with("spa-boot.") && n.ends_with(".js"))
+        })
+        .collect();
+    assert_eq!(assets.len(), 3, "{names:?}");
+    let mut tools = vec![("gzip", "gz")];
+    if required(Need::Brotli, have_brotli) {
+        tools.push(("brotli", "br"));
+    }
+    for a in assets {
+        let raw = std::fs::read(dist.join(a)).unwrap();
+        for (tool, ext) in &tools {
+            let packed = dist.join(format!("{a}.{ext}"));
+            let o = Command::new(tool)
+                .args(["-d", "-c"])
+                .stdin(
+                    std::fs::File::open(&packed)
+                        .unwrap_or_else(|e| panic!("{}: {e}\n{names:?}", packed.display())),
+                )
+                .output()
+                .unwrap();
+            assert!(
+                o.status.success() && o.stdout == raw,
+                "{} is not {a}",
+                packed.display()
+            );
+        }
+    }
     let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&web);
 }
 
 /// The real-app deploy flow through `--target web:app`, end to end: the source
@@ -704,8 +772,10 @@ fn web_app_no_change_rebuild_reuses_outputs() {
 /// backend's `sky-out/` is then compiled by a PLAIN `CGO_ENABLED=0 go build`
 /// (host GOOS/GOARCH so it runs here; once more for linux/amd64 to prove the
 /// cross-compile builds). `/_sky/buildinfo` reports the CI commit, the commit
-/// date and `source = ci:GITHUB_SHA`, and the wasm client carries the same
-/// stamp — resolved once at the project root, not per split leg.
+/// date and `source = ci:GITHUB_SHA` (resolved once at the project root, not
+/// per split leg). The wasm client links the constant client stamp instead
+/// (v0.27.9, build_stamp::client_stamp), so its bytes and its content-hashed
+/// name depend only on the frontend code.
 ///
 /// RED on v0.25.20: the stamp was a `-X` linker flag on sky's own `go build`
 /// only, so this binary reported `{"commit":"dev","builtAt":"unknown",
@@ -808,20 +878,34 @@ fn web_app_archive_build_reports_the_ci_commit() {
     let split = build.join(".skyapp").join("web-app").join(".split");
     let backend_dir = split.join("backend");
     let sky_out = backend_dir.join("sky-out");
-    // Both legs carry the identity resolved at the project root.
-    let want = format!(
-        "\"{}\", \"2026-09-21T14:13:20Z\", \"ci:GITHUB_SHA\"",
-        &sha[..12]
-    );
-    for leg in ["backend", "frontend"] {
+    // The backend leg (it serves /_sky/buildinfo) carries the identity
+    // resolved at the project root. The wasm client links the constant client
+    // stamp (build_stamp::client_stamp): nothing under GOOS=js reads it, and a
+    // per-commit value would change the wasm bytes, and so its content-hashed
+    // name, on every commit.
+    let stamp_of = |leg: &str| {
         let f = split
             .join(leg)
             .join("sky-out")
             .join("skybuildinfo")
             .join("skybuildinfo.go");
-        let src = std::fs::read_to_string(&f).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
-        assert!(src.contains(&want), "{leg} leg stamp:\n{src}");
-    }
+        std::fs::read_to_string(&f).unwrap_or_else(|e| panic!("{}: {e}", f.display()))
+    };
+    let want = format!(
+        "\"{}\", \"2026-09-21T14:13:20Z\", \"ci:GITHUB_SHA\"",
+        &sha[..12]
+    );
+    let backend_stamp = stamp_of("backend");
+    assert!(
+        backend_stamp.contains(&want),
+        "backend leg stamp:\n{backend_stamp}"
+    );
+    let frontend_stamp = stamp_of("frontend");
+    let client = "\"client\", \"client\", \"client\")";
+    assert!(
+        frontend_stamp.contains(client) && !frontend_stamp.contains(&sha[..12]),
+        "frontend leg stamp (want the constant client stamp, no commit):\n{frontend_stamp}"
+    );
 
     let go_build = |out: &str, target: Option<(&str, &str)>| {
         let mut c = clean("go");

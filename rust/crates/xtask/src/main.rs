@@ -8,6 +8,8 @@
 //!   1. byte-exact round-trip: `reprint(green_tree) == source_bytes` (L8);
 //!   2. zero `ERROR` nodes (the parser structured every construct).
 
+mod bench_app;
+mod bench_gen;
 mod build_run_gate;
 mod ci_scan;
 mod coerce_floor_gate;
@@ -82,6 +84,7 @@ const GATES: &[(&str, GateFn)] = &[
         shared_world_gate::run(args, &repo_root())
     }),
     ("corpus-bench", |args| corpus_bench::run(args, &repo_root())),
+    ("bench-gen", bench_gen::run),
     ("corpus", |args| corpus::run(args, &repo_root())),
     ("denominators", |args| {
         denominators_gate::run(args, &repo_root())

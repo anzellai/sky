@@ -30,9 +30,11 @@ package rt
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -68,6 +70,15 @@ func TestLiveJS_EmitsPatchesEventListener(t *testing.T) {
 }
 
 // ─── (d) Server-side wire emission ─────────────────────────────
+
+// sseStreamTestDeadline bounds a test that reads a handleSSE stream until it
+// has seen the frames it asserts on. Each read loop stops at those frames and
+// the deferred cancel then ends the request, so a passing run takes
+// milliseconds; the bound only decides how long a broken handler is waited on
+// before the test fails. It used to be the whole budget (250 ms): a loaded
+// -race runner took longer than that to reach the queued frame, and the test
+// failed against a correct handler.
+const sseStreamTestDeadline = 10 * time.Second
 
 // TestHandleSSE_EmitsEventPatchesForPatchesFrame drives handleSSE
 // directly, pushes an sseFrame with event="patches" onto sess.sseCh,
@@ -109,7 +120,7 @@ func TestHandleSSE_EmitsEventPatchesForPatchesFrame(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", srv.URL, nil)
 	req.AddCookie(&http.Cookie{Name: "sky_sid", Value: "sid-patches"})
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), sseStreamTestDeadline)
 	defer cancel()
 	req = req.WithContext(ctx)
 
@@ -140,10 +151,93 @@ func TestHandleSSE_EmitsEventPatchesForPatchesFrame(t *testing.T) {
 		}
 	}
 	if !sawEventPatches {
-		t.Fatalf("handleSSE did not emit `event: patches` for sseFrame{event:patches}")
+		t.Fatalf("handleSSE did not emit `event: patches` for sseFrame{event:patches} within %v", sseStreamTestDeadline)
 	}
 	if !sawPatchesData {
-		t.Fatalf("handleSSE emitted event:patches but data line missing seq+patches")
+		t.Fatalf("handleSSE emitted event:patches but data line missing seq+patches within %v", sseStreamTestDeadline)
+	}
+}
+
+// sseFrameWatchWriter is a ResponseWriter for driving handleSSE in-process: it
+// closes `seen` once the bytes written so far contain `want`.
+type sseFrameWatchWriter struct {
+	header http.Header
+	want   string
+	seen   chan struct{}
+	mu     sync.Mutex
+	buf    strings.Builder
+	once   sync.Once
+}
+
+func (w *sseFrameWatchWriter) Header() http.Header { return w.header }
+func (w *sseFrameWatchWriter) WriteHeader(int)     {}
+func (w *sseFrameWatchWriter) Flush()              {}
+func (w *sseFrameWatchWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	w.buf.Write(p)
+	hit := strings.Contains(w.buf.String(), w.want)
+	w.mu.Unlock()
+	if hit {
+		w.once.Do(func() { close(w.seen) })
+	}
+	return len(p), nil
+}
+
+// TestHandleSSE_FrameQueuedBeforeFirstConnectionIsDelivered: a frame pushed
+// before a session's first SSE connection (an `init` command's result, a
+// dispatch error banner) waits in sess.sseCh and must reach that connection.
+//
+// handleSSE used to start the session's fan-out relay BEFORE it registered
+// the connection. The relay could then drain the queued frame while no
+// connection was registered and fan it out to nobody. The loss needs the
+// relay goroutine to run before the handler reaches registerSSEConn, so it is
+// rare per connection (about 1 in 1,500 to 3,000 under -race on a laptop) and
+// showed up as an occasional CI failure of
+// TestHandleSSE_EmitsEventPatchesForPatchesFrame. This test opens many first
+// connections so that the old order fails it in practically every run; the
+// fixed order (register, then start the relay) cannot lose the frame.
+func TestHandleSSE_FrameQueuedBeforeFirstConnectionIsDelivered(t *testing.T) {
+	const connections = 10000
+	app := &liveApp{
+		store:  newMemoryStore(30 * time.Minute),
+		locker: newSessionLocker(),
+		view: func(model any) any {
+			return velement("div", nil, []any{vtext("baseline")})
+		},
+	}
+	for i := 0; i < connections; i++ {
+		sid := fmt.Sprintf("sid-first-conn-%d", i)
+		sess := &liveSession{
+			sseCh:     make(chan sseFrame, 4),
+			cancelSub: make(chan struct{}),
+			done:      make(chan struct{}),
+			model:     "model-state",
+			handlers:  map[string]any{},
+		}
+		app.store.Set(sid, sess)
+		sess.sseCh <- sseFrame{event: "patches", data: `{"seq":42,"patches":[]}`}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		req := httptest.NewRequest(http.MethodGet, "/_sky/sse?tab=t", nil).WithContext(ctx)
+		req.AddCookie(&http.Cookie{Name: "sky_sid", Value: sid})
+		w := &sseFrameWatchWriter{header: http.Header{}, want: "event: patches\n", seen: make(chan struct{})}
+		finished := make(chan struct{})
+		go func() {
+			defer close(finished)
+			app.handleSSE(w, req)
+		}()
+		select {
+		case <-w.seen:
+		case <-time.After(sseStreamTestDeadline):
+			cancel()
+			<-finished
+			t.Fatalf("connection %d of %d: the frame queued before the session's first SSE connection "+
+				"never reached it within %v (the relay fanned it out before the connection registered)",
+				i+1, connections, sseStreamTestDeadline)
+		}
+		cancel()
+		<-finished
+		app.store.Delete(sid)
 	}
 }
 
@@ -179,7 +273,7 @@ func TestHandleSSE_EmitsEventPatchForPatchFrame(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", srv.URL, nil)
 	req.AddCookie(&http.Cookie{Name: "sky_sid", Value: "sid-patch-legacy"})
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), sseStreamTestDeadline)
 	defer cancel()
 	req = req.WithContext(ctx)
 
@@ -214,7 +308,7 @@ func TestHandleSSE_EmitsEventPatchForPatchFrame(t *testing.T) {
 		}
 	}
 	if !sawPatchSeqSeven {
-		t.Fatalf("handleSSE didn't emit our queued event:patch frame (seq=7)")
+		t.Fatalf("handleSSE didn't emit our queued event:patch frame (seq=7) within %v", sseStreamTestDeadline)
 	}
 }
 

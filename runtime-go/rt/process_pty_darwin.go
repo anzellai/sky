@@ -46,3 +46,15 @@ func procOpenPTY(cols, rows int) (master, slave *os.File, err error) {
 	}
 	return master, slave, nil
 }
+
+// ptyQueuedOutput reports how many bytes the child wrote to the slave that
+// the master has not read yet (TIOCOUTQ on the slave). macOS discards them at
+// the slave's last close, so the parent holds the slave until this is 0
+// (procHandle.releasePtySlave). An ioctl error reports 0: nothing to wait for.
+func ptyQueuedOutput(slave *os.File) int {
+	var n int32
+	if err := ptyIoctl(slave.Fd(), syscall.TIOCOUTQ, uintptr(unsafe.Pointer(&n))); err != nil {
+		return 0
+	}
+	return int(n)
+}

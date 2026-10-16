@@ -423,6 +423,39 @@ licences screen).
 `.ipa` with Xcode's Devices window or `xcrun devicectl device install app`. The
 Android emulator has an emulated back camera, so the scanner opens there.
 
+## Rebuilds — the shell is built only when it changes
+
+The iOS and Android shells (and the tablet targets, which use the same shells)
+stay in their build directory between builds: `sky-out/ios` and
+`sky-out/android` of the project the shell is built from (for a Std.App entry,
+the generated frontend under `.skyapp/<target>/`). A build writes each
+generated file only when its bytes change, and removes the files an earlier
+build wrote and this one does not (a native extension you deleted, the sources
+of an earlier bundle id), so they are not compiled in.
+
+The tool steps (swiftc, the icons and the ad hoc signature on iOS; aapt2,
+javac, d8, zipalign and apksigner on Android) run only when one of their inputs
+differs from the last complete build. The inputs are hashed by content:
+
+- the generated sources, `Info.plist` / `AndroidManifest.xml` and the other
+  resources, the native extension files, the library jars and the icon;
+- the bundle settings (they reach the files above) and the entitlements;
+- the signing: the debug keystore on Android, the simulator entitlements on iOS;
+- the toolchain: Xcode's version, the simulator SDK, the swiftc in use, every
+  installed Android build-tools and platform, the JDK, and the path, size and
+  modification time of each tool.
+
+When every input is the same and the artefact is still there, the build
+prints `… shell unchanged since the last build` and runs none of the tools.
+Otherwise it builds the shell again from an empty `build/` directory. The
+digest is written only after every step succeeded, so a build that failed part
+way is never reused. A change to the app's Sky code does not change the shell,
+which loads the app from its backend. On `examples/64-app-native` this saves
+about 1.5 s per iOS build and 2.2 s per Android build.
+
+`sky package --release` does not reuse anything: its iOS and Android steps
+always build from an empty `release/` directory.
+
 ## Release packaging — `sky package --release`
 
 ```bash

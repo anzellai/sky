@@ -94,7 +94,7 @@ pub const REJECT_EXPECTED: u64 = ty::reject_corpus::EXPECTED_CORPUS_FILES as u64
 /// broken version compiled, type-checked and ran. Seven pin the fix (tag +
 /// display, both halves), five pin what must NOT change outside a paragraph,
 /// since keying on parent context risks flattening every layout in every app.
-pub const CONFORMANCE_EXPECTED: u64 = 1496; // +19 CodecConformance + SkyCoreErrorCoverage (the `Domain` error detail: wire round-trip, forward-compatible decode, Error.domain / failureOf / isRetryable / retryAfter) — v0.28.0; +1 StdDbLifecycle (a SQL NULL column reads as "" through getField, getString and Dict.get) — v0.27.2; +14 Ordering (the derived order of comparable values, C-11) +2 ProcessWatch +4 SyncFile (S1) +2 JwtAuth (verifyToken claims decoded with Json.Decode, S3d) — v0.27.0 final batch; +3 SyncFile (a nullary union printed by name at the top level and nested, a nested pattern over a runtime-built enum ordinal) — v0.27.0 named-int enums; +29 SyncFile (Sky.Core.File stat / lstat / realPath / readLink / chmod / permissions / resolveWithin, Std.Sync Ref / Mutex / Queue, the Sky-syntax toString printer) — v0.27.0 downstream round 3; +14 LanguageShapes (`as` over a nested ctor pattern on the ADT bag, a Task-returning parameter / record field in a free Task slot, let-polymorphism, Module.value.field) — v0.27.0 downstream round 3; +6 CoreHelpers (Result.fromMaybe / Maybe.toResult, kernel path) +4 Json (the same, imported Sky.Core.Result / Sky.Core.Maybe) — v0.27.0 downstream request; +3 Native (Native.scanCode off-client is Unavailable, every CodeFormat, the message) — v0.27.0 native scanner; +9 Json (Decode.decodeValue, the documented Decode.value key order, one document per decodeString) +37 Encoding (RFC 4648 section 10 base32 / base32hex vectors, unpadded form, strict-decode negatives) +5 Noise (the BLAKE2s suite, suite mismatch, protocolName) — v0.27.0 downstream requests; +5 CryptoPrimitives (explicit-nonce ChaCha20-Poly1305 RFC 8439 2.8.2 and XChaCha20-Poly1305 draft A.3.1 vectors, determinism, negatives) — v0.27.0 judge fix; +3 TaskLoop (andThen / onError recursion at two million steps, a 100,000-task sequence) — v0.27.0 phase 7 Task trampoline; +12 UiTextWrap +19 UiCanvas (Std.Ui.text span wrap, Std.Ui.Canvas SVG, Std.Ui.Terminal payloads) — v0.27.0 phase 6C; +10 Native (secure store, biometrics, Std.Bundle builders off-client) — v0.27.0 phase 6B; +24 ProcessWatch — v0.27.0 phase 5B streaming processes and Std.Watch; +25 CryptoPrimitives +11 Noise +10 Cpace +12 Qr — v0.27.0 phase 5A crypto/QR modules; +15 Auth +16 Db +11 Db.Store lifecycle — B1 authdb coverage; +19 Codec.error/Codec.result wire round-trips — v0.24.0 Sky.Spa error/result codecs; +7 TaskLoop (Task.loop/forever) +12 CoreHelpers (Result.toMaybe, Sky.Core.Tuple) +10 Json (Decode.value, Encode.raw, imported Result.toMaybe) — v0.27.0
+pub const CONFORMANCE_EXPECTED: u64 = 1507; // +19 CodecConformance + SkyCoreErrorCoverage (the `Domain` error detail: wire round-trip, forward-compatible decode, Error.domain / failureOf / isRetryable / retryAfter) — v0.28.0; +4 Codec (Codec.inline: flat-record JSON both ways, round-trip, a missing embedded field) +7 Codec (a repeated JSON key fails to decode, names the key, across Codec.inline, encoding unchanged) — build-speed branch; +1 StdDbLifecycle (a SQL NULL column reads as "" through getField, getString and Dict.get) — v0.27.2; +14 Ordering (the derived order of comparable values, C-11) +2 ProcessWatch +4 SyncFile (S1) +2 JwtAuth (verifyToken claims decoded with Json.Decode, S3d) — v0.27.0 final batch; +3 SyncFile (a nullary union printed by name at the top level and nested, a nested pattern over a runtime-built enum ordinal) — v0.27.0 named-int enums; +29 SyncFile (Sky.Core.File stat / lstat / realPath / readLink / chmod / permissions / resolveWithin, Std.Sync Ref / Mutex / Queue, the Sky-syntax toString printer) — v0.27.0 downstream round 3; +14 LanguageShapes (`as` over a nested ctor pattern on the ADT bag, a Task-returning parameter / record field in a free Task slot, let-polymorphism, Module.value.field) — v0.27.0 downstream round 3; +6 CoreHelpers (Result.fromMaybe / Maybe.toResult, kernel path) +4 Json (the same, imported Sky.Core.Result / Sky.Core.Maybe) — v0.27.0 downstream request; +3 Native (Native.scanCode off-client is Unavailable, every CodeFormat, the message) — v0.27.0 native scanner; +9 Json (Decode.decodeValue, the documented Decode.value key order, one document per decodeString) +37 Encoding (RFC 4648 section 10 base32 / base32hex vectors, unpadded form, strict-decode negatives) +5 Noise (the BLAKE2s suite, suite mismatch, protocolName) — v0.27.0 downstream requests; +5 CryptoPrimitives (explicit-nonce ChaCha20-Poly1305 RFC 8439 2.8.2 and XChaCha20-Poly1305 draft A.3.1 vectors, determinism, negatives) — v0.27.0 judge fix; +3 TaskLoop (andThen / onError recursion at two million steps, a 100,000-task sequence) — v0.27.0 phase 7 Task trampoline; +12 UiTextWrap +19 UiCanvas (Std.Ui.text span wrap, Std.Ui.Canvas SVG, Std.Ui.Terminal payloads) — v0.27.0 phase 6C; +10 Native (secure store, biometrics, Std.Bundle builders off-client) — v0.27.0 phase 6B; +24 ProcessWatch — v0.27.0 phase 5B streaming processes and Std.Watch; +25 CryptoPrimitives +11 Noise +10 Cpace +12 Qr — v0.27.0 phase 5A crypto/QR modules; +15 Auth +16 Db +11 Db.Store lifecycle — B1 authdb coverage; +19 Codec.error/Codec.result wire round-trips — v0.24.0 Sky.Spa error/result codecs; +7 TaskLoop (Task.loop/forever) +12 CoreHelpers (Result.toMaybe, Sky.Core.Tuple) +10 Json (Decode.value, Encode.raw, imported Result.toMaybe) — v0.27.0
 /// `verify-cli.sh` entries that actually assert something. The 14th entry
 /// (`11-fyne-stopwatch`) is a declared skip and is deliberately NOT counted:
 /// v2's "SKIP counted as pass" defect is closed by making skips invisible to
@@ -111,10 +111,10 @@ pub const SKY_VERIFY_EXPECTED: u64 = 14;
 /// `spa-derived-read` 4 (whole-model reads + the Msg-arg collision),
 /// `spa-diff-narrow` 2 (narrow read/write sets), `spa-partition-io` 3
 /// (Save / SaveTagged / Bulk), `spa-guard` 2 (Stamp, and Save — a
-/// client-result root, checked by its leaf and command since v0.28.0; an
+/// client-result root, checked by its leaf and command since v0.27.9; an
 /// App.app app, analysed via app_config_defs), `spa-readset-noneleaf` 9 (reads
 /// through model-derived locals, client-result roots with a `Cmd.none` leaf,
-/// a guard-helper write), `spa-async-leaves` 26 (v0.28.0: 17 async arms that
+/// a guard-helper write), `spa-async-leaves` 26 (v0.27.9: 17 async arms that
 /// make their own model write in the client through `let` / `if` / `case` /
 /// helpers, 16 of them with a client leg, and 9 that hold). Exact: a fence
 /// change that drops or adds a checkable branch flips this and fails.
@@ -433,7 +433,7 @@ pub fn spa_diff_fuzz(ctx: &GateCtx) -> GateOutcome {
     // reads through model-derived locals and the `Cmd.none` leaves of
     // client-result roots: the leaf/command and client-leg comparisons.
     // `spa-async-leaves` holds the async arms that make their own model write
-    // in the client through `let` / `if` / `case` / helpers (v0.28.0): their
+    // in the client through `let` / `if` / `case` / helpers (v0.27.9): their
     // client leg's model and where it sends are compared.
     const FIXTURES: &[&str] = &[
         "rust/crates/sky/tests/fixtures/spa-derived-read",
@@ -4346,4 +4346,74 @@ mod corpus_count_sync {
             super::CORPUS_BEHAVIOURAL_EXPECTED
         );
     }
+}
+
+// ---- build speed: counted guards -------------------------------------------
+
+/// Run ONE named `#[test]` of a `sky` integration suite, exactly, and require
+/// libtest to report exactly one passed test. A filter that matches nothing
+/// exits 0 having run nothing, so the exit status alone cannot be the verdict.
+fn one_sky_test(ctx: &GateCtx, suite: &str, test: &str) -> GateOutcome {
+    let src = ctx
+        .repo_root
+        .join("rust/crates/sky/tests")
+        .join(format!("{suite}.rs"));
+    let Ok(text) = std::fs::read_to_string(&src) else {
+        return GateOutcome::new(false, 0, format!("cannot read {}", src.display()));
+    };
+    if !text.contains(&format!("fn {test}()")) {
+        return GateOutcome::new(false, 0, format!("{} has no `fn {test}()`", src.display()));
+    }
+    // `CARGO_TARGET_DIR` is unset deliberately, as in `cli_verbs`.
+    let out = Command::new("cargo")
+        .args(["test", "-p", "sky", "--test", suite, "--", "--exact", test])
+        .current_dir(ctx.repo_root.join("rust"))
+        .env_remove("CARGO_TARGET_DIR")
+        .stdin(std::process::Stdio::null())
+        .output();
+    match out {
+        Err(e) => GateOutcome::new(false, 0, format!("could not run cargo test: {e}")),
+        Ok(o) => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            let ran_one = stdout.contains("test result: ok. 1 passed;");
+            if o.status.success() && ran_one {
+                GateOutcome::new(true, 1, format!("{suite}::{test} green"))
+            } else {
+                GateOutcome::new(
+                    false,
+                    1,
+                    format!(
+                        "{suite}::{test} failed or did not run (exit {:?}):\n{}\n{}",
+                        o.status.code(),
+                        super::layer2::tail(&stdout, 25),
+                        super::layer2::tail(&String::from_utf8_lossy(&o.stderr), 15)
+                    ),
+                )
+            }
+        }
+    }
+}
+
+/// One assertion: the benchmark app at N and 2N grows the split's generated
+/// Sky and the emitted Go by less than 2.3x (`build_growth_flow.rs`).
+pub const BUILD_GROWTH_LINEAR_EXPECTED: u64 = 1;
+
+pub fn build_growth_linear(ctx: &GateCtx) -> GateOutcome {
+    one_sky_test(
+        ctx,
+        "build_growth_flow",
+        "generated_sky_and_emitted_go_grow_linearly",
+    )
+}
+
+/// One assertion: a copy of a built project in a new directory compiles zero
+/// Go packages (`go_build_cache_flow.rs`).
+pub const BUILD_NEW_DIR_EXPECTED: u64 = 1;
+
+pub fn build_new_dir_compiles_nothing(ctx: &GateCtx) -> GateOutcome {
+    one_sky_test(
+        ctx,
+        "go_build_cache_flow",
+        "a_copy_in_a_new_directory_compiles_nothing",
+    )
 }

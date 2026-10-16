@@ -465,6 +465,13 @@ try {
   // sign-out stops receiving data and shows it is signed out in that window.
   if (APP_AUTH) {
     phase = "revoke";
+    // Park `page` on the app before `_logout`. It is still the console tab
+    // from the steps above, and `_logout` ends its session: its live channel
+    // then reports auth-required and the console reloads itself. That reload
+    // raced the `page.goto("/")` in signIn below ("navigation is interrupted
+    // by another navigation", seen on a release run). Step (c) opens its own
+    // console tab for the signed-out case.
+    await page.goto(ORIGIN + "/", { waitUntil: "domcontentloaded" });
     const consoleCookieOf = async () => (await ctx.cookies(ORIGIN)).find((c) => c.name === "__Host-sky_console");
     await ctx.request.get(ORIGIN + "/_sky/console/", { maxRedirects: 0 });
     const held = await consoleCookieOf();

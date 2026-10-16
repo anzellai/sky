@@ -12,3 +12,6 @@ import (
 func procOpenPTY(cols, rows int) (master, slave *os.File, err error) {
 	return nil, nil, errors.New("a PTY is supported on Linux and macOS only")
 }
+
+// ptyQueuedOutput: no PTY here (procOpenPTY refuses), so nothing is queued.
+func ptyQueuedOutput(*os.File) int { return 0 }

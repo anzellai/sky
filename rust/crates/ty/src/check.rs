@@ -14,7 +14,6 @@ use base::{DefId, ModuleId, Span};
 use diagnostics::{Code, Diagnostic, Severity};
 use hir::{Body, Expr, ExprId, LocalId, Res};
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
 
 /// The kind of type-error emitted (all currently map to a unify clash).
@@ -114,6 +113,20 @@ impl BodyTypes {
         }
     }
 
+    /// Build a table from a drain that read every type straight into one
+    /// hash-consed [`TyTable`] (`Infer::infer_def_tables`).
+    pub(crate) fn from_tables(t: crate::infer::TypedTables) -> Self {
+        BodyTypes {
+            result: t.result,
+            signature: t.signature,
+            tables: Arc::new(BodyTables {
+                exprs: t.exprs,
+                locals: t.locals,
+                table: t.table,
+            }),
+        }
+    }
+
     /// The inferred type of expression `e`, if one was recorded.
     pub fn expr(&self, e: ExprId) -> Option<Ty> {
         let t = &self.tables;
@@ -124,6 +137,30 @@ impl BodyTypes {
     pub fn local(&self, l: LocalId) -> Option<Ty> {
         let t = &self.tables;
         t.locals.get(&l).map(|r| t.table.get(*r))
+    }
+
+    /// The table reference of expression `e`'s type, if one was recorded. Two
+    /// expressions of one table with equal types have the same reference, so a
+    /// reader can memoise per reference (the lowerer's `goty`) and pay for each
+    /// DISTINCT type once instead of once per expression.
+    pub fn expr_ref(&self, e: ExprId) -> Option<TyRef> {
+        self.tables.exprs.get(&e).copied()
+    }
+
+    /// The table reference of local `l`'s type, if one was recorded.
+    pub fn local_ref(&self, l: LocalId) -> Option<TyRef> {
+        self.tables.locals.get(&l).copied()
+    }
+
+    /// Rebuild the owned type at `r` (a reference from [`BodyTypes::expr_ref`] /
+    /// [`BodyTypes::local_ref`] of THIS table).
+    pub fn get_ref(&self, r: TyRef) -> Ty {
+        self.tables.table.get(r)
+    }
+
+    /// The hash-consed table the references of this def point into.
+    pub fn table(&self) -> &TyTable {
+        &self.tables.table
     }
 
     /// The head name of expression `e`'s type when it is a nominal application
@@ -162,7 +199,7 @@ impl BodyTypes {
 /// on `SourceDb`. `body_types` routes through the `infer(DefId)` query, so a def's
 /// typed table is memoised at per-def granularity on the salsa backend.
 pub struct Typer<'a> {
-    world: Rc<World>,
+    world: Arc<World>,
     db: &'a dyn TyDb,
 }
 
@@ -197,8 +234,7 @@ impl<'a> Typer<'a> {
             .with_self_def(Some(def))
             .with_inferred(true)
             .with_expected(self.world.value_sigs.get(&def).cloned());
-        let (result, signature, exprs, locals) = infer.infer_def_typed(body);
-        BodyTypes::new(result, signature, exprs, locals)
+        BodyTypes::from_tables(infer.infer_def_tables(body))
     }
 
     /// The declared/derived scheme for a top-level value def, if known.
@@ -676,7 +712,18 @@ impl DictKeyScan {
     /// Fold one type — a declared signature, or one expression's inferred type —
     /// into the scan.
     fn add(&mut self, t: &Ty, def_name: &str, span: Option<Span>, from_annotation: bool) {
-        for key in dictkey::unsupported_keys(t) {
+        self.add_keys(
+            &dictkey::unsupported_keys(t),
+            def_name,
+            span,
+            from_annotation,
+        );
+    }
+
+    /// Fold one type's offending keys (as [`dictkey::unsupported_keys`] lists
+    /// them) into the scan.
+    fn add_keys(&mut self, keys: &[Ty], def_name: &str, span: Option<Span>, from_annotation: bool) {
+        for key in keys.iter().cloned() {
             let rendered = key.render_pretty();
             match self.found.iter_mut().find(|f| f.rendered == rendered) {
                 Some(slot) => {
@@ -769,7 +816,7 @@ pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
 /// paths, so a divergence can only come from the world, never from the checking.
 pub fn check_modules_with_world(
     db: &dyn TyDb,
-    world: std::rc::Rc<crate::sig::World>,
+    world: std::sync::Arc<crate::sig::World>,
     to_check: &[ModuleId],
 ) -> CheckOutput {
     let sky = db.as_sky_db();
@@ -1068,13 +1115,18 @@ pub fn check_modules_with_world(
                 dict_keys.add(&scheme.ty, &dname, anno_spans.get(&dname).copied(), true);
             }
             // Read the solved per-expression types ONCE (the accessor `mem::take`s
-            // its buffer, so a second call returns empty): the `[E2008]` scan
-            // iterates them in arena order (deterministic dedup), then the
-            // `[E2009]` scan indexes them by `ExprId` to type each `Codec.auto`
-            // witness.
-            let recorded = infer.recorded_expr_types();
-            for (e, ty) in &recorded {
-                dict_keys.add(ty, &dname, body.expr_span(*e), false);
+            // its buffer, so a second call returns empty) into one hash-consed
+            // table. The `[E2008]` scan iterates them in recording (push) order,
+            // which its first-seen dedup depends on; each distinct type's key
+            // list is computed once. The scans below look types up by `ExprId`
+            // (last recording wins) and rebuild only what they read.
+            let (recorded, table) = infer.recorded_expr_table();
+            let mut key_memo = HashMap::new();
+            for (e, r) in &recorded {
+                let keys = dictkey::unsupported_keys_ref(&table, *r, &mut key_memo);
+                if !keys.is_empty() {
+                    dict_keys.add_keys(&keys, &dname, body.expr_span(*e), false);
+                }
             }
 
             // ---- [E2009] un-derivable codec element ---------------------
@@ -1087,7 +1139,7 @@ pub fn check_modules_with_world(
             // the witness's collection element is a genuinely-free inference var
             // (concrete / rigid-quantifier elements are silent — see
             // `codec_elem.rs`).
-            let expr_ty: HashMap<ExprId, Ty> = recorded.into_iter().collect();
+            let expr_ty = crate::tytable::ExprTypes::new(&recorded, &table);
             codec_elem::scan_body(body, &expr_ty, sky, &dname, &mut codec_elems);
 
             // ---- [E2010] form-submit handler ---------------------------

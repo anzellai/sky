@@ -12,12 +12,6 @@ description: >-
   ./.github/actions/gate-setup`.
 
 inputs:
-  cache-key:
-    description: >-
-      Namespaces this job family's Go cache (e.g. core / t2 / app / falsifiers
-      / sweep) so a heavy job's Go cache does not evict a light one's.
-    required: false
-    default: 'release'
   install-compiler:
     description: >-
       Run scripts/build.sh to install the compiler at sky-out/sky. Every gate
@@ -27,9 +21,12 @@ inputs:
     default: 'true'
   postgres:
     description: >-
-      apt-install postgresql-16 + sqlite3 for the live tests. The workspace
-      live tests, the T3 app tier, and the T1 falsifiers need a real
-      PostgreSQL; steps set SKY_POSTGRES_BIN themselves.
+      Resolve PostgreSQL (scripts/ci/resolve-postgres.sh: the image's own, or
+      the distribution default, whatever its major) and make sure sqlite3 +
+      brotli are present, for the live tests. The workspace live tests, the T3
+      app tier, and the T1 falsifiers need a real PostgreSQL; the resolver
+      exports SKY_POSTGRES_BIN (and SKY_PG_MAJOR) to every later step. The sky crate's
+      precompress tests need the brotli tool (live_gate Need::Brotli).
     required: false
     default: 'false'
   neovim:
@@ -47,13 +44,14 @@ inputs:
       the warm cache this setup exists to keep.
     required: false
     default: 'true'
-  rust-cache-writer:
+  go-cache-family:
     description: >-
-      Whether this job SAVES the shared cargo cache (`sky-release-linux`).
-      Exactly one job family should write it; the rest restore it. Concurrent
-      writes of the same key churn the 10 GB repo cache budget.
+      The Go cache family this job restores: `go-linux` (the default, written
+      by rust-ci on main) or `go-sweep` (the FFI module cache the nightly
+      example sweep writes on main; it falls back to go-linux). A release
+      never runs on main, so it only restores.
     required: false
-    default: 'false'
+    default: 'go-linux'
 
 runs:
   using: 'composite'
@@ -77,7 +75,8 @@ runs:
     # out to a real `go build`, and an unpinned toolchain silently tests
     # whatever Go the runner image ships. cache:false — the Go cache is managed
     # explicitly below so the BUILD cache (not just the module cache) is warm.
-    - uses: actions/setup-go@v5
+    - uses: actions/setup-go@v7
+      id: setup-go
       with:
         go-version: '1.26'
         cache: false
@@ -92,38 +91,46 @@ runs:
         echo "GOCACHE=${{ github.workspace }}/.gocache"     >> "$GITHUB_ENV"
         echo "GOMODCACHE=${{ github.workspace }}/.gomodcache" >> "$GITHUB_ENV"
 
-    # WARMTH: the primary key is per-family and per-go.sum, saved by this job at
-    # release time. But releases are infrequent, so the `go-release-*` namespace
-    # is almost always evicted (GitHub drops caches after 7 idle days / over the
-    # 10 GB budget) — a release used to start cache-COLD every time, which is the
-    # single biggest avoidable cost here. The per-commit rust-ci warms the
-    # `go-linux-*` family on EVERY push to main, so the release falls back to it:
-    # a release now inherits the Go BUILD cache main last produced. restore-keys
-    # are tried in order (most specific first), so a same-release warm entry
-    # still wins when one exists; `go-linux-` is the always-available floor.
-    - name: Cache Go build + module cache (keep it WARM across releases)
-      uses: actions/cache@v4
+    # WARMTH, RESTORE ONLY. Caches are saved on refs/heads/main alone (rust-ci
+    # and the nightly write them); a release runs on a tag or a dispatched
+    # branch, so it restores them and saves nothing. When every branch and tag
+    # saved its own family (go-release-<job>, ~25 entries), they filled the
+    # 10 GB repository budget and evicted main's entries, and every run started
+    # cache-cold. The key ends with the Go version (a build cache is useless across Go
+    # versions); the go.sum-hash prefix still restores the module cache.
+    - name: Restore the Go build + module cache (saved on main only)
+      uses: actions/cache/restore@v6
       with:
         path: |
           ${{ github.workspace }}/.gocache
           ${{ github.workspace }}/.gomodcache
-        key: go-release-${{ inputs.cache-key }}-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+        key: ${{ inputs.go-cache-family }}-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
         restore-keys: |
-          go-release-${{ inputs.cache-key }}-
+          ${{ inputs.go-cache-family }}-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          ${{ inputs.go-cache-family }}-
           go-linux-
 
+    # The release-profile cargo cache the nightly writes on main
+    # (nightly-sweep.yml example-sweep, shared-key sky-gates-linux). Restore only.
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: rust
-        shared-key: sky-release-linux
-        save-if: ${{ inputs.rust-cache-writer == 'true' }}
+        shared-key: sky-gates-linux
+        save-if: 'false'
 
     # Neovim is a DECLARED dependency of the `lsp` harness gate (T1). Without it
     # that gate reports 0 assertions and the harness fails — a gate that cannot
     # run has not passed.
+    #
+    # TMPDIR: extract on the same filesystem as $HOME. Ubuntu 26.04 mounts /tmp
+    # as tmpfs, and the action's rename from os.tmpdir() into $HOME then fails
+    # with EXDEV ("cross-device link not permitted").
     - name: Neovim for the lsp harness gate
       if: inputs.neovim == 'true'
       uses: rhysd/action-setup-vim@v1
+      env:
+        TMPDIR: ${{ runner.temp }}
       with:
         neovim: true
 
@@ -131,17 +138,13 @@ runs:
     # tier, the T1 falsifiers). Without one they used to return and report `ok`
     # — a release gate is the last place that should count tests that did not
     # run.
-    - name: PostgreSQL + sqlite3 for the live tests
+    - name: PostgreSQL + sqlite3 + brotli for the live tests
       if: inputs.postgres == 'true'
       shell: bash
       run: |
         set -euo pipefail
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq postgresql-16 sqlite3
-        for b in initdb pg_ctl postgres; do
-          [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
-            echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
-        done
+        bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
+        bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
 
     # `scripts/build.sh` installs the compiler at `sky-out/sky` — the binary
     # BOTH the codegen build+run sweep and the app-driving harness gates need,

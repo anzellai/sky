@@ -104,14 +104,28 @@ fn emitted_go(dir: &Path, log: &str) -> String {
 }
 
 /// The Go body of `func <name>(` in `src`, up to the closing brace column-0.
+///
+/// A zero-parameter def is a CAF: its accessor only reads the memo cell
+/// (`return X__caf.Get(X__cafInit)`) and the value is built in the named
+/// initialiser `X__cafInit`. For a CAF this returns the initialiser's body,
+/// which is where the emitted value (a bare symbol or an eta-expanded closure)
+/// lives.
 fn func_body<'a>(src: &'a str, name: &str) -> &'a str {
-    let needle = format!("func {name}(");
-    let at = src
-        .find(&needle)
-        .unwrap_or_else(|| panic!("emitted Go must define {name}:\n{src}"));
-    let rest = &src[at..];
-    let end = rest.find("\n}").map(|i| i + 2).unwrap_or(rest.len());
-    &rest[..end]
+    let raw = |n: &str| -> &'a str {
+        let needle = format!("func {n}(");
+        let at = src
+            .find(&needle)
+            .unwrap_or_else(|| panic!("emitted Go must define {n}:\n{src}"));
+        let rest = &src[at..];
+        let end = rest.find("\n}").map(|i| i + 2).unwrap_or(rest.len());
+        &rest[..end]
+    };
+    let body = raw(name);
+    if body.contains(&format!("{name}__caf.Get({name}__cafInit)")) {
+        raw(&format!("{name}__cafInit"))
+    } else {
+        body
+    }
 }
 
 // ===========================================================================

@@ -18,7 +18,9 @@
 -- batch in which each path appears once: a file created and then written is
 -- `Created`; created and then deleted is not reported; deleted and re-created
 -- is `Modified`; moved within the watched tree is `Renamed old new`. A tree
--- that never goes quiet still gets a batch every ten windows.
+-- that never goes quiet still gets a batch every ten windows. A batch is
+-- checked against the disk when it closes, so a file that is already gone
+-- then is not reported even when the system tells of its deletion late.
 --
 -- Replacement. A file saved by rename (an editor writes a temporary file
 -- and renames it over the original) is reported `Modified`, and the new file

@@ -85,19 +85,21 @@ pub(crate) fn applications(body: &Body) -> Vec<(ExprId, Vec<ExprId>, ExprId)> {
 
 /// Does `t` contain no type variable (and no error sentinel)?
 pub(crate) fn is_ground(t: &Ty) -> bool {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         Ty::Var(_) | Ty::Error => false,
         Ty::Unit => true,
         Ty::Fun(a, b) => is_ground(a) && is_ground(b),
         Ty::App(_, xs) | Ty::Tuple(xs) => xs.iter().all(is_ground),
         Ty::Record(fs, ext) => ext.is_none() && fs.iter().all(|(_, t)| is_ground(t)),
-    }
+    })
 }
 
 /// Could `a` and `b` be the same type? A variable matches anything, so this
 /// only says "no" when both sides are concrete at the point they differ.
 pub(crate) fn compatible(a: &Ty, b: &Ty) -> bool {
-    match (a, b) {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match (a, b) {
         (Ty::Var(_), _) | (_, Ty::Var(_)) | (Ty::Error, _) | (_, Ty::Error) => true,
         (Ty::Unit, Ty::Unit) => true,
         (Ty::Fun(a1, b1), Ty::Fun(a2, b2)) => compatible(a1, a2) && compatible(b1, b2),
@@ -127,7 +129,7 @@ pub(crate) fn compatible(a: &Ty, b: &Ty) -> bool {
             true
         }
         _ => false,
-    }
+    })
 }
 
 fn prim(t: &Ty) -> Option<&str> {
@@ -279,7 +281,7 @@ pub struct FormSubmitScan {
 /// Scan one body for `onSubmit` applications whose argument cannot work.
 pub fn scan_body(
     body: &Body,
-    expr_ty: &HashMap<ExprId, Ty>,
+    expr_ty: &crate::tytable::ExprTypes<'_>,
     sky: &dyn SkyDb,
     def_name: &str,
     out: &mut FormSubmitScan,
@@ -296,11 +298,12 @@ pub fn scan_body(
             continue;
         };
         // The whole application's type is `Attribute m`; `m` is the message.
-        let msg = match expr_ty.get(&call) {
+        let call_ty = expr_ty.get(&call);
+        let msg = match &call_ty {
             Some(Ty::App(_, xs)) if args.len() == 1 => xs.last(),
             _ => None,
         };
-        if let Some(reason) = problem(arg_ty, msg) {
+        if let Some(reason) = problem(&arg_ty, msg) {
             let span = body.expr_span(arg).or_else(|| body.expr_span(call));
             if !out
                 .found

@@ -35,12 +35,12 @@ fn peel(t: &Ty, arity: usize) -> (Vec<Ty>, Ty) {
     let mut ps = Vec::new();
     let mut cur = t.clone();
     for _ in 0..arity {
-        match cur {
-            Ty::Fun(a, b) => {
-                ps.push(*a);
-                cur = *b;
+        match cur.into_fun() {
+            Ok((a, b)) => {
+                ps.push(a);
+                cur = b;
             }
-            other => panic!("expected {arity} params, ran out at {other:?}"),
+            Err(other) => panic!("expected {arity} params, ran out at {other:?}"),
         }
     }
     (ps, cur)
@@ -181,12 +181,14 @@ fn normalisations_and_wildcards_on_real_entries() {
         )
     );
     // A callback parameter keeps its arrows and its typed result.
-    let Ty::Fun(_, rest) = get("net_http", "clientConnSetStateHook") else {
+    let Ok((_, rest)) = get("net_http", "clientConnSetStateHook").into_fun() else {
         panic!()
     };
-    let Ty::Fun(cb, _) = *rest else { panic!() };
+    let Ok((cb, _)) = rest.into_fun() else {
+        panic!()
+    };
     assert_eq!(
-        *cb,
+        cb,
         Ty::Fun(Box::new(go("Net.Http.ClientConn")), Box::new(Ty::Unit))
     );
 }

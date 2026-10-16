@@ -1,0 +1,33 @@
+name: 'Playwright browsers for the browser gates'
+description: >-
+  Node 22, the repository's pinned Playwright (package-lock.json), Chromium and
+  WebKit with their system dependencies, and sqlite3. The browser builds are
+  restored from the `ms-playwright` cache, which only main writes (the nightly
+  web-runtime job), so a release job downloads nothing it already has. Shared
+  by the gate-web-* jobs of release.yml, which used to be one 41-minute job.
+
+inputs:
+  browsers:
+    description: The Playwright browsers to install.
+    required: false
+    default: 'chromium webkit'
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: '22'
+    # Restore only: the nightly web-runtime job (on main) saves it.
+    - name: Restore the Playwright browsers (saved on main only)
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/.cache/ms-playwright
+        key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+    - name: Install Playwright, its browsers and their system dependencies, sqlite3
+      shell: bash
+      run: |
+        set -euo pipefail
+        npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+        npx playwright install --with-deps ${{ inputs.browsers }}
+        bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3

@@ -29,7 +29,9 @@ func TestSkyNavFetchChecksOk(t *testing.T) {
 	// the popstate Back/Forward handler. Each MUST gate its .then on
 	// r.ok before invoking __skyPatch, otherwise a 404 body becomes
 	// the whole page.
-	const wantPattern = "if (!r.ok)"
+	// v0.27.9: the gate is __skyIsPage(r), which accepts a 2xx and the app's
+	// NotFound page (404 with X-Sky-View) and nothing else.
+	const wantPattern = "if (!__skyIsPage(r))"
 	occurrences := strings.Count(js, wantPattern)
 	if occurrences < 2 {
 		t.Errorf("expected at least 2 occurrences of %q in runtime JS "+
@@ -46,6 +48,10 @@ func TestSkyNavFetchChecksOk(t *testing.T) {
 	// var in scope). Either way, a full-page navigation triggers the
 	// runtime's initial-page handler, which mints a fresh session_id
 	// and re-runs init.
+	// The gate refuses every non-2xx except a 404 that carries a render id.
+	if !strings.Contains(js, `return r.ok || (r.status === 404 && !!r.headers.get("X-Sky-View"));`) {
+		t.Error("__skyIsPage must accept only a 2xx or a 404 with X-Sky-View")
+	}
 	if !strings.Contains(js, "X-Sky-Nav") {
 		t.Fatal("runtime JS missing the X-Sky-Nav fetch — sky-nav handler stripped?")
 	}
@@ -89,7 +95,7 @@ func TestSkyNavPushesUrlBeforePatch(t *testing.T) {
 	// click handler — guard against a regression that reintroduces the
 	// patch-then-push order. Search the window between the fetch's r.ok gate
 	// and the pushState.
-	okGate := strings.LastIndex(js[:push], "if (!r.ok) { window.location.href = href")
+	okGate := strings.LastIndex(js[:push], "if (!__skyIsPage(r)) { window.location.href = href")
 	if okGate < 0 {
 		t.Fatal("could not locate the sky-nav click handler's r.ok gate")
 	}

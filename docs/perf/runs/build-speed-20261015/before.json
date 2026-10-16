@@ -1,0 +1,3299 @@
+{
+  "machine": {
+    "platform": "darwin-arm64",
+    "cpus": 8,
+    "mem_bytes": 17179869184,
+    "go": "go version go1.26.1 darwin/arm64",
+    "sky": "sky v0.27.8 (03d61922f)"
+  },
+  "reps": 1,
+  "medians": {
+    "app100-web:app/cold": {
+      "wall_s": 70.22,
+      "cpu_s": 181.33,
+      "peak_rss_bytes": 1001947136
+    },
+    "app100-web:app/edit": {
+      "wall_s": 45.32,
+      "cpu_s": 60.88,
+      "peak_rss_bytes": 1031946240
+    },
+    "app100-web:app/first": {
+      "wall_s": 51.64,
+      "cpu_s": 79.27,
+      "peak_rss_bytes": 1046069248
+    },
+    "app100-web:app/newdir": {
+      "wall_s": 49.98,
+      "cpu_s": 79,
+      "peak_rss_bytes": 1039892480
+    },
+    "app100-web:app/warm": {
+      "wall_s": 10.96,
+      "cpu_s": 11.56,
+      "peak_rss_bytes": 292077568
+    },
+    "app200-web:app/cold": {
+      "wall_s": 168.18,
+      "cpu_s": 273.82,
+      "peak_rss_bytes": 2899050496
+    },
+    "app200-web:app/edit": {
+      "wall_s": 125.59,
+      "cpu_s": 163.91,
+      "peak_rss_bytes": 2842066944
+    },
+    "app200-web:app/first": {
+      "wall_s": 131.48,
+      "cpu_s": 183.85,
+      "peak_rss_bytes": 2836660224
+    },
+    "app200-web:app/newdir": {
+      "wall_s": 157.08,
+      "cpu_s": 278.65,
+      "peak_rss_bytes": 3057188864
+    },
+    "app200-web:app/warm": {
+      "wall_s": 65.22,
+      "cpu_s": 65.24,
+      "peak_rss_bytes": 922845184
+    },
+    "app50-web:app/cold": {
+      "wall_s": 52.87,
+      "cpu_s": 161.81,
+      "peak_rss_bytes": 820412416
+    },
+    "app50-web:app/edit": {
+      "wall_s": 29.56,
+      "cpu_s": 38.32,
+      "peak_rss_bytes": 631767040
+    },
+    "app50-web:app/first": {
+      "wall_s": 40.12,
+      "cpu_s": 80.21,
+      "peak_rss_bytes": 725843968
+    },
+    "app50-web:app/newdir": {
+      "wall_s": 33.84,
+      "cpu_s": 56.58,
+      "peak_rss_bytes": 678379520
+    },
+    "app50-web:app/warm": {
+      "wall_s": 3.13,
+      "cpu_s": 3.85,
+      "peak_rss_bytes": 152027136
+    }
+  },
+  "runs": [
+    {
+      "case": "app50-web:app",
+      "scenario": "first",
+      "rep": 1,
+      "wall_s": 40.12,
+      "cpu_s": 80.21,
+      "peak_rss_bytes": 725843968,
+      "timings": [
+        {
+          "scope": "sky build in backend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.34,
+          "rss_mb": 77
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.58,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.04,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go build (native)",
+          "wall_s": 7.50,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "total (wall)",
+          "wall_s": 8.54,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.31,
+          "rss_mb": 77
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.55,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.05,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.24,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go build (wasm, GOOS=js)",
+          "wall_s": 7.39,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "stage dist bundle (hash + copy)",
+          "wall_s": 0.07,
+          "rss_mb": 121
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 1.51,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 22.22,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 0.01,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 0.02,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "total (wall)",
+          "wall_s": 30.91,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.03,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.06,
+          "rss_mb": 50
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.23,
+          "rss_mb": 76
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "synthesise + stage Spa entry (.skyapp)",
+          "wall_s": 0.00,
+          "rss_mb": 77
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "spa split (partition + generate)",
+          "wall_s": 0.24,
+          "rss_mb": 79
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "frontend leg (child sky build, wasm)",
+          "wall_s": 30.92,
+          "rss_mb": 79
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "backend leg (child sky build, native)",
+          "wall_s": 8.55,
+          "rss_mb": 79
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "both legs (wall)",
+          "wall_s": 39.47,
+          "rss_mb": 79
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "stage static assets (dist + backend)",
+          "wall_s": 0.00,
+          "rss_mb": 79
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "total (wall)",
+          "wall_s": 40.12,
+          "rss_mb": 79
+        }
+      ]
+    },
+    {
+      "case": "app50-web:app",
+      "scenario": "warm",
+      "rep": 1,
+      "wall_s": 3.13,
+      "cpu_s": 3.85,
+      "peak_rss_bytes": 152027136,
+      "timings": [
+        {
+          "scope": "sky build in backend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.34,
+          "rss_mb": 77
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.58,
+          "rss_mb": 111
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.07,
+          "rss_mb": 111
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 111
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go build (native)",
+          "wall_s": 0.17,
+          "rss_mb": 111
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "total (wall)",
+          "wall_s": 1.22,
+          "rss_mb": 111
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.31,
+          "rss_mb": 77
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.55,
+          "rss_mb": 105
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.08,
+          "rss_mb": 105
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 105
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go build (wasm, GOOS=js)",
+          "wall_s": 0.10,
+          "rss_mb": 105
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "stage dist bundle (hash + copy)",
+          "wall_s": 0.08,
+          "rss_mb": 118
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.07,
+          "rss_mb": 144
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.07,
+          "rss_mb": 144
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 0.01,
+          "rss_mb": 144
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 0.02,
+          "rss_mb": 144
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 144
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 144
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "total (wall)",
+          "wall_s": 1.28,
+          "rss_mb": 144
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.06,
+          "rss_mb": 50
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.22,
+          "rss_mb": 76
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "synthesise + stage Spa entry (.skyapp)",
+          "wall_s": 0.01,
+          "rss_mb": 77
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "spa split (partition + generate)",
+          "wall_s": 0.25,
+          "rss_mb": 79
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "frontend leg (child sky build, wasm)",
+          "wall_s": 1.29,
+          "rss_mb": 79
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "backend leg (child sky build, native)",
+          "wall_s": 1.23,
+          "rss_mb": 79
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "both legs (wall)",
+          "wall_s": 2.52,
+          "rss_mb": 79
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "stage static assets (dist + backend)",
+          "wall_s": 0.00,
+          "rss_mb": 79
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "total (wall)",
+          "wall_s": 3.13,
+          "rss_mb": 79
+        }
+      ]
+    },
+    {
+      "case": "app50-web:app",
+      "scenario": "newdir",
+      "rep": 1,
+      "wall_s": 33.84,
+      "cpu_s": 56.58,
+      "peak_rss_bytes": 678379520,
+      "timings": [
+        {
+          "scope": "sky build in backend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.33,
+          "rss_mb": 77
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.58,
+          "rss_mb": 111
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.05,
+          "rss_mb": 111
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 111
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go build (native)",
+          "wall_s": 6.27,
+          "rss_mb": 111
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "total (wall)",
+          "wall_s": 7.30,
+          "rss_mb": 111
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.32,
+          "rss_mb": 77
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.54,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.05,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go build (wasm, GOOS=js)",
+          "wall_s": 2.47,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "stage dist bundle (hash + copy)",
+          "wall_s": 0.07,
+          "rss_mb": 121
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 1.53,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 22.34,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 0.01,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 0.02,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "total (wall)",
+          "wall_s": 25.88,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.06,
+          "rss_mb": 50
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.24,
+          "rss_mb": 78
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "synthesise + stage Spa entry (.skyapp)",
+          "wall_s": 0.00,
+          "rss_mb": 79
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "spa split (partition + generate)",
+          "wall_s": 0.26,
+          "rss_mb": 80
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "frontend leg (child sky build, wasm)",
+          "wall_s": 25.89,
+          "rss_mb": 80
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "backend leg (child sky build, native)",
+          "wall_s": 7.31,
+          "rss_mb": 80
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "both legs (wall)",
+          "wall_s": 33.20,
+          "rss_mb": 80
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "stage static assets (dist + backend)",
+          "wall_s": 0.00,
+          "rss_mb": 80
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "total (wall)",
+          "wall_s": 33.84,
+          "rss_mb": 80
+        }
+      ]
+    },
+    {
+      "case": "app50-web:app",
+      "scenario": "edit",
+      "rep": 1,
+      "wall_s": 29.56,
+      "cpu_s": 38.32,
+      "peak_rss_bytes": 631767040,
+      "timings": [
+        {
+          "scope": "sky build in backend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.36,
+          "rss_mb": 77
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.58,
+          "rss_mb": 110
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.07,
+          "rss_mb": 110
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 110
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go build (native)",
+          "wall_s": 2.39,
+          "rss_mb": 110
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "total (wall)",
+          "wall_s": 3.48,
+          "rss_mb": 110
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.32,
+          "rss_mb": 77
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.55,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.08,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go build (wasm, GOOS=js)",
+          "wall_s": 1.30,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "stage dist bundle (hash + copy)",
+          "wall_s": 0.08,
+          "rss_mb": 121
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 1.54,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 23.03,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 0.01,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 0.02,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "total (wall)",
+          "wall_s": 25.45,
+          "rss_mb": 147
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.06,
+          "rss_mb": 50
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.22,
+          "rss_mb": 77
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "synthesise + stage Spa entry (.skyapp)",
+          "wall_s": 0.01,
+          "rss_mb": 77
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "spa split (partition + generate)",
+          "wall_s": 0.25,
+          "rss_mb": 79
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "frontend leg (child sky build, wasm)",
+          "wall_s": 25.46,
+          "rss_mb": 79
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "backend leg (child sky build, native)",
+          "wall_s": 3.49,
+          "rss_mb": 79
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "both legs (wall)",
+          "wall_s": 28.94,
+          "rss_mb": 79
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "stage static assets (dist + backend)",
+          "wall_s": 0.00,
+          "rss_mb": 79
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "total (wall)",
+          "wall_s": 29.55,
+          "rss_mb": 79
+        }
+      ]
+    },
+    {
+      "case": "app50-web:app",
+      "scenario": "cold",
+      "rep": 1,
+      "wall_s": 52.87,
+      "cpu_s": 161.81,
+      "peak_rss_bytes": 820412416,
+      "timings": [
+        {
+          "scope": "sky build in backend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.34,
+          "rss_mb": 77
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.59,
+          "rss_mb": 111
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.04,
+          "rss_mb": 111
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 111
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go build (native)",
+          "wall_s": 20.98,
+          "rss_mb": 111
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "total (wall)",
+          "wall_s": 22.03,
+          "rss_mb": 111
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.32,
+          "rss_mb": 77
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.55,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.04,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go build (wasm, GOOS=js)",
+          "wall_s": 7.37,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "stage dist bundle (hash + copy)",
+          "wall_s": 0.08,
+          "rss_mb": 120
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 1.51,
+          "rss_mb": 146
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 21.78,
+          "rss_mb": 146
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 0.01,
+          "rss_mb": 146
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 0.02,
+          "rss_mb": 146
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 146
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 146
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "total (wall)",
+          "wall_s": 30.23,
+          "rss_mb": 146
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.06,
+          "rss_mb": 50
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.22,
+          "rss_mb": 78
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "synthesise + stage Spa entry (.skyapp)",
+          "wall_s": 0.00,
+          "rss_mb": 78
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "spa split (partition + generate)",
+          "wall_s": 0.24,
+          "rss_mb": 80
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "frontend leg (child sky build, wasm)",
+          "wall_s": 30.23,
+          "rss_mb": 80
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "backend leg (child sky build, native)",
+          "wall_s": 22.03,
+          "rss_mb": 80
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "both legs (wall)",
+          "wall_s": 52.27,
+          "rss_mb": 80
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "stage static assets (dist + backend)",
+          "wall_s": 0.00,
+          "rss_mb": 80
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "total (wall)",
+          "wall_s": 52.87,
+          "rss_mb": 80
+        }
+      ]
+    },
+    {
+      "case": "app100-web:app",
+      "scenario": "first",
+      "rep": 1,
+      "wall_s": 51.64,
+      "cpu_s": 79.27,
+      "peak_rss_bytes": 1046069248,
+      "timings": [
+        {
+          "scope": "sky build in backend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 2.05,
+          "rss_mb": 165
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "lower + emit Go",
+          "wall_s": 2.64,
+          "rss_mb": 222
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.04,
+          "rss_mb": 222
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 222
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go build (native)",
+          "wall_s": 9.03,
+          "rss_mb": 222
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "total (wall)",
+          "wall_s": 13.85,
+          "rss_mb": 222
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 1.99,
+          "rss_mb": 167
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "lower + emit Go",
+          "wall_s": 2.54,
+          "rss_mb": 230
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.05,
+          "rss_mb": 230
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 230
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go build (wasm, GOOS=js)",
+          "wall_s": 3.46,
+          "rss_mb": 230
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "stage dist bundle (hash + copy)",
+          "wall_s": 0.09,
+          "rss_mb": 247
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 1.72,
+          "rss_mb": 280
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 28.61,
+          "rss_mb": 280
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 0.01,
+          "rss_mb": 280
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 0.02,
+          "rss_mb": 280
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 280
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 280
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "total (wall)",
+          "wall_s": 36.84,
+          "rss_mb": 280
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.03,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.08,
+          "rss_mb": 62
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.32,
+          "rss_mb": 104
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "synthesise + stage Spa entry (.skyapp)",
+          "wall_s": 0.00,
+          "rss_mb": 104
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "spa split (partition + generate)",
+          "wall_s": 0.41,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "frontend leg (child sky build, wasm)",
+          "wall_s": 36.85,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "backend leg (child sky build, native)",
+          "wall_s": 13.86,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "both legs (wall)",
+          "wall_s": 50.71,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "stage static assets (dist + backend)",
+          "wall_s": 0.00,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "total (wall)",
+          "wall_s": 51.64,
+          "rss_mb": 107
+        }
+      ]
+    },
+    {
+      "case": "app100-web:app",
+      "scenario": "warm",
+      "rep": 1,
+      "wall_s": 10.96,
+      "cpu_s": 11.56,
+      "peak_rss_bytes": 292077568,
+      "timings": [
+        {
+          "scope": "sky build in backend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 2.08,
+          "rss_mb": 165
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "lower + emit Go",
+          "wall_s": 2.67,
+          "rss_mb": 223
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.07,
+          "rss_mb": 223
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 223
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go build (native)",
+          "wall_s": 0.16,
+          "rss_mb": 223
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "total (wall)",
+          "wall_s": 5.06,
+          "rss_mb": 223
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 1.96,
+          "rss_mb": 169
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "lower + emit Go",
+          "wall_s": 2.53,
+          "rss_mb": 227
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.07,
+          "rss_mb": 227
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 227
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go build (wasm, GOOS=js)",
+          "wall_s": 0.11,
+          "rss_mb": 228
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "stage dist bundle (hash + copy)",
+          "wall_s": 0.10,
+          "rss_mb": 244
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.09,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.09,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 0.01,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 0.02,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "total (wall)",
+          "wall_s": 4.98,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.03,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.09,
+          "rss_mb": 62
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.31,
+          "rss_mb": 104
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "synthesise + stage Spa entry (.skyapp)",
+          "wall_s": 0.01,
+          "rss_mb": 104
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "spa split (partition + generate)",
+          "wall_s": 0.41,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "frontend leg (child sky build, wasm)",
+          "wall_s": 4.98,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "backend leg (child sky build, native)",
+          "wall_s": 5.07,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "both legs (wall)",
+          "wall_s": 10.05,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "stage static assets (dist + backend)",
+          "wall_s": 0.00,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "total (wall)",
+          "wall_s": 10.96,
+          "rss_mb": 107
+        }
+      ]
+    },
+    {
+      "case": "app100-web:app",
+      "scenario": "newdir",
+      "rep": 1,
+      "wall_s": 49.98,
+      "cpu_s": 79,
+      "peak_rss_bytes": 1039892480,
+      "timings": [
+        {
+          "scope": "sky build in backend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 2.09,
+          "rss_mb": 165
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "lower + emit Go",
+          "wall_s": 2.65,
+          "rss_mb": 226
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.05,
+          "rss_mb": 226
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 226
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go build (native)",
+          "wall_s": 7.79,
+          "rss_mb": 226
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "total (wall)",
+          "wall_s": 12.66,
+          "rss_mb": 226
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 1.96,
+          "rss_mb": 169
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "lower + emit Go",
+          "wall_s": 2.53,
+          "rss_mb": 225
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.04,
+          "rss_mb": 225
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 225
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go build (wasm, GOOS=js)",
+          "wall_s": 3.37,
+          "rss_mb": 225
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "stage dist bundle (hash + copy)",
+          "wall_s": 0.09,
+          "rss_mb": 242
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 1.71,
+          "rss_mb": 276
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 28.35,
+          "rss_mb": 276
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 0.01,
+          "rss_mb": 276
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 0.02,
+          "rss_mb": 276
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 276
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 276
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "total (wall)",
+          "wall_s": 36.43,
+          "rss_mb": 276
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.08,
+          "rss_mb": 62
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.30,
+          "rss_mb": 105
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "synthesise + stage Spa entry (.skyapp)",
+          "wall_s": 0.00,
+          "rss_mb": 105
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "spa split (partition + generate)",
+          "wall_s": 0.40,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "frontend leg (child sky build, wasm)",
+          "wall_s": 36.44,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "backend leg (child sky build, native)",
+          "wall_s": 12.67,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "both legs (wall)",
+          "wall_s": 49.11,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "stage static assets (dist + backend)",
+          "wall_s": 0.00,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "total (wall)",
+          "wall_s": 49.98,
+          "rss_mb": 108
+        }
+      ]
+    },
+    {
+      "case": "app100-web:app",
+      "scenario": "edit",
+      "rep": 1,
+      "wall_s": 45.32,
+      "cpu_s": 60.88,
+      "peak_rss_bytes": 1031946240,
+      "timings": [
+        {
+          "scope": "sky build in backend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 2.06,
+          "rss_mb": 165
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "lower + emit Go",
+          "wall_s": 2.63,
+          "rss_mb": 224
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.08,
+          "rss_mb": 224
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 224
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go build (native)",
+          "wall_s": 3.74,
+          "rss_mb": 224
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "total (wall)",
+          "wall_s": 8.59,
+          "rss_mb": 224
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 1.96,
+          "rss_mb": 169
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "lower + emit Go",
+          "wall_s": 2.52,
+          "rss_mb": 227
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.08,
+          "rss_mb": 227
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 227
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go build (wasm, GOOS=js)",
+          "wall_s": 2.15,
+          "rss_mb": 227
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "stage dist bundle (hash + copy)",
+          "wall_s": 0.09,
+          "rss_mb": 244
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 1.72,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 28.88,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 0.01,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 0.02,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "total (wall)",
+          "wall_s": 35.78,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.03,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.08,
+          "rss_mb": 62
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.34,
+          "rss_mb": 104
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "synthesise + stage Spa entry (.skyapp)",
+          "wall_s": 0.01,
+          "rss_mb": 104
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "spa split (partition + generate)",
+          "wall_s": 0.41,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "frontend leg (child sky build, wasm)",
+          "wall_s": 35.78,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "backend leg (child sky build, native)",
+          "wall_s": 8.60,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "both legs (wall)",
+          "wall_s": 44.39,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "stage static assets (dist + backend)",
+          "wall_s": 0.00,
+          "rss_mb": 107
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "total (wall)",
+          "wall_s": 45.31,
+          "rss_mb": 107
+        }
+      ]
+    },
+    {
+      "case": "app100-web:app",
+      "scenario": "cold",
+      "rep": 1,
+      "wall_s": 70.22,
+      "cpu_s": 181.33,
+      "peak_rss_bytes": 1001947136,
+      "timings": [
+        {
+          "scope": "sky build in backend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 2.05,
+          "rss_mb": 165
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "lower + emit Go",
+          "wall_s": 2.63,
+          "rss_mb": 227
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.05,
+          "rss_mb": 227
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 227
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go build (native)",
+          "wall_s": 22.97,
+          "rss_mb": 227
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "total (wall)",
+          "wall_s": 27.79,
+          "rss_mb": 227
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 28
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 1.95,
+          "rss_mb": 169
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "lower + emit Go",
+          "wall_s": 2.53,
+          "rss_mb": 227
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.04,
+          "rss_mb": 227
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 227
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go build (wasm, GOOS=js)",
+          "wall_s": 8.21,
+          "rss_mb": 228
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "stage dist bundle (hash + copy)",
+          "wall_s": 0.09,
+          "rss_mb": 244
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 1.72,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 28.60,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 0.01,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 0.02,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "total (wall)",
+          "wall_s": 41.54,
+          "rss_mb": 278
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 23
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.08,
+          "rss_mb": 63
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.30,
+          "rss_mb": 105
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "synthesise + stage Spa entry (.skyapp)",
+          "wall_s": 0.00,
+          "rss_mb": 105
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "spa split (partition + generate)",
+          "wall_s": 0.40,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "frontend leg (child sky build, wasm)",
+          "wall_s": 41.54,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "backend leg (child sky build, native)",
+          "wall_s": 27.80,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "both legs (wall)",
+          "wall_s": 69.34,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "stage static assets (dist + backend)",
+          "wall_s": 0.00,
+          "rss_mb": 108
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "total (wall)",
+          "wall_s": 70.22,
+          "rss_mb": 108
+        }
+      ]
+    },
+    {
+      "case": "app200-web:app",
+      "scenario": "first",
+      "rep": 1,
+      "wall_s": 131.48,
+      "cpu_s": 183.85,
+      "peak_rss_bytes": 2836660224,
+      "timings": [
+        {
+          "scope": "sky build in backend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.05,
+          "rss_mb": 45
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 46
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 14.24,
+          "rss_mb": 483
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "lower + emit Go",
+          "wall_s": 16.81,
+          "rss_mb": 617
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.04,
+          "rss_mb": 617
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 617
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go build (native)",
+          "wall_s": 14.43,
+          "rss_mb": 617
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "total (wall)",
+          "wall_s": 45.65,
+          "rss_mb": 617
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.03,
+          "rss_mb": 42
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 42
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 13.80,
+          "rss_mb": 575
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "lower + emit Go",
+          "wall_s": 16.27,
+          "rss_mb": 797
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.05,
+          "rss_mb": 797
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 797
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go build (wasm, GOOS=js)",
+          "wall_s": 5.91,
+          "rss_mb": 798
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "stage dist bundle (hash + copy)",
+          "wall_s": 0.16,
+          "rss_mb": 798
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 2.31,
+          "rss_mb": 837
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 47.68,
+          "rss_mb": 837
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 0.01,
+          "rss_mb": 837
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 0.02,
+          "rss_mb": 837
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.01,
+          "rss_mb": 837
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.01,
+          "rss_mb": 837
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "total (wall)",
+          "wall_s": 84.00,
+          "rss_mb": 837
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.03,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.18,
+          "rss_mb": 103
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.57,
+          "rss_mb": 189
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "synthesise + stage Spa entry (.skyapp)",
+          "wall_s": 0.01,
+          "rss_mb": 189
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "spa split (partition + generate)",
+          "wall_s": 0.93,
+          "rss_mb": 193
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "frontend leg (child sky build, wasm)",
+          "wall_s": 84.02,
+          "rss_mb": 193
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "backend leg (child sky build, native)",
+          "wall_s": 45.66,
+          "rss_mb": 193
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "both legs (wall)",
+          "wall_s": 129.68,
+          "rss_mb": 193
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "stage static assets (dist + backend)",
+          "wall_s": 0.00,
+          "rss_mb": 193
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "total (wall)",
+          "wall_s": 131.48,
+          "rss_mb": 193
+        }
+      ]
+    },
+    {
+      "case": "app200-web:app",
+      "scenario": "warm",
+      "rep": 1,
+      "wall_s": 65.22,
+      "cpu_s": 65.24,
+      "peak_rss_bytes": 922845184,
+      "timings": [
+        {
+          "scope": "sky build in backend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.03,
+          "rss_mb": 45
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 45
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 14.46,
+          "rss_mb": 482
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "lower + emit Go",
+          "wall_s": 16.89,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.07,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go build (native)",
+          "wall_s": 0.58,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "total (wall)",
+          "wall_s": 32.11,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.03,
+          "rss_mb": 42
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 42
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 14.02,
+          "rss_mb": 553
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "lower + emit Go",
+          "wall_s": 16.53,
+          "rss_mb": 793
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.09,
+          "rss_mb": 793
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 793
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go build (wasm, GOOS=js)",
+          "wall_s": 0.21,
+          "rss_mb": 793
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "stage dist bundle (hash + copy)",
+          "wall_s": 0.16,
+          "rss_mb": 822
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.15,
+          "rss_mb": 879
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.15,
+          "rss_mb": 880
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 0.01,
+          "rss_mb": 880
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 0.02,
+          "rss_mb": 880
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 880
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.00,
+          "rss_mb": 880
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "total (wall)",
+          "wall_s": 31.30,
+          "rss_mb": 880
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.03,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.18,
+          "rss_mb": 104
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.56,
+          "rss_mb": 186
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "synthesise + stage Spa entry (.skyapp)",
+          "wall_s": 0.01,
+          "rss_mb": 187
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "spa split (partition + generate)",
+          "wall_s": 0.91,
+          "rss_mb": 197
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "frontend leg (child sky build, wasm)",
+          "wall_s": 31.31,
+          "rss_mb": 197
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "backend leg (child sky build, native)",
+          "wall_s": 32.12,
+          "rss_mb": 197
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "both legs (wall)",
+          "wall_s": 63.43,
+          "rss_mb": 197
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "stage static assets (dist + backend)",
+          "wall_s": 0.00,
+          "rss_mb": 197
+        },
+        {
+          "scope": "sky build in a/",
+          "phase": "total (wall)",
+          "wall_s": 65.22,
+          "rss_mb": 197
+        }
+      ]
+    },
+    {
+      "case": "app200-web:app",
+      "scenario": "newdir",
+      "rep": 1,
+      "wall_s": 157.08,
+      "cpu_s": 278.65,
+      "peak_rss_bytes": 3057188864,
+      "timings": [
+        {
+          "scope": "sky build in backend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.05,
+          "rss_mb": 45
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 45
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 14.26,
+          "rss_mb": 483
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "lower + emit Go",
+          "wall_s": 17.41,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.05,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go build (native)",
+          "wall_s": 30.96,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "total (wall)",
+          "wall_s": 62.83,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.03,
+          "rss_mb": 42
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 42
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 13.81,
+          "rss_mb": 575
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "lower + emit Go",
+          "wall_s": 16.27,
+          "rss_mb": 792
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.05,
+          "rss_mb": 792
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go cache maintain",
+          "wall_s": 3.38,
+          "rss_mb": 792
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go build (wasm, GOOS=js)",
+          "wall_s": 11.41,
+          "rss_mb": 792
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "stage dist bundle (hash + copy)",
+          "wall_s": 0.16,
+          "rss_mb": 811
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 2.30,
+          "rss_mb": 869
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 47.22,
+          "rss_mb": 869
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 0.01,
+          "rss_mb": 869
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 0.02,
+          "rss_mb": 869
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.01,
+          "rss_mb": 869
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.01,
+          "rss_mb": 869
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "total (wall)",
+          "wall_s": 92.42,
+          "rss_mb": 869
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.02,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.18,
+          "rss_mb": 104
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.57,
+          "rss_mb": 186
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "synthesise + stage Spa entry (.skyapp)",
+          "wall_s": 0.01,
+          "rss_mb": 187
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "spa split (partition + generate)",
+          "wall_s": 0.96,
+          "rss_mb": 197
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "frontend leg (child sky build, wasm)",
+          "wall_s": 92.44,
+          "rss_mb": 197
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "backend leg (child sky build, native)",
+          "wall_s": 62.84,
+          "rss_mb": 197
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "both legs (wall)",
+          "wall_s": 155.28,
+          "rss_mb": 197
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "stage static assets (dist + backend)",
+          "wall_s": 0.00,
+          "rss_mb": 197
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "total (wall)",
+          "wall_s": 157.07,
+          "rss_mb": 197
+        }
+      ]
+    },
+    {
+      "case": "app200-web:app",
+      "scenario": "edit",
+      "rep": 1,
+      "wall_s": 125.59,
+      "cpu_s": 163.91,
+      "peak_rss_bytes": 2842066944,
+      "timings": [
+        {
+          "scope": "sky build in backend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.04,
+          "rss_mb": 45
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 45
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 14.21,
+          "rss_mb": 484
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "lower + emit Go",
+          "wall_s": 16.64,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.07,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go build (native)",
+          "wall_s": 10.40,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "total (wall)",
+          "wall_s": 41.43,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.03,
+          "rss_mb": 42
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 42
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 13.85,
+          "rss_mb": 571
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "lower + emit Go",
+          "wall_s": 16.24,
+          "rss_mb": 791
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.08,
+          "rss_mb": 791
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 791
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go build (wasm, GOOS=js)",
+          "wall_s": 4.55,
+          "rss_mb": 791
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "stage dist bundle (hash + copy)",
+          "wall_s": 0.16,
+          "rss_mb": 820
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 2.31,
+          "rss_mb": 878
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 47.31,
+          "rss_mb": 878
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 0.01,
+          "rss_mb": 878
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 0.02,
+          "rss_mb": 878
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.01,
+          "rss_mb": 878
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.01,
+          "rss_mb": 878
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "total (wall)",
+          "wall_s": 82.31,
+          "rss_mb": 878
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.03,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.18,
+          "rss_mb": 104
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.57,
+          "rss_mb": 186
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "synthesise + stage Spa entry (.skyapp)",
+          "wall_s": 0.01,
+          "rss_mb": 187
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "spa split (partition + generate)",
+          "wall_s": 0.93,
+          "rss_mb": 197
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "frontend leg (child sky build, wasm)",
+          "wall_s": 82.33,
+          "rss_mb": 197
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "backend leg (child sky build, native)",
+          "wall_s": 41.45,
+          "rss_mb": 197
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "both legs (wall)",
+          "wall_s": 123.78,
+          "rss_mb": 197
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "stage static assets (dist + backend)",
+          "wall_s": 0.00,
+          "rss_mb": 197
+        },
+        {
+          "scope": "sky build in b/",
+          "phase": "total (wall)",
+          "wall_s": 125.58,
+          "rss_mb": 197
+        }
+      ]
+    },
+    {
+      "case": "app200-web:app",
+      "scenario": "cold",
+      "rep": 1,
+      "wall_s": 168.18,
+      "cpu_s": 273.82,
+      "peak_rss_bytes": 2899050496,
+      "timings": [
+        {
+          "scope": "sky build in backend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.05,
+          "rss_mb": 45
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 45
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 14.38,
+          "rss_mb": 483
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "lower + emit Go",
+          "wall_s": 17.33,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.05,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "go build (native)",
+          "wall_s": 41.87,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in backend/",
+          "phase": "total (wall)",
+          "wall_s": 73.78,
+          "rss_mb": 605
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.03,
+          "rss_mb": 42
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 43
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 13.94,
+          "rss_mb": 553
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "lower + emit Go",
+          "wall_s": 16.41,
+          "rss_mb": 794
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "write sky-out (Go + runtime + ffi)",
+          "wall_s": 0.04,
+          "rss_mb": 794
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go cache maintain",
+          "wall_s": 0.00,
+          "rss_mb": 794
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "go build (wasm, GOOS=js)",
+          "wall_s": 14.30,
+          "rss_mb": 794
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "stage dist bundle (hash + copy)",
+          "wall_s": 0.16,
+          "rss_mb": 823
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 2.31,
+          "rss_mb": 881
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 47.63,
+          "rss_mb": 881
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9",
+          "wall_s": 0.01,
+          "rss_mb": 881
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11",
+          "wall_s": 0.02,
+          "rss_mb": 881
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress gzip -9 (cached)",
+          "wall_s": 0.01,
+          "rss_mb": 881
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "precompress brotli -11 (cached)",
+          "wall_s": 0.01,
+          "rss_mb": 881
+        },
+        {
+          "scope": "sky build in frontend/",
+          "phase": "total (wall)",
+          "wall_s": 92.61,
+          "rss_mb": 881
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "load sources (stdlib + app)",
+          "wall_s": 0.03,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "parse (app modules)",
+          "wall_s": 0.00,
+          "rss_mb": 24
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "canonicalise + typecheck",
+          "wall_s": 0.18,
+          "rss_mb": 104
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "lower + emit Go",
+          "wall_s": 0.56,
+          "rss_mb": 186
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "synthesise + stage Spa entry (.skyapp)",
+          "wall_s": 0.01,
+          "rss_mb": 187
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "spa split (partition + generate)",
+          "wall_s": 0.92,
+          "rss_mb": 198
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "frontend leg (child sky build, wasm)",
+          "wall_s": 92.63,
+          "rss_mb": 198
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "backend leg (child sky build, native)",
+          "wall_s": 73.79,
+          "rss_mb": 198
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "both legs (wall)",
+          "wall_s": 166.41,
+          "rss_mb": 198
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "stage static assets (dist + backend)",
+          "wall_s": 0.00,
+          "rss_mb": 198
+        },
+        {
+          "scope": "sky build in c/",
+          "phase": "total (wall)",
+          "wall_s": 168.18,
+          "rss_mb": 198
+        }
+      ]
+    }
+  ]
+}

@@ -40,23 +40,27 @@ jobs:
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
       GO_CACHE_BUDGET_MB: '6144'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-web-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-web-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -78,7 +82,7 @@ jobs:
         run: |
           echo "platform: $(node -p 'process.platform')"
           ls -la "examples/26-ui-showcase/snapshots/$(node -p 'process.platform')"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ui-showcase-baselines
           path: examples/26-ui-showcase/snapshots/**

@@ -64,7 +64,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: The pinned llama.cpp source, checked
         run: |
@@ -82,10 +82,11 @@ jobs:
           if [ "$RUNNER_OS" = macOS ]; then brew install ninja; else sudo apt-get update && sudo apt-get install -y ninja-build; fi
           cmake --version
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         if: matrix.target == 'web'
         with:
           go-version-file: runtime-go/go.mod
+          cache: false
 
       # The engine core's contract on the runner's CPU before any target is
       # built: the streamed answer is the one-call answer, in whole UTF-8
@@ -157,7 +158,7 @@ jobs:
           grep -q ios-arm64-simulator "$plist"
           grep -q '<string>ios-arm64</string>' "$plist"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sky-llama-${{ env.LLAMA_BUILD }}-${{ matrix.target }}
           path: ${{ runner.temp }}/out/sky-llama-${{ env.LLAMA_BUILD }}-${{ matrix.target }}.tar.gz
@@ -172,7 +173,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The tag is the URL `sky ai provision --device` downloads from
       # (ai_device.rs RELEASE_TAG); it is derived from the pin, never from
@@ -189,7 +190,7 @@ jobs:
           fi
           echo "tag=$want" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: staging
 

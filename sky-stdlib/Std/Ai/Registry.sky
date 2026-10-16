@@ -1922,7 +1922,16 @@ adapterFor reg ref localEngine =
                                                   , format = "gguf"
                                                   , path = path
                                                   , onDevice =
-                                                      v.onDevice /= Nothing
+                                                      -- A `case`, not `/= Nothing`: the
+                                                      -- erased `!=` kernel's result is
+                                                      -- narrowed at every call site.
+                                                      case v.onDevice of
+
+                                                          Just _ ->
+                                                              True
+
+                                                          Nothing ->
+                                                              False
                                                   })
 
                                Nothing ->

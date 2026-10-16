@@ -512,6 +512,11 @@ The app-shape details (Sky.Live TEA loop, routing, session lifecycle, forms,
   `__Host-sky_sid` over HTTPS, and its value changes at sign-in), and
   cross-instance pub/sub (`store=redis` or
   `SKY_LIVE_BROKER_URL`). `memory` and `sqlite` are single-instance only.
+- Health checks: probe **`/_sky/healthz`** (liveness, always 200) or
+  **`/_sky/readyz`** (503 until the store and database answer, and while
+  draining). Never probe a path the app does not declare (`/healthz`,
+  `/health`): since v0.27.9 the app's `withNotFound` page is sent with **404**,
+  so such a probe fails.
 - Bind address: production binds **all interfaces** by design (containers,
   VMs and proxies need it); dev binds `127.0.0.1`. `SKY_HOST` overrides either
   (`SKY_HOST=127.0.0.1` to keep a production process on loopback behind a local
@@ -615,9 +620,24 @@ A `Dict k v` field crosses the wire through `Codec.dict`.
 
 **Serving the wasm — precompressed.** A Go→wasm client is multi-MB raw (~2.5 MB
 brotli), so `sky build` precompresses the hashed `main.<hash>.wasm` + `wasm_exec.js`
-in `frontend/dist` to `.gz` (always) and `.br` (brotli-11, when the `brotli` tool
-is installed — else it warns once and ships gzip only). Those files sit unused
-until the static host serves them: Caddy `file_server { precompressed br gzip }`
+in `frontend/dist` to `.gz` (`gzip -9`) and `.br` (brotli quality 11, written by
+`sky` itself with the `brotli` crate in parallel parts: no tool needed, ~3x
+quicker than `brotli -q 11` for a file within 1% of its size).
+`--precompress=max|fast|off` (or `SKY_PRECOMPRESS`) picks the level: `fast` is
+brotli 9 + gzip -6 (seconds, ~18% larger `.br`), `off` writes none
+(`--no-precompress` is its alias, and every level first removes the assets'
+earlier `.br` / `.gz`); `max` is the default, and becomes `fast` with a warning
+when the available memory does not hold its parallel brotli. The Sky backend's static
+mounts send them: a request that accepts `br` (else `gzip`; a fixed order, not
+by q-value) gets the `.br` (else `.gz`) file as it is, with the original's
+Content-Type and Last-Modified and an ETag per encoding, only when the build's
+`dist/sky-precompress.json` lists it and the source and sidecar still have the
+size and SHA-256 it records. A Range request that accepts the encoding ranges
+over the sidecar (206 with Content-Encoding); one that does not, a file with no
+listed variant, and a `.gz` / `.br` a user committed in their own static dir get
+the raw file (gzipped on the fly as before; `runtime-go/rt/static_precompressed.go`).
+Every static response says `Vary: Accept-Encoding`.
+A separate static host serves them with Caddy `file_server { precompressed br gzip }`
 (Caddy's `encode` has no brotli), or nginx `gzip_static` + `ngx_brotli`. The wasm
 is content-hashed + `immutable`, so allow a CDN to cache `*.wasm` (Cloudflare does
 not by default). Deploy-time `brotli` bridges are no longer needed — the build
@@ -664,6 +684,24 @@ Rule of thumb: durable, single-owner storage → embedded PG on a **VM or a
 container-with-a-volume**; stateless serverless → **managed PG** (Cloud SQL /
 RDS). Where the bundle cannot run the runtime **refuses loudly** (the "PostgreSQL
 binaries do not run" check), it does not silently lose data.
+
+**Build speed — what the build reuses.** Every `go build` goes through one
+builder (`rust/crates/project/src/go_cmd.rs`) and passes `-trimpath`, so a
+package compiled in one directory is a cache hit in any other (a new checkout,
+each Sky.Spa leg, a desktop shell); `--no-trimpath` opts out and `sky run
+--profile` builds without it. `go build -p` is sized from the dependency
+compiles (`go_jobs.rs`; `main` compiles alone), `--go-jobs <n>` overrides it.
+Exactly pinned Go FFI modules skip `go get` on a rebuild (`go_get_memo.rs`).
+An SSR client build's backend leg builds beside its frontend leg and links the
+wasm name through `skybuildinfo`, handed over on the backend's stdin
+(`spa_wasm_handoff.rs`); the wasm client links a constant stamp, so its hashed
+name changes only with its source. The bundle's `.gz` /
+`.br` are compressed at once, beside the backend leg. Over its cap the Go cache
+loses its least recently used entries, not everything. For CI, cache
+`~/.sky/go-build`, `~/go/pkg/mod` and `~/.cache/sky/precompress` — not
+`~/.cache/go-build`, which `actions/setup-go` caches — and never restore a
+cache an untrusted job can write into a release job (`docs/tooling/cli.md`,
+"Caching builds in CI").
 
 **Never run `sky build` from the repo root** — it overwrites the compiler binary
 in `sky-out/`. Always `cd` into the example/project dir first.

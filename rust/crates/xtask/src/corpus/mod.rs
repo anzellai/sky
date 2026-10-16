@@ -203,8 +203,11 @@ pub fn n_min() -> usize {
 /// gate reached about case 350 of 554 when the harness killed it at its 4000 s
 /// budget on a CI runner (about 11.4 s of wall clock per case, Go build cache
 /// restored). A runner's cores bound the per-case `go build`, so the only lever
-/// that adds hardware is more runners. Four shards of 138-139 cases each need
-/// about 1,590 s at that rate, which is 44 % of the 3600 s shard budget.
+/// that adds hardware is more runners. The v0.27.9 build-speed work then cut
+/// the per-case cost to about 0.8 s (530 cases in 422 s, release run
+/// 38922351710), so the four shards share one CI job today, each under a
+/// 1200 s budget. The shards stay: they keep each slice's count, budget and
+/// proof separate, and a slow slice moves to its own runner with no new code.
 pub const SHARDS: usize = 4;
 
 /// The number of cases shard `i` of `n` holds when the corpus has `total`.

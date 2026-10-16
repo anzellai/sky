@@ -81,7 +81,13 @@ struct CodecBinding {
     /// the binding's type annotation — the surface used for the generated Req/
     /// Resp field type, because the solved `coded_ty` has type aliases EXPANDED
     /// (a `List Todo` field would otherwise render as `List { id : Int, … }`).
-    surface: String,
+    /// `None` when the binding has no `Codec <T>` annotation: the resolver then
+    /// names the solved type through the project's shapes
+    /// ([`CodecResolver::type_surface`]), or refuses. (It used to render the
+    /// solved type with `render_ty`, which writes a record as `any`; an
+    /// unannotated `presetListCodec = Codec.list presetCodec` put `List any`
+    /// into the generated wire records.)
+    surface: Option<String>,
 }
 
 /// A resolved field codec: the codec expression to emit + the surface type name
@@ -273,6 +279,20 @@ struct ProjectShapes {
     external_modules: HashSet<String>,
     /// The module names of the project's own modules.
     project_modules: HashSet<String>,
+    /// The record aliases that take type parameters (`type alias Paged a = { … }`):
+    /// qualified key → the parameter names and each field's type (aliases
+    /// expanded, parameters left as type variables). A use names one
+    /// instantiation (`Paged Item`), and the solved row of that use holds only
+    /// the fields, so the resolver recovers the arguments by matching these
+    /// field types against the row ([`CodecResolver::instantiation`]).
+    generic_records: HashMap<String, GenericRecord>,
+}
+
+/// A record alias with type parameters, as [`ProjectShapes::generic_records`]
+/// holds it.
+struct GenericRecord {
+    params: Vec<String>,
+    fields: Vec<(String, ty::Ty)>,
 }
 
 /// The import alias under which a generated module names a Sky DEPENDENCY
@@ -395,6 +415,11 @@ struct CodecResolver<'a> {
     /// Each user union's constructor payloads, so a key held inside a union
     /// (`type KeyBox = KeyBox Noise.Handshake`) is found (B-2).
     unions: UnionPayloads,
+    /// The project types a generated field type names that no wire field's
+    /// solved type carries by name (the type of an unannotated codec
+    /// binding, spelt by [`CodecResolver::type_surface`]): seeds for the copy
+    /// into `Shared`.
+    named_types: BTreeSet<String>,
 }
 
 /// One auto-derived record codec: the record's qualified key, how `Shared`
@@ -403,6 +428,9 @@ struct AutoRecord {
     key: String,
     type_ref: String,
     blank: String,
+    /// The project types the type arguments of a parameterised record name
+    /// (`Item` in `Paged Item`): `Shared` must declare them as well.
+    arg_types: Vec<String>,
 }
 
 impl<'a> CodecResolver<'a> {
@@ -416,6 +444,7 @@ impl<'a> CodecResolver<'a> {
             external_modules: BTreeSet::new(),
             device_keys: false,
             unions: UnionPayloads::new(),
+            named_types: BTreeSet::new(),
         }
     }
 
@@ -429,12 +458,27 @@ impl<'a> CodecResolver<'a> {
         }
         // (a) A project-defined `Codec <T>` binding for exactly this type. Use
         // the binding's DECLARED surface for the field type (aliases un-expanded).
-        for b in self.registry {
+        let registry: &'a [CodecBinding] = self.registry;
+        for b in registry {
             if ty_matches(t, &b.coded_ty) {
+                let surface = match &b.surface {
+                    Some(s) => s.clone(),
+                    None => {
+                        let mut seeds = Vec::new();
+                        let s = self.type_surface(&b.coded_ty, &mut seeds).ok_or_else(|| {
+                            format!(
+                                "the codec binding `{0}` has no type annotation, and the split cannot name its type in the generated wire module. Annotate it: `{0} : Codec <T>`.",
+                                b.name
+                            )
+                        })?;
+                        self.named_types.extend(seeds);
+                        s
+                    }
+                };
                 self.needed.insert(b.name.clone());
                 return Ok(ResolvedCodec {
                     codec: b.name.clone(),
-                    surface: b.surface.clone(),
+                    surface,
                 });
             }
         }
@@ -541,7 +585,7 @@ impl<'a> CodecResolver<'a> {
             // a `Codec.auto` codec for it (§14 #2, option B).
             if args.is_empty() {
                 if let Some(key) = self.shapes.record_key(name.as_str()) {
-                    return self.auto_derive_record(key);
+                    return self.auto_derive_record(key, None);
                 }
             }
             // A bare data-carrying / enum UNION cannot cross the wire under
@@ -551,9 +595,15 @@ impl<'a> CodecResolver<'a> {
             // (option A). A union nested INSIDE a record is fine — that path is
             // reached via the record blank, not here.
             if let Some(key) = self.shapes.union_key(name.as_str()) {
+                let enum_only = self
+                    .shapes
+                    .unions
+                    .get(&key)
+                    .is_some_and(|ctors| ctors.iter().all(|(_, nullary)| *nullary));
                 return Err(bare_union_no_codec_msg(
                     &self.shapes.type_ref(&key),
                     &render_ty(t),
+                    enum_only,
                 ));
             }
         }
@@ -597,7 +647,7 @@ impl<'a> CodecResolver<'a> {
             let set: BTreeSet<String> =
                 fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
             if let Some(key) = self.shapes.record_by_fields.get(&set).cloned() {
-                return self.auto_derive_record(key);
+                return self.auto_derive_record(key, Some(t));
             }
             // A record whose nominal name we cannot recover (an anonymous inline
             // record, or a field-set shared by two named records) — fail closed
@@ -620,10 +670,44 @@ impl<'a> CodecResolver<'a> {
     /// Two DIFFERENT records that `Shared` would name alike (two project
     /// modules each declaring `Item`) are refused too: the generated module
     /// names a project type by its bare name, so it could not tell them apart.
-    fn auto_derive_record(&mut self, key: String) -> Result<ResolvedCodec, String> {
+    ///
+    /// A record alias with type parameters (`type alias Paged a = { … }`) is
+    /// named with the arguments of this use (`Paged Item`), recovered from the
+    /// solved row `row`; each instantiation gets its own blank and codec
+    /// (`autoPaged_ItemCodec_`). Before v0.27.9 the split wrote the bare name
+    /// (`Paged`), which left the parameter free in every generated annotation
+    /// that named the type, and the backend failed to type-check.
+    fn auto_derive_record(
+        &mut self,
+        key: String,
+        row: Option<&ty::Ty>,
+    ) -> Result<ResolvedCodec, String> {
         let shapes: &'a ProjectShapes = self.shapes;
-        let ident = shapes.ident(&key);
+        let (type_ref, ident, arg_types) = match shapes.generic_records.get(&key) {
+            None => (shapes.type_ref(&key), shapes.ident(&key), Vec::new()),
+            Some(generic) => {
+                let (args, arg_types) = self.instantiation(&key, generic, row)?;
+                let shown: Vec<String> = args.iter().map(|a| wrap_arg(a)).collect();
+                let type_ref = format!("{} {}", shapes.type_ref(&key), shown.join(" "));
+                let mut ident = shapes.ident(&key);
+                for a in &args {
+                    ident.push('_');
+                    ident.extend(a.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_'));
+                }
+                (type_ref, ident, arg_types)
+            }
+        };
         match self.auto_records.get(&ident) {
+            Some(existing) if existing.key == key && existing.type_ref != type_ref => {
+                return Err(format!(
+                    "two uses of the record `{}` cross the Sky.Spa wire as `{}` and `{}`, and the generated wire module would give both the same codec name. Declare a `Codec ({})` binding in the project for one of them. {}",
+                    ProjectShapes::bare(&key),
+                    existing.type_ref,
+                    type_ref,
+                    type_ref,
+                    crate::migration_see(SPLIT_REFUSALS)
+                ));
+            }
             Some(existing) if existing.key != key => {
                 return Err(format!(
                     "two record types named `{}` cross the Sky.Spa wire (`{}` and `{}`). The generated wire module names a project type by its bare name, so it cannot tell them apart. Rename one of them. {}",
@@ -644,15 +728,128 @@ impl<'a> CodecResolver<'a> {
                     ident.clone(),
                     AutoRecord {
                         key: key.clone(),
-                        type_ref: shapes.type_ref(&key),
+                        type_ref: type_ref.clone(),
                         blank,
+                        arg_types,
                     },
                 );
             }
         }
         Ok(ResolvedCodec {
             codec: format!("auto{ident}Codec_"),
-            surface: shapes.type_ref(&key),
+            surface: type_ref,
+        })
+    }
+
+    /// The type arguments of one use of the parameterised record `key`, as
+    /// generated source spells them, recovered by matching the record's field
+    /// types against the solved row of the use. Also returns the project types
+    /// the arguments name. Fails closed when an argument cannot be recovered
+    /// (a parameter no field mentions, or a row that is not concrete there).
+    fn instantiation(
+        &mut self,
+        key: &str,
+        generic: &GenericRecord,
+        row: Option<&ty::Ty>,
+    ) -> Result<(Vec<String>, Vec<String>), String> {
+        let name = ProjectShapes::bare(key);
+        let refuse = |why: &str| {
+            format!(
+                "the record `{name}` takes type parameters ({}), and the split cannot name this use of it: {why}. Declare a `Codec ({name} …)` binding for the exact type in the project (spa-split copies it into Shared). {}",
+                generic.params.join(", "),
+                crate::migration_see(SPLIT_REFUSALS)
+            )
+        };
+        let Some(row @ ty::Ty::Record(..)) = row else {
+            return Err(refuse(
+                "the use has no field types to read the arguments from",
+            ));
+        };
+        let mut bound: HashMap<String, ty::Ty> = HashMap::new();
+        bind_type_params(
+            &ty::Ty::Record(
+                generic
+                    .fields
+                    .iter()
+                    .map(|(n, t)| (base::Name::new(n), t.clone()))
+                    .collect(),
+                None,
+            ),
+            row,
+            &generic.params,
+            &mut bound,
+        );
+        let mut args = Vec::new();
+        let mut arg_types = Vec::new();
+        for p in &generic.params {
+            let Some(t) = bound.get(p) else {
+                return Err(refuse(&format!("no field shows what `{p}` is")));
+            };
+            let shown = self
+                .type_surface(t, &mut arg_types)
+                .ok_or_else(|| refuse(&format!("`{p}` is `{}` here", render_ty(t))))?;
+            args.push(shown);
+        }
+        Ok((args, arg_types))
+    }
+
+    /// How generated source spells the solved type `t`, for a type argument:
+    /// a project or dependency type by [`ProjectShapes::type_ref`] (a record
+    /// recovered from its field set), a stdlib type by its tail name. Adds
+    /// each project type it names to `seeds`. `None` for a type with no
+    /// spelling (a type variable, a function, an anonymous record).
+    fn type_surface(&mut self, t: &ty::Ty, seeds: &mut Vec<String>) -> Option<String> {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            let shapes: &'a ProjectShapes = self.shapes;
+            let name_key = |this: &mut Self, key: &str, seeds: &mut Vec<String>| {
+                if shapes.is_external(key) {
+                    this.external_modules
+                        .insert(ProjectShapes::module_of(key).to_string());
+                } else {
+                    seeds.push(ProjectShapes::bare(key).to_string());
+                }
+                shapes.type_ref(key)
+            };
+            match t {
+                ty::Ty::App(n, args) => {
+                    let head = match shapes.key_of(n.as_str()) {
+                        Some(k) => name_key(self, k, seeds),
+                        None => tail_seg(n.as_str()).to_string(),
+                    };
+                    let mut out = head;
+                    for a in args {
+                        out.push(' ');
+                        out.push_str(&wrap_arg(&self.type_surface(a, seeds)?));
+                    }
+                    Some(out)
+                }
+                ty::Ty::Record(fields, _) => {
+                    let set: BTreeSet<String> =
+                        fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
+                    let key = shapes.record_by_fields.get(&set)?.clone();
+                    match shapes.generic_records.get(&key) {
+                        None => Some(name_key(self, &key, seeds)),
+                        Some(generic) => {
+                            let (args, mut inner) =
+                                self.instantiation(&key, generic, Some(t)).ok()?;
+                            seeds.append(&mut inner);
+                            let head = name_key(self, &key, seeds);
+                            let shown: Vec<String> = args.iter().map(|a| wrap_arg(a)).collect();
+                            Some(format!("{head} {}", shown.join(" ")))
+                        }
+                    }
+                }
+                ty::Ty::Tuple(xs) => {
+                    let mut parts = Vec::new();
+                    for x in xs {
+                        parts.push(self.type_surface(x, seeds)?);
+                    }
+                    Some(format!("( {} )", parts.join(", ")))
+                }
+                ty::Ty::Unit => Some("()".to_string()),
+                _ => None,
+            }
         })
     }
 
@@ -748,8 +945,14 @@ fn no_codec_msg(surface: &str) -> String {
 }
 
 /// The actionable error for a bare top-level union that `Codec.auto` cannot
-/// decode across the wire.
-fn bare_union_no_codec_msg(name: &str, surface: &str) -> String {
+/// decode across the wire. An enum (every constructor nullary) is named as
+/// one, with the `Codec.enum` binding that carries it.
+fn bare_union_no_codec_msg(name: &str, surface: &str, enum_only: bool) -> String {
+    if enum_only {
+        return format!(
+            "no codec for a field of type `{surface}` — `Codec.auto` cannot DECODE a bare union across the Sky.Spa wire, an enum included (only a record's FIELDS decode an ADT). Define a top-level `Codec {name}` binding in the project (spa-split copies it into Shared): for an enum, `Codec.enum [ ( Ctor, \"ctor\" ), … ]`. Or carry the value inside a record."
+        );
+    }
     format!(
         "no codec for a field of type `{surface}` — `Codec.auto` cannot DECODE a bare data-carrying union across the Sky.Spa wire (only a record's FIELDS decode an ADT). Define a top-level `Codec {name}` binding in the project (spa-split copies it into Shared), or carry the value inside a record."
     )
@@ -810,28 +1013,30 @@ fn tail_seg(name: &str) -> &str {
 /// module differ when the modules differ; a bare name is "module unknown") — enough to match a field's type against a
 /// user `Codec <T>` binding's T (`List Todo` ≡ `List Todo`).
 fn ty_matches(a: &ty::Ty, b: &ty::Ty) -> bool {
-    use ty::Ty;
-    match (a, b) {
-        (Ty::App(n1, a1), Ty::App(n2, a2)) => {
-            ty::nominal::same(n1.as_str(), n2.as_str())
-                && a1.len() == a2.len()
-                && a1.iter().zip(a2).all(|(x, y)| ty_matches(x, y))
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        use ty::Ty;
+        match (a, b) {
+            (Ty::App(n1, a1), Ty::App(n2, a2)) => {
+                ty::nominal::same(n1.as_str(), n2.as_str())
+                    && a1.len() == a2.len()
+                    && a1.iter().zip(a2).all(|(x, y)| ty_matches(x, y))
+            }
+            (Ty::Tuple(x), Ty::Tuple(y)) => {
+                x.len() == y.len() && x.iter().zip(y).all(|(p, q)| ty_matches(p, q))
+            }
+            (Ty::Record(f1, _), Ty::Record(f2, _)) => {
+                f1.len() == f2.len()
+                    && f1.iter().zip(f2).all(|((n1, t1), (n2, t2))| {
+                        n1.as_str() == n2.as_str() && ty_matches(t1, t2)
+                    })
+            }
+            (Ty::Var(_), Ty::Var(_)) => true,
+            (Ty::Unit, Ty::Unit) => true,
+            (Ty::Fun(a1, b1), Ty::Fun(a2, b2)) => ty_matches(a1, a2) && ty_matches(b1, b2),
+            _ => false,
         }
-        (Ty::Tuple(x), Ty::Tuple(y)) => {
-            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| ty_matches(p, q))
-        }
-        (Ty::Record(f1, _), Ty::Record(f2, _)) => {
-            f1.len() == f2.len()
-                && f1
-                    .iter()
-                    .zip(f2)
-                    .all(|((n1, t1), (n2, t2))| n1.as_str() == n2.as_str() && ty_matches(t1, t2))
-        }
-        (Ty::Var(_), Ty::Var(_)) => true,
-        (Ty::Unit, Ty::Unit) => true,
-        (Ty::Fun(a1, b1), Ty::Fun(a2, b2)) => ty_matches(a1, a2) && ty_matches(b1, b2),
-        _ => false,
-    }
+    })
 }
 
 /// Collect the bare name of every PROJECT type declaration a type names —
@@ -841,7 +1046,8 @@ fn ty_matches(a: &ty::Ty, b: &ty::Ty) -> bool {
 /// dependency type never seeds a copy of a same-named project type. A bare
 /// name (declaring module unknown) is collected as written.
 fn collect_ty_names(t: &ty::Ty, shapes: &ProjectShapes, out: &mut BTreeSet<String>) {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         ty::Ty::App(name, args) => {
             let n = name.as_str();
             match shapes.key_of(n) {
@@ -877,7 +1083,7 @@ fn collect_ty_names(t: &ty::Ty, shapes: &ProjectShapes, out: &mut BTreeSet<Strin
             collect_ty_names(b, shapes, out);
         }
         ty::Ty::Var(_) | ty::Ty::Unit | ty::Ty::Error => {}
-    }
+    })
 }
 
 /// What `generate` produced, for the CLI + the acceptance test.
@@ -1015,6 +1221,26 @@ struct Wire {
     name: String,
     req_fields: Vec<ModelFieldTy>,
     resp_fields: Vec<ModelFieldTy>,
+    /// How many leading `req_fields` are the whole Model, carried as ONE
+    /// [`WHOLE_MODEL_FIELD`] record that `Codec.inline` flattens into the
+    /// request JSON (a whole-model request that also carries Msg args). Zero for
+    /// every other request. See [`WireShapes`].
+    req_embedded_model: usize,
+}
+
+/// The request field that carries the whole Model on a whole-model request with
+/// Msg args. Its codec is `Codec.inline`, so the JSON stays flat: the Model
+/// fields, in order, then the Msg args — byte for byte what a flat record of
+/// all of them encodes. The Model fields are declared once (`SpaModelWire_`)
+/// instead of once per branch.
+pub(crate) const WHOLE_MODEL_FIELD: &str = "spaWholeModel_";
+
+/// Whether a branch's request embeds the whole Model as [`WHOLE_MODEL_FIELD`]:
+/// it reads the whole model AND binds Msg args. `build_wire` (the `Req` type),
+/// `emit_build_req` (what the client sends) and `emit_reconstruct` (what the
+/// server reads back) all decide with this one predicate, so they agree.
+pub(crate) fn embeds_whole_model(io: &BranchIo, model_field_count: usize) -> bool {
+    io.request_whole_model() && !io.msg_args.is_empty() && model_field_count > 0
 }
 
 /// Look a Model field's typed entry up by name.
@@ -1069,7 +1295,8 @@ fn union_payloads(db: &SkyDatabase) -> UnionPayloads {
 /// recursive type terminates.
 fn device_key_in(t: &ty::Ty, unions: &UnionPayloads) -> Option<String> {
     fn walk(t: &ty::Ty, unions: &UnionPayloads, seen: &mut Vec<String>) -> Option<String> {
-        match t {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match t {
             ty::Ty::App(name, args) => {
                 let n = name.as_str();
                 if DEVICE_KEY_TYPES.contains(&n) {
@@ -1089,7 +1316,7 @@ fn device_key_in(t: &ty::Ty, unions: &UnionPayloads) -> Option<String> {
             ty::Ty::Tuple(items) => items.iter().find_map(|t| walk(t, unions, seen)),
             ty::Ty::Fun(a, b) => walk(a, unions, seen).or_else(|| walk(b, unions, seen)),
             _ => None,
-        }
+        })
     }
     walk(t, unions, &mut Vec::new())
 }
@@ -1329,7 +1556,8 @@ fn codec_auto_unencodable(f: &ModelFieldTy, db: Option<&dyn ty::TyDb>) -> Option
         }
     }
     fn scan(t: &ty::Ty) -> Option<&'static str> {
-        match t {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match t {
             ty::Ty::App(name, args) => {
                 if let Some(kind) = resolved_kind(name.as_str()) {
                     return Some(kind);
@@ -1343,7 +1571,7 @@ fn codec_auto_unencodable(f: &ModelFieldTy, db: Option<&dyn ty::TyDb>) -> Option
             ty::Ty::Tuple(items) => items.iter().find_map(scan),
             ty::Ty::Fun(a, b) => scan(a).or_else(|| scan(b)),
             _ => None,
-        }
+        })
     }
     let why = |kind: &str| -> String {
         if kind == "SecretKey" {
@@ -1599,6 +1827,7 @@ fn build_follow_ctx(
             name: format!("SpaFollow{c}"),
             req_fields: fields,
             resp_fields: Vec::new(),
+            req_embedded_model: 0,
         });
     }
     for w in wires.iter_mut() {
@@ -2115,11 +2344,15 @@ pub(crate) fn emit_reconstruct(io: &BranchIo, model_fields: &[ModelFieldTy]) -> 
     } else if whole && io.msg_args.is_empty() {
         // Req IS the whole model.
         "                m =\n                    p\n".to_string()
+    } else if embeds_whole_model(io, model_fields.len()) {
+        // Whole model PLUS Msg-arg fields — the model rides as ONE embedded
+        // record (`WHOLE_MODEL_FIELD`, flattened on the wire by `Codec.inline`);
+        // the Msg args are read separately via `p.<arg>` in the ctor application
+        // by the caller.
+        format!("                m =\n                    p.{WHOLE_MODEL_FIELD}\n")
     } else if whole {
-        // Whole model PLUS Msg-arg fields — `p` carries the Msg args too
-        // (build_wire appends them), so `p` is WIDER than `Model`. Select the
-        // model fields back out into a `Model` record; the Msg args are read
-        // separately via `p.<arg>` in the ctor application by the caller.
+        // Whole model PLUS Msg-arg fields with no known model fields: select
+        // the (empty) model field list back out.
         let sets = model_fields
             .iter()
             .enumerate()
@@ -2167,24 +2400,27 @@ pub(crate) fn emit_build_req(
     let whole = io.request_whole_model();
     if whole && io.msg_args.is_empty() {
         model_param.to_string()
-    } else if whole {
-        let mut parts: Vec<String> = model_field_names
-            .iter()
-            .map(|f| format!("{f} = {model_param}.{f}"))
-            .collect();
+    } else if embeds_whole_model(io, model_field_names.len()) {
+        // The model rides as ONE embedded record (see `WHOLE_MODEL_FIELD`);
+        // `Codec.inline` writes its fields flat, then the Msg args.
+        let mut parts: Vec<String> = vec![format!("{WHOLE_MODEL_FIELD} = {model_param}")];
         for a in &io.msg_args {
             // Send the arg VALUE under its (possibly renamed) wire field, NOT
             // skipped — a name collision with a Model field must keep both (see
             // msg_arg_wire_name). `spaMsgArg_region = region` carries the NEW
-            // region; `region = model.region` the old one.
+            // region; the embedded model carries the old one under `region`.
             let collides = model_field_names.iter().any(|f| f == a);
             parts.push(format!("{} = {a}", msg_arg_wire_name(a, collides)));
         }
-        if parts.is_empty() {
-            "{}".to_string()
-        } else {
-            format!("{{ {} }}", parts.join(", "))
-        }
+        format!("{{ {} }}", parts.join(", "))
+    } else if whole {
+        // Whole model with Msg args but no known model fields: the args only.
+        let parts: Vec<String> = io
+            .msg_args
+            .iter()
+            .map(|a| format!("{} = {a}", msg_arg_wire_name(a, false)))
+            .collect();
+        format!("{{ {} }}", parts.join(", "))
     } else {
         let mut parts: Vec<String> = io
             .request_fields()
@@ -2393,32 +2629,323 @@ fn build_wire(
             f.codec = Some(r.codec);
             f.ty_name = r.surface;
         }
+        // Every generated field type must be closed. `Shared` declares each wire
+        // shape once, and every whole-model request shares the one annotated
+        // builder `spaModelWireFields_`: an `any` or a type variable there is one
+        // fixed type for all of them (the value restriction), so a resolver gap
+        // would surface as `[E2012]` in generated code. Refuse it here instead.
+        if let Some(open) = open_type_word(&f.ty_name) {
+            return Err(format!(
+                "branch `{name}`, field `{}`: internal error: the generated wire type `{}` leaves `{open}` open. Please report this; as a workaround, declare an annotated `Codec <T>` binding for the field's type.",
+                f.name, f.ty_name
+            ));
+        }
     }
+    // A whole-model request that ALSO carries Msg args embeds the Model as one
+    // field (see `WHOLE_MODEL_FIELD`) so its fields are declared once, not once
+    // per branch. The fields above stay resolved and checked one by one.
+    let req_embedded_model = if embeds_whole_model(io, model_fields.len()) {
+        model_fields.len()
+    } else {
+        0
+    };
     Ok(Wire {
         name: name.to_string(),
         req_fields: req,
         resp_fields: resp,
+        req_embedded_model,
     })
+}
+
+/// The first word of a generated type surface that is not a closed type: the
+/// `any` wildcard or a type variable (a lowercase word that is not a record
+/// field label). `None` when the surface is closed (`List Item`,
+/// `{ status : Int, body : String }`, `Paged Item`).
+fn open_type_word(surface: &str) -> Option<String> {
+    let chars: Vec<char> = surface.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_alphanumeric() || c == '_' {
+            let start = i;
+            while i < chars.len()
+                && (chars[i].is_alphanumeric() || chars[i] == '_' || chars[i] == '.')
+            {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            let mut j = i;
+            while j < chars.len() && chars[j] == ' ' {
+                j += 1;
+            }
+            let is_label = j < chars.len() && chars[j] == ':';
+            if !is_label && word.chars().next().is_some_and(|c| c.is_lowercase()) {
+                return Some(word);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// The field order a generated wire record is DECLARED in, keyed by its field
+/// NAME set: the source order of the project record with exactly those fields
+/// (`ProjectShapes::record_by_fields`). Go lowering gives every record alias
+/// with one field set ONE struct, declared in the order of whichever alias it
+/// meets first (`lower::record_fieldsets`), and `Codec.auto` writes JSON keys
+/// in struct order. A wire record declared in chain (alphabetical) order with
+/// the same fields and types as the app's `Model` therefore re-ordered the
+/// keys of every `Codec.auto` encode of the Model: the SSR `sky-model` seed and
+/// the client's saved model. Declaring the wire record in the project
+/// record's order keeps that struct, and with it those bytes, as they are
+/// without the split. The codec chain (the RPC JSON order) does not change.
+type DeclOrders = HashMap<BTreeSet<String>, Vec<String>>;
+
+/// [`DeclOrders`] for the project's records.
+fn wire_decl_orders(shapes: &ProjectShapes) -> DeclOrders {
+    shapes
+        .record_by_fields
+        .iter()
+        .filter_map(|(set, key)| {
+            let fields = shapes.records.get(key)?;
+            Some((set.clone(), fields.iter().map(|(n, _)| n.clone()).collect()))
+        })
+        .collect()
+}
+
+/// The declared field order of a wire record whose fields (in codec chain
+/// order) are `fields`: a project record's order when [`DeclOrders`] has one
+/// for the same name set and it differs from the chain, else `None` (declare
+/// in chain order).
+fn wire_decl_order(fields: &[ModelFieldTy], orders: &DeclOrders) -> Option<Vec<usize>> {
+    let set: BTreeSet<String> = fields.iter().map(|f| f.name.clone()).collect();
+    if set.len() != fields.len() {
+        return None;
+    }
+    let order = orders.get(&set)?;
+    let idx: Vec<usize> = order
+        .iter()
+        .map(|n| fields.iter().position(|f| &f.name == n))
+        .collect::<Option<Vec<usize>>>()?;
+    if idx.len() != fields.len() || idx.iter().enumerate().all(|(i, j)| i == *j) {
+        return None;
+    }
+    Some(idx)
+}
+
+/// The `type alias <name> = { … }` declaration of a wire record and the
+/// constructor its `Codec.object` takes. Declared in `decl` order when given
+/// (see [`DeclOrders`]); the constructor then takes the fields in chain order
+/// (`\spaW0_ spaW1_ … -> { … }`), because `Codec.object` applies its
+/// constructor to the fields in the order the chain adds them.
+fn render_wire_record(
+    name: &str,
+    fields: &[ModelFieldTy],
+    decl: Option<&[usize]>,
+) -> (String, String) {
+    let order: Vec<usize> = match decl {
+        Some(d) => d.to_vec(),
+        None => (0..fields.len()).collect(),
+    };
+    let mut out = format!("type alias {name} =\n");
+    for (i, j) in order.iter().enumerate() {
+        let f = &fields[*j];
+        let lead = if i == 0 { "    { " } else { "    , " };
+        out.push_str(&format!("{lead}{} : {}\n", f.name, f.ty_name));
+    }
+    out.push_str("    }\n\n\n");
+    let ctor = if decl.is_some() {
+        let params: Vec<String> = (0..fields.len()).map(|i| format!("spaW{i}_")).collect();
+        let sets: Vec<String> = fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| format!("{} = spaW{i}_", f.name))
+            .collect();
+        format!("(\\{} -> {{ {} }})", params.join(" "), sets.join(", "))
+    } else {
+        name.to_string()
+    };
+    (out, ctor)
 }
 
 /// A `type alias <Name> = { … }` + its codec, rendered from a resolved field
 /// list (every field's `codec` is `Some`).
-fn render_wire_type(name: &str, codec_name: &str, fields: &[ModelFieldTy]) -> String {
+fn render_wire_type(
+    name: &str,
+    codec_name: &str,
+    fields: &[ModelFieldTy],
+    orders: &DeclOrders,
+) -> String {
     let mut out = String::new();
+    let mut ctor = name.to_string();
     if fields.is_empty() {
         out.push_str(&format!("type alias {name} =\n    {{}}\n\n\n"));
     } else {
-        out.push_str(&format!("type alias {name} =\n"));
-        for (i, f) in fields.iter().enumerate() {
-            let lead = if i == 0 { "    { " } else { "    , " };
-            out.push_str(&format!("{lead}{} : {}\n", f.name, f.ty_name));
-        }
-        out.push_str("    }\n\n\n");
+        let (decl, c) =
+            render_wire_record(name, fields, wire_decl_order(fields, orders).as_deref());
+        out.push_str(&decl);
+        ctor = c;
     }
     out.push_str(&format!("{codec_name} : Codec {name}\n{codec_name} =\n"));
-    out.push_str(&format!("    Codec.object {name}\n"));
+    out.push_str(&format!("    Codec.object {ctor}\n"));
     for f in fields {
         // Every field is resolved by construction; the fallback is defensive.
+        let codec = f.codec.clone().unwrap_or_else(|| "Codec.string".into());
+        out.push_str(&format!(
+            "        |> Codec.field \"{0}\" .{0} {1}\n",
+            f.name, codec
+        ));
+    }
+    out.push_str("        |> Codec.buildObject\n");
+    out
+}
+
+/// The wire records `Shared` has already rendered, keyed by their ordered field
+/// list (name, Sky type, codec). See [`gen_shared`]: one record + codec per
+/// distinct shape, an alias for every repeat. The whole Model embedded in a
+/// request with Msg args ([`WHOLE_MODEL_FIELD`]) is one more shape: declared
+/// once as `SpaModelWire_` with its field builder `spaModelWireFields_`.
+#[derive(Default)]
+struct WireShapes {
+    owners: HashMap<Vec<(String, String, String)>, (String, String)>,
+    models: HashMap<Vec<(String, String, String)>, (String, String)>,
+    /// The `SpaModelWire_` declarations, rendered once each, ahead of the
+    /// branch records.
+    model_decls: String,
+    /// The order each wire record is declared in (see [`DeclOrders`]).
+    orders: DeclOrders,
+}
+
+impl WireShapes {
+    /// The ordered shape key: exactly what [`render_wire_type`] writes for each
+    /// field. Order is part of the key: `Codec.object` encodes fields in chain
+    /// order, so two records with the same field SET in a different order write
+    /// different JSON and must not share a codec.
+    fn key(fields: &[ModelFieldTy]) -> Vec<(String, String, String)> {
+        fields
+            .iter()
+            .map(|f| {
+                (
+                    f.name.clone(),
+                    f.ty_name.clone(),
+                    f.codec.clone().unwrap_or_else(|| "Codec.string".into()),
+                )
+            })
+            .collect()
+    }
+
+    /// The `SpaModelWire_` record + field builder for an embedded model shape,
+    /// declared on first use.
+    fn model_wire(&mut self, fields: &[ModelFieldTy]) -> (String, String) {
+        let key = Self::key(fields);
+        if let Some(found) = self.models.get(&key) {
+            return found.clone();
+        }
+        let n = self.models.len();
+        let suffix = if n == 0 {
+            String::new()
+        } else {
+            (n + 1).to_string()
+        };
+        let ty = format!("SpaModelWire{suffix}_");
+        let builder = format!("spaModelWire{suffix}Fields_");
+        let mut out = String::from(
+            "-- | The whole Model, declared once and embedded in every whole-model\n\
+             -- request that also carries Msg args. `Codec.inline` writes its fields\n\
+             -- flat, so the request JSON is the Model fields, then the Msg args.\n",
+        );
+        let (decl, ctor) = render_wire_record(
+            &ty,
+            fields,
+            wire_decl_order(fields, &self.orders).as_deref(),
+        );
+        out.push_str(&decl);
+        out.push_str(&format!(
+            "{builder} : Codec.ObjectCodec {ty} {ty}\n{builder} =\n    Codec.object {ctor}\n"
+        ));
+        for (name, _, codec) in &key {
+            out.push_str(&format!(
+                "        |> Codec.field \"{name}\" .{name} {codec}\n"
+            ));
+        }
+        out.push_str("\n\n");
+        self.model_decls.push_str(&out);
+        self.models.insert(key, (ty.clone(), builder.clone()));
+        (ty, builder)
+    }
+
+    /// Render `name` + `codec_name`: the full record + codec for a new shape, or
+    /// a type alias + codec alias of the first record with the same shape. The
+    /// first `embedded_model` fields are the whole Model, carried as one
+    /// [`WHOLE_MODEL_FIELD`] record (zero: a plain record).
+    fn render(
+        &mut self,
+        name: &str,
+        codec_name: &str,
+        fields: &[ModelFieldTy],
+        embedded_model: usize,
+    ) -> String {
+        let (model, rest) = fields.split_at(embedded_model.min(fields.len()));
+        let mut key = Vec::new();
+        let mut embed = None;
+        if !model.is_empty() {
+            let (ty, builder) = self.model_wire(model);
+            key.push((WHOLE_MODEL_FIELD.to_string(), ty.clone(), builder.clone()));
+            embed = Some((ty, builder));
+        }
+        key.extend(Self::key(rest));
+        if let Some((owner_ty, owner_codec)) = self.owners.get(&key) {
+            return format!(
+                "type alias {name} =\n    {owner_ty}\n\n\n\
+                 {codec_name} : Codec {name}\n{codec_name} =\n    {owner_codec}\n"
+            );
+        }
+        // A plain record that IS the embedded Model shape (a whole-model request
+        // without Msg args, a whole-model response) reuses `SpaModelWire_`
+        // rather than declaring the Model fields again.
+        let model_shape = if embed.is_none() {
+            self.models.get(&key).cloned()
+        } else {
+            None
+        };
+        self.owners
+            .insert(key, (name.to_string(), codec_name.to_string()));
+        if let Some((ty, builder)) = model_shape {
+            return format!(
+                "type alias {name} =\n    {ty}\n\n\n\
+                 {codec_name} : Codec {name}\n{codec_name} =\n    Codec.buildObject {builder}\n"
+            );
+        }
+        match embed {
+            None => render_wire_type(name, codec_name, fields, &self.orders),
+            Some((ty, builder)) => render_embedded_wire_type(name, codec_name, &ty, &builder, rest),
+        }
+    }
+}
+
+/// [`render_wire_type`] for a whole-model request with Msg args: the record
+/// holds the Model as one [`WHOLE_MODEL_FIELD`] field, and its codec inlines the
+/// Model's field builder before the Msg-arg fields, so the JSON matches a flat
+/// record of the Model fields followed by the args.
+fn render_embedded_wire_type(
+    name: &str,
+    codec_name: &str,
+    model_ty: &str,
+    model_builder: &str,
+    args: &[ModelFieldTy],
+) -> String {
+    let mut out = format!("type alias {name} =\n    {{ {WHOLE_MODEL_FIELD} : {model_ty}\n");
+    for f in args {
+        out.push_str(&format!("    , {} : {}\n", f.name, f.ty_name));
+    }
+    out.push_str("    }\n\n\n");
+    out.push_str(&format!("{codec_name} : Codec {name}\n{codec_name} =\n"));
+    out.push_str(&format!("    Codec.object {name}\n"));
+    out.push_str(&format!(
+        "        |> Codec.inline .{WHOLE_MODEL_FIELD} {model_builder}\n"
+    ));
+    for f in args {
         let codec = f.codec.clone().unwrap_or_else(|| "Codec.string".into());
         out.push_str(&format!(
             "        |> Codec.field \"{0}\" .{0} {1}\n",
@@ -2446,14 +2973,21 @@ fn render_auto_codec_defs(auto_records: &BTreeMap<String, AutoRecord>) -> String
     let mut out = String::new();
     for (name, rec) in auto_records {
         let ty = &rec.type_ref;
+        let coded = wrap_arg(ty);
         let blank = &rec.blank;
-        let shown = ProjectShapes::bare(&rec.key);
+        // A parameterised record is shown with its arguments (`Paged Item`).
+        let shown = if ty.contains(' ') {
+            ty.as_str()
+        } else {
+            ProjectShapes::bare(&rec.key)
+        };
+        let shown_coded = wrap_arg(shown);
         out.push_str(&format!(
-            "-- Auto-derived codec for the plain record `{shown}` (no user `Codec {shown}`).\n\
+            "-- Auto-derived codec for the plain record `{shown}` (no user `Codec {shown_coded}`).\n\
              blank{name}_ : {ty}\n\
              blank{name}_ =\n    \
              {blank}\n\n\n\
-             auto{name}Codec_ : Codec {ty}\n\
+             auto{name}Codec_ : Codec {coded}\n\
              auto{name}Codec_ =\n    \
              Codec.auto blank{name}_\n\n\n"
         ));
@@ -2468,6 +3002,7 @@ fn gen_shared(
     auto_codec_defs: &str,
     copied_exposing: &[String],
     session_proj: &[SessionProjField],
+    decl_orders: DeclOrders,
 ) -> String {
     let mut exposing: Vec<String> = copied_exposing.to_vec();
     let mut bodies = String::new();
@@ -2491,6 +3026,26 @@ fn gen_shared(
             p.codec
         ));
     }
+    // One record + codec per distinct wire SHAPE, not per branch. Every branch
+    // that reads (or writes) the whole Model has the same request (or response)
+    // record, and a full `Codec.object … |> Codec.field …` chain per branch made
+    // the generated source grow with branches × Model fields (each chain is
+    // type-checked and lowered on both legs). The first branch with a shape owns
+    // the record + codec; a later branch with the identical ordered field list
+    // gets a one-line alias of each. The JSON a codec writes depends only on the
+    // ordered (name, codec) list, which the key holds, so the wire bytes are
+    // unchanged.
+    let mut shapes = WireShapes {
+        orders: decl_orders,
+        ..WireShapes::default()
+    };
+    // Declare the embedded Model first, so every whole-model record (with or
+    // without Msg args) shares its one field list.
+    for w in wires {
+        if w.req_embedded_model > 0 && w.req_embedded_model <= w.req_fields.len() {
+            shapes.model_wire(&w.req_fields[..w.req_embedded_model]);
+        }
+    }
     for w in wires {
         let req_ty = format!("{}Req", w.name);
         let resp_ty = format!("{}Resp", w.name);
@@ -2504,11 +3059,13 @@ fn gen_shared(
             "-- | {} RPC — request = read-set + Msg args, response = write-set.\n",
             w.name
         ));
-        bodies.push_str(&render_wire_type(&req_ty, &req_codec, &w.req_fields));
+        bodies.push_str(&shapes.render(&req_ty, &req_codec, &w.req_fields, w.req_embedded_model));
         bodies.push_str("\n\n");
-        bodies.push_str(&render_wire_type(&resp_ty, &resp_codec, &w.resp_fields));
+        bodies.push_str(&shapes.render(&resp_ty, &resp_codec, &w.resp_fields, 0));
         bodies.push_str("\n\n");
     }
+    // The embedded Model records go ahead of the branch records that use them.
+    let bodies = format!("{}{bodies}", shapes.model_decls);
     // Dedup while preserving order (a type + its constructor could collide).
     let mut seen: HashSet<String> = HashSet::new();
     exposing.retain(|e| seen.insert(e.clone()));
@@ -2703,6 +3260,57 @@ pub fn generate(
     broker_url: Option<&str>,
     static_mount_override: Option<(String, String)>,
 ) -> Result<SpaSplitReport, String> {
+    generate_split(
+        repo_root,
+        project_dir,
+        entry_module,
+        None,
+        out_dir,
+        broker_url,
+        static_mount_override,
+    )
+}
+
+/// [`generate`] over a program the build's front half has already loaded and
+/// checked ([`crate::build::front_half_loaded`] on this same `project_dir` and
+/// `entry_module`). The split then analyses that db instead of loading the
+/// sources and type-checking them again. A program whose db is not the one
+/// the split would load itself (a project with Sky dependencies) is loaded
+/// afresh, exactly as [`generate`] does. The output is the same either way.
+pub fn generate_with(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_module: Option<&str>,
+    loaded: crate::build::LoadedProgram,
+    out_dir: &Path,
+    broker_url: Option<&str>,
+    static_mount_override: Option<(String, String)>,
+) -> Result<SpaSplitReport, String> {
+    generate_split(
+        repo_root,
+        project_dir,
+        entry_module,
+        Some(loaded),
+        out_dir,
+        broker_url,
+        static_mount_override,
+    )
+}
+
+/// The shared body of [`generate`] and [`generate_with`]. The first generation
+/// analyses the already-loaded program when there is one; a generation the
+/// frontend oracle asks for again ([`generate_checked`]) loads the sources
+/// afresh, as [`generate`] does, so every generation sees the same program.
+fn generate_split(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_module: Option<&str>,
+    loaded: Option<crate::build::LoadedProgram>,
+    out_dir: &Path,
+    broker_url: Option<&str>,
+    static_mount_override: Option<(String, String)>,
+) -> Result<SpaSplitReport, String> {
+    let mut loaded = loaded;
     generate_checked(
         out_dir,
         |policy| {
@@ -2710,6 +3318,7 @@ pub fn generate(
                 repo_root,
                 project_dir,
                 entry_module,
+                loaded.take(),
                 out_dir,
                 broker_url,
                 static_mount_override.clone(),
@@ -2730,7 +3339,7 @@ pub fn generate(
 /// client body, and the ones that would if the policy allowed it.
 type PlannedGeneration = Result<(SpaSplitReport, BTreeSet<String>, BTreeSet<String>), String>;
 
-/// The frontend build is the oracle for planned client arms (v0.28.0). A
+/// The frontend build is the oracle for planned client arms (v0.27.9). A
 /// generation whose planned arms do not compile is generated again with those
 /// constructors on hold, each with a build note: first with every plan off
 /// (when that fails too, the failure is not the plans', and is returned), then
@@ -2821,6 +3430,7 @@ fn generate_inner(
     repo_root: &Path,
     project_dir: &Path,
     entry_module: Option<&str>,
+    loaded: Option<crate::build::LoadedProgram>,
     out_dir: &Path,
     broker_url: Option<&str>,
     // The app's declared static mount `(dir, url-prefix)`, supplied by the caller
@@ -2845,13 +3455,20 @@ fn generate_inner(
         ));
     }
 
-    let (db, entry, check_ids) =
-        crate::build::load_source_db(repo_root, project_dir, entry_module)?;
+    let (db, entry, check_ids, checked) = match loaded.and_then(|l| l.for_split()) {
+        Some(reused) => reused,
+        None => {
+            let (db, entry, check_ids) =
+                crate::build::load_source_db(repo_root, project_dir, entry_module)?;
+            (db, entry, check_ids, None)
+        }
+    };
     let proj_name = project_dir
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "app".to_string());
-    let (report, chain_notes) = analyze_for_split(&db, entry, &check_ids, proj_name.clone())?;
+    let (report, chain_notes) =
+        analyze_for_split(&db, entry, &check_ids, proj_name.clone(), checked)?;
 
     // The generator needs a per-branch `case msg of` split — EXCEPT for an
     // `update` with no `case` that is entirely PURE: every Msg then runs in the
@@ -3468,7 +4085,11 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         if !shapes.is_external(&rec.key) {
             seed_ty.insert(ProjectShapes::bare(&rec.key).to_string());
         }
+        // The project types a parameterised record's arguments name (`Item` in
+        // `Paged Item`): the record's own declaration does not mention them.
+        seed_ty.extend(rec.arg_types.iter().cloned());
     }
+    seed_ty.extend(resolver.named_types.iter().cloned());
 
     // ---- copy-vs-import: which modules feed `Shared` by COPY (§14 #2) ----
     // A codec binding a wire references is COPIED into `Shared` when it lives in
@@ -4080,6 +4701,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &auto_codec_defs,
         &copied_exposing,
         &session_projection,
+        wire_decl_orders(&shapes),
     );
     let push_mode = report.subscribes_topics || report.publishes;
     let broker_url = broker_url.map(str::trim).filter(|s| !s.is_empty());
@@ -4226,7 +4848,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         .filter(|f| !session_field_names.contains(f))
         .cloned()
         .collect::<Vec<_>>();
-    // v0.28.0: which server arms run ASYNC from a planned client body (their
+    // v0.27.9: which server arms run ASYNC from a planned client body (their
     // own model write runs in the client), and a build note for every arm that
     // holds later Msgs while its request runs.
     {
@@ -4816,7 +5438,7 @@ pub fn generate_diff_fuzz(
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "app".to_string());
-    let (report, _) = analyze_for_split(&db, entry, &check_ids, proj_name.clone())?;
+    let (report, _) = analyze_for_split(&db, entry, &check_ids, proj_name.clone(), None)?;
     if report.whole_update.is_some() || report.branches.is_empty() {
         return Err(
             "cannot fuzz: `update` has no resolvable `case msg of` (per-branch analysis unavailable)".into(),
@@ -5859,9 +6481,23 @@ fn build_project_shapes(db: &SkyDatabase, mods: &[ModuleId], deps: &[ModuleId]) 
     // Pass 2: classify each record field from its RESOLVED type (resolved in
     // the declaring module), and build the field-SET → unique-key index.
     let mut records: HashMap<String, Vec<(String, FieldKind)>> = HashMap::new();
+    let mut generic_records: HashMap<String, GenericRecord> = HashMap::new();
     let mut by_fields_multi: HashMap<BTreeSet<String>, Vec<String>> = HashMap::new();
     for raw in raw_records {
         let resolved = world.record_alias_fields_resolved(db, raw.module, &raw.syntax);
+        let params = alias_type_params(&raw.syntax);
+        if !params.is_empty() {
+            generic_records.insert(
+                raw.key.clone(),
+                GenericRecord {
+                    params,
+                    fields: resolved
+                        .iter()
+                        .map(|(n, t)| (n.clone(), world.expand_ty(t)))
+                        .collect(),
+                },
+            );
+        }
         let set: BTreeSet<String> = raw.surfaces.iter().map(|(f, _)| f.clone()).collect();
         by_fields_multi
             .entry(set)
@@ -5904,7 +6540,55 @@ fn build_project_shapes(db: &SkyDatabase, mods: &[ModuleId], deps: &[ModuleId]) 
         by_bare,
         external_modules,
         project_modules,
+        generic_records,
     }
+}
+
+/// The type parameters an alias declares (`type alias Paged a = …` → `["a"]`).
+fn alias_type_params(alias: &syntax::SyntaxNode) -> Vec<String> {
+    alias
+        .children()
+        .find(|c| c.kind() == syntax::SyntaxKind::TypeVarList)
+        .map(|list| {
+            list.children_with_tokens()
+                .filter_map(|e| e.into_token())
+                .filter(|t| t.kind() == syntax::SyntaxKind::LowerIdent)
+                .map(|t| t.text().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Bind each of `params` that occurs in the generic type `g` to the matching
+/// part of the solved type `c`. A part whose shape differs is skipped: the
+/// parameter may still be bound through another field.
+fn bind_type_params(g: &ty::Ty, c: &ty::Ty, params: &[String], out: &mut HashMap<String, ty::Ty>) {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match (g, c) {
+        (ty::Ty::Var(v), _) if params.iter().any(|p| p == v.as_str()) => {
+            out.entry(v.as_str().to_string())
+                .or_insert_with(|| c.clone());
+        }
+        (ty::Ty::App(_, gs), ty::Ty::App(_, cs)) | (ty::Ty::Tuple(gs), ty::Ty::Tuple(cs))
+            if gs.len() == cs.len() =>
+        {
+            for (g, c) in gs.iter().zip(cs) {
+                bind_type_params(g, c, params, out);
+            }
+        }
+        (ty::Ty::Fun(ga, gb), ty::Ty::Fun(ca, cb)) => {
+            bind_type_params(ga, ca, params, out);
+            bind_type_params(gb, cb, params, out);
+        }
+        (ty::Ty::Record(gf, _), ty::Ty::Record(cf, _)) => {
+            for (n, g) in gf {
+                if let Some((_, c)) = cf.iter().find(|(m, _)| m == n) {
+                    bind_type_params(g, c, params, out);
+                }
+            }
+        }
+        _ => {}
+    })
 }
 
 /// The declared fields of a record-alias `type alias N = { … }` — each as
@@ -6027,8 +6711,7 @@ fn build_codec_registry(db: &SkyDatabase, mods: &[ModuleId]) -> Vec<CodecBinding
                     // Prefer the user's declared surface (`Codec (List Todo)` →
                     // `List Todo`); fall back to the solved (alias-expanded) type.
                     let surface = decl_text_by(&file, &src, &bname, DeclKind::TypeAnno)
-                        .and_then(|a| codec_arg_surface(&a))
-                        .unwrap_or_else(|| render_ty(&args[0]));
+                        .and_then(|a| codec_arg_surface(&a));
                     out.push(CodecBinding {
                         name: bname,
                         def: td.def,
@@ -6048,8 +6731,12 @@ fn build_codec_registry(db: &SkyDatabase, mods: &[ModuleId]) -> Vec<CodecBinding
 /// `List Todo`). Returns `None` if the annotation is not a `Codec <T>` shape.
 fn codec_arg_surface(anno: &str) -> Option<String> {
     let rhs = anno.split_once(':')?.1.trim();
-    let after = rhs.strip_prefix("Codec")?.trim();
-    let after = after.trim_start_matches('.').trim(); // tolerate `Codec.Codec`-ish
+    // `Codec T` or the qualified `Codec.Codec T`; not a longer name that only
+    // starts with `Codec` (`CodecFor T`).
+    let after = ["Codec.Codec", "Codec"].iter().find_map(|head| {
+        rhs.strip_prefix(head)
+            .filter(|rest| rest.starts_with([' ', '(']))
+    })?;
     let s = after.trim();
     // Strip a single fully-enclosing pair of parens.
     let s = if s.starts_with('(') && s.ends_with(')') {
@@ -6784,7 +7471,7 @@ fn tainted_refs_in(
 ///
 /// `init`'s command runs once when the client starts (unless the SSR page
 /// settled it). When that command reaches a server-only binding (a task that
-/// opens the database, an AI slot), the wasm client cannot hold it: it is
+/// opens the database, a model slot), the wasm client cannot hold it: it is
 /// excluded from the frontend, and a verbatim `init` fails with `Undefined
 /// name`. `update` arms get the RPC rewrite; this is the same treatment for
 /// `init`. The client `init` keeps its model and sends one RPC
@@ -8750,7 +9437,12 @@ fn gen_backend(
                  -- exactly as the client does at boot (Spa_ssrResolveModel).\n\
                  spaSsrResolveModel : any -> any -> model -> String -> model\n\
                  spaSsrResolveModel =\n\
-                 \x20   Ffi.kernel \"Spa_ssrResolveModel\"\n\n\n",
+                 \x20   Ffi.kernel \"Spa_ssrResolveModel\"\n\n\n\
+                 -- The page's HTTP status: 404 when the path matches no route and the\n\
+                 -- NotFound page renders, else 200 (Spa_ssrStatus).\n\
+                 spaSsrStatus : any -> any -> String -> Int\n\
+                 spaSsrStatus =\n\
+                 \x20   Ffi.kernel \"Spa_ssrStatus\"\n\n\n",
             );
         }
         // Settle decisions (fix 2). `settle_init` settles init's GET-safe read
@@ -8849,6 +9541,12 @@ fn gen_backend(
             lets.push_str(&format!(
                 "        routed =\n            spaSsrResolveModel spaRoutes_ spaNotFound_ {seed_base} req.path\n\n"
             ));
+            // The status the page is sent with: an unmatched path renders the
+            // NotFound page with 404, not 200 (a soft 404 reads as a real page
+            // to a crawler and as healthy to a probe).
+            lets.push_str(
+                "        ssrStatus_ =\n            spaSsrStatus spaRoutes_ spaNotFound_ req.path\n\n",
+            );
             "routed".to_string()
         } else {
             seed_base.to_string()
@@ -8961,6 +9659,12 @@ fn gen_backend(
                 "ssrHandler : Handler\nssrHandler req =\n    spaWithSession_ req (ssrInner_ req)\n\n\n",
             );
         }
+        // A routed app sends its NotFound page with 404 (`ssrStatus_` above).
+        let with_status = if has_synth_routes {
+            "Server.withStatus ssrStatus_ <| "
+        } else {
+            ""
+        };
         handlers.push_str(&format!(
             "-- Server-render the REQUESTED route's first paint (design §4.1/§4.2):\n\
              -- run init, seed it from the request (withRequest), resolve the path to\n\
@@ -8978,7 +9682,7 @@ fn gen_backend(
              {lets}\
              \x20   in\n\
              \x20   Task.succeed\n\
-             \x20       (Server.html\n\
+             \x20       ({with_status}Server.html\n\
              \x20           (spaSsrPageSeeded\n\
              \x20               (\"<meta name=\\\"sky-wire\\\" content=\\\"{wire_hash}\\\">\" ++ spaAiEngineMeta_ ++ spaSsrRenderHead spaHead_ resolved)\n\
              \x20               (spaSsrRenderBody (spaView_ resolved))\n\
@@ -9683,7 +10387,7 @@ pub(crate) struct ArmRoutes {
 /// the oracle turns a plan off when the frontend it produces does not compile.
 #[derive(Default, Clone)]
 pub(crate) struct PlanPolicy {
-    /// Every planned body is off (the arms hold as before v0.28.0).
+    /// Every planned body is off (the arms hold as before v0.27.9).
     all_off: bool,
     /// These constructors' planned bodies are off.
     off: HashSet<String>,
@@ -10407,7 +11111,7 @@ fn helper_copy(
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum ClientArmKind {
     /// The arm as written through `let` / `if` / `case` / helpers, the RPC
-    /// bound once above it (a planned arm, v0.28.0).
+    /// bound once above it (a planned arm, v0.27.9).
     Planned,
     /// The arm's direct `( model, cmd )` tuple, the command replaced by the
     /// RPC.
@@ -11157,7 +11861,7 @@ pub fn analyze_project(
         .unwrap_or(project_dir)
         .to_string_lossy()
         .to_string();
-    analyze_for_split(&db, entry, &check_ids, project).map(|(report, _)| report)
+    analyze_for_split(&db, entry, &check_ids, project, None).map(|(report, _)| report)
 }
 
 /// The partition the split generates from. A continuation whose arm is client
@@ -11170,14 +11874,31 @@ fn analyze_for_split(
     entry: ModuleId,
     check_ids: &[ModuleId],
     project: String,
+    // `spa_partition::check_program(db, check_ids)` when the caller has it
+    // already (the build's own front half, over this same db).
+    checked: Option<ty::CheckOutput>,
 ) -> Result<(SpaPartitionReport, Vec<String>), String> {
-    let report = spa_partition::analyze_loaded(db, entry, check_ids, project.clone())?;
+    // One check serves both analyses: the db is not written between them, so
+    // a second `check_modules` over the same modules returns the same value.
+    let checked = match checked {
+        Some(c) => c,
+        None => spa_partition::check_program(db, check_ids),
+    };
+    // The analyses read the verdict and the diagnostics, never the per-def
+    // types: free those now rather than hold them through both analyses.
+    let checked = ty::CheckOutput {
+        def_types: Vec::new(),
+        ..checked
+    };
+    let none = BTreeSet::new();
+    let report =
+        spa_partition::analyze_checked(db, entry, check_ids, project.clone(), &none, &checked)?;
     let keep_on_server = unwireable_continuations(db, check_ids, &report);
     if keep_on_server.is_empty() {
         return Ok((report, Vec::new()));
     }
     let report =
-        spa_partition::analyze_loaded_keeping(db, entry, check_ids, project, &keep_on_server)?;
+        spa_partition::analyze_checked(db, entry, check_ids, project, &keep_on_server, &checked)?;
     let note = format!(
         "continuation(s) {:?} run on the server inside the RPC that performs them: their argument has no wire codec, so they cannot run in the client. That RPC holds later Msgs until it answers; declare a `Codec` for the argument to run them in the client.",
         keep_on_server.iter().collect::<Vec<_>>()
@@ -11422,10 +12143,38 @@ fn value_params(d: &syntax::ast::Decl) -> Vec<String> {
     Vec::new()
 }
 
-fn decl_text_by(file: &SourceFile, src: &str, name: &str, kind: DeclKind) -> Option<String> {
+fn decl_text_by(file: &SourceFile, _src: &str, name: &str, kind: DeclKind) -> Option<String> {
     file.decls()
         .find(|d| decl_name(d).as_deref() == Some(name) && decl_kind(d) == kind)
-        .map(|d| slice(src, d.syntax()).trim_end().to_string())
+        .map(|d| significant_text(d.syntax()))
+}
+
+/// The text of `node` without its comments, each whitespace run one space. A
+/// declaration node holds the comments above it: slicing the source gave
+/// `-- | The codec for a preset: …\npresetCodec : Codec Preset`, and the
+/// annotation readers split at the FIRST `:`, inside the comment. The codec
+/// surface was then lost (`List any` in the generated wire), and an `update`
+/// annotation's Msg / Model names read from the comment.
+fn significant_text(node: &syntax::SyntaxNode) -> String {
+    let mut out = String::new();
+    let mut gap = false;
+    for t in node
+        .descendants_with_tokens()
+        .filter_map(|e| e.into_token())
+    {
+        match t.kind() {
+            syntax::SyntaxKind::LineComment | syntax::SyntaxKind::BlockComment => gap = true,
+            k if k.is_trivia() => gap = true,
+            _ => {
+                if gap && !out.is_empty() {
+                    out.push(' ');
+                }
+                gap = false;
+                out.push_str(t.text());
+            }
+        }
+    }
+    out
 }
 
 /// The model type name = the parameter type of `view`'s annotation
@@ -11984,6 +12733,7 @@ mod type_identity_tests {
             by_bare,
             external_modules: HashSet::from(["Geo.Shape".to_string()]),
             project_modules: HashSet::from(["Main".to_string()]),
+            generic_records: HashMap::new(),
         }
     }
 
@@ -12137,7 +12887,7 @@ mod live_store_section_tests {
         );
     }
 
-    /// Regression (v0.28.0, examples/72-ai-support-desk under `--target
+    /// Regression (v0.27.9, a database-backed app under `--target
     /// web:app`): the backend lost `[database]`, so every database read
     /// answered "no path given". It now carries the runtime tables verbatim.
     #[test]
@@ -12285,7 +13035,7 @@ mod plan_tests {
         let (db, entry, check_ids) =
             crate::build::load_source_db(&repo, &fx, None).expect("load fixture");
         let (mut report, _) =
-            analyze_for_split(&db, entry, &check_ids, "fx".into()).expect("analyse");
+            analyze_for_split(&db, entry, &check_ids, "fx".into(), None).expect("analyse");
         for b in report.branches.iter_mut() {
             if ctor_name(&b.msg) == "IfWrap" {
                 if let Ok(plan) = &mut b.client_model {
@@ -12322,5 +13072,64 @@ mod plan_tests {
             notes.iter().any(|n| n.contains("`IfWrap` holds later Msgs") && n.contains("no longer matches")),
             "{notes:#?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod open_wire_type_tests {
+    use super::{codec_arg_surface, decl_text_by, open_type_word, DeclKind};
+
+    /// A doc comment above a codec annotation is not part of the annotation.
+    /// The reader used to slice the declaration with its comments and split at
+    /// the first `:`, which was inside the comment, so the codec's surface was
+    /// lost and the split wrote `List any` for `List Preset`.
+    #[test]
+    fn a_codec_annotation_under_a_comment_with_a_colon_keeps_its_type() {
+        let src = "module Data exposing (presetCodec)\n\n\n\
+                   -- | The wire codec for a preset: code and weight.\n\
+                   presetCodec : Codec Preset\n\
+                   presetCodec =\n    Codec.object Preset\n\n\n\
+                   {- a block: comment -}\n\
+                   listCodec : Codec.Codec (List Preset)\n\
+                   listCodec =\n    Codec.list presetCodec\n\n\n\
+                   forCodec : CodecFor Preset\n\
+                   forCodec =\n    presetCodec\n";
+        let parse = syntax::parse(src, base::FileId(0));
+        let file = parse.tree();
+        let surface = |name: &str| {
+            decl_text_by(&file, src, name, DeclKind::TypeAnno).and_then(|a| codec_arg_surface(&a))
+        };
+        assert_eq!(surface("presetCodec").as_deref(), Some("Preset"));
+        assert_eq!(surface("listCodec").as_deref(), Some("List Preset"));
+        assert_eq!(surface("forCodec"), None, "`CodecFor` is not `Codec`");
+    }
+
+    /// The guard in `build_wire`: a generated wire type may not hold `any` or a
+    /// type variable; a record field label is not a type variable.
+    #[test]
+    fn a_generated_wire_type_with_any_or_a_type_variable_is_open() {
+        for closed in [
+            "List Product",
+            "Paged Item",
+            "Maybe (Paged (List Item))",
+            "{ status : Int, body : String, headers : Dict String String }",
+            "( Int, String )",
+            "SpaTy_Geo_Shape_.Point",
+            "Result Error ()",
+        ] {
+            assert_eq!(open_type_word(closed), None, "`{closed}` is closed");
+        }
+        for (open, word) in [
+            ("List any", "any"),
+            ("Maybe a", "a"),
+            ("{ items : List a, page : Int }", "a"),
+            ("Dict String (List msg)", "msg"),
+        ] {
+            assert_eq!(
+                open_type_word(open).as_deref(),
+                Some(word),
+                "`{open}` leaves `{word}` open"
+            );
+        }
     }
 }

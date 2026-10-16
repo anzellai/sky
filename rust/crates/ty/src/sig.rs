@@ -442,8 +442,15 @@ fn call_arg_ids(
 /// passes at each param position of a single `callee`. The salsa lowering path
 /// uses the declaration-only `type_world` (for backdating) and demands per-def
 /// facts through separate queries, so it can't read the whole-program harvest
-/// baked into `World::build`; this is the per-def primitive that query wraps.
-/// `world` is the (declaration-only) world used to infer each caller — the arg
+/// baked into `World::build`.
+///
+/// This scans every body and infers each caller once PER CALLEE, so N helpers
+/// called from one large body re-infer it N times. The lowering query folds
+/// [`caller_param_records`] summaries instead (one inference per caller), which
+/// gives the same value; this per-callee form stays as that query's answer for
+/// a def the summaries do not cover and as the reference the differential tests
+/// compare against.
+/// `world` is the world used to infer each caller — the arg
 /// types it needs don't depend on the harvest, so this is not circular.
 pub fn callsite_param_records_for(db: &dyn SkyDb, world: &World, callee: DefId) -> Vec<Option<Ty>> {
     use crate::infer::Infer;
@@ -504,28 +511,219 @@ pub fn callsite_param_records_for(db: &dyn SkyDb, world: &World, callee: DefId) 
     slot
 }
 
-/// True iff `body` contains a record update whose base is a top-level PARAM
-/// (`Res::Local` bound by a param pattern). Used by the lowering `infer_query`
-/// to decide whether to demand this def's call-site param records (#166).
-pub fn body_updates_a_param(body: &hir::Body) -> bool {
-    let param_locals: std::collections::HashSet<hir::LocalId> = body
-        .params
-        .iter()
-        .filter_map(|p| match &body.pats[*p] {
-            hir::Pattern::Var(l) => Some(*l),
+/// What one caller passes at one param position of one callee, over every
+/// direct call in that caller: one closed record, or two different ones.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ParamRecordSeen {
+    /// Every closed record seen at this position is this one.
+    One(Ty),
+    /// Two different closed records were seen at this position.
+    Conflict,
+}
+
+impl ParamRecordSeen {
+    /// Fold one more observation into a slot, as the per-callee harvest does:
+    /// the first record fills it, an equal one keeps it, a different one makes
+    /// it a conflict for good.
+    fn merge(slot: &mut Option<ParamRecordSeen>, next: ParamRecordSeen) {
+        *slot = match (slot.take(), next) {
+            (None, n) => Some(n),
+            (Some(ParamRecordSeen::Conflict), _) | (_, ParamRecordSeen::Conflict) => {
+                Some(ParamRecordSeen::Conflict)
+            }
+            (Some(ParamRecordSeen::One(a)), ParamRecordSeen::One(b)) => {
+                if a == b {
+                    Some(ParamRecordSeen::One(a))
+                } else {
+                    Some(ParamRecordSeen::Conflict)
+                }
+            }
+        };
+    }
+}
+
+/// One caller's contribution to the call-site harvest: for each callee it
+/// calls directly (first-call order), the per-param-position summary of the
+/// closed records it passes. A position with no closed record is `None`; the
+/// vector is as long as the last position that saw one.
+pub type CallerParamRecords = Vec<(DefId, Vec<Option<ParamRecordSeen>>)>;
+
+/// The linear form of [`callsite_param_records_for`]: infer ONE caller body
+/// once and summarise the closed-record argument types of all its direct calls
+/// to every callee accepted by `want`.
+///
+/// Folding these summaries over every caller with [`fold_param_records`] gives
+/// exactly what [`callsite_param_records_for`] gives for that callee:
+/// * the caller is inferred the same way (`Infer::new(world, db)
+///   .with_inferred(true)`, nothing else set), and inference does not read the
+///   selection, which only picks the entries that are read back;
+/// * read-back is pure over the solved union-find (`infer_def_selected`), so
+///   each argument's type is the same whichever other entries are read back
+///   with it;
+/// * the per-callee fold keeps, per position, the one record every call agrees
+///   on, or `None` once two differ, and its length is the last position that
+///   saw a record. That result does not depend on the order of the calls or of
+///   the callers, so summarising per caller and then folding the summaries
+///   (in any order) is the same function.
+pub fn caller_param_records(
+    db: &dyn SkyDb,
+    world: &World,
+    body: &hir::Body,
+    want: impl Fn(DefId) -> bool,
+) -> CallerParamRecords {
+    use crate::infer::Infer;
+    let (want_e, want_l) = call_arg_ids(body, &want);
+    let mut out: CallerParamRecords = Vec::new();
+    if want_e.is_empty() {
+        // No direct call to a wanted callee has an argument: nothing to read.
+        return out;
+    }
+    let mut infer = Infer::new(world, db).with_inferred(true);
+    let (exprs, locals) = infer.infer_def_selected(body, &want_e, &want_l);
+    let mut index: HashMap<DefId, usize> = HashMap::new();
+    for (_eid, expr) in body.exprs.iter() {
+        let (c, args) = match expr {
+            hir::Expr::Call(c, a) => (*c, a),
+            _ => continue,
+        };
+        let f = match &body.exprs[c] {
+            hir::Expr::Var(hir::Res::Def(d)) => *d,
+            _ => continue,
+        };
+        if !want(f) {
+            continue;
+        }
+        for (i, arg) in args.iter().enumerate() {
+            let aty = exprs.get(arg).cloned().or_else(|| {
+                if let hir::Expr::Var(hir::Res::Local(l)) = &body.exprs[*arg] {
+                    locals.get(l).cloned()
+                } else {
+                    None
+                }
+            });
+            let t = match aty {
+                Some(t @ Ty::Record(_, None)) => t,
+                _ => continue,
+            };
+            let at = *index.entry(f).or_insert_with(|| {
+                out.push((f, Vec::new()));
+                out.len() - 1
+            });
+            let slot = &mut out[at].1;
+            while slot.len() <= i {
+                slot.push(None);
+            }
+            ParamRecordSeen::merge(&mut slot[i], ParamRecordSeen::One(t));
+        }
+    }
+    out
+}
+
+/// Fold per-caller summaries ([`caller_param_records`]) for one callee into
+/// the harvest result [`callsite_param_records_for`] returns: per position the
+/// record every caller agrees on, else `None`.
+pub fn fold_param_records<'a>(
+    seen: impl IntoIterator<Item = &'a [Option<ParamRecordSeen>]>,
+) -> Vec<Option<Ty>> {
+    let mut acc: Vec<Option<ParamRecordSeen>> = Vec::new();
+    for one in seen {
+        for (i, s) in one.iter().enumerate() {
+            let Some(s) = s else { continue };
+            while acc.len() <= i {
+                acc.push(None);
+            }
+            ParamRecordSeen::merge(&mut acc[i], s.clone());
+        }
+    }
+    acc.into_iter()
+        .map(|s| match s {
+            Some(ParamRecordSeen::One(t)) => Some(t),
             _ => None,
         })
-        .collect();
+        .collect()
+}
+
+/// The top-level defs `body` calls directly (`f a …` with `f` a `Res::Def`),
+/// each once, in first-call order — the syntactic edge the call-site harvest
+/// follows. The callers of a def are exactly the bodies whose list holds it.
+pub fn direct_callees(body: &hir::Body) -> Vec<DefId> {
+    let mut out: Vec<DefId> = Vec::new();
+    let mut seen: HashSet<DefId> = HashSet::new();
     for (_, expr) in body.exprs.iter() {
-        if let hir::Expr::Update { base, .. } = expr {
-            if let hir::Expr::Var(hir::Res::Local(l)) = &body.exprs[*base] {
-                if param_locals.contains(l) {
-                    return true;
-                }
+        let hir::Expr::Call(c, _) = expr else {
+            continue;
+        };
+        if let hir::Expr::Var(hir::Res::Def(f)) = &body.exprs[*c] {
+            if seen.insert(*f) {
+                out.push(*f);
             }
         }
     }
-    false
+    out
+}
+
+/// The positions of the top-level PARAMS (`Res::Local` bound by a param
+/// pattern) that `body` record-updates (`{ p | … }`), sorted and deduplicated.
+/// Empty when the body updates no param. The lowering `infer_query` uses it to
+/// decide whether to demand this def's call-site param records (#166).
+///
+/// A position is the index of the param whose pattern binds the update's base,
+/// exactly as the record-update close in `infer` computes it.
+pub fn body_updates_a_param(body: &hir::Body) -> Vec<usize> {
+    let mut out: Vec<usize> = Vec::new();
+    for (_, expr) in body.exprs.iter() {
+        let hir::Expr::Update { base, .. } = expr else {
+            continue;
+        };
+        let hir::Expr::Var(hir::Res::Local(l)) = &body.exprs[*base] else {
+            continue;
+        };
+        let idx = body
+            .params
+            .iter()
+            .position(|p| matches!(&body.pats[*p], hir::Pattern::Var(pid) if pid == l));
+        if let Some(idx) = idx {
+            if !out.contains(&idx) {
+                out.push(idx);
+            }
+        }
+    }
+    out.sort_unstable();
+    out
+}
+
+/// The CLOSED record `def`'s declared signature gives its param `idx`, if any.
+///
+/// The one place that decides whether a record update of a param closes from
+/// the def's own annotation (#166): the close in `infer` reads this first and
+/// consults the call-site harvest only when it is `None`, and the lowering
+/// `infer_query` demands the harvest only when it is `None` for some updated
+/// param ([`wants_callsite_harvest`]). Only a closed record counts: an
+/// unannotated def has no `value_sigs` entry, and a declared open row or type
+/// variable adds nothing to the close.
+pub fn declared_param_record(world: &World, def: DefId, idx: usize) -> Option<&Ty> {
+    let scheme = world.value_sigs.get(&def)?;
+    let mut cur = &scheme.ty;
+    for _ in 0..idx {
+        match cur {
+            Ty::Fun(_, b) => cur = b,
+            _ => return None,
+        }
+    }
+    match cur {
+        Ty::Fun(a, _) if matches!(a.as_ref(), Ty::Record(_, None)) => Some(&**a),
+        _ => None,
+    }
+}
+
+/// Does the record-update close in `def`'s own inference read its call-site
+/// harvest? True iff `body` updates some param whose declared type is not a
+/// closed record ([`declared_param_record`] is `None`). When false the harvest
+/// cannot change `def`'s typed table, so the lowering path does not demand it.
+pub fn wants_callsite_harvest(world: &World, def: DefId, body: &hir::Body) -> bool {
+    body_updates_a_param(body)
+        .into_iter()
+        .any(|idx| declared_param_record(world, def, idx).is_none())
 }
 
 impl World {
@@ -1605,72 +1803,75 @@ impl World {
     /// `alias_by_mod` key (from `resolve_type_names`) is never affected. On the
     /// lowering path (`expand_ty`) `protect` is empty — behaviour is unchanged.
     fn expand(&self, ty: &Ty, depth: u32, protect: &HashSet<String>, cur_mod: Option<&str>) -> Ty {
-        if depth > 40 {
-            return ty.clone();
-        }
-        match ty {
-            Ty::App(name, args) => {
-                let args: Vec<Ty> = args
-                    .iter()
-                    .map(|a| self.expand(a, depth + 1, protect, cur_mod))
-                    .collect();
-                // When a declaring module is known (the lowering DECL path via
-                // `expand_ty_in_module`), a BARE name resolves against THAT
-                // module's own alias first (`"{cur_mod}.{name}"`), so a project's
-                // own `Message` field is not hijacked by a same-named stdlib alias
-                // in the bare table. A qualified name (already carrying a `.`) is
-                // left for the `alias_by_mod` lookup below.
-                let own_module_hit = match cur_mod {
-                    Some(cm) if !name.as_str().contains('.') => {
-                        self.alias_by_mod.get(&format!("{cm}.{}", name.as_str()))
-                    }
-                    _ => None,
-                };
-                // A module-qualified key (`"<module>.<name>"`, produced only by
-                // `resolve_type_names` for a reference HIR resolved to an alias)
-                // always hits `alias_by_mod` — the #164-correct table. The bare
-                // `aliases` fallback is consulted for every other name EXCEPT one
-                // that this module sees as a union (`protect`), so a bare union
-                // name can't be hijacked by a foreign alias of the same name.
-                let hit = own_module_hit
-                    .or_else(|| self.alias_by_mod.get(name.as_str()))
-                    .or_else(|| {
-                        if protect.contains(name.as_str()) {
-                            None
-                        } else {
-                            self.aliases.get(name.as_str())
-                        }
-                    });
-                if let Some(def) = hit {
-                    let mut sub: HashMap<String, Ty> = HashMap::new();
-                    for (p, arg) in def.params.iter().zip(args.iter()) {
-                        sub.insert(p.clone(), arg.clone());
-                    }
-                    let substituted = substitute(&def.body, &sub);
-                    // The alias body was resolved through `resolve_type_names` at
-                    // registration, so its inner names are already module-qualified
-                    // (or intentionally bare) — do not re-apply `cur_mod` to it.
-                    return self.expand(&substituted, depth + 1, protect, None);
-                }
-                Ty::App(name.clone(), args)
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            if depth > 40 {
+                return ty.clone();
             }
-            Ty::Fun(a, b) => Ty::Fun(
-                Box::new(self.expand(a, depth + 1, protect, cur_mod)),
-                Box::new(self.expand(b, depth + 1, protect, cur_mod)),
-            ),
-            Ty::Tuple(xs) => Ty::Tuple(
-                xs.iter()
-                    .map(|x| self.expand(x, depth + 1, protect, cur_mod))
-                    .collect(),
-            ),
-            Ty::Record(fs, ext) => Ty::Record(
-                fs.iter()
-                    .map(|(n, t)| (n.clone(), self.expand(t, depth + 1, protect, cur_mod)))
-                    .collect(),
-                ext.clone(),
-            ),
-            other => other.clone(),
-        }
+            match ty {
+                Ty::App(name, args) => {
+                    let args: Vec<Ty> = args
+                        .iter()
+                        .map(|a| self.expand(a, depth + 1, protect, cur_mod))
+                        .collect();
+                    // When a declaring module is known (the lowering DECL path via
+                    // `expand_ty_in_module`), a BARE name resolves against THAT
+                    // module's own alias first (`"{cur_mod}.{name}"`), so a project's
+                    // own `Message` field is not hijacked by a same-named stdlib alias
+                    // in the bare table. A qualified name (already carrying a `.`) is
+                    // left for the `alias_by_mod` lookup below.
+                    let own_module_hit = match cur_mod {
+                        Some(cm) if !name.as_str().contains('.') => {
+                            self.alias_by_mod.get(&format!("{cm}.{}", name.as_str()))
+                        }
+                        _ => None,
+                    };
+                    // A module-qualified key (`"<module>.<name>"`, produced only by
+                    // `resolve_type_names` for a reference HIR resolved to an alias)
+                    // always hits `alias_by_mod` — the #164-correct table. The bare
+                    // `aliases` fallback is consulted for every other name EXCEPT one
+                    // that this module sees as a union (`protect`), so a bare union
+                    // name can't be hijacked by a foreign alias of the same name.
+                    let hit = own_module_hit
+                        .or_else(|| self.alias_by_mod.get(name.as_str()))
+                        .or_else(|| {
+                            if protect.contains(name.as_str()) {
+                                None
+                            } else {
+                                self.aliases.get(name.as_str())
+                            }
+                        });
+                    if let Some(def) = hit {
+                        let mut sub: HashMap<String, Ty> = HashMap::new();
+                        for (p, arg) in def.params.iter().zip(args.iter()) {
+                            sub.insert(p.clone(), arg.clone());
+                        }
+                        let substituted = substitute(&def.body, &sub);
+                        // The alias body was resolved through `resolve_type_names` at
+                        // registration, so its inner names are already module-qualified
+                        // (or intentionally bare) — do not re-apply `cur_mod` to it.
+                        return self.expand(&substituted, depth + 1, protect, None);
+                    }
+                    Ty::App(name.clone(), args)
+                }
+                Ty::Fun(a, b) => Ty::Fun(
+                    Box::new(self.expand(a, depth + 1, protect, cur_mod)),
+                    Box::new(self.expand(b, depth + 1, protect, cur_mod)),
+                ),
+                Ty::Tuple(xs) => Ty::Tuple(
+                    xs.iter()
+                        .map(|x| self.expand(x, depth + 1, protect, cur_mod))
+                        .collect(),
+                ),
+                Ty::Record(fs, ext) => Ty::Record(
+                    fs.iter()
+                        .map(|(n, t)| (n.clone(), self.expand(t, depth + 1, protect, cur_mod)))
+                        .collect(),
+                    ext.clone(),
+                ),
+                other => other.clone(),
+            }
+        })
     }
 }
 
@@ -1712,7 +1913,8 @@ fn record_ctor_scheme(record: &Ty) -> Scheme {
 }
 
 fn substitute(ty: &Ty, sub: &HashMap<String, Ty>) -> Ty {
-    match ty {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match ty {
         Ty::Var(n) => sub.get(n.as_str()).cloned().unwrap_or_else(|| ty.clone()),
         Ty::Fun(a, b) => Ty::Fun(Box::new(substitute(a, sub)), Box::new(substitute(b, sub))),
         Ty::App(n, args) => Ty::App(n.clone(), args.iter().map(|a| substitute(a, sub)).collect()),
@@ -1724,7 +1926,7 @@ fn substitute(ty: &Ty, sub: &HashMap<String, Ty>) -> Ty {
             ext.clone(),
         ),
         other => other.clone(),
-    }
+    })
 }
 
 fn intern_value(db: &dyn SkyDb, m: ModuleId, name: &str) -> DefId {
@@ -1750,13 +1952,14 @@ fn param_spine_contains_unit(ty: &Ty) -> bool {
 
 /// Does `ty` contain a `Ty::Unit` anywhere in its structure?
 fn ty_contains_unit(ty: &Ty) -> bool {
-    match ty {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match ty {
         Ty::Unit => true,
         Ty::Fun(a, b) => ty_contains_unit(a) || ty_contains_unit(b),
         Ty::App(_, args) | Ty::Tuple(args) => args.iter().any(ty_contains_unit),
         Ty::Record(fields, _) => fields.iter().any(|(_, t)| ty_contains_unit(t)),
         Ty::Var(_) | Ty::Error => false,
-    }
+    })
 }
 
 /// The set of app modules that sit in an import cycle (a strongly-connected
@@ -2026,89 +2229,92 @@ fn rewrite_alias_refs(
     keys: TypeKeys<'_>,
     ty: &Ty,
 ) -> Ty {
-    match ty {
-        Ty::App(name, args) => {
-            let args: Vec<Ty> = args
-                .iter()
-                .map(|a| rewrite_alias_refs(db, type_refs, qualifiers, keys, a))
-                .collect();
-            let full = name.as_str();
-            // The bare final segment: what `ast_type_to_ty` produces, and the
-            // `<name>` half of any alias / union key.
-            let base = crate::nominal::base(full);
-            // A type named through a Go FFI package (`GoHttp.Client` under
-            // `import Net.Http as GoHttp`) is a Go type: it gets its own
-            // identity, and never falls back to the bare base below, where a
-            // same-named type of the app (`type alias Client = { … }`) would
-            // capture it. v0.27.0: it did, so a record passed where a Go
-            // `*http.Client` was expected checked clean, and the Go value
-            // then panicked at the app type's narrowing (`CoerceFailure`).
-            if let Some((q, _)) = full.rsplit_once('.') {
-                if let Some(hir::ImportSource::Foreign(package)) = qualifiers.get(q) {
-                    return Ty::App(Name::new(&crate::nominal::go_type(package, base)), args);
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        match ty {
+            Ty::App(name, args) => {
+                let args: Vec<Ty> = args
+                    .iter()
+                    .map(|a| rewrite_alias_refs(db, type_refs, qualifiers, keys, a))
+                    .collect();
+                let full = name.as_str();
+                // The bare final segment: what `ast_type_to_ty` produces, and the
+                // `<name>` half of any alias / union key.
+                let base = crate::nominal::base(full);
+                // A type named through a Go FFI package (`GoHttp.Client` under
+                // `import Net.Http as GoHttp`) is a Go type: it gets its own
+                // identity, and never falls back to the bare base below, where a
+                // same-named type of the app (`type alias Client = { … }`) would
+                // capture it. v0.27.0: it did, so a record passed where a Go
+                // `*http.Client` was expected checked clean, and the Go value
+                // then panicked at the app type's narrowing (`CoerceFailure`).
+                if let Some((q, _)) = full.rsplit_once('.') {
+                    if let Some(hir::ImportSource::Foreign(package)) = qualifiers.get(q) {
+                        return Ty::App(Name::new(&crate::nominal::go_type(package, base)), args);
+                    }
                 }
-            }
-            // Resolve through HIR: prefer the exact (possibly qualified) name,
-            // then fall back to the bare base (an `exposing`-imported name is
-            // registered bare). A hit that lands on a DECLARED alias or union is
-            // rewritten to that declaration's defining-module key; anything else
-            // stays bare, exactly as before this fix.
-            if let Some(tr) = type_refs.get(full).or_else(|| type_refs.get(base)) {
-                if let Some(loc) = db.def_loc(tr.con) {
-                    // Check the SENTINEL before touching `module_name`: builtins
-                    // and kernel-implicit types are interned into
-                    // `BUILTIN_MOD == ModuleId(u32::MAX)`, which is not a real
-                    // module and would index out of bounds. They stay bare —
-                    // which is also what keeps `dictkey`'s `"Dict"`, `unify`'s
-                    // `"List"` super-types and `lower`'s `"Task"`/`"Cmd"`
-                    // dispatch matching, since all of those compare bare strings.
-                    // (`lower::pinned_union_go` and `sky_lsp::def_kind` guard the
-                    // same sentinel the same way.)
-                    if loc.module.index() != u32::MAX {
-                        let key = crate::nominal::qualify(db.module_name(loc.module), base);
-                        // An alias resolves to `alias_by_mod`; a union resolves
-                        // to the identity `record_union` stamped on its own
-                        // declaration. Both sides read the SAME key set, so a
-                        // declaration and every reference to it agree by
-                        // construction. A miss (Go FFI type, unchaseable
-                        // re-export) falls through to bare, and `nominal::same`
-                        // then reads that as "module unknown" rather than
-                        // manufacturing a rejection.
-                        let known = match loc.kind {
-                            DefKind::TypeAlias => keys.alias.contains(&key),
-                            DefKind::TypeCon => keys.union.contains(&key),
-                            _ => false,
-                        };
-                        if known {
-                            return Ty::App(Name::new(&key), args);
+                // Resolve through HIR: prefer the exact (possibly qualified) name,
+                // then fall back to the bare base (an `exposing`-imported name is
+                // registered bare). A hit that lands on a DECLARED alias or union is
+                // rewritten to that declaration's defining-module key; anything else
+                // stays bare, exactly as before this fix.
+                if let Some(tr) = type_refs.get(full).or_else(|| type_refs.get(base)) {
+                    if let Some(loc) = db.def_loc(tr.con) {
+                        // Check the SENTINEL before touching `module_name`: builtins
+                        // and kernel-implicit types are interned into
+                        // `BUILTIN_MOD == ModuleId(u32::MAX)`, which is not a real
+                        // module and would index out of bounds. They stay bare —
+                        // which is also what keeps `dictkey`'s `"Dict"`, `unify`'s
+                        // `"List"` super-types and `lower`'s `"Task"`/`"Cmd"`
+                        // dispatch matching, since all of those compare bare strings.
+                        // (`lower::pinned_union_go` and `sky_lsp::def_kind` guard the
+                        // same sentinel the same way.)
+                        if loc.module.index() != u32::MAX {
+                            let key = crate::nominal::qualify(db.module_name(loc.module), base);
+                            // An alias resolves to `alias_by_mod`; a union resolves
+                            // to the identity `record_union` stamped on its own
+                            // declaration. Both sides read the SAME key set, so a
+                            // declaration and every reference to it agree by
+                            // construction. A miss (Go FFI type, unchaseable
+                            // re-export) falls through to bare, and `nominal::same`
+                            // then reads that as "module unknown" rather than
+                            // manufacturing a rejection.
+                            let known = match loc.kind {
+                                DefKind::TypeAlias => keys.alias.contains(&key),
+                                DefKind::TypeCon => keys.union.contains(&key),
+                                _ => false,
+                            };
+                            if known {
+                                return Ty::App(Name::new(&key), args);
+                            }
                         }
                     }
                 }
+                Ty::App(Name::new(base), args)
             }
-            Ty::App(Name::new(base), args)
+            Ty::Fun(a, b) => Ty::Fun(
+                Box::new(rewrite_alias_refs(db, type_refs, qualifiers, keys, a)),
+                Box::new(rewrite_alias_refs(db, type_refs, qualifiers, keys, b)),
+            ),
+            Ty::Tuple(xs) => Ty::Tuple(
+                xs.iter()
+                    .map(|x| rewrite_alias_refs(db, type_refs, qualifiers, keys, x))
+                    .collect(),
+            ),
+            Ty::Record(fs, ext) => Ty::Record(
+                fs.iter()
+                    .map(|(n, ft)| {
+                        (
+                            n.clone(),
+                            rewrite_alias_refs(db, type_refs, qualifiers, keys, ft),
+                        )
+                    })
+                    .collect(),
+                ext.clone(),
+            ),
+            other => other.clone(),
         }
-        Ty::Fun(a, b) => Ty::Fun(
-            Box::new(rewrite_alias_refs(db, type_refs, qualifiers, keys, a)),
-            Box::new(rewrite_alias_refs(db, type_refs, qualifiers, keys, b)),
-        ),
-        Ty::Tuple(xs) => Ty::Tuple(
-            xs.iter()
-                .map(|x| rewrite_alias_refs(db, type_refs, qualifiers, keys, x))
-                .collect(),
-        ),
-        Ty::Record(fs, ext) => Ty::Record(
-            fs.iter()
-                .map(|(n, ft)| {
-                    (
-                        n.clone(),
-                        rewrite_alias_refs(db, type_refs, qualifiers, keys, ft),
-                    )
-                })
-                .collect(),
-            ext.clone(),
-        ),
-        other => other.clone(),
-    }
+    })
 }
 
 /// Like [`ast_type_to_ty`] but PRESERVES a qualified reference's qualifier in the

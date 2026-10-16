@@ -16,6 +16,11 @@ fmt = { path = "../fmt" }
 testrunner = { path = "../testrunner" }
 sky-lsp = { path = "../sky-lsp" }
 notify = "8"
+# In-process brotli for the web bundle's `.br` (src/precompress.rs): its
+# parallel encoder writes quality-11 output at about a third of the time of the
+# `brotli` tool. BSD-3-Clause AND MIT. Pinned exactly: the cache key names this
+# version (precompress::BROTLI_CRATE, checked by a test).
+brotli = "=9.0.0"
 serde.workspace = true
 serde_json.workspace = true
 

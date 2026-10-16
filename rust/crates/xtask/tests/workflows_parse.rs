@@ -1138,7 +1138,11 @@ fn the_release_workflow_is_the_full_suite() {
         ("scripts/example-sweep.sh", "the full clean-slate sweep"),
         ("scripts/verify-all-web.sh", "the browser tier"),
         ("scripts/doc-examples.sh", "the live-docs examples"),
-        ("go test -race", "the Go runtime under the race detector"),
+        (
+            "go-test-shard.sh",
+            "the Go runtime under the race detector (sharded by test; every shard \
+             runs: go_test_shards_run_every_shard_once_in_a_gating_job)",
+        ),
         // Every `scripts/*-e2e.sh` is required by the rule in
         // `e2e_scripts_are_gated.rs`, not by a hand list that cannot notice a
         // new script (G-1: nav-e2e ran nowhere for a whole release).
@@ -1212,6 +1216,69 @@ fn the_release_workflow_is_the_full_suite() {
         uncovered.is_empty(),
         "registered gate(s) whose falsifier proof no release job re-establishes: \
          {uncovered:?} — add each to one of the gate-falsifiers-* `--only` lists"
+    );
+
+    // 4b. A gate's proof may be split across jobs by `--mutation` (one job
+    //     per mutation). Then the union of the mutations those
+    //     lines apply must be every mutation the gate declares, or half the
+    //     proof would run nowhere while each job reports PROVEN.
+    let mut declared: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    let mut current: Option<String> = None;
+    for line in registry.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("name: \"") {
+            current = rest.split('"').next().map(str::to_string);
+        } else if let Some(rest) = t.strip_prefix("id: \"") {
+            if let (Some(g), Some(id)) = (&current, rest.split('"').next()) {
+                declared.entry(g.clone()).or_default().push(id.to_string());
+            }
+        }
+    }
+    // The parse reads literal `id: "…"` lines. A gate whose ids are built by
+    // a macro (the corpus shard gates, `concat!`) declares none here, and a
+    // `--mutation` filter cannot name it, so the check below passes it over.
+    assert!(
+        declared.get("spa-diff-fuzz").is_some_and(|m| m.len() >= 2),
+        "registry mutation parse found {:?} for spa-diff-fuzz",
+        declared.get("spa-diff-fuzz")
+    );
+    let mut applied: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for r in &runs {
+        for line in r.lines().filter(|l| l.contains("--verify-falsifiers")) {
+            let toks: Vec<&str> = line.split_whitespace().collect();
+            let list = |flag: &str| -> Vec<String> {
+                toks.iter()
+                    .position(|t| *t == flag)
+                    .map(|i| toks[i + 1].split(',').map(str::to_string).collect())
+                    .unwrap_or_default()
+            };
+            let filter = list("--mutation");
+            for gate in list("--only") {
+                let all = declared.get(&gate).cloned().unwrap_or_default();
+                let named: Vec<String> =
+                    all.iter().filter(|m| filter.contains(m)).cloned().collect();
+                let ran = if named.is_empty() { all } else { named };
+                applied.entry(gate).or_default().extend(ran);
+            }
+        }
+    }
+    let mut half_proven = Vec::new();
+    for (gate, ids) in &declared {
+        if !covered.iter().any(|c| c == gate) {
+            continue;
+        }
+        let missing: Vec<&String> = ids
+            .iter()
+            .filter(|id| !applied.get(gate).is_some_and(|a| a.contains(id)))
+            .collect();
+        if !missing.is_empty() {
+            half_proven.push(format!("{gate}: {missing:?}"));
+        }
+    }
+    assert!(
+        half_proven.is_empty(),
+        "declared mutation(s) that no release falsifier job applies:\n  {}",
+        half_proven.join("\n  ")
     );
 
     // 5. Every tier runs in shards (`--tier tN --only <list>`): T1 by gate group,
@@ -1750,9 +1817,12 @@ fn every_go_test_package_under_tools_runs_in_ci() {
 }
 
 /// The browser-tier jobs whose steps each run long e2e scripts, as
-/// (workflow file, job id).
-const BROWSER_TIER_JOBS: [(&str, &str); 2] = [
-    ("release.yml", "gate-web"),
+/// (workflow file, job id). The release splits the tier across four jobs.
+const BROWSER_TIER_JOBS: [(&str, &str); 5] = [
+    ("release.yml", "gate-web-1"),
+    ("release.yml", "gate-web-2"),
+    ("release.yml", "gate-web-3"),
+    ("release.yml", "gate-web-4"),
     ("nightly-sweep.yml", "web-runtime"),
 ];
 
@@ -1787,6 +1857,7 @@ fn every_browser_tier_gate_step_has_its_own_bound() {
         "/../../../.github/workflows"
     ));
     let mut missing = Vec::new();
+    let mut per_file: std::collections::BTreeMap<&str, usize> = Default::default();
     for (file, job_id) in BROWSER_TIER_JOBS {
         let text = std::fs::read_to_string(dir.join(file))
             .unwrap_or_else(|e| panic!("cannot read {file}: {e}"));
@@ -1823,8 +1894,15 @@ fn every_browser_tier_gate_step_has_its_own_bound() {
             }
         }
         assert!(
-            gate_steps >= 10,
-            "{file} {job_id}: only {gate_steps} gate-script steps found; the scanner is wrong"
+            gate_steps >= 1,
+            "{file} {job_id}: no gate-script steps found; the scanner is wrong"
+        );
+        *per_file.entry(file).or_default() += gate_steps;
+    }
+    for (file, n) in &per_file {
+        assert!(
+            *n >= 10,
+            "{file}: only {n} browser-tier gate-script steps found; the scanner is wrong"
         );
     }
     assert!(
@@ -2044,4 +2122,1047 @@ fn no_ignored_test_sweep_runs_the_paid_cloud_tests() {
          `--skip gcp_live_`:\n{}",
         bad.join("\n")
     );
+}
+
+/// Every job that runs the `sky` crate's tests installs the `brotli` tool.
+///
+/// The precompress tests (`sky` unit tests, `spa_target_flow`'s `--ignored`
+/// leg) compare Sky's `.br` assets with brotli's own output, through
+/// `live_gate::required(Need::Brotli, …)`: without the tool they FAIL (live
+/// tests never skip silently). A job that runs them without installing it goes
+/// red for a reason that is not the code. The release gate jobs get it from the
+/// `gate-setup` action (`postgres: 'true'`); the others install it themselves.
+#[test]
+fn every_job_running_the_sky_tests_installs_brotli() {
+    let action = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../.github/actions/gate-setup/action.yml"
+    ))
+    .expect("read gate-setup");
+    let setup_has_brotli = action.contains("brotli");
+    let mut bad = Vec::new();
+    for path in workflows() {
+        let text = std::fs::read_to_string(&path).expect("read workflow");
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parsed above");
+        let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) else {
+            continue;
+        };
+        for (name, job) in jobs {
+            let steps: Vec<&serde_yaml::Value> = job
+                .get("steps")
+                .and_then(|s| s.as_sequence())
+                .into_iter()
+                .flatten()
+                .collect();
+            let runs: Vec<&str> = steps
+                .iter()
+                .filter_map(|s| s.get("run").and_then(|r| r.as_str()))
+                .collect();
+            let runs_sky_tests = runs.iter().any(|r| {
+                r.lines().any(|l| {
+                    (l.contains("nextest run -p sky") || l.contains("cargo test -p sky"))
+                        && !l.contains("--test native_shell_flow")
+                        && !l.contains("--no-run")
+                })
+            });
+            if !runs_sky_tests {
+                continue;
+            }
+            let installs = runs.iter().any(|r| r.contains("brotli"));
+            let via_setup = setup_has_brotli
+                && steps.iter().any(|s| {
+                    s.get("uses").and_then(|u| u.as_str()) == Some("./.github/actions/gate-setup")
+                        && s.get("with")
+                            .and_then(|w| w.get("postgres"))
+                            .and_then(|p| p.as_str())
+                            == Some("true")
+                });
+            if !installs && !via_setup {
+                bad.push(format!(
+                    "{}: {}",
+                    path.file_name().unwrap().to_string_lossy(),
+                    name.as_str().unwrap_or("?")
+                ));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "these jobs run the sky crate's tests without installing brotli (the \
+         precompress tests then fail on Need::Brotli):\n  {}",
+        bad.join("\n  ")
+    );
+}
+
+/// The full build-speed measure, as the nightly runs it: the app at both
+/// sizes and examples/13-skyshop, every scenario, every budgeted key.
+const FULL_BENCH: &str = "bash scripts/bench-build.sh --reps 3 --cases \"app skyshop\" \
+     --out build-perf.json --write-budget build-budget.proposed.json \
+     --budget docs/perf/build-budget.json";
+
+/// The per-push and pull-request measure in rust-ci.yml: the 50-field app
+/// against its own budget keys, one target per job (`build-perf` measures
+/// `web`, `build-perf-2` measures `web:app`; together they are the script's
+/// default targets, so the per-push scope is unchanged by the split).
+/// `--budget-subset` requires every budgeted key of the measured case and
+/// still fails on a rise.
+const SUBSET_BENCH_JOBS: [(&str, &str); 2] = [("build-perf", "web"), ("build-perf-2", "web:app")];
+
+fn subset_bench(target: &str) -> String {
+    format!(
+        "bash scripts/bench-build.sh --reps 3 --cases app --sizes 50 --targets {target} \
+         --out build-perf.json --budget docs/perf/build-budget.json --budget-subset"
+    )
+}
+
+/// The only condition rust-ci.yml's measure may carry: the in-job path
+/// filter. Anything else (an event or branch test, `false`) is a skip.
+const RUST_CI_BENCH_IF: &str = "steps.paths.outputs.run == 'true'";
+
+/// The `build-perf` job of a parsed workflow, or why it is unusable.
+fn build_perf_job<'a>(
+    file: &str,
+    doc: &'a serde_yaml::Value,
+) -> Result<&'a serde_yaml::Value, String> {
+    named_build_perf_job(file, doc, "build-perf")
+}
+
+/// The named build-speed job of a parsed workflow, or why it is unusable.
+fn named_build_perf_job<'a>(
+    file: &str,
+    doc: &'a serde_yaml::Value,
+    name: &str,
+) -> Result<&'a serde_yaml::Value, String> {
+    let job = &doc["jobs"][name];
+    if job.is_null() || job_is_disabled(job) {
+        return Err(format!("{file}: no enabled {name} job"));
+    }
+    Ok(job)
+}
+
+/// The steps of a job that run scripts/bench-build.sh.
+fn bench_steps(job: &serde_yaml::Value) -> Vec<&serde_yaml::Value> {
+    job["steps"]
+        .as_sequence()
+        .into_iter()
+        .flatten()
+        .filter(|s| {
+            s["run"]
+                .as_str()
+                .is_some_and(|r| r.contains("scripts/bench-build.sh"))
+        })
+        .collect()
+}
+
+/// What is wrong with the nightly's `build-perf` job: it must run exactly
+/// the full measure, in one step with no condition of its own.
+fn nightly_build_perf_problems(doc: &serde_yaml::Value) -> Vec<String> {
+    let file = "nightly-sweep.yml";
+    let job = match build_perf_job(file, doc) {
+        Ok(j) => j,
+        Err(e) => return vec![e],
+    };
+    let mut problems = Vec::new();
+    let benches = bench_steps(job);
+    if benches.len() != 1 {
+        problems.push(format!(
+            "{file}: build-perf has {} bench-build steps, want 1",
+            benches.len()
+        ));
+    }
+    for s in benches {
+        let run = s["run"].as_str().unwrap_or("").trim();
+        if run != FULL_BENCH {
+            problems.push(format!(
+                "{file}: build-perf runs `{run}`, want exactly `{FULL_BENCH}`"
+            ));
+        }
+        if !s["if"].is_null() {
+            problems.push(format!(
+                "{file}: the full build-perf step carries `if: {:?}`; it must run every night",
+                s["if"]
+            ));
+        }
+    }
+    problems
+}
+
+/// What is wrong with rust-ci.yml's `build-perf` job: on every event it must
+/// run exactly the 50-field subset, gated only by the in-job path filter, and
+/// that filter must say `run=true` when a build-speed input changes.
+fn rust_ci_build_perf_problems(doc: &serde_yaml::Value) -> Vec<String> {
+    let file = "rust-ci.yml";
+    let mut problems = Vec::new();
+    for (name, target) in SUBSET_BENCH_JOBS {
+        let want = subset_bench(target);
+        let job = match named_build_perf_job(file, doc, name) {
+            Ok(j) => j,
+            Err(e) => {
+                problems.push(e);
+                continue;
+            }
+        };
+        if !job["if"].is_null() {
+            problems.push(format!(
+                "{file}: {name} carries a job-level `if: {:?}`; ci-green treats a \
+                 skipped job as a failure, and the path filter lives inside the job",
+                job["if"]
+            ));
+        }
+        let benches = bench_steps(job);
+        if benches.len() != 1 {
+            problems.push(format!(
+                "{file}: {name} has {} bench-build steps, want 1 (the full measure \
+                 belongs in the nightly; it does not fit the T1 tier budget)",
+                benches.len()
+            ));
+        }
+        for s in benches {
+            let run = s["run"].as_str().unwrap_or("").trim();
+            if run != want {
+                problems.push(format!(
+                    "{file}: {name} runs `{run}`, want exactly `{want}`"
+                ));
+            }
+            let cond = s["if"].as_str().map(str::trim);
+            if cond != Some(RUST_CI_BENCH_IF) {
+                problems.push(format!(
+                    "{file}: the {name} measure runs under `if: {cond:?}`, want \
+                     {RUST_CI_BENCH_IF:?} (the path filter only, on every event)"
+                ));
+            }
+        }
+        // The path filter must exist, set `run=true`, and match the compiler,
+        // runtime, stdlib, bench script and budget. A filter that never says
+        // `run=true` is a skip in disguise.
+        let paths = job["steps"]
+            .as_sequence()
+            .into_iter()
+            .flatten()
+            .find(|s| s["id"].as_str() == Some("paths"));
+        match paths.and_then(|s| s["run"].as_str()) {
+            None => problems.push(format!("{file}: {name} has no `id: paths` step")),
+            Some(run) => {
+                for needle in [
+                    "echo \"run=true\" >> \"$GITHUB_OUTPUT\"",
+                    "rust/crates/(project|sky|codegen|lower|ty|hir|skydb)/",
+                    "runtime-go/",
+                    "sky-stdlib/",
+                    "scripts/bench-build\\.sh$",
+                    "docs/perf/build-budget\\.json$",
+                ] {
+                    if !run.contains(needle) {
+                        problems.push(format!("{file}: the {name} path filter lacks `{needle}`"));
+                    }
+                }
+            }
+        }
+    }
+    problems
+}
+
+fn read_workflow(file: &str) -> serde_yaml::Value {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let text = std::fs::read_to_string(root.join(".github/workflows").join(file))
+        .unwrap_or_else(|e| panic!("read {file}: {e}"));
+    serde_yaml::from_str(&text).unwrap_or_else(|e| panic!("{file} does not parse: {e}"))
+}
+
+/// The bench-build step of a job, for a mutation in the tests below.
+fn bench_step_mut<'a>(doc: &'a mut serde_yaml::Value) -> &'a mut serde_yaml::Value {
+    doc["jobs"]["build-perf"]["steps"]
+        .as_sequence_mut()
+        .expect("build-perf has steps")
+        .iter_mut()
+        .find(|s| {
+            s["run"]
+                .as_str()
+                .is_some_and(|r| r.contains("scripts/bench-build.sh"))
+        })
+        .expect("build-perf has a bench-build step")
+}
+
+/// Per push and per pull request, the 50-field app; every night, the full set.
+///
+/// The full measure (both app sizes and examples/13-skyshop, every scenario)
+/// takes about 30 minutes on a runner. On a push to main it made build-perf
+/// the slowest setup-independent job, 1776 s against the 990 s T1 tier budget
+/// (rust-ci run 38837799531). So rust-ci.yml measures the 50-field app on
+/// every event, against its own budget keys, and the nightly measures the full
+/// set. This pins both invocations, and pins that rust-ci's measure is
+/// skipped only by its path filter.
+#[test]
+fn build_speed_measures_the_50_field_app_per_push_and_the_full_set_nightly() {
+    let mut problems = rust_ci_build_perf_problems(&read_workflow("rust-ci.yml"));
+    problems.extend(nightly_build_perf_problems(&read_workflow(
+        "nightly-sweep.yml",
+    )));
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// The nightly check above goes red on the shapes that would shrink the full
+/// measure, and the rust-ci check goes red on a skip or a changed scope.
+#[test]
+fn the_full_build_speed_check_catches_a_shrunk_measure() {
+    let nightly = read_workflow("nightly-sweep.yml");
+    assert!(
+        nightly_build_perf_problems(&nightly).is_empty(),
+        "the nightly is not in its pinned shape"
+    );
+    let set_run = |d: &mut serde_yaml::Value, run: &str| {
+        bench_step_mut(d)["run"] = serde_yaml::Value::String(run.into());
+    };
+    let mut cases: Vec<(&str, serde_yaml::Value)> = Vec::new();
+    let mut d = nightly.clone();
+    set_run(&mut d, &FULL_BENCH.replace("\"app skyshop\"", "app"));
+    cases.push(("nightly: skyshop dropped", d));
+    let mut d = nightly.clone();
+    set_run(
+        &mut d,
+        &FULL_BENCH.replace("--reps 3", "--reps 3 --sizes 50"),
+    );
+    cases.push(("nightly: one app size", d));
+    let mut d = nightly.clone();
+    set_run(&mut d, &format!("{FULL_BENCH} --budget-subset"));
+    cases.push(("nightly: --budget-subset", d));
+    let mut d = nightly.clone();
+    set_run(&mut d, &subset_bench("web"));
+    cases.push(("nightly: the per-push subset", d));
+    let mut d = nightly.clone();
+    bench_step_mut(&mut d)["if"] = serde_yaml::Value::String("false".into());
+    cases.push(("nightly: the step is skipped", d));
+    let mut d = nightly.clone();
+    d["jobs"]["build-perf"]["if"] = serde_yaml::Value::Bool(false);
+    cases.push(("nightly: the job is disabled", d));
+    for (what, d) in &cases {
+        assert!(
+            !nightly_build_perf_problems(d).is_empty(),
+            "the check missed: {what}"
+        );
+    }
+
+    let ci = read_workflow("rust-ci.yml");
+    assert!(
+        rust_ci_build_perf_problems(&ci).is_empty(),
+        "rust-ci.yml is not in its pinned shape"
+    );
+    let mut cases: Vec<(&str, serde_yaml::Value)> = Vec::new();
+    let mut d = ci.clone();
+    set_run(&mut d, FULL_BENCH);
+    cases.push(("rust-ci: the full measure per push", d));
+    let mut d = ci.clone();
+    set_run(&mut d, &subset_bench("web").replace(" --budget-subset", ""));
+    cases.push(("rust-ci: no --budget-subset", d));
+    let mut d = ci.clone();
+    set_run(
+        &mut d,
+        &subset_bench("web").replace(" --budget docs/perf/build-budget.json", ""),
+    );
+    cases.push(("rust-ci: no --budget", d));
+    let mut d = ci.clone();
+    bench_step_mut(&mut d)["if"] = serde_yaml::Value::String("false".into());
+    cases.push(("rust-ci: the step is skipped", d));
+    let mut d = ci.clone();
+    bench_step_mut(&mut d)["if"] =
+        serde_yaml::Value::String(format!("{RUST_CI_BENCH_IF} && github.event_name != 'push'"));
+    cases.push(("rust-ci: skipped on a push", d));
+    let mut d = ci.clone();
+    d["jobs"]["build-perf"]["if"] = serde_yaml::Value::String("false".into());
+    cases.push(("rust-ci: the job is disabled", d));
+    let mut d = ci.clone();
+    for s in d["jobs"]["build-perf"]["steps"]
+        .as_sequence_mut()
+        .expect("steps")
+        .iter_mut()
+    {
+        if s["id"].as_str() == Some("paths") {
+            let run = s["run"].as_str().expect("paths run").replace(
+                "echo \"run=true\" >> \"$GITHUB_OUTPUT\"",
+                "echo \"run=false\" >> \"$GITHUB_OUTPUT\"",
+            );
+            s["run"] = serde_yaml::Value::String(run);
+        }
+    }
+    cases.push(("rust-ci: the path filter never says run=true", d));
+    let mut d = ci.clone();
+    d["jobs"]
+        .as_mapping_mut()
+        .expect("jobs")
+        .remove(serde_yaml::Value::from("build-perf-2"));
+    cases.push(("rust-ci: the web:app half is gone", d));
+    let mut d = ci.clone();
+    for s in d["jobs"]["build-perf-2"]["steps"]
+        .as_sequence_mut()
+        .expect("steps")
+        .iter_mut()
+    {
+        if s["run"]
+            .as_str()
+            .is_some_and(|r| r.contains("scripts/bench-build.sh"))
+        {
+            s["run"] = serde_yaml::Value::String(subset_bench("web"));
+        }
+    }
+    cases.push(("rust-ci: both halves measure web", d));
+    for (what, d) in &cases {
+        assert!(
+            !rust_ci_build_perf_problems(d).is_empty(),
+            "the check missed: {what}"
+        );
+    }
+}
+
+/// Every file under `.github/` that a job runs: the workflows and the local
+/// composite actions.
+fn workflows_and_actions() -> Vec<PathBuf> {
+    let mut out = workflows();
+    let actions = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../.github/actions"
+    ));
+    for entry in std::fs::read_dir(&actions)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", actions.display()))
+        .flatten()
+    {
+        for name in ["action.yml", "action.yaml"] {
+            let p = entry.path().join(name);
+            if p.is_file() {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// Does this line name a numbered PostgreSQL package or install path
+/// (`postgresql-16`, `/usr/lib/postgresql/16`, `/usr/share/postgresql/16`)?
+fn names_a_postgresql_major(line: &str) -> bool {
+    [
+        "postgresql-",
+        "/usr/lib/postgresql/",
+        "/usr/share/postgresql/",
+    ]
+    .iter()
+    .any(|prefix| {
+        line.match_indices(prefix).any(|(i, _)| {
+            line[i + prefix.len()..]
+                .bytes()
+                .next()
+                .is_some_and(|b| b.is_ascii_digit())
+        })
+    })
+}
+
+#[test]
+fn the_postgresql_major_detector_sees_every_spelling() {
+    for hit in [
+        "sudo apt-get install -y -qq postgresql-16 sqlite3",
+        "sudo apt-get install -y -qq postgresql-18-pgvector",
+        "SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin",
+        "[ -f /usr/share/postgresql/16/extension/vector.control ]",
+    ] {
+        assert!(names_a_postgresql_major(hit), "missed: {hit}");
+    }
+    for miss in [
+        "apt_install postgresql",
+        "apt_install \"postgresql-$major-pgvector\"",
+        "for d in /usr/lib/postgresql/*/bin; do",
+        "image: postgres:16",
+    ] {
+        assert!(!names_a_postgresql_major(miss), "false hit: {miss}");
+    }
+}
+
+/// Does this step resolve PostgreSQL for the steps after it?
+fn resolves_postgres(step: &serde_yaml::Value) -> bool {
+    let run = step.get("run").and_then(|r| r.as_str()).unwrap_or("");
+    if run.contains("scripts/ci/resolve-postgres.sh") {
+        return true;
+    }
+    step.get("uses").and_then(|u| u.as_str()) == Some("./.github/actions/gate-setup")
+        && step
+            .get("with")
+            .and_then(|w| w.get("postgres"))
+            .and_then(|p| p.as_str())
+            == Some("true")
+}
+
+/// Does this run line need a real PostgreSQL on the runner? The workspace and
+/// `sky` crate tests (the shared-cluster live tests, `db_*_flow`), the
+/// `--ignored` real-DB leg, the rt race run (the embedded supervisor) and the
+/// harness T1 / T3 tiers (Layer-2 apps) all stand up their own cluster from
+/// SKY_POSTGRES_BIN.
+fn needs_runner_postgres(run: &str) -> bool {
+    run.lines().any(|l| {
+        l.contains("cargo test --workspace")
+            || l.contains("nextest run -p sky")
+            || (l.contains("cargo test -p sky") && l.contains("--ignored"))
+            || (l.contains("go test -race") && l.contains("./rt/"))
+            || (l.contains("go-test-shard.sh") && l.contains("./rt/") && l.contains("-race"))
+            || l.contains("harness --tier t1")
+            || l.contains("harness --tier t3")
+    })
+}
+
+/// The PostgreSQL major is a fact about the runner image, never a literal.
+///
+/// Every job used to `apt-get install postgresql-16` and set
+/// `SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin`. That held only while
+/// `ubuntu-latest` meant Ubuntu 24.04: the 26.04 image ships PostgreSQL 18 and
+/// its archive has no `postgresql-16`, so every live-test job would have died
+/// on an apt error the day the label moved. `scripts/ci/resolve-postgres.sh`
+/// now discovers the major (the image's own, else the distribution default)
+/// and exports SKY_POSTGRES_BIN, so:
+///
+///   * no workflow or composite action names a numbered PostgreSQL package or
+///     a `/usr/lib/postgresql/<n>` path,
+///   * no `env:` map sets SKY_POSTGRES_BIN (a literal would override the
+///     resolver for that step), and
+///   * every Linux job that runs a PostgreSQL-backed test resolves it in an
+///     EARLIER step, so the test cannot reach its "PostgreSQL is missing" path.
+#[test]
+fn postgresql_comes_from_the_resolver_never_a_hardcoded_major() {
+    let mut bad = Vec::new();
+    for path in workflows_and_actions() {
+        let text = std::fs::read_to_string(&path).expect("read");
+        let file = path.display().to_string();
+        for (n, line) in text.lines().enumerate() {
+            if names_a_postgresql_major(line) {
+                bad.push(format!(
+                    "{file}:{}: hardcoded PostgreSQL major: {}",
+                    n + 1,
+                    line.trim()
+                ));
+            }
+        }
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parses");
+        let mut envs: Vec<(String, &serde_yaml::Value)> = Vec::new();
+        if let Some(e) = doc.get("env") {
+            envs.push(("workflow".into(), e));
+        }
+        let mut job_steps: Vec<(String, &serde_yaml::Value, Vec<&serde_yaml::Value>)> = Vec::new();
+        if let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) {
+            for (name, job) in jobs {
+                let name = name.as_str().unwrap_or("?").to_string();
+                if let Some(e) = job.get("env") {
+                    envs.push((format!("job {name}"), e));
+                }
+                let steps: Vec<&serde_yaml::Value> = job
+                    .get("steps")
+                    .and_then(|s| s.as_sequence())
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                for s in &steps {
+                    if let Some(e) = s.get("env") {
+                        envs.push((format!("job {name} step"), e));
+                    }
+                }
+                job_steps.push((name, job, steps));
+            }
+        }
+        if let Some(steps) = doc
+            .get("runs")
+            .and_then(|r| r.get("steps"))
+            .and_then(|s| s.as_sequence())
+        {
+            for s in steps {
+                if let Some(e) = s.get("env") {
+                    envs.push(("composite step".into(), e));
+                }
+            }
+        }
+        for (where_, env) in envs {
+            if env.get("SKY_POSTGRES_BIN").is_some() {
+                bad.push(format!(
+                    "{file}: {where_} sets SKY_POSTGRES_BIN in `env:`; it comes from scripts/ci/resolve-postgres.sh"
+                ));
+            }
+        }
+        for (name, job, steps) in job_steps {
+            let linux = job
+                .get("runs-on")
+                .and_then(|r| r.as_str())
+                .is_some_and(|r| r.contains("ubuntu"));
+            if !linux || job_is_disabled(job) {
+                continue;
+            }
+            for (i, s) in steps.iter().enumerate() {
+                let run = s.get("run").and_then(|r| r.as_str()).unwrap_or("");
+                if needs_runner_postgres(run) && !steps[..i].iter().any(|p| resolves_postgres(p)) {
+                    bad.push(format!(
+                        "{file}: job {name} step {:?} needs a runner PostgreSQL but no earlier step \
+                         runs scripts/ci/resolve-postgres.sh (or gate-setup with postgres: 'true')",
+                        s.get("name").and_then(|n| n.as_str()).unwrap_or("?")
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "PostgreSQL pinned outside the resolver:\n  {}",
+        bad.join("\n  ")
+    );
+
+    let resolver = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../scripts/ci/resolve-postgres.sh"
+    ))
+    .expect("read resolve-postgres.sh");
+    for must in [
+        "SKY_POSTGRES_BIN=",
+        "GITHUB_ENV",
+        "::error::",
+        "apt_install postgresql\n",
+    ] {
+        assert!(
+            resolver.contains(must),
+            "scripts/ci/resolve-postgres.sh lost `{}`: it must install the distribution's \
+             unnumbered `postgresql`, fail with ::error:: on a missing binary, and export \
+             SKY_POSTGRES_BIN to $GITHUB_ENV",
+            must.trim()
+        );
+    }
+}
+
+/// The Linux release binaries link against a pinned glibc floor, and each
+/// build leg proves it before anything is uploaded.
+///
+/// The legs run on the CURRENT Ubuntu runners so a breaking image change shows
+/// up early. A binary linked normally needs the build host's glibc (24.04 gives
+/// 2.39, which Debian 12, Ubuntu 22.04 and RHEL 9 cannot run), so the legs
+/// build with `cargo zigbuild --target <triple>.$SKY_GLIBC_FLOOR`, and two
+/// steps before `Package` check the result: the highest GLIBC_x.y symbol
+/// version against the floor, and `--version` inside debian:12.
+#[test]
+fn linux_release_binaries_link_against_the_glibc_floor_and_prove_it() {
+    let doc = read_workflow("release.yml");
+    let floor = doc["env"]["SKY_GLIBC_FLOOR"]
+        .as_str()
+        .expect("release.yml declares env.SKY_GLIBC_FLOOR as a string");
+    let is_version = floor
+        .strip_prefix("2.")
+        .is_some_and(|minor| !minor.is_empty() && minor.bytes().all(|b| b.is_ascii_digit()));
+    assert!(
+        is_version,
+        "SKY_GLIBC_FLOOR must be a glibc version like 2.35, got {floor:?}"
+    );
+
+    let build = &doc["jobs"]["build"];
+    assert!(
+        !build.is_null() && !job_is_disabled(build),
+        "release.yml has no enabled build job"
+    );
+    let legs = build["strategy"]["matrix"]["include"]
+        .as_sequence()
+        .expect("build.strategy.matrix.include");
+    let linux: Vec<&serde_yaml::Value> = legs
+        .iter()
+        .filter(|l| {
+            l["artifact"]
+                .as_str()
+                .is_some_and(|a| a.starts_with("sky-linux-"))
+        })
+        .collect();
+    assert_eq!(
+        linux.len(),
+        2,
+        "expected the sky-linux-x64 and sky-linux-arm64 legs"
+    );
+    for leg in &linux {
+        let artifact = leg["artifact"].as_str().unwrap();
+        let target = leg["rust-target"].as_str().unwrap_or("");
+        assert!(
+            target.ends_with("-unknown-linux-gnu"),
+            "{artifact}: rust-target must be a *-unknown-linux-gnu triple (zigbuild appends the \
+             floor), got {target:?}"
+        );
+        let os = leg["os"].as_str().unwrap_or("");
+        assert!(
+            os == "ubuntu-latest" || os == "ubuntu-24.04-arm",
+            "{artifact}: the Linux legs run on the current runners (ubuntu-latest / \
+             ubuntu-24.04-arm); the glibc floor comes from zigbuild, not an old image. Got {os:?}"
+        );
+    }
+
+    let steps = build["steps"].as_sequence().expect("build steps");
+    let run_of = |s: &serde_yaml::Value| s["run"].as_str().unwrap_or("").to_string();
+    let idx = |pred: &dyn Fn(&serde_yaml::Value) -> bool, what: &str| {
+        steps
+            .iter()
+            .position(|s| pred(s))
+            .unwrap_or_else(|| panic!("release.yml build job has no {what} step"))
+    };
+    let compile = idx(
+        &|s| {
+            let r = run_of(s);
+            r.contains("cargo zigbuild")
+                && r.contains("--target \"$target\"")
+                && r.contains("${{ matrix.rust-target }}.${SKY_GLIBC_FLOOR}")
+        },
+        "`cargo zigbuild --target <rust-target>.$SKY_GLIBC_FLOOR`",
+    );
+    let symbols = idx(
+        &|s| {
+            let r = run_of(s);
+            r.contains("SKY_GLIBC_FLOOR")
+                && r.contains("objdump -T")
+                && r.contains("sky-ffi-inspect-")
+        },
+        "glibc symbol-version check (objdump -T against SKY_GLIBC_FLOOR, both binaries)",
+    );
+    let debian = idx(
+        &|s| {
+            let r = run_of(s);
+            r.contains("docker run") && r.contains("debian:12") && r.contains("--version")
+        },
+        "`--version` inside debian:12",
+    );
+    let package = idx(&|s| s["name"].as_str() == Some("Package"), "Package");
+    let upload = idx(
+        &|s| {
+            s["uses"]
+                .as_str()
+                .is_some_and(|u| u.starts_with("actions/upload-artifact@"))
+        },
+        "upload-artifact",
+    );
+    for (i, what) in [(symbols, "glibc symbol check"), (debian, "debian:12 run")] {
+        let step = &steps[i];
+        assert_eq!(
+            step["if"].as_str(),
+            Some("matrix.rust-target != ''"),
+            "the {what} must run on exactly the Linux legs"
+        );
+        assert!(
+            compile < i && i < package && i < upload,
+            "the {what} must run after the build and BEFORE Package and upload-artifact, so a \
+             binary that fails it never reaches the publish job"
+        );
+        assert!(
+            step.get("continue-on-error").is_none(),
+            "the {what} must fail the leg"
+        );
+    }
+}
+
+/// Every step of a parsed workflow (`jobs.*.steps`) or composite action
+/// (`runs.steps`), with the name of the job it sits in.
+fn all_steps(doc: &serde_yaml::Value) -> Vec<(String, &serde_yaml::Value)> {
+    let mut out = Vec::new();
+    if let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) {
+        for (k, job) in jobs {
+            let name = k.as_str().unwrap_or("?").to_string();
+            for s in job["steps"].as_sequence().into_iter().flatten() {
+                out.push((name.clone(), s));
+            }
+        }
+    }
+    for s in doc["runs"]["steps"].as_sequence().into_iter().flatten() {
+        out.push(("(composite)".to_string(), s));
+    }
+    out
+}
+
+/// What breaks the "only main saves a cache" rule in one parsed file.
+fn cache_discipline_problems(file: &str, doc: &serde_yaml::Value) -> Vec<String> {
+    let main_only = |cond: &str| cond.contains("github.ref == 'refs/heads/main'");
+    let mut problems = Vec::new();
+    for (job, s) in all_steps(doc) {
+        let uses = s["uses"].as_str().unwrap_or("");
+        let with = &s["with"];
+        let at = format!("{file} `{job}`");
+        if uses.starts_with("actions/cache@") {
+            problems.push(format!(
+                "{at}: `{uses}` saves on every ref; use actions/cache/restore and a \
+                 main-only actions/cache/save"
+            ));
+        }
+        if uses.starts_with("actions/cache/save@") && !s["if"].as_str().is_some_and(main_only) {
+            problems.push(format!(
+                "{at}: actions/cache/save without `if: ... github.ref == 'refs/heads/main'`"
+            ));
+        }
+        if uses.starts_with("Swatinem/rust-cache@") {
+            let save = match &with["save-if"] {
+                serde_yaml::Value::String(v) => v.trim().to_string(),
+                serde_yaml::Value::Bool(b) => b.to_string(),
+                _ => String::new(),
+            };
+            if save != "false" && !main_only(&save) {
+                problems.push(format!(
+                    "{at}: rust-cache `save-if: {save:?}`; it must be 'false' or main-only \
+                     (a missing save-if saves on every ref)"
+                ));
+            }
+        }
+        if uses.starts_with("actions/setup-go@") {
+            let cache_off = matches!(&with["cache"], serde_yaml::Value::Bool(false))
+                || with["cache"].as_str() == Some("false");
+            if !cache_off {
+                problems.push(format!(
+                    "{at}: actions/setup-go without `cache: false` saves its own cache on \
+                     every ref; restore the main-only Go family instead"
+                ));
+            }
+        }
+        if with["cache-to"]
+            .as_str()
+            .is_some_and(|c| c.contains("type=gha"))
+        {
+            problems.push(format!(
+                "{at}: a docker `type=gha` cache-to saves on every ref"
+            ));
+        }
+    }
+    problems
+}
+
+/// Only `refs/heads/main` saves a cache. Every other ref restores.
+///
+/// # Why this exists
+///
+/// GitHub gives a repository 10 GB of Actions cache, evicted least recently
+/// used. Every branch, tag and pull request saved its own entries: on
+/// 2026-10-16 the repository held 31 entries (10.5 GB), 26 of them from one
+/// branch, and main's entries were evicted. A branch can restore main's caches
+/// but not another branch's, so every run started cold: rust-cache found
+/// nothing, and the Go build caches were missing in rust-ci run 38764872817 and
+/// release run 38764879819. With main as the only writer, each family has one
+/// entry, the total stays far under the budget, and every ref restores it.
+///
+/// Parsed, not grepped: a comment cannot vouch for a step.
+#[test]
+fn caches_are_saved_on_main_only() {
+    let mut problems = Vec::new();
+    for path in workflows_and_actions() {
+        let text = std::fs::read_to_string(&path).expect("read");
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parses");
+        let file = path.file_name().unwrap().to_string_lossy().to_string();
+        let file = if file.starts_with("action.") {
+            path.parent()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or(file)
+        } else {
+            file
+        };
+        problems.extend(cache_discipline_problems(&file, &doc));
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// The check above goes red on each shape that saves a cache off main.
+#[test]
+fn the_cache_discipline_check_catches_a_branch_save() {
+    let cases = [
+        ("save-always cache", "jobs:\n  a:\n    steps:\n      - uses: actions/cache@v6\n        with:\n          path: x\n          key: k\n"),
+        ("unguarded save", "jobs:\n  a:\n    steps:\n      - uses: actions/cache/save@v6\n        with:\n          path: x\n          key: k\n"),
+        ("rust-cache default", "jobs:\n  a:\n    steps:\n      - uses: Swatinem/rust-cache@v2\n        with:\n          workspaces: rust\n"),
+        ("rust-cache true", "jobs:\n  a:\n    steps:\n      - uses: Swatinem/rust-cache@v2\n        with:\n          save-if: 'true'\n"),
+        ("setup-go cache", "jobs:\n  a:\n    steps:\n      - uses: actions/setup-go@v7\n        with:\n          go-version: '1.26'\n"),
+        ("docker gha", "jobs:\n  a:\n    steps:\n      - uses: docker/build-push-action@v7\n        with:\n          cache-to: type=gha,mode=max\n"),
+        ("composite save", "runs:\n  using: composite\n  steps:\n    - uses: actions/cache@v6\n      with:\n        path: x\n        key: k\n"),
+    ];
+    for (what, yaml) in cases {
+        let doc: serde_yaml::Value = serde_yaml::from_str(yaml).expect(what);
+        assert!(
+            !cache_discipline_problems("t.yml", &doc).is_empty(),
+            "the check missed: {what}"
+        );
+    }
+    let ok = "jobs:\n  a:\n    steps:\n      - uses: actions/cache/restore@v6\n        with:\n          path: x\n          key: k\n      - uses: actions/cache/save@v6\n        if: always() && github.ref == 'refs/heads/main'\n        with:\n          path: x\n          key: k\n      - uses: Swatinem/rust-cache@v2\n        with:\n          save-if: ${{ github.ref == 'refs/heads/main' }}\n      - uses: actions/setup-go@v7\n        with:\n          cache: false\n";
+    let doc: serde_yaml::Value = serde_yaml::from_str(ok).unwrap();
+    assert_eq!(
+        cache_discipline_problems("t.yml", &doc),
+        Vec::<String>::new()
+    );
+}
+
+/// Every `scripts/ci/go-test-shard.sh K/N <packages> -- <flags>` split, in
+/// either workflow, runs all N shards exactly once, with the same packages and
+/// flags, in jobs that gate the result (`ci-green` needs them in rust-ci.yml,
+/// `release` needs them in release.yml).
+///
+/// The race run of the Go runtime tests is split by test across two jobs
+/// (rust-ci `integration-postgres` / `-2`, release `gate-race-1` / `-2`). The
+/// script derives each shard from one sorted list, so the shards are disjoint
+/// and total once every K in 1..=N runs (go_test_shards_are_disjoint_and_total.rs
+/// proves the partition). Deleting a job, or two jobs naming the same shard,
+/// would leave half the tests unrun while every job reports green.
+#[test]
+fn go_test_shards_run_every_shard_once_in_a_gating_job() {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let mut splits_seen = 0;
+    for (file, fan_in) in [("rust-ci.yml", "ci-green"), ("release.yml", "release")] {
+        let text = std::fs::read_to_string(root.join(".github/workflows").join(file))
+            .expect("read workflow");
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parses");
+        let jobs = doc.get("jobs").and_then(|j| j.as_mapping()).expect("jobs");
+        let gating: Vec<String> = doc["jobs"][fan_in]["needs"]
+            .as_sequence()
+            .map(|s| {
+                s.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        // (packages and flags) -> [(k, n, job)]
+        let mut splits: std::collections::BTreeMap<String, Vec<(u32, u32, String)>> =
+            Default::default();
+        for (name, job) in jobs {
+            let Some(name) = name.as_str() else { continue };
+            if job_is_disabled(job) {
+                continue;
+            }
+            for step in job["steps"].as_sequence().into_iter().flatten() {
+                let run = step["run"].as_str().unwrap_or("");
+                for line in run.lines().map(str::trim).filter(|l| !l.starts_with('#')) {
+                    let toks: Vec<&str> = line.split_whitespace().collect();
+                    let Some(i) = toks.iter().position(|t| t.ends_with("go-test-shard.sh")) else {
+                        continue;
+                    };
+                    let spec = toks.get(i + 1).copied().unwrap_or("");
+                    let (k, n) = spec.split_once('/').unwrap_or_else(|| {
+                        panic!("{file} `{name}`: bad shard `{spec}` in `{line}`")
+                    });
+                    let key = toks[i + 2..].join(" ");
+                    splits.entry(key).or_default().push((
+                        k.parse().expect("K"),
+                        n.parse().expect("N"),
+                        name.to_string(),
+                    ));
+                }
+            }
+        }
+        assert!(
+            !splits.is_empty(),
+            "{file}: no go-test-shard.sh split found"
+        );
+        for (key, shards) in &splits {
+            splits_seen += 1;
+            let n = shards[0].1;
+            assert!(
+                shards.iter().all(|(_, m, _)| *m == n),
+                "{file} `{key}`: shards disagree on N: {shards:?}"
+            );
+            let mut ks: Vec<u32> = shards.iter().map(|(k, _, _)| *k).collect();
+            ks.sort();
+            assert_eq!(
+                ks,
+                (1..=n).collect::<Vec<u32>>(),
+                "{file} `{key}`: shards must be 1..={n}, each exactly once: {shards:?}"
+            );
+            let ungated: Vec<&String> = shards
+                .iter()
+                .map(|(_, _, j)| j)
+                .filter(|j| !gating.contains(j))
+                .collect();
+            assert!(
+                ungated.is_empty(),
+                "{file} `{key}`: shard job(s) {ungated:?} are not in `{fan_in}: needs:`"
+            );
+        }
+    }
+    assert!(splits_seen >= 2);
+}
+
+/// A `strategy.matrix.shard` job runs shards `0..N` where N is the total its
+/// commands name (`${{ matrix.shard }}/N`, `SWEEP_SHARD_TOTAL: 'N'`).
+///
+/// The release sweeps run as matrix jobs (`gate-buildrun`, `gate-sweep`) and
+/// their shard counts are tuned to fit the concurrency cap. Changing the total
+/// in the commands but not the matrix list (or the reverse) would leave
+/// shards that no leg runs, or legs that select nothing, with every leg green.
+#[test]
+fn every_matrix_shard_list_matches_the_total_its_commands_name() {
+    let mut seen = 0;
+    for file in ["release.yml", "rust-ci.yml", "nightly-sweep.yml"] {
+        let doc = read_workflow(file);
+        let jobs = doc["jobs"].as_mapping().expect("jobs");
+        for (name, job) in jobs {
+            let name = name.as_str().unwrap_or("?");
+            let Some(list) = job["strategy"]["matrix"]["shard"].as_sequence() else {
+                continue;
+            };
+            seen += 1;
+            let legs: Vec<u64> = list.iter().filter_map(|v| v.as_u64()).collect();
+            let text = serde_yaml::to_string(job).expect("re-serialise");
+            let mut totals: Vec<u64> = Vec::new();
+            for (i, _) in text.match_indices("${{ matrix.shard }}/") {
+                let rest = &text[i + "${{ matrix.shard }}/".len()..];
+                let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if let Ok(n) = digits.parse() {
+                    totals.push(n);
+                }
+            }
+            if let Some(t) = job["steps"]
+                .as_sequence()
+                .into_iter()
+                .flatten()
+                .find_map(|s| s["env"]["SWEEP_SHARD_TOTAL"].as_str())
+            {
+                totals.push(t.parse().expect("SWEEP_SHARD_TOTAL is a number"));
+            }
+            assert!(!totals.is_empty(), "{file} `{name}`: no shard total found");
+            for n in &totals {
+                assert_eq!(
+                    legs,
+                    (0..*n).collect::<Vec<u64>>(),
+                    "{file} `{name}`: matrix.shard is {legs:?}, but its commands name a total of {n}"
+                );
+            }
+        }
+    }
+    assert!(
+        seen >= 2,
+        "found {seen} matrix-sharded jobs; the parse is wrong"
+    );
+}
+
+/// `ci-green`'s tier-budget lists match the job graph: SETUP_INDEPENDENT_JOBS
+/// names exactly the Linux jobs that do not `needs: setup`, and MACOS_JOBS
+/// names exactly the macOS jobs. A job missing from both lists is charged as
+/// setup-dependent (setup + its time), and a stale name hides nothing but
+/// misreports the tier; either way the budget the assertion prints is wrong.
+#[test]
+fn the_tier_budget_lists_match_the_job_graph() {
+    let doc = read_workflow("rust-ci.yml");
+    let jobs = doc["jobs"].as_mapping().expect("jobs");
+    let env_list = |key: &str| -> std::collections::BTreeSet<String> {
+        doc["jobs"]["ci-green"]["steps"]
+            .as_sequence()
+            .into_iter()
+            .flatten()
+            .find_map(|s| s["env"][key].as_str())
+            .unwrap_or_else(|| panic!("ci-green sets no {key}"))
+            .split_whitespace()
+            .map(str::to_string)
+            .collect()
+    };
+    let independent = env_list("SETUP_INDEPENDENT_JOBS");
+    let macos = env_list("MACOS_JOBS");
+    let mut want_independent = std::collections::BTreeSet::new();
+    let mut want_macos = std::collections::BTreeSet::new();
+    for (name, job) in jobs {
+        let name = name.as_str().unwrap_or("?").to_string();
+        if name == "setup" || name == "ci-green" {
+            continue;
+        }
+        let runs_on = job["runs-on"].as_str().unwrap_or("");
+        let needs_setup = match &job["needs"] {
+            serde_yaml::Value::String(s) => s == "setup",
+            serde_yaml::Value::Sequence(v) => v.iter().any(|x| x.as_str() == Some("setup")),
+            _ => false,
+        };
+        if runs_on.starts_with("macos") {
+            want_macos.insert(name);
+        } else if !needs_setup {
+            want_independent.insert(name);
+        }
+    }
+    assert_eq!(independent, want_independent, "SETUP_INDEPENDENT_JOBS");
+    assert_eq!(macos, want_macos, "MACOS_JOBS");
 }

@@ -446,7 +446,7 @@ model`, `(stamp model).flag` each put `flag` in the request. A value that holds
 the model in a way the analysis cannot map back to fields (a destructured
 binder of a tuple that holds it, a `case` subject that holds it, the model in a
 list or a call argument) makes the request carry the whole model. Before
-v0.28.0 such a read was dropped: the backend rebuilt the field from `init ()`
+v0.27.9 such a read was dropped: the backend rebuilt the field from `init ()`
 and could take another branch than Sky.Live (`spa_partition::collect_reads`,
 fixture `tests/fixtures/spa-readset-noneleaf`).
 A field written on the allow path of a guard helper (`requireFlag model (\_ ->
@@ -527,7 +527,10 @@ reach for it when you want the split artefacts kept at a specific path.
 target shape):
 - **shared/Shared.sky** — per SERVER branch `M`, `type alias MReq` (read-set) /
   `type alias MResp` (write-set) + their `Codec.object … |> Codec.field … |>
-  Codec.buildObject` codecs, copied into BOTH projects' `src/`.
+  Codec.buildObject` codecs, copied into BOTH projects' `src/`. One record +
+  codec is declared per distinct wire SHAPE, not per branch: a record whose
+  ordered field list repeats an earlier one is a one-line alias of it, and the
+  whole Model's fields are declared once (§27).
 - **backend/** — the input app copied **verbatim** (Model, Msg, init, `update`,
   all helpers incl. the server ones), `main` replaced by a `Server.listen` with
   one `Server.rpc "POST /_rpc/M" MHandler` per SERVER branch (§21) + `Server.static
@@ -878,7 +881,7 @@ and returns `( model, Cmd.none )` for `[]`, as Sky.Live dispatches nothing on a
 `Cmd.none` path. It dispatches the result Msg with the **whole** `Result` value
 into the client `update`, so `Saved`'s arm runs in the wasm client.
 
-**A `Cmd.none` leaf sends no request (v0.28.0).** A root whose tail the client
+**A `Cmd.none` leaf sends no request (v0.27.9).** A root whose tail the client
 can read runs in the client as written, with each command that needs the server
 replaced by the RPC (the planned arm of §19a below, `spa_partition::client_model_plan`):
 
@@ -898,7 +901,7 @@ Gated ->
 So the request goes out only on the branch where Sky.Live runs the task. A
 root whose `Cmd.none` the client cannot see (a guard helper's reject path, a
 hold arm) sends the request on every branch, and the backend answers `[]` when
-no task ran. Before v0.28.0 it answered `Err "…
+no task ran. Before v0.27.9 it answered `Err "…
 carried no server task to run"`, and the client dispatched `Got (Err …)`, a
 failure the app never had. `Saved` stays a client arm —
 **no** `/_rpc/Saved` route, **no** `SavedReq`, **no** decomposition of the
@@ -949,12 +952,12 @@ and `readset_noneleaf_backend_takes_the_live_branch_and_sends_no_false_err`
 "no task ran" answer in `runtime-go/rt/spa_perform_notjs_test.go`.
 
 
-## 19a. Async arms through `case` / `if` / `let` and helpers (v0.28.0)
+## 19a. Async arms through `case` / `if` / `let` and helpers (v0.27.9)
 
-Before v0.28.0 a server arm ran async (`Spa.rpc`) only when its body was a
+Before v0.27.9 a server arm ran async (`Spa.rpc`) only when its body was a
 direct `( model, cmd )` tuple. Any other shape held later Msgs for the whole
-request (`Spa.rpcHold`), so a page froze while a slow call ran: in
-`examples/72-ai-support-desk`, `Select` (a helper), `Redraft` (a `case`) and
+request (`Spa.rpcHold`), so a page froze while a slow call ran: in a
+support-desk app, `Select` (a helper), `Redraft` (a `case`) and
 `Send` (a `case` with an `if`) showed no selection and no "drafting" label
 until the model answered, and typed text applied late. Sky.Live shows them at
 once.
@@ -1048,7 +1051,7 @@ frontend. Both are fixed (`arm_at_column_8`, the trimmed pattern).
 (`tests/fixtures/spa-async-leaves`: 17 async shapes, 9 hold shapes, each with its
 note), `identity_arms_hold_and_a_guard_on_identity_holds_every_write`
 (`spa-async-identity`), `std_app_sibling_update_two_space_layout_runs_async_and_builds`
-(`spa-async-app`, both trees built), `example_72_select_redraft_send_are_async`;
+(`spa-async-app`, both trees built);
 `spa_split::plan_tests` (the oracle, a stale span, the annotation and layout
 helpers). The differential split fuzzer (`xtask harness --only spa-diff-fuzz`)
 builds each async arm's client leg with the split's own emitter
@@ -1080,7 +1083,7 @@ with its Cmds. The split gives each server constructor one of two kinds
 
 - **async** (`Spa.rpc`): the arm's own model write is empty, or reads no server
   data (`spa_partition::client_model_plan`: a direct `( model, cmd )` tuple, or,
-  since v0.28.0, tuples reached through `let` / `if` / `case` / helpers, §19a).
+  since v0.27.9, tuples reached through `let` / `if` / `case` / helpers, §19a).
   The client keeps the model writes and runs them when the Msg runs; only the
   command goes over the wire, built from the model the Msg ran on and sent at
   once. The `Applied<Msg>` arm applies no
@@ -1149,10 +1152,10 @@ built from (`Cmd.batch [ <native leaves>, Spa.rpc … ]`). A native leaf that
 uses a `let`-bound value of the arm or a server-tainted binding fails the build,
 naming it.
 
-**`init`'s command runs on the server when it must (v0.28.0).** `init`'s
+**`init`'s command runs on the server when it must (v0.27.9).** `init`'s
 command runs once when the client starts, unless the SSR page settled it. When
-that command reaches a server-only binding (a task that opens the database, an
-AI slot, a qualified binding of a server module, through a helper or a `let`)
+that command reaches a server-only binding (a task that opens the database, a
+model slot, a qualified binding of a server module, through a helper or a `let`)
 and is not the GET-safe read the SSR settles, the client cannot hold it. The
 split then gives `init` the follow-up treatment of a server branch: the client
 `init` keeps its model and sends one RPC, `POST /_rpc/SpaInit_`; the backend
@@ -1167,7 +1170,7 @@ tuple (through `let … in`), or a model that uses a server-only binding.
 `spa_split::plan_init_rpc`; tests `init_command_reaching_server_bindings_runs_through_an_init_rpc`
 and `init_in_a_sibling_module_reaching_server_bindings_runs_through_an_init_rpc`.
 Before, `init` was copied verbatim and the client failed with `Undefined name`
-(`examples/72-ai-support-desk` under `--target web:app`).
+(a database-backed app under `--target web:app`).
 
 **Guard.** `App.withGuard` runs in the client before `update` for every Msg,
 exactly like Live (`Spa.withGuard`, `spaGuardedUpdate`); a rejected Msg keeps the
@@ -1562,7 +1565,7 @@ removes it. The store is resolved as for Sky.Live: the operator's
 (`App.applyServerConfig`), which the backend runs before it listens: the
 session store, its `ttl` and `idleEvict`, `maxBodyBytes`, `csrf`, and the
 base log, database and telemetry land in the builder layer, so an operator's
-variable still wins and a `sky.toml` default does not (v0.28.0; before, the
+variable still wins and a `sky.toml` default does not (v0.27.9; before, the
 synthesis dropped both builders and the backend saw only `sky.toml` and the
 environment). The boot line names the source: `set by App.withConfig in the
 app's code`. The backend's port is not taken from `WebConfig`: it listens on
@@ -1659,3 +1662,146 @@ paths, a fresh sign-in, the default store across a restart); the unit tests
 `scripts/session-revocation-e2e.sh` (Chrome / Chromium and WebKit, strict CSP:
 a copied live cookie works from a second browser, a copy taken before either
 sign-out does not).
+
+## 26. Building the two legs: concurrency and the wasm-name handoff (v0.27.9)
+
+`sky build --target web:app` (and every client target) builds the split as two
+child `sky build` processes: the native backend leg and the wasm frontend leg.
+
+**Concurrent or in order.** The legs run at the same time when the machine's
+available memory holds both legs' `sky` process and Go peaks plus a 1 GB
+reserve (`rust/crates/sky/src/leg_plan.rs`), else one after the other.
+`SKY_BUILD_PARALLEL=1` forces them together, `SKY_BUILD_SERIAL=1` in order.
+When they run together, the parent sets each leg's `go build -p` from the
+memory they share (unless the user set `SKY_GO_BUILD_JOBS` / `--go-jobs`). A
+web bundle's `.gz` / `.br` are compressed by the parent, all assets at once,
+beside the backend leg when memory holds both.
+
+**The SSR wasm name.** A backend that server-renders the first page names the
+frontend's `main.<hash>.wasm` in it, and the hash exists only once the
+frontend has built. The name is linked into the backend's generated
+`skybuildinfo` package (`rt.SetSpaBuiltWasmName`), a small package of its own,
+so the backend's `main` does not change with the frontend. In parallel the
+backend leg runs its Sky front end and a first `go build` (everything, `main`
+included) while the frontend builds; when the name arrives it rewrites the
+small package and builds again (one small compile and the link).
+
+**The handoff** (`rust/crates/project/src/spa_wasm_handoff.rs`) is the backend
+child's standard input. The parent starts the backend with
+`--spa-await-wasm-name-on-stdin` and a piped stdin, and writes one line when
+the frontend leg ends: `ok main.<hex>.wasm` or `failed`, then closes the pipe.
+A delivery made before the backend started (the in-order path) is written as
+it starts.
+
+- The pipe belongs to one build. Two builds of the same project cannot read
+  or delete each other's delivery.
+- The frontend thread in the parent holds a guard that delivers `failed` if
+  the thread ends without a delivery (a panic).
+- An end of file with no line (the parent exited or was killed) ends the
+  backend's wait at once, with an error, on every platform.
+- The wait ends at most the `go build` time limit (600 s) after the backend
+  leg started, its first `go build` included.
+- `failed` builds the backend without a name. Its page then finds the wasm by
+  scanning `../frontend/dist` at run time.
+- A backend built on its own (`cd .split/backend && sky build`) keeps the
+  name its last build linked.
+
+**The client's stamp is constant.** The wasm client links a constant build
+stamp (`build_stamp::client_stamp`): nothing under `GOOS=js` reads it, and a
+per-commit value would change the wasm's bytes and its hashed name on every
+commit (a precompress cache miss, a new download for every browser, a new name
+for the backend to link). The backend keeps the real stamp at
+`/_sky/buildinfo`.
+
+## 27. One Model wire for every whole-model branch (build speed)
+
+A server branch that hands `model` to a helper reads the WHOLE model (§14 B1),
+and one whose result is a rebuilt model writes it whole. Before this change
+each such branch got its own `MReq` / `MResp` record and its own
+`Codec.object … |> Codec.field …` chain over every Model field, in `Shared`,
+which both legs compile. The generated source grew with branches × Model
+fields: a measured app with 100 whole-model branches and 200 Model fields
+generated 156k lines from 3.3k, and its backend leg spent 31 s in typecheck,
+35 s in lowering and 4.75 GB of memory. The size is now linear in branches +
+fields:
+
+- **One record per shape.** `gen_shared` keys each record by its ORDERED list
+  of (field name, Sky type, codec). The first branch with a shape owns the
+  record and codec. A later branch with the same list gets
+  `type alias MReq = OwnerReq` and `mReqCodec = ownerReqCodec`. Order is part
+  of the key because `Codec.object` writes fields in chain order.
+- **One Model wire.** A whole-model request that also carries Msg args holds
+  the model as ONE field, `spaWholeModel_ : SpaModelWire_`, and its codec is
+  `Codec.object MReq |> Codec.inline .spaWholeModel_ spaModelWireFields_ |>
+  Codec.field "<arg>" …`. `SpaModelWire_` and its field builder
+  `spaModelWireFields_` are declared once. A whole-model record without Msg
+  args (or a whole-model response) of the same shape is
+  `type alias MReq = SpaModelWire_` with `Codec.buildObject spaModelWireFields_`.
+  The client sends `{ spaWholeModel_ = model, <arg> = <arg> }` and the server
+  reads `m = p.spaWholeModel_` (`emit_build_req` / `emit_reconstruct`, both
+  through `embeds_whole_model`, so they agree).
+- **Same wire bytes.** `Codec.inline` writes the embedded record's fields flat,
+  in order, then the remaining fields, so the JSON is byte for byte what the
+  flat record wrote: the Model fields, then the Msg args (a colliding arg still
+  rides as `spaMsgArg_<arg>`). Decoding reads every field from the same object
+  and fails on a missing one. Only the Sky declarations changed; the payloads,
+  the write-back, the session and device-key checks and the RPC ordering are
+  the same.
+
+Measured on a generated app (`examples/62-app-notes` grown to N groups of two
+Model fields and three arms; each `SaveK` hands `model` to an opaque helper),
+backend leg, before → after:
+
+| N | generated `.sky` lines | typecheck | lower + emit | `main.go` | leg wall |
+|---|---|---|---|---|---|
+| 50 | 49,310 → 18,113 | 4.28 s → 0.29 s | 5.22 s → 0.69 s | 1.59 → 0.49 MB | 20.4 s → 7.9 s |
+| 100 | 156,260 → 33,863 | 30.9 s → 0.94 s | 35.2 s → 1.91 s | 5.20 → 0.88 MB | 85.7 s → 12.9 s |
+| 200 | 550,160 → 65,363 | not run before → 3.33 s | not run before → 6.54 s | → 1.69 MB | → 44.1 s |
+
+The generated source is now linear in N. Typecheck and lowering still grow
+faster than linearly, because every handler expression carries the full
+Model record type and the checker reads back one owned type per expression.
+That cost does not depend on how the wire is declared.
+
+The `spa_split_flow` tests `whole_model_branches_share_one_model_wire_codec`
+(one Model field list, and the backend answers the flat JSON the previous
+client sent, byte for byte) and
+`generated_wire_grows_linearly_with_whole_model_branches` (Shared stays linear
+from N=25 to N=100) hold it; `CodecConformanceTest` pins that `Codec.inline`
+writes the same JSON as the flat record.
+
+### 27.1 Every wire type is closed
+
+The shared builder makes an open type in the Model wire fatal. `spaModelWireFields_`
+is ONE annotated value (a CAF), so an `any` or a type variable in
+`SpaModelWire_` is one fixed type for every whole-model request (the v0.27.0
+value restriction), and the backend failed `[E2012]` ("the one type of `a`")
+at each `Codec.inline .spaWholeModel_ spaModelWireFields_` use. The per-branch
+records before §27 hid the same gap, because each record's annotation filled
+its own `any`. Three shapes left a wire type open, and all are now named:
+
+- **A comment above a codec annotation.** The annotation reader sliced the
+  declaration with the comments above it and split at the first `:`. A doc
+  comment with a colon (`-- | The codec for a preset: …`) lost the codec's
+  surface, and every codec the split composed over it (`Codec.list`,
+  `Codec.maybe`, `Codec.dict`, nested) carried `any`. The reader now reads the
+  annotation without its comments.
+- **An unannotated codec binding.** `presetListCodec = Codec.list presetCodec`
+  has no `Codec <T>` line to copy. The split named its type with the
+  solved-type renderer, which writes a record as `any`, so the wire held
+  `List any`. The resolver now spells the solved type through the project's
+  shapes (a record by its alias name, `List Preset`) and seeds the named types
+  into `Shared`; a type it cannot spell is refused with a request to annotate
+  the binding.
+- **A record alias with type parameters.** `type alias Paged a = { … }` used as
+  `Paged Item` was written as the bare `Paged`, leaving `a` free. The split
+  recovers the arguments of each use from its fields, names the use
+  `Paged Item`, and derives one codec per use (`autoPaged_ItemCodec_ : Codec
+  (Paged Item)`). A parameter no field shows is refused with a request to
+  declare a `Codec (Paged …)` binding.
+
+`build_wire` refuses any generated field type that still holds `any` or a type
+variable (`open_type_word`), so a future resolver gap fails the split with a
+clear message instead of `[E2012]` in generated code. The `spa_split_flow`
+test `generated_wire_types_name_every_type_they_hold` (fixture
+`spa-wire-type-names`) checks both legs of an app with all three shapes.

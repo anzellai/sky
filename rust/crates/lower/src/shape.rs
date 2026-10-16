@@ -72,8 +72,8 @@ fn declares(body: &[GoStmt]) -> bool {
 
 fn stmt(s: GoStmt, ret: Option<&GoTy>, out: &mut Vec<GoStmt>) {
     match s {
-        GoStmt::Return(Some(e)) => match (e.kind, ret) {
-            (GoExprKind::Block(inner), Some(r)) if e.ty == *r => {
+        GoStmt::Return(Some(e)) => match e.into_parts() {
+            (GoExprKind::Block(inner), ty) if ret.is_some_and(|r| ty == *r) => {
                 let inner = stmts(inner, ret);
                 if declares(&inner) {
                     out.push(GoStmt::Scope(inner));
@@ -81,8 +81,8 @@ fn stmt(s: GoStmt, ret: Option<&GoTy>, out: &mut Vec<GoStmt>) {
                     out.extend(inner);
                 }
             }
-            (kind, _) => {
-                let mut e = GoExpr::new(kind, e.ty);
+            (kind, ty) => {
+                let mut e = GoExpr::new(kind, ty);
                 expr(&mut e);
                 out.push(GoStmt::Return(Some(e)));
             }
@@ -140,6 +140,10 @@ fn stmt(s: GoStmt, ret: Option<&GoTy>, out: &mut Vec<GoStmt>) {
 /// Walk an expression and flatten the bodies of the closures and IIFEs inside
 /// it, each against its OWN result type.
 fn expr(e: &mut GoExpr) {
+    base::ensure_stack(|| expr_inner(e))
+}
+
+fn expr_inner(e: &mut GoExpr) {
     match &mut e.kind {
         GoExprKind::FuncLit(_, ret, body) => {
             let ret = ret.clone();

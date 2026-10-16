@@ -17,14 +17,16 @@
 //!     `project::go_jobs`). A record alone would under-state a build whose Go
 //!     came from the cache.
 //!   * In parallel, the plan also sets each leg's `go build -p`
-//!     (`SKY_GO_BUILD_JOBS`) to the number of compiles per leg the memory left
-//!     after both `sky` processes holds, unless the user set it.
+//!     (`SKY_GO_BUILD_JOBS`), unless the user set it, from the leg's largest
+//!     DEPENDENCY compile (`project::go_jobs`): what is left after both `sky`
+//!     processes must hold both legs' dependency compiles at once (half each),
+//!     and one leg's dependency compiles beside the other leg's `main`.
 //!   * Available memory is `project::memory::available_memory`.
 //!   * Unknown memory → serial: a slower build is recoverable, an OOM-killed one
 //!     is not.
 //!   * `SKY_BUILD_SERIAL=1` forces serial, `SKY_BUILD_PARALLEL=1` forces parallel.
 
-use project::go_jobs::{FRONT_PEAK_RECORD, GO_PEAK_RECORD};
+use project::go_jobs::{compiles_that_fit, largest_dep_for, FRONT_PEAK_RECORD, GO_PEAK_RECORD};
 use project::memory::{gib, recorded_peak, RESERVE_BYTES};
 use std::path::Path;
 
@@ -49,8 +51,12 @@ const GO_BYTES_PER_SOURCE_BYTE: u64 = 1200;
 pub struct LegNeed {
     /// The leg's `sky` process (parse, typecheck, lower + emit).
     pub front: u64,
-    /// The leg's largest Go tool process (`compile` / `link`).
+    /// The leg's largest Go tool process (`compile` / `link`): its `main`
+    /// compile, kept at the largest measured.
     pub go: u64,
+    /// The leg's largest dependency compile (`project::go_jobs`), which
+    /// sizes its `-p`.
+    pub dep: u64,
 }
 
 impl LegNeed {
@@ -111,14 +117,16 @@ pub fn decide(
             reason: format!("serial (available memory unknown; {legs})"),
         },
         Some(avail) if avail >= need => {
-            // Compiles per leg: what is left after both `sky` processes and the
-            // reserve, shared by one compile of each leg per slot.
+            // Compiles per leg. What is left after both `sky` processes and
+            // the reserve must hold both legs' dependency compiles at once
+            // (half each), and one leg's dependency compiles beside the other
+            // leg's `main` (a `main` compiles alone within its own leg).
             let left = avail
                 .saturating_sub(RESERVE_BYTES)
                 .saturating_sub(backend.front)
                 .saturating_sub(frontend.front);
-            let per_slot = backend.go.saturating_add(frontend.go).max(1);
-            let slots = ((left / per_slot) as usize).max(1);
+            let room = (left / 2).min(left.saturating_sub(backend.go.max(frontend.go)));
+            let slots = compiles_that_fit(room, backend.dep.max(frontend.dep));
             let go_jobs = (slots < cpus.max(1)).then_some(slots);
             let jobs = match go_jobs {
                 Some(n) => format!("; go build -p {n} per leg"),
@@ -152,6 +160,7 @@ pub fn estimate_from_source(leg_source_bytes: u64) -> LegNeed {
         front: FRONT_BASE_BYTES
             .saturating_add(leg_source_bytes.saturating_mul(FRONT_BYTES_PER_SOURCE_BYTE)),
         go: GO_BASE_BYTES.saturating_add(leg_source_bytes.saturating_mul(GO_BYTES_PER_SOURCE_BYTE)),
+        dep: project::go_jobs::OTHER_COMPILE_BYTES,
     }
 }
 
@@ -167,9 +176,74 @@ pub fn leg_need(leg_dir: &Path) -> (LegNeed, bool) {
         LegNeed {
             front: front.max(est.front),
             go: go.max(est.go),
+            dep: largest_dep_for(&out).0,
         },
         front > est.front || go > est.go,
     )
+}
+
+/// The in-process brotli's peak (`precompress::brotli_compress`), per file:
+/// a 64 MB base, three copies of the input (read, the encoder's own, the
+/// output buffer) and 190 MB per part compressed at once (each part's encoder
+/// state at the 16 MB window). Measured on a 52 MB Go wasm: 1,559 MB peak for
+/// 8 parts at quality 11 (model: 1,740 MB) and 334 MB for one part (model:
+/// 410 MB).
+const BROTLI_BASE_BYTES: u64 = 64 << 20;
+const BROTLI_INPUT_COPIES: u64 = 3;
+const BROTLI_BYTES_PER_PART: u64 = 190 << 20;
+
+/// The memory the precompression of `files` at `level` needs at once: all
+/// files are compressed together (gzip's few MB are inside the base).
+pub fn brotli_need(files: &[std::path::PathBuf], level: crate::precompress::Level) -> u64 {
+    let Some((_, crate::precompress::Codec::Brotli(b))) = level.codecs() else {
+        return 0;
+    };
+    files
+        .iter()
+        .map(|f| {
+            let n = std::fs::metadata(f).map_or(0, |m| m.len());
+            let parts = if b.parallel {
+                crate::precompress::brotli_chunks(n as usize) as u64
+            } else {
+                1
+            };
+            BROTLI_BASE_BYTES
+                .saturating_add(n.saturating_mul(BROTLI_INPUT_COPIES))
+                .saturating_add(parts.saturating_mul(BROTLI_BYTES_PER_PART))
+        })
+        .sum()
+}
+
+/// Whether the dist's precompression may run beside the backend leg: the
+/// available memory holds the backend's `sky` and Go peaks, the compressors,
+/// and the reserve. Unknown memory: no.
+pub fn compression_beside(backend: LegNeed, brotli: u64, available: Option<u64>) -> bool {
+    available.is_some_and(|a| {
+        a >= backend
+            .total()
+            .saturating_add(brotli)
+            .saturating_add(RESERVE_BYTES)
+    })
+}
+
+/// The precompress level a build can afford in `available` bytes: `max`
+/// becomes `fast` when the available memory is known and holds less than
+/// `max_need` (its [`brotli_need`]) plus the reserve. `max` starts up to 8
+/// brotli parts at once (1.56 GB peak on a 52 MB wasm). The part count stays
+/// a function of the input length, so a level's bytes never depend on the
+/// machine: a machine short of memory writes `fast`'s bytes, under `fast`'s
+/// cache key and name, never a different `max`. Unknown memory keeps the
+/// requested level; `fast` and `off` are kept as they are.
+pub fn precompress_level_within(
+    requested: crate::precompress::Level,
+    max_need: u64,
+    available: Option<u64>,
+) -> crate::precompress::Level {
+    use crate::precompress::Level;
+    match (requested, available) {
+        (Level::Max, Some(a)) if a < max_need.saturating_add(RESERVE_BYTES) => Level::Fast,
+        _ => requested,
+    }
 }
 
 /// Total bytes of `.sky` files under `dir` (recursive; symlinks not followed).
@@ -200,7 +274,11 @@ mod tests {
     const MB: u64 = 1 << 20;
 
     fn leg(front: u64, go: u64) -> LegNeed {
-        LegNeed { front, go }
+        LegNeed {
+            front,
+            go,
+            dep: project::go_jobs::OTHER_COMPILE_BYTES,
+        }
     }
 
     #[test]
@@ -213,14 +291,18 @@ mod tests {
         let p = decide(false, false, b, f, "(measured)", Some(10 * GB), 8);
         assert!(p.parallel, "{p:?}");
         assert!(p.reason.starts_with("parallel ("), "{p:?}");
-        // 10 GB - 1 GB - 1.4 GB leaves 7.6 GB = 2 slots of 3.3 GB: -p 2 per leg.
-        assert_eq!(p.go_jobs, Some(2), "{p:?}");
-        assert!(p.reason.contains("go build -p 2 per leg"), "{p:?}");
-        // Exactly at the line is still parallel, with one compile per leg.
+        // 10 GB - 1 GB - 1.4 GB leaves 7.6 GB; half is 3.8 GB per leg, under
+        // the small-room line (project::go_jobs::SMALL_ROOM_BYTES), so each
+        // other compile counts 0.7 GB: 0.7 + 4 others, capped at -p 4.
+        assert_eq!(p.go_jobs, Some(4), "{p:?}");
+        assert!(p.reason.contains("go build -p 4 per leg"), "{p:?}");
+        // Exactly at the line is still parallel: what is left beside the
+        // backend's 2.2 GB `main` (1.1 GB) holds the 0.7 GB compile alone.
         let at = b.total() + f.total() + RESERVE_BYTES;
         let p = decide(false, false, b, f, "", Some(at), 8);
         assert!(p.parallel);
         assert_eq!(p.go_jobs, Some(1));
+        assert!(p.reason.contains("go build -p 1 per leg"), "{p:?}");
         // Plenty of memory: one compile per CPU fits, so Go keeps its default.
         let p = decide(false, false, b, f, "", Some(64 * GB), 8);
         assert_eq!((p.parallel, p.go_jobs), (true, None), "{p:?}");
@@ -275,6 +357,49 @@ mod tests {
         assert!(decide(false, true, huge, huge, "", None, 8).parallel);
         // Both set: serial is the safe one.
         assert!(!decide(true, true, small, small, "", Some(100 * GB), 8).parallel);
+    }
+
+    #[test]
+    fn compression_runs_beside_the_backend_only_when_memory_holds_both() {
+        let d = std::env::temp_dir().join(format!("sky-legplan-br-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let w = d.join("main.ab.wasm");
+        std::fs::write(&w, vec![0u8; 10 << 20]).unwrap();
+        use crate::precompress::Level;
+        let br = brotli_need(&[w.clone(), d.join("absent.js")], Level::Max);
+        // 10 MB wasm: 64 + 30 MB + 2 parts of 190 MB; an absent file still
+        // counts its base and one part.
+        assert_eq!(br, (64 << 20) * 2 + (30 << 20) + 3 * (190 << 20));
+        assert_eq!(
+            brotli_need(&[w.clone()], Level::Fast),
+            (64 << 20) + (30 << 20) + (190 << 20)
+        );
+        assert_eq!(brotli_need(&[w.clone()], Level::Off), 0);
+        let b = leg(737 * MB, 2200 * MB);
+        let need = b.total() + br + RESERVE_BYTES;
+        assert!(compression_beside(b, br, Some(need)));
+        assert!(!compression_beside(b, br, Some(need - 1)));
+        assert!(!compression_beside(b, br, None));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn max_falls_back_to_fast_when_memory_is_short() {
+        use crate::precompress::Level::{Fast, Max, Off};
+        // 52 MB wasm at max: 64 MB + 3 x 52 MB + 8 parts x 190 MB.
+        let need = (64 * MB) + 3 * (52 * MB) + 8 * (190 * MB);
+        let enough = need + RESERVE_BYTES;
+        assert_eq!(precompress_level_within(Max, need, Some(enough)), Max);
+        assert_eq!(precompress_level_within(Max, need, Some(enough - 1)), Fast);
+        assert_eq!(precompress_level_within(Max, need, Some(GB)), Fast);
+        assert_eq!(precompress_level_within(Max, need, Some(0)), Fast);
+        // Unknown memory: the requested level.
+        assert_eq!(precompress_level_within(Max, need, None), Max);
+        // fast and off are never changed.
+        assert_eq!(precompress_level_within(Fast, need, Some(0)), Fast);
+        assert_eq!(precompress_level_within(Off, need, Some(0)), Off);
+        // A small bundle on a small machine keeps max.
+        assert_eq!(precompress_level_within(Max, 500 * MB, Some(2 * GB)), Max);
     }
 
     #[test]

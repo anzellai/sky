@@ -99,6 +99,9 @@ pub enum Need {
     /// images, and ALWAYS tears them down and checks for leaks. These tests
     /// spend money, so they are `#[ignore]` and run only through it.
     GcpLive,
+    /// The `brotli` command-line tool, for the tests that compare the
+    /// precompressed web assets with its own output.
+    Brotli,
 }
 
 impl Need {
@@ -108,8 +111,8 @@ impl Need {
         match self {
             Need::Postgres => {
                 "install PostgreSQL and point SKY_POSTGRES_BIN at its `bin` directory \
-                 (`brew install postgresql@16`, or `apt-get install postgresql-16` whose \
-                 binaries land in /usr/lib/postgresql/16/bin and are NOT on PATH), or run \
+                 (`brew install postgresql@16`, or `apt-get install postgresql` whose \
+                 binaries land in /usr/lib/postgresql/<major>/bin and are NOT on PATH), or run \
                  `sky db provision --embed`"
             }
             Need::Go => "install a Go toolchain (the compiler shells out to a real `go build`)",
@@ -155,6 +158,7 @@ impl Need {
                  and the run's resources, keeps spend under the ledger's cap, and tears \
                  everything down"
             }
+            Need::Brotli => "install brotli (`brew install brotli`, or `apt-get install brotli`)",
         }
     }
 
@@ -172,6 +176,7 @@ impl Need {
             Need::AiTrainToolchain => "the Std.Ai.Train Fake toolchain and the dev model",
             Need::AiTrainMlx => "the Std.Ai.Train Mlx toolchain and the dev base weights",
             Need::GcpLive => "the Google Cloud live-test wrapper (scripts/ai/gcp-live.sh)",
+            Need::Brotli => "the brotli tool",
         }
     }
 }

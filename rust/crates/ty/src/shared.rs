@@ -285,7 +285,7 @@ impl SharedWorld {
             .filter_map(|n| db.module_by_name(n))
             .collect();
         let case_def_ids = case_def_ids_of(&db, &case_ids);
-        let out = crate::check::check_modules_with_world(&db, Rc::new(world), &ids);
+        let out = crate::check::check_modules_with_world(&db, std::sync::Arc::new(world), &ids);
         CaseCheck {
             out,
             source: WorldSource::Shared,
@@ -325,7 +325,7 @@ impl SharedWorld {
             .filter_map(|n| db.module_by_name(n))
             .collect();
         let case_def_ids = case_def_ids_of(&db, &case_ids);
-        let out = crate::check::check_modules_with_world(&db, Rc::new(world), &ids);
+        let out = crate::check::check_modules_with_world(&db, std::sync::Arc::new(world), &ids);
         CaseCheck {
             out,
             source: WorldSource::Shared,
