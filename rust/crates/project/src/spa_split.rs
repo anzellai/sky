@@ -2083,7 +2083,8 @@ fn generated_source_parses(rel: &str, content: &str) -> Result<(), String> {
             let before = &content[..off];
             let line = before.matches('\n').count() + 1;
             let col = off - before.rfind('\n').map_or(0, |i| i + 1) + 1;
-            format!("{line}:{col}")
+            let text = content.lines().nth(line - 1).unwrap_or("").trim();
+            format!("{line}:{col}, in `{text}`")
         })
         .unwrap_or_else(|| "?".to_string());
     Err(format!(
@@ -7851,12 +7852,16 @@ fn drop_dangling_sibling_imports(
         .tree()
         .imports()
         .map(|imp| {
+            // A node can own the whitespace around it (the newline before an
+            // import is its leading trivia), so trim the range to the
+            // import's own text: dropping one import must keep the newline
+            // that separates its neighbours.
             let r = imp.syntax().text_range();
-            (
-                usize::from(r.start()),
-                usize::from(r.end()),
-                imp.name().map(|n| n.text()).unwrap_or_default(),
-            )
+            let (s, e) = (usize::from(r.start()), usize::from(r.end()));
+            let text = &src[s..e];
+            let s = s + (text.len() - text.trim_start().len());
+            let e = s + text.trim().len();
+            (s, e, imp.name().map(|n| n.text()).unwrap_or_default())
         })
         .collect();
     // The module's code with comments + imports removed, so an import's own
@@ -7883,8 +7888,12 @@ fn drop_dangling_sibling_imports(
                         .any(|n| references_word(&body, n)) // unused after the strip
             });
         if drop {
-            out.push_str(&src[at..*s]);
-            at = *e;
+            // The newline skipped after a dropped import can be the first
+            // byte of the next import node, so `at` may already be past `s`.
+            if *s > at {
+                out.push_str(&src[at..*s]);
+            }
+            at = at.max(*e);
             if src[at..].starts_with('\n') {
                 at += 1;
             }
@@ -13343,6 +13352,46 @@ mod import_gate_tests {
         );
         assert!(
             out.contains("import Sky.Core.Prelude exposing (..)\n"),
+            "{out}"
+        );
+        assert!(
+            syntax::parse(&out, base::FileId(0)).errors().is_empty(),
+            "{out}"
+        );
+    }
+
+    /// Two adjacent unused imports both go. The newline skipped after the
+    /// first is the first byte of the second import's node; slicing from it
+    /// panicked (`byte range starts at N but ends at N-1`).
+    #[test]
+    fn two_adjacent_unused_imports_both_go() {
+        let src = "module M exposing (k)\n\nimport Std.Db as Db\nimport Std.Db.Something as File\nimport Sky.Core.Prelude exposing (..)\n\n\nk =\n    1\n";
+        let out = drop_dangling_sibling_imports(
+            src,
+            &HashSet::from(["Std.Db.Something".to_string()]),
+            Some(&exposed()),
+        );
+        assert!(!out.contains("Std.Db"), "{out}");
+        assert!(
+            out.contains("import Sky.Core.Prelude exposing (..)\n"),
+            "{out}"
+        );
+        assert!(
+            syntax::parse(&out, base::FileId(0)).errors().is_empty(),
+            "{out}"
+        );
+    }
+
+    /// Dropping an import between two kept ones keeps them on their own
+    /// lines. The dropped node owned the newline before it; removing the node
+    /// and the newline after it joined its neighbours into one line
+    /// (`import A as Aimport C as C`), which does not parse.
+    #[test]
+    fn a_dropped_import_between_two_kept_ones_keeps_their_lines() {
+        let src = "module M exposing (k)\n\nimport Sky.Core.Result as Result\nimport Std.Db as Db\nimport Sky.Core.String as String\n\n\nk =\n    String.length (Result.withDefault \"\" (Ok \"x\"))\n";
+        let out = gated(src);
+        assert!(
+            out.contains("import Sky.Core.Result as Result\nimport Sky.Core.String as String\n"),
             "{out}"
         );
         assert!(
