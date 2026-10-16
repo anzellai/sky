@@ -1480,7 +1480,7 @@ fn run_oracle_stdout(dir: &Path, stdin: Option<String>) -> Option<String> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = cmd.spawn().ok()?;
+    let mut child = spawn_when_not_busy(&mut cmd).ok()?;
     if let Some(data) = &stdin {
         if let Some(mut si) = child.stdin.take() {
             let _ = si.write_all(data.as_bytes());
@@ -1495,6 +1495,31 @@ fn run_oracle_stdout(dir: &Path, stdin: Option<String>) -> Option<String> {
 /// Run the RUST binary at `<out_dir>/app` (the `sky-out-rust/` build), feed
 /// `stdin`, return its RAW stdout. Used for the `--bless` double-capture guard
 /// (run twice; refuse to bless if the two normalised captures differ).
+/// `cmd.spawn()`, retried while the program is "text file busy" (ETXTBSY).
+///
+/// On Linux, `exec` of a file fails with ETXTBSY while any process holds it
+/// open for writing. A binary or script written just before it runs can still
+/// be open in a child that another thread forked in that window: the child
+/// holds the inherited descriptor until its own `exec` closes it. The window
+/// is short, so a few short retries end it. Observed on a CI runner:
+/// `run_cwd_tests::gate_runs_apps_in_the_dir_sky_run_uses` read an empty
+/// stdout because the spawn of its freshly written fake app failed.
+fn spawn_when_not_busy(cmd: &mut Command) -> std::io::Result<std::process::Child> {
+    const ETXTBSY: i32 = 26;
+    let mut tries = 0;
+    loop {
+        match cmd.spawn() {
+            Err(e)
+                if e.raw_os_error() == Some(ETXTBSY) && cfg!(target_os = "linux") && tries < 50 =>
+            {
+                tries += 1;
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            other => return other,
+        }
+    }
+}
+
 fn run_rust_stdout(out_dir: &Path, stdin: Option<String>) -> Option<String> {
     let app = out_dir.join("app");
     if !app.exists() {
@@ -1505,7 +1530,7 @@ fn run_rust_stdout(out_dir: &Path, stdin: Option<String>) -> Option<String> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = cmd.spawn().ok()?;
+    let mut child = spawn_when_not_busy(&mut cmd).ok()?;
     if let Some(data) = &stdin {
         if let Some(mut si) = child.stdin.take() {
             let _ = si.write_all(data.as_bytes());
