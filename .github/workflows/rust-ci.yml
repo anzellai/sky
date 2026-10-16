@@ -15,8 +15,14 @@ name: Rust CI
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # JOB GRAPH (v2 §8.1). `setup` builds the workspace ONCE and primes the shared
-# cargo cache; the Rust-building jobs `needs: setup` and restore it instead of
-# each paying its own cold dependency build. `ci-green` is the fan-in.
+# cargo cache; the Rust-building jobs restore it instead of each paying its own
+# cold dependency build. `ci-green` is the fan-in.
+#
+# NO JOB `needs: setup` ANY MORE. Only refs/heads/main saves a cache, so off
+# main `setup` restores and builds nothing, and waiting for it was pure serial
+# delay. On main the other jobs restore the entry main saved last, which is
+# warm unless Cargo.lock or the toolchain moved. Every job is therefore in
+# SETUP_INDEPENDENT_JOBS (or MACOS_JOBS); workflows_parse pins that.
 #
 # ROLLOUT — TWO STEPS, AND THE ORDER MATTERS (v2 §9.5):
 #   STEP 1 (THIS COMMIT): `ci-green` is an ADDITIONAL check. Every pre-existing
@@ -153,7 +159,6 @@ jobs:
   # ── ty crate tests (the heavy corpus tests — each recompiles the stdlib, so
   #    this crate is the bulk of the old 30-min test step; on its own runner) ──
   test-ty:
-    needs: setup
     runs-on: ubuntu-latest
     # The 1857 s (~31 min) figure this job was sized against is STALE. It was
     # measured before the per-case cost was fixed, when every corpus case
@@ -195,7 +200,6 @@ jobs:
 
   # ── Every other crate's tests + clippy + doctests ───────────────────────────
   test-rest:
-    needs: setup
     runs-on: ubuntu-latest
     # Not separately measured. Reasoned: clippy --all-targets (~6 min debug) +
     # workspace-minus-ty tests incl. `project`'s real `go build` integration
@@ -798,7 +802,6 @@ jobs:
 
   # ── Accept-side parity gates (infer dominates ~13m) ─────────────────────────
   parity-accept:
-    needs: setup
     runs-on: ubuntu-latest
     # infer ~13 min (this file's own header) + debug `cargo build --workspace`
     # ~4 min + roundtrip/resolve/divergences/s8 ~3 min ≈ 20 min. 1.5x = 30.
@@ -825,7 +828,6 @@ jobs:
 
   # ── Reject-side parity + fmt (reject dominates ~16m) ────────────────────────
   parity-reject:
-    needs: setup
     runs-on: ubuntu-latest
     # reject measured 780 s DEBUG (74 s release — this job builds debug, so the
     # debug number is the one that applies) + fmt gate + debug workspace build
@@ -855,7 +857,6 @@ jobs:
   # `repro_gate::tests::shards_are_disjoint_and_total`, so every example is
   # still covered. Both remain setup-dependent; the chain drops to setup + ~395s.
   repro:
-    needs: setup
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -871,7 +872,6 @@ jobs:
         run: cargo run -q -p xtask -- repro --shard=0/2
 
   repro-2:
-    needs: setup
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -888,7 +888,6 @@ jobs:
 
   # ── Codegen emit + go build + runtime (needs Go; cached) ────────────────────
   codegen-build:
-    needs: setup
     runs-on: ubuntu-latest
     # Now: workspace build + coerce-floor + the console drift check (run
     # 36615007321: 129 s + 131 s + 49 s of 630 s, the rest was the rt tests that
@@ -1369,7 +1368,6 @@ jobs:
   # merely making it faster. Nothing is dropped — both gates still run on every
   # push, and `ci-green` requires this job like any other.
   behaviour-docs:
-    needs: setup
     runs-on: ubuntu-latest
     # ~81s workspace build + ~167s conformance (incl. the release sky build) +
     # ~48s doc-examples + ~3 min for the release-mode deep-expression tests
@@ -1492,7 +1490,6 @@ jobs:
   # falsifier-applicability check is already per-PR: it rides inside the
   # `coverage-ledger --check` step below.
   config-gates:
-    needs: setup
     runs-on: ubuntu-latest
     # ~60s cache restore + ~90s release `sky` (cache-warm) + ~50s config-matrix
     # + ~112s cli-verbs+analytics + three sub-second checks ≈ 6 min. 1.5x with
@@ -1802,7 +1799,6 @@ jobs:
 
   # ── Editor-parity (Neovim) + fuzzer (small; isolated setup) ─────────────────
   lsp-fuzz:
-    needs: setup
     runs-on: ubuntu-latest
     # "small; isolated setup" per this file's header. Reasoned: nvim setup ~1 min
     # + debug workspace build ~4 min + lsp 49 cases (debug `sky`) ~5.5 min + fuzz
@@ -2511,7 +2507,7 @@ jobs:
           # REST-API name contains a space (a `matrix` leg reports as
           # `name (leg)`) could never match one. That is why the licence gate is
           # two explicitly-named jobs rather than one two-legged matrix.
-          SETUP_INDEPENDENT_JOBS: 'integration-postgres integration-postgres-2 build-perf build-perf-2 build-corpus build-corpus-2 build-corpus-3 erasure-fuzz erasure-fuzz-2 test-sky test-sky-2 test-sky-3 test-sky-4 test-sky-5 test-sky-6 test-sky-7 test-sky-8 test-sky-9 runtime-rt licence-gate-linux'
+          SETUP_INDEPENDENT_JOBS: 'test-ty test-rest parity-accept parity-reject repro repro-2 codegen-build behaviour-docs config-gates lsp-fuzz integration-postgres integration-postgres-2 build-perf build-perf-2 build-corpus build-corpus-2 build-corpus-3 erasure-fuzz erasure-fuzz-2 test-sky test-sky-2 test-sky-3 test-sky-4 test-sky-5 test-sky-6 test-sky-7 test-sky-8 test-sky-9 runtime-rt licence-gate-linux'
           MACOS_JOBS: 'macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour macos-conformance'
         run: |
           set -euo pipefail

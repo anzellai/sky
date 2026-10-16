@@ -2802,3 +2802,48 @@ fn every_matrix_shard_list_matches_the_total_its_commands_name() {
         "found {seen} matrix-sharded jobs; the parse is wrong"
     );
 }
+
+/// `ci-green`'s tier-budget lists match the job graph: SETUP_INDEPENDENT_JOBS
+/// names exactly the Linux jobs that do not `needs: setup`, and MACOS_JOBS
+/// names exactly the macOS jobs. A job missing from both lists is charged as
+/// setup-dependent (setup + its time), and a stale name hides nothing but
+/// misreports the tier; either way the budget the assertion prints is wrong.
+#[test]
+fn the_tier_budget_lists_match_the_job_graph() {
+    let doc = read_workflow("rust-ci.yml");
+    let jobs = doc["jobs"].as_mapping().expect("jobs");
+    let env_list = |key: &str| -> std::collections::BTreeSet<String> {
+        doc["jobs"]["ci-green"]["steps"]
+            .as_sequence()
+            .into_iter()
+            .flatten()
+            .find_map(|s| s["env"][key].as_str())
+            .unwrap_or_else(|| panic!("ci-green sets no {key}"))
+            .split_whitespace()
+            .map(str::to_string)
+            .collect()
+    };
+    let independent = env_list("SETUP_INDEPENDENT_JOBS");
+    let macos = env_list("MACOS_JOBS");
+    let mut want_independent = std::collections::BTreeSet::new();
+    let mut want_macos = std::collections::BTreeSet::new();
+    for (name, job) in jobs {
+        let name = name.as_str().unwrap_or("?").to_string();
+        if name == "setup" || name == "ci-green" {
+            continue;
+        }
+        let runs_on = job["runs-on"].as_str().unwrap_or("");
+        let needs_setup = match &job["needs"] {
+            serde_yaml::Value::String(s) => s == "setup",
+            serde_yaml::Value::Sequence(v) => v.iter().any(|x| x.as_str() == Some("setup")),
+            _ => false,
+        };
+        if runs_on.starts_with("macos") {
+            want_macos.insert(name);
+        } else if !needs_setup {
+            want_independent.insert(name);
+        }
+    }
+    assert_eq!(independent, want_independent, "SETUP_INDEPENDENT_JOBS");
+    assert_eq!(macos, want_macos, "MACOS_JOBS");
+}
