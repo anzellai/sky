@@ -28,6 +28,20 @@
 #   cold     a fresh directory with an EMPTY temporary GOCACHE (the Go
 #            module cache and Sky's precompress cache are not emptied)
 #
+# Runner speed (the reference workload):
+#   CI runners of one label are not one machine. The same cold app50-web build
+#   took 95-115 CPU-s on some ubuntu-latest runners and 155-177 on others, and
+#   every scenario moved together, so an absolute wall budget failed on the
+#   slow machines and could not be tightened for the fast ones. Before every
+#   repetition of every case the script therefore times a FIXED workload on the
+#   same machine, in the same job: a cold `go build` (empty GOCACHE) of the Go
+#   standard-library packages in REFERENCE_PKGS. It depends only on the Go
+#   toolchain, never on this tree, so a slower Sky does not slow it. The report
+#   carries its median, and the budget compares each case's wall time as a
+#   RATIO to it (`wall_ratio`): a slow runner slows both and passes, a slower
+#   Sky slows only the case and fails. A report without a reference, or a
+#   budget without ratios, fails; there is no absolute fallback.
+#
 # Usage:
 #   scripts/bench-build.sh [--reps N] [--sizes "50 100"] [--cases "app skyshop desktop"]
 #                          [--targets "web:app web"]
@@ -102,13 +116,15 @@ while [ "$#" -gt 0 ]; do
 done
 
 require_tool jq "install jq (apt-get install jq / brew install jq)"
-require_tool go "install Go (https://go.dev/dl/)"
-require_tool cargo "install the Rust toolchain (https://rustup.rs)"
-if [ ! -x /usr/bin/time ]; then
-    echo "FAIL: bench-build needs /usr/bin/time (apt-get install time)." >&2
-    exit 1
-fi
 if [ -z "$FROM_REPORT" ]; then
+    # Only a measuring run builds and times anything; --report compares a
+    # finished report and needs jq alone.
+    require_tool go "install Go (https://go.dev/dl/)"
+    require_tool cargo "install the Rust toolchain (https://rustup.rs)"
+    if [ ! -x /usr/bin/time ]; then
+        echo "FAIL: bench-build needs /usr/bin/time (apt-get install time)." >&2
+        exit 1
+    fi
     require_fresh_compiler "$SKY" "$TREE"
 fi
 
@@ -210,6 +226,47 @@ measure() {
         "$(( ${rss:-0} / 1048576 ))"
 }
 
+# The fixed reference workload (see the header): Go standard-library
+# packages only, so it measures the machine and the Go toolchain, never this
+# tree. Changing the list changes the unit of every budget ratio, so the
+# budget records it and a mismatch fails until the budget is re-seeded.
+REFERENCE_PKGS="net/http encoding/json text/template"
+REFS="$WORK/reference.jsonl"
+: > "$REFS"
+
+# measure_reference <label>: one cold build of REFERENCE_PKGS, appended to $REFS.
+measure_reference() {
+    local label="$1" cache="$WORK/gocache-reference" tf="$WORK/reference-time.out"
+    local log="$WORK/reference.log" code=0
+    rm -rf "$cache"
+    mkdir -p "$cache"
+    rm -f "$tf"
+    # Outside any module, with no GOFLAGS: the std packages resolve from GOROOT.
+    if [ "$OS" = darwin ]; then
+        (cd "$WORK" && unset GOFLAGS && export GOCACHE="$cache" && \
+            with_timeout 900 /usr/bin/time -p -o "$tf" go build $REFERENCE_PKGS) > "$log" 2>&1 || code=$?
+    else
+        (cd "$WORK" && unset GOFLAGS && export GOCACHE="$cache" && \
+            with_timeout 900 /usr/bin/time -o "$tf" -f $'real %e\nuser %U\nsys %S' \
+            go build $REFERENCE_PKGS) > "$log" 2>&1 || code=$?
+    fi
+    local wall user sys
+    wall="$(awk '$1 == "real" { print $2 }' "$tf" 2>/dev/null || true)"
+    user="$(awk '$1 == "user" { print $2 }' "$tf" 2>/dev/null || true)"
+    sys="$(awk '$1 == "sys" { print $2 }' "$tf" 2>/dev/null || true)"
+    chmod -R u+w "$cache" 2>/dev/null || true
+    rm -rf "$cache"
+    if [ "$code" != 0 ] || [ -z "$wall" ]; then
+        echo "FAIL: the reference workload (go build $REFERENCE_PKGS) exited $code:" >&2
+        tail -25 "$log" >&2
+        exit 1
+    fi
+    jq -cn --arg label "$label" --argjson wall "$wall" --argjson user "$user" --argjson sys "$sys" \
+        '{label: $label, wall_s: $wall, cpu_s: (($user + $sys) * 100 | round / 100)}' >> "$REFS"
+    printf '  %-22s %-7s %-5s  wall %7.2fs  cpu %7.2fs\n' reference "$label" "" "$wall" \
+        "$(awk -v u="$user" -v s="$sys" 'BEGIN { print u + s }')"
+}
+
 # run_case <case-id> <pristine-dir> <edit-file> <edit-from> <edit-to> -- <sky build args...>
 run_case() {
     local case_id="$1" pristine="$2" edit_file="$3" edit_from="$4" edit_to="$5"
@@ -217,6 +274,7 @@ run_case() {
     local rep=1
     while [ "$rep" -le "$REPS" ]; do
         local base="$WORK/r$rep/$case_id"
+        measure_reference "$case_id/r$rep"
         local a="$base/a" b="$base/deeper/b" c="$base/c"
         copy_project "$pristine" "$a"
         measure "$case_id" prime "$rep" "$a" "$base/prime.log" -- "$@"
@@ -339,12 +397,20 @@ REPORT="$WORK/report.json"
 if [ -n "$FROM_REPORT" ]; then
     cp -f "$FROM_REPORT" "$REPORT"
     REPS="$(jq -r '.reps' "$REPORT")"
+    # The report says which machine it measured; compare it against that
+    # platform's budget, not the one this comparison happens to run on.
+    PLATFORM="$(jq -r '.machine.platform' "$REPORT")"
 else
 jq -s --arg platform "$PLATFORM" --argjson cpus "$CPUS" --argjson mem "$MEM" \
     --arg go "$(go version)" --arg sky "$("$SKY" --version 2>/dev/null | head -1)" \
-    --argjson reps "$REPS" '
+    --argjson reps "$REPS" --arg refpkgs "$REFERENCE_PKGS" --slurpfile refs "$REFS" '
     {machine: {platform: $platform, cpus: $cpus, mem_bytes: $mem, go: $go, sky: $sky},
      reps: $reps,
+     reference: (if ($refs | length) == 0 then null else
+                 {packages: $refpkgs,
+                  wall_s: ($refs | map(.wall_s) | sort | .[(length - 1) / 2 | floor]),
+                  cpu_s: ($refs | map(.cpu_s) | sort | .[(length - 1) / 2 | floor]),
+                  runs: $refs} end),
      medians: (group_by(.case + "/" + .scenario) | map({
         key: (.[0].case + "/" + .[0].scenario),
         value: {
@@ -361,22 +427,36 @@ if [ -n "$OUT" ]; then
 fi
 
 if [ -n "$WRITE_BUDGET" ]; then
+    if [ "$(jq -r '.reference.wall_s // 0 | . > 0' "$REPORT")" != true ]; then
+        echo "FAIL: the report has no reference workload, so no budget ratio can be written." >&2
+        exit 1
+    fi
     existing='{}'
     [ -f "$WRITE_BUDGET" ] && existing="$(cat "$WRITE_BUDGET")"
     echo "$existing" | jq --slurpfile r "$REPORT" --arg platform "$PLATFORM" '
         .factor = (.factor // 1.5)
         | .slack_s = (.slack_s // 2)
         | .slack_bytes = (.slack_bytes // 67108864)
+        | $r[0].reference as $ref
         | .platforms[$platform] = {
             machine: $r[0].machine,
             reps: $r[0].reps,
+            reference: {packages: $ref.packages, wall_s: $ref.wall_s},
             budget: ($r[0].medians | with_entries(select(.key | endswith("/prime") | not))
-                     | map_values({wall_s, peak_rss_bytes}))
+                     | map_values({wall_s,
+                                   wall_ratio: ((.wall_s / $ref.wall_s) * 10000 | round / 10000),
+                                   peak_rss_bytes}))
           }' > "$WRITE_BUDGET.tmp"
     mv -f "$WRITE_BUDGET.tmp" "$WRITE_BUDGET"
     echo "bench-build: wrote the $PLATFORM budget to $WRITE_BUDGET"
 fi
 
+# The comparison. Wall time is compared as a RATIO to the reference workload
+# this run measured on its own machine (see the header): a key fails when
+#   wall / reference > wall_ratio x factor
+# and its wall is also above (wall_ratio x reference) + slack_s, the absolute
+# noise floor that keeps a sub-second warm build from failing on jitter. Peak
+# RSS does not depend on the CPU's speed and stays absolute.
 if [ -n "$BUDGET" ]; then
     verdict="$(jq -r --slurpfile r "$REPORT" --arg platform "$PLATFORM" \
         --argjson subset "$BUDGET_SUBSET" '
@@ -384,8 +464,16 @@ if [ -n "$BUDGET" ]; then
         | (.slack_s // 0) as $ss
         | (.slack_bytes // 0) as $sb
         | .platforms[$platform] as $p
+        | ($r[0].reference // {}) as $ref
         | if $p == null then
             "NO-BUDGET"
+          elif ($ref.wall_s // 0) <= 0 then
+            "NO-REFERENCE: the report carries no reference workload, so its wall times cannot be normalised"
+          elif ($p.reference.wall_s // 0) <= 0
+               or ([$p.budget[] | select((.wall_ratio // 0) <= 0)] | length) > 0 then
+            "NO-RATIO: the \($platform) budget has no reference ratios; re-seed it with --write-budget"
+          elif $p.reference.packages != $ref.packages then
+            "REFERENCE-MISMATCH: the budget was seeded against `\($p.reference.packages)`, this run measured `\($ref.packages)`; re-seed it"
           else
             # A case is the key before the "/" (app50-web:app, skyshop-web).
             ($r[0].medians | keys | map(split("/")[0]) | unique) as $measured
@@ -399,23 +487,31 @@ if [ -n "$BUDGET" ]; then
             [ $entries[] | . as $b
               | ($r[0].medians[$b.key]) as $m
               | if $m == null then "MISSING \($b.key): budgeted but not measured"
-                elif $m.wall_s > $b.value.wall_s * $f and $m.wall_s > $b.value.wall_s + $ss then
-                  "OVER \($b.key): wall \($m.wall_s)s > \($b.value.wall_s)s x \($f)"
-                elif $m.peak_rss_bytes > $b.value.peak_rss_bytes * $f
-                    and $m.peak_rss_bytes > $b.value.peak_rss_bytes + $sb then
-                  "OVER \($b.key): peak RSS \($m.peak_rss_bytes) > \($b.value.peak_rss_bytes) x \($f)"
-                else empty end ] | join("\n")
+                else
+                  ($m.wall_s / $ref.wall_s) as $ratio
+                  | ($b.value.wall_ratio * $ref.wall_s) as $expect
+                  | if $ratio > $b.value.wall_ratio * $f and $m.wall_s > $expect + $ss then
+                      "OVER \($b.key): wall \($m.wall_s)s is \($ratio * 1000 | round / 1000) x the reference (\($ref.wall_s)s), budget \($b.value.wall_ratio) x \($f) (\($expect * 100 | round / 100)s expected on this machine)"
+                    elif $m.peak_rss_bytes > $b.value.peak_rss_bytes * $f
+                        and $m.peak_rss_bytes > $b.value.peak_rss_bytes + $sb then
+                      "OVER \($b.key): peak RSS \($m.peak_rss_bytes) > \($b.value.peak_rss_bytes) x \($f)"
+                    else empty end
+                end ] | join("\n")
               end
           end' "$BUDGET")"
-    if [ "$verdict" = "NO-BUDGET" ]; then
-        echo "FAIL: $BUDGET has no budget for $PLATFORM." >&2
-        echo "  Seed it from a run on that platform: scripts/bench-build.sh --reps 3 --write-budget $BUDGET" >&2
-        exit 1
-    fi
+    case "$verdict" in
+        NO-BUDGET)
+            echo "FAIL: $BUDGET has no budget for $PLATFORM." >&2
+            echo "  Seed it from a run on that platform: scripts/bench-build.sh --reps 3 --write-budget $BUDGET" >&2
+            exit 1 ;;
+        NO-REFERENCE*|NO-RATIO*|REFERENCE-MISMATCH*)
+            echo "FAIL: $verdict ($BUDGET)." >&2
+            exit 1 ;;
+    esac
     if [ -n "$verdict" ]; then
-        echo "FAIL: build speed above budget ($BUDGET, medians of $REPS):" >&2
+        echo "FAIL: build speed above budget ($BUDGET, medians of $REPS, reference $(jq -r '.reference.wall_s' "$REPORT")s):" >&2
         echo "$verdict" >&2
         exit 1
     fi
-    echo "bench-build: PASS — every median within budget x factor for $PLATFORM ($BUDGET)"
+    echo "bench-build: PASS — every median within budget x factor for $PLATFORM ($BUDGET, as a ratio to the reference workload, $(jq -r '.reference.wall_s' "$REPORT")s on this machine)"
 fi
