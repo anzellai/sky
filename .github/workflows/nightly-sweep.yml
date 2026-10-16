@@ -760,8 +760,11 @@ jobs:
         run: bash scripts/ci/nix-build-check.sh
 
   # Build speed against docs/perf/build-budget.json, every night whatever
-  # changed (rust-ci's `build-perf` measures only when a build-speed input
-  # changed). Same script, same budget, same factor.
+  # changed: the full set (the app at both sizes, examples/13-skyshop, every
+  # scenario) against every budgeted key. rust-ci's `build-perf` measures only
+  # the 50-field app, and only when a build-speed input changed, because the
+  # full set does not fit the T1 tier budget. Same script, same budget, same
+  # factor. xtask workflows_parse pins this invocation.
   build-perf:
     if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "build-perf"]'), inputs.only) }}
     runs-on: ubuntu-latest

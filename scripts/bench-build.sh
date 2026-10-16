@@ -41,12 +41,12 @@
 #                   runner noise), or when the budget has no entry for this
 #                   platform or a budgeted key was not measured
 #   --budget-subset with --budget, for a run that measures a subset of the
-#                   budgeted cases (a pull request runs `--cases app --sizes
-#                   50`): a budgeted key is required only when this run
+#                   budgeted cases (rust-ci runs `--cases app --sizes 50` on
+#                   every event): a budgeted key is required only when this run
 #                   measured its case (`app50-web`, `skyshop-web`, the part
 #                   before the `/`), and every key of such a case is compared
 #                   as usual. It fails when no budgeted case was measured. The
-#                   full run (main, nightly) never passes it, so there every
+#                   full run (the nightly) never passes it, so there every
 #                   budgeted key must be measured.
 #   --write-budget  write this run's medians (prime excluded) as this
 #                   platform's budget entry

@@ -1800,26 +1800,37 @@ fn every_job_running_the_sky_tests_installs_brotli() {
     );
 }
 
-/// The full build-speed measure, as the nightly and every push to main run it.
+/// The full build-speed measure, as the nightly runs it: the app at both
+/// sizes and examples/13-skyshop, every scenario, every budgeted key.
 const FULL_BENCH: &str = "bash scripts/bench-build.sh --reps 3 --cases \"app skyshop\" \
      --out build-perf.json --write-budget build-budget.proposed.json \
      --budget docs/perf/build-budget.json";
 
-/// What is wrong with a workflow's `build-perf` job, measured against the
-/// full build-speed invocation. `on_main` is the `if:` the full step must
-/// carry (rust-ci.yml: a push or a run on main), or `None` when the step runs
-/// unconditionally (the nightly).
-fn build_perf_problems(file: &str, text: &str, on_main: Option<&str>) -> Vec<String> {
-    let doc: serde_yaml::Value = match serde_yaml::from_str(text) {
-        Ok(d) => d,
-        Err(e) => return vec![format!("{file}: does not parse: {e}")],
-    };
+/// The per-push and pull-request measure in rust-ci.yml: the 50-field app
+/// against its own budget keys. `--budget-subset` requires every budgeted key
+/// of the measured case and still fails on a rise.
+const SUBSET_BENCH: &str = "bash scripts/bench-build.sh --reps 3 --cases app --sizes 50 \
+     --out build-perf.json --budget docs/perf/build-budget.json --budget-subset";
+
+/// The only condition rust-ci.yml's measure may carry: the in-job path
+/// filter. Anything else (an event or branch test, `false`) is a skip.
+const RUST_CI_BENCH_IF: &str = "steps.paths.outputs.run == 'true'";
+
+/// The `build-perf` job of a parsed workflow, or why it is unusable.
+fn build_perf_job<'a>(
+    file: &str,
+    doc: &'a serde_yaml::Value,
+) -> Result<&'a serde_yaml::Value, String> {
     let job = &doc["jobs"]["build-perf"];
     if job.is_null() || job_is_disabled(job) {
-        return vec![format!("{file}: no enabled build-perf job")];
+        return Err(format!("{file}: no enabled build-perf job"));
     }
-    let mut problems = Vec::new();
-    let benches: Vec<&serde_yaml::Value> = job["steps"]
+    Ok(job)
+}
+
+/// The steps of a job that run scripts/bench-build.sh.
+fn bench_steps(job: &serde_yaml::Value) -> Vec<&serde_yaml::Value> {
+    job["steps"]
         .as_sequence()
         .into_iter()
         .flatten()
@@ -1828,108 +1839,238 @@ fn build_perf_problems(file: &str, text: &str, on_main: Option<&str>) -> Vec<Str
                 .as_str()
                 .is_some_and(|r| r.contains("scripts/bench-build.sh"))
         })
-        .collect();
-    let full: Vec<&&serde_yaml::Value> = benches
-        .iter()
-        .filter(|s| s["run"].as_str().map(str::trim) == Some(FULL_BENCH))
-        .collect();
-    if full.len() != 1 {
+        .collect()
+}
+
+/// What is wrong with the nightly's `build-perf` job: it must run exactly
+/// the full measure, in one step with no condition of its own.
+fn nightly_build_perf_problems(doc: &serde_yaml::Value) -> Vec<String> {
+    let file = "nightly-sweep.yml";
+    let job = match build_perf_job(file, doc) {
+        Ok(j) => j,
+        Err(e) => return vec![e],
+    };
+    let mut problems = Vec::new();
+    let benches = bench_steps(job);
+    if benches.len() != 1 {
         problems.push(format!(
-            "{file}: build-perf has {} steps running exactly `{FULL_BENCH}`, want 1",
-            full.len()
+            "{file}: build-perf has {} bench-build steps, want 1",
+            benches.len()
         ));
     }
-    for s in &full {
-        let cond = s["if"].as_str().map(str::trim);
-        if cond != on_main {
+    for s in benches {
+        let run = s["run"].as_str().unwrap_or("").trim();
+        if run != FULL_BENCH {
             problems.push(format!(
-                "{file}: the full build-perf step runs under `if: {cond:?}`, want {on_main:?}"
+                "{file}: build-perf runs `{run}`, want exactly `{FULL_BENCH}`"
             ));
         }
-    }
-    // Any other bench step is the pull-request scope: it must exclude a push
-    // and main, so it can never stand in for the full measure there.
-    for s in benches
-        .iter()
-        .filter(|s| s["run"].as_str().map(str::trim) != Some(FULL_BENCH))
-    {
-        let cond = s["if"].as_str().unwrap_or("");
-        if on_main.is_none()
-            || !cond.contains("github.event_name != 'push'")
-            || !cond.contains("github.ref != 'refs/heads/main'")
-        {
+        if !s["if"].is_null() {
             problems.push(format!(
-                "{file}: a reduced build-perf step (`{}`) can run where the full \
-                 measure must (if: {cond:?})",
-                s["run"].as_str().unwrap_or("").trim()
+                "{file}: the full build-perf step carries `if: {:?}`; it must run every night",
+                s["if"]
             ));
         }
     }
     problems
 }
 
-const RUST_CI_FULL_IF: &str = "steps.paths.outputs.run == 'true' && \
-     (github.event_name == 'push' || github.ref == 'refs/heads/main')";
-
-/// The build-speed gate keeps its full scope on main and in the nightly.
-///
-/// A pull request measures a small case (`--cases app --sizes 50
-/// --budget-subset`) to keep its CI short. The full set (both app sizes and
-/// examples/13-skyshop, every budgeted key) must still run on every push to
-/// main and every night, or a rise in an unmeasured case reaches a release
-/// unseen. This pins that invocation and its condition.
-#[test]
-fn the_full_build_speed_measure_runs_on_main_and_in_the_nightly() {
-    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+/// What is wrong with rust-ci.yml's `build-perf` job: on every event it must
+/// run exactly the 50-field subset, gated only by the in-job path filter, and
+/// that filter must say `run=true` when a build-speed input changes.
+fn rust_ci_build_perf_problems(doc: &serde_yaml::Value) -> Vec<String> {
+    let file = "rust-ci.yml";
+    let job = match build_perf_job(file, doc) {
+        Ok(j) => j,
+        Err(e) => return vec![e],
+    };
     let mut problems = Vec::new();
-    for (file, on_main) in [
-        ("rust-ci.yml", Some(RUST_CI_FULL_IF)),
-        ("nightly-sweep.yml", None),
-    ] {
-        let text = std::fs::read_to_string(root.join(".github/workflows").join(file))
-            .unwrap_or_else(|e| panic!("read {file}: {e}"));
-        problems.extend(build_perf_problems(file, &text, on_main));
+    if !job["if"].is_null() {
+        problems.push(format!(
+            "{file}: build-perf carries a job-level `if: {:?}`; ci-green treats a \
+             skipped job as a failure, and the path filter lives inside the job",
+            job["if"]
+        ));
     }
+    let benches = bench_steps(job);
+    if benches.len() != 1 {
+        problems.push(format!(
+            "{file}: build-perf has {} bench-build steps, want 1 (the full measure \
+             belongs in the nightly; it does not fit the T1 tier budget)",
+            benches.len()
+        ));
+    }
+    for s in benches {
+        let run = s["run"].as_str().unwrap_or("").trim();
+        if run != SUBSET_BENCH {
+            problems.push(format!(
+                "{file}: build-perf runs `{run}`, want exactly `{SUBSET_BENCH}`"
+            ));
+        }
+        let cond = s["if"].as_str().map(str::trim);
+        if cond != Some(RUST_CI_BENCH_IF) {
+            problems.push(format!(
+                "{file}: the build-perf measure runs under `if: {cond:?}`, want \
+                 {RUST_CI_BENCH_IF:?} (the path filter only, on every event)"
+            ));
+        }
+    }
+    // The path filter must exist, set `run=true`, and match the compiler,
+    // runtime, stdlib, bench script and budget. A filter that never says
+    // `run=true` is a skip in disguise.
+    let paths = job["steps"]
+        .as_sequence()
+        .into_iter()
+        .flatten()
+        .find(|s| s["id"].as_str() == Some("paths"));
+    match paths.and_then(|s| s["run"].as_str()) {
+        None => problems.push(format!("{file}: build-perf has no `id: paths` step")),
+        Some(run) => {
+            for needle in [
+                "echo \"run=true\" >> \"$GITHUB_OUTPUT\"",
+                "rust/crates/(project|sky|codegen|lower|ty|hir|skydb)/",
+                "runtime-go/",
+                "sky-stdlib/",
+                "scripts/bench-build\\.sh$",
+                "docs/perf/build-budget\\.json$",
+            ] {
+                if !run.contains(needle) {
+                    problems.push(format!(
+                        "{file}: the build-perf path filter lacks `{needle}`"
+                    ));
+                }
+            }
+        }
+    }
+    problems
+}
+
+fn read_workflow(file: &str) -> serde_yaml::Value {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let text = std::fs::read_to_string(root.join(".github/workflows").join(file))
+        .unwrap_or_else(|e| panic!("read {file}: {e}"));
+    serde_yaml::from_str(&text).unwrap_or_else(|e| panic!("{file} does not parse: {e}"))
+}
+
+/// The bench-build step of a job, for a mutation in the tests below.
+fn bench_step_mut<'a>(doc: &'a mut serde_yaml::Value) -> &'a mut serde_yaml::Value {
+    doc["jobs"]["build-perf"]["steps"]
+        .as_sequence_mut()
+        .expect("build-perf has steps")
+        .iter_mut()
+        .find(|s| {
+            s["run"]
+                .as_str()
+                .is_some_and(|r| r.contains("scripts/bench-build.sh"))
+        })
+        .expect("build-perf has a bench-build step")
+}
+
+/// Per push and per pull request, the 50-field app; every night, the full set.
+///
+/// The full measure (both app sizes and examples/13-skyshop, every scenario)
+/// takes about 30 minutes on a runner. On a push to main it made build-perf
+/// the slowest setup-independent job, 1776 s against the 990 s T1 tier budget
+/// (rust-ci run 38837799531). So rust-ci.yml measures the 50-field app on
+/// every event, against its own budget keys, and the nightly measures the full
+/// set. This pins both invocations, and pins that rust-ci's measure is
+/// skipped only by its path filter.
+#[test]
+fn build_speed_measures_the_50_field_app_per_push_and_the_full_set_nightly() {
+    let mut problems = rust_ci_build_perf_problems(&read_workflow("rust-ci.yml"));
+    problems.extend(nightly_build_perf_problems(&read_workflow(
+        "nightly-sweep.yml",
+    )));
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
-/// The check above goes red on the shapes that would shrink the full measure.
+/// The nightly check above goes red on the shapes that would shrink the full
+/// measure, and the rust-ci check goes red on a skip or a changed scope.
 #[test]
 fn the_full_build_speed_check_catches_a_shrunk_measure() {
-    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
-    let text = std::fs::read_to_string(root.join(".github/workflows/rust-ci.yml"))
-        .expect("read rust-ci.yml");
-    let shrunk = text.replacen(
-        "--reps 3 --cases \"app skyshop\" --out",
-        "--reps 3 --cases app --out",
-        1,
-    );
-    assert!(shrunk != text, "the full invocation is not in rust-ci.yml");
-    let pr_only = text.replacen(
-        RUST_CI_FULL_IF,
-        "steps.paths.outputs.run == 'true' && github.event_name != 'push'",
-        1,
-    );
+    let nightly = read_workflow("nightly-sweep.yml");
     assert!(
-        pr_only != text,
-        "the full step's condition is not in rust-ci.yml"
+        nightly_build_perf_problems(&nightly).is_empty(),
+        "the nightly is not in its pinned shape"
     );
-    let reduced_on_main = text.replacen(
-        "github.event_name != 'push' && github.ref != 'refs/heads/main'",
-        "true",
-        1,
+    let set_run = |d: &mut serde_yaml::Value, run: &str| {
+        bench_step_mut(d)["run"] = serde_yaml::Value::String(run.into());
+    };
+    let mut cases: Vec<(&str, serde_yaml::Value)> = Vec::new();
+    let mut d = nightly.clone();
+    set_run(&mut d, &FULL_BENCH.replace("\"app skyshop\"", "app"));
+    cases.push(("nightly: skyshop dropped", d));
+    let mut d = nightly.clone();
+    set_run(
+        &mut d,
+        &FULL_BENCH.replace("--reps 3", "--reps 3 --sizes 50"),
     );
-    assert!(
-        reduced_on_main != text,
-        "the pull-request step's condition is not in rust-ci.yml"
-    );
-    for (what, t) in [
-        ("skyshop dropped", shrunk),
-        ("full step limited to non-push runs", pr_only),
-        ("reduced step allowed on main", reduced_on_main),
-    ] {
+    cases.push(("nightly: one app size", d));
+    let mut d = nightly.clone();
+    set_run(&mut d, &format!("{FULL_BENCH} --budget-subset"));
+    cases.push(("nightly: --budget-subset", d));
+    let mut d = nightly.clone();
+    set_run(&mut d, SUBSET_BENCH);
+    cases.push(("nightly: the per-push subset", d));
+    let mut d = nightly.clone();
+    bench_step_mut(&mut d)["if"] = serde_yaml::Value::String("false".into());
+    cases.push(("nightly: the step is skipped", d));
+    let mut d = nightly.clone();
+    d["jobs"]["build-perf"]["if"] = serde_yaml::Value::Bool(false);
+    cases.push(("nightly: the job is disabled", d));
+    for (what, d) in &cases {
         assert!(
-            !build_perf_problems("rust-ci.yml", &t, Some(RUST_CI_FULL_IF)).is_empty(),
+            !nightly_build_perf_problems(d).is_empty(),
+            "the check missed: {what}"
+        );
+    }
+
+    let ci = read_workflow("rust-ci.yml");
+    assert!(
+        rust_ci_build_perf_problems(&ci).is_empty(),
+        "rust-ci.yml is not in its pinned shape"
+    );
+    let mut cases: Vec<(&str, serde_yaml::Value)> = Vec::new();
+    let mut d = ci.clone();
+    set_run(&mut d, FULL_BENCH);
+    cases.push(("rust-ci: the full measure per push", d));
+    let mut d = ci.clone();
+    set_run(&mut d, &SUBSET_BENCH.replace(" --budget-subset", ""));
+    cases.push(("rust-ci: no --budget-subset", d));
+    let mut d = ci.clone();
+    set_run(
+        &mut d,
+        &SUBSET_BENCH.replace(" --budget docs/perf/build-budget.json", ""),
+    );
+    cases.push(("rust-ci: no --budget", d));
+    let mut d = ci.clone();
+    bench_step_mut(&mut d)["if"] = serde_yaml::Value::String("false".into());
+    cases.push(("rust-ci: the step is skipped", d));
+    let mut d = ci.clone();
+    bench_step_mut(&mut d)["if"] =
+        serde_yaml::Value::String(format!("{RUST_CI_BENCH_IF} && github.event_name != 'push'"));
+    cases.push(("rust-ci: skipped on a push", d));
+    let mut d = ci.clone();
+    d["jobs"]["build-perf"]["if"] = serde_yaml::Value::String("false".into());
+    cases.push(("rust-ci: the job is disabled", d));
+    let mut d = ci.clone();
+    for s in d["jobs"]["build-perf"]["steps"]
+        .as_sequence_mut()
+        .expect("steps")
+        .iter_mut()
+    {
+        if s["id"].as_str() == Some("paths") {
+            let run = s["run"].as_str().expect("paths run").replace(
+                "echo \"run=true\" >> \"$GITHUB_OUTPUT\"",
+                "echo \"run=false\" >> \"$GITHUB_OUTPUT\"",
+            );
+            s["run"] = serde_yaml::Value::String(run);
+        }
+    }
+    cases.push(("rust-ci: the path filter never says run=true", d));
+    for (what, d) in &cases {
+        assert!(
+            !rust_ci_build_perf_problems(d).is_empty(),
             "the check missed: {what}"
         );
     }
