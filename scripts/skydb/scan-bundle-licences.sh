@@ -205,6 +205,11 @@ classify() {
       esac ;;
     liblz4)
       echo "BSD-2-Clause|PERMISSIVE|LZ4" ;;
+    # xxHash: Ubuntu 26.04's liblz4 links the system libxxhash instead of its
+    # own bundled copy, so a bundle built there vendors it next to liblz4.
+    # Same author, same licence as LZ4.
+    libxxhash)
+      echo "BSD-2-Clause|PERMISSIVE|xxHash (an LZ4 dependency on newer distributions)" ;;
     libzstd)
       echo "BSD-3-Clause|PERMISSIVE|Zstandard (dual BSD-3/GPL-2; taken under BSD-3)" ;;
     libicuuc|libicui18n|libicudata|libicuio|libicutu)

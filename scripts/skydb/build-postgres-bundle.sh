@@ -221,7 +221,8 @@ export PKG_CONFIG_PATH="${PKG_CONFIG_PATH_EXTRA}${PKG_CONFIG_PATH:-}"
 # gen_random_uuid() since 13, so contrib/uuid-ossp buys nothing and would add
 # a dependency.
 #
-# LINKED, permissive, allowed by the doc: zlib (Zlib), lz4 (BSD-2-Clause),
+# LINKED, permissive, allowed by the doc: zlib (Zlib), lz4 (BSD-2-Clause, and
+# its xxHash dependency, BSD-2-Clause, where the distribution splits it out),
 # zstd (BSD-3-Clause/GPL-2.0 dual — we take BSD-3-Clause), ICU (Unicode-3.0),
 # libxml2 (MIT).
 # ─────────────────────────────────────────────────────────────────────

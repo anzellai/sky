@@ -1544,7 +1544,8 @@ The configure line excludes, at minimum: `--without-readline` (GPL),
 `--without-systemd` (LGPL), and the `--without-perl --without-python
 --without-tcl` procedural languages. OpenSSL is 3.x only (Apache-2.0; the
 pre-3.0 dual licence is messier). zlib, lz4, zstd, ICU and libxml2 are
-permissive and may be linked.
+permissive and may be linked, as is xxHash (BSD-2-Clause), which newer
+distributions' lz4 links as a separate library.
 
 ### Extensions
 
