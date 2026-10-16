@@ -1873,13 +1873,19 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
-      - name: rt tests under the race detector, with a live PostgreSQL
+      # SHARDED by test (scripts/ci/go-test-shard.sh): one race run of the rt
+      # tests took 655-668 s, almost all of it in the one package sky-app/rt,
+      # so a package split cannot shorten it. This job runs shard 1/2,
+      # integration-postgres-2 runs 2/2; both list the same tests and take
+      # disjoint halves whose union is the unsharded run
+      # (go_test_shards_are_disjoint_and_total.rs, workflows_parse.rs).
+      - name: rt tests under the race detector, with a live PostgreSQL (shard 1/2)
         working-directory: runtime-go
         # The DSN-gated live tests fail, never skip, without it (G-8,
         # runtime-go/rt/live_gate_test.go); the job's postgres service is it.
         env:
           SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
-        run: CGO_ENABLED=1 go test -race -timeout 20m ./rt/... -count=1
+        run: CGO_ENABLED=1 bash ../scripts/ci/go-test-shard.sh 1/2 ./rt/... -- -race -timeout 20m -count=1
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1895,6 +1901,88 @@ jobs:
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
           key: ${{ steps.go-cache.outputs.cache-primary-key }}
+
+  # ── The second race shard of the rt tests (see integration-postgres) ──────
+  # Shard 2/2 of the same tests. It runs neither the integration-tagged store
+  # tests (shard 1 owns them) nor saves the race cache (one writer per family).
+  integration-postgres-2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sky
+          POSTGRES_PASSWORD: sky
+          POSTGRES_DB: sky
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        id: setup-go
+        with:
+          go-version: '1.26'
+          cache: false
+      # A -race build shares nothing with the non-race caches, so it gets its
+      # own family.
+      - name: Cache Go build + module cache
+        id: go-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-race-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-race-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-race-linux-
+      # Two things made a whole defect class unreachable in CI, and it took a
+      # local run to find one: a data race between `waitReady` reading
+      # `cmd.ProcessState` and `watchChild`'s `Wait()` writing it — also an
+      # os/exec contract violation, since ProcessState is invalid until Wait
+      # returns. CI could not have caught it, because
+      #
+      #   1. every Go step here runs CGO_ENABLED=0, and `-race` needs cgo; and
+      #   2. the embedded-PostgreSQL supervisor needs real initdb/pg_ctl/postgres
+      #      binaries ON THE RUNNER. The service container above is a server on
+      #      a port — it puts nothing on PATH — so every live test SKIPPED, and
+      #      a skipped test is green.
+      #
+      # Both are closed below. The binaries also make the live supervisor tests
+      # (socket permissions, drain-then-stop ordering, DSN handoff) actually run
+      # rather than skip.
+      - name: PostgreSQL binaries for the embedded supervisor
+        run: |
+          set -euo pipefail
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
+
+      # The rt tests that run the embedded browser clients need node; a
+      # missing one fails them (runtime-go/rt/live_gate_test.go).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      # SHARDED by test (scripts/ci/go-test-shard.sh): one race run of the rt
+      # tests took 655-668 s, almost all of it in the one package sky-app/rt,
+      # so a package split cannot shorten it. This job runs shard 1/2,
+      # integration-postgres-2 runs 2/2; both list the same tests and take
+      # disjoint halves whose union is the unsharded run
+      # (go_test_shards_are_disjoint_and_total.rs, workflows_parse.rs).
+      - name: rt tests under the race detector, with a live PostgreSQL (shard 2/2)
+        working-directory: runtime-go
+        # The DSN-gated live tests fail, never skip, without it (G-8,
+        # runtime-go/rt/live_gate_test.go); the job's postgres service is it.
+        env:
+          SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
+        run: CGO_ENABLED=1 bash ../scripts/ci/go-test-shard.sh 2/2 ./rt/... -- -race -timeout 20m -count=1
 
   # ── macOS: platform-determinism subset only (the reason for a 2nd OS) ───────
   # Byte-stable codegen (repro) + coerce floor + runtime behaviour must hold on a
@@ -2256,6 +2344,7 @@ jobs:
       - licence-gate-linux
       - licence-gate-macos
       - integration-postgres
+      - integration-postgres-2
       - macos-determinism
       - macos-determinism-2
       - macos-determinism-3
@@ -2318,7 +2407,7 @@ jobs:
           # REST-API name contains a space (a `matrix` leg reports as
           # `name (leg)`) could never match one. That is why the licence gate is
           # two explicitly-named jobs rather than one two-legged matrix.
-          SETUP_INDEPENDENT_JOBS: 'integration-postgres build-perf build-corpus build-corpus-2 build-corpus-3 erasure-fuzz erasure-fuzz-2 test-sky test-sky-2 test-sky-3 test-sky-4 test-sky-5 test-sky-6 test-sky-7 test-sky-8 test-sky-9 runtime-rt licence-gate-linux'
+          SETUP_INDEPENDENT_JOBS: 'integration-postgres integration-postgres-2 build-perf build-corpus build-corpus-2 build-corpus-3 erasure-fuzz erasure-fuzz-2 test-sky test-sky-2 test-sky-3 test-sky-4 test-sky-5 test-sky-6 test-sky-7 test-sky-8 test-sky-9 runtime-rt licence-gate-linux'
           MACOS_JOBS: 'macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour macos-conformance licence-gate-macos'
         run: |
           set -euo pipefail

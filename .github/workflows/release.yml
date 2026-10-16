@@ -1217,7 +1217,7 @@ jobs:
   # PostgreSQL, plus the `integration`-tagged Postgres session-store tests.
   # Mirrors rust-ci's `integration-postgres` (which explains why `-race` needs
   # cgo and why the embedded-supervisor tests need real binaries on the runner).
-  gate-race:
+  gate-race-1:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -1268,13 +1268,15 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
-      - name: rt tests under the race detector, with a live PostgreSQL
+      # SHARDED by test, as rust-ci integration-postgres: this job runs shard
+      # 1/2 and gate-race-2 runs 2/2 of the same list (scripts/ci/go-test-shard.sh).
+      - name: rt tests under the race detector, with a live PostgreSQL (shard 1/2)
         working-directory: runtime-go
         # The DSN-gated live tests fail, never skip, without it (G-8,
         # runtime-go/rt/live_gate_test.go); the job's postgres service is it.
         env:
           SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
-        run: CGO_ENABLED=1 go test -race -timeout 20m ./rt/... -count=1
+        run: CGO_ENABLED=1 bash ../scripts/ci/go-test-shard.sh 1/2 ./rt/... -- -race -timeout 20m -count=1
       # Every Go test package under tools/ runs here
       # (workflows_parse.rs::every_go_test_package_under_tools_runs_in_ci).
       - name: tools Go tests (sky-ffi-inspect, skyliveload)
@@ -1282,6 +1284,65 @@ jobs:
           set -euo pipefail
           (cd "$GITHUB_WORKSPACE/tools/sky-ffi-inspect" && CGO_ENABLED=0 go test ./... -count=1)
           (cd "$GITHUB_WORKSPACE/tools/skyliveload" && CGO_ENABLED=0 go test ./... -count=1)
+
+  # gate-race-2 — shard 2/2 of the race run of the rt tests (see gate-race-1).
+  # The integration-tagged store tests and the tools tests run in gate-race-1.
+  gate-race-2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sky
+          POSTGRES_PASSWORD: sky
+          POSTGRES_DB: sky
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        id: setup-go
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Restore the race-build Go cache (saved on main only)
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-race-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-race-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-race-linux-
+      - name: PostgreSQL binaries for the embedded supervisor
+        run: |
+          set -euo pipefail
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
+      # The rt tests that run the embedded browser clients need node; a
+      # missing one fails them (runtime-go/rt/live_gate_test.go).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      # Shard 2/2 (scripts/ci/go-test-shard.sh).
+      - name: rt tests under the race detector, with a live PostgreSQL (shard 2/2)
+        working-directory: runtime-go
+        # The DSN-gated live tests fail, never skip, without it (G-8,
+        # runtime-go/rt/live_gate_test.go); the job's postgres service is it.
+        env:
+          SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
+        run: CGO_ENABLED=1 bash ../scripts/ci/go-test-shard.sh 2/2 ./rt/... -- -race -timeout 20m -count=1
+
+
 
   # gate-web-1..4 — the browser tier and the e2e scripts: every Sky.Live /
   # Http.Server example driven in real Chromium (verify-all-web.sh, incl. the
@@ -1759,7 +1820,8 @@ jobs:
       - gate-falsifiers-7
       - gate-falsifiers-8
       - gate-falsifiers-9
-      - gate-race
+      - gate-race-1
+      - gate-race-2
       - gate-web-1
       - gate-web-2
       - gate-web-3

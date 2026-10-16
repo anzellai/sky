@@ -1138,7 +1138,11 @@ fn the_release_workflow_is_the_full_suite() {
         ("scripts/example-sweep.sh", "the full clean-slate sweep"),
         ("scripts/verify-all-web.sh", "the browser tier"),
         ("scripts/doc-examples.sh", "the live-docs examples"),
-        ("go test -race", "the Go runtime under the race detector"),
+        (
+            "go-test-shard.sh",
+            "the Go runtime under the race detector (sharded by test; every shard \
+             runs: go_test_shards_run_every_shard_once_in_a_gating_job)",
+        ),
         // Every `scripts/*-e2e.sh` is required by the rule in
         // `e2e_scripts_are_gated.rs`, not by a hand list that cannot notice a
         // new script (G-1: nav-e2e ran nowhere for a whole release).
@@ -2233,6 +2237,7 @@ fn needs_runner_postgres(run: &str) -> bool {
             || l.contains("nextest run -p sky")
             || (l.contains("cargo test -p sky") && l.contains("--ignored"))
             || (l.contains("go test -race") && l.contains("./rt/"))
+            || (l.contains("go-test-shard.sh") && l.contains("./rt/") && l.contains("-race"))
             || l.contains("harness --tier t1")
             || l.contains("harness --tier t3")
     })
@@ -2612,4 +2617,93 @@ fn the_cache_discipline_check_catches_a_branch_save() {
         cache_discipline_problems("t.yml", &doc),
         Vec::<String>::new()
     );
+}
+
+/// Every `scripts/ci/go-test-shard.sh K/N <packages> -- <flags>` split, in
+/// either workflow, runs all N shards exactly once, with the same packages and
+/// flags, in jobs that gate the result (`ci-green` needs them in rust-ci.yml,
+/// `release` needs them in release.yml).
+///
+/// The race run of the Go runtime tests is split by test across two jobs
+/// (rust-ci `integration-postgres` / `-2`, release `gate-race-1` / `-2`). The
+/// script derives each shard from one sorted list, so the shards are disjoint
+/// and total once every K in 1..=N runs (go_test_shards_are_disjoint_and_total.rs
+/// proves the partition). Deleting a job, or two jobs naming the same shard,
+/// would leave half the tests unrun while every job reports green.
+#[test]
+fn go_test_shards_run_every_shard_once_in_a_gating_job() {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let mut splits_seen = 0;
+    for (file, fan_in) in [("rust-ci.yml", "ci-green"), ("release.yml", "release")] {
+        let text = std::fs::read_to_string(root.join(".github/workflows").join(file))
+            .expect("read workflow");
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parses");
+        let jobs = doc.get("jobs").and_then(|j| j.as_mapping()).expect("jobs");
+        let gating: Vec<String> = doc["jobs"][fan_in]["needs"]
+            .as_sequence()
+            .map(|s| {
+                s.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        // (packages and flags) -> [(k, n, job)]
+        let mut splits: std::collections::BTreeMap<String, Vec<(u32, u32, String)>> =
+            Default::default();
+        for (name, job) in jobs {
+            let Some(name) = name.as_str() else { continue };
+            if job_is_disabled(job) {
+                continue;
+            }
+            for step in job["steps"].as_sequence().into_iter().flatten() {
+                let run = step["run"].as_str().unwrap_or("");
+                for line in run.lines().map(str::trim).filter(|l| !l.starts_with('#')) {
+                    let toks: Vec<&str> = line.split_whitespace().collect();
+                    let Some(i) = toks.iter().position(|t| t.ends_with("go-test-shard.sh")) else {
+                        continue;
+                    };
+                    let spec = toks.get(i + 1).copied().unwrap_or("");
+                    let (k, n) = spec.split_once('/').unwrap_or_else(|| {
+                        panic!("{file} `{name}`: bad shard `{spec}` in `{line}`")
+                    });
+                    let key = toks[i + 2..].join(" ");
+                    splits.entry(key).or_default().push((
+                        k.parse().expect("K"),
+                        n.parse().expect("N"),
+                        name.to_string(),
+                    ));
+                }
+            }
+        }
+        assert!(
+            !splits.is_empty(),
+            "{file}: no go-test-shard.sh split found"
+        );
+        for (key, shards) in &splits {
+            splits_seen += 1;
+            let n = shards[0].1;
+            assert!(
+                shards.iter().all(|(_, m, _)| *m == n),
+                "{file} `{key}`: shards disagree on N: {shards:?}"
+            );
+            let mut ks: Vec<u32> = shards.iter().map(|(k, _, _)| *k).collect();
+            ks.sort();
+            assert_eq!(
+                ks,
+                (1..=n).collect::<Vec<u32>>(),
+                "{file} `{key}`: shards must be 1..={n}, each exactly once: {shards:?}"
+            );
+            let ungated: Vec<&String> = shards
+                .iter()
+                .map(|(_, _, j)| j)
+                .filter(|j| !gating.contains(j))
+                .collect();
+            assert!(
+                ungated.is_empty(),
+                "{file} `{key}`: shard job(s) {ungated:?} are not in `{fan_in}: needs:`"
+            );
+        }
+    }
+    assert!(splits_seen >= 2);
 }
