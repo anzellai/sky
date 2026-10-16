@@ -131,6 +131,87 @@ func TestDeviceOfferPlacementFollowsTheOperator(t *testing.T) {
 	}
 }
 
+// TestDeviceOfferCarriesTheEngineSettings: Device.withThreads and
+// withGpuLayers reach the offer, the operator's DEVICE_THREADS /
+// DEVICE_GPU_LAYERS win over the code, unset leaves both to the engine (0 and
+// -1), and a value out of range is InvalidSetting naming its source, never
+// dropped.
+func TestDeviceOfferCarriesTheEngineSettings(t *testing.T) {
+	_, modelRef := aiTestEnv(t, nil)
+	offer := func(cfg map[string]any) (int, aiDeviceOffer, string) {
+		aiDeviceReset()
+		srv := deviceServer(t, cfg)
+		resp, body := get(t, srv.URL+"/_sky/ai/device/chat", nil)
+		var o aiDeviceOffer
+		_ = json.Unmarshal([]byte(body), &o)
+		return resp.StatusCode, o, body
+	}
+	withEngine := func(threads, layers string) map[string]any {
+		cfg := deviceEndpoint("chat", "", "auto", modelRef, "")
+		d := cfg["device"].(map[string]any)
+		d["threads"], d["gpuLayers"] = threads, layers
+		return cfg
+	}
+	if code, o, body := offer(withEngine("", "")); code != 200 || o.Threads != 0 || o.GpuLayers != -1 {
+		t.Fatalf("unset: %d %s", code, body)
+	}
+	if code, o, body := offer(withEngine("3", "0")); code != 200 || o.Threads != 3 || o.GpuLayers != 0 {
+		t.Fatalf("code: %d %s", code, body)
+	}
+	t.Setenv("SKY_AI_CHAT_DEVICE_THREADS", "6")
+	t.Setenv("SKY_AI_CHAT_DEVICE_GPU_LAYERS", "12")
+	if code, o, body := offer(withEngine("3", "0")); code != 200 || o.Threads != 6 || o.GpuLayers != 12 {
+		t.Fatalf("operator over code: %d %s", code, body)
+	}
+	t.Setenv("SKY_AI_CHAT_DEVICE_THREADS", "")
+	t.Setenv("SKY_AI_CHAT_DEVICE_GPU_LAYERS", "")
+	for _, c := range []struct{ threads, layers, setting string }{
+		{"0", "", "Device.withThreads"},
+		{"", "-2", "Device.withGpuLayers"},
+	} {
+		code, _, body := offer(withEngine(c.threads, c.layers))
+		f, ok := aiDeviceFailureFrom([]byte(body))
+		if code == 200 || !ok || f.code != aiInvalidSetting {
+			t.Fatalf("%+v: %d %s", c, code, body)
+		}
+		if v, _ := f.attrValue("setting"); v != c.setting {
+			t.Fatalf("%+v: setting %q", c, v)
+		}
+	}
+	t.Setenv("SKY_AI_CHAT_DEVICE_THREADS", "many")
+	code, _, body := offer(withEngine("", ""))
+	if f, ok := aiDeviceFailureFrom([]byte(body)); code == 200 || !ok || f.code != aiInvalidSetting {
+		t.Fatalf("env not a number: %d %s", code, body)
+	} else if v, _ := f.attrValue("setting"); v != "SKY_AI_CHAT_DEVICE_THREADS" {
+		t.Fatalf("env setting %q", v)
+	}
+}
+
+// TestDeskEngineSettingsReachLlamaServer: the Mac app's managed engine gets
+// the slot's threads as `-t` and its GPU layers as the GPU setting, so a
+// count on a CPU build is NoAccelerator (aiPlanFit), never dropped.
+func TestDeskEngineSettingsReachLlamaServer(t *testing.T) {
+	if got := aiDeskGpu(-1); got != "auto" {
+		t.Fatalf("unset layers: %q", got)
+	}
+	if got := aiDeskGpu(0); got != "0" {
+		t.Fatalf("cpu only: %q", got)
+	}
+	if got := aiDeskGpu(12); got != "12" {
+		t.Fatalf("layers: %q", got)
+	}
+	m := ggufMeta{blockCount: 24, contextLength: 32768}
+	if _, err := aiPlanFit(m, 1<<20, 512, aiDeskGpu(12), "cpu", 1<<34); err == nil {
+		t.Fatal("GPU layers on a CPU build must fail")
+	} else if f, ok := err.(*aiFailure); !ok || f.code != aiNoAccelerator {
+		t.Fatalf("want NoAccelerator, got %v", err)
+	}
+	fit, err := aiPlanFit(m, 1<<20, 512, aiDeskGpu(12), "metal", 1<<34)
+	if err != nil || fit.gpuLayers != 12 {
+		t.Fatalf("metal: %+v %v", fit, err)
+	}
+}
+
 func TestDeviceOfferWithoutAModelIsNotConfigured(t *testing.T) {
 	aiTestEnv(t, nil)
 	srv := deviceServer(t, deviceEndpoint("chat", "", "auto", "", ""))

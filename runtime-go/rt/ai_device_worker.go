@@ -162,13 +162,13 @@ async function caps(engines) {
     } else if (!adapter.features.has('shader-f16')) {
       out.unsupported.push({ backend: 'webgpu', reason: 'the GPU has no shader-f16' });
     } else {
-      out.backends.push({ backend: 'webgpu', maxModelBytes: MAX_BROWSER_MODEL });
+      out.backends.push({ backend: 'webgpu', maxModelBytes: MAX_BROWSER_MODEL, gpu: true });
     }
   }
   if (!engines.cpu) {
     out.unsupported.push({ backend: 'wasm-cpu', reason: 'the build has no CPU engine (sky build --ai-web-engine cpu)' });
   } else {
-    out.backends.push({ backend: 'wasm-cpu', maxModelBytes: MAX_BROWSER_MODEL });
+    out.backends.push({ backend: 'wasm-cpu', maxModelBytes: MAX_BROWSER_MODEL, gpu: false });
   }
   try {
     const est = await navigator.storage.estimate();
@@ -265,7 +265,12 @@ async function loadEngine(variant, engines) {
 async function ensureLoaded(msg) {
   const offer = JSON.parse(msg.offer);
   const variant = msg.backend === 'webgpu' ? 'webgpu' : 'cpu';
-  const key = variant + ':' + offer.model.sha256 + ':' + (offer.adapter ? offer.adapter.sha256 : '');
+  // The engine settings are part of what is loaded: GPU layers on the WebGPU
+  // engine (-1: all of them), none on the CPU engine (the decision never sends
+  // a slot that asks for GPU layers there). Both engines are single-threaded
+  // WebAssembly builds, so they run one thread whatever the slot's threads.
+  const layers = variant === 'webgpu' ? (offer.gpuLayers >= 0 ? offer.gpuLayers : 999) : 0;
+  const key = variant + ':' + layers + ':' + offer.model.sha256 + ':' + (offer.adapter ? offer.adapter.sha256 : '');
   if (engine && engine.key === key) return engine;
   const dir = await storeDir();
   const need = [offer.model].concat(offer.adapter ? [offer.adapter] : []);
@@ -282,7 +287,7 @@ async function ensureLoaded(msg) {
   if (offer.adapter) blobs.push({ name: 'adapter.gguf', data: await (await dir.getFileHandle(offer.adapter.sha256 + '.gguf')).getFile() });
   e.mod.FS.mount(e.mod.FS.filesystems.WORKERFS, { blobs }, '/m');
   const rc = await e.call('sky_llama_load', 'number', ['string', 'number', 'number', 'number'],
-    ['/m/model.gguf', variant === 'webgpu' ? 999 : 0, offer.context, 1]);
+    ['/m/model.gguf', layers, offer.context, 1]);
   if (rc !== 0) {
     const why = e.mod.ccall('sky_llama_last_error', 'string', [], []);
     throw fail('EngineFailed', 'the device model did not load: ' + why, [['reason', 'the device model did not load: ' + why]]);

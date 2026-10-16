@@ -6,6 +6,8 @@ module Std.Ai.Device exposing
     , withModel
     , withAdapter
     , withContext
+    , withThreads
+    , withGpuLayers
     , withMaxDownload
     , withBackends
     , withMetered
@@ -129,11 +131,15 @@ type Backend
     | WasmCpu
 
 -- The record the runtime reads. An unset number is -1, an unset text "".
+-- `threads` and `gpuLayers` are texts ("" unset) because the operator's
+-- environment overrides them, and the runtime checks both sources alike.
 type alias RawSpec =
     { placement : String
     , model : String
     , adapter : String
     , context : Int
+    , threads : String
+    , gpuLayers : String
     , maxDownloadBytes : Int
     , backends : List String
     , metered : Bool
@@ -154,6 +160,8 @@ spec p =
         , model = ""
         , adapter = ""
         , context = -1
+        , threads = ""
+        , gpuLayers = ""
         , maxDownloadBytes = -1
         , backends = []
         , metered = False
@@ -182,6 +190,31 @@ on the server (`Auto`). Default: 2048. -}
 withContext : Int -> Spec -> Spec
 withContext n (Spec s) =
     Spec { s | context = n }
+
+
+{-| The most CPU threads the device engine uses, at least 1. Env:
+`<PREFIX>_AI_<SLOT>_DEVICE_THREADS`. Default: the engine's own (iOS: the
+cores less two, at most 4; Android: half the cores, at most 2; the Mac app:
+llama-server's default). An upper bound: the browser engines (`WebGpu`,
+`WasmCpu`) are single-threaded WebAssembly builds and run one thread. A value
+below 1 is refused with `InvalidSetting` when the slot's offer is read. -}
+withThreads : Int -> Spec -> Spec
+withThreads n (Spec s) =
+    Spec { s | threads = String.fromInt n }
+
+
+{-| How many of the model's layers the device engine offloads to its GPU.
+`0` runs on the CPU only. Env: `<PREFIX>_AI_<SLOT>_DEVICE_GPU_LAYERS`.
+Default: the engine's own (every layer where the backend has a GPU, none on
+the CPU engines). A count above 0 is a requirement, never a silent ignore: a
+backend with no GPU (`WasmCpu`, the Android engine, the iOS simulator) is not
+used for the slot, and the decision goes to the next backend of the list,
+else to the server (`Auto`) or fails with `DeviceUnsupported` naming the
+setting (`DeviceOnly`). A negative value is refused with `InvalidSetting`
+when the slot's offer is read. -}
+withGpuLayers : Int -> Spec -> Spec
+withGpuLayers n (Spec s) =
+    Spec { s | gpuLayers = String.fromInt n }
 
 
 {-| The largest download, in bytes, a device is offered (model and adapter
@@ -282,7 +315,8 @@ type alias OfferFile =
     , url : String
     }
 
-{-| The server's offer for one slot (`GET /_sky/ai/device/<slot>`). `refused`
+{-| The server's offer for one slot (`GET /_sky/ai/device/<slot>`). `threads`
+is 0 and `gpuLayers` -1 when the slot leaves them to the engine. `refused`
 is set when the server will not let devices run this slot's model (an adapter
 not cleared with `Registry.allowOnDevice`): its text is the reason. `server`
 is `False` for `DeviceOnly`, which has no server fallback. `here` is `True`
@@ -293,6 +327,8 @@ type alias Offer =
     , model : OfferFile
     , adapter : Maybe OfferFile
     , context : Int
+    , threads : Int
+    , gpuLayers : Int
     , maxDownloadBytes : Int
     , backends : List Backend
     , metered : Bool
@@ -301,10 +337,12 @@ type alias Offer =
     , refused : Maybe String
     }
 
-{-| One backend the device can run: the largest model it can hold, in bytes. -}
+{-| One backend the device can run: the largest model it can hold, in bytes,
+and whether it can offload layers to a GPU. -}
 type alias BackendInfo =
     { backend : Backend
     , maxModelBytes : Int
+    , gpu : Bool
     }
 
 {-| What a device can do. `platform` is `browser`, `ios`, `android`, `mac` or
@@ -351,8 +389,9 @@ prompt's length in tokens. The first rule that applies wins:
 2. An offer the server refused: `OnServer` for `Auto`, `NotPromotable` for
    `DeviceOnly`.
 3. The first backend of the offer's list that the device has, has not failed
-   this session, and can hold the model and the adapter. None: `OnServer`
-   for `Auto`, `DeviceUnsupported` for `DeviceOnly`.
+   this session, can hold the model and the adapter, and has a GPU when the
+   slot asks for GPU layers (`withGpuLayers` above 0). None: `OnServer` for
+   `Auto`, `DeviceUnsupported` for `DeviceOnly`.
 4. Files that are not stored yet need 1.1 times their size free: else
    `OnServer` for `Auto`, `StorageDenied` for `DeviceOnly`.
 5. Files not stored yet: `NeedsDownload`.
@@ -499,9 +538,25 @@ firstFitting caps offer need wanted =
 fits : Capabilities -> Offer -> Int -> Backend -> Bool
 fits caps offer need b =
     not (List.member b caps.failed) && need <= offer.maxDownloadBytes
-        && List.any
-               (\info -> info.backend == b && need <= info.maxModelBytes)
-               caps.backends
+        && holds b need (offer.gpuLayers > 0) caps.backends
+
+
+-- Whether the device reports backend `b` able to hold `need` bytes, with a
+-- GPU when `gpu` is asked for. A recursion over the typed list, not a lambda.
+holds : Backend -> Int -> Bool -> List BackendInfo -> Bool
+holds b need gpu infos =
+    case infos of
+
+        [] ->
+            False
+
+        info :: rest ->
+            if info.backend == b && need <= info.maxModelBytes
+                && (info.gpu || not gpu) then
+                True
+
+            else
+                holds b need gpu rest
 
 
 noBackendReason : Capabilities -> Offer -> Int -> String
@@ -512,7 +567,7 @@ noBackendReason caps offer need =
             ++ String.fromInt offer.maxDownloadBytes
 
     else
-        case List.filterMap (reasonFor caps) offer.backends of
+        case List.filterMap (reasonFor caps offer) offer.backends of
 
             r :: _ ->
                 r
@@ -522,8 +577,8 @@ noBackendReason caps offer need =
                     ++ " bytes"
 
 
-reasonFor : Capabilities -> Backend -> Maybe String
-reasonFor caps b =
+reasonFor : Capabilities -> Offer -> Backend -> Maybe String
+reasonFor caps offer b =
     if List.member b caps.failed then
         Just (backendText b ++ " failed to load on this device")
 
@@ -534,7 +589,15 @@ reasonFor caps b =
                 Just (backendText b ++ ": " ++ why)
 
             [] ->
-                Nothing
+                if offer.gpuLayers > 0 && holds b 0 False caps.backends
+                    && not (holds b 0 True caps.backends) then
+                    Just
+                        (backendText b ++ " has no GPU and the slot asks for "
+                            ++ String.fromInt offer.gpuLayers
+                            ++ " GPU layers (Device.withGpuLayers)")
+
+                else
+                    Nothing
 
 
 firstBackendName : Offer -> String
@@ -580,6 +643,18 @@ req name d df =
     apply (JsonD.field name d) df
 
 
+-- A whole-number field, or `fallback` when the value has none (an older
+-- server's offer or device's report).
+intOr : String -> Int -> JsonD.Decoder Int
+intOr name fallback =
+    JsonD.oneOf [ JsonD.field name JsonD.int, JsonD.succeed fallback ]
+
+
+boolOr : String -> Bool -> JsonD.Decoder Bool
+boolOr name fallback =
+    JsonD.oneOf [ JsonD.field name JsonD.bool, JsonD.succeed fallback ]
+
+
 maybeField : String -> JsonD.Decoder a -> JsonD.Decoder (Maybe a)
 maybeField name d =
     JsonD.oneOf [ JsonD.field name (JsonD.map Just d), JsonD.succeed Nothing ]
@@ -611,12 +686,14 @@ backendDecoder =
 offerDecoder : JsonD.Decoder Offer
 offerDecoder =
     JsonD.succeed
-        (\slot p m a c mx bs mt sv h r ->
+        (\slot p m a c th gl mx bs mt sv h r ->
             { slot = slot
             , placement = placementFromText p
             , model = m
             , adapter = a
             , context = c
+            , threads = th
+            , gpuLayers = gl
             , maxDownloadBytes = mx
             , backends = bs
             , metered = mt
@@ -629,6 +706,8 @@ offerDecoder =
         |> req "model" fileDecoder
         |> apply (maybeField "adapter" fileDecoder)
         |> req "context" JsonD.int
+        |> apply (intOr "threads" 0)
+        |> apply (intOr "gpuLayers" (-1))
         |> req "maxDownloadBytes" JsonD.int
         |> req "backends" (JsonD.list backendDecoder)
         |> req "metered" JsonD.bool
@@ -645,10 +724,11 @@ decodeOffer body =
 
 infoDecoder : JsonD.Decoder BackendInfo
 infoDecoder =
-    JsonD.map2
-        (\b m -> { backend = b, maxModelBytes = m })
+    JsonD.map3
+        (\b m g -> { backend = b, maxModelBytes = m, gpu = g })
         (JsonD.field "backend" backendDecoder)
         (JsonD.field "maxModelBytes" JsonD.int)
+        (boolOr "gpu" False)
 
 
 unsupportedDecoder : JsonD.Decoder ( Backend, String )

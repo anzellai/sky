@@ -487,6 +487,21 @@
 #   the previous transition (R5, §5.3); the row was carried forward then.
 #   Std.Ai suites (scripts/sky-suites.sh Ai, 14 suites), ai_cloud_train_flow
 #   and ai_serve_flow prove the behaviour is unchanged.
+# ── Recorded transition, 2026-10-17 — Std.Ai.Device engine settings
+#    (Device.withThreads / withGpuLayers) ──
+#   All 86 rows measured. One row rises: 75-ai-everywhere 846 -> 849 (+3);
+#   every other row unchanged. Cause (2), new code: three new wire fields,
+#   the offer's `threads` and `gpuLayers` and a backend's `gpu`
+#   (Std.Ai.Device offerDecoder +2, infoDecoder +1, counted per emitted Go
+#   function against HEAD's Device.sky). Each is one argument of the JSON
+#   decoder's callback (R2, `eta_narrow` at the decoder's erased slot: the
+#   closed form, doc 14 §5.1), as every existing field of those decoders
+#   pays. The decision itself added none: `fits` reads the typed backend list
+#   through a recursion (`holds`) instead of a `List.any` lambda (R12), which
+#   offsets the GPU check, and `reasonFor` reuses `holds` rather than a new
+#   comparison (an erased `==` on the Backend ADT, R5, measured +1 when it was
+#   a helper of its own). The defaults decode with `JsonD.oneOf` instead of
+#   `Maybe.withDefault` (R12, measured +4 before).
 00-standard-libs	adapter=0	dispatch=0	narrow=113
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=6
@@ -555,7 +570,7 @@
 72-ai-support-desk	adapter=0	dispatch=0	narrow=442
 73-ai-train	adapter=0	dispatch=0	narrow=1286
 74-ai-cloud	adapter=0	dispatch=0	narrow=1411
-75-ai-everywhere	adapter=0	dispatch=0	narrow=846
+75-ai-everywhere	adapter=0	dispatch=0	narrow=849
 apps/dispatch	adapter=0	dispatch=0	narrow=318
 apps/fieldbook	adapter=0	dispatch=0	narrow=459
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2

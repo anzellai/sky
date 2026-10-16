@@ -26,6 +26,17 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 
 ### Added
 
+- **`Device.withThreads` and `Device.withGpuLayers`: the device engine's
+  threads and GPU layers.** Env: `<PREFIX>_AI_<SLOT>_DEVICE_THREADS` and
+  `_DEVICE_GPU_LAYERS` (operator over code). They reach llama.cpp on every
+  target: the iOS and Android engines, the Mac app's `llama-server` (`-t`,
+  `-ngl`) and the WebGPU engine. Threads are an upper bound (the browser
+  engines run one). GPU layers above 0 are a requirement: each device reports
+  which backends have a GPU (`BackendInfo.gpu`), a backend without one is not
+  used for the slot, and a `DeviceOnly` slot with no GPU backend fails with
+  `DeviceUnsupported` naming the setting. An out-of-range value is
+  `InvalidSetting`. `docs/ai/device.md` has the per-engine table.
+
 - **`Std.Ai.Device`: a model slot on the user's own device.** The server's
   slot gets `Endpoint.withDevice (Device.spec Device.Auto)`; a Sky.Spa client
   (`web:app`, `desktop:mac`, `mobile:ios`, `mobile:android`) asks
@@ -598,12 +609,22 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 
 ### Fixed
 
-- **`--target desktop:windows` and `desktop:linux` are refused with the
-  reason.** The desktop window (Sky.Webview) runs on macOS only in this
-  version. These targets used to build the host's shell: a macOS binary on a
-  Mac, and elsewhere a binary whose window never opened, so the app and any
-  `Std.Ai.Device` slot in it never ran. `sky build` and `sky check` now say
-  they are not supported yet and name `web:app` in a browser, where a device
+- **A Sky.Live page reconnects within about a second of the server coming
+  back.** The stream's reopen backoff doubles to a 16 s cap, and fast
+  failures (a proxy's 503 while its upstream restarts) reach the long steps
+  within seconds, so a restart of a second or two could leave a page, the
+  Sky Console included, offline for up to 16 s more (the release gate's
+  console-live e2e saw 21 s once). While a long step waits, the client now
+  sends its side-effect-free session ping once a second and reopens as soon
+  as anything but a gateway error answers. Regression:
+  `TestLiveJS_ReopensAsSoonAsTheServerAnswers`.
+
+- **An app with a `Std.Ai.Device` slot is refused on `--target
+  desktop:windows` and `desktop:linux`, with the reason.** The desktop device
+  engine runs behind the macOS window only in this version, so on those
+  targets no shell answers the device ops and the slot could never run on the
+  device. `sky build` and `sky check` now say this is not supported yet and
+  name `web:app` in a browser, where a device
   slot runs in the browser engine, else on the server, or fails typed
   (`DeviceUnsupported`) for a `DeviceOnly` slot.
 - **`Std.Ai.Registry.adapterFor` reads the device clearance with a `case`.**

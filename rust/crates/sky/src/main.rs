@@ -1605,22 +1605,26 @@ fn rewrite_app_run(src: &str, runner: &str) -> String {
     project::app_entry::rewrite_run(src, runner)
 }
 
-/// Why a `desktop:<os>` target cannot be built in this version, or `None`.
+/// Why a `desktop:<os>` target cannot carry an app's `Std.Ai.Device` slots in
+/// this version, or `None`.
 ///
-/// The desktop shell is a Sky.Webview window, and Sky.Webview opens a window
-/// on macOS only (runtime-go/rt/webview.go is `cgo && darwin`; every other
-/// build gets webview_stub.go, whose `Webview.app` returns an `Err`). Before
-/// this check `desktop:windows` / `desktop:linux` built the shell for the
-/// HOST: a macOS binary on a Mac, or on Linux a binary whose window never
-/// opened, so the app (and any `Std.Ai.Device` slot in it) never ran. The
-/// build now says so and names the targets that work there.
-fn desktop_target_refused(tgt: target::Target) -> Option<String> {
+/// The device engine of a desktop app is the managed llama-server behind the
+/// macOS window (runtime-go/rt/ai_device_desktop.go, answered by webview.go,
+/// which is `cgo && darwin`). On `desktop:windows` / `desktop:linux` no shell
+/// answers the AI ops, so a device slot could never run on the device there.
+/// An app that uses `Std.Ai.Device` (`uses_device`) is refused with the
+/// reason; every other desktop app builds exactly as before.
+fn desktop_target_refused(tgt: target::Target, uses_device: bool) -> Option<String> {
     use target::{DesktopOs, Target};
+    if !uses_device {
+        return None;
+    }
     match tgt {
         Target::Desktop(os @ (DesktopOs::Windows | DesktopOs::Linux)) => Some(format!(
-            "`--target {}` is not supported yet: the desktop window (Sky.Webview) runs on \
-             macOS only in this version, so `desktop:mac` is the one desktop shell. On {} \
-             build `web:app` and open it in a browser: a `Std.Ai.Device` slot then runs \
+            "`--target {}` is not supported yet for an app that uses `Std.Ai.Device`: the \
+             desktop device engine runs behind the macOS window only in this version, so \
+             `desktop:mac` is the one desktop shell for device slots. On {} build `web:app` \
+             and open it in a browser: a `Std.Ai.Device` slot then runs \
              in the browser engine (WebGPU or CPU WebAssembly) when the browser can run it, \
              else on the server, or fails typed (`DeviceUnsupported`) for a `DeviceOnly` \
              slot.",
@@ -5167,7 +5171,9 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         },
         None => None,
     };
-    if let Some(msg) = parsed_target.and_then(desktop_target_refused) {
+    if let Some(msg) =
+        parsed_target.and_then(|t| desktop_target_refused(t, project_uses_ai_device(&project_dir)))
+    {
         eprintln!("sky {}: {msg}", verb(check_only));
         return ExitCode::FAILURE;
     }
@@ -7717,9 +7723,16 @@ enum SkyAi {
         }
         // A model may use a third of the device's memory.
         let maxModel = Int64(ProcessInfo.processInfo.physicalMemory / 3)
+        // Metal on a device; the simulator's engine runs on the CPU, so a slot
+        // that asks for GPU layers is not sent to it (Device.withGpuLayers).
+        #if targetEnvironment(simulator)
+        let gpu = false
+        #else
+        let gpu = true
+        #endif
         let c: [String: Any] = [
             "platform": "ios",
-            "backends": [["backend": "native", "maxModelBytes": maxModel]],
+            "backends": [["backend": "native", "maxModelBytes": maxModel, "gpu": gpu]],
             "unsupported": [["backend": "webgpu", "reason": "the iOS shell runs llama.cpp natively"],
                             ["backend": "wasm-cpu", "reason": "the iOS shell runs llama.cpp natively"]],
             "storageAvailableBytes": avail,
@@ -7827,7 +7840,11 @@ enum SkyAi {
     // Load the slot's model and adapter (on the engine queue).
     static func load(_ o: [String: Any]) -> (Any?, String?) {
         let fs = files(o)
-        let k = fs.map { $0["sha256"] as? String ?? "" }.joined(separator: ":")
+        // The slot's engine settings (Device.withThreads / withGpuLayers): 0
+        // threads and -1 layers leave them to the shell's defaults below.
+        let wantThreads = (o["threads"] as? NSNumber)?.intValue ?? 0
+        let wantLayers = (o["gpuLayers"] as? NSNumber)?.intValue ?? -1
+        let k = fs.map { $0["sha256"] as? String ?? "" }.joined(separator: ":") + "|t\(wantThreads)|g\(wantLayers)"
         if k == loadedKey { return ("ready", nil) }
         var paths: [URL] = []
         for f in fs {
@@ -7843,10 +7860,11 @@ enum SkyAi {
         #if targetEnvironment(simulator)
         let gpuLayers: Int32 = 0
         #else
-        let gpuLayers: Int32 = 999
+        let gpuLayers: Int32 = wantLayers >= 0 ? Int32(wantLayers) : 999
         #endif
         let ctx = Int32((o["context"] as? NSNumber)?.intValue ?? 2048)
-        let threads = Int32(max(1, min(4, ProcessInfo.processInfo.activeProcessorCount - 2)))
+        let threads = wantThreads > 0 ? Int32(wantThreads)
+            : Int32(max(1, min(4, ProcessInfo.processInfo.activeProcessorCount - 2)))
         if sky_llama_load(paths[0].path, gpuLayers, ctx, threads) != 0 {
             let why = String(cString: sky_llama_last_error())
             return (nil, failure("EngineFailed", "the device model did not load: " + why, [["reason", "the device model did not load: " + why]]))
@@ -10409,7 +10427,9 @@ public final class SkyAi {
         ConnectivityManager cm = (ConnectivityManager) c.getSystemService(Context.CONNECTIVITY_SERVICE);
         JSONObject o = new JSONObject();
         o.put("platform", "android");
-        o.put("backends", new JSONArray().put(new JSONObject().put("backend", "native").put("maxModelBytes", mi.totalMem / 3)));
+        // The Android engine is a CPU build: a slot that asks for GPU layers
+        // (Device.withGpuLayers) is not sent to it.
+        o.put("backends", new JSONArray().put(new JSONObject().put("backend", "native").put("maxModelBytes", mi.totalMem / 3).put("gpu", false)));
         o.put("unsupported", new JSONArray()
             .put(new JSONObject().put("backend", "webgpu").put("reason", "the Android shell runs llama.cpp natively"))
             .put(new JSONObject().put("backend", "wasm-cpu").put("reason", "the Android shell runs llama.cpp natively")));
@@ -10513,7 +10533,8 @@ public final class SkyAi {
     // Load the slot's model and adapter (on the engine thread).
     private static void load(Context c, JSONObject offer) throws Exception {
         JSONArray fs = files(offer);
-        String k = key(offer);
+        // The loaded model, adapter and thread count (Device.withThreads).
+        String k = key(offer) + "|t" + offer.optInt("threads", 0);
         if (k.equals(loadedKey)) return;
         File[] paths = new File[fs.length()];
         for (int i = 0; i < fs.length(); i++) {
@@ -10529,7 +10550,9 @@ public final class SkyAi {
         loadedKey = "";
         // Few threads: a phone's big cores are few, and oversubscribing them
         // makes generation slower, not faster.
-        int threads = Math.max(1, Math.min(2, Runtime.getRuntime().availableProcessors() / 2));
+        // The slot's Device.withThreads, when it sets one.
+        int threads = offer.optInt("threads", 0) > 0 ? offer.optInt("threads", 0)
+            : Math.max(1, Math.min(2, Runtime.getRuntime().availableProcessors() / 2));
         if (SkyLlama.load(paths[0].getAbsolutePath(), offer.optInt("context", 2048), threads) != 0) {
             String why = SkyLlama.lastError();
             throw new SkyAiFailure(failure("EngineFailed", "the device model did not load: " + why, new String[][] {{"reason", "the device model did not load: " + why}}));
@@ -17742,14 +17765,14 @@ mod tests {
         assert!(!uses_app_run("main = App.runLive appDef\n"));
     }
 
-    /// `desktop:windows` / `desktop:linux` used to build the HOST's shell (a
-    /// macOS binary on a Mac), whose window never opened elsewhere. They are
-    /// refused with the reason; `desktop:mac` and bare `desktop` still build.
+    /// An app with a `Std.Ai.Device` slot is refused on `desktop:windows` /
+    /// `desktop:linux` with the reason; `desktop:mac`, bare `desktop` and the
+    /// other client targets still build it.
     #[test]
-    fn a_desktop_target_without_a_window_is_refused_with_the_reason() {
+    fn a_device_app_on_a_desktop_without_its_engine_is_refused_with_the_reason() {
         for t in ["desktop:windows", "desktop:linux"] {
-            let msg = desktop_target_refused(target::Target::parse(t).unwrap())
-                .unwrap_or_else(|| panic!("{t} must be refused"));
+            let msg = desktop_target_refused(target::Target::parse(t).unwrap(), true)
+                .unwrap_or_else(|| panic!("{t} must be refused for a device app"));
             assert!(msg.contains("not supported yet"), "{msg}");
             assert!(msg.contains("web:app"), "{msg}");
             assert!(msg.contains("DeviceUnsupported"), "{msg}");
@@ -17762,8 +17785,20 @@ mod tests {
             "mobile:android",
         ] {
             assert!(
-                desktop_target_refused(target::Target::parse(t).unwrap()).is_none(),
+                desktop_target_refused(target::Target::parse(t).unwrap(), true).is_none(),
                 "{t} must build"
+            );
+        }
+    }
+
+    /// A desktop app with no `Std.Ai.Device` slot builds on every desktop
+    /// target exactly as before: the refusal is for device slots only.
+    #[test]
+    fn a_desktop_app_without_a_device_slot_is_never_refused() {
+        for t in ["desktop:windows", "desktop:linux", "desktop:mac", "desktop"] {
+            assert!(
+                desktop_target_refused(target::Target::parse(t).unwrap(), false).is_none(),
+                "{t} must build an app with no device slot"
             );
         }
     }

@@ -34,6 +34,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,8 @@ type aiDeviceSpec struct {
 	model       string
 	adapter     string
 	context     int
+	threads     string // "" unset; checked in resolveOffer
+	gpuLayers   string // "" unset; checked in resolveOffer
 	maxDownload int64
 	backends    []string
 	metered     bool
@@ -56,6 +59,8 @@ func parseAiDeviceSpec(v any) aiDeviceSpec {
 		model:       aiStrField(v, "Model", "model"),
 		adapter:     aiStrField(v, "Adapter", "adapter"),
 		context:     aiIntField(v, "Context", "context"),
+		threads:     aiStrField(v, "Threads", "threads"),
+		gpuLayers:   aiStrField(v, "GpuLayers", "gpuLayers"),
 		maxDownload: int64(aiIntField(v, "MaxDownloadBytes", "maxDownloadBytes")),
 		metered:     aiBoolField(v, "Metered", "metered"),
 	}
@@ -63,6 +68,28 @@ func parseAiDeviceSpec(v any) aiDeviceSpec {
 		s.backends = append(s.backends, AsString(b))
 	}
 	return s
+}
+
+// aiDeviceEngineSetting reads one device engine setting: the operator's
+// <PREFIX>_AI_<SLOT>_<key>, else the code's builder value. nil when neither
+// sets it (the engine's own default). A value that is not an integer, or is
+// below min, is InvalidSetting naming where it came from.
+func aiDeviceEngineSetting(slot, key, builder string, min int, builderName string) (*int, error) {
+	suffix := aiSlotSuffix(slot, key)
+	v, src := aiLayer(suffix, builder, nil)
+	if v == "" {
+		return nil, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < min {
+		where := builderName
+		if src == "env" {
+			where = skyEnvName(suffix)
+		}
+		return nil, aiFailf(aiInvalidSetting, "%s = %q for slot %q: use a whole number of at least %d", where, v, slot, min).
+			with("setting", where).with("reason", fmt.Sprintf("a whole number of at least %d", min))
+	}
+	return &n, nil
 }
 
 // aiDeviceEntry is one registered device slot.
@@ -172,6 +199,25 @@ func (e *aiDeviceEntry) resolveOffer(ctx context.Context) (*aiDeviceOffer, map[s
 	}
 	if o.Context <= 0 {
 		o.Context = aiDeviceDefaultContext
+	}
+	// The engine settings (Device.withThreads / withGpuLayers), operator env
+	// over code. A value that is not a number in range is refused, never
+	// dropped: the engine would otherwise run on settings nobody asked for.
+	threads, err := aiDeviceEngineSetting(e.slot, "DEVICE_THREADS", e.spec.threads, 1, "Device.withThreads")
+	if err != nil {
+		return nil, nil, err
+	}
+	gpuLayers, err := aiDeviceEngineSetting(e.slot, "DEVICE_GPU_LAYERS", e.spec.gpuLayers, 0, "Device.withGpuLayers")
+	if err != nil {
+		return nil, nil, err
+	}
+	o.Threads = 0
+	if threads != nil {
+		o.Threads = *threads
+	}
+	o.GpuLayers = -1
+	if gpuLayers != nil {
+		o.GpuLayers = *gpuLayers
 	}
 	if o.MaxDownloadBytes <= 0 {
 		o.MaxDownloadBytes = aiDeviceDefaultMaxDownload

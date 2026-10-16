@@ -102,6 +102,7 @@ type aiLocalSpec struct {
 	model      aiModelRef
 	adapter    aiLocalAdapter // a registry LoRA adapter loaded with the model; zero when none
 	context    int            // 0: the default, reduced to fit
+	threads    int            // 0: llama-server's default
 	gpu        string
 	parallel   int
 	idleUnload time.Duration

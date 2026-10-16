@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -173,10 +174,21 @@ func aiDeskReady(sum string) string {
 	return ""
 }
 
+// aiDeskHasGpu: the managed engine on this Mac offloads to a GPU (the Metal
+// build, and SKY_AI_ACCEL does not say cpu).
+func aiDeskHasGpu() bool {
+	a, ok := aiHostAsset()
+	if !ok {
+		return false
+	}
+	acc, err := aiAccelerator(a.variant)
+	return err == nil && acc != "cpu"
+}
+
 func aiDeskCaps() aiDeviceCaps {
 	c := aiDeviceCaps{Platform: "mac"}
 	mem := aiK().availableBytes()
-	c.Backends = []aiDeviceBackendInfo{{Backend: aiDeviceNative, MaxModelBytes: mem / 2}}
+	c.Backends = []aiDeviceBackendInfo{{Backend: aiDeviceNative, MaxModelBytes: mem / 2, Gpu: aiDeskHasGpu()}}
 	c.Unsupported = []aiDeviceUnsupportedBackend{
 		{Backend: aiDeviceWebGpu, Reason: "the desktop app runs llama.cpp natively"},
 		{Backend: aiDeviceWasmCpu, Reason: "the desktop app runs llama.cpp natively"},
@@ -320,6 +332,16 @@ func aiDeskDownload(u string, f aiDeviceFile, progress func(int64)) error {
 	return os.Rename(tmp, dest)
 }
 
+// aiDeskGpu is the managed engine's GPU setting for an offer's GPU layers:
+// the engine's own choice (-1), or the count. aiPlanFit refuses a count above
+// 0 on a CPU build (NoAccelerator), so it is never silently dropped.
+func aiDeskGpu(layers int) string {
+	if layers < 0 {
+		return "auto"
+	}
+	return strconv.Itoa(layers)
+}
+
 // aiDeskEngine is the managed engine for an offer's model and adapter.
 func aiDeskEngine(o *aiDeviceOffer) (*aiEngine, error) {
 	model := aiDeskReady(o.Model.Sha256)
@@ -330,7 +352,8 @@ func aiDeskEngine(o *aiDeviceOffer) (*aiEngine, error) {
 	spec := aiLocalSpec{
 		model:      aiModelRef{kind: "file", file: model, sha256: o.Model.Sha256},
 		context:    o.Context,
-		gpu:        "auto",
+		threads:    o.Threads,
+		gpu:        aiDeskGpu(o.GpuLayers),
 		parallel:   1,
 		idleUnload: aiDefaultIdleUnload(),
 	}

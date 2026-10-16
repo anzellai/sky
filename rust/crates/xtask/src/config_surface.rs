@@ -211,7 +211,8 @@ const NON_LITERAL_PREFIXED_READS: &[(&str, &str)] = &[
          <PREFIX>_AI_<SLOT>_<KEY> like every slot's (the SLOT is the app's own \
          literal), built with aiSlotSuffix and read through aiLayer / \
          configLayers. The KEY set is closed and literal in that file \
-         (PLACEMENT / DEVICE_MODEL / DEVICE_ADAPTER, and MODEL, the slot's own \
+         (PLACEMENT / DEVICE_MODEL / DEVICE_ADAPTER / DEVICE_THREADS / \
+         DEVICE_GPU_LAYERS, and MODEL, the slot's own \
          model the device follows), each documented in docs/ai/device.md as \
          SKY_AI_<SLOT>_<KEY>",
     ),

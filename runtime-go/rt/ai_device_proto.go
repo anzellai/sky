@@ -58,6 +58,8 @@ type aiDeviceOffer struct {
 	Model            aiDeviceFile  `json:"model"`
 	Adapter          *aiDeviceFile `json:"adapter,omitempty"`
 	Context          int           `json:"context"`
+	Threads          int           `json:"threads"`   // 0: the engine's own
+	GpuLayers        int           `json:"gpuLayers"` // -1: the engine's own
 	MaxDownloadBytes int64         `json:"maxDownloadBytes"`
 	Backends         []string      `json:"backends"`
 	Metered          bool          `json:"metered"`
@@ -70,6 +72,9 @@ type aiDeviceOffer struct {
 type aiDeviceBackendInfo struct {
 	Backend       string `json:"backend"`
 	MaxModelBytes int64  `json:"maxModelBytes"`
+	// Gpu: the backend can offload layers to a GPU. A slot that asks for GPU
+	// layers (Device.withGpuLayers above 0) does not use a backend without.
+	Gpu bool `json:"gpu"`
 }
 
 // aiDeviceUnsupportedBackend is a backend a device cannot use, and why.

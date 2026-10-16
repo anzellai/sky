@@ -53,9 +53,10 @@ main =
 This program runs on the server, so `assistant` is the `notes` slot itself. In
 a Sky.Spa client (`web:app`, `desktop:mac`, `mobile:ios`, `mobile:android`)
 the same `Device.provider "notes"` runs in the client, and the device decides
-per call. `desktop:windows` and `desktop:linux` are not supported yet: the
-build refuses them, because the desktop window runs on macOS only in this
-version. On Windows and Linux, build `web:app` and open it in a browser; the
+per call. An app with a device slot is not supported yet on
+`desktop:windows` and `desktop:linux`: the build refuses it, because the
+desktop device engine runs behind the macOS window only in this version
+(other desktop apps build as before). On Windows and Linux, build `web:app` and open it in a browser; the
 slot then runs in the browser engine when the browser can run it, else on the
 server, and a `DeviceOnly` slot fails typed (`DeviceUnsupported`).
 
@@ -89,9 +90,35 @@ operator overrides them per slot:
 | `Device.withModel ref` | `<PREFIX>_AI_<SLOT>_DEVICE_MODEL` | the slot's local model (`Endpoint.withLocal`) |
 | `Device.withAdapter ref` | `<PREFIX>_AI_<SLOT>_DEVICE_ADAPTER` | the slot's adapter |
 | `Device.withContext n` | | 2048 tokens |
+| `Device.withThreads n` (at least 1) | `<PREFIX>_AI_<SLOT>_DEVICE_THREADS` | the engine's own |
+| `Device.withGpuLayers n` (0 = CPU only) | `<PREFIX>_AI_<SLOT>_DEVICE_GPU_LAYERS` | the engine's own: every layer where the backend has a GPU |
 | `Device.withMaxDownload bytes` | | 1 GiB |
 | `Device.withBackends [ Native, WebGpu, WasmCpu ]` | | all three, in that order |
 | `Device.withMetered True` | | `False`: no download on a metered connection |
+
+### Engine settings for experts: threads and GPU layers
+
+llama.cpp is the engine on every target. The defaults suit most apps; an
+expert can set two engine settings per slot. What each engine does with them:
+
+| Engine | `withThreads n` | `withGpuLayers n` |
+|---|---|---|
+| iOS app (`SkyLlama.xcframework`) | uses `n` (default: the cores less two, at most 4) | offloads `n` layers to Metal (default: all); the simulator has no GPU |
+| Android app (`libskyllama.so`) | uses `n` (default: half the cores, at most 2) | CPU build: no GPU |
+| Mac app (managed `llama-server`) | `-t n` (default: llama-server's) | `-ngl n` (default: all on Metal); a CPU build refuses `n > 0` with `NoAccelerator` |
+| Browser, `WebGpu` | one thread (a single-threaded WebAssembly build) | offloads `n` layers to WebGPU (default: all) |
+| Browser, `WasmCpu` | one thread | no GPU |
+
+`withThreads` is an upper bound: an engine never runs more threads than it
+is given, and the browser engines run one. `withGpuLayers` above 0 is a
+requirement, not a hint. Each device reports which backends have a GPU, and a
+backend without one is not used for the slot: the decision takes the next
+backend of the list, else the server (`Auto`), or fails with
+`DeviceUnsupported` whose reason names `Device.withGpuLayers` (`DeviceOnly`).
+`withGpuLayers 0` runs on the CPU everywhere. A value out of range (threads
+below 1, a negative layer count, an environment value that is not a whole
+number) is refused with `InvalidSetting` naming the builder or the variable
+when the server reads the slot's offer; it is never dropped.
 
 A model is a `Std.Ai.Local` reference with its SHA-256 (`Local.reference
 Local.devModel`). An adapter is `registry:<name>@<alias>` (the slot needs

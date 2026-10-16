@@ -3030,7 +3030,11 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 /// 1066 -> 1068 in the phase 4 live runs (+2 `ServeTest`: the tier image
 /// runs the `serve` verb with an executable binary, and the deployed tier
 /// stages its base with `SKY_AI_FETCH=on`), measured by the `sky-suites` gate.
-pub const SKY_SUITES_EXPECTED: u64 = 1068;
+/// 1068 -> 1074 with the device engine settings (+6 `DeviceTest`: GPU layers
+/// skip a backend with no GPU, go to the server, fail typed for `DeviceOnly`,
+/// zero layers run on the CPU; the offer's settings and a backend's `gpu`
+/// decode).
+pub const SKY_SUITES_EXPECTED: u64 = 1074;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.
@@ -4042,8 +4046,9 @@ pub fn ai_device_blob_allowlist(ctx: &GateCtx) -> GateOutcome {
 /// `tests/Std/Ai/DeviceTest.sky`, run by itself: every rule of the decision,
 /// the status, the wire values, the spec builders, record and replay, and one
 /// suite scored on both sides. The count is the suite's passing cases,
-/// measured by the gate.
-pub const AI_DEVICE_DECIDE_EXPECTED: u64 = 38;
+/// measured by the gate. 44 with the engine settings (`withThreads`,
+/// `withGpuLayers`: four decision cases, two wire cases).
+pub const AI_DEVICE_DECIDE_EXPECTED: u64 = 44;
 
 pub fn ai_device_decide(ctx: &GateCtx) -> GateOutcome {
     let sky = match super::layer2::sky_binary(&ctx.repo_root) {

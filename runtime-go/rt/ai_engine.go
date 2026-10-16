@@ -169,8 +169,8 @@ var (
 // aiEngineKey identifies an engine for sharing: the same model with the same
 // launch settings is one engine.
 func aiEngineKey(spec aiLocalSpec) string {
-	key := fmt.Sprintf("%s|ctx=%d|gpu=%s|np=%d|emb=%v|port=%d",
-		spec.model.sha256, spec.context, spec.gpu, spec.parallel, spec.embeddings, spec.port)
+	key := fmt.Sprintf("%s|ctx=%d|t=%d|gpu=%s|np=%d|emb=%v|port=%d",
+		spec.model.sha256, spec.context, spec.threads, spec.gpu, spec.parallel, spec.embeddings, spec.port)
 	if spec.adapter.sha256 != "" {
 		key += "|lora=" + spec.adapter.sha256
 	}
@@ -356,6 +356,9 @@ func (e *aiEngine) start(ctx context.Context) error {
 		"-ngl", strconv.Itoa(fit.gpuLayers),
 		"-np", strconv.Itoa(e.spec.parallel),
 		"--no-webui",
+	}
+	if e.spec.threads > 0 {
+		args = append(args, "-t", strconv.Itoa(e.spec.threads))
 	}
 	if e.spec.embeddings {
 		args = append(args, "--embeddings", "--pooling", "mean")
