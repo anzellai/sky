@@ -15,8 +15,14 @@ name: Rust CI
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # JOB GRAPH (v2 §8.1). `setup` builds the workspace ONCE and primes the shared
-# cargo cache; the Rust-building jobs `needs: setup` and restore it instead of
-# each paying its own cold dependency build. `ci-green` is the fan-in.
+# cargo cache; the Rust-building jobs restore it instead of each paying its own
+# cold dependency build. `ci-green` is the fan-in.
+#
+# NO JOB `needs: setup` ANY MORE. Only refs/heads/main saves a cache, so off
+# main `setup` restores and builds nothing, and waiting for it was pure serial
+# delay. On main the other jobs restore the entry main saved last, which is
+# warm unless Cargo.lock or the toolchain moved. Every job is therefore in
+# SETUP_INDEPENDENT_JOBS (or MACOS_JOBS); workflows_parse pins that.
 #
 # ROLLOUT — TWO STEPS, AND THE ORDER MATTERS (v2 §9.5):
 #   STEP 1 (THIS COMMIT): `ci-green` is an ADDITIONAL check. Every pre-existing
@@ -128,7 +134,9 @@ jobs:
           # ONLY this job writes the cache. Letting every job save produced
           # concurrent writes of near-identical entries that raced and churned
           # the 10 GB repo budget.
-          save-if: 'true'
+          # Only main saves (restore everywhere): a branch saving its own copy
+          # evicted main's entries from the 10 GB repository budget.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # CACHE-WARM FAST PATH (§8.1: `setup <= 6 min (<= 3 cache-warm)`). The
       # key is the toolchain + Cargo.lock/Cargo.toml hash. On an EXACT hit the
       # dependency cache every dependent job restores already exists, and
@@ -143,13 +151,14 @@ jobs:
       # primes the cache. No check is dropped: every dependent job builds the
       # workspace, and test-ty / test-rest build the test binaries.
       - name: Build workspace (primes the shared cache for every dependent job)
-        if: steps.rust-cache.outputs.cache-hit != 'true'
+        # Only main saves the cache, so a build anywhere else would prime
+        # nothing: on a branch or a pull request this job only restores.
+        if: steps.rust-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
         run: cargo build --workspace --locked
 
   # ── ty crate tests (the heavy corpus tests — each recompiles the stdlib, so
   #    this crate is the bulk of the old 30-min test step; on its own runner) ──
   test-ty:
-    needs: setup
     runs-on: ubuntu-latest
     # The 1857 s (~31 min) figure this job was sized against is STALE. It was
     # measured before the per-case cost was fixed, when every corpus case
@@ -191,7 +200,6 @@ jobs:
 
   # ── Every other crate's tests + clippy + doctests ───────────────────────────
   test-rest:
-    needs: setup
     runs-on: ubuntu-latest
     # Not separately measured. Reasoned: clippy --all-targets (~6 min debug) +
     # workspace-minus-ty tests incl. `project`'s real `go build` integration
@@ -222,17 +230,21 @@ jobs:
       # other Go-touching job pinned 1.26. A runner image bump could therefore
       # change a codegen gate's verdict with no change in this repo.
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-test-rest-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-test-rest-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
 
       # PROVISION THE LIVE ENVIRONMENT. This is the only job that runs
       # `cargo test --workspace`, and it had no PostgreSQL — so the fourteen
@@ -336,17 +348,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-test-sky-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-test-sky-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
@@ -384,17 +400,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-test-sky-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-test-sky-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
@@ -428,17 +448,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-test-sky-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-test-sky-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
@@ -477,17 +501,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-test-sky-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-test-sky-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
@@ -531,17 +559,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-test-sky-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-test-sky-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
@@ -576,17 +608,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-test-sky-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-test-sky-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
@@ -621,17 +657,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-test-sky-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-test-sky-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
@@ -673,17 +713,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-test-sky-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-test-sky-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
@@ -718,17 +762,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-test-sky-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-test-sky-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
@@ -754,7 +802,6 @@ jobs:
 
   # ── Accept-side parity gates (infer dominates ~13m) ─────────────────────────
   parity-accept:
-    needs: setup
     runs-on: ubuntu-latest
     # infer ~13 min (this file's own header) + debug `cargo build --workspace`
     # ~4 min + roundtrip/resolve/divergences/s8 ~3 min ≈ 20 min. 1.5x = 30.
@@ -781,7 +828,6 @@ jobs:
 
   # ── Reject-side parity + fmt (reject dominates ~16m) ────────────────────────
   parity-reject:
-    needs: setup
     runs-on: ubuntu-latest
     # reject measured 780 s DEBUG (74 s release — this job builds debug, so the
     # debug number is the one that applies) + fmt gate + debug workspace build
@@ -811,7 +857,6 @@ jobs:
   # `repro_gate::tests::shards_are_disjoint_and_total`, so every example is
   # still covered. Both remain setup-dependent; the chain drops to setup + ~395s.
   repro:
-    needs: setup
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -827,7 +872,6 @@ jobs:
         run: cargo run -q -p xtask -- repro --shard=0/2
 
   repro-2:
-    needs: setup
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -844,7 +888,6 @@ jobs:
 
   # ── Codegen emit + go build + runtime (needs Go; cached) ────────────────────
   codegen-build:
-    needs: setup
     runs-on: ubuntu-latest
     # Now: workspace build + coerce-floor + the console drift check (run
     # 36615007321: 129 s + 131 s + 49 s of 630 s, the rest was the rt tests that
@@ -858,17 +901,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-linux-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -947,18 +994,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-rt-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
           restore-keys: |
-            go-rt-linux-
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
             go-linux-
       # Node.js runs the embedded browser clients in the rt tests (island,
       # scene, terminal and Sky.Live client tests). A missing node FAILS those
@@ -1032,17 +1081,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-linux-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -1069,6 +1122,17 @@ jobs:
         if: always()
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
+      # Only main writes a cache (restore everywhere). A branch or pull
+      # request saving its own copy evicted main's entries from the 10 GB
+      # repository budget, and every run went cache-cold.
+      - name: Save the Go caches (main only)
+        if: always() && github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
   # ── build-corpus SHARD 1 of 3 (fan-out sibling of build-corpus) ─────────────
   # Byte-identical to build-corpus but `--shard=1/3`. Kept a separate job (not a
@@ -1087,17 +1151,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-linux-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -1132,17 +1200,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-linux-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -1206,17 +1278,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-linux-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -1252,17 +1328,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-linux-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -1288,7 +1368,6 @@ jobs:
   # merely making it faster. Nothing is dropped — both gates still run on every
   # push, and `ci-green` requires this job like any other.
   behaviour-docs:
-    needs: setup
     runs-on: ubuntu-latest
     # ~81s workspace build + ~167s conformance (incl. the release sky build) +
     # ~48s doc-examples + ~3 min for the release-mode deep-expression tests
@@ -1302,17 +1381,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-linux-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -1407,7 +1490,6 @@ jobs:
   # falsifier-applicability check is already per-PR: it rides inside the
   # `coverage-ledger --check` step below.
   config-gates:
-    needs: setup
     runs-on: ubuntu-latest
     # ~60s cache restore + ~90s release `sky` (cache-warm) + ~50s config-matrix
     # + ~112s cli-verbs+analytics + three sub-second checks ≈ 6 min. 1.5x with
@@ -1420,17 +1502,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-linux-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -1482,10 +1568,15 @@ jobs:
   # ── build-perf: build wall time, CPU and peak memory against a budget ──────
   #
   # `scripts/bench-build.sh` builds the `xtask bench-gen` app (a medium Std.App
-  # web app) at 50 fields for --target web:app and web: first build, warm
+  # web app) at 50 fields for --target web (this job) and web:app (build-perf-2):
+  # first build, warm
   # rebuild, a copy in a new directory, a one-module edit, and a cold build
   # with an empty GOCACHE, three times each. The medians are compared to the
-  # app's keys in docs/perf/build-budget.json; above budget x 1.5 fails. The
+  # app's keys in docs/perf/build-budget.json AS A RATIO to a fixed reference
+  # workload timed on the same runner (a cold `go build` of Go std packages):
+  # ubuntu-latest runners differ by ~1.6x in speed, and an absolute budget
+  # failed on the slow ones (2 of 8 runs on main, 4 of 7 on a branch). A
+  # ratio above budget x factor fails (scripts/bench-build.sh). The
   # nightly measures the full set (the app at both sizes and
   # examples/13-skyshop) against every budgeted key. The
   # counted guards (growth, new-directory) run in every push's sky tests and
@@ -1497,10 +1588,10 @@ jobs:
   # `needs: setup` (it builds the compiler in release itself).
   build-perf:
     runs-on: ubuntu-latest
-    # The linux-x86_64 budget is seeded from rust-ci run 38764872817 (see
-    # docs/perf/build-budget.json). With the 50-field measure the whole job
-    # took 11.6 minutes in run 38833457153 (8.5 of them measuring); 40 bounds
-    # a cache-cold run.
+    # The linux-x86_64 budget is seeded from the bench-probe runs named in
+    # docs/perf/build-budget.json. Both targets in one job took 11.6 minutes
+    # in run 38833457153 (8.5 of them measuring); each half is about 7. 40
+    # bounds a cache-cold run.
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
@@ -1545,6 +1636,7 @@ jobs:
           shared-key: sky-linux
           save-if: 'false'
       - uses: actions/setup-go@v7
+        id: setup-go
         if: steps.paths.outputs.run == 'true'
         with:
           go-version: '1.26'
@@ -1555,7 +1647,8 @@ jobs:
       # GOCACHE of its own, so this cache never makes a cold number warm.
       - name: Cache the Sky Go build cache
         if: steps.paths.outputs.run == 'true'
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.sky/go-build
@@ -1579,10 +1672,10 @@ jobs:
       # runner, which does not fit the T1 tier budget, so it runs in the
       # nightly (nightly-sweep.yml). xtask workflows_parse pins both
       # invocations and this step's condition.
-      - name: 'Gate — build speed within budget (app at 50, medians of 3, budget x 1.5)'
+      - name: 'Gate — build speed within budget (app at 50, web, medians of 3, as a ratio to the reference workload)'
         if: steps.paths.outputs.run == 'true'
         working-directory: .
-        run: bash scripts/bench-build.sh --reps 3 --cases app --sizes 50 --out build-perf.json --budget docs/perf/build-budget.json --budget-subset
+        run: bash scripts/bench-build.sh --reps 3 --cases app --sizes 50 --targets web --out build-perf.json --budget docs/perf/build-budget.json --budget-subset
       - name: Keep the measurements
         if: always() && steps.paths.outputs.run == 'true'
         uses: actions/upload-artifact@v7
@@ -1596,10 +1689,121 @@ jobs:
         if: always() && steps.paths.outputs.run == 'true'
         working-directory: .
         run: GOCACHE="$HOME/.sky/go-build" GOMODCACHE="$HOME/go/pkg/mod" bash scripts/ci/bound-go-cache.sh
+      - name: Save the Sky Go build cache (main only)
+        if: always() && steps.paths.outputs.run == 'true' && github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.sky/go-build
+            ~/go/pkg/mod
+            ~/.cache/sky/precompress
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
+
+  # ── build-perf-2: the web:app half of the per-push build-speed measure ────
+  # build-perf measures `--target web`, this job `--target web:app`; together
+  # they are the 50-field app on both targets (workflows_parse pins the pair).
+  build-perf-2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Does this change touch what a build's speed depends on?
+        id: paths
+        working-directory: .
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          pattern='^(rust/crates/(project|sky|codegen|lower|ty|hir|skydb)/|runtime-go/|sky-stdlib/|scripts/bench-build\.sh$|rust/crates/xtask/src/bench_(app|gen)\.rs$|docs/perf/build-budget\.json$)'
+          case "$EVENT" in
+            pull_request) changed=$(git diff --name-only "origin/$BASE_REF...HEAD") ;;
+            push)
+              if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+                changed="(no previous commit: measure)"
+              else
+                changed=$(git diff --name-only "$BEFORE" HEAD)
+              fi ;;
+            *) changed="(manual run: measure)" ;;
+          esac
+          if [ "$EVENT" != pull_request ] && [ "$EVENT" != push ] \
+              || printf '%s\n' "$changed" | grep -Eq "$pattern" \
+              || printf '%s\n' "$changed" | grep -q '^(no previous commit'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "build-perf: measuring (a build-speed input changed or this is a manual run)"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "build-perf: no build-speed input changed; nothing to measure:"
+            printf '%s\n' "$changed" | head -20
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.paths.outputs.run == 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.paths.outputs.run == 'true'
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - uses: actions/setup-go@v7
+        id: setup-go
+        if: steps.paths.outputs.run == 'true'
+        with:
+          go-version: '1.26'
+          cache: false
+      # Sky's own Go build cache (~/.sky/go-build, used when GOCACHE is unset),
+      # the module cache and Sky's precompress cache: the state a user's
+      # second build has. The bench's `cold` scenario uses an empty temporary
+      # GOCACHE of its own, so this cache never makes a cold number warm.
+      - name: Cache the Sky Go build cache
+        if: steps.paths.outputs.run == 'true'
+        id: go-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.sky/go-build
+            ~/go/pkg/mod
+            ~/.cache/sky/precompress
+          key: build-perf-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: build-perf-linux-
+      - name: Install brotli, jq and time
+        if: steps.paths.outputs.run == 'true'
+        working-directory: .
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" brotli jq time
+      - name: Build and install the compiler (sky-out/sky)
+        if: steps.paths.outputs.run == 'true'
+        working-directory: .
+        run: bash scripts/build.sh
+      # One scope on every event (pull request, push to main, manual run): the
+      # 50-field app (both targets, every scenario) against its own budget
+      # keys. `--budget-subset` requires every budgeted key of a measured case
+      # and still fails on a rise. The full set (the app at both sizes,
+      # examples/13-skyshop, every scenario) takes about 30 minutes on a
+      # runner, which does not fit the T1 tier budget, so it runs in the
+      # nightly (nightly-sweep.yml). xtask workflows_parse pins both
+      # invocations and this step's condition.
+      - name: 'Gate — build speed within budget (app at 50, web:app, medians of 3, as a ratio to the reference workload)'
+        if: steps.paths.outputs.run == 'true'
+        working-directory: .
+        run: bash scripts/bench-build.sh --reps 3 --cases app --sizes 50 --targets web:app --out build-perf.json --budget docs/perf/build-budget.json --budget-subset
+      - name: Keep the measurements
+        if: always() && steps.paths.outputs.run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-perf-2
+          path: |
+            build-perf.json
+            build-budget.proposed.json
+          if-no-files-found: ignore
+      - name: Bound the Go caches before save
+        if: always() && steps.paths.outputs.run == 'true'
+        working-directory: .
+        run: GOCACHE="$HOME/.sky/go-build" GOMODCACHE="$HOME/go/pkg/mod" bash scripts/ci/bound-go-cache.sh
 
   # ── Editor-parity (Neovim) + fuzzer (small; isolated setup) ─────────────────
   lsp-fuzz:
-    needs: setup
     runs-on: ubuntu-latest
     # "small; isolated setup" per this file's header. Reasoned: nvim setup ~1 min
     # + debug workspace build ~4 min + lsp 49 cases (debug `sky`) ~5.5 min + fuzz
@@ -1676,16 +1880,9 @@ jobs:
         working-directory: .
         run: bash scripts/skydb/test-licence-gate.sh
 
-  licence-gate-macos:
-    runs-on: macos-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install GNU readline (fidelity fixture)
-        run: brew install readline || true
-      - name: Prove the licence gate rejects what it must
-        working-directory: .
-        run: bash scripts/skydb/test-licence-gate.sh
+  # The macOS half of the licence gate runs in `macos-conformance` (it takes
+  # under a minute). Its own job held one of the five macOS runners the
+  # account may use at once, which the release gate's macOS jobs then waited on.
 
   # ── Real-Postgres session-store integration (the store prod shops run on) ───
   # The per-push rt tests cover memory/sqlite round-trip + the postgres fail-loud
@@ -1725,19 +1922,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       # A -race build shares nothing with the non-race caches, so it gets its
       # own family.
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-race-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-race-linux-
+          key: go-race-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-race-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-race-linux-
       - name: Postgres session-store integration tests
         working-directory: runtime-go
         env:
@@ -1769,17 +1970,116 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
-      - name: rt tests under the race detector, with a live PostgreSQL
+      # SHARDED by test (scripts/ci/go-test-shard.sh): one race run of the rt
+      # tests took 655-668 s, almost all of it in the one package sky-app/rt,
+      # so a package split cannot shorten it. This job runs shard 1/2,
+      # integration-postgres-2 runs 2/2; both list the same tests and take
+      # disjoint halves whose union is the unsharded run
+      # (go_test_shards_are_disjoint_and_total.rs, workflows_parse.rs).
+      - name: rt tests under the race detector, with a live PostgreSQL (shard 1/2)
         working-directory: runtime-go
         # The DSN-gated live tests fail, never skip, without it (G-8,
         # runtime-go/rt/live_gate_test.go); the job's postgres service is it.
         env:
           SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
-        run: CGO_ENABLED=1 go test -race -timeout 20m ./rt/... -count=1
+        run: CGO_ENABLED=1 bash ../scripts/ci/go-test-shard.sh 1/2 ./rt/... -- -race -timeout 20m -count=1
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
+      # Only main writes a cache (restore everywhere). A branch or pull
+      # request saving its own copy evicted main's entries from the 10 GB
+      # repository budget, and every run went cache-cold.
+      - name: Save the Go caches (main only)
+        if: always() && github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
+
+  # ── The second race shard of the rt tests (see integration-postgres) ──────
+  # Shard 2/2 of the same tests. It runs neither the integration-tagged store
+  # tests (shard 1 owns them) nor saves the race cache (one writer per family).
+  integration-postgres-2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sky
+          POSTGRES_PASSWORD: sky
+          POSTGRES_DB: sky
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        id: setup-go
+        with:
+          go-version: '1.26'
+          cache: false
+      # A -race build shares nothing with the non-race caches, so it gets its
+      # own family.
+      - name: Cache Go build + module cache
+        id: go-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-race-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-race-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-race-linux-
+      # Two things made a whole defect class unreachable in CI, and it took a
+      # local run to find one: a data race between `waitReady` reading
+      # `cmd.ProcessState` and `watchChild`'s `Wait()` writing it — also an
+      # os/exec contract violation, since ProcessState is invalid until Wait
+      # returns. CI could not have caught it, because
+      #
+      #   1. every Go step here runs CGO_ENABLED=0, and `-race` needs cgo; and
+      #   2. the embedded-PostgreSQL supervisor needs real initdb/pg_ctl/postgres
+      #      binaries ON THE RUNNER. The service container above is a server on
+      #      a port — it puts nothing on PATH — so every live test SKIPPED, and
+      #      a skipped test is green.
+      #
+      # Both are closed below. The binaries also make the live supervisor tests
+      # (socket permissions, drain-then-stop ordering, DSN handoff) actually run
+      # rather than skip.
+      - name: PostgreSQL binaries for the embedded supervisor
+        run: |
+          set -euo pipefail
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
+
+      # The rt tests that run the embedded browser clients need node; a
+      # missing one fails them (runtime-go/rt/live_gate_test.go).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      # SHARDED by test (scripts/ci/go-test-shard.sh): one race run of the rt
+      # tests took 655-668 s, almost all of it in the one package sky-app/rt,
+      # so a package split cannot shorten it. This job runs shard 1/2,
+      # integration-postgres-2 runs 2/2; both list the same tests and take
+      # disjoint halves whose union is the unsharded run
+      # (go_test_shards_are_disjoint_and_total.rs, workflows_parse.rs).
+      - name: rt tests under the race detector, with a live PostgreSQL (shard 2/2)
+        working-directory: runtime-go
+        # The DSN-gated live tests fail, never skip, without it (G-8,
+        # runtime-go/rt/live_gate_test.go); the job's postgres service is it.
+        env:
+          SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
+        run: CGO_ENABLED=1 bash ../scripts/ci/go-test-shard.sh 2/2 ./rt/... -- -race -timeout 20m -count=1
 
   # ── macOS: platform-determinism subset only (the reason for a 2nd OS) ───────
   # Byte-stable codegen (repro) + coerce floor + runtime behaviour must hold on a
@@ -1813,21 +2113,26 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-macos-
+          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-macos-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
           shared-key: sky-macos
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build --workspace --locked
       - name: Gate — repro (byte-stable Go, 2nd platform, shard 0/3)
         # A third of the corpus; `macos-determinism-2` runs `--shard=1/3` and
@@ -1845,6 +2150,21 @@ jobs:
         env:
           SKY_LIVE_TESTS: skip
         run: cargo run -q -p xtask -- coerce-floor
+      # The Go runtime's own tests on the 2nd platform. They moved here from
+      # macos-behaviour, which built the workspace, ran these (~300 s) and the
+      # project tests (~130 s), and was the longest rust-ci job (10-14 min,
+      # runs 38892647386, 38915868318); this job had the most room.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      # Node is installed, so the browser-client rt tests run on this platform
+      # too. SKY_LIVE_TESTS=skip covers only the embedded-PostgreSQL live
+      # tests, which `integration-postgres` runs on Linux with real binaries;
+      # a PostgreSQL install here would bill at 10x for no platform signal.
+      - name: Gate — runtime rt tests (go test, 2nd platform)
+        env:
+          SKY_LIVE_TESTS: skip
+        run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
       # NOTE: the `golden` gate (the other 2nd-platform emit/go-build parity
       # gate) runs on `macos-determinism-2`, not here — the two determinism
       # gates are balanced one-per-shard so neither job binds the tier.
@@ -1852,6 +2172,17 @@ jobs:
         if: always()
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
+      # Only main writes a cache (restore everywhere). A branch or pull
+      # request saving its own copy evicted main's entries from the 10 GB
+      # repository budget, and every run went cache-cold.
+      - name: Save the Go caches (main only)
+        if: always() && github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
   # ── macOS determinism, second repro shard ──────────────────────────────────
   #
@@ -1881,17 +2212,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-macos-
+          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-macos-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -1935,17 +2270,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-macos-
+          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-macos-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -1980,7 +2319,8 @@ jobs:
   # Predicted from this run's per-step numbers — the next run is the measurement.
   macos-behaviour:
     runs-on: macos-latest
-    # Workspace build + rt tests + project tests. The stdlib conformance leg
+    # Workspace build + project tests (the rt tests moved to macos-determinism
+    # on ci/speed). The stdlib conformance leg
     # moved to `macos-conformance` at v0.27.0: with 42 suites the whole job ran
     # past its 20 min limit (PR run 36641698044, cancelled at 20.5 min inside
     # conformance; 1045-1074 s when it did finish). Measured without
@@ -1995,34 +2335,27 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-macos-
+          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-macos-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
           shared-key: sky-macos
           save-if: 'false'
       - run: cargo build --workspace --locked
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-      # Node is installed, so the browser-client rt tests run on this platform
-      # too. SKY_LIVE_TESTS=skip covers only the embedded-PostgreSQL live
-      # tests, which `integration-postgres` runs on Linux with real binaries;
-      # a PostgreSQL install here would bill at 10x for no platform signal.
-      - name: Gate — runtime rt tests (go test, 2nd platform)
-        env:
-          SKY_LIVE_TESTS: skip
-        run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
       - name: Gate — project integration tests (go build regressions, 2nd platform)
         run: cargo test -p project --locked
       - name: Bound the Go caches before save
@@ -2046,22 +2379,34 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
+        id: go-cache
         uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-macos-
+          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-macos-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
           shared-key: sky-macos
           save-if: 'false'
+      # The licence gate's macOS half (otool / Mach-O load commands; the
+      # Linux half is licence-gate-linux). See the licence gate comment above.
+      - name: Install GNU readline (fidelity fixture)
+        working-directory: .
+        run: brew install readline || true
+      - name: Prove the licence gate rejects what it must (macOS)
+        working-directory: .
+        run: bash scripts/skydb/test-licence-gate.sh
       - name: Gate — stdlib behavioral conformance (2nd platform)
         run: |
           cargo build --release -p sky --locked
@@ -2105,10 +2450,11 @@ jobs:
       - behaviour-docs
       - config-gates
       - build-perf
+      - build-perf-2
       - lsp-fuzz
       - licence-gate-linux
-      - licence-gate-macos
       - integration-postgres
+      - integration-postgres-2
       - macos-determinism
       - macos-determinism-2
       - macos-determinism-3
@@ -2171,8 +2517,8 @@ jobs:
           # REST-API name contains a space (a `matrix` leg reports as
           # `name (leg)`) could never match one. That is why the licence gate is
           # two explicitly-named jobs rather than one two-legged matrix.
-          SETUP_INDEPENDENT_JOBS: 'integration-postgres build-perf build-corpus build-corpus-2 build-corpus-3 erasure-fuzz erasure-fuzz-2 test-sky test-sky-2 test-sky-3 test-sky-4 test-sky-5 test-sky-6 test-sky-7 test-sky-8 test-sky-9 runtime-rt licence-gate-linux'
-          MACOS_JOBS: 'macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour macos-conformance licence-gate-macos'
+          SETUP_INDEPENDENT_JOBS: 'test-ty test-rest parity-accept parity-reject repro repro-2 codegen-build behaviour-docs config-gates lsp-fuzz integration-postgres integration-postgres-2 build-perf build-perf-2 build-corpus build-corpus-2 build-corpus-3 erasure-fuzz erasure-fuzz-2 test-sky test-sky-2 test-sky-3 test-sky-4 test-sky-5 test-sky-6 test-sky-7 test-sky-8 test-sky-9 runtime-rt licence-gate-linux'
+          MACOS_JOBS: 'macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour macos-conformance'
         run: |
           set -euo pipefail
           gh api \

@@ -2055,7 +2055,7 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
                     new.push(Ev::new(
                         format!(
                             "{} (counted assertions, run by a release job: gate-core-sky \
-                             for a flow test, gate-web / gate-example-e2e for an e2e \
+                             for a flow test, gate-web-1..4 / gate-example-e2e for an e2e \
                              script; not a registered harness gate, so no falsifier)",
                             u.id
                         ),

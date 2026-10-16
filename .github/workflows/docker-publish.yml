@@ -46,5 +46,6 @@ jobs:
           tags: |
             anzel/sky:${{ inputs.version }}
             anzel/sky:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # No `type=gha` layer cache: this runs on a tag (or a dispatch), and a
+          # cache saved there serves that ref alone while it fills the 10 GB
+          # repository budget that main's caches live in.

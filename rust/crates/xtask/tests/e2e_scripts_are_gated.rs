@@ -286,3 +286,64 @@ fn the_release_job_attests_the_published_assets() {
         .unwrap_or("");
     assert_eq!(subject, "release/*", "every published asset is attested");
 }
+
+/// Every `scripts/*-e2e.sh` runs in EXACTLY ONE release gate job.
+///
+/// The browser tier is split across `gate-web-1..4` (one 41-minute job before,
+/// release run 38764879819). The rule above proves each script runs somewhere;
+/// this proves the split is a partition: a script listed in two jobs costs a
+/// second browser run and two copies drift, and the union with the rule above
+/// is "every script, once".
+#[test]
+fn every_e2e_script_runs_in_exactly_one_release_gate_job() {
+    let doc = release();
+    let runs = gate_runs(&doc);
+    let mut twice = Vec::new();
+    for script in e2e_scripts() {
+        let call = format!("scripts/{script}");
+        let mut jobs: Vec<&str> = runs
+            .iter()
+            .filter(|(_, r)| {
+                r.lines().any(|l| {
+                    let l = l.trim();
+                    !l.starts_with('#')
+                        && l.split_whitespace()
+                            .any(|t| t == call || t.ends_with(&format!("/{call}")))
+                })
+            })
+            .map(|(j, _)| j.as_str())
+            .collect();
+        jobs.sort();
+        jobs.dedup();
+        let lines = runs
+            .iter()
+            .flat_map(|(_, r)| r.lines())
+            .filter(|l| {
+                let l = l.trim();
+                !l.starts_with('#') && l.split_whitespace().any(|t| t == call)
+            })
+            .count();
+        if jobs.len() > 1 || lines > 1 {
+            twice.push(format!("{script}: {lines} invocation(s) in {jobs:?}"));
+        }
+    }
+    assert!(
+        twice.is_empty(),
+        "e2e script(s) run more than once across the release gate jobs:\n  {}",
+        twice.join("\n  ")
+    );
+    // Anti-vacuity: the browser tier really is split, and every part gates.
+    let needs: Vec<String> = doc["jobs"]["release"]["needs"]
+        .as_sequence()
+        .expect("release: needs:")
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    for n in 1..=4 {
+        let job = format!("gate-web-{n}");
+        assert!(
+            doc["jobs"][job.as_str()].is_mapping() && needs.contains(&job),
+            "{job} must exist and be in `release: needs:`"
+        );
+    }
+}

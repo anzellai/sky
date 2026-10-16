@@ -64,21 +64,28 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-sweep-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-sweep-
+          key: go-sweep-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-sweep-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-sweep-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
           shared-key: sky-gates-linux
+          # The one writer of the release-profile cache, on main only (the
+          # release gate jobs and the other nightly jobs restore it).
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build sky binary
         # Ask cargo where it put the binary instead of assuming
         # `rust/target/release/sky`: cargo honours CARGO_TARGET_DIR and friends,
@@ -116,6 +123,17 @@ jobs:
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh
+      # Only main writes a cache (restore everywhere). A branch or pull
+      # request saving its own copy evicted main's entries from the 10 GB
+      # repository budget, and every run went cache-cold.
+      - name: Save the Go caches (main only)
+        if: always() && github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
   # ── The browser tier — the ONLY runner of scripts/verify-all-web.sh in CI ───
   #
@@ -146,7 +164,7 @@ jobs:
     # runs): 40. nav-e2e adds two fixture builds in two browsers: 50.
     # console-controls-e2e adds ~8 min: 65.
     # Each long step also carries its own timeout-minutes (as in release.yml
-    # gate-web), so a hung script fails its own named step with its log.
+    # gate-web-*), so a hung script fails its own named step with its log.
     timeout-minutes: 65
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
@@ -156,20 +174,32 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
+      # The one writer of the Playwright browser cache (on main); the release
+      # gate-web-* jobs restore it (.github/actions/playwright-setup).
+      - name: Restore the Playwright browsers
+        id: pw-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-web-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-web-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -322,6 +352,12 @@ jobs:
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh
+      - name: Save the Playwright browsers (main only)
+        if: always() && github.ref == 'refs/heads/main' && steps.pw-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
   # ── Behavioural corpus (harness tier T2) ────────────────────────────────────
   #
@@ -374,17 +410,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-corpus-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-corpus-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -479,17 +519,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-t3-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-t3-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -580,6 +624,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
@@ -596,13 +641,16 @@ jobs:
         with:
           neovim: true
       - name: Cache Go build + module cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
             ${{ github.workspace }}/.gomodcache
-          key: go-falsify-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-          restore-keys: go-falsify-
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -637,7 +685,7 @@ jobs:
   # caller is postgres-bundle.yml, whose triggers are `workflow_dispatch` and
   # `push: tags: ['postgres-bundle-v*']`; `git tag -l 'postgres-bundle-v*'`
   # returns nothing and no such tag has ever been cut. The per-commit
-  # `licence-gate-linux` / `licence-gate-macos` jobs run
+  # `licence-gate-linux` job and `macos-conformance` run
   # test-licence-gate.sh with no `--bundle`, so its two real-bundle cases (C8
   # unmodified-bundle-accepts, C9 planted-GPL-extension-rejects) skip there.
   #
@@ -778,11 +826,13 @@ jobs:
           shared-key: sky-linux
           save-if: 'false'
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache the Sky Go build cache
-        uses: actions/cache@v6
+        id: go-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.sky/go-build
@@ -794,7 +844,7 @@ jobs:
         run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" brotli jq time
       - name: Build and install the compiler (sky-out/sky)
         run: bash scripts/build.sh
-      - name: 'Gate — build speed within budget (medians of 3, budget x 1.5)'
+      - name: 'Gate — build speed within budget (medians of 3, as a ratio to the reference workload)'
         run: bash scripts/bench-build.sh --reps 3 --cases "app skyshop" --out build-perf.json --write-budget build-budget.proposed.json --budget docs/perf/build-budget.json
       - name: Keep the measurements
         if: always()

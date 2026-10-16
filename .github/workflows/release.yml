@@ -106,17 +106,16 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
-          cache: true
-          # This job's only Go compile is tools/sky-ffi-inspect, whose deps live
-          # in tools/sky-ffi-inspect/go.sum. Without this, setup-go looks for a
-          # go.sum in the repo root (there is none) and logs "Restore cache
-          # failed: Dependencies file is not found ... go.sum" on every leg. Name
-          # the file it should hash so the module cache keys and warms correctly.
-          cache-dependency-path: tools/sky-ffi-inspect/go.sum
+          # No setup-go cache: these legs run on a tag, and a cache saved on a
+          # tag ref is visible to that tag alone, so it only filled the 10 GB
+          # repository budget. The one Go compile here is tools/sky-ffi-inspect.
+          cache: false
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
+          # A cache saved on a tag ref serves that tag alone. Save nothing.
+          save-if: 'false'
 
       # The Linux legs link against SKY_GLIBC_FLOOR, not the runner's glibc.
       # Both tools are pinned: zig from its PyPI wheel (the files.pythonhosted.org
@@ -393,16 +392,16 @@ jobs:
   #
   # Shared setup (Rust + Go toolchains, warm caches, disk reclaim, the
   # scripts/build.sh compiler install) is defined ONCE in the local composite
-  # action .github/actions/gate-setup. The composite's actions/cache restore-key
-  # falls back to the per-commit `go-linux-` family, so a release inherits the
-  # Go build cache that main's rust-ci warmed on the last push instead of
-  # starting cold (releases are infrequent, so the release-only `go-release-*`
-  # namespace is otherwise always evicted).
+  # action .github/actions/gate-setup. Caches are RESTORE-ONLY here: only
+  # refs/heads/main saves a cache (rust-ci and the nightly), so a release
+  # restores the Go cache main last wrote (`go-linux`, or `go-sweep` for the
+  # FFI-heavy jobs) and the release-profile cargo cache the nightly writes
+  # (`sky-gates-linux`), and saves nothing that could evict them.
   # ════════════════════════════════════════════════════════════════════════
 
   # gate-core: workspace tests + corpus gates + coerce-floor + the T1 harness
   # (with proofs). The `lsp` T1 gate needs Neovim; the workspace live tests + T1
-  # apps need a real PostgreSQL. Sole writer of the shared cargo cache.
+  # apps need a real PostgreSQL. Caches are restore-only here.
   # `build-run --all` used to run here too; it now lives in `gate-buildrun`.
   # ────────────────────────────────────────────────────────────────
   # verify-ci-green — the tagged commit's per-commit `ci-green` must be GREEN.
@@ -454,7 +453,7 @@ jobs:
 
   gate-core:
     runs-on: ubuntu-latest
-    # Workspace tests EXCEPT the `sky` crate, which runs in gate-core-sky-1..9.
+    # Workspace tests EXCEPT the `sky` crate, which runs in gate-core-sky-1..6.
     # They took ~37 min on the runner at v0.25.18 (run 36122173135), so the
     # corpus gates + coerce-floor + doc examples that used to follow them here
     # moved to gate-corpus. At v0.27.0 the sky crate alone outgrew the job: run
@@ -469,12 +468,10 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core
           postgres: 'true'
           neovim: 'true'
-          rust-cache-writer: 'true'
 
-      # `--exclude sky`: the sky crate runs in gate-core-sky-1..9 below, sliced
+      # `--exclude sky`: the sky crate runs in gate-core-sky-1..6 below, sliced
       # by test with nextest. Doctests still run here (`cargo test` runs them;
       # nextest does not, and sky is bin-only, so it has none).
       - name: Workspace tests (every crate except sky)
@@ -488,15 +485,15 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  # gate-core-sky-1..9 — the `sky` crate's tests, split out of gate-core.
-  # `cargo nextest run -p sky --partition slice:k/9`: slice splits the whole
-  # sorted test list evenly across the nine jobs, so a long binary such as
+  # gate-core-sky-1..6 — the `sky` crate's tests, split out of gate-core.
+  # `cargo nextest run -p sky --partition slice:k/6`: slice splits the whole
+  # sorted test list evenly across the six jobs, so a long binary such as
   # spa_split_flow (81 tests, 25-40 min alone under `cargo test`) is spread
   # across all of them. Disjoint and total by construction;
-  # tests/workflows_parse.rs checks the nine slices are all present. The
+  # tests/workflows_parse.rs checks the six slices are all present. The
   # `serial-servers` group in rust/.config/nextest.toml still runs the
   # fixed-port server tests one at a time within each job. The same split the
-  # per-commit `test-sky` jobs use (rust-ci.yml, also 9 slices).
+  # per-commit `test-sky` jobs use (rust-ci.yml, at 9 slices).
   #
   # Why nine, measured (release runs 37545837777, 37594890617, 37713125127,
   # 37752520304, all at five slices): the nextest execution summed over the
@@ -512,6 +509,14 @@ jobs:
   # 13.6 min (rust-ci runs 37711532703, 37750307576). That is >= 40% headroom
   # under 30 min. Seven slices would put the slowest job at ~18 min, at the
   # edge of that margin, so nine. Timeout stays 30.
+  #
+  # Why SIX since v0.27.9: the build-speed work made the tests faster. At nine
+  # slices the jobs took 268-429 s each, compile and setup included (release run
+  # 38858732165): about 29 min of tests in all, under 4 min per slice, behind a
+  # ~2.5 min compile that every slice repeats. Nine jobs of mostly fixed cost
+  # held nine of the 40 jobs that can run at once, and the release queued. Six
+  # slices are ~5 min of tests each (~8 min a job), still under a third of the
+  # 30-min timeout.
   # The heavy `#[ignore]`d legs run in gate-app (`-- --ignored`), unchanged.
   gate-core-sky-1:
     runs-on: ubuntu-latest
@@ -520,18 +525,17 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core-sky
           postgres: 'true'
           install-compiler: 'false'
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 1/9 (nextest)
+      - name: sky crate tests, slice 1/6 (nextest)
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:1/9
+        run: cargo nextest run -p sky --locked --partition slice:1/6
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -544,18 +548,17 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core-sky
           postgres: 'true'
           install-compiler: 'false'
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 2/9 (nextest)
+      - name: sky crate tests, slice 2/6 (nextest)
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:2/9
+        run: cargo nextest run -p sky --locked --partition slice:2/6
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -568,18 +571,17 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core-sky
           postgres: 'true'
           install-compiler: 'false'
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 3/9 (nextest)
+      - name: sky crate tests, slice 3/6 (nextest)
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:3/9
+        run: cargo nextest run -p sky --locked --partition slice:3/6
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -592,18 +594,17 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core-sky
           postgres: 'true'
           install-compiler: 'false'
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 4/9 (nextest)
+      - name: sky crate tests, slice 4/6 (nextest)
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:4/9
+        run: cargo nextest run -p sky --locked --partition slice:4/6
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -616,18 +617,17 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core-sky
           postgres: 'true'
           install-compiler: 'false'
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 5/9 (nextest)
+      - name: sky crate tests, slice 5/6 (nextest)
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:5/9
+        run: cargo nextest run -p sky --locked --partition slice:5/6
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -640,94 +640,24 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core-sky
           postgres: 'true'
           install-compiler: 'false'
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 6/9 (nextest)
+      - name: sky crate tests, slice 6/6 (nextest)
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:6/9
+        run: cargo nextest run -p sky --locked --partition slice:6/6
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  gate-core-sky-7:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: core-sky
-          postgres: 'true'
-          install-compiler: 'false'
-      - name: Install cargo-nextest (prebuilt binary)
-        run: |
-          set -euo pipefail
-          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 7/9 (nextest)
-        working-directory: rust
-        env:
-          SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:7/9
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
 
-  gate-core-sky-8:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: core-sky
-          postgres: 'true'
-          install-compiler: 'false'
-      - name: Install cargo-nextest (prebuilt binary)
-        run: |
-          set -euo pipefail
-          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 8/9 (nextest)
-        working-directory: rust
-        env:
-          SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:8/9
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
 
-  gate-core-sky-9:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: core-sky
-          postgres: 'true'
-          install-compiler: 'false'
-      - name: Install cargo-nextest (prebuilt binary)
-        run: |
-          set -euo pipefail
-          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 9/9 (nextest)
-        working-directory: rust
-        env:
-          SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:9/9
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
 
   # gate-corpus — the corpus gates, coerce-floor and the live-doc examples,
   # split out of gate-core (see its comment) so both finish inside a ceiling.
@@ -737,8 +667,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: corpus
 
       # Release-built, deliberately. `preflight-tag.sh:70-74` records the
       # measurement: an unoptimised xtask made these ~10x slower, and `reject`
@@ -789,29 +717,31 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   # The T1 shards need postgres + neovim because T1 includes the lsp gate and
-  # the postgres-arm gates. Not the rust-cache writer (gate-core writes it).
-  # gate-t1-N — the T1 gate harness, SHARDED 4 ways by `--only`. Its 30 gates
+  # the postgres-arm gates. Caches are restore-only (main writes them).
+  # gate-t1-N — the T1 gate harness, SHARDED 3 ways by `--only`. Its 30 gates
   # run one after another inside one harness, and their budgets sum to ~413 min;
   # as ONE job it passed a 40-min and then a 75-min ceiling at v0.25.18 (runs
   # 36111406977 and 36122173135, cancelled with no verdict). The shards run in
   # parallel. `workflows_parse::the_release_workflow_is_the_full_suite` fails if
   # a T1 gate is in no shard. The harness prints each gate's verdict as it ends.
+  # Shard 1 holds what were shards 1 and 4 (conformance + verify-cli, 256 s;
+  # the corpus, runtime-safety and census gates, 159 s; release run
+  # 38764879819): two jobs of mostly setup became one of ~9 minutes.
   gate-t1-1:
     runs-on: ubuntu-latest
     # The harness runs this job's gates one after another: their summed budget
     # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
     # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
-    timeout-minutes: 95
+    timeout-minutes: 235
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core
           postgres: 'true'
           neovim: 'true'
-      - name: Gate harness (T1 shard 1/4 — conformance and verify-cli) with proof requirement
+      - name: Gate harness (T1 shard 1/3 — conformance, verify-cli, corpus, runtime safety, census) with proof requirement
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only conformance,verify-cli
+        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only conformance,verify-cli,roundtrip,reject,shared-world,corpus-manifest,corpus-reject,corpus-emit-shape,analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index,periodic-loops-recover-per-cycle,live-time-every-mutex-survives-a-panic,jobs-complete-failure-is-reported,coverage-ledger,config-surface,kernel-members,config-migration,config-migrate
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -827,10 +757,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core
           postgres: 'true'
           neovim: 'true'
-      - name: Gate harness (T1 shard 2/4 — sky-verify, sky-suites, lsp) with proof requirement
+      - name: Gate harness (T1 shard 2/3 — sky-verify, sky-suites, lsp) with proof requirement
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only sky-verify,sky-suites,lsp
       - name: Bound the Go caches before save
@@ -848,10 +777,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core
           postgres: 'true'
           neovim: 'true'
-      - name: Gate harness (T1 shard 3/4 — Layer-2 apps and CLI verbs) with proof requirement
+      - name: Gate harness (T1 shard 3/3 — Layer-2 apps and CLI verbs) with proof requirement
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only apps-bundled,cli-verbs,apps-ledger,apps-dispatch,apps-dispatch-destructive,apps-relay,config-matrix,build-growth-linear
       - name: Bound the Go caches before save
@@ -859,58 +787,36 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  gate-t1-4:
-    runs-on: ubuntu-latest
-    # The harness runs this job's gates one after another: their summed budget
-    # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
-    # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
-    timeout-minutes: 155
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: core
-          postgres: 'true'
-          neovim: 'true'
-      - name: Gate harness (T1 shard 4/4 — corpus, runtime safety, census) with proof requirement
-        working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only roundtrip,reject,shared-world,corpus-manifest,corpus-reject,corpus-emit-shape,analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index,periodic-loops-recover-per-cycle,live-time-every-mutex-survives-a-panic,jobs-complete-failure-is-reported,coverage-ledger,config-surface,kernel-members,config-migration,config-migrate
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
 
-  # gate-buildrun — the codegen build+run sweep, SHARDED 3 ways. Each shard
-  # emits + `go build`s a DISJOINT third of every example (`--shard=N/3`) and
+  # gate-buildrun — the codegen build+run sweep, SHARDED 2 ways. Each shard
+  # emits + `go build`s a DISJOINT half of every example (`--shard=N/2`) and
   # RUNS the CLI subset against its committed golden. This is the proven rust-ci
   # `build-corpus` pattern; `build_run_gate::shards_are_disjoint_and_total`
-  # proves the thirds union to the whole corpus with nothing gated twice or
+  # proves the halves union to the whole corpus with nothing gated twice or
   # dropped. Moved out of gate-core, where it was the step that overran 44 min.
-  # Measured locally: a shard is ~3-4 min cold, ~20 s warm — well inside 30.
+  # Three shards ran 111-367 s each after a 2-2.5 min setup (release run
+  # 38764879819), so a third runner bought little and held one of the 40
+  # concurrent jobs; two shards are ~5-6 min of building each.
   gate-buildrun:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2]
+        shard: [0, 1]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
-        with:
-          # All shards share one Go cache family so the build-run cache warms
-          # once and is reused across the three shards.
-          cache-key: buildrun
       # The composite's free-disk default makes sure the job starts with room
       # before the sweep fills the go-build cache (it reclaims OS junk only when
       # the runner is short). No `go clean -cache` — the sweep repopulates
       # only what its third needs, and a warm cache is the whole point.
-      - name: Codegen build + run (shard ${{ matrix.shard }}/3)
+      - name: Codegen build + run (shard ${{ matrix.shard }}/2)
         working-directory: rust
         run: |
           set -euo pipefail
-          cargo run --release --locked -q -p xtask -- build-run --all --shard=${{ matrix.shard }}/3
-          cargo run --release --locked -q -p xtask -- build-run --shape cli --run --golden --shard=${{ matrix.shard }}/3
+          cargo run --release --locked -q -p xtask -- build-run --all --shard=${{ matrix.shard }}/2
+          cargo run --release --locked -q -p xtask -- build-run --shape cli --run --golden --shard=${{ matrix.shard }}/2
 
       - name: Bound the Go caches before save
         if: always()
@@ -937,8 +843,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: t2
 
       - name: Gate harness (T2 — corpus, build+run every fixture) with proof requirement
         working-directory: rust
@@ -964,8 +868,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: t2
 
       - name: Gate harness (T2 — isolation / witness / spa-diff-fuzz / fieldbook) with proof requirement
         working-directory: rust
@@ -1012,7 +914,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: app
           postgres: 'true'
 
       # T3 — the Layer-2 app tier. Set the DSN on the STEP, not the job, so the
@@ -1056,77 +957,80 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   # ════════════════════════════════════════════════════════════════════════
-  # gate-falsifiers-{1,2,3} — the falsifier verification, SPLIT three ways by
-  # `--only` gate groups so no single job overruns (the unsharded job TIMED OUT
-  # at 45 min on the v0.24.4 run). `--require-proofs` on the tier lines DEMOTES
-  # a PASS whose proof lapsed, but only these runs ESTABLISH that a gate's
-  # declared mutation still reddens it. It ran ONLY in the nightly before.
+  # gate-falsifiers-1..9 — the falsifier verification. `--require-proofs` on
+  # the tier lines DEMOTES a PASS whose proof lapsed, but only these runs
+  # ESTABLISH that each gate's declared mutation still reddens it. `--all`:
+  # nothing is carried from the checked-in proof ledger. The union of the
+  # `--only` lists is every gate the registry declares, bar the self-tests and
+  # a blocked gate, which have no baseline to falsify; the canary runs in every
+  # group. `workflows_parse::the_release_workflow_is_the_full_suite` checks the
+  # union, and that a gate split by `--mutation` runs every declared mutation.
   #
-  # The three `--only` lists PARTITION the T1 tier: their union is exactly the
-  # T1 gates and no gate appears twice, so the coverage of the old blanket
-  # `--verify-falsifiers --tier t1` is preserved, spread across three runners.
-  # Each group carries only the environment its gates need — group 2 has Neovim
-  # for the `lsp` falsifier, group 3 has PostgreSQL for the `apps-*` falsifiers.
-  # The permanent canary self-gate is verified in every run automatically.
+  # PACKING (measured per gate in release run 38764879819, baseline plus
+  # mutations): lsp 461 s, spa-diff-fuzz 382, apps-ffi-scale 346, build-growth
+  # 312, build-new-dir 308, config-matrix 236, conformance 220, corpus-reject
+  # 174, cli-verbs 155, kernel-members 134, apps-fleet 122, the rest under
+  # 110 s; 66 min in all, plus the corpus at 1,256 s. The old groups followed
+  # the tiers and ran 9-25 min; these are packed longest-first into about
+  # 9.5 min of proofs each, within three environment classes:
+  #   1-5  T1 and T4, the runner's PostgreSQL binaries (the apps-* T1 gates
+  #        stand up their own clusters); group 1 adds Neovim for `lsp`.
+  #   6-7  T2 and T3, the PostgreSQL service and its DSN (as gate-app).
+  #   8-9  the T2 behavioural corpus, one job per mutation (`--mutation`). Each
+  #        runs the baseline and one mutated build+run of every case; together
+  #        they are the whole proof, and neither records a partial one.
   # ════════════════════════════════════════════════════════════════════════
-
-  # gate-falsifiers-1 — the corpus + conformance + sky-suites falsifiers. Pure
-  # compiler / stdlib / sqlite; needs neither Neovim nor PostgreSQL.
   gate-falsifiers-1:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: falsifiers-1
-      - name: Falsifier verification (group 1 — corpus / sky-suites)
+          postgres: 'true'
+          neovim: 'true'
+      - name: Falsifier verification (group 1)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only sky-suites,roundtrip,reject,shared-world,corpus-manifest,corpus-reject,corpus-emit-shape
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only lsp,erasure-path-uses-an-index,console-analytics-queries-are-bounded,analytics-prune-errors-are-reported,apps-dispatch-destructive,roundtrip
 
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
-
-  # gate-falsifiers-2 — the CLI / LSP / config falsifiers. Needs Neovim for the
-  # `lsp` gate's mutation; no PostgreSQL.
   gate-falsifiers-2:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: falsifiers-2
-          neovim: 'true'
-      - name: Falsifier verification (group 2 — verify-cli / lsp / config)
+          postgres: 'true'
+          # apps-ffi-scale drives a cold `sky install` of the 76k-symbol FFI
+          # surface: restore the FFI module cache the nightly sweep writes.
+          go-cache-family: go-sweep
+      - name: Falsifier verification (group 2)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only verify-cli,lsp,cli-verbs,config-surface,kernel-members,config-migration,config-migrate
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only apps-ffi-scale,config-surface,analytics-retention-survives-a-panic,apps-dispatch,corpus-manifest
 
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
-
-  # gate-falsifiers-3 — the app / runtime-safety falsifiers + the census /
-  # ratchet gates. Needs PostgreSQL for the `apps-*` gates (health-driver
-  # mutations). The `denominators` / `coverage-ledger` / `config-migration`
-  # census checks (§0.2.1 step 2) run in no per-commit job, so a release is the
-  # only place they are gated — they ride here.
   gate-falsifiers-3:
     runs-on: ubuntu-latest
-    timeout-minutes: 65
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: falsifiers-3
           postgres: 'true'
-      - name: Falsifier verification (group 3 — Layer-2 apps)
+      - name: Falsifier verification (group 3)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only sky-verify,apps-bundled,apps-ledger,apps-dispatch,apps-dispatch-destructive,apps-relay,build-growth-linear
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only build-growth-linear,kernel-members,verify-cli,live-time-every-mutex-survives-a-panic,periodic-loops-recover-per-cycle,jobs-complete-failure-is-reported,config-migration
 
+  gate-falsifiers-4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/gate-setup
+        with:
+          postgres: 'true'
+      - name: Falsifier verification (group 4)
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only config-matrix,cli-verbs,corpus-emit-shape,sky-verify,apps-ledger,apps-bundled,config-migrate
       # Denominator + ledger + config-migration ratchets. These do not test the
       # compiler; they assert that the coverage + config-migration claims shipped
       # alongside it are still true and still current. `config-migration --check`
@@ -1141,52 +1045,21 @@ jobs:
           cargo run --release --locked -q -p xtask -- config-migration --check
           cargo run --release --locked -q -p xtask -- config-surface --check
 
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
-
-  # gate-falsifiers-{4,5,6} — the falsifier proofs of the tiers ABOVE T1. Groups
-  # 1-3 partition T1; these partition T2, T3 and T4, so the union of all six
-  # `--only` lists is every gate the registry declares (bar the self-tests and
-  # a blocked gate, which have no baseline to falsify; the canary runs in every
-  # group). `--all`: nothing is carried from the checked-in proof ledger.
-  #
-  # Group 4 is the behavioural corpus alone: its baseline and its mutated run
-  # each `go build` and run every fixture (~10 min apiece).
-  #
-  # v0.27.0 (468 cases): 57 min of job time against the old 60 min limit
-  # (release run 36643630048). The time is the BASELINE run, which builds every
-  # case from a cold per-case state: ~37 min, against ~7 min for each mutated
-  # run that follows it on a warm cache (measured per mutation in run
-  # 36651737329, where the two mutations ran in separate jobs: 2,686 s and
-  # 2,671 s each, baseline included). Splitting by mutation therefore repeats
-  # the baseline and saves ~7 min, so the work does not divide at the job level,
-  # and the timeout follows docs/ci-test-architecture-v2.md §8.2 instead: 1.5x
-  # the ~57 min measured ≈ 86, rounded to 90.
-  gate-falsifiers-4:
+  gate-falsifiers-5:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      GO_CACHE_BUDGET_MB: '4096'
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: t2
-      - name: Falsifier verification (group 4 — the T2 behavioural corpus)
+          postgres: 'true'
+      - name: Falsifier verification (group 5)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only conformance,corpus-reject,sky-suites,shared-world,apps-relay,reject,coverage-ledger
 
-  # Group 5 — the rest of T2 and all of T3. The T3 gates need the PostgreSQL
-  # service (the same container and DSN as gate-app).
-  gate-falsifiers-5:
+  gate-falsifiers-6:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:16
@@ -1205,106 +1078,79 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: app
           postgres: 'true'
-      - name: Falsifier verification (group 5 — T2 rest + T3 on Postgres)
+      - name: Falsifier verification (group 6 — T2 and T3 on Postgres)
         working-directory: rust
         env:
           SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
           DATABASE_URL: postgres://sky:sky@localhost:5432/sky?sslmode=disable
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only spa-diff-fuzz,corpus-isolation,corpus-witness,apps-fieldbook,apps-ledger-postgres,apps-dispatch-postgres,apps-fleet,build-new-dir-compiles-nothing
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only spa-diff-fuzz,corpus-witness,corpus-isolation,apps-ledger-postgres,apps-fieldbook
 
-  # Group 6 — T4, the 76k-symbol FFI benchmark. Its baseline and its mutated run
-  # each drive a cold `sky install` of the Stripe/Firebase surface.
-  gate-falsifiers-6:
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    env:
-      GO_CACHE_BUDGET_MB: '6144'
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: sweep
-      - name: Falsifier verification (group 6 — T4 FFI scale)
-        working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only apps-ffi-scale
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
-
-  # gate-falsifiers-7 — split out of group 3, which ran past its 30-minute
-  # ceiling once the Layer-2 app gates and the runtime-safety gates shared a job.
   gate-falsifiers-7:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sky
+          POSTGRES_PASSWORD: sky
+          POSTGRES_DB: sky
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: falsifiers-7
           postgres: 'true'
-      - name: Falsifier verification (group 7 — analytics safety + coverage ledger)
+      - name: Falsifier verification (group 7 — T2 and T3 on Postgres)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,coverage-ledger
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
+        env:
+          SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
+          DATABASE_URL: postgres://sky:sky@localhost:5432/sky?sslmode=disable
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only build-new-dir-compiles-nothing,apps-fleet,apps-dispatch-postgres
 
-  # gate-falsifiers-8 — split from group 7. Each runtime-safety proof rebuilds
-  # and re-runs the Go runtime tests twice (baseline + mutation); eight of them
-  # passed a 45-min ceiling on the runner (run 36122173135) though they take
-  # ~5 min on a laptop.
   gate-falsifiers-8:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The baseline builds and runs every behavioural case from a cold per-case
+    # state, then the mutated run does it again (1,256 s for the baseline and
+    # both mutations in one job, release run 38764879819). About 1.5x.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: falsifiers-8
-          postgres: 'true'
-      - name: Falsifier verification (group 8 — runtime loops and locks)
+      - name: Falsifier verification (group 8 — the T2 behavioural corpus, corpus.wrong-expected-value)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only erasure-path-uses-an-index,periodic-loops-recover-per-cycle,live-time-every-mutex-survives-a-panic,jobs-complete-failure-is-reported
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus --mutation corpus.wrong-expected-value
 
-  # gate-falsifiers-9 — split out of groups 1 and 2 at v0.27.0. Group 1 took
-  # 27 min of its 30 (conformance alone 520 s, 42 suites now) and group 2 took
-  # 24 of 30 (release run 36643630048). conformance (520 s) and config-matrix
-  # (254 s) move here: ~13 min of proofs + ~5 min setup. Timeout 1.5x ≈ 30.
   gate-falsifiers-9:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The baseline builds and runs every behavioural case from a cold per-case
+    # state, then the mutated run does it again (1,256 s for the baseline and
+    # both mutations in one job, release run 38764879819). About 1.5x.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: falsifiers-9
-      - name: Falsifier verification (group 9 — conformance / config-matrix)
+      - name: Falsifier verification (group 9 — the T2 behavioural corpus, corpus.wrong-stdlib-digest)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only conformance,config-matrix
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus --mutation corpus.wrong-stdlib-digest
 
   # gate-race — the Go runtime under the race detector against a live
   # PostgreSQL, plus the `integration`-tagged Postgres session-store tests.
   # Mirrors rust-ci's `integration-postgres` (which explains why `-race` needs
   # cgo and why the embedded-supervisor tests need real binaries on the runner).
-  gate-race:
+  gate-race-1:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
     services:
       postgres:
         image: postgres:16
@@ -1322,9 +1168,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
+      - name: Restore the race-build Go cache (saved on main only)
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-race-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-race-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-race-linux-
       - name: PostgreSQL binaries for the embedded supervisor
         run: |
           set -euo pipefail
@@ -1339,13 +1196,15 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
-      - name: rt tests under the race detector, with a live PostgreSQL
+      # SHARDED by test, as rust-ci integration-postgres: this job runs shard
+      # 1/2 and gate-race-2 runs 2/2 of the same list (scripts/ci/go-test-shard.sh).
+      - name: rt tests under the race detector, with a live PostgreSQL (shard 1/2)
         working-directory: runtime-go
         # The DSN-gated live tests fail, never skip, without it (G-8,
         # runtime-go/rt/live_gate_test.go); the job's postgres service is it.
         env:
           SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
-        run: CGO_ENABLED=1 go test -race -timeout 20m ./rt/... -count=1
+        run: CGO_ENABLED=1 bash ../scripts/ci/go-test-shard.sh 1/2 ./rt/... -- -race -timeout 20m -count=1
       # Every Go test package under tools/ runs here
       # (workflows_parse.rs::every_go_test_package_under_tools_runs_in_ci).
       - name: tools Go tests (sky-ffi-inspect, skyliveload)
@@ -1354,44 +1213,197 @@ jobs:
           (cd "$GITHUB_WORKSPACE/tools/sky-ffi-inspect" && CGO_ENABLED=0 go test ./... -count=1)
           (cd "$GITHUB_WORKSPACE/tools/skyliveload" && CGO_ENABLED=0 go test ./... -count=1)
 
-  # gate-web — the browser tier and the e2e scripts: every Sky.Live /
-  # Http.Server example driven in real Chromium (verify-all-web.sh, incl. the
-  # console e2e, ui-showcase and the resilience holds), the Sky.Spa wasm client
-  # e2e, the terminal loops in a pty, DOM identity, the Sky.Live client and the
-  # Std.Ui forms. Mirrors nightly-sweep.yml's `web-runtime` job; before this job
-  # none of it ran at a release.
-  gate-web:
+  # gate-race-2 — shard 2/2 of the race run of the rt tests (see gate-race-1).
+  # The integration-tagged store tests and the tools tests run in gate-race-1.
+  gate-race-2:
     runs-on: ubuntu-latest
-    # The nightly job budgets 25 min for the tier; the e2e scripts build their
-    # fixtures on top. 45 keeps ~1.5x.
-    # console-live-e2e adds ~11 min: 60. nav-e2e adds two fixture builds and
-    # two browsers: 70. spa-resilience-e2e adds ~5 min (it waits out the real
-    # 30 s timeout and 60 s retry budget): 80. console-controls-e2e adds
-    # ~8 min (a fixture build, the hub daemon build, six browser runs): 95.
-    # Each long step also carries its own timeout-minutes, about twice its
-    # slowest green run (bfc8a16c, 7292ef57, 218f4d21). A hung script then
-    # fails its own named step, with its log, instead of the whole job being
-    # cancelled at the job limit with no log at all (run 36942837671, step 7).
-    timeout-minutes: 95
+    timeout-minutes: 20
     env:
-      GO_CACHE_BUDGET_MB: '6144'
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sky
+          POSTGRES_PASSWORD: sky
+          POSTGRES_DB: sky
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/gate-setup
+      - uses: actions/setup-go@v7
+        id: setup-go
         with:
-          cache-key: web
+          go-version: '1.26'
+          cache: false
+      - name: Restore the race-build Go cache (saved on main only)
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-race-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-race-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-race-linux-
+      - name: PostgreSQL binaries for the embedded supervisor
+        run: |
+          set -euo pipefail
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
+      # The rt tests that run the embedded browser clients need node; a
+      # missing one fails them (runtime-go/rt/live_gate_test.go).
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
-      - name: Install Playwright + its browser, sqlite3, python3-venv
-        timeout-minutes: 10
-        run: |
-          npm ci --no-audit --no-fund || npm install --no-audit --no-fund
-          npx playwright install --with-deps chromium
-          command -v sqlite3 >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3; }
+      # Shard 2/2 (scripts/ci/go-test-shard.sh).
+      - name: rt tests under the race detector, with a live PostgreSQL (shard 2/2)
+        working-directory: runtime-go
+        # The DSN-gated live tests fail, never skip, without it (G-8,
+        # runtime-go/rt/live_gate_test.go); the job's postgres service is it.
+        env:
+          SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
+        run: CGO_ENABLED=1 bash ../scripts/ci/go-test-shard.sh 2/2 ./rt/... -- -race -timeout 20m -count=1
+
+
+
+  # gate-web-1..4 — the browser tier and the e2e scripts: every Sky.Live /
+  # Http.Server example driven in real Chromium (verify-all-web.sh, incl. the
+  # console e2e, ui-showcase and the resilience holds), the Sky.Spa wasm client
+  # e2e, the terminal loops in a pty, DOM identity, the Sky.Live client and the
+  # Std.Ui forms. Mirrors nightly-sweep.yml's `web-runtime` job; before these
+  # jobs none of it ran at a release.
+  #
+  # SPLIT FOUR WAYS. As one job (`gate-web`) its fifteen steps ran one after
+  # another for 41 minutes (release run 38764879819: console live 579 s, Spa Msg
+  # order 376 s, verify-all-web 353 s, Spa wasm 284 s, canvas 187 s, CSP 122 s,
+  # live client 113 s, controls 91 s, the rest under 45 s each), the longest
+  # job of the release. The scripts share nothing but the installed compiler
+  # and the browsers: each builds its own fixtures and frees its own ports. So
+  # they are packed longest-first into four jobs of about 8-10 minutes of
+  # scripts each. Every script still runs, exactly once, in a job `release:`
+  # needs: `e2e_scripts_are_gated.rs` checks that every scripts/*-e2e.sh runs in
+  # a gating job and in only one, and `workflows_parse.rs` pins the four jobs.
+  #
+  # Each step keeps its own timeout-minutes, about twice its slowest green run
+  # (bfc8a16c, 7292ef57, 218f4d21), so a hung script fails its own named step,
+  # with its log, instead of the job being cancelled at the job limit with no
+  # log at all (run 36942837671, step 7). The job limit is the summed step
+  # limits plus ~15 min of setup.
+  gate-web-1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/gate-setup
+      - uses: ./.github/actions/playwright-setup
+      - uses: ./.github/actions/install-caddy
+      - name: Sky Console live data + reconnect e2e (direct + behind Caddy)
+        timeout-minutes: 22
+        run: scripts/console-live-e2e.sh
+      - name: Sky.Live without cookies e2e (header session transport, strict CSP)
+        timeout-minutes: 5
+        run: scripts/header-session-e2e.sh
+      - name: Std.Ui forms + keydown + pub/sub e2e (Sky.Live + Sky.Spa)
+        timeout-minutes: 5
+        run: scripts/ui-forms-e2e.sh
+      - name: Upload failure evidence (diffs, server logs, build logs)
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-web-evidence-1
+          path: |
+            .skycache/ui-showcase-diffs/**
+            .skycache/verify/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  gate-web-2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/gate-setup
+      - uses: ./.github/actions/playwright-setup
+      - uses: ./.github/actions/install-caddy
       - name: Browser runtime verification (Sky.Live + Http.Server + resilience)
         timeout-minutes: 15
         run: scripts/verify-all-web.sh
+      - name: Strict Content-Security-Policy e2e (Console, Sky.Live, Sky.Spa)
+        timeout-minutes: 8
+        run: scripts/csp-e2e.sh
+      - name: Sky Console controls e2e (every control; embedded, dev, hub; Chromium + WebKit)
+        timeout-minutes: 25
+        # Every tab, range chip, level toggle, search, pivot, console link,
+        # auto-refresh and sign-in/out, with the rows, the URL, the read's
+        # parameters and the server's answer asserted.
+        run: scripts/console-controls-e2e.sh
+      - name: Widget islands e2e (Sky.Live + Sky.Spa, strict CSP)
+        timeout-minutes: 5
+        run: scripts/islands-e2e.sh
+      - name: Upload failure evidence (diffs, server logs, build logs)
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-web-evidence-2
+          path: |
+            .skycache/ui-showcase-diffs/**
+            .skycache/verify/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  gate-web-3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/gate-setup
+      - uses: ./.github/actions/playwright-setup
+      - name: Sky.Spa Msg order + client WebSocket + sign-out e2e (Chromium + WebKit, strict CSP)
+        timeout-minutes: 18
+        # Each Msg runs once, in arrival order, as on Sky.Live; RPCs overlap; the
+        # wasm client holds its own WebSocket; a sky_sid cookie copied before
+        # sign-out is refused after it; a transiently failing request is re-sent
+        # by the runtime (offline, 503 + Retry-After, a hung request, a hidden
+        # page).
+        run: |
+          set -euo pipefail
+          scripts/spa-rpc-order-e2e.sh
+          scripts/spa-websocket-e2e.sh
+          scripts/session-revocation-e2e.sh
+          scripts/spa-resilience-e2e.sh
+      - name: Std.Ui canvas, text wrapping + terminal e2e (Sky.Live + Sky.Spa, strict CSP)
+        timeout-minutes: 10
+        # The terminal-race case runs vim in the terminal, in Chromium and WebKit.
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" vim
+          scripts/ui-canvas-terminal-e2e.sh
+      - name: Terminal loops pty e2e (terminal:tui + terminal:cli)
+        timeout-minutes: 5
+        run: scripts/tui-e2e.sh
+      - name: Upload failure evidence (diffs, server logs, build logs)
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-web-evidence-3
+          path: |
+            .skycache/ui-showcase-diffs/**
+            .skycache/verify/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  gate-web-4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/gate-setup
+      - uses: ./.github/actions/playwright-setup
       - name: Sky.Spa wasm client e2e (restore, stale handlers, RPC consistency, examples)
         timeout-minutes: 18
         run: |
@@ -1401,76 +1413,25 @@ jobs:
           scripts/spa-rpc-consistency-e2e.sh
           scripts/spa-examples-e2e.sh
           scripts/spa-client-crypto-e2e.sh
-      - name: Terminal loops pty e2e (terminal:tui + terminal:cli)
-        timeout-minutes: 5
-        run: scripts/tui-e2e.sh
-      - name: Sky.Spa + Sky.Live DOM identity e2e
-        timeout-minutes: 5
-        run: scripts/spa-vdom-identity-e2e.sh
       - name: Sky.Live client e2e (handler addressing, input authority)
         timeout-minutes: 6
         run: scripts/live-client-e2e.sh
-      - name: Widget islands e2e (Sky.Live + Sky.Spa, strict CSP)
+      - name: Sky.Spa + Sky.Live DOM identity e2e
         timeout-minutes: 5
-        run: scripts/islands-e2e.sh
-      - name: Std.Ui canvas, text wrapping + terminal e2e (Sky.Live + Sky.Spa, strict CSP)
-        timeout-minutes: 10
-        # The terminal-race case runs vim in the terminal, in Chromium and WebKit.
-        run: |
-          npx playwright install --with-deps webkit
-          command -v vim >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq vim; }
-          scripts/ui-canvas-terminal-e2e.sh
+        run: scripts/spa-vdom-identity-e2e.sh
       - name: Std.Nav e2e (pushUrl / replaceUrl / clearFragment, Sky.Live + Sky.Spa, Chromium + WebKit, strict CSP)
         timeout-minutes: 5
-        # WebKit was installed by the step above.
         run: scripts/nav-e2e.sh
-      - name: Sky.Spa Msg order + client WebSocket + sign-out e2e (Chromium + WebKit, strict CSP)
-        timeout-minutes: 18
-        # Each Msg runs once, in arrival order, as on Sky.Live; RPCs overlap; the
-        # wasm client holds its own WebSocket; a sky_sid cookie copied before
-        # sign-out is refused after it; a transiently failing request is re-sent
-        # by the runtime (offline, 503 + Retry-After, a hung request, a hidden
-        # page). WebKit was installed above.
-        run: |
-          set -euo pipefail
-          scripts/spa-rpc-order-e2e.sh
-          scripts/spa-websocket-e2e.sh
-          scripts/session-revocation-e2e.sh
-          scripts/spa-resilience-e2e.sh
-      - name: Sky.Live without cookies e2e (header session transport, strict CSP)
-        timeout-minutes: 5
-        run: scripts/header-session-e2e.sh
-      - name: Std.Ui forms + keydown + pub/sub e2e (Sky.Live + Sky.Spa)
-        timeout-minutes: 5
-        run: scripts/ui-forms-e2e.sh
-      - uses: ./.github/actions/install-caddy
-      - name: Strict Content-Security-Policy e2e (Console, Sky.Live, Sky.Spa)
-        timeout-minutes: 8
-        run: scripts/csp-e2e.sh
-      - name: Sky Console live data + reconnect e2e (direct + behind Caddy)
-        timeout-minutes: 22
-        run: scripts/console-live-e2e.sh
-      - name: Sky Console controls e2e (every control; embedded, dev, hub; Chromium + WebKit)
-        timeout-minutes: 25
-        # Every tab, range chip, level toggle, search, pivot, console link,
-        # auto-refresh and sign-in/out, with the rows, the URL, the read's
-        # parameters and the server's answer asserted. WebKit was installed
-        # above; sqlite3 by the Playwright step; openssl ships on the runner.
-        run: scripts/console-controls-e2e.sh
       - name: Upload failure evidence (diffs, server logs, build logs)
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: release-web-evidence
+          name: release-web-evidence-4
           path: |
             .skycache/ui-showcase-diffs/**
             .skycache/verify/**
           if-no-files-found: ignore
           retention-days: 14
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
 
   # gate-example-e2e — the behavioural contracts in `examples/*/e2e.json`
   # (`scripts/example-e2e.sh`): CLI steps, HTTP requests and Sky.Live event
@@ -1488,7 +1449,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: example-e2e
+          go-cache-family: go-sweep
       - name: Install jq, lsof, sqlite3
         run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" jq lsof sqlite3
       - name: Example behavioural contracts
@@ -1504,9 +1465,9 @@ jobs:
   # the other gate §0.2.1 names by hand: it ran ONLY in the nightly. No
   # `--build-only` — the sweep must RUN each binary, not just compile it.
   #
-  # SHARDED across 5 runners via `strategy.matrix`. Each shard builds+runs a
-  # DISJOINT subset (examples whose stable index mod 5 == shard); the union of
-  # the five shards is every example, exactly once (verified by
+  # SHARDED across 3 runners via `strategy.matrix`. Each shard builds+runs a
+  # DISJOINT subset (examples whose stable index mod 3 == shard); the union of
+  # the three shards is every example, exactly once (verified by
   # `example_sweep_shards_are_total.rs` + `scripts/example-sweep.sh --list`).
   # The compiler at sky-out/sky is installed by the composite (the sweep resolves
   # that path and refuses a stale one via require_fresh_compiler), and it does
@@ -1516,8 +1477,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4]
-    # A shard is ~1/5 of the ~60 min full sweep + the compiler install. 45
+        shard: [0, 1, 2]
+    # Five shards swept 59-88 s each, and 313 s for the one with 13-skyshop,
+    # after a 2-2.5 min setup (release run 38764879819); three hold fewer of the
+    # 40 concurrent jobs for the same work. A shard is ~1/3 of the sweep + the
+    # compiler install. 45
     # keeps the ~1.5x margin (the skyshop FFI shard's cold `sky install` is the
     # variable one). 55: the shard that sweeps 13-skyshop also compiles and
     # runs the `project` lib tests for the harvest differential below.
@@ -1533,14 +1497,14 @@ jobs:
         with:
           # All shards share one Go cache family so the FFI cache is warmed
           # once and reused; distinct from the light jobs' caches.
-          cache-key: sweep
+          go-cache-family: go-sweep
           postgres: 'true'
 
-      - name: Full example sweep (clean-slate build AND run, shard ${{ matrix.shard }}/5, incl. FFI/Std.Db)
+      - name: Full example sweep (clean-slate build AND run, shard ${{ matrix.shard }}/3, incl. FFI/Std.Db)
         working-directory: .
         env:
           SWEEP_SHARD_INDEX: ${{ matrix.shard }}
-          SWEEP_SHARD_TOTAL: '5'
+          SWEEP_SHARD_TOTAL: '3'
         run: scripts/example-sweep.sh
 
       # The #166 call-site harvest differential over EVERY example project
@@ -1555,7 +1519,7 @@ jobs:
         working-directory: .
         run: |
           set -euo pipefail
-          if scripts/example-sweep.sh --list --shard "${{ matrix.shard }}/5" | grep -qx 13-skyshop; then
+          if scripts/example-sweep.sh --list --shard "${{ matrix.shard }}/3" | grep -qx 13-skyshop; then
             cd rust && cargo test --locked -p project --lib harvest_identity -- --ignored
           else
             echo "13-skyshop is swept in another shard; the full harvest differential runs there"
@@ -1583,17 +1547,34 @@ jobs:
     # tests (~4.5 min measured locally: the iOS launch gate 158 s, the macOS
     # universal-link gate 62 s, the Android release 36 s). 1.5x.
     timeout-minutes: 45
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
-          cache: true
-          cache-dependency-path: runtime-go/go.sum
+          cache: false
+      # Restore only: main writes these (rust-ci macos-determinism). A tag or a
+      # dispatched branch saving its own copy evicted main's entries.
+      - name: Restore the Go build + module cache (saved on main only)
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-macos-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
+          shared-key: sky-macos
+          save-if: 'false'
       - name: Native shell smoke (iOS simulator, macOS universal links, Android release)
         working-directory: rust
         env:
@@ -1625,17 +1606,33 @@ jobs:
     # (220-250 s measured locally after a cold boot, plus up to 85 s for the
     # system-dialog test). About 1.5x.
     timeout-minutes: 60
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
-          cache: true
-          cache-dependency-path: runtime-go/go.sum
+          cache: false
+      # Restore only: main writes these (rust-ci). See gate-native.
+      - name: Restore the Go build + module cache (saved on main only)
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
       - name: Enable KVM for the emulator
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -1733,14 +1730,10 @@ jobs:
       - gate-core-sky-4
       - gate-core-sky-5
       - gate-core-sky-6
-      - gate-core-sky-7
-      - gate-core-sky-8
-      - gate-core-sky-9
       - gate-corpus
       - gate-t1-1
       - gate-t1-2
       - gate-t1-3
-      - gate-t1-4
       - gate-buildrun
       - gate-t2-corpus
       - gate-t2-rest
@@ -1754,8 +1747,12 @@ jobs:
       - gate-falsifiers-7
       - gate-falsifiers-8
       - gate-falsifiers-9
-      - gate-race
-      - gate-web
+      - gate-race-1
+      - gate-race-2
+      - gate-web-1
+      - gate-web-2
+      - gate-web-3
+      - gate-web-4
       - gate-example-e2e
       - gate-sweep
       - gate-native
@@ -1900,5 +1897,6 @@ jobs:
           tags: |
             anzel/sky:latest
             anzel/sky:${{ steps.version.outputs.VERSION }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # No `type=gha` layer cache: this runs on a tag (or a dispatch), and a
+          # cache saved there serves that ref alone while it fills the 10 GB
+          # repository budget that main's caches live in.

@@ -44,6 +44,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
+          # Restore the release-profile cache the nightly writes on main.
+          shared-key: sky-gates-linux
+          save-if: 'false'
       - name: Build sky
         working-directory: rust
         run: cargo build --release -p sky --locked
