@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   build-deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Dominated by `cargo build --release -p sky` (~15-20 min cache-cold, the
     # same release build release.yml's Linux leg does); the doc-site render +
     # Pages upload/deploy add ~3 min ≈ 20 min. 1.5x = 30.

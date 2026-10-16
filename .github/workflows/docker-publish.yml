@@ -17,7 +17,7 @@ on:
 
 jobs:
   docker:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Same body as release.yml's `docker` job: no compilation, cost is the arm64
     # leg under QEMU (~5-8 min) + the download retry loop ≈ 12 min. 1.5x ≈ 20.
     timeout-minutes: 20
