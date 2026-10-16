@@ -2749,3 +2749,56 @@ fn go_test_shards_run_every_shard_once_in_a_gating_job() {
     }
     assert!(splits_seen >= 2);
 }
+
+/// A `strategy.matrix.shard` job runs shards `0..N` where N is the total its
+/// commands name (`${{ matrix.shard }}/N`, `SWEEP_SHARD_TOTAL: 'N'`).
+///
+/// The release sweeps run as matrix jobs (`gate-buildrun`, `gate-sweep`) and
+/// their shard counts are tuned to fit the concurrency cap. Changing the total
+/// in the commands but not the matrix list (or the reverse) would leave
+/// shards that no leg runs, or legs that select nothing, with every leg green.
+#[test]
+fn every_matrix_shard_list_matches_the_total_its_commands_name() {
+    let mut seen = 0;
+    for file in ["release.yml", "rust-ci.yml", "nightly-sweep.yml"] {
+        let doc = read_workflow(file);
+        let jobs = doc["jobs"].as_mapping().expect("jobs");
+        for (name, job) in jobs {
+            let name = name.as_str().unwrap_or("?");
+            let Some(list) = job["strategy"]["matrix"]["shard"].as_sequence() else {
+                continue;
+            };
+            seen += 1;
+            let legs: Vec<u64> = list.iter().filter_map(|v| v.as_u64()).collect();
+            let text = serde_yaml::to_string(job).expect("re-serialise");
+            let mut totals: Vec<u64> = Vec::new();
+            for (i, _) in text.match_indices("${{ matrix.shard }}/") {
+                let rest = &text[i + "${{ matrix.shard }}/".len()..];
+                let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if let Ok(n) = digits.parse() {
+                    totals.push(n);
+                }
+            }
+            if let Some(t) = job["steps"]
+                .as_sequence()
+                .into_iter()
+                .flatten()
+                .find_map(|s| s["env"]["SWEEP_SHARD_TOTAL"].as_str())
+            {
+                totals.push(t.parse().expect("SWEEP_SHARD_TOTAL is a number"));
+            }
+            assert!(!totals.is_empty(), "{file} `{name}`: no shard total found");
+            for n in &totals {
+                assert_eq!(
+                    legs,
+                    (0..*n).collect::<Vec<u64>>(),
+                    "{file} `{name}`: matrix.shard is {legs:?}, but its commands name a total of {n}"
+                );
+            }
+        }
+    }
+    assert!(
+        seen >= 2,
+        "found {seen} matrix-sharded jobs; the parse is wrong"
+    );
+}

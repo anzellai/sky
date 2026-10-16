@@ -862,19 +862,21 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  # gate-buildrun — the codegen build+run sweep, SHARDED 3 ways. Each shard
-  # emits + `go build`s a DISJOINT third of every example (`--shard=N/3`) and
+  # gate-buildrun — the codegen build+run sweep, SHARDED 2 ways. Each shard
+  # emits + `go build`s a DISJOINT half of every example (`--shard=N/2`) and
   # RUNS the CLI subset against its committed golden. This is the proven rust-ci
   # `build-corpus` pattern; `build_run_gate::shards_are_disjoint_and_total`
-  # proves the thirds union to the whole corpus with nothing gated twice or
+  # proves the halves union to the whole corpus with nothing gated twice or
   # dropped. Moved out of gate-core, where it was the step that overran 44 min.
-  # Measured locally: a shard is ~3-4 min cold, ~20 s warm — well inside 30.
+  # Three shards ran 111-367 s each after a 2-2.5 min setup (release run
+  # 38764879819), so a third runner bought little and held one of the 40
+  # concurrent jobs; two shards are ~5-6 min of building each.
   gate-buildrun:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2]
+        shard: [0, 1]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -883,12 +885,12 @@ jobs:
       # before the sweep fills the go-build cache (it reclaims OS junk only when
       # the runner is short). No `go clean -cache` — the sweep repopulates
       # only what its third needs, and a warm cache is the whole point.
-      - name: Codegen build + run (shard ${{ matrix.shard }}/3)
+      - name: Codegen build + run (shard ${{ matrix.shard }}/2)
         working-directory: rust
         run: |
           set -euo pipefail
-          cargo run --release --locked -q -p xtask -- build-run --all --shard=${{ matrix.shard }}/3
-          cargo run --release --locked -q -p xtask -- build-run --shape cli --run --golden --shard=${{ matrix.shard }}/3
+          cargo run --release --locked -q -p xtask -- build-run --all --shard=${{ matrix.shard }}/2
+          cargo run --release --locked -q -p xtask -- build-run --shape cli --run --golden --shard=${{ matrix.shard }}/2
 
       - name: Bound the Go caches before save
         if: always()
@@ -1537,9 +1539,9 @@ jobs:
   # the other gate §0.2.1 names by hand: it ran ONLY in the nightly. No
   # `--build-only` — the sweep must RUN each binary, not just compile it.
   #
-  # SHARDED across 5 runners via `strategy.matrix`. Each shard builds+runs a
-  # DISJOINT subset (examples whose stable index mod 5 == shard); the union of
-  # the five shards is every example, exactly once (verified by
+  # SHARDED across 3 runners via `strategy.matrix`. Each shard builds+runs a
+  # DISJOINT subset (examples whose stable index mod 3 == shard); the union of
+  # the three shards is every example, exactly once (verified by
   # `example_sweep_shards_are_total.rs` + `scripts/example-sweep.sh --list`).
   # The compiler at sky-out/sky is installed by the composite (the sweep resolves
   # that path and refuses a stale one via require_fresh_compiler), and it does
@@ -1549,8 +1551,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4]
-    # A shard is ~1/5 of the ~60 min full sweep + the compiler install. 45
+        shard: [0, 1, 2]
+    # Five shards swept 59-88 s each, and 313 s for the one with 13-skyshop,
+    # after a 2-2.5 min setup (release run 38764879819); three hold fewer of the
+    # 40 concurrent jobs for the same work. A shard is ~1/3 of the sweep + the
+    # compiler install. 45
     # keeps the ~1.5x margin (the skyshop FFI shard's cold `sky install` is the
     # variable one). 55: the shard that sweeps 13-skyshop also compiles and
     # runs the `project` lib tests for the harvest differential below.
@@ -1569,11 +1574,11 @@ jobs:
           go-cache-family: go-sweep
           postgres: 'true'
 
-      - name: Full example sweep (clean-slate build AND run, shard ${{ matrix.shard }}/5, incl. FFI/Std.Db)
+      - name: Full example sweep (clean-slate build AND run, shard ${{ matrix.shard }}/3, incl. FFI/Std.Db)
         working-directory: .
         env:
           SWEEP_SHARD_INDEX: ${{ matrix.shard }}
-          SWEEP_SHARD_TOTAL: '5'
+          SWEEP_SHARD_TOTAL: '3'
         run: scripts/example-sweep.sh
 
       # The #166 call-site harvest differential over EVERY example project
@@ -1588,7 +1593,7 @@ jobs:
         working-directory: .
         run: |
           set -euo pipefail
-          if scripts/example-sweep.sh --list --shard "${{ matrix.shard }}/5" | grep -qx 13-skyshop; then
+          if scripts/example-sweep.sh --list --shard "${{ matrix.shard }}/3" | grep -qx 13-skyshop; then
             cd rust && cargo test --locked -p project --lib harvest_identity -- --ignored
           else
             echo "13-skyshop is swept in another shard; the full harvest differential runs there"
