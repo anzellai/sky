@@ -685,7 +685,7 @@ jobs:
   # caller is postgres-bundle.yml, whose triggers are `workflow_dispatch` and
   # `push: tags: ['postgres-bundle-v*']`; `git tag -l 'postgres-bundle-v*'`
   # returns nothing and no such tag has ever been cut. The per-commit
-  # `licence-gate-linux` / `licence-gate-macos` jobs run
+  # `licence-gate-linux` job and `macos-conformance` run
   # test-licence-gate.sh with no `--bundle`, so its two real-bundle cases (C8
   # unmodified-bundle-accepts, C9 planted-GPL-extension-rejects) skip there.
   #

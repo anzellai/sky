@@ -21,7 +21,7 @@ name: PostgreSQL bundle
 # `ci-green`, the single required status check, fans in rust-ci.yml and nothing
 # else. The one gate guarding a legal obligation was advisory. The per-commit
 # self-test now lives in rust-ci.yml (`licence-gate-linux` /
-# `licence-gate-macos`), inside the fan-in, and
+# `macos-conformance`), inside the fan-in, and
 # `rust/crates/xtask/tests/workflows_parse.rs` fails the build if any workflow
 # regains a per-commit trigger without that coverage.
 #

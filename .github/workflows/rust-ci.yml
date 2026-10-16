@@ -1879,16 +1879,9 @@ jobs:
         working-directory: .
         run: bash scripts/skydb/test-licence-gate.sh
 
-  licence-gate-macos:
-    runs-on: macos-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install GNU readline (fidelity fixture)
-        run: brew install readline || true
-      - name: Prove the licence gate rejects what it must
-        working-directory: .
-        run: bash scripts/skydb/test-licence-gate.sh
+  # The macOS half of the licence gate runs in `macos-conformance` (it takes
+  # under a minute). Its own job held one of the five macOS runners the
+  # account may use at once, which the release gate's macOS jobs then waited on.
 
   # ── Real-Postgres session-store integration (the store prod shops run on) ───
   # The per-push rt tests cover memory/sqlite round-trip + the postgres fail-loud
@@ -2400,6 +2393,14 @@ jobs:
           workspaces: rust
           shared-key: sky-macos
           save-if: 'false'
+      # The licence gate's macOS half (otool / Mach-O load commands; the
+      # Linux half is licence-gate-linux). See the licence gate comment above.
+      - name: Install GNU readline (fidelity fixture)
+        working-directory: .
+        run: brew install readline || true
+      - name: Prove the licence gate rejects what it must (macOS)
+        working-directory: .
+        run: bash scripts/skydb/test-licence-gate.sh
       - name: Gate — stdlib behavioral conformance (2nd platform)
         run: |
           cargo build --release -p sky --locked
@@ -2446,7 +2447,6 @@ jobs:
       - build-perf-2
       - lsp-fuzz
       - licence-gate-linux
-      - licence-gate-macos
       - integration-postgres
       - integration-postgres-2
       - macos-determinism
@@ -2512,7 +2512,7 @@ jobs:
           # `name (leg)`) could never match one. That is why the licence gate is
           # two explicitly-named jobs rather than one two-legged matrix.
           SETUP_INDEPENDENT_JOBS: 'integration-postgres integration-postgres-2 build-perf build-perf-2 build-corpus build-corpus-2 build-corpus-3 erasure-fuzz erasure-fuzz-2 test-sky test-sky-2 test-sky-3 test-sky-4 test-sky-5 test-sky-6 test-sky-7 test-sky-8 test-sky-9 runtime-rt licence-gate-linux'
-          MACOS_JOBS: 'macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour macos-conformance licence-gate-macos'
+          MACOS_JOBS: 'macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour macos-conformance'
         run: |
           set -euo pipefail
           gh api \
