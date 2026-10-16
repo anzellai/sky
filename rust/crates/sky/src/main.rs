@@ -18640,7 +18640,11 @@ mod tests {
         );
         write_tool(
             &bt.join("zipalign"),
-            &format!("echo \"zipalign $*\" >> {lg}\ncp \"$3\" \"$4\"\n"),
+            // The input and output are the last two arguments (`-P 16 -f 4 in
+            // out` aligns the JNI libraries to 16 KB pages).
+            &format!(
+                "echo \"zipalign $*\" >> {lg}\nfor a in \"$@\"; do i=\"$o\"; o=\"$a\"; done\ncp \"$i\" \"$o\"\n"
+            ),
         );
         write_tool(
             &bt.join("apksigner"),
