@@ -46,9 +46,9 @@ func TestSSEHandshakeHeaders(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", srv.URL, nil)
 	req.AddCookie(&http.Cookie{Name: "sky_sid", Value: "sid-handshake"})
-	// Cancel after a short grace window so the handler returns and
-	// httputil-style scanning can observe the bytes it emitted.
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	// Read until the hello data line, then the deferred cancel ends the
+	// request; the deadline only bounds a handler that never sends it.
+	ctx, cancel := context.WithTimeout(context.Background(), sseStreamTestDeadline)
 	defer cancel()
 	req = req.WithContext(ctx)
 
@@ -150,7 +150,7 @@ func TestSSEReconnectResyncPushesCurrentView(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", srv.URL, nil)
 	req.AddCookie(&http.Cookie{Name: "sky_sid", Value: "sid-resync"})
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), sseStreamTestDeadline)
 	defer cancel()
 	req = req.WithContext(ctx)
 
@@ -244,7 +244,7 @@ func TestSSEResyncReconcilesPageWithConnectionURL(t *testing.T) {
 	// sends via encodeURIComponent(location.pathname)).
 	req, _ := http.NewRequest("GET", srv.URL+"?tab=t1&path=%2Fproducts", nil)
 	req.AddCookie(&http.Cookie{Name: "sky_sid", Value: "sid-reconcile"})
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), sseStreamTestDeadline)
 	defer cancel()
 	req = req.WithContext(ctx)
 
@@ -312,7 +312,7 @@ func TestSSEHeartbeatFires(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", srv.URL, nil)
 	req.AddCookie(&http.Cookie{Name: "sky_sid", Value: "sid-hb"})
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sseStreamTestDeadline)
 	defer cancel()
 	req = req.WithContext(ctx)
 
@@ -335,7 +335,7 @@ func TestSSEHeartbeatFires(t *testing.T) {
 		}
 	}
 	if !sawHeartbeat {
-		t.Errorf("no heartbeat event observed within 1s window (interval=100ms)")
+		t.Errorf("no heartbeat event observed within %v (interval=100ms)", sseStreamTestDeadline)
 	}
 }
 
