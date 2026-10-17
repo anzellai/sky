@@ -206,8 +206,9 @@ fn variables_that_are_read(root: &Path) -> BTreeSet<String> {
         let src = std::fs::read_to_string(path).expect("read go source");
         scan_calls(
             &src,
-            // `configLayers("X")` (the env-over-code resolver) and `aiLayer("X")`
-            // (Std.Ai's wrapper of it) take a suffix too, as in config_surface.rs
+            // `configLayers("X")` (the env-over-code resolver), `aiLayer("X")`
+            // (Std.Ai's wrapper of it) and the strict `aiLayerChecked("X")` /
+            // `aiEnvChecked("X")` take a suffix too, as in config_surface.rs
             // PREFIXED_READ_HELPERS.
             &[
                 "skyGetenv(\"",
@@ -215,6 +216,8 @@ fn variables_that_are_read(root: &Path) -> BTreeSet<String> {
                 "skyEnvName(\"",
                 "configLayers(\"",
                 "aiLayer(\"",
+                "aiLayerChecked(\"",
+                "aiEnvChecked(\"",
             ],
             &mut names,
             |s| is_env_token(s).then(|| format!("SKY_{s}")),
