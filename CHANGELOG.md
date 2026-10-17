@@ -609,6 +609,13 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 
 ### Fixed
 
+- **An Android build on a machine with no Android user directory.** The APK
+  build made the debug keystore with `keytool` in `~/.android` without
+  creating it, so a fresh machine (a CI runner) failed with
+  `FileNotFoundException`. The build now uses the directory the SDK tools use
+  (`ANDROID_USER_HOME`, else `ANDROID_SDK_HOME/.android`, else
+  `~/.android`) and creates it first.
+
 - **A Sky.Live page reconnects within about a second of the server coming
   back.** The stream's reopen backoff doubles to a 16 s cap, and fast
   failures (a proxy's 503 while its upstream restarts) reach the long steps
