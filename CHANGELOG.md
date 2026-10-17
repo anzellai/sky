@@ -705,18 +705,6 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   (`ANDROID_USER_HOME`, else `ANDROID_SDK_HOME/.android`, else
   `~/.android`) and creates it first.
 
-- **A server that is going away no longer tells its pages their session was
-  lost, and a "session lost" reload waits until the server answers.** When a
-  Sky.Spa backend's `Server.listen` stopped, it released its Sky Console
-  sub-app while the console's stream was still open: every session was ended,
-  the stream answered `session-lost`, the page reloaded at once into the
-  stopped server and stayed on the browser's error page. The release gate's
-  console-live e2e failed this way now and then; it was reproduced on Linux
-  (1 restart in 10 after a 45 s hold). A stream whose app releases its
-  sessions now ends plainly, as `Live.stop` already did, and the client reloads
-  only once its session ping is answered by anything but a network or gateway
-  error. Regressions: `TestSSE_AppReleaseEndsTheStreamPlainly_EvictionStillSaysSo`,
-  `TestLiveJS_LostSessionReloadsOnlyWhenTheServerAnswers`.
 - **A Sky.Live page reconnects within about a second of the server coming
   back.** The stream's reopen backoff doubles to a 16 s cap, and fast
   failures (a proxy's 503 while its upstream restarts) reach the long steps
@@ -1175,6 +1163,12 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 - The `samename-stdlib-type` fixture imports `Std.Ai.Provider` itself: the
   collision it guards used to arrive only through Provider's internal
   `Request` alias, which this release removed.
+
+## v0.27.11 — A stopping server no longer strands its pages on the browser's error page (2026-10-17)
+
+### Fixed
+
+- **A server that is going away no longer tells its pages their session was lost, and a "session lost" reload waits until the server answers.** When a Sky.Live or Sky.Spa server stopped on SIGTERM, it released its sessions (and, for a Sky.Spa backend's `Server.listen`, its Sky Console sub-app) while the console's stream was still open: every session was ended, the stream answered `session-lost`, and the page reloaded at once into the stopped server and stayed on the browser's error page, where no script runs, until the user reloaded by hand. The release gate's console-live e2e failed this way now and then; it was reproduced on Linux (1 restart in 10 after a 45 s hold). A stream whose app releases its sessions now ends plainly, as `Live.stop` already did, and a real eviction still sends `session-lost`. After `session-lost` the client reloads only once its session ping is answered by anything but a network error or a 502, 503 or 504; it asks once a second, for up to 120 tries. (`runtime-go/rt/live.go`, `live_serve.go`, `live_client_asset.go`; tests `TestSSE_AppReleaseEndsTheStreamPlainly_EvictionStillSaysSo`, `TestLiveJS_LostSessionReloadsOnlyWhenTheServerAnswers`.)
 
 ## v0.27.10 — Same-named record aliases, Sky.Spa split fixes and Std.Image edits (2026-10-16)
 
