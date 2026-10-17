@@ -13,6 +13,10 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## v0.27.10 — Same-named record aliases, Sky.Spa split fixes and Std.Image edits (2026-10-16)
 
+### ⚠ Breaking changes
+
+- **`Std.Image.trim` is a new export named like `Sky.Core.String.trim`.** A module that imports both `Std.Image exposing (..)` and `Sky.Core.String exposing (..)` and calls `trim` bare now gets `[E1012]`, which names both modules. Write `String.trim` (or `Image.trim`), or narrow one `exposing` list. [#new-stdlib-names](docs/migration/v0.27.md#new-stdlib-names)
+
 ### Added
 
 - **`Std.Image.trim`, `crop`, `toAlpha` and `whiteToAlpha`**, so image clean-up needs no outside tools. `trim : Format -> Int -> Int -> String -> Task Error String` (`trim format threshold padding bytes`) cuts the edge rows and columns that are only margin (fully transparent, or at least `threshold` on red, green and blue) and keeps `padding` pixels around what is left; an image that is all margin is `Err InvalidInput`. `crop : Format -> Int -> Int -> Int -> Int -> String -> Task Error String` (`crop format x y width height bytes`) cuts out an area, clamped to the image; an empty area or a negative size is `Err InvalidInput`. `toAlpha : Rgb -> String -> Task Error String` makes one background colour transparent ("colour to alpha": each pixel keeps its own colour and gets the coverage that, laid back over the background, gives the original, so anti-aliased edges stay smooth), and `whiteToAlpha` is `toAlpha` with white. Both return PNG. `type alias Rgb = { red : Int, green : Int, blue : Int }` is exposed from `Std.Image`. For a logo on a white square: `trim`, then `whiteToAlpha`, then `resizeToFit Png`. Bytes that are not an image are an `Err`, never a panic. Backend only, like the rest of `Std.Image`. (`runtime-go/rt/image_edit_kernels.go`; tests `image_edit_kernels_test.go`, `ImageEditConformanceTest`.)

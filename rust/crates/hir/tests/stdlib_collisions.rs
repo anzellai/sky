@@ -51,6 +51,7 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     "value spawn",
     "value stop",
     "value toMaybe",
+    "value trim",
     "value value",
     "value withClientCrypto",
     "value withEmbedded",
