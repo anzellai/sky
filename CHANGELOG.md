@@ -616,6 +616,18 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   (`ANDROID_USER_HOME`, else `ANDROID_SDK_HOME/.android`, else
   `~/.android`) and creates it first.
 
+- **A server that is going away no longer tells its pages their session was
+  lost, and a "session lost" reload waits until the server answers.** When a
+  Sky.Spa backend's `Server.listen` stopped, it released its Sky Console
+  sub-app while the console's stream was still open: every session was ended,
+  the stream answered `session-lost`, the page reloaded at once into the
+  stopped server and stayed on the browser's error page. The release gate's
+  console-live e2e failed this way now and then; it was reproduced on Linux
+  (1 restart in 10 after a 45 s hold). A stream whose app releases its
+  sessions now ends plainly, as `Live.stop` already did, and the client reloads
+  only once its session ping is answered by anything but a network or gateway
+  error. Regressions: `TestSSE_AppReleaseEndsTheStreamPlainly_EvictionStillSaysSo`,
+  `TestLiveJS_LostSessionReloadsOnlyWhenTheServerAnswers`.
 - **A Sky.Live page reconnects within about a second of the server coming
   back.** The stream's reopen backoff doubles to a 16 s cap, and fast
   failures (a proxy's 503 while its upstream restarts) reach the long steps
