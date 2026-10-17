@@ -167,7 +167,7 @@
       "tier": "T1"
     },
     "ai-train-exactly-once": {
-      "expected_assertions": 15,
+      "expected_assertions": 17,
       "falsifier_mutation": "ai-train-exactly-once.ignore-the-intent",
       "falsifier_proven": true,
       "summary": "a Vertex launch whose journal row was lost attaches to its job: one create, never two",
@@ -755,7 +755,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 1074,
+      "expected_assertions": 1092,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
@@ -832,7 +832,6 @@
       "Std.Ai.Device": "examples/75-ai-everywhere",
       "Std.Ai.Policy": "examples/66-slack-agent",
       "Std.Ai.Serve": "examples/74-ai-cloud",
-      "Std.Ai.Trace": "examples/66-slack-agent",
       "Std.Cache": "examples/36-composite-server",
       "Std.Csv": "examples/36-composite-server",
       "Std.Durable": "examples/66-slack-agent",
@@ -931,7 +930,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2887,
+    "stdlib_entries": 2924,
     "stdlib_modules": 127,
     "surfaces_covered": 184,
     "surfaces_covered_pct": 94.4,
@@ -9666,7 +9665,7 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
             "by": "flow:ai_native_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
@@ -9687,13 +9686,24 @@
             "by": "flow:durable_agent_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "tests/Std (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
-        "evidence": [],
+        "evidence": [
+          {
+            "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
+          }
+        ],
         "strength": 0
       },
       "description": "the Std.Ai.Agent public API",
@@ -10997,12 +11007,27 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
             "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:ai_cloud_train_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:ai_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
           },
           {
             "by": "flow:ai_trace_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
@@ -11013,20 +11038,35 @@
             "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "tests/Std (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
-        "class": "Runs",
+        "class": "Asserted",
         "evidence": [
           {
             "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
           }
         ],
-        "strength": 2
+        "strength": 3
       },
       "description": "the Std.Ai.Trace public API",
       "id": "stdlib.Std.Ai.Trace",
@@ -13779,6 +13819,21 @@
             "strength": 3
           },
           {
+            "by": "flow:ai_cloud_train_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:ai_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "tests/Std (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
@@ -13805,6 +13860,11 @@
             "strength": 3
           },
           {
+            "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
+          },
+          {
             "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
             "class": "Asserted",
             "strength": 3
@@ -13819,7 +13879,7 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
             "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
@@ -13870,9 +13930,14 @@
             "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "tests/Std (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "Runs",
@@ -13881,6 +13946,11 @@
             "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
           }
         ],
         "strength": 2
@@ -18688,10 +18758,14 @@
           ]
         },
         "Std.Ai.Agent": {
-          "count": 2,
+          "count": 6,
           "symbols": [
+            "Options",
+            "defaultOptions",
             "inputCodec",
-            "outputCodec"
+            "nativeToolLoopWith",
+            "outputCodec",
+            "toolLoopWith"
           ]
         },
         "Std.Ai.Cloud.Google": {
@@ -18807,11 +18881,12 @@
           ]
         },
         "Std.Ai.Local": {
-          "count": 13,
+          "count": 14,
           "symbols": [
             "Engine",
             "Fit",
             "Gpu",
+            "NamedAdapter",
             "Pulled",
             "Settings",
             "Spec",
@@ -18857,11 +18932,14 @@
           ]
         },
         "Std.Ai.Provider": {
-          "count": 3,
+          "count": 6,
           "symbols": [
+            "CallFacts",
+            "MeasuredTransport",
             "WireTransport",
             "closeStream",
-            "cost"
+            "measureTools",
+            "wireMeasured"
           ]
         },
         "Std.Ai.Registry": {
@@ -18921,9 +18999,12 @@
           ]
         },
         "Std.Ai.Trace": {
-          "count": 1,
+          "count": 4,
           "symbols": [
-            "Trace"
+            "Entry",
+            "Trace",
+            "chatStream",
+            "recordToolCall"
           ]
         },
         "Std.Ai.Train": {
@@ -19433,9 +19514,8 @@
           ]
         },
         "Std.Money": {
-          "count": 8,
+          "count": 7,
           "symbols": [
-            "amount",
             "compare",
             "currencyName",
             "gt",
@@ -19727,7 +19807,7 @@
           ]
         }
       },
-      "count": 804,
+      "count": 814,
       "pct_of_denominator": 27.8
     },
     "symbols_unreferenced_strict": {
@@ -20006,10 +20086,14 @@
           ]
         },
         "Std.Ai.Agent": {
-          "count": 2,
+          "count": 6,
           "symbols": [
+            "Options",
+            "defaultOptions",
             "inputCodec",
-            "outputCodec"
+            "nativeToolLoopWith",
+            "outputCodec",
+            "toolLoopWith"
           ]
         },
         "Std.Ai.Cloud.Google": {
@@ -20135,11 +20219,12 @@
           ]
         },
         "Std.Ai.Local": {
-          "count": 13,
+          "count": 14,
           "symbols": [
             "Engine",
             "Fit",
             "Gpu",
+            "NamedAdapter",
             "Pulled",
             "Settings",
             "Spec",
@@ -20186,14 +20271,17 @@
           ]
         },
         "Std.Ai.Provider": {
-          "count": 6,
+          "count": 9,
           "symbols": [
+            "CallFacts",
+            "MeasuredTransport",
             "ToolCall",
             "ToolResponse",
             "Turn",
             "WireTransport",
             "closeStream",
-            "cost"
+            "measureTools",
+            "wireMeasured"
           ]
         },
         "Std.Ai.Registry": {
@@ -20256,9 +20344,12 @@
           ]
         },
         "Std.Ai.Trace": {
-          "count": 1,
+          "count": 4,
           "symbols": [
-            "Trace"
+            "Entry",
+            "Trace",
+            "chatStream",
+            "recordToolCall"
           ]
         },
         "Std.Ai.Train": {
@@ -20835,9 +20926,8 @@
           ]
         },
         "Std.Money": {
-          "count": 8,
+          "count": 7,
           "symbols": [
-            "amount",
             "compare",
             "currencyName",
             "gt",
@@ -21150,8 +21240,8 @@
           ]
         }
       },
-      "count": 912,
-      "pct_of_denominator": 31.6
+      "count": 922,
+      "pct_of_denominator": 31.5
     }
   },
   "units": [
@@ -22502,10 +22592,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "examples/73-ai-train",
-      "modules_imported": 27,
+      "modules_imported": 28,
       "path": "examples/73-ai-train",
-      "refs_generous": 139,
-      "refs_qualified": 130,
+      "refs_generous": 146,
+      "refs_qualified": 137,
       "role": "Example",
       "sky_files": 3,
       "sky_toml_sections": [
@@ -22585,10 +22675,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "flow:ai_cloud_train_flow",
-      "modules_imported": 20,
+      "modules_imported": 22,
       "path": "rust/crates/sky/tests/ai_cloud_train_flow.rs",
-      "refs_generous": 98,
-      "refs_qualified": 92,
+      "refs_generous": 110,
+      "refs_qualified": 105,
       "role": "FlowTest",
       "sky_files": 3,
       "sky_toml_sections": []
@@ -22669,10 +22759,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "flow:ai_serve_flow",
-      "modules_imported": 25,
+      "modules_imported": 27,
       "path": "rust/crates/sky/tests/ai_serve_flow.rs",
-      "refs_generous": 119,
-      "refs_qualified": 110,
+      "refs_generous": 131,
+      "refs_qualified": 123,
       "role": "FlowTest",
       "sky_files": 4,
       "sky_toml_sections": []
@@ -23125,12 +23215,12 @@
       "db_drivers": [],
       "gate": "sky-suites",
       "id": "tests/Std",
-      "modules_imported": 46,
+      "modules_imported": 50,
       "path": "tests/Std",
-      "refs_generous": 623,
-      "refs_qualified": 600,
+      "refs_generous": 673,
+      "refs_qualified": 649,
       "role": "SkySuite",
-      "sky_files": 22,
+      "sky_files": 23,
       "sky_toml_sections": []
     },
     {
