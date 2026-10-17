@@ -781,12 +781,15 @@ wrapper's estimate: the measured seconds at the list price of 2026-10-12.
 |---|---|---|
 | l1, trainer image | 557 to 1176 s of Cloud Build | 0.06 to 0.12 |
 | l1, tier image | 17 to 89 s of Cloud Build | under 0.01 |
-| l3, the Fake jobs of a passing run | up to 524 s per job on `n2-standard-4` | 0.08 (two passing runs: 0.085 and 0.076) |
-| l4, the passing run | 3155 s on `g2-standard-4`, from creation to end | 0.83 |
-| l5, the passing run (europe-west4) | Cloud Run L4 for 1258 s, which includes the 16-minute idle wait, and two Fake jobs of 285 s and 141 s | 0.40 for Cloud Run, 0.035 for the jobs |
+| l3, the Fake jobs of a passing run | up to 524 s per job on `n2-standard-4` (1359 s on 2026-10-17) | 0.08 (two passing runs: 0.085 and 0.076), 0.28 on 2026-10-17 |
+| l4, the passing runs | 3155 s on `g2-standard-4`, from creation to end (334 s on 2026-10-17) | 0.83 (0.09 on 2026-10-17) |
+| l5, the passing runs (europe-west4) | Cloud Run L4 for 1258 s and 1302 s, which include the 16-minute idle wait, and two Fake jobs (285 s and 141 s, then 636 s and 125 s) | 0.40 and 0.41 for Cloud Run, 0.035 and 0.063 for the jobs |
 
 Whole passing runs: l0 to l3 cost USD 0.16 and USD 0.20, l0, l1 and l4 cost
-USD 0.91, and l0, l1 and l5 cost USD 0.53. The leak check was clean after
+USD 0.91, and l0, l1 and l5 cost USD 0.53. The v0.28.0 verification on
+2026-10-17 ran l0 to l4 in us-central1 for USD 0.46
+(`sky-live-20261017081033-5b9bed`) and l0, l1 and l5 in europe-west4 for
+USD 0.56 (`sky-live-20261017085615-cbd1a8`). The leak check was clean after
 each of them.
 
 The ledger's l4 seconds count from the job's creation, so they include the
@@ -806,8 +809,9 @@ outcomes; response texts and error strings stay out). Recorded so far
 | `sky-live-20261014042006-f7b821` | 167 | 2590 | not measured (no idle wait then) | failed |
 | `sky-live-20261014045345-b61c00` | 145 | 2499 | 119946 | failed (the `/v1/models` check) |
 | `sky-live-20261014053814-92a459` | 137 | 2263 | 107390 | passed |
+| `sky-live-20261017085615-cbd1a8` | 169 | 2357 | 116896 | passed |
 
-These three lines were backfilled from the runs' logged `ai_gcp_live: l5:`
+The first three lines were backfilled from the runs' logged `ai_gcp_live: l5:`
 lines (`measurementsNote` says so). From now on the wrapper records them.
 
 ### Teardown
