@@ -82,9 +82,22 @@ impl ToolEnv {
         }
     }
 
-    /// `HOME` (the debug keystore lives under it).
+    /// `HOME`.
     pub fn home(&self) -> PathBuf {
         self.var("HOME").map(PathBuf::from).unwrap_or_default()
+    }
+
+    /// The Android user directory, where the debug keystore lives:
+    /// `ANDROID_USER_HOME`, else `ANDROID_SDK_HOME/.android`, else
+    /// `~/.android` (the order the SDK tools use, and the build script's).
+    pub fn android_user_dir(&self) -> PathBuf {
+        if let Some(d) = self.var("ANDROID_USER_HOME").filter(|v| !v.is_empty()) {
+            return PathBuf::from(d);
+        }
+        if let Some(d) = self.var("ANDROID_SDK_HOME").filter(|v| !v.is_empty()) {
+            return PathBuf::from(d).join(".android");
+        }
+        self.home().join(".android")
     }
 }
 
@@ -370,7 +383,7 @@ pub fn android_tools(i: &mut Inputs, env: &ToolEnv) {
     }
     i.file(
         "debug keystore",
-        &env.home().join(".android").join("debug.keystore"),
+        &env.android_user_dir().join("debug.keystore"),
     );
 }
 
