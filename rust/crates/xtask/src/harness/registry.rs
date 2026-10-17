@@ -1203,8 +1203,8 @@ pub static GATES: &[Gate] = &[
                           red",
             kind: MutationKind::ReplaceOnce {
                 path: "runtime-go/rt/live.go",
-                from: "\tsess.mu.Lock()\n\tdefer sess.mu.Unlock()\n\tmsg := toMsg",
-                to: "\tsess.mu.Lock()\n\tmsg := toMsg",
+                from: "\tsess.mu.Lock()\n\tdefer sess.mu.Unlock()\n\t// The timer is stopped under sess.mu",
+                to: "\tsess.mu.Lock()\n\t// The timer is stopped under sess.mu",
             },
         }]),
         body: bodies::time_every_panic_leaves_the_mutex_acquirable,
