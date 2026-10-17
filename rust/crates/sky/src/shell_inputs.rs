@@ -82,19 +82,9 @@ impl ToolEnv {
         }
     }
 
-    /// `HOME`.
+    /// `HOME` (the debug keystore lives under it).
     pub fn home(&self) -> PathBuf {
         self.var("HOME").map(PathBuf::from).unwrap_or_default()
-    }
-
-    /// The debug keystore the Android build script signs with:
-    /// `$ANDROID_USER_HOME/debug.keystore`, else `~/.android/debug.keystore`
-    /// (the script's own rule, so the fingerprint reads the file it signs with).
-    pub fn android_debug_keystore(&self) -> PathBuf {
-        match self.var("ANDROID_USER_HOME").filter(|v| !v.is_empty()) {
-            Some(d) => PathBuf::from(d).join("debug.keystore"),
-            None => self.home().join(".android").join("debug.keystore"),
-        }
     }
 }
 
@@ -378,9 +368,10 @@ pub fn android_tools(i: &mut Inputs, env: &ToolEnv) {
     for t in ["bash", "keytool", "zip"] {
         i.tool(env, t);
     }
-    let ks = env.android_debug_keystore();
-    i.os("debug keystore path", Some(ks.as_os_str()));
-    i.file("debug keystore", &ks);
+    i.file(
+        "debug keystore",
+        &env.home().join(".android").join("debug.keystore"),
+    );
 }
 
 #[cfg(test)]

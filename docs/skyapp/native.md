@@ -421,8 +421,6 @@ differs from the last complete build. The inputs are hashed by content:
   resources, the native extension files, the library jars and the icon;
 - the bundle settings (they reach the files above) and the entitlements;
 - the signing: the debug keystore on Android, the simulator entitlements on iOS;
-  the debug keystore is `$ANDROID_USER_HOME/debug.keystore`, else
-  `~/.android/debug.keystore`, and the first build creates it (and its directory);
 - the toolchain: Xcode's version, the simulator SDK, the swiftc in use, every
   installed Android build-tools and platform, the JDK, and the path, size and
   modification time of each tool.
