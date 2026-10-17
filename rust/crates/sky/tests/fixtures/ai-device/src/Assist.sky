@@ -11,11 +11,16 @@ import Std.Ai.Device as Device
 import Std.Ai.Provider exposing (Provider)
 
 
+-- `withMetered True`: these flows test that the slot runs on the device, not
+-- the metered-network rule (tests/Std/Ai/DeviceTest.sky covers that). An
+-- Android emulator reports its cellular network as metered until its Wi-Fi
+-- comes up, so without it `prepare` was refused or not by the boot's timing.
 probeSlot : Endpoint
 probeSlot =
     Endpoint.endpoint "probe" |> Endpoint.withLocal (Local.model Local.devModel)
         |> Endpoint.withDevice
-               (Device.spec Device.Auto |> Device.withContext 2048)
+               (Device.spec Device.Auto |> Device.withContext 2048
+                   |> Device.withMetered True)
 
 
 assistant : Provider

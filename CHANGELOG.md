@@ -695,6 +695,13 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   console hub's OTLP envelope now share one service name (`SKY_SERVICE_NAME`,
   then `OTEL_SERVICE_NAME`, then `K_SERVICE`). The hub envelope's default
   `service.instance.id` is the host name (it was `instance-0`).
+- **The Android device test no longer depends on how the emulator's network
+  boots.** An Android emulator reports its cellular network as metered until
+  its Wi-Fi comes up, so the slot's `prepare` was refused (a metered
+  connection) or not by timing, and `gate-ai-device-android` failed now and
+  then. The device flows' fixture slot allows metered downloads
+  (`Device.withMetered True`); the metered rule itself stays covered by
+  `tests/Std/Ai/DeviceTest.sky`.
 - **"Not shipped" is now "not supported yet".** The SageMaker training backend
   is refused with `InvalidSetting` naming the variable, and the message, the
   testing guide and the design say "not supported yet".

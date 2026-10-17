@@ -21382,8 +21382,8 @@
       "id": "e2e:scripts/ai-device-e2e.sh",
       "modules_imported": 13,
       "path": "scripts/ai-device-e2e.sh",
-      "refs_generous": 45,
-      "refs_qualified": 40,
+      "refs_generous": 46,
+      "refs_qualified": 41,
       "role": "FlowTest",
       "sky_files": 2,
       "sky_toml_sections": []
@@ -22689,8 +22689,8 @@
       "id": "flow:ai_device_flow",
       "modules_imported": 13,
       "path": "rust/crates/sky/tests/ai_device_flow.rs",
-      "refs_generous": 45,
-      "refs_qualified": 40,
+      "refs_generous": 46,
+      "refs_qualified": 41,
       "role": "FlowTest",
       "sky_files": 2,
       "sky_toml_sections": []
@@ -22701,8 +22701,8 @@
       "id": "flow:ai_device_native_flow",
       "modules_imported": 13,
       "path": "rust/crates/sky/tests/ai_device_native_flow.rs",
-      "refs_generous": 45,
-      "refs_qualified": 40,
+      "refs_generous": 46,
+      "refs_qualified": 41,
       "role": "FlowTest",
       "sky_files": 2,
       "sky_toml_sections": []
