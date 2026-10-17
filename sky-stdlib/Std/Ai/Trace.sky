@@ -285,7 +285,14 @@ callRow e facts usage output =
     { model = facts.adapter
     , promptTokens = usage.promptTokens
     , completionTokens = usage.completionTokens
-    , cost = Maybe.map (\book -> Provider.cost book usage) e.book
+    , cost =
+        case e.book of
+
+            Just book ->
+                Just (Provider.cost book usage)
+
+            Nothing ->
+                Nothing
     , output = output
     , facts = Just facts
     }

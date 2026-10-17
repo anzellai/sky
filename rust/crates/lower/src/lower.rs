@@ -5653,7 +5653,7 @@ impl<'a> Ctx<'a> {
         // validateTime(now, rt.AsString(_p0)) }`.
         if let Some(arity) = go_arity {
             if largs.len() < arity {
-                return self.make_partial(c, largs, &param_gtys, &ret_goty, arity);
+                return self.make_partial(c, largs, &param_gtys, &ret_goty, arity, actual);
             }
             if largs.len() > arity {
                 return self.over_apply(c, largs, arity, &ret_goty);
@@ -5669,7 +5669,7 @@ impl<'a> Ctx<'a> {
             // stepwise companion to the `lower_lambda` spine-collapse.)
             let arity = ps.len();
             if !largs.is_empty() && largs.len() < arity {
-                return self.make_partial(c, largs, &Some(ps), &cod, arity);
+                return self.make_partial(c, largs, &Some(ps), &cod, arity, actual);
             }
         }
         if let Some((sym, targs, _, ret)) = hof_plan {
@@ -5745,7 +5745,7 @@ impl<'a> Ctx<'a> {
                     // (the same closure `make_partial` builds for a Def).
                     if batch.len() < ps.len() {
                         let arity = ps.len();
-                        return self.make_partial(call, batch, &Some(ps), &cod, arity);
+                        return self.make_partial(call, batch, &Some(ps), &cod, arity, &GoTy::Any);
                     }
                     call = GoExpr::new(GoExprKind::Call(Box::new(call), batch), cod.clone());
                     cur = cod;
@@ -5766,6 +5766,15 @@ impl<'a> Ctx<'a> {
     /// takes the remaining params as `any` (so the runtime's reflection-based
     /// HOF dispatch can invoke it), coercing each to the callee's real Go param
     /// type inside the wrapped call.
+    ///
+    /// Except where the SLOT already names the callee's param type: when `slot`
+    /// is a func of the same arity whose param `i` is the callee's own concrete
+    /// Go param type, that param is declared at that type and passed straight
+    /// through. Both shapes are known at emit time and EQUAL (doc 14 §1), so
+    /// declaring it `any` only to `rt.Coerce` it back was an identity narrowing
+    /// (R1): `finish ctx job (cloudCleanup ctx job cloud)` emitted
+    /// `func(_e2 Adapter_R) { _p1 := _e2; … rt.Coerce[Adapter_R](_p1) }`. A
+    /// param whose slot is `any` or differs keeps the `any` form.
     fn make_partial(
         &mut self,
         callee: GoExpr,
@@ -5773,10 +5782,16 @@ impl<'a> Ctx<'a> {
         param_gtys: &Option<Vec<GoTy>>,
         ret: &GoTy,
         arity: usize,
+        slot: &GoTy,
     ) -> GoExpr {
         let n_given = given.len();
         let n_rest = arity - n_given;
+        let slot_ps: Option<Vec<GoTy>> = match slot {
+            GoTy::Func(ps, _) if ps.len() == n_rest => Some(ps.clone()),
+            _ => None,
+        };
         let mut rest_params = Vec::new();
+        let mut rest_tys = Vec::new();
         let mut call_args = given;
         for i in 0..n_rest {
             let pty = param_gtys
@@ -5786,15 +5801,18 @@ impl<'a> Ctx<'a> {
                 .unwrap_or(GoTy::Any);
             let pname = format!("_p{}", self.local_counter);
             self.local_counter += 1;
+            let typed = pty != GoTy::Any && slot_ps.as_ref().and_then(|ps| ps.get(i)) == Some(&pty);
+            let decl = if typed { pty.clone() } else { GoTy::Any };
             rest_params.push(GoParam {
                 name: pname.clone(),
-                ty: GoTy::Any,
+                ty: decl.clone(),
             });
-            let arg_ref = GoExpr::new(GoExprKind::Ident(pname), GoTy::Any);
+            rest_tys.push(decl.clone());
+            let arg_ref = GoExpr::new(GoExprKind::Ident(pname), decl);
             call_args.push(self.coerce_if_needed(arg_ref, &pty));
         }
         let body_call = GoExpr::new(GoExprKind::Call(Box::new(callee), call_args), ret.clone());
-        let fn_ty = GoTy::Func(vec![GoTy::Any; n_rest], Box::new(ret.clone()));
+        let fn_ty = GoTy::Func(rest_tys, Box::new(ret.clone()));
         GoExpr::new(
             GoExprKind::FuncLit(
                 rest_params,

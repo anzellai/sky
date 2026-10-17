@@ -700,11 +700,19 @@ runCase ctx p (Suite s) c sample =
     let
         opts =
             { temperature = s.options.temperature
-            , seed = Just (Maybe.withDefault (s.seed + sample) s.options.seed)
+            , seed =
+                case s.options.seed of
+
+                    Just fixed ->
+                        Just fixed
+
+                    Nothing ->
+                        Just (s.seed + sample)
             , maxTokens = s.options.maxTokens
             , adapter = s.options.adapter
             }
         messages = s.prompt c.input
+        info = { id = c.id, tags = c.tags, expect = c.expect }
     in
         Time.now ()
             |> Task.andThen
@@ -722,23 +730,33 @@ runCase ctx p (Suite s) c sample =
                                                                 (\_ ->
                                                                     scoreCall
                                                                         ctx
-                                                                        (Suite s)
-                                                                        c
+                                                                        s.seed
+                                                                        s.priceBook
+                                                                        info
                                                                         sample
                                                                         messages
                                                                         (t1 - t0)
                                                                         called.result))))
 
+-- What scoring reads of a case: everything but its input. The scorers take
+-- this, not the `Case input`, so they are not polymorphic in the input and
+-- read every field typed.
+type alias CaseInfo =
+    { id : String
+    , tags : List String
+    , expect : Expect
+    }
+
 
 -- Score a case's answer, or make its error result.
-scoreCall : JudgeCtx -> Suite input -> Case input -> Int -> List Message -> Int -> Result Error Output -> Task Error CaseResult
-scoreCall ctx (Suite s) c sample messages latency result =
+scoreCall : JudgeCtx -> Int -> Maybe PriceBook -> CaseInfo -> Int -> List Message -> Int -> Result Error Output -> Task Error CaseResult
+scoreCall ctx seed book c sample messages latency result =
     case result of
 
         Ok out ->
             -- A judge that fails makes a case error, as a failed call does.
-            scoreExpect ctx s.seed messages c.expect out
-                |> Task.map (okResult (Suite s) c sample out latency)
+            scoreExpect ctx seed messages c.expect out
+                |> Task.map (okResult book c sample out latency)
                 |> Task.onError
                        (\e -> Task.succeed (errResult c sample latency e))
 
@@ -773,13 +791,17 @@ callModel ctx book p tools opts messages =
             |> Task.map
                    (\m ->
                        { result =
-                           Result.map
-                               (\r ->
-                                   { content = r.content
-                                   , toolCalls = []
-                                   , usage = r.usage
-                                   })
-                               m.result
+                           case m.result of
+
+                               Ok r ->
+                                   Ok
+                                       { content = r.content
+                                       , toolCalls = []
+                                       , usage = r.usage
+                                       }
+
+                               Err e ->
+                                   Err e
                        , record =
                            traceWith
                                ctx
@@ -793,13 +815,17 @@ callModel ctx book p tools opts messages =
             |> Task.map
                    (\m ->
                        { result =
-                           Result.map
-                               (\r ->
-                                   { content = r.content
-                                   , toolCalls = r.toolCalls
-                                   , usage = r.usage
-                                   })
-                               m.result
+                           case m.result of
+
+                               Ok r ->
+                                   Ok
+                                       { content = r.content
+                                       , toolCalls = r.toolCalls
+                                       , usage = r.usage
+                                       }
+
+                               Err e ->
+                                   Err e
                        , record =
                            traceWith
                                ctx
@@ -821,8 +847,8 @@ traceWith ctx book kind write =
             Task.succeed ()
 
 
-okResult : Suite input -> Case input -> Int -> Output -> Int -> ( List ( String, Float ), Score ) -> CaseResult
-okResult (Suite s) c sample out latency ( parts, sc ) =
+okResult : Maybe PriceBook -> CaseInfo -> Int -> Output -> Int -> ( List ( String, Float ), Score ) -> CaseResult
+okResult priceBook c sample out latency ( parts, sc ) =
     { id = c.id
     , sample = sample
     , tags = c.tags
@@ -832,12 +858,19 @@ okResult (Suite s) c sample out latency ( parts, sc ) =
     , reason = sc.reason
     , output = out.content
     , latencyMs = latency
-    , cost = Maybe.map (\book -> Provider.cost book out.usage) s.priceBook
+    , cost =
+        case priceBook of
+
+            Just book ->
+                Just (Provider.cost book out.usage)
+
+            Nothing ->
+                Nothing
     , error = Nothing
     }
 
 
-errResult : Case input -> Int -> Int -> Error -> CaseResult
+errResult : CaseInfo -> Int -> Int -> Error -> CaseResult
 errResult c sample latency e =
     { id = c.id
     , sample = sample

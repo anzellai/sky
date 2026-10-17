@@ -2756,7 +2756,13 @@ addProgressLine line acc =
                     , loss = finite p.loss
                     , tokensPerSecond = finite p.tokensPerSecond
                     , checkpoint =
-                        Maybe.withDefault "" (Maybe.map .checkpoint old)
+                        case old of
+
+                            Just pr ->
+                                pr.checkpoint
+
+                            Nothing ->
+                                ""
                     })
                 acc
 
@@ -2800,11 +2806,14 @@ upsertStep step make acc =
             [ make Nothing ]
 
         pr :: rest ->
+            -- `[ x ] ++ rest`, not `x :: rest`: both sides are typed lists of
+            -- one element type, so the append is typed (`rt.List_appendT`),
+            -- where a cons returns `any` and is narrowed back.
             if pr.step == step then
-                make (Just pr) :: rest
+                [ make (Just pr) ] ++ rest
 
             else
-                pr :: upsertStep step make rest
+                [ pr ] ++ upsertStep step make rest
 
 
 -- A trace write, with the tables made first when a run started by an earlier
@@ -5796,6 +5805,20 @@ type alias CloudStatus =
     }
 
 
+-- A recorded amount, or zero dollars when it does not parse. A `case`, not
+-- `Maybe.withDefault`: the polymorphic default's result would be narrowed
+-- back at run time.
+moneyOrZero : String -> Money
+moneyOrZero text =
+    case parseMoney text of
+
+        Just m ->
+            m
+
+        Nothing ->
+            Money.zero Money.USD
+
+
 -- | The job's Vertex run, from its run directory (`Nothing` for a local run
 -- or one that has not launched).
 cloudStatus : Job -> Task Error (Maybe CloudStatus)
@@ -5821,16 +5844,8 @@ cloudStatus job =
                                                       , attempt = a
                                                       , region = r
                                                       , machine = m
-                                                      , spent =
-                                                          Maybe.withDefault
-                                                              (Money.zero
-                                                                  Money.USD)
-                                                              (parseMoney sp)
-                                                      , budget =
-                                                          Maybe.withDefault
-                                                              (Money.zero
-                                                                  Money.USD)
-                                                              (parseMoney bu)
+                                                      , spent = moneyOrZero sp
+                                                      , budget = moneyOrZero bu
                                                       })
                                                   (JsonD.map3
                                                       (\j st a -> ( j, st, a ))

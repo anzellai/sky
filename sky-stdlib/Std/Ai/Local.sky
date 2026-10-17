@@ -301,7 +301,13 @@ namedAdapter name ref =
 
 
 {-| Load several LoRA adapters on one engine, each pinned by digest (a
-`Local.file`, or `Std.Ai.Train.adapterRef` for a trained one). A call chooses
+`Local.file`, or `Std.Ai.Train.adapterRef` for a trained one) or named in the
+registry (`Local.fromReference "registry:<name>@<alias>"`). A registry adapter
+needs the slot's registry (`Endpoint.fromRegistry`): the slot resolves it when
+it starts and again as the alias moves, loads the version's GGUF file after
+checking its digest and that it was trained on the engine's base model
+(`AdapterMismatch` otherwise), and fails with `NotRegistered` for a name or
+alias the registry does not know. A call chooses
 one by name with `Provider.Options`' `adapter`; a call that names none runs
 the base model. A name that is not loaded fails the call with `NotRegistered`,
 listing the loaded names: it never answers from the base model.
@@ -314,8 +320,8 @@ listing the loaded names: it never answers from the base model.
 
 An engine either applies one adapter to every call (`withAdapter`) or loads
 named adapters; setting both is `InvalidSetting`. Env:
-`<PREFIX>_AI_<SLOT>_ADAPTERS`, `name[:scale]=<model reference>` separated by
-commas. -}
+`<PREFIX>_AI_<SLOT>_ADAPTERS`, `name[:scale]=<model reference>` (or
+`registry:<name>@<alias>`) separated by commas. -}
 withAdapters : List NamedAdapter -> Spec -> Spec
 withAdapters adapters (Spec s) =
     Spec { s | adapters = adapters }

@@ -157,7 +157,7 @@ var (
 	aiExpectModelRef    = aiExpect{accept: aiModelRefText, form: "a model reference, hf:<org>/<repo>/<file>#sha256=<hex> or file:<path>#sha256=<hex>"}
 	aiExpectAdapterRef  = aiExpect{accept: aiAdapterRefText, form: "an adapter name, or registry:<name>@<alias>"}
 	aiExpectDeviceAdRef = aiExpect{accept: aiDeviceAdapterText, form: "a model reference (hf:… or file:…#sha256=<hex>) or registry:<name>@<alias>"}
-	aiExpectAdapterList = aiExpect{accept: aiAdapterListText, form: "a list name=<model reference>, separated by commas, with an optional :<scale> after a name (support:0.8=file:/a.gguf#sha256=<hex>)"}
+	aiExpectAdapterList = aiExpect{accept: aiAdapterListText, form: "a list name=<model reference or registry:<name>@<alias>>, separated by commas, with an optional :<scale> after a name (support:0.8=file:/a.gguf#sha256=<hex>)"}
 	aiExpectPlacement   = aiExpect{accept: aiOneOf("auto", "device", "server"), form: "auto, device or server"}
 	aiExpectThreads     = aiExpect{accept: aiAtLeast(1), form: "a whole number of at least 1"}
 	aiExpectGpuLayers   = aiExpect{accept: aiAtLeast(0), form: "a whole number of at least 0"}
@@ -286,11 +286,15 @@ type aiLocalSpec struct {
 }
 
 // aiNamedAdapter is one adapter of Local.withAdapters: the name a call
-// selects it by, its pinned file, and the scale it is applied at.
+// selects it by, its pinned file, and the scale it is applied at. An adapter
+// written `registry:<name>@<alias>` has registry set (`<name>@<alias>`) and no
+// ref until the slot resolves it through its registry (aiSlot.resolveAll),
+// which fills ref with the version's file and digest.
 type aiNamedAdapter struct {
-	name  string
-	ref   aiModelRef
-	scale float64
+	name     string
+	ref      aiModelRef
+	scale    float64
+	registry string
 }
 
 // aiDefaultParallel is the engine slot count when nothing sets one.
@@ -561,9 +565,16 @@ func aiParseNamedAdapters(text, where string) ([]aiNamedAdapter, error) {
 			}
 			scale = f
 		}
+		if r := strings.TrimSpace(ref); strings.HasPrefix(r, aiRegistryScheme) {
+			if !aiRegistryRefText(r) {
+				return nil, fail("adapter %q: a registry reference is registry:<name>@<alias>", name)
+			}
+			out = append(out, aiNamedAdapter{name: name, scale: scale, registry: strings.TrimPrefix(r, aiRegistryScheme)})
+			continue
+		}
 		m, err := aiParseModelRef(ref)
 		if err != nil {
-			return nil, fail("adapter %q: use a model reference, hf:<org>/<repo>/<file>#sha256=<hex> or file:<path>#sha256=<hex>", name)
+			return nil, fail("adapter %q: use a model reference, hf:<org>/<repo>/<file>#sha256=<hex>, file:<path>#sha256=<hex> or registry:<name>@<alias>", name)
 		}
 		if strings.Contains(m.file, ",") {
 			return nil, fail("adapter %q: the path has a comma, which llama-server reads as a list; rename the file", name)
@@ -705,8 +716,10 @@ type aiSlotConfig struct {
 	local       aiLocalSpec
 	// registry is set when the adapter is `registry:<name>@<alias>`: the slot
 	// resolves it through the resolver at start and again every
-	// adapterRefresh (0: once).
+	// adapterRefresh (0: once). namedRegistry is set when a named adapter
+	// (Local.withAdapters) is one: the slot resolves those the same way.
 	registry       bool
+	namedRegistry  bool
 	resolve        any
 	adapterRefresh time.Duration
 	// auth is "bearer" (the key in Authorization) or "google" (also a Google
@@ -813,14 +826,6 @@ func resolveAiSlot(b aiEndpointBuilder) (*aiSlotConfig, error) {
 				b.slot, c.adapter).with("setting", name("ADAPTER"))
 		}
 		c.registry, c.resolve = true, b.resolve
-		c.adapterRefresh = 30 * time.Second
-		v, _, err := layer("ADAPTER_REFRESH_S", itoaSet(b.adapterRefreshS), "Endpoint.withAdapterRefresh", aiExpectNonNegative)
-		if err != nil {
-			return nil, err
-		}
-		if v != "" {
-			c.adapterRefresh = time.Duration(aiAtoi(v)) * time.Second
-		}
 	}
 
 	c.auth = "bearer"
@@ -859,6 +864,29 @@ func resolveAiSlot(b aiEndpointBuilder) (*aiSlotConfig, error) {
 		c.local = spec
 		if c.model == "" {
 			record(aiSetting{key: "MODEL", name: name("MODEL"), value: spec.model.String(), source: "code"})
+		}
+		// A named adapter written `registry:<name>@<alias>` resolves through
+		// the slot's registry, as the slot's single registry adapter does.
+		for _, a := range spec.adapters {
+			if a.registry == "" {
+				continue
+			}
+			if !b.hasResolver || b.resolve == nil {
+				return nil, aiFailf(aiNotConfigured,
+					"slot %q: the named adapter %q is registry:%s and the slot has no registry; give it Endpoint.fromRegistry (Registry.resolver …) in code",
+					b.slot, a.name, a.registry).with("setting", name("ADAPTERS"))
+			}
+			c.namedRegistry, c.resolve = true, b.resolve
+		}
+	}
+	if c.registry || c.namedRegistry {
+		c.adapterRefresh = 30 * time.Second
+		rv, _, err := layer("ADAPTER_REFRESH_S", itoaSet(b.adapterRefreshS), "Endpoint.withAdapterRefresh", aiExpectNonNegative)
+		if err != nil {
+			return nil, err
+		}
+		if rv != "" {
+			c.adapterRefresh = time.Duration(aiAtoi(rv)) * time.Second
 		}
 	}
 

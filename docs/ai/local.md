@@ -129,7 +129,7 @@ because they name global variables: `home`, `offline`, `fetch`, `llama`, `vllm`,
 | `Local.withPort` | `SKY_AI_<SLOT>_PORT` (`0` a free port, at most 65535) | 0 |
 | `Local.withDraft` | `SKY_AI_<SLOT>_DRAFT`, a model reference ([Draft model](#a-draft-model-speculative-decoding)) | none |
 | `Local.withDraftTokens` | `SKY_AI_<SLOT>_DRAFT_MAX` (above 0) and `SKY_AI_<SLOT>_DRAFT_MIN` (0 or more) | the engine's (3 and 0) |
-| `Local.withAdapters` | `SKY_AI_<SLOT>_ADAPTERS`: `name[:scale]=<model reference>`, separated by commas ([Several adapters](#several-adapters-on-one-engine)) | none |
+| `Local.withAdapters` | `SKY_AI_<SLOT>_ADAPTERS`: `name[:scale]=<model reference or registry:<name>@<alias>>`, separated by commas ([Several adapters](#several-adapters-on-one-engine)) | none |
 
 `Endpoint.describe slot` reports where each setting came from (`env`, `code`
 or `default`). It never shows a key, and it shows a remote URL as scheme, host
@@ -308,6 +308,30 @@ not `local`; a name used twice, a scale that is not above 0, or a reference
 without a digest is `InvalidSetting`. An engine either applies one adapter to
 every call (`withAdapter`, or a registry adapter) or loads named adapters, so
 setting both is `InvalidSetting`.
+
+A named adapter can also come from the registry: give it
+`Local.fromReference "registry:<name>@<alias>"` (or write
+`support=registry:support-lora@prod` in `SKY_AI_<SLOT>_ADAPTERS`), and give the
+slot its registry with `Endpoint.fromRegistry`.
+
+```elm
+registrySpec : Local.Spec
+registrySpec =
+    Local.model Local.devModel
+        |> Local.withAdapters
+            [ Local.namedAdapter "support" (Local.fromReference "registry:support-lora@prod")
+            , Local.namedAdapter "legal" legalRef
+            ]
+```
+
+The slot resolves each registry adapter when it starts and again as the alias
+moves (`Endpoint.withAdapterRefresh`), in the same resolution as a registry
+`withAdapter`: the registry database names the version, the engine loads the
+version's GGUF file through the SHA-256 check against the version's digest,
+and a version trained on another base model is `AdapterMismatch`. A name or
+alias the registry does not know fails the call with the registry's
+`NotRegistered`. A registry adapter on a slot without `Endpoint.fromRegistry`
+is `NotConfigured` when the slot starts.
 
 An operator sets the list with `SKY_AI_<SLOT>_ADAPTERS`, for example
 `support=file:/srv/a.gguf#sha256=<hex>,legal:0.8=file:/srv/b.gguf#sha256=<hex>`.
@@ -574,11 +598,9 @@ local slot whose engine or model is not provisioned.
 ## Not yet
 
 These parts of the design are later work: Sky's own published engine bundles
-(the pins use the upstream llama.cpp release assets today), and a registry
-reference (`registry:<name>@<alias>`) inside `Local.withAdapters` (a named
-adapter is a pinned file or Hugging Face reference; a registry adapter is the
-slot's one adapter, through `Endpoint.fromRegistry`). A slot name computed at
-run time works, but the build cannot list it for the startup report.
+(the pins use the upstream llama.cpp release assets today). A slot name
+computed at run time works, but the build cannot list it for the startup
+report.
 
 ## In the Sky Console
 

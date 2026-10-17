@@ -504,36 +504,63 @@
 #   `Maybe.withDefault` (R12, measured +4 before).
 #
 # ── Recorded transition, 2026-10-17 — Std.Ai.Trace across the lifecycle,
-#    local drafts and named adapters, strict AI settings ──
-#   All 86 rows measured. Eight AI rows rise, +242 in all (adapter and
-#   dispatch stay 0): 70-ai-synthetic +2, 71-ai-registry +48,
-#   72-ai-support-desk +2, 73-ai-train +51, 74-ai-cloud +36,
-#   75-ai-everywhere +51, sky-bundled/ai +3, sky-bundled/ai-train +49. Cause
-#   (2), new code, proven by bisecting the SOURCE: the same compiler with
-#   HEAD's seven Std.Ai files gives exactly the golden (71: 825, 73: 1286),
-#   and a per-function count of the emitted Go against HEAD's files puts
-#   every delta in a new or changed function (73, 71 and 75 counted):
-#   * Provider's measured calls (`measure` +6, `measureTools` +8,
-#     `timedWith` / `finishTimed` / `factsOf` / `rate` +9): each call through
-#     the `Timing` record's erased callback slots narrows its argument and
-#     result (R2, `eta_narrow`, the closed form of doc 14 §5.1), and the
-#     Result case on the outcome is R6 on a stdlib ADT (§4.5). `chatWith`
-#     and `chatTools` leave the Eval path (-10).
-#   * Eval records its calls: the case runner split into `scoreCall` (+11)
-#     and `callModel` (+8) for `Result.map` lambdas over the measured answer
-#     (R12, a polymorphic def's erased signature, §5.5), `judgeAnswered` +3;
-#     `runCase` -2.
-#   * Train records progress and cost: new helpers (`addProgressLine` +4,
-#     R6 on the `Event` payloads; `trainOn` +4, R7 on the cloud run's
-#     triple; `traceLines` / `traceCost` / `withTraceTables` +6), and
-#     existing functions it now reaches pay their usual cost (`cloudStatus`
-#     +15, R5 kernel returns of the JSON decoder; `Durable.conn` +3;
-#     `Error.withMessage` +2). `upsertStep` was rewritten as a recursion
-#     instead of `List.find` + `List.map` lambdas (R12), which took 73 from
-#     +57 to +51.
-#   * Trace's row writes (`insertRow` +2, `callRow` +1, `setup` +1: R5 kernel
-#     returns), and `Endpoint.withLocal` +2 for the draft and adapter
-#     settings (R12 on `Maybe.withDefault`).
+#    local drafts and named adapters, strict AI settings; then the closeable
+#    narrowings in that code removed ──
+#   All 86 rows measured. The first commit of this transition raised eight AI
+#   rows by +242 (70 +2, 71 +48, 72 +2, 73 +51, 74 +36, 75 +51,
+#   sky-bundled/ai +3, sky-bundled/ai-train +49). A Judge found closeable
+#   narrowings (R1, R5, R12) in that rise; this re-bless removes them. The
+#   eight rows now sum to 7054 (7305 before this re-bless, 7063 before the
+#   transition), and the golden to 17344 (17783 before). Every row fell or
+#   held; none rose. Two causes:
+#   * Lowering (doc 14 §1, R1, identity): a partially applied def in a func
+#     slot whose param is the def's own Go param type declared that param
+#     `any` and narrowed it back (`trainOn`: `rt.Coerce[Adapter_R](_p1)` with
+#     `_p1` already `Adapter_R`). `lower.rs::make_partial` now declares it at
+#     the type when the slot names the same type. Corpus-wide: 07-todo-cli
+#     -4, 19-skyforum -8, 62-app-notes -12, … (regression test
+#     `lower/tests/partial_identity_param.rs`).
+#   * Source, in the functions this transition added or changed:
+#     `addProgressLine` reads the checkpoint with a `case`, not `Maybe.map
+#     .checkpoint` (R12/R11 `rt.Field`); `upsertStep` builds with `[ x ] ++
+#     rest` (typed `rt.List_appendT`), not `::` (R5 `rt.List_cons`);
+#     `cloudStatus` (`moneyOrZero`), `factsOf` (`orText`), `rate`,
+#     `measuredOf`, `Endpoint.withLocal` (`orUnset`), `Eval.runCase`,
+#     `Eval.okResult` and `Trace.callRow` use a `case` for `Maybe.withDefault`
+#     / `Maybe.map` (R12); `Eval.callModel` uses a `case` for `Result.map`
+#     (R12); `Eval.scoreCall` / `okResult` / `errResult` take a monomorphic
+#     `CaseInfo`, not the polymorphic `Suite input` / `Case input` (R12 and a
+#     second R6 destructure); `Device.fits` / `holds` / `reasonFor` compare a
+#     Backend by name (`sameBackend`, `listed`, `unsupportedWhy`), not the
+#     erased `==` (R5 `rt.Eq`) or `List.member` (R12); `requestValue`,
+#     `turnValue` and `toolSpecValue` are annotated (R12 `rt.AsListT[any]`).
+#   What remains in those functions, by origin:
+#   * R6, stdlib ADT payloads (§4.5, blocked by the runtime contract):
+#     `Error.withMessage` 2, `Durable.conn` 3 (the `Ctx` payload),
+#     `Endpoint.withLocal` 1 (`Config`), `addProgressLine` 2 (`Event`),
+#     `Provider.measure` / `measureTools` 3 each (`Provider`'s payloads),
+#     `Eval.runCase` 9 (the `Suite` payload, field by field).
+#   * NOT floor, OPEN (closing each is a compiler change across the corpus):
+#     - the erased callback slot of a Task or JSON-decoder kernel
+#       (`Task.andThen` / `map` / `map2` / `onError`, `JsonD.mapN`): the
+#       `widen` adapter narrows the kernel's `any` argument. `insertRow` 2,
+#       `setup` 1, `traceCost` 2, `traceLines` 1, `withTraceTables` 2,
+#       `trainOn` 3, `cloudStatus` 12, `timed` 1, `timedWith` 1,
+#       `finishTimed` 2, `measure` / `measureTools` 1 each, `judgeAnswered`
+#       3, `scoreCall` 2, `runCase` 4. Lever: typed kernel entry points
+#       (§5.3; `rt.Task_mapT` exists and the lowerer does not route to it).
+#     - R12, the polymorphic `timed` / `timedWith` (`Timing a`): the record's
+#       `rt.Coerce[Timing_R[any]]` in `measure` / `measureTools` (2 each) and
+#       `timedWith`'s `attempt` result 1. Lever §5.5. Monomorphic copies were
+#       measured and cost MORE (+13 on 75), because of the next item.
+#     - R1, a parametric record alias at a concrete type
+#       (`Measured ChatResponse`) lowers to an anonymous struct in a signature
+#       and to `Measured_R[any]` in a literal (`goty.rs`
+#       `select_record_candidate` refutes a template that holds the param
+#       inside a type constructor), so each crossing narrows field by field:
+#       `Eval.callModel` 7.
+#     - R5, kernel returns: `rate` 1 (float `/` is `rt.Div`), `cloudStatus` 1
+#       (`JsonD.decodeString`'s result).
 00-standard-libs	adapter=0	dispatch=0	narrow=113
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=6
@@ -541,26 +568,26 @@
 04-local-pkg	adapter=0	dispatch=0	narrow=1
 05-mux-server	adapter=0	dispatch=0	narrow=3
 06-json	adapter=0	dispatch=0	narrow=60
-07-todo-cli	adapter=0	dispatch=0	narrow=159
-08-notes-app	adapter=0	dispatch=0	narrow=358
+07-todo-cli	adapter=0	dispatch=0	narrow=155
+08-notes-app	adapter=0	dispatch=0	narrow=354
 09-live-counter	adapter=0	dispatch=0	narrow=100
 10-live-component	adapter=0	dispatch=0	narrow=103
-12-skyvote	adapter=0	dispatch=0	narrow=403
-13-skyshop	adapter=0	dispatch=0	narrow=1188
+12-skyvote	adapter=0	dispatch=0	narrow=399
+13-skyshop	adapter=0	dispatch=0	narrow=1187
 14-task-demo	adapter=0	dispatch=0	narrow=8
 15-http-server	adapter=0	dispatch=0	narrow=8
-16-skychess	adapter=0	dispatch=0	narrow=466
-17-skymon	adapter=0	dispatch=0	narrow=427
-18-job-queue	adapter=0	dispatch=0	narrow=197
-19-skyforum	adapter=0	dispatch=0	narrow=92
+16-skychess	adapter=0	dispatch=0	narrow=462
+17-skymon	adapter=0	dispatch=0	narrow=420
+18-job-queue	adapter=0	dispatch=0	narrow=193
+19-skyforum	adapter=0	dispatch=0	narrow=84
 20-cli-counter	adapter=0	dispatch=0	narrow=40
 21-tui-stopwatch	adapter=0	dispatch=0	narrow=45
 22-tui-stopwatch-ui	adapter=0	dispatch=0	narrow=51
-23-tui-todo	adapter=0	dispatch=0	narrow=62
+23-tui-todo	adapter=0	dispatch=0	narrow=61
 24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=69
-25-sky-console	adapter=0	dispatch=0	narrow=67
-26-ui-showcase	adapter=0	dispatch=0	narrow=208
-27-multi-session-chat	adapter=0	dispatch=0	narrow=191
+25-sky-console	adapter=0	dispatch=0	narrow=66
+26-ui-showcase	adapter=0	dispatch=0	narrow=204
+27-multi-session-chat	adapter=0	dispatch=0	narrow=186
 28-streaming-chat	adapter=0	dispatch=0	narrow=72
 29-webview-threejs-spike	adapter=0	dispatch=0	narrow=51
 30-sse-server-demo	adapter=0	dispatch=0	narrow=14
@@ -568,12 +595,12 @@
 32-sse-relay	adapter=0	dispatch=0	narrow=18
 33-websocket-echo	adapter=0	dispatch=0	narrow=4
 34-multi-tier-console	adapter=0	dispatch=0	narrow=60
-35-composite-generics	adapter=0	dispatch=0	narrow=126
-36-composite-server	adapter=0	dispatch=0	narrow=233
-37-composite-live-shop	adapter=0	dispatch=0	narrow=281
-38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=223
+35-composite-generics	adapter=0	dispatch=0	narrow=125
+36-composite-server	adapter=0	dispatch=0	narrow=224
+37-composite-live-shop	adapter=0	dispatch=0	narrow=277
+38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=219
 40-generic-adt-field	adapter=0	dispatch=0	narrow=2
-41-nested-curry	adapter=0	dispatch=0	narrow=4
+41-nested-curry	adapter=0	dispatch=0	narrow=3
 42-poly-record	adapter=0	dispatch=0	narrow=2
 43-composition	adapter=0	dispatch=0	narrow=2
 44-record-update	adapter=0	dispatch=0	narrow=1
@@ -584,39 +611,39 @@
 49-xmodule-adt	adapter=0	dispatch=0	narrow=1
 50-open-row-closure	adapter=0	dispatch=0	narrow=11
 51-kernel-variadic-arity	adapter=0	dispatch=0	narrow=2
-52-blog-analytics	adapter=0	dispatch=0	narrow=367
+52-blog-analytics	adapter=0	dispatch=0	narrow=357
 53-record-update-map	adapter=0	dispatch=0	narrow=21
 54-record-fieldset-collision	adapter=0	dispatch=0	narrow=1
-55-store-partial-update	adapter=0	dispatch=0	narrow=123
-61-app-kanban	adapter=0	dispatch=0	narrow=177
-62-app-notes	adapter=0	dispatch=0	narrow=338
-63-app-chat	adapter=0	dispatch=0	narrow=340
-64-app-native	adapter=0	dispatch=0	narrow=204
+55-store-partial-update	adapter=0	dispatch=0	narrow=121
+61-app-kanban	adapter=0	dispatch=0	narrow=169
+62-app-notes	adapter=0	dispatch=0	narrow=326
+63-app-chat	adapter=0	dispatch=0	narrow=328
+64-app-native	adapter=0	dispatch=0	narrow=199
 65-metadata-service	adapter=0	dispatch=0	narrow=16
 66-slack-agent	adapter=0	dispatch=0	narrow=134
 67-durable-counter	adapter=0	dispatch=0	narrow=73
-68-ai-dataset	adapter=0	dispatch=0	narrow=431
+68-ai-dataset	adapter=0	dispatch=0	narrow=424
 69-ai-scrub	adapter=0	dispatch=0	narrow=60
-70-ai-synthetic	adapter=0	dispatch=0	narrow=421
-71-ai-registry	adapter=0	dispatch=0	narrow=873
-72-ai-support-desk	adapter=0	dispatch=0	narrow=444
-73-ai-train	adapter=0	dispatch=0	narrow=1337
-74-ai-cloud	adapter=0	dispatch=0	narrow=1447
-75-ai-everywhere	adapter=0	dispatch=0	narrow=900
-apps/dispatch	adapter=0	dispatch=0	narrow=318
-apps/fieldbook	adapter=0	dispatch=0	narrow=459
+70-ai-synthetic	adapter=0	dispatch=0	narrow=410
+71-ai-registry	adapter=0	dispatch=0	narrow=831
+72-ai-support-desk	adapter=0	dispatch=0	narrow=435
+73-ai-train	adapter=0	dispatch=0	narrow=1299
+74-ai-cloud	adapter=0	dispatch=0	narrow=1398
+75-ai-everywhere	adapter=0	dispatch=0	narrow=847
+apps/dispatch	adapter=0	dispatch=0	narrow=312
+apps/fieldbook	adapter=0	dispatch=0	narrow=445
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
-apps/ledger	adapter=0	dispatch=0	narrow=410
+apps/ledger	adapter=0	dispatch=0	narrow=404
 apps/relay	adapter=0	dispatch=0	narrow=119
 examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=62
 examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=63
-examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=187
+examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=181
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=1
-examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=193
+examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=189
 simple	adapter=0	dispatch=0	narrow=3
-sky-bundled/ai	adapter=0	dispatch=0	narrow=654
-sky-bundled/ai-cloud	adapter=0	dispatch=0	narrow=537
-sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1229
-sky-bundled/console	adapter=0	dispatch=0	narrow=180
-sky-bundled/doc	adapter=0	dispatch=0	narrow=48
+sky-bundled/ai	adapter=0	dispatch=0	narrow=639
+sky-bundled/ai-cloud	adapter=0	dispatch=0	narrow=520
+sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1195
+sky-bundled/console	adapter=0	dispatch=0	narrow=169
+sky-bundled/doc	adapter=0	dispatch=0	narrow=46
 test_pkg	adapter=0	dispatch=0	narrow=1

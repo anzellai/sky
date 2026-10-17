@@ -52,6 +52,11 @@ type aiSlot struct {
 	adAt      time.Time
 	adErr     string
 	resolveMu sync.Mutex
+	// The named adapters (cfg.namedRegistry) with each registry reference
+	// resolved to its version's file, from the same resolution as ad;
+	// resolved is set once a resolution succeeded.
+	named    []aiNamedAdapter
+	resolved bool
 
 	// The Google ID token (AUTH=google) and when it expires; idMu makes one
 	// caller mint while the others wait for it.
@@ -159,6 +164,11 @@ func (s *aiSlot) ensureEngine(ctx context.Context, ad *aiResolvedAdapter) (*aiEn
 	if ad != nil {
 		spec.adapter = aiLocalAdapter{path: ad.path, sha256: ad.digest, label: ad.label}
 	}
+	if s.cfg.namedRegistry {
+		s.adMu.Lock()
+		spec.adapters = s.named
+		s.adMu.Unlock()
+	}
 	s.engineMu.Lock()
 	var retired *aiEngine
 	if s.engine == nil || s.engine.key != aiEngineKey(spec) {
@@ -175,16 +185,18 @@ func (s *aiSlot) ensureEngine(ctx context.Context, ad *aiResolvedAdapter) (*aiEn
 
 // adapter returns the slot's registry adapter (nil when the slot has none),
 // resolving it on first use and again when the refresh interval has passed.
-// A failed refresh keeps the current adapter and is reported in describe and
-// on stderr; a failed first resolution fails the call.
+// The same resolution resolves the slot's registry named adapters
+// (Local.withAdapters), which ensureEngine reads from s.named. A failed
+// refresh keeps the current resolution and is reported in describe and on
+// stderr; a failed first resolution fails the call.
 func (s *aiSlot) adapter() (*aiResolvedAdapter, error) {
-	if !s.cfg.registry {
+	if !s.cfg.registry && !s.cfg.namedRegistry {
 		return nil, nil
 	}
 	s.adMu.Lock()
-	cur, at := s.ad, s.adAt
+	cur, at, done := s.ad, s.adAt, s.resolved
 	s.adMu.Unlock()
-	if cur != nil {
+	if done {
 		if s.cfg.adapterRefresh <= 0 || time.Since(at) < s.cfg.adapterRefresh {
 			return cur, nil
 		}
@@ -197,7 +209,7 @@ func (s *aiSlot) adapter() (*aiResolvedAdapter, error) {
 	}
 	defer s.resolveMu.Unlock()
 	s.adMu.Lock()
-	if s.ad != nil && s.ad != cur {
+	if s.resolved && (!done || !s.adAt.Equal(at)) {
 		// Another caller resolved while this one waited.
 		ad := s.ad
 		s.adMu.Unlock()
@@ -205,31 +217,70 @@ func (s *aiSlot) adapter() (*aiResolvedAdapter, error) {
 	}
 	s.adMu.Unlock()
 
-	ad, err := s.resolveAdapter()
+	ad, named, err := s.resolveAll()
 	s.adMu.Lock()
 	defer s.adMu.Unlock()
 	s.adAt = time.Now()
 	if err != nil {
-		if cur == nil {
+		if !done {
 			return nil, err
 		}
 		msg := aiErrorText(err)
 		if msg != s.adErr {
-			fmt.Fprintf(os.Stderr, "[sky] Std.Ai.Endpoint: slot %q: cannot re-resolve %s, still serving %s: %s\n", s.cfg.slot, s.cfg.adapter, cur.label, msg)
+			serving := "the current adapters"
+			if cur != nil {
+				serving = cur.label
+			}
+			fmt.Fprintf(os.Stderr, "[sky] Std.Ai.Endpoint: slot %q: cannot re-resolve its registry adapters, still serving %s: %s\n", s.cfg.slot, serving, msg)
 		}
 		s.adErr = msg
 		return cur, nil
 	}
-	s.ad, s.adErr = ad, ""
+	s.ad, s.named, s.resolved, s.adErr = ad, named, true, ""
 	return ad, nil
 }
 
-// resolveAdapter asks the slot's Sky resolver for the adapter its
-// `registry:<name>@<alias>` names now. A local slot also checks the base
-// model: an adapter trained on another base than the engine runs would load
-// and answer nonsense, so it is AdapterMismatch instead.
-func (s *aiSlot) resolveAdapter() (*aiResolvedAdapter, error) {
-	ref := strings.TrimPrefix(s.cfg.adapter, aiRegistryScheme)
+// resolveAll resolves the slot's registry adapter (when its adapter is
+// `registry:<name>@<alias>`) and each named adapter written that way. A named
+// adapter resolves to its version's GGUF file, pinned by the version's digest,
+// so the engine loads it through the same SHA-256 check as any pinned file.
+func (s *aiSlot) resolveAll() (*aiResolvedAdapter, []aiNamedAdapter, error) {
+	var ad *aiResolvedAdapter
+	if s.cfg.registry {
+		a, err := s.resolveRef(strings.TrimPrefix(s.cfg.adapter, aiRegistryScheme))
+		if err != nil {
+			return nil, nil, err
+		}
+		ad = a
+	}
+	if !s.cfg.namedRegistry {
+		return ad, nil, nil
+	}
+	named := make([]aiNamedAdapter, len(s.cfg.local.adapters))
+	for i, n := range s.cfg.local.adapters {
+		named[i] = n
+		if n.registry == "" {
+			continue
+		}
+		a, err := s.resolveRef(n.registry)
+		if err != nil {
+			return nil, nil, err
+		}
+		if strings.Contains(a.path, ",") {
+			return nil, nil, aiFailf(aiInvalidSetting, "slot %q: adapter %q: the registry file %s has a comma, which llama-server reads as a list", s.cfg.slot, n.name, a.path).
+				with("setting", "adapters").with("reason", "an adapter path may not contain a comma")
+		}
+		named[i].ref = aiModelRef{kind: "file", file: a.path, sha256: a.digest}
+	}
+	return ad, named, nil
+}
+
+// resolveRef asks the slot's Sky resolver for the adapter `ref`
+// (`<name>@<alias>`) names now. A local slot also checks the base model: an
+// adapter trained on another base than the engine runs would load and answer
+// nonsense, so it is AdapterMismatch instead. An unknown name or alias is the
+// resolver's own NotRegistered, passed through unchanged.
+func (s *aiSlot) resolveRef(ref string) (*aiResolvedAdapter, error) {
 	local := s.cfg.mode == "local"
 	res := AnyTaskRun(sky_call2(s.cfg.resolve, ref, local))
 	tag, okV, errV := anyResultView(res)
@@ -516,6 +567,31 @@ func (s *aiSlot) description() any {
 			"value":  aiDescribeValue(st),
 			"source": st.source,
 		})
+	}
+	if s.cfg.namedRegistry {
+		s.adMu.Lock()
+		named, resolved := s.named, s.resolved
+		s.adMu.Unlock()
+		for i, st := range settings {
+			m := st.(map[string]any)
+			if m["key"] != "ADAPTERS" {
+				continue
+			}
+			v, _ := m["value"].(string)
+			if !resolved {
+				v += " (not resolved yet)"
+			} else {
+				var parts []string
+				for _, a := range named {
+					if a.registry != "" {
+						parts = append(parts, a.name+": sha256:"+a.ref.sha256[:12])
+					}
+				}
+				v += " -> " + strings.Join(parts, ", ")
+			}
+			m["value"] = v
+			settings[i] = m
+		}
 	}
 	if s.cfg.registry {
 		s.adMu.Lock()

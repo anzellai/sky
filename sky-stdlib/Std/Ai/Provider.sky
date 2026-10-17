@@ -727,7 +727,14 @@ rate tokens latency first =
 
         Just total ->
             let
-                generating = total - Maybe.withDefault 0 first
+                generating =
+                    case first of
+
+                        Just at ->
+                            total - at
+
+                        Nothing ->
+                            total
             in
                 if tokens > 0 && generating > 0 then
                     Just (intToFloat tokens * 1000.0 / intToFloat generating)
@@ -743,6 +750,19 @@ type alias Clock =
     { wallMs : Int
     , firstMs : Maybe Int
     }
+
+
+-- A text, or `d` when there is none. A `case`, not `Maybe.withDefault`,
+-- whose polymorphic result is narrowed back at run time.
+orText : String -> Maybe String -> String
+orText d m =
+    case m of
+
+        Just v ->
+            v
+
+        Nothing ->
+            d
 
 
 -- The facts of a finished call. The runtime's figures win. When the runtime
@@ -772,9 +792,9 @@ factsOf rt adapter clock tokens outcome =
             else
                 clock.firstMs
     in
-        { slot = Maybe.withDefault "" rt.slot
-        , tier = Maybe.withDefault "remote" rt.tier
-        , adapter = Maybe.withDefault adapter rt.adapter
+        { slot = orText "" rt.slot
+        , tier = orText "remote" rt.tier
+        , adapter = orText adapter rt.adapter
         , queueWaitMs = rt.queueWaitMs
         , startMs = rt.startMs
         , latencyMs = latency
@@ -838,7 +858,14 @@ measuredOf t start outcome end rt =
                     rt
                     t.adapter
                     { wallMs = end - start
-                    , firstMs = Maybe.map (\at -> at - start) firstAt
+                    , firstMs =
+                        case firstAt of
+
+                            Just at ->
+                                Just (at - start)
+
+                            Nothing ->
+                                Nothing
                     }
                     (t.tokens answer)
                     "ok"
@@ -878,7 +905,7 @@ measure opts provider messages =
         Custom c ->
             timed
                 { byRuntime = False
-                , adapter = Maybe.withDefault "" opts.adapter
+                , adapter = modelFor opts ""
                 , call = \_ -> whole (c.chat messages)
                 , tokens = \r -> r.usage.completionTokens
                 }
@@ -1005,7 +1032,7 @@ measureStream opts provider messages onPiece =
         Custom _ ->
             timed
                 { byRuntime = False
-                , adapter = Maybe.withDefault "" opts.adapter
+                , adapter = modelFor opts ""
                 , call =
                     \_ -> readAll (openStream opts provider messages) onPiece
                 , tokens = \r -> r.usage.completionTokens
@@ -1359,6 +1386,7 @@ turnMessages turns =
         turns
 
 
+requestValue : String -> List Turn -> List ToolSpec -> JsonE.Value
 requestValue model turns tools =
     JsonE.object
         (( "model", JsonE.string model )
@@ -1370,6 +1398,7 @@ requestValue model turns tools =
                    [ ( "tools", JsonE.list toolSpecValue tools ) ]))
 
 
+turnValue : Turn -> JsonE.Value
 turnValue turn =
     case turn of
 
@@ -1407,6 +1436,7 @@ toolCallValue call =
         ]
 
 
+toolSpecValue : ToolSpec -> JsonE.Value
 toolSpecValue spec =
     JsonE.object
         [ ( "type", JsonE.string "function" )

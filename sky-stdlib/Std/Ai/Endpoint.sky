@@ -331,12 +331,19 @@ withLocal spec (Endpoint c) =
                 , local =
                     { model = s.model
                     , adapter = adapter
-                    , context = Maybe.withDefault (-1) s.context
-                    , gpu = Maybe.withDefault "" (Maybe.map gpuText s.gpu)
-                    , parallel = Maybe.withDefault (-1) s.parallel
-                    , idleUnload = Maybe.withDefault (-1) s.idleUnloadSeconds
+                    , context = orUnset s.context
+                    , gpu =
+                        case s.gpu of
+
+                            Just g ->
+                                gpuText g
+
+                            Nothing ->
+                                ""
+                    , parallel = orUnset s.parallel
+                    , idleUnload = orUnset s.idleUnloadSeconds
                     , embeddings = s.embeddings
-                    , port = Maybe.withDefault (-1) s.port
+                    , port = orUnset s.port
                     , draft =
                         case s.draft of
 
@@ -345,8 +352,8 @@ withLocal spec (Endpoint c) =
 
                             Nothing ->
                                 ""
-                    , draftMax = Maybe.withDefault (-1) s.draftMax
-                    , draftMin = Maybe.withDefault (-1) s.draftMin
+                    , draftMax = orUnset s.draftMax
+                    , draftMin = orUnset s.draftMin
                     , adapters =
                         s.adapters
                             |> List.map
@@ -370,6 +377,19 @@ both). The placement, device model and device adapter fall back to
 withDevice : Device.Spec -> Endpoint -> Endpoint
 withDevice d (Endpoint c) =
     Endpoint { c | hasDevice = True, device = Device.rawSpec d }
+
+
+-- A setting the spec left out is -1 on the wire. A `case`, not
+-- `Maybe.withDefault`, whose polymorphic result is narrowed back at run time.
+orUnset : Maybe Int -> Int
+orUnset m =
+    case m of
+
+        Just n ->
+            n
+
+        Nothing ->
+            -1
 
 
 gpuText : LocalEngine.Gpu -> String

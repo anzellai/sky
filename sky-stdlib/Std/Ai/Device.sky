@@ -537,7 +537,7 @@ firstFitting caps offer need wanted =
 
 fits : Capabilities -> Offer -> Int -> Backend -> Bool
 fits caps offer need b =
-    not (List.member b caps.failed) && need <= offer.maxDownloadBytes
+    not (listed b caps.failed) && need <= offer.maxDownloadBytes
         && holds b need (offer.gpuLayers > 0) caps.backends
 
 
@@ -551,12 +551,48 @@ holds b need gpu infos =
             False
 
         info :: rest ->
-            if info.backend == b && need <= info.maxModelBytes
+            if sameBackend info.backend b && need <= info.maxModelBytes
                 && (info.gpu || not gpu) then
                 True
 
             else
                 holds b need gpu rest
+
+
+-- Backend equality through its name: a stdlib union compares through the
+-- runtime's erased `==`, which a string comparison does not need.
+sameBackend : Backend -> Backend -> Bool
+sameBackend a b =
+    backendText a == backendText b
+
+
+-- Whether `b` is in the list. A recursion, not `List.member`, whose
+-- polymorphic list is narrowed at run time.
+listed : Backend -> List Backend -> Bool
+listed b bs =
+    case bs of
+
+        [] ->
+            False
+
+        x :: rest ->
+            sameBackend x b || listed b rest
+
+
+-- Why the device says it cannot run `b`, if it says so.
+unsupportedWhy : Backend -> List ( Backend, String ) -> Maybe String
+unsupportedWhy b pairs =
+    case pairs of
+
+        [] ->
+            Nothing
+
+        ( u, why ) :: rest ->
+            if sameBackend u b then
+                Just why
+
+            else
+                unsupportedWhy b rest
 
 
 noBackendReason : Capabilities -> Offer -> Int -> String
@@ -579,16 +615,16 @@ noBackendReason caps offer need =
 
 reasonFor : Capabilities -> Offer -> Backend -> Maybe String
 reasonFor caps offer b =
-    if List.member b caps.failed then
+    if listed b caps.failed then
         Just (backendText b ++ " failed to load on this device")
 
     else
-        case List.filter (\( u, _ ) -> u == b) caps.unsupported of
+        case unsupportedWhy b caps.unsupported of
 
-            ( _, why ) :: _ ->
+            Just why ->
                 Just (backendText b ++ ": " ++ why)
 
-            [] ->
+            Nothing ->
                 if offer.gpuLayers > 0 && holds b 0 False caps.backends
                     && not (holds b 0 True caps.backends) then
                     Just
