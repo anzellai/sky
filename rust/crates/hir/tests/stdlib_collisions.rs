@@ -47,6 +47,9 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     "value Options",
     "value defaultOptions",
     "value embed",
+    // v0.27.10: `Std.Image.trim` (crop away a uniform margin) shares its name
+    // with `String.trim`; see the v0.27.10 CHANGELOG.
+    "value trim",
 ];
 
 /// Names a module NEW in this release shares with a module that existed

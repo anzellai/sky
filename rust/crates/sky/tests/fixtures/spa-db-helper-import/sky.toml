@@ -1,0 +1,7 @@
+name = "spa-db-helper-import"
+version = "0.1.0"
+entry = "src/Main.sky"
+bin = "app"
+
+[source]
+root = "src"

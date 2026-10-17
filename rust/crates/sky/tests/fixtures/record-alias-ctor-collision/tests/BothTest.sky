@@ -1,0 +1,31 @@
+module BothTest exposing (tests)
+
+import Sky.Core.Prelude exposing (..)
+import A
+import B
+import Sky.Test as Test exposing (Test)
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "A.parse reads its own two-field Reply"
+          (\_ ->
+              case A.parse "{\"relevant\":true,\"answer\":\"yes\"}" of
+
+                  Ok r ->
+                      Test.equal "yes" r.answer
+
+                  Err _ ->
+                      Test.fail "decode failed")
+    , Test.test
+          "B.parse reads its own three-field Reply"
+          (\_ ->
+              case B.parse "{\"text\":\"t\",\"notes\":[\"n\"],\"flag\":true}" of
+
+                  Ok r ->
+                      Test.equal "t" r.text
+
+                  Err _ ->
+                      Test.fail "decode failed")
+    ]

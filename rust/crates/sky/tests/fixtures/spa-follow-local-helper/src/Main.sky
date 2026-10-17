@@ -1,0 +1,90 @@
+module Main exposing (main)
+
+-- `Send` is a server arm that delegates to the helper `send`. Its command is
+-- read through three shapes the split used to give up on, so it fell back to
+-- "any Msg may be the follow-up":
+--   * a `let`-bound command list chosen by an `if` (`ownerAlert`),
+--   * `Cmd.batch (ownerAlert ++ ack)`,
+--   * a `let`-bound local function returning `( model, cmd )` (`refuse`, with
+--     no command, and `remind`, whose command is a perform).
+-- The follow-ups are exactly `Sent` and `Reminded`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Time as Time
+import Std.App as App
+import Std.Ui as Ui
+
+type alias Model =
+    { email : String
+    , owner : Bool
+    , out : String
+    }
+
+type Msg
+    = Send
+    | Sent (Result Error ())
+    | Reminded (Result Error ())
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { email = "a@b.c", owner = True, out = "" }, Cmd.none )
+
+
+send : Model -> ( Model, Cmd Msg )
+send model =
+    let
+        refuse msg = ( { model | out = msg }, Cmd.none )
+        remind =
+            \msg ->
+                ( { model | out = msg }, Cmd.perform (Time.sleep 5) Reminded )
+        ownerAlert =
+            if model.owner then
+                [ Cmd.perform (Time.sleep 10) Sent ]
+
+            else
+                []
+        ack = [ Cmd.perform (Time.sleep 20) Sent ]
+    in
+        if String.isEmpty model.email then
+            refuse "no email"
+
+        else if String.length model.email > 100 then
+            remind "too long"
+
+        else
+            ( { model | out = "sending" }, Cmd.batch (ownerAlert ++ ack) )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Send ->
+            send model
+
+        Sent _ ->
+            ( { model | out = "sent" }, Cmd.none )
+
+        Reminded _ ->
+            ( { model | out = "reminded" }, Cmd.none )
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view =
+                \m ->
+                    Ui.column
+                        []
+                        [ Ui.text ("OUT=" ++ m.out)
+                        , Ui.button
+                              []
+                              { onPress = Just Send, label = Ui.text "send" }
+                        ]
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ())

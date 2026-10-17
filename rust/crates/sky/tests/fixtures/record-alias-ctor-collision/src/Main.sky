@@ -1,0 +1,56 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import A exposing (Reply)
+import B
+import Std.Log exposing (println)
+
+
+okA : Result Error A.Reply -> String
+okA r =
+    case r of
+
+        Ok v ->
+            A.describe v
+
+        Err e ->
+            "A err"
+
+
+okB : Result Error B.Reply -> String
+okB r =
+    case r of
+
+        Ok v ->
+            B.describe v
+
+        Err e ->
+            "B err"
+
+
+main =
+    let
+        lines =
+            [ okA (A.parse "{\"relevant\":true,\"answer\":\"yes\"}")
+            , okB (B.parse "{\"text\":\"t\",\"notes\":[\"n\"],\"flag\":false}")
+            , A.describe (A.make "m")
+            , B.describe (B.make "m")
+            , A.describe (A.partial "p")
+            , B.describe (B.partial "p")
+            , okA (A.codecRoundTrip (A.make "c"))
+            , okB (B.codecRoundTrip (B.make "c"))
+            , A.describe A.defaultReply
+            , B.describe B.defaultReply
+            , A.describe (A.bump (A.make "u"))
+            , B.describe (B.bump (B.make "u"))
+            , String.join ";" (List.map A.describe (A.viaList [ "x", "y" ]))
+            , String.join ";" (List.map B.describe (B.viaList [ "x", "y" ]))
+            , A.describe (A.loose "lo")
+            , B.describe (B.loose "lo")
+            , A.describe (Reply True "main")
+            , B.describe (B.Reply "main" [] True)
+            ]
+    in
+        println (String.join "\n" lines)

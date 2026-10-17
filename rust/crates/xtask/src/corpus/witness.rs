@@ -28,8 +28,8 @@
 //! always the latter.
 
 use super::axes::{
-    Assignment, Axis, Stratum, AS_BINDER, COLLIDER, COLLISION, DICT_KEY, EDGE, EQ_PAIR, ERASURE,
-    IMPORT_SHAPE, INNER, LET_USES, POSITION, QUAL_USE, SHADOW, TASK_CALLEE,
+    Assignment, Axis, Stratum, ALIAS_NAMES, AS_BINDER, COLLIDER, COLLISION, DICT_KEY, EDGE,
+    EQ_PAIR, ERASURE, IMPORT_SHAPE, INNER, LET_USES, POSITION, QUAL_USE, SHADOW, TASK_CALLEE,
 };
 use super::gen;
 use super::runner;
@@ -89,6 +89,11 @@ fn axis_under_test(s: &Stratum) -> (Axis, &'static str) {
         // constructors is what answered wrong, and each pair emits different Go
         // (different constructor values), so the pair axis is witnessed.
         "adt_equality" => (EQ_PAIR, "nullary_same"),
+        // v0.27.10. A second alias with ANOTHER name always worked; sharing the
+        // name is what built the wrong record. The two emit different Go (the
+        // second module's constructor is `Beta_BetaReply` against
+        // `Beta_Reply`), so the axis is witnessed.
+        "alias_ctor_collision" => (ALIAS_NAMES, "distinct"),
         other => panic!("no axis-under-test declared for stratum {other:?}"),
     }
 }

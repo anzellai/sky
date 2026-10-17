@@ -462,7 +462,7 @@ fn a_follow_up_msg_is_never_server_internal() {
         "no follow-up may be encoded as an empty tag:\n{back}"
     );
     assert!(
-        front.contains("tag_ == \"Tracked\"") && front.contains("        Tracked "),
+        front.contains("\"Tracked\" ->") && front.contains("        Tracked "),
         "the client must decode and run `Tracked`:\n{front}"
     );
     // An undecodable follow-up never drops the RPC's own write: the write-set

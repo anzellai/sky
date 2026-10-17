@@ -1135,16 +1135,23 @@ pruned, sent as an empty tag and `Bump`'s whole write was dropped). The backend
 encoder has no empty-tag arm: a constructor the split proved is never a
 follow-up is dropped with the classified `SpaFollowUpOutsideWire` error, and
 the rest of the response still applies. The split reads the follow-up constructors from the command: a
-`Cmd.perform _ Ctor` leaf, through helpers, `let` names, `if` / `case`, and a
-`Cmd.batch` over a list, `xs ++ ys`, `c :: cs` or `List.map` / `List.indexedMap`
-of a lambda or helper (each perform then runs once per element). A follow-up
+`Cmd.perform _ Ctor` leaf, through helpers, `let` names, `let`-bound local
+functions (`refuse msg = ( { model | … }, Cmd.none )`, or `\msg -> …`), `if` /
+`case`, and a `Cmd.batch` over a list, a list chosen by an `if` / `case`, `xs ++
+ys`, `c :: cs` or `List.map` / `List.indexedMap` of a lambda or helper (each
+perform then runs once per element) (v0.27.10: the `if`-chosen list and the
+local functions). A follow-up
 constructor it reads whose argument has no wire codec fails the build, naming
 it. When a command cannot be read (for example `Cmd.batch (List.filterMap …)`),
 every `Msg` constructor may be its follow-up: those with a wire codec cross, and
 those without one are named in a build warning. If one of them occurs at run
 time, the backend drops it and logs the classified error
 `SpaFollowUpOutsideWire` (`Spa_followUpOutsideWire`); the rest of the response
-still applies (R1).
+still applies (R1). The client decoder dispatches on the tag with one flat
+`case`, so it parses for a `Msg` of any size (v0.27.10: it was an `else if`
+chain, which passed the parser's nesting limit at a few hundred constructors).
+Every `.sky` file the split writes is parsed before it is written; one that does
+not parse stops the split with a message naming the file as a generator defect.
 
 A `Std.Native` leaf (a client-only effect) cannot run on the server: the server
 skips it, and the client runs it when the Msg runs, on the model the request is
@@ -1393,6 +1400,20 @@ server function used to be left out of the client whole unless the client
 reached one of its pure functions. Now any type or constructor a client module
 names (`type_occs`, constructor references) keeps a client copy of the module:
 its type declarations and pure defs, never a tainted def.
+
+**A client file keeps every import its code uses (v0.27.10).** A server-only
+stdlib module (`Std.Db`, `Sky.Core.File`, …) stays imported in a client file
+(the entry, a module's client copy, `Shared`) while the finished file uses a
+name the import binds, and is dropped otherwise. The names are its alias, the
+names it spells, the constructors of each `T(..)` and every export of an
+`exposing (..)`, read from the module's exports. A pure helper such as `scope
+session id = Store.and_ [ Store.eq "id" (SqlString id) ]` builds a value, not an
+effect, so it is copied, and its `import Std.Db as Db exposing (SqlValue(..))`
+comes with it. Before, the gate saw only `Db` and `SqlValue`, and the entry and
+`Shared` dropped server-only imports without a gate, so the client failed with
+`Undefined name: SqlString`. The decision stays one of effects: a value of a
+server module's type is not server code, and a def that runs an effect is still
+never copied.
 
 **`Shared` brings the types its copied records name.** A wire record copied
 into `Shared` can name a type of another module (`at : Shape.Point`). The

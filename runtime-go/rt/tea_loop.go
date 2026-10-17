@@ -33,6 +33,16 @@ type teaTopicMsg struct {
 	payload any
 }
 
+// teaEveryMsg is a Sub.every tick on its way to the loop, with the cancel
+// channel of the timer that produced it. A tick can be queued behind the
+// Msg whose update removes its Sub.every; resolve then drops it, so update
+// never sees a Tick after the update that stopped the timer. Sky.Live makes
+// the same check under its session lock (timeEveryDispatch).
+type teaEveryMsg struct {
+	msg    any
+	cancel <-chan struct{}
+}
+
 type teaLoop struct {
 	msgCh    chan any
 	subs     *subManager
@@ -121,6 +131,14 @@ func (l *teaLoop) runCmd(cmd any) {
 // becomes the subscriber's Msg; a payload on a topic nobody subscribes to
 // is dropped (ok=false), exactly as a Sky.Live broker with no subscriber.
 func (l *teaLoop) resolve(msg any) (any, bool) {
+	if em, isEvery := msg.(teaEveryMsg); isEvery {
+		select {
+		case <-em.cancel:
+			return nil, false
+		default:
+		}
+		return em.msg, em.msg != nil
+	}
 	tm, isTopic := msg.(teaTopicMsg)
 	if !isTopic {
 		return msg, msg != nil

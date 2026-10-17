@@ -103,8 +103,14 @@ func resizeBytes(in, outFormat string, quality, maxW, maxH int) any {
 		draw.CatmullRom.Scale(rgba, rgba.Bounds(), src, b, draw.Over, nil)
 		dst = rgba
 	}
-	// Resolve the output encoder. "preserve" maps the source format to its own
-	// encoder (gif has no encoder here, so it becomes png).
+	return encodeImage("image.resize", dst, outFormat, srcFormat, quality)
+}
+
+// encodeImage writes `dst` in the chosen output format and wraps the bytes as
+// the kernel's Result. "preserve" maps the source format to its own encoder
+// (gif has no encoder here, so it becomes png); a JPEG quality outside 1..100
+// uses defaultJpegQuality. `op` names the Sky entry point in the error.
+func encodeImage(op string, dst image.Image, outFormat, srcFormat string, quality int) any {
 	enc := outFormat
 	if enc == "" || enc == "preserve" {
 		if srcFormat == "jpeg" {
@@ -121,14 +127,14 @@ func resizeBytes(in, outFormat string, quality, maxW, maxH int) any {
 	switch enc {
 	case "jpeg":
 		if err := jpeg.Encode(&out, dst, &jpeg.Options{Quality: q}); err != nil {
-			return Err[any, any](ErrFfi("image.resize: jpeg encode: " + err.Error()))
+			return Err[any, any](ErrFfi(op + ": jpeg encode: " + err.Error()))
 		}
 	case "png":
 		if err := png.Encode(&out, dst); err != nil {
-			return Err[any, any](ErrFfi("image.resize: png encode: " + err.Error()))
+			return Err[any, any](ErrFfi(op + ": png encode: " + err.Error()))
 		}
 	default:
-		return Err[any, any](ErrInvalidInput("image.resize: unsupported output format " + enc))
+		return Err[any, any](ErrInvalidInput(op + ": unsupported output format " + enc))
 	}
 	return Ok[any, any](out.String())
 }

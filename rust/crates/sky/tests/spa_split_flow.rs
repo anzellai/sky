@@ -8188,7 +8188,7 @@ fn rpc_order_fixture_sends_async_rpcs_whose_results_run_in_the_client() {
     assert!(
         front.contains("Spa.rpcHold addToBasketReqCodec")
             && front.contains("Spa.rpcHold signInReqCodec")
-            && front.contains("tag_ == \"Tracked\""),
+            && front.contains("\"Tracked\" ->"),
         "the basket steps hold and `Tracked` decodes in the client:\n{front}"
     );
     assert!(
@@ -11802,4 +11802,147 @@ fn std_app_sibling_update_two_space_layout_runs_async_and_builds() {
         logic.contains("\npickSpaClient_ spaRpc_ n model ="),
         "the helper `pick` must have a client copy:\n{logic}"
     );
+}
+
+/// A server arm's command is read through the shapes the split used to give up
+/// on: a `let`-bound command list chosen by an `if`, `Cmd.batch (xs ++ ys)`, and
+/// a `let`-bound local function returning `( model, cmd )` (`refuse msg = …`,
+/// and `remind = \msg -> …` whose command is a perform). Before, the arm fell
+/// back to "any `Msg` may be its follow-up", so `Send` itself got a follow-up
+/// codec, and the perform inside the local function was never seen. Now the
+/// follow-ups are read exactly: `Sent` and `Reminded`, and nothing else.
+#[test]
+fn a_command_built_by_local_helpers_and_an_if_list_is_read_exactly() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("spa-follow-local-helper", &[]);
+    assert!(out.status.success(), "the app must build:\n{log}");
+    assert!(
+        !log.contains("could not be read"),
+        "every server command is readable here:\n{log}"
+    );
+    let front = split_file(&proj, "frontend/src/Main.sky");
+    assert!(
+        front.contains("\"Sent\" ->") && front.contains("\"Reminded\" ->"),
+        "both follow-ups decode in the client:\n{front}"
+    );
+    assert!(
+        !front.contains("\"Send\" ->"),
+        "`Send` is never a follow-up, so it gets no follow-up codec:\n{front}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A server arm whose command cannot be read makes every `Msg` constructor a
+/// possible follow-up, so the client's follow-up decoder covers the whole
+/// union. It was an `else if` chain, one nesting level per constructor, and a
+/// `Msg` of a few hundred constructors passed the parser's nesting limit: the
+/// frontend failed with hundreds of parse errors in `spaDecodeFollow_`
+/// (`nested too deeply`, then `expected …`). Now the decoder is one flat `case`
+/// and the app builds. One constructor carries a function, so it has no codec
+/// and the split warns that it does not cross.
+#[test]
+fn an_unreadable_command_over_a_large_msg_builds() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let n = 300;
+    let ctors: String = (0..n).map(|i| format!("    | Pick{i} Int\n")).collect();
+    let arms: String = (0..n)
+        .map(|i| {
+            format!(
+                "        Pick{i} k ->\n            ( {{ model | out = String.fromInt k }}, Cmd.none )\n\n"
+            )
+        })
+        .collect();
+    let main_sky = format!(
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.String as String\n\
+         import Sky.Core.Time as Time\n\
+         import Std.App as App\n\
+         import Std.Ui as Ui\n\n\n\
+         type alias Model =\n    {{ out : String }}\n\n\n\
+         type Msg\n    = Fetch\n    | Fetched (Result Error ())\n    | Hold (Int -> Int)\n{ctors}\n\n\
+         init : () -> ( Model, Cmd Msg )\n\
+         init _ =\n    ( {{ out = \"\" }}, Cmd.none )\n\n\n\
+         -- A helper picks the follow-up, so the split cannot read it.\n\
+         after : Result Error () -> Msg\n\
+         after r =\n    Fetched r\n\n\n\
+         update : Msg -> Model -> ( Model, Cmd Msg )\n\
+         update msg model =\n    case msg of\n\
+         \x20       Fetch ->\n            ( model, Cmd.perform (Time.sleep 10) after )\n\n\
+         \x20       Fetched _ ->\n            ( {{ model | out = \"fetched\" }}, Cmd.none )\n\n\
+         \x20       Hold f ->\n            ( {{ model | out = String.fromInt (f 1) }}, Cmd.none )\n\n\
+         {arms}\n\
+         main =\n    App.run\n        (App.app\n            {{ init = init\n            , update = update\n            , view =\n                \\m ->\n                    Ui.column []\n                        [ Ui.text (\"OUT=\" ++ m.out)\n                        , Ui.button [] {{ onPress = Just Fetch, label = Ui.text \"fetch\" }}\n                        ]\n            , subscriptions = \\_ -> Sub.none\n            }}\n            |> App.withNotFound ()\n        )\n"
+    );
+    let proj = scratch_std_app("followlarge", &main_sky);
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.status.success() && !log.contains("nested too deeply"),
+        "a large Msg with an unreadable server command must build:\n{}",
+        &log[log.len().saturating_sub(4000)..]
+    );
+    assert!(
+        log.contains("could not be read") && log.contains("`Hold`"),
+        "the split still says which command it could not read, and that \
+         `Hold` (no codec) does not cross:\n{}",
+        &log[log.len().saturating_sub(4000)..]
+    );
+    let front = split_file(&proj, "frontend/src/Main.sky");
+    assert!(
+        front.contains(&format!("\"Pick{}\" ->", n - 1)),
+        "the fallback decoder covers every Msg with a codec"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A pure helper in a server module keeps the import it uses in its client
+/// copy. `Leads` opens the database (server-only), and its pure `scope` builds
+/// a `Store.Cond` with `SqlString`, which `import Std.Db as Db exposing
+/// (SqlValue(..))` brings in. The client copy of `Leads` used to drop that
+/// import (its usage gate saw `Db` and `SqlValue`, never the constructors), and
+/// the entry dropped every server-only import outright: the frontend failed
+/// with `Undefined name: SqlString` in both. Now each copy keeps an import
+/// while a name it binds is used, and still drops the server code.
+#[test]
+fn a_pure_helper_keeps_the_server_module_import_its_constructor_needs() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("spa-db-helper-import", &[]);
+    assert!(
+        out.status.success() && !log.contains("Undefined name"),
+        "the app must build:\n{log}"
+    );
+    let leads = split_file(&proj, "frontend/src/Leads.sky");
+    assert!(
+        leads.contains("import Std.Db as Db exposing (SqlValue(..))")
+            && leads.contains("scope session id ="),
+        "the client copy keeps `scope` and the import it uses:\n{leads}"
+    );
+    assert!(
+        !leads.contains("Db.open") && !leads.contains("countFor session id ="),
+        "the server code stays out of the client:\n{leads}"
+    );
+    let main = split_file(&proj, "frontend/src/Main.sky");
+    assert!(
+        main.contains("import Std.Db as Db exposing (SqlValue(..))"),
+        "the client entry keeps the import its view uses:\n{main}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
 }

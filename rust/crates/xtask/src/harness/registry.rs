@@ -533,9 +533,10 @@ pub static GATES: &[Gate] = &[
                 // (+2 cases, 691 → 693), the v0.28.0 Std.Ai.Train surface
                 // (+2 cases, 693 → 695), the v0.28.0 Std.Ai.Device surface
                 // (+2 cases, 695 → 697) and the v0.28.0 Std.Ai.Serve and
-                // Std.Ai.Cloud.Google surfaces (+3 cases, 697 → 700).
-                from: "n_min = 700",
-                to: "n_min = 698",
+                // Std.Ai.Cloud.Google surfaces (+3 cases, 697 → 700), and the
+                // v0.27.10 alias_ctor_collision stratum (+4 cases, 700 → 704).
+                from: "n_min = 704",
+                to: "n_min = 702",
             },
         }]),
         body: bodies::corpus_manifest,
@@ -1539,8 +1540,8 @@ pub static GATES: &[Gate] = &[
                           red",
             kind: MutationKind::ReplaceOnce {
                 path: "runtime-go/rt/live.go",
-                from: "\tsess.mu.Lock()\n\tdefer sess.mu.Unlock()\n\tmsg := toMsg",
-                to: "\tsess.mu.Lock()\n\tmsg := toMsg",
+                from: "\tsess.mu.Lock()\n\tdefer sess.mu.Unlock()\n\t// The timer is stopped under sess.mu",
+                to: "\tsess.mu.Lock()\n\t// The timer is stopped under sess.mu",
             },
         }]),
         body: bodies::time_every_panic_leaves_the_mutex_acquirable,

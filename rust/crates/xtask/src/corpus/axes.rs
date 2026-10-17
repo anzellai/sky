@@ -15,6 +15,7 @@
 //! | `collision` | `goty.rs` record-fieldset collision | same field NAMES, different field TYPES |
 //! | `annotation` | #166's annotated-vs-unannotated split | whether the signature is written |
 //! | `row` | #171 — closed vs open (row-polymorphic) records | record openness |
+//! | `alias_names` / `ctor_use` | v0.27.10 — two modules' `type alias Reply`, the wrong constructor | whether two record aliases share a name, and how the constructor is used |
 //!
 //! A **stratum** is a named subset of the space that gets FULL cross, because
 //! history says that triple produces bugs. Everything else is covered by a
@@ -331,6 +332,18 @@ pub const EQ_CARRIER: Axis = Axis::new(
     &["bare", "in_record", "in_list", "in_maybe", "in_tuple"],
 );
 
+/// **Whether two modules' record aliases share a name** (v0.27.10). Two
+/// modules each declaring `type alias Reply` (different fields) type-checked,
+/// but every use of `Reply` as a constructor in one module built the OTHER
+/// module's record: the lowering found a record-alias constructor by its bare
+/// name, in a last-writer-wins table. `distinct` (the second alias has another
+/// name) is the shape that always worked.
+pub const ALIAS_NAMES: Axis = Axis::new("alias_names", &["distinct", "same"]);
+
+/// **How the record-alias constructor is used** (v0.27.10): applied in full,
+/// or passed as a value (`Decode.map2 Reply …`, the reported shape).
+pub const CTOR_USE: Axis = Axis::new("ctor_use", &["applied", "value"]);
+
 /// **How a Task-returning function reaches a `Task.andThen` chain.** A
 /// parameter `f : Int -> Task Error ()` called in a middle link whose result
 /// the next link ignores (`\_ -> …`) was typed `SkyTask[E, any]` by inference
@@ -578,6 +591,15 @@ pub const STRATA: &[Stratum] = &[
         coordinate: Some("v0.27.7: `A == B` True for two nullary ctors of a sealed type"),
         isolated: false,
     },
+    // ---- v0.27.10 -----------------------------------------------------------
+    Stratum {
+        name: "alias_ctor_collision",
+        axes: &[ALIAS_NAMES, CTOR_USE],
+        coordinate: Some("v0.27.10: same-named record-alias constructors across modules"),
+        // Two modules declare the colliding name: the module graph IS the
+        // subject (v2 §3.2 family 3), so it cannot share a compilation unit.
+        isolated: true,
+    },
 ];
 
 /// Whether a point in a stratum's cross is a real case.
@@ -713,6 +735,13 @@ pub fn pinned_coordinate(stratum: &str) -> Option<Assignment> {
                 .with(EQ_PAIR, "nullary_diff")
                 .with(EQ_CARRIER, "bare")
                 .with(UNION_REP, "sealed"),
+        ),
+        // v0.27.10: the reported reproduction, `Decode.mapN Reply` in two
+        // modules that each declare `type alias Reply`.
+        "alias_ctor_collision" => Some(
+            Assignment::new()
+                .with(ALIAS_NAMES, "same")
+                .with(CTOR_USE, "value"),
         ),
         _ => None,
     }

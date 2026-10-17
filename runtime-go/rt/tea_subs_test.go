@@ -23,8 +23,8 @@ func TestSubManager_SlowTimerSurvivesFrequentUpdates(t *testing.T) {
 	slow, fast := 0, 0
 	for {
 		select {
-		case msg := <-msgCh:
-			switch msg {
+		case raw := <-msgCh:
+			switch everyPayload(raw) {
 			case "fast":
 				fast++
 			case "slow":
@@ -58,8 +58,8 @@ func TestSubManager_SameIntervalBothDispatchAndRemovalStops(t *testing.T) {
 collect:
 	for {
 		select {
-		case msg := <-msgCh:
-			seen[msg]++
+		case raw := <-msgCh:
+			seen[everyPayload(raw)]++
 			if seen["a"] >= 2 && seen["b"] >= 2 {
 				break collect
 			}
@@ -80,6 +80,33 @@ collect:
 	case msg := <-msgCh:
 		t.Fatalf("stopped ticker still dispatched %v", msg)
 	case <-time.After(120 * time.Millisecond):
+	}
+}
+
+// everyPayload unwraps a queued Sub.every tick to its Msg.
+func everyPayload(raw any) any {
+	if em, ok := raw.(teaEveryMsg); ok {
+		return em.msg
+	}
+	return raw
+}
+
+// A tick queued behind the update that removes its Sub.every never reaches
+// update: the loop resolves it against its timer's cancel when it dequeues
+// it. Before, the ticker sent the bare Msg, and a Tick sitting in the
+// channel behind a Stop was applied after the Stop.
+func TestTeaLoop_TickQueuedBehindStopIsDropped(t *testing.T) {
+	msgCh := make(chan any, 8)
+	loop := newTeaLoop(msgCh, nil, nil, nil)
+	defer loop.subs.stopAll()
+	cancel := make(chan struct{})
+	queued := teaEveryMsg{msg: "tick", cancel: cancel}
+	if got, ok := loop.resolve(queued); !ok || got != "tick" {
+		t.Fatalf("a tick of a running timer must resolve to its Msg, got %v %v", got, ok)
+	}
+	close(cancel) // the update ahead of it in the queue stopped the timer
+	if got, ok := loop.resolve(queued); ok {
+		t.Fatalf("a tick of a stopped timer reached update: %v", got)
 	}
 }
 

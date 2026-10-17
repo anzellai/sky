@@ -94,7 +94,7 @@ pub const REJECT_EXPECTED: u64 = ty::reject_corpus::EXPECTED_CORPUS_FILES as u64
 /// broken version compiled, type-checked and ran. Seven pin the fix (tag +
 /// display, both halves), five pin what must NOT change outside a paragraph,
 /// since keying on parent context risks flattening every layout in every app.
-pub const CONFORMANCE_EXPECTED: u64 = 1507; // +19 CodecConformance + SkyCoreErrorCoverage (the `Domain` error detail: wire round-trip, forward-compatible decode, Error.domain / failureOf / isRetryable / retryAfter) — v0.28.0; +4 Codec (Codec.inline: flat-record JSON both ways, round-trip, a missing embedded field) +7 Codec (a repeated JSON key fails to decode, names the key, across Codec.inline, encoding unchanged) — build-speed branch; +1 StdDbLifecycle (a SQL NULL column reads as "" through getField, getString and Dict.get) — v0.27.2; +14 Ordering (the derived order of comparable values, C-11) +2 ProcessWatch +4 SyncFile (S1) +2 JwtAuth (verifyToken claims decoded with Json.Decode, S3d) — v0.27.0 final batch; +3 SyncFile (a nullary union printed by name at the top level and nested, a nested pattern over a runtime-built enum ordinal) — v0.27.0 named-int enums; +29 SyncFile (Sky.Core.File stat / lstat / realPath / readLink / chmod / permissions / resolveWithin, Std.Sync Ref / Mutex / Queue, the Sky-syntax toString printer) — v0.27.0 downstream round 3; +14 LanguageShapes (`as` over a nested ctor pattern on the ADT bag, a Task-returning parameter / record field in a free Task slot, let-polymorphism, Module.value.field) — v0.27.0 downstream round 3; +6 CoreHelpers (Result.fromMaybe / Maybe.toResult, kernel path) +4 Json (the same, imported Sky.Core.Result / Sky.Core.Maybe) — v0.27.0 downstream request; +3 Native (Native.scanCode off-client is Unavailable, every CodeFormat, the message) — v0.27.0 native scanner; +9 Json (Decode.decodeValue, the documented Decode.value key order, one document per decodeString) +37 Encoding (RFC 4648 section 10 base32 / base32hex vectors, unpadded form, strict-decode negatives) +5 Noise (the BLAKE2s suite, suite mismatch, protocolName) — v0.27.0 downstream requests; +5 CryptoPrimitives (explicit-nonce ChaCha20-Poly1305 RFC 8439 2.8.2 and XChaCha20-Poly1305 draft A.3.1 vectors, determinism, negatives) — v0.27.0 judge fix; +3 TaskLoop (andThen / onError recursion at two million steps, a 100,000-task sequence) — v0.27.0 phase 7 Task trampoline; +12 UiTextWrap +19 UiCanvas (Std.Ui.text span wrap, Std.Ui.Canvas SVG, Std.Ui.Terminal payloads) — v0.27.0 phase 6C; +10 Native (secure store, biometrics, Std.Bundle builders off-client) — v0.27.0 phase 6B; +24 ProcessWatch — v0.27.0 phase 5B streaming processes and Std.Watch; +25 CryptoPrimitives +11 Noise +10 Cpace +12 Qr — v0.27.0 phase 5A crypto/QR modules; +15 Auth +16 Db +11 Db.Store lifecycle — B1 authdb coverage; +19 Codec.error/Codec.result wire round-trips — v0.24.0 Sky.Spa error/result codecs; +7 TaskLoop (Task.loop/forever) +12 CoreHelpers (Result.toMaybe, Sky.Core.Tuple) +10 Json (Decode.value, Encode.raw, imported Result.toMaybe) — v0.27.0
+pub const CONFORMANCE_EXPECTED: u64 = 1519; // +19 CodecConformance + SkyCoreErrorCoverage (the `Domain` error detail: wire round-trip, forward-compatible decode, Error.domain / failureOf / isRetryable / retryAfter) — v0.28.0; +12 ImageEdit (Std.Image trim, crop, toAlpha, whiteToAlpha: sizes, clamping, padding, the Rgb key, InvalidInput on all-margin, a negative size, a channel above 255 and bytes that are not an image) — v0.27.10; +4 Codec (Codec.inline: flat-record JSON both ways, round-trip, a missing embedded field) +7 Codec (a repeated JSON key fails to decode, names the key, across Codec.inline, encoding unchanged) — build-speed branch; +1 StdDbLifecycle (a SQL NULL column reads as "" through getField, getString and Dict.get) — v0.27.2; +14 Ordering (the derived order of comparable values, C-11) +2 ProcessWatch +4 SyncFile (S1) +2 JwtAuth (verifyToken claims decoded with Json.Decode, S3d) — v0.27.0 final batch; +3 SyncFile (a nullary union printed by name at the top level and nested, a nested pattern over a runtime-built enum ordinal) — v0.27.0 named-int enums; +29 SyncFile (Sky.Core.File stat / lstat / realPath / readLink / chmod / permissions / resolveWithin, Std.Sync Ref / Mutex / Queue, the Sky-syntax toString printer) — v0.27.0 downstream round 3; +14 LanguageShapes (`as` over a nested ctor pattern on the ADT bag, a Task-returning parameter / record field in a free Task slot, let-polymorphism, Module.value.field) — v0.27.0 downstream round 3; +6 CoreHelpers (Result.fromMaybe / Maybe.toResult, kernel path) +4 Json (the same, imported Sky.Core.Result / Sky.Core.Maybe) — v0.27.0 downstream request; +3 Native (Native.scanCode off-client is Unavailable, every CodeFormat, the message) — v0.27.0 native scanner; +9 Json (Decode.decodeValue, the documented Decode.value key order, one document per decodeString) +37 Encoding (RFC 4648 section 10 base32 / base32hex vectors, unpadded form, strict-decode negatives) +5 Noise (the BLAKE2s suite, suite mismatch, protocolName) — v0.27.0 downstream requests; +5 CryptoPrimitives (explicit-nonce ChaCha20-Poly1305 RFC 8439 2.8.2 and XChaCha20-Poly1305 draft A.3.1 vectors, determinism, negatives) — v0.27.0 judge fix; +3 TaskLoop (andThen / onError recursion at two million steps, a 100,000-task sequence) — v0.27.0 phase 7 Task trampoline; +12 UiTextWrap +19 UiCanvas (Std.Ui.text span wrap, Std.Ui.Canvas SVG, Std.Ui.Terminal payloads) — v0.27.0 phase 6C; +10 Native (secure store, biometrics, Std.Bundle builders off-client) — v0.27.0 phase 6B; +24 ProcessWatch — v0.27.0 phase 5B streaming processes and Std.Watch; +25 CryptoPrimitives +11 Noise +10 Cpace +12 Qr — v0.27.0 phase 5A crypto/QR modules; +15 Auth +16 Db +11 Db.Store lifecycle — B1 authdb coverage; +19 Codec.error/Codec.result wire round-trips — v0.24.0 Sky.Spa error/result codecs; +7 TaskLoop (Task.loop/forever) +12 CoreHelpers (Result.toMaybe, Sky.Core.Tuple) +10 Json (Decode.value, Encode.raw, imported Result.toMaybe) — v0.27.0
 /// `verify-cli.sh` entries that actually assert something. The 14th entry
 /// (`11-fyne-stopwatch`) is a declared skip and is deliberately NOT counted:
 /// v2's "SKIP counted as pass" defect is closed by making skips invisible to
@@ -816,7 +816,15 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// `aiserve` surface, nominal, and the `aigooglecloud` surface, nominal and
 /// failure), measured by `xtask corpus --emit-manifest` and the
 /// `corpus-manifest` gate.
-pub const CORPUS_EXPECTED: u64 = 700;
+
+///
+/// **680 since the v0.27.10 `alias_ctor_collision` stratum** (+4, Family L:
+/// 2 `alias_names` x 2 `ctor_use`). Two modules that each declare `type alias
+/// Reply` built each other's record; see `corpus/gen.rs`.
+
+/// **704 at the merge of v0.27.10 into the v0.28.0 line** (700 + the 4
+/// `alias_ctor_collision` cases).
+pub const CORPUS_EXPECTED: u64 = 704;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -885,7 +893,13 @@ pub const CORPUS_EXPECTED: u64 = 700;
 /// **554 at the merge of v0.28.0 phases 4 and 5** (+3, the `aiserve` and
 /// `aigooglecloud` surfaces, built and run; phase 4's `xtask corpus --run`
 /// built and ran all of them green).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 554;
+
+///
+/// **534 since the v0.27.10 `alias_ctor_collision` stratum** (+4, all built
+/// and run; the same +4 as `CORPUS_EXPECTED`).
+
+/// **558 at the merge of v0.27.10 into the v0.28.0 line** (554 + 4).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 558;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
