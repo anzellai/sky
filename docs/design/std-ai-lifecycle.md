@@ -1473,7 +1473,7 @@ Where the shipped phase differs from this design and from its plan:
    30-minute lease), `resume-<a>`, `collect`, `convert`, `merge` and
    `register`. Validation is `Train.check`, run by `start` and again in the
    workflow. Progress goes to the run directory, the console and `Trace`
-   (`Trace.progress`, one row per step), and the run's end records one
+   (`Trace.trainingSteps`, one row per step), and the run's end records one
    `Training` cost row.
 9. **Progress states** come from the run directory: `Provisioning` before the
    first trainer starts, `Converting` after the trainer's `done` line, and

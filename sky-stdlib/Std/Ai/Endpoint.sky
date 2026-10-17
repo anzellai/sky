@@ -473,7 +473,7 @@ streamOpenMeasuredRaw =
 
 {-| The slot as a `Provider`. It is pure: the first call resolves the slot and
 the process keeps the result, so a top-level binding is enough. A measured
-call (`Provider.measure`, `Std.Ai.Trace.chat`) reports the slot, its tier,
+call (`Provider.measure`, `Std.Ai.Trace.tracedChat`) reports the slot, its tier,
 the adapter, the queue wait and the latency. -}
 provider : Endpoint -> Provider
 provider (Endpoint c) =

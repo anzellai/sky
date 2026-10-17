@@ -505,10 +505,10 @@ tracedRuns =
                                                                      b
                                                                )
                                                              ))
-                                                         (Trace.rows
+                                                         (Trace.runRows
                                                              db
                                                              first.traceRun)
-                                                         (Trace.rows
+                                                         (Trace.runRows
                                                              db
                                                              second.traceRun))))
         |> Task.run

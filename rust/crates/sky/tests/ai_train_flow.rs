@@ -173,7 +173,7 @@ fn the_train_example_trains_registers_and_serves_offline() {
         out.status.success(),
         "the example's suite must pass offline:\n{report}"
     );
-    assert!(report.contains("6 passed, 0 failed"), "{report}");
+    assert!(report.contains("7 passed, 0 failed"), "{report}");
     // Nothing was installed or fetched: no toolchain, no python, no model.
     for d in [
         "toolchains",

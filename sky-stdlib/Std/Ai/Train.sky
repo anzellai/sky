@@ -2738,12 +2738,12 @@ trainOn ctx job backend =
 -- row is keyed (the step; "cost"), so a replayed step writes nothing twice.
 -- The progress in a run's protocol lines: one entry per step, with the
 -- checkpoint written at that step.
-traceProgressOf : List String -> List Trace.Progress
+traceProgressOf : List String -> List Trace.TrainingStep
 traceProgressOf lines =
     List.foldl addProgressLine [] lines
 
 
-addProgressLine : String -> List Trace.Progress -> List Trace.Progress
+addProgressLine : String -> List Trace.TrainingStep -> List Trace.TrainingStep
 addProgressLine line acc =
     case decodeEvent line of
 
@@ -2792,7 +2792,7 @@ finite x =
         Just x
 
 
-upsertStep : Int -> (Maybe Trace.Progress -> Trace.Progress) -> List Trace.Progress -> List Trace.Progress
+upsertStep : Int -> (Maybe Trace.TrainingStep -> Trace.TrainingStep) -> List Trace.TrainingStep -> List Trace.TrainingStep
 upsertStep step make acc =
     case acc of
 
@@ -2822,7 +2822,7 @@ traceLines ctx job lines =
         withTraceTables
             db
             (traceProgressOf lines
-                |> List.map (Trace.recordProgress db (runId job))
+                |> List.map (Trace.recordTrainingStep db (runId job))
                 |> Task.sequence
                 |> Task.map (\_ -> ()))
 

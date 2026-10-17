@@ -863,7 +863,7 @@ whole call =
 
 
 {-| `chatWith`, measured: the result (a failure is a value here, not a failed
-Task) and what the call did. `Std.Ai.Trace.chat` records both.
+Task) and what the call did. `Std.Ai.Trace.tracedChat` records both.
 
     Provider.measure Provider.defaultOptions assistant messages
         |> Task.map (\m -> m.facts.latencyMs)

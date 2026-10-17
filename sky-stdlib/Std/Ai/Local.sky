@@ -498,7 +498,7 @@ streamOpenMeasuredRaw =
 
 {-| The engine as a `Provider`. A call to an engine that was unloaded for
 being idle starts it again. A measured call (`Provider.measure`,
-`Std.Ai.Trace.chat`) reports the tier `local`, the start time, the latency
+`Std.Ai.Trace.tracedChat`) reports the tier `local`, the start time, the latency
 and the engine's own tokens per second. -}
 provider : Engine -> Provider
 provider (Engine id) =

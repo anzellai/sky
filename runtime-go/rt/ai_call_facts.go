@@ -4,7 +4,7 @@ package rt
 
 // ai_call_facts.go — what one measured model call did, for Std.Ai.Trace.
 //
-// A measured call (Provider.measure, Trace.chat) asks for a token, calls one
+// A measured call (Provider.measure, Trace.tracedChat) asks for a token, calls one
 // of the measured kernels with it, and reads the facts back with
 // Ai_callFacts once the answer (or the failure) is in. The facts travel by
 // token, never inside the response body or the failure: the device bridge

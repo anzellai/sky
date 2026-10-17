@@ -31,7 +31,7 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   `remote`), the adapter, the queue wait, the start time (engine start,
   adapter resolution), the latency, the time to the first token, the tokens
   per second, a local engine's draft acceptance and the outcome (`ok` or the
-  `Failure` code). A failed call is a row too. `Trace.chat` / `chatStream`
+  `Failure` code). A failed call is a row too. `Trace.tracedChat` / `tracedChatStream`
   measure and record a call; `Provider.measure`, `measureStream` and
   `measureTools` give the facts without recording. A slot or a local engine
   measures in the runtime and hands the facts over by a per-call token, never
@@ -42,9 +42,9 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   twice. An `Eval` run records its candidate calls (`Evaluation`) and its judge
   calls (`Judge`, priced by the new `Eval.withJudgePriceBook`) under
   `Report.traceRun`, with the gate's p95 latency unchanged. A `Train` run
-  records each step in `Trace.progress` and one `Training` cost row when it
+  records each step in `Trace.trainingSteps` and one `Training` cost row when it
   ends, finished or failed (a Vertex run's measured spend; a local run
-  unpriced). `Trace.summary` and `Trace.costs` total a run and the whole
+  unpriced). `Trace.runSummary` and `Trace.costs` total a run and the whole
   ledger per currency and kind. `setup` migrates an existing table in place
   through the migration ledger (`_sky_ai_trace_*`). See `docs/ai/trace.md`.
 - **A local engine can run a draft model and keep several adapters loaded.**
@@ -661,7 +661,7 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   added every row's amount whatever its currency, so a run priced in USD and
   in EUR gave one wrong number, and it skipped a stored cost that was not a
   decimal. It now fails with `InvalidInput` in both cases, and adds priced
-  rows only (an unpriced row has no cost, and `Trace.summary` counts it).
+  rows only (an unpriced row has no cost, and `Trace.runSummary` counts it).
 - **The AI runtime no longer has a raw panic for a failed randomness read.**
   `aiRandomHex` panicked when `crypto/rand` failed. It now returns a typed
   `EngineFailed`, and each caller (an engine key, a registry id, a temporary
@@ -1139,7 +1139,7 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   `SKY_AI_FETCH=maybe`) used to run with the default. It now refuses to start,
   naming the variable and the form it expects. Fix or unset the variable.
 - **`Trace.totalCost` fails on a run priced in two currencies (loud).** Read
-  `Trace.summary` for the total per currency.
+  `Trace.runSummary` for the total per currency.
 - **`sky ai promote` compares against the alias's version (loud).** A version
   whose attached report regresses against the report of the same suite on
   the version the alias serves is refused with `GateFailed` (exit 1), where it

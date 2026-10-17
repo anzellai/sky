@@ -19001,10 +19001,10 @@
         "Std.Ai.Trace": {
           "count": 4,
           "symbols": [
-            "Entry",
+            "Ledger",
             "Trace",
-            "chatStream",
-            "recordToolCall"
+            "recordToolCall",
+            "tracedChatStream"
           ]
         },
         "Std.Ai.Train": {
@@ -20346,10 +20346,10 @@
         "Std.Ai.Trace": {
           "count": 4,
           "symbols": [
-            "Entry",
+            "Ledger",
             "Trace",
-            "chatStream",
-            "recordToolCall"
+            "recordToolCall",
+            "tracedChatStream"
           ]
         },
         "Std.Ai.Train": {

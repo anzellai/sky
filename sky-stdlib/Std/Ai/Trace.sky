@@ -6,24 +6,24 @@ module Std.Ai.Trace exposing
     , totalCost
     , spanCount
     , Kind(..)
-    , Entry
-    , entry
+    , Ledger
+    , ledger
     , priced
-    , chat
-    , chatStream
+    , tracedChat
+    , tracedChatStream
     , recordCall
     , recordToolCall
     , recordCost
     , recordUnpriced
     , Row
-    , rows
+    , runRows
     , Summary
-    , summary
+    , runSummary
     , CostLine
     , costs
-    , Progress
-    , recordProgress
-    , progress
+    , TrainingStep
+    , recordTrainingStep
+    , trainingSteps
     )
 
 {-| `Std.Ai.Trace` — the trajectory and cost ledger of the whole AI lifecycle.
@@ -37,7 +37,7 @@ record their own rows (`Training`, `Evaluation`, `Judge`), so the ledger
 covers the lifecycle in exact money, and training progress (step, loss,
 throughput, checkpoint) is kept beside it.
 
-    Trace.chat db (Trace.entry "chat-42" |> Trace.priced book) Provider.defaultOptions assistant messages
+    Trace.tracedChat db (Trace.ledger "chat-42" |> Trace.priced book) Provider.defaultOptions assistant messages
 
     Trace.totalCost db "chat-42"   -- the run's cost, summed exactly
     Trace.costs db                 -- the whole ledger by kind and currency
@@ -199,7 +199,7 @@ kindFromText s =
 the row idempotent: a second row with the same run and key is not written,
 so a durable step that records it is safe to replay. `book` prices the row
 (`Nothing`: unpriced). -}
-type alias Entry =
+type alias Ledger =
     { runId : String
     , key : String
     , kind : Kind
@@ -207,14 +207,14 @@ type alias Entry =
     }
 
 
-{-| A model-call entry for a run: no key, no price book. -}
-entry : String -> Entry
-entry runId =
+{-| A model-call ledger for a run: no key, no price book. -}
+ledger : String -> Ledger
+ledger runId =
     { runId = runId, key = "", kind = Call, book = Nothing }
 
 
-{-| Price the entry's rows with a price book. -}
-priced : Provider.PriceBook -> Entry -> Entry
+{-| Price the ledger's rows with a price book. -}
+priced : Provider.PriceBook -> Ledger -> Ledger
 priced book e =
     { e | book = Just book }
 
@@ -232,27 +232,27 @@ type alias RowIn =
 -- ── Recording calls ─────────────────────────────────────────────────
 {-| Send a chat, measured, record it, and return its answer. A failed call is
 recorded with its outcome, then the Task fails with its error. -}
-chat : Db -> Entry -> Provider.Options -> Provider.Provider -> List Provider.Message -> Task Error Provider.ChatResponse
-chat db e opts p messages =
+tracedChat : Db -> Ledger -> Provider.Options -> Provider.Provider -> List Provider.Message -> Task Error Provider.ChatResponse
+tracedChat db e opts p messages =
     Provider.measure opts p messages |> Task.andThen (recordThenAnswer db e)
 
 
 {-| `chat`, with each piece of the answer handed to `onPiece` as it is
 written. The row has the time to the first token. -}
-chatStream : Db -> Entry -> Provider.Options -> Provider.Provider -> List Provider.Message -> (String -> Task Error ()) -> Task Error Provider.ChatResponse
-chatStream db e opts p messages onPiece =
+tracedChatStream : Db -> Ledger -> Provider.Options -> Provider.Provider -> List Provider.Message -> (String -> Task Error ()) -> Task Error Provider.ChatResponse
+tracedChatStream db e opts p messages onPiece =
     Provider.measureStream opts p messages onPiece
         |> Task.andThen (recordThenAnswer db e)
 
 
-recordThenAnswer : Db -> Entry -> Provider.Measured Provider.ChatResponse -> Task Error Provider.ChatResponse
+recordThenAnswer : Db -> Ledger -> Provider.Measured Provider.ChatResponse -> Task Error Provider.ChatResponse
 recordThenAnswer db e m =
     recordCall db e m |> Task.andThen (\_ -> Task.fromResult m.result)
 
 
 {-| Record a measured chat call. A failed call is a row with its outcome and
 no tokens. -}
-recordCall : Db -> Entry -> Provider.Measured Provider.ChatResponse -> Task Error ()
+recordCall : Db -> Ledger -> Provider.Measured Provider.ChatResponse -> Task Error ()
 recordCall db e m =
     case m.result of
 
@@ -264,7 +264,7 @@ recordCall db e m =
 
 
 {-| Record a measured native tool call (`Provider.measureTools`). -}
-recordToolCall : Db -> Entry -> Provider.Measured Provider.ToolResponse -> Task Error ()
+recordToolCall : Db -> Ledger -> Provider.Measured Provider.ToolResponse -> Task Error ()
 recordToolCall db e m =
     case m.result of
 
@@ -280,7 +280,7 @@ noUsage =
     { promptTokens = 0, completionTokens = 0, totalTokens = 0 }
 
 
-callRow : Entry -> Provider.CallFacts -> Provider.Usage -> String -> RowIn
+callRow : Ledger -> Provider.CallFacts -> Provider.Usage -> String -> RowIn
 callRow e facts usage output =
     { model = facts.adapter
     , promptTokens = usage.promptTokens
@@ -293,7 +293,7 @@ callRow e facts usage output =
 
 {-| Record a cost that is not a model call: a training run's spend, for
 example. `label` is what was paid for (the job or the adapter). -}
-recordCost : Db -> Entry -> String -> Money -> Task Error ()
+recordCost : Db -> Ledger -> String -> Money -> Task Error ()
 recordCost db e label money =
     insertRow
         db
@@ -309,7 +309,7 @@ recordCost db e label money =
 
 {-| Record a run that has no price (a training run on this machine): the row
 says it happened, and its cost stays empty, never zero. -}
-recordUnpriced : Db -> Entry -> String -> Task Error ()
+recordUnpriced : Db -> Ledger -> String -> Task Error ()
 recordUnpriced db e label =
     insertRow
         db
@@ -348,7 +348,7 @@ record db t =
                        |> Task.map (\_ -> ()))
 
 
-insertRow : Db -> Entry -> RowIn -> Task Error ()
+insertRow : Db -> Ledger -> RowIn -> Task Error ()
 insertRow db e r =
     Time.now ()
         |> Task.andThen
@@ -368,7 +368,7 @@ insertSql =
         ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING"
 
 
-insertParams : Entry -> RowIn -> Int -> List SqlValue
+insertParams : Ledger -> RowIn -> Int -> List SqlValue
 insertParams e r now =
     let
         ( costText, currencyText ) =
@@ -494,8 +494,8 @@ type alias Row =
 
 
 {-| A run's rows, oldest first. -}
-rows : Db -> String -> Task Error (List Row)
-rows db runId =
+runRows : Db -> String -> Task Error (List Row)
+runRows db runId =
     Db.query
         db
         ("SELECT run_id, kind, model, prompt_tokens, completion_tokens, cost_minor, currency, output, outcome, "
@@ -540,7 +540,7 @@ gives the total per currency), and when a stored cost is not a decimal.
 -}
 totalCost : Db -> String -> Task Error String
 totalCost db runId =
-    summary db runId |> Task.andThen (singleTotal runId)
+    runSummary db runId |> Task.andThen (singleTotal runId)
 
 
 singleTotal : String -> Summary -> Task Error String
@@ -559,7 +559,7 @@ singleTotal runId s =
                     ("Std.Ai.Trace.totalCost: run " ++ runId
                         ++ " is priced in more than one currency ("
                         ++ String.join ", " (List.map Tuple.first s.costs)
-                        ++ "); read Trace.summary for the total per currency"))
+                        ++ "); read Trace.runSummary for the total per currency"))
 
 {-| A run in figures: its rows, the model calls that failed, the rows with no
 price, the tokens, and the exact total per currency (`( "USD", "0.0042" )`). -}
@@ -575,8 +575,8 @@ type alias Summary =
 
 {-| Sum a run's rows. Fails with `InvalidInput` when a stored cost is not a
 decimal: a corrupt row must not vanish from a total. -}
-summary : Db -> String -> Task Error Summary
-summary db runId =
+runSummary : Db -> String -> Task Error Summary
+runSummary db runId =
     Db.query
         db
         "SELECT cost_minor, currency, outcome, prompt_tokens, completion_tokens FROM _sky_ai_traces WHERE run_id = ?"
@@ -772,7 +772,7 @@ spanCount db runId =
 {-| One step of a training run: the step and the total, the loss, the
 throughput in tokens per second, and the checkpoint written at the step
 (`""` when none). -}
-type alias Progress =
+type alias TrainingStep =
     { step : Int
     , total : Int
     , loss : Maybe Float
@@ -783,8 +783,8 @@ type alias Progress =
 
 {-| Record a training step. A step already recorded for the run is not written
 again, so a resumed run does not duplicate its progress. -}
-recordProgress : Db -> String -> Progress -> Task Error ()
-recordProgress db runId p =
+recordTrainingStep : Db -> String -> TrainingStep -> Task Error ()
+recordTrainingStep db runId p =
     Time.now ()
         |> Task.andThen
                (\now ->
@@ -805,17 +805,17 @@ recordProgress db runId p =
 
 
 {-| A training run's recorded steps, in step order. -}
-progress : Db -> String -> Task Error (List Progress)
-progress db runId =
+trainingSteps : Db -> String -> Task Error (List TrainingStep)
+trainingSteps db runId =
     Db.query
         db
         "SELECT step, total, loss, tokens_per_second, checkpoint FROM _sky_ai_trace_progress WHERE run_id = ? ORDER BY step"
         [ SqlString runId ]
-        |> Task.map (List.map progressOf)
+        |> Task.map (List.map trainingStepOf)
 
 
-progressOf : Dict String String -> Progress
-progressOf r =
+trainingStepOf : Dict String String -> TrainingStep
+trainingStepOf r =
     { step = intOr0 (dictGet "step" r)
     , total = intOr0 (dictGet "total" r)
     , loss = String.toFloat (dictGet "loss" r)

@@ -38,15 +38,15 @@ in place, and its rows read as model calls with outcome `ok`.
 Record a chat as you make it:
 
 ```elm
-Trace.chat db (Trace.entry "chat-42" |> Trace.priced book) Provider.defaultOptions assistant messages
+Trace.tracedChat db (Trace.ledger "chat-42" |> Trace.priced book) Provider.defaultOptions assistant messages
 ```
 
-`Trace.chatStream` does the same for a streamed answer and records the time to
+`Trace.tracedChatStream` does the same for a streamed answer and records the time to
 the first token. `Provider.measure`, `measureStream` and `measureTools` give the
 facts without recording them, and `Trace.recordCall` records a measured call
 later.
 
-An `Entry` names the run, the kind and the price book. Its `key`, when it is
+A `Ledger` names the run, the kind and the price book. Its `key`, when it is
 not `""`, makes the row idempotent: a second row with the same run and key is
 not written, so a `Std.Durable` step that records it is safe to replay. A row
 with no price book is unpriced.
@@ -70,22 +70,22 @@ costs nothing and records nothing. The rows go under the run's own id,
 ### Training
 
 A `Train` run records each step it reads (the step, the total, the loss, the
-tokens per second and the checkpoint) in `Trace.progress db runId`, and one
+tokens per second and the checkpoint) in `Trace.trainingSteps db runId`, and one
 `Training` cost row when it ends, finished or failed. A Vertex run's row is
 its measured spend. A run on this machine is unpriced.
 
 ## Reading
 
-- `Trace.rows db run`: a run's rows, oldest first.
+- `Trace.runRows db run`: a run's rows, oldest first.
 - `Trace.totalCost db run`: the run's priced rows, summed exactly. It fails
   with `InvalidInput` when they are in more than one currency, or when a
   stored cost is not a decimal.
-- `Trace.summary db run`: rows, failures, unpriced rows, tokens, and the total
+- `Trace.runSummary db run`: rows, failures, unpriced rows, tokens, and the total
   per currency.
 - `Trace.costs db`: the whole ledger by kind and currency, for the cost of the
   lifecycle (calls, evals, judges, training).
 - `Trace.spanCount db run`: the model calls of a run.
-- `Trace.progress db run`: a training run's steps.
+- `Trace.trainingSteps db run`: a training run's steps.
 
 ## Where the facts come from
 
@@ -101,4 +101,4 @@ The GPU tier (`Std.Ai.Serve`) reports its own queue wait as a tier signal (on
 the client slot's own queue. See [`serve.md`](serve.md).
 
 Rows can hold answers (`output`). Do not print a run's rows to a log; read
-costs with `summary` or `costs`.
+costs with `runSummary` or `costs`.

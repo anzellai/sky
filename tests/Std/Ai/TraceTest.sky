@@ -1,6 +1,6 @@
 module Std.Ai.TraceTest exposing (tests)
 
--- Std.Ai.Trace: the lifecycle ledger. A call recorded through `Trace.chat`
+-- Std.Ai.Trace: the lifecycle ledger. A call recorded through `Trace.tracedChat`
 -- carries its facts and its outcome, a failed call is a row too, a keyed row
 -- is written once (a replayed durable step), training and eval rows sit in
 -- the same ledger, a table made by an earlier release is migrated in place,
@@ -110,13 +110,13 @@ callRows =
     fresh
         |> Task.andThen
                (\db ->
-                   Trace.chat
+                   Trace.tracedChat
                        db
-                       (Trace.entry "run-a" |> Trace.priced (book USD))
+                       (Trace.ledger "run-a" |> Trace.priced (book USD))
                        Provider.defaultOptions
                        answering
                        hi
-                       |> Task.andThen (\_ -> Trace.rows db "run-a"))
+                       |> Task.andThen (\_ -> Trace.runRows db "run-a"))
         |> Task.run
 
 
@@ -148,9 +148,9 @@ failedRows =
     fresh
         |> Task.andThen
                (\db ->
-                   Trace.chat
+                   Trace.tracedChat
                        db
-                       (Trace.entry "run-f")
+                       (Trace.ledger "run-f")
                        Provider.defaultOptions
                        (failing
                            (Failure.toError
@@ -160,7 +160,7 @@ failedRows =
                        |> Task.onError (\e -> Task.succeed (Err e))
                        |> Task.andThen
                               (\answer ->
-                                  Trace.rows db "run-f"
+                                  Trace.runRows db "run-f"
                                       |> Task.map (\found -> ( answer, found ))))
         |> Task.run
 
@@ -189,15 +189,15 @@ otherErrorOutcome =
     fresh
         |> Task.andThen
                (\db ->
-                   Trace.chat
+                   Trace.tracedChat
                        db
-                       (Trace.entry "run-u")
+                       (Trace.ledger "run-u")
                        Provider.defaultOptions
                        (failing (Error.unavailable "down"))
                        hi
                        |> Task.onError
                               (\_ -> Task.succeed { content = "", usage = usage })
-                       |> Task.andThen (\_ -> Trace.rows db "run-u"))
+                       |> Task.andThen (\_ -> Trace.runRows db "run-u"))
         |> Task.run
 
 
@@ -230,9 +230,9 @@ lifecycle =
     fresh
         |> Task.andThen
                (\db ->
-                   Trace.chat
+                   Trace.tracedChat
                        db
-                       (Trace.entry "run-l" |> Trace.priced (book USD))
+                       (Trace.ledger "run-l" |> Trace.priced (book USD))
                        Provider.defaultOptions
                        answering
                        hi
@@ -261,7 +261,7 @@ lifecycle =
                               (\_ ->
                                   Task.map2
                                       (\s c -> ( s, c ))
-                                      (Trace.summary db "run-l")
+                                      (Trace.runSummary db "run-l")
                                       (Trace.costs db)))
         |> Task.run
 
@@ -291,17 +291,17 @@ mixedCurrencies =
     fresh
         |> Task.andThen
                (\db ->
-                   Trace.chat
+                   Trace.tracedChat
                        db
-                       (Trace.entry "run-m" |> Trace.priced (book USD))
+                       (Trace.ledger "run-m" |> Trace.priced (book USD))
                        Provider.defaultOptions
                        answering
                        hi
                        |> Task.andThen
                               (\_ ->
-                                  Trace.chat
+                                  Trace.tracedChat
                                       db
-                                      (Trace.entry "run-m"
+                                      (Trace.ledger "run-m"
                                           |> Trace.priced (book EUR))
                                       Provider.defaultOptions
                                       answering
@@ -343,9 +343,9 @@ legacy =
                        |> Task.andThen (\_ -> Trace.setup db)
                        |> Task.andThen
                               (\_ ->
-                                  Trace.chat
+                                  Trace.tracedChat
                                       db
-                                      (Trace.entry "old"
+                                      (Trace.ledger "old"
                                           |> Trace.priced (book USD))
                                       Provider.defaultOptions
                                       answering
@@ -354,7 +354,7 @@ legacy =
                               (\_ ->
                                   Task.map2
                                       (\found total -> ( found, total ))
-                                      (Trace.rows db "old")
+                                      (Trace.runRows db "old")
                                       (Trace.totalCost db "old")))
         |> Task.run
 
@@ -386,12 +386,12 @@ legacyKept ( found, total ) =
 
 
 -- ── Training progress ───────────────────────────────────────────────
-steps : Result Error (List Trace.Progress)
+steps : Result Error (List Trace.TrainingStep)
 steps =
     fresh
         |> Task.andThen
                (\db ->
-                   Trace.recordProgress
+                   Trace.recordTrainingStep
                        db
                        "train-1"
                        { step = 10
@@ -402,7 +402,7 @@ steps =
                        }
                        |> Task.andThen
                               (\_ ->
-                                  Trace.recordProgress
+                                  Trace.recordTrainingStep
                                       db
                                       "train-1"
                                       { step = 20
@@ -413,7 +413,7 @@ steps =
                                       })
                        |> Task.andThen
                               (\_ ->
-                                  Trace.recordProgress
+                                  Trace.recordTrainingStep
                                       db
                                       "train-1"
                                       { step = 10
@@ -422,11 +422,11 @@ steps =
                                       , tokensPerSecond = Nothing
                                       , checkpoint = ""
                                       })
-                       |> Task.andThen (\_ -> Trace.progress db "train-1"))
+                       |> Task.andThen (\_ -> Trace.trainingSteps db "train-1"))
         |> Task.run
 
 
-stepsKept : List Trace.Progress -> TestResult
+stepsKept : List Trace.TrainingStep -> TestResult
 stepsKept found =
     all
         [ Test.equal [ 10, 20 ] (List.map .step found)
@@ -479,7 +479,7 @@ agentRows =
                               (\_ ->
                                   Task.map2
                                       (\found n -> ( found, n ))
-                                      (Trace.rows db "agent-1")
+                                      (Trace.runRows db "agent-1")
                                       (Trace.spanCount db "agent-1")))
         |> Task.run
 
@@ -505,7 +505,7 @@ agentTraced ( found, n ) =
 tests : List Test
 tests =
     [ Test.test
-          "a call through Trace.chat is a row with its facts"
+          "a call through Trace.tracedChat is a row with its facts"
           (\_ -> expectOk aCallRecordsItsFacts callRows)
     , Test.test
           "a failed call is a row with its failure code and no cost"

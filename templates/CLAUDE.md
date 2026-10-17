@@ -125,7 +125,7 @@ An eval is a test: let its `Eval.check` thresholds fail it, and do not loosen
 a threshold to make a run pass.
 
 `Std.Ai.Trace` rows can hold prompts' answers (`output`): never print a
-run's rows to a log, and read costs with `Trace.summary` or `Trace.costs`.
+run's rows to a log, and read costs with `Trace.runSummary` or `Trace.costs`.
 Call `Trace.setup db` once at start-up before you record.
 
 `Std.Ai.Registry` promotion needs evidence: never use `Registry.forcePromote`

@@ -276,13 +276,13 @@ tracedOf : Fixture.World -> Train.Job -> Task Error ( List Trace.Row, Maybe Mone
 tracedOf w job =
     Task.map2
         (\found status -> ( found, Maybe.map .spent status ))
-        (Trace.rows w.db (Train.runId job))
+        (Trace.runRows w.db (Train.runId job))
         (Train.cloudStatus job)
 
 
 -- A finished Vertex run in Std.Ai.Trace: its six steps, and one Training row
 -- with its measured spend in exact money.
-tracedRun : Result Error ( List Trace.Progress, List Trace.Row, Maybe Money.Money )
+tracedRun : Result Error ( List Trace.TrainingStep, List Trace.Row, Maybe Money.Money )
 tracedRun =
     fresh "traced"
         |> Task.andThen
@@ -292,7 +292,8 @@ tracedRun =
                    in
                        Train.drive w.db job
                            |> Task.andThen
-                                  (\_ -> Trace.progress w.db (Train.runId job))
+                                  (\_ ->
+                                      Trace.trainingSteps w.db (Train.runId job))
                            |> Task.andThen
                                   (\steps ->
                                       tracedOf w job

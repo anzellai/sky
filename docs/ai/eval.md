@@ -182,7 +182,7 @@ seed and every answer): two runs with the same digest answered the same.
 - `traceRun`: the run's id in `Std.Ai.Trace`. Each candidate call is an
   `Evaluation` row there (priced with `withPriceBook`), and each judge call that
   reached the model is a `Judge` row (priced with `withJudgePriceBook`; a
-  journal hit records nothing). `Trace.summary db report.traceRun` gives the
+  journal hit records nothing). `Trace.runSummary db report.traceRun` gives the
   run's tokens and its exact cost. See [`trace.md`](trace.md).
 
 `Eval.encodeReport` writes a report as JSON with every field and

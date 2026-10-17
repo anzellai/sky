@@ -990,7 +990,7 @@ container does. `examples/74-ai-cloud` and
 A run records itself in `Std.Ai.Trace` under its id (`Train.runId job`, the
 id `start` returns). Each step the watch reads is a progress row (the step,
 the total, the loss, the tokens per second, the checkpoint written at it):
-`Trace.progress db runId`. When the run ends, finished or failed, it records
+`Trace.trainingSteps db runId`. When the run ends, finished or failed, it records
 one `Training` cost row. A Vertex run's row is its measured spend in exact
 money, so `Trace.costs db` adds training to the calls and the evals of the
 lifecycle. A run on this machine has no price, so its row is unpriced (no

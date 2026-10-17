@@ -490,7 +490,7 @@ type alias ScorerScore =
 -- | A run of a suite. `digest` names the run's outputs: two runs with the
 -- same digest answered the same. `traceRun` is the run's id in
 -- `Std.Ai.Trace`: its candidate and judge calls are recorded there as they
--- return (`Trace.summary db report.traceRun`). It is `""` for a report an
+-- return (`Trace.runSummary db report.traceRun`). It is `""` for a report an
 -- earlier release stored.
 type alias Report =
     { suite : String
@@ -810,7 +810,7 @@ callModel ctx book p tools opts messages =
 
 
 -- Record a row of the run's kind, when the run is traced.
-traceWith : JudgeCtx -> Maybe PriceBook -> Trace.Kind -> (Db -> Trace.Entry -> Task Error ()) -> Task Error ()
+traceWith : JudgeCtx -> Maybe PriceBook -> Trace.Kind -> (Db -> Trace.Ledger -> Task Error ()) -> Task Error ()
 traceWith ctx book kind write =
     case ctx.trace of
 

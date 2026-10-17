@@ -290,15 +290,15 @@ sky test tests/Std/Ai/TraceTest.sky
 cd examples/73-ai-train && sky test tests/TrainExampleTest.sky
 ```
 
-In your own app, call `Trace.setup db` once, record calls with `Trace.chat db
-(Trace.entry run |> Trace.priced book) …`, and read `Trace.summary db run` or
+In your own app, call `Trace.setup db` once, record calls with `Trace.tracedChat db
+(Trace.ledger run |> Trace.priced book) …`, and read `Trace.runSummary db run` or
 `Trace.costs db`.
 
 **Expected result.** `TraceTest` passes 10 cases: a call is a row with its
 facts, a failed call is a row with its failure code, a keyed row is written
 once, a traced agent records its call once, a table from an earlier release is
 migrated in place, and `totalCost` refuses to add USD to EUR. The training
-example's run leaves steps 1 to 12 in `Trace.progress` and one unpriced
+example's run leaves steps 1 to 12 in `Trace.trainingSteps` and one unpriced
 `Training` row. An eval run's rows are under `report.traceRun`.
 
 **How it fails.** `totalCost` fails with `InvalidInput` when a run is priced
@@ -494,7 +494,7 @@ from `tests/mocks/` but keeps the project's own database
 
 ```
 cd examples/73-ai-train
-sky test tests/TrainExampleTest.sky       # tier 0, 6 passed
+sky test tests/TrainExampleTest.sky       # tier 0, 7 passed
 sky run src/Main.sky                      # tier 2 on a Mac
 SKY_AI_TRAIN_BACKEND=fake sky run src/Main.sky    # tier 3 elsewhere
 ```

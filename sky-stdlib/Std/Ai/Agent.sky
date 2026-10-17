@@ -145,7 +145,7 @@ journalledToolsCodec =
 
 
 -- The trace entry of a model step: the run, the step's key, the book.
-traceEntry : Ctx -> String -> Provider.PriceBook -> Trace.Entry
+traceEntry : Ctx -> String -> Provider.PriceBook -> Trace.Ledger
 traceEntry ctx key book =
     { runId = Durable.runId ctx
     , key = key
@@ -191,9 +191,9 @@ measuredChat ctx key book provider messages =
                                |> Task.andThen (\_ -> Task.fail e))
 
 
-failedEntry : Ctx -> Provider.PriceBook -> Trace.Entry
+failedEntry : Ctx -> Provider.PriceBook -> Trace.Ledger
 failedEntry ctx book =
-    Trace.entry (Durable.runId ctx) |> Trace.priced book
+    Trace.ledger (Durable.runId ctx) |> Trace.priced book
 
 
 writeChatTrace : Ctx -> String -> Provider.PriceBook -> Journalled Provider.ChatResponse -> Task Error Provider.ChatResponse

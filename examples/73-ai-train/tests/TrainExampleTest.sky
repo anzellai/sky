@@ -76,7 +76,7 @@ served =
 -- died and the second resumed), the newest checkpoint, and one cost row. The
 -- Fake trainer runs on this machine, so that row is unpriced: no cost, never a
 -- zero. Driving the finished run again adds no row.
-traced : Result Error ( List Trace.Progress, List Trace.Row )
+traced : Result Error ( List Trace.TrainingStep, List Trace.Row )
 traced =
     trained
         |> Result.andThen
@@ -90,8 +90,10 @@ traced =
                                                  Task.map2
                                                      (\steps found ->
                                                          ( steps, found ))
-                                                     (Trace.progress w.db a.runId)
-                                                     (Trace.rows w.db a.runId)))
+                                                     (Trace.trainingSteps
+                                                         w.db
+                                                         a.runId)
+                                                     (Trace.runRows w.db a.runId)))
                        |> Task.run)
 
 
