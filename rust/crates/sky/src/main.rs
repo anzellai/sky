@@ -10700,14 +10700,21 @@ const ANDROID_BUILD_APK: &str = r#"#!/usr/bin/env bash
 # Build + sign a WebView shell APK with the Android SDK tools directly
 # (aapt2 -> javac -> d8 -> zipalign -> apksigner) — no Gradle, no Studio.
 # Requires: ANDROID_HOME (SDK with build-tools + a platform), a JDK (javac),
-# and ~/.android/debug.keystore (generated here if missing).
+# and the debug keystore (generated here if missing) in the Android user
+# directory: $ANDROID_USER_HOME, else $ANDROID_SDK_HOME/.android, else
+# ~/.android, the order the SDK tools use. The directory is created first: a
+# fresh machine (a CI runner) has none, and keytool does not make it.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 : "${ANDROID_HOME:=$HOME/Library/Android/sdk}"
 BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
 PLAT="$(ls -d "$ANDROID_HOME"/platforms/android-* | sort -V | tail -1)/android.jar"
-KS="$HOME/.android/debug.keystore"
+if [ -n "${ANDROID_USER_HOME:-}" ]; then ANDROID_USER_DIR="$ANDROID_USER_HOME"
+elif [ -n "${ANDROID_SDK_HOME:-}" ]; then ANDROID_USER_DIR="$ANDROID_SDK_HOME/.android"
+else ANDROID_USER_DIR="$HOME/.android"; fi
+KS="$ANDROID_USER_DIR/debug.keystore"
+[ -f "$KS" ] || mkdir -p "$ANDROID_USER_DIR"
 [ -f "$KS" ] || keytool -genkeypair -keystore "$KS" -storepass android -keypass android \
   -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
   -dname "CN=Android Debug,O=Android,C=US"
@@ -18775,6 +18782,95 @@ mod tests {
         std::fs::remove_file(out.join("android/build/shellapp.apk")).unwrap();
         assert!(build(&u2) > 0, "a missing APK rebuilds");
         assert_eq!(build(&u2), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A machine with no Android user directory (a fresh CI runner): the
+    /// build creates it before keytool writes the debug keystore there, in
+    /// `ANDROID_USER_HOME`, else `ANDROID_SDK_HOME/.android`, else
+    /// `~/.android`. The shim keytool fails as the real one does when the
+    /// keystore's directory is missing. Before the fix the APK build failed
+    /// with `FileNotFoundException: ~/.android/debug.keystore`.
+    #[cfg(unix)]
+    #[test]
+    fn the_debug_keystore_directory_is_created_where_the_sdk_looks() {
+        let root = std::env::temp_dir().join(format!("sky-android-ks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bin = root.join("bin");
+        let sdk = root.join("sdk");
+        let bt = sdk.join("build-tools/35.0.0");
+        let out_arg = r#"o=""; prev=""; for a in "$@"; do case "$prev" in -o|--out|--output|-d) o="$a";; esac; prev="$a"; done"#;
+        write_tool(
+            &bin.join("keytool"),
+            r#"ks=""; prev=""; for a in "$@"; do [ "$prev" = -keystore ] && ks="$a"; prev="$a"; done
+[ -d "$(dirname "$ks")" ] || { echo "keytool error: java.io.FileNotFoundException: $ks (No such file or directory)" >&2; exit 1; }
+echo key > "$ks"
+"#,
+        );
+        write_tool(
+            &bin.join("javac"),
+            &format!("{out_arg}\nmkdir -p \"$o\"; touch \"$o/A.class\"\n"),
+        );
+        write_tool(&bin.join("zip"), "exit 0\n");
+        write_tool(
+            &bt.join("aapt2"),
+            &format!("{out_arg}\ntouch \"$o\"\nfor a in \"$@\"; do [ \"$p\" = --java ] && mkdir -p \"$a\"; p=\"$a\"; done\n"),
+        );
+        write_tool(
+            &bt.join("d8"),
+            &format!("{out_arg}\ntouch \"$o/classes.dex\"\n"),
+        );
+        write_tool(
+            &bt.join("zipalign"),
+            "for a in \"$@\"; do i=\"$o\"; o=\"$a\"; done\ncp \"$i\" \"$o\"\n",
+        );
+        write_tool(
+            &bt.join("apksigner"),
+            &format!(
+                "if [ \"$1\" = sign ]; then {out_arg}; touch \"$o\"; \
+                 else echo 'Signer #1 certificate SHA-256 digest: 00'; fi\n"
+            ),
+        );
+        std::fs::write(bt.join("source.properties"), "Pkg.Revision=35.0.0\n").unwrap();
+        let plat = sdk.join("platforms/android-35");
+        std::fs::create_dir_all(&plat).unwrap();
+        std::fs::write(plat.join("android.jar"), "").unwrap();
+        std::fs::write(plat.join("source.properties"), "Pkg.Revision=1\n").unwrap();
+        let home = root.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let u = url(
+            app_url::Shell::Android,
+            None,
+            Some("https://one.example.test/"),
+            None,
+        );
+        for (user_home, sdk_home, want) in [
+            ("", "", home.join(".android/debug.keystore")),
+            ("", "sdkhome", root.join("sdkhome/.android/debug.keystore")),
+            ("userhome", "sdkhome", root.join("userhome/debug.keystore")),
+        ] {
+            let at = |v: &str| {
+                if v.is_empty() {
+                    std::ffi::OsString::new()
+                } else {
+                    root.join(v).into_os_string()
+                }
+            };
+            let env = shell_inputs::ToolEnv::process()
+                .with("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+                .with("ANDROID_HOME", sdk.as_os_str())
+                .with("HOME", home.as_os_str())
+                .with("ANDROID_USER_HOME", at(user_home))
+                .with("ANDROID_SDK_HOME", at(sdk_home))
+                .with("JAVA_HOME", root.join("jdk").as_os_str());
+            assert_eq!(env.android_user_dir(), want.parent().unwrap());
+            let proj = root.join(format!("app-{user_home}-{sdk_home}"));
+            write_shell_project(&proj, "com.example.shell", "1.0", "");
+            let apk = build_android_apk_in(&proj, &proj.join("sky-out"), &u, &env)
+                .unwrap_or_else(|e| panic!("{want:?}: {e}"));
+            assert!(apk.is_file());
+            assert!(want.is_file(), "no debug keystore at {}", want.display());
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 
