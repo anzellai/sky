@@ -4299,7 +4299,7 @@ func (app *liveApp) runTimeEveryReg(sess *liveSession, reg *everyReg, interval t
 		AlsoStop: done,
 		Report:   periodicReport,
 		Work: func(t time.Time) error {
-			app.timeEveryTick(sess, reg.currentToMsg(), t)
+			app.timeEveryTick(sess, reg.currentToMsg(), t, cancel, done)
 			return nil
 		},
 	})
@@ -4321,8 +4321,19 @@ func (app *liveApp) runTimeEveryReg(sess *liveSession, reg *everyReg, interval t
 // the unlock happens on the panicking path as well as the normal one. That is
 // what `TestTimeEveryPanicLeavesTheSessionMutexAcquirable` asserts, and it is
 // the assertion that matters most in this file.
-func (app *liveApp) timeEveryTick(sess *liveSession, toMsg any, t time.Time) {
-	snap, patches, prevTree, haveFrame := app.timeEveryDispatch(sess, toMsg, t)
+//
+// `stopped` are the timer's own stop signals (its cancel and the session's
+// done). A tick that woke before an `update` stopped its timer waits on
+// sess.mu while that update runs; once it holds the lock it checks them and
+// dispatches nothing if the timer was stopped meanwhile. Without the check a
+// `Tick` reached `update` after the `Stop` that removed its `Sub.every`, so
+// the model moved on after the app said it would not (the islands e2e saw
+// `ticks` advance once past its last value).
+func (app *liveApp) timeEveryTick(sess *liveSession, toMsg any, t time.Time, stopped ...<-chan struct{}) {
+	snap, patches, prevTree, haveFrame, ran := app.timeEveryDispatch(sess, toMsg, t, stopped)
+	if !ran {
+		return
+	}
 	// L7: a tick mutates the model; a persistent store must see it.
 	app.persistSession(sess)
 	// Suppress SSE write when the tick didn't change the view — prevents
@@ -4346,10 +4357,23 @@ func (app *liveApp) timeEveryTick(sess *liveSession, toMsg any, t time.Time) {
 
 // timeEveryDispatch is the locked half of one tick. `defer sess.mu.Unlock()`
 // is load-bearing — see timeEveryTick.
-func (app *liveApp) timeEveryDispatch(sess *liveSession, toMsg any, t time.Time) (
-	snap frameSnapshot, patches []Patch, prevTreeBeforeDispatch *VNode, haveFrame bool) {
+func (app *liveApp) timeEveryDispatch(sess *liveSession, toMsg any, t time.Time, stopped []<-chan struct{}) (
+	snap frameSnapshot, patches []Patch, prevTreeBeforeDispatch *VNode, haveFrame bool, ran bool) {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
+	// The timer is stopped under sess.mu (applyEverySubsDiff runs inside
+	// dispatch), so this read is ordered after any update that stopped it.
+	for _, c := range stopped {
+		if c == nil {
+			continue
+		}
+		select {
+		case <-c:
+			return snap, patches, nil, false, false
+		default:
+		}
+	}
+	ran = true
 	msg := toMsg
 	// If toMsg is a function, call it with current time millis
 	if isFunc(msg) {
@@ -4387,7 +4411,7 @@ func (app *liveApp) timeEveryDispatch(sess *liveSession, toMsg any, t time.Time)
 		}
 		haveFrame = true
 	}
-	return snap, patches, prevTreeBeforeDispatch, haveFrame
+	return snap, patches, prevTreeBeforeDispatch, haveFrame, ran
 }
 
 // applyTopicSubsDiff computes the diff between the session's current

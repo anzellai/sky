@@ -277,8 +277,12 @@ func (m *subManager) spawnEvery(ms int, t *everyTimer) {
 					if isFunc(msg) {
 						msg = sky_call(toMsg, now.UnixMilli())
 					}
+					// The tick carries its timer's cancel: the loop drops it
+					// if an update stopped the timer while it was queued
+					// (teaLoop.resolve), so no Tick reaches update after the
+					// update that removed its Sub.every.
 					select {
-					case msgCh <- msg:
+					case msgCh <- teaEveryMsg{msg: msg, cancel: cancel}:
 					case <-cancel:
 						return
 					}

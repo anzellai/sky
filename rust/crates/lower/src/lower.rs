@@ -3809,8 +3809,8 @@ impl<'a> Ctx<'a> {
                 // A bare record-alias constructor used as a value/first-class
                 // function (`Result.map3 Profile …`, `List.map Piece …`): eta
                 // to a closure over its fields, same as a `Res::Ctor` value.
-                if self.record_ctor_name(d).is_some() {
-                    return self.lower_ctor_value(d, actual, expected, None);
+                if let Some(pin) = self.record_ctor_pin(d) {
+                    return self.lower_ctor_value(d, actual, expected, Some(pin));
                 }
                 if let Some(raw) = self.kernel_alias.get(&d) {
                     // value-reference to a kernel-alias: use the runtime symbol.
@@ -4192,7 +4192,8 @@ impl<'a> Ctx<'a> {
         // `rt.SkyADT` param — the cross-module `Msg`-wrapper case). Force `any`
         // params for those; record ctors keep their typed field params.
         let adt_like = matches!(
-            self.ctor_owner.get(&cname).map(|(_, k)| *k),
+            self.ctor_union_go_pinned(&cname, pin.as_deref())
+                .map(|(_, k)| k),
             Some(NominalKind::Adt) | Some(NominalKind::Iota)
         );
         // Match the expected function shape when known; else `any` params.
@@ -4937,17 +4938,35 @@ impl<'a> Ctx<'a> {
 
     // ---- call / operator / control-flow lowering -----------------------
 
-    /// If `d` names a record-alias auto-constructor (`type alias Piece = { … }`
-    /// gives `Piece : Kind -> Colour -> Piece`), return its name. These resolve
-    /// to `Res::Def` (a bodyless synthesized def), NOT `Res::Ctor`, so the ctor
-    /// call/value paths must recognise them by name — otherwise `lower_var`
-    /// emits a zero-arg thunk `Piece()` and the args apply to its result
-    /// (`Piece()(kind, colour)` → "not enough arguments", example 16).
-    fn record_ctor_name(&self, d: DefId) -> Option<String> {
-        let loc = self.db.def_loc(d);
-        let name = loc.map(|l| l.name.as_str().to_string())?;
-        match self.ctor_owner.get(&name) {
-            Some((_, NominalKind::Record)) => Some(name),
+    /// A record-alias auto-constructor (`type alias Piece = { … }` gives
+    /// `Piece : Kind -> Colour -> Piece`) resolves to `Res::Def` (a bodyless
+    /// synthesized def), NOT `Res::Ctor`, so the ctor call/value paths must
+    /// recognise it here — otherwise `lower_var` emits a zero-arg thunk
+    /// `Piece()` and the args apply to its result (`Piece()(kind, colour)` →
+    /// "not enough arguments", example 16).
+    ///
+    /// Returns the Go record type a record-alias auto-constructor `d` builds, from the
+    /// module that DECLARES it (`A.Reply` → `A_Reply_R`), never from the bare
+    /// name. Two modules may each declare `type alias Reply`: the bare-name
+    /// `ctor_owner` / `ctor_arity` maps are last-writer-wins, so a `Reply` value
+    /// in module `A` resolved to `B`'s constructor (a 3-field curried func where
+    /// `A`'s 2-field record was expected, a `CoerceFailure` at run time). The
+    /// pin is passed to every ctor path (`ctor_call`, `lower_ctor_value`,
+    /// `ctor_emit`), which then read the union-scoped tables keyed by this Go
+    /// name. `None` when `d` is not a registered closed record alias.
+    fn record_ctor_pin(&self, d: DefId) -> Option<String> {
+        let loc = self.db.def_loc(d)?;
+        if loc.module.index() == u32::MAX {
+            return None;
+        }
+        let name = loc.name.as_str().to_string();
+        let go = format!(
+            "{}_{}_R",
+            module_prefix(self.db.module_name(loc.module)),
+            name
+        );
+        match self.ctor_in_union.get(&(go.clone(), name)) {
+            Some((NominalKind::Record, _)) => Some(go),
             _ => None,
         }
     }
@@ -4964,8 +4983,8 @@ impl<'a> Ctx<'a> {
         // `record_ctor_name`): route through the arity-aware ctor path.
         if let Expr::Var(Res::Def(d)) = &self.body.exprs[callee] {
             let d = *d;
-            if self.record_ctor_name(d).is_some() {
-                let (_, e) = self.ctor_call(d, args, actual, None);
+            if let Some(pin) = self.record_ctor_pin(d) {
+                let (_, e) = self.ctor_call(d, args, actual, Some(pin));
                 return e;
             }
         }

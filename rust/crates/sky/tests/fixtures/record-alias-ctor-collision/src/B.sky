@@ -1,0 +1,84 @@
+module B exposing
+    ( Reply
+    , parse
+    , make
+    , partial
+    , codecRoundTrip
+    , defaultReply
+    , describe
+    , bump
+    , viaList
+    , loose
+    )
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Json.Decode as Decode
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Codec as Codec
+
+type alias Reply =
+    { text : String
+    , notes : List String
+    , flag : Bool
+    }
+
+
+decoder : Decode.Decoder Reply
+decoder =
+    Decode.map3
+        Reply
+        (Decode.field "text" Decode.string)
+        (Decode.field "notes" (Decode.list Decode.string))
+        (Decode.field "flag" Decode.bool)
+
+
+parse : String -> Result Error Reply
+parse s =
+    Decode.decodeString decoder s
+
+
+make : String -> Reply
+make s =
+    Reply s [] True
+
+
+partial : String -> Reply
+partial s =
+    let
+        f = Reply s [ "p" ]
+    in
+        f False
+
+
+replyCodec : Codec.Codec Reply
+replyCodec =
+    Codec.auto { text = "", notes = [], flag = False }
+
+
+codecRoundTrip : Reply -> Result Error Reply
+codecRoundTrip r =
+    Codec.fromJson replyCodec (Codec.toJson replyCodec r)
+
+
+defaultReply : Reply
+defaultReply =
+    Reply "caf" [] False
+
+
+describe r =
+    r.text ++ "/" ++ String.join "," r.notes
+
+
+bump : Reply -> Reply
+bump r =
+    { r | text = r.text ++ "!" }
+
+
+viaList : List String -> List Reply
+viaList xs =
+    List.map (\x -> Reply x [] False) xs
+
+
+loose s =
+    Reply s [ "l" ] True

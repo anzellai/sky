@@ -1,0 +1,119 @@
+module ImageEditConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for the Std.Image edit functions: trim, crop,
+-- toAlpha and whiteToAlpha, driven through the typed stdlib surface. The
+-- fixtures are tiny PNGs, base64 in this file:
+--
+--   * rectPng   — 20x20 white with a black 6x4 rectangle at (5, 8);
+--   * pixelsPng — 3x1: white, black, grey 128;
+--   * blankPng  — 10x10 all white.
+--
+-- The pixel arithmetic is checked in runtime-go/rt/image_edit_kernels_test.go;
+-- this suite checks that the Sky surface reaches it, with its `Format`, its
+-- `Rgb` record and its errors.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Encoding as Encoding
+import Sky.Core.Error exposing (Error, ErrorKind(..))
+import Sky.Core.Task as Task
+import Std.Image as Image
+import Sky.Test as Test exposing (Test)
+
+
+rectPng : String
+rectPng =
+    "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAI0lEQVR42mP4T2XAMGrgqIFUMpCBgQErHjVwNNmMGjhoDQQAjBryVA5+KEcAAAAASUVORK5CYII="
+
+
+pixelsPng : String
+pixelsPng =
+    "iVBORw0KGgoAAAANSUhEUgAAAAMAAAABCAYAAAAb4BS0AAAAFElEQVR42mP4DwQMDAz/Gxoa/gMANF0He/xWv04AAAAASUVORK5CYII="
+
+
+blankPng : String
+blankPng =
+    "iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAEUlEQVR42mP4TyRgGFVIX4UAI/uOgGWVNeQAAAAASUVORK5CYII="
+
+
+bytesOf : String -> String
+bytesOf b64 =
+    Result.withDefault "" (Encoding.base64Decode b64)
+
+
+-- The size of the image an edit produced, as "WxH", or the error kind.
+sizeAfter : (String -> Task Error String) -> String -> String
+sizeAfter edit b64 =
+    case Task.run (edit (bytesOf b64) |> Task.andThen Image.dimensions) of
+
+        Ok d ->
+            String.fromInt d.width ++ "x" ++ String.fromInt d.height
+
+        Err e ->
+            "err"
+
+
+refused : (String -> Task Error String) -> String -> Test.TestResult
+refused edit b64 =
+    Test.expectErrorKind InvalidInput (Task.run (edit (bytesOf b64)))
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "trim cuts the white margin to the rectangle"
+          (\_ ->
+              Test.equal "6x4" (sizeAfter (Image.trim Image.Png 245 0) rectPng))
+    , Test.test
+          "trim keeps the padding around what is left"
+          (\_ ->
+              Test.equal "10x8" (sizeAfter (Image.trim Image.Png 245 2) rectPng))
+    , Test.test
+          "trim of an all-white image is InvalidInput"
+          (\_ -> (refused (Image.trim Image.Png 245 0) blankPng))
+    , Test.test
+          "crop cuts out the area"
+          (\_ ->
+              Test.equal
+                  "7x3"
+                  (sizeAfter (Image.crop Image.Preserve 2 3 7 3) rectPng))
+    , Test.test
+          "crop past the edge is cut at the edge"
+          (\_ ->
+              Test.equal
+                  "5x5"
+                  (sizeAfter (Image.crop Image.Png 15 15 50 50) rectPng))
+    , Test.test
+          "crop with a negative width is InvalidInput"
+          (\_ -> (refused (Image.crop Image.Png 0 0 (-1) 5) rectPng))
+    , Test.test
+          "whiteToAlpha keeps the size"
+          (\_ -> Test.equal "3x1" (sizeAfter Image.whiteToAlpha pixelsPng))
+    , Test.test
+          "toAlpha takes any background colour"
+          (\_ ->
+              Test.equal
+                  "3x1"
+                  (sizeAfter
+                      (Image.toAlpha { red = 0, green = 0, blue = 0 })
+                      pixelsPng))
+    , Test.test
+          "toAlpha with a channel above 255 is InvalidInput"
+          (\_ ->
+              (refused
+                  (Image.toAlpha { red = 256, green = 0, blue = 0 })
+                  pixelsPng))
+    , Test.test
+          "trim refuses bytes that are not an image"
+          (\_ -> refused (Image.trim Image.Png 245 0) "bm90IGFuIGltYWdl")
+    , Test.test
+          "crop refuses bytes that are not an image"
+          (\_ -> refused (Image.crop Image.Png 0 0 1 1) "bm90IGFuIGltYWdl")
+    , Test.test
+          "whiteToAlpha refuses bytes that are not an image"
+          (\_ -> refused Image.whiteToAlpha "bm90IGFuIGltYWdl")
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

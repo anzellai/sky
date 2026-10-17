@@ -17,15 +17,15 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 676
-n_iso = 57
-n_iso_ceiling = 58
+n_min = 680
+n_iso = 61
+n_iso_ceiling = 62
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 675
+class_v = 679
 class_d = 1
 family_S = 170
-family_L = 361
+family_L = 365
 family_E = 10
 family_R = 135
 family_F = 0
@@ -6933,6 +6933,58 @@ axes       = { eq_carrier = "in_tuple", eq_pair = "nullary_vs_fields", union_rep
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
 stdout     = "7/42"
+
+[[case]]
+id         = "alias_ctor_collision/distinct-applied"
+family     = "L"
+stratum    = "alias_ctor_collision"
+mode       = "behavioural"
+isolation  = "unit"
+class      = "V"
+witness    = "value"
+axes       = { alias_names = "distinct", ctor_use = "applied" }
+coordinate = "v0.27.10: same-named record-alias constructors across modules"
+expect     = "accept"
+stdout     = "42+|42n"
+
+[[case]]
+id         = "alias_ctor_collision/distinct-value"
+family     = "L"
+stratum    = "alias_ctor_collision"
+mode       = "behavioural"
+isolation  = "unit"
+class      = "V"
+witness    = "value"
+axes       = { alias_names = "distinct", ctor_use = "value" }
+coordinate = "v0.27.10: same-named record-alias constructors across modules"
+expect     = "accept"
+stdout     = "42+|42n"
+
+[[case]]
+id         = "alias_ctor_collision/same-applied"
+family     = "L"
+stratum    = "alias_ctor_collision"
+mode       = "behavioural"
+isolation  = "unit"
+class      = "V"
+witness    = "value"
+axes       = { alias_names = "same", ctor_use = "applied" }
+coordinate = "v0.27.10: same-named record-alias constructors across modules"
+expect     = "accept"
+stdout     = "42+|42n"
+
+[[case]]
+id         = "alias_ctor_collision/same-value"
+family     = "L"
+stratum    = "alias_ctor_collision"
+mode       = "behavioural"
+isolation  = "unit"
+class      = "V"
+witness    = "value"
+axes       = { alias_names = "same", ctor_use = "value" }
+coordinate = "v0.27.10: same-named record-alias constructors across modules"
+expect     = "accept"
+stdout     = "42+|42n"
 
 [[case]]
 id         = "reject_matrix/arity_over-plain-bare"

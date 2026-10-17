@@ -1,6 +1,16 @@
-module Std.Image exposing (Format(..), resizeToFit, thumbnail, dimensions)
+module Std.Image exposing
+    ( Format(..)
+    , Rgb
+    , resizeToFit
+    , thumbnail
+    , dimensions
+    , trim
+    , crop
+    , toAlpha
+    , whiteToAlpha
+    )
 
-{-| Backend image resize + thumbnail generation.
+{-| Backend image resize, thumbnail, trim, crop and colour to alpha.
 
 Operate on raw bytes (`Sky.Core.Bytes`, an alias of `String`) — decode the base64
 payload of an upload first (`Sky.Core.Encoding.base64Decode`), resize, then write
@@ -15,6 +25,10 @@ source format — a JPEG stays a JPEG at quality 85, a PNG/GIF becomes a PNG). W
 you choose an explicit format you also know the file extension to save it under.
 Resizing preserves the aspect ratio and NEVER upscales. A non-image or corrupt
 input fails with a classified `Error`.
+
+To clean up a logo on a white square: `trim` cuts the white margin, `whiteToAlpha`
+makes the white transparent (keeping soft edges smooth), and `resizeToFit Png`
+caps the size. All of it runs in the backend with no outside tools.
 
     import Std.Image as Image
     import Sky.Core.Encoding as Encoding
@@ -76,6 +90,51 @@ dimensions : String -> Task Error { width : Int
 dimensions =
     Ffi.kernel "Image_dimensions"
 
+{-| A colour as red, green and blue, each 0..255. -}
+type alias Rgb =
+    { red : Int
+    , green : Int
+    , blue : Int
+    }
+
+
+{-| Cut away the edge rows and columns that are only margin, and keep `padding`
+pixels around what is left (never more than the image has). A pixel is margin
+when it is fully transparent, or when its red, green and blue are each at least
+`threshold` (0..255; 245 treats near-white as white). An image with no margin
+keeps its size. An image that is all margin fails with `InvalidInput` ("nothing
+left to trim to"). The output is written in the chosen `Format`; `Png` keeps
+transparency. -}
+trim : Format -> Int -> Int -> String -> Task Error String
+trim fmt threshold padding bytes =
+    trim_ (formatName fmt) (formatQuality fmt) threshold padding bytes
+
+
+{-| Cut out the area that starts `x` pixels from the left and `y` pixels from
+the top, `width` by `height`. An area that runs past the edge is cut at the
+edge. An empty area, or a negative width or height, fails with `InvalidInput`.
+The output is written in the chosen `Format`. -}
+crop : Format -> Int -> Int -> Int -> Int -> String -> Task Error String
+crop fmt x y width height bytes =
+    crop_ (formatName fmt) (formatQuality fmt) x y width height bytes
+
+
+{-| Make one background colour transparent ("colour to alpha"). Each pixel
+keeps its own colour and gets the coverage that, laid back over the background
+colour, gives the original pixel, so soft and anti-aliased edges stay smooth.
+The background colour itself becomes fully transparent. The output is always
+PNG. A channel outside 0..255 fails with `InvalidInput`. -}
+toAlpha : Rgb -> String -> Task Error String
+toAlpha colour bytes =
+    toAlpha_ colour.red colour.green colour.blue bytes
+
+
+{-| `toAlpha` with white as the background: makes a white background
+transparent. The output is always PNG. -}
+whiteToAlpha : String -> Task Error String
+whiteToAlpha bytes =
+    toAlpha { red = 255, green = 255, blue = 255 } bytes
+
 
 -- The primitive resize kernel (format string + quality int + bounds + bytes).
 -- The `Format` ADT is translated to these primitives above so the FFI boundary
@@ -83,6 +142,23 @@ dimensions =
 resize_ : String -> Int -> Int -> Int -> String -> Task Error String
 resize_ =
     Ffi.kernel "Image_resize"
+
+
+-- The primitive edit kernels: the `Format` and the `Rgb` record are passed as
+-- primitives, like `resize_`.
+trim_ : String -> Int -> Int -> Int -> String -> Task Error String
+trim_ =
+    Ffi.kernel "Image_trim"
+
+
+crop_ : String -> Int -> Int -> Int -> Int -> Int -> String -> Task Error String
+crop_ =
+    Ffi.kernel "Image_crop"
+
+
+toAlpha_ : Int -> Int -> Int -> String -> Task Error String
+toAlpha_ =
+    Ffi.kernel "Image_toAlpha"
 
 
 formatName : Format -> String
