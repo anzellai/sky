@@ -288,7 +288,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1488,
+      "expected_assertions": 1500,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -649,6 +649,12 @@
           "tests/conformance"
         ]
       },
+      "Std.Image": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
       "Std.Jobs": {
         "path": "apps/dispatch",
         "units": [
@@ -689,7 +695,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2225,
+    "stdlib_entries": 2230,
     "stdlib_modules": 113,
     "surfaces_covered": 169,
     "surfaces_covered_pct": 93.9,
@@ -11636,6 +11642,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
@@ -11644,9 +11655,15 @@
         "strength": 4
       },
       "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
       },
       "description": "the Std.Image public API",
       "id": "stdlib.Std.Image",
@@ -15103,7 +15120,7 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 9,
+      "count": 8,
       "modules": [
         "Sky.Core.Basics",
         "Sky.Core.Io",
@@ -15111,11 +15128,10 @@
         "Std.Cli",
         "Std.Db.Migrate",
         "Std.Db.Table",
-        "Std.Image",
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 8.0
+      "pct_of_denominator": 7.1
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -15839,7 +15855,7 @@
           "count": 4,
           "symbols": [
             "Format",
-            "dimensions",
+            "Rgb",
             "resizeToFit",
             "thumbnail"
           ]
@@ -16213,7 +16229,7 @@
         }
       },
       "count": 660,
-      "pct_of_denominator": 29.7
+      "pct_of_denominator": 29.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -17007,7 +17023,7 @@
           "count": 4,
           "symbols": [
             "Format",
-            "dimensions",
+            "Rgb",
             "resizeToFit",
             "thumbnail"
           ]
@@ -17405,7 +17421,7 @@
         }
       },
       "count": 751,
-      "pct_of_denominator": 33.8
+      "pct_of_denominator": 33.7
     }
   },
   "units": [
@@ -19195,12 +19211,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 55,
+      "modules_imported": 56,
       "path": "tests/conformance",
-      "refs_generous": 743,
-      "refs_qualified": 726,
+      "refs_generous": 748,
+      "refs_qualified": 731,
       "role": "Conformance",
-      "sky_files": 44,
+      "sky_files": 45,
       "sky_toml_sections": []
     }
   ]
