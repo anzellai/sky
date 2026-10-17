@@ -43,6 +43,84 @@ func aiDeclared() []string {
 	return append([]string(nil), aiDeclaredSlots...)
 }
 
+// aiSlotEnvForms are the forms of every `<PREFIX>_AI_<SLOT>_<KEY>` variable
+// that has one. KEY and the free-text keys (MODEL on a remote slot is a
+// server's model name) are not listed.
+var aiSlotEnvForms = []struct {
+	key string
+	ex  aiExpect
+}{
+	{"MODE", aiExpectMode},
+	{"URL", aiExpectURL},
+	{"ADAPTER", aiExpectAdapterRef},
+	{"ADAPTER_REFRESH_S", aiExpectNonNegative},
+	{"AUTH", aiExpectAuth},
+	{"TIMEOUT_MS", aiExpectPositive},
+	{"MAX_INFLIGHT", aiExpectPositive},
+	{"QUEUE", aiExpectNonNegative},
+	{"QUEUE_WAIT_MS", aiExpectPositive},
+	{"RETRIES", aiExpectNonNegative},
+	{"CONTEXT", aiExpectPositive},
+	{"GPU", aiExpectGpu},
+	{"PARALLEL", aiExpectPositive},
+	{"IDLE_UNLOAD_S", aiExpectNonNegative},
+	{"PORT", aiExpectPort},
+	{"DRAFT", aiExpectModelRef},
+	{"DRAFT_MAX", aiExpectPositive},
+	{"DRAFT_MIN", aiExpectNonNegative},
+	{"ADAPTERS", aiExpectAdapterList},
+	{"PLACEMENT", aiExpectPlacement},
+	{"DEVICE_MODEL", aiExpectModelRef},
+	{"DEVICE_ADAPTER", aiExpectDeviceAdRef},
+	{"DEVICE_THREADS", aiExpectThreads},
+	{"DEVICE_GPU_LAYERS", aiExpectGpuLayers},
+}
+
+// aiGlobalEnvForms are the global AI variables that have a form.
+var aiGlobalEnvForms = []struct {
+	suffix string
+	ex     aiExpect
+}{
+	{"AI_FETCH", aiExpectFetch},
+	{"AI_ACCEL", aiExpectAccel},
+	{"AI_TRAIN_BACKEND", aiExpectTrainBack},
+	{"AI_GCP_ENDPOINT", aiExpectURL},
+	{"AI_REGISTRY", aiExpectRegistry},
+}
+
+// aiStartupSettingsError checks, before a server listens, every AI variable
+// the environment sets for the slots the source declares and every global
+// AI variable: a value that does not parse is an InvalidSetting failure that
+// names the variable and the form expected (never a value that could be
+// secret), and the app refuses to start. A program that serves nothing
+// meets the same check at its first AI call instead. A local slot's MODEL is
+// checked as a model reference at that call, because a remote slot's MODEL
+// is free text.
+func aiStartupSettingsError() error {
+	for _, g := range aiGlobalEnvForms {
+		if _, err := aiEnvChecked(g.suffix, g.ex); err != nil {
+			return err
+		}
+	}
+	for _, slot := range aiDeclared() {
+		if aiValidSlot(slot) != nil {
+			continue
+		}
+		for _, f := range aiSlotEnvForms {
+			if _, err := aiEnvChecked(aiSlotSuffix(slot, f.key), f.ex); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// aiStartupRefusal is the line a server prints when it refuses to start on
+// an AI setting.
+func aiStartupRefusal(err error) string {
+	return "[sky.ai] FATAL: the app refuses to start: " + aiErrorText(err)
+}
+
 // aiStartupLines is the AI block of the startup report.
 func aiStartupLines() []string {
 	resolved := map[string]*aiSlotConfig{}

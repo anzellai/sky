@@ -24,6 +24,7 @@ import Std.Ai.Provider as Provider
 import Std.Ai.Registry as Registry
 import Std.Ai.Train as Train exposing (Status(..))
 import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Trace as Trace
 import Support
 
 
@@ -68,6 +69,29 @@ served =
                        (Endpoint.provider (Support.chatSlotIn dir))
                        [ Provider.user "How do I get a refund?" ]
                        |> Task.map .content
+                       |> Task.run)
+
+
+-- The run in Std.Ai.Trace: its steps (once each, though the first trainer
+-- died and the second resumed), the newest checkpoint, and one cost row. The
+-- Fake trainer runs on this machine, so that row is unpriced: no cost, never a
+-- zero. Driving the finished run again adds no row.
+traced : Result Error ( List Trace.Progress, List Trace.Row )
+traced =
+    trained
+        |> Result.andThen
+               (\( a, _, _ ) ->
+                   Support.openIn dir
+                       |> Task.andThen
+                              (\w ->
+                                  Train.drive w.db (crashy w)
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Task.map2
+                                                     (\steps found ->
+                                                         ( steps, found ))
+                                                     (Trace.progress w.db a.runId)
+                                                     (Trace.rows w.db a.runId)))
                        |> Task.run)
 
 
@@ -143,6 +167,24 @@ tests =
 
                           Err e ->
                               Test.fail (Error.toString e)
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "the run's steps and its unpriced cost row are in Std.Ai.Trace, once"
+          (\_ ->
+              case traced of
+
+                  Ok ( steps, found ) ->
+                      Test.equal
+                          ( List.map .step steps == List.range 1 12
+                          , List.any (\p -> p.loss /= Nothing) steps
+                          , List.any (\p -> p.checkpoint /= "") steps
+                          , List.map
+                                (\r -> ( r.kind, r.costMinor, r.currency ))
+                                found
+                          )
+                          ( True, True, True, [ ( Trace.Training, "", "" ) ] )
 
                   Err e ->
                       Test.fail (Error.toString e))

@@ -46,8 +46,54 @@ adapter loading on. The tier:
 * answers `/metrics` (Prometheus text) with its own counters
   (`sky_ai_tier_requests_total`, `_inflight`, `_resident_adapters`,
   `_adapter_loads_total`, `_adapter_unloads_total`, `_ready`) and vLLM's
-  signals (`sky_ai_engine_running`, `_waiting`, `_kv_cache`). The Sky
-  Console's AI tab shows the same under "GPU tiers".
+  signals (`sky_ai_engine_running`, `_waiting`, `_kv_cache`,
+  `_preemptions`, `_queue_wait_ms`). The Sky Console's AI tab shows the
+  same under "GPU tiers";
+* pushes its autoscale signals to OpenTelemetry when an OTLP endpoint is
+  set (see [The signals in OpenTelemetry](#the-signals-in-opentelemetry)).
+
+### The signals in OpenTelemetry
+
+Every 15 seconds the tier scrapes vLLM's `/metrics`. After each scrape, when
+`OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` is
+set, it pushes its signals to the collector as OTLP/HTTP protobuf
+(`Content-Type: application/x-protobuf`).
+
+| Variable | Meaning |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | The collector's base URL. The tier keeps its path and appends `v1/metrics`: `https://otlp.example/otlp` sends to `https://otlp.example/otlp/v1/metrics`. |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | The full metrics URL, used as given. It wins over the base. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | `key=value` pairs, comma-separated, sent with each push (a vendor's API key). |
+| `OTEL_EXPORTER_OTLP_METRICS_HEADERS` | The same, for metrics only. A name here wins over the general one. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_EXPORTER_OTLP_METRICS_PROTOCOL` | `grpc` turns the push off with one warning. Sky sends HTTP/protobuf only. An endpoint on port 4317 (the gRPC port) does the same. |
+| `SKY_SERVICE_NAME`, then `OTEL_SERVICE_NAME`, then `K_SERVICE` | The resource's `service.name`. Traces carry the same one. |
+
+The metrics have the names `/metrics` uses. Each carries the attributes
+`tier` (the tier's bind address), `engine` and `base`.
+
+| Metric | Kind | Meaning |
+|---|---|---|
+| `sky_ai_tier_ready` | gauge | 1 when the engine is up and every alias is loaded, else 0 |
+| `sky_ai_tier_inflight` | gauge | requests the tier serves now |
+| `sky_ai_tier_resident_adapters` | gauge | adapters loaded in the engine |
+| `sky_ai_engine_running` | gauge | requests vLLM runs now |
+| `sky_ai_engine_waiting` | gauge | requests in vLLM's queue |
+| `sky_ai_engine_kv_cache` | gauge | KV-cache use, 0 to 1 |
+| `sky_ai_engine_queue_wait_ms` | gauge | the mean queue wait in the last window, in milliseconds |
+| `sky_ai_engine_preemptions` | cumulative monotonic sum | requests vLLM preempted since it started |
+
+`queueWaitMs` (`sky_ai_engine_queue_wait_ms`) comes from vLLM's
+`vllm:request_queue_time_seconds` histogram: the change in its sum divided
+by the change in its count between two scrapes. It lags. It covers only the
+requests that left the queue in that window, so a request still waiting is
+not in it: read `sky_ai_engine_waiting` for those. A window in which no
+request left the queue has no value (the signal is absent, not 0). A window
+in which the totals went down (vLLM restarted) is skipped.
+
+A push has a 5-second timeout and is not retried: the next scrape sends
+fresh values. It runs apart from the scrape, so a slow collector never
+delays the tier's work or its shutdown. A failed push prints one line, and
+again only when the failure changes.
 
 The tier reads only the registry's **store**, never the app's database. Each
 `Registry.register` writes the version's manifest
@@ -161,6 +207,10 @@ tier before traffic with `Endpoint.warm`, or keep an instance with
 * `runtime-go/rt/ai_serve_test.go`: routing, the token, on-demand loading and
   eviction, the hot-load with zero failed requests, health gating, SSE
   pass-through, signals; against `runtime-go/rt/testdata/fakevllm`.
+* `runtime-go/rt/ai_serve_otel_test.go`: the queue wait over a scrape window
+  (an empty window and a reset), and the OTLP push against a fake collector
+  that decodes the protobuf (names, values, the `tier` attribute,
+  `service.name`, headers, and no push under the gRPC guard).
 * `tests/Std/Ai/ServeTest.sky`: vLLM's arguments, the Cloud Run service, its
   Knative YAML, the Dockerfile.
 * `rust/crates/sky/tests/ai_serve_flow.rs`: `sky ai serve` on the fake engine

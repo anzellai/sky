@@ -281,6 +281,32 @@ reason. A judge below its calibration is refused by the gate. The judge is
 the local pinned model by default (tier 1). With `--test-mode` its calls come
 from `tests/mocks/` (tier 0).
 
+### Cost and call facts (Std.Ai.Trace)
+
+**Run it.** Offline, from the repository:
+
+```
+sky test tests/Std/Ai/TraceTest.sky
+cd examples/73-ai-train && sky test tests/TrainExampleTest.sky
+```
+
+In your own app, call `Trace.setup db` once, record calls with `Trace.chat db
+(Trace.entry run |> Trace.priced book) …`, and read `Trace.summary db run` or
+`Trace.costs db`.
+
+**Expected result.** `TraceTest` passes 10 cases: a call is a row with its
+facts, a failed call is a row with its failure code, a keyed row is written
+once, a traced agent records its call once, a table from an earlier release is
+migrated in place, and `totalCost` refuses to add USD to EUR. The training
+example's run leaves steps 1 to 12 in `Trace.progress` and one unpriced
+`Training` row. An eval run's rows are under `report.traceRun`.
+
+**How it fails.** `totalCost` fails with `InvalidInput` when a run is priced
+in two currencies or a stored cost is not a decimal. A slot's queue wait,
+start, latency and time to first token come from the runtime
+(`runtime-go/rt/ai_call_facts_test.go`); a `custom` provider has only Sky's
+clock, so its queue wait is empty.
+
 ### Registry
 
 **Run it.**
@@ -329,6 +355,21 @@ never falls back to a local model. A full queue fails at once with
 An adapter trained on another base fails with `AdapterMismatch`. Run
 `sky doctor` before a deploy: it checks every slot against the operator's
 environment.
+
+**A draft model and several adapters.** Give a local spec
+`Local.withDraft` and `Local.withAdapters` (see
+[`local.md`](local.md#several-adapters-on-one-engine)), or set
+`SKY_AI_<SLOT>_DRAFT` and `SKY_AI_<SLOT>_ADAPTERS`. Call with
+`Provider.Options`' `adapter` set to a loaded name, to none, and to a name
+that is not loaded. **Expected result.** A loaded name and no name both
+answer (the base model when no name is given). A name that is not loaded fails
+with `NotRegistered`, and its message lists the loaded names. A draft with
+another vocabulary fails the start with `InvalidSetting` naming
+`SKY_AI_<SLOT>_DRAFT`. With a draft, each answer's `timings` carries
+`draft_n` and `draft_n_accepted`. The live test
+`draft_and_named_adapters_on_the_real_engine` in `ai_local_live` runs all of
+this on the real engine, with the adapters on the synthetic model that
+`go run ./cmd/sky-tiny-gguf <dir>` (from `runtime-go/`) writes.
 
 ### Serving, the GPU tier
 
@@ -585,7 +626,7 @@ cargo test -p sky --test ai_train_flow
 | `ai_serve_flow` | the GPU tier and the cloud verbs, offline | Go |
 | `ai_device_flow`, `ai_device_engine_exports` | device build checks and the engine's exports | Go |
 | `ai_trace_flow`, `ai_policy_router_flow`, `ai_native_tools_flow`, `ai_toolcall_continuation_flow` | Trace, Policy, the router, native tools | Go |
-| `ai_local_live` | the real managed engine with no configuration | tier 1 |
+| `ai_local_live` | the real managed engine with no configuration, a draft model, and named adapters chosen per call | tier 1 |
 | `ai_train_live` | the real driver under the managed Python, a crash and a relaunch | tier 3 (`--train fake`) |
 | `ai_train_mlx_live` | a real MLX QLoRA run, killed and resumed | tier 2 |
 | `ai_memory_pg_flow` (`--ignored`) | `Std.Ai.Memory.Pg` on a real cluster | PostgreSQL with pgvector |
@@ -866,7 +907,7 @@ teardown deletes the bucket again until it is gone.
 ## Known limits
 
 * **Cloud.** Google Cloud only. The AWS training backend (`SageMaker`) is not
-  shipped: `SKY_AI_TRAIN_BACKEND=sagemaker` is `InvalidSetting`. The registry
+  supported yet: `SKY_AI_TRAIN_BACKEND=sagemaker` is `InvalidSetting`. The registry
   store works on S3.
 * **Cost figures.** The ledger holds estimates at list prices. No line is
   reconciled with a bill (`actualUsd` is empty). The budget guard therefore
@@ -881,13 +922,13 @@ teardown deletes the bucket again until it is gone.
   (`Serve.withMinInstances 1`, billed while idle).
 * **Quotas and capacity.** A new project has no L4 quota. A region with no
   free L4 is `CapacityUnavailable`. Sky does not move a job to another region.
-* **Local engine.** One engine loads one adapter. Draft models
-  (`withDraft`) are not shipped. The pins use the upstream llama.cpp release
+* **Local engine.** A named adapter in `Local.withAdapters` is a pinned
+  file or Hugging Face reference, not a `registry:` reference (a registry
+  adapter is a slot's one adapter). The pins use the upstream llama.cpp release
   assets. The managed engine runs on macOS arm64 and Linux x64 with glibc.
 * **Training backends.** MLX needs Apple silicon. Unsloth needs Linux x86_64
   with an NVIDIA GPU and driver 580 or newer. The CLI knows only the
   development base (`--base dev`). Train another base from a program.
-  Training progress is not yet in `Std.Ai.Trace`.
 * **The pipeline.** Training runs as a pipeline task (`Pipeline.withTask`,
   as in `examples/74-ai-cloud`'s `train` task). There is no separate training
   member.
@@ -905,7 +946,14 @@ teardown deletes the bucket again until it is gone.
 Every AI setting is a `withX` builder in code with an operator variable that
 overrides it. The order is: **operator variable, then `withX` in code, then
 the stdlib default.** An empty variable counts as unset. A value that does
-not parse is skipped, and the next layer applies. Under a custom
+not parse is never skipped: it is `InvalidSetting`, whose `setting` names the
+variable (or the `withX` builder) and whose `reason` names the form expected.
+The message shows the value only when it cannot be a secret (never a key, a
+token or a URL). A server checks the AI variables of its declared slots and the
+machine variables before it listens, and refuses to start on a bad one (exit
+1, or the `Err` of an embedded app's Task). A setting read at a call (a
+program that serves nothing, a device offer, a training host) fails that
+call. Under a custom
 `[env] prefix` the variables are `<PREFIX>_AI_...`. Nothing about AI is read
 from `sky.toml`. Build-time choices are CLI flags.
 
@@ -925,6 +973,9 @@ A slot is a named use of a model, for example `chat`, `judge` or `teacher`.
 | `Endpoint.withRetry` | `SKY_AI_<SLOT>_RETRIES` | 2 |
 | `Local.withContext` | `SKY_AI_<SLOT>_CONTEXT` | 8192, halved until it fits |
 | `Local.withGpu` | `SKY_AI_<SLOT>_GPU` | `auto` |
+| `Local.withDraft` | `SKY_AI_<SLOT>_DRAFT` (a model reference) | none |
+| `Local.withDraftTokens` | `SKY_AI_<SLOT>_DRAFT_MAX`, `SKY_AI_<SLOT>_DRAFT_MIN` | the engine's |
+| `Local.withAdapters` | `SKY_AI_<SLOT>_ADAPTERS` (`name[:scale]=<ref>,…`) | none |
 
 The full list, with the queue settings, is in
 [`local.md`](local.md#per-slot-settings). The judge is the slot `judge`
@@ -968,6 +1019,22 @@ SKY_AI_CHAT_KEY=<a secret from your secret store>
 | `Train.withImage` | `SKY_AI_TRAIN_IMAGE` (pinned by digest) |
 | `Train.withServiceAccount` | `SKY_AI_TRAIN_SERVICE_ACCOUNT` |
 | `Train.withLabels` | `SKY_AI_TRAIN_LABELS` (`team=support,env=qa`) |
+
+How to test a bad value. Set one variable to a value that does not parse and
+start the app, or call the slot:
+
+```
+SKY_AI_CHAT_TIMEOUT_MS=soon ./sky-out/app
+```
+
+**Expected result.** The server prints
+`[sky.ai] FATAL: the app refuses to start: …InvalidSetting…` naming
+`SKY_AI_CHAT_TIMEOUT_MS` and "a whole number above 0", and exits 1. The Go
+test `TestAiSlotSettingIsRefusedNotSkipped` covers each kind of setting (whole
+numbers, milliseconds, `MODE` / `AUTH` / `GPU`, the URL, model references,
+the adapter list, the draft settings), with `TestAiGlobalSettingIsRefused`,
+`TestAiDevicePlacementIsRefusedNotSkipped` and
+`TestAiStartupRefusesABadSetting` for the machine, device and startup checks.
 
 `Train.withMachinePrices`, `withMaxRuntimeMinutes`, `withSpot` and
 `withKeepStaging` are code only. The `sky ai train` flags (`--project`,

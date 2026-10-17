@@ -37,19 +37,22 @@ func newAiQueue(slot string, maxInFlight, capacity int, queueWait time.Duration)
 }
 
 // acquire takes a permit, or fails with Overloaded or TimedOut. The returned
-// release must be called exactly once.
-func (q *aiQueue) acquire() (func(), error) {
-	release := func() { <-q.permits }
+// release must be called exactly once. waited is how long the call waited for
+// its permit, also when it fails (a TimedOut call waited the whole queue
+// wait), for Std.Ai.Trace and the console.
+func (q *aiQueue) acquire() (release func(), waited time.Duration, err error) {
+	release = func() { <-q.permits }
 	select {
 	case q.permits <- struct{}{}:
-		return release, nil
+		return release, 0, nil
 	default:
 	}
+	entered := time.Now()
 	q.mu.Lock()
 	if q.waiting >= q.capacity {
 		in, waiting := cap(q.permits), q.waiting
 		q.mu.Unlock()
-		return nil, aiFailf(aiOverloaded,
+		return nil, 0, aiFailf(aiOverloaded,
 			"slot %q is full: %d calls in flight and %d waiting (raise its max in flight or queue, or route the overflow elsewhere)",
 			q.slot, in, waiting)
 	}
@@ -64,9 +67,9 @@ func (q *aiQueue) acquire() (func(), error) {
 	defer timer.Stop()
 	select {
 	case q.permits <- struct{}{}:
-		return release, nil
+		return release, time.Since(entered), nil
 	case <-timer.C:
-		return nil, aiFailf(aiTimedOut, "slot %q: waited %s in the queue for a free call", q.slot, q.queueWait).
+		return nil, time.Since(entered), aiFailf(aiTimedOut, "slot %q: waited %s in the queue for a free call", q.slot, q.queueWait).
 			withInt("afterMs", int(q.queueWait/time.Millisecond))
 	}
 }

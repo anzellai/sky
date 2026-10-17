@@ -149,6 +149,13 @@ const PREFIXED_READ_HELPERS: &[&str] = &[
     // to the derivation until it is declared, which is precisely the
     // behaviour stage 1 built this list for.
     "configLayers(\"",
+    // The strict AI readers (v0.28.0): a value that does not parse is a
+    // typed InvalidSetting, never skipped. `aiEnvChecked("AI_ACCEL", …)` and
+    // `aiLayerChecked("AI_SERVE_BIND", …)` ARE reads of `SKY_AI_ACCEL` and
+    // `SKY_AI_SERVE_BIND`; the gate went red when the literal reads they
+    // replaced disappeared from the measurement.
+    "aiEnvChecked(\"",
+    "aiLayerChecked(\"",
 ];
 
 /// Every site where a prefixed-read primitive is called with a non-literal
@@ -199,11 +206,18 @@ const NON_LITERAL_PREFIXED_READS: &[(&str, &str)] = &[
          time (aiSlotSuffix) and read through configLayers. The KEY set is \
          closed and literal in that file (MODE / URL / KEY / MODEL / ADAPTER / \
          TIMEOUT_MS / MAX_INFLIGHT / QUEUE / QUEUE_WAIT_MS / RETRIES / CONTEXT / \
-         GPU / PARALLEL / IDLE_UNLOAD_S / PORT / ADAPTER_REFRESH_S), each \
+         GPU / PARALLEL / IDLE_UNLOAD_S / PORT / ADAPTER_REFRESH_S / DRAFT / \
+         DRAFT_MAX / DRAFT_MIN / ADAPTERS), each \
          documented in docs/ai/local.md as SKY_AI_<SLOT>_<KEY>. The \
          machine-wide AI_HOME / AI_LLAMA_BIN / AI_FETCH / AI_ACCEL are literal \
          skyGetenv reads in ai_fetch.go / ai_gguf.go, and AI_REGISTRY a \
          literal skyEnvName read in ai_store.go; all are counted normally",
+    ),
+    (
+        "runtime-go/rt/ai_draft.go",
+        "the display name of a slot's DRAFT setting in a failure message \
+         (`<PREFIX>_AI_<SLOT>_DRAFT`); the value is read by ai_config.go's \
+         closed slot KEY set, never here",
     ),
     (
         "runtime-go/rt/ai_device_serve.go",

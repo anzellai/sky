@@ -178,7 +178,12 @@ seed and every answer): two runs with the same digest answered the same.
 - `scorers`: each scorer's mean over the cases it scored;
 - `p95LatencyMs` and `meanCost`;
 - `seed`, `samples`, the judge's rubric version and the `digest`;
-- `calibration`: the judge's calibration, when it has labelled cases.
+- `calibration`: the judge's calibration, when it has labelled cases;
+- `traceRun`: the run's id in `Std.Ai.Trace`. Each candidate call is an
+  `Evaluation` row there (priced with `withPriceBook`), and each judge call that
+  reached the model is a `Judge` row (priced with `withJudgePriceBook`; a
+  journal hit records nothing). `Trace.summary db report.traceRun` gives the
+  run's tokens and its exact cost. See [`trace.md`](trace.md).
 
 `Eval.encodeReport` writes a report as JSON with every field and
 `Eval.decodeReport` reads it back; `Std.Ai.Registry` stores attached reports in

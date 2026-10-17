@@ -200,7 +200,7 @@ The backend is resolved in this order:
    `SKY_AI_TRAIN_BACKEND=fake`.
 
 Any other value of the variable is `InvalidSetting` naming the variable.
-`sagemaker` is `InvalidSetting` too: the AWS backend is not shipped yet.
+`sagemaker` is `InvalidSetting` too: the AWS backend is not supported yet.
 `vertex` is never detected: a cloud job is chosen in code or by the variable.
 
 A backend this host cannot run is `NoAccelerator`, never a silent fallback to
@@ -985,7 +985,19 @@ emulator, which runs the Fake protocol into an emulated bucket the way the
 container does. `examples/74-ai-cloud` and
 `rust/crates/sky/tests/fixtures/ai-cloud` test the whole workflow this way.
 
+## In `Std.Ai.Trace`
+
+A run records itself in `Std.Ai.Trace` under its id (`Train.runId job`, the
+id `start` returns). Each step the watch reads is a progress row (the step,
+the total, the loss, the tokens per second, the checkpoint written at it):
+`Trace.progress db runId`. When the run ends, finished or failed, it records
+one `Training` cost row. A Vertex run's row is its measured spend in exact
+money, so `Trace.costs db` adds training to the calls and the evals of the
+lifecycle. A run on this machine has no price, so its row is unpriced (no
+cost, never a zero). Every row is keyed, so a resumed run writes nothing
+twice. See [`trace.md`](trace.md).
+
 ## Not yet
 
-These parts of §8.5 are later work: the AWS backend (`SageMaker`) and the
-progress in `Trace`.
+The AWS backend (`SageMaker`) is not supported yet: `sagemaker` is
+`InvalidSetting`.

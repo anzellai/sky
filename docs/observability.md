@@ -42,6 +42,21 @@ Auto-instrumented (Tier 1 — always on):
   that collector (Tempo / Jaeger / Honeycomb / Datadog / Cloud
   Trace — anything that speaks OTLP).
 
+The endpoint is a base URL. Sky keeps its path and appends `v1/traces`, as
+the OpenTelemetry specification says: `https://otlp.example/otlp` sends
+spans to `https://otlp.example/otlp/v1/traces`. (Before this, Sky kept only
+the host and port of a value set through `Sky.Config.withTelemetry`, so a
+collector behind a path saw no spans.) `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
+is a full traces URL and is used as given.
+
+**OTLP metrics are pushed for the GPU tier signals only.** A
+`Std.Ai.Serve` tier pushes its autoscale signals (`sky_ai_tier_*`,
+`sky_ai_engine_*`) as OTLP/HTTP protobuf to `<base>/v1/metrics`, or to
+`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, on each 15-second scrape. The app's
+own counters, gauges and histograms are not pushed: they stay on
+`/_sky/metrics` and in the console. See
+[ai/serve.md](ai/serve.md#the-signals-in-opentelemetry) for the metric names.
+
 ### The Console behind a strict Content-Security-Policy
 
 The Sky Console at `/_sky/console` is a Sky.Live sub-app. It works behind a
@@ -323,11 +338,13 @@ opt back in with `SKY_TRACE_HONOR_REMOTE_PARENT=1`.
 
 | Env | Default | Meaning |
 |---|---|---|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | (unset) | Export OTLP here in addition to the in-process ring. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | (unset) | Export OTLP here in addition to the in-process ring. A base URL: its path is kept and `v1/traces` (or `v1/metrics`) is appended. |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` / `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | (unset) | The full URL for one signal, used as given. Wins over the base. Metrics are the GPU tier signals only. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | (unset) | `grpc` disables OTLP export with a warning: Sky sends HTTP/protobuf only. An endpoint on port 4317 does the same. |
 | `OTEL_TRACES_SAMPLER_ARG` | (mode default) | Fixed sample fraction `0.0–1.0`. |
 | `SKY_TRACE_HONOR_REMOTE_PARENT` | (unset) | `1` restores parent-based inheritance for *remote* `traceparent` sampling decisions. Set only behind a trusted head-sampling gateway — the default treats the inbound flag as untrusted and ratio-samples instead. |
-| `SKY_SERVICE_NAME` / `OTEL_SERVICE_NAME` | `sky-app` | `service.name` the backend groups by. |
-| `OTEL_EXPORTER_OTLP_HEADERS` | (unset) | Comma-separated `k=v` headers (auth tokens for managed collectors). |
+| `SKY_SERVICE_NAME` / `OTEL_SERVICE_NAME` / `K_SERVICE` | `sky-app` | `service.name` the backend groups by, first set wins. Traces, the GPU tier metrics and the console hub envelope carry the same one. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | (unset) | Comma-separated `k=v` headers (auth tokens for managed collectors). `OTEL_EXPORTER_OTLP_TRACES_HEADERS` / `_METRICS_HEADERS` add per-signal headers that win on a clash. |
 | `SKY_CONSOLE_DB_PATH` | (unset) | When set, dual-writes every log / metric / span to the SQLite file at this path so the bundled console mini-app can render history beyond the 10 k-line / 1 k-span in-RAM caps. WAL mode, 24 h log/span retention, 7 d metric retention. Unset keeps the pure in-RAM path. |
 | `SKY_TELEMETRY_AGGREGATION_WINDOW` | `0` (off) | A Go duration (e.g. `10s`). When `> 0`, **counter** metric rows are coalesced within the window: only the last cumulative value per `(name, labels)` is persisted, so a busy app writes one row per counter per window instead of one per interaction. Lossless for rate/delta reads — only sub-window time-resolution is lost. **Gauges are never coalesced** (intra-window peaks would be lost); histograms have their own knob below. Off by default because it changes the persisted-row resolution the remote SkyDeploy console sees; `10s` is the recommended production value on a busy Sky.Live app. |
 | `SKY_TELEMETRY_DB_CAPACITY` | (unset) | Operator-declared database capacity in human units (`100GB`, `1.5TB`, `512MB`, `100GiB`, or a bare byte count). The size report warns when the whole database exceeds 90% of it — the only "near full" signal available for a **remote** database, whose host disk the app cannot see. Unset → size + growth reported, no capacity danger flag. A malformed value logs one warning and disables the check (never silently). See "Database size report". |

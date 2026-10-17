@@ -1274,20 +1274,17 @@ func encodeOtlpEnvelope(kind TelemetryKind, fragments [][]byte) ([]byte, error) 
 }
 
 // defaultResource builds the OTLP Resource shape used in every
-// envelope. service.name + service.instance.id are derived from
-// SkyDeploy / Cloud Run / Lambda env per SERVERLESS.md.
+// envelope. It is telemetry.ServiceResource, the one resource the
+// OTLP trace and metrics exporters also carry, so every signal names
+// the same service (SKY_SERVICE_NAME, then OTEL_SERVICE_NAME, then
+// K_SERVICE). service.instance.id follows SERVERLESS.md (K_REVISION,
+// then HOSTNAME).
 func defaultResource() otlpResource {
-	svc := envOrDefault("OTEL_SERVICE_NAME", envOrDefault("K_SERVICE", "sky-app"))
-	rev := envOrDefault("K_REVISION", envOrDefault("HOSTNAME", "instance-0"))
-	return otlpResource{
-		Attributes: []otlpAttribute{
-			otlpAttr("service.name", svc),
-			otlpAttr("service.instance.id", rev),
-			otlpAttr("telemetry.sdk.name", "sky"),
-			otlpAttr("telemetry.sdk.version", "0.16.1"),
-			otlpAttr("telemetry.sdk.language", "go"),
-		},
+	var out otlpResource
+	for _, kv := range telemetry.ServiceResource("", "") {
+		out.Attributes = append(out.Attributes, otlpAttr(string(kv.Key), kv.Value.AsString()))
 	}
+	return out
 }
 
 // ─── OTLP JSON shapes — minimal field subset ─────────────────────

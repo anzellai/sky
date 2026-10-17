@@ -174,6 +174,12 @@ func aiEngineKey(spec aiLocalSpec) string {
 	if spec.adapter.sha256 != "" {
 		key += "|lora=" + spec.adapter.sha256
 	}
+	if spec.draft.sha256 != "" {
+		key += fmt.Sprintf("|draft=%s/%d/%d", spec.draft.sha256, spec.draftMax, spec.draftMin)
+	}
+	for _, a := range spec.adapters {
+		key += fmt.Sprintf("|ad=%s:%s:%g", a.name, a.ref.sha256, a.scale)
+	}
 	return key
 }
 
@@ -292,7 +298,9 @@ func (e *aiEngine) start(ctx context.Context) error {
 			k := strings.TrimSpace(string(key))
 			// The recorded engine, proven by its key: a port reused by
 			// another process since the entry was written is not attached.
-			if aiHealthy(ent.Port, k) && aiEngineOwnsPort(ent.Port, k) {
+			if owns, err := aiEngineOwnsPort(ent.Port, k); err != nil {
+				return err
+			} else if aiHealthy(ent.Port, k) && owns {
 				e.mu.Lock()
 				e.attached, e.port, e.apiKey, e.pid = true, ent.Port, k, ent.Pid
 				e.fit = aiFit{accelerator: ent.Accelerator, contextTokens: ent.Context}
@@ -311,7 +319,11 @@ func (e *aiEngine) start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	fit, err := aiFitFor(modelPath, e.spec, bin.variant)
+	draftPath, adapterPaths, extraBytes, err := aiEnsureDraftAndAdapters(ctx, e.slot, e.spec, modelPath)
+	if err != nil {
+		return err
+	}
+	fit, err := aiFitForWith(modelPath, extraBytes, e.spec, bin.variant)
 	if err != nil {
 		return err
 	}
@@ -337,12 +349,23 @@ func (e *aiEngine) start(ctx context.Context) error {
 			return aiFailf(aiEngineFailed, "no free port on 127.0.0.1: %v", err)
 		}
 	}
-	apiKey := aiRandomHex(32)
+	apiKey, err := aiRandomHex(32)
+	if err != nil {
+		return err
+	}
+	keyName, err := aiRandomHex(8)
+	if err != nil {
+		return err
+	}
+	regID, err := aiRandomHex(6)
+	if err != nil {
+		return err
+	}
 	runDir := filepath.Join(aiHome(), "run")
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		return aiFailf(aiEngineFailed, "cannot create %s: %v", runDir, err)
 	}
-	keyFile := filepath.Join(runDir, aiRandomHex(8)+".key")
+	keyFile := filepath.Join(runDir, keyName+".key")
 	if err := os.WriteFile(keyFile, []byte(apiKey+"\n"), 0o600); err != nil {
 		return aiFailf(aiEngineFailed, "cannot write the engine key file: %v", err)
 	}
@@ -366,6 +389,7 @@ func (e *aiEngine) start(ctx context.Context) error {
 	if e.spec.adapter.path != "" {
 		args = append(args, "--lora", e.spec.adapter.path)
 	}
+	args = append(args, aiDraftAndAdapterArgs(e.spec, draftPath, adapterPaths)...)
 	var env [][2]string
 	for _, kv := range aiEngineEnv() {
 		k, v, _ := strings.Cut(kv, "=")
@@ -405,6 +429,17 @@ func (e *aiEngine) start(ctx context.Context) error {
 		os.Remove(keyFile)
 		return err
 	}
+	// A draft the engine loaded and could not use: llama-server logs it and
+	// serves on without speculation. That is not the engine that was asked
+	// for, so it is stopped and the start fails.
+	if draftPath != "" {
+		if line := aiDraftRefusedInLog(h.logTail(256 << 10)); line != "" {
+			h.shutdown()
+			aiCloseWatch(watch)
+			os.Remove(keyFile)
+			return aiDraftVocabFailure(e.slot, e.spec.model, e.spec.draft, "llama-server refused it: "+line)
+		}
+	}
 
 	e.mu.Lock()
 	e.proc, e.pid, e.port, e.apiKey, e.keyFile = h, h.pid, port, apiKey, keyFile
@@ -412,7 +447,7 @@ func (e *aiEngine) start(ctx context.Context) error {
 	e.bin, e.fit, e.attached, e.stopping = bin, fit, false, false
 	e.mu.Unlock()
 	e.regID = aiRegistryAdd(aiRegistryEntry{
-		Slot: e.slot, Key: e.key, Pid: h.pid, HolderPid: os.Getpid(), Port: port,
+		ID: regID, Slot: e.slot, Key: e.key, Pid: h.pid, HolderPid: os.Getpid(), Port: port,
 		Model: e.spec.model.String(), KeyFile: keyFile, Build: bin.build,
 		Accelerator: fit.accelerator, Context: fit.contextTokens,
 		StartedAt: time.Now().UTC().Format(time.RFC3339),
@@ -432,6 +467,60 @@ func aiCloseWatch(w *os.File) {
 
 // aiFitFor plans the engine's memory from the model file and the host.
 func aiFitFor(modelPath string, spec aiLocalSpec, variant string) (aiFit, error) {
+	return aiFitForWith(modelPath, 0, spec, variant)
+}
+
+// aiEnsureDraftAndAdapters makes the draft model and the named adapters
+// present and verified through the same model store and SHA-256 checks as
+// the base model, compares the draft's vocabulary with the base's, and
+// returns their paths and the bytes they add to the engine's memory.
+func aiEnsureDraftAndAdapters(ctx context.Context, slot string, spec aiLocalSpec, modelPath string) (draftPath string, adapterPaths []string, extra int64, err error) {
+	if len(spec.adapters) > 0 && spec.adapter.sha256 != "" {
+		return "", nil, 0, aiFailf(aiInvalidSetting,
+			"the engine has a single adapter applied to every call (Local.withAdapter or a registry adapter) and named adapters (Local.withAdapters); one engine does one or the other").
+			with("setting", "adapters").with("reason", "a single adapter and named adapters cannot share an engine")
+	}
+	size := func(p string) int64 {
+		if st, err := os.Stat(p); err == nil {
+			return st.Size()
+		}
+		return 0
+	}
+	if spec.draft.sha256 != "" {
+		if draftPath, err = aiEnsureModel(ctx, spec.draft); err != nil {
+			return "", nil, 0, err
+		}
+		if err = aiCheckDraftVocab(slot, spec.model, modelPath, spec.draft, draftPath); err != nil {
+			return "", nil, 0, err
+		}
+		extra += size(draftPath)
+	}
+	for _, a := range spec.adapters {
+		p, err := aiEnsureModel(ctx, a.ref)
+		if err != nil {
+			return "", nil, 0, err
+		}
+		if strings.Contains(p, ",") {
+			return "", nil, 0, aiFailf(aiInvalidSetting, "adapter %q: the path %s has a comma, which llama-server reads as a list; move the file", a.name, p).
+				with("setting", "adapters").with("reason", "an adapter path may not contain a comma")
+		}
+		// An adapter Std.Ai.Train converted records the serving model it was
+		// converted for; loaded on any other model it would answer nonsense.
+		if want := aiAdapterServingSha(p); want != "" && want != spec.model.sha256 {
+			return "", nil, 0, aiFailf(aiAdapterMismatch,
+				"the adapter %q was converted for the model sha256 %s, and this engine runs sha256 %s; serve it on its own base model",
+				a.name, want, spec.model.sha256).
+				with("adapter", a.name).with("adapterBase", want).with("engineBase", spec.model.sha256)
+		}
+		adapterPaths = append(adapterPaths, p)
+		extra += size(p)
+	}
+	return draftPath, adapterPaths, extra, nil
+}
+
+// aiFitForWith is aiFitFor with extra bytes the engine loads besides the
+// model (a draft model, adapters), counted as weights.
+func aiFitForWith(modelPath string, extra int64, spec aiLocalSpec, variant string) (aiFit, error) {
 	meta, err := readGGUFMeta(modelPath)
 	if err != nil {
 		return aiFit{}, aiFailf(aiInvalidSetting, "model %s: %v", modelPath, err).with("setting", "model")
@@ -444,7 +533,7 @@ func aiFitFor(modelPath string, spec aiLocalSpec, variant string) (aiFit, error)
 	if err != nil {
 		return aiFit{}, err
 	}
-	return aiPlanFit(meta, st.Size(), spec.context, spec.gpu, accel, aiK().availableBytes())
+	return aiPlanFit(meta, st.Size()+extra, spec.context, spec.gpu, accel, aiK().availableBytes())
 }
 
 func aiFreePort() (int, error) {
@@ -486,8 +575,12 @@ func aiHealthy(port int, key string) bool {
 // /props with the launch's fresh random key and refuse it with any other key.
 // A keyless server accepts both, one with another key refuses both: neither
 // can pass without knowing this launch's key.
-func aiEngineOwnsPort(port int, key string) bool {
-	return aiPropsStatus(port, key) == 200 && aiPropsStatus(port, "sky-not-the-key-"+aiRandomHex(16)) == 401
+func aiEngineOwnsPort(port int, key string) (bool, error) {
+	other, err := aiRandomHex(16)
+	if err != nil {
+		return false, err
+	}
+	return aiPropsStatus(port, key) == 200 && aiPropsStatus(port, "sky-not-the-key-"+other) == 401, nil
 }
 
 func aiPropsStatus(port int, key string) int {
@@ -537,7 +630,11 @@ func aiWaitHealthy(ctx context.Context, h *procHandle, port int, key string) err
 		default:
 		}
 		if aiHealthy(port, key) {
-			if aiEngineOwnsPort(port, key) {
+			owns, err := aiEngineOwnsPort(port, key)
+			if err != nil {
+				return err
+			}
+			if owns {
 				return nil
 			}
 			return aiForeignListener(port, h.logTail(1500))
@@ -746,6 +843,14 @@ func (e *aiEngine) stop() {
 // is EngineCrashed (with its exit code and log tail), a 503 while loading is
 // Overloaded, a deadline is TimedOut.
 func (e *aiEngine) post(ctx context.Context, timeout time.Duration, path, body string) (string, error) {
+	// An engine with named adapters: the request's model chooses one, and
+	// every request carries an explicit scale for each (ai_draft.go). An
+	// unknown name fails here, before anything reaches the engine. The
+	// answer is returned as the engine wrote it, `timings` included.
+	body, err := aiRouteAdapter(e.spec, body)
+	if err != nil {
+		return "", err
+	}
 	e.mu.Lock()
 	port, key, h := e.port, e.apiKey, e.proc
 	e.inflight++

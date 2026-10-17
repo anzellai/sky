@@ -1,4 +1,5 @@
-//! LIVE: the real managed engine with zero configuration.
+//! LIVE: the real managed engine with zero configuration, and a draft model
+//! and named adapters on it.
 //!
 //! A compiled Sky program whose code names only `Local.devModel` gets a chat
 //! completion and an embedding through two `Std.Ai.Endpoint` slots, with no
@@ -272,6 +273,138 @@ fn the_flagship_pipeline_evaluates_on_the_real_engine() {
     assert_eq!(held, 0, "engines outlived the pipeline: {running}");
     let _ = std::fs::remove_dir_all(&project);
     let _ = std::fs::remove_dir_all(&data);
+}
+
+/// A draft model and several named LoRA adapters on the real llama-server
+/// (`Local.withDraft`, `Local.withAdapters`). The development model runs with
+/// itself as its draft (same vocabulary, so the pinned build drafts with it;
+/// a draft it could not use would fail the start). A draft with another
+/// vocabulary fails typed before anything loads. The synthetic Qwen2 model
+/// (`go run ./cmd/sky-tiny-gguf`, pinned by SHA-256 like any file model)
+/// carries two adapters: a call chooses one by name, a call naming none runs
+/// the base model, and a name that is not loaded is NotRegistered listing the
+/// loaded ones, never a base-model answer. The same holds through an
+/// Endpoint slot.
+#[test]
+fn draft_and_named_adapters_on_the_real_engine() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let home = ai_home();
+    let available = provisioned(&home) || (reachable("github.com") && reachable("huggingface.co"));
+    if !required(Need::AiEngine, available) {
+        return;
+    }
+    let pid = std::process::id();
+    let project = std::env::temp_dir().join(format!("sky-ai-live-draft-{pid}"));
+    let tiny = std::env::temp_dir().join(format!("sky-ai-live-tiny-{pid}"));
+    let _ = std::fs::remove_dir_all(&project);
+    copy_dir(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ai-local-draft"),
+        &project,
+    );
+    let runtime = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../runtime-go");
+    let out = Command::new("go")
+        .args(["run", "./cmd/sky-tiny-gguf"])
+        .arg(&tiny)
+        .current_dir(&runtime)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "sky-tiny-gguf: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let files: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let out = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "sky build: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let mut app = Command::new(project.join("sky-out/app"));
+    app.current_dir(&project).env_remove("ENV");
+    for (k, _) in std::env::vars() {
+        if k.starts_with("SKY_AI_") && k != "SKY_AI_HOME" {
+            app.env_remove(k);
+        }
+    }
+    for (var, key) in [
+        ("TINY_MODEL", "model"),
+        ("TINY_ADAPTER", "adapter"),
+        ("TINY_ADAPTER_B", "adapterB"),
+        ("TINY_OTHER_VOCAB", "otherVocab"),
+    ] {
+        app.env(var, files[key].as_str().unwrap());
+        app.env(
+            format!("{var}_SHA256"),
+            files[format!("{key}Sha256")].as_str().unwrap(),
+        );
+    }
+    let child = app
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let holder = child.id();
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    eprintln!("ai_local_live: draft and adapters\n{stdout}");
+    assert!(out.status.success(), "app failed: {stdout}{stderr}");
+    let line = |label: &str| -> String {
+        stdout
+            .lines()
+            .find_map(|l| l.strip_prefix(&format!("{label}=")))
+            .unwrap_or_else(|| panic!("no {label} line: {stdout}{stderr}"))
+            .to_string()
+    };
+    assert!(line("draft").starts_with("answered"), "{stdout}{stderr}");
+    let mismatch = line("mismatch");
+    assert!(
+        mismatch.starts_with("InvalidSetting setting=Local.withDraft")
+            && mismatch.contains("vocabulary"),
+        "{mismatch}"
+    );
+    for label in [
+        "adapter support",
+        "adapter legal",
+        "adapter base",
+        "slot support",
+    ] {
+        assert!(
+            line(label).starts_with("answered"),
+            "{label}: {stdout}{stderr}"
+        );
+    }
+    let billing = line("adapter billing");
+    assert!(
+        billing.starts_with("NotRegistered ref=billing") && billing.contains("support, legal"),
+        "{billing}"
+    );
+
+    let ps = Command::new(SKY)
+        .args(["ai", "ps", "--format", "json"])
+        .output()
+        .unwrap();
+    let running: serde_json::Value =
+        serde_json::from_slice(&ps.stdout).unwrap_or(serde_json::Value::Null);
+    let held = running
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|e| e["holderPid"] == holder && e["state"] == "running")
+                .count()
+        })
+        .unwrap_or(0);
+    assert_eq!(held, 0, "engines outlived the program: {running}");
+    let _ = std::fs::remove_dir_all(&project);
+    let _ = std::fs::remove_dir_all(&tiny);
 }
 
 fn copy_dir(from: &Path, to: &Path) {

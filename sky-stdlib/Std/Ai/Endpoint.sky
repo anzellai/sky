@@ -105,6 +105,10 @@ type alias RawLocal =
     , idleUnload : Int
     , embeddings : Bool
     , port : Int
+    , draft : String
+    , draftMax : Int
+    , draftMin : Int
+    , adapters : String
     }
 
 type alias Config =
@@ -190,6 +194,10 @@ endpoint slot =
             , idleUnload = -1
             , embeddings = False
             , port = -1
+            , draft = ""
+            , draftMax = -1
+            , draftMin = -1
+            , adapters = ""
             }
         , hasResolver = False
         , resolverName = ""
@@ -298,8 +306,10 @@ withAdapterRefresh seconds (Endpoint c) =
 
 
 {-| The managed local engine this slot runs when it is not remote. Its context,
-GPU, parallel, idle-unload and port settings each fall back to
-`<PREFIX>_AI_<SLOT>_CONTEXT`, `_GPU`, `_PARALLEL`, `_IDLE_UNLOAD_S` and `_PORT`. -}
+GPU, parallel, idle-unload, port, draft and adapter settings each fall back to
+`<PREFIX>_AI_<SLOT>_CONTEXT`, `_GPU`, `_PARALLEL`, `_IDLE_UNLOAD_S`, `_PORT`,
+`_DRAFT`, `_DRAFT_MAX`, `_DRAFT_MIN` and `_ADAPTERS`. A value that does not
+parse fails with `InvalidSetting` naming the variable. -}
 withLocal : LocalEngine.Spec -> Endpoint -> Endpoint
 withLocal spec (Endpoint c) =
     let
@@ -327,6 +337,24 @@ withLocal spec (Endpoint c) =
                     , idleUnload = Maybe.withDefault (-1) s.idleUnloadSeconds
                     , embeddings = s.embeddings
                     , port = Maybe.withDefault (-1) s.port
+                    , draft =
+                        case s.draft of
+
+                            Just ref ->
+                                ref
+
+                            Nothing ->
+                                ""
+                    , draftMax = Maybe.withDefault (-1) s.draftMax
+                    , draftMin = Maybe.withDefault (-1) s.draftMin
+                    , adapters =
+                        s.adapters
+                            |> List.map
+                                   (\a ->
+                                       a.name ++ ":" ++ String.fromFloat a.scale
+                                           ++ "="
+                                           ++ LocalEngine.reference a.adapter)
+                            |> String.join ","
                     }
             }
 
@@ -433,13 +461,26 @@ streamCloseRaw =
     Ffi.kernel "Ai_streamClose"
 
 
+postMeasuredRaw : Config -> String -> String -> String -> Task Error String
+postMeasuredRaw =
+    Ffi.kernel "Ai_endpointPostMeasured"
+
+
+streamOpenMeasuredRaw : Config -> String -> String -> String -> Task Error String
+streamOpenMeasuredRaw =
+    Ffi.kernel "Ai_endpointStreamOpenMeasured"
+
+
 {-| The slot as a `Provider`. It is pure: the first call resolves the slot and
-the process keeps the result, so a top-level binding is enough. -}
+the process keeps the result, so a top-level binding is enough. A measured
+call (`Provider.measure`, `Std.Ai.Trace.chat`) reports the slot, its tier,
+the adapter, the queue wait and the latency. -}
 provider : Endpoint -> Provider
 provider (Endpoint c) =
-    Provider.wireStreaming
+    Provider.wireMeasured
         (postRaw c)
         { open = streamOpenRaw c, next = streamNextRaw, close = streamCloseRaw }
+        { post = postMeasuredRaw c, open = streamOpenMeasuredRaw c }
         ""
 
 {-| One resolved setting and where it came from: `env`, `code` or `default`.

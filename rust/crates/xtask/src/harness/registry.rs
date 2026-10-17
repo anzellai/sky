@@ -1410,7 +1410,7 @@ pub static GATES: &[Gate] = &[
                           end (a silent non-stream); the arrived-in-pieces assertion must go red",
             kind: MutationKind::ReplaceOnce {
                 path: "runtime-go/rt/ai_stream.go",
-                from: "\t\t\t\t\tst.content.WriteString(d)\n\t\t\t\t\treturn aiDeltaEvent(d), false, nil",
+                from: "\t\t\t\t\tst.content.WriteString(d)\n\t\t\t\t\tst.pieceSeen()\n\t\t\t\t\treturn aiDeltaEvent(d), false, nil",
                 to: "\t\t\t\t\tst.content.WriteString(d)\n\t\t\t\t\tcontinue",
             },
         }]),

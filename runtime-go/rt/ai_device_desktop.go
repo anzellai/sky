@@ -264,7 +264,11 @@ func aiDeskDownload(u string, f aiDeviceFile, progress func(int64)) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
-	tmp := dest + ".part-" + aiRandomHex(4)
+	rnd, err := aiRandomHex(4)
+	if err != nil {
+		return err
+	}
+	tmp := dest + ".part-" + rnd
 	out, err := os.Create(tmp)
 	if err != nil {
 		return err

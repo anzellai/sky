@@ -39,14 +39,26 @@ import (
 // built-in emulator.
 const aiGcpFakeHost = "sky-gcp.invalid"
 
-// aiGcpEndpoint is the emulator's base URL, or "" for Google itself.
+// aiGcpEndpoint is the emulator's base URL, or "" for Google itself. It is
+// "" for a value that does not parse too: the Sky side reads the variable
+// through Ai_gcpEndpoint, which fails the call on such a value, so this
+// fallback only keeps the test-mode transport mocked.
 func aiGcpEndpoint() string {
-	for _, v := range configLayers("AI_GCP_ENDPOINT", "") {
-		if v = strings.TrimSpace(v); v != "" {
-			return strings.TrimRight(v, "/")
-		}
+	v, err := aiGcpEndpointChecked()
+	if err != nil {
+		return ""
 	}
-	return ""
+	return v
+}
+
+// aiGcpEndpointChecked is aiGcpEndpoint with the refusal: InvalidSetting
+// naming SKY_AI_GCP_ENDPOINT (never its value) when it does not parse.
+func aiGcpEndpointChecked() (string, error) {
+	v, err := aiEnvChecked("AI_GCP_ENDPOINT", aiExpectURL)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(v, "/"), nil
 }
 
 // Ai_gcpEndpoint : () -> Task Error String
@@ -70,8 +82,17 @@ func aiGcpLoopbackEmulator(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// Ai_gcpEndpoint : () -> Task Error String — the emulator's base URL, or ""
+// for Google itself. A value that is not a URL fails the Task
+// (InvalidSetting), so a mistyped emulator address never reaches Google.
 func Ai_gcpEndpoint(_ any) any {
-	return func() any { return Ok[any, any](aiGcpEndpoint()) }
+	return func() any {
+		v, err := aiGcpEndpointChecked()
+		if err != nil {
+			return aiTaskErr(err)
+		}
+		return Ok[any, any](v)
+	}
 }
 
 var (

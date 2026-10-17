@@ -125,7 +125,11 @@ func aiTrainNoteRun(runDir string) {
 // ─── small helpers ──────────────────────────────────────────────────────
 
 func aiWriteFileAtomic(path string, data []byte) error {
-	tmp := path + ".tmp-" + aiRandomHex(4)
+	rnd, err := aiRandomHex(4)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp-" + rnd
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
@@ -201,28 +205,39 @@ func aiHasCUDA() bool {
 	return fileExists("/proc/driver/nvidia/version") || fileExists("/dev/nvidiactl")
 }
 
-func aiTrainAccelerator() string {
-	if strings.EqualFold(strings.TrimSpace(skyGetenv("AI_ACCEL")), "cpu") {
-		return "cpu"
+// aiTrainAccelerator is the accelerator a training run uses:
+// `<PREFIX>_AI_ACCEL=cpu` forces the CPU, else the host's. A value that is
+// not one of the accelerator words is InvalidSetting, never ignored.
+func aiTrainAccelerator() (string, error) {
+	v, err := aiEnvChecked("AI_ACCEL", aiExpectAccel)
+	if err != nil {
+		return "", err
+	}
+	if strings.EqualFold(v, "cpu") {
+		return "cpu", nil
 	}
 	switch {
 	case runtime.GOOS == "darwin" && runtime.GOARCH == "arm64":
-		return "metal"
+		return "metal", nil
 	case aiHasCUDA():
-		return "cuda"
+		return "cuda", nil
 	}
-	return "cpu"
+	return "cpu", nil
 }
 
 // Ai_trainHost : () -> Task Error Host
 func Ai_trainHost(_ any) any {
 	return func() any {
+		accel, err := aiTrainAccelerator()
+		if err != nil {
+			return aiTaskErr(err)
+		}
 		return Ok[any, any](map[string]any{
 			"os":             runtime.GOOS,
 			"arch":           runtime.GOARCH,
 			"totalBytes":     int(detectRAMBytes()),
 			"availableBytes": int(aiHostAvailableBytes()),
-			"accelerator":    aiTrainAccelerator(),
+			"accelerator":    accel,
 		})
 	}
 }
@@ -243,9 +258,9 @@ func aiTrainResolveBackend(code string) (backend, source string, err error) {
 	if raw, ok := lookupEnvRaw(name); ok && strings.TrimSpace(raw) != "" && !valid(raw) {
 		v := strings.ToLower(strings.TrimSpace(raw))
 		if v == "sagemaker" {
-			return "", "", aiFailf(aiInvalidSetting, "%s=%q: the SageMaker backend is not shipped yet; use vertex (Google Cloud), mlx, unsloth or fake", name, raw).with("setting", name)
+			return "", "", aiFailf(aiInvalidSetting, "%s=%q: the SageMaker backend is not supported yet; use vertex (Google Cloud), mlx, unsloth or fake", name, raw).with("setting", name).with("reason", "the SageMaker backend is not supported yet")
 		}
-		return "", "", aiFailf(aiInvalidSetting, "%s=%q: use mlx, unsloth, vertex or fake", name, raw).with("setting", name)
+		return "", "", aiFailf(aiInvalidSetting, "%s=%q: use mlx, unsloth, vertex or fake", name, raw).with("setting", name).with("reason", "use mlx, unsloth, vertex or fake")
 	}
 	for i, v := range configLayers("AI_TRAIN_BACKEND", code) {
 		if !valid(v) {
@@ -584,7 +599,11 @@ func aiTrainLaunch(runDir, driver string) (map[string]any, error) {
 		return aiTrainerValue(t, true), nil
 	}
 	// `<PREFIX>_AI_ACCEL=cpu` runs MLX on the CPU (a CI runner has no Metal).
-	if aiTrainAccelerator() == "cpu" {
+	accel, err := aiTrainAccelerator()
+	if err != nil {
+		return nil, err
+	}
+	if accel == "cpu" {
 		cfg["device"] = "cpu"
 	}
 	if b, err := json.Marshal(cfg); err == nil {
@@ -593,8 +612,12 @@ func aiTrainLaunch(runDir, driver string) (map[string]any, error) {
 	if err := aiWriteFileAtomic(filepath.Join(runDir, aiTrainDriverFile), []byte(driver)); err != nil {
 		return nil, aiTrainFail("cannot write %s: %v", aiTrainDriverFile, err)
 	}
+	launch, err := aiRandomHex(8)
+	if err != nil {
+		return nil, err
+	}
 	t := aiTrainer{
-		Launch:      "sky-train-" + aiRandomHex(8),
+		Launch:      "sky-train-" + launch,
 		Attempt:     attempt,
 		ResumeFrom:  aiJNum(cfg, "resumeFrom", 0),
 		StartedAtMs: time.Now().UnixMilli(),

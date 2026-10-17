@@ -25,6 +25,7 @@ import Std.Ai.Provider as Provider exposing (Provider, Message)
 import Std.Ai.Failure as Failure exposing (Failure(..))
 import Std.Ai.Eval as Eval exposing (Expect(..))
 import Std.Sync as Sync
+import Std.Ai.Trace as Trace exposing (Kind(..))
 
 
 -- ── Candidates ──────────────────────────────────────────────────────
@@ -224,6 +225,17 @@ boolText b =
 
     else
         "False"
+
+
+onReportLike : (a -> TestResult) -> Result Error a -> TestResult
+onReportLike f result =
+    case result of
+
+        Ok r ->
+            f r
+
+        Err e ->
+            Test.fail (Error.toString e)
 
 
 onReport : (Eval.Report -> TestResult) -> Result Error Eval.Report -> TestResult
@@ -433,6 +445,102 @@ journalSuite judgeProvider =
         |> Eval.withJudge (Eval.judge judgeProvider "journal-v1")
 
 
+-- Std.Ai.Trace: each run has its own trace id; its candidate calls are
+-- `Evaluation` rows priced with the suite's book, and its judge calls are
+-- `Judge` rows priced with the judge's book. A second run of the unchanged
+-- suite answers the judge from the journal, so it records no judge rows.
+tracedSuite : Provider -> Eval.Suite String
+tracedSuite judgeProvider =
+    Eval.suite
+        "traced"
+        ask
+        [ caseOf "j1" (Rubric "Traced rubric: stays polite.")
+        , caseOf "j2" (Rubric "Traced rubric: stays polite.")
+        ]
+        |> Eval.withJudge (Eval.judge judgeProvider "traced-v1")
+        |> Eval.withPriceBook
+               { inputPer1k = Money.fromMinor USD 10
+               , outputPer1k = Money.fromMinor USD 20
+               }
+        |> Eval.withJudgePriceBook
+               { inputPer1k = Money.fromMinor USD 1
+               , outputPer1k = Money.fromMinor USD 2
+               }
+
+
+tracedRuns : Result Error ( ( String, List Kind, List String ), ( String, List Kind ) )
+tracedRuns =
+    Task.map2 (\calls db -> ( calls, db )) (Sync.newRef 0) memoryDb
+        |> Task.andThen
+               (\( calls, db ) ->
+                   let
+                       once =
+                           Eval.run
+                               db
+                               (table
+                                   [ ( "j1", "Polite one." )
+                                   , ( "j2", "Rude one." )
+                                   ])
+                               (tracedSuite (countingJudge calls))
+                   in
+                       once
+                           |> Task.andThen
+                                  (\first ->
+                                      once
+                                          |> Task.andThen
+                                                 (\second ->
+                                                     Task.map2
+                                                         (\a b ->
+                                                             ( ( first.traceRun
+                                                               , List.map
+                                                                     .kind
+                                                                     a
+                                                               , List.map
+                                                                     .currency
+                                                                     a
+                                                               )
+                                                             , ( second.traceRun
+                                                               , List.map
+                                                                     .kind
+                                                                     b
+                                                               )
+                                                             ))
+                                                         (Trace.rows
+                                                             db
+                                                             first.traceRun)
+                                                         (Trace.rows
+                                                             db
+                                                             second.traceRun))))
+        |> Task.run
+
+
+count : Kind -> List Kind -> Int
+count k kinds =
+    List.length (List.filter (\x -> x == k) kinds)
+
+
+tracedKinds : ( ( String, List Kind, List String ), ( String, List Kind ) ) -> TestResult
+tracedKinds ( ( firstRun, firstKinds, currencies ), ( secondRun, secondKinds ) ) =
+    if firstRun == "" || firstRun == secondRun then
+        Test.fail
+            ("each run needs its own trace id, got " ++ firstRun ++ " and "
+                ++ secondRun)
+
+    else if count Evaluation firstKinds /= 2 || count Judge firstKinds /= 2 then
+        Test.fail
+            "the first run must record two candidate rows and two judge rows"
+
+    else if List.any (\c -> c /= "USD") currencies then
+        Test.fail "every row of the first run must be priced"
+
+    else if count Evaluation secondKinds /= 2 || count Judge secondKinds /= 0 then
+        Test.fail
+            "a judge answered from the journal costs nothing and records nothing"
+
+    else
+        Test.pass
+
+
 -- Two runs of an unchanged suite on one database: the second asks the judge
 -- nothing.
 journalCalls : Result Error ( Int, Int, Bool )
@@ -616,8 +724,7 @@ codecRoundTrip =
                        |> Result.map
                               (\back ->
                                   Eval.encodeReport back == Eval.encodeReport r
-                                      && back.calibration
-                                      /= Nothing))
+                                      && back.calibration /= Nothing))
 
 
 tests : List Test
@@ -643,6 +750,9 @@ tests =
     , Test.test
           "AllOf needs every expectation"
           (\_ -> passes "both" True scored)
+    , Test.test
+          "a run records its candidate and judge calls in Std.Ai.Trace"
+          (\_ -> onReportLike tracedKinds tracedRuns)
     , Test.test
           "a failed call is a case error, not a failed run"
           (\_ ->

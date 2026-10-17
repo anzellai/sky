@@ -74,6 +74,7 @@ module Std.Ai.Eval exposing
     , withOptions
     , withSeed
     , withPriceBook
+    , withJudgePriceBook
     , withTools
     , judge
     , withPassScore
@@ -113,6 +114,7 @@ import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
 import Sky.Core.Dict exposing (Dict)
 import Sky.Core.Regex as Regex
 import Sky.Core.Crypto as Crypto
@@ -135,6 +137,8 @@ import Std.Ai.Provider as Provider exposing
 import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
 import Std.Ai.Local as Local
 import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Trace as Trace
+import Sky.Core.Uuid as Uuid
 
 -- ── Cases and expectations ──────────────────────────────────────────
 -- | One case: a stable id (it pairs the case across runs), the input the
@@ -196,6 +200,7 @@ type Suite input
 , options : Provider.Options
 , seed : Int
 , priceBook : Maybe PriceBook
+, judgePriceBook : Maybe PriceBook
 , tools : List ToolSpec
 }
 
@@ -221,6 +226,7 @@ suite name prompt cases =
             }
         , seed = 42
         , priceBook = Nothing
+        , judgePriceBook = Nothing
         , tools = []
         }
 
@@ -306,6 +312,13 @@ withSeed n (Suite s) =
 withPriceBook : PriceBook -> Suite input -> Suite input
 withPriceBook book (Suite s) =
     Suite { s | priceBook = Just book }
+
+
+-- | Price the judge's calls in `Std.Ai.Trace`. Without it the judge's rows
+-- are recorded unpriced (their tokens, no cost).
+withJudgePriceBook : PriceBook -> Suite input -> Suite input
+withJudgePriceBook book (Suite s) =
+    Suite { s | judgePriceBook = Just book }
 
 
 -- | Advertise tools, for `CallsTool` cases. The calls then go through
@@ -434,7 +447,11 @@ judgeAnswerWith db (Judge j) seed rubric question answer =
         |> Task.andThen
                (\identity ->
                    journalled
-                       { judge = Judge j, db = db, identity = identity }
+                       { judge = Judge j
+                       , db = db
+                       , identity = identity
+                       , trace = Nothing
+                       }
                        seed
                        64
                        (judgePrompt
@@ -471,7 +488,10 @@ type alias ScorerScore =
     }
 
 -- | A run of a suite. `digest` names the run's outputs: two runs with the
--- same digest answered the same.
+-- same digest answered the same. `traceRun` is the run's id in
+-- `Std.Ai.Trace`: its candidate and judge calls are recorded there as they
+-- return (`Trace.summary db report.traceRun`). It is `""` for a report an
+-- earlier release stored.
 type alias Report =
     { suite : String
     , candidate : String
@@ -492,6 +512,7 @@ type alias Report =
     , costBudget : Maybe Money
     , calibration : Maybe Calibration
     , digest : String
+    , traceRun : String
     }
 
 -- | A judge's calibration: how often it agreed with the human labels.
@@ -566,7 +587,7 @@ migrateRaw =
 -- judge journal. `run` calls it.
 setup : Db -> Task Error ()
 setup db =
-    migrateRaw db evalMigrations |> Task.map (\_ -> ())
+    migrateRaw db evalMigrations |> Task.andThen (\_ -> Trace.setup db)
 
 
 -- | Run a suite against a provider, record it in the database and the
@@ -581,6 +602,14 @@ type alias JudgeCtx =
     { judge : Judge
     , db : Db
     , identity : String
+    , trace : Maybe TraceTo
+    }
+
+-- Where a run's calls are recorded in Std.Ai.Trace: the run's id and the
+-- judge's price book (`Nothing`: the judge's rows are unpriced).
+type alias TraceTo =
+    { runId : String
+    , judgeBook : Maybe PriceBook
     }
 
 
@@ -600,8 +629,20 @@ runAs candidate db p (Suite s) =
 
                        else
                            Task.succeed "")
-            |> Task.map
-                   (\identity -> { judge = j, db = db, identity = identity })
+            |> Task.andThen
+                   (\identity ->
+                       Uuid.v4
+                           |> Task.map
+                                  (\id ->
+                                      { judge = j
+                                      , db = db
+                                      , identity = identity
+                                      , trace =
+                                          Just
+                                              { runId = "eval-" ++ id
+                                              , judgeBook = s.judgePriceBook
+                                              }
+                                      }))
             |> Task.andThen
                    (\ctx ->
                        calibrateIf rubric ctx |> Task.map (\cal -> ( ctx, cal )))
@@ -644,6 +685,7 @@ runCases candidate ctx p (Suite s) cal =
                                           |> Task.map
                                                  (\ended ->
                                                      buildReport
+                                                         (traceRunOf ctx)
                                                          candidate
                                                          (Suite s)
                                                          cal
@@ -667,37 +709,41 @@ runCase ctx p (Suite s) c sample =
         Time.now ()
             |> Task.andThen
                    (\t0 ->
-                       callModel p s.tools opts messages
+                       callModel ctx s.priceBook p s.tools opts messages
                            |> Task.andThen
-                                  (\out ->
+                                  (\called ->
                                       Time.now ()
                                           |> Task.andThen
                                                  (\t1 ->
-                                                     scoreExpect
-                                                         ctx
-                                                         s.seed
-                                                         messages
-                                                         c.expect
-                                                         out
-                                                         |> Task.map
-                                                                (\sc ->
-                                                                    okResult
+                                                     -- The row is written after the clock stops, so the
+                                                     -- case's latency (the p95 gate) is the call's alone.
+                                                     called.record
+                                                         |> Task.andThen
+                                                                (\_ ->
+                                                                    scoreCall
+                                                                        ctx
                                                                         (Suite s)
                                                                         c
                                                                         sample
-                                                                        out
+                                                                        messages
                                                                         (t1 - t0)
-                                                                        sc)))
-                           |> Task.onError
-                                  (\e ->
-                                      Time.now ()
-                                          |> Task.map
-                                                 (\t1 ->
-                                                     errResult
-                                                         c
-                                                         sample
-                                                         (t1 - t0)
-                                                         e)))
+                                                                        called.result))))
+
+
+-- Score a case's answer, or make its error result.
+scoreCall : JudgeCtx -> Suite input -> Case input -> Int -> List Message -> Int -> Result Error Output -> Task Error CaseResult
+scoreCall ctx (Suite s) c sample messages latency result =
+    case result of
+
+        Ok out ->
+            -- A judge that fails makes a case error, as a failed call does.
+            scoreExpect ctx s.seed messages c.expect out
+                |> Task.map (okResult (Suite s) c sample out latency)
+                |> Task.onError
+                       (\e -> Task.succeed (errResult c sample latency e))
+
+        Err e ->
+            Task.succeed (errResult c sample latency e)
 
 
 judgeFor : Suite input -> Judge
@@ -711,23 +757,68 @@ type alias Output =
     , usage : Provider.Usage
     }
 
+-- A candidate call, measured: its answer (or failure) and the task that
+-- records it in Std.Ai.Trace under the run (an `Evaluation` row, priced with
+-- the suite's book).
+type alias Called =
+    { result : Result Error Output
+    , record : Task Error ()
+    }
 
-callModel : Provider -> List ToolSpec -> Provider.Options -> List Message -> Task Error Output
-callModel p tools opts messages =
+
+callModel : JudgeCtx -> Maybe PriceBook -> Provider -> List ToolSpec -> Provider.Options -> List Message -> Task Error Called
+callModel ctx book p tools opts messages =
     if List.isEmpty tools then
-        Provider.chatWith opts p messages
+        Provider.measure opts p messages
             |> Task.map
-                   (\r ->
-                       { content = r.content, toolCalls = [], usage = r.usage })
+                   (\m ->
+                       { result =
+                           Result.map
+                               (\r ->
+                                   { content = r.content
+                                   , toolCalls = []
+                                   , usage = r.usage
+                                   })
+                               m.result
+                       , record =
+                           traceWith
+                               ctx
+                               book
+                               Trace.Evaluation
+                               (\db e -> Trace.recordCall db e m)
+                       })
 
     else
-        Provider.chatTools p (List.map Provider.Say messages) tools
+        Provider.measureTools p (List.map Provider.Say messages) tools
             |> Task.map
-                   (\r ->
-                       { content = r.content
-                       , toolCalls = r.toolCalls
-                       , usage = r.usage
+                   (\m ->
+                       { result =
+                           Result.map
+                               (\r ->
+                                   { content = r.content
+                                   , toolCalls = r.toolCalls
+                                   , usage = r.usage
+                                   })
+                               m.result
+                       , record =
+                           traceWith
+                               ctx
+                               book
+                               Trace.Evaluation
+                               (\db e -> Trace.recordToolCall db e m)
                        })
+
+
+-- Record a row of the run's kind, when the run is traced.
+traceWith : JudgeCtx -> Maybe PriceBook -> Trace.Kind -> (Db -> Trace.Entry -> Task Error ()) -> Task Error ()
+traceWith ctx book kind write =
+    case ctx.trace of
+
+        Just t ->
+            write ctx.db { runId = t.runId, key = "", kind = kind, book = book }
+
+        Nothing ->
+            Task.succeed ()
 
 
 okResult : Suite input -> Case input -> Int -> Output -> Int -> ( List ( String, Float ), Score ) -> CaseResult
@@ -1094,14 +1185,11 @@ journalled ctx seed maxTokens prompt =
                             , JsonE.encode 0 (JsonE.list messageValue prompt)
                             ])
                 ask =
-                    Provider.chatWith
+                    Provider.measure
                         (judgeOptions seed maxTokens)
                         j.provider
                         prompt
-                        |> Task.andThen
-                               (\r ->
-                                   remember ctx key r.content
-                                       |> Task.map (\_ -> r.content))
+                        |> Task.andThen (judgeAnswered ctx key)
             in
                 Db.query
                     ctx.db
@@ -1116,6 +1204,31 @@ journalled ctx seed maxTokens prompt =
 
                                    Nothing ->
                                        ask)
+
+
+-- A judge call that reached the model: recorded as a `Judge` row (a journal
+-- hit costs nothing and records nothing), then remembered.
+judgeAnswered : JudgeCtx -> String -> Provider.Measured Provider.ChatResponse -> Task Error String
+judgeAnswered ctx key m =
+    traceWith
+        ctx
+        (judgeBookOf ctx)
+        Trace.Judge
+        (\db e -> Trace.recordCall db e m)
+        |> Task.andThen (\_ -> Task.fromResult m.result)
+        |> Task.andThen
+               (\r -> remember ctx key r.content |> Task.map (\_ -> r.content))
+
+
+judgeBookOf : JudgeCtx -> Maybe PriceBook
+judgeBookOf ctx =
+    case ctx.trace of
+
+        Just t ->
+            t.judgeBook
+
+        Nothing ->
+            Nothing
 
 
 remember : JudgeCtx -> String -> String -> Task Error ()
@@ -1231,7 +1344,11 @@ calibrate db (Judge j) =
             |> Task.andThen
                    (\identity ->
                        calibrateWith
-                           { judge = Judge j, db = db, identity = identity })
+                           { judge = Judge j
+                           , db = db
+                           , identity = identity
+                           , trace = Nothing
+                           })
 
 
 calibrateWith : JudgeCtx -> Task Error Calibration
@@ -1373,6 +1490,7 @@ pairwise db j rubric (Suite s) base cand =
                                       { judge = j
                                       , db = db
                                       , identity = identity
+                                      , trace = Nothing
                                       }
                                       rubric
                                       s.seed)
@@ -1503,8 +1621,19 @@ lastUserText messages =
 
 
 -- ── Aggregation ─────────────────────────────────────────────────────
-buildReport : String -> Suite input -> Maybe Calibration -> Int -> Int -> List CaseResult -> Report
-buildReport candidate (Suite s) cal started duration results =
+traceRunOf : JudgeCtx -> String
+traceRunOf ctx =
+    case ctx.trace of
+
+        Just t ->
+            t.runId
+
+        Nothing ->
+            ""
+
+
+buildReport : String -> String -> Suite input -> Maybe Calibration -> Int -> Int -> List CaseResult -> Report
+buildReport traceRun candidate (Suite s) cal started duration results =
     let
         errors =
             List.length (List.filter (\r -> r.error /= Nothing) results)
@@ -1536,6 +1665,7 @@ buildReport candidate (Suite s) cal started duration results =
         , costBudget = s.costBudget
         , calibration = cal
         , digest = digestOf s.name candidate s.seed results
+        , traceRun = traceRun
         }
 
 
@@ -1680,6 +1810,7 @@ reportValue r =
                     JsonE.null
           )
         , ( "digest", JsonE.string r.digest )
+        , ( "traceRun", JsonE.string r.traceRun )
         , ( "scorers", JsonE.list scorerValue r.scorers )
         , ( "cases", JsonE.list caseValue r.cases )
         ]
@@ -1802,6 +1933,9 @@ reportDecoder =
         |> opt "costBudget" moneyDecoder
         |> opt "calibration" calibrationDecoder
         |> req "digest" JsonD.string
+        |> apply
+               (JsonD.oneOf
+                   [ JsonD.field "traceRun" JsonD.string, JsonD.succeed "" ])
 
 
 scorerDecoder : JsonD.Decoder ScorerScore

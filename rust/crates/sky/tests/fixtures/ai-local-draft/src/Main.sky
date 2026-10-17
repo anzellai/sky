@@ -1,0 +1,135 @@
+module Main exposing (main)
+
+{-| Fixture: a local engine with a draft model, and one with several named
+LoRA adapters, on the real llama-server (the live test `ai_local_live.rs`).
+
+The test passes the synthetic model files through `TINY_*` variables (paths
+and digests from `go run ./cmd/sky-tiny-gguf`). It prints one line per check:
+
+    draft=<answer>                 the development model with itself as draft
+    mismatch=<typed failure>       a draft with another vocabulary
+    adapter support=<answer>       a named adapter chosen per call
+    adapter legal=<answer>
+    adapter base=<answer>          no adapter named: the base model
+    adapter billing=<typed failure>  a name that is not loaded
+    slot support=<answer>          the same through an Endpoint slot
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe
+import Std.Log exposing (println)
+import Sky.Core.System as System
+import Std.Ai.Provider as Provider exposing (Provider)
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Local as Local
+import Std.Ai.Failure as Failure exposing (Failure(..))
+
+
+tiny : String -> Local.ModelRef
+tiny name =
+    Local.file
+        { path = System.getenvOr ("TINY_" ++ name) ""
+        , sha256 = System.getenvOr ("TINY_" ++ name ++ "_SHA256") ""
+        }
+
+
+-- The typed view of a failure, as one line.
+typed : Error -> String
+typed e =
+    case Failure.fromError e of
+
+        Just (InvalidSetting r) ->
+            "InvalidSetting setting=" ++ r.setting ++ " reason=" ++ r.reason
+
+        Just (NotRegistered r) ->
+            "NotRegistered ref=" ++ r.ref ++ " message=" ++ Error.toString e
+
+        Just f ->
+            Failure.code f ++ " " ++ Error.toString e
+
+        Nothing ->
+            "untyped " ++ Error.toString e
+
+
+opts : Maybe String -> Provider.Options
+opts adapter =
+    { temperature = Just 0.0
+    , seed = Just 7
+    , maxTokens = Just 8
+    , adapter = adapter
+    }
+
+
+ask : String -> Maybe String -> Provider -> Task Error ()
+ask label adapter provider =
+    Provider.chatWith (opts adapter) provider [ Provider.user "Say hello." ]
+        |> Task.map
+               (\r -> "answered " ++ String.fromInt (String.length r.content))
+        |> Task.onError (\e -> Task.succeed (typed e))
+        |> Task.andThen (\s -> println (label ++ "=" ++ s))
+
+
+askDraft : Task Error ()
+askDraft =
+    Local.start
+        (Local.model Local.devModel |> Local.withContext 1024
+            |> Local.withDraft Local.devModel
+            |> Local.withDraftTokens { max = 4, min = 1 })
+        |> Task.andThen (\engine -> ask "draft" Nothing (Local.provider engine))
+        |> Task.onError (\e -> println ("draft=" ++ typed e))
+
+
+askMismatch : Task Error ()
+askMismatch =
+    Local.start
+        (Local.model Local.devModel |> Local.withContext 1024
+            |> Local.withDraft (tiny "OTHER_VOCAB"))
+        |> Task.map (\_ -> "started")
+        |> Task.onError (\e -> Task.succeed (typed e))
+        |> Task.andThen (\s -> println ("mismatch=" ++ s))
+
+
+tinySpec : Local.Spec
+tinySpec =
+    Local.model (tiny "MODEL") |> Local.withContext 512
+        |> Local.withAdapters
+               [ Local.namedAdapter "support" (tiny "ADAPTER")
+               , { name = "legal", adapter = tiny "ADAPTER_B", scale = 0.5 }
+               ]
+
+
+askAdapters : Task Error ()
+askAdapters =
+    Local.start tinySpec
+        |> Task.andThen
+               (\engine ->
+                   let
+                       p = Local.provider engine
+                   in
+                       ask "adapter support" (Just "support") p
+                           |> Task.andThen
+                                  (\_ -> ask "adapter legal" (Just "legal") p)
+                           |> Task.andThen (\_ -> ask "adapter base" Nothing p)
+                           |> Task.andThen
+                                  (\_ -> ask "adapter billing" (Just "billing") p))
+        |> Task.onError (\e -> println ("adapters=" ++ typed e))
+
+
+tunedSlot : Endpoint
+tunedSlot =
+    Endpoint.endpoint "tuned" |> Endpoint.withLocal tinySpec
+
+
+main : Task Error ()
+main =
+    askDraft |> Task.andThen (\_ -> askMismatch)
+        |> Task.andThen (\_ -> askAdapters)
+        |> Task.andThen
+               (\_ ->
+                   ask
+                       "slot support"
+                       (Just "support")
+                       (Endpoint.provider tunedSlot))

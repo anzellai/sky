@@ -60,16 +60,17 @@ func aiHome() string {
 // time: `<PREFIX>_AI_FETCH` = on / off, else on in development and off in
 // production (a production host provisions ahead with `sky ai provision`).
 func aiFetchAllowed() (bool, error) {
-	switch v := strings.ToLower(strings.TrimSpace(skyGetenv("AI_FETCH"))); v {
+	v, err := aiEnvChecked("AI_FETCH", aiExpectFetch)
+	if err != nil {
+		return false, err
+	}
+	switch strings.ToLower(v) {
 	case "":
 		return !productionFromEnv(), nil
 	case "on", "1", "true", "yes":
 		return true, nil
-	case "off", "0", "false", "no":
-		return false, nil
-	default:
-		return false, aiFailf(aiInvalidSetting, "%s=%q: use on or off", skyEnvName("AI_FETCH"), v).with("setting", skyEnvName("AI_FETCH"))
 	}
+	return false, nil
 }
 
 // aiDevelopment reports whether the app runs in development (ENV unset or
@@ -496,7 +497,11 @@ func aiEnsureModel(ctx context.Context, m aiModelRef) (string, error) {
 // (`sky ai pull`), stores it by the digest of the bytes received, and returns
 // that digest so the caller can pin it in code.
 func aiPullUnpinned(ctx context.Context, repo, file string) (path, sum string, size int64, err error) {
-	tmpName := "pull-" + aiRandomHex(8) + ".gguf"
+	rnd, err := aiRandomHex(8)
+	if err != nil {
+		return "", "", 0, err
+	}
+	tmpName := "pull-" + rnd + ".gguf"
 	tmp := filepath.Join(aiHome(), "downloads", tmpName+".done")
 	sum, err = aiDownload(ctx, aiHuggingFaceURL(repo, file), tmp, "")
 	if err != nil {
@@ -520,12 +525,20 @@ func aiPullUnpinned(ctx context.Context, repo, file string) (path, sum string, s
 	return dest, sum, size, nil
 }
 
-func aiRandomHex(n int) string {
+// aiRandRead is the system randomness source. A test replaces it to prove
+// that every caller turns a failed read into an error.
+var aiRandRead = rand.Read
+
+// aiRandomHex returns n random bytes as hex. A failed read of the system
+// randomness source is an error for the caller to return: an engine key, a
+// registry id or a temporary name made without it is not unique, and the
+// failure must reach the program as an Err, never as a panic.
+func aiRandomHex(n int) (string, error) {
 	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+	if _, err := aiRandRead(b); err != nil {
+		return "", aiFailf(aiEngineFailed, "the system randomness source failed: %v", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 // aiTail keeps the last n bytes of s, for a log tail in an error message.

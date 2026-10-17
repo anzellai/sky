@@ -53,7 +53,7 @@ operator env, then the `withX` value, then the stdlib fallback.
 | `Std.Ai.Provider` (`openai`, `compatible`, `router`, `custom`, `customTools`, `chat`, `chatTools`, `PriceBook`, `cost`) | `sky-stdlib/Std/Ai/Provider.sky` | The single type every tier hands the app. Local engines, GPU tiers and cloud endpoints all become a `Provider`. |
 | `Std.Ai.Agent` (`oneShot`, `toolLoop`, `nativeToolLoop`) | `sky-stdlib/Std/Ai/Agent.sky` | Unchanged. Agents run on any `Provider` this design produces. |
 | `Std.Ai.Policy`, `Std.Ai.Tool` | `sky-stdlib/Std/Ai/` | Unchanged. The firewall also gates promotion and paid launches (section 11). |
-| `Std.Ai.Trace` (`forResponse`, `record`, `totalCost`) | `sky-stdlib/Std/Ai/Trace.sky` | Extended with latency, tokens per second, slot and adapter (section 8.10). |
+| `Std.Ai.Trace` (`forResponse`, `record`, `totalCost`) | `sky-stdlib/Std/Ai/Trace.sky` | Extended with latency, tokens per second, slot and adapter (section 8.10). Implemented in v0.28.0, see [`../ai/trace.md`](../ai/trace.md). |
 | `Std.Ai.Memory.Pg` | `sky-stdlib/Std/Ai/Memory/Pg.sky` | Gains an embedding source: `Provider.embed` on a local or remote engine. |
 | `Std.Durable` (`register`, `step`, `sleep`, `awaitSignal`, `poll`, `compact`) | `sky-stdlib/Std/Durable.sky`, [`durable-execution.md`](durable-execution.md) | Training, evaluation and deployment run as durable workflows. A paid launch is a journalled step, so it is exactly-once across a restart. |
 | `Process.spawn` (`command`, `withArgs`, `withEnv`, `withClearEnv`, `readFrom`, `kill`, `wait`) | `sky-stdlib/Sky/Core/Process.sky` | Supervises `llama-server`, vLLM and the trainer drivers as child processes. |
@@ -422,6 +422,18 @@ digest filled in, ready to paste. A model with no digest cannot be written, so
 an unpinned model cannot reach production. The model store is
 content-addressed: `<AI_HOME>/models/sha256/<hex>.gguf`.
 
+*(Draft models and several adapters ship in v0.28.0: `withDraft`,
+`withDraftTokens`, and `withAdapters [ namedAdapter "support" ref, … ]`,
+with `<PREFIX>_AI_<SLOT>_DRAFT`, `_DRAFT_MAX`, `_DRAFT_MIN` and `_ADAPTERS`. The
+draft is pinned and hash-checked like the base, and its vocabulary must match
+the base's (`InvalidSetting` otherwise, checked before launch and in the
+engine's log). The engine loads every adapter at launch, and a call chooses
+one by name through `Provider.Options` `adapter`; every loaded adapter gets an
+explicit scale on every request, and an unknown name is `NotRegistered`, never
+the base model's answer. A named adapter is a pinned `file:` or `hf:`
+reference; a `registry:` reference there is not supported yet. See
+[`../ai/local.md`](../ai/local.md).)*
+
 **What `start` does**, in order, each with a typed failure:
 
 1. Discover a `llama-server` build: `<PREFIX>_AI_LLAMA_BIN` (set but incomplete
@@ -633,7 +645,7 @@ and journalled teacher and judge calls. User guide:
 ### 8.5 `Std.Ai.Train`
 
 *Shipped in v0.28.0; the `Vertex` backend is phase 4 (section 14, P4), and
-`SageMaker` is not shipped. The shipped API and the
+`SageMaker` is not supported yet. The shipped API and the
 changes from this sketch (a Go GGUF converter, no Convert toolchain, a
 detached trainer, `drive` and `poll`, CUDA 13) are in section 14, P3, and in
 [`../ai/train.md`](../ai/train.md).*
@@ -989,6 +1001,14 @@ out of the app's binary and startup report. When the app's entry exposes a
 first token, tokens per second, queue wait, and outcome (`ok` or the `Failure`
 tag). Training and eval runs record their own cost rows, so `totalCost` covers
 the whole lifecycle in exact money.
+
+*(Implemented in v0.28.0. Rows also carry the start time (engine start and
+adapter resolution) and a local engine's draft acceptance. The facts reach
+`Provider.measure` by a per-call token, never inside the answer, because the
+device bridge forwards answers to browsers. An eval run records its rows under
+`Report.traceRun`, a training run under its run id, and `Trace.costs` sums the
+whole ledger by kind and currency. `totalCost` adds one run's priced rows and
+refuses to add two currencies. See [`../ai/trace.md`](../ai/trace.md).)*
 
 The Sky console gains an **AI** panel:
 
@@ -1452,8 +1472,9 @@ Where the shipped phase differs from this design and from its plan:
    most five minutes, then a one-second durable sleep, so no step outlives the
    30-minute lease), `resume-<a>`, `collect`, `convert`, `merge` and
    `register`. Validation is `Train.check`, run by `start` and again in the
-   workflow. Progress goes to the run directory and the console, not yet to
-   `Trace`.
+   workflow. Progress goes to the run directory, the console and `Trace`
+   (`Trace.progress`, one row per step), and the run's end records one
+   `Training` cost row.
 9. **Progress states** come from the run directory: `Provisioning` before the
    first trainer starts, `Converting` after the trainer's `done` line, and
    `Registering` once the GGUF adapter is written.
@@ -1480,11 +1501,11 @@ layer, in Sky over HTTP. User guides: [`../ai/serve.md`](../ai/serve.md) and
 Where the shipped phase differs from this design and from its plan:
 
 1. **One cloud, one target.** SageMaker, GKE or EKS, Vertex AI endpoints and
-   Bedrock Custom Model Import are not in this phase. `Train.SageMaker` is
-   still `InvalidSetting`.
+   Bedrock Custom Model Import are not supported yet. `sagemaker` as a
+   training backend is `InvalidSetting`.
 2. **`Serve.Engine` is `Vllm` only.** A tier on llama.cpp would serve one
    adapter per engine, which `Std.Ai.Local` already does on a laptop.
-   `Serve.plan` and `withParallel` are not shipped: vLLM sizes itself from
+   `Serve.plan` and `withParallel` are not supported yet: vLLM sizes itself from
    `withGpuMemoryFraction` and `withMaxModelLength`.
 3. **Two containers, not one.** On Cloud Run the tier binary (distroless, the
    ingress) and the upstream vLLM image (by digest) are two containers of one
@@ -1514,8 +1535,10 @@ Where the shipped phase differs from this design and from its plan:
 8. **Images are built in the user's project.** `sky ai image build` runs Cloud
    Build into the project's own Artifact Registry and pins the result by
    digest. Nothing is published to a public registry.
-9. **Autoscale signals go to `/metrics` and the console**, not yet to
-   OpenTelemetry.
+9. **Autoscale signals go to `/metrics`, the console and OpenTelemetry.**
+   The tier pushes them as OTLP/HTTP protobuf metrics on each 15-second
+   scrape when an OTLP endpoint is set, under the same `service.name` as
+   the traces. The engine's queue wait is one of them (`queueWaitMs`).
 10. **The budget is enforced three ways**: `plan` refuses an estimate above
     it, the job's runtime ceiling is set from it (so Vertex stops the job with
     no Sky process left), and the watch cancels the job when the spend at the

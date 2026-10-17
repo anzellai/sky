@@ -26,6 +26,54 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 
 ### Added
 
+- **`Std.Ai.Trace` covers the lifecycle: what each call did, and eval and
+  training rows.** A row now records the slot, the tier (`local` or
+  `remote`), the adapter, the queue wait, the start time (engine start,
+  adapter resolution), the latency, the time to the first token, the tokens
+  per second, a local engine's draft acceptance and the outcome (`ok` or the
+  `Failure` code). A failed call is a row too. `Trace.chat` / `chatStream`
+  measure and record a call; `Provider.measure`, `measureStream` and
+  `measureTools` give the facts without recording. A slot or a local engine
+  measures in the runtime and hands the facts over by a per-call token, never
+  inside the answer (the device bridge forwards answers to browsers).
+  `Agent.oneShotWith`, `toolLoopWith` and `nativeToolLoopWith` take
+  `{ trace = Just book }`: the call and its facts are journalled together and
+  the row is written by its own keyed step, so a resumed run records nothing
+  twice. An `Eval` run records its candidate calls (`Evaluation`) and its judge
+  calls (`Judge`, priced by the new `Eval.withJudgePriceBook`) under
+  `Report.traceRun`, with the gate's p95 latency unchanged. A `Train` run
+  records each step in `Trace.progress` and one `Training` cost row when it
+  ends, finished or failed (a Vertex run's measured spend; a local run
+  unpriced). `Trace.summary` and `Trace.costs` total a run and the whole
+  ledger per currency and kind. `setup` migrates an existing table in place
+  through the migration ledger (`_sky_ai_trace_*`). See `docs/ai/trace.md`.
+- **A local engine can run a draft model and keep several adapters loaded.**
+  `Local.withDraft ref` (and `withDraftTokens { max, min }`) runs speculative
+  decoding: the draft is pinned and hash-checked like the base, its
+  vocabulary must match the base's (`InvalidSetting` otherwise, checked before
+  launch and in the engine's log), and the engine starts with `-md` and
+  `--spec-type draft-simple`. `Local.withAdapters [ Local.namedAdapter
+  "support" ref, … ]` loads several LoRA adapters at once, and a call chooses
+  one by name through `Provider.Options` `adapter` (on a stream too). Every
+  loaded adapter gets an explicit scale on every request, so an adapter is
+  never applied by accident, and an unknown name is `NotRegistered` listing
+  the loaded names, never the base model's answer. Env:
+  `<PREFIX>_AI_<SLOT>_DRAFT`, `_DRAFT_MAX`, `_DRAFT_MIN`, `_ADAPTERS`
+  (`name[:scale]=<ref>,…`). A `Trace` row records the draft acceptance and
+  the engine's own tokens per second. The live test runs in the release gate
+  (`ai_local_live`, `draft_and_named_adapters_on_the_real_engine`). See
+  `docs/ai/local.md`.
+- **The GPU tier's signals go to OpenTelemetry.** With
+  `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`) set,
+  `Serve.run` pushes its signals every 15 s as OTLP/HTTP protobuf metrics:
+  `sky_ai_tier_ready`, `_inflight`, `_resident_adapters` and
+  `sky_ai_engine_running`, `_waiting`, `_kv_cache`, `_queue_wait_ms` (gauges)
+  and `sky_ai_engine_preemptions` (a cumulative sum), with the same names as
+  `/metrics`. A push has its own 5 s timeout and no retry, and never delays a
+  drain. `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` and port 4317 turn it off, as for
+  traces. The tier also reports `queueWaitMs`: the mean time a request waited
+  in vLLM's queue over the scrape window (`vllm:request_queue_time_seconds`),
+  on `/metrics`, in the console and in OpenTelemetry. See `docs/ai/serve.md`.
 - **`Device.withThreads` and `Device.withGpuLayers`: the device engine's
   threads and GPU layers.** Env: `<PREFIX>_AI_<SLOT>_DEVICE_THREADS` and
   `_DEVICE_GPU_LAYERS` (operator over code). They reach llama.cpp on every
@@ -609,6 +657,47 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 
 ### Fixed
 
+- **`Trace.totalCost` no longer adds two currencies, or drops a bad row.** It
+  added every row's amount whatever its currency, so a run priced in USD and
+  in EUR gave one wrong number, and it skipped a stored cost that was not a
+  decimal. It now fails with `InvalidInput` in both cases, and adds priced
+  rows only (an unpriced row has no cost, and `Trace.summary` counts it).
+- **The AI runtime no longer has a raw panic for a failed randomness read.**
+  `aiRandomHex` panicked when `crypto/rand` failed. It now returns a typed
+  `EngineFailed`, and each caller (an engine key, a registry id, a temporary
+  file name) passes it on. Since Go 1.24 `crypto/rand.Read` never returns an
+  error (it stops the process), so this path is reached only through the test
+  hook, which proves every caller handles it.
+- **The console's AI panel times a slot's stream and its calls the same way.**
+  A call's latency included its queue wait and a stream's did not. Both now
+  run from the queue place, and each record carries its queue wait.
+- **A bad AI setting fails loudly; it is never skipped.** An AI variable
+  (`<PREFIX>_AI_<SLOT>_*`, the machine's `SKY_AI_FETCH`, `SKY_AI_ACCEL`,
+  `SKY_AI_TRAIN_BACKEND`, `SKY_AI_GCP_ENDPOINT`, `SKY_AI_REGISTRY`, the GPU
+  tier's `SKY_AI_SERVE_*`, the device settings) whose value does not parse
+  used to fall back to the code value or the default in silence. Now a
+  setting read at start-up refuses the start (a Sky.Live app or a
+  `Server.listen` program exits 1, an embedded app returns the failure), and
+  one read at call time fails the call, both with a typed `InvalidSetting`
+  that names the variable and the form it expects and never shows a value
+  that could be secret. A `withX` value in code that does not parse (for
+  example `Local.withContext 0`) is the same failure, naming the builder.
+  Also refused now: a URL without `http://` or `https://` in every mode, and a
+  port above 65535. Sky.Live's own settings (`LIVE_TTL`, `LIVE_PORT`, …) keep
+  their current rule in this release. See the testing guide's Configuration
+  section.
+- **OTLP trace export keeps the endpoint's path, and metrics and traces name
+  the same service.** A base `OTEL_EXPORTER_OTLP_ENDPOINT` with a path
+  (`https://gateway/otlp`) sent traces to `/v1/traces` at the host, dropping
+  `/otlp`, when the endpoint came from `Sky.Config.withTelemetry`. Traces now
+  go to `<endpoint>/v1/traces` and `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is
+  used as given, as the OTLP specification says. The trace resource and the
+  console hub's OTLP envelope now share one service name (`SKY_SERVICE_NAME`,
+  then `OTEL_SERVICE_NAME`, then `K_SERVICE`). The hub envelope's default
+  `service.instance.id` is the host name (it was `instance-0`).
+- **"Not shipped" is now "not supported yet".** The SageMaker training backend
+  is refused with `InvalidSetting` naming the variable, and the message, the
+  testing guide and the design say "not supported yet".
 - **An Android build on a machine with no Android user directory.** The APK
   build made the debug keystore with `keytool` in `~/.android` without
   creating it, so a fresh machine (a CI runner) failed with
@@ -1045,6 +1134,12 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 
 ### Migration
 
+- **A bad AI variable now stops the start (loud).** An app that started with
+  an AI variable that did not parse (an `SKY_AI_CHAT_MAX_INFLIGHT=lots`, a
+  `SKY_AI_FETCH=maybe`) used to run with the default. It now refuses to start,
+  naming the variable and the form it expects. Fix or unset the variable.
+- **`Trace.totalCost` fails on a run priced in two currencies (loud).** Read
+  `Trace.summary` for the total per currency.
 - **`sky ai promote` compares against the alias's version (loud).** A version
   whose attached report regresses against the report of the same suite on
   the version the alias serves is refused with `GateFailed` (exit 1), where it

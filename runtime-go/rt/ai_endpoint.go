@@ -273,17 +273,26 @@ func aiErrorText(err error) string {
 // post sends one request body to path (relative to the base, "/chat/completions")
 // through the queue, and returns the response body.
 func (s *aiSlot) post(path, body string) (string, error) {
-	release, err := s.q.acquire()
+	return s.postWith(path, body, newAiCallFacts(s.cfg.slot, s.cfg.mode))
+}
+
+// postWith is post with the call's facts recorded in f (ai_call_facts.go).
+func (s *aiSlot) postWith(path, body string, f *aiCallFacts) (string, error) {
+	release, waited, err := s.q.acquire()
+	f.setQueueWait(waited)
 	if err != nil {
 		return "", err
 	}
 	defer release()
+	placed := time.Now()
 
 	ad, err := s.adapter()
 	if err != nil {
+		f.startFailed(placed)
 		return "", err
 	}
 	body = aiPatchModel(body, s.requestModel(ad))
+	f.setAdapter(s.factsAdapter(body))
 
 	if s.cfg.mode == "remote" || testModeActive() {
 		url := aiJoinPath(s.cfg.baseURL, path)
@@ -296,11 +305,16 @@ func (s *aiSlot) post(path, body string) (string, error) {
 		if s.cfg.mode == "remote" && s.cfg.auth == "google" {
 			tok, err := s.googleIDToken()
 			if err != nil {
+				f.startFailed(placed)
 				return "", err
 			}
 			extra["X-Serverless-Authorization"] = "Bearer " + tok
 		}
-		return aiRemotePostWith(ctx, s.cfg, url, body, extra)
+		f.sent(placed)
+		out, err := aiRemotePostWith(ctx, s.cfg, url, body, extra)
+		f.answered()
+		f.timingsFrom(out)
+		return out, err
 	}
 	// Starting an engine (a first fetch, a cold load) is bounded by the start
 	// deadline, not by the call's timeout; the call's own timeout starts when
@@ -309,19 +323,31 @@ func (s *aiSlot) post(path, body string) (string, error) {
 	e, err := s.ensureEngine(startCtx, ad)
 	cancelStart()
 	if err != nil {
+		f.startFailed(placed)
 		return "", err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.timeout)
 	defer cancel()
-	return e.post(ctx, s.cfg.timeout, path, body)
+	f.sent(placed)
+	out, err := e.post(ctx, s.cfg.timeout, path, body)
+	f.answered()
+	f.timingsFrom(out)
+	return out, err
 }
 
 // call is post, recorded for the Sky Console's AI panel (ai_console.go).
 func (s *aiSlot) call(path, body string) (string, error) {
+	return s.callWith(path, body, newAiCallFacts(s.cfg.slot, s.cfg.mode))
+}
+
+// callWith is call with the facts kept in f, for a measured call. The
+// console record's latency stays the whole wall time, queue included.
+func (s *aiSlot) callWith(path, body string, f *aiCallFacts) (string, error) {
 	start := time.Now()
-	out, err := s.post(path, body)
+	out, err := s.postWith(path, body, f)
 	rec := aiCallRecord{TS: start.UTC(), Slot: s.cfg.slot, Mode: s.cfg.mode, Kind: aiCallKind(path),
-		Model: aiConsoleModel(s.cfg), Outcome: aiCallOutcome(err), LatencyMs: aiCallLatency(start)}
+		Model: aiConsoleModel(s.cfg), Outcome: aiCallOutcome(err), LatencyMs: aiCallLatency(start),
+		QueueWaitMs: f.queueWaitMs()}
 	if err == nil {
 		rec.PromptTokens, rec.CompletionTokens = aiUsage(out)
 	}

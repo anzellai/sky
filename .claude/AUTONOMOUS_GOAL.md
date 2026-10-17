@@ -23,6 +23,11 @@ The previous mandates are complete: the single v0.27.0 release (v0.27.0 to v0.27
 - llama-server bundle: Sky should build its own. A pinned, hash-checked upstream download is acceptable for v0.28.0 only if building our own is too much for now. After the merge is green, assess the work to build our own llama-server bundles for linux x64/arm64, darwin arm64 and windows x64, reusing `ai-device-bundles.yml`. If the work is moderate, implement it (pinned source, checksums, licence scan, a workflows_parse pin) and switch the pins to our release. If it is large, report the estimate and keep the upstream pins.
 - GCP live run: the user authorised a live GCP and GPU run. The coordinator runs it after the merge is green, not the merge agent.
 
+Added 2026-10-17:
+
+- Draft models and several adapters: both ship in v0.28.0. A local engine takes a draft model for speculative decoding (`withDraft`), provisioned and pinned through the same registry and hash checks as the base. A local engine keeps several LoRA adapters loaded at once, and each call chooses one with a typed setting. An adapter that is not loaded is a typed error, never a silent answer from the base model. Trace records the draft acceptance and the tokens per second. Live tests on a tiny Qwen draft and base, plus offline unit tests, run in the release gate.
+- Bad AI environment values fail loudly. When an operator sets an AI environment variable to a value that does not parse, the app refuses to start, or the AI call fails with a typed `InvalidSetting`, whichever matches when the setting is read. The error names the variable and the form it expects, and never shows a value that could be secret. A bad value is never skipped silently. This applies to every AI setting. Sky.Live's general configuration rule is not changed in this release.
+
 ## The user's binding decisions
 
 - Configuration: NO sky.toml keys for AI. Everything in code via carefully constructed `withX` builders with env-var fallback, so code always holds the local default and QA/production override it with .env files / env vars.

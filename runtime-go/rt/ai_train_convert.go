@@ -582,7 +582,11 @@ func aiTrainMerge(runDir, serving string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	tmp := out + ".tmp-" + aiRandomHex(4)
+	rnd, err := aiRandomHex(4)
+	if err != nil {
+		return nil, err
+	}
+	tmp := out + ".tmp-" + rnd
 	defer os.Remove(tmp)
 	cmd := exec.CommandContext(ctx, bin, "-m", model, "--lora", adapter, "-o", tmp)
 	cmd.Env = aiEngineEnv()

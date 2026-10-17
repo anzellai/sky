@@ -363,12 +363,12 @@ func aiPlanFit(m ggufMeta, weights int64, ctx int, gpu, accel string, avail int6
 // aiAccelerator is the accelerator an engine build drives:
 // `<PREFIX>_AI_ACCEL` when the operator forces one, else the build's variant.
 func aiAccelerator(variant string) (string, error) {
-	switch v := strings.ToLower(strings.TrimSpace(skyGetenv("AI_ACCEL"))); v {
-	case "":
-	case "cpu", "metal", "cuda", "rocm", "vulkan":
-		return v, nil
-	default:
-		return "", aiFailf(aiInvalidSetting, "%s=%q: use cpu, metal, cuda, rocm or vulkan", skyEnvName("AI_ACCEL"), v).with("setting", skyEnvName("AI_ACCEL"))
+	v, err := aiEnvChecked("AI_ACCEL", aiExpectAccel)
+	if err != nil {
+		return "", err
+	}
+	if v != "" {
+		return strings.ToLower(v), nil
 	}
 	switch variant {
 	case "metal", "cpu":

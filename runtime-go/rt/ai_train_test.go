@@ -370,7 +370,7 @@ func TestTrainBackendPrecedence(t *testing.T) {
 	}
 	t.Setenv("SKY_AI_TRAIN_BACKEND", "sagemaker")
 	_, _, err = aiTrainResolveBackend("")
-	if f, ok := err.(*aiFailure); !ok || f.code != aiInvalidSetting || !strings.Contains(f.msg, "not shipped") {
+	if f, ok := err.(*aiFailure); !ok || f.code != aiInvalidSetting || !strings.Contains(f.msg, "not supported yet") {
 		t.Fatalf("sagemaker: %v", err)
 	}
 	t.Setenv("SKY_AI_TRAIN_BACKEND", "")

@@ -9,6 +9,13 @@ module Std.Ai.Provider exposing
     , wire
     , StreamTransport
     , wireStreaming
+    , MeasuredTransport
+    , wireMeasured
+    , CallFacts
+    , Measured
+    , measure
+    , measureStream
+    , measureTools
     , Message
     , user
     , system
@@ -65,6 +72,7 @@ import Sky.Core.Secret as Secret exposing (Secret)
 import Sky.Core.Http as Http
 import Sky.Core.Json.Encode as JsonE
 import Sky.Core.Json.Decode as JsonD
+import Sky.Core.Time as Time
 import Std.Codec as Codec exposing (Codec)
 import Std.Money as Money exposing (Money)
 import Std.Decimal as Decimal
@@ -97,6 +105,18 @@ type alias WireImpl =
     { post : String -> String -> String -> Task Error String
     , model : String
     , stream : Maybe StreamTransport
+    , measured : Maybe MeasuredTransport
+    }
+
+{-| How a `wireMeasured` provider measures a call for `measure`: `post token
+path body` and `open token path body` are the transport's `post` and stream
+`open`, and they keep the call's facts (queue wait, start, latency, time to
+the first piece, the slot, the tier and the adapter) under `token` for
+`measure` to read. `Std.Ai.Endpoint` and `Std.Ai.Local` build their
+providers this way. -}
+type alias MeasuredTransport =
+    { post : String -> String -> String -> Task Error String
+    , open : String -> String -> String -> Task Error String
     }
 
 {-| How a streaming `wire` provider reads an answer as it is written:
@@ -136,6 +156,7 @@ compatible endpoint apiKey model =
                 , next = streamNext
                 , close = streamClose
                 }
+        , measured = Nothing
         }
 
 
@@ -214,6 +235,7 @@ wire transport model =
         { post = \_ path body -> transport path body
         , model = model
         , stream = Nothing
+        , measured = Nothing
         }
 
 
@@ -226,6 +248,19 @@ wireStreaming transport streamTransport model =
         { post = \_ path body -> transport path body
         , model = model
         , stream = Just streamTransport
+        , measured = Nothing
+        }
+
+
+{-| `wireStreaming`, with a transport that also reports what each call did
+(`measure`, `Std.Ai.Trace`). A plain call goes through the plain transport. -}
+wireMeasured : WireTransport -> StreamTransport -> MeasuredTransport -> String -> Provider
+wireMeasured transport streamTransport measuredTransport model =
+    Wire
+        { post = \_ path body -> transport path body
+        , model = model
+        , stream = Just streamTransport
+        , measured = Just measuredTransport
         }
 
 
@@ -515,6 +550,518 @@ streamStep onPiece s =
 
                        Finished r ->
                            Task.succeed (Done r))
+
+-- ---------------------------------------------------------------------------
+-- Measured calls (Std.Ai.Trace)
+-- ---------------------------------------------------------------------------
+{-| What one model call did. A value the call never reached is `Nothing`,
+never 0.
+
+  - `slot`: the `Std.Ai.Endpoint` slot (`""` for another provider).
+  - `tier`: `"local"` for a managed local engine, `"remote"` otherwise (a
+    `custom` provider counts as remote).
+  - `adapter`: the adapter or model name the server answered with.
+  - `queueWaitMs`: time waiting for a place in the slot's queue.
+  - `startMs`: time from the place to the request being sent: resolving a
+    registry adapter, starting or loading a local engine.
+  - `latencyMs`: time from the request being sent to the whole answer, with
+    the slot's retries. For a stream, to its end as the caller read it.
+  - `firstTokenMs`: for a stream, time from the request to the first piece.
+  - `tokensPerSecond`: generated tokens per second. A local engine reports its
+    own figure. Otherwise it is the completion tokens over the generation time
+    (the latency, less the time to the first piece for a stream).
+  - `draftAcceptance`: for a local engine with a draft model, the share of
+    drafted tokens the base model accepted (0 to 1).
+  - `outcome`: `"ok"`, or the `Std.Ai.Failure` code (`"Overloaded"`), or the
+    `ErrorKind` of another error (`"Unavailable"`).
+-}
+type alias CallFacts =
+    { slot : String
+    , tier : String
+    , adapter : String
+    , queueWaitMs : Maybe Int
+    , startMs : Maybe Int
+    , latencyMs : Maybe Int
+    , firstTokenMs : Maybe Int
+    , tokensPerSecond : Maybe Float
+    , draftAcceptance : Maybe Float
+    , outcome : String
+    }
+
+{-| A measured call: its result, which may be a failure, and its facts. -}
+type alias Measured a =
+    { result : Result Error a
+    , facts : CallFacts
+    }
+
+-- What the runtime measured (ai_call_facts.go). A value it did not measure
+-- is null.
+type alias RuntimeFacts =
+    { slot : Maybe String
+    , tier : Maybe String
+    , adapter : Maybe String
+    , queueWaitMs : Maybe Int
+    , startMs : Maybe Int
+    , latencyMs : Maybe Int
+    , firstTokenMs : Maybe Int
+    , tokensPerSecond : Maybe Float
+    , draftAcceptance : Maybe Float
+    }
+
+
+noRuntimeFacts : RuntimeFacts
+noRuntimeFacts =
+    { slot = Nothing
+    , tier = Nothing
+    , adapter = Nothing
+    , queueWaitMs = Nothing
+    , startMs = Nothing
+    , latencyMs = Nothing
+    , firstTokenMs = Nothing
+    , tokensPerSecond = Nothing
+    , draftAcceptance = Nothing
+    }
+
+
+runtimeFactsCodec : Codec RuntimeFacts
+runtimeFactsCodec =
+    Codec.auto
+        { slot = Just ""
+        , tier = Just ""
+        , adapter = Just ""
+        , queueWaitMs = Just 0
+        , startMs = Just 0
+        , latencyMs = Just 0
+        , firstTokenMs = Just 0
+        , tokensPerSecond = Just 0.0
+        , draftAcceptance = Just 0.0
+        }
+
+
+callToken : () -> Task Error String
+callToken =
+    Ffi.kernel "Ai_callToken"
+
+
+callFactsRaw : String -> Task Error String
+callFactsRaw =
+    Ffi.kernel "Ai_callFacts"
+
+
+-- A token when the provider measures its calls, else "" (nothing to read).
+newToken : Bool -> Task Error String
+newToken measuredByRuntime =
+    if measuredByRuntime then
+        callToken ()
+
+    else
+        Task.succeed ""
+
+
+-- The runtime's facts for a token ("" reads nothing). A call that never
+-- reached a slot or an engine has none.
+runtimeFacts : String -> Task Error RuntimeFacts
+runtimeFacts token =
+    if token == "" then
+        Task.succeed noRuntimeFacts
+
+    else
+        callFactsRaw token |> Task.map decodeRuntimeFacts
+
+
+decodeRuntimeFacts : String -> RuntimeFacts
+decodeRuntimeFacts raw =
+    case Codec.fromJson runtimeFactsCodec raw of
+
+        Ok f ->
+            f
+
+        Err _ ->
+            noRuntimeFacts
+
+
+-- The outcome of a call: "ok", the AI failure code, or the error's kind.
+outcomeOf : Result Error a -> String
+outcomeOf result =
+    case result of
+
+        Ok _ ->
+            "ok"
+
+        Err e ->
+            errorOutcome e
+
+
+errorOutcome : Error -> String
+errorOutcome e =
+    case Error.failureOf e of
+
+        Just df ->
+            if Error.failureDomain df == "ai" then
+                Error.failureCode df
+
+            else
+                kindOf e
+
+        Nothing ->
+            kindOf e
+
+
+kindOf : Error -> String
+kindOf e =
+    case e of
+
+        Error.Error k _ ->
+            Error.kindLabel k
+
+
+intToFloat : Int -> Float
+intToFloat n =
+    Maybe.withDefault 0.0 (String.toFloat (String.fromInt n))
+
+
+-- Completion tokens over the generation time, when both are known.
+rate : Int -> Maybe Int -> Maybe Int -> Maybe Float
+rate tokens latency first =
+    case latency of
+
+        Just total ->
+            let
+                generating = total - Maybe.withDefault 0 first
+            in
+                if tokens > 0 && generating > 0 then
+                    Just (intToFloat tokens * 1000.0 / intToFloat generating)
+
+                else
+                    Nothing
+
+        Nothing ->
+            Nothing
+
+-- What the clock in Sky saw: the whole call, and the first piece of a stream.
+type alias Clock =
+    { wallMs : Int
+    , firstMs : Maybe Int
+    }
+
+
+-- The facts of a finished call. The runtime's figures win. When the runtime
+-- measured nothing (a built-in backend, a `wire` or a `custom` provider), the
+-- Sky clock gives the latency and the time to the first piece.
+factsOf : RuntimeFacts -> String -> Clock -> Int -> String -> CallFacts
+factsOf rt adapter clock tokens outcome =
+    let
+        byRuntime =
+            case rt.tier of
+
+                Just _ ->
+                    True
+
+                Nothing ->
+                    False
+        latency =
+            if byRuntime then
+                rt.latencyMs
+
+            else
+                Just clock.wallMs
+        first =
+            if byRuntime then
+                rt.firstTokenMs
+
+            else
+                clock.firstMs
+    in
+        { slot = Maybe.withDefault "" rt.slot
+        , tier = Maybe.withDefault "remote" rt.tier
+        , adapter = Maybe.withDefault adapter rt.adapter
+        , queueWaitMs = rt.queueWaitMs
+        , startMs = rt.startMs
+        , latencyMs = latency
+        , firstTokenMs = first
+        , tokensPerSecond =
+            case rt.tokensPerSecond of
+
+                Just v ->
+                    Just v
+
+                Nothing ->
+                    rate tokens latency first
+        , draftAcceptance = rt.draftAcceptance
+        , outcome = outcome
+        }
+
+
+-- Run `call`, keeping a failure as a value.
+attempt : Task Error a -> Task Error (Result Error a)
+attempt call =
+    call |> Task.map Ok |> Task.onError (\e -> Task.succeed (Err e))
+
+-- How to time one kind of call: whether the runtime measures it, the adapter
+-- name to report when it does not, the call (given the token), and how many
+-- tokens an answer generated.
+type alias Timing a =
+    { byRuntime : Bool
+    , adapter : String
+    , call : String -> Task Error ( a, Maybe Int )
+    , tokens : a -> Int
+    }
+
+
+timed : Timing a -> Task Error (Measured a)
+timed t =
+    newToken t.byRuntime |> Task.andThen (timedWith t)
+
+
+timedWith : Timing a -> String -> Task Error (Measured a)
+timedWith t token =
+    Time.now ()
+        |> Task.andThen
+               (\start ->
+                   attempt (t.call token)
+                       |> Task.andThen (finishTimed t token start))
+
+
+finishTimed : Timing a -> String -> Int -> Result Error ( a, Maybe Int ) -> Task Error (Measured a)
+finishTimed t token start outcome =
+    Task.map2 (measuredOf t start outcome) (Time.now ()) (runtimeFacts token)
+
+
+measuredOf : Timing a -> Int -> Result Error ( a, Maybe Int ) -> Int -> RuntimeFacts -> Measured a
+measuredOf t start outcome end rt =
+    case outcome of
+
+        Ok ( answer, firstAt ) ->
+            { result = Ok answer
+            , facts =
+                factsOf
+                    rt
+                    t.adapter
+                    { wallMs = end - start
+                    , firstMs = Maybe.map (\at -> at - start) firstAt
+                    }
+                    (t.tokens answer)
+                    "ok"
+            }
+
+        Err e ->
+            { result = Err e
+            , facts =
+                factsOf
+                    rt
+                    t.adapter
+                    { wallMs = end - start, firstMs = Nothing }
+                    0
+                    (errorOutcome e)
+            }
+
+
+-- A whole answer has no first piece.
+whole : Task Error a -> Task Error ( a, Maybe Int )
+whole call =
+    Task.map (\a -> ( a, Nothing )) call
+
+
+{-| `chatWith`, measured: the result (a failure is a value here, not a failed
+Task) and what the call did. `Std.Ai.Trace.chat` records both.
+
+    Provider.measure Provider.defaultOptions assistant messages
+        |> Task.map (\m -> m.facts.latencyMs)
+-}
+measure : Options -> Provider -> List Message -> Task Error (Measured ChatResponse)
+measure opts provider messages =
+    case provider of
+
+        Routed select ->
+            measure opts (select messages) messages
+
+        Custom c ->
+            timed
+                { byRuntime = False
+                , adapter = Maybe.withDefault "" opts.adapter
+                , call = \_ -> whole (c.chat messages)
+                , tokens = \r -> r.usage.completionTokens
+                }
+
+        Wire w ->
+            timed
+                { byRuntime = isMeasured w
+                , adapter = modelFor opts w.model
+                , call =
+                    \token ->
+                        whole
+                            (wirePost
+                                w
+                                token
+                                "chat"
+                                (chatBody opts w.model messages)
+                                |> Task.andThen decodeChat)
+                , tokens = \r -> r.usage.completionTokens
+                }
+
+
+isMeasured : WireImpl -> Bool
+isMeasured w =
+    case w.measured of
+
+        Just _ ->
+            True
+
+        Nothing ->
+            False
+
+
+-- A post through the measured transport when there is one and a token.
+wirePost : WireImpl -> String -> String -> String -> Task Error String
+wirePost w token what body =
+    case w.measured of
+
+        Just m ->
+            if token == "" then
+                w.post what "/chat/completions" body
+
+            else
+                m.post token "/chat/completions" body
+
+        Nothing ->
+            w.post what "/chat/completions" body
+
+
+{-| `chatTools`, measured, for a native tool loop. -}
+measureTools : Provider -> List Turn -> List ToolSpec -> Task Error (Measured ToolResponse)
+measureTools provider turns tools =
+    case provider of
+
+        Routed select ->
+            measureTools (select (turnMessages turns)) turns tools
+
+        Custom c ->
+            timed
+                { byRuntime = False
+                , adapter = ""
+                , call = \_ -> whole (c.chatTools turns tools)
+                , tokens = \r -> r.usage.completionTokens
+                }
+
+        Wire w ->
+            timed
+                { byRuntime = isMeasured w
+                , adapter = w.model
+                , call =
+                    \token ->
+                        whole
+                            (wirePost
+                                w
+                                token
+                                "chatTools"
+                                (JsonE.encode
+                                    0
+                                    (requestValue w.model turns tools))
+                                |> Task.andThen decodeToolResponse)
+                , tokens = \r -> r.usage.completionTokens
+                }
+
+
+{-| `chatStream`, measured: each piece goes to `onPiece` as it is written,
+and the facts include the time to the first piece. -}
+measureStream : Options -> Provider -> List Message -> (String -> Task Error ()) -> Task Error (Measured ChatResponse)
+measureStream opts provider messages onPiece =
+    case provider of
+
+        Routed select ->
+            measureStream opts (select messages) messages onPiece
+
+        Wire w ->
+            case ( w.measured, w.stream ) of
+
+                ( Just m, Just st ) ->
+                    timed
+                        { byRuntime = True
+                        , adapter = modelFor opts w.model
+                        , call =
+                            \token ->
+                                readAll
+                                    (m.open
+                                        token
+                                        "/chat/completions"
+                                        (chatBody opts w.model messages)
+                                        |> Task.map (Open st))
+                                    onPiece
+                        , tokens = \r -> r.usage.completionTokens
+                        }
+
+                _ ->
+                    timed
+                        { byRuntime = False
+                        , adapter = modelFor opts w.model
+                        , call =
+                            \_ ->
+                                readAll
+                                    (openStream opts provider messages)
+                                    onPiece
+                        , tokens = \r -> r.usage.completionTokens
+                        }
+
+        Custom _ ->
+            timed
+                { byRuntime = False
+                , adapter = Maybe.withDefault "" opts.adapter
+                , call =
+                    \_ -> readAll (openStream opts provider messages) onPiece
+                , tokens = \r -> r.usage.completionTokens
+                }
+
+-- The state of a measured stream: the stream and when its first piece came.
+type alias StreamClock =
+    { stream : AnswerStream
+    , first : Maybe Int
+    }
+
+
+-- Open, read to the end noting when the first piece came, close on a failure.
+readAll : Task Error AnswerStream -> (String -> Task Error ()) -> Task Error ( ChatResponse, Maybe Int )
+readAll open onPiece =
+    open |> Task.andThen (readFrom onPiece)
+
+
+readFrom : (String -> Task Error ()) -> AnswerStream -> Task Error ( ChatResponse, Maybe Int )
+readFrom onPiece s =
+    Task.loop (clockStep onPiece) { stream = s, first = Nothing }
+        |> Task.onError
+               (\e -> closeStream s |> Task.andThen (\_ -> Task.fail e))
+
+
+clockStep : (String -> Task Error ()) -> StreamClock -> Task Error (Step StreamClock ( ChatResponse, Maybe Int ))
+clockStep onPiece clock =
+    readStream clock.stream |> Task.andThen (clockRead onPiece clock)
+
+
+clockRead : (String -> Task Error ()) -> StreamClock -> StreamStep -> Task Error (Step StreamClock ( ChatResponse, Maybe Int ))
+clockRead onPiece clock step =
+    case step of
+
+        Piece text next ->
+            firstPieceAt clock.first
+                |> Task.andThen
+                       (\first ->
+                           onPiece text
+                               |> Task.map
+                                      (\_ ->
+                                          Loop { stream = next, first = first }))
+
+        Finished r ->
+            Task.succeed (Done ( r, clock.first ))
+
+
+firstPieceAt : Maybe Int -> Task Error (Maybe Int)
+firstPieceAt seen =
+    case seen of
+
+        Just _ ->
+            Task.succeed seen
+
+        Nothing ->
+            Time.now () |> Task.map Just
 
 
 chatBody : Options -> String -> List Message -> String

@@ -13,6 +13,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
 import Sky.Core.String as String
+import Sky.Core.List as List
 import Sky.Core.Secret as Secret
 import Sky.Core.Json.Encode as JsonE
 import Sky.Test as Test exposing (Test, TestResult(..))
@@ -448,6 +449,10 @@ tests =
                         , idleUnloadSeconds = Nothing
                         , embeddings = False
                         , port = Nothing
+                        , draft = Nothing
+                        , draftMax = Nothing
+                        , draftMin = Nothing
+                        , adapters = []
                         }
                         (Local.settings
                             (Local.model
@@ -475,6 +480,48 @@ tests =
                                      , ( s.embeddings, s.port )
                                      )
                                    )))
+          , Test.test
+                "withDraft and withDraftTokens set the draft"
+                (\_ ->
+                    Local.model (Local.fromReference "file:/big.gguf#sha256=ab")
+                        |> Local.withDraft Local.devModel
+                        |> Local.withDraftTokens { max = 8, min = 2 }
+                        |> Local.settings
+                        |> (\s -> ( s.draft, s.draftMax, s.draftMin ))
+                        |> Test.equal
+                               ( Just (Local.reference Local.devModel)
+                               , Just 8
+                               , Just 2
+                               ))
+          , Test.test
+                "withAdapters keeps each name, file and scale"
+                (\_ ->
+                    Local.model Local.devModel
+                        |> Local.withAdapters
+                               [ Local.namedAdapter
+                                     "support"
+                                     (Local.file
+                                         { path = "/a.gguf", sha256 = "ab" })
+                               , { name = "legal"
+                                 , adapter =
+                                     Local.file
+                                         { path = "/b.gguf", sha256 = "cd" }
+                                 , scale = 0.5
+                                 }
+                               ]
+                        |> Local.settings
+                        |> (\s ->
+                               List.map
+                                   (\a ->
+                                       ( a.name
+                                       , Local.reference a.adapter
+                                       , a.scale
+                                       ))
+                                   s.adapters)
+                        |> Test.equal
+                               [ ( "support", "file:/a.gguf#sha256=ab", 1.0 )
+                               , ( "legal", "file:/b.gguf#sha256=cd", 0.5 )
+                               ])
           ]
     , Test.suite
           "Std.Ai.Endpoint resolution"
@@ -504,6 +551,89 @@ tests =
                         |> Task.run
                         |> Test.equal
                                (Ok ( "remote", "https://gpu.example.test:8443" )))
+          , Test.test
+                "a local slot with a draft and named adapters resolves"
+                (\_ ->
+                    Endpoint.endpoint "sky_test_draft_ok"
+                        |> Endpoint.withLocal
+                               (Local.model Local.devModel
+                                   |> Local.withDraft Local.devModel
+                                   |> Local.withDraftTokens { max = 4, min = 1 }
+                                   |> Local.withAdapters
+                                          [ Local.namedAdapter
+                                                "support"
+                                                (Local.file
+                                                    { path = "/a.gguf"
+                                                    , sha256 =
+                                                        String.repeat 64 "a"
+                                                    })
+                                          ])
+                        |> Endpoint.describe
+                        |> Task.map (\d -> d.mode)
+                        |> Task.run
+                        |> Test.equal (Ok "local"))
+          , Test.test
+                "drafted tokens without a draft model are InvalidSetting"
+                (\_ ->
+                    Endpoint.endpoint "sky_test_draft_alone"
+                        |> Endpoint.withLocal
+                               (Local.model Local.devModel
+                                   |> Local.withDraftTokens { max = 4, min = 1 })
+                        |> Endpoint.describe
+                        |> Task.run
+                        |> Test.expectErrorKind InvalidInput)
+          , Test.test
+                "a minimum above the maximum drafted tokens is InvalidSetting"
+                (\_ ->
+                    Endpoint.endpoint "sky_test_draft_minmax"
+                        |> Endpoint.withLocal
+                               (Local.model Local.devModel
+                                   |> Local.withDraft Local.devModel
+                                   |> Local.withDraftTokens { max = 2, min = 5 })
+                        |> Endpoint.describe
+                        |> Task.run
+                        |> Test.expectErrorKind InvalidInput)
+          , Test.test
+                "an adapter named local is InvalidSetting"
+                (\_ ->
+                    Endpoint.endpoint "sky_test_adapter_local"
+                        |> Endpoint.withLocal
+                               (Local.model Local.devModel
+                                   |> Local.withAdapters
+                                          [ Local.namedAdapter
+                                                "local"
+                                                (Local.file
+                                                    { path = "/a.gguf"
+                                                    , sha256 =
+                                                        String.repeat 64 "a"
+                                                    })
+                                          ])
+                        |> Endpoint.describe
+                        |> Task.run
+                        |> Test.expectErrorKind InvalidInput)
+          , Test.test
+                "withAdapter and withAdapters on one engine are InvalidSetting"
+                (\_ ->
+                    Endpoint.endpoint "sky_test_adapter_both"
+                        |> Endpoint.withLocal
+                               (Local.model Local.devModel
+                                   |> Local.withAdapter
+                                          (Local.file
+                                              { path = "/a.gguf"
+                                              , sha256 = String.repeat 64 "a"
+                                              })
+                                   |> Local.withAdapters
+                                          [ Local.namedAdapter
+                                                "support"
+                                                (Local.file
+                                                    { path = "/b.gguf"
+                                                    , sha256 =
+                                                        String.repeat 64 "b"
+                                                    })
+                                          ])
+                        |> Endpoint.describe
+                        |> Task.run
+                        |> Test.expectErrorKind InvalidInput)
           , Test.test
                 "MODE=local with a URL in code is refused"
                 (\_ ->

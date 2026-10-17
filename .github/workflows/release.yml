@@ -1170,7 +1170,10 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  # gate-ai-local — the real managed engine with zero configuration
+  # gate-ai-local — the real managed engine with zero configuration, and a
+  # draft model and named LoRA adapters on it (draft_and_named_adapters_on_
+  # the_real_engine; the adapters run on the synthetic Qwen2 model that
+  # `go run ./cmd/sky-tiny-gguf` writes, so nothing more is fetched)
   # (rust/crates/sky/tests/ai_local_live.rs). The sliced core-sky runs exclude
   # it (rust/.config/nextest.toml, default-filter), so the model is fetched and
   # cached in this one job. Same job as rust-ci.yml `ai-local-live`.

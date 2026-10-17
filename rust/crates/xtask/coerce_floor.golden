@@ -502,6 +502,38 @@
 #   comparison (an erased `==` on the Backend ADT, R5, measured +1 when it was
 #   a helper of its own). The defaults decode with `JsonD.oneOf` instead of
 #   `Maybe.withDefault` (R12, measured +4 before).
+#
+# ── Recorded transition, 2026-10-17 — Std.Ai.Trace across the lifecycle,
+#    local drafts and named adapters, strict AI settings ──
+#   All 86 rows measured. Eight AI rows rise, +242 in all (adapter and
+#   dispatch stay 0): 70-ai-synthetic +2, 71-ai-registry +48,
+#   72-ai-support-desk +2, 73-ai-train +51, 74-ai-cloud +36,
+#   75-ai-everywhere +51, sky-bundled/ai +3, sky-bundled/ai-train +49. Cause
+#   (2), new code, proven by bisecting the SOURCE: the same compiler with
+#   HEAD's seven Std.Ai files gives exactly the golden (71: 825, 73: 1286),
+#   and a per-function count of the emitted Go against HEAD's files puts
+#   every delta in a new or changed function (73, 71 and 75 counted):
+#   * Provider's measured calls (`measure` +6, `measureTools` +8,
+#     `timedWith` / `finishTimed` / `factsOf` / `rate` +9): each call through
+#     the `Timing` record's erased callback slots narrows its argument and
+#     result (R2, `eta_narrow`, the closed form of doc 14 §5.1), and the
+#     Result case on the outcome is R6 on a stdlib ADT (§4.5). `chatWith`
+#     and `chatTools` leave the Eval path (-10).
+#   * Eval records its calls: the case runner split into `scoreCall` (+11)
+#     and `callModel` (+8) for `Result.map` lambdas over the measured answer
+#     (R12, a polymorphic def's erased signature, §5.5), `judgeAnswered` +3;
+#     `runCase` -2.
+#   * Train records progress and cost: new helpers (`addProgressLine` +4,
+#     R6 on the `Event` payloads; `trainOn` +4, R7 on the cloud run's
+#     triple; `traceLines` / `traceCost` / `withTraceTables` +6), and
+#     existing functions it now reaches pay their usual cost (`cloudStatus`
+#     +15, R5 kernel returns of the JSON decoder; `Durable.conn` +3;
+#     `Error.withMessage` +2). `upsertStep` was rewritten as a recursion
+#     instead of `List.find` + `List.map` lambdas (R12), which took 73 from
+#     +57 to +51.
+#   * Trace's row writes (`insertRow` +2, `callRow` +1, `setup` +1: R5 kernel
+#     returns), and `Endpoint.withLocal` +2 for the draft and adapter
+#     settings (R12 on `Maybe.withDefault`).
 00-standard-libs	adapter=0	dispatch=0	narrow=113
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=6
@@ -565,12 +597,12 @@
 67-durable-counter	adapter=0	dispatch=0	narrow=73
 68-ai-dataset	adapter=0	dispatch=0	narrow=431
 69-ai-scrub	adapter=0	dispatch=0	narrow=60
-70-ai-synthetic	adapter=0	dispatch=0	narrow=419
-71-ai-registry	adapter=0	dispatch=0	narrow=825
-72-ai-support-desk	adapter=0	dispatch=0	narrow=442
-73-ai-train	adapter=0	dispatch=0	narrow=1286
-74-ai-cloud	adapter=0	dispatch=0	narrow=1411
-75-ai-everywhere	adapter=0	dispatch=0	narrow=849
+70-ai-synthetic	adapter=0	dispatch=0	narrow=421
+71-ai-registry	adapter=0	dispatch=0	narrow=873
+72-ai-support-desk	adapter=0	dispatch=0	narrow=444
+73-ai-train	adapter=0	dispatch=0	narrow=1337
+74-ai-cloud	adapter=0	dispatch=0	narrow=1447
+75-ai-everywhere	adapter=0	dispatch=0	narrow=900
 apps/dispatch	adapter=0	dispatch=0	narrow=318
 apps/fieldbook	adapter=0	dispatch=0	narrow=459
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
@@ -582,9 +614,9 @@ examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=187
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=1
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=193
 simple	adapter=0	dispatch=0	narrow=3
-sky-bundled/ai	adapter=0	dispatch=0	narrow=651
+sky-bundled/ai	adapter=0	dispatch=0	narrow=654
 sky-bundled/ai-cloud	adapter=0	dispatch=0	narrow=537
-sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1180
+sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1229
 sky-bundled/console	adapter=0	dispatch=0	narrow=180
 sky-bundled/doc	adapter=0	dispatch=0	narrow=48
 test_pkg	adapter=0	dispatch=0	narrow=1

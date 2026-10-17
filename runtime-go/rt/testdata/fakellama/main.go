@@ -7,10 +7,16 @@
 // answer without a real model:
 //
 //	{"healthDelayMs": 500, "crashOnRequest": 1, "exitOnStart": 3,
-//	 "slowMs": 2000, "firstLaunchOnly": true,
+//	 "slowMs": 2000, "firstLaunchOnly": true, "timings": true, "refuseDraft": true,
 //	 "replies": [{"model": "support-lora-v2", "contains": "refund", "content": "..."}]}
 //
-// A chat answer is `fake[<model>]: <last message>` unless a `replies` entry
+// "timings" adds llama-server's `timings` object to each answer (and to the
+// final stream chunk), with the draft fields when the launch had a draft
+// model. "refuseDraft" logs the line the pinned llama-server logs when a
+// draft's vocabulary does not match, and serves on, as it does.
+//
+// A chat answer is `fake[<model>]: <last message>` (with ` lora=<id>:<scale>,…`
+// when the request carries a `lora` list) unless a `replies` entry
 // matches: the first whose model is empty or the request's model, and whose
 // `contains` is in the last message, answers with its content. That lets a
 // test script a candidate that regresses and a judge that scores.
@@ -49,6 +55,8 @@ type knobs struct {
 	SlowMs          int     `json:"slowMs"`
 	FirstLaunchOnly bool    `json:"firstLaunchOnly"`
 	Replies         []reply `json:"replies"`
+	Timings         bool    `json:"timings"`
+	RefuseDraft     bool    `json:"refuseDraft"`
 }
 
 type reply struct {
@@ -101,7 +109,7 @@ func main() {
 	}
 
 	host, port, keyFile := "127.0.0.1", "8080", ""
-	embeddings := false
+	embeddings, draft := false, false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--host":
@@ -115,7 +123,21 @@ func main() {
 			keyFile = args[i]
 		case "--embeddings":
 			embeddings = true
+		case "-md":
+			draft = true
 		}
+	}
+	if draft && k.RefuseDraft {
+		fmt.Fprintln(os.Stderr, "0.00.050.425 E spec common_specu: the target and draft vocabs are not compatible")
+		fmt.Fprintln(os.Stderr, "0.00.051.210 E srv    load_model: failed to initialize speculative decoding context: draft model vocab type must match target model to use speculation")
+	}
+	timings := func() map[string]any {
+		t := map[string]any{"prompt_n": 3, "prompt_ms": 1.5, "prompt_per_second": 2000.0,
+			"predicted_n": 5, "predicted_ms": 10.0, "predicted_per_second": 500.0}
+		if draft && !k.RefuseDraft {
+			t["draft_n"], t["draft_n_accepted"] = 8, 6
+		}
+		return t
 	}
 	key := ""
 	if keyFile != "" {
@@ -168,6 +190,10 @@ func main() {
 			Seed        *int     `json:"seed"`
 			MaxTokens   *int     `json:"max_tokens"`
 			Stream      bool     `json:"stream"`
+			Lora        []struct {
+				ID    int     `json:"id"`
+				Scale float64 `json:"scale"`
+			} `json:"lora"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		last := ""
@@ -183,6 +209,13 @@ func main() {
 		}
 		if req.Temperature != nil {
 			extra += fmt.Sprintf(" temp=%g", *req.Temperature)
+		}
+		if len(req.Lora) > 0 {
+			var parts []string
+			for _, l := range req.Lora {
+				parts = append(parts, fmt.Sprintf("%d:%g", l.ID, l.Scale))
+			}
+			extra += " lora=" + strings.Join(parts, ",")
 		}
 		content := fmt.Sprintf("fake[%s]: %s%s", req.Model, last, extra)
 		for _, rp := range k.Replies {
@@ -208,15 +241,23 @@ func main() {
 			for _, wd := range words {
 				send(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": wd}}}})
 			}
-			send(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{}, "finish_reason": "stop"}}})
+			final := map[string]any{"choices": []any{map[string]any{"delta": map[string]any{}, "finish_reason": "stop"}}}
+			if k.Timings {
+				final["timings"] = timings()
+			}
+			send(final)
 			send(map[string]any{"choices": []any{}, "usage": map[string]any{"prompt_tokens": 3, "completion_tokens": len(words), "total_tokens": 3 + len(words)}})
 			fmt.Fprint(w, "data: [DONE]\n\n")
 			return
 		}
-		b, _ := json.Marshal(map[string]any{
+		answer := map[string]any{
 			"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": content}}},
 			"usage":   map[string]any{"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8},
-		})
+		}
+		if k.Timings {
+			answer["timings"] = timings()
+		}
+		b, _ := json.Marshal(answer)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(b)
 	})

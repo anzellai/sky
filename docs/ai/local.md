@@ -74,9 +74,18 @@ SKY_AI_CHAT_TIMEOUT_MS=60000
 
 The order is the one every Sky setting uses: **operator env > `withX` in code
 > stdlib default.** There is no `sky.toml` section for AI. A value set but empty
-counts as unset. A value that does not parse (a timeout of `soon`) is skipped
-and the next layer applies. Under a custom `[env] prefix` the variables are
+counts as unset. Under a custom `[env] prefix` the variables are
 `<PREFIX>_AI_<SLOT>_<KEY>`.
+
+A value that does not parse (a timeout of `soon`, a `MODE` of `cloud`, a URL
+without `http://` or `https://`) is never skipped. It is `InvalidSetting`
+(`InvalidInput`): the `setting` names the variable (or the `withX` builder, for
+a value from code) and the `reason` names the form expected. The message shows
+the value only when it cannot be a secret: never a key, a token or a URL. A
+server checks every AI variable of the slots its source declares, and the
+machine variables, before it listens, and refuses to start on the first one
+that does not parse. A program that serves nothing meets the same check when
+it first reads the setting, and that call fails.
 
 ### Local or remote
 
@@ -117,7 +126,10 @@ because they name global variables: `home`, `offline`, `fetch`, `llama`, `vllm`,
 | `Local.withGpu` | `SKY_AI_<SLOT>_GPU` (`auto`, `cpu`, `all`, a layer count) | `auto` |
 | `Local.withParallel` | `SKY_AI_<SLOT>_PARALLEL` | 2 |
 | `Local.withIdleUnload` | `SKY_AI_<SLOT>_IDLE_UNLOAD_S` (`0` never) | 600 in development, 0 otherwise |
-| `Local.withPort` | `SKY_AI_<SLOT>_PORT` (`0` a free port) | 0 |
+| `Local.withPort` | `SKY_AI_<SLOT>_PORT` (`0` a free port, at most 65535) | 0 |
+| `Local.withDraft` | `SKY_AI_<SLOT>_DRAFT`, a model reference ([Draft model](#a-draft-model-speculative-decoding)) | none |
+| `Local.withDraftTokens` | `SKY_AI_<SLOT>_DRAFT_MAX` (above 0) and `SKY_AI_<SLOT>_DRAFT_MIN` (0 or more) | the engine's (3 and 0) |
+| `Local.withAdapters` | `SKY_AI_<SLOT>_ADAPTERS`: `name[:scale]=<model reference>`, separated by commas ([Several adapters](#several-adapters-on-one-engine)) | none |
 
 `Endpoint.describe slot` reports where each setting came from (`env`, `code`
 or `default`). It never shows a key, and it shows a remote URL as scheme, host
@@ -256,6 +268,87 @@ as it is.
 from the command line. A registry adapter (`registry:<name>@<alias>`) is the
 other way, and serving then follows the alias ([Registry
 adapters](#registry-adapters)).
+
+## Several adapters on one engine
+
+`Local.withAdapters` loads several LoRA adapters on one engine, each a pinned
+model reference with a name and a scale. A call chooses one by name with the
+`adapter` field of `Provider.Options`. A call that names none runs the base
+model.
+
+```elm
+tunedSpec : Local.Spec
+tunedSpec =
+    Local.model Local.devModel
+        |> Local.withAdapters
+            [ Local.namedAdapter "support" supportRef
+            , { name = "legal", adapter = legalRef, scale = 0.8 }
+            ]
+
+
+askLegal : Provider -> Task Error Provider.ChatResponse
+askLegal provider =
+    Provider.chatWith
+        { temperature = Nothing, seed = Nothing, maxTokens = Nothing, adapter = Just "legal" }
+        provider
+        [ Provider.user "Is this clause enforceable?" ]
+```
+
+The engine starts once with every adapter (`--lora a.gguf,b.gguf`). Each
+request then carries llama-server's `lora` list with a scale for every loaded
+adapter: the named one at its scale, the others at 0, or all at 0 for the
+base model. Each file goes through the model store and its SHA-256 check like
+a model, and an adapter `Std.Ai.Train` converted for another model is
+`AdapterMismatch`.
+
+A name that is not loaded fails the call with `NotRegistered` (`NotFound`).
+Its `ref` is the name, and the message lists the loaded names. It never
+answers from the base model. A name is letters, digits, `.`, `_` and `-`, and
+not `local`; a name used twice, a scale that is not above 0, or a reference
+without a digest is `InvalidSetting`. An engine either applies one adapter to
+every call (`withAdapter`, or a registry adapter) or loads named adapters, so
+setting both is `InvalidSetting`.
+
+An operator sets the list with `SKY_AI_<SLOT>_ADAPTERS`, for example
+`support=file:/srv/a.gguf#sha256=<hex>,legal:0.8=file:/srv/b.gguf#sha256=<hex>`.
+`Endpoint.withAdapter "support"` (or `SKY_AI_<SLOT>_ADAPTER=support`) makes
+that adapter the slot's default for calls that name none.
+
+## A draft model (speculative decoding)
+
+`Local.withDraft ref` gives the engine a draft model: a smaller model of the
+same family, pinned by digest like the base. llama-server drafts a few tokens
+with it and the base model checks them, so the answer is still the base
+model's, produced faster when the draft guesses well.
+`Local.withDraftTokens { max, min }` bounds how many tokens it drafts per step.
+
+```elm
+fastSpec : Local.Spec
+fastSpec =
+    Local.model qwen7b
+        |> Local.withDraft Local.devModel
+        |> Local.withDraftTokens { max = 8, min = 1 }
+```
+
+The draft is fetched and verified through the same model store and SHA-256
+checks as the base. `sky ai provision --model <ref>` provisions it ahead on a
+host with fetching off; without it the start is `NotProvisioned`. The engine
+starts with `-md <file> --spec-type draft-simple`, and
+`--spec-draft-n-max` / `--spec-draft-n-min` when they are set.
+
+A draft must share the base model's vocabulary. The pinned llama-server does
+not refuse one that does not: it logs the mismatch and serves without
+speculation. So Sky compares the two vocabularies before the engine loads
+(the tokenizer type, the start and end tokens, the size within 128 tokens and
+the token text), and checks the engine's log once it is healthy. Either
+finding is `InvalidSetting` naming `SKY_AI_<SLOT>_DRAFT` (or
+`Local.withDraft`), never a slow engine nobody asked for. A drafted-token
+setting without a draft, or a minimum above the maximum, is `InvalidSetting`
+too.
+
+llama-server reports how the draft did in each answer's `timings` object
+(`draft_n` tokens drafted, `draft_n_accepted` accepted, with
+`predicted_per_second`). The engine passes the answer on as it is.
 
 ## Provider additions
 
@@ -480,12 +573,12 @@ local slot whose engine or model is not provisioned.
 
 ## Not yet
 
-These parts of the design are later work: draft models in `Local`
-(`withDraft`), several resident adapters per local engine (one engine loads
-one adapter today), and Sky's own
-published engine bundles (the pins use the upstream llama.cpp release assets
-today). A slot name computed at run time works, but the build cannot list it
-for the startup report.
+These parts of the design are later work: Sky's own published engine bundles
+(the pins use the upstream llama.cpp release assets today), and a registry
+reference (`registry:<name>@<alias>`) inside `Local.withAdapters` (a named
+adapter is a pinned file or Hugging Face reference; a registry adapter is the
+slot's one adapter, through `Endpoint.fromRegistry`). A slot name computed at
+run time works, but the build cannot list it for the startup report.
 
 ## In the Sky Console
 

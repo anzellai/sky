@@ -185,9 +185,13 @@ func aiDeviceDefaultBackends() []string {
 // resolveOffer resolves the placement, model and adapter (operator env over
 // code) and verifies the files the offer names.
 func (e *aiDeviceEntry) resolveOffer(ctx context.Context) (*aiDeviceOffer, map[string]string, error) {
-	placement, _ := aiLayer(aiSlotSuffix(e.slot, "PLACEMENT"), e.spec.placement, func(v string) bool {
-		return v == "auto" || v == "device" || v == "server"
-	})
+	// A placement that is not auto, device or server is refused, never
+	// skipped: the slot would otherwise run where nobody asked.
+	placement, _, err := aiLayerChecked(aiSlotSuffix(e.slot, "PLACEMENT"), e.spec.placement, "Device.spec", aiExpectPlacement)
+	if err != nil {
+		return nil, nil, err
+	}
+	placement = strings.ToLower(strings.TrimSpace(placement))
 	if placement == "" {
 		placement = "server"
 	}
@@ -231,8 +235,14 @@ func (e *aiDeviceEntry) resolveOffer(ctx context.Context) (*aiDeviceOffer, map[s
 	}
 	// The device model: DEVICE_MODEL, else the spec's, else the model the
 	// slot's own engine runs (its MODEL variable, else Endpoint.withLocal).
-	slotModel, _ := aiLayer(aiSlotSuffix(e.slot, "MODEL"), e.b.local.model, nil)
-	modelRef, _ := aiLayer(aiSlotSuffix(e.slot, "DEVICE_MODEL"), orDefault(e.spec.model, slotModel), nil)
+	slotModel, _, err := aiLayerChecked(aiSlotSuffix(e.slot, "MODEL"), e.b.local.model, "Local.model", aiExpectModelRef)
+	if err != nil {
+		return nil, nil, err
+	}
+	modelRef, _, err := aiLayerChecked(aiSlotSuffix(e.slot, "DEVICE_MODEL"), orDefault(e.spec.model, slotModel), "Device.withModel", aiExpectModelRef)
+	if err != nil {
+		return nil, nil, err
+	}
 	if modelRef == "" {
 		name := skyEnvName(aiSlotSuffix(e.slot, "DEVICE_MODEL"))
 		return nil, nil, aiFailf(aiNotConfigured,
@@ -255,7 +265,10 @@ func (e *aiDeviceEntry) resolveOffer(ctx context.Context) (*aiDeviceOffer, map[s
 	o.Model = aiDeviceFile{Label: filepath.Base(m.file), Sha256: m.sha256, Bytes: st.Size(), URL: "/_sky/ai/blob/" + m.sha256}
 	files[m.sha256] = path
 
-	adapterRef, _ := aiLayer(aiSlotSuffix(e.slot, "DEVICE_ADAPTER"), orDefault(e.spec.adapter, orDefault(e.b.adapter, e.b.local.adapter)), nil)
+	adapterRef, _, err := aiLayerChecked(aiSlotSuffix(e.slot, "DEVICE_ADAPTER"), orDefault(e.spec.adapter, orDefault(e.b.adapter, e.b.local.adapter)), "Device.withAdapter", aiExpectDeviceAdRef)
+	if err != nil {
+		return nil, nil, err
+	}
 	if adapterRef == "" {
 		return o, files, nil
 	}
@@ -520,9 +533,13 @@ func aiDeviceChunkList(path, sum string) ([]byte, error) {
 	}
 	b, _ := json.Marshal(out)
 	if err := os.MkdirAll(filepath.Dir(cache), 0o700); err == nil {
-		tmp := cache + ".tmp-" + aiRandomHex(4)
-		if os.WriteFile(tmp, b, 0o600) == nil {
-			_ = os.Rename(tmp, cache)
+		// The cache is an optimisation: without a temporary name the list
+		// is served uncached.
+		if rnd, err := aiRandomHex(4); err == nil {
+			tmp := cache + ".tmp-" + rnd
+			if os.WriteFile(tmp, b, 0o600) == nil {
+				_ = os.Rename(tmp, cache)
+			}
 		}
 	}
 	return b, nil
@@ -909,7 +926,11 @@ func aiCopyFile(src, dst string) error {
 		return err
 	}
 	defer in.Close()
-	tmp := dst + ".tmp-" + aiRandomHex(4)
+	rnd, err := aiRandomHex(4)
+	if err != nil {
+		return err
+	}
+	tmp := dst + ".tmp-" + rnd
 	out, err := os.Create(tmp)
 	if err != nil {
 		return err

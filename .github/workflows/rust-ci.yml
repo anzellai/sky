@@ -2416,7 +2416,10 @@ jobs:
   # ── Std.Ai: the real managed engine, zero configuration ─────────────────
   # ai_local_live.rs builds a Sky program whose code names only the pinned
   # development model, runs it with no SKY_AI_* variable, and asserts a chat
-  # answer and an embedding from the real llama-server. The pinned engine
+  # answer and an embedding from the real llama-server. It also runs a draft
+  # model (the development model drafting for itself, a draft of another
+  # vocabulary refused typed) and named LoRA adapters chosen per call (on the
+  # synthetic Qwen2 model `go run ./cmd/sky-tiny-gguf` writes, no download). The pinned engine
   # build (~17 MB) and the Qwen2.5 0.5B Q4_0 model (~430 MB) live in the
   # Std.Ai home, cached here and keyed on the file that pins them, so a pin
   # change refetches and anything else restores. The test is excluded from the

@@ -1,0 +1,561 @@
+module Std.Ai.TraceTest exposing (tests)
+
+-- Std.Ai.Trace: the lifecycle ledger. A call recorded through `Trace.chat`
+-- carries its facts and its outcome, a failed call is a row too, a keyed row
+-- is written once (a replayed durable step), training and eval rows sit in
+-- the same ledger, a table made by an earlier release is migrated in place,
+-- and totals stay exact: priced rows only, one currency per total. The
+-- runtime-measured facts of a slot (queue wait, start, time to the first
+-- piece, the engine's own rate) are covered by
+-- runtime-go/rt/ai_call_facts_test.go.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result exposing (Result(..))
+import Sky.Test as Test exposing (Test, TestResult)
+import Std.Db as Db exposing (Db, SqlValue(..))
+import Std.Money as Money exposing (Currency(..))
+import Std.Decimal as Decimal
+import Std.Ai.Provider as Provider exposing (Provider)
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Trace as Trace exposing (Kind(..))
+import Std.Ai.Agent as Agent
+import Std.Durable as Durable
+
+
+usage : Provider.Usage
+usage =
+    { promptTokens = 1000, completionTokens = 500, totalTokens = 1500 }
+
+
+answering : Provider
+answering =
+    Provider.custom (\_ -> Task.succeed { content = "hello", usage = usage })
+
+
+failing : Error -> Provider
+failing e =
+    Provider.custom (\_ -> Task.fail e)
+
+
+book : Currency -> Provider.PriceBook
+book c =
+    case Provider.priceBook c "0.001" "0.002" of
+
+        Ok b ->
+            b
+
+        Err _ ->
+            Provider.freePriceBook c
+
+
+-- The exact cost of one answered call in the test book.
+oneCall : String
+oneCall =
+    Decimal.toString (Money.amount (Provider.cost (book USD) usage))
+
+
+fresh : Task Error Db
+fresh =
+    Db.open "sqlite" ":memory:"
+        |> Task.andThen (\db -> Trace.setup db |> Task.map (\_ -> db))
+
+
+hi : List Provider.Message
+hi =
+    [ Provider.user "hi" ]
+
+
+-- Every check passes, or the first failure.
+all : List TestResult -> TestResult
+all results =
+    case List.filter isFailure results of
+
+        first :: _ ->
+            first
+
+        [] ->
+            Test.pass
+
+
+isFailure : TestResult -> Bool
+isFailure r =
+    case r of
+
+        Test.Passed ->
+            False
+
+        _ ->
+            True
+
+
+expectOk : (a -> TestResult) -> Result Error a -> TestResult
+expectOk f result =
+    case result of
+
+        Ok a ->
+            f a
+
+        Err e ->
+            Test.fail (Error.toString e)
+
+
+-- ── Calls ───────────────────────────────────────────────────────────
+callRows : Result Error (List Trace.Row)
+callRows =
+    fresh
+        |> Task.andThen
+               (\db ->
+                   Trace.chat
+                       db
+                       (Trace.entry "run-a" |> Trace.priced (book USD))
+                       Provider.defaultOptions
+                       answering
+                       hi
+                       |> Task.andThen (\_ -> Trace.rows db "run-a"))
+        |> Task.run
+
+
+aCallRecordsItsFacts : List Trace.Row -> TestResult
+aCallRecordsItsFacts found =
+    case found of
+
+        [ r ] ->
+            all
+                [ Test.equal "ok" r.outcome
+                , Test.equal "remote" r.tier
+                , Test.equal 1000 r.promptTokens
+                , Test.equal 500 r.completionTokens
+                , Test.equal oneCall r.costMinor
+                , Test.equal "USD" r.currency
+                , Test.equal True (r.latencyMs /= Nothing)
+                , Test.equal Nothing r.queueWaitMs
+                , Test.equal Nothing r.firstTokenMs
+                , Test.equal "hello" r.output
+                ]
+
+        _ ->
+            Test.fail
+                ("expected one row, got " ++ String.fromInt (List.length found))
+
+
+failedRows : Result Error ( Result Error Provider.ChatResponse, List Trace.Row )
+failedRows =
+    fresh
+        |> Task.andThen
+               (\db ->
+                   Trace.chat
+                       db
+                       (Trace.entry "run-f")
+                       Provider.defaultOptions
+                       (failing
+                           (Failure.toError
+                               (NotConfigured { setting = "SKY_AI_CHAT_URL" })))
+                       hi
+                       |> Task.map Ok
+                       |> Task.onError (\e -> Task.succeed (Err e))
+                       |> Task.andThen
+                              (\answer ->
+                                  Trace.rows db "run-f"
+                                      |> Task.map (\found -> ( answer, found ))))
+        |> Task.run
+
+
+aFailedCallIsARow : ( Result Error Provider.ChatResponse, List Trace.Row ) -> TestResult
+aFailedCallIsARow ( answer, found ) =
+    case ( answer, found ) of
+
+        ( Err _, [ r ] ) ->
+            all
+                [ Test.equal "NotConfigured" r.outcome
+                , Test.equal 0 r.completionTokens
+                , Test.equal "" r.costMinor
+                ]
+
+        ( Ok _, _ ) ->
+            Test.fail "the failed call answered"
+
+        _ ->
+            Test.fail
+                ("expected one row, got " ++ String.fromInt (List.length found))
+
+
+otherErrorOutcome : Result Error (List Trace.Row)
+otherErrorOutcome =
+    fresh
+        |> Task.andThen
+               (\db ->
+                   Trace.chat
+                       db
+                       (Trace.entry "run-u")
+                       Provider.defaultOptions
+                       (failing (Error.unavailable "down"))
+                       hi
+                       |> Task.onError
+                              (\_ -> Task.succeed { content = "", usage = usage })
+                       |> Task.andThen (\_ -> Trace.rows db "run-u"))
+        |> Task.run
+
+
+-- ── Keys, kinds and totals ──────────────────────────────────────────
+keyedTwice : Result Error Int
+keyedTwice =
+    fresh
+        |> Task.andThen
+               (\db ->
+                   let
+                       e =
+                           { runId = "run-k"
+                           , key = "llm:0"
+                           , kind = Call
+                           , book = Just (book USD)
+                           }
+                   in
+                       Provider.measure Provider.defaultOptions answering hi
+                           |> Task.andThen
+                                  (\m ->
+                                      Trace.recordCall db e m
+                                          |> Task.andThen
+                                                 (\_ -> Trace.recordCall db e m))
+                           |> Task.andThen (\_ -> Trace.spanCount db "run-k"))
+        |> Task.run
+
+
+lifecycle : Result Error ( Trace.Summary, List Trace.CostLine )
+lifecycle =
+    fresh
+        |> Task.andThen
+               (\db ->
+                   Trace.chat
+                       db
+                       (Trace.entry "run-l" |> Trace.priced (book USD))
+                       Provider.defaultOptions
+                       answering
+                       hi
+                       |> Task.andThen
+                              (\_ ->
+                                  Trace.recordCost
+                                      db
+                                      { runId = "run-l"
+                                      , key = "train"
+                                      , kind = Training
+                                      , book = Nothing
+                                      }
+                                      "support-lora"
+                                      (Money.fromMajor USD 3))
+                       |> Task.andThen
+                              (\_ ->
+                                  Trace.recordUnpriced
+                                      db
+                                      { runId = "run-l"
+                                      , key = "local"
+                                      , kind = Training
+                                      , book = Nothing
+                                      }
+                                      "local-run")
+                       |> Task.andThen
+                              (\_ ->
+                                  Task.map2
+                                      (\s c -> ( s, c ))
+                                      (Trace.summary db "run-l")
+                                      (Trace.costs db)))
+        |> Task.run
+
+
+lifecycleTotals : ( Trace.Summary, List Trace.CostLine ) -> TestResult
+lifecycleTotals ( s, lines ) =
+    all
+        [ Test.equal 3 s.rows
+        , Test.equal 1 s.unpriced
+        , Test.equal 0 s.failures
+        , Test.equal
+              [ ( "USD"
+                , Decimal.toString
+                      (Decimal.add
+                          (Money.amount (Provider.cost (book USD) usage))
+                          (Money.amount (Money.fromMajor USD 3)))
+                )
+              ]
+              s.costs
+        , Test.equal 2 (List.length lines)
+        , Test.equal [ Call, Training ] (List.map .kind lines)
+        ]
+
+
+mixedCurrencies : Result Error String
+mixedCurrencies =
+    fresh
+        |> Task.andThen
+               (\db ->
+                   Trace.chat
+                       db
+                       (Trace.entry "run-m" |> Trace.priced (book USD))
+                       Provider.defaultOptions
+                       answering
+                       hi
+                       |> Task.andThen
+                              (\_ ->
+                                  Trace.chat
+                                      db
+                                      (Trace.entry "run-m"
+                                          |> Trace.priced (book EUR))
+                                      Provider.defaultOptions
+                                      answering
+                                      hi)
+                       |> Task.andThen (\_ -> Trace.totalCost db "run-m"))
+        |> Task.run
+
+
+-- ── Migration of an earlier table ───────────────────────────────────
+legacyDdl : String
+legacyDdl =
+    "CREATE TABLE IF NOT EXISTS _sky_ai_traces ("
+        ++ "run_id TEXT NOT NULL, model TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, "
+        ++ "completion_tokens INTEGER NOT NULL, cost_minor TEXT NOT NULL, currency TEXT NOT NULL, "
+        ++ "output TEXT NOT NULL, created_at BIGINT NOT NULL)"
+
+
+legacy : Result Error ( List Trace.Row, String )
+legacy =
+    Db.open "sqlite" ":memory:"
+        |> Task.andThen
+               (\db ->
+                   Db.execRaw db legacyDdl
+                       |> Task.andThen
+                              (\_ ->
+                                  Db.exec
+                                      db
+                                      "INSERT INTO _sky_ai_traces (run_id, model, prompt_tokens, completion_tokens, cost_minor, currency, output, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                                      [ SqlString "old"
+                                      , SqlString "gpt"
+                                      , SqlInt 10
+                                      , SqlInt 5
+                                      , SqlString "0.5"
+                                      , SqlString "USD"
+                                      , SqlString "x"
+                                      , SqlInt 1
+                                      ])
+                       |> Task.andThen (\_ -> Trace.setup db)
+                       |> Task.andThen (\_ -> Trace.setup db)
+                       |> Task.andThen
+                              (\_ ->
+                                  Trace.chat
+                                      db
+                                      (Trace.entry "old"
+                                          |> Trace.priced (book USD))
+                                      Provider.defaultOptions
+                                      answering
+                                      hi)
+                       |> Task.andThen
+                              (\_ ->
+                                  Task.map2
+                                      (\found total -> ( found, total ))
+                                      (Trace.rows db "old")
+                                      (Trace.totalCost db "old")))
+        |> Task.run
+
+
+legacyKept : ( List Trace.Row, String ) -> TestResult
+legacyKept ( found, total ) =
+    case found of
+
+        [ old, new ] ->
+            all
+                [ Test.equal Call old.kind
+                , Test.equal "ok" old.outcome
+                , Test.equal Nothing old.latencyMs
+                , Test.equal "ok" new.outcome
+                , Test.equal
+                      (Decimal.toString
+                          (Decimal.add
+                              (Result.withDefault
+                                  Decimal.zero
+                                  (Decimal.fromString "0.5"))
+                              (Money.amount (Provider.cost (book USD) usage))))
+                      total
+                ]
+
+        _ ->
+            Test.fail
+                ("expected the old row and the new one, got "
+                    ++ String.fromInt (List.length found))
+
+
+-- ── Training progress ───────────────────────────────────────────────
+steps : Result Error (List Trace.Progress)
+steps =
+    fresh
+        |> Task.andThen
+               (\db ->
+                   Trace.recordProgress
+                       db
+                       "train-1"
+                       { step = 10
+                       , total = 20
+                       , loss = Just 1.5
+                       , tokensPerSecond = Just 900.0
+                       , checkpoint = ""
+                       }
+                       |> Task.andThen
+                              (\_ ->
+                                  Trace.recordProgress
+                                      db
+                                      "train-1"
+                                      { step = 20
+                                      , total = 20
+                                      , loss = Just 0.75
+                                      , tokensPerSecond = Nothing
+                                      , checkpoint = "ckpt-20"
+                                      })
+                       |> Task.andThen
+                              (\_ ->
+                                  Trace.recordProgress
+                                      db
+                                      "train-1"
+                                      { step = 10
+                                      , total = 20
+                                      , loss = Just 9.0
+                                      , tokensPerSecond = Nothing
+                                      , checkpoint = ""
+                                      })
+                       |> Task.andThen (\_ -> Trace.progress db "train-1"))
+        |> Task.run
+
+
+stepsKept : List Trace.Progress -> TestResult
+stepsKept found =
+    all
+        [ Test.equal [ 10, 20 ] (List.map .step found)
+        , Test.equal [ Just 1.5, Just 0.75 ] (List.map .loss found)
+        , Test.equal [ "", "ckpt-20" ] (List.map .checkpoint found)
+        ]
+
+
+-- ── Measured facts without a runtime ────────────────────────────────
+streamed : Result Error (Provider.Measured Provider.ChatResponse)
+streamed =
+    Provider.measureStream
+        Provider.defaultOptions
+        answering
+        hi
+        (\_ -> Task.succeed ())
+        |> Task.run
+
+
+-- ── A traced agent ──────────────────────────────────────────────────
+tracedAgent : Durable.WorkflowDef Agent.Input Agent.Output
+tracedAgent =
+    Agent.oneShotWith
+        { trace = Just (book USD) }
+        "traced-agent"
+        answering
+        "Be brief."
+
+
+agentRows : Result Error ( List Trace.Row, Int )
+agentRows =
+    fresh
+        |> Task.andThen
+               (\db ->
+                   Durable.setup db
+                       |> Task.andThen
+                              (\_ ->
+                                  Durable.start
+                                      db
+                                      tracedAgent
+                                      "agent-1"
+                                      { messages = hi })
+                       |> Task.andThen
+                              (\_ ->
+                                  Durable.poll db [ Durable.erase tracedAgent ])
+                       |> Task.andThen
+                              (\_ ->
+                                  Durable.poll db [ Durable.erase tracedAgent ])
+                       |> Task.andThen
+                              (\_ ->
+                                  Task.map2
+                                      (\found n -> ( found, n ))
+                                      (Trace.rows db "agent-1")
+                                      (Trace.spanCount db "agent-1")))
+        |> Task.run
+
+
+agentTraced : ( List Trace.Row, Int ) -> TestResult
+agentTraced ( found, n ) =
+    case found of
+
+        [ r ] ->
+            all
+                [ Test.equal 1 n
+                , Test.equal "ok" r.outcome
+                , Test.equal oneCall r.costMinor
+                , Test.equal "hello" r.output
+                ]
+
+        _ ->
+            Test.fail
+                ("expected one row for the run, got "
+                    ++ String.fromInt (List.length found))
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "a call through Trace.chat is a row with its facts"
+          (\_ -> expectOk aCallRecordsItsFacts callRows)
+    , Test.test
+          "a failed call is a row with its failure code and no cost"
+          (\_ -> expectOk aFailedCallIsARow failedRows)
+    , Test.test
+          "a non-AI error records its kind as the outcome"
+          (\_ ->
+              expectOk
+                  (\found ->
+                      Test.equal [ "Unavailable" ] (List.map .outcome found))
+                  otherErrorOutcome)
+    , Test.test
+          "a keyed row is written once (a replayed step)"
+          (\_ -> expectOk (Test.equal 1) keyedTwice)
+    , Test.test
+          "training rows and unpriced rows share the run's ledger"
+          (\_ -> expectOk lifecycleTotals lifecycle)
+    , Test.test
+          "totalCost refuses to add two currencies"
+          (\_ ->
+              case mixedCurrencies of
+
+                  Err e ->
+                      Test.equal
+                          True
+                          (String.contains
+                              "more than one currency"
+                              (Error.toString e))
+
+                  Ok total ->
+                      Test.fail ("added USD and EUR into " ++ total))
+    , Test.test
+          "a table made by an earlier release is migrated in place"
+          (\_ -> expectOk legacyKept legacy)
+    , Test.test
+          "training progress is kept once per step"
+          (\_ -> expectOk stepsKept steps)
+    , Test.test
+          "a traced agent records its model call once, under the run"
+          (\_ -> expectOk agentTraced agentRows)
+    , Test.test
+          "a custom provider's stream has a time to the first piece and a rate"
+          (\_ ->
+              expectOk
+                  (\m ->
+                      all
+                          [ Test.equal "ok" m.facts.outcome
+                          , Test.equal True (m.facts.firstTokenMs /= Nothing)
+                          , Test.equal True (m.facts.latencyMs /= Nothing)
+                          , Test.equal Nothing m.facts.queueWaitMs
+                          ])
+                  streamed)
+    ]

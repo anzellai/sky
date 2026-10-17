@@ -142,7 +142,10 @@ counts, and the cost priced in `Std.Money` as an exact decimal string. `totalCos
 sums a run's per-call costs in Sky over `Std.Decimal` — never a float `SUM` in
 SQL, because a float would corrupt the total, which is the whole reason cost lives
 in `Std.Money`. The rows are the per-run / per-tenant cost figure and the audit
-record of what the agent did.
+record of what the agent did. From v0.28.0 a row also records what the call did
+(slot, tier, adapter, queue wait, latency, time to first token, tokens per
+second, outcome), and training and eval runs record their own rows: see
+[`../ai/trace.md`](../ai/trace.md).
 
 ## `Std.Ai.Memory.Pg` — long-term memory
 

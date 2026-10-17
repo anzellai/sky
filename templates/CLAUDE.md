@@ -110,6 +110,11 @@ once, about 450 MB, into the per-user AI home). It stops with the program.
 started. Never `pkill llama-server`: other programs on the machine may share an
 engine. Do not run `sky ai provision` or `sky ai pull` speculatively; they
 download hundreds of megabytes.
+`Local.withDraft` loads a second (draft) model into the same engine, so
+budget its memory too. With `Local.withAdapters`, a call that names an adapter
+the engine did not load fails with `NotRegistered`: fix the name, do not drop
+it to get a base-model answer. An `SKY_AI_*` value that does not parse is
+`InvalidSetting`; fix the value rather than unsetting it.
 
 `Std.Ai.Eval` scores `Rubric` cases with a judge slot (`"judge"`) whose
 default is the same local pinned model, so a real eval run (outside `sky
@@ -118,6 +123,10 @@ a `.env.test`) no engine starts: give the
 judge a `tests/mocks/` fixture, or pass `Eval.withJudge` a `Provider.custom`.
 An eval is a test: let its `Eval.check` thresholds fail it, and do not loosen
 a threshold to make a run pass.
+
+`Std.Ai.Trace` rows can hold prompts' answers (`output`): never print a
+run's rows to a log, and read costs with `Trace.summary` or `Trace.costs`.
+Call `Trace.setup db` once at start-up before you record.
 
 `Std.Ai.Registry` promotion needs evidence: never use `Registry.forcePromote`
 (or `sky ai promote --force`) to get past a failing gate unless the user asks,

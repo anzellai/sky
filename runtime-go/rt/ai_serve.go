@@ -49,9 +49,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"sky-app/rt/periodic"
+	"sky-app/rt/telemetry"
 )
 
 // aiTierConfig is a resolved tier.
@@ -101,6 +103,18 @@ type aiTier struct {
 	evictions int
 	engineSig map[string]float64 // the engine's scraped signals
 
+	// queueRaw is the engine's last raw queue-time histogram (seconds sum,
+	// request count), kept apart from engineSig: queueWaitMs is the mean
+	// over the window between two scrapes, so it needs the previous totals.
+	queueRaw     [2]float64
+	queueSeen    bool
+	preemptStart time.Time // when the engine's preemption counter began
+	preemptLast  float64
+	preemptSeen  bool
+
+	otelPushing atomic.Bool // a push to the OTLP collector is in flight
+	otelLastErr string      // the last push failure printed
+
 	stop chan struct{}
 	srv  *http.Server
 }
@@ -128,24 +142,36 @@ func aiServeBuilder(v any) aiTierConfig {
 
 // aiServeLayer resolves one SKY_AI_SERVE_* setting; each suffix is a literal
 // for the configuration census.
-func aiServeLayer(key, code string, accept func(string) bool) (string, string) {
+func aiServeLayer(key, code, builder string, ex aiExpect) (string, string, error) {
 	switch key {
 	case "ENGINE":
-		return aiLayer("AI_SERVE_ENGINE", code, accept)
+		return aiLayerChecked("AI_SERVE_ENGINE", code, builder, ex)
 	case "BIND":
-		return aiLayer("AI_SERVE_BIND", code, accept)
+		return aiLayerChecked("AI_SERVE_BIND", code, builder, ex)
 	case "ENGINE_URL":
-		return aiLayer("AI_SERVE_ENGINE_URL", code, accept)
+		return aiLayerChecked("AI_SERVE_ENGINE_URL", code, builder, ex)
 	case "ADAPTERS":
-		return aiLayer("AI_SERVE_ADAPTERS", code, accept)
+		return aiLayerChecked("AI_SERVE_ADAPTERS", code, builder, ex)
 	case "MAX_ADAPTERS":
-		return aiLayer("AI_SERVE_MAX_ADAPTERS", code, accept)
+		return aiLayerChecked("AI_SERVE_MAX_ADAPTERS", code, builder, ex)
 	case "MODELS":
-		return aiLayer("AI_SERVE_MODELS", code, accept)
+		return aiLayerChecked("AI_SERVE_MODELS", code, builder, ex)
 	case "POLL_S":
-		return aiLayer("AI_SERVE_POLL_S", code, accept)
+		return aiLayerChecked("AI_SERVE_POLL_S", code, builder, ex)
 	}
-	return "", "default"
+	return "", "default", nil
+}
+
+// The forms of the tier's settings. A value that does not parse is an
+// InvalidSetting naming the variable (or the builder), never skipped.
+var (
+	aiExpectServeEngine = aiExpect{accept: aiOneOf("vllm"), form: "vllm"}
+	aiExpectServeBind   = aiExpect{accept: aiHostPort, form: "host:port, for example 0.0.0.0:8080"}
+)
+
+func aiHostPort(s string) bool {
+	_, port, err := net.SplitHostPort(strings.TrimSpace(s))
+	return err == nil && aiPortNumber(port)
 }
 
 // Ai_serveResolve : RawTier -> Task Error (List Setting) — the tier's
@@ -175,23 +201,26 @@ func Ai_serveResolve(rawArg any) any {
 func aiServeSettings(b aiTierConfig, codeToken string) ([]aiSetting, aiTierConfig, error) {
 	var out []aiSetting
 	c := b
-	get := func(key, code, def string, accept func(string) bool) string {
-		v, src := aiServeLayer(key, code, accept)
+	var firstErr error
+	get := func(key, code, def, builder string, ex aiExpect) string {
+		v, src, err := aiServeLayer(key, code, builder, ex)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
 		if v == "" {
 			v, src = def, "default"
 		}
 		out = append(out, aiSetting{key: key, name: skyEnvName(aiServeSuffix(key)), value: v, source: src})
 		return v
 	}
-	engineOK := func(s string) bool { return strings.TrimSpace(s) == "vllm" }
-	if raw, ok := lookupEnvRaw(skyEnvName("AI_SERVE_ENGINE")); ok && raw != "" && !engineOK(raw) {
-		return nil, c, aiFailf(aiInvalidSetting, "%s=%q: the GPU tier runs vllm", skyEnvName("AI_SERVE_ENGINE"), raw).with("setting", skyEnvName("AI_SERVE_ENGINE"))
-	}
-	c.engine = get("ENGINE", b.engine, "vllm", engineOK)
-	c.bind = get("BIND", b.bind, "0.0.0.0:8080", nil)
-	c.engineURL = strings.TrimRight(get("ENGINE_URL", b.engineURL, "http://127.0.0.1:8000", nil), "/")
+	c.engine = get("ENGINE", b.engine, "vllm", "Serve.tier", aiExpectServeEngine)
+	c.bind = get("BIND", b.bind, "0.0.0.0:8080", "Serve.withBind", aiExpectServeBind)
+	c.engineURL = strings.TrimRight(get("ENGINE_URL", b.engineURL, "http://127.0.0.1:8000", "Serve.withEngineUrl", aiExpectURL), "/")
 	adapters := strings.Join(b.adapters, ",")
-	adapters = get("ADAPTERS", adapters, "", nil)
+	adapters = get("ADAPTERS", adapters, "", "Serve.withAdapters", aiExpect{})
+	if firstErr != nil {
+		return nil, c, firstErr
+	}
 	c.adapters = nil
 	for _, a := range strings.Split(adapters, ",") {
 		if a = strings.TrimPrefix(strings.TrimSpace(a), aiRegistryScheme); a != "" {
@@ -201,16 +230,19 @@ func aiServeSettings(b aiTierConfig, codeToken string) ([]aiSetting, aiTierConfi
 			c.adapters = append(c.adapters, a)
 		}
 	}
-	c.maxAdapters = aiAtoi(get("MAX_ADAPTERS", itoaSet(b.maxAdapters), "4", aiPositiveInt))
+	c.maxAdapters = aiAtoi(get("MAX_ADAPTERS", itoaSet(b.maxAdapters), "4", "Serve.withMaxAdapters", aiExpectPositive))
 	if c.maxAdapters < len(c.adapters) {
 		c.maxAdapters = len(c.adapters)
 	}
-	c.modelsDir = get("MODELS", b.modelsDir, "/models", nil)
+	c.modelsDir = get("MODELS", b.modelsDir, "/models", "Serve.withModelsDir", aiExpect{})
 	pollS := int(b.poll / time.Second)
 	if b.poll < 0 {
 		pollS = -1
 	}
-	c.poll = time.Duration(aiAtoi(get("POLL_S", itoaSet(pollS), "30", aiPositiveInt))) * time.Second
+	c.poll = time.Duration(aiAtoi(get("POLL_S", itoaSet(pollS), "30", "Serve.withAliasPolling", aiExpectPositive))) * time.Second
+	if firstErr != nil {
+		return nil, c, firstErr
+	}
 	if t, src := aiLayer("AI_SERVE_TOKEN", codeToken, nil); t != "" {
 		c.token = t
 		out = append(out, aiSetting{key: "TOKEN", name: skyEnvName("AI_SERVE_TOKEN"), value: "(secret)", source: src})
@@ -346,7 +378,7 @@ func (t *aiTier) loops() {
 		Interval: 15 * time.Second,
 		Stop:     t.stop,
 		Report:   periodicReport,
-		Work:     func(time.Time) error { t.scrapeEngine(); t.drain(); return nil },
+		Work:     func(time.Time) error { t.scrapeEngine(); t.drain(); t.pushOTel(); return nil },
 	})
 }
 
@@ -809,6 +841,14 @@ var aiEngineSignals = map[string]string{
 	"vllm:num_preemptions_total": "preemptions",
 }
 
+// aiEngineQueueRaw are the parts of vLLM's queue-time histogram the tier
+// reads: the sum of the seconds requests waited in the engine's queue and
+// how many requests that sum covers. Both are cumulative.
+var aiEngineQueueRaw = map[string]int{
+	"vllm:request_queue_time_seconds_sum":   0,
+	"vllm:request_queue_time_seconds_count": 1,
+}
+
 func (t *aiTier) scrapeEngine() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -820,6 +860,8 @@ func (t *aiTier) scrapeEngine() {
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	sig := map[string]float64{}
+	var queue [2]float64
+	var queueGot [2]bool
 	for _, line := range strings.Split(string(data), "\n") {
 		if line == "" || line[0] == '#' {
 			continue
@@ -829,17 +871,142 @@ func (t *aiTier) scrapeEngine() {
 			name = line[:i]
 		}
 		key, ok := aiEngineSignals[name]
-		if !ok {
+		qi, isQueue := aiEngineQueueRaw[name]
+		if !ok && !isQueue {
 			continue
 		}
 		fields := strings.Fields(line)
-		if v, err := strconv.ParseFloat(fields[len(fields)-1], 64); err == nil {
-			sig[key] += v
+		v, err := strconv.ParseFloat(fields[len(fields)-1], 64)
+		if err != nil {
+			continue
 		}
+		if isQueue {
+			queue[qi] += v
+			queueGot[qi] = true
+			continue
+		}
+		sig[key] += v
+	}
+	now := time.Now()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	// queueWaitMs: the mean queue wait of the requests that finished
+	// queueing in this window. A total that went down means the engine
+	// restarted: skip the window. No request in the window: no value.
+	if queueGot[0] && queueGot[1] {
+		if t.queueSeen {
+			dSum, dCount := queue[0]-t.queueRaw[0], queue[1]-t.queueRaw[1]
+			if dSum >= 0 && dCount > 0 {
+				sig["queueWaitMs"] = dSum / dCount * 1000
+			}
+		}
+		t.queueRaw, t.queueSeen = queue, true
+	}
+	// The preemption counter is cumulative from the engine's start. A drop
+	// is a restart: the count began again now.
+	if p, ok := sig["preemptions"]; ok {
+		switch {
+		case !t.preemptSeen:
+			t.preemptStart = t.started
+		case p < t.preemptLast:
+			t.preemptStart = now
+		}
+		t.preemptLast, t.preemptSeen = p, true
+	}
+	t.engineSig = sig
+}
+
+// ─── OpenTelemetry ──────────────────────────────────────────────────────
+
+// aiOTelPushTimeout bounds one push to the OTLP collector. A push never
+// retries: the next scrape pushes fresh values.
+const aiOTelPushTimeout = 5 * time.Second
+
+var aiOTelClient = &http.Client{Timeout: aiOTelPushTimeout}
+
+// pushOTel sends the tier's signals to the OTLP collector when an endpoint
+// is configured. It runs in the background so the scrape loop, drain and
+// shutdown never wait for a slow collector, and it skips a tick while the
+// previous push is still in flight.
+func (t *aiTier) pushOTel() {
+	target, ok := telemetry.OTLPMetricsTargetFromEnv()
+	if !ok || !t.otelPushing.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer t.otelPushing.Store(false)
+		ctx, cancel := context.WithTimeout(context.Background(), aiOTelPushTimeout)
+		defer cancel()
+		go func() {
+			select {
+			case <-t.stop:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		err := t.pushOTelTo(ctx, target)
+		select {
+		case <-t.stop:
+			return // the tier is closing: a cut push is not a failure
+		default:
+		}
+		t.reportOTel(err)
+	}()
+}
+
+// pushOTelTo sends the tier's signals to target once.
+func (t *aiTier) pushOTelTo(ctx context.Context, target telemetry.OTLPMetricsTarget) error {
+	return telemetry.PushOTLPMetrics(ctx, aiOTelClient, target, "sky.ai.serve", t.otelPoints())
+}
+
+// reportOTel prints a push failure once, and again only when it changes.
+func (t *aiTier) reportOTel(err error) {
+	msg := ""
+	if err != nil {
+		msg = err.Error()
 	}
 	t.mu.Lock()
-	t.engineSig = sig
+	changed := msg != t.otelLastErr
+	t.otelLastErr = msg
 	t.mu.Unlock()
+	if changed && msg != "" {
+		fmt.Fprintf(os.Stderr, "[sky] Std.Ai.Serve: the OTLP metrics push failed (it retries on the next scrape): %s\n", msg)
+	}
+}
+
+// otelPoints are the tier's signals as OTLP points, under the names its
+// /metrics route uses. Every point carries the tier (its bind address), the
+// engine and the base. Preemptions are a cumulative monotonic sum. The
+// rest are gauges.
+func (t *aiTier) otelPoints() []telemetry.MetricPoint {
+	s := t.status()
+	t.mu.Lock()
+	start := t.preemptStart
+	t.mu.Unlock()
+	attrs := map[string]string{"tier": t.cfg.bind, "engine": t.cfg.engine, "base": t.cfg.baseName}
+	ready := 0.0
+	if s.Ready {
+		ready = 1
+	}
+	pts := []telemetry.MetricPoint{
+		{Name: "sky_ai_tier_ready", Unit: "1", Help: "1 when the engine is up and every alias is loaded", Value: ready, Attrs: attrs},
+		{Name: "sky_ai_tier_inflight", Unit: "{request}", Help: "requests the tier is serving now", Value: float64(s.InFlight), Attrs: attrs},
+		{Name: "sky_ai_tier_resident_adapters", Unit: "{adapter}", Help: "adapters loaded in the engine", Value: float64(len(s.Resident)), Attrs: attrs},
+	}
+	units := map[string]string{"running": "{request}", "waiting": "{request}", "kvCache": "1", "queueWaitMs": "ms", "preemptions": "{preemption}"}
+	keys := make([]string, 0, len(s.Signals))
+	for k := range s.Signals {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		p := telemetry.MetricPoint{Name: "sky_ai_engine_" + aiSnake(k), Unit: units[k], Value: s.Signals[k], Attrs: attrs}
+		if k == "preemptions" {
+			p.Monotonic, p.Start = true, start
+		}
+		pts = append(pts, p)
+	}
+	return pts
 }
 
 // aiTierStatus is one tier as the Sky Console shows it.

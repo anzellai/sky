@@ -188,7 +188,7 @@ func aiTestEnv(t *testing.T, knobs map[string]any) (engineDir, modelRef string) 
 
 // localBuilder is a Local.Spec as the Sky side passes it, unset fields -1.
 func localBuilder(model string) aiLocalBuilder {
-	return aiLocalBuilder{model: model, context: -1, parallel: -1, idleUnload: -1, port: -1}
+	return aiLocalBuilder{model: model, context: -1, parallel: -1, idleUnload: -1, port: -1, draftMax: -1, draftMin: -1}
 }
 
 func endpointBuilder(slot string) aiEndpointBuilder {
@@ -305,8 +305,8 @@ func TestAiSlotNames(t *testing.T) {
 }
 
 // The precedence gate: operator env > withX in code > stdlib fallback, a
-// seeded value is never an operator value, and an unparseable value falls
-// through instead of collapsing to the fallback.
+// seeded value is never an operator value, and an unparseable value is
+// InvalidSetting instead of falling through to another layer.
 func TestAiPrecedenceEnvBuilderFallback(t *testing.T) {
 	aiTestEnv(t, nil)
 	b := endpointBuilder("chat")
@@ -326,10 +326,12 @@ func TestAiPrecedenceEnvBuilderFallback(t *testing.T) {
 	if c.timeout != 5*time.Second {
 		t.Fatalf("env: got %v; want 5s (operator env beats the builder)", c.timeout)
 	}
+	// An unparseable operator value is refused, never skipped: the slot
+	// must not run on the builder's value when the operator asked for
+	// another one.
 	t.Setenv("SKY_AI_CHAT_TIMEOUT_MS", "soon")
-	c, _ = resolveAiSlot(b)
-	if c.timeout != 7*time.Second {
-		t.Fatalf("unparseable env: got %v; want the builder's 7s", c.timeout)
+	if _, err := resolveAiSlot(b); failCode(err) != aiInvalidSetting || !strings.Contains(err.Error(), "SKY_AI_CHAT_TIMEOUT_MS") {
+		t.Fatalf("unparseable env: got %v; want InvalidSetting naming SKY_AI_CHAT_TIMEOUT_MS", err)
 	}
 	t.Setenv("SKY_AI_CHAT_TIMEOUT_MS", "")
 	SetEnvDefault("SKY_AI_CHAT_TIMEOUT_MS", "9000")
@@ -538,27 +540,37 @@ func TestAiGGUFRejectsHostileHeaders(t *testing.T) {
 
 func TestAiQueueOverloadedAndTimedOut(t *testing.T) {
 	q := newAiQueue("chat", 1, 1, 200*time.Millisecond)
-	release, err := q.acquire()
+	release, waited, err := q.acquire()
 	if err != nil {
 		t.Fatal(err)
 	}
+	if waited != 0 {
+		t.Fatalf("a free permit waited %s; want 0", waited)
+	}
 	waiterErr := make(chan error, 1)
+	waiterWaited := make(chan time.Duration, 1)
 	go func() {
-		r, err := q.acquire()
+		r, w, err := q.acquire()
 		if r != nil {
 			r()
 		}
+		waiterWaited <- w
 		waiterErr <- err
 	}()
 	time.Sleep(50 * time.Millisecond)
-	if _, err := q.acquire(); failCode(err) != aiOverloaded {
-		t.Fatalf("full queue: got %v; want Overloaded at once", err)
+	if _, w, err := q.acquire(); failCode(err) != aiOverloaded || w != 0 {
+		t.Fatalf("full queue: got %v after %s; want Overloaded at once", err, w)
+	}
+	// A call that timed out in the queue reports the whole wait: Std.Ai.Trace
+	// and the console record it as queue wait, not as latency.
+	if w := <-waiterWaited; w < 200*time.Millisecond {
+		t.Fatalf("waiter reported a wait of %s; want at least the 200ms queue wait", w)
 	}
 	if err := <-waiterErr; failCode(err) != aiTimedOut {
 		t.Fatalf("waiter: got %v; want TimedOut", err)
 	}
 	release()
-	r, err := q.acquire()
+	r, _, err := q.acquire()
 	if err != nil {
 		t.Fatalf("after release: %v", err)
 	}

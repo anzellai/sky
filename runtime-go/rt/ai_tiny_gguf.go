@@ -130,6 +130,72 @@ func tinyGGUF(kvs []tinyKV, tensors []tinyTensor) []byte {
 // their paths and SHA-256 digests.
 func AiTinyQwen(dir string) (model, modelSum, adapter, adapterSum string, err error) {
 	rng := rand.New(rand.NewSource(7))
+	kvs, ts := tinyQwenModel(rng, tinyLayers, 0)
+	lora := tinyQwenLora(rng, tinyLayers)
+	if err = os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	if model, modelSum, err = tinyWrite(dir, "tiny-qwen2.gguf", tinyGGUF(kvs, ts)); err != nil {
+		return
+	}
+	adapter, adapterSum, err = tinyWrite(dir, "tiny-qwen2-lora.gguf", tinyGGUF(tinyLoraKVs("sky-tiny-qwen2-lora"), lora))
+	return
+}
+
+// AiTinyQwenExtras writes the files the draft and multi-adapter tests need
+// next to AiTinyQwen's, and returns each one's path and digest by name:
+//
+//   - "draft": a one-layer model with the same vocabulary, a valid draft for
+//     the tiny model.
+//   - "adapterB": a second LoRA adapter for the tiny model.
+//   - "otherVocab": a model whose vocabulary is 300 tokens larger, an
+//     invalid draft for the tiny model (and for any real Qwen model).
+func AiTinyQwenExtras(dir string) (map[string][2]string, error) {
+	out := map[string][2]string{}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	put := func(key, name string, data []byte) error {
+		p, sum, err := tinyWrite(dir, name, data)
+		if err == nil {
+			out[key] = [2]string{p, sum}
+		}
+		return err
+	}
+	dk, dt := tinyQwenModel(rand.New(rand.NewSource(9)), 1, 0)
+	if err := put("draft", "tiny-qwen2-draft.gguf", tinyGGUF(dk, dt)); err != nil {
+		return nil, err
+	}
+	lb := tinyQwenLora(rand.New(rand.NewSource(11)), tinyLayers)
+	if err := put("adapterB", "tiny-qwen2-lora-b.gguf", tinyGGUF(tinyLoraKVs("sky-tiny-qwen2-lora-b"), lb)); err != nil {
+		return nil, err
+	}
+	ok, ot := tinyQwenModel(rand.New(rand.NewSource(13)), 1, 300)
+	if err := put("otherVocab", "tiny-other-vocab.gguf", tinyGGUF(ok, ot)); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func tinyWrite(dir, name string, data []byte) (string, string, error) {
+	p := filepath.Join(dir, name)
+	s := sha256.Sum256(data)
+	return p, hex.EncodeToString(s[:]), os.WriteFile(p, data, 0o644)
+}
+
+func tinyLoraKVs(name string) []tinyKV {
+	return []tinyKV{
+		{"general.architecture", "qwen2"},
+		{"general.type", "adapter"},
+		{"adapter.type", "lora"},
+		{"adapter.lora.alpha", float32(8)},
+		{"general.name", name},
+	}
+}
+
+// tinyQwenModel is the model's metadata and tensors. extra adds that many
+// ordinary tokens to the vocabulary (a different vocabulary).
+func tinyQwenModel(rng *rand.Rand, layers, extra int) ([]tinyKV, []tinyTensor) {
 	normal := func(n int, scale float64) []float32 {
 		out := make([]float32, n)
 		for i := range out {
@@ -151,6 +217,10 @@ func AiTinyQwen(dir string) (model, modelSum, adapter, adapterSum string, err er
 		tokens = append(tokens, string(runes[b]))
 		types = append(types, 1)
 	}
+	for i := 0; i < extra; i++ {
+		tokens = append(tokens, "<|x"+itoa(i)+"|>")
+		types = append(types, 1)
+	}
 	for _, s := range []string{"<|endoftext|>", "<|im_start|>", "<|im_end|>"} {
 		tokens = append(tokens, s)
 		types = append(types, 3)
@@ -164,7 +234,7 @@ func AiTinyQwen(dir string) (model, modelSum, adapter, adapterSum string, err er
 		{"general.name", "sky-tiny-qwen2"},
 		{"qwen2.context_length", uint32(2048)},
 		{"qwen2.embedding_length", uint32(tinyEmbd)},
-		{"qwen2.block_count", uint32(tinyLayers)},
+		{"qwen2.block_count", uint32(layers)},
 		{"qwen2.feed_forward_length", uint32(tinyFF)},
 		{"qwen2.attention.head_count", uint32(tinyHeads)},
 		{"qwen2.attention.head_count_kv", uint32(tinyKVHeads)},
@@ -176,7 +246,7 @@ func AiTinyQwen(dir string) (model, modelSum, adapter, adapterSum string, err er
 		{"tokenizer.ggml.token_type", types},
 		{"tokenizer.ggml.merges", []string{}},
 		{"tokenizer.ggml.eos_token_id", uint32(vocab - 1)},
-		{"tokenizer.ggml.padding_token_id", uint32(256)},
+		{"tokenizer.ggml.padding_token_id", uint32(256 + extra)},
 		{"tokenizer.chat_template", tmpl},
 	}
 	ts := []tinyTensor{
@@ -184,7 +254,7 @@ func AiTinyQwen(dir string) (model, modelSum, adapter, adapterSum string, err er
 		{"output_norm.weight", []uint64{tinyEmbd}, ones(tinyEmbd)},
 		{"output.weight", []uint64{tinyEmbd, uint64(vocab)}, normal(tinyEmbd*vocab, 0.02)},
 	}
-	for l := 0; l < tinyLayers; l++ {
+	for l := 0; l < layers; l++ {
 		p := "blk." + itoa(l) + "."
 		ts = append(ts,
 			tinyTensor{p + "attn_norm.weight", []uint64{tinyEmbd}, ones(tinyEmbd)},
@@ -201,32 +271,26 @@ func AiTinyQwen(dir string) (model, modelSum, adapter, adapterSum string, err er
 			tinyTensor{p + "ffn_down.weight", []uint64{tinyFF, tinyEmbd}, normal(tinyFF*tinyEmbd, 0.02)},
 		)
 	}
+	return kvs, ts
+}
+
+// tinyQwenLora is a rank-4 LoRA adapter on the attention queries.
+func tinyQwenLora(rng *rand.Rand, layers int) []tinyTensor {
 	var lora []tinyTensor
-	for l := 0; l < tinyLayers; l++ {
+	for l := 0; l < layers; l++ {
 		p := "blk." + itoa(l) + ".attn_q.weight."
+		a := make([]float32, tinyEmbd*tinyRank)
+		for i := range a {
+			a[i] = float32(rng.NormFloat64() * 0.05)
+		}
+		b := make([]float32, tinyRank*tinyEmbd)
+		for i := range b {
+			b[i] = float32(rng.NormFloat64() * 0.05)
+		}
 		lora = append(lora,
-			tinyTensor{p + "lora_a", []uint64{tinyEmbd, tinyRank}, normal(tinyEmbd*tinyRank, 0.05)},
-			tinyTensor{p + "lora_b", []uint64{tinyRank, tinyEmbd}, normal(tinyRank*tinyEmbd, 0.05)},
+			tinyTensor{p + "lora_a", []uint64{tinyEmbd, tinyRank}, a},
+			tinyTensor{p + "lora_b", []uint64{tinyRank, tinyEmbd}, b},
 		)
 	}
-	adapterKVs := []tinyKV{
-		{"general.architecture", "qwen2"},
-		{"general.type", "adapter"},
-		{"adapter.type", "lora"},
-		{"adapter.lora.alpha", float32(8)},
-		{"general.name", "sky-tiny-qwen2-lora"},
-	}
-	if err = os.MkdirAll(dir, 0o755); err != nil {
-		return
-	}
-	write := func(name string, data []byte) (string, string, error) {
-		p := filepath.Join(dir, name)
-		s := sha256.Sum256(data)
-		return p, hex.EncodeToString(s[:]), os.WriteFile(p, data, 0o644)
-	}
-	if model, modelSum, err = write("tiny-qwen2.gguf", tinyGGUF(kvs, ts)); err != nil {
-		return
-	}
-	adapter, adapterSum, err = write("tiny-qwen2-lora.gguf", tinyGGUF(adapterKVs, lora))
-	return
+	return lora
 }

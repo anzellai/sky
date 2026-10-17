@@ -405,6 +405,16 @@ func buildLiveServerFor(cfg any, embedded, served bool) (ls *liveServer, err err
 	} else {
 		AssertConsoleInvariantOrExit()
 	}
+	// An AI variable whose value does not parse refuses the start
+	// (ai_startup.go): a process-owning app exits 1, an embedded one returns
+	// the failure as its Task's Err.
+	if aerr := aiStartupSettingsError(); aerr != nil {
+		if embedded {
+			return ls, aerr
+		}
+		fmt.Fprintln(os.Stderr, aiStartupRefusal(aerr))
+		ExitProcess(1)
+	}
 	// Static assets (if configured) mounted first so api/page routing
 	// doesn't shadow them.
 	if app.staticDir != "" {
@@ -566,6 +576,12 @@ func liveStartError(err error, embedded bool) any {
 	prefix := "Sky.Live did not start: "
 	if embedded {
 		prefix = "Sky.Live (embedded) did not start: "
+	}
+	// An AI setting that does not parse keeps its typed Std.Ai failure
+	// (InvalidSetting), so the app can match on it.
+	var af *aiFailure
+	if errors.As(err, &af) {
+		return aiErrorValue(af)
 	}
 	var inv errLiveConsoleInvariant
 	if errors.As(err, &inv) {

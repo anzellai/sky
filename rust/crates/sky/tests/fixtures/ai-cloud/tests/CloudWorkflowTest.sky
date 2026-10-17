@@ -22,6 +22,8 @@ import Std.Money as Money
 import Std.Ai.Train as Train exposing (Status(..))
 import Std.Ai.Failure as Failure exposing (Failure(..))
 import Std.Ai.Cloud.Google as Google
+import Std.Ai.Trace as Trace
+import Std.Decimal as Decimal
 import Fixture
 
 
@@ -230,31 +232,95 @@ refused =
 -- running job passes its USD 0.15 budget at its first watch.
 stopped : Result Error Train.Adapter
 stopped =
+    case stoppedRun of
+
+        Ok ( outcome, _, _ ) ->
+            outcome
+
+        Err e ->
+            Err e
+
+
+spender : Fixture.World -> Train.Job
+spender w =
+    Fixture.job "spender" w |> Train.withMaxSteps 200 |> Train.fakeStepMs 50
+        |> Train.withBudget (Money.fromMinor Money.USD 15)
+
+
+-- The run's outcome, then its rows in Std.Ai.Trace and its last measured
+-- spend: a run stopped by its budget still records what it spent.
+stoppedRun : Result Error ( Result Error Train.Adapter, List Trace.Row, Maybe Money.Money )
+stoppedRun =
     fresh "stopped"
         |> Task.andThen
                (\w ->
                    Fixture.control "clockscale?x=100000"
                        |> Task.andThen
                               (\_ ->
-                                  Train.drive
-                                      w.db
-                                      (Fixture.job "spender" w
-                                          |> Train.withMaxSteps 200
-                                          |> Train.fakeStepMs 50
-                                          |> Train.withBudget
-                                                 (Money.fromMinor Money.USD 15))
+                                  Train.drive w.db (spender w) |> Task.map Ok
                                       |> Task.onError
-                                             (\e ->
-                                                 Fixture.control
-                                                     "clockscale?x=1"
-                                                     |> Task.andThen
-                                                            (\_ -> Task.fail e))
+                                             (\e -> Task.succeed (Err e)))
+                       |> Task.andThen
+                              (\outcome ->
+                                  Fixture.control "clockscale?x=1"
                                       |> Task.andThen
-                                             (\a ->
-                                                 Fixture.control
-                                                     "clockscale?x=1"
-                                                     |> Task.map (\_ -> a))))
+                                             (\_ -> tracedOf w (spender w))
+                                      |> Task.map
+                                             (\( found, spent ) ->
+                                                 ( outcome, found, spent ))))
         |> Task.run
+
+
+-- A job's rows in Std.Ai.Trace and its last measured spend.
+tracedOf : Fixture.World -> Train.Job -> Task Error ( List Trace.Row, Maybe Money.Money )
+tracedOf w job =
+    Task.map2
+        (\found status -> ( found, Maybe.map .spent status ))
+        (Trace.rows w.db (Train.runId job))
+        (Train.cloudStatus job)
+
+
+-- A finished Vertex run in Std.Ai.Trace: its six steps, and one Training row
+-- with its measured spend in exact money.
+tracedRun : Result Error ( List Trace.Progress, List Trace.Row, Maybe Money.Money )
+tracedRun =
+    fresh "traced"
+        |> Task.andThen
+               (\w ->
+                   let
+                       job = Fixture.job "traced" w
+                   in
+                       Train.drive w.db job
+                           |> Task.andThen
+                                  (\_ -> Trace.progress w.db (Train.runId job))
+                           |> Task.andThen
+                                  (\steps ->
+                                      tracedOf w job
+                                          |> Task.map
+                                                 (\( found, spent ) ->
+                                                     ( steps, found, spent ))))
+        |> Task.run
+
+
+-- The rows a run's spend should give: one Training row, priced.
+costRow : Maybe Money.Money -> List ( Trace.Kind, String, String )
+costRow spent =
+    case spent of
+
+        Just m ->
+            [ ( Trace.Training
+              , Decimal.toString (Money.amount m)
+              , Money.currencyCode (Money.currency m)
+              )
+            ]
+
+        Nothing ->
+            []
+
+
+rowCosts : List Trace.Row -> List ( Trace.Kind, String, String )
+rowCosts found =
+    List.map (\r -> ( r.kind, r.costMinor, r.currency )) found
 
 
 -- Vertex AI cancels a job at its scheduling timeout (a live run, 2026-10-12).
@@ -504,6 +570,33 @@ tests =
 
                   _ ->
                       Test.fail ("not BudgetExceeded: " ++ codeOf stopped))
+    , Test.test
+          "a Vertex run records its steps and its measured spend in Std.Ai.Trace"
+          (\_ ->
+              case tracedRun of
+
+                  Ok ( steps, found, spent ) ->
+                      Test.equal
+                          ( List.map .step steps
+                          , spent /= Nothing
+                          , rowCosts found
+                          )
+                          ( List.range 1 6, True, costRow spent )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a run stopped by its budget still records what it spent"
+          (\_ ->
+              case stoppedRun of
+
+                  Ok ( _, found, spent ) ->
+                      Test.equal
+                          ( spent /= Nothing, rowCosts found )
+                          ( True, costRow spent )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
     , Test.test
           "a job Vertex stops at its runtime ceiling is TrainingFailed, not TrainingCancelled"
           (\_ ->

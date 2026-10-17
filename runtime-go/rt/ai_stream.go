@@ -52,6 +52,9 @@ type aiStream struct {
 	closed   bool
 	onClose  []func(err error)
 	timer    *time.Timer
+	// facts, for a measured stream (ai_call_facts.go): the first piece and
+	// the end of the stream complete them.
+	facts *aiCallFacts
 }
 
 var (
@@ -103,6 +106,9 @@ func (st *aiStream) close(err error) {
 		return
 	}
 	st.closed = true
+	if st.facts != nil {
+		st.facts.answered()
+	}
 	if st.timer != nil {
 		st.timer.Stop()
 	}
@@ -231,7 +237,8 @@ type aiStreamChunk struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 	} `json:"usage"`
-	Error json.RawMessage `json:"error"`
+	Timings *aiEngineTimings `json:"timings"`
+	Error   json.RawMessage  `json:"error"`
 }
 
 func aiDeltaEvent(text string) string {
@@ -252,6 +259,7 @@ func (st *aiStream) next() (event string, done bool, err error) {
 			var whole aiStreamChunk
 			if err := json.Unmarshal([]byte(st.whole), &whole); err == nil && len(whole.Choices) > 0 && whole.Choices[0].Message.Content != "" {
 				st.content.WriteString(whole.Choices[0].Message.Content)
+				st.pieceSeen()
 				return aiDeltaEvent(whole.Choices[0].Message.Content), false, nil
 			}
 		}
@@ -260,6 +268,9 @@ func (st *aiStream) next() (event string, done bool, err error) {
 			return "", false, aiFailf(aiRemoteRejected, "%s answered a body that is not JSON: %s", st.target, aiTail(st.whole, 300))
 		}
 		st.prompt, st.complete = aiUsage(st.whole)
+		if st.facts != nil {
+			st.facts.timingsFrom(st.whole)
+		}
 		return string(b), true, nil
 	}
 	for {
@@ -283,12 +294,16 @@ func (st *aiStream) next() (event string, done bool, err error) {
 			if c.Usage != nil {
 				st.prompt, st.complete = c.Usage.PromptTokens, c.Usage.CompletionTokens
 			}
+			if c.Timings != nil && st.facts != nil {
+				st.facts.setTimings(*c.Timings)
+			}
 			if len(c.Choices) > 0 {
 				if c.Choices[0].FinishReason != "" {
 					st.finish = c.Choices[0].FinishReason
 				}
 				if d := c.Choices[0].Delta.Content; d != "" {
 					st.content.WriteString(d)
+					st.pieceSeen()
 					return aiDeltaEvent(d), false, nil
 				}
 			}
@@ -299,6 +314,13 @@ func (st *aiStream) next() (event string, done bool, err error) {
 			}
 			return "", false, aiFailf(aiUnreachable, "%s: the stream broke: %v", st.target, rerr).with("target", st.target)
 		}
+	}
+}
+
+// pieceSeen records the first piece of a measured stream.
+func (st *aiStream) pieceSeen() {
+	if st.facts != nil {
+		st.facts.firstPiece()
 	}
 }
 
@@ -334,9 +356,26 @@ func aiDoneEvent(body string) string {
 // and its engine or remote server. The queue place is held until the stream
 // ends.
 func (s *aiSlot) openStream(path, body string) (string, error) {
-	release, err := s.q.acquire()
+	return s.openStreamWith(path, body, nil)
+}
+
+// openStreamWith is openStream with the call's facts kept in f, for a
+// measured stream (nil: not measured). The console record's latency stays the
+// whole wall time from the queue place.
+func (s *aiSlot) openStreamWith(path, body string, f *aiCallFacts) (string, error) {
+	t0 := time.Now()
+	release, waited, err := s.q.acquire()
+	if f != nil {
+		f.setQueueWait(waited)
+	}
 	if err != nil {
 		return "", err
+	}
+	placed := time.Now()
+	startFailed := func() {
+		if f != nil {
+			f.startFailed(placed)
+		}
 	}
 	held := true
 	defer func() {
@@ -346,10 +385,14 @@ func (s *aiSlot) openStream(path, body string) (string, error) {
 	}()
 	ad, err := s.adapter()
 	if err != nil {
+		startFailed()
 		return "", err
 	}
 	body = aiPatchModel(aiStreamBody(body), s.requestModel(ad))
-	start := time.Now()
+	if f != nil {
+		f.setAdapter(s.factsAdapter(body))
+	}
+	start := t0
 	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.timeout)
 	var st *aiStream
 	var engineDone func()
@@ -358,6 +401,9 @@ func (s *aiSlot) openStream(path, body string) (string, error) {
 		if s.cfg.mode == "local" {
 			url = aiJoinPath(aiTestLocalBase(s.cfg.slot), path)
 		}
+		if f != nil {
+			f.sent(placed)
+		}
 		st, err = aiRemoteStream(ctx, s.cfg, url, body)
 	} else {
 		startCtx, cancelStart := context.WithTimeout(context.Background(), aiStartTimeout())
@@ -365,7 +411,11 @@ func (s *aiSlot) openStream(path, body string) (string, error) {
 		cancelStart()
 		if eerr != nil {
 			cancel()
+			startFailed()
 			return "", eerr
+		}
+		if f != nil {
+			f.sent(placed)
 		}
 		st, engineDone, err = e.openStream(ctx, path, body)
 	}
@@ -374,8 +424,12 @@ func (s *aiSlot) openStream(path, body string) (string, error) {
 		if engineDone != nil {
 			engineDone()
 		}
+		if f != nil {
+			f.answered()
+		}
 		return "", err
 	}
+	st.facts = f
 	held = false
 	slot, mode, model := s.cfg.slot, s.cfg.mode, aiConsoleModel(s.cfg)
 	st.onClose = append(st.onClose, func(err error) {
@@ -386,6 +440,9 @@ func (s *aiSlot) openStream(path, body string) (string, error) {
 		}
 		rec := aiCallRecord{TS: start.UTC(), Slot: slot, Mode: mode, Kind: aiCallKind(path),
 			Model: model, Outcome: aiCallOutcome(err), LatencyMs: aiCallLatency(start)}
+		if f != nil {
+			rec.QueueWaitMs = f.queueWaitMs()
+		}
 		rec.PromptTokens, rec.CompletionTokens = st.prompt, st.complete
 		aiRecordCall(rec)
 	})
@@ -414,6 +471,12 @@ func (s *aiSlot) requestModel(ad *aiResolvedAdapter) string {
 // openStream starts a streaming request on a managed engine. done ends the
 // engine's in-flight count for it (the engine is not retired mid-answer).
 func (e *aiEngine) openStream(ctx context.Context, path, body string) (*aiStream, func(), error) {
+	// The same adapter routing as post: a stream names its adapter, every
+	// loaded adapter gets an explicit scale, an unknown name is NotRegistered.
+	body, err := aiRouteAdapter(e.spec, body)
+	if err != nil {
+		return nil, func() {}, err
+	}
 	e.mu.Lock()
 	port, key := e.port, e.apiKey
 	e.inflight++
@@ -467,6 +530,12 @@ func Ai_endpointStreamOpen(cfgArg, pathArg, bodyArg any) any {
 // Ai_localStreamOpen : Int -> String -> String -> Task Error String — a
 // stream from a `Std.Ai.Local` engine.
 func Ai_localStreamOpen(idArg, pathArg, bodyArg any) any {
+	return aiLocalStreamOpen(idArg, pathArg, bodyArg, "")
+}
+
+// aiLocalStreamOpen is Ai_localStreamOpen, measured under token when it is
+// not "" (ai_call_facts.go).
+func aiLocalStreamOpen(idArg, pathArg, bodyArg any, token string) any {
 	id := int64(AsInt(idArg))
 	path, body := AsString(pathArg), AsString(bodyArg)
 	return func() any {
@@ -474,29 +543,53 @@ func Ai_localStreamOpen(idArg, pathArg, bodyArg any) any {
 		if err != nil {
 			return aiTaskErr(err)
 		}
+		var f *aiCallFacts
+		if token != "" {
+			f = newAiCallFacts(orDefault(e.slot, "local"), "local")
+			f.setQueueWait(0)
+			aiPutCallFacts(token, f)
+		}
+		placed := time.Now()
 		body := aiPatchModel(aiStreamBody(body), "local")
+		if f != nil {
+			f.setAdapter(aiLocalRequestAdapter(body))
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), aiLocalCallTimeout)
 		var st *aiStream
 		var done func()
 		if testModeActive() {
 			c := &aiSlotConfig{slot: "local", timeout: aiLocalCallTimeout}
+			if f != nil {
+				f.sent(placed)
+			}
 			st, err = aiRemoteStream(ctx, c, aiTestLocalBase("local")+path, body)
 		} else {
 			startCtx, cancelStart := context.WithTimeout(context.Background(), aiStartTimeout())
 			err = e.ensure(startCtx)
 			cancelStart()
 			if err == nil {
+				if f != nil {
+					f.sent(placed)
+				}
 				st, done, err = e.openStream(ctx, path, body)
+			} else if f != nil {
+				f.startFailed(placed)
 			}
 		}
 		if err != nil {
+			if f != nil {
+				f.answered()
+			}
 			cancel()
 			if done != nil {
 				done()
 			}
 			return aiTaskErr(err)
 		}
-		start := time.Now()
+		st.facts = f
+		// The console record's latency is the whole wall time, engine start
+		// included, as for a slot's stream and a post.
+		start := placed
 		slot, model := orDefault(e.slot, "local"), e.spec.model.String()
 		st.onClose = append(st.onClose, func(err error) {
 			cancel()

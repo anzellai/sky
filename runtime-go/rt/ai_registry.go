@@ -81,7 +81,11 @@ func aiRegistryUpdate(fn func(*aiRegistryFile)) {
 	if err != nil {
 		return
 	}
-	tmp := aiRegistryPath() + ".tmp-" + aiRandomHex(4)
+	rnd, err := aiRandomHex(4)
+	if err != nil {
+		return
+	}
+	tmp := aiRegistryPath() + ".tmp-" + rnd
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return
 	}
@@ -95,8 +99,9 @@ func aiEntryAlive(e aiRegistryEntry) bool {
 	return processAlive(e.Pid) && processAlive(e.HolderPid)
 }
 
+// aiRegistryAdd records a running engine under e.ID, which the caller made
+// before it launched the engine (so a failure to make it stops the launch).
 func aiRegistryAdd(e aiRegistryEntry) string {
-	e.ID = aiRandomHex(6)
 	aiRegistryUpdate(func(f *aiRegistryFile) { f.Engines = append(f.Engines, e) })
 	return e.ID
 }

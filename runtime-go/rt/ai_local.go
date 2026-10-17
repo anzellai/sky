@@ -71,7 +71,13 @@ func Ai_localFit(specArg any) any {
 		if err != nil {
 			return aiTaskErr(err)
 		}
-		f, err := aiFitFor(path, spec, aiFitVariant())
+		// The draft model and the named adapters load with the model, so
+		// the fit counts them (and checks the draft's vocabulary).
+		_, _, extra, err := aiEnsureDraftAndAdapters(ctx, "", spec, path)
+		if err != nil {
+			return aiTaskErr(err)
+		}
+		f, err := aiFitForWith(path, extra, spec, aiFitVariant())
 		if err != nil {
 			return aiTaskErr(err)
 		}
@@ -101,6 +107,12 @@ func Ai_localStart(specArg any) any {
 
 // Ai_localPost : Int -> String -> String -> Task Error String
 func Ai_localPost(idArg, pathArg, bodyArg any) any {
+	return aiLocalPost(idArg, pathArg, bodyArg, "")
+}
+
+// aiLocalPost is Ai_localPost, measured under token when it is not ""
+// (ai_call_facts.go).
+func aiLocalPost(idArg, pathArg, bodyArg any, token string) any {
 	id := int64(AsInt(idArg))
 	path, body := AsString(pathArg), AsString(bodyArg)
 	return func() any {
@@ -108,12 +120,20 @@ func Ai_localPost(idArg, pathArg, bodyArg any) any {
 		if err != nil {
 			return aiTaskErr(err)
 		}
+		f := newAiCallFacts(orDefault(e.slot, "local"), "local")
+		f.setQueueWait(0)
+		aiPutCallFacts(token, f)
+		placed := time.Now()
 		body := aiPatchModel(body, "local")
+		f.setAdapter(aiLocalRequestAdapter(body))
 		ctx, cancel := context.WithTimeout(context.Background(), aiLocalCallTimeout)
 		defer cancel()
 		if testModeActive() {
 			c := &aiSlotConfig{slot: "local", timeout: aiLocalCallTimeout}
+			f.sent(placed)
 			out, err := aiRemotePost(ctx, c, aiTestLocalBase("local")+path, body)
+			f.answered()
+			f.timingsFrom(out)
 			if err != nil {
 				return aiTaskErr(err)
 			}
@@ -123,10 +143,14 @@ func Ai_localPost(idArg, pathArg, bodyArg any) any {
 		err = e.ensure(startCtx)
 		cancelStart()
 		if err != nil {
+			f.startFailed(placed)
 			return aiTaskErr(err)
 		}
-		start := time.Now()
+		start := placed
+		f.sent(placed)
 		out, err := e.post(ctx, aiLocalCallTimeout, path, body)
+		f.answered()
+		f.timingsFrom(out)
 		rec := aiCallRecord{TS: start.UTC(), Slot: orDefault(e.slot, "local"), Mode: "local", Kind: aiCallKind(path),
 			Model: e.spec.model.String(), Outcome: aiCallOutcome(err), LatencyMs: aiCallLatency(start)}
 		if err == nil {

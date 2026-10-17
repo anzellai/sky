@@ -15,6 +15,11 @@ module Std.Ai.Local exposing
     , withEmbeddings
     , withPort
     , withAdapter
+    , withDraft
+    , withDraftTokens
+    , NamedAdapter
+    , namedAdapter
+    , withAdapters
     , Settings
     , settings
     , Fit
@@ -72,6 +77,7 @@ import Sky.Core.Task as Task
 import Sky.Core.Error exposing (Error)
 import Sky.Core.String as String
 import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.List as List
 import Std.Ai.Provider as Provider exposing (Provider)
 
 -- ---------------------------------------------------------------------------
@@ -159,8 +165,18 @@ type Gpu
     | AllLayers
     | Layers Int
 
+{-| One of several LoRA adapters loaded together on an engine
+(`withAdapters`): the name a call chooses it by, the pinned adapter file, and
+the scale it is applied at (1.0 is the adapter as trained). -}
+type alias NamedAdapter =
+    { name : String
+    , adapter : ModelRef
+    , scale : Float
+    }
+
 {-| What the engine runs, as the code wrote it. A field the code did not set
-is `Nothing`; the engine then uses its default (shown on each builder). -}
+is `Nothing` (or `[]`); the engine then uses its default (shown on each
+builder). -}
 type alias Settings =
     { model : String
     , adapter : Maybe String
@@ -170,6 +186,10 @@ type alias Settings =
     , idleUnloadSeconds : Maybe Int
     , embeddings : Bool
     , port : Maybe Int
+    , draft : Maybe String
+    , draftMax : Maybe Int
+    , draftMin : Maybe Int
+    , adapters : List NamedAdapter
     }
 
 {-| An engine specification: a model plus launch settings. -}
@@ -189,6 +209,10 @@ model ref =
         , idleUnloadSeconds = Nothing
         , embeddings = False
         , port = Nothing
+        , draft = Nothing
+        , draftMax = Nothing
+        , draftMin = Nothing
+        , adapters = []
         }
 
 
@@ -242,6 +266,61 @@ withAdapter ref (Spec s) =
     Spec { s | adapter = Just (reference ref) }
 
 
+{-| Speed up answers with a draft model (speculative decoding): a smaller model
+of the same family, pinned by digest like the base. The engine drafts a few
+tokens with it and the base model checks them, so the answer is the base
+model's answer, produced faster when the draft guesses well.
+
+    Local.model qwen7b
+        |> Local.withDraft Local.devModel
+        |> Local.withDraftTokens { max = 8, min = 1 }
+
+The draft is fetched and verified like the base (`sky ai provision --model
+<ref>` provisions it ahead). A draft whose vocabulary is not the base model's
+fails with `InvalidSetting` before the engine loads, never a silent run
+without the draft. Env: `<PREFIX>_AI_<SLOT>_DRAFT` (a model reference). -}
+withDraft : ModelRef -> Spec -> Spec
+withDraft ref (Spec s) =
+    Spec { s | draft = Just (reference ref) }
+
+
+{-| How many tokens the draft model drafts per step: at most `max` (above 0)
+and at least `min` (0 or more, not above `max`). Default: the engine's (3 and
+0). Needs `withDraft`. Env: `<PREFIX>_AI_<SLOT>_DRAFT_MAX` and `_DRAFT_MIN`. -}
+withDraftTokens : { max : Int, min : Int } -> Spec -> Spec
+withDraftTokens t (Spec s) =
+    Spec { s | draftMax = Just t.max, draftMin = Just t.min }
+
+
+{-| A named adapter at scale 1.0, for `withAdapters`. A name is letters,
+digits, `.`, `_` and `-`, and not `local`. Change the scale with a record
+update: `{ (Local.namedAdapter "legal" ref) | scale = 0.8 }`. -}
+namedAdapter : String -> ModelRef -> NamedAdapter
+namedAdapter name ref =
+    { name = name, adapter = ref, scale = 1.0 }
+
+
+{-| Load several LoRA adapters on one engine, each pinned by digest (a
+`Local.file`, or `Std.Ai.Train.adapterRef` for a trained one). A call chooses
+one by name with `Provider.Options`' `adapter`; a call that names none runs
+the base model. A name that is not loaded fails the call with `NotRegistered`,
+listing the loaded names: it never answers from the base model.
+
+    Local.model Local.devModel
+        |> Local.withAdapters
+            [ Local.namedAdapter "support" supportRef
+            , Local.namedAdapter "legal" legalRef
+            ]
+
+An engine either applies one adapter to every call (`withAdapter`) or loads
+named adapters; setting both is `InvalidSetting`. Env:
+`<PREFIX>_AI_<SLOT>_ADAPTERS`, `name[:scale]=<model reference>` separated by
+commas. -}
+withAdapters : List NamedAdapter -> Spec -> Spec
+withAdapters adapters (Spec s) =
+    Spec { s | adapters = adapters }
+
+
 {-| Read back what a spec holds. -}
 settings : Spec -> Settings
 settings (Spec s) =
@@ -258,7 +337,23 @@ type alias RawSpec =
     , idleUnload : Int
     , embeddings : Bool
     , port : Int
+    , draft : String
+    , draftMax : Int
+    , draftMin : Int
+    , adapters : String
     }
+
+
+-- The adapters as the runtime reads them: name:scale=<reference>, joined by
+-- commas (the ADAPTERS variable's form).
+adaptersText : List NamedAdapter -> String
+adaptersText adapters =
+    adapters
+        |> List.map
+               (\a ->
+                   a.name ++ ":" ++ String.fromFloat a.scale ++ "="
+                       ++ reference a.adapter)
+        |> String.join ","
 
 
 raw : Spec -> RawSpec
@@ -271,6 +366,10 @@ raw (Spec s) =
     , idleUnload = Maybe.withDefault (-1) s.idleUnloadSeconds
     , embeddings = s.embeddings
     , port = Maybe.withDefault (-1) s.port
+    , draft = Maybe.withDefault "" s.draft
+    , draftMax = Maybe.withDefault (-1) s.draftMax
+    , draftMin = Maybe.withDefault (-1) s.draftMin
+    , adapters = adaptersText s.adapters
     }
 
 
@@ -387,16 +486,29 @@ streamCloseRaw =
     Ffi.kernel "Ai_streamClose"
 
 
+postMeasuredRaw : Int -> String -> String -> String -> Task Error String
+postMeasuredRaw =
+    Ffi.kernel "Ai_localPostMeasured"
+
+
+streamOpenMeasuredRaw : Int -> String -> String -> String -> Task Error String
+streamOpenMeasuredRaw =
+    Ffi.kernel "Ai_localStreamOpenMeasured"
+
+
 {-| The engine as a `Provider`. A call to an engine that was unloaded for
-being idle starts it again. -}
+being idle starts it again. A measured call (`Provider.measure`,
+`Std.Ai.Trace.chat`) reports the tier `local`, the start time, the latency
+and the engine's own tokens per second. -}
 provider : Engine -> Provider
 provider (Engine id) =
-    Provider.wireStreaming
+    Provider.wireMeasured
         (postRaw id)
         { open = streamOpenRaw id
         , next = streamNextRaw
         , close = streamCloseRaw
         }
+        { post = postMeasuredRaw id, open = streamOpenMeasuredRaw id }
         ""
 
 {-| What an engine is doing: `state` is `ready`, `starting`, `stopped`,

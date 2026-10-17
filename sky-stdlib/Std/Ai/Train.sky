@@ -184,6 +184,7 @@ import Std.Ai.Dataset as Dataset
 import Std.Ai.Registry as Registry
 import Std.Ai.Failure as Failure exposing (Failure(..))
 import Std.Ai.Store as Store exposing (Store)
+import Std.Ai.Trace as Trace
 import Std.Ai.Cloud.Google as Google
 import Std.Money as Money exposing (Money)
 import Std.Decimal as Decimal
@@ -2404,6 +2405,7 @@ start db job =
                    else
                        Task.succeed ())
         |> Task.andThen (\_ -> Durable.setup db)
+        |> Task.andThen (\_ -> Trace.setup db)
         |> Task.andThen (\_ -> readRaw (runDir job))
         |> Task.andThen
                (\state ->
@@ -2690,43 +2692,211 @@ runs workDir =
 -- ── The workflow body ───────────────────────────────────────────────
 body : Job -> Durable.Ctx -> RunRequest -> Task Error Adapter
 body job ctx req =
+    if req.runId /= runId job then
+        Task.fail
+            (invalid
+                "job"
+                ("this worker's job is run " ++ runId job
+                    ++ ", and the durable run is "
+                    ++ req.runId
+                    ++ "; the job changed after the run started (a new job is a new run)"))
+            |> Task.onError (\e -> recordFailure (runDir job) e)
+
+    else
+        trainRun ctx job
+            |> Task.onError
+                   (\e ->
+                       costOnFailure ctx job e
+                           |> Task.andThen (recordFailure (runDir job)))
+            |> Task.andThen (\a -> traceCost ctx job |> Task.map (\_ -> a))
+
+
+trainRun : Durable.Ctx -> Job -> Task Error Adapter
+trainRun ctx job =
+    resolveStep ctx job |> Task.andThen (trainOn ctx job)
+
+
+trainOn : Durable.Ctx -> Job -> String -> Task Error Adapter
+trainOn ctx job backend =
+    if backend == "vertex" then
+        cloudTrain ctx job
+            |> Task.andThen
+                   (\( st, seen, cloud ) ->
+                       finish ctx job (cloudCleanup ctx job cloud) ( st, seen ))
+
+    else
+        setupFrom ctx job backend |> Task.andThen (\st -> train ctx job st)
+            |> Task.andThen
+                   (\done -> finish ctx job (\a -> Task.succeed a) done)
+
+
+-- ── Std.Ai.Trace ────────────────────────────────────────────────────
+-- A training run's rows in Std.Ai.Trace, under the run's id (`runId job`):
+-- each step's progress as the watch reads it, and one cost row when the run
+-- ends, finished or failed. A Vertex run's row is its measured spend in exact
+-- money; a run on this machine has no price, so its row is unpriced. Every
+-- row is keyed (the step; "cost"), so a replayed step writes nothing twice.
+-- The progress in a run's protocol lines: one entry per step, with the
+-- checkpoint written at that step.
+traceProgressOf : List String -> List Trace.Progress
+traceProgressOf lines =
+    List.foldl addProgressLine [] lines
+
+
+addProgressLine : String -> List Trace.Progress -> List Trace.Progress
+addProgressLine line acc =
+    case decodeEvent line of
+
+        Ok (Just (StepProgress p)) ->
+            upsertStep
+                p.step
+                (\old ->
+                    { step = p.step
+                    , total = p.total
+                    , loss = finite p.loss
+                    , tokensPerSecond = finite p.tokensPerSecond
+                    , checkpoint =
+                        Maybe.withDefault "" (Maybe.map .checkpoint old)
+                    })
+                acc
+
+        Ok (Just (Checkpoint c)) ->
+            upsertStep
+                c.step
+                (\old ->
+                    case old of
+
+                        Just pr ->
+                            { pr | checkpoint = c.path }
+
+                        Nothing ->
+                            { step = c.step
+                            , total = 0
+                            , loss = Nothing
+                            , tokensPerSecond = Nothing
+                            , checkpoint = c.path
+                            })
+                acc
+
+        _ ->
+            acc
+
+
+-- A value the trainer could not write reads as -1 (`num`): no value.
+finite : Float -> Maybe Float
+finite x =
+    if x < 0.0 then
+        Nothing
+
+    else
+        Just x
+
+
+upsertStep : Int -> (Maybe Trace.Progress -> Trace.Progress) -> List Trace.Progress -> List Trace.Progress
+upsertStep step make acc =
+    case acc of
+
+        [] ->
+            [ make Nothing ]
+
+        pr :: rest ->
+            if pr.step == step then
+                make (Just pr) :: rest
+
+            else
+                pr :: upsertStep step make rest
+
+
+-- A trace write, with the tables made first when a run started by an earlier
+-- release meets a database without them.
+withTraceTables : Db -> Task Error () -> Task Error ()
+withTraceTables db write =
+    write |> Task.onError (\_ -> Trace.setup db |> Task.andThen (\_ -> write))
+
+
+traceLines : Durable.Ctx -> Job -> List String -> Task Error ()
+traceLines ctx job lines =
     let
-        dir = runDir job
+        db = Durable.conn ctx
     in
-        (if req.runId /= runId job then
-            Task.fail
-                (invalid
-                    "job"
-                    ("this worker's job is run " ++ runId job
-                        ++ ", and the durable run is "
-                        ++ req.runId
-                        ++ "; the job changed after the run started (a new job is a new run)"))
+        withTraceTables
+            db
+            (traceProgressOf lines
+                |> List.map (Trace.recordProgress db (runId job))
+                |> Task.sequence
+                |> Task.map (\_ -> ()))
 
-        else
-            resolveStep ctx job
-                |> Task.andThen
-                       (\backend ->
-                           if backend == "vertex" then
-                               cloudTrain ctx job
-                                   |> Task.andThen
-                                          (\( st, seen, cloud ) ->
-                                              finish
-                                                  ctx
-                                                  job
-                                                  (cloudCleanup ctx job cloud)
-                                                  ( st, seen ))
 
-                           else
-                               setupFrom ctx job backend
-                                   |> Task.andThen (\st -> train ctx job st)
-                                   |> Task.andThen
-                                          (\done ->
-                                              finish
-                                                  ctx
-                                                  job
-                                                  (\a -> Task.succeed a)
-                                                  done)))
-            |> Task.onError (\e -> recordFailure dir e)
+-- Every progress line of the run so far (a cloud run's events are mirrored
+-- into the run directory by its watch).
+traceRunLines : Durable.Ctx -> Job -> Task Error ()
+traceRunLines ctx job =
+    readRaw (runDir job)
+        |> Task.andThen (\state -> traceLines ctx job state.lines)
+
+
+-- The run's cost row, once.
+traceCost : Durable.Ctx -> Job -> Task Error ()
+traceCost ctx job =
+    Durable.step
+        ctx
+        Codec.string
+        "trace-cost"
+        (writeCost ctx job |> Task.map (\_ -> ""))
+        |> Task.map (\_ -> ())
+
+
+writeCost : Durable.Ctx -> Job -> Task Error ()
+writeCost ctx job =
+    let
+        db = Durable.conn ctx
+        e =
+            { runId = runId job
+            , key = "cost"
+            , kind = Trace.Training
+            , book = Nothing
+            }
+    in
+        cloudStatus job
+            |> Task.andThen
+                   (\status ->
+                       withTraceTables
+                           db
+                           (case status of
+
+                               Just cs ->
+                                   Trace.recordCost db e (runId job) cs.spent
+
+                               Nothing ->
+                                   Trace.recordUnpriced db e (runId job)))
+
+
+-- A failed run records its cost too (a cloud run paid for what it did). When
+-- that write fails as well, the run's own failure is kept and says so.
+costOnFailure : Durable.Ctx -> Job -> Error -> Task Error Error
+costOnFailure ctx job e =
+    if Durable.isSuspend e then
+        Task.succeed e
+
+    else
+        traceCost ctx job |> Task.map (\_ -> e)
+            |> Task.onError
+                   (\traceErr ->
+                       Task.succeed
+                           (Error.withMessage
+                               (messageOf e
+                                   ++ " (and its cost row could not be recorded: "
+                                   ++ messageOf traceErr
+                                   ++ ")")
+                               e))
+
+
+messageOf : Error -> String
+messageOf e =
+    case e of
+
+        Error.Error _ info ->
+            info.message
 
 
 recordFailure : String -> Error -> Task Error Adapter
@@ -3038,7 +3208,11 @@ watchLoop ctx job st attempt relaunched n offset =
             ctx
             seenCodec
             ("watch-" ++ tag)
-            (watchRaw dir offset s.watchWindowMs |> Task.map (seenOf offset))
+            (watchRaw dir offset s.watchWindowMs
+                |> Task.andThen
+                       (\w ->
+                           traceLines ctx job w.lines
+                               |> Task.map (\_ -> seenOf offset w)))
             |> Task.andThen
                    (\seen ->
                        case seen.outcome of
@@ -5012,7 +5186,9 @@ cloudWatchLoop ctx job cs p store key attempt name n segment relaunched spentBef
             ctx
             cloudWatchCodec
             ("watch-" ++ tag)
-            (watchCloud job cs store key attempt name segment spentBefore)
+            (watchCloud job cs store key attempt name segment spentBefore
+                |> Task.andThen
+                       (\w -> traceRunLines ctx job |> Task.map (\_ -> w)))
             |> Task.andThen
                    (\w ->
                        let

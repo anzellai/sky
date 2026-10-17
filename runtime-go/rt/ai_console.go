@@ -49,6 +49,7 @@ type aiCallRecord struct {
 	Model            string    `json:"model"`
 	Outcome          string    `json:"outcome"` // ok, or the failure code
 	LatencyMs        int64     `json:"latencyMs"`
+	QueueWaitMs      int64     `json:"queueWaitMs"`
 	PromptTokens     int       `json:"promptTokens"`
 	CompletionTokens int       `json:"completionTokens"`
 }

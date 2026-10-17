@@ -581,6 +581,12 @@ func serverListenRun(port any, routes any) any {
 		fmt.Fprintf(os.Stderr, "[sky.console] FATAL: %v\n", err)
 		return Err[any, any](ErrInvalidInput(err.Error()))
 	}
+	// An AI variable whose value does not parse refuses the start
+	// (ai_startup.go): the Task's Err is the typed InvalidSetting failure.
+	if err := aiStartupSettingsError(); err != nil {
+		fmt.Fprintln(os.Stderr, aiStartupRefusal(err))
+		return aiTaskErr(err)
+	}
 	// If THIS process is a sub-app (SKY_PARENT_URL + SKY_LIVE_NAMESPACE
 	// set), start the push-exporter so Log.* / metric / span writes
 	// flow back to the parent. No-op for standalone runs.

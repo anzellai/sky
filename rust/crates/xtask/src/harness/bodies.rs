@@ -3048,7 +3048,13 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 /// skip a backend with no GPU, go to the server, fail typed for `DeviceOnly`,
 /// zero layers run on the CPU; the offer's settings and a backend's `gpu`
 /// decode).
-pub const SKY_SUITES_EXPECTED: u64 = 1074;
+/// 1074 -> 1092 with the Trace lifecycle and the local engine's drafts and
+/// adapters (+10 `TraceTest`: facts, failed calls, keyed rows, kinds and
+/// totals, currencies, the in-place migration, progress, a traced agent, a
+/// custom stream's clock; +1 `EvalTest`: a run's candidate and judge rows;
+/// +7 `ProviderEndpointTest`: `withDraft`, `withDraftTokens`, `withAdapters`
+/// and their settings), measured by the `sky-suites` gate (43 suites).
+pub const SKY_SUITES_EXPECTED: u64 = 1092;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.
