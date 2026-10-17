@@ -1213,6 +1213,13 @@ type liveApp struct {
 	// of this app returns, so the graceful HTTP shutdown can finish. nil for
 	// an app that is never stopped (a nil channel never selects).
 	stopCh chan struct{}
+	// released is set when the app releases its sessions because it is going
+	// away (releaseSessionsAndStore: Live.stop, or the server that mounted a
+	// console sub-app stopping). A stream whose session ends for that reason
+	// ends plainly: the session did not end, the server did. Telling the
+	// client "session lost" made it reload into a server that was no longer
+	// there, and the page stayed on the browser's error page.
+	released atomic.Bool
 	// storeRelease removes this app's session store from the process
 	// release phase (the store is closed by Live.stop instead). nil when
 	// nothing was registered.
@@ -5121,6 +5128,12 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		case <-sess.done:
+			if app.released.Load() {
+				// The app is going away (releaseSessionsAndStore). End the
+				// stream plainly, as stopCh does: the client reconnects and
+				// learns about its session from the server that answers next.
+				return
+			}
 			// L3: the session was evicted (TTL cleanup called markDone) — tear
 			// this connection down instead of heart-beating into a dead session
 			// (which kept the client's "connected" banner green while its next

@@ -2836,7 +2836,32 @@ function __skyRecoverLostSession(reason) {
     console.warn("[sky.live] session lost (" + reason + "); reloading the page to start a new session");
   }
   __skySetStatus("lost", reason === "auth-required" ? "Signed out. Reloading…" : "Session ended. Reloading…");
-  window.location.reload();
+  __skyReloadWhenServerAnswers(0);
+}
+
+// __skyReloadWhenServerAnswers — reload only once the server answers. A reload
+// into a server that has gone (the frame came from a process on its way down,
+// or the network dropped) lands on the browser's error page, where no script
+// runs and nothing ever recovers. So ask first with the side-effect-free
+// session ping, and reload when anything but a network error or a gateway
+// error (502 / 503 / 504, a proxy with no upstream) answers; else ask again a
+// second later. After two minutes it reloads anyway.
+function __skyReloadWhenServerAnswers(tries) {
+  var again = function() {
+    if (tries >= 120) { window.location.reload(); return; }
+    setTimeout(function() { __skyReloadWhenServerAnswers(tries + 1); }, 1000);
+  };
+  var headers = __skyWithSession({"Content-Type": "application/json"});
+  if (__skyCsrfToken) headers["X-Sky-Csrf"] = __skyCsrfToken;
+  fetch(__skyBase + "/_sky/event", {
+    method: "POST",
+    headers: headers,
+    body: JSON.stringify({sessionId: __skySid, msg: "__skySessionPing", args: [], tab: __skyTabId}),
+    credentials: "same-origin"
+  }).then(function(r) {
+    if (r.status === 502 || r.status === 503 || r.status === 504) { again(); return; }
+    window.location.reload();
+  }).catch(again);
 }
 
 // __skyWatchdog — runs every 5s. Two wedge detectors layered:

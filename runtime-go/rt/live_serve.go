@@ -690,6 +690,9 @@ func (app *liveApp) releaseSessionsAndStore() {
 	if app == nil || app.store == nil {
 		return
 	}
+	// Before any session ends: its open streams then end plainly, never with
+	// a "session lost" frame (handleSSE).
+	app.released.Store(true)
 	if l, ok := app.store.(liveSessionLister); ok {
 		for _, sess := range l.liveSessions() {
 			sess.markDone()
