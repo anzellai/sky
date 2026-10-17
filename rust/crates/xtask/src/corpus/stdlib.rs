@@ -6823,6 +6823,8 @@ aiDeviceOffer =
     , model = { label = "m.gguf", sha256 = "aa", bytes = 400, url = "/_sky/ai/blob/aa" }
     , adapter = Just { label = "a.gguf", sha256 = "bb", bytes = 20, url = "/_sky/ai/blob/bb" }
     , context = 2048
+    , threads = 0
+    , gpuLayers = -1
     , maxDownloadBytes = 1000
     , backends = [ Device.Native, Device.WebGpu, Device.WasmCpu ]
     , metered = False
@@ -6835,7 +6837,7 @@ aiDeviceOffer =
 aiDeviceCaps : Device.Capabilities
 aiDeviceCaps =
     { platform = "browser"
-    , backends = [ { backend = Device.WebGpu, maxModelBytes = 1000 }, { backend = Device.WasmCpu, maxModelBytes = 1000 } ]
+    , backends = [ { backend = Device.WebGpu, maxModelBytes = 1000, gpu = True }, { backend = Device.WasmCpu, maxModelBytes = 1000, gpu = False } ]
     , unsupported = []
     , storageAvailableBytes = 10000
     , metered = False

@@ -85,7 +85,7 @@
       "tier": "T4"
     },
     "ai-device-decide": {
-      "expected_assertions": 38,
+      "expected_assertions": 44,
       "falsifier_mutation": "ai-device-decide.no-storage-margin",
       "falsifier_proven": true,
       "summary": "Std.Ai.Device's decision: every rule, in order, as a pure function",
@@ -755,7 +755,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 1068,
+      "expected_assertions": 1074,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
@@ -925,7 +925,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2880,
+    "stdlib_entries": 2882,
     "stdlib_modules": 127,
     "surfaces_covered": 184,
     "surfaces_covered_pct": 94.4,
@@ -19684,7 +19684,7 @@
         }
       },
       "count": 811,
-      "pct_of_denominator": 28.2
+      "pct_of_denominator": 28.1
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -23083,8 +23083,8 @@
       "id": "tests/Std",
       "modules_imported": 46,
       "path": "tests/Std",
-      "refs_generous": 621,
-      "refs_qualified": 598,
+      "refs_generous": 623,
+      "refs_qualified": 600,
       "role": "SkySuite",
       "sky_files": 22,
       "sky_toml_sections": []
