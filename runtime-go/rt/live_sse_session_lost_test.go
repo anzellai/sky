@@ -224,3 +224,47 @@ func TestServerStream_OutlivesServerListenDeadlines(t *testing.T) {
 		t.Fatalf("%d of 20 frames arrived", n)
 	}
 }
+
+// A server that is going away is not a lost session. Before this, the SPA
+// backend's Server.listen released its console sub-app (releaseConsole →
+// releaseSessionsAndStore) while the console's stream was still open: every
+// session was ended with markDone, the stream answered `session-lost`
+// (session-evicted), the page reloaded at once, the server had already gone,
+// and the page sat on the browser's error page for good. The release gate's
+// console-live e2e (spa-direct) failed that way; reproduced on Linux in 1 of
+// 10 restarts after a 45 s hold. Now the stream ends plainly when the app
+// releases its sessions; a session the store evicts still gets the frame.
+func TestSSE_AppReleaseEndsTheStreamPlainly_EvictionStillSaysSo(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		end      func(app *liveApp, sess *liveSession)
+		wantLost bool
+	}{
+		{"the store evicts the session", func(_ *liveApp, sess *liveSession) { sess.markDone() }, true},
+		{"the app releases its sessions (its server is going away)", func(app *liveApp, _ *liveSession) { app.releaseSessionsAndStore() }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newBindingTestApp("sky_sid")
+			sid, cookie := mintSession(t, app, "sky_sid")
+			sess := mustGet(t, app, sid)
+			req := httptest.NewRequest(http.MethodGet, "/_sky/sse?tab=t&sl=1", nil)
+			req.Header.Set("Accept", "text/event-stream")
+			req.Header.Set("Cookie", cookie)
+			rec := httptest.NewRecorder()
+			done := make(chan struct{})
+			go func() { app.handleSSE(rec, req); close(done) }()
+			// Let the handler reach its stream loop before the session ends.
+			time.Sleep(100 * time.Millisecond)
+			tc.end(app, sess)
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the stream did not end")
+			}
+			lost := strings.Contains(rec.Body.String(), "event: session-lost")
+			if lost != tc.wantLost {
+				t.Fatalf("session-lost frame sent = %v, want %v; body %q", lost, tc.wantLost, rec.Body.String())
+			}
+		})
+	}
+}
