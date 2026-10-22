@@ -52,6 +52,10 @@ pub(crate) struct Parser<'a> {
     /// and then its use `f type`) adds a label to that diagnostic rather than a
     /// second error, so one mistake is one error.
     reserved_reported: Vec<(&'a str, usize)>,
+    /// Closing keywords the open `if` / `case` / `let` constructs wait for,
+    /// with `Tombstone` marking each open bracket (see
+    /// [`Parser::push_awaited`]).
+    awaited: Vec<SyntaxKind>,
 }
 
 /// An open node marker (an index into the event list at its `Start`).
@@ -108,6 +112,7 @@ impl<'a> Parser<'a> {
             block_indent: 0,
             depth: 0,
             reserved_reported: Vec::new(),
+            awaited: Vec::new(),
         }
     }
 
@@ -161,6 +166,58 @@ impl<'a> Parser<'a> {
             .get(self.pos + n)
             .map(|t| t.ws_before)
             .unwrap_or(true)
+    }
+
+    pub(crate) fn nth_newline_before(&self, n: usize) -> bool {
+        self.toks
+            .get(self.pos + n)
+            .map(|t| t.newline_before)
+            .unwrap_or(true)
+    }
+
+    /// Text of the token `n` ahead (empty past EOF).
+    pub(crate) fn nth_text(&self, n: usize) -> &'a str {
+        match self.toks.get(self.pos + n) {
+            Some(t) => &self.src[t.start as usize..t.end as usize],
+            None => "",
+        }
+    }
+
+    /// The token `n` ahead *continues* the enclosing block (see
+    /// [`Parser::at_continuation`]).
+    pub(crate) fn nth_continues(&self, n: usize) -> bool {
+        match self.toks.get(self.pos + n) {
+            Some(t) if t.kind != Eof => !t.newline_before || t.col > self.block_indent,
+            _ => false,
+        }
+    }
+
+    // ---- awaited closing keywords ----
+
+    /// `if` waits for `then` and then `else`, `case` for `of`, `let` for `in`.
+    /// A bracket (`(`, `[`, `{`) opens a fresh scope: no closing keyword can
+    /// end a construct outside it.
+    pub(crate) fn push_awaited(&mut self, kind: SyntaxKind) {
+        self.awaited.push(kind);
+    }
+
+    pub(crate) fn pop_awaited(&mut self) {
+        self.awaited.pop();
+    }
+
+    /// Open a bracket scope (see [`Parser::push_awaited`]).
+    pub(crate) fn push_bracket(&mut self) {
+        self.awaited.push(Tombstone);
+    }
+
+    /// An open `if` / `case` / `let` in the current bracket scope waits for
+    /// `kind`, so `kind` here ends an expression rather than naming a value.
+    pub(crate) fn is_awaited(&self, kind: SyntaxKind) -> bool {
+        self.awaited
+            .iter()
+            .rev()
+            .take_while(|k| **k != Tombstone)
+            .any(|k| *k == kind)
     }
 
     /// The current token *continues* the enclosing block: same line, or a fresh

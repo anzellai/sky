@@ -303,6 +303,10 @@ fn reserved_errors(src: &str) -> Vec<std::string::String> {
 }
 
 fn assert_one_reserved(src: &str, kw: &str) {
+    assert!(
+        p(src).errors().iter().all(|d| d.code.0 == "E0001"),
+        "{src:?}: every parse diagnostic is [E0001]"
+    );
     let errs = reserved_errors(src);
     assert_eq!(
         errs.len(),
@@ -364,50 +368,109 @@ fn reserved_words_match_the_lexer_and_the_docs() {
     );
 }
 
+// Every identifier position, as a source template. `KW` stands where a name
+// is expected. Each template, with any reserved word in place of `KW`, must
+// give exactly ONE diagnostic: `[E0001]`, naming the word. A word misused
+// twice in one file (a binding and its use) is still one diagnostic, with a
+// second label on it.
+//
+// `if` / `case` / `let` can start an expression, so in a value position they
+// are a name only when the next token cannot continue that construct. Every
+// value template below puts such a token after `KW` (`)`, `,`, `]`, `}`, an
+// operator, end of input, or a new top-level declaration).
+const RESERVED_POSITIONS: &[(&str, &str)] = &[
+    // value / atom
+    ("value: a call argument", "f x =\n    g KW\n"),
+    ("value: an argument before `)`", "f x =\n    h (g x KW)\n"),
+    ("value: the repro", "main =\n    Task.run (Log.println KW)\n"),
+    ("value: an operand", "f x =\n    x ++ KW\n"),
+    ("value: before a pipe", "f x =\n    KW |> g\n"),
+    ("value: an argument before a pipe", "f x =\n    g KW |> h\n"),
+    ("value: a list item", "f x =\n    [ x, KW ]\n"),
+    ("value: a tuple item", "f x =\n    ( x, KW )\n"),
+    ("value: a record field value", "f x =\n    { a = KW }\n"),
+    ("value: before the next declaration", "f x =\n    g KW\n\n\nmain =\n    1\n"),
+    ("value: a whole body", "f x =\n    KW\n\n\nmain =\n    1\n"),
+    // function argument (a parameter of a definition)
+    ("function argument", "f KW =\n    1\n"),
+    ("second function argument", "f x KW =\n    1\n"),
+    ("let function argument", "x =\n    let\n        g KW =\n            1\n    in\n    g\n"),
+    // lambda parameter
+    ("lambda parameter", "g =\n    \\KW -> 1\n"),
+    ("second lambda parameter", "g =\n    \\x KW -> 1\n"),
+    // bare case pattern
+    ("case pattern", "f x =\n    case x of\n        KW ->\n            1\n"),
+    // constructor-pattern argument
+    (
+        "constructor argument in a case arm",
+        "f w =\n    case w of\n        Just KW ->\n            \"y\"\n\n        Nothing ->\n            \"n\"\n",
+    ),
+    ("constructor argument, own type", "f w =\n    case w of\n        W KW ->\n            \"y\"\n"),
+    ("constructor argument in a lambda", "g =\n    \\(Just KW) -> 1\n"),
+    ("constructor argument in a parameter", "f (Just KW) =\n    1\n"),
+    ("tuple pattern item", "g =\n    \\( a, KW ) -> 1\n"),
+    // let-binding name
+    ("let name", "x =\n    let\n        KW =\n            1\n    in\n    2\n"),
+    (
+        "let name and its use",
+        "main =\n    let\n        KW =\n            \"x\"\n    in\n    Task.run (Log.println KW)\n",
+    ),
+    ("one-line let name and its use", "main =\n    let KW = \"x\" in g KW\n"),
+    (
+        "let annotation and name",
+        "x =\n    let\n        KW : Int\n        KW =\n            1\n    in\n    2\n",
+    ),
+    ("let function name", "x =\n    let\n        KW y =\n            y\n    in\n    2\n"),
+    // function definition name
+    ("top-level name", "module Main exposing (main)\n\nKW =\n    1\n\n\nmain =\n    2\n"),
+    ("top-level function name", "module Main exposing (main)\n\nKW x =\n    x\n\n\nmain =\n    2\n"),
+    ("top-level annotation and name", "module Main exposing (main)\n\nKW : Int\nKW =\n    1\n"),
+    ("first declaration name, no header", "KW x =\n    x\n"),
+    // record field in a literal
+    ("record field", "r =\n    { KW = 1 }\n"),
+    ("second record field", "r =\n    { a = 1, KW = 2 }\n"),
+    // record field in a type alias
+    ("type alias field", "type alias R =\n    { KW : Int }\n"),
+    ("second type alias field", "type alias R =\n    { a : Int, KW : Int }\n"),
+    // record update
+    ("record update field", "g r =\n    { r | KW = 1 }\n"),
+    ("record update base", "g r =\n    { KW | a = 1 }\n"),
+    // field access
+    ("field access", "g r =\n    r.KW\n"),
+    ("field access as an argument", "g r =\n    h r.KW 1\n"),
+    ("accessor function", "g xs =\n    List.map .KW xs\n"),
+];
+
 #[test]
-fn reserved_word_as_a_let_name_is_one_named_error() {
+fn reserved_word_in_every_identifier_position_is_one_named_error() {
+    let mut failures = Vec::new();
     for kw in syntax::RESERVED_WORDS {
-        if matches!(*kw, "module" | "import") {
-            continue;
+        for (position, template) in RESERVED_POSITIONS {
+            let src = template.replace("KW", kw);
+            let parsed = p(&src);
+            let diags = parsed.errors();
+            let ok = diags.len() == 1
+                && diags[0].code.0 == "E0001"
+                && diags[0]
+                    .message
+                    .contains(&format!("`{kw}` is a reserved word"));
+            if !ok {
+                let got: Vec<std::string::String> = diags
+                    .iter()
+                    .map(|d| format!("[{}] {}", d.code.0, d.message))
+                    .collect();
+                failures.push(format!("`{kw}` as {position}: {src:?}\n    got {got:?}"));
+            }
         }
-        let src = format!("x =\n    let\n        {kw} =\n            1\n    in\n    2\n");
-        assert_one_reserved(&src, kw);
     }
+    assert!(
+        failures.is_empty(),
+        "{} of {} cases do not give exactly one named [E0001]:\n{}",
+        failures.len(),
+        syntax::RESERVED_WORDS.len() * RESERVED_POSITIONS.len(),
+        failures.join("\n")
+    );
 }
-
-#[test]
-fn reserved_word_as_a_parameter_is_one_named_error() {
-    for kw in syntax::RESERVED_WORDS {
-        let src = format!("f {kw} =\n    1\n");
-        assert_one_reserved(&src, kw);
-        let src = format!("g =\n    \\{kw} -> 1\n");
-        assert_one_reserved(&src, kw);
-    }
-}
-
-#[test]
-fn reserved_word_as_a_top_level_name_is_one_named_error() {
-    for kw in syntax::RESERVED_WORDS {
-        if matches!(*kw, "module" | "import") {
-            continue;
-        }
-        let src = format!("module Main exposing (main)\n\n{kw} =\n    1\n\n\nmain =\n    2\n");
-        assert_one_reserved(&src, kw);
-    }
-}
-
-#[test]
-fn reserved_word_as_a_field_name_is_one_named_error() {
-    assert_one_reserved("r =\n    { type = 1 }\n", "type");
-    assert_one_reserved("g r =\n    r.type\n", "type");
-    assert_one_reserved("g r =\n    { r | of = 1 }\n", "of");
-}
-
-// A reserved word used as a VALUE (an argument, an operand, a constructor
-// argument in a pattern) is the same single named error. Before the fix the
-// argument position stopped at the word, so `Log.println type)` also gave an
-// unnamed `expected RParen`.
-const NOT_AN_EXPRESSION: &[&str] = &["module", "exposing", "import", "as", "type", "alias"];
 
 #[test]
 fn reserved_word_used_as_a_value_is_one_named_error() {
@@ -428,36 +491,37 @@ fn reserved_word_used_as_a_value_is_one_named_error() {
         .collect();
     assert_eq!(labels.len(), 2, "binding + use site labels, got {labels:?}");
     assert_eq!(labels[1], "`type` is also used here");
-    for kw in NOT_AN_EXPRESSION {
-        assert_one_reserved(&format!("f x =\n    g {kw}\n"), kw);
-        assert_one_reserved(&format!("f x =\n    h (g x {kw})\n"), kw);
-        assert_one_reserved(&format!("f x =\n    g x {kw} x\n"), kw);
-        assert_one_reserved(&format!("f x =\n    x ++ {kw}\n"), kw);
-        assert_one_reserved(&format!("f x =\n    [ x, {kw} ]\n"), kw);
-    }
+    // the judge's repros
+    assert_one_reserved("main =\n    Task.run (Log.println then)\n", "then");
+    assert_one_reserved(
+        "main =\n    let\n        case =\n            \"x\"\n    in\n    Task.run (Log.println case)\n",
+        "case",
+    );
+    assert_one_reserved(
+        "f w =\n    case w of\n        Just of ->\n            \"y\"\n\n        Nothing ->\n            \"n\"\n",
+        "of",
+    );
 }
 
 #[test]
-fn reserved_word_in_a_pattern_is_one_named_error() {
-    for kw in syntax::RESERVED_WORDS {
-        // a case-arm pattern, bare and as a constructor argument
-        assert_one_reserved(
-            &format!("f x =\n    case x of\n        {kw} ->\n            1\n"),
-            kw,
-        );
-        // a lambda argument and a function argument
-        assert_one_reserved(&format!("g =\n    \\{kw} -> 1\n"), kw);
-        assert_one_reserved(&format!("f {kw} =\n    1\n"), kw);
-    }
-    for kw in ["module", "exposing", "import", "type", "alias"] {
-        assert_one_reserved(
-            &format!("f x =\n    case x of\n        Just {kw} ->\n            1\n\n        Nothing ->\n            0\n"),
-            kw,
-        );
-        assert_one_reserved(&format!("g =\n    \\(Just {kw}) -> 1\n"), kw);
-        assert_one_reserved(&format!("f (Just {kw}) =\n    1\n"), kw);
-        assert_one_reserved(&format!("g =\n    \\( a, {kw} ) -> 1\n"), kw);
-    }
+fn expression_keywords_still_parse_where_they_start_or_end_a_construct() {
+    assert_clean(
+        "f x =\n    g (if x then h y else k z) (case f x of\n        _ ->\n            1\n    )\n",
+    );
+    assert_clean("f x =\n    if g x then\n        h x\n\n    else if k x then\n        1\n\n    else\n        2\n");
+    assert_clean("f x =\n    case g x of\n        Just y ->\n            y\n\n        Nothing ->\n            0\n");
+    assert_clean("f x =\n    let\n        y =\n            g x\n    in\n    h y\n");
+    assert_clean("f x =\n    let y = g x in h y\n");
+    assert_clean("f x =\n    g (let y = 1 in y) x\n");
+    assert_clean("f x =\n    if case x of\n        _ ->\n            True\n    then\n        1\n\n    else\n        2\n");
+    assert_clean("f x =\n    case (if x then 1 else 2) of\n        _ ->\n            x\n");
+    assert_clean("f x =\n    x |> \\y -> if y then 1 else 2\n");
+    assert_clean(
+        "f x =\n    [ if x then 1 else 2, case x of\n        _ ->\n            3\n    ]\n",
+    );
+    assert_clean("f x =\n    case x of\n        Just y as z ->\n            z\n\n        _ ->\n            x\n");
+    assert_clean("f (Just x as y) =\n    y\n");
+    assert_clean("module Main exposing (main)\n\nimport Std.Log as Log exposing (println)\n\n\ntype alias R =\n    { a : Int }\n\n\ntype T\n    = A\n    | B Int\n\n\nmain =\n    1\n");
 }
 
 #[test]
