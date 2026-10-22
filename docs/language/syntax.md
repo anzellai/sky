@@ -180,12 +180,22 @@ error (`[E1014] UNKNOWN OPERATOR`): "not equal" is `/=`, never `!=`.
 
 Non-reserved identifiers frequently used in Sky but which are *not* keywords: `from`, `where`, `port`, `foreign`.
 
-A reserved word where a name is expected (a binding, a parameter, a field) is
-one parse error that names the word, with no follow-on errors:
+A reserved word where a name is expected (a binding, a parameter, a field, a
+value, a type variable, an import alias) is one parse error that names the
+word, with no follow-on errors:
 
 ```text
 `type` is a reserved word and cannot be used as a name. Pick another name. The reserved words are: module, exposing, import, as, type, alias, if, then, else, case, of, let, in.
 ```
+
+The parser reports at most one syntax error for each top-level unit (the
+module header, an import, or a declaration with its annotation). After the
+first error it keeps parsing, so the editor still sees the whole file, but it
+reports nothing more until the next line that starts at column 1. Two broken
+declarations give two errors. When a reserved word is the cause, the error
+names that word, even where the parse fails a few tokens later (`x ++ if`
+fails at the end of the line) or at a valid keyword (`if if then …` names the
+second `if`, not `then`).
 
 `True` and `False` are literals, not names. Before v0.27.12 the compiler also
 reserved `foreign` (a leftover rule with no meaning), so `let foreign = …`

@@ -119,15 +119,131 @@ impl Parse {
 pub fn parse(src: &str, file: FileId) -> Parse {
     let raw = lexer::lex(src);
     let toks = layout::layout(src, &raw);
-    let mut p = parser::Parser::new(src, toks, file);
-    grammar::source_file(&mut p);
-    let (events, errors) = p.finish();
-    let (green, depth) = event::build_tree(src, &raw, events);
+    let done = run_grammar(src, toks.clone(), file);
+    let mut errors = done.diags;
+    name_reserved_words(src, &toks, file, &mut errors, &done.sites, &done.units);
+    let (green, depth) = event::build_tree(src, &raw, done.events);
     Parse {
         green,
         errors,
         depth,
     }
+}
+
+fn run_grammar(src: &str, toks: Vec<PToken>, file: FileId) -> parser::Finished {
+    let mut p = parser::Parser::new(src, toks, file);
+    grammar::source_file(&mut p);
+    p.finish()
+}
+
+/// The most reserved words [`name_reserved_words`] tries for one error.
+const MAX_CANDIDATES: usize = 8;
+
+/// The most further uses of the same word one trial follows.
+const MAX_FOLLOW: usize = 4;
+
+/// Name the reserved word behind each unit's one syntax error.
+///
+/// The grammar reports only the first error in a top-level unit (the
+/// diagnostic budget, `Parser::begin_unit`). That error is raised where the
+/// parse first fails, which is the misused word itself (`g then`), the token
+/// after a word that opened a construct (`x ++ if` fails at the end of
+/// input), or a valid keyword after the misused one (`if if then` fails at
+/// `then`). So the misused word is found by trial, not by position.
+///
+/// Each reserved word of the unit near the error (the error token, the token
+/// after it, then backwards) is read as a plain name, and the unit is parsed
+/// again. When the renamed word is used again later in the unit (a binding
+/// and its use), the trial follows: a new error at another use of the same
+/// word renames that use too. The word whose trial gets the parse furthest
+/// (no error at all is furthest) is the misused one. A trial must get past
+/// the original error to count. When none does, a reserved word standing at
+/// the error is named. Either way the one diagnostic of the unit becomes the
+/// named `[E0001]`. A unit whose error involves no reserved word keeps its
+/// message.
+///
+/// Only a unit that already has an error is tried, and only that unit's
+/// tokens are parsed again, so valid code costs nothing.
+fn name_reserved_words(
+    src: &str,
+    toks: &[PToken],
+    file: FileId,
+    errors: &mut [Diagnostic],
+    sites: &[parser::ErrorSite],
+    units: &[usize],
+) {
+    for site in sites {
+        let end = units
+            .iter()
+            .copied()
+            .find(|&u| u > site.unit)
+            .unwrap_or(toks.len());
+        let unit = &toks[site.unit..end];
+        let at = site.at - site.unit; // may be `unit.len()` (end of the unit)
+        if let Some(i) = misused_word(src, unit, file, at) {
+            let t = unit[i];
+            let word = &src[t.start as usize..t.end as usize];
+            let msg = format!(
+                "`{word}` is a reserved word and cannot be used as a name. Pick another name. \
+                 The reserved words are: {}.",
+                lexer::RESERVED_WORDS.join(", ")
+            );
+            let span = base::Span::new(file, t.start, t.end);
+            errors[site.diag] = Diagnostic::error("E0001", msg.clone()).with_label(span, msg);
+        }
+    }
+}
+
+/// The index in `unit` of the reserved word misused as a name, for a unit
+/// whose first error is at `at` (see [`name_reserved_words`]).
+fn misused_word(src: &str, unit: &[PToken], file: FileId, at: usize) -> Option<usize> {
+    let text = |t: &PToken| &src[t.start as usize..t.end as usize];
+    let reserved = |i: usize| {
+        unit.get(i)
+            .is_some_and(|t| parser::is_reserved_word(t.kind))
+    };
+    let mut order = vec![at, at + 1];
+    order.extend((0..at.min(unit.len())).rev());
+    let candidates = order
+        .into_iter()
+        .filter(|&i| reserved(i))
+        .take(MAX_CANDIDATES);
+    // The first error of `unit` with the tokens in `renamed` read as names,
+    // or `usize::MAX` when there is none.
+    let first_error = |renamed: &[usize]| {
+        let mut trial = unit.to_vec();
+        for &i in renamed {
+            trial[i].kind = SyntaxKind::LowerIdent;
+        }
+        let done = run_grammar(src, trial, file);
+        done.sites.iter().map(|s| s.at).min().unwrap_or(usize::MAX)
+    };
+    let mut best: Option<(usize, usize)> = None; // (candidate, how far)
+    for c in candidates {
+        let mut renamed = vec![c];
+        let mut reached = first_error(&renamed);
+        for _ in 0..MAX_FOLLOW {
+            // A later use of the same word stands at (or just before) the new
+            // error: it is the same name, so read it as a name too.
+            let again = [reached, reached.wrapping_sub(1)].into_iter().find(|&i| {
+                reserved(i) && !renamed.contains(&i) && text(&unit[i]) == text(&unit[c])
+            });
+            match again {
+                Some(i) => {
+                    renamed.push(i);
+                    reached = first_error(&renamed);
+                }
+                None => break,
+            }
+        }
+        if reached > at && best.is_none_or(|(_, far)| reached > far) {
+            best = Some((c, reached));
+        }
+        if reached == usize::MAX {
+            break;
+        }
+    }
+    best.map(|(c, _)| c).or_else(|| reserved(at).then_some(at))
 }
 
 #[cfg(test)]

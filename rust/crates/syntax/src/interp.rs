@@ -145,7 +145,7 @@ pub(crate) fn body(p: &mut Parser, start: u32, end: u32) {
     // a partial parse would drop the un-consumed significant tokens from the
     // sub green tree (non-lossless), so route those to the flat fallback.
     let clean = sub.at_end() && sub.diags.is_empty();
-    let (events, _diags) = sub.finish();
+    let events = sub.finish().events;
 
     if clean {
         let (green, depth) = build_tree(&text, &raw, events);

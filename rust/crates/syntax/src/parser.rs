@@ -47,15 +47,33 @@ pub(crate) struct Parser<'a> {
     /// its `col > block_indent` (doc 04 §4, `checkIndent`).
     pub(crate) block_indent: u32,
     depth: u32,
-    /// The diagnostic already reported for each reserved word misused as a
-    /// name, by word. A later misuse of the same word (the binding `type = …`
-    /// and then its use `f type`) adds a label to that diagnostic rather than a
-    /// second error, so one mistake is one error.
-    reserved_reported: Vec<(&'a str, usize)>,
-    /// Closing keywords the open `if` / `case` / `let` constructs wait for,
-    /// with `Tombstone` marking each open bracket (see
-    /// [`Parser::push_awaited`]).
-    awaited: Vec<SyntaxKind>,
+    /// The diagnostic budget (see [`Parser::begin_unit`]): the token index
+    /// where the current top-level unit starts, and whether that unit has
+    /// already reported a syntax error.
+    unit_start: usize,
+    unit_errored: bool,
+    /// Every unit start, in order.
+    units: Vec<usize>,
+    /// Where each reported diagnostic was raised.
+    sites: Vec<ErrorSite>,
+}
+
+/// Where a reported syntax diagnostic was raised: its index in the
+/// diagnostics, the token it was raised at, and the start of its unit.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ErrorSite {
+    pub(crate) diag: usize,
+    pub(crate) at: usize,
+    pub(crate) unit: usize,
+}
+
+/// What a parse yields besides the tree: the diagnostics, where each was
+/// raised, and the unit starts.
+pub(crate) struct Finished {
+    pub(crate) events: Vec<Event>,
+    pub(crate) diags: Vec<Diagnostic>,
+    pub(crate) sites: Vec<ErrorSite>,
+    pub(crate) units: Vec<usize>,
 }
 
 /// An open node marker (an index into the event list at its `Start`).
@@ -111,8 +129,10 @@ impl<'a> Parser<'a> {
             file,
             block_indent: 0,
             depth: 0,
-            reserved_reported: Vec::new(),
-            awaited: Vec::new(),
+            unit_start: 0,
+            unit_errored: false,
+            units: Vec::new(),
+            sites: Vec::new(),
         }
     }
 
@@ -166,58 +186,6 @@ impl<'a> Parser<'a> {
             .get(self.pos + n)
             .map(|t| t.ws_before)
             .unwrap_or(true)
-    }
-
-    pub(crate) fn nth_newline_before(&self, n: usize) -> bool {
-        self.toks
-            .get(self.pos + n)
-            .map(|t| t.newline_before)
-            .unwrap_or(true)
-    }
-
-    /// Text of the token `n` ahead (empty past EOF).
-    pub(crate) fn nth_text(&self, n: usize) -> &'a str {
-        match self.toks.get(self.pos + n) {
-            Some(t) => &self.src[t.start as usize..t.end as usize],
-            None => "",
-        }
-    }
-
-    /// The token `n` ahead *continues* the enclosing block (see
-    /// [`Parser::at_continuation`]).
-    pub(crate) fn nth_continues(&self, n: usize) -> bool {
-        match self.toks.get(self.pos + n) {
-            Some(t) if t.kind != Eof => !t.newline_before || t.col > self.block_indent,
-            _ => false,
-        }
-    }
-
-    // ---- awaited closing keywords ----
-
-    /// `if` waits for `then` and then `else`, `case` for `of`, `let` for `in`.
-    /// A bracket (`(`, `[`, `{`) opens a fresh scope: no closing keyword can
-    /// end a construct outside it.
-    pub(crate) fn push_awaited(&mut self, kind: SyntaxKind) {
-        self.awaited.push(kind);
-    }
-
-    pub(crate) fn pop_awaited(&mut self) {
-        self.awaited.pop();
-    }
-
-    /// Open a bracket scope (see [`Parser::push_awaited`]).
-    pub(crate) fn push_bracket(&mut self) {
-        self.awaited.push(Tombstone);
-    }
-
-    /// An open `if` / `case` / `let` in the current bracket scope waits for
-    /// `kind`, so `kind` here ends an expression rather than naming a value.
-    pub(crate) fn is_awaited(&self, kind: SyntaxKind) -> bool {
-        self.awaited
-            .iter()
-            .rev()
-            .take_while(|k| **k != Tombstone)
-            .any(|k| *k == kind)
     }
 
     /// The current token *continues* the enclosing block: same line, or a fresh
@@ -277,16 +245,9 @@ impl<'a> Parser<'a> {
     }
 
     /// Consume `kind` or record a diagnostic without consuming.
-    ///
-    /// Where a name (`LowerIdent`) is expected and a reserved word stands
-    /// instead, the word was meant as the name: report it by name and consume
-    /// it, so the rest of the construct parses without follow-on errors.
     pub(crate) fn expect(&mut self, kind: SyntaxKind) -> bool {
         if self.eat(kind) {
             true
-        } else if kind == LowerIdent && self.at_reserved_word() {
-            self.reserved_word_error_and_bump();
-            false
         } else {
             self.error(format!("expected {kind:?}"));
             false
@@ -295,44 +256,25 @@ impl<'a> Parser<'a> {
 
     // ---- diagnostics + recovery ----
 
+    /// Record a syntax diagnostic at the current token. Only the FIRST one in
+    /// a unit is kept (the diagnostic budget, [`Parser::begin_unit`]): a later
+    /// one is a follow-on of the first, so it is dropped. The ERROR nodes and
+    /// the recovery are unchanged, so the tree the LSP and `fmt` read is the
+    /// same.
     pub(crate) fn error(&mut self, msg: impl Into<std::string::String>) {
+        if self.unit_errored {
+            return;
+        }
+        self.unit_errored = true;
+        self.sites.push(ErrorSite {
+            diag: self.diags.len(),
+            at: self.pos,
+            unit: self.unit_start,
+        });
         let msg = msg.into();
         let span = self.cur_span();
         self.diags
             .push(Diagnostic::error("E0001", msg.clone()).with_label(span, msg));
-    }
-
-    /// The current token is a reserved word (see [`is_reserved_word`]).
-    pub(crate) fn at_reserved_word(&self) -> bool {
-        is_reserved_word(self.current())
-    }
-
-    /// One diagnostic that names the reserved word standing where a name is
-    /// expected, with the word wrapped in an ERROR node and consumed, so the
-    /// enclosing construct resumes without a cascade of follow-on errors.
-    ///
-    /// A word already reported in this file gets a further label on that one
-    /// diagnostic ("`type` is also used here"), not a second error.
-    pub(crate) fn reserved_word_error_and_bump(&mut self) {
-        let word = self.cur_text();
-        if let Some(&(_, ix)) = self.reserved_reported.iter().find(|(w, _)| *w == word) {
-            let span = self.cur_span();
-            let label = format!("`{word}` is also used here");
-            self.diags[ix] = self.diags[ix].clone().with_label(span, label);
-            let m = self.start();
-            if !self.at_end() {
-                self.bump();
-            }
-            m.complete(self, Error);
-            return;
-        }
-        self.reserved_reported.push((word, self.diags.len()));
-        let msg = format!(
-            "`{word}` is a reserved word and cannot be used as a name. Pick another name. \
-             The reserved words are: {}.",
-            crate::lexer::RESERVED_WORDS.join(", ")
-        );
-        self.err_and_bump(msg);
     }
 
     /// Wrap the current token in an ERROR node with a diagnostic, then advance.
@@ -365,6 +307,37 @@ impl<'a> Parser<'a> {
     /// natural recovery stop.
     pub(crate) fn at_block_boundary(&self) -> bool {
         !self.at_end() && self.newline_before() && self.col() <= self.block_indent
+    }
+
+    // ---- diagnostic budget ----
+
+    /// Start a new top-level unit if the current token begins a line at
+    /// column 1 (the module header, an import, a declaration, or recovery
+    /// garbage at the top level). The diagnostic budget resets here, so an
+    /// error in one declaration never hides an error in the next one.
+    ///
+    /// A definition that follows its own annotation (`name : T` and then
+    /// `name … =`) continues the annotation's unit: the two are one
+    /// declaration, so one mistake in its name is one diagnostic.
+    pub(crate) fn begin_unit(&mut self) {
+        let line_start = self.pos == 0 || (self.newline_before() && self.col() == 1);
+        if self.at_end() || !line_start || self.units.last() == Some(&self.pos) {
+            return;
+        }
+        if let Some(&prev) = self.units.last() {
+            let head = |i: usize| {
+                self.toks
+                    .get(i)
+                    .map(|t| &self.src[t.start as usize..t.end as usize])
+            };
+            let annotated = self.toks.get(prev + 1).map(|t| t.kind) == Some(Colon);
+            if annotated && head(prev) == head(self.pos) && self.nth(1) != Colon {
+                return;
+            }
+        }
+        self.unit_start = self.pos;
+        self.unit_errored = false;
+        self.units.push(self.pos);
     }
 
     // ---- block-indent scoping (Haskell `withIndent`) ----
@@ -444,8 +417,13 @@ impl<'a> Parser<'a> {
 
     // ---- finish ----
 
-    pub(crate) fn finish(self) -> (Vec<Event>, Vec<Diagnostic>) {
-        (self.events, self.diags)
+    pub(crate) fn finish(self) -> Finished {
+        Finished {
+            events: self.events,
+            diags: self.diags,
+            sites: self.sites,
+            units: self.units,
+        }
     }
 }
 
