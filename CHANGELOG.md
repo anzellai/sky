@@ -13,6 +13,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## v0.27.12 — `toFloat`, strict `Pipeline.optional`, `foreign` as a name (2026-10-22)
 
+### ⚠ Breaking changes
+
+- **`Pipeline.optional` is strict on a present value.** See Migration below.
+- **`Decode.null`, `Decode.nullable` and `Decode.maybe` are new exports named like older ones.** A module that imports `Sky.Core.Json.Decode exposing (..)` together with `Sky.Core.Json.Encode exposing (..)` (`null`), `Std.Db.Decode exposing (..)` or `Std.Config exposing (..)` (`nullable`), or `Std.Codec exposing (..)` (`maybe`), and uses that name bare, now gets `[E1012]`, which names both modules. Write it qualified (`Encode.null`, `Decode.nullable`), or narrow one `exposing` list. `toFloat` in the Prelude breaks nothing: an explicit import (`Sky.Core.String exposing (..)`, `Std.Decimal exposing (..)`) still wins over the Prelude with no error. [#new-stdlib-names](docs/migration/v0.27.md#new-stdlib-names)
+
 ### Migration
 
 `Json.Decode.Pipeline.optional` no longer hides a wrongly typed value. A field that is present and not `null`, and that the decoder rejects, is now an `Err` (for example `at .n: expected Int, got String`). Before, it silently became the default. Absent fields, `null` fields and a non-object input still give the default.
