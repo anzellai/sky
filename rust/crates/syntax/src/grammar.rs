@@ -47,6 +47,14 @@ const PAT_ATOM_START: TokenSet = TokenSet::new(&[
     FalseKw,
 ]);
 
+/// Reserved words that can neither start nor continue an expression. Where
+/// one stands in a value position (an argument, an operand) it was meant as a
+/// name: it is one named error, consumed, so parsing resumes without a cascade.
+/// `if` / `case` / `let` start an expression, and `then` / `else` / `of` / `in`
+/// end one, so they are not in this set.
+const RESERVED_NOT_EXPR: TokenSet =
+    TokenSet::new(&[ModuleKw, ExposingKw, ImportKw, AsKw, TypeKw, AliasKw]);
+
 const DECL_START: TokenSet = TokenSet::new(&[TypeKw, LowerIdent, UpperIdent]);
 
 // ---- entry ---------------------------------------------------------------
@@ -469,8 +477,10 @@ fn pattern_app(p: &mut Parser) -> CompletedMarker {
             p.bump(); // segment / ctor
             qualified = true;
         }
-        // atomic pattern arguments
-        while p.at_any(PAT_ATOM_START) {
+        // atomic pattern arguments. A reserved word here was meant as a
+        // variable (`Just type`): `pattern_atom` names it. `as` is excluded,
+        // since it ends the constructor pattern (`Just x as y`).
+        while p.at_any(PAT_ATOM_START) || (p.at_any(RESERVED_NOT_EXPR) && !p.at(AsKw)) {
             pattern_atom(p);
         }
         m.complete(p, if qualified { PatCtorQual } else { PatCtor })
@@ -715,7 +725,7 @@ fn arg_continues(p: &Parser) -> bool {
     if is_negative_literal_arg(p) {
         return true;
     }
-    if !p.at_any(ARG_START) {
+    if !p.at_any(ARG_START) && !p.at_any(RESERVED_NOT_EXPR) {
         return false;
     }
     !p.newline_before() || p.col() > p.block_indent
@@ -884,7 +894,7 @@ fn atom(p: &mut Parser) -> CompletedMarker {
         CaseKw => case_expr(p),
         // A reserved word that can neither start nor end an expression, where
         // one is expected, was meant as a name (`in type`).
-        ModuleKw | ExposingKw | ImportKw | AsKw | TypeKw | AliasKw => {
+        _ if p.at_any(RESERVED_NOT_EXPR) => {
             let m = p.start();
             p.reserved_word_error_and_bump();
             m.complete(p, Error)

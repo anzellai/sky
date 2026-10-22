@@ -402,3 +402,72 @@ fn reserved_word_as_a_field_name_is_one_named_error() {
     assert_one_reserved("g r =\n    r.type\n", "type");
     assert_one_reserved("g r =\n    { r | of = 1 }\n", "of");
 }
+
+// A reserved word used as a VALUE (an argument, an operand, a constructor
+// argument in a pattern) is the same single named error. Before the fix the
+// argument position stopped at the word, so `Log.println type)` also gave an
+// unnamed `expected RParen`.
+const NOT_AN_EXPRESSION: &[&str] = &["module", "exposing", "import", "as", "type", "alias"];
+
+#[test]
+fn reserved_word_used_as_a_value_is_one_named_error() {
+    let repro = "module Main exposing (main)\nimport Sky.Core.Prelude exposing (..)\nimport Sky.Core.Task as Task\nimport Std.Log as Log\nmain =\n    let\n        type = \"x\"\n    in\n    Task.run (Log.println type)\n";
+    let errs = reserved_errors(repro);
+    assert_eq!(
+        errs.len(),
+        1,
+        "the repro gives ONE diagnostic, got {errs:?}"
+    );
+    assert!(errs[0].contains("`type` is a reserved word"), "{errs:?}");
+    // the use site is marked on that one diagnostic, not reported again
+    let parsed = p(repro);
+    let labels: Vec<&str> = parsed.errors()[0]
+        .labels
+        .iter()
+        .map(|l| l.message.as_str())
+        .collect();
+    assert_eq!(labels.len(), 2, "binding + use site labels, got {labels:?}");
+    assert_eq!(labels[1], "`type` is also used here");
+    for kw in NOT_AN_EXPRESSION {
+        assert_one_reserved(&format!("f x =\n    g {kw}\n"), kw);
+        assert_one_reserved(&format!("f x =\n    h (g x {kw})\n"), kw);
+        assert_one_reserved(&format!("f x =\n    g x {kw} x\n"), kw);
+        assert_one_reserved(&format!("f x =\n    x ++ {kw}\n"), kw);
+        assert_one_reserved(&format!("f x =\n    [ x, {kw} ]\n"), kw);
+    }
+}
+
+#[test]
+fn reserved_word_in_a_pattern_is_one_named_error() {
+    for kw in syntax::RESERVED_WORDS {
+        // a case-arm pattern, bare and as a constructor argument
+        assert_one_reserved(
+            &format!("f x =\n    case x of\n        {kw} ->\n            1\n"),
+            kw,
+        );
+        // a lambda argument and a function argument
+        assert_one_reserved(&format!("g =\n    \\{kw} -> 1\n"), kw);
+        assert_one_reserved(&format!("f {kw} =\n    1\n"), kw);
+    }
+    for kw in ["module", "exposing", "import", "type", "alias"] {
+        assert_one_reserved(
+            &format!("f x =\n    case x of\n        Just {kw} ->\n            1\n\n        Nothing ->\n            0\n"),
+            kw,
+        );
+        assert_one_reserved(&format!("g =\n    \\(Just {kw}) -> 1\n"), kw);
+        assert_one_reserved(&format!("f (Just {kw}) =\n    1\n"), kw);
+        assert_one_reserved(&format!("g =\n    \\( a, {kw} ) -> 1\n"), kw);
+    }
+}
+
+#[test]
+fn port_is_an_ordinary_name_and_expression_keywords_still_work() {
+    assert_clean("f port =\n    g port\n");
+    assert_clean("f x =\n    case x of\n        Just port ->\n            port\n\n        Nothing ->\n            0\n");
+    assert_clean("g =\n    \\port -> port\n");
+    assert_clean(
+        "f x =\n    g (if x then 1 else 2) (case x of\n        _ ->\n            1\n    )\n",
+    );
+    assert_clean("f x =\n    let\n        y =\n            1\n    in\n    g y\n");
+    assert_clean("f x =\n    case x of\n        Just y as z ->\n            z\n\n        _ ->\n            x\n");
+}

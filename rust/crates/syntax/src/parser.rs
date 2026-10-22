@@ -47,6 +47,11 @@ pub(crate) struct Parser<'a> {
     /// its `col > block_indent` (doc 04 §4, `checkIndent`).
     pub(crate) block_indent: u32,
     depth: u32,
+    /// The diagnostic already reported for each reserved word misused as a
+    /// name, by word. A later misuse of the same word (the binding `type = …`
+    /// and then its use `f type`) adds a label to that diagnostic rather than a
+    /// second error, so one mistake is one error.
+    reserved_reported: Vec<(&'a str, usize)>,
 }
 
 /// An open node marker (an index into the event list at its `Start`).
@@ -102,6 +107,7 @@ impl<'a> Parser<'a> {
             file,
             block_indent: 0,
             depth: 0,
+            reserved_reported: Vec::new(),
         }
     }
 
@@ -247,8 +253,23 @@ impl<'a> Parser<'a> {
     /// One diagnostic that names the reserved word standing where a name is
     /// expected, with the word wrapped in an ERROR node and consumed, so the
     /// enclosing construct resumes without a cascade of follow-on errors.
+    ///
+    /// A word already reported in this file gets a further label on that one
+    /// diagnostic ("`type` is also used here"), not a second error.
     pub(crate) fn reserved_word_error_and_bump(&mut self) {
         let word = self.cur_text();
+        if let Some(&(_, ix)) = self.reserved_reported.iter().find(|(w, _)| *w == word) {
+            let span = self.cur_span();
+            let label = format!("`{word}` is also used here");
+            self.diags[ix] = self.diags[ix].clone().with_label(span, label);
+            let m = self.start();
+            if !self.at_end() {
+                self.bump();
+            }
+            m.complete(self, Error);
+            return;
+        }
+        self.reserved_reported.push((word, self.diags.len()));
         let msg = format!(
             "`{word}` is a reserved word and cannot be used as a name. Pick another name. \
              The reserved words are: {}.",
