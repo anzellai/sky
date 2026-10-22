@@ -6,7 +6,9 @@
 -- primitives.  `toString` / `compare` stay kernel because they
 -- need polymorphic dispatch via reflect that's hard to express
 -- in Sky source without `Sky.Ffi.call`.
-module Sky.Core.Basics exposing (identity, always, not, fst, snd, clamp)
+module Sky.Core.Basics exposing (identity, always, not, fst, snd, clamp, toFloat)
+
+import Sky.Ffi as Ffi
 
 
 identity x =
@@ -50,3 +52,13 @@ clamp lo hi x =
 
     else
         x
+
+
+-- | Convert an `Int` to a `Float` (Elm's `toFloat`). Exact for every Int
+-- whose magnitude is at most 2^53; a larger Int rounds to the nearest
+-- Float.
+--
+--     toFloat 3 / 2.0 == 1.5
+toFloat : Int -> Float
+toFloat =
+    Ffi.kernel "Basics_toFloat"

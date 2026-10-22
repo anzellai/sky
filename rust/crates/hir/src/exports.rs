@@ -182,7 +182,7 @@ pub fn compute_exports(
                     is_record,
                 });
             }
-            ast::Decl::TypeAnno(_) | ast::Decl::Foreign(_) => {}
+            ast::Decl::TypeAnno(_) => {}
         }
     }
 

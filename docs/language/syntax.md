@@ -178,7 +178,18 @@ error (`[E1014] UNKNOWN OPERATOR`): "not equal" is `/=`, never `!=`.
 
 `module`, `exposing`, `import`, `as`, `type`, `alias`, `if`, `then`, `else`, `case`, `of`, `let`, `in`.
 
-Non-reserved identifiers frequently used in Sky but which are *not* keywords: `from`, `where`.
+Non-reserved identifiers frequently used in Sky but which are *not* keywords: `from`, `where`, `port`, `foreign`.
+
+A reserved word where a name is expected (a binding, a parameter, a field) is
+one parse error that names the word, with no follow-on errors:
+
+```text
+`type` is a reserved word and cannot be used as a name. Pick another name. The reserved words are: module, exposing, import, as, type, alias, if, then, else, case, of, let, in.
+```
+
+`True` and `False` are literals, not names. Before v0.27.12 the compiler also
+reserved `foreign` (a leftover rule with no meaning), so `let foreign = …`
+failed with `expected a pattern`; it is an ordinary name now.
 
 ## Known limitations
 

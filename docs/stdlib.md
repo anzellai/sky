@@ -51,6 +51,7 @@ Implicitly available everywhere via `Sky.Core.Prelude exposing (..)`. Nothing to
 | `compare` | `comparable -> comparable -> Order` | LT / EQ / GT |
 | `negate`, `abs`, `sqrt` | `number -> number` | Math basics |
 | `min`, `max` | `comparable -> comparable -> comparable` | Pick smaller / larger |
+| `toFloat` | `Int -> Float` | Int to Float, as in Elm (`toFloat 3 / 2.0 == 1.5`). Exact up to 2^53. The other way: `Math.round` / `floor` / `ceil` / `trunc` |
 
 ### `String` — text manipulation
 
@@ -518,6 +519,9 @@ case Dec.decodeString (Dec.field "name" Dec.string) payload of
 | `Dec.andThen` | dependent decoders |
 | `Dec.succeed` / `Dec.fail` | constant decoders |
 | `Dec.oneOf` | try decoders in order |
+| `Dec.null` | `a -> Decoder a` — succeeds with the value on JSON `null`, fails on anything else |
+| `Dec.nullable` | `Decoder a -> Decoder (Maybe a)` — `null` is `Nothing`; any other value must satisfy the decoder (`Just`), else `Err` |
+| `Dec.maybe` | `Decoder a -> Decoder (Maybe a)` — `Just` on success, `Nothing` on ANY failure (a wrong type included); prefer `nullable` |
 | `Dec.at` | `List String -> Decoder a -> Decoder a` (path traversal) |
 
 `Value` is one type shared by both modules: a `Dec.value` result nests in `Enc.object` / `Enc.list` and writes back with `Enc.encode`. `Enc.encode` has no error result, so the one `Value` JSON cannot hold — a NaN or infinite `Float` (`Math.nan`, `Math.inf`, a Float overflow) — raises the classified `JsonEncodeFailure` panic (a 500 for that request in a server, exit 1 in a CLI). It never returns an empty string. Check a Float you do not control with `Math.isNaN` first.
@@ -539,6 +543,15 @@ userDecoder =
         |> Pipeline.required "name" Dec.string
         |> Pipeline.optional "age"  Dec.int 0
 ```
+
+`Pipeline.optional name decoder default` gives `default` when the field is
+absent, when it is `null`, or when the input is not an object. A field that is
+present and not `null` must satisfy the decoder: `{"age": "7"}` is an `Err`
+that names `.age`, never `0` (the elm-json-decode-pipeline rule, since
+v0.27.12). To accept a wrongly typed value on purpose, say so in the decoder:
+`Pipeline.optional "age" (Dec.oneOf [ Dec.int, Dec.succeed 0 ]) 0`. To keep
+`null` apart from absent, use `Pipeline.optional "age" (Dec.nullable Dec.int)
+(Just 0)`.
 
 ### `Uuid` — UUID generation + parsing
 

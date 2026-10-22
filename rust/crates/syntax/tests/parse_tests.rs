@@ -288,3 +288,117 @@ fn qualified_value_then_field_is_field_access() {
     // `.x` on `Shape.origin`, then `.w` and `.z` on `A.B.v`.
     assert_eq!(count(&parse, SyntaxKind::FieldAccess), 3);
 }
+
+// ---- reserved words (v0.27.12) --------------------------------------------
+//
+// `foreign` was a keyword in the Rust lexer only: `docs/language/syntax.md`
+// never listed it, and the one rule that used it (a top-level `foreign …`
+// line) was parsed and then dropped by `hir`. So `let foreign = "x"` failed
+// with `expected a pattern` and a cascade of `expected RParen` errors. It is
+// an ordinary name now. Every word that IS reserved gets ONE diagnostic that
+// names it, wherever a name is expected, and no follow-on errors.
+
+fn reserved_errors(src: &str) -> Vec<std::string::String> {
+    p(src).errors().iter().map(|d| d.message.clone()).collect()
+}
+
+fn assert_one_reserved(src: &str, kw: &str) {
+    let errs = reserved_errors(src);
+    assert_eq!(
+        errs.len(),
+        1,
+        "`{kw}`: expected exactly ONE diagnostic (no cascade) for {src:?}, got {errs:?}"
+    );
+    assert!(
+        errs[0].contains(&format!("`{kw}` is a reserved word")),
+        "`{kw}`: the diagnostic must name the reserved word, got {:?}",
+        errs[0]
+    );
+}
+
+#[test]
+fn foreign_is_an_ordinary_name() {
+    assert_clean("x =\n    let\n        foreign =\n            \"x\"\n    in\n    foreign\n");
+    assert_clean("foreign =\n    1\n");
+    assert_clean("f foreign =\n    foreign\n");
+    assert_clean("g r =\n    { r | foreign = 1 }.foreign\n");
+    assert!(!syntax::RESERVED_WORDS.contains(&"foreign"));
+}
+
+#[test]
+fn reserved_words_match_the_lexer_and_the_docs() {
+    for kw in syntax::RESERVED_WORDS {
+        let toks = syntax::lex(kw);
+        assert!(
+            toks.iter()
+                .any(|t| t.kind != SyntaxKind::LowerIdent && t.kind != SyntaxKind::Eof),
+            "`{kw}` is listed as reserved but lexes as a name"
+        );
+    }
+    let docs = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../docs/language/syntax.md"
+    ))
+    .expect("docs/language/syntax.md");
+    let section = docs
+        .split("## Reserved words")
+        .nth(1)
+        .expect("a `## Reserved words` section")
+        .split("\n## ")
+        .next()
+        .unwrap();
+    let listed_line = section.lines().find(|l| l.starts_with('`')).unwrap();
+    let listed: Vec<&str> = listed_line
+        .split('`')
+        .enumerate()
+        .filter(|(i, _)| i % 2 == 1)
+        .map(|(_, w)| w)
+        .collect();
+    let mut want: Vec<&str> = syntax::RESERVED_WORDS.to_vec();
+    let mut got = listed.clone();
+    want.sort_unstable();
+    got.sort_unstable();
+    assert_eq!(
+        got, want,
+        "docs/language/syntax.md must list exactly the lexer's reserved words"
+    );
+}
+
+#[test]
+fn reserved_word_as_a_let_name_is_one_named_error() {
+    for kw in syntax::RESERVED_WORDS {
+        if matches!(*kw, "module" | "import") {
+            continue;
+        }
+        let src = format!("x =\n    let\n        {kw} =\n            1\n    in\n    2\n");
+        assert_one_reserved(&src, kw);
+    }
+}
+
+#[test]
+fn reserved_word_as_a_parameter_is_one_named_error() {
+    for kw in syntax::RESERVED_WORDS {
+        let src = format!("f {kw} =\n    1\n");
+        assert_one_reserved(&src, kw);
+        let src = format!("g =\n    \\{kw} -> 1\n");
+        assert_one_reserved(&src, kw);
+    }
+}
+
+#[test]
+fn reserved_word_as_a_top_level_name_is_one_named_error() {
+    for kw in syntax::RESERVED_WORDS {
+        if matches!(*kw, "module" | "import") {
+            continue;
+        }
+        let src = format!("module Main exposing (main)\n\n{kw} =\n    1\n\n\nmain =\n    2\n");
+        assert_one_reserved(&src, kw);
+    }
+}
+
+#[test]
+fn reserved_word_as_a_field_name_is_one_named_error() {
+    assert_one_reserved("r =\n    { type = 1 }\n", "type");
+    assert_one_reserved("g r =\n    r.type\n", "type");
+    assert_one_reserved("g r =\n    { r | of = 1 }\n", "of");
+}

@@ -1943,6 +1943,14 @@ func Basics_modBy(divisor, n any) any {
 	return Basics_modByT(AsInt(divisor), AsInt(n))
 }
 
+// Basics_toFloat — Elm's `toFloat : Int -> Float`. The erased entry point
+// for a call whose argument the compiler cannot prove is a Go `int`; a
+// proven `int` argument lowers to the typed twin `Basics_toFloatT`.
+func Basics_toFloat(n any) any { return float64(AsInt(n)) }
+
+// Basics_toFloatT — the typed twin of Basics_toFloat (doc 14 §5.3).
+func Basics_toFloatT(n int) float64 { return float64(n) }
+
 // Basics_clamp — any-typed wrapper around Basics_clampT to match the
 // codegen's default `rt.Basics_clamp` call shape. Without this, every
 // `clamp lo hi n` reference where ANY of the args isn't a primitive

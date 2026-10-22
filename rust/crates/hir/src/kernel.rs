@@ -130,6 +130,8 @@ pub const BUILTIN_VARS: &[(&str, &str, &str)] = &[
     ("errorToString", "Basics", "errorToString"),
     ("println", "Log", "println"),
     ("js", "Basics", "js"),
+    // Elm's `toFloat : Int -> Float`, ambient like the rest of Basics.
+    ("toFloat", "Basics", "toFloat"),
 ];
 
 /// `builtinTypes` (Environment.hs:229): `(name, arity)`. `Error` is auto-imported
@@ -268,7 +270,7 @@ pub const PRELUDE_QUALIFIERS: &[(&str, &[&str])] = &[
         "Basics",
         &[
             "identity", "always", "not", "toString", "modBy", "clamp", "fst", "snd", "compare",
-            "negate", "abs", "sqrt", "min", "max",
+            "negate", "abs", "sqrt", "min", "max", "toFloat",
         ],
     ),
     ("Cmd", &["none", "batch", "perform"]),
@@ -331,6 +333,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "max",
             "errorToString",
             "js",
+            "toFloat",
         ],
     ),
     (
@@ -791,6 +794,9 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "succeed",
             "fail",
             "oneOf",
+            "null",
+            "nullable",
+            "maybe",
             "at",
             "map2",
             "map3",

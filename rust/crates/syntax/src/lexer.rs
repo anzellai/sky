@@ -158,6 +158,16 @@ fn lex_char(lex: &mut Lexer<Lx>) {
     lex.bump(end.unwrap_or(stop));
 }
 
+/// Every lower-case reserved word: the words that cannot be used as a name.
+/// `lower_keyword` maps each to its keyword token, and the parser names the
+/// word in one diagnostic when it meets one where a name is expected.
+/// `docs/language/syntax.md` lists the same set (a parse test keeps the two
+/// in step).
+pub const RESERVED_WORDS: &[&str] = &[
+    "module", "exposing", "import", "as", "type", "alias", "if", "then", "else", "case", "of",
+    "let", "in",
+];
+
 /// Lower-cased keyword set (doc 04 §3.4). `True`/`False` are upper — handled
 /// separately.
 fn lower_keyword(text: &str) -> Option<SyntaxKind> {
@@ -168,7 +178,6 @@ fn lower_keyword(text: &str) -> Option<SyntaxKind> {
         "as" => SyntaxKind::AsKw,
         "type" => SyntaxKind::TypeKw,
         "alias" => SyntaxKind::AliasKw,
-        "foreign" => SyntaxKind::ForeignKw,
         "if" => SyntaxKind::IfKw,
         "then" => SyntaxKind::ThenKw,
         "else" => SyntaxKind::ElseKw,

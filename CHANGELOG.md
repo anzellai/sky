@@ -11,6 +11,44 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.27.12 — `toFloat`, strict `Pipeline.optional`, `foreign` as a name (2026-10-22)
+
+### Migration
+
+`Json.Decode.Pipeline.optional` no longer hides a wrongly typed value. A field that is present and not `null`, and that the decoder rejects, is now an `Err` (for example `at .n: expected Int, got String`). Before, it silently became the default. Absent fields, `null` fields and a non-object input still give the default.
+
+1. Run your tests and each JSON input once. A decode that now fails was reading a value of the wrong type.
+2. If the payload is wrong, fix the decoder to match it (for example `Decode.string` where the field is a string).
+3. If you want the old lenient behaviour for one field, say so in the decoder:
+
+   ```elm
+   -- before (v0.27.11): a wrongly typed "n" silently gave 0
+   |> Pipeline.optional "n" Decode.int 0
+
+   -- after: the same lenient behaviour, written out
+   |> Pipeline.optional "n" (Decode.oneOf [ Decode.int, Decode.succeed 0 ]) 0
+   ```
+
+4. To keep `null` apart from an absent field, use the new `Decode.nullable`:
+
+   ```elm
+   |> Pipeline.optional "name" (Decode.nullable Decode.string) Nothing
+   ```
+
+A hand-written `Util.nullable` or `optionalField` that tests for `null` through `Decode.value` can now be replaced by `Decode.nullable` and `Pipeline.optional`.
+
+### Added
+
+- **`toFloat : Int -> Float`**, in `Sky.Core.Basics` and the Prelude, as in Elm. `toFloat 3 / 2.0 == 1.5`, with no import. Exact for every Int up to 2^53. Over a typed `Int` it compiles to a typed Go call (`rt.Basics_toFloatT`), with no runtime narrowing. (`sky-stdlib/Sky/Core/Basics.sky`, `runtime-go/rt/rt.go`, `rust/crates/lower`; tests `to_float_typed_emit.rs`, `basics_tofloat_test.go`, `MathConformanceTest`.)
+- **`Decode.null`, `Decode.nullable` and `Decode.maybe`** in `Sky.Core.Json.Decode`, with Elm semantics. `null v` succeeds with `v` on JSON `null` only. `nullable d` gives `Nothing` on `null`, `Just` on a value `d` accepts and `Err` on a value `d` rejects. `maybe d` gives `Just` on success and `Nothing` on any failure. (`runtime-go/rt/stdlib_extra.go`; tests `json_optional_strict_test.go`, `JsonConformanceTest`.)
+- **`sky init` writes a `.gitattributes`** that makes GitHub highlight `.sky` and `.skyi` files as Elm (GitHub Linguist has no Sky grammar yet, and Sky syntax is Elm). Every template variant writes it, and an existing `.gitattributes` is kept. (`rust/crates/sky/src/main.rs`; tests in `init_scaffold_flow.rs`; `docs/tooling/cli.md`.)
+
+### Fixed
+
+- **`Pipeline.optional` returned the default for a present value of the wrong type.** `JsonDecP_optional` dropped the inner decoder's `Err`, so `{"n": "7"}` decoded with `optional "n" Decode.int 0` as `Ok 0`. That hides an upstream schema change. It now follows the elm-json-decode-pipeline rule (see Migration). The inner decoder runs first, so a `Decode.nullable` decoder decides what `null` means. There is no `optionalAt` in Sky, and `required`, `requiredAt` and `custom` already returned the inner `Err`. (`runtime-go/rt/stdlib_extra.go`; test `TestPipelineOptionalPresentWrongTypeIsErr`.)
+- **`foreign` can be used as a name.** The Rust lexer reserved `foreign` for a leftover top-level rule that the compiler parsed and then dropped. `docs/language/syntax.md` never listed it as reserved. `let foreign = "x"` failed with `expected a pattern` and a cascade of `expected RParen` errors. The keyword and its rule are removed. (`rust/crates/syntax`; test `foreign_is_an_ordinary_name`.)
+- **A reserved word used as a name is one error that names the word.** In a `let` binding, a parameter, a lambda parameter, a top-level name, a record field or a field access, `type` (or any other reserved word) now gives one `[E0001]` ("`type` is a reserved word and cannot be used as a name …", with the list of reserved words) and no follow-on errors. `docs/language/syntax.md` lists the reserved words, and a parse test keeps the list in step with the lexer. (`rust/crates/syntax/src/parser.rs`, `grammar.rs`; tests `reserved_word_as_a_*`.)
+
 ## v0.27.11 — A stopping server no longer strands its pages on the browser's error page (2026-10-17)
 
 ### Fixed

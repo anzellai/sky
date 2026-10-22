@@ -116,3 +116,42 @@ fn a_fresh_project_checks_with_zero_findings_and_a_clean_doctor() {
     );
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// The `.gitattributes` every new project gets (v0.27.12): GitHub Linguist has
+/// no Sky grammar, and Sky syntax is Elm, so `.sky` / `.skyi` files highlight
+/// as Elm. Every template variant writes it; an existing file is kept.
+const GITATTRIBUTES: &str =
+    "# GitHub Linguist has no Sky grammar yet. Sky syntax is Elm, so highlight it as Elm.\n\
+*.sky linguist-language=Elm\n\
+*.skyi linguist-language=Elm\n";
+
+#[test]
+fn a_fresh_project_highlights_sky_as_elm_on_github() {
+    for flag in [None, Some("--production")] {
+        let (base, dir) = scaffold(flag);
+        let attrs = std::fs::read_to_string(dir.join(".gitattributes"))
+            .unwrap_or_else(|e| panic!("{flag:?}: sky init writes a .gitattributes: {e}"));
+        assert_eq!(
+            attrs, GITATTRIBUTES,
+            "{flag:?}: the exact .gitattributes lines"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+#[test]
+fn sky_init_keeps_an_existing_gitattributes() {
+    let base = scratch();
+    let dir = base.join("fresh");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mine = "*.png binary\n";
+    std::fs::write(dir.join(".gitattributes"), mine).unwrap();
+    let (code, out, err) = run(&base, &["init", "fresh"]);
+    assert_eq!(code, 0, "sky init:\n{out}{err}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join(".gitattributes")).unwrap(),
+        mine,
+        "sky init must not overwrite a .gitattributes the project already has"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}

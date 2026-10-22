@@ -114,7 +114,6 @@ pub const KIND_CLASSES: &[(SyntaxKind, KindClass)] = &[
     (AsKw, KEYWORD),
     (TypeKw, KEYWORD),
     (AliasKw, KEYWORD),
-    (ForeignKw, KEYWORD),
     (IfKw, KEYWORD),
     (ThenKw, KEYWORD),
     (ElseKw, KEYWORD),
@@ -167,7 +166,6 @@ pub const KIND_CLASSES: &[(SyntaxKind, KindClass)] = &[
     (TypeAnnoDecl, KindClass::Construct),
     (UnionDecl, KindClass::Construct),
     (AliasDecl, KindClass::Construct),
-    (ForeignDecl, KindClass::Construct),
     (ParamList, KindClass::Construct),
     (TypeVarList, KindClass::Construct),
     (UnionVariantList, KindClass::Construct),
@@ -327,11 +325,11 @@ mod tests {
         let constructs = construct_kinds().len();
         let total = kind_count();
         assert_eq!(
-            total, 124,
+            total, 122,
             "SyntaxKind count changed — reclassify, then update this pin"
         );
         assert_eq!(
-            constructs, 80,
+            constructs, 79,
             "construct count changed ({constructs} of {total}) — intentional? update this pin \
              in the same commit that changes KIND_CLASSES"
         );

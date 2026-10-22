@@ -18,7 +18,7 @@ pub mod ast;
 
 pub use kind::{SkyLang, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 pub use layout::{layout, PToken};
-pub use lexer::{lex, LexToken};
+pub use lexer::{lex, LexToken, RESERVED_WORDS};
 /// Byte-range primitives from rowan — re-exported so downstream crates (the
 /// resolver's LSP occurrence recording) can name a token/node range without a
 /// direct rowan dependency.

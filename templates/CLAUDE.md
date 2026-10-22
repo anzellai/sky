@@ -99,3 +99,11 @@ logic for a `web:app` (or desktop / mobile) client. The runtime re-sends a
 transiently failing request, shows "Reconnecting…" after 3 s and the Retry
 bar only once its budget is spent; `App.withRpcError` sees FINAL errors only.
 For an app-owned indicator use `Sub.connection` (see AGENTS.md).
+
+### After an upgrade to v0.27.12, run the tests that decode JSON
+
+`Pipeline.optional` now returns an `Err` for a present, non-null value its
+decoder rejects (it used to return the default). Run `sky test` and exercise
+each JSON input once after the upgrade. Where a lenient fallback is intended,
+write it out (`Decode.oneOf [ dec, Decode.succeed default ]`); do not loosen a
+decoder only to make a test pass. See AGENTS.md "JSON decoding is strict".

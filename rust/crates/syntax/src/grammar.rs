@@ -5,7 +5,7 @@
 //! (the scar doc 04 §13 names).
 
 use crate::kind::SyntaxKind::{self, *};
-use crate::parser::{CompletedMarker, Parser, TokenSet};
+use crate::parser::{is_reserved_word, CompletedMarker, Parser, TokenSet};
 
 // ---- token sets ----------------------------------------------------------
 
@@ -47,7 +47,7 @@ const PAT_ATOM_START: TokenSet = TokenSet::new(&[
     FalseKw,
 ]);
 
-const DECL_START: TokenSet = TokenSet::new(&[TypeKw, ForeignKw, LowerIdent, UpperIdent]);
+const DECL_START: TokenSet = TokenSet::new(&[TypeKw, LowerIdent, UpperIdent]);
 
 // ---- entry ---------------------------------------------------------------
 
@@ -62,7 +62,7 @@ pub(crate) fn source_file(p: &mut Parser) {
     // top-level anchor is column 1: a decl body continues while col > 1.
     p.with_indent(1, |p| {
         while !p.at_end() {
-            if p.at_any(DECL_START) {
+            if p.at_any(DECL_START) || at_reserved_decl_name(p) {
                 decl(p);
             } else if p.at_block_boundary() {
                 // A non-declaration token sitting AT the top-level anchor (col 1
@@ -199,10 +199,18 @@ fn import_decl(p: &mut Parser) {
 
 // ---- declarations --------------------------------------------------------
 
+/// A reserved word used as a top-level name: `type = 1`, `case : Int`.
+fn at_reserved_decl_name(p: &Parser) -> bool {
+    p.at_reserved_word() && matches!(p.nth(1), Eq | Colon)
+}
+
 fn decl(p: &mut Parser) {
+    if at_reserved_decl_name(p) {
+        value_or_anno(p);
+        return;
+    }
     match p.current() {
         TypeKw => type_decl(p),
-        ForeignKw => foreign_decl(p),
         LowerIdent | UpperIdent => value_or_anno(p),
         _ => p.err_and_bump("expected a declaration"),
     }
@@ -210,7 +218,11 @@ fn decl(p: &mut Parser) {
 
 fn value_or_anno(p: &mut Parser) {
     let m = p.start();
-    p.bump(); // the binding / type name
+    if p.at_reserved_word() {
+        p.reserved_word_error_and_bump();
+    } else {
+        p.bump(); // the binding / type name
+    }
     if p.at(Colon) {
         // `name : Type` annotation (the `:` may be on a continuation line).
         p.bump();
@@ -228,7 +240,7 @@ fn value_or_anno(p: &mut Parser) {
         // (patternCtorArgs is greedy). A lowercase/paren/literal param
         // delegates to `pattern_atom`, so those are unchanged.
         let pl = p.start();
-        while p.at_any(PAT_ATOM_START) && !p.at(Eq) {
+        while (p.at_any(PAT_ATOM_START) || p.at_reserved_word()) && !p.at(Eq) {
             pattern_app(p);
         }
         pl.complete(p, ParamList);
@@ -289,18 +301,6 @@ fn variant(p: &mut Parser) {
         type_atom(p);
     }
     m.complete(p, UnionVariant);
-}
-
-fn foreign_decl(p: &mut Parser) {
-    let m = p.start();
-    p.bump(); // foreign
-              // consume the rest of the foreign line + indented continuations.
-    p.with_indent(1, |p| {
-        while !p.at_end() && p.at_continuation() {
-            p.bump();
-        }
-    });
-    m.complete(p, ForeignDecl);
 }
 
 // ---- types ---------------------------------------------------------------
@@ -544,6 +544,11 @@ fn pattern_atom(p: &mut Parser) -> CompletedMarker {
         LParen => pattern_paren(p),
         LBrack => pattern_list(p),
         LBrace => pattern_record(p),
+        _ if p.at_reserved_word() => {
+            let m = p.start();
+            p.reserved_word_error_and_bump();
+            m.complete(p, Error)
+        }
         _ => {
             let m = p.start();
             p.error("expected a pattern");
@@ -737,10 +742,18 @@ fn primary_expr(p: &mut Parser) -> CompletedMarker {
 
 /// Field-access chains: `record.field.sub`.
 fn postfix(p: &mut Parser, mut cm: CompletedMarker) -> CompletedMarker {
-    while p.at(Dot) && !p.ws_before() && p.nth(1) == LowerIdent {
+    while p.at(Dot)
+        && !p.ws_before()
+        && (p.nth(1) == LowerIdent || (is_reserved_word(p.nth(1)) && !p.nth_ws_before(1)))
+    {
         let m = cm.precede(p);
         p.bump(); // .
-        p.bump(); // field
+        if p.at_reserved_word() {
+            // `record.type`: a reserved word cannot be a field name.
+            p.reserved_word_error_and_bump();
+        } else {
+            p.bump(); // field
+        }
         cm = m.complete(p, FieldAccess);
     }
     cm
@@ -869,6 +882,13 @@ fn atom(p: &mut Parser) -> CompletedMarker {
         IfKw => if_expr(p),
         LetKw => let_expr(p),
         CaseKw => case_expr(p),
+        // A reserved word that can neither start nor end an expression, where
+        // one is expected, was meant as a name (`in type`).
+        ModuleKw | ExposingKw | ImportKw | AsKw | TypeKw | AliasKw => {
+            let m = p.start();
+            p.reserved_word_error_and_bump();
+            m.complete(p, Error)
+        }
         _ => {
             let m = p.start();
             p.error("expected an expression");
@@ -982,7 +1002,7 @@ fn lambda_expr(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
     p.bump(); // backslash
     let pl = p.start();
-    while p.at_any(PAT_ATOM_START) && !p.at(Arrow) {
+    while (p.at_any(PAT_ATOM_START) || p.at_reserved_word()) && !p.at(Arrow) {
         // `pattern_app` so an uppercase constructor param consumes its
         // args (`\Just x -> …`), matching the oracle's `lambdaParams`.
         pattern_app(p);
@@ -1009,7 +1029,9 @@ fn let_expr(p: &mut Parser) -> CompletedMarker {
     p.bump(); // let
     let anchor = p.col(); // first binding's column
     loop {
-        if p.at(InKw) || p.at_end() {
+        // `in` followed by `=` is `in` misused as a binding name, not the
+        // end of the bindings: parse it as a binding so the error names it.
+        if (p.at(InKw) && p.nth(1) != Eq) || p.at_end() {
             break;
         }
         let_binding(p, anchor);
@@ -1042,7 +1064,7 @@ fn let_binding(p: &mut Parser, anchor: u32) {
         let m = p.start();
         p.bump(); // name
         let pl = p.start();
-        while p.at_any(PAT_ATOM_START) && !p.at(Eq) {
+        while (p.at_any(PAT_ATOM_START) || p.at_reserved_word()) && !p.at(Eq) {
             // `pattern_app` so a constructor param consumes its args,
             // matching the oracle's greedy `pattern_` in let bindings.
             pattern_app(p);

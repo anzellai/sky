@@ -78,7 +78,6 @@ ast_node!(ValueDecl, ValueDecl);
 ast_node!(TypeAnnoDecl, TypeAnnoDecl);
 ast_node!(UnionDecl, UnionDecl);
 ast_node!(AliasDecl, AliasDecl);
-ast_node!(ForeignDecl, ForeignDecl);
 ast_node!(ParamList, ParamList);
 ast_node!(TypeVarList, TypeVarList);
 ast_node!(UnionVariantList, UnionVariantList);
@@ -148,16 +147,12 @@ pub enum Decl {
     TypeAnno(TypeAnnoDecl),
     Union(UnionDecl),
     Alias(AliasDecl),
-    Foreign(ForeignDecl),
 }
 
 impl AstNode for Decl {
     fn can_cast(kind: SyntaxKind) -> bool {
         use SyntaxKind::*;
-        matches!(
-            kind,
-            ValueDecl | TypeAnnoDecl | UnionDecl | AliasDecl | ForeignDecl
-        )
+        matches!(kind, ValueDecl | TypeAnnoDecl | UnionDecl | AliasDecl)
     }
     fn cast(node: SyntaxNode) -> Option<Self> {
         Some(match node.kind() {
@@ -165,7 +160,6 @@ impl AstNode for Decl {
             SyntaxKind::TypeAnnoDecl => Decl::TypeAnno(TypeAnnoDecl(node)),
             SyntaxKind::UnionDecl => Decl::Union(UnionDecl(node)),
             SyntaxKind::AliasDecl => Decl::Alias(AliasDecl(node)),
-            SyntaxKind::ForeignDecl => Decl::Foreign(ForeignDecl(node)),
             _ => return None,
         })
     }
@@ -175,7 +169,6 @@ impl AstNode for Decl {
             Decl::TypeAnno(n) => n.syntax(),
             Decl::Union(n) => n.syntax(),
             Decl::Alias(n) => n.syntax(),
-            Decl::Foreign(n) => n.syntax(),
         }
     }
 }

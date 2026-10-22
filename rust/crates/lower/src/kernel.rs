@@ -119,6 +119,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Basics", "negate", "rt.Negate"),
     ("Basics", "abs", "rt.Math_abs"),
     ("Basics", "sqrt", "rt.Math_sqrt"),
+    ("Basics", "toFloat", "rt.Basics_toFloat"),
     // Prelude/Basics `min`/`max` reuse the Math kernels — the HIR kernel table
     // registers them as valid names, but they had no codegen mapping, so a
     // well-typed `min 3 5` passed `sky check` then failed `go build` (E4005).

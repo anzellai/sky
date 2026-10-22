@@ -1206,7 +1206,7 @@ impl<'a> Resolver<'a> {
                         local_aliases.insert(t.text().to_string());
                     }
                 }
-                ast::Decl::TypeAnno(_) | ast::Decl::Foreign(_) => {}
+                ast::Decl::TypeAnno(_) => {}
             }
         }
         let module_name = self.self_module_name();
@@ -1948,7 +1948,7 @@ impl<'a> Resolver<'a> {
                         self.bind_var(an, Res::Def(d), BindLayer::Local);
                     }
                 }
-                ast::Decl::TypeAnno(_) | ast::Decl::Foreign(_) => {}
+                ast::Decl::TypeAnno(_) => {}
             }
         }
     }
@@ -2075,7 +2075,6 @@ impl<'a> Resolver<'a> {
                     }
                     self.finish_body(a.name().map(|t| t.text().to_string()));
                 }
-                ast::Decl::Foreign(_) => {}
             }
         }
     }

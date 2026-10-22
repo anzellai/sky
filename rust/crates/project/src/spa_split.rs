@@ -11873,7 +11873,6 @@ enum DeclKind {
     TypeAnno,
     Union,
     Alias,
-    Foreign,
 }
 
 fn decl_kind(d: &syntax::ast::Decl) -> DeclKind {
@@ -11883,7 +11882,6 @@ fn decl_kind(d: &syntax::ast::Decl) -> DeclKind {
         Decl::TypeAnno(_) => DeclKind::TypeAnno,
         Decl::Union(_) => DeclKind::Union,
         Decl::Alias(_) => DeclKind::Alias,
-        Decl::Foreign(_) => DeclKind::Foreign,
     }
 }
 
@@ -11898,7 +11896,6 @@ fn decl_name(d: &syntax::ast::Decl) -> Option<String> {
         Decl::TypeAnno(t) => t.name().map(|n| n.text().to_string()),
         Decl::Union(u) => u.name().map(|n| n.text().to_string()),
         Decl::Alias(a) => a.name().map(|n| n.text().to_string()),
-        Decl::Foreign(_) => None,
     }
 }
 

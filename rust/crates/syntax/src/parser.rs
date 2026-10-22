@@ -214,9 +214,16 @@ impl<'a> Parser<'a> {
     }
 
     /// Consume `kind` or record a diagnostic without consuming.
+    ///
+    /// Where a name (`LowerIdent`) is expected and a reserved word stands
+    /// instead, the word was meant as the name: report it by name and consume
+    /// it, so the rest of the construct parses without follow-on errors.
     pub(crate) fn expect(&mut self, kind: SyntaxKind) -> bool {
         if self.eat(kind) {
             true
+        } else if kind == LowerIdent && self.at_reserved_word() {
+            self.reserved_word_error_and_bump();
+            false
         } else {
             self.error(format!("expected {kind:?}"));
             false
@@ -230,6 +237,24 @@ impl<'a> Parser<'a> {
         let span = self.cur_span();
         self.diags
             .push(Diagnostic::error("E0001", msg.clone()).with_label(span, msg));
+    }
+
+    /// The current token is a reserved word (see [`is_reserved_word`]).
+    pub(crate) fn at_reserved_word(&self) -> bool {
+        is_reserved_word(self.current())
+    }
+
+    /// One diagnostic that names the reserved word standing where a name is
+    /// expected, with the word wrapped in an ERROR node and consumed, so the
+    /// enclosing construct resumes without a cascade of follow-on errors.
+    pub(crate) fn reserved_word_error_and_bump(&mut self) {
+        let word = self.cur_text();
+        let msg = format!(
+            "`{word}` is a reserved word and cannot be used as a name. Pick another name. \
+             The reserved words are: {}.",
+            crate::lexer::RESERVED_WORDS.join(", ")
+        );
+        self.err_and_bump(msg);
     }
 
     /// Wrap the current token in an ERROR node with a diagnostic, then advance.
@@ -344,4 +369,25 @@ impl<'a> Parser<'a> {
     pub(crate) fn finish(self) -> (Vec<Event>, Vec<Diagnostic>) {
         (self.events, self.diags)
     }
+}
+
+/// A lower-case reserved word token (`lexer::RESERVED_WORDS`). `True` /
+/// `False` are literals, not names, and are not included.
+pub(crate) fn is_reserved_word(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        ModuleKw
+            | ExposingKw
+            | ImportKw
+            | AsKw
+            | TypeKw
+            | AliasKw
+            | IfKw
+            | ThenKw
+            | ElseKw
+            | CaseKw
+            | OfKw
+            | LetKw
+            | InKw
+    )
 }

@@ -10896,7 +10896,7 @@ fn cmd_init(args: &[String]) -> ExitCode {
         println!(
             "sky init [name] [--production]\n\n\
              Scaffold a new Sky project in ./<name> (default: sky-project):\n  \
-             sky.toml, src/Main.sky, .gitignore, .dockerignore, docker-compose.yml, .env.example, AGENTS.md, CLAUDE.md.\n\n\
+             sky.toml, src/Main.sky, .gitignore, .gitattributes, .dockerignore, docker-compose.yml, .env.example, AGENTS.md, CLAUDE.md.\n\n\
              Default is SQLite + in-memory sessions — zero setup, `sky run` and go.\n\
              The production path (one Postgres for app data + sessions + analytics +\n\
              telemetry) is documented inline in sky.toml + ready in docker-compose.yml.\n\n\
@@ -11128,6 +11128,23 @@ main =
             return ExitCode::FAILURE;
         }
     }
+    // `.gitattributes`: GitHub Linguist has no Sky grammar, and Sky syntax is
+    // Elm, so `.sky` / `.skyi` files highlight as Elm. A project that already
+    // has one keeps it untouched.
+    let gitattributes_path = root.join(".gitattributes");
+    let wrote_gitattributes = !gitattributes_path.exists();
+    if wrote_gitattributes {
+        let gitattributes = "# GitHub Linguist has no Sky grammar yet. Sky syntax is Elm, so highlight it as Elm.\n\
+                             *.sky linguist-language=Elm\n\
+                             *.skyi linguist-language=Elm\n";
+        if let Err(e) = std::fs::write(&gitattributes_path, gitattributes) {
+            eprintln!(
+                "sky init: could not write {}: {e}",
+                gitattributes_path.display()
+            );
+            return ExitCode::FAILURE;
+        }
+    }
 
     // Best-effort AI coding guide: AGENTS.md is the agent-agnostic source of
     // truth (Claude/Copilot/Cursor/…); CLAUDE.md is a thin entry point that
@@ -11153,6 +11170,9 @@ main =
     println!("  sky.toml");
     println!("  src/Main.sky");
     println!("  .gitignore");
+    if wrote_gitattributes {
+        println!("  .gitattributes       (GitHub highlights .sky files as Elm)");
+    }
     println!("  .dockerignore        (keeps .skydata/ keys and .env out of images)");
     println!("  docker-compose.yml   (production Postgres — optional)");
     println!("  .env.example         (copy to .env for production)");

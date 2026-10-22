@@ -85,6 +85,13 @@ Core syntax you must get right:
 - **Import aliasing**: `import Std.Db as Db exposing (Store)`.
 - **Multiline strings**: triple-quoted with `{{expr}}` interpolation; `\{{` escapes.
 - **Negative literal args**: `f -1` parses as `f (-1)`; `f - 1` is subtraction.
+- **Int to Float**: `toFloat n` (Prelude, as in Elm). Float to Int: `Math.round` / `floor` / `ceil` / `trunc`.
+- **Reserved words**: `module exposing import as type alias if then else case of let in`.
+  One of them used as a name is one parse error that names it. `foreign`, `where`
+  and `port` are ordinary names.
+- **JSON**: `Pipeline.optional name dec default` gives `default` only when the
+  field is absent or `null`; a present value `dec` rejects is an `Err` (since
+  v0.27.12). `Decode.nullable` / `Decode.maybe` / `Decode.null` are as in Elm.
 - No custom operators, no `where` clauses (use `let`), no higher-kinded types (HM only).
 
 **Effect boundary — the single most important rule.** Every observable side
