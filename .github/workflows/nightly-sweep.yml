@@ -61,16 +61,18 @@ jobs:
       # ~742 MiB.
       GO_CACHE_BUDGET_MB: '6144'
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
         id: go-cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -79,7 +81,7 @@ jobs:
           restore-keys: |
             go-sweep-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
             go-sweep-
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: sky-gates-linux
@@ -128,7 +130,7 @@ jobs:
       # repository budget, and every run went cache-cold.
       - name: Save the Go caches (main only)
         if: always() && github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -171,27 +173,29 @@ jobs:
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
       GO_CACHE_BUDGET_MB: '6144'
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         id: setup-go
         with:
           go-version: '1.26'
           cache: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22'
       # The one writer of the Playwright browser cache (on main); the release
       # gate-web-* jobs restore it (.github/actions/playwright-setup).
       - name: Restore the Playwright browsers
         id: pw-cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - name: Cache Go build + module cache
         id: go-cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -200,7 +204,7 @@ jobs:
           restore-keys: |
             go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
             go-linux-
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: sky-gates-linux
@@ -209,7 +213,8 @@ jobs:
         timeout-minutes: 10
         run: |
           npm ci --no-audit --no-fund || npm install --no-audit --no-fund
-          npx playwright install --with-deps chromium
+          bash "$GITHUB_WORKSPACE/scripts/ci/playwright-deps.sh" chromium
+          npx playwright install chromium
       - name: Build sky binary
         run: |
           source scripts/lib/cargo-target.sh
@@ -278,7 +283,8 @@ jobs:
         timeout-minutes: 10
         # The terminal-race case runs vim in the terminal, in Chromium and WebKit.
         run: |
-          npx playwright install --with-deps webkit
+          bash "$GITHUB_WORKSPACE/scripts/ci/playwright-deps.sh" webkit
+          npx playwright install webkit
           command -v vim >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq vim; }
           scripts/ui-canvas-terminal-e2e.sh
       # Std.Nav: `update` moves the address bar without a reload (pushUrl,
@@ -341,7 +347,7 @@ jobs:
       # the runner, so both had to be re-derived by hand.
       - name: Upload failure evidence (diffs, server logs, build logs)
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: web-runtime-evidence
           path: |
@@ -354,7 +360,7 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
       - name: Save the Playwright browsers (main only)
         if: always() && github.ref == 'refs/heads/main' && steps.pw-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -407,16 +413,18 @@ jobs:
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
       GO_CACHE_BUDGET_MB: '6144'
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
         id: go-cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -425,7 +433,7 @@ jobs:
           restore-keys: |
             go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
             go-linux-
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: sky-gates-linux
@@ -516,16 +524,18 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
         id: go-cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -534,7 +544,7 @@ jobs:
           restore-keys: |
             go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
             go-linux-
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: sky-gates-linux
@@ -621,9 +631,11 @@ jobs:
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
       GO_CACHE_BUDGET_MB: '6144'
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         id: setup-go
         with:
           go-version: '1.26'
@@ -635,14 +647,14 @@ jobs:
       # Extract on the same filesystem as $HOME. Ubuntu 26.04 mounts /tmp as
       # tmpfs, and the action's rename from os.tmpdir() into $HOME then fails
       # with EXDEV ("cross-device link not permitted").
-      - uses: rhysd/action-setup-vim@v1
+      - uses: rhysd/action-setup-vim@febef33995d6649302e9d88dda81e071b68f16a7 # v1
         env:
           TMPDIR: ${{ runner.temp }}
         with:
           neovim: true
       - name: Cache Go build + module cache
         id: go-cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -651,7 +663,7 @@ jobs:
           restore-keys: |
             go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
             go-linux-
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: sky-gates-linux
@@ -714,7 +726,7 @@ jobs:
     env:
       PLATFORM: linux-amd64
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # `runner` is NOT one of the contexts a job-level `env:` may use, and the
       # penalty is not a warning: GitHub refuses to parse the whole FILE. Both
@@ -780,7 +792,7 @@ jobs:
 
       - name: Upload the SBOM
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: nightly-sbom-linux-amd64
           path: ${{ runner.temp }}/bundles/*/sbom.json
@@ -800,7 +812,7 @@ jobs:
     timeout-minutes: 60
     steps:
       # Full history: the flake reads the commit for its `+g<rev>` version.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
@@ -818,21 +830,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: sky-linux
           save-if: 'false'
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Cache the Sky Go build cache
         id: go-cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.sky/go-build
@@ -848,7 +862,7 @@ jobs:
         run: bash scripts/bench-build.sh --reps 3 --cases "app skyshop" --out build-perf.json --write-budget build-budget.proposed.json --budget docs/perf/build-budget.json
       - name: Keep the measurements
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: build-perf-nightly
           path: |

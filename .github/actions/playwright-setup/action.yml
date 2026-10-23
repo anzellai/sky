@@ -15,12 +15,12 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - uses: actions/setup-node@v7
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
       with:
         node-version: '22'
     # Restore only: the nightly web-runtime job (on main) saves it.
     - name: Restore the Playwright browsers (saved on main only)
-      uses: actions/cache/restore@v6
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: ~/.cache/ms-playwright
         key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -29,5 +29,6 @@ runs:
       run: |
         set -euo pipefail
         npm ci --no-audit --no-fund || npm install --no-audit --no-fund
-        npx playwright install --with-deps ${{ inputs.browsers }}
+        bash "$GITHUB_WORKSPACE/scripts/ci/playwright-deps.sh" ${{ inputs.browsers }}
+        npx playwright install ${{ inputs.browsers }}
         bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3

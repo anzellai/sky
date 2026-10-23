@@ -73,7 +73,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # A real GNU readline on the runner lets the suite include one rejection
       # driven by a genuine GPL library rather than a stub carrying its name.
@@ -136,7 +136,7 @@ jobs:
     # here wastes a full matrix.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # NOTE: libreadline-dev is deliberately NOT installed on the build
       # runners. --without-readline already excludes it, but not having the
@@ -230,7 +230,7 @@ jobs:
           du -sh "$BUNDLE"
           ls -la "${TMP}/${NAME}.tar.gz"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: postgres-bundle-${{ matrix.platform }}
           path: |
@@ -252,7 +252,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # The tag IS the URL. `sky db provision --embed` builds its default
       # download URL as `postgres-bundle-v<PG_VERSION>` from the version pinned
@@ -305,7 +305,7 @@ jobs:
           echo "release tag: ${want} (pinned PostgreSQL ${pinned}, ref ${GITHUB_REF_NAME})"
           echo "tag=${want}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: staging
 
@@ -362,7 +362,7 @@ jobs:
           cat SHA256SUMS
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           # The DERIVED tag, never github.ref_name — on a manual dispatch that
           # is a branch name, and a release published under one is invisible to
