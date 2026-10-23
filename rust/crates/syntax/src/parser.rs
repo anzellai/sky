@@ -5,6 +5,7 @@
 //! [`crate::grammar`].
 
 use crate::event::Event;
+use crate::grammar::UNIT_START;
 use crate::kind::SyntaxKind::{self, *};
 use crate::layout::PToken;
 use base::{FileId, Span};
@@ -29,6 +30,16 @@ impl TokenSet {
             i += 1;
         }
         TokenSet(mask)
+    }
+
+    /// The kinds in either set.
+    pub(crate) const fn union(self, other: TokenSet) -> TokenSet {
+        TokenSet(self.0 | other.0)
+    }
+
+    /// The kinds in this set except `k`.
+    pub(crate) const fn without(self, k: SyntaxKind) -> TokenSet {
+        TokenSet(self.0 & !(1u128 << (k as u16)))
     }
 
     pub(crate) fn contains(self, k: SyntaxKind) -> bool {
@@ -63,16 +74,14 @@ pub(crate) struct Parser<'a> {
     sites: Vec<ErrorSite>,
 }
 
-/// Tokens that can never begin a declaration or an expression: at column 1
-/// they continue the unit before them.
-const CONTINUES: TokenSet = TokenSet::new(&[
-    Comma, RParen, RBrack, RBrace, Pipe, Arrow, Eq, Colon, Colon2, Dot, DotDot, Op,
-]);
-
 /// Split a token stream into its lexical top-level units: a unit starts at
-/// the first token and at every token that begins a line at column 1, except
-/// punctuation that can only continue the line before ([`CONTINUES`]: the
-/// formatter writes a multi-line record type with `,` and `}` at column 1).
+/// the first token and at every token that begins a line at column 1 and
+/// can begin a top-level unit ([`crate::grammar::UNIT_START`], derived from
+/// the top-level grammar). Any other token at column 1 continues the unit
+/// before it: a keyword that only continues a construct (`then`, `else`,
+/// `of`, `in`, `as`, `alias`, `exposing`), punctuation (the formatter writes
+/// a multi-line record type with `,` and `}` at column 1), a literal, a
+/// bracket or an upper-case name.
 /// A definition that follows its own annotation (`name : T` and then
 /// `name … =`) continues the annotation's unit: the two are one declaration.
 ///
@@ -83,7 +92,7 @@ pub(crate) fn lexical_units(src: &str, toks: &[PToken]) -> Vec<usize> {
     let kind = |i: usize| toks.get(i).map(|t| t.kind);
     let mut units: Vec<usize> = Vec::new();
     for (i, t) in toks.iter().enumerate() {
-        let line_start = i == 0 || (t.newline_before && t.col == 1 && !CONTINUES.contains(t.kind));
+        let line_start = i == 0 || (t.newline_before && t.col == 1 && UNIT_START.contains(t.kind));
         if !line_start {
             continue;
         }

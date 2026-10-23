@@ -121,13 +121,82 @@ pub fn parse(src: &str, file: FileId) -> Parse {
     let toks = layout::layout(src, &raw);
     let done = run_grammar(src, toks.clone(), file);
     let mut errors = done.diags;
-    name_reserved_words(src, &toks, file, &mut errors, &done.sites, &done.units);
+    explain_errors(src, &toks, file, &mut errors, &done.sites, &done.units);
     let (green, depth) = event::build_tree(src, &raw, done.events);
     Parse {
         green,
         errors,
         depth,
     }
+}
+
+/// Parse `toks` as ONE unit, with no split at column 1.
+fn run_grammar_one_unit(src: &str, toks: Vec<PToken>, file: FileId) -> parser::Finished {
+    let mut p = parser::Parser::new(src, toks, file);
+    grammar::source_file(&mut p);
+    p.finish()
+}
+
+/// The message for a line at column 1 that the definition above needs.
+const INDENT_MESSAGE: &str = "This line starts at column 1, so it begins a new declaration. \
+     Indent it to continue the definition above.";
+
+/// Make each unit's one syntax error say what caused it, when a trial proves
+/// the cause. First, a line at column 1 that starts with a lower-case name
+/// always begins a new unit (`parser::lexical_units`). When the unit before
+/// it has an error, and the two units parse with no error as ONE unit, the
+/// line was meant to continue the definition: the first unit's error says
+/// to indent it, and the second unit's error is dropped. Otherwise a
+/// misused reserved word is named ([`name_reserved_words`]).
+fn explain_errors(
+    src: &str,
+    toks: &[PToken],
+    file: FileId,
+    errors: &mut Vec<Diagnostic>,
+    sites: &[parser::ErrorSite],
+    units: &[usize],
+) {
+    let mut dropped = vec![false; errors.len()];
+    let mut joined_units = Vec::new();
+    for site in sites {
+        if dropped[site.diag] || joined_units.contains(&site.unit) {
+            continue;
+        }
+        let Some(&next) = units.get(site.unit + 1) else {
+            continue;
+        };
+        if toks[next].kind != SyntaxKind::LowerIdent {
+            continue;
+        }
+        let start = units[site.unit];
+        let end = units.get(site.unit + 2).copied().unwrap_or(toks.len());
+        if !run_grammar_one_unit(src, toks[start..end].to_vec(), file)
+            .sites
+            .is_empty()
+        {
+            continue;
+        }
+        let t = toks[next];
+        let span = base::Span::new(file, t.start, t.end);
+        errors[site.diag] =
+            Diagnostic::error("E0001", INDENT_MESSAGE).with_label(span, INDENT_MESSAGE);
+        joined_units.push(site.unit + 1);
+        for later in sites.iter().filter(|s| s.unit == site.unit + 1) {
+            dropped[later.diag] = true;
+        }
+    }
+    let named: Vec<parser::ErrorSite> = sites
+        .iter()
+        .filter(|s| !dropped[s.diag] && errors[s.diag].message != INDENT_MESSAGE)
+        .copied()
+        .collect();
+    name_reserved_words(src, toks, file, errors, &named, units);
+    let mut i = 0;
+    errors.retain(|_| {
+        let keep = !dropped.get(i).copied().unwrap_or(false);
+        i += 1;
+        keep
+    });
 }
 
 fn run_grammar(src: &str, toks: Vec<PToken>, file: FileId) -> parser::Finished {
@@ -152,13 +221,22 @@ const MAX_FOLLOW: usize = 4;
 ///
 /// A trial reads one reserved word of the unit as a fresh name (a value
 /// name, or a capitalised name where only a type or module name fits) and
-/// parses the unit again. When the renamed word is used again later in the unit (a
-/// binding and its use), the trial follows: a new error at another use of
-/// the same word renames that use too. A word is named only when its trial
-/// parses the WHOLE unit with no error. The earliest such word in the unit
-/// is named. When no trial is clean, the parser's own diagnostic stays as it
-/// is, so a valid keyword (`exposing` in `module Main exposing main`) is
-/// never named as misused.
+/// parses the unit again. When the renamed word is used again later in the
+/// unit (a binding and its use), the trial follows: a new error at another
+/// use of the same word renames that use too. A word W is named when:
+///
+/// - its trial parses the WHOLE unit with no error, or
+/// - (the chain rule, for two or more misused words in one unit) its trial
+///   moves the first error strictly past W onto another reserved word W2,
+///   and W2 qualifies by the same rule with W still renamed. The chain
+///   renames only words at or after the plain parse's first error: a word
+///   before it was accepted as a valid keyword (`if a then b else c` is
+///   never renamed into an application). The chain is at most as long as
+///   the number of reserved words in the unit.
+///
+/// The earliest such word in the unit is named. When no word qualifies,
+/// the parser's own diagnostic stays as it is, so a valid keyword
+/// (`exposing` in `module Main exposing main`) is never named as misused.
 ///
 /// Only a unit that already has an error is tried, and only that unit's
 /// tokens are parsed again, so valid code costs nothing.
@@ -188,54 +266,99 @@ fn name_reserved_words(
     }
 }
 
-/// The index in `unit` of the earliest reserved word whose trial parses the
-/// whole unit with no error (see [`name_reserved_words`]), or `None`.
+/// A token of a trial read as a fresh name: its index in the unit and the
+/// name kind it is read as.
+type Rename = (usize, SyntaxKind);
+
+/// The index in `unit` of the earliest reserved word that qualifies (see
+/// [`name_reserved_words`]), or `None`.
 fn misused_word(src: &str, unit: &[PToken], file: FileId) -> Option<usize> {
     let text = |t: &PToken| &src[t.start as usize..t.end as usize];
     let reserved = |i: usize| {
         unit.get(i)
             .is_some_and(|t| parser::is_reserved_word(t.kind))
     };
-    // The first error of `unit` with the tokens in `renamed` read as names of
-    // kind `name`, or `None` when the unit parses clean.
-    let first_error = |renamed: &[usize], name: SyntaxKind| {
+    // The first error of `unit` with the tokens in `renamed` read as names,
+    // or `None` when the unit parses clean.
+    let first_error = |renamed: &[Rename]| {
         let mut trial = unit.to_vec();
-        for &i in renamed {
+        for &(i, name) in renamed {
             trial[i].kind = name;
         }
         let done = run_grammar(src, trial, file);
         done.sites.iter().map(|s| s.at).min()
     };
-    // Whether reading the word at `c` (and its later uses) as a fresh name of
-    // kind `name` makes the whole unit parse clean.
-    let clean_as = |c: usize, name: SyntaxKind| {
-        let mut renamed = vec![c];
-        let mut reached = first_error(&renamed, name);
+    // Read the word at `c` (and its later uses) as a fresh name of kind
+    // `name`, on top of the renames in `base`. Returns all the renames and
+    // the first error that is left.
+    let rename = |base: &[Rename], c: usize, name: SyntaxKind| {
+        let mut renamed = base.to_vec();
+        renamed.push((c, name));
+        let mut reached = first_error(&renamed);
         for _ in 0..MAX_FOLLOW {
             let Some(at) = reached else { break };
             // A later use of the same word stands at (or just before) the new
             // error: it is the same name, so read it as a name too.
             let again = [at, at.wrapping_sub(1)].into_iter().find(|&i| {
-                reserved(i) && !renamed.contains(&i) && text(&unit[i]) == text(&unit[c])
+                reserved(i)
+                    && !renamed.iter().any(|&(r, _)| r == i)
+                    && text(&unit[i]) == text(&unit[c])
             });
             match again {
                 Some(i) => {
-                    renamed.push(i);
-                    reached = first_error(&renamed, name);
+                    renamed.push((i, name));
+                    reached = first_error(&renamed);
                 }
                 None => break,
             }
         }
-        reached.is_none()
+        (renamed, reached)
     };
     // A unit that parses clean on its own errs only in its context (an
     // import after a declaration): no rename is the cause.
-    first_error(&[], SyntaxKind::LowerIdent)?;
+    let plain = first_error(&[])?;
+    let chain_limit = (0..unit.len()).filter(|&i| reserved(i)).count();
     // A fresh name is a value name or, where only a type or module name fits
     // (`type if = A`, `import Std.Log as if`), a capitalised one.
+    const NAMES: [SyntaxKind; 2] = [SyntaxKind::LowerIdent, SyntaxKind::UpperIdent];
+    let qualifies = |c: usize| {
+        // A word before the plain first error was accepted by the parse: it
+        // may be named only when renaming it alone parses clean.
+        let chain = c >= plain;
+        let mut base: Vec<Rename> = Vec::new();
+        let mut w = c;
+        for _ in 0..=chain_limit {
+            // The next link: the furthest-reaching rename of `w` whose error
+            // lands strictly past `w` on another reserved word.
+            let mut next: Option<(Vec<Rename>, usize, usize)> = None;
+            for name in NAMES {
+                let (renamed, reached) = rename(&base, w, name);
+                let Some(at) = reached else { return true };
+                if !chain || at <= w {
+                    continue;
+                }
+                let w2 = [at, at.wrapping_sub(1)].into_iter().find(|&i| {
+                    i > w && i >= plain && reserved(i) && !renamed.iter().any(|&(r, _)| r == i)
+                });
+                if let Some(w2) = w2 {
+                    if next.as_ref().is_none_or(|n| at > n.2) {
+                        next = Some((renamed, w2, at));
+                    }
+                }
+            }
+            match next {
+                Some((renamed, w2, _)) => {
+                    base = renamed;
+                    w = w2;
+                }
+                None => return false,
+            }
+        }
+        false
+    };
     (0..unit.len())
         .filter(|&i| reserved(i))
-        .find(|&c| clean_as(c, SyntaxKind::LowerIdent) || clean_as(c, SyntaxKind::UpperIdent))
+        .find(|&c| qualifies(c))
 }
 
 #[cfg(test)]

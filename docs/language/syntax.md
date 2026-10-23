@@ -189,22 +189,42 @@ names the word, with no follow-on errors:
 ```
 
 The file is cut into top-level units by its tokens alone. A unit starts at
-each line that begins at column 1, except a line that begins with a `,`, a
-closing bracket or an operator, which continues the line before. A definition
-and its annotation are one unit. So a declaration body must be indented past
-column 1. The parser never reads past the end of a unit, and it reports at
-most one syntax error for each unit. After the first error it keeps parsing,
-so the editor still sees the whole file, but it reports nothing more in that
-unit. Two broken declarations always give two errors, one in each.
+each line that begins at column 1 with a token that can begin a top-level
+declaration: a lower-case name, `type`, `import` or `module`. Any other
+token at column 1 continues the line before: a keyword that only continues a
+construct (`then`, `else`, `of`, `in`, `as`, `alias`, `exposing`), a `,`, a
+bracket, an operator, a literal or an upper-case name. A definition and its
+annotation are one unit. The parser never reads past the end of a unit, and
+it reports at most one syntax error for each unit. After the first error it
+keeps parsing, so the editor still sees the whole file, but it reports
+nothing more in that unit. Two broken declarations always give two errors,
+one in each.
 
-A reserved word is named only when a trial proves it is the cause: read as a
+So a line inside a definition that starts at column 1 with a lower-case name
+begins a new declaration. When the definition above needs that line, this is
+one error:
+
+```text
+This line starts at column 1, so it begins a new declaration. Indent it to continue the definition above.
+```
+
+Indent the line (`sky fmt` always does). A body line at column 1 that starts
+with anything else (`42`, `Just x`, `Task.run …`, `[`, `(`) still continues
+the definition.
+
+A reserved word is named only when a trial proves it is the cause. Read as a
 fresh name, the word (and its later uses in the unit) must make the whole
-unit parse with no error. The earliest such word is named. This finds the
-word even where the parse fails a few tokens later (`x ++ if` fails at the end
-of the line) or at a valid keyword (`if if then …` names the second `if`, not
-`then`). When no trial parses clean, the parser's own message stays, so a
-keyword in its valid place is never named: `module Main exposing main` gives
-`expected LParen`, and `if x 1 else 2` gives `expected ThenKw`.
+unit parse with no error. Or, when one declaration misuses two or more words,
+renaming the word must move the first error past it onto another reserved
+word that qualifies by the same rule (`f type =` with the body `of` names
+`type`). This chain renames only words at or after the place where the plain
+parse first fails, so a keyword the parse accepted is never renamed. The
+earliest word that qualifies is named. This finds the word even where the
+parse fails a few tokens later (`x ++ if` fails at the end of the line) or at
+a valid keyword (`if if then …` names the second `if`, not `then`). When no
+word qualifies, the parser's own message stays, so a keyword in its valid
+place is never named: `module Main exposing main` gives `expected LParen`,
+and `if x 1 else 2` gives `expected ThenKw`.
 
 A `case` needs at least one branch. `case x of` with no branch is
 `expected a case branch`.

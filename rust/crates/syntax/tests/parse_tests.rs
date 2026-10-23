@@ -706,11 +706,82 @@ fn closing_punctuation_at_column_one_continues_its_declaration() {
 }
 
 #[test]
-fn a_body_at_column_one_starts_a_new_unit() {
-    // A body is indented past column 1 (the layout rule). A body token at
-    // column 1 begins the next unit, so the definition has no body.
-    let got = diag_lines(&p("answer =\n42\n"));
-    assert_eq!(got.len(), 2, "{got:?}");
+fn keywords_that_cannot_begin_a_declaration_continue_at_column_one() {
+    // v0.27.11 accepted each of these with no error. A keyword that cannot
+    // begin a top-level declaration continues the unit before it.
+    for src in [
+        "v m =\n    case m\nof\n        _ ->\n            1\n",
+        "v b =\n    if b\nthen\n        1\n\n    else\n        2\n",
+        "type\nalias R = Int\n",
+        "v =\n    let\n        y = 1\nin\n    y\n",
+        "v b =\n    if b then\n        1\nelse\n        2\n",
+        "module Main exposing (main)\n\nimport Std.Log\nas Log\n\n\nmain =\n    1\n",
+        "module Main\nexposing (main)\n\nimport Std.Log\nexposing (println)\n\n\nmain =\n    1\n",
+        "f x =\n    case x of\n        Just y\nas z ->\n            z\n\n        _ ->\n            x\n",
+        "v =\n    let y = 1\nin y\n",
+    ] {
+        assert_clean(src);
+    }
+}
+
+#[test]
+fn a_body_at_column_one_parses_unless_it_starts_with_a_lower_case_name() {
+    // A token that cannot begin a declaration continues the unit, so a
+    // body at column 1 that starts with one parses as in v0.27.11.
+    for body in [
+        "42",
+        "Just 1",
+        "Task.run x",
+        "[ 1 ]",
+        "( 1, 2 )",
+        "\"s\"",
+        "-1",
+        "\\x -> x",
+    ] {
+        assert_clean(&format!("answer =\n{body}\n\n\nmain =\n    1\n"));
+    }
+    // A lower-case name at column 1 always begins a declaration. When the
+    // definition above needs the line, that is ONE error saying to indent
+    // it, and it never names a keyword the definition used correctly.
+    let indent = "This line starts at column 1, so it begins a new declaration. \
+                  Indent it to continue the definition above.";
+    for src in [
+        "answer =\nidentity 1\n",
+        "answer =\nidentity 1\n\n\nmain =\n    1\n",
+        "answer =\n    1 +\nidentity 1\n",
+        "answer b =\n    if b then\nidentity 1\n    else\n        2\n",
+        "answer b =\n    if b then\n        1\n    else\nidentity 2\n",
+        "answer =\n    let\ny = 1\n    in\n    y\n",
+        "answer =\n    let\n        y = 1\n    in\ny\n",
+        "answer m =\n    case m of\nn ->\n            n\n",
+        "idf :\na -> a\nidf x =\n    x\n",
+        "answer =\n    [\nidentity 1\n    ]\n",
+        "answer =\n    \\x ->\nidentity x\n",
+    ] {
+        let parsed = p(src);
+        let got = diag_lines(&parsed);
+        assert_eq!(got, vec![format!("[E0001] {indent}")], "{src:?}");
+        assert_eq!(parsed.reprint(), src);
+    }
+}
+
+#[test]
+fn two_misused_words_in_one_declaration_name_the_first() {
+    // Renaming `type` alone moves the error onto `of`, and renaming `of`
+    // too parses clean: the chain names the first word.
+    assert_one_named("f type =\n    of\n", "type");
+    assert_one_named("f type =\n    of\n\n\nmain =\n    1\n", "type");
+    assert_one_named("f x =\n    g of type\n", "of");
+    assert_one_named("f type =\n    g of 1\n", "type");
+    // three misused words
+    assert_one_named("f type =\n    of ++ in\n", "type");
+    assert_one_named("f type if =\n    of\n", "type");
+    // a misused word, then a mistake that no rename fixes: no proof, so the
+    // parser's own message stays
+    assert_one_plain("f type =\n    1 +\n", "expected Eq");
+    // the chain never renames a keyword that the plain parse accepted
+    assert_one_named("f x =\n    if x then 1 else of\n", "of");
+    assert_one_plain("f x =\n    if then 1 else 2\n", "expected an expression");
 }
 
 #[test]

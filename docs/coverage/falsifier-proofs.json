@@ -135,27 +135,25 @@
     },
     "build-growth-linear": {
       "inputs_files": 478,
-      "inputs_hash": "347fee0d503eb36a3b4c21f5a6675226e23fd41a",
-      "last_inconclusive_at_unix": 1792716465,
+      "inputs_hash": "b84f8872145d805efee897e2994a0c3ed0f723ed",
       "mutation": "build-growth.one-model-wire-per-arm",
       "mutations": [
         "build-growth.one-model-wire-per-arm"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1792681488
+      "proven_at_unix": 1792720119
     },
     "build-new-dir-compiles-nothing": {
       "inputs_files": 478,
-      "inputs_hash": "3f4a35fa11109d93eaf4120561af055edb8c50e4",
-      "last_inconclusive_at_unix": 1792716465,
+      "inputs_hash": "be186496f291ccbf919c883b7c2042626614725b",
       "mutation": "build-new-dir.no-trimpath",
       "mutations": [
         "build-new-dir.no-trimpath"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1792681488
+      "proven_at_unix": 1792720119
     },
     "canary": {
       "inputs_files": 2,
@@ -166,7 +164,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1792716465
+      "proven_at_unix": 1792720119
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -318,14 +316,14 @@
     },
     "coverage-ledger": {
       "inputs_files": 4350,
-      "inputs_hash": "d224a1cd49f19da2b742b93c0fa802f3a614edb9",
+      "inputs_hash": "8c579129cd4d0bd351d8ab02a33c2aef805ed604",
       "mutation": "coverage-ledger.drop-a-sole-owner-import",
       "mutations": [
         "coverage-ledger.drop-a-sole-owner-import"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1792716465
+      "proven_at_unix": 1792720119
     },
     "erasure-path-uses-an-index": {
       "inputs_files": 800,
@@ -450,8 +448,7 @@
     },
     "spa-diff-fuzz": {
       "inputs_files": 20,
-      "inputs_hash": "346354350fb02dfb65db45ce2e0add93423ef87f",
-      "last_inconclusive_at_unix": 1792716465,
+      "inputs_hash": "437648e1f21d6bb9541d4dc20b136d2e34501b64",
       "mutation": "spa-diff-fuzz.drop-msgarg-rename",
       "mutations": [
         "spa-diff-fuzz.drop-msgarg-rename",
@@ -462,7 +459,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1792681488
+      "proven_at_unix": 1792720119
     },
     "verify-cli": {
       "inputs_files": 440,

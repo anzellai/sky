@@ -49,6 +49,19 @@ const PAT_ATOM_START: TokenSet = TokenSet::new(&[
 
 const DECL_START: TokenSet = TokenSet::new(&[TypeKw, LowerIdent, UpperIdent]);
 
+/// The tokens that begin a lexical top-level unit when they start a line at
+/// column 1 (`parser::lexical_units`). They are the first tokens of the
+/// top-level productions in [`source_file`]: `module` (the header),
+/// `import`, and a declaration ([`DECL_START`]), less an upper-case name.
+/// [`decl`] also reads an upper-case name, but at column 1 it is
+/// also the first token of an expression (`Task.run …`, `Just x`), so it
+/// continues the unit before it, as it did before units existed. A
+/// lower-case name is the one token that can both begin a declaration and
+/// continue an expression: at column 1 it always begins a declaration.
+pub(crate) const UNIT_START: TokenSet = DECL_START
+    .union(TokenSet::new(&[ModuleKw, ImportKw]))
+    .without(UpperIdent);
+
 // ---- entry ---------------------------------------------------------------
 
 pub(crate) fn source_file(p: &mut Parser) {
