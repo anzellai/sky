@@ -696,10 +696,10 @@
   "summary": {
     "stdlib_entries": 2234,
     "stdlib_modules": 113,
-    "surfaces_covered": 169,
-    "surfaces_covered_pct": 93.9,
-    "surfaces_equal": 16,
-    "surfaces_stronger": 164,
+    "surfaces_covered": 170,
+    "surfaces_covered_pct": 94.4,
+    "surfaces_equal": 15,
+    "surfaces_stronger": 165,
     "surfaces_total": 180,
     "surfaces_weaker": 0,
     "units_by_role": {
@@ -1112,9 +1112,15 @@
     {
       "category": "cli",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -1123,7 +1129,7 @@
       },
       "description": "`sky lsp`",
       "id": "cli.lsp",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "cli",
@@ -15140,11 +15146,10 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 10,
+      "count": 9,
       "surfaces": [
         "cli.console",
         "cli.console-serve",
-        "cli.lsp",
         "cli.spa-partition",
         "cli.upgrade-claude",
         "stdlib.Sky.Core.Io",

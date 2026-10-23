@@ -21,9 +21,9 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | value |
 |---|---|
 | surfaces | 180 |
-| covered by the new corpus (>= Asserted) | 169 |
-| verdict `stronger` | 164 |
-| verdict `equal` | 16 |
+| covered by the new corpus (>= Asserted) | 170 |
+| verdict `stronger` | 165 |
+| verdict `equal` | 15 |
 | verdict `weaker` | 0 |
 | corpus units | 134 |
 | stdlib modules (denominator) | 113 |
@@ -42,7 +42,6 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 - `cli.console`
 - `cli.console-serve`
-- `cli.lsp`
 - `cli.spa-partition`
 - `cli.upgrade-claude`
 - `stdlib.Sky.Core.Io`
@@ -96,7 +95,7 @@ None.
 | `cli.fuzz` | cli | None | Falsified | stronger |
 | `cli.init` | cli | None | Falsified | stronger |
 | `cli.install` | cli | Runs | Falsified | stronger |
-| `cli.lsp` | cli | None | None | equal |
+| `cli.lsp` | cli | None | Falsified | stronger |
 | `cli.migrate` | cli | None | Falsified | stronger |
 | `cli.package` | cli | None | Falsified | stronger |
 | `cli.remove` | cli | None | Falsified | stronger |
