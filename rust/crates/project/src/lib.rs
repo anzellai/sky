@@ -13,6 +13,8 @@ pub mod abi_guard;
 pub mod app_entry;
 mod build;
 pub mod build_stamp;
+/// Why a process ended when a signal ended it, and `sky`'s own SIGTERM line.
+pub mod child_exit;
 /// `sky config migrate` — the automatic legacy-`sky.toml` → typed-`config`
 /// rewriter. Reuses the ONE `config_migration::MIGRATIONS` table, never a copy.
 pub mod config_migrate;

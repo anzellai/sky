@@ -64,6 +64,12 @@ mod xmlmini;
 /// unify, read-back and the type table, lowering, `goty`, emit) grows its stack
 /// on demand through `base::ensure_stack`.
 fn main() -> ExitCode {
+    // A SIGTERM from another process (a memory watchdog, `kill`) used to end
+    // `sky` with status 143 and no output. The handler writes one line, then
+    // ends the process by the same signal, so the status is unchanged. It is
+    // reset on `exec`: the children `sky run` / `sky watch` start and signal
+    // keep their own SIGTERM behaviour.
+    project::child_exit::install_sigterm_notice();
     sky_main()
 }
 
@@ -2104,6 +2110,11 @@ fn check_std_app(
             return ExitCode::FAILURE;
         }
     };
+    if let Some(line) = project::child_exit::describe("derived check", &out.status) {
+        eprint!("{}", String::from_utf8_lossy(&out.stderr));
+        eprintln!("sky check: {line}");
+        return ExitCode::FAILURE;
+    }
     // An error in the user's own source is reported there, not in the
     // rewritten copy.
     if !out.status.success() && std_app_user_errors(repo_root, project_dir, entry_file, "check") {
@@ -3812,6 +3823,11 @@ fn build_std_app(
             return ExitCode::FAILURE;
         }
     };
+    if let Some(line) = project::child_exit::describe("derived build", &out.status) {
+        eprint!("{}", String::from_utf8_lossy(&out.stderr));
+        eprintln!("sky build --target {}: {line}", tgt.canonical());
+        return ExitCode::FAILURE;
+    }
     // An error in the user's own source is reported there, not in the
     // rewritten copy.
     if !out.status.success() && std_app_user_errors(repo_root, project_dir, entry_file, "build") {
@@ -4298,6 +4314,9 @@ fn spa_split_and_build(
     // Each failed leg's text output, for `split_diag` to map its diagnostics
     // back to the user's source.
     let leg_text = std::cell::RefCell::new(String::new());
+    // Each leg's exit status, so a leg a signal stopped is named as such.
+    let leg_status: std::cell::RefCell<Vec<(String, std::process::ExitStatus)>> =
+        std::cell::RefCell::new(Vec::new());
     let report_leg = |label: &str,
                       half: &str,
                       leg_dir: &Path,
@@ -4320,6 +4339,7 @@ fn spa_split_and_build(
                     let _ = std::io::stdout().write_all(&out.stdout);
                     let _ = std::io::stderr().write_all(&out.stderr);
                 }
+                leg_status.borrow_mut().push((half.to_string(), out.status));
                 out.status.success()
             }
             Ok(Err(e)) => {
@@ -4354,14 +4374,55 @@ fn spa_split_and_build(
         );
     }
     if !backend_ok {
-        eprintln!("sky spa-split --build: backend failed to build");
+        eprintln!("{}", leg_failure_line("backend", &leg_status.borrow()));
         return Err(ExitCode::FAILURE);
     }
     if !frontend_ok {
-        eprintln!("sky spa-split --build: frontend failed to build");
+        eprintln!("{}", leg_failure_line("frontend", &leg_status.borrow()));
         return Err(ExitCode::FAILURE);
     }
     Ok(od)
+}
+
+/// The last line for a Sky.Spa leg that failed. A leg a signal stopped (a
+/// memory watchdog's SIGTERM) prints nothing of its own, so the line names the
+/// signal and the knobs; any other failure points at the leg's output above.
+fn leg_failure_line(half: &str, statuses: &[(String, std::process::ExitStatus)]) -> String {
+    let signal = statuses
+        .iter()
+        .find(|(h, _)| h == half)
+        .and_then(|(_, s)| project::child_exit::describe(&format!("{half} build"), s));
+    match signal {
+        Some(line) => format!("sky spa-split --build: {line}"),
+        None => format!("sky spa-split --build: {half} failed to build"),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod leg_failure_line_tests {
+    use super::leg_failure_line;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
+
+    /// A leg a memory watchdog stopped used to end with "frontend failed to
+    /// build" and no reason.
+    #[test]
+    fn a_leg_stopped_by_sigterm_names_the_signal() {
+        let statuses = vec![
+            ("backend".to_string(), ExitStatus::from_raw(1 << 8)),
+            ("frontend".to_string(), ExitStatus::from_raw(15)),
+        ];
+        assert_eq!(
+            leg_failure_line("frontend", &statuses),
+            "sky spa-split --build: frontend build stopped by SIGTERM from another process \
+             (a memory watchdog?). Free memory, or set SKY_GO_BUILD_JOBS=1 and \
+             SKY_BUILD_SERIAL=1, then try again."
+        );
+        assert_eq!(
+            leg_failure_line("backend", &statuses),
+            "sky spa-split --build: backend failed to build"
+        );
+    }
 }
 
 /// Say plainly that a type or name error reported from code the Sky.Spa split
@@ -5796,6 +5857,9 @@ fn build_desktop_shell(
         .arg(&entry)
         .status()
         .map_err(|e| format!("run `sky build` on the desktop shell: {e}"))?;
+    if let Some(line) = project::child_exit::describe("desktop shell build", &status) {
+        return Err(line);
+    }
     if !status.success() {
         return Err("the desktop shell failed to build (see the errors above)".to_string());
     }

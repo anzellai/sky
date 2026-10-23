@@ -866,6 +866,12 @@ On a runner with little memory, `--go-jobs <n>` (or `SKY_GO_BUILD_JOBS=<n>`)
 caps how many packages `go build` compiles at once, and `SKY_BUILD_SERIAL=1`
 builds a client app's two legs one after the other.
 
+When another process (a memory watchdog, `kill`) stops a build, sky says so. A
+child leg or `go build` stopped by a signal ends with a line such as `frontend
+build stopped by SIGTERM from another process (a memory watchdog?)` and these
+two knobs. A SIGTERM to `sky` itself prints `sky: stopped by SIGTERM from
+another process`, and the exit status stays 143.
+
 Exit codes: `0` clean, `1` warnings, `2` errors. CI-friendly.
 
 ### `sky verify [example]`

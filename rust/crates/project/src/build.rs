@@ -1674,7 +1674,16 @@ fn run_bounded(mut cmd: Command, timeout: Duration) -> std::io::Result<BoundedOu
         match crate::memory::try_wait_child(&mut child)? {
             Some(exit) => {
                 let _ = out_h.join();
-                let stderr = err_h.join().unwrap_or_default();
+                let mut stderr = err_h.join().unwrap_or_default();
+                // A signal from outside (a memory watchdog) leaves Go no chance to
+                // say anything: name it, so the failure is not a blank message.
+                if let Some(line) = go_build_signal_line(&exit.status, &stderr) {
+                    if !stderr.is_empty() && !stderr.ends_with('\n') {
+                        stderr.push('\n');
+                    }
+                    stderr.push_str(&line);
+                    stderr.push('\n');
+                }
                 return Ok(BoundedOutcome {
                     status: Some(exit.status),
                     stderr,
@@ -1701,6 +1710,30 @@ fn run_bounded(mut cmd: Command, timeout: Duration) -> std::io::Result<BoundedOu
             }
         }
     }
+}
+
+/// The line that names a signal which stopped a `go build`: `go build` itself
+/// ended by one, or one of its compile / link steps (Go then exits 1 and prints
+/// `signal: killed` / `signal: terminated` with nothing else). `None` for any
+/// other outcome.
+fn go_build_signal_line(status: &std::process::ExitStatus, stderr: &str) -> Option<String> {
+    if let Some(line) = crate::child_exit::describe("go build", status) {
+        return Some(line);
+    }
+    if status.success() {
+        return None;
+    }
+    let sig = if stderr.contains("signal: killed") {
+        9
+    } else if stderr.contains("signal: terminated") {
+        15
+    } else {
+        return None;
+    };
+    Some(crate::child_exit::describe_signal(
+        "a go build compile step",
+        sig,
+    ))
 }
 
 /// Drain a child pipe to a String on its own thread so `run_bounded` never
@@ -5138,6 +5171,42 @@ mod go_build_child_tests {
         assert!(big.peak_rss.unwrap() >= 300 << 20, "{:?}", big.peak_rss);
         let small = small.peak_rss.unwrap();
         assert!(small < 100 << 20, "the second child reported {small} bytes");
+    }
+
+    /// A `go build` stopped by a signal from another process (a memory
+    /// watchdog) used to fail with an empty message. Its stderr now names the
+    /// signal and the knobs; a compile step Go reports as `signal: killed` too.
+    #[test]
+    #[cfg(unix)]
+    fn a_go_build_stopped_by_a_signal_says_so() {
+        let mut c = Command::new("sh");
+        c.args(["-c", "kill -TERM $$"]);
+        let out = run_bounded(c, Duration::from_secs(60)).unwrap();
+        assert!(
+            out.stderr.contains(
+                "go build stopped by SIGTERM from another process (a memory watchdog?). \
+                 Free memory, or set SKY_GO_BUILD_JOBS=1"
+            ),
+            "{:?}",
+            out.stderr
+        );
+        let mut c = Command::new("sh");
+        c.args([
+            "-c",
+            "echo '# sky-app/rt' >&2; echo 'signal: killed' >&2; exit 1",
+        ]);
+        let out = run_bounded(c, Duration::from_secs(60)).unwrap();
+        assert!(
+            out.stderr
+                .contains("a go build compile step stopped by SIGKILL from another process"),
+            "{:?}",
+            out.stderr
+        );
+        // An ordinary failure gains no signal line.
+        let mut c = Command::new("sh");
+        c.args(["-c", "echo './main.go:1:1: bad' >&2; exit 1"]);
+        let out = run_bounded(c, Duration::from_secs(60)).unwrap();
+        assert_eq!(out.stderr, "./main.go:1:1: bad\n");
     }
 
     /// N3: a backend built on its own (`cd .split/backend && sky build`, no
