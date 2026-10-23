@@ -15,6 +15,11 @@
 # the next attempt does not fetch them again. If every mirror fails, the job
 # FAILS with an ::error::. It never skips.
 #
+# Each attempt runs as root inside the time limit's process group, so the
+# limit stops apt-get and its download workers too. Run through sudo, apt-get
+# sat outside that group: on 2026-10-23 (release run 39942166203) a cut attempt
+# left apt-get holding the dpkg lock, and both later mirrors failed at once.
+#
 # Usage: bash scripts/ci/playwright-deps.sh chromium webkit
 set -euo pipefail
 
@@ -49,15 +54,42 @@ use_mirror() {
   echo "apt mirror: ${url}"
 }
 
+# The repository's pinned Playwright (npm ci ran before this script).
+playwright="${GITHUB_WORKSPACE:-$PWD}/node_modules/.bin/playwright"
+if [ ! -x "$playwright" ]; then
+  echo "::error::playwright-deps.sh: $playwright is missing; run npm ci first" >&2
+  exit 2
+fi
+
+# Wait (bounded) until no process holds the dpkg lock, so the next attempt
+# does not fail at once on a lock a cut attempt left behind.
+wait_for_dpkg_lock() {
+  local n
+  for n in $(seq 1 30); do
+    if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "::warning::the dpkg lock is still held after 60s; stopping apt-get"
+  sudo pkill -KILL -x apt-get || true
+  sudo pkill -KILL -f '/usr/lib/apt/methods/' || true
+  sleep 2
+}
+
 for i in "${!mirrors[@]}"; do
   if [ -n "${mirrors[$i]}" ]; then
     use_mirror "${mirrors[$i]}"
   fi
   echo "Installing Playwright system packages (attempt $((i + 1)) of ${#mirrors[@]}, up to ${attempt_secs}s)"
-  if with_timeout "$attempt_secs" npx playwright install-deps "$@"; then
+  # As root, Playwright runs apt-get itself (no inner sudo), so every apt
+  # process is in the group the limit stops.
+  if sudo env "PATH=$PATH" bash -c 'source "$1"; shift; secs="$1"; shift; with_timeout "$secs" "$@"' \
+      _ "$here/../lib/with-timeout.sh" "$attempt_secs" "$playwright" install-deps "$@"; then
     exit 0
   fi
   echo "::warning::Playwright system packages: attempt $((i + 1)) failed or ran out of time"
+  wait_for_dpkg_lock
   # A cut install can leave dpkg half-configured; finish it before the next try.
   sudo dpkg --configure -a || true
 done
