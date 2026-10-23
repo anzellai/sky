@@ -208,6 +208,9 @@ fn run_grammar(src: &str, toks: Vec<PToken>, file: FileId) -> parser::Finished {
 /// The most further uses of the same word one trial follows.
 const MAX_FOLLOW: usize = 4;
 
+/// The most renames the chain search from one start word tries.
+const CHAIN_BUDGET: usize = 256;
+
 /// Name the reserved word behind each unit's one syntax error, when a trial
 /// proves it.
 ///
@@ -233,12 +236,17 @@ const MAX_FOLLOW: usize = 4;
 ///
 /// - its trial parses the WHOLE unit with no error, or
 /// - (the chain rule, for two or more misused words in one unit) its trial
-///   moves the first error strictly past W onto another reserved word W2,
-///   and W2 qualifies by the same rule with W still renamed. The chain
-///   renames only words at or after the plain parse's first error: a word
-///   before it was accepted as a valid keyword (`if a then b else c` is
-///   never renamed into an application). The chain is at most as long as
-///   the number of reserved words in the unit.
+///   moves the first error strictly past W, and a later reserved word W2 is
+///   eligible on that parse (the error is at W2, or at the token after W2
+///   when that token is not a reserved word, or W2 is before an enclosing
+///   block item), and W2 qualifies by the same rule with W still renamed.
+///   A chain may start at any eligible word, before or after the plain
+///   parse's first error (`1 -> if` and then `2 -> then` as two `case` arms
+///   names `if`). A word whose only eligibility is a reserved word after it
+///   (`if then 1 else 2`) starts no chain: its construct began validly, so
+///   it is named only when renaming it alone parses clean. A keyword in its
+///   valid place is never eligible, so no chain passes through it. The
+///   chain is at most as long as the number of reserved words in the unit.
 ///
 /// The earliest such word in the unit is named. When no word qualifies,
 /// the parser's own diagnostic stays as it is, so a valid keyword
@@ -293,6 +301,12 @@ fn before_enclosing_item(unit: &[PToken], c: usize) -> bool {
 /// name kind it is read as.
 type Rename = (usize, SyntaxKind);
 
+/// A trial: the renames on top of a base, and the first error left.
+type RenameFn<'a> = dyn Fn(&[Rename], usize, SyntaxKind) -> (Vec<Rename>, Option<usize>) + 'a;
+
+/// The next links of a chain after a word, given the renames and the error.
+type NextWordsFn<'a> = dyn Fn(&[Rename], usize, usize) -> Vec<usize> + 'a;
+
 /// The index in `unit` of the earliest reserved word that qualifies (see
 /// [`name_reserved_words`]), or `None`.
 fn misused_word(src: &str, unit: &[PToken], file: FileId) -> Option<usize> {
@@ -344,6 +358,64 @@ fn misused_word(src: &str, unit: &[PToken], file: FileId) -> Option<usize> {
     // A fresh name is a value name or, where only a type or module name fits
     // (`type if = A`, `import Std.Log as if`), a capitalised one.
     const NAMES: [SyntaxKind; 2] = [SyntaxKind::LowerIdent, SyntaxKind::UpperIdent];
+    // A word may start or continue a chain when the parse (with the earlier
+    // words of the chain renamed) fails at the word, or at the token
+    // directly after it when that token is not itself a reserved word, or
+    // when the next token belongs to an enclosing block (see
+    // [`before_enclosing_item`]). After a word, a separator (`,`), a new arm
+    // or a new binding shows the word's construct could not begin. A reserved
+    // word after it does not: in `if then 1 else 2` the `if` is started
+    // validly and only its condition is missing, so renaming `if`, `then` and
+    // `else` into an application proves nothing.
+    let chains_at = |i: usize, err: usize| {
+        i == err || (i + 1 == err && !reserved(err)) || before_enclosing_item(unit, i)
+    };
+    // Renames left for the chain search from one start word. Each rename
+    // costs at most `MAX_FOLLOW + 1` grammar runs. The bound keeps a unit
+    // with many reserved words from a long search, and the result stays
+    // deterministic.
+    let budget = std::cell::Cell::new(CHAIN_BUDGET);
+    // The chain from word `w` with the renames in `base` already made: true
+    // when some sequence of eligible words, starting at `w`, makes the unit
+    // parse clean within `depth` more links.
+    fn chain(
+        rename: &RenameFn,
+        next_words: &NextWordsFn,
+        budget: &std::cell::Cell<usize>,
+        base: &[Rename],
+        w: usize,
+        depth: usize,
+    ) -> bool {
+        for name in NAMES {
+            if budget.get() == 0 {
+                return false;
+            }
+            budget.set(budget.get() - 1);
+            let (renamed, reached) = rename(base, w, name);
+            let Some(at) = reached else { return true };
+            // The rename must move the first error strictly past `w`.
+            if depth == 0 || at <= w {
+                continue;
+            }
+            for w2 in next_words(&renamed, w, at) {
+                if chain(rename, next_words, budget, &renamed, w2, depth - 1) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    // The next links after `w`, when the first error is at `at`: reserved
+    // words after `w`, at or before the error, not yet renamed, that may
+    // continue a chain on this parse. The word at the error comes first, then
+    // the word before it, then the others in order.
+    let next_words = |renamed: &[Rename], w: usize, at: usize| {
+        let mut out: Vec<usize> = (w + 1..=at.min(unit.len().saturating_sub(1)))
+            .filter(|&i| reserved(i) && !renamed.iter().any(|&(r, _)| r == i) && chains_at(i, at))
+            .collect();
+        out.sort_by_key(|&i| (i != at, i + 1 != at, i));
+        out
+    };
     let qualifies = |c: usize| {
         // Eligibility: the plain parse fails AT the word, or at the token
         // directly after it (the construct the word starts could not begin).
@@ -357,39 +429,11 @@ fn misused_word(src: &str, unit: &[PToken], file: FileId) -> Option<usize> {
         if c != plain && c + 1 != plain && !before_enclosing_item(unit, c) {
             return false;
         }
-        // A word before the plain first error was accepted by the parse: it
-        // may be named only when renaming it alone parses clean.
-        let chain = c >= plain;
-        let mut base: Vec<Rename> = Vec::new();
-        let mut w = c;
-        for _ in 0..=chain_limit {
-            // The next link: the furthest-reaching rename of `w` whose error
-            // lands strictly past `w` on another reserved word.
-            let mut next: Option<(Vec<Rename>, usize, usize)> = None;
-            for name in NAMES {
-                let (renamed, reached) = rename(&base, w, name);
-                let Some(at) = reached else { return true };
-                if !chain || at <= w {
-                    continue;
-                }
-                let w2 = [at, at.wrapping_sub(1)].into_iter().find(|&i| {
-                    i > w && i >= plain && reserved(i) && !renamed.iter().any(|&(r, _)| r == i)
-                });
-                if let Some(w2) = w2 {
-                    if next.as_ref().is_none_or(|n| at > n.2) {
-                        next = Some((renamed, w2, at));
-                    }
-                }
-            }
-            match next {
-                Some((renamed, w2, _)) => {
-                    base = renamed;
-                    w = w2;
-                }
-                None => return false,
-            }
-        }
-        false
+        // An eligible word that cannot start a chain (`if then 1 else 2`)
+        // is named only when renaming it alone parses clean.
+        let depth = if chains_at(c, plain) { chain_limit } else { 0 };
+        budget.set(CHAIN_BUDGET);
+        chain(&rename, &next_words, &budget, &[], c, depth)
     };
     (0..unit.len())
         .filter(|&i| reserved(i))

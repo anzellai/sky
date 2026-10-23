@@ -1025,3 +1025,86 @@ fn a_keyword_as_a_declaration_name_begins_its_own_unit() {
         failures.join("\n")
     );
 }
+
+#[test]
+fn a_chain_may_start_before_the_plain_first_error() {
+    // The first misused word sits before the plain parse's first error (a
+    // bare `if` is read as the start of an `if` that runs into the next
+    // arm). Renaming both words parses clean: the first word is named.
+    assert_one_named(
+        "g y =\n    case y of\n        1 -> if\n        2 -> then\n        _ -> 0\n",
+        "if",
+    );
+    assert_one_named(
+        "g y =\n    let\n        z = if\n        w = then\n    in\n    z\n",
+        "if",
+    );
+    assert_one_named(
+        "g y =\n    case y of\n        1 -> if\n        2 -> 5\n        3 -> else\n        _ -> 0\n",
+        "if",
+    );
+    assert_one_named(
+        "g y =\n    case y of\n        1 -> case\n        _ -> of\n",
+        "case",
+    );
+    assert_one_named("g y =\n    [ if\n    , then\n    ]\n", "if");
+}
+
+#[test]
+fn two_and_three_misused_words_name_the_first() {
+    // (body, first misused word): case arms, let bindings, list and tuple
+    // items, adjacent and non-adjacent.
+    let table = [
+        // case arms, adjacent
+        ("case y of\n        1 -> if\n        2 -> then\n        _ -> 0", "if"),
+        ("case y of\n        1 -> if\n        2 -> else\n        _ -> 0", "if"),
+        ("case y of\n        1 -> case\n        2 -> of\n        _ -> 0", "case"),
+        ("case y of\n        1 -> let\n        2 -> in\n        _ -> 0", "let"),
+        // case arms, non-adjacent
+        ("case y of\n        1 -> if\n        2 -> 5\n        3 -> then\n        _ -> 0", "if"),
+        ("case y of\n        1 -> case\n        2 -> 5\n        3 -> of\n        _ -> 0", "case"),
+        // case arms, three words
+        ("case y of\n        1 -> if\n        2 -> then\n        3 -> else\n        _ -> 0", "if"),
+        ("case y of\n        1 -> if\n        2 -> 5\n        3 -> then\n        4 -> of\n        _ -> 0", "if"),
+        // let bindings, adjacent and non-adjacent
+        ("let\n        z = if\n        w = then\n    in\n    z", "if"),
+        ("let\n        z = if\n        w = else\n    in\n    z", "if"),
+        ("let\n        z = case\n        w = of\n    in\n    z", "case"),
+        ("let\n        z = if\n        q = 3\n        w = then\n    in\n    z", "if"),
+        ("let\n        z = if\n        w = then\n        v = else\n    in\n    z", "if"),
+        // list items
+        ("[ if\n    , then\n    ]", "if"),
+        ("[ if\n    , 1\n    , then\n    ]", "if"),
+        ("[ case\n    , of\n    ]", "case"),
+        ("[ if\n    , then\n    , else\n    ]", "if"),
+        // tuple items
+        ("( if\n    , then\n    )", "if"),
+        ("( if, then )", "if"),
+        ("( case\n    , of\n    , in\n    )", "case"),
+    ];
+    let mut bad = Vec::new();
+    for (body, kw) in table {
+        let src = format!("g y =\n    {body}\n");
+        if let Err(e) = one_named(&src, kw) {
+            bad.push(e);
+        }
+    }
+    assert!(bad.is_empty(), "not named:\n{}", bad.join("\n"));
+}
+
+#[test]
+fn a_chain_never_passes_through_a_keyword_in_its_valid_place() {
+    // The `if` is complete and valid: only the bare `then` is misused.
+    assert_one_named(
+        "g y =\n    case y of\n        1 -> if y then a else b\n        2 -> then\n        _ -> 0\n",
+        "then",
+    );
+    assert_one_named(
+        "g y =\n    let\n        z = case y of\n            _ -> 1\n        w = of\n    in\n    z\n",
+        "of",
+    );
+    assert_one_named(
+        "g y =\n    [ if y then 1 else 2\n    , then\n    ]\n",
+        "then",
+    );
+}

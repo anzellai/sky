@@ -247,11 +247,19 @@ cut off after its first binding keeps the parser's message.
 On top of that, a trial must prove the word is the cause. Read as a
 fresh name, the word (and its later uses in the unit) must make the whole
 unit parse with no error. Or, when one declaration misuses two or more words,
-renaming the word must move the first error past it onto another reserved
-word that qualifies by the same rule (`f type =` with the body `of` names
-`type`). This chain renames only words at or after the place where the plain
-parse first fails, so a keyword the parse accepted is never renamed. The
-earliest word that qualifies is named. This finds the word even where the
+renaming the word must move the first error past it, and a later reserved
+word must be eligible on that new parse and qualify by the same rule
+(`f type =` with the body `of` names `type`). A chain may start at any
+eligible word, before or after the place where the plain parse first fails:
+`1 -> if` and then `2 -> then` as two `case` arms names `if`, and so do
+`z = if` and then `w = then` as two `let` bindings, and `[ if` and then
+`, then` as two list items. Each later word must be eligible on the parse with
+the earlier words renamed. A word whose only eligibility is a reserved word
+directly after it starts no chain: in `if then 1 else 2` the `if` began
+validly and only its condition is missing, so the parser's own message stays.
+A keyword in its valid place is never eligible, so a chain never passes
+through it: `1 -> if y then a else b` and then `2 -> then` names only `then`.
+The earliest word that qualifies is named. This finds the word even where the
 parse fails a few tokens later (`x ++ if` fails at the end of the line) or at
 a valid keyword (`if if then …` names the second `if`, not `then`). When no
 word qualifies, the parser's own message stays, so a keyword in its valid

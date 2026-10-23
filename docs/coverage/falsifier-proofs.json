@@ -164,7 +164,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1792734473
+      "proven_at_unix": 1792738940
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -316,14 +316,14 @@
     },
     "coverage-ledger": {
       "inputs_files": 4350,
-      "inputs_hash": "68ef957bb03f4f15183be92b1761ddbf01596c0d",
+      "inputs_hash": "c1d34a4f70eedfc0115016319990ad2257a91b0a",
       "mutation": "coverage-ledger.drop-a-sole-owner-import",
       "mutations": [
         "coverage-ledger.drop-a-sole-owner-import"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1792734473
+      "proven_at_unix": 1792738940
     },
     "erasure-path-uses-an-index": {
       "inputs_files": 800,
