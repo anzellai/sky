@@ -223,7 +223,13 @@ const MAX_FOLLOW: usize = 4;
 /// name, or a capitalised name where only a type or module name fits) and
 /// parses the unit again. When the renamed word is used again later in the
 /// unit (a binding and its use), the trial follows: a new error at another
-/// use of the same word renames that use too. A word W is named when:
+/// use of the same word renames that use too.
+///
+/// A word W is eligible only when the plain parse's first error is at W or
+/// at the token directly after W (the construct W starts could not begin).
+/// When the parse accepted W and read more of its construct before failing
+/// (`if y` with no `then`), W is in its valid place and is never named. An
+/// eligible word W is named when:
 ///
 /// - its trial parses the WHOLE unit with no error, or
 /// - (the chain rule, for two or more misused words in one unit) its trial
@@ -322,6 +328,15 @@ fn misused_word(src: &str, unit: &[PToken], file: FileId) -> Option<usize> {
     // (`type if = A`, `import Std.Log as if`), a capitalised one.
     const NAMES: [SyntaxKind; 2] = [SyntaxKind::LowerIdent, SyntaxKind::UpperIdent];
     let qualifies = |c: usize| {
+        // Eligibility: the plain parse fails AT the word, or at the token
+        // directly after it (the construct the word starts could not begin).
+        // When the parse accepted the word and read more of its construct
+        // before it failed (`if y` cut off before `then`), the word is in
+        // its valid place: renaming it would turn the unit into a function
+        // call, which is no proof that the word is misused.
+        if c != plain && c + 1 != plain {
+            return false;
+        }
         // A word before the plain first error was accepted by the parse: it
         // may be named only when renaming it alone parses clean.
         let chain = c >= plain;

@@ -229,7 +229,16 @@ complete expression such a line is an error, as in v0.27.11: `answer =`,
 `    1` and then `+ 2` at column 1 gives `expected a declaration`. Indent
 it.
 
-A reserved word is named only when a trial proves it is the cause. Read as a
+A reserved word is named only when the plain parse fails at the word, or at
+the token directly after it (the construct the word starts could not even
+begin: `g = case` with nothing after it, `if of then …`). When the parse
+accepted the word and read more of its construct before it failed, the word
+is in its valid place and is never named, even though renaming it would make
+the unit parse as a function call: `if y` with no `then` gives
+`expected ThenKw`, `case y` with no `of` gives `expected OfKw`, and a `let`
+cut off after its first binding keeps the parser's message.
+
+On top of that, a trial must prove the word is the cause. Read as a
 fresh name, the word (and its later uses in the unit) must make the whole
 unit parse with no error. Or, when one declaration misuses two or more words,
 renaming the word must move the first error past it onto another reserved
@@ -244,7 +253,8 @@ place is never named: `module Main exposing main` gives `expected LParen`,
 and `if x 1 else 2` gives `expected ThenKw`.
 
 A `case` needs at least one branch. `case x of` with no branch is
-`expected a case branch`.
+`expected a case branch`. A `let` needs at least one binding. `let in x` is
+`expected a let binding`.
 
 `True` and `False` are literals, not names. Before v0.27.12 the compiler also
 reserved `foreign` (a leftover rule with no meaning), so `let foreign = …`

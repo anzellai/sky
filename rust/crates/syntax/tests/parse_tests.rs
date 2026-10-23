@@ -844,6 +844,69 @@ fn a_valid_keyword_is_never_named_as_misused() {
     );
 }
 
+/// `src` gives exactly one diagnostic, and it names no reserved word.
+fn assert_one_unnamed(src: &str) {
+    let parsed = p(src);
+    let got = diag_lines(&parsed);
+    assert_eq!(got.len(), 1, "{src:?}: {got:?}");
+    assert!(!got[0].contains("reserved word"), "{src:?}: {got:?}");
+    assert_eq!(parsed.reprint(), src);
+}
+
+#[test]
+fn a_keyword_in_an_incomplete_construct_is_not_named() {
+    // The plain parse accepted the keyword and read more of its construct
+    // before it failed: the keyword is in its valid place. Renaming it turns
+    // the unit into a function call that parses, but that does not make the
+    // keyword misused. The messages are the parser's own, as v0.27.11
+    // reports them.
+    assert_one_plain("g y =\n    if y\n", "expected ThenKw");
+    assert_one_plain("g y =\n    case y\n", "expected OfKw");
+    assert_one_unnamed("g y =\n    let\n        z\n");
+    assert_one_unnamed("g x =\n    let\n        ( a, b )\n\n\nq p =\n    p\n");
+}
+
+#[test]
+fn a_keyword_cut_off_after_its_first_part_is_not_named() {
+    // Each construct starts validly, then stops: after the keyword's first
+    // part, mid-way, or before its closing word.
+    let cut = [
+        "if y",
+        "if y then",
+        "if y then 1",
+        "if y then 1 else",
+        "case y",
+        "case y of",
+        "case y of\n        A",
+        "case y of\n        A ->",
+        "case y of\n        A ->\n            1\n\n        B",
+        "let\n        z",
+        "let\n        z =",
+        "let\n        z = 1",
+        "let\n        z = 1\n    in",
+        "let\n        ( a, b )",
+        "let\n        ( a, b ) = y",
+        "let\n        f a =",
+    ];
+    for body in cut {
+        // At the end of the file, and before another declaration.
+        for tail in ["\n", "\n\n\nq p =\n    p\n"] {
+            assert_one_unnamed(&format!("g y =\n    {body}{tail}"));
+        }
+    }
+}
+
+#[test]
+fn a_let_with_no_binding_is_an_error() {
+    // An empty `let` was accepted, so `let\n    in y = …` (a keyword as a
+    // let function name) read as an empty block and failed far from the word.
+    assert_one_plain("f x =\n    let\n    in\n    x\n", "expected a let binding");
+    assert_one_plain(
+        "f x =\n    let in x\n\n\nmain =\n    1\n",
+        "expected a let binding",
+    );
+}
+
 #[test]
 fn a_case_with_no_branch_is_an_error() {
     // A `case` needs at least one branch. With none, the checker saw no

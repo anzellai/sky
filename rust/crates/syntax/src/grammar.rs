@@ -1049,6 +1049,12 @@ fn let_expr(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
     p.bump(); // let
     let anchor = p.col(); // first binding's column
+                          // A `let` needs at least one binding. An empty one was accepted, so a
+                          // keyword used as the first binding's name (`let in = 1`) read as the end
+                          // of the block, and the error landed far from the word.
+    if p.at(InKw) || p.at_end() {
+        p.error("expected a let binding");
+    }
     loop {
         if p.at(InKw) || p.at_end() {
             break;
