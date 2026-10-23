@@ -53,6 +53,13 @@ fn import_paths(parse: &syntax::Parse) -> Vec<String> {
             }
         }
     }
+    // A default qualified import (`Tuple`) is read by `resolve` with no
+    // `import` line, so it is part of every module's footprint too.
+    for (_, p) in crate::kernel::DEFAULT_QUALIFIED_IMPORTS {
+        if !out.iter().any(|o| o == p) {
+            out.push((*p).to_string());
+        }
+    }
     out
 }
 

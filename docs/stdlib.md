@@ -147,8 +147,6 @@ The `Result → Task` bridges live on `Task` (`Task.fromResult` / `Task.andThenR
 ### `Tuple` — pairs (`Sky.Core.Tuple`)
 
 ```elm
-import Sky.Core.Tuple as Tuple
-
 labelled = List.map (Tuple.pair "k") [ 1, 2 ]          -- [ ( "k", 1 ), ( "k", 2 ) ]
 shown = Tuple.mapBoth String.toUpper negate ( "a", 1 )  -- ( "A", -1 )
 ```
@@ -162,7 +160,7 @@ shown = Tuple.mapBoth String.toUpper negate ( "a", 1 )  -- ( "A", -1 )
 | `Tuple.mapSecond` | `(b -> y) -> ( a, b ) -> ( a, y )` |
 | `Tuple.mapBoth` | `(a -> x) -> (b -> y) -> ( a, b ) -> ( x, y )` |
 
-Pure Sky, no runtime kernel, so it needs the `import`. `fst` / `snd` from `Basics` stay available and are the same as `Tuple.first` / `Tuple.second`.
+The `Tuple` qualifier needs no `import`, as in Elm. An import that binds `Tuple` to another module (`import My.Pairs as Tuple`) wins. `fst` / `snd` from `Basics` stay available and are the same as `Tuple.first` / `Tuple.second`.
 
 ### `Math` — numerical functions
 
