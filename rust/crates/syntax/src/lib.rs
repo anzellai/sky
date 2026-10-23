@@ -272,6 +272,23 @@ fn name_reserved_words(
     }
 }
 
+/// The token directly after `unit[c]` starts a later line at a column less
+/// than or equal to the indentation (first-token column) of `unit[c]`'s own
+/// line. That token belongs to an enclosing block (a new arm, binding or
+/// declaration), so the construct the word at `c` starts could not begin.
+/// A validly started construct is not caught: in `if y` the next token is on
+/// the same line, and after `let` the binding is indented further.
+fn before_enclosing_item(unit: &[PToken], c: usize) -> bool {
+    let Some(next) = unit.get(c + 1) else {
+        return false;
+    };
+    let mut first = c;
+    while first > 0 && !unit[first].newline_before {
+        first -= 1;
+    }
+    next.newline_before && next.col <= unit[first].col
+}
+
 /// A token of a trial read as a fresh name: its index in the unit and the
 /// name kind it is read as.
 type Rename = (usize, SyntaxKind);
@@ -333,8 +350,11 @@ fn misused_word(src: &str, unit: &[PToken], file: FileId) -> Option<usize> {
         // When the parse accepted the word and read more of its construct
         // before it failed (`if y` cut off before `then`), the word is in
         // its valid place: renaming it would turn the unit into a function
-        // call, which is no proof that the word is misused.
-        if c != plain && c + 1 != plain {
+        // call, which is no proof that the word is misused. A word is also
+        // eligible when the next token starts a later line at or left of the
+        // word's line indentation (see [`before_enclosing_item`]): a bare
+        // `if` as a case arm body, before the next arm.
+        if c != plain && c + 1 != plain && !before_enclosing_item(unit, c) {
             return false;
         }
         // A word before the plain first error was accepted by the parse: it

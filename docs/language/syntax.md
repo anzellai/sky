@@ -231,7 +231,13 @@ it.
 
 A reserved word is named only when the plain parse fails at the word, or at
 the token directly after it (the construct the word starts could not even
-begin: `g = case` with nothing after it, `if of then …`). When the parse
+begin: `g = case` with nothing after it, `if of then …`), or when the token
+directly after the word starts a later line at a column less than or equal
+to the indentation (first-token column) of the word's own line. That token
+belongs to an enclosing block (a new arm, binding or declaration), so the
+word's construct could not begin: a bare `if`, `case` or `let` as a `case`
+arm body before the next arm, or as a `let` binding's value before the next
+binding. When the parse
 accepted the word and read more of its construct before it failed, the word
 is in its valid place and is never named, even though renaming it would make
 the unit parse as a function call: `if y` with no `then` gives

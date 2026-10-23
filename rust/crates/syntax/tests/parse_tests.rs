@@ -897,6 +897,29 @@ fn a_keyword_cut_off_after_its_first_part_is_not_named() {
 }
 
 #[test]
+fn a_bare_keyword_before_an_enclosing_block_item_is_named() {
+    // The token after the keyword starts a later line at or left of the
+    // keyword's line indentation: it is a new arm or binding of the
+    // enclosing block, so the keyword's construct could not begin.
+    for kw in ["if", "case", "let"] {
+        let arms = [
+            // On the arm's own line, then another arm.
+            format!("f x =\n    case x of\n        A -> {kw}\n        B -> 0\n"),
+            // On its own line, then another arm.
+            format!("f x =\n    case x of\n        A ->\n            {kw}\n\n        B ->\n            0\n"),
+            // As the last arm, before another declaration.
+            format!("f x =\n    case x of\n        A -> 0\n        B -> {kw}\n\n\nq p =\n    p\n"),
+            // As a let binding's value, then another binding.
+            format!("f x =\n    let\n        a = {kw}\n        b = 1\n    in\n    b\n"),
+            format!("f x =\n    let\n        a =\n            {kw}\n\n        b = 1\n    in\n    b\n"),
+        ];
+        for src in arms {
+            assert_one_named(&src, kw);
+        }
+    }
+}
+
+#[test]
 fn a_let_with_no_binding_is_an_error() {
     // An empty `let` was accepted, so `let\n    in y = …` (a keyword as a
     // let function name) read as an empty block and failed far from the word.
