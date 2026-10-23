@@ -1,0 +1,5 @@
+[project]
+name = "spa-same-shape-aliases"
+
+[app]
+target = "web:app"

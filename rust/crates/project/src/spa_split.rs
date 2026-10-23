@@ -200,15 +200,10 @@ fn is_session_identity_ty(t: &ty::Ty, shapes: &ProjectShapes) -> bool {
     };
     match inner {
         ty::Ty::App(name, args) if args.is_empty() => tail_seg(name.as_str()) == "Session",
-        ty::Ty::Record(fields, _) => {
-            let set: BTreeSet<String> =
-                fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
-            shapes
-                .record_by_fields
-                .get(&set)
-                .map(|k| ProjectShapes::bare(k) == "Session")
-                .unwrap_or(false)
-        }
+        ty::Ty::Record(fields, _) => shapes
+            .record_for_row(fields, None)
+            .map(|k| ProjectShapes::bare(&k) == "Session")
+            .unwrap_or(false),
         _ => false,
     }
 }
@@ -264,11 +259,22 @@ enum FieldKind {
 struct ProjectShapes {
     /// Qualified record key → its declared fields (source order) + default class.
     records: HashMap<String, Vec<(String, FieldKind)>>,
-    /// Field-NAME set → the unique record key with exactly those fields. A set
-    /// shared by two project records (or, with no project record, by two
-    /// dependency records) is AMBIGUOUS and omitted (recovery then fails closed
-    /// to the actionable error rather than guess).
-    record_by_fields: HashMap<BTreeSet<String>, String>,
+    /// Field-NAME set → every record key with exactly those field names (the
+    /// project's own records only, when any of them has the set; else the
+    /// dependency records). A set held by one record names it. A set held by
+    /// several is resolved against a row's field TYPES by
+    /// [`ProjectShapes::record_for_row`]: two aliases with the same field names
+    /// but different field types are never one shape.
+    record_by_fields: HashMap<BTreeSet<String>, Vec<String>>,
+    /// Qualified record key → its declared field types (aliases expanded,
+    /// parameters left as type variables). Used to tell apart two records with
+    /// the same field names.
+    record_field_tys: HashMap<String, Vec<(String, ty::Ty)>>,
+    /// Bare constructor name → the record key each argument's declared type
+    /// names (`DoPaste PasteForm` → `[Some("Main.PasteForm")]`), when that
+    /// constructor name is declared once. A Msg argument whose row matches
+    /// several same-shape aliases takes the alias the constructor names.
+    ctor_arg_records: HashMap<String, Vec<Option<String>>>,
     /// Qualified union key → its constructors `(name, is_nullary)` in declared order.
     unions: HashMap<String, Vec<(String, bool)>>,
     /// Bare name → every record / union key declaring it. A BARE type name
@@ -323,6 +329,114 @@ impl ProjectShapes {
         self.key_of(name)
             .filter(|k| self.records.contains_key(*k))
             .map(str::to_string)
+    }
+
+    /// Recover the record key of a structural row (the solver expands a record
+    /// alias to an un-named row). The field NAMES pick the candidates. With one
+    /// candidate it is the answer. With several, only the candidates whose
+    /// declared field TYPES match the row remain: two aliases with the same
+    /// names but different types are never one shape. If several remain and
+    /// their field types are identical, they are one structural type: the
+    /// alias `prefer` names wins (the alias the Msg constructor declares), else
+    /// the first key in order. `None` when the row names no record or stays
+    /// ambiguous.
+    fn record_for_row(&self, row: &[(base::Name, ty::Ty)], prefer: Option<&str>) -> Option<String> {
+        let set: BTreeSet<String> = row.iter().map(|(n, _)| n.as_str().to_string()).collect();
+        let cands = self.record_by_fields.get(&set)?;
+        if cands.len() == 1 {
+            return Some(cands[0].clone());
+        }
+        let mut matching: Vec<&String> = cands
+            .iter()
+            .filter(|k| {
+                self.record_field_tys.get(*k).is_some_and(|decl| {
+                    decl.iter().all(|(n, d)| {
+                        row.iter()
+                            .find(|(rn, _)| rn.as_str() == n)
+                            .is_some_and(|(_, a)| self.ty_matches(d, a, 0))
+                    })
+                })
+            })
+            .collect();
+        matching.sort();
+        if let Some(p) = prefer {
+            if matching.iter().any(|k| k.as_str() == p) {
+                return Some(p.to_string());
+            }
+        }
+        let first = matching.first()?;
+        if matching.len() == 1 {
+            return Some((*first).clone());
+        }
+        let first_tys = self.record_field_tys.get(*first)?;
+        let all_same = matching.iter().all(|k| {
+            self.record_field_tys.get(*k).is_some_and(|tys| {
+                tys.len() == first_tys.len()
+                    && tys.iter().all(|(n, t)| {
+                        first_tys
+                            .iter()
+                            .find(|(fnm, _)| fnm == n)
+                            .is_some_and(|(_, ft)| ft == t)
+                    })
+            })
+        });
+        all_same.then(|| (*first).clone())
+    }
+
+    /// Whether a record's DECLARED field type `d` (aliases expanded, a type
+    /// variable for a parameter) can be the solved type `a`. A variable on
+    /// either side matches anything. Nominal names compare by their last
+    /// segment, because the declaration and the solver may qualify a name
+    /// differently.
+    fn ty_matches(&self, d: &ty::Ty, a: &ty::Ty, depth: usize) -> bool {
+        use ty::Ty;
+        if depth > 32 {
+            return false;
+        }
+        match (d, a) {
+            (Ty::Var(_), _) | (_, Ty::Var(_)) | (Ty::Error, _) | (_, Ty::Error) => true,
+            (Ty::App(n1, x1), Ty::App(n2, x2)) => {
+                tail_seg(n1.as_str()) == tail_seg(n2.as_str())
+                    && x1.len() == x2.len()
+                    && x1
+                        .iter()
+                        .zip(x2)
+                        .all(|(p, q)| self.ty_matches(p, q, depth + 1))
+            }
+            // A declared field that names a record alias the expansion left
+            // nominal: compare that record's declared fields with the row.
+            (Ty::App(n, args), Ty::Record(fs, _)) if args.is_empty() => self
+                .record_key(n.as_str())
+                .and_then(|k| self.record_field_tys.get(&k))
+                .is_some_and(|decl| {
+                    decl.len() == fs.len()
+                        && decl.iter().all(|(dn, dt)| {
+                            fs.iter()
+                                .find(|(fnm, _)| fnm.as_str() == dn)
+                                .is_some_and(|(_, ft)| self.ty_matches(dt, ft, depth + 1))
+                        })
+                }),
+            (Ty::Record(f1, _), Ty::Record(f2, _)) => {
+                f1.len() == f2.len()
+                    && f1.iter().all(|(n, t)| {
+                        f2.iter()
+                            .find(|(m, _)| m == n)
+                            .is_some_and(|(_, u)| self.ty_matches(t, u, depth + 1))
+                    })
+            }
+            (Ty::Fun(a1, b1), Ty::Fun(a2, b2)) => {
+                self.ty_matches(a1, a2, depth + 1) && self.ty_matches(b1, b2, depth + 1)
+            }
+            (Ty::Tuple(x1), Ty::Tuple(x2)) => {
+                x1.len() == x2.len()
+                    && x1
+                        .iter()
+                        .zip(x2)
+                        .all(|(p, q)| self.ty_matches(p, q, depth + 1))
+            }
+            (Ty::Unit, Ty::Unit) => true,
+            _ => false,
+        }
     }
 
     fn union_key(&self, name: &str) -> Option<String> {
@@ -420,6 +534,10 @@ struct CodecResolver<'a> {
     /// binding, spelt by [`CodecResolver::type_surface`]): seeds for the copy
     /// into `Shared`.
     named_types: BTreeSet<String>,
+    /// The record key the Msg constructor declares for the argument being
+    /// resolved (`DoPaste PasteForm`). It picks between same-shape aliases
+    /// ([`ProjectShapes::record_for_row`]); `None` outside a Msg argument.
+    prefer: Option<String>,
 }
 
 /// One auto-derived record codec: the record's qualified key, how `Shared`
@@ -445,6 +563,7 @@ impl<'a> CodecResolver<'a> {
             device_keys: false,
             unions: UnionPayloads::new(),
             named_types: BTreeSet::new(),
+            prefer: None,
         }
     }
 
@@ -646,12 +765,13 @@ impl<'a> CodecResolver<'a> {
         if let ty::Ty::Record(fields, _) = t {
             let set: BTreeSet<String> =
                 fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
-            if let Some(key) = self.shapes.record_by_fields.get(&set).cloned() {
+            if let Some(key) = self.shapes.record_for_row(fields, self.prefer.as_deref()) {
                 return self.auto_derive_record(key, Some(t));
             }
             // A record whose nominal name we cannot recover (an anonymous inline
-            // record, or a field-set shared by two named records) — fail closed
-            // with the actionable instruction rather than guess.
+            // record, or a field-name set shared by two named records whose field
+            // types the row does not tell apart) — fail closed with the
+            // actionable instruction rather than guess.
             let shown: Vec<String> = set.into_iter().collect();
             return Err(format!(
                 "no codec for an anonymous record `{{ {} }}` — `Codec.auto` needs a named type. Give it a top-level `type alias` and a `Codec <T>` binding in the project (spa-split copies it into Shared).",
@@ -825,9 +945,7 @@ impl<'a> CodecResolver<'a> {
                     Some(out)
                 }
                 ty::Ty::Record(fields, _) => {
-                    let set: BTreeSet<String> =
-                        fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
-                    let key = shapes.record_by_fields.get(&set)?.clone();
+                    let key = shapes.record_for_row(fields, self.prefer.as_deref())?;
                     match shapes.generic_records.get(&key) {
                         None => Some(name_key(self, &key, seeds)),
                         Some(generic) => {
@@ -2614,12 +2732,30 @@ fn build_wire(
             .map(|f| lookup_field(model_fields, f))
             .collect()
     };
+    // The record alias the Msg constructor declares for each argument
+    // (`DoPaste PasteForm`), by wire field name: it names the codec of an
+    // argument whose row matches several same-shape aliases. Positional, so
+    // only when the binders line up one to one with the declared arguments.
+    let shapes: &ProjectShapes = resolver.shapes;
+    let declared = shapes.ctor_arg_records.get(name);
+    let mut arg_prefer: HashMap<String, String> = HashMap::new();
     for a in msg_arg_tys {
         // Rename an arg whose name collides with a Model field so both ride the
         // request (see msg_arg_wire_name); keep the dedup as a final safety.
         let collides = model_fields.iter().any(|f| f.name == a.name);
         let mut a2 = a.clone();
         a2.name = msg_arg_wire_name(&a.name, collides);
+        if let Some(Some(key)) = declared
+            .filter(|d| d.len() == msg_arg_tys.len())
+            .and_then(|d| {
+                msg_arg_tys
+                    .iter()
+                    .position(|m| m.name == a.name)
+                    .map(|i| &d[i])
+            })
+        {
+            arg_prefer.insert(a2.name.clone(), key.clone());
+        }
         if !req.iter().any(|f| f.name == a2.name) {
             req.push(a2);
         }
@@ -2668,9 +2804,12 @@ fn build_wire(
                     f.name
                 )
             })?;
+            resolver.prefer = arg_prefer.get(&f.name).cloned();
             let r = resolver
                 .resolve(&t)
-                .map_err(|e| format!("branch `{name}`, field `{}`: {e}", f.name))?;
+                .map_err(|e| format!("branch `{name}`, field `{}`: {e}", f.name));
+            resolver.prefer = None;
+            let r = r?;
             f.codec = Some(r.codec);
             f.ty_name = r.surface;
         }
@@ -2752,9 +2891,21 @@ fn wire_decl_orders(shapes: &ProjectShapes) -> DeclOrders {
     shapes
         .record_by_fields
         .iter()
-        .filter_map(|(set, key)| {
-            let fields = shapes.records.get(key)?;
-            Some((set.clone(), fields.iter().map(|(n, _)| n.clone()).collect()))
+        .filter_map(|(set, keys)| {
+            // Several records with one name set: an order only when they all
+            // declare it alike.
+            let mut orders = keys.iter().map(|key| {
+                shapes
+                    .records
+                    .get(key)
+                    .map(|fields| fields.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>())
+            });
+            let first = orders.next()??;
+            if orders.all(|o| o.as_ref() == Some(&first)) {
+                Some((set.clone(), first))
+            } else {
+                None
+            }
         })
         .collect()
 }
@@ -6434,6 +6585,7 @@ fn build_project_shapes(db: &SkyDatabase, mods: &[ModuleId], deps: &[ModuleId]) 
     let mut by_bare: HashMap<String, Vec<String>> = HashMap::new();
     let mut project_modules: HashSet<String> = HashSet::new();
     let mut external_modules: HashSet<String> = HashSet::new();
+    let mut ctor_args_raw: Vec<(String, String, Vec<String>)> = Vec::new();
     let mut external_keys: HashSet<String> = HashSet::new();
     for (&mid, external) in mods
         .iter()
@@ -6479,6 +6631,13 @@ fn build_project_shapes(db: &SkyDatabase, mods: &[ModuleId], deps: &[ModuleId]) 
                         .iter()
                         .filter_map(|v| {
                             let cn = v.name()?.text().to_string();
+                            let arg_texts: Vec<String> = v
+                                .syntax()
+                                .children()
+                                .filter_map(syntax::ast::Type::cast)
+                                .map(|t| t.syntax().text().to_string().trim().to_string())
+                                .collect();
+                            ctor_args_raw.push((cn.clone(), mname.clone(), arg_texts));
                             let nullary = v
                                 .syntax()
                                 .children()
@@ -6516,6 +6675,7 @@ fn build_project_shapes(db: &SkyDatabase, mods: &[ModuleId], deps: &[ModuleId]) 
     let mut records: HashMap<String, Vec<(String, FieldKind)>> = HashMap::new();
     let mut generic_records: HashMap<String, GenericRecord> = HashMap::new();
     let mut by_fields_multi: HashMap<BTreeSet<String>, Vec<String>> = HashMap::new();
+    let mut record_field_tys: HashMap<String, Vec<(String, ty::Ty)>> = HashMap::new();
     for raw in raw_records {
         let resolved = world.record_alias_fields_resolved(db, raw.module, &raw.syntax);
         let params = alias_type_params(&raw.syntax);
@@ -6531,6 +6691,14 @@ fn build_project_shapes(db: &SkyDatabase, mods: &[ModuleId], deps: &[ModuleId]) 
                 },
             );
         }
+        let rmod = db.module_name(raw.module).to_string();
+        record_field_tys.insert(
+            raw.key.clone(),
+            resolved
+                .iter()
+                .map(|(n, t)| (n.clone(), world.expand_ty_in_module(t, &rmod)))
+                .collect(),
+        );
         let set: BTreeSet<String> = raw.surfaces.iter().map(|(f, _)| f.clone()).collect();
         by_fields_multi
             .entry(set)
@@ -6549,26 +6717,51 @@ fn build_project_shapes(db: &SkyDatabase, mods: &[ModuleId], deps: &[ModuleId]) 
             .collect();
         records.insert(raw.key, classified);
     }
-    // A field set shared by several records is ambiguous. A single PROJECT
-    // record among them still wins over dependency records (the project's
-    // own types are the ones its code builds); otherwise the set is dropped.
-    let record_by_fields: HashMap<BTreeSet<String>, String> = by_fields_multi
+    // A field set held by several records keeps them all; `record_for_row`
+    // tells them apart by field types. PROJECT records win over dependency
+    // records (the project's own types are the ones its code builds): when
+    // any project record holds the set, the dependency records drop out.
+    let record_by_fields: HashMap<BTreeSet<String>, Vec<String>> = by_fields_multi
         .into_iter()
-        .filter_map(|(set, keys)| {
-            let own: Vec<&String> = keys
+        .map(|(set, keys)| {
+            let own: Vec<String> = keys
                 .iter()
                 .filter(|k| !external_keys.contains(*k))
+                .cloned()
                 .collect();
-            match (own.len(), keys.len()) {
-                (1, _) => Some((set, own[0].clone())),
-                (0, 1) => Some((set, keys[0].clone())),
-                _ => None,
-            }
+            let mut keep = if own.is_empty() { keys } else { own };
+            keep.sort();
+            (set, keep)
         })
         .collect();
+    // The record each Msg constructor argument names. A bare name resolves in
+    // the declaring module first, then by a unique bare name. A constructor
+    // name declared by more than one union gives no hint.
+    let mut ctor_arg_records: HashMap<String, Vec<Option<String>>> = HashMap::new();
+    let mut ctor_seen: HashMap<String, usize> = HashMap::new();
+    for (cn, cmod, texts) in ctor_args_raw {
+        *ctor_seen.entry(cn.clone()).or_default() += 1;
+        let args = texts
+            .iter()
+            .map(|t| {
+                if t.is_empty() || !t.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    return None;
+                }
+                let own = ty::nominal::qualify(&cmod, t);
+                if record_keys.contains(&own) {
+                    return Some(own);
+                }
+                lookup(t).filter(|k| record_keys.contains(k))
+            })
+            .collect();
+        ctor_arg_records.insert(cn, args);
+    }
+    ctor_arg_records.retain(|cn, _| ctor_seen.get(cn) == Some(&1));
     ProjectShapes {
         records,
         record_by_fields,
+        record_field_tys,
+        ctor_arg_records,
         unions,
         by_bare,
         external_modules,
@@ -12821,6 +13014,8 @@ mod type_identity_tests {
         ProjectShapes {
             records,
             record_by_fields: HashMap::new(),
+            record_field_tys: HashMap::new(),
+            ctor_arg_records: HashMap::new(),
             unions,
             by_bare,
             external_modules: HashSet::from(["Geo.Shape".to_string()]),
