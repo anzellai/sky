@@ -5,7 +5,7 @@
 //! [`crate::grammar`].
 
 use crate::event::Event;
-use crate::grammar::UNIT_START;
+use crate::grammar::{NAME_ONLY_KEYWORDS, UNIT_START};
 use crate::kind::SyntaxKind::{self, *};
 use crate::layout::PToken;
 use base::{FileId, Span};
@@ -81,18 +81,27 @@ pub(crate) struct Parser<'a> {
 /// before it: a keyword that only continues a construct (`then`, `else`,
 /// `of`, `in`, `as`, `alias`, `exposing`), punctuation (the formatter writes
 /// a multi-line record type with `,` and `}` at column 1), a literal, a
-/// bracket or an upper-case name.
+/// bracket or an upper-case name. One shape of such a keyword line also
+/// begins a unit: the line reads as a declaration named by the keyword
+/// (`else = 2`, `of x = 2`, `in : Int`), which is never a valid continuation
+/// ([`crate::grammar::NAME_ONLY_KEYWORDS`] has the proof). The one exception
+/// is `as name =`, the end of a let destructuring (`( a, b )` on one line,
+/// `as p = e` on the next): it continues the unit before it when a trial
+/// parse of the two together reads past its `=` with no error.
 /// A definition that follows its own annotation (`name : T` and then
 /// `name … =`) continues the annotation's unit: the two are one declaration.
 ///
 /// The boundaries depend on the tokens alone, never on how far the parser
 /// reads, so the error recovery in one unit cannot reach into the next one.
-pub(crate) fn lexical_units(src: &str, toks: &[PToken]) -> Vec<usize> {
+pub(crate) fn lexical_units(src: &str, toks: &[PToken], file: FileId) -> Vec<usize> {
     let text = |i: usize| toks.get(i).map(|t| &src[t.start as usize..t.end as usize]);
     let kind = |i: usize| toks.get(i).map(|t| t.kind);
     let mut units: Vec<usize> = Vec::new();
     for (i, t) in toks.iter().enumerate() {
-        let line_start = i == 0 || (t.newline_before && t.col == 1 && UNIT_START.contains(t.kind));
+        let col1 = t.newline_before && t.col == 1;
+        let line_start = i == 0
+            || (col1 && UNIT_START.contains(t.kind))
+            || (col1 && keyword_names_a_declaration(src, toks, &units, i, file));
         if !line_start {
             continue;
         }
@@ -105,6 +114,50 @@ pub(crate) fn lexical_units(src: &str, toks: &[PToken]) -> Vec<usize> {
         units.push(i);
     }
     units
+}
+
+/// Whether the column-1 token at `i` is a keyword that cannot begin a unit
+/// ([`NAME_ONLY_KEYWORDS`]) and its line reads as a declaration named by it:
+/// the keyword, then zero or more lower-case names or `_` on the same line,
+/// then `=` or `:`. `units` are the unit starts found before `i`.
+fn keyword_names_a_declaration(
+    src: &str,
+    toks: &[PToken],
+    units: &[usize],
+    i: usize,
+    file: FileId,
+) -> bool {
+    if !NAME_ONLY_KEYWORDS.contains(toks[i].kind) {
+        return false;
+    }
+    let same_line = |j: usize| toks.get(j).filter(|t| !t.newline_before);
+    let mut j = i + 1;
+    while same_line(j).is_some_and(|t| matches!(t.kind, LowerIdent | Underscore)) {
+        j += 1;
+    }
+    let Some(end) = same_line(j).filter(|t| matches!(t.kind, Eq | Colon)) else {
+        return false;
+    };
+    // `as name =` can end a let destructuring (`pattern as name = e`). It
+    // continues the unit before it when a parse of that unit and this line
+    // as one reads past the `=` with no error.
+    let alias_tail =
+        toks[i].kind == AsKw && j == i + 2 && toks[i + 1].kind == LowerIdent && end.kind == Eq;
+    if !alias_tail {
+        return true;
+    }
+    let Some(&start) = units.last() else {
+        return true;
+    };
+    let line_end = (j + 1..toks.len())
+        .find(|&k| toks[k].newline_before)
+        .unwrap_or(toks.len());
+    let mut p = Parser::new(src, toks[start..line_end].to_vec(), file);
+    crate::grammar::source_file(&mut p);
+    let done = p.finish();
+    // It begins a unit unless the parse read past its `=` with no error.
+    let accepted_to = j - start;
+    done.sites.iter().any(|s| s.at <= accepted_to)
 }
 
 /// Where a reported syntax diagnostic was raised: its index in the
@@ -176,7 +229,7 @@ impl<'a> Parser<'a> {
 
     /// A parser over a whole file: one unit per [`lexical_units`].
     pub(crate) fn new_file(src: &'a str, toks: Vec<PToken>, file: FileId) -> Parser<'a> {
-        let units = lexical_units(src, &toks);
+        let units = lexical_units(src, &toks, file);
         Parser::with_units(src, toks, file, units)
     }
 

@@ -135,25 +135,25 @@
     },
     "build-growth-linear": {
       "inputs_files": 478,
-      "inputs_hash": "b84f8872145d805efee897e2994a0c3ed0f723ed",
+      "inputs_hash": "56c4a66c09488b3e7accfc581e125030985d8c60",
       "mutation": "build-growth.one-model-wire-per-arm",
       "mutations": [
         "build-growth.one-model-wire-per-arm"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1792720119
+      "proven_at_unix": 1792726210
     },
     "build-new-dir-compiles-nothing": {
       "inputs_files": 478,
-      "inputs_hash": "be186496f291ccbf919c883b7c2042626614725b",
+      "inputs_hash": "f14d71b8f13fd0282df21033d94d6e22114c7616",
       "mutation": "build-new-dir.no-trimpath",
       "mutations": [
         "build-new-dir.no-trimpath"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1792720119
+      "proven_at_unix": 1792726210
     },
     "canary": {
       "inputs_files": 2,
@@ -164,7 +164,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1792720119
+      "proven_at_unix": 1792726210
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -316,14 +316,14 @@
     },
     "coverage-ledger": {
       "inputs_files": 4350,
-      "inputs_hash": "8c579129cd4d0bd351d8ab02a33c2aef805ed604",
+      "inputs_hash": "63daaeb76f55abc0ec0e589d8c6299c184870ffd",
       "mutation": "coverage-ledger.drop-a-sole-owner-import",
       "mutations": [
         "coverage-ledger.drop-a-sole-owner-import"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1792720119
+      "proven_at_unix": 1792726210
     },
     "erasure-path-uses-an-index": {
       "inputs_files": 800,

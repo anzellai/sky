@@ -719,6 +719,15 @@ fn keywords_that_cannot_begin_a_declaration_continue_at_column_one() {
         "module Main\nexposing (main)\n\nimport Std.Log\nexposing (println)\n\n\nmain =\n    1\n",
         "f x =\n    case x of\n        Just y\nas z ->\n            z\n\n        _ ->\n            x\n",
         "v =\n    let y = 1\nin y\n",
+        // `pattern as name = expr` is a let destructuring, so a column-1
+        // `as name =` can continue one.
+        "v =\n    let\n        ( a, b )\nas p = ( 1, 2 )\n    in\n    p\n",
+        "v =\n    let\n        Just a\nas p = m\n    in\n    p\n",
+        "v =\n    let ( a, b )\nas p = ( 1, 2 ) in p\n",
+        "v =\n    let\n        ( a, b )\nas p = ( 1, 2 )\n\n        c = 3\n    in\n    p\n",
+        // `alias` before an upper-case name continues `type`.
+        "type\nalias R = Int\n\n\nmain =\n    1\n",
+        "type\nalias R a = List a\n",
     ] {
         assert_clean(src);
     }
@@ -843,5 +852,90 @@ fn a_case_with_no_branch_is_an_error() {
     assert_one_plain(
         "f x =\n    case x of\n\n\nmain =\n    1\n",
         "expected a case branch",
+    );
+}
+
+/// `src` gives `count` diagnostics. The last one names `kw` and starts at
+/// or after `at`. Any earlier one starts before `at`.
+fn last_named(src: &str, at: u32, kw: &str, count: usize) -> Result<(), std::string::String> {
+    let parsed = p(src);
+    let diags = parsed.errors();
+    let ok = diags.len() == count
+        && diags.iter().take(count - 1).all(|d| diag_start(d) < at)
+        && diags.last().is_some_and(|d| {
+            d.code.0 == "E0001"
+                && d.message.starts_with(&format!("`{kw}` is a reserved word"))
+                && diag_start(d) >= at
+        });
+    if ok && parsed.reprint() == src {
+        Ok(())
+    } else {
+        Err(format!("{src:?}\n    got {:?}", diag_lines(&parsed)))
+    }
+}
+
+#[test]
+fn the_keyword_name_repros_give_one_named_error_per_declaration() {
+    // A declaration whose name is a keyword that cannot begin a unit, after
+    // a broken declaration: each declaration keeps its own named error.
+    for (src, first, second) in [
+        ("g = case\nelse = 2\n", "case", "else"),
+        ("type =\n    1\nalias =\n    2\n", "type", "alias"),
+        ("type = 1\nof = 2\n", "type", "of"),
+        ("module = 1\nas = 2\n", "module", "as"),
+        ("f type = 1\nof = 2\n", "type", "of"),
+        ("x if = 1\nthen = 2\n", "if", "then"),
+        ("h let =\n    1\nin =\n    2\n", "let", "in"),
+    ] {
+        let parsed = p(src);
+        let got = diag_lines(&parsed);
+        assert_eq!(got.len(), 2, "{src:?}: {got:?}");
+        for (line, kw) in got.iter().zip([first, second]) {
+            assert!(
+                line.starts_with(&format!("[E0001] `{kw}` is a reserved word")),
+                "{src:?}: {got:?}"
+            );
+        }
+        assert_eq!(parsed.reprint(), src);
+    }
+}
+
+/// The keywords that cannot begin a top-level unit.
+const NON_STARTING_KEYWORDS: &[&str] = &["then", "else", "of", "in", "as", "alias", "exposing"];
+
+#[test]
+fn a_keyword_as_a_declaration_name_begins_its_own_unit() {
+    // (what comes before, its source, the diagnostics it gives itself)
+    let before: &[(&str, &str, usize)] = &[
+        ("a valid declaration", "a =\n    1\n", 0),
+        ("a broken declaration", "b x =\n    x +\n", 1),
+        ("a case with no `of`", "c x =\n    case x\n", 1),
+        ("a case with no branch", "c x =\n    case x of\n", 1),
+        ("an if with no `then`", "d x =\n    if x\n", 1),
+        ("an if with no `else`", "d x =\n    if x then 1\n", 1),
+        ("a let with no `in`", "e =\n    let\n        y = 1\n", 1),
+        ("a let with no binding", "e =\n    let\n", 1),
+    ];
+    let mut failures = Vec::new();
+    let mut total = 0;
+    for kw in NON_STARTING_KEYWORDS {
+        for form in ["KW = 2\n", "KW x = 2\n", "KW : Int\n", "KW x _ =\n    2\n"] {
+            for (what, first, own) in before {
+                for gap in ["", "\n\n"] {
+                    total += 1;
+                    let src = format!("{first}{gap}{}", form.replace("KW", kw));
+                    let at = (first.len() + gap.len()) as u32;
+                    if let Err(e) = last_named(&src, at, kw, own + 1) {
+                        failures.push(format!("{what} + {form:?}: {e}"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {total} cases do not give one error per declaration:\n{}",
+        failures.len(),
+        failures.join("\n")
     );
 }

@@ -62,6 +62,36 @@ pub(crate) const UNIT_START: TokenSet = DECL_START
     .union(TokenSet::new(&[ModuleKw, ImportKw]))
     .without(UpperIdent);
 
+/// The keywords that cannot begin a top-level unit ([`UNIT_START`]). At
+/// column 1 such a keyword continues the unit before it, except when its
+/// line reads as a declaration with the keyword as its name: the keyword,
+/// then zero or more plain argument patterns (lower-case names, `_`) on the
+/// same line, then `=` or `:` (`else = 2`, `of x = 2`, `in : Int`). Then it
+/// also begins a unit (`parser::lexical_units`), so a broken declaration
+/// before it cannot hide its error.
+///
+/// Such a line is never a valid continuation. The grammar reads what
+/// follows each keyword as below, and none of it is a name (or `_`) list
+/// that `=` or `:` ends:
+///
+/// - `then`, `else` ([`if_expr`]) and `in` ([`let_expr`]): an expression.
+///   `=` and `:` never follow an expression: a binding's `=` follows its
+///   name and parameters at the start of a binding ([`value_or_anno`],
+///   [`let_binding`]), a record field's `=` or `:` follows `{`, `,` or `|`,
+///   and `==` and `::` are other tokens.
+/// - `of` ([`case_expr`]): a branch, which is a pattern and then `->`.
+/// - `alias` ([`type_decl`]): an upper-case name.
+/// - `exposing` ([`exposing_list`]): `(`.
+/// - `as`: an upper-case name or `_` in an import ([`import_decl`]), and a
+///   lower-case name in a pattern ([`pattern`]). That pattern can end a let
+///   destructuring (`( a, b ) as p = e`, [`let_binding`]), so `as` with ONE
+///   lower-case name and then `=` can continue a valid unit. The parser
+///   decides that one shape by a trial parse (`parser::lexical_units`).
+///   Every other shape (`as = e`, `as _ = e`, `as p q = e`, `as p : T`) is
+///   never valid.
+pub(crate) const NAME_ONLY_KEYWORDS: TokenSet =
+    TokenSet::new(&[ThenKw, ElseKw, OfKw, InKw, AsKw, AliasKw, ExposingKw]);
+
 // ---- entry ---------------------------------------------------------------
 
 pub(crate) fn source_file(p: &mut Parser) {

@@ -194,7 +194,19 @@ declaration: a lower-case name, `type`, `import` or `module`. Any other
 token at column 1 continues the line before: a keyword that only continues a
 construct (`then`, `else`, `of`, `in`, `as`, `alias`, `exposing`), a `,`, a
 bracket, an operator, a literal or an upper-case name. A definition and its
-annotation are one unit. The parser never reads past the end of a unit, and
+annotation are one unit.
+
+One shape of such a keyword line also begins a unit: the line reads as a
+declaration named by the keyword. That is the keyword, then zero or more
+lower-case names or `_` on the same line, then `=` or `:` (`else = 2`,
+`of x = 2`, `in : Int`). The grammar never puts `=` or `:` there, so the
+line cannot continue anything. It is its own declaration, and it gets its
+own error that names the keyword, even after a broken declaration. The one
+exception is `as name =`, which can end a `let` destructuring
+(`( a, b )` on one line and `as p = ( 1, 2 )` on the next). That line
+continues the unit before it when the two parse together past its `=` with
+no error. `alias R = Int` after a `type` line also continues, because a
+type alias name is upper-case. The parser never reads past the end of a unit, and
 it reports at most one syntax error for each unit. After the first error it
 keeps parsing, so the editor still sees the whole file, but it reports
 nothing more in that unit. Two broken declarations always give two errors,
@@ -208,9 +220,14 @@ one error:
 This line starts at column 1, so it begins a new declaration. Indent it to continue the definition above.
 ```
 
-Indent the line (`sky fmt` always does). A body line at column 1 that starts
-with anything else (`42`, `Just x`, `Task.run …`, `[`, `(`) still continues
-the definition.
+Indent the line (`sky fmt` always does). A line at column 1 that starts with
+anything else (`42`, `Just x`, `Task.run …`, `[`, `(`, `+`, `then`) stays in
+the unit of the definition. The parser reads it as part of the definition
+only where the definition still needs more: after `=`, after an operator,
+after `then`, `else`, `of`, `->` or `in`, or inside an open bracket. After a
+complete expression such a line is an error, as in v0.27.11: `answer =`,
+`    1` and then `+ 2` at column 1 gives `expected a declaration`. Indent
+it.
 
 A reserved word is named only when a trial proves it is the cause. Read as a
 fresh name, the word (and its later uses in the unit) must make the whole
