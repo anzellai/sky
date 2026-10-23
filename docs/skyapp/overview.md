@@ -197,8 +197,9 @@ command: `Nav.pushUrl "/orders/7"`, `Nav.replaceUrl "/"` or
 `Nav.clearFragment`. It routes like an in-app link on every web target, and a
 terminal target ignores it.
 
-At session init the `Sky.Http.Server.Request` carries `method` / `path` /
-`headers` / `params` / `query` / `cookies`. `body` and `remoteAddr` are empty —
+At session init the `Sky.Http.Server.Request` carries `method` / `host` /
+`path` / `headers` / `params` / `query` / `cookies` (`host` is the name the
+browser used, port included, and is also `headers` `"Host"`). `body` and `remoteAddr` are empty —
 init is a GET-time hook; read a POST body in a route handler or an `update`
 command instead.
 

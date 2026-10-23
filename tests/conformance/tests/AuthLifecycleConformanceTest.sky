@@ -63,6 +63,7 @@ blankRequest =
     , query = Dict.empty
     , cookies = Dict.empty
     , remoteAddr = "127.0.0.1"
+    , host = "localhost"
     }
 
 

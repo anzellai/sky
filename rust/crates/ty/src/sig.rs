@@ -1357,6 +1357,7 @@ impl World {
             ("concat", fun(list(list(a())), list(a()))),
             ("member", fun(a(), fun(list(a()), bool_()))),
             ("range", fun(int_(), fun(int_(), list(int_())))),
+            ("repeat", fun(int_(), fun(a(), list(a())))),
             ("zip", fun(list(a()), fun(list(b()), list(tup2(a(), b()))))),
             ("length", fun(list(a()), int_())),
             ("isEmpty", fun(list(a()), bool_())),

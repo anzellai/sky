@@ -219,6 +219,14 @@ use `Sub.everyWithTime` and read the time the tick carries; a tick whose
 update calls the server is coalesced and held back while the page is hidden
 (`docs/skyspa/overview.md`, "Network resilience").
 
+**Request host and binary data.** A `Sky.Http.Server` handler, an `App.api`
+route and the `App.withRequest` hook get `req.host`: the name the client used,
+port included (`"a.localhost:8000"`), also in `req.headers` under `"Host"`. An
+app that serves several domains reads it. `Server.bytes contentType bytes`
+answers binary data byte for byte, and `File.writeBytes path bytes` writes it
+(a `Bytes` is a `String` whose bytes need not be UTF-8, e.g. from
+`Bytes.fromBase64`). `List.repeat n x` is `n` copies of `x`, as in Elm.
+
 **A host that cannot keep cookies** (a native shell whose custom scheme drops
 `Set-Cookie`, some embedded web views) uses `App.withSessionTransport
 HeaderToken` (or `SKY_LIVE_SESSION_TRANSPORT=header`): the Sky.Live session id

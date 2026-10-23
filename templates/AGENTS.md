@@ -46,6 +46,12 @@ still reach for directly is **`Sky.Http.Server`** (`Server.listen 8000 […]`) f
 a headless HTTP/JSON API with no TEA UI, and `main = Task.run cmd` for a one-shot
 job. See `sky doc Std.App`.
 
+A handler's `req.host` is the name the client used (port included, also in
+`req.headers` under `"Host"`), so one app can serve several domains.
+`Server.bytes "image/png" png` answers binary data byte for byte, and
+`File.writeBytes path bytes` saves it (`png` from `Bytes.fromBase64`, for
+example).
+
 ### Migrating a deprecated front door → `Std.App`
 
 Turn `main = Live.app (Live.config { … })` into a named `appDef` refined by

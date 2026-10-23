@@ -9,6 +9,7 @@ module SyncFileConformanceTest exposing (main, tests)
 -- Windows, and the -race runs.
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Bytes as Bytes
 import Sky.Core.Error as Error
 import Sky.Core.File as File exposing (FileKind(..))
 import Sky.Core.List as List
@@ -196,10 +197,40 @@ missingKind =
             "ok"
 
 
+-- `File.writeBytes` then `File.readFileBytes`: bytes that are not UTF-8
+-- (a PNG signature, a NUL, 0xFF 0xFE) come back unchanged.
+bytesRoundTrip : Result Error (List Int)
+bytesRoundTrip =
+    case Bytes.fromBase64 "iVBORwD//oAK" of
+        Nothing ->
+            Ok []
+
+        Just blob ->
+            fixture
+                (\dir ->
+                    File.writeBytes (dir ++ "/blob.bin") blob
+                        |> Task.andThen (\_ -> File.readFileBytes (dir ++ "/blob.bin")))
+
+
 tests : List Test
 tests =
     [ -- ─── Sky.Core.File ───────────────────────────────────────────
-      Test.test "stat: a regular file is File, with its size"
+      Test.test "writeBytes then readFileBytes keeps non-UTF-8 bytes"
+        (\_ -> Test.equal (Ok [ 137, 80, 78, 71, 0, 255, 254, 128, 10 ]) bytesRoundTrip)
+    , Test.test "writeBytes then readFile keeps the exact length in bytes"
+        (\_ ->
+            Test.equal (Ok 9)
+                (case Bytes.fromBase64 "iVBORwD//oAK" of
+                    Nothing ->
+                        Ok 0
+
+                    Just blob ->
+                        fixture
+                            (\dir ->
+                                File.writeBytes (dir ++ "/b2.bin") blob
+                                    |> Task.andThen (\_ -> File.readFile (dir ++ "/b2.bin"))
+                                    |> Task.map Bytes.length)))
+    , Test.test "stat: a regular file is File, with its size"
         (\_ ->
             Test.equal (Ok ( File, 5 ))
                 (fixture (\dir -> File.stat (dir ++ "/root/sub/f.txt") |> Task.map (\i -> ( i.kind, i.size )))))
