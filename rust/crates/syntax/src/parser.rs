@@ -47,19 +47,60 @@ pub(crate) struct Parser<'a> {
     /// its `col > block_indent` (doc 04 §4, `checkIndent`).
     pub(crate) block_indent: u32,
     depth: u32,
-    /// The diagnostic budget (see [`Parser::begin_unit`]): the token index
-    /// where the current top-level unit starts, and whether that unit has
-    /// already reported a syntax error.
-    unit_start: usize,
-    unit_errored: bool,
-    /// Every unit start, in order.
+    /// The lexical units (see [`lexical_units`]): the token index where each
+    /// starts, in order. A file parse has one per top-level unit. A
+    /// sub-parser (an interpolation body) has one for all its tokens.
     units: Vec<usize>,
+    /// The unit the cursor is in (an index into `units`).
+    unit: usize,
+    /// The token index where that unit ends. The cursor never passes it: a
+    /// token there reads as the end of input until the top level begins the
+    /// next unit ([`Parser::begin_unit`]).
+    limit: usize,
+    /// Whether the current unit has already reported a syntax error.
+    unit_errored: bool,
     /// Where each reported diagnostic was raised.
     sites: Vec<ErrorSite>,
 }
 
+/// Tokens that can never begin a declaration or an expression: at column 1
+/// they continue the unit before them.
+const CONTINUES: TokenSet = TokenSet::new(&[
+    Comma, RParen, RBrack, RBrace, Pipe, Arrow, Eq, Colon, Colon2, Dot, DotDot, Op,
+]);
+
+/// Split a token stream into its lexical top-level units: a unit starts at
+/// the first token and at every token that begins a line at column 1, except
+/// punctuation that can only continue the line before ([`CONTINUES`]: the
+/// formatter writes a multi-line record type with `,` and `}` at column 1).
+/// A definition that follows its own annotation (`name : T` and then
+/// `name … =`) continues the annotation's unit: the two are one declaration.
+///
+/// The boundaries depend on the tokens alone, never on how far the parser
+/// reads, so the error recovery in one unit cannot reach into the next one.
+pub(crate) fn lexical_units(src: &str, toks: &[PToken]) -> Vec<usize> {
+    let text = |i: usize| toks.get(i).map(|t| &src[t.start as usize..t.end as usize]);
+    let kind = |i: usize| toks.get(i).map(|t| t.kind);
+    let mut units: Vec<usize> = Vec::new();
+    for (i, t) in toks.iter().enumerate() {
+        let line_start = i == 0 || (t.newline_before && t.col == 1 && !CONTINUES.contains(t.kind));
+        if !line_start {
+            continue;
+        }
+        if let Some(&prev) = units.last() {
+            let annotated = kind(prev + 1) == Some(Colon);
+            if annotated && text(prev) == text(i) && kind(i + 1) != Some(Colon) {
+                continue;
+            }
+        }
+        units.push(i);
+    }
+    units
+}
+
 /// Where a reported syntax diagnostic was raised: its index in the
-/// diagnostics, the token it was raised at, and the start of its unit.
+/// diagnostics, the token it was raised at, and its unit (an index into
+/// [`Finished::units`]).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ErrorSite {
     pub(crate) diag: usize,
@@ -68,7 +109,7 @@ pub(crate) struct ErrorSite {
 }
 
 /// What a parse yields besides the tree: the diagnostics, where each was
-/// raised, and the unit starts.
+/// raised, and the lexical unit starts.
 pub(crate) struct Finished {
     pub(crate) events: Vec<Event>,
     pub(crate) diags: Vec<Diagnostic>,
@@ -119,7 +160,19 @@ impl CompletedMarker {
 }
 
 impl<'a> Parser<'a> {
+    /// A parser over `toks` as one unit (an interpolation body).
     pub(crate) fn new(src: &'a str, toks: Vec<PToken>, file: FileId) -> Parser<'a> {
+        Parser::with_units(src, toks, file, vec![0])
+    }
+
+    /// A parser over a whole file: one unit per [`lexical_units`].
+    pub(crate) fn new_file(src: &'a str, toks: Vec<PToken>, file: FileId) -> Parser<'a> {
+        let units = lexical_units(src, &toks);
+        Parser::with_units(src, toks, file, units)
+    }
+
+    fn with_units(src: &'a str, toks: Vec<PToken>, file: FileId, units: Vec<usize>) -> Parser<'a> {
+        let limit = units.get(1).copied().unwrap_or(toks.len());
         Parser {
             src,
             toks,
@@ -129,21 +182,31 @@ impl<'a> Parser<'a> {
             file,
             block_indent: 0,
             depth: 0,
-            unit_start: 0,
+            units,
+            unit: 0,
+            limit,
             unit_errored: false,
-            units: Vec::new(),
             sites: Vec::new(),
+        }
+    }
+
+    /// The token at `i`, or `None` past the end of the current unit.
+    fn tok(&self, i: usize) -> Option<&PToken> {
+        if i < self.limit {
+            self.toks.get(i)
+        } else {
+            None
         }
     }
 
     // ---- cursor ----
 
     pub(crate) fn current(&self) -> SyntaxKind {
-        self.toks.get(self.pos).map(|t| t.kind).unwrap_or(Eof)
+        self.tok(self.pos).map(|t| t.kind).unwrap_or(Eof)
     }
 
     pub(crate) fn nth(&self, n: usize) -> SyntaxKind {
-        self.toks.get(self.pos + n).map(|t| t.kind).unwrap_or(Eof)
+        self.tok(self.pos + n).map(|t| t.kind).unwrap_or(Eof)
     }
 
     pub(crate) fn at(&self, kind: SyntaxKind) -> bool {
@@ -155,37 +218,31 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn at_end(&self) -> bool {
-        self.pos >= self.toks.len()
+        self.pos >= self.limit.min(self.toks.len())
     }
 
     /// Text of the current token (empty at EOF).
     pub(crate) fn cur_text(&self) -> &'a str {
-        match self.toks.get(self.pos) {
+        match self.tok(self.pos) {
             Some(t) => &self.src[t.start as usize..t.end as usize],
             None => "",
         }
     }
 
     pub(crate) fn newline_before(&self) -> bool {
-        self.toks
-            .get(self.pos)
-            .map(|t| t.newline_before)
-            .unwrap_or(true)
+        self.tok(self.pos).map(|t| t.newline_before).unwrap_or(true)
     }
 
     pub(crate) fn col(&self) -> u32 {
-        self.toks.get(self.pos).map(|t| t.col).unwrap_or(0)
+        self.tok(self.pos).map(|t| t.col).unwrap_or(0)
     }
 
     pub(crate) fn ws_before(&self) -> bool {
-        self.toks.get(self.pos).map(|t| t.ws_before).unwrap_or(true)
+        self.tok(self.pos).map(|t| t.ws_before).unwrap_or(true)
     }
 
     pub(crate) fn nth_ws_before(&self, n: usize) -> bool {
-        self.toks
-            .get(self.pos + n)
-            .map(|t| t.ws_before)
-            .unwrap_or(true)
+        self.tok(self.pos + n).map(|t| t.ws_before).unwrap_or(true)
     }
 
     /// The current token *continues* the enclosing block: same line, or a fresh
@@ -197,9 +254,16 @@ impl<'a> Parser<'a> {
         !self.newline_before() || self.col() > self.block_indent
     }
 
+    /// The span a diagnostic at the cursor points at. At the end of a unit
+    /// that is not the end of the file, it is the point just after the
+    /// unit's last token, so the diagnostic stays inside its own unit.
     fn cur_span(&self) -> Span {
-        match self.toks.get(self.pos) {
+        match self.tok(self.pos) {
             Some(t) => Span::new(self.file, t.start, t.end),
+            None if self.pos < self.toks.len() && self.pos > 0 => {
+                let end = self.toks[self.pos - 1].end;
+                Span::new(self.file, end, end)
+            }
             None => {
                 let end = self.src.len() as u32;
                 Span::new(self.file, end, end)
@@ -257,8 +321,9 @@ impl<'a> Parser<'a> {
     // ---- diagnostics + recovery ----
 
     /// Record a syntax diagnostic at the current token. Only the FIRST one in
-    /// a unit is kept (the diagnostic budget, [`Parser::begin_unit`]): a later
-    /// one is a follow-on of the first, so it is dropped. The ERROR nodes and
+    /// a lexical unit is kept (the diagnostic budget): a later one is a
+    /// follow-on of the first, so it is dropped. The cursor never leaves its
+    /// unit, so the unit that keeps a diagnostic is the unit it points into. The ERROR nodes and
     /// the recovery are unchanged, so the tree the LSP and `fmt` read is the
     /// same.
     pub(crate) fn error(&mut self, msg: impl Into<std::string::String>) {
@@ -269,7 +334,7 @@ impl<'a> Parser<'a> {
         self.sites.push(ErrorSite {
             diag: self.diags.len(),
             at: self.pos,
-            unit: self.unit_start,
+            unit: self.unit,
         });
         let msg = msg.into();
         let span = self.cur_span();
@@ -311,33 +376,23 @@ impl<'a> Parser<'a> {
 
     // ---- diagnostic budget ----
 
-    /// Start a new top-level unit if the current token begins a line at
-    /// column 1 (the module header, an import, a declaration, or recovery
-    /// garbage at the top level). The diagnostic budget resets here, so an
-    /// error in one declaration never hides an error in the next one.
-    ///
-    /// A definition that follows its own annotation (`name : T` and then
-    /// `name … =`) continues the annotation's unit: the two are one
-    /// declaration, so one mistake in its name is one diagnostic.
+    /// Begin the next lexical unit when the cursor has reached the end of
+    /// the current one (the module header, an import, a declaration, or
+    /// recovery garbage at the top level). Only the top level calls this, so
+    /// a construct nested in one unit ends at the unit's end, and the
+    /// diagnostic budget resets here: an error in one declaration never
+    /// hides an error in the next one.
     pub(crate) fn begin_unit(&mut self) {
-        let line_start = self.pos == 0 || (self.newline_before() && self.col() == 1);
-        if self.at_end() || !line_start || self.units.last() == Some(&self.pos) {
+        if self.pos < self.limit || self.pos >= self.toks.len() {
             return;
         }
-        if let Some(&prev) = self.units.last() {
-            let head = |i: usize| {
-                self.toks
-                    .get(i)
-                    .map(|t| &self.src[t.start as usize..t.end as usize])
-            };
-            let annotated = self.toks.get(prev + 1).map(|t| t.kind) == Some(Colon);
-            if annotated && head(prev) == head(self.pos) && self.nth(1) != Colon {
-                return;
-            }
-        }
-        self.unit_start = self.pos;
+        self.unit += 1;
+        self.limit = self
+            .units
+            .get(self.unit + 1)
+            .copied()
+            .unwrap_or(self.toks.len());
         self.unit_errored = false;
-        self.units.push(self.pos);
     }
 
     // ---- block-indent scoping (Haskell `withIndent`) ----
@@ -378,7 +433,7 @@ impl<'a> Parser<'a> {
 
     /// Byte range of the current significant token.
     pub(crate) fn cur_range(&self) -> Option<(u32, u32)> {
-        self.toks.get(self.pos).map(|t| (t.start, t.end))
+        self.tok(self.pos).map(|t| (t.start, t.end))
     }
 
     pub(crate) fn src_slice(&self, start: u32, end: u32) -> &'a str {

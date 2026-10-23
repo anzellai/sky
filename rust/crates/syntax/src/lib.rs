@@ -131,36 +131,34 @@ pub fn parse(src: &str, file: FileId) -> Parse {
 }
 
 fn run_grammar(src: &str, toks: Vec<PToken>, file: FileId) -> parser::Finished {
-    let mut p = parser::Parser::new(src, toks, file);
+    let mut p = parser::Parser::new_file(src, toks, file);
     grammar::source_file(&mut p);
     p.finish()
 }
 
-/// The most reserved words [`name_reserved_words`] tries for one error.
-const MAX_CANDIDATES: usize = 8;
-
 /// The most further uses of the same word one trial follows.
 const MAX_FOLLOW: usize = 4;
 
-/// Name the reserved word behind each unit's one syntax error.
+/// Name the reserved word behind each unit's one syntax error, when a trial
+/// proves it.
 ///
-/// The grammar reports only the first error in a top-level unit (the
-/// diagnostic budget, `Parser::begin_unit`). That error is raised where the
-/// parse first fails, which is the misused word itself (`g then`), the token
-/// after a word that opened a construct (`x ++ if` fails at the end of
-/// input), or a valid keyword after the misused one (`if if then` fails at
-/// `then`). So the misused word is found by trial, not by position.
+/// The grammar reports only the first error in each lexical top-level unit
+/// (the diagnostic budget, `parser::lexical_units`). That error is raised
+/// where the parse first fails, which may be the misused word itself
+/// (`g then`), the token after a word that opened a construct (`x ++ if`
+/// fails at the end of the unit), or a valid keyword after the misused one
+/// (`if if then` fails at `then`). So the misused word is found by trial,
+/// not by position.
 ///
-/// Each reserved word of the unit near the error (the error token, the token
-/// after it, then backwards) is read as a plain name, and the unit is parsed
-/// again. When the renamed word is used again later in the unit (a binding
-/// and its use), the trial follows: a new error at another use of the same
-/// word renames that use too. The word whose trial gets the parse furthest
-/// (no error at all is furthest) is the misused one. A trial must get past
-/// the original error to count. When none does, a reserved word standing at
-/// the error is named. Either way the one diagnostic of the unit becomes the
-/// named `[E0001]`. A unit whose error involves no reserved word keeps its
-/// message.
+/// A trial reads one reserved word of the unit as a fresh name (a value
+/// name, or a capitalised name where only a type or module name fits) and
+/// parses the unit again. When the renamed word is used again later in the unit (a
+/// binding and its use), the trial follows: a new error at another use of
+/// the same word renames that use too. A word is named only when its trial
+/// parses the WHOLE unit with no error. The earliest such word in the unit
+/// is named. When no trial is clean, the parser's own diagnostic stays as it
+/// is, so a valid keyword (`exposing` in `module Main exposing main`) is
+/// never named as misused.
 ///
 /// Only a unit that already has an error is tried, and only that unit's
 /// tokens are parsed again, so valid code costs nothing.
@@ -173,14 +171,10 @@ fn name_reserved_words(
     units: &[usize],
 ) {
     for site in sites {
-        let end = units
-            .iter()
-            .copied()
-            .find(|&u| u > site.unit)
-            .unwrap_or(toks.len());
-        let unit = &toks[site.unit..end];
-        let at = site.at - site.unit; // may be `unit.len()` (end of the unit)
-        if let Some(i) = misused_word(src, unit, file, at) {
+        let start = units[site.unit];
+        let end = units.get(site.unit + 1).copied().unwrap_or(toks.len());
+        let unit = &toks[start..end];
+        if let Some(i) = misused_word(src, unit, file) {
             let t = unit[i];
             let word = &src[t.start as usize..t.end as usize];
             let msg = format!(
@@ -194,56 +188,54 @@ fn name_reserved_words(
     }
 }
 
-/// The index in `unit` of the reserved word misused as a name, for a unit
-/// whose first error is at `at` (see [`name_reserved_words`]).
-fn misused_word(src: &str, unit: &[PToken], file: FileId, at: usize) -> Option<usize> {
+/// The index in `unit` of the earliest reserved word whose trial parses the
+/// whole unit with no error (see [`name_reserved_words`]), or `None`.
+fn misused_word(src: &str, unit: &[PToken], file: FileId) -> Option<usize> {
     let text = |t: &PToken| &src[t.start as usize..t.end as usize];
     let reserved = |i: usize| {
         unit.get(i)
             .is_some_and(|t| parser::is_reserved_word(t.kind))
     };
-    let mut order = vec![at, at + 1];
-    order.extend((0..at.min(unit.len())).rev());
-    let candidates = order
-        .into_iter()
-        .filter(|&i| reserved(i))
-        .take(MAX_CANDIDATES);
-    // The first error of `unit` with the tokens in `renamed` read as names,
-    // or `usize::MAX` when there is none.
-    let first_error = |renamed: &[usize]| {
+    // The first error of `unit` with the tokens in `renamed` read as names of
+    // kind `name`, or `None` when the unit parses clean.
+    let first_error = |renamed: &[usize], name: SyntaxKind| {
         let mut trial = unit.to_vec();
         for &i in renamed {
-            trial[i].kind = SyntaxKind::LowerIdent;
+            trial[i].kind = name;
         }
         let done = run_grammar(src, trial, file);
-        done.sites.iter().map(|s| s.at).min().unwrap_or(usize::MAX)
+        done.sites.iter().map(|s| s.at).min()
     };
-    let mut best: Option<(usize, usize)> = None; // (candidate, how far)
-    for c in candidates {
+    // Whether reading the word at `c` (and its later uses) as a fresh name of
+    // kind `name` makes the whole unit parse clean.
+    let clean_as = |c: usize, name: SyntaxKind| {
         let mut renamed = vec![c];
-        let mut reached = first_error(&renamed);
+        let mut reached = first_error(&renamed, name);
         for _ in 0..MAX_FOLLOW {
+            let Some(at) = reached else { break };
             // A later use of the same word stands at (or just before) the new
             // error: it is the same name, so read it as a name too.
-            let again = [reached, reached.wrapping_sub(1)].into_iter().find(|&i| {
+            let again = [at, at.wrapping_sub(1)].into_iter().find(|&i| {
                 reserved(i) && !renamed.contains(&i) && text(&unit[i]) == text(&unit[c])
             });
             match again {
                 Some(i) => {
                     renamed.push(i);
-                    reached = first_error(&renamed);
+                    reached = first_error(&renamed, name);
                 }
                 None => break,
             }
         }
-        if reached > at && best.is_none_or(|(_, far)| reached > far) {
-            best = Some((c, reached));
-        }
-        if reached == usize::MAX {
-            break;
-        }
-    }
-    best.map(|(c, _)| c).or_else(|| reserved(at).then_some(at))
+        reached.is_none()
+    };
+    // A unit that parses clean on its own errs only in its context (an
+    // import after a declaration): no rename is the cause.
+    first_error(&[], SyntaxKind::LowerIdent)?;
+    // A fresh name is a value name or, where only a type or module name fits
+    // (`type if = A`, `import Std.Log as if`), a capitalised one.
+    (0..unit.len())
+        .filter(|&i| reserved(i))
+        .find(|&c| clean_as(c, SyntaxKind::LowerIdent) || clean_as(c, SyntaxKind::UpperIdent))
 }
 
 #[cfg(test)]

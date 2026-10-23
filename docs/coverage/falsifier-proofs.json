@@ -136,6 +136,7 @@
     "build-growth-linear": {
       "inputs_files": 478,
       "inputs_hash": "347fee0d503eb36a3b4c21f5a6675226e23fd41a",
+      "last_inconclusive_at_unix": 1792716465,
       "mutation": "build-growth.one-model-wire-per-arm",
       "mutations": [
         "build-growth.one-model-wire-per-arm"
@@ -147,6 +148,7 @@
     "build-new-dir-compiles-nothing": {
       "inputs_files": 478,
       "inputs_hash": "3f4a35fa11109d93eaf4120561af055edb8c50e4",
+      "last_inconclusive_at_unix": 1792716465,
       "mutation": "build-new-dir.no-trimpath",
       "mutations": [
         "build-new-dir.no-trimpath"
@@ -164,7 +166,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1792709039
+      "proven_at_unix": 1792716465
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -316,14 +318,14 @@
     },
     "coverage-ledger": {
       "inputs_files": 4350,
-      "inputs_hash": "528bd0fece95581a1e33aecde5a39387259bf6b8",
+      "inputs_hash": "d224a1cd49f19da2b742b93c0fa802f3a614edb9",
       "mutation": "coverage-ledger.drop-a-sole-owner-import",
       "mutations": [
         "coverage-ledger.drop-a-sole-owner-import"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1792709039
+      "proven_at_unix": 1792716465
     },
     "erasure-path-uses-an-index": {
       "inputs_files": 800,
@@ -449,6 +451,7 @@
     "spa-diff-fuzz": {
       "inputs_files": 20,
       "inputs_hash": "346354350fb02dfb65db45ce2e0add93423ef87f",
+      "last_inconclusive_at_unix": 1792716465,
       "mutation": "spa-diff-fuzz.drop-msgarg-rename",
       "mutations": [
         "spa-diff-fuzz.drop-msgarg-rename",

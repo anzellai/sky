@@ -26,9 +26,15 @@ fn have_go() -> bool {
         .unwrap_or(false)
 }
 
+/// A fresh directory per call. The tests of this file run in parallel in one
+/// process, and two calls in the same clock tick got the same name: one test
+/// then read the `.gitattributes` another had written. A counter keeps every
+/// name distinct.
 fn scratch() -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "sky-init-{}-{}",
+        "sky-init-{}-{n}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

@@ -53,8 +53,10 @@ const DECL_START: TokenSet = TokenSet::new(&[TypeKw, LowerIdent, UpperIdent]);
 
 pub(crate) fn source_file(p: &mut Parser) {
     let m = p.start();
-    // Each top-level unit (the header, an import, a declaration) starts a
-    // fresh diagnostic budget: only its first syntax error is reported.
+    // Each lexical top-level unit (the header, an import, a declaration)
+    // starts a fresh diagnostic budget: only its first syntax error is
+    // reported. The parser never reads past the end of a unit until
+    // `begin_unit` starts the next one.
     p.begin_unit();
     if p.at(ModuleKw) {
         module_header(p);
@@ -65,28 +67,31 @@ pub(crate) fn source_file(p: &mut Parser) {
         p.begin_unit();
     }
     // top-level anchor is column 1: a decl body continues while col > 1.
-    p.with_indent(1, |p| {
-        while !p.at_end() {
-            p.begin_unit();
-            if p.at_any(DECL_START) {
-                decl(p);
-            } else if p.at_block_boundary() {
-                // A non-declaration token sitting AT the top-level anchor (col 1
-                // on a fresh line) — e.g. a stray `import` after a decl, or a
-                // mis-indented keyword. `err_recover` early-returns at a block
-                // boundary WITHOUT advancing, so calling it here would spin this
-                // `while !at_end()` loop forever (the token can never start a
-                // declaration and is never consumed). Bump exactly one token to
-                // guarantee forward progress — ill-formed input must terminate as
-                // diagnostics, never hang (L7). Valid programs never reach here:
-                // a well-formed top level is only decls after the imports.
-                p.err_and_bump("expected a declaration");
-            } else {
-                // recover to the next declaration anchor rather than eating one
-                // token at a time (doc 04 §11). Not at a block boundary here, so
-                // `err_recover` consumes ≥1 token — progress is guaranteed.
-                p.err_recover("expected a declaration", DECL_START);
-            }
+    // A unit's end reads as the end of input, so begin the next unit before
+    // asking whether the input has ended.
+    p.with_indent(1, |p| loop {
+        p.begin_unit();
+        if p.at_end() {
+            break;
+        }
+        if p.at_any(DECL_START) {
+            decl(p);
+        } else if p.at_block_boundary() {
+            // A non-declaration token sitting AT the top-level anchor (col 1
+            // on a fresh line) — e.g. a stray `import` after a decl, or a
+            // mis-indented keyword. `err_recover` early-returns at a block
+            // boundary WITHOUT advancing, so calling it here would spin this
+            // top-level loop forever (the token can never start a
+            // declaration and is never consumed). Bump exactly one token to
+            // guarantee forward progress — ill-formed input must terminate as
+            // diagnostics, never hang (L7). Valid programs never reach here:
+            // a well-formed top level is only decls after the imports.
+            p.err_and_bump("expected a declaration");
+        } else {
+            // recover to the next declaration anchor rather than eating one
+            // token at a time (doc 04 §11). Not at a block boundary here, so
+            // `err_recover` consumes ≥1 token — progress is guaranteed.
+            p.err_recover("expected a declaration", DECL_START);
         }
     });
     m.complete(p, SourceFile);
@@ -1064,6 +1069,11 @@ fn case_expr(p: &mut Parser) -> CompletedMarker {
     expr(p); // subject (stops at `of`)
     p.expect(OfKw);
     let anchor = p.col(); // first arm's column
+                          // A `case` needs at least one branch: with none there is no pattern for
+                          // the exhaustiveness check to test.
+    if p.at_end() {
+        p.error("expected a case branch");
+    }
     loop {
         if p.at_end() {
             break;

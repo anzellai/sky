@@ -181,21 +181,33 @@ error (`[E1014] UNKNOWN OPERATOR`): "not equal" is `/=`, never `!=`.
 Non-reserved identifiers frequently used in Sky but which are *not* keywords: `from`, `where`, `port`, `foreign`.
 
 A reserved word where a name is expected (a binding, a parameter, a field, a
-value, a type variable, an import alias) is one parse error that names the
-word, with no follow-on errors:
+value, a type variable, a type name, an import alias) is one parse error that
+names the word, with no follow-on errors:
 
 ```text
 `type` is a reserved word and cannot be used as a name. Pick another name. The reserved words are: module, exposing, import, as, type, alias, if, then, else, case, of, let, in.
 ```
 
-The parser reports at most one syntax error for each top-level unit (the
-module header, an import, or a declaration with its annotation). After the
-first error it keeps parsing, so the editor still sees the whole file, but it
-reports nothing more until the next line that starts at column 1. Two broken
-declarations give two errors. When a reserved word is the cause, the error
-names that word, even where the parse fails a few tokens later (`x ++ if`
-fails at the end of the line) or at a valid keyword (`if if then …` names the
-second `if`, not `then`).
+The file is cut into top-level units by its tokens alone. A unit starts at
+each line that begins at column 1, except a line that begins with a `,`, a
+closing bracket or an operator, which continues the line before. A definition
+and its annotation are one unit. So a declaration body must be indented past
+column 1. The parser never reads past the end of a unit, and it reports at
+most one syntax error for each unit. After the first error it keeps parsing,
+so the editor still sees the whole file, but it reports nothing more in that
+unit. Two broken declarations always give two errors, one in each.
+
+A reserved word is named only when a trial proves it is the cause: read as a
+fresh name, the word (and its later uses in the unit) must make the whole
+unit parse with no error. The earliest such word is named. This finds the
+word even where the parse fails a few tokens later (`x ++ if` fails at the end
+of the line) or at a valid keyword (`if if then …` names the second `if`, not
+`then`). When no trial parses clean, the parser's own message stays, so a
+keyword in its valid place is never named: `module Main exposing main` gives
+`expected LParen`, and `if x 1 else 2` gives `expected ThenKw`.
+
+A `case` needs at least one branch. `case x of` with no branch is
+`expected a case branch`.
 
 `True` and `False` are literals, not names. Before v0.27.12 the compiler also
 reserved `foreign` (a leftover rule with no meaning), so `let foreign = …`

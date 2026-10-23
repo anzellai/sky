@@ -483,6 +483,9 @@ const RESERVED_POSITIONS: &[(&str, &str)] = &[
     // module header and imports
     ("exposed value", "module Main exposing (main, KW)\n\n\nmain =\n    1\n"),
     ("import alias", "module Main exposing (main)\n\nimport Std.Log as KW\n\n\nmain =\n    1\n"),
+    ("imported module name", "module Main exposing (main)\n\nimport KW\n\n\nmain =\n    1\n"),
+    ("type name", "type KW\n    = A\n"),
+    ("type alias name", "type alias KW =\n    { a : Int }\n"),
     ("imported value", "module Main exposing (main)\n\nimport Std.Log exposing (KW)\n\n\nmain =\n    1\n"),
 ];
 
@@ -520,8 +523,12 @@ fn misused_keyword_next_to_a_valid_one_names_the_misused_one() {
     assert_one_named("f x =\n    case if of\n        _ ->\n            1\n", "if");
     assert_one_named("f x =\n    case in of\n        _ ->\n            1\n", "in");
     assert_one_named("f x =\n    let y = in in y\n", "in");
-    // a branch left out: one diagnostic, at the word that stands there
-    assert_one_named("f x =\n    if True then else \"b\"\n", "else");
+    // a branch left out is a missing expression, not a misused word: no
+    // trial parses clean, so the parser's own message stays
+    assert_one_plain(
+        "f x =\n    if True then else \"b\"\n",
+        "expected an expression",
+    );
     // the function-argument repro: atoms are the only arguments
     for kw in ["if", "case", "let"] {
         assert_one_named(&format!("f x =\n    g {kw} 1\n"), kw);
@@ -530,7 +537,7 @@ fn misused_keyword_next_to_a_valid_one_names_the_misused_one() {
 
 #[test]
 fn errors_in_two_declarations_give_one_each() {
-    let src = "f x =\n    g type 1 ( ]\n\n\ny =\n    h (case)\n\n\nmain =\n    1\n";
+    let src = "f x =\n    g type 1\n\n\ny =\n    h (case)\n\n\nmain =\n    1\n";
     let parsed = p(src);
     let got = diag_lines(&parsed);
     assert_eq!(got.len(), 2, "one per broken declaration, got {got:?}");
@@ -543,6 +550,13 @@ fn errors_in_two_declarations_give_one_each() {
     assert_eq!(got.len(), 2, "{got:?}");
     assert!(got[0].contains("`then` is a reserved word"), "{got:?}");
     assert!(!got[1].contains("reserved word"), "{got:?}");
+    // a declaration with a misused word AND another error: renaming the word
+    // does not make it parse, so its own message stays (one per declaration)
+    let src = "f x =\n    g type 1 ( ]\n\n\ny =\n    h (case)\n";
+    let got = diag_lines(&p(src));
+    assert_eq!(got.len(), 2, "{got:?}");
+    assert!(!got[0].contains("reserved word"), "{got:?}");
+    assert!(got[1].contains("`case` is a reserved word"), "{got:?}");
 }
 
 #[test]
@@ -614,4 +628,149 @@ fn keywords_in_their_valid_places_still_parse() {
     assert_clean("f x =\n    t\n        |> Task.andThen (\\y -> case y of\n            Just z ->\n                Task.succeed z\n\n            Nothing ->\n                Task.succeed 0\n        )\n");
     assert_clean("f x =\n    t\n        |> Task.andThen\n            (\\y ->\n                case y of\n                    Just z ->\n                        Task.succeed z\n\n                    Nothing ->\n                        Task.succeed 0\n            )\n");
     assert_clean("module Main exposing (main)\n\nimport Std.Log as Log exposing (println)\n\n\ntype alias R =\n    { a : Int }\n\n\ntype T\n    = A\n    | B Int\n\n\nmain =\n    1\n");
+}
+
+/// The byte offset where the first label of `d` starts.
+fn diag_start(d: &diagnostics::Diagnostic) -> u32 {
+    d.labels.first().map(|l| l.span.range.0).unwrap_or(0)
+}
+
+// A second, separate broken declaration after each broken first one. The
+// diagnostic budget is per LEXICAL unit (a line starting at column 1, with an
+// annotation and its definition as one unit), so recovery in the first unit
+// can never swallow the second unit's diagnostic. `V` is a reserved word that
+// differs from the first unit's word.
+const SECOND_UNITS: &[(&str, &str)] = &[
+    ("field access", "zz y =\n    y.V\n"),
+    ("unclosed paren", "zz y =\n    ( y\n"),
+    (
+        "unclosed paren before a valid declaration",
+        "zz y =\n    ( y\n\n\nmain =\n    1\n",
+    ),
+    ("missing operand", "zz y =\n    y +\n"),
+    ("missing body", "zz y =\n"),
+];
+
+fn two_errors(src: &str, second_at: u32) -> Result<(), std::string::String> {
+    let parsed = p(src);
+    let diags = parsed.errors();
+    let valid_end = src[second_at as usize..]
+        .find("\nmain =")
+        .map(|i| second_at + i as u32)
+        .unwrap_or(src.len() as u32);
+    let ok = diags.len() == 2
+        && diag_start(&diags[0]) < second_at
+        && diag_start(&diags[1]) >= second_at
+        && diag_start(&diags[1]) <= valid_end;
+    if ok && parsed.reprint() == src {
+        Ok(())
+    } else {
+        Err(format!("{src:?}\n    got {:?}", diag_lines(&parsed)))
+    }
+}
+
+#[test]
+fn a_second_broken_declaration_keeps_its_own_error() {
+    let mut failures = Vec::new();
+    let mut total = 0;
+    for kw in syntax::RESERVED_WORDS {
+        let v = if *kw == "of" { "type" } else { "of" };
+        for (position, template) in RESERVED_POSITIONS {
+            let first = template.replace("KW", kw);
+            for (kind, second) in SECOND_UNITS {
+                total += 1;
+                let src = format!("{first}\n\n{}", second.replace('V', v));
+                let at = (first.len() + 2) as u32;
+                if let Err(e) = two_errors(&src, at) {
+                    failures.push(format!("{position} + {kind}: {e}"));
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {total} cases do not give one error per broken declaration:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn closing_punctuation_at_column_one_continues_its_declaration() {
+    // The formatter writes a multi-line record type with `,` and `}` at
+    // column 1. They continue the unit before them; they never start one.
+    assert_clean(
+        "wrap : a -> { val : a\n, tag : String\n}\nwrap v =\n    { val = v, tag = \"\" }\n",
+    );
+    assert_clean("type alias R =\n    { a : Int\n, b : Int\n}\n\n\nmain =\n    1\n");
+}
+
+#[test]
+fn a_body_at_column_one_starts_a_new_unit() {
+    // A body is indented past column 1 (the layout rule). A body token at
+    // column 1 begins the next unit, so the definition has no body.
+    let got = diag_lines(&p("answer =\n42\n"));
+    assert_eq!(got.len(), 2, "{got:?}");
+}
+
+#[test]
+fn the_judge_repros_give_two_errors() {
+    let tail = "\n\n\nzz y =\n    y.of\n";
+    for first in [
+        "g if =\n    1\n",
+        "type T\n    = T type\n",
+        "of : Int\n",
+        "f a type b = a\n",
+        "let g type = 1\n",
+    ] {
+        let src = format!("{first}{tail}");
+        let at = (first.len() + 3) as u32;
+        if let Err(e) = two_errors(&src, at) {
+            panic!("expected two errors: {e}");
+        }
+        let got = p(&src);
+        assert!(
+            got.errors()[1]
+                .message
+                .starts_with("`of` is a reserved word"),
+            "{:?}",
+            diag_lines(&got)
+        );
+    }
+}
+
+/// `src` gives exactly one diagnostic, with the message `want`, and names no
+/// reserved word: the keyword in it is used in its valid place.
+fn assert_one_plain(src: &str, want: &str) {
+    let parsed = p(src);
+    let got = diag_lines(&parsed);
+    assert_eq!(got.len(), 1, "{src:?}: {got:?}");
+    assert!(!got[0].contains("reserved word"), "{src:?}: {got:?}");
+    assert_eq!(parsed.errors()[0].message, want, "{src:?}");
+}
+
+#[test]
+fn a_valid_keyword_is_never_named_as_misused() {
+    // The messages are the parser's own, as v0.27.11 reports them.
+    assert_one_plain(
+        "module Main exposing main\n\n\nmain =\n    1\n",
+        "expected LParen",
+    );
+    assert_one_plain("f x =\n    if x 1 else 2\n", "expected ThenKw");
+    assert_one_plain("f x =\n    if then 1 else 2\n", "expected an expression");
+    assert_one_plain(
+        "f x =\n    case of\n        _ ->\n            1\n",
+        "expected an expression",
+    );
+}
+
+#[test]
+fn a_case_with_no_branch_is_an_error() {
+    // A `case` needs at least one branch. With none, the checker saw no
+    // pattern to test, and the program panicked at run time.
+    assert_one_plain("f x =\n    case x of\n", "expected a case branch");
+    assert_one_plain(
+        "f x =\n    case x of\n\n\nmain =\n    1\n",
+        "expected a case branch",
+    );
 }
