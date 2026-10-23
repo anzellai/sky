@@ -11,6 +11,31 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.27.13 — request host, binary responses, `List.repeat`, `Tuple` with no import (2026-10-23)
+
+### ⚠ Breaking changes
+
+- **`Server.Request` has a new field, `host : String`.** Code that builds a `Request` record by hand (a test helper, a mock) must now set `host`, for example `host = "localhost:8000"`. Code that only reads a request is not affected.
+- **`List.repeat` is a new export named like `String.repeat`.** A module that imports `Sky.Core.List exposing (..)` together with `Sky.Core.String exposing (..)`, `Std.Css exposing (..)` or `Std.Ui.Grid exposing (..)`, and uses `repeat` bare, now gets `[E1012]`, which names both modules. Write it qualified (`List.repeat`, `String.repeat`), or narrow one `exposing` list.
+
+### Added
+
+- **`req.host`**: the name a request used, with the port (`a.localhost:8000`), from Go's `r.Host`. It is set on `Sky.Http.Server` routes, Sky.Live `App.api` routes, the console's request and the `App.withRequest` hook. `Dict.get "Host" req.headers` now works too (Go moves `Host` out of the header map, so it was always `Nothing`). An app that serves two domains from one backend can now tell them apart. (`runtime-go/rt/live.go`, `rt_server.go`; tests `request_host_bytes_test.go`, `request_host_bytes_flow.rs`.)
+- **`Server.bytes contentType body`** answers a body byte for byte (an image, a PDF), and **`File.writeBytes path body`** writes exact bytes. `Bytes.fromBase64` then `Server.bytes "image/png"` serves a PNG. `File.readFileBytes` reads it back. (`sky-stdlib/Sky/Http/Server.sky`, `Sky/Core/File.sky`; `SyncFileConformanceTest`.)
+- **`List.repeat : Int -> a -> List a`**, as in Elm. A count of 0 or less gives `[]`. (`ListConformanceTest`.)
+
+### Fixed
+
+- **`Tuple.first ( a, b )` with no import was `Undefined name: Tuple.first`.** Every `Tuple` function needed `import Sky.Core.Tuple as Tuple`, because only kernel modules resolved by qualifier alone, and `Tuple` is written in Sky. `Tuple` is now imported by default, as in Elm. An explicit import, or your own module or alias named `Tuple`, still wins. (`rust/crates/hir`; `tuple_default_import_flow.rs`.)
+- **An unused name in a destructured lambda or function parameter broke `go build`.** `List.filter (\( q, a ) -> … a …)` type-checked, then failed with `declared and not used: v_10`. Case arms and `let` already discarded unused binders. Lambda and function parameters now do the same, for tuple, record, constructor and cons patterns. (`rust/crates/lower/src/lower.rs`; `codegen_unused_pattern_binder_flow.rs`.)
+- **Sky.Spa: two record aliases with the same field names failed the split.** `TipForm = { text : String }` next to `PasteForm = { text : String }` gave "no codec for an anonymous record `{ text }`". The split now keeps every alias with a given set of field names, takes the alias the `Msg` constructor names, and never joins two aliases whose field types differ. (`rust/crates/project/src/spa_split.rs`; `spa_split_wires_two_aliases_with_the_same_field_names`.)
+- **A Go dependency removed from `sky.toml` broke the build.** After a branch switch drops a `[go.dependencies]` entry, its generated files stay in `sky-ffi/`, and `go build` tried to fetch the package. The build now loads only the packages `sky.toml` declares, prints one warning that names the files it ignores, and removes stale copies from `sky-out/skyffi/`. (`rust/crates/project/src/build.rs`; `path_deps_flow.rs`.)
+- **A `sky` stopped by another process printed nothing.** A memory watchdog's SIGTERM gave exit 143 and no output, and a Sky.Spa build said only "frontend failed to build". `sky` now prints `sky: stopped by SIGTERM from another process`, and a build step stopped by a signal names the signal and the settings that lower memory use (`SKY_GO_BUILD_JOBS`, `SKY_BUILD_SERIAL`). The exit status is unchanged. (`rust/crates/project/src/child_exit.rs`; `sigterm_notice_flow.rs`.)
+
+### Repository tooling
+
+- **`scripts/mem-guard.sh` stopped small `sky` commands under memory pressure.** With swap 80% full, the floor doubles to 2400 MB, and when other programs held the memory the guard stopped every `sky` started, a 74 MB `sky check --help` included. Under pressure it now stops only a process of `MEM_GUARD_MIN_VICTIM_MB` (default 1024) or more. The per-process limit is unchanged. (`scripts/test-mem-guard.sh`.)
+
 ## v0.27.12 — `toFloat`, strict `Pipeline.optional`, `foreign` as a name (2026-10-22)
 
 ### ⚠ Breaking changes
