@@ -1458,6 +1458,13 @@ removes the line, the generated `sky-ffi/<slug>.*` surface, and the `go.mod`
 require (`go mod tidy`). The routing is a local section lookup — no probe.
 `--go` / `--sky` force one path.
 
+A `["go.dependencies"]` entry that leaves `sky.toml` some other way (a git
+branch switch, a hand edit) keeps its `sky-ffi/` files. The build uses only
+the surfaces `sky.toml` declares: it ignores the others, prints one line that
+names them, and removes their old wrappers from its own output
+(`sky-out/skyffi/`). Declare the dependency again and the surface is used
+again, with no `sky install`.
+
 ### `sky install`
 
 Regenerates the FFI surface from the declared dependencies. For each
