@@ -19,6 +19,8 @@
 #   MEM_GUARD_INTERVAL       poll interval (seconds).                   default 2
 #   MEM_GUARD_LOG            log file path.                             default /tmp/mem-guard.log
 #   MEM_GUARD_DRY            set to 1 to log only, never kill.          default unset
+#   MEM_GUARD_MIN_VICTIM_MB  smallest RSS the pressure floor may stop.  default 1024
+#                            (the per-proc limit applies at any size)
 #
 # Watched process names (basename of comm):
 #   Always-kill at PROC_MB:  sky, sky-ffi-inspect, cargo, rustc,
@@ -53,6 +55,7 @@ SWAP_PCT="${MEM_GUARD_SWAP_PCT:-80}"
 INTERVAL="${MEM_GUARD_INTERVAL:-2}"
 LOG="${MEM_GUARD_LOG:-/tmp/mem-guard.log}"
 DRY="${MEM_GUARD_DRY:-}"
+MIN_VICTIM_MB="${MEM_GUARD_MIN_VICTIM_MB:-1024}"
 
 # basename(comm) regexes
 ALWAYS_KILL_RE='^(sky|sky-ffi-inspect|cargo|rustc|rust-analyzer|cabal|ghc|ghc-iserv|cc1|ld64|ld|haskell-language-server|hls-wrapper|gopls|go|Python|python|python3|python3\.[0-9]+)$'
@@ -74,6 +77,17 @@ watch_class() {
     else
         WATCH_CLASS=none
     fi
+}
+
+# May the pressure signal stop a watched process of this RSS (MB)? Only when it
+# is large enough to matter. When other programs hold the memory (a running app,
+# a local model), stopping a small `sky check` frees nothing the floor needs and
+# only shows the user exit 143 with no output: on 2026-10-23 the guard stopped
+# every `sky` started for an hour, a 74MB `sky check --help` included. The
+# per-process limit (PROC_LIMIT_MB) still applies to every size.
+# scripts/test-mem-guard.sh extracts and tests this function.
+pressure_victim() {
+    (( $1 >= MIN_VICTIM_MB ))
 }
 
 log() {
@@ -159,6 +173,8 @@ log "starting (proc=${PROC_LIMIT_MB}MB panic=${PANIC_LIMIT_MB}MB sys_floor=${SYS
 # persistent outage is visible without spamming the log every 2 seconds.
 probe_fails=0
 probe_reported=0
+# One SPARE line per pressure episode, not one every INTERVAL.
+spared_reported=0
 
 while :; do
     if ! free=$(free_mb 2>/dev/null) || [[ -z "$free" ]]; then
@@ -200,6 +216,8 @@ while :; do
     if (( free < floor )); then
         pressure=1
         pressure_why="system free=${free}MB below floor=${floor}MB (swap ${swap}% of total)"
+    else
+        spared_reported=0  # the episode is over; log the next one again
     fi
 
     # Snapshot watched processes by RSS desc. ps RSS is in KB.
@@ -238,8 +256,13 @@ while :; do
                 continue
             fi
             if (( pressure )); then
-                kill_proc "$pid" "$rss_mb" "$comm" "${pressure_why} (heaviest watched)"
-                pressure=0  # one kill per pass; recheck next iteration
+                if pressure_victim "$rss_mb"; then
+                    kill_proc "$pid" "$rss_mb" "$comm" "${pressure_why} (heaviest watched)"
+                elif (( ! spared_reported )); then
+                    log "SPARE pid=$pid rss=${rss_mb}MB comm=$comm: ${pressure_why}, but the heaviest watched process is under ${MIN_VICTIM_MB}MB, so stopping it frees nothing the floor needs (other programs hold the memory)"
+                    spared_reported=1
+                fi
+                pressure=0  # one decision per pass; recheck next iteration
                 continue
             fi
         elif [[ "$WATCH_CLASS" == panic ]]; then
