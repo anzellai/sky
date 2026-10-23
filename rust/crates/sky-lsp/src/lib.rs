@@ -2274,8 +2274,8 @@ fn classify_token(
         LineComment | BlockComment => Some(TOK_COMMENT),
         String | MultilineString | Char | StringChunk => Some(TOK_STRING),
         Int | HexInt | Float => Some(TOK_NUMBER),
-        ModuleKw | ExposingKw | ImportKw | AsKw | TypeKw | AliasKw | ForeignKw | IfKw | ThenKw
-        | ElseKw | CaseKw | OfKw | LetKw | InKw | TrueKw | FalseKw => Some(TOK_KEYWORD),
+        ModuleKw | ExposingKw | ImportKw | AsKw | TypeKw | AliasKw | IfKw | ThenKw | ElseKw
+        | CaseKw | OfKw | LetKw | InKw | TrueKw | FalseKw => Some(TOK_KEYWORD),
         Op | Arrow | Backslash | Pipe | DotDot | Eq | Colon | Colon2 => Some(TOK_OPERATOR),
         LowerIdent | UpperIdent => {
             // A module qualifier (`M.`) is a namespace, not the thing after it.

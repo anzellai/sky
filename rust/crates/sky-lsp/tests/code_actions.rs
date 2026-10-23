@@ -80,15 +80,12 @@ import Std.Log exposing (println)\n\
 import Sky.Core.Prelude exposing (..)\n\
 import Sky.Core.String as String\n\
 \n\
-answer =\n\
-    42\n\
+answer =\n    42\n\
 \n\
 label : String\n\
-label =\n\
-    \"hi\"\n\
+label =\n    \"hi\"\n\
 \n\
-main =\n\
-    println (String.fromInt answer)\n";
+main =\n    println (String.fromInt answer)\n";
 
 // ---- Add type annotation ---------------------------------------------
 
@@ -196,8 +193,7 @@ import Sky.Core.Prelude exposing (..)\n\
 import Sky.Core.String as String\n\
 import Std.Log exposing (println)\n\
 \n\
-main =\n\
-    println \"hi\"\n";
+main =\n    println \"hi\"\n";
     let a = analysis_with(sorted);
     let actions = a.code_actions(&main_url(), whole_doc(), &ctx());
     let ts = titles(&actions);
@@ -212,8 +208,7 @@ fn organize_imports_noop_with_single_import() {
     let one = "module Main exposing (main)\n\
 import Std.Log exposing (println)\n\
 \n\
-main =\n\
-    println \"hi\"\n";
+main =\n    println \"hi\"\n";
     let a = analysis_with(one);
     let actions = a.code_actions(&main_url(), whole_doc(), &ctx());
     assert!(

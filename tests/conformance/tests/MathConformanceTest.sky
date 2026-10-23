@@ -11,6 +11,7 @@ module MathConformanceTest exposing (main, tests)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Math as Math
+import Sky.Core.List as List
 import Sky.Test as Test exposing (Test)
 
 
@@ -294,6 +295,20 @@ tests =
         (\_ -> Test.equal 3 (7 // 2))
     , Test.test "7 % 3 == 1 (nonzero divisor remainder unchanged)"
         (\_ -> Test.equal 1 (7 % 3))
+
+      -- ── toFloat (Int -> Float), Elm's Basics conversion (v0.27.12) ──
+    , Test.test "toFloat 3 / 2.0 == 1.5 (Prelude, no import)"
+        (\_ -> Test.equal 1.5 (toFloat 3 / 2.0))
+    , Test.test "toFloat (-7) == -7.0 (sign kept)"
+        (\_ -> Test.equal (-7.0) (toFloat (-7)))
+    , Test.test "toFloat 0 == 0.0"
+        (\_ -> Test.equal 0.0 (toFloat 0))
+    , Test.test "toFloat 9007199254740992 == 2^53 (exact)"
+        (\_ -> Test.equal 9007199254740992.0 (toFloat 9007199254740992))
+    , Test.test "Basics.toFloat as a function value"
+        (\_ -> Test.equal [ 1.0, 2.0 ] (List.map Basics.toFloat [ 1, 2 ]))
+    , Test.test "Math.round (toFloat n) == n round-trips"
+        (\_ -> Test.equal 41 (Math.round (toFloat 41)))
     ]
 
 

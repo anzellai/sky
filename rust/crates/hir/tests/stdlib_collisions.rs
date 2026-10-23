@@ -44,6 +44,9 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     "value address",
     "value close",
     "value island",
+    "value maybe",
+    "value null",
+    "value nullable",
     "value onIslandEvent",
     "value raw",
     "value rpc",
@@ -268,6 +271,16 @@ fn same_kernel(a: &str, b: &str) -> bool {
     face(a, b) || face(b, a)
 }
 
+/// The ambient layer: the Prelude and its two import spellings. A binding from
+/// one of these enters at `BindLayer::Ambient` (`hir/src/resolve.rs`,
+/// `AMBIENT_IMPORTS`), so any other import shadows it silently and a pair with
+/// one of them is never `[E1012]`. A new Basics member (`toFloat`, v0.27.12)
+/// therefore collides with nothing: `import Sky.Core.String exposing (..)` keeps
+/// its bare `toFloat` meaning `String.toFloat`.
+fn is_ambient_module(m: &str) -> bool {
+    matches!(m, "kernel:Basics" | "Sky.Core.Basics" | "Sky.Core.Prelude")
+}
+
 /// `(namespace name) -> ["A + B", …]`: pairs of modules that both existed in
 /// the previous release and both export the name now, but did not both export
 /// it then. Exactly the pairs an old program can import together and newly
@@ -285,7 +298,11 @@ fn new_collisions(
         for (i, a) in mods.iter().enumerate() {
             for b in &mods[i + 1..] {
                 let both_before = before.is_some_and(|s| s.contains(*a) && s.contains(*b));
-                if !both_before && !same_kernel(a, b) {
+                if !both_before
+                    && !same_kernel(a, b)
+                    && !is_ambient_module(a)
+                    && !is_ambient_module(b)
+                {
                     out.entry(format!("{ns} {name}"))
                         .or_default()
                         .push(format!("{a} + {b}"));
@@ -431,7 +448,7 @@ fn no_new_stdlib_export_silently_rebinds_an_ambient_name() {
         };
         // The ambient layer itself (`kernel:Basics`) and modules no old program
         // could import are not a rebinding hazard.
-        if r.module == "kernel:Basics" || !old_mods.contains(&r.module) {
+        if is_ambient_module(&r.module) || !old_mods.contains(&r.module) {
             continue;
         }
         let existed = old

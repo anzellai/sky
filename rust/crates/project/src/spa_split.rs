@@ -1931,8 +1931,10 @@ fn render_follow_backend(fc: &FollowCtx, q: &str) -> String {
     // classified `SpaFollowUpOutsideWire` error and the rest of the response
     // (the branch's own write included) still applies. It never sends an
     // empty tag, which the client could not decode. Only when the covered set
-    // is smaller than the union (else `_` is redundant).
-    let has_wildcard = fc.ctors.len() + fc.outside_wire.len() < fc.all_ctors;
+    // is smaller than the union (else `_` is redundant), and always when no
+    // constructor is covered: a `case` with no branch does not parse.
+    let covered = fc.ctors.len() + fc.outside_wire.len();
+    let has_wildcard = covered < fc.all_ctors || covered == 0;
     let wildcard = if has_wildcard {
         "        _ ->\n            spaFollowOutsideWire_ \"(a Msg the split proved is never a follow-up)\"\n\n"
     } else {
@@ -11873,7 +11875,6 @@ enum DeclKind {
     TypeAnno,
     Union,
     Alias,
-    Foreign,
 }
 
 fn decl_kind(d: &syntax::ast::Decl) -> DeclKind {
@@ -11883,7 +11884,6 @@ fn decl_kind(d: &syntax::ast::Decl) -> DeclKind {
         Decl::TypeAnno(_) => DeclKind::TypeAnno,
         Decl::Union(_) => DeclKind::Union,
         Decl::Alias(_) => DeclKind::Alias,
-        Decl::Foreign(_) => DeclKind::Foreign,
     }
 }
 
@@ -11898,7 +11898,6 @@ fn decl_name(d: &syntax::ast::Decl) -> Option<String> {
         Decl::TypeAnno(t) => t.name().map(|n| n.text().to_string()),
         Decl::Union(u) => u.name().map(|n| n.text().to_string()),
         Decl::Alias(a) => a.name().map(|n| n.text().to_string()),
-        Decl::Foreign(_) => None,
     }
 }
 

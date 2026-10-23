@@ -47,40 +47,94 @@ const PAT_ATOM_START: TokenSet = TokenSet::new(&[
     FalseKw,
 ]);
 
-const DECL_START: TokenSet = TokenSet::new(&[TypeKw, ForeignKw, LowerIdent, UpperIdent]);
+const DECL_START: TokenSet = TokenSet::new(&[TypeKw, LowerIdent, UpperIdent]);
+
+/// The tokens that begin a lexical top-level unit when they start a line at
+/// column 1 (`parser::lexical_units`). They are the first tokens of the
+/// top-level productions in [`source_file`]: `module` (the header),
+/// `import`, and a declaration ([`DECL_START`]), less an upper-case name.
+/// [`decl`] also reads an upper-case name, but at column 1 it is
+/// also the first token of an expression (`Task.run …`, `Just x`), so it
+/// continues the unit before it, as it did before units existed. A
+/// lower-case name is the one token that can both begin a declaration and
+/// continue an expression: at column 1 it always begins a declaration.
+pub(crate) const UNIT_START: TokenSet = DECL_START
+    .union(TokenSet::new(&[ModuleKw, ImportKw]))
+    .without(UpperIdent);
+
+/// The keywords that cannot begin a top-level unit ([`UNIT_START`]). At
+/// column 1 such a keyword continues the unit before it, except when its
+/// line reads as a declaration with the keyword as its name: the keyword,
+/// then zero or more plain argument patterns (lower-case names, `_`) on the
+/// same line, then `=` or `:` (`else = 2`, `of x = 2`, `in : Int`). Then it
+/// also begins a unit (`parser::lexical_units`), so a broken declaration
+/// before it cannot hide its error.
+///
+/// Such a line is never a valid continuation. The grammar reads what
+/// follows each keyword as below, and none of it is a name (or `_`) list
+/// that `=` or `:` ends:
+///
+/// - `then`, `else` ([`if_expr`]) and `in` ([`let_expr`]): an expression.
+///   `=` and `:` never follow an expression: a binding's `=` follows its
+///   name and parameters at the start of a binding ([`value_or_anno`],
+///   [`let_binding`]), a record field's `=` or `:` follows `{`, `,` or `|`,
+///   and `==` and `::` are other tokens.
+/// - `of` ([`case_expr`]): a branch, which is a pattern and then `->`.
+/// - `alias` ([`type_decl`]): an upper-case name.
+/// - `exposing` ([`exposing_list`]): `(`.
+/// - `as`: an upper-case name or `_` in an import ([`import_decl`]), and a
+///   lower-case name in a pattern ([`pattern`]). That pattern can end a let
+///   destructuring (`( a, b ) as p = e`, [`let_binding`]), so `as` with ONE
+///   lower-case name and then `=` can continue a valid unit. The parser
+///   decides that one shape by a trial parse (`parser::lexical_units`).
+///   Every other shape (`as = e`, `as _ = e`, `as p q = e`, `as p : T`) is
+///   never valid.
+pub(crate) const NAME_ONLY_KEYWORDS: TokenSet =
+    TokenSet::new(&[ThenKw, ElseKw, OfKw, InKw, AsKw, AliasKw, ExposingKw]);
 
 // ---- entry ---------------------------------------------------------------
 
 pub(crate) fn source_file(p: &mut Parser) {
     let m = p.start();
+    // Each lexical top-level unit (the header, an import, a declaration)
+    // starts a fresh diagnostic budget: only its first syntax error is
+    // reported. The parser never reads past the end of a unit until
+    // `begin_unit` starts the next one.
+    p.begin_unit();
     if p.at(ModuleKw) {
         module_header(p);
     }
+    p.begin_unit();
     while p.at(ImportKw) {
         import_decl(p);
+        p.begin_unit();
     }
     // top-level anchor is column 1: a decl body continues while col > 1.
-    p.with_indent(1, |p| {
-        while !p.at_end() {
-            if p.at_any(DECL_START) {
-                decl(p);
-            } else if p.at_block_boundary() {
-                // A non-declaration token sitting AT the top-level anchor (col 1
-                // on a fresh line) — e.g. a stray `import` after a decl, or a
-                // mis-indented keyword. `err_recover` early-returns at a block
-                // boundary WITHOUT advancing, so calling it here would spin this
-                // `while !at_end()` loop forever (the token can never start a
-                // declaration and is never consumed). Bump exactly one token to
-                // guarantee forward progress — ill-formed input must terminate as
-                // diagnostics, never hang (L7). Valid programs never reach here:
-                // a well-formed top level is only decls after the imports.
-                p.err_and_bump("expected a declaration");
-            } else {
-                // recover to the next declaration anchor rather than eating one
-                // token at a time (doc 04 §11). Not at a block boundary here, so
-                // `err_recover` consumes ≥1 token — progress is guaranteed.
-                p.err_recover("expected a declaration", DECL_START);
-            }
+    // A unit's end reads as the end of input, so begin the next unit before
+    // asking whether the input has ended.
+    p.with_indent(1, |p| loop {
+        p.begin_unit();
+        if p.at_end() {
+            break;
+        }
+        if p.at_any(DECL_START) {
+            decl(p);
+        } else if p.at_block_boundary() {
+            // A non-declaration token sitting AT the top-level anchor (col 1
+            // on a fresh line) — e.g. a stray `import` after a decl, or a
+            // mis-indented keyword. `err_recover` early-returns at a block
+            // boundary WITHOUT advancing, so calling it here would spin this
+            // top-level loop forever (the token can never start a
+            // declaration and is never consumed). Bump exactly one token to
+            // guarantee forward progress — ill-formed input must terminate as
+            // diagnostics, never hang (L7). Valid programs never reach here:
+            // a well-formed top level is only decls after the imports.
+            p.err_and_bump("expected a declaration");
+        } else {
+            // recover to the next declaration anchor rather than eating one
+            // token at a time (doc 04 §11). Not at a block boundary here, so
+            // `err_recover` consumes ≥1 token — progress is guaranteed.
+            p.err_recover("expected a declaration", DECL_START);
         }
     });
     m.complete(p, SourceFile);
@@ -202,7 +256,6 @@ fn import_decl(p: &mut Parser) {
 fn decl(p: &mut Parser) {
     match p.current() {
         TypeKw => type_decl(p),
-        ForeignKw => foreign_decl(p),
         LowerIdent | UpperIdent => value_or_anno(p),
         _ => p.err_and_bump("expected a declaration"),
     }
@@ -289,18 +342,6 @@ fn variant(p: &mut Parser) {
         type_atom(p);
     }
     m.complete(p, UnionVariant);
-}
-
-fn foreign_decl(p: &mut Parser) {
-    let m = p.start();
-    p.bump(); // foreign
-              // consume the rest of the foreign line + indented continuations.
-    p.with_indent(1, |p| {
-        while !p.at_end() && p.at_continuation() {
-            p.bump();
-        }
-    });
-    m.complete(p, ForeignDecl);
 }
 
 // ---- types ---------------------------------------------------------------
@@ -1008,6 +1049,12 @@ fn let_expr(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
     p.bump(); // let
     let anchor = p.col(); // first binding's column
+                          // A `let` needs at least one binding. An empty one was accepted, so a
+                          // keyword used as the first binding's name (`let in = 1`) read as the end
+                          // of the block, and the error landed far from the word.
+    if p.at(InKw) || p.at_end() {
+        p.error("expected a let binding");
+    }
     loop {
         if p.at(InKw) || p.at_end() {
             break;
@@ -1071,6 +1118,11 @@ fn case_expr(p: &mut Parser) -> CompletedMarker {
     expr(p); // subject (stops at `of`)
     p.expect(OfKw);
     let anchor = p.col(); // first arm's column
+                          // A `case` needs at least one branch: with none there is no pattern for
+                          // the exhaustiveness check to test.
+    if p.at_end() {
+        p.error("expected a case branch");
+    }
     loop {
         if p.at_end() {
             break;

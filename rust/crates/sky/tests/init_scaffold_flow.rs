@@ -26,9 +26,15 @@ fn have_go() -> bool {
         .unwrap_or(false)
 }
 
+/// A fresh directory per call. The tests of this file run in parallel in one
+/// process, and two calls in the same clock tick got the same name: one test
+/// then read the `.gitattributes` another had written. A counter keeps every
+/// name distinct.
 fn scratch() -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "sky-init-{}-{}",
+        "sky-init-{}-{n}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -113,6 +119,45 @@ fn a_fresh_project_checks_with_zero_findings_and_a_clean_doctor() {
     assert!(
         !format!("{out}{err}").contains("SKY_AUTH_TOKEN_SECRET"),
         "no auth-secret finding for an app without Std.Auth:\n{out}{err}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// The `.gitattributes` every new project gets (v0.27.12): GitHub Linguist has
+/// no Sky grammar, and Sky syntax is Elm, so `.sky` / `.skyi` files highlight
+/// as Elm. Every template variant writes it; an existing file is kept.
+const GITATTRIBUTES: &str =
+    "# GitHub Linguist has no Sky grammar yet. Sky syntax is Elm, so highlight it as Elm.\n\
+*.sky linguist-language=Elm\n\
+*.skyi linguist-language=Elm\n";
+
+#[test]
+fn a_fresh_project_highlights_sky_as_elm_on_github() {
+    for flag in [None, Some("--production")] {
+        let (base, dir) = scaffold(flag);
+        let attrs = std::fs::read_to_string(dir.join(".gitattributes"))
+            .unwrap_or_else(|e| panic!("{flag:?}: sky init writes a .gitattributes: {e}"));
+        assert_eq!(
+            attrs, GITATTRIBUTES,
+            "{flag:?}: the exact .gitattributes lines"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+#[test]
+fn sky_init_keeps_an_existing_gitattributes() {
+    let base = scratch();
+    let dir = base.join("fresh");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mine = "*.png binary\n";
+    std::fs::write(dir.join(".gitattributes"), mine).unwrap();
+    let (code, out, err) = run(&base, &["init", "fresh"]);
+    assert_eq!(code, 0, "sky init:\n{out}{err}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join(".gitattributes")).unwrap(),
+        mine,
+        "sky init must not overwrite a .gitattributes the project already has"
     );
     let _ = std::fs::remove_dir_all(&base);
 }

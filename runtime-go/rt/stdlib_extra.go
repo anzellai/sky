@@ -1004,6 +1004,49 @@ func JsonDec_oneOf(decoders any) any {
 	}}
 }
 
+// JsonDec.null : a -> JsonDecoder a
+// Succeeds with the given value when the JSON value is `null`, and fails
+// on anything else (Elm's `Json.Decode.null`).
+func JsonDec_null(v any) any {
+	return JsonDecoder{run: func(j any) any {
+		if j == nil {
+			return Ok[any, any](v)
+		}
+		return Err[any, any](ErrDecode("expected null, got " + jsonValueKind(j)))
+	}}
+}
+
+// JsonDec.nullable : JsonDecoder a -> JsonDecoder (Maybe a)
+// `null` decodes to `Nothing`; any other value must satisfy the inner
+// decoder and decodes to `Just`. A non-null value the inner decoder
+// rejects is an Err (Elm's `Json.Decode.nullable`).
+func JsonDec_nullable(inner any) any {
+	return JsonDecoder{run: func(j any) any {
+		if j == nil {
+			return Ok[any, any](Nothing[any]())
+		}
+		r := runDec(inner, j)
+		if isErr(r) {
+			return r
+		}
+		return Ok[any, any](Just[any](okVal(r)))
+	}}
+}
+
+// JsonDec.maybe : JsonDecoder a -> JsonDecoder (Maybe a)
+// `Just` the inner decoder's value when it succeeds, `Nothing` when it
+// fails, never an Err (Elm's `Json.Decode.maybe`). Use `nullable` when only
+// `null` should become `Nothing`.
+func JsonDec_maybe(inner any) any {
+	return JsonDecoder{run: func(j any) any {
+		r := runDec(inner, j)
+		if isErr(r) {
+			return Ok[any, any](Nothing[any]())
+		}
+		return Ok[any, any](Just[any](okVal(r)))
+	}}
+}
+
 func JsonDec_succeed(v any) any {
 	return JsonDecoder{run: func(_ any) any {
 		return Ok[any, any](v)
@@ -1220,14 +1263,21 @@ func JsonDecP_optional(name any, inner any, def any, fnDec any) any {
 		if !ok || fnSr.Tag != 0 {
 			return fnR
 		}
+		// NoRedInk elm-json-decode-pipeline semantics: an absent field, a
+		// null field, or a non-object input gives the default. A PRESENT
+		// value runs the inner decoder first (so a `nullable` inner decides
+		// what null means); if it fails on a non-null value the Err is
+		// returned, never swallowed into the default — a wrongly typed value
+		// is a schema change the caller must see.
 		var val any = def
 		if m, ok := v.(map[string]any); ok {
-			if fv, exists := m[fmt.Sprintf("%v", name)]; exists {
-				if innerDec, ok := inner.(JsonDecoder); ok {
-					innerR := innerDec.run(fv)
-					if innerSr, ok := innerR.(SkyResult[any, any]); ok && innerSr.Tag == 0 {
-						val = innerSr.OkValue
-					}
+			fieldName := fmt.Sprintf("%v", name)
+			if fv, exists := m[fieldName]; exists {
+				innerR := runDec(inner, fv)
+				if !isErr(innerR) {
+					val = okVal(innerR)
+				} else if fv != nil {
+					return jsonPrefixError(innerR, "."+fieldName)
 				}
 			}
 		}

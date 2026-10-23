@@ -20,8 +20,13 @@ required =
     Ffi.kernel "JsonDecP_required"
 
 
--- | Decode an optional field; fall back to the supplied default
--- when the field is absent or null.
+-- | Decode an optional field. The default is used when the field is
+-- absent, when it is `null`, or when the input is not an object. A field
+-- that is present and not `null` must satisfy the decoder: a wrongly typed
+-- value is an `Err`, never the default (elm-json-decode-pipeline rule).
+-- To keep a lenient fallback for a wrongly typed value, say so:
+--
+--     Pipeline.optional "n" (Decode.oneOf [ Decode.int, Decode.succeed 0 ]) 0
 optional : String -> Decoder a -> a -> Decoder (a -> b) -> Decoder b
 optional =
     Ffi.kernel "JsonDecP_optional"

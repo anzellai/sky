@@ -11,6 +11,27 @@ Every `sky` subcommand. Run `sky --help` for the authoritative list.
 
 ## Build & run
 
+### `sky init [name] [--production]`
+
+Scaffolds a new project in `name/` (default `sky-project`): `sky.toml`,
+`src/Main.sky`, `.gitignore`, `.gitattributes`, `.dockerignore`,
+`docker-compose.yml`, `.env.example`, `AGENTS.md` and `CLAUDE.md`.
+`--production` (aliases `--postgres`, `--prod`) makes the Postgres
+configuration active from the start.
+
+The `.gitattributes` makes GitHub highlight Sky source as Elm, because GitHub
+Linguist has no Sky grammar yet and Sky syntax is Elm:
+
+```text
+# GitHub Linguist has no Sky grammar yet. Sky syntax is Elm, so highlight it as Elm.
+*.sky linguist-language=Elm
+*.skyi linguist-language=Elm
+```
+
+Every variant writes it (since v0.27.12). A `.gitattributes` the directory
+already has is kept unchanged. For an older project, add the three lines by
+hand.
+
 ### `sky build [path]`
 
 Compile a Sky source file to a Go binary under `sky-out/`.

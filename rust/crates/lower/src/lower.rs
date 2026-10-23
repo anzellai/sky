@@ -5824,6 +5824,30 @@ impl<'a> Ctx<'a> {
                 return self.list_hof_typed(hof, go, f, xs, actual);
             }
         }
+        // `toFloat` over a proven Go `int` goes to its typed twin
+        // `rt.Basics_toFloatT(int) float64`, so the call carries no `any` box
+        // and no R5 return narrowing. Doc 14: origin R5 (the kernel return),
+        // lever §5.3 (typed kernel entry point), floor check §1: both the
+        // argument (`int`) and the result (`float64`) shapes are known at
+        // emit time. An unproven argument keeps the erased call.
+        if go == "rt.Basics_toFloat" && args.len() == 1 {
+            let n = self.lower_expr(args[0], &GoTy::Bare(Prim::Int));
+            if n.ty == GoTy::Bare(Prim::Int) {
+                let call = GoExpr::new(
+                    GoExprKind::Call(
+                        Box::new(GoExpr::new(
+                            GoExprKind::Ident("rt.Basics_toFloatT".into()),
+                            GoTy::Any,
+                        )),
+                        vec![n],
+                    ),
+                    GoTy::Bare(Prim::Float),
+                );
+                return self.coerce_if_needed(call, actual);
+            }
+            let wn = self.widen(n);
+            return self.kernel_call_lowered(go, vec![wn], actual);
+        }
         // A UNARY list kernel that only needs the list's LENGTH, over a proven
         // slice, goes to its typed twin. See `list_unary_prim_twin` for why the
         // table stops where it does.

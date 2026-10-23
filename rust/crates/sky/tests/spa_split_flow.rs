@@ -153,14 +153,20 @@ fn dist_has_wasm(dist: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
+/// A fresh directory per call. The tests of this file run in parallel in one
+/// process, and two calls in the same clock tick got the same name: one test
+/// then read the sources another had written. A counter keeps every name
+/// distinct.
 fn scratch() -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let uniq = format!(
-        "sky-spasplit-{}-{}",
+        "sky-spasplit-{}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
     std::env::temp_dir().join(uniq)
 }

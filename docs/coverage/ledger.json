@@ -12,7 +12,6 @@
     "_source": "rust/crates/sky/src/main.rs dispatch table (primary); docs/tooling/cli.md headings (cross-check)",
     "dispatched_but_undocumented": [
       "console-serve",
-      "init",
       "migrate"
     ],
     "documented_but_not_dispatched": [],
@@ -288,7 +287,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1500,
+      "expected_assertions": 1519,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -695,7 +694,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2230,
+    "stdlib_entries": 2234,
     "stdlib_modules": 113,
     "surfaces_covered": 169,
     "surfaces_covered_pct": 93.9,
@@ -15178,14 +15177,15 @@
           ]
         },
         "Sky.Core.Basics": {
-          "count": 6,
+          "count": 7,
           "symbols": [
             "always",
             "clamp",
             "fst",
             "identity",
             "not",
-            "snd"
+            "snd",
+            "toFloat"
           ]
         },
         "Sky.Core.Bytes": {
@@ -16228,7 +16228,7 @@
           ]
         }
       },
-      "count": 660,
+      "count": 661,
       "pct_of_denominator": 29.6
     },
     "symbols_unreferenced_strict": {
@@ -16256,14 +16256,15 @@
           ]
         },
         "Sky.Core.Basics": {
-          "count": 6,
+          "count": 7,
           "symbols": [
             "always",
             "clamp",
             "fst",
             "identity",
             "not",
-            "snd"
+            "snd",
+            "toFloat"
           ]
         },
         "Sky.Core.Bytes": {
@@ -17420,7 +17421,7 @@
           ]
         }
       },
-      "count": 751,
+      "count": 752,
       "pct_of_denominator": 33.7
     }
   },
@@ -19213,8 +19214,8 @@
       "id": "tests/conformance",
       "modules_imported": 56,
       "path": "tests/conformance",
-      "refs_generous": 748,
-      "refs_qualified": 731,
+      "refs_generous": 751,
+      "refs_qualified": 734,
       "role": "Conformance",
       "sky_files": 45,
       "sky_toml_sections": []
