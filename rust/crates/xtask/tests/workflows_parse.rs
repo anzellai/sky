@@ -2847,3 +2847,101 @@ fn the_tier_budget_lists_match_the_job_graph() {
     assert_eq!(independent, want_independent, "SETUP_INDEPENDENT_JOBS");
     assert_eq!(macos, want_macos, "MACOS_JOBS");
 }
+
+/// What breaks the "pin every action to a commit" rule in one parsed file.
+fn unpinned_actions(file: &str, doc: &serde_yaml::Value) -> Vec<String> {
+    let pinned = |uses: &str| {
+        uses.starts_with("./")
+            || uses.starts_with("docker://")
+            || uses.rsplit_once('@').is_some_and(|(_, r)| {
+                r.len() == 40
+                    && r.bytes()
+                        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            })
+    };
+    let mut problems = Vec::new();
+    let mut check = |at: String, uses: &str| {
+        if !pinned(uses) {
+            problems.push(format!(
+                "{at}: `{uses}` is not pinned to a commit SHA; write `owner/repo@<40-hex sha> # <tag>`"
+            ));
+        }
+    };
+    if let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) {
+        for (k, job) in jobs {
+            if let Some(u) = job["uses"].as_str() {
+                check(format!("{file} `{}`", k.as_str().unwrap_or("?")), u);
+            }
+        }
+    }
+    for (job, s) in all_steps(doc) {
+        if let Some(u) = s["uses"].as_str() {
+            check(format!("{file} `{job}`"), u);
+        }
+    }
+    problems
+}
+
+/// Every action a workflow or composite action uses is pinned to a commit SHA.
+///
+/// # Why this exists
+///
+/// A tag such as `@v4` or a branch such as `@stable` can be moved by whoever
+/// controls the action's repository. The release jobs run actions next to
+/// `DOCKERHUB_TOKEN` and a `contents: write` token, so a moved tag on a
+/// compromised action reads those secrets (this happened to
+/// `tj-actions/changed-files` in March 2025). A commit SHA cannot be moved.
+/// Dependabot (`.github/dependabot.yml`) proposes each update as a reviewed PR.
+///
+/// Parsed, not grepped: a comment cannot vouch for a step.
+#[test]
+fn every_action_is_pinned_to_a_commit_sha() {
+    let mut problems = Vec::new();
+    for path in workflows_and_actions() {
+        let text = std::fs::read_to_string(&path).expect("read");
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parses");
+        problems.extend(unpinned_actions(&path.display().to_string(), &doc));
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// The check above goes red on each unpinned shape and passes a pinned one.
+#[test]
+fn the_pin_check_catches_a_tag_or_branch_ref() {
+    let cases = [
+        (
+            "tag",
+            "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v7\n",
+        ),
+        (
+            "branch",
+            "jobs:\n  a:\n    steps:\n      - uses: dtolnay/rust-toolchain@stable\n",
+        ),
+        (
+            "short sha",
+            "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@3d3c42e\n",
+        ),
+        (
+            "subpath tag",
+            "jobs:\n  a:\n    steps:\n      - uses: actions/cache/restore@v6\n",
+        ),
+        (
+            "reusable workflow",
+            "jobs:\n  a:\n    uses: org/repo/.github/workflows/x.yml@main\n",
+        ),
+        (
+            "composite",
+            "runs:\n  using: composite\n  steps:\n    - uses: actions/setup-node@v7\n",
+        ),
+    ];
+    for (what, yaml) in cases {
+        let doc: serde_yaml::Value = serde_yaml::from_str(yaml).expect(what);
+        assert!(
+            !unpinned_actions("t.yml", &doc).is_empty(),
+            "the check missed: {what}"
+        );
+    }
+    let ok = "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n      - uses: ./.github/actions/gate-setup\n      - uses: docker://alpine:3\n";
+    let doc: serde_yaml::Value = serde_yaml::from_str(ok).unwrap();
+    assert_eq!(unpinned_actions("t.yml", &doc), Vec::<String>::new());
+}

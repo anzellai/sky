@@ -1,0 +1,15 @@
+# Every action in .github is pinned to a commit SHA (workflows_parse.rs,
+# every_action_is_pinned_to_a_commit_sha). Dependabot proposes each new
+# release as a PR that moves the SHA and the `# vN` comment together.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - '*'

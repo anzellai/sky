@@ -69,13 +69,15 @@ runs:
       shell: bash
       run: bash scripts/ci/reclaim-runner-disk.sh
 
-    - uses: dtolnay/rust-toolchain@stable
+    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      with:
+        toolchain: stable
 
     # Pin the Go toolchain (the same reason the build job does): the gates shell
     # out to a real `go build`, and an unpinned toolchain silently tests
     # whatever Go the runner image ships. cache:false — the Go cache is managed
     # explicitly below so the BUILD cache (not just the module cache) is warm.
-    - uses: actions/setup-go@v7
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
       id: setup-go
       with:
         go-version: '1.26'
@@ -99,7 +101,7 @@ runs:
     # cache-cold. The key ends with the Go version (a build cache is useless across Go
     # versions); the go.sum-hash prefix still restores the module cache.
     - name: Restore the Go build + module cache (saved on main only)
-      uses: actions/cache/restore@v6
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: |
           ${{ github.workspace }}/.gocache
@@ -113,7 +115,7 @@ runs:
 
     # The release-profile cargo cache the nightly writes on main
     # (nightly-sweep.yml example-sweep, shared-key sky-gates-linux). Restore only.
-    - uses: Swatinem/rust-cache@v2
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       with:
         workspaces: rust
         shared-key: sky-gates-linux
@@ -128,7 +130,7 @@ runs:
     # with EXDEV ("cross-device link not permitted").
     - name: Neovim for the lsp harness gate
       if: inputs.neovim == 'true'
-      uses: rhysd/action-setup-vim@v1
+      uses: rhysd/action-setup-vim@febef33995d6649302e9d88dda81e071b68f16a7 # v1
       env:
         TMPDIR: ${{ runner.temp }}
       with:
