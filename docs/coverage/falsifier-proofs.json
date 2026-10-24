@@ -164,7 +164,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1792798576
+      "proven_at_unix": 1792807229
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -179,14 +179,14 @@
     },
     "config-matrix": {
       "inputs_files": 1379,
-      "inputs_hash": "7e1e803b5105e57a358fd7f6ca6bb7ac1b4d1f2b",
+      "inputs_hash": "f079e37325307f3b8023b176e1810f44ee68afcb",
       "mutation": "config-matrix.invert-operator-env-provenance",
       "mutations": [
         "config-matrix.invert-operator-env-provenance"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1792798576
+      "proven_at_unix": 1792807229
     },
     "config-migrate": {
       "inputs_files": 5,
@@ -316,14 +316,14 @@
     },
     "coverage-ledger": {
       "inputs_files": 4360,
-      "inputs_hash": "f644fcf068e5553d6710c28c2ff61b0732cadb1a",
+      "inputs_hash": "603b4dd3fcf39c4102c8715b81cbaa6ad8f70763",
       "mutation": "coverage-ledger.drop-a-sole-owner-import",
       "mutations": [
         "coverage-ledger.drop-a-sole-owner-import"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1792798576
+      "proven_at_unix": 1792807229
     },
     "erasure-path-uses-an-index": {
       "inputs_files": 801,
