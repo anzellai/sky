@@ -24,7 +24,9 @@ pub use exports::{compute_exports, ExportedAlias, ExportedCtor, ExportedUnion, M
 pub use ffi::{
     is_ffi_plumbing_elsewhere, FfiFnSig, FfiSurface, FfiTrust, SharedFfiSurface, FFI_PLUMBING,
 };
-pub use hir::{Body, CaseBranch, Expr, ExprId, LocalDef, PatId, Pattern, TopDef, Type, TypeId};
+pub use hir::{
+    Body, CaseBranch, Expr, ExprId, LetAnno, LocalDef, PatId, Pattern, TopDef, Type, TypeId,
+};
 pub use ids::{CtorRef, DefKind, DefLoc, DefTable, LocalId, Res, TypeRes};
 pub use kernel::{
     is_reserved_sky_namespace, kernel_functions, BUILTIN_CTORS, BUILTIN_TYPES, BUILTIN_VARS,

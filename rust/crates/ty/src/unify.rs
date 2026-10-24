@@ -226,6 +226,14 @@ pub struct UnionFind {
     /// Reused buffers of the occurs check (no type state: see
     /// [`OccursScratch`]).
     occurs_scratch: OccursScratch,
+    /// True while unifying a function's PARAMETER (contravariant position).
+    /// The unifier reads its first side as the actual value and its second as
+    /// the declared type. Under a function's parameter the roles swap:
+    /// `unify(callee, arg -> result)` meets the declared parameter on the
+    /// first side and the argument on the second. A record clash reads this
+    /// to name the missing and the unknown fields from the right side. It
+    /// changes only the wording of a refusal, never what unifies.
+    contravariant: bool,
     /// Record fields copied out by [`UnionFind::content`] (tests only): pins
     /// that binding a variable moves a structure instead of copying it.
     #[cfg(test)]
@@ -808,7 +816,13 @@ impl UnionFind {
             (FlatTy::Fun(a1, r1), FlatTy::Fun(a2, r2)) => {
                 let (a1, r1, a2, r2) = (*a1, *r1, *a2, *r2);
                 self.union(ra, rb, Content::Structure(f1.clone()));
-                self.unify(a1, a2)?;
+                // The parameter is contravariant: flip which side is the
+                // declared type for the record wording, and restore it before
+                // the result (covariant) or an early return.
+                self.contravariant = !self.contravariant;
+                let params = self.unify(a1, a2);
+                self.contravariant = !self.contravariant;
+                params?;
                 self.unify(r1, r2)
             }
             (FlatTy::Tuple(xs), FlatTy::Tuple(ys)) => {
@@ -1141,16 +1155,31 @@ impl UnionFind {
         // field-presence clash the Haskell oracle rejects.
         // The first unify arg is the ACTUAL (body/literal), the second the
         // EXPECTED (declared) — `unify(v, expected)` threads a→side1, b→side2 —
-        // so the two extras rules are directional:
-        //   side1 (actual) closed + only2 (fields only the expected has)
+        // except under a function's parameter, where the roles swap
+        // (`contravariant`). So, with the sides put in actual/expected order:
+        //   actual closed + fields only the expected has
         //     ⇒ the actual is MISSING those fields.
-        //   side2 (expected) closed + only1 (fields only the actual has)
+        //   expected closed + fields only the actual has
         //     ⇒ the actual has UNKNOWN fields not in the declared type.
-        if e1.is_none() && !only2.is_empty() {
-            return Err(Mismatch::new(record_missing_msg(&only2)));
-        }
-        if e2.is_none() && !only1.is_empty() {
-            return Err(Mismatch::new(record_unknown_msg(&only1)));
+        // When both hold, one message names both.
+        let (act_only, act_closed, exp_only, exp_closed) = if self.contravariant {
+            (&only2, e2.is_none(), &only1, e1.is_none())
+        } else {
+            (&only1, e1.is_none(), &only2, e2.is_none())
+        };
+        let missing = act_closed && !exp_only.is_empty();
+        let unknown = exp_closed && !act_only.is_empty();
+        match (missing, unknown) {
+            (true, true) => {
+                return Err(Mismatch::new(format!(
+                    "{}, and has {}",
+                    record_missing_msg(exp_only),
+                    unknown_fields_phrase(act_only)
+                )))
+            }
+            (true, false) => return Err(Mismatch::new(record_missing_msg(exp_only))),
+            (false, true) => return Err(Mismatch::new(record_unknown_msg(act_only))),
+            (false, false) => {}
         }
 
         // resolved combined field set + extension
@@ -1199,9 +1228,13 @@ fn record_missing_msg(missing: &BTreeMap<Name, TyVarId>) -> String {
 }
 
 fn record_unknown_msg(unknown: &BTreeMap<Name, TyVarId>) -> String {
+    format!("record has {}", unknown_fields_phrase(unknown))
+}
+
+fn unknown_fields_phrase(unknown: &BTreeMap<Name, TyVarId>) -> String {
     let names: Vec<&str> = unknown.keys().map(Name::as_str).collect();
     format!(
-        "record has unknown field(s) not in the declared type: {}",
+        "unknown field(s) not in the declared type: {}",
         names.join(", ")
     )
 }

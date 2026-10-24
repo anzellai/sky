@@ -170,6 +170,16 @@ thread_local! {
         const { std::cell::Cell::new(false) };
 }
 
+/// An instance of a `let` define's annotation ([`Infer::let_anno_inst`]): the
+/// annotated type, its instance in the union-find, and each named variable's
+/// node, read back by the generality check.
+struct LetAnnoInst {
+    ty: Ty,
+    var: TyVarId,
+    sub: HashMap<String, TyVarId>,
+    vars: Vec<Name>,
+}
+
 /// Entries for a world's `record_result_sigs` and `callsite_param_records`
 /// that one inference run reads IN PLACE OF the world's own entry for the same
 /// def — what inserting them into a clone of the world would give, without the
@@ -1577,13 +1587,46 @@ impl<'a> Infer<'a> {
 
     /// Infer the defs of ONE let dependency group (see [`let_def_groups`]).
     fn infer_let_defs(&mut self, body: &Body, defs: &[&hir::LocalDef]) {
+        // Annotated defines (`n : Int` before `n = …`): read each annotation
+        // and tie the binder to an instance of it BEFORE any def of the group
+        // is inferred, so a recursive reference, a sibling's reference and the
+        // body's parameters all see the annotated type. Every named variable
+        // of the instance is flexible here; that the body keeps it as general
+        // as the annotation says is checked after the group (Elm's rule: the
+        // variables of a let annotation are rigid in its definition).
+        let mut annotated: Vec<Option<LetAnnoInst>> = Vec::with_capacity(defs.len());
         for &d in defs {
+            let inst = self.let_anno_inst(d);
+            if let (Some(a), Some((_, lid))) = (&inst, d.binders.first()) {
+                if let Some(&placeholder) = self.locals.get(lid) {
+                    self.unify(placeholder, a.var);
+                }
+            }
+            annotated.push(inst);
+        }
+        for (i, &d) in defs.iter().enumerate() {
+            let errs_before = self.errors.len();
             // parameters (function let-binding) get fresh vars, then body.
             let param_vars: Vec<TyVarId> = d
                 .params
                 .iter()
                 .map(|&p| self.infer_pat_fresh(body, p))
                 .collect();
+            // Seed the parameters from the annotation's arrow spine, as a
+            // top-level signature seeds its def's parameters.
+            if let Some(a) = annotated[i].as_mut() {
+                let mut cur = a.ty.clone();
+                for &pv in &param_vars {
+                    match cur.into_fun() {
+                        Ok((arg, rest)) => {
+                            let av = self.ty_to_var(&arg, &mut a.sub);
+                            self.unify(pv, av);
+                            cur = rest;
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
             let tv = self.infer_expr(body, d.body);
             let full = param_vars
                 .into_iter()
@@ -1593,9 +1636,23 @@ impl<'a> Infer<'a> {
                 // destructure binding: pattern typed against the value.
                 self.infer_pat_against(body, pat, full);
             }
+            // The definition against its annotation: the body is the actual
+            // side, the annotation the declared one (the same order and the
+            // same wording as a top-level signature). Only when the body
+            // checked cleanly, so one fault is one error.
+            if let Some(a) = &annotated[i] {
+                if self.errors.len() == errs_before {
+                    let prev = self.cur_span;
+                    self.cur_span = body.expr_span(d.body).or(prev);
+                    self.unify(full, a.var);
+                    self.cur_span = prev;
+                }
+            }
             for (_, lid) in &d.binders {
                 if let Some(&placeholder) = self.locals.get(lid) {
-                    self.unify(placeholder, full);
+                    if annotated[i].is_none() {
+                        self.unify(placeholder, full);
+                    }
                     // Tooling table only (inlay hints / hover on a let
                     // binding): record the binder's type var so the
                     // per-local table carries it. Guarded by
@@ -1605,6 +1662,98 @@ impl<'a> Infer<'a> {
                         self.local_vars.push((*lid, placeholder));
                     }
                 }
+            }
+        }
+        // Decide the deferred bounds, then check each annotation's variables
+        // stayed as general as it says.
+        if annotated.iter().any(Option::is_some) {
+            self.discharge_bounds(false);
+            for (i, &d) in defs.iter().enumerate() {
+                if let Some(a) = &annotated[i] {
+                    self.check_let_anno_generality(body, d, a);
+                }
+            }
+        }
+    }
+
+    /// An instance of a let define's annotation, its named variables flexible
+    /// (a name that spells a bound, `comparable`, carries it). `None` for a
+    /// binding with no annotation, or when the annotation cannot be read.
+    fn let_anno_inst(&mut self, d: &hir::LocalDef) -> Option<LetAnnoInst> {
+        let anno = d.anno.as_ref()?;
+        if d.pat.is_some() || d.binders.len() != 1 {
+            return None;
+        }
+        let module = self.db.def_loc(self.self_def?)?.module;
+        let ty = self.world.let_annotation_ty(self.db, module, anno.span)?;
+        let mut sub: HashMap<String, TyVarId> = HashMap::new();
+        let mut vars: Vec<Name> = Vec::new();
+        for n in ty.free_vars() {
+            if n.as_str() != "any" && !sub.contains_key(n.as_str()) {
+                let v = self.fresh_for_name(n.as_str());
+                sub.insert(n.as_str().to_string(), v);
+                vars.push(n);
+            }
+        }
+        let var = self.ty_to_var(&ty, &mut sub);
+        Some(LetAnnoInst { ty, var, sub, vars })
+    }
+
+    /// A let annotation's named variables are rigid in its definition: after
+    /// the group is inferred, each must still be a distinct unbound variable
+    /// (a body that pins `a` to `Int`, or makes `a` and `b` one type, is less
+    /// general than its annotation), and must carry no bound its name does not
+    /// spell (`a -> a` with `x + 1`). The wording is the top-level gate's. A
+    /// variable joined to an enclosing scope's variable, or to an enclosing
+    /// signature's variable of the same name, is left alone (lenient: it is
+    /// never generalised there, so it stays sound).
+    fn check_let_anno_generality(&mut self, body: &Body, d: &hir::LocalDef, a: &LetAnnoInst) {
+        let span = body.expr_span(d.body).or(self.cur_span);
+        let mut seen: HashMap<TyVarId, &str> = HashMap::new();
+        for n in &a.vars {
+            let Some(&v) = a.sub.get(n.as_str()) else {
+                continue;
+            };
+            let r = self.uf.find(v);
+            let message = match self.uf.content(r) {
+                Content::Error => continue,
+                Content::Structure(_) => Some(format!(
+                    "rigid type variable `{}` cannot be unified with a concrete type",
+                    n.as_str()
+                )),
+                Content::Rigid(other) => (other.as_str() != n.as_str()).then(|| {
+                    format!(
+                        "rigid type variable `{}` cannot unify with `{}`",
+                        n.as_str(),
+                        other.as_str()
+                    )
+                }),
+                Content::FlexSuper(s) => {
+                    let have = SuperType::from_var_name(n.as_str()).unwrap_or_default();
+                    let missing = s
+                        .closure()
+                        .minus(have.closure())
+                        .minus(SuperType::GoValue)
+                        .minus(SuperType::Encodable);
+                    (!missing.is_empty())
+                        .then(|| crate::unify::rigid_bound_message(n.as_str(), missing))
+                }
+                Content::Flex => None,
+            };
+            let message = message.or_else(|| {
+                seen.insert(r, n.as_str()).map(|first| {
+                    format!(
+                        "rigid type variable `{first}` cannot unify with `{}`",
+                        n.as_str()
+                    )
+                })
+            });
+            if let Some(message) = message {
+                self.errors.push(TypeError {
+                    message,
+                    span,
+                    code: "E2001",
+                });
             }
         }
     }

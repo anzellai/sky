@@ -71,6 +71,18 @@ pub struct LocalDef {
     pub pat: Option<PatId>,
     pub params: Vec<PatId>,
     pub body: ExprId,
+    /// The binding's type annotation (`n : Int` written before `n = …`), if
+    /// it has one. Only a plain define carries one.
+    pub anno: Option<LetAnno>,
+}
+
+/// A `let` binding's type annotation: the resolved type, and the source span
+/// of the annotation's type, from which the checker reads it the way it reads
+/// a top-level signature.
+#[derive(Clone, PartialEq, Debug)]
+pub struct LetAnno {
+    pub ty: TypeId,
+    pub span: Span,
 }
 
 /// A `case` branch.
