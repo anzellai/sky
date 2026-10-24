@@ -11,9 +11,15 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.27.14 — record field errors name the right side (2026-10-24)
+## v0.27.14 — `let` annotations are checked, record field errors name the right side (2026-10-24)
+
+### ⚠ Breaking changes
+
+- **A type annotation on a `let` binding is now checked.** Before, the checker read it and threw it away, so `let n : Int` / `n = "not an int"` passed `sky check`. Code with a wrong `let` annotation is now refused with `[E2001]` at the definition. To migrate, correct the annotation to the type the definition has (`n : String`), or delete the annotation line. A polymorphic annotation must be as general as its body: `f : a -> a` with `f x = x + 1` is refused, write `f : Int -> Int`.
 
 ### Fixed
+
+- **A `let` annotation was ignored.** It is now checked the way a top-level signature is: the definition must have the annotated type, an annotated `let` function has that type in the `let` body, and the annotation's type variables are rigid in the definition (a body that pins `a` to a concrete type, joins two variables or needs a bound the name does not spell is refused, with the top-level wording). An annotated polymorphic `let` function is usable at more than one type, under the value restriction as before. Aliases, records and imported aliases resolve as in a top-level signature. (`rust/crates/hir/src/resolve.rs` keeps the annotation on the `let` definition, `rust/crates/ty/src/infer.rs` checks it; `let_annotation_check.rs`.)
 
 - **A record passed as a function argument got the missing and unknown fields reversed.** `show { a = "x" }`, where `show` takes `{ a : String, b : String }`, said `record has unknown field(s) not in the declared type: b`. Field `b` is missing, not unknown. The same record as an annotated value was already right. A function's parameter sits on the other side of the unifier from a declared value, and the record check did not allow for it. It does now, so an argument, a `|>` or `<|` pipe, an annotated value, a function result, a list element and an `if` or `case` branch all say `record is missing field(s): b` for a field the type has and the record lacks, and `record has unknown field(s) not in the declared type: c` for a field the record has and the type lacks. A record with both now names both in one message. Only the wording changes. The same programs are accepted and refused. (`rust/crates/ty/src/unify.rs`; `record_field_mismatch_wording.rs`.)
 

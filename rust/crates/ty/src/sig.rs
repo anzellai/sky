@@ -1266,6 +1266,29 @@ impl World {
         matches!(&scheme.ty, Ty::Record(_, None)).then_some(scheme)
     }
 
+    /// The type a `let` annotation spells (`n : Int` inside a `let` of a body
+    /// in module `m`), resolved and alias-expanded exactly as a top-level
+    /// signature in that module is (pass 2). `span` is the annotation type's
+    /// source span ([`hir::LetAnno::span`]). `None` when the span names no type
+    /// in the module's tree.
+    pub(crate) fn let_annotation_ty(
+        &self,
+        db: &dyn SkyDb,
+        m: ModuleId,
+        span: base::Span,
+    ) -> Option<Ty> {
+        let tree = db.module_parse(m).tree();
+        let range = syntax::TextRange::new(span.range.0.into(), span.range.1.into());
+        let t = tree
+            .syntax()
+            .descendants()
+            .filter(|n| n.text_range() == range)
+            .find_map(ast::Type::cast)?;
+        let protect = union_names_in_module(db, m);
+        let raw = resolve_type_names(db, m, &t, self.type_keys());
+        Some(self.expand(&raw, 0, &protect, None))
+    }
+
     /// Per-def entry point for the D2 record-result scheme (pass 7), demanded
     /// LAZILY on the lowering path (`skydb::record_result_sig_query`) instead of
     /// baked into the aggregate world. `self` MUST be the full check-world

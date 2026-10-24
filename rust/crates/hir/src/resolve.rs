@@ -6,7 +6,9 @@
 use crate::cst;
 use crate::db::{ImportSource, SkyDb};
 use crate::exports::ModuleExports;
-use crate::hir::{Body, CaseBranch, Expr, ExprId, LocalDef, PatId, Pattern, TopDef, Type, TypeId};
+use crate::hir::{
+    Body, CaseBranch, Expr, ExprId, LetAnno, LocalDef, PatId, Pattern, TopDef, Type, TypeId,
+};
 use crate::ids::{CtorRef, DefKind, LocalId, Res, TypeRes};
 use crate::kernel::{
     is_reserved_sky_namespace, kernel_functions, BUILTIN_CTORS, BUILTIN_TYPES, BUILTIN_VARS,
@@ -2614,6 +2616,9 @@ impl<'a> Resolver<'a> {
         // captures a not-yet-declared var — examples 26/37).
         let mut defs = Vec::new();
         let mut binding_ix = 0usize;
+        // An annotation-only binding (`n : Int`) waits here for the define of
+        // the same name that follows it.
+        let mut pending_anno: Option<(Name, LetAnno)> = None;
         for child in l.syntax().children() {
             match child.kind() {
                 SyntaxKind::LetBinding => {
@@ -2631,6 +2636,14 @@ impl<'a> Resolver<'a> {
                         .children()
                         .find(|c| c.kind() == SyntaxKind::ParamList);
                     let has_body = b.body().is_some();
+                    let anno = if has_body {
+                        match (pending_anno.take(), b.name()) {
+                            (Some((n, a)), Some(name)) if n.as_str() == name.text() => Some(a),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
                     if let Some(pl) = params_node {
                         self.push_scope();
                         let mut params = Vec::new();
@@ -2651,6 +2664,7 @@ impl<'a> Resolver<'a> {
                             pat: None,
                             params,
                             body,
+                            anno,
                         });
                     } else if has_body {
                         let body = self.resolve_expr(&b.body().unwrap());
@@ -2659,11 +2673,17 @@ impl<'a> Resolver<'a> {
                             pat: None,
                             params: Vec::new(),
                             body,
+                            anno,
                         });
                     } else {
-                        // annotation-only binding: resolve its type
+                        // annotation-only binding: resolve its type and keep it
+                        // for the define of the same name that follows.
                         if let Some(t) = b.syntax().children().find_map(ast::Type::cast) {
-                            let _ = self.resolve_type(&t);
+                            let ty = self.resolve_type(&t);
+                            let span = self.span_of(t.syntax().text_range());
+                            if let Some(name) = b.name() {
+                                pending_anno = Some((Name::new(name.text()), LetAnno { ty, span }));
+                            }
                         }
                     }
                 }
@@ -2685,6 +2705,7 @@ impl<'a> Resolver<'a> {
                         pat,
                         params: Vec::new(),
                         body: val,
+                        anno: None,
                     });
                 }
                 _ => {}
