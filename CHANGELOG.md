@@ -11,6 +11,12 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.27.14 — record field errors name the right side (2026-10-24)
+
+### Fixed
+
+- **A record passed as a function argument got the missing and unknown fields reversed.** `show { a = "x" }`, where `show` takes `{ a : String, b : String }`, said `record has unknown field(s) not in the declared type: b`. Field `b` is missing, not unknown. The same record as an annotated value was already right. A function's parameter sits on the other side of the unifier from a declared value, and the record check did not allow for it. It does now, so an argument, a `|>` or `<|` pipe, an annotated value, a function result, a list element and an `if` or `case` branch all say `record is missing field(s): b` for a field the type has and the record lacks, and `record has unknown field(s) not in the declared type: c` for a field the record has and the type lacks. A record with both now names both in one message. Only the wording changes. The same programs are accepted and refused. (`rust/crates/ty/src/unify.rs`; `record_field_mismatch_wording.rs`.)
+
 ## v0.27.13 — request host, binary responses, `List.repeat`, `Tuple` with no import (2026-10-23)
 
 ### ⚠ Breaking changes
