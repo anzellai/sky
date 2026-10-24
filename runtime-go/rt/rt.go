@@ -3853,6 +3853,20 @@ func List_range(lo any, hi any) any {
 	return result
 }
 
+// List_repeat : Int -> a -> List a. `repeat n x` is n copies of x (Elm); an n
+// of 0 or less gives [].
+func List_repeat(n any, x any) any {
+	count := AsInt(n)
+	if count <= 0 {
+		return []any{}
+	}
+	result := make([]any, count)
+	for i := range result {
+		result[i] = x
+	}
+	return result
+}
+
 // ═══════════════════════════════════════════════════════════
 // More String operations
 // ═══════════════════════════════════════════════════════════
@@ -7641,6 +7655,22 @@ func File_writeFile(path any, content any) any {
 	}
 }
 
+// File_writeBytes : String -> Bytes -> Task Error (). Overwrites the file with
+// exactly these bytes; nothing is re-encoded.
+func File_writeBytes(path any, content any) any {
+	return func() any {
+		if r := ssrSuppressedWrite("file.writeBytes"); r != nil {
+			return r
+		}
+		return WithFileSpan("writeBytes", fmt.Sprintf("%v", path), func() any {
+			if err := os.WriteFile(fmt.Sprintf("%v", path), readBytes(content), 0644); err != nil {
+				return Err[any, any](ErrFfi(err.Error()))
+			}
+			return Ok[any, any](struct{}{})
+		})
+	}
+}
+
 func File_append(path any, content any) any {
 	return func() any {
 		if r := ssrSuppressedWrite("file.append"); r != nil {
@@ -8901,6 +8931,25 @@ type SkyRequest struct {
 	Cookies    map[string]string
 	Form       map[string]string
 	RemoteAddr string // audit P1-2: client IP for rate-limit keying
+	// Host is the name the client used for this request (`Host:` / the
+	// HTTP/2 :authority), port included when the client sent one. Go's
+	// net/http moves it out of r.Header into r.Host, so without this field
+	// an app serving several domains could not tell which one a request
+	// used. requestHostHeader also copies it back into Headers["Host"].
+	Host string
+}
+
+// requestHostHeader copies r.Host into a request's header map under "Host".
+// Go's net/http removes the Host header from r.Header (it lives in r.Host),
+// so `Dict.get "Host" req.headers` was always Nothing. A header map that
+// already carries "Host" is left alone.
+func requestHostHeader(headers map[string]any, host string) {
+	if host == "" || headers == nil {
+		return
+	}
+	if _, ok := headers["Host"]; !ok {
+		headers["Host"] = host
+	}
 }
 
 // SkyResponse wraps an HTTP response.
@@ -9161,6 +9210,10 @@ func asSkyRequest(src any) (SkyRequest, bool) {
 		out.RemoteAddr = f.String()
 		matched = true
 	}
+	if f := rv.FieldByName("Host"); f.IsValid() && f.Kind() == reflect.String {
+		out.Host = f.String()
+		matched = true
+	}
 	if f := rv.FieldByName("Headers"); f.IsValid() && f.Kind() == reflect.Map {
 		out.Headers = mapToAnyValueMap(f)
 		matched = true
@@ -9315,6 +9368,13 @@ func Server_json(body any) any {
 
 func Server_html(body any) any {
 	return SkyResponse{Status: 200, Body: fmt.Sprintf("%v", body), ContentType: "text/html"}
+}
+
+// Server_bytes : String -> Bytes -> Response. A 200 response whose body is sent
+// byte for byte (a Sky Bytes is a Go string of any bytes) with the given
+// Content-Type. Not text/html, so no CSRF or dev-banner injection touches it.
+func Server_bytes(contentType any, body any) any {
+	return SkyResponse{Status: 200, Body: string(readBytes(body)), ContentType: fmt.Sprintf("%v", contentType)}
 }
 
 // injectCsrfIntoForms walks an HTML body and inserts a hidden

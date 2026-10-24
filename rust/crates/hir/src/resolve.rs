@@ -10,7 +10,7 @@ use crate::hir::{Body, CaseBranch, Expr, ExprId, LocalDef, PatId, Pattern, TopDe
 use crate::ids::{CtorRef, DefKind, LocalId, Res, TypeRes};
 use crate::kernel::{
     is_reserved_sky_namespace, kernel_functions, BUILTIN_CTORS, BUILTIN_TYPES, BUILTIN_VARS,
-    KERNEL_IMPLICIT_TYPES, PRELUDE_QUALIFIERS,
+    DEFAULT_QUALIFIED_IMPORTS, KERNEL_IMPLICIT_TYPES, PRELUDE_QUALIFIERS,
 };
 use base::{DefId, FileId, ModuleId, Name, Span};
 use diagnostics::Diagnostic;
@@ -1113,6 +1113,9 @@ impl<'a> Resolver<'a> {
         for imp in &imports {
             self.process_import(imp, &claims);
         }
+        // 2b. default qualified imports (Elm's implicit `import Tuple`). After
+        //     every real import, so any import binding the same qualifier wins.
+        self.bind_default_qualifiers();
 
         // 3. local declarations (after imports → local shadows import, C7)
         self.register_locals(&tree);
@@ -1491,6 +1494,26 @@ impl<'a> Resolver<'a> {
             (_, None) => {}
         }
         self.cur_import = None;
+    }
+
+    /// Bind each [`DEFAULT_QUALIFIED_IMPORTS`] qualifier that no import of this
+    /// module bound, as if the module had `import <path> as <qualifier>`. It
+    /// binds a qualifier only, never an unqualified name. A compilation that
+    /// does not carry the module (a narrow test db) binds nothing.
+    fn bind_default_qualifiers(&mut self) {
+        let own = self.db.module_name(self.module).to_string();
+        for (qual, path) in DEFAULT_QUALIFIED_IMPORTS {
+            if own == *path || self.import_aliases.contains_key(*qual) {
+                continue;
+            }
+            let source = self.db.classify_import(path);
+            if let ImportSource::Dep(dep) = &source {
+                self.import_aliases
+                    .insert((*qual).to_string(), source.clone());
+                let exports = self.db.module_exports(*dep);
+                self.bind_qual_from_exports(qual, &exports);
+            }
+        }
     }
 
     fn bind_qual_from_exports(&mut self, q: &str, exports: &ModuleExports) {

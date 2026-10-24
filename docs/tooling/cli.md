@@ -866,6 +866,12 @@ On a runner with little memory, `--go-jobs <n>` (or `SKY_GO_BUILD_JOBS=<n>`)
 caps how many packages `go build` compiles at once, and `SKY_BUILD_SERIAL=1`
 builds a client app's two legs one after the other.
 
+When another process (a memory watchdog, `kill`) stops a build, sky says so. A
+child leg or `go build` stopped by a signal ends with a line such as `frontend
+build stopped by SIGTERM from another process (a memory watchdog?)` and these
+two knobs. A SIGTERM to `sky` itself prints `sky: stopped by SIGTERM from
+another process`, and the exit status stays 143.
+
 Exit codes: `0` clean, `1` warnings, `2` errors. CI-friendly.
 
 ### `sky verify [example]`
@@ -1457,6 +1463,13 @@ line and its `.skydeps/<slug>/` tree; a `["go.dependencies"]` entry (Go module)
 removes the line, the generated `sky-ffi/<slug>.*` surface, and the `go.mod`
 require (`go mod tidy`). The routing is a local section lookup — no probe.
 `--go` / `--sky` force one path.
+
+A `["go.dependencies"]` entry that leaves `sky.toml` some other way (a git
+branch switch, a hand edit) keeps its `sky-ffi/` files. The build uses only
+the surfaces `sky.toml` declares: it ignores the others, prints one line that
+names them, and removes their old wrappers from its own output
+(`sky-out/skyffi/`). Declare the dependency again and the surface is used
+again, with no `sky install`.
 
 ### `sky install`
 

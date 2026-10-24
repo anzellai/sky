@@ -287,7 +287,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1519,
+      "expected_assertions": 1526,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -694,23 +694,23 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2234,
+    "stdlib_entries": 2237,
     "stdlib_modules": 113,
-    "surfaces_covered": 169,
-    "surfaces_covered_pct": 93.9,
-    "surfaces_equal": 16,
-    "surfaces_stronger": 164,
+    "surfaces_covered": 170,
+    "surfaces_covered_pct": 94.4,
+    "surfaces_equal": 15,
+    "surfaces_stronger": 165,
     "surfaces_total": 180,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
       "Example": 64,
-      "FlowTest": 51,
+      "FlowTest": 52,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 134
+    "units_total": 135
   },
   "surfaces": [
     {
@@ -1112,9 +1112,15 @@
     {
       "category": "cli",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -1123,7 +1129,7 @@
       },
       "description": "`sky lsp`",
       "id": "cli.lsp",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "cli",
@@ -4686,6 +4692,11 @@
             "strength": 3
           },
           {
+            "by": "flow:codegen_unused_pattern_binder_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:durable_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -6149,6 +6160,11 @@
           },
           {
             "by": "flow:codegen_rowpoly_lambda_caf_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:codegen_unused_pattern_binder_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -12144,6 +12160,11 @@
             "strength": 3
           },
           {
+            "by": "flow:codegen_unused_pattern_binder_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:durable_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -15140,11 +15161,10 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 10,
+      "count": 9,
       "surfaces": [
         "cli.console",
         "cli.console-serve",
-        "cli.lsp",
         "cli.spa-partition",
         "cli.upgrade-claude",
         "stdlib.Sky.Core.Io",
@@ -15221,13 +15241,12 @@
           ]
         },
         "Sky.Core.File": {
-          "count": 5,
+          "count": 4,
           "symbols": [
             "copy",
             "exists",
             "isDir",
-            "readDir",
-            "readFileBytes"
+            "readDir"
           ]
         },
         "Sky.Core.Http": {
@@ -15379,11 +15398,12 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 10,
+          "count": 11,
           "symbols": [
             "Cookie",
             "Route",
             "Server",
+            "bytes",
             "delete",
             "put",
             "rpc",
@@ -16229,7 +16249,7 @@
         }
       },
       "count": 661,
-      "pct_of_denominator": 29.6
+      "pct_of_denominator": 29.5
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -16302,14 +16322,13 @@
           ]
         },
         "Sky.Core.File": {
-          "count": 6,
+          "count": 5,
           "symbols": [
             "FileKind",
             "copy",
             "exists",
             "isDir",
-            "readDir",
-            "readFileBytes"
+            "readDir"
           ]
         },
         "Sky.Core.Http": {
@@ -16482,12 +16501,13 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 11,
+          "count": 12,
           "symbols": [
             "Cookie",
             "Handler",
             "Route",
             "Server",
+            "bytes",
             "delete",
             "put",
             "rpc",
@@ -17422,7 +17442,7 @@
         }
       },
       "count": 752,
-      "pct_of_denominator": 33.7
+      "pct_of_denominator": 33.6
     }
   },
   "units": [
@@ -18887,6 +18907,18 @@
     {
       "db_drivers": [],
       "gate": null,
+      "id": "flow:codegen_unused_pattern_binder_flow",
+      "modules_imported": 3,
+      "path": "rust/crates/sky/tests/codegen_unused_pattern_binder_flow.rs",
+      "refs_generous": 8,
+      "refs_qualified": 7,
+      "role": "FlowTest",
+      "sky_files": 1,
+      "sky_toml_sections": []
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
       "id": "flow:doc_flow",
       "modules_imported": 11,
       "path": "rust/crates/sky/tests/doc_flow.rs",
@@ -19061,7 +19093,7 @@
       "refs_generous": 163,
       "refs_qualified": 157,
       "role": "FlowTest",
-      "sky_files": 134,
+      "sky_files": 135,
       "sky_toml_sections": []
     },
     {
@@ -19214,8 +19246,8 @@
       "id": "tests/conformance",
       "modules_imported": 56,
       "path": "tests/conformance",
-      "refs_generous": 751,
-      "refs_qualified": 734,
+      "refs_generous": 754,
+      "refs_qualified": 737,
       "role": "Conformance",
       "sky_files": 45,
       "sky_toml_sections": []

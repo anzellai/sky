@@ -76,7 +76,8 @@ sum     = List.foldl (\n acc -> n + acc) 0 [ 1, 2, 3 ]    -- 6
 evens   = List.filter (\n -> modBy 2 n == 0) [ 1, 2, 3, 4 ] -- [2, 4]
 ```
 
-`map`, `filter`, `foldl`, `foldr`, `length`, `head`, `tail`, `take`, `drop`, `append`, `concat`, `concatMap`, `reverse`, `member`, `any`, `all`, `range`, `zip`, `isEmpty`, `indexedMap`, `find`, `cons`.
+`map`, `filter`, `foldl`, `foldr`, `length`, `head`, `tail`, `take`, `drop`, `append`, `concat`, `concatMap`, `reverse`, `member`, `any`, `all`, `range`, `repeat`, `zip`, `isEmpty`, `indexedMap`, `find`, `cons`.
+`List.repeat n x` is `n` copies of `x` (Elm); `n` of 0 or less gives `[]`.
 
 > v0.17 closed Limitation #8 — all 13 list ops in scope now run
 > on constant Go stack. `foldl` / `find` / `any` / `all` /
@@ -147,8 +148,6 @@ The `Result → Task` bridges live on `Task` (`Task.fromResult` / `Task.andThenR
 ### `Tuple` — pairs (`Sky.Core.Tuple`)
 
 ```elm
-import Sky.Core.Tuple as Tuple
-
 labelled = List.map (Tuple.pair "k") [ 1, 2 ]          -- [ ( "k", 1 ), ( "k", 2 ) ]
 shown = Tuple.mapBoth String.toUpper negate ( "a", 1 )  -- ( "A", -1 )
 ```
@@ -162,7 +161,7 @@ shown = Tuple.mapBoth String.toUpper negate ( "a", 1 )  -- ( "A", -1 )
 | `Tuple.mapSecond` | `(b -> y) -> ( a, b ) -> ( a, y )` |
 | `Tuple.mapBoth` | `(a -> x) -> (b -> y) -> ( a, b ) -> ( x, y )` |
 
-Pure Sky, no runtime kernel, so it needs the `import`. `fst` / `snd` from `Basics` stay available and are the same as `Tuple.first` / `Tuple.second`.
+The `Tuple` qualifier needs no `import`, as in Elm. An import that binds `Tuple` to another module (`import My.Pairs as Tuple`) wins. `fst` / `snd` from `Basics` stay available and are the same as `Tuple.first` / `Tuple.second`.
 
 ### `Math` — numerical functions
 
@@ -1042,7 +1041,7 @@ readme =
         |> Task.andThen (\content -> println content)
 ```
 
-`readFile`, `readFileLimit`, `readFileBytes`, `writeFile`, `append`, `mkdirAll`, `readDir`, `exists`, `remove`, `isDir`, `tempFile`, `tempDir`, `copy`, `rename`, `stat`, `lstat`, `realPath`, `readLink`, `chmod`, `permissions`, `resolveWithin`.
+`readFile`, `readFileLimit`, `readFileBytes`, `writeFile`, `writeBytes`, `append`, `mkdirAll`, `readDir`, `exists`, `remove`, `isDir`, `tempFile`, `tempDir`, `copy`, `rename`, `stat`, `lstat`, `realPath`, `readLink`, `chmod`, `permissions`, `resolveWithin`.
 
 `exists` / `isDir` return `Task Error Bool` (effects — the disk could be unmounted between successive calls).  `tempFile` / `tempDir` create uniquely-named entries in the system temp dir and return the absolute path; caller is responsible for `remove`-ing when done. Every function is a Task: nothing touches the disk until the Task runs. A missing path fails with `NotFound`, a refused one with `PermissionDenied`, anything else with `Io`.
 
@@ -1787,8 +1786,18 @@ Extractors (Layer 3 Sky source — `Sky.Http.Server.sky`): `param`
 (path `:id`), `queryParam`, `header`, `getCookie`. Kernel-side
 extras: `formValue`, `body`, `path`, `method`.
 
-Responses: `text`, `json`, `html`, `withStatus`, `redirect`,
+`Request` fields: `method`, `path`, `body`, `headers`, `params`, `query`,
+`cookies`, `remoteAddr` and `host` (v0.27.13). `host` is the name the client
+used, port included when sent (`"a.example.com"`, `"a.localhost:8000"`). The
+same value is in `headers` under `"Host"`. An app that serves several domains
+reads it to tell them apart.
+
+Responses: `text`, `json`, `html`, `bytes`, `withStatus`, `redirect`,
 `cookie` + `addCookie`, `withCookie name value attrs`, `withHeader`.
+`Server.bytes contentType body` sends `body` byte for byte (a `Sky.Core.Bytes`
+buffer, for example from `Bytes.fromBase64`):
+`Server.bytes "image/png" png`. To save binary data to disk, use
+`File.writeBytes path bytes`.
 
 ### `Live` — Sky.Live (server-driven UI)
 

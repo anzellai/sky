@@ -993,6 +993,7 @@ impl World {
                     }
                 }
             }
+            push_default_import_edges(db, m, &app_set, &mut ds);
             deps_of.insert(m, ds);
         }
 
@@ -1356,6 +1357,7 @@ impl World {
             ("concat", fun(list(list(a())), list(a()))),
             ("member", fun(a(), fun(list(a()), bool_()))),
             ("range", fun(int_(), fun(int_(), list(int_())))),
+            ("repeat", fun(int_(), fun(a(), list(a())))),
             ("zip", fun(list(a()), fun(list(b()), list(tup2(a(), b()))))),
             ("length", fun(list(a()), int_())),
             ("isEmpty", fun(list(a()), bool_())),
@@ -2056,6 +2058,27 @@ fn modules_in_cycle(
         .collect()
 }
 
+/// The import edges `hir::DEFAULT_QUALIFIED_IMPORTS` adds with no `import`
+/// line: `Tuple.first` reads `Sky.Core.Tuple` in every module, so the module
+/// order puts `Sky.Core.Tuple` first, as an explicit import would. The edge is
+/// added even when an import binds the `Tuple` qualifier to another module: an
+/// extra dependency only orders, and the target imports nothing, so it can
+/// never close a cycle.
+fn push_default_import_edges(
+    db: &dyn SkyDb,
+    m: ModuleId,
+    app_set: &std::collections::HashSet<ModuleId>,
+    ds: &mut Vec<ModuleId>,
+) {
+    for (_, path) in hir::DEFAULT_QUALIFIED_IMPORTS {
+        if let hir::ImportSource::Dep(dep) = db.classify_import(path) {
+            if app_set.contains(&dep) && dep != m && !ds.contains(&dep) {
+                ds.push(dep);
+            }
+        }
+    }
+}
+
 /// Build the APP-module import graph and return its cycles as groups. Same graph
 /// + Tarjan the deferral logic in `infer_app_check_sigs` uses, exposed so the
 /// checker (`check_modules`) can REJECT cycles (Elm-like posture) rather than
@@ -2082,6 +2105,7 @@ pub(crate) fn app_import_cycle_groups(db: &dyn SkyDb) -> Vec<Vec<ModuleId>> {
                 }
             }
         }
+        push_default_import_edges(db, m, &app_set, &mut ds);
         deps_of.insert(m, ds);
     }
     scc_cycle_groups(&app_mods, &deps_of)

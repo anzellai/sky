@@ -220,6 +220,7 @@ pub const PRELUDE_QUALIFIERS: &[(&str, &[&str])] = &[
             "any",
             "all",
             "range",
+            "repeat",
             "zip",
             "filterMap",
             "isEmpty",
@@ -303,6 +304,22 @@ pub const PRELUDE_QUALIFIERS: &[(&str, &[&str])] = &[
         ],
     ),
 ];
+
+/// Pure-Sky stdlib modules every module sees under a qualifier with no
+/// `import`, as Elm imports `Tuple` by default. `(qualifier, module path)`.
+///
+/// A kernel module (`Maybe`, `List`) needs no entry: its qualifier already
+/// falls back to the kernel pseudo-module. A pure-Sky module has no such
+/// fallback, so without this table `Tuple.first` with no `import
+/// Sky.Core.Tuple as Tuple` was `[E1001] Undefined name`.
+///
+/// The binding is the weakest one a qualifier can have: any import that binds
+/// the same qualifier (an explicit `as Tuple`, or the auto-qualifier of a
+/// user module `Tuple` / `My.Tuple`) wins, and the module itself is skipped.
+/// The resolver binds it, the resolve memo counts it in the module's
+/// dependency footprint (`db.rs`), and the type checker's module order treats
+/// it as an import edge (`ty::sig`), so all three agree.
+pub const DEFAULT_QUALIFIED_IMPORTS: &[(&str, &str)] = &[("Tuple", "Sky.Core.Tuple")];
 
 /// `staticKernelFunctions` (Module.hs:1752-1861): the known function names each
 /// kernel pseudo-module exposes. This is the source of truth for a kernel
@@ -413,6 +430,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "any",
             "all",
             "range",
+            "repeat",
             "zip",
             "filterMap",
             "isEmpty",
@@ -617,6 +635,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "readFileLimit",
             "readFileBytes",
             "writeFile",
+            "writeBytes",
             "append",
             "mkdirAll",
             "readDir",
@@ -663,6 +682,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "withCookie",
             "addCookie",
             "withHeader",
+            "bytes",
             "any",
             "method",
             "formValue",

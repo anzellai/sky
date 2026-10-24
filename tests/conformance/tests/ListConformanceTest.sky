@@ -44,8 +44,20 @@ big =
 
 tests : List Test
 tests =
-    [ -- map / filter on empty + singleton
-      Test.test "map on empty list yields empty"
+    [ -- repeat (Elm semantics: n <= 0 gives [])
+      Test.test "repeat 3 copies the value 3 times"
+        (\_ -> Test.equal [ "a", "a", "a" ] (List.repeat 3 "a"))
+    , Test.test "repeat 1 is a singleton"
+        (\_ -> Test.equal [ 7 ] (List.repeat 1 7))
+    , Test.test "repeat 0 is empty"
+        (\_ -> Test.equal emptyInts (List.repeat 0 7))
+    , Test.test "repeat with a negative count is empty"
+        (\_ -> Test.equal emptyInts (List.repeat -2 7))
+    , Test.test "SCALE: repeat 1M has 1M elements"
+        (\_ -> Test.equal 1000000 (List.length (List.repeat 1000000 0)))
+
+    -- map / filter on empty + singleton
+    ,       Test.test "map on empty list yields empty"
         (\_ -> Test.equal emptyInts (List.map (\n -> n + 1) emptyInts))
     , Test.test "map on singleton applies fn"
         (\_ -> Test.equal [ 10 ] (List.map (\n -> n * 2) [ 5 ]))

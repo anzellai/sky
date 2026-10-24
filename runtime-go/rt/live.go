@@ -1306,7 +1306,8 @@ func (a *liveApp) consoleModelFor(r *http.Request) any {
 		"query":   r.URL.RawQuery,
 		"params":  Dict_empty(),
 		"method":  r.Method,
-		"headers": headersToDict(r.Header),
+		"host":    r.Host,
+		"headers": requestHeadersToDict(r),
 		"cookies": cookiesToDict(r.Cookies()),
 	}
 	return tupleFirst(sky_call(a.init, req))
@@ -1482,12 +1483,14 @@ func (app *liveApp) serveAPI(ar apiRoute, params []string, w http.ResponseWriter
 		Cookies:    make(map[string]string),
 		Form:       make(map[string]string),
 		RemoteAddr: r.RemoteAddr,
+		Host:       r.Host,
 	}
 	for k, v := range r.Header {
 		if len(v) > 0 {
 			skyReq.Headers[k] = v[0]
 		}
 	}
+	requestHostHeader(skyReq.Headers, r.Host)
 	for _, ck := range r.Cookies() {
 		skyReq.Cookies[ck.Name] = ck.Value
 	}
@@ -1735,6 +1738,18 @@ func headersToDict(h http.Header) any {
 			continue
 		}
 		d = Dict_insert(k, vs[0], d)
+	}
+	return d
+}
+
+// requestHeadersToDict is headersToDict over a request's headers plus its
+// Host, which net/http keeps in r.Host rather than r.Header. Without it
+// `Dict.get "Host" req.headers` was always Nothing in an init / withRequest
+// seed.
+func requestHeadersToDict(r *http.Request) any {
+	d := headersToDict(r.Header)
+	if r.Host != "" && len(r.Header.Values("Host")) == 0 {
+		d = Dict_insert("Host", r.Host, d)
 	}
 	return d
 }
@@ -2389,7 +2404,8 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 			"query":      r.URL.RawQuery,
 			"params":     initParams,
 			"method":     r.Method,
-			"headers":    headersToDict(r.Header),
+			"host":       r.Host,
+			"headers":    requestHeadersToDict(r),
 			"cookies":    cookiesToDict(r.Cookies()),
 		}
 		res := sky_call(app.init, req)

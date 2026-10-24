@@ -2803,7 +2803,12 @@ impl<'a> Ctx<'a> {
                     },
                 };
                 let subj = GoExpr::new(GoExprKind::Ident(n.clone()), ty.clone());
-                let (_cond, binds) = self.pattern_test(&subj, &ty, p);
+                let (_cond, mut binds) = self.pattern_test(&subj, &ty, p);
+                // `_ = v` for every binder, so a param binder the body ignores
+                // (`tupleParam ( n, unused ) = n`) does not trip Go's "declared
+                // and not used" (as for a case arm or a `let` destructure).
+                let discards = discard_binds(&binds);
+                binds.extend(discards);
                 (n, ty, binds)
             }
         }
@@ -7892,7 +7897,12 @@ impl<'a> Ctx<'a> {
                     let n = self.fresh_temp();
                     let subj = GoExpr::new(GoExprKind::Ident(n.clone()), ty.clone());
                     let (_cond, binds) = self.pattern_test(&subj, &ty, *p);
+                    // `_ = v` for every binder, so a binder the body ignores
+                    // (`\( q, a ) -> … a …`) does not trip Go's "declared and
+                    // not used" (as for a case arm or a `let` destructure).
+                    let discards = discard_binds(&binds);
                     destructure.extend(binds);
+                    destructure.extend(discards);
                     n
                 }
             };

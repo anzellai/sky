@@ -90,6 +90,7 @@ func dispatchSkyHandler(w http.ResponseWriter, req *http.Request, handler any, p
 		Query:      make(map[string]any),
 		Cookies:    make(map[string]string),
 		RemoteAddr: req.RemoteAddr,
+		Host:       req.Host,
 	}
 	for _, ck := range req.Cookies() {
 		skyReq.Cookies[ck.Name] = ck.Value
@@ -99,6 +100,7 @@ func dispatchSkyHandler(w http.ResponseWriter, req *http.Request, handler any, p
 			skyReq.Headers[k] = v[0]
 		}
 	}
+	requestHostHeader(skyReq.Headers, req.Host)
 	if req.Body != nil {
 		bodyBytes, err := io.ReadAll(req.Body)
 		if err != nil {

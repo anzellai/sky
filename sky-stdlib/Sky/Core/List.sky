@@ -33,6 +33,7 @@ module Sky.Core.List exposing
     , concat
     , member
     , range
+    , repeat
     , zip
     , map
     , filter
@@ -153,6 +154,15 @@ concat =
 range : Int -> Int -> List Int
 range =
     Ffi.kernel "List_range"
+
+
+-- | `repeat n x` — a list of `n` copies of `x`, as in Elm. An `n` of 0 or less
+-- gives `[]`.
+--
+--     List.repeat 3 "a" == [ "a", "a", "a" ]
+repeat : Int -> a -> List a
+repeat =
+    Ffi.kernel "List_repeat"
 
 
 -- | `zip xs ys` — pair-wise zip, truncated to the shorter list's length.

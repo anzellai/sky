@@ -1,0 +1,92 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+-- Regression: a destructured pattern binder that the body never reads must not
+-- become an unused Go variable ("declared and not used" in go build). Every
+-- binder named `unusedN` (and every second tuple/record/ctor slot) is unused.
+type Pair
+    = Pair Int String
+
+type alias Pt =
+    { px : Int
+    , py : Int
+    }
+
+
+tupleParam : ( Int, String ) -> Int
+tupleParam ( n, unused1 ) =
+    n
+
+
+recordParam : Pt -> Int
+recordParam { px, py } =
+    px
+
+
+ctorParam : Pair -> Int
+ctorParam (Pair n unused2) =
+    n
+
+
+total : List Int -> Int
+total xs =
+    List.foldl (\x acc -> x + acc) 0 xs
+
+
+headOr : List Int -> Int
+headOr xs =
+    case xs of
+
+        h :: unused3 ->
+            h
+
+        [] ->
+            0
+
+
+main =
+    let
+        pairs = [ ( "q1", "a1" ), ( "q2", "" ), ( "q3", "a3" ) ]
+        kept =
+            List.filter (\( q, a ) -> not (String.isEmpty a) && a /= "zz") pairs
+        fromRecords = List.map (\{ px, py } -> px) [ { px = 1, py = 2 } ]
+        fromCtors = List.map (\(Pair n unused4) -> n) [ Pair 3 "c" ]
+        fromNested =
+            List.map (\( ( a, unused5 ), unused6 ) -> a) [ ( ( 4, "d" ), "e" ) ]
+        caseTuple =
+            case ( 5, "x" ) of
+
+                ( n, unused7 ) ->
+                    n
+        caseCtor =
+            case Pair 6 "y" of
+
+                Pair n unused8 ->
+                    n
+        ( letA, unused9 ) = ( 7, "z" )
+        (Pair letB unused10) = Pair 8 "w"
+        localTuple ( a, unused11 ) = a
+        localCtor (Pair a unused12) = a
+    in
+        println
+            (String.join
+                ","
+                [ String.fromInt (List.length kept)
+                , String.fromInt (total fromRecords)
+                , String.fromInt (total fromCtors)
+                , String.fromInt (total fromNested)
+                , String.fromInt caseTuple
+                , String.fromInt caseCtor
+                , String.fromInt letA
+                , String.fromInt letB
+                , String.fromInt (localTuple ( 9, "v" ))
+                , String.fromInt (localCtor (Pair 10 "u"))
+                , String.fromInt (tupleParam ( 11, "t" ))
+                , String.fromInt (recordParam { px = 12, py = 13 })
+                , String.fromInt (ctorParam (Pair 14 "s"))
+                , String.fromInt (headOr [ 15, 16 ])
+                ])

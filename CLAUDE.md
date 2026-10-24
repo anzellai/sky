@@ -797,9 +797,12 @@ tooling and Python (`sky` / `cargo` / `rustc` / `rust-analyzer` / `cc1` /
 / `ghc-iserv` / `haskell-language-server` still covered); 10 GB
 panic tier for the dev-session host
 (`claude` / `node` / `ghostty`); system-pressure floor kicks in
-when free + inactive + speculative memory drops below 1.2 GB. Tune
-via `MEM_GUARD_PROC_MB` / `MEM_GUARD_PANIC_MB` /
-`MEM_GUARD_SYS_FLOOR_MB`. `MEM_GUARD_DRY=1` runs in log-only mode.
+when free + inactive + speculative memory drops below 1.2 GB (2.4 GB
+when swap is 80% full or more), and then stops the heaviest watched
+process only if it holds at least 1 GB, because a small `sky check`
+frees nothing the floor needs. Tune via `MEM_GUARD_PROC_MB` /
+`MEM_GUARD_PANIC_MB` / `MEM_GUARD_SYS_FLOOR_MB` /
+`MEM_GUARD_MIN_VICTIM_MB`. `MEM_GUARD_DRY=1` runs in log-only mode.
 Never silence a kill by raising the threshold — the kill means the
 process was on a path to OOM the machine. Fix the underlying
 compiler bug.

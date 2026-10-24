@@ -49,6 +49,9 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     "value nullable",
     "value onIslandEvent",
     "value raw",
+    // v0.27.13: List.repeat (Elm). String.repeat, Std.Css and Std.Ui.Grid
+    // already export `repeat`; Elm has the same pair.
+    "value repeat",
     "value rpc",
     "value serve",
     "value spawn",

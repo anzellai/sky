@@ -500,3 +500,76 @@ main =\n    println \"hi\"\n",
     );
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A git branch switch that drops a Go path dependency from `sky.toml` leaves
+/// its generated surface (`sky-ffi/`) and the build's staged wrapper
+/// (`sky-out/skyffi/<slug>_bindings.go`) on disk. Only `sky remove` deleted
+/// them, so the next build compiled the stale wrapper and `go build` failed:
+/// "cannot find module providing package example.com/media". The build now
+/// loads only declared surfaces, removes stale wrappers from its own output,
+/// and names the ignored surface in one line.
+#[test]
+fn a_dependency_dropped_from_sky_toml_does_not_break_the_next_build() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let (base, _greet, app) = go_fixture("dropped");
+    let media = base.join("app/media");
+    write(
+        &media.join("go.mod"),
+        "module example.com/media\n\ngo 1.22\n",
+    );
+    write(
+        &media.join("media.go"),
+        "package media\n\n// Kind names a media kind.\nfunc Kind(ext string) string {\n\treturn \"media:\" + ext\n}\n",
+    );
+    let both = "module Main exposing (main)\n\n\
+import Example.Com.Greet as Greet\n\
+import Example.Com.Media as Media\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Sky.Core.Result as Result\n\
+import Std.Log exposing (println)\n\n\n\
+main =\n    println ((Greet.hello \"sky\" |> Result.withDefault \"err\") ++ \" \" ++ (Media.kind \"png\" |> Result.withDefault \"err\"))\n";
+    write(&app.join("src/Main.sky"), both);
+    let (ok, log) = run(&app, SKY, &["add", "../greet"]);
+    assert!(ok, "sky add ../greet:\n{log}");
+    let (ok, log) = run(&app, SKY, &["add", "./media"]);
+    assert!(ok, "sky add ./media:\n{log}");
+    let (ok, log) = run(&app, SKY, &["check", "src/Main.sky"]);
+    assert!(ok, "check with both dependencies:\n{log}");
+    assert!(
+        app.join("sky-out/skyffi/media_bindings.go").is_file(),
+        "the first build stages the media wrapper:\n{log}"
+    );
+
+    // The branch switch: sky.toml and the source lose the dependency, every
+    // generated file stays.
+    let toml = std::fs::read_to_string(app.join("sky.toml")).unwrap();
+    let toml: String = toml
+        .lines()
+        .filter(|l| !l.contains("example.com/media"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    write(&app.join("sky.toml"), &toml);
+    write(&app.join("src/Main.sky"), MAIN_HELLO);
+    assert!(app.join("sky-ffi/media.kernel.json").is_file());
+
+    let (ok, log) = run(&app, SKY, &["check", "src/Main.sky"]);
+    assert!(
+        ok,
+        "a dependency dropped from sky.toml must not break the build:\n{log}"
+    );
+    assert!(
+        !app.join("sky-out/skyffi/media_bindings.go").exists(),
+        "the stale wrapper is removed from the build output"
+    );
+    assert!(
+        log.contains("media.kernel.json (example.com/media)"),
+        "one line names the ignored surface:\n{log}"
+    );
+    let (ok, log) = run(&app, SKY, &["build", "src/Main.sky"]);
+    assert!(ok, "build:\n{log}");
+    let (ok, out) = run(&app, app.join("sky-out/app").to_str().unwrap(), &[]);
+    assert!(ok && out.contains("hello sky"), "{out}");
+    let _ = std::fs::remove_dir_all(&base);
+}
