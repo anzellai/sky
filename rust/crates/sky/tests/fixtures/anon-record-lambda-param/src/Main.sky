@@ -1,0 +1,175 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+type alias Item =
+    { path : String
+    , label : String
+    }
+
+type alias Tally =
+    { seen : List String
+    , n : Int
+    }
+
+
+items : List Item
+items =
+    [ { path = "/a", label = "A" }, { path = "/b", label = "B" } ]
+
+
+-- The reported shape: the accumulator (second param) is an anonymous record,
+-- the element (first param) a named one.
+collect : List Item -> Dict.Dict String Int -> { entries : List String
+, counts : Dict.Dict String Int
+}
+collect xs counts =
+    List.foldl
+        (\it acc ->
+            { entries = it.label :: acc.entries
+            , counts = Dict.insert it.path 1 acc.counts
+            })
+        { entries = [], counts = counts }
+        xs
+
+
+myFold : (b -> a -> b) -> b -> List a -> b
+myFold f z xs =
+    case xs of
+
+        [] ->
+            z
+
+        x :: rest ->
+            myFold f (f z x) rest
+
+
+-- The anonymous accumulator is the FIRST param.
+accFirst : List Item -> { names : List String
+, n : Int
+}
+accFirst xs =
+    myFold
+        (\acc it -> { names = it.label :: acc.names, n = acc.n + 1 })
+        { names = [], n = 0 }
+        xs
+
+
+-- An anonymous record built per element.
+mapped : List Item -> List { name : String
+, size : Int
+}
+mapped xs =
+    List.map (\it -> { name = it.label, size = String.length it.path }) xs
+
+
+-- The step function is let-bound, not written at the call.
+letBound : List Item -> { total : Int
+, seen : List String
+}
+letBound xs =
+    let
+        step =
+            \it acc ->
+                { total = acc.total + String.length it.path
+                , seen = it.path :: acc.seen
+                }
+    in
+        List.foldl step { total = 0, seen = [] } xs
+
+
+-- A nested anonymous accumulator.
+nested : List Item -> { inner : { labels : List String
+      , count : Int
+      }
+, last : String
+}
+nested xs =
+    List.foldl
+        (\it acc ->
+            { inner =
+                { labels = it.label :: acc.inner.labels
+                , count = acc.inner.count + 1
+                }
+            , last = it.path
+            })
+        { inner = { labels = [], count = 0 }, last = "" }
+        xs
+
+
+-- The element is anonymous and the accumulator named.
+anonElem : Tally
+anonElem =
+    List.foldl
+        (\r acc -> { seen = r.tag :: acc.seen, n = acc.n + r.v })
+        { seen = [], n = 0 }
+        [ { tag = "x", v = 1 }, { tag = "y", v = 2 } ]
+
+
+-- Both params anonymous, of different shapes.
+bothAnon : Int
+bothAnon =
+    List.foldl
+        (\r acc -> { sum = acc.sum + r.v })
+        { sum = 0 }
+        [ { v = 1 }, { v = 2 } ]
+        |> .sum
+
+
+-- The element and the accumulator have the SAME named type.
+sameType : Item
+sameType =
+    List.foldl
+        (\it acc -> { path = acc.path ++ it.path, label = it.label })
+        { path = "", label = "" }
+        items
+
+
+-- An index first, then the element, into an anonymous record.
+indexed : List { pos : Int
+, name : String
+}
+indexed =
+    List.indexedMap (\i it -> { pos = i, name = it.label }) items
+
+
+main =
+    let
+        c = collect items Dict.empty
+        f = accFirst items
+        m = mapped items
+        l = letBound items
+        n = nested items
+    in
+        println
+            (String.join
+                "\n"
+                [ "collect " ++ String.join "+" c.entries ++ " "
+                      ++ String.fromInt (Dict.size c.counts)
+                , "accFirst " ++ String.join "+" f.names ++ " "
+                      ++ String.fromInt f.n
+                , "mapped "
+                      ++ String.join
+                             "+"
+                             (List.map (\r -> r.name ++ String.fromInt r.size) m)
+                , "letBound " ++ String.fromInt l.total ++ " "
+                      ++ String.join "+" l.seen
+                , "nested " ++ String.join "+" n.inner.labels ++ " "
+                      ++ String.fromInt n.inner.count
+                      ++ " "
+                      ++ n.last
+                , "anonElem " ++ String.join "+" anonElem.seen ++ " "
+                      ++ String.fromInt anonElem.n
+                , "bothAnon " ++ String.fromInt bothAnon
+                , "sameType " ++ sameType.path ++ " " ++ sameType.label
+                , "indexed "
+                      ++ String.join
+                             "+"
+                             (List.map
+                                 (\r -> String.fromInt r.pos ++ r.name)
+                                 indexed)
+                ])

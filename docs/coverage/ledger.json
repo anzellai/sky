@@ -310,7 +310,7 @@
       "tier": "T1"
     },
     "corpus": {
-      "expected_assertions": 534,
+      "expected_assertions": 566,
       "falsifier_mutation": "corpus.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
@@ -370,7 +370,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 680,
+      "expected_assertions": 712,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -705,12 +705,12 @@
     "units_by_role": {
       "Conformance": 1,
       "Example": 64,
-      "FlowTest": 52,
+      "FlowTest": 53,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 135
+    "units_total": 136
   },
   "surfaces": [
     {
@@ -3111,6 +3111,11 @@
             "strength": 3
           },
           {
+            "by": "flow:codegen_anon_record_lambda_param_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:codegen_open_row_alias_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -4672,6 +4677,11 @@
             "strength": 3
           },
           {
+            "by": "flow:codegen_anon_record_lambda_param_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:codegen_cons_payload_alias_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -6140,6 +6150,11 @@
           },
           {
             "by": "flow:build_growth_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:codegen_anon_record_lambda_param_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -12130,6 +12145,11 @@
             "strength": 3
           },
           {
+            "by": "flow:codegen_anon_record_lambda_param_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:codegen_cons_payload_alias_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -15270,12 +15290,6 @@
             "requiredAt"
           ]
         },
-        "Sky.Core.List": {
-          "count": 1,
-          "symbols": [
-            "sortWith"
-          ]
-        },
         "Sky.Core.Maybe": {
           "count": 8,
           "symbols": [
@@ -16248,7 +16262,7 @@
           ]
         }
       },
-      "count": 661,
+      "count": 660,
       "pct_of_denominator": 29.5
     },
     "symbols_unreferenced_strict": {
@@ -16357,12 +16371,6 @@
           "count": 1,
           "symbols": [
             "requiredAt"
-          ]
-        },
-        "Sky.Core.List": {
-          "count": 1,
-          "symbols": [
-            "sortWith"
           ]
         },
         "Sky.Core.Maybe": {
@@ -17441,7 +17449,7 @@
           ]
         }
       },
-      "count": 752,
+      "count": 751,
       "pct_of_denominator": 33.6
     }
   },
@@ -17571,8 +17579,8 @@
       "id": "corpus:layer1",
       "modules_imported": 8,
       "path": "corpus:layer1",
-      "refs_generous": 81,
-      "refs_qualified": 76,
+      "refs_generous": 101,
+      "refs_qualified": 100,
       "role": "Layer1",
       "sky_files": 12,
       "sky_toml_sections": []
@@ -18816,6 +18824,18 @@
       "path": "rust/crates/sky/tests/build_growth_flow.rs",
       "refs_generous": 18,
       "refs_qualified": 16,
+      "role": "FlowTest",
+      "sky_files": 1,
+      "sky_toml_sections": []
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
+      "id": "flow:codegen_anon_record_lambda_param_flow",
+      "modules_imported": 4,
+      "path": "rust/crates/sky/tests/codegen_anon_record_lambda_param_flow.rs",
+      "refs_generous": 10,
+      "refs_qualified": 9,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []

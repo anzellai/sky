@@ -28,8 +28,8 @@
 //! always the latter.
 
 use super::axes::{
-    Assignment, Axis, Stratum, ALIAS_NAMES, AS_BINDER, COLLIDER, COLLISION, DICT_KEY, EDGE,
-    EQ_PAIR, ERASURE, IMPORT_SHAPE, INNER, LET_USES, POSITION, QUAL_USE, SHADOW, TASK_CALLEE,
+    Assignment, Axis, Stratum, ALIAS_NAMES, ANON_ROLE, AS_BINDER, COLLIDER, COLLISION, DICT_KEY,
+    EDGE, EQ_PAIR, ERASURE, IMPORT_SHAPE, INNER, LET_USES, POSITION, QUAL_USE, SHADOW, TASK_CALLEE,
 };
 use super::gen;
 use super::runner;
@@ -94,6 +94,11 @@ fn axis_under_test(s: &Stratum) -> (Axis, &'static str) {
         // second module's constructor is `Beta_BetaReply` against
         // `Beta_Reply`), so the axis is witnessed.
         "alias_ctor_collision" => (ALIAS_NAMES, "distinct"),
+        // v0.27.14. An anonymous ELEMENT with a named accumulator always
+        // worked: the element took the pin it should. An anonymous
+        // ACCUMULATOR over named elements is what took the element's pin. The
+        // two are different programs, so the role axis is witnessed.
+        "lambda_record_param" => (ANON_ROLE, "elem"),
         other => panic!("no axis-under-test declared for stratum {other:?}"),
     }
 }

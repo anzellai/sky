@@ -475,9 +475,10 @@ pub static GATES: &[Gate] = &[
                 // 519 → 614), and the v0.27.0 Std.Sync surface (+2 cases,
                 // 614 → 616), and the v0.27.7 adt_equality stratum (+60 cases,
                 // 616 → 676), and the v0.27.10 alias_ctor_collision stratum
-                // (+4 cases, 676 → 680).
-                from: "n_min = 680",
-                to: "n_min = 681",
+                // (+4 cases, 676 → 680), and the v0.27.14
+                // lambda_record_param stratum (+32 cases, 680 → 712).
+                from: "n_min = 712",
+                to: "n_min = 713",
             },
         }]),
         body: bodies::corpus_manifest,

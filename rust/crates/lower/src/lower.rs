@@ -819,6 +819,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             warnings: Vec::new(),
             errors: Vec::new(),
             closure_elem: None,
+            closure_elem_at: None,
             caf_lambda_ty: None,
             ffi: &cfg.ffi,
             ffi_used: BTreeSet::new(),
@@ -2226,6 +2227,18 @@ struct Ctx<'a> {
     /// runtime element (a nominal `_R`, or `any` for an erased list). `None`
     /// outside a combinator-closure arg. See `lower_lambda` + `lower_call`.
     closure_elem: Option<GoTy>,
+    /// Which params of that combinator closure stand at the list ELEMENT, read
+    /// from the solved Sky types (`closure_elem_positions`). `closure_elem` pins
+    /// only these. `None` when the types cannot tell, and then the pin falls back
+    /// to the first anonymous-struct param.
+    ///
+    /// Without it the pin went to the first anonymous-struct param whatever its
+    /// position. In `List.foldl (\it acc -> …) { entries = [], … } items` over a
+    /// list of NAMED records, `it` is the named record (not a `struct{…}`), so the
+    /// pin skipped it and narrowed the accumulator `acc` to the element's record:
+    /// `sky check` passed and `go build` failed (`v.Entries undefined (type
+    /// Main_Item_R …)`).
+    closure_elem_at: Option<Vec<bool>>,
     /// The erased Go function type of the CURRENT def when it is a
     /// row-polymorphic lambda CAF (`caf_lambda_row_poly_ty`). The root lambda is
     /// lowered against it instead of its own (colliding-nominal) inferred type,
@@ -2343,6 +2356,31 @@ impl<'a> Ctx<'a> {
             return self.types.local(*l);
         }
         None
+    }
+
+    /// For a combinator closure `lam` applied over the list `list`, which of
+    /// the closure's params (along its flat arrow spine, the same order
+    /// `lower_lambda` binds them in) have the list's ELEMENT type. These, and
+    /// only these, take the `closure_elem` pin.
+    ///
+    /// Read from the solved Sky types: HM unified the element param with the
+    /// list's element, so the two are equal, and an accumulator of another type
+    /// is not. `None` when either type is missing, or when no param matches (the
+    /// types cannot tell; `lower_lambda` keeps the first-struct fallback).
+    fn closure_elem_positions(&self, lam: ExprId, list: ExprId) -> Option<Vec<bool>> {
+        let elem = match &self.sky_ty_of(list)? {
+            Ty::App(n, a) if a.len() == 1 && ty::nominal::base(n.as_str()) == "List" => {
+                a[0].clone()
+            }
+            _ => return None,
+        };
+        let mut fun = self.sky_ty_of(lam)?;
+        let mut at = Vec::new();
+        while let Ok((p, r)) = fun.into_fun() {
+            at.push(p == elem);
+            fun = r;
+        }
+        at.iter().any(|b| *b).then_some(at)
     }
 
     /// The payload kind a `Sub.subscribeTopic` decoder expects, when its
@@ -5233,10 +5271,15 @@ impl<'a> Ctx<'a> {
                     .cloned()
                     .unwrap_or(GoTy::Any);
                 if i == 0 && combinator_elem.is_some() {
+                    let at = args
+                        .last()
+                        .and_then(|list| self.closure_elem_positions(*a, *list));
                     let saved = self.closure_elem.take();
+                    let saved_at = std::mem::replace(&mut self.closure_elem_at, at);
                     self.closure_elem = combinator_elem.clone();
                     let e = self.lower_expr(*a, &expected);
                     self.closure_elem = saved;
+                    self.closure_elem_at = saved_at;
                     e
                 } else {
                     self.lower_expr(*a, &expected)
@@ -7821,7 +7864,19 @@ impl<'a> Ctx<'a> {
             // IS that same anonymous struct (18-job-queue: `[]struct{…}` field), the
             // pin is a no-op — byte-identical to before. Non-combinator lambdas keep
             // their struct param (no `closure_elem`) — no regression.
-            if !elem_pinned && matches!(ty, GoTy::Struct(_)) {
+            //
+            // WHICH param is the element comes from the solved Sky types when they
+            // can tell (`closure_elem_at`): an accumulator is never the element,
+            // even when it is the first anonymous struct. `List.foldl (\it acc ->
+            // …)` over a list of NAMED records has a nominal `it` and a
+            // `struct{…}` `acc`; the "first struct" rule alone pinned `acc` to the
+            // element's record, and `go build` failed on `acc`'s own fields. The
+            // same held for an accumulator-first user fold (`\acc it -> …`).
+            let at_elem = match &self.closure_elem_at {
+                Some(at) => at.get(i).copied().unwrap_or(false),
+                None => !elem_pinned,
+            };
+            if at_elem && matches!(ty, GoTy::Struct(_)) {
                 if let Some(elem) = self.closure_elem.clone() {
                     ty = elem;
                     elem_pinned = true;
@@ -7912,6 +7967,7 @@ impl<'a> Ctx<'a> {
         // in the body is a different closure (its own combinator call sets its own
         // `closure_elem`). Clear so the body doesn't inherit this one.
         self.closure_elem = None;
+        self.closure_elem_at = None;
         // Record-update-over-param narrowing fix (shop-app bug #2).
         // For `\r -> { r | f = v }` mapped over a typed list, the row-poly
         // solver (on the erased-`List.map` lowering path) leaves the update's

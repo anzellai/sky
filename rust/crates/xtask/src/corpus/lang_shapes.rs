@@ -11,8 +11,9 @@
 //! (and `42!` where a second type is involved).
 
 use super::axes::{
-    Assignment, AS_BINDER, EQ_CARRIER, EQ_PAIR, LET_BINDING, LET_SITE, LET_USES, NESTED_PAYLOAD,
-    QUAL_PATH, QUAL_USE, TASK_CALLEE, TASK_LINK, TASK_RESULT, UNION_REP,
+    Assignment, ACC_POS, ANON_DEPTH, ANON_ROLE, AS_BINDER, EQ_CARRIER, EQ_PAIR, LET_BINDING,
+    LET_SITE, LET_USES, LIST_IMPORT, NESTED_PAYLOAD, QUAL_PATH, QUAL_USE, STEP_SITE, TASK_CALLEE,
+    TASK_LINK, TASK_RESULT, UNION_REP,
 };
 use super::gen::{Body, SURVIVOR, UPDATED};
 
@@ -349,5 +350,113 @@ pub fn adt_equality(a: &Assignment) -> (Body, String) {
             check,
         },
         out,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// lambda_record_param  (v0.27.14)
+// ---------------------------------------------------------------------------
+
+/// A two-param fold step where one param is an ANONYMOUS record and the other
+/// a NAMED one. `anon_role = acc`: the list holds named `Item`s and the
+/// accumulator is anonymous (the reported shape). `anon_role = elem`: the list
+/// holds anonymous records and the accumulator is the named `Tally`.
+///
+/// The defect: a list combinator closure pins the param at the list element to
+/// the list's Go element type, and the pin went to the first `struct{…}` param
+/// whatever its position. A named element is not a `struct{…}`, so the
+/// anonymous accumulator took the pin and was narrowed to `Item`: `sky check`
+/// passed and `go build` failed on the accumulator's own fields. Each case
+/// prints fields read back from the accumulator the fold built, so a param
+/// narrowed to the wrong record cannot print the expected line.
+pub fn lambda_record_param(a: &Assignment) -> (Body, String) {
+    let anon_acc = match a.get(ANON_ROLE) {
+        "acc" => true,
+        "elem" => false,
+        other => panic!("lambda_record_param: unknown anon_role {other:?}"),
+    };
+    let nested = match a.get(ANON_DEPTH) {
+        "flat" => false,
+        "nested" => true,
+        other => panic!("lambda_record_param: unknown anon_depth {other:?}"),
+    };
+    // The answer is built from the two digits of 42, one per element, read
+    // back in list order; the second number counts (or sums) the elements.
+    let (decl, elem_ty, acc_ty, init, body, items, read, out) = match (anon_acc, nested) {
+        (true, false) => (
+            "type alias Item =\n    { path : String, label : String }\n",
+            "Item",
+            "{ seen : List String, n : Int }",
+            "{ seen = [], n = 0 }",
+            "{ seen = it.label :: acc.seen, n = acc.n + 1 }",
+            "[ { path = \"p\", label = \"4\" }, { path = \"q\", label = \"2\" } ]",
+            "String.join \"\" (List.reverse r.seen) ++ \"/\" ++ String.fromInt r.n",
+            "42/2",
+        ),
+        (true, true) => (
+            "type alias Item =\n    { path : String, label : String }\n",
+            "Item",
+            "{ inner : { seen : List String, n : Int }, last : String }",
+            "{ inner = { seen = [], n = 0 }, last = \"\" }",
+            "{ inner = { seen = it.label :: acc.inner.seen, n = acc.inner.n + 1 }, last = it.path }",
+            "[ { path = \"p\", label = \"4\" }, { path = \"q\", label = \"2\" } ]",
+            "String.join \"\" (List.reverse r.inner.seen) ++ \"/\" ++ String.fromInt r.inner.n ++ r.last",
+            "42/2q",
+        ),
+        (false, false) => (
+            "type alias Tally =\n    { seen : List String, n : Int }\n",
+            "{ tag : String, w : Int }",
+            "Tally",
+            "{ seen = [], n = 0 }",
+            "{ seen = it.tag :: acc.seen, n = acc.n + it.w }",
+            "[ { tag = \"4\", w = 1 }, { tag = \"2\", w = 1 } ]",
+            "String.join \"\" (List.reverse r.seen) ++ \"/\" ++ String.fromInt r.n",
+            "42/2",
+        ),
+        (false, true) => (
+            "type alias Tally =\n    { seen : List String, n : Int }\n",
+            "{ meta : { tag : String }, w : Int }",
+            "Tally",
+            "{ seen = [], n = 0 }",
+            "{ seen = it.meta.tag :: acc.seen, n = acc.n + it.w }",
+            "[ { meta = { tag = \"4\" }, w = 1 }, { meta = { tag = \"2\" }, w = 1 } ]",
+            "String.join \"\" (List.reverse r.seen) ++ \"/\" ++ String.fromInt r.n",
+            "42/2",
+        ),
+    };
+    // `second`: the kernel `List.foldl` (`\it acc -> …`). `first`: a local
+    // fold whose step takes the accumulator first (`\acc it -> …`).
+    let (fold, lam, fold_decl) = match a.get(ACC_POS) {
+        "second" => ("List.foldl", "\\it acc ->", ""),
+        "first" => (
+            "foldAcc",
+            "\\acc it ->",
+            "foldAcc : (b -> a -> b) -> b -> List a -> b\nfoldAcc f z xs =\n    case xs of\n        [] ->\n            z\n\n        x :: rest ->\n            foldAcc f (f z x) rest\n\n\n",
+        ),
+        other => panic!("lambda_record_param: unknown acc_pos {other:?}"),
+    };
+    let fold_expr = match a.get(STEP_SITE) {
+        "inline" => format!("{fold} ({lam} {body}) {init} xs"),
+        "let_bound" => format!(
+            "let\n        step =\n            {lam} {body}\n    in\n    {fold} step {init} xs"
+        ),
+        other => panic!("lambda_record_param: unknown step_site {other:?}"),
+    };
+    let decls = format!(
+        "{decl}\n\n{fold_decl}collect : List {elem_ty} -> {acc_ty}\ncollect xs =\n    {fold_expr}\n"
+    );
+    let imports = match a.get(LIST_IMPORT) {
+        "autoloaded" => String::new(),
+        "explicit" => "import Sky.Core.List as List\n".to_string(),
+        other => panic!("lambda_record_param: unknown list_import {other:?}"),
+    };
+    let check = format!("let\n        r =\n            collect {items}\n    in\n    {read}");
+    (
+        Body {
+            imports,
+            decls,
+            check,
+        },
+        out.to_string(),
     )
 }

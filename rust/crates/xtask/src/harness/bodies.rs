@@ -774,7 +774,13 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// **680 since the v0.27.10 `alias_ctor_collision` stratum** (+4, Family L:
 /// 2 `alias_names` x 2 `ctor_use`). Two modules that each declare `type alias
 /// Reply` built each other's record; see `corpus/gen.rs`.
-pub const CORPUS_EXPECTED: u64 = 680;
+///
+/// **712 since the v0.27.14 `lambda_record_param` stratum** (+32, Family L:
+/// 2 `anon_role` x 2 `acc_pos` x 2 `step_site` x 2 `anon_depth` x 2
+/// `list_import`). A fold's
+/// anonymous-record accumulator was narrowed to the element's named record;
+/// see `corpus/lang_shapes.rs`.
+pub const CORPUS_EXPECTED: u64 = 712;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -813,7 +819,10 @@ pub const CORPUS_EXPECTED: u64 = 680;
 ///
 /// **534 since the v0.27.10 `alias_ctor_collision` stratum** (+4, all built
 /// and run; the same +4 as `CORPUS_EXPECTED`).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 534;
+///
+/// **566 since the v0.27.14 `lambda_record_param` stratum** (+32, all built
+/// and run; the same +32 as `CORPUS_EXPECTED`).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 566;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
