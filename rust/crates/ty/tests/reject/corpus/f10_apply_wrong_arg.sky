@@ -5,8 +5,14 @@
 --         checked; before, the monomorphic-only filter excluded it and the call
 --         was accepted. oracle: reject [E2001].
 module Main exposing (main)
+
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
-apply f x = f x
+
+
+apply f x =
+    f x
+
+
 main =
     println (apply String.fromInt "s")

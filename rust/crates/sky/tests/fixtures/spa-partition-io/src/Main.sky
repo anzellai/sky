@@ -36,10 +36,11 @@ readEnv : String
 readEnv =
     System.getenvOr "NOTE" "hi"
 
-
 type alias Model =
-    { count : Int, note : String, seed : String }
-
+    { count : Int
+    , note : String
+    , seed : String
+    }
 
 type Msg
     = Inc
@@ -61,6 +62,7 @@ persistAll m =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Inc ->
             ( { model | count = model.count + 1 }, Cmd.none )
 
@@ -76,15 +78,18 @@ update msg model =
 
 view : Model -> any
 view model =
-    Ui.layout []
-        (Ui.column [ Ui.spacing 8, Ui.padding 12 ]
-            [ Ui.el [ Ev.onClick Inc ] (Ui.text ("count " ++ String.fromInt model.count))
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8, Ui.padding 12 ]
+            [ Ui.el
+                  [ Ev.onClick Inc ]
+                  (Ui.text ("count " ++ String.fromInt model.count))
             , Ui.el [ Ev.onClick Save ] (Ui.text "save")
             , Ui.el [ Ev.onClick (SaveTagged "x") ] (Ui.text "save tagged")
             , Ui.el [ Ev.onClick Bulk ] (Ui.text "bulk")
             , Ui.el [] (Ui.text model.note)
-            ]
-        )
+            ])
 
 
 subscriptions : Model -> Sub Msg
@@ -100,5 +105,4 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            }
-        )
+            })

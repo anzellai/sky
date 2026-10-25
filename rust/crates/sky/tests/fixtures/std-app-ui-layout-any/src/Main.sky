@@ -7,10 +7,8 @@ import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Ui as Ui
 
-
 type alias Model =
     { n : Int }
-
 
 type Msg
     = Bump
@@ -24,6 +22,7 @@ init _ =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Bump ->
             ( { model | n = model.n + 1 }, Cmd.none )
 
@@ -49,14 +48,16 @@ subscriptions _ =
 -- the `count=` content instead of an empty root.
 view : Model -> any
 view model =
-    Ui.layout []
-        (Ui.column []
-            [ Ui.text ("count=" ++ String.fromInt model.n) ]
-        )
+    Ui.layout [] (Ui.column [] [ Ui.text ("count=" ++ String.fromInt model.n) ])
 
 
 appDef =
-    App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
         |> App.withNotFound ()
 
 

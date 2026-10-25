@@ -28,12 +28,10 @@ import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Html exposing (Html)
 
-
 type alias Model =
     { note : String
     , count : Int
     }
-
 
 type Msg
     = Bump
@@ -63,6 +61,7 @@ shipCmd =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Bump ->
             ( { model | count = model.count + 1 }, Cmd.none )
 
@@ -78,9 +77,9 @@ update msg model =
         SyncCopy ->
             ( model
             , Cmd.batch
-                [ Cmd.perform (File.readFile "data/note.txt") Synced
-                , Cmd.perform (Native.clipboardWrite model.note) Copied
-                ]
+                  [ Cmd.perform (File.readFile "data/note.txt") Synced
+                  , Cmd.perform (Native.clipboardWrite model.note) Copied
+                  ]
             )
 
         Synced (Ok raw) ->
@@ -97,10 +96,9 @@ update msg model =
 
         Shipped (Ok raw) ->
             let
-                _ =
-                    Log.println ("[ship] " ++ raw)
+                _ = Log.println ("[ship] " ++ raw)
             in
-            ( { model | note = raw }, Cmd.none )
+                ( { model | note = raw }, Cmd.none )
 
         Shipped (Err _) ->
             ( { model | note = "ship failed" }, Cmd.none )
@@ -115,8 +113,7 @@ view model =
             [ Ui.text ("note=" ++ model.note)
             , Ui.text ("count=" ++ String.fromInt model.count)
             , Ui.el [ Ui.onClick Ship ] (Ui.text "Ship it")
-            ]
-        )
+            ])
 
 
 subscriptions : Model -> Sub Msg
@@ -132,5 +129,4 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            }
-        )
+            })

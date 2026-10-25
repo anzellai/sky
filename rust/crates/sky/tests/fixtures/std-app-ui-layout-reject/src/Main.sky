@@ -6,10 +6,8 @@ import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Ui as Ui exposing (Element)
 
-
 type alias Model =
     { n : Int }
-
 
 type Msg
     = Bump
@@ -23,6 +21,7 @@ init _ =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Bump ->
             ( { model | n = model.n + 1 }, Cmd.none )
 
@@ -39,14 +38,16 @@ subscriptions _ =
 -- after the fix it is a COMPILE error. No `: any` annotation — inference must
 -- see the `Html` result.
 view model =
-    Ui.layout []
-        (Ui.column []
-            [ Ui.el [ Ui.onClick Bump ] (Ui.text "Bump") ]
-        )
+    Ui.layout [] (Ui.column [] [ Ui.el [ Ui.onClick Bump ] (Ui.text "Bump") ])
 
 
 appDef =
-    App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
         |> App.withNotFound ()
 
 

@@ -15,11 +15,15 @@ import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
 type alias P =
-    { name : String, age : Int }
+    { name : String
+    , age : Int
+    }
+
 
 bad : P -> P
 bad r =
     { r | nope = 1 }
+
 
 main =
     println (bad { name = "a", age = 1 }).name

@@ -38,7 +38,7 @@ fn ext_sky_annotated_ref_hovers_type() {
     let root = build_fixture(true);
     let a = analysis_for(&root);
     // `bar` (used at `greeting =\n bar`) is Foo's ANNOTATED export `: String`.
-    let h = hover(&a, &root, "\n            bar", 13);
+    let h = hover(&a, &root, "greeting = bar", 11);
     assert!(
         h.contains("String") && !h.contains(": ?"),
         "annotated external-Sky ref must hover `String`, got: {h:?}"
@@ -119,7 +119,7 @@ fn src_overrides_dep_same_name() {
     .unwrap();
     let a = analysis_for(&root);
     // `bar` now resolves to the PROJECT Foo (`: Int`), not the dep's (`: String`).
-    let h = hover(&a, &root, "\n            bar", 13);
+    let h = hover(&a, &root, "greeting = bar", 11);
     assert!(
         h.contains("Int") && !h.contains("String"),
         "project src/Foo.sky must OVERRIDE the same-named dep module (load order), got: {h:?}"
@@ -179,7 +179,7 @@ fn invalidation_reload_project_refreshes() {
         !after.iter().any(|d| d.message.contains("sky install")),
         "after the dep is fetched + reload_project, the unfetched hint must clear; got {after:#?}"
     );
-    let h = hover(&a, &root, "\n            bar", 13);
+    let h = hover(&a, &root, "greeting = bar", 11);
     assert!(
         h.contains("String"),
         "after reload, the external-Sky ref must hover its type; got {h:?}"

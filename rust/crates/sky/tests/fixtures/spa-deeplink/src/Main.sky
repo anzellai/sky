@@ -18,18 +18,15 @@ import Sky.Core.File as File
 import Std.App as App
 import Std.Ui as Ui exposing (Element)
 
-
 type Page
     = Home
     | Post String
     | NotFoundPage
 
-
 type alias Model =
     { page : Page
     , note : String
     }
-
 
 type Msg
     = Reload
@@ -44,6 +41,7 @@ init () =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Reload ->
             ( model, Cmd.perform (File.readFile "data/note.txt") Reloaded )
 
@@ -57,22 +55,21 @@ update msg model =
 view : Model -> Element Msg
 view model =
     case model.page of
+
         Home ->
-            Ui.column []
+            Ui.column
+                []
                 [ Ui.text "Welcome home"
-                , Ui.link [] { url = "/blog/hello", label = Ui.text "Read hello" }
+                , Ui.link
+                      []
+                      { url = "/blog/hello", label = Ui.text "Read hello" }
                 ]
 
         Post slug ->
-            Ui.column []
-                [ Ui.text "Blog post"
-                , Ui.text slug
-                ]
+            Ui.column [] [ Ui.text "Blog post", Ui.text slug ]
 
         NotFoundPage ->
-            Ui.column []
-                [ Ui.text "No such page here"
-                ]
+            Ui.column [] [ Ui.text "No such page here" ]
 
 
 subscriptions : Model -> Sub Msg
@@ -87,7 +84,8 @@ app =
         , view = view
         , subscriptions = subscriptions
         }
-        |> App.withRoutes [ App.route "/" Home, App.routeParam "/blog/:slug" Post ]
+        |> App.withRoutes
+               [ App.route "/" Home, App.routeParam "/blog/:slug" Post ]
         |> App.withNotFound NotFoundPage
 
 

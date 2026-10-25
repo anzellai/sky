@@ -19,13 +19,11 @@ import Std.Html exposing (Html)
 import Domain exposing (..)
 import Store exposing (..)
 
-
 type alias Model =
     { todos : List Todo
     , draft : String
     , label : String
     }
-
 
 type Msg
     = DraftChanged String
@@ -50,7 +48,9 @@ update msg model =
             -- CLIENT (pure): calls `Store.formatTotal`, a pure helper sharing the
             -- MIXED `Store` module with File effects. Before per-binding routing
             -- the split REFUSED here; after it, `formatTotal` is a frontend copy.
-            ( { model | label = formatTotal (List.length model.todos * 250) }, Cmd.none )
+            ( { model | label = formatTotal (List.length model.todos * 250) }
+            , Cmd.none
+            )
 
         Add ->
             -- SERVER: reaches Store.loadTodos / saveTodos (File effects).
@@ -70,9 +70,7 @@ update msg model =
 
 view : Model -> Html Msg
 view model =
-    Ui.layout
-        []
-        (Ui.column [ Ui.spacing 8 ] [ Ui.text model.label ])
+    Ui.layout [] (Ui.column [ Ui.spacing 8 ] [ Ui.text model.label ])
 
 
 subscriptions : Model -> Sub Msg

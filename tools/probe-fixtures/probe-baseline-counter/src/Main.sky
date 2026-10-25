@@ -3,7 +3,6 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
-
 type Msg
     = Increment
     | Decrement
@@ -12,8 +11,12 @@ type Msg
 update : Msg -> Int -> Int
 update msg count =
     case msg of
-        Increment -> count + 1
-        Decrement -> count - 1
+
+        Increment ->
+            count + 1
+
+        Decrement ->
+            count - 1
 
 
 main =

@@ -50,30 +50,30 @@ main =
         _ =
             println
                 (if RateLimit.allow "t1" "ip" 3 1 then
-                     "1: allow"
+                    "1: allow"
 
-                 else
-                     "1: deny")
+                else
+                    "1: deny")
         _ =
             println
                 (if RateLimit.allow "t1" "ip" 3 1 then
-                     "2: allow"
+                    "2: allow"
 
-                 else
-                     "2: deny")
+                else
+                    "2: deny")
         _ =
             println
                 (if RateLimit.allow "t1" "ip" 3 1 then
-                     "3: allow"
+                    "3: allow"
 
-                 else
-                     "3: deny")
+                else
+                    "3: deny")
         _ =
             println
                 (if RateLimit.allow "t1" "ip" 3 1 then
-                     "4: allow"
+                    "4: allow"
 
-                 else
-                     "4: deny")
+                else
+                    "4: deny")
     in
         println "validate ok"

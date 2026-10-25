@@ -48,12 +48,13 @@ type alias Product =
     , price : Int
     }
 
+
 productCodec : Codec Product
 productCodec =
-    Codec.object Product
-        |> Codec.field "sku" .sku Codec.string
+    Codec.object Product |> Codec.field "sku" .sku Codec.string
         |> Codec.field "price" .price Codec.int
         |> Codec.buildObject
+
 
 productListCodec =
     Codec.list productCodec
@@ -73,7 +74,18 @@ type alias Model =
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { status = "", items = { entries = [], page = 0 }, names = { entries = [], page = 0 }, products = [], hits = [], pick = Nothing, slots = [], groups = Nothing, byCode = Dict.empty }, Cmd.none )
+    ( { status = ""
+      , items = { entries = [], page = 0 }
+      , names = { entries = [], page = 0 }
+      , products = []
+      , hits = []
+      , pick = Nothing
+      , slots = []
+      , groups = Nothing
+      , byCode = Dict.empty
+      }
+    , Cmd.none
+    )
 
 type Msg
     = Draft String
@@ -96,9 +108,22 @@ update msg model =
 
         Save p ->
             let
-                _ = Task.run (File.writeFile "audit.txt" (stamp model ++ String.fromInt p.page))
+                _ =
+                    Task.run
+                        (File.writeFile
+                            "audit.txt"
+                            (stamp model ++ String.fromInt p.page))
             in
-                ( { model | items = p, status = String.fromInt (List.length p.entries + List.length model.products + List.length model.hits + Dict.size model.byCode) }, Cmd.none )
+                ( { model
+                      | items = p
+                      , status =
+                          String.fromInt
+                              (List.length p.entries + List.length model.products
+                                  + List.length model.hits
+                                  + Dict.size model.byCode)
+                  }
+                , Cmd.none
+                )
 
 
 view : Model -> Html Msg

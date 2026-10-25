@@ -15,35 +15,38 @@ import Types exposing (Model, Msg(..))
 
 draft : Int -> Task Error String
 draft n =
-  Task.succeed (System.getenvOr "SPA_ASYNC_APP_DRAFT" "drafted")
+    Task.succeed (System.getenvOr "SPA_ASYNC_APP_DRAFT" "drafted")
 
 
 pick : Int -> Model -> ( Model, Cmd Msg )
 pick n model =
-  if n == model.picked then
-    ( { model | note = "same" }, Cmd.none )
-  else
-    ( { model | picked = n, busy = True, note = "" }, Cmd.perform (draft n) Drafted )
+    if n == model.picked then
+        ( { model | note = "same" }, Cmd.none )
+
+    else
+        ( { model | picked = n, busy = True, note = "" }
+        , Cmd.perform (draft n) Drafted
+        )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
-  case msg of
-    Pick n ->
-      pick n model
+    case msg of
 
-    Toggle ->
-      case model.saved of
-        "" ->
-          ( { model | busy = True }
-          , Cmd.perform (draft 0) Drafted
-          )
+        Pick n ->
+            pick n model
 
-        _ ->
-          ( { model | saved = "" }, Cmd.none )
+        Toggle ->
+            case model.saved of
 
-    Drafted (Ok s) ->
-      ( { model | busy = False, saved = s }, Cmd.none )
+                "" ->
+                    ( { model | busy = True }, Cmd.perform (draft 0) Drafted )
 
-    Drafted (Err _) ->
-      ( { model | busy = False, note = "error" }, Cmd.none )
+                _ ->
+                    ( { model | saved = "" }, Cmd.none )
+
+        Drafted (Ok s) ->
+            ( { model | busy = False, saved = s }, Cmd.none )
+
+        Drafted (Err _) ->
+            ( { model | busy = False, note = "error" }, Cmd.none )

@@ -13,7 +13,6 @@ import Sky.Core.Result as Result
 import Sky.Core.File as File
 import Std.Codec as Codec exposing (Codec)
 
-
 type alias Item =
     { id : Int
     , title : String
@@ -40,7 +39,10 @@ loadItems : () -> Task Error (List Item)
 loadItems _ =
     File.readFile storePath
         |> Task.map
-               (\s -> Result.withDefault [] (Codec.fromJson (Codec.list itemCodec) s))
+               (\s ->
+                   Result.withDefault
+                       []
+                       (Codec.fromJson (Codec.list itemCodec) s))
         |> Task.onError (\_ -> Task.succeed [])
 
 

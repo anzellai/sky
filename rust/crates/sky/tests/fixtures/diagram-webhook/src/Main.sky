@@ -22,24 +22,25 @@ import Std.Sub as Sub
 import Std.Ui as Ui exposing (Element)
 import Std.Ui.Events as Ev
 
-
 type Page
     = HomePage
     | AboutPage
 
-
 type alias Model =
-    { page : Page, count : Int, note : String }
-
+    { page : Page
+    , count : Int
+    , note : String
+    }
 
 type Msg
     = Inc
     | Save
     | GoAbout
 
-
 type alias Widget =
-    { id : Int, label : String }
+    { id : Int
+    , label : String
+    }
 
 
 widgets : Store Widget
@@ -65,6 +66,7 @@ init _ =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Inc ->
             ( { model | count = model.count + 1 }, Cmd.none )
 
@@ -77,8 +79,11 @@ update msg model =
 
 view : Model -> Element Msg
 view model =
-    Ui.column [ Ui.spacing 8, Ui.padding 12 ]
-        [ Ui.el [ Ev.onClick Inc ] (Ui.text ("count " ++ String.fromInt model.count))
+    Ui.column
+        [ Ui.spacing 8, Ui.padding 12 ]
+        [ Ui.el
+              [ Ev.onClick Inc ]
+              (Ui.text ("count " ++ String.fromInt model.count))
         , Ui.el [ Ev.onClick Save ] (Ui.text "save")
         , Ui.el [ Ev.onClick GoAbout ] (Ui.text "about")
         , Ui.el [] (Ui.text model.note)
@@ -98,10 +103,10 @@ app =
         , subscriptions = subscriptions
         }
         |> App.withRoutes
-            [ App.route "/" HomePage
-            , App.route "/about" AboutPage
-            , App.api "POST /webhooks/stripe" handleWebhook
-            ]
+               [ App.route "/" HomePage
+               , App.route "/about" AboutPage
+               , App.api "POST /webhooks/stripe" handleWebhook
+               ]
         |> App.withNotFound HomePage
 
 

@@ -5,7 +5,6 @@ module Conflate.Beta exposing (..)
 
 import Sky.Core.Prelude exposing (..)
 
-
 type Shape
     = Square Int
 
@@ -13,5 +12,6 @@ type Shape
 betaTag : Shape -> String
 betaTag s =
     case s of
+
         Square _n ->
             "beta-square"

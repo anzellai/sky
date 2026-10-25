@@ -81,7 +81,8 @@ getOrCreateCustomer userId userName userEmail =
         listParamsR =
             Stripe.newCustomerListParams ()
                 |> Result.andThen
-                       (\p -> Stripe.customerListParamsSetEmail (Just userEmail) p)
+                       (\p ->
+                           Stripe.customerListParamsSetEmail (Just userEmail) p)
     in
         case listParamsR of
 

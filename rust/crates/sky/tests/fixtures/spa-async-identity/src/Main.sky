@@ -20,12 +20,10 @@ import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Html exposing (Html)
 
-
 type alias Session =
     { userId : String
     , role : String
     }
-
 
 type alias Model =
     { session : Maybe Session
@@ -33,7 +31,6 @@ type alias Model =
     , busy : Bool
     , note : String
     }
-
 
 type Msg
     = LogIn
@@ -66,14 +63,18 @@ update msg model =
             case model.session of
 
                 Just s ->
-                    ( { model | busy = True }, Cmd.perform (persist s.userId) Saved )
+                    ( { model | busy = True }
+                    , Cmd.perform (persist s.userId) Saved
+                    )
 
                 Nothing ->
                     ( model, Cmd.none )
 
         IdentityWrite ->
             if model.flag then
-                ( { model | session = Nothing, busy = True }, Cmd.perform (persist "out") Saved )
+                ( { model | session = Nothing, busy = True }
+                , Cmd.perform (persist "out") Saved
+                )
 
             else
                 ( model, Cmd.none )

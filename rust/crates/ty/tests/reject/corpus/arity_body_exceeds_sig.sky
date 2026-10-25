@@ -10,13 +10,16 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
+
 f : Int -> Int
 f x y =
     x + y
 
+
 g : Int -> Int
 g n =
     f n
+
 
 main =
     println (String.fromInt (g 5))

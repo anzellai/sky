@@ -31,14 +31,12 @@ import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Html exposing (Html)
 
-
 type alias Model =
     { note : String
     , log : String
     , count : Int
     , busy : Bool
     }
-
 
 type Msg
     = Trigger String
@@ -52,8 +50,7 @@ init _ =
 
 saveThing : String -> Task Error String
 saveThing x =
-    File.writeFile "thing.txt" x
-        |> Task.map (\_ -> "thing.txt")
+    File.writeFile "thing.txt" x |> Task.map (\_ -> "thing.txt")
 
 
 -- The higher-order guard wrapper (shop-app `requireAdmin`): the
@@ -67,25 +64,23 @@ guard model thunk =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Trigger x ->
             guard
                 model
                 (\_ ->
-                    ( { model | busy = True }
-                    , Cmd.perform (saveThing x) Saved
-                    ))
+                    ( { model | busy = True }, Cmd.perform (saveThing x) Saved ))
 
         Saved (Ok ref) ->
             guard
                 model
                 (\_ ->
                     let
-                        _ =
-                            File.readFile "audit.txt"
+                        _ = File.readFile "audit.txt"
                     in
-                    ( { model | note = ref, log = "reloaded", busy = False }
-                    , Cmd.none
-                    ))
+                        ( { model | note = ref, log = "reloaded", busy = False }
+                        , Cmd.none
+                        ))
 
         Saved (Err e) ->
             guard
@@ -105,10 +100,15 @@ view model =
             [ Ui.text ("note=" ++ model.note)
             , Ui.text ("log=" ++ model.log)
             , Ui.text ("count=" ++ String.fromInt model.count)
-            , Ui.text ("busy=" ++ (if model.busy then "yes" else "no"))
+            , Ui.text
+                  ("busy="
+                      ++ (if model.busy then
+                             "yes"
+
+                         else
+                             "no"))
             , Ui.el [ Ui.onClick (Trigger "payload") ] (Ui.text "Trigger")
-            ]
-        )
+            ])
 
 
 subscriptions : Model -> Sub Msg
@@ -124,5 +124,4 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            }
-        )
+            })

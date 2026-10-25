@@ -17,7 +17,6 @@ import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Html exposing (Html)
 
-
 type alias Note =
     { body : String }
 
@@ -26,18 +25,15 @@ emptyNote : Note
 emptyNote =
     { body = "" }
 
-
 type alias Session =
     { userId : String
     , role : String
     }
 
-
 type alias Model =
     { session : Maybe Session
     , note : String
     }
-
 
 type Msg
     = LogIn
@@ -52,34 +48,35 @@ init _ =
 -- A SERVER effect (File) — forcing it makes a branch a server branch.
 persist : String -> String -> Task Error String
 persist name s =
-    File.writeFile name s
-        |> Task.map (\_ -> "ok")
+    File.writeFile name s |> Task.map (\_ -> "ok")
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         LogIn ->
             -- SERVER branch that ESTABLISHES the session. The response must
             -- Set-Cookie the signed session.
             let
-                _ =
-                    Task.run (persist "login.txt" "in")
+                _ = Task.run (persist "login.txt" "in")
             in
-            ( { model | session = Just { userId = "u1", role = "admin" } }, Cmd.none )
+                ( { model | session = Just { userId = "u1", role = "admin" } }
+                , Cmd.none
+                )
 
         SaveAdmin content ->
             -- ADMIN branch: gates on the session role read off the model. A forged
             -- wire `session` must NOT reach this read — the backend overrides
             -- `session` from the verified cookie BEFORE this runs.
             case model.session of
+
                 Just s ->
                     if s.role == "admin" then
                         let
-                            _ =
-                                Task.run (persist "admin.txt" content)
+                            _ = Task.run (persist "admin.txt" content)
                         in
-                        ( { model | note = content }, Cmd.none )
+                            ( { model | note = content }, Cmd.none )
 
                     else
                         ( model, Cmd.none )

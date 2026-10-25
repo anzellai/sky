@@ -38,10 +38,10 @@ subscriptions _model =
 
 view model =
     div
-        [class "app"]
-        [ h1 [] [text "Counter"]
-        , button [onClick Decrement] [text "-"]
-        , button [onClick Increment] [text "+"]
+        [ class "app" ]
+        [ h1 [] [ text "Counter" ]
+        , button [ onClick Decrement ] [ text "-" ]
+        , button [ onClick Increment ] [ text "+" ]
         ]
 
 
@@ -51,6 +51,6 @@ main =
         , update = update
         , view = view
         , subscriptions = subscriptions
-        , routes = [route "/" 0]
+        , routes = [ route "/" 0 ]
         , notFound = 0
         }

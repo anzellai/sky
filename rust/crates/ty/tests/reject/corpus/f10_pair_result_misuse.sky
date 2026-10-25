@@ -3,8 +3,14 @@
 --         admits the poly scheme so the result-type misuse is caught at the
 --         call site. oracle: reject [E2001].
 module Main exposing (main)
+
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
-pair a b = (a, b)
+
+
+pair a b =
+    ( a, b )
+
+
 main =
     println (String.fromInt (pair 1 2))

@@ -9,7 +9,6 @@ import Types exposing (Preset)
 -- comment is part of the test: the annotation reader once split here.)
 presetCodec : Codec Preset
 presetCodec =
-    Codec.object Preset
-        |> Codec.field "code" .code Codec.string
+    Codec.object Preset |> Codec.field "code" .code Codec.string
         |> Codec.field "weight" .weight Codec.int
         |> Codec.buildObject

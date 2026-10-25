@@ -17,10 +17,8 @@ import Std.Sub as Sub
 import Std.Cmd as Cmd
 import Std.Ui as Ui exposing (Element)
 
-
 type alias Model =
     { count : Int }
-
 
 type Msg
     = Increment
@@ -48,7 +46,11 @@ view model =
     Ui.column
         []
         [ Ui.text ("count: " ++ String.fromInt model.count)
-        , Ui.image [] { src = "/brand/screenshots/spa-web.png", description = "screenshot" }
+        , Ui.image
+              []
+              { src = "/brand/screenshots/spa-web.png"
+              , description = "screenshot"
+              }
         , Ui.el [ Ui.onClick Increment ] (Ui.text "+")
         ]
 
@@ -72,8 +74,7 @@ app =
                        | port = 9090
                        , static = Just "brand"
                        , staticUrl = Just "/brand"
-                   }
-               )
+                   })
 
 
 main : Task Error ()

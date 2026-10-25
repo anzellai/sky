@@ -40,6 +40,7 @@ wfBody ctx input =
 dictGet : String -> Dict String String -> String
 dictGet key row =
     case Dict.get key row of
+
         Just v ->
             v
 
@@ -50,6 +51,7 @@ dictGet key row =
 intOf : String -> Int
 intOf s =
     case String.toInt s of
+
         Just n ->
             n
 
@@ -59,66 +61,70 @@ intOf s =
 
 journalCount : Db -> String -> Task Error Int
 journalCount db id =
-    Db.query db "SELECT COUNT(*) AS n FROM _sky_durable_journal WHERE run_id = ?" [ SqlString id ]
+    Db.query
+        db
+        "SELECT COUNT(*) AS n FROM _sky_durable_journal WHERE run_id = ?"
+        [ SqlString id ]
         |> Task.map
-            (\rows ->
-                case List.head rows of
-                    Just row ->
-                        intOf (dictGet "n" row)
+               (\rows ->
+                   case List.head rows of
 
-                    Nothing ->
-                        0
-            )
+                       Just row ->
+                           intOf (dictGet "n" row)
+
+                       Nothing ->
+                           0)
 
 
 runInfo : Db -> String -> Task Error ( String, String )
 runInfo db id =
-    Db.query db "SELECT status, output FROM _sky_durable_runs WHERE id = ?" [ SqlString id ]
+    Db.query
+        db
+        "SELECT status, output FROM _sky_durable_runs WHERE id = ?"
+        [ SqlString id ]
         |> Task.map
-            (\rows ->
-                case List.head rows of
-                    Just row ->
-                        ( dictGet "status" row, dictGet "output" row )
+               (\rows ->
+                   case List.head rows of
 
-                    Nothing ->
-                        ( "?", "?" )
-            )
+                       Just row ->
+                           ( dictGet "status" row, dictGet "output" row )
+
+                       Nothing ->
+                           ( "?", "?" ))
 
 
 main : Task Error ()
 main =
     Db.connect ()
         |> Task.andThen
-            (\db ->
-                Durable.setup db
-                    |> Task.andThen (\_ -> Durable.start db wfDef "c-1" "go")
-                    |> Task.andThen (\_ -> Durable.poll db [ Durable.erase wfDef ])
-                    |> Task.andThen (\_ -> journalCount db "c-1")
-                    |> Task.andThen
-                        (\before ->
-                            Durable.compact db 0
-                                |> Task.andThen
-                                    (\removed ->
-                                        journalCount db "c-1"
-                                            |> Task.andThen
-                                                (\after ->
-                                                    runInfo db "c-1"
-                                                        |> Task.andThen
-                                                            (\( status, output ) ->
-                                                                println
-                                                                    ("compact before="
-                                                                        ++ String.fromInt before
-                                                                        ++ " after="
-                                                                        ++ String.fromInt after
-                                                                        ++ " removed="
-                                                                        ++ String.fromInt removed
-                                                                        ++ " status="
-                                                                        ++ status
-                                                                        ++ " output="
-                                                                        ++ output
-                                                                    )
-                                                            )
-                                                )
-                                    )
-                        )
-            )
+               (\db ->
+                   Durable.setup db
+                       |> Task.andThen (\_ -> Durable.start db wfDef "c-1" "go")
+                       |> Task.andThen
+                              (\_ -> Durable.poll db [ Durable.erase wfDef ])
+                       |> Task.andThen (\_ -> journalCount db "c-1")
+                       |> Task.andThen
+                              (\before ->
+                                  Durable.compact db 0
+                                      |> Task.andThen
+                                             (\removed ->
+                                                 journalCount db "c-1"
+                                                     |> Task.andThen
+                                                            (\after ->
+                                                                runInfo db "c-1"
+                                                                    |> Task.andThen
+                                                                           (\( status, output ) ->
+                                                                               println
+                                                                                   ("compact before="
+                                                                                       ++ String.fromInt
+                                                                                              before
+                                                                                       ++ " after="
+                                                                                       ++ String.fromInt
+                                                                                              after
+                                                                                       ++ " removed="
+                                                                                       ++ String.fromInt
+                                                                                              removed
+                                                                                       ++ " status="
+                                                                                       ++ status
+                                                                                       ++ " output="
+                                                                                       ++ output))))))

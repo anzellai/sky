@@ -11,11 +11,14 @@ import Std.Log exposing (println)
 -- implementation.
 wrap : a -> List a
 wrap x =
-    [x]
+    [ x ]
 
 
 main =
-    let asString = wrap "hello"
+    let
+        asString = wrap "hello"
         asInt = wrap 42
     in
-    println ("strings: " ++ String.fromInt (List.length asString) ++ ", ints: " ++ String.fromInt (List.length asInt))
+        println
+            ("strings: " ++ String.fromInt (List.length asString) ++ ", ints: "
+                ++ String.fromInt (List.length asInt))

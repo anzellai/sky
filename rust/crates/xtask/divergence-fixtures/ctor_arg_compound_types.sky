@@ -11,10 +11,8 @@ module DivCtorArgCompound exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
-
 type Pair
-    = P (Int, String)
-
+    = P ( Int, String )
 
 type Boxed
     = B { label : String }
@@ -23,6 +21,7 @@ type Boxed
 first : Pair -> Int
 first p =
     case p of
+
         P ( a, _ ) ->
             a
 
@@ -30,13 +29,13 @@ first p =
 lbl : Boxed -> String
 lbl b =
     case b of
+
         B rec ->
             rec.label
 
 
 main =
     let
-        _ =
-            println (String.fromInt (first (P ( 1, "x" ))))
+        _ = println (String.fromInt (first (P ( 1, "x" ))))
     in
-    println (lbl (B { label = "hi" }))
+        println (lbl (B { label = "hi" }))

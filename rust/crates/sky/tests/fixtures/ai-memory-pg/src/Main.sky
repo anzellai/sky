@@ -35,14 +35,34 @@ table =
 
 seed : Db -> Task Error ()
 seed db =
-    Memory.remember db table { key = "a", text = "apples are red", embedding = [ 1.0, 0.0, 0.0 ] }
-        |> Task.andThen (\_ -> Memory.remember db table { key = "b", text = "bananas are yellow", embedding = [ 0.0, 1.0, 0.0 ] })
-        |> Task.andThen (\_ -> Memory.remember db table { key = "c", text = "cherries are dark", embedding = [ 0.0, 0.0, 1.0 ] })
+    Memory.remember
+        db
+        table
+        { key = "a", text = "apples are red", embedding = [ 1.0, 0.0, 0.0 ] }
+        |> Task.andThen
+               (\_ ->
+                   Memory.remember
+                       db
+                       table
+                       { key = "b"
+                       , text = "bananas are yellow"
+                       , embedding = [ 0.0, 1.0, 0.0 ]
+                       })
+        |> Task.andThen
+               (\_ ->
+                   Memory.remember
+                       db
+                       table
+                       { key = "c"
+                       , text = "cherries are dark"
+                       , embedding = [ 0.0, 0.0, 1.0 ]
+                       })
 
 
 topKey : List Memory.Hit -> String
 topKey hits =
     case List.head hits of
+
         Just h ->
             h.key
 
@@ -54,16 +74,23 @@ main : Task Error ()
 main =
     Db.connect ()
         |> Task.andThen
-            (\db ->
-                Memory.setup db table 3
-                    |> Task.andThen (\_ -> seed db)
-                    |> Task.andThen (\_ -> Memory.search db table [ 0.9, 0.1, 0.1 ] 3)
-                    |> Task.andThen
-                        (\vhits ->
-                            Memory.hybridSearch db table [ 0.9, 0.1, 0.1 ] "banana" 1.5 3
-                                |> Task.andThen
-                                    (\hhits ->
-                                        println ("memory search=" ++ topKey vhits ++ " hybrid=" ++ topKey hhits)
-                                    )
-                        )
-            )
+               (\db ->
+                   Memory.setup db table 3 |> Task.andThen (\_ -> seed db)
+                       |> Task.andThen
+                              (\_ -> Memory.search db table [ 0.9, 0.1, 0.1 ] 3)
+                       |> Task.andThen
+                              (\vhits ->
+                                  Memory.hybridSearch
+                                      db
+                                      table
+                                      [ 0.9, 0.1, 0.1 ]
+                                      "banana"
+                                      1.5
+                                      3
+                                      |> Task.andThen
+                                             (\hhits ->
+                                                 println
+                                                     ("memory search="
+                                                         ++ topKey vhits
+                                                         ++ " hybrid="
+                                                         ++ topKey hhits))))

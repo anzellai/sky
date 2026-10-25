@@ -8,7 +8,7 @@ import Sky.Core.Error as Error exposing (Error)
 
 main =
     let
-    -- htmlEscape: XSS payload becomes visible text
+        -- htmlEscape: XSS payload becomes visible text
         attacker = "<script>alert('xss')</script>"
         _ = println (String.htmlEscape attacker)
         -- Round-trip with attribute-breaking chars

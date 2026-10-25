@@ -8,12 +8,17 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
-type Customer = Customer
-type Widget = Widget
+type Customer
+    = Customer
+
+type Widget
+    = Widget
+
 
 useCustomer : Customer -> Int
 useCustomer c =
     1
+
 
 main =
     println (String.fromInt (useCustomer Widget))

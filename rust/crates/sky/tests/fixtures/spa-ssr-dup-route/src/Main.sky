@@ -33,7 +33,14 @@ update msg model =
             ( { model | page = page }, Cmd.none )
 
         GotItems (Ok rows) ->
-            ( { model | items = List.map (\r -> Maybe.withDefault "" (Dict.get "name" r)) rows }, Cmd.none )
+            ( { model
+                  | items =
+                      List.map
+                          (\r -> Maybe.withDefault "" (Dict.get "name" r))
+                          rows
+              }
+            , Cmd.none
+            )
 
         GotItems (Err _) ->
             ( { model | items = [] }, Cmd.none )
@@ -44,13 +51,15 @@ view model =
     case model.page of
 
         HomePage ->
-            Ui.column []
+            Ui.column
+                []
                 [ Ui.text "Welcome home"
                 , Ui.link [] { url = "/items", label = Ui.text "See items" }
                 ]
 
         ItemsPage ->
-            Ui.column []
+            Ui.column
+                []
                 (Ui.text "Item list:" :: List.map (\i -> Ui.text i) model.items)
 
         LoginPage ->

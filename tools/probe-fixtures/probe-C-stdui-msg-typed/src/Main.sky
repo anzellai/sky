@@ -4,7 +4,6 @@ import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 import Std.Ui as Ui
 
-
 type Msg
     = Increment
     | Decrement
@@ -16,7 +15,8 @@ type Msg
 -- `func(any) any` HOFs.  C13 makes Std_Ui_Element generic.
 view : Int -> Ui.Element Msg
 view count =
-    Ui.row []
+    Ui.row
+        []
         [ Ui.button [] { onPress = Just Decrement, label = Ui.text "-" }
         , Ui.text (String.fromInt count)
         , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
@@ -26,6 +26,7 @@ view count =
 main =
     -- We're not running the UI here (no Sky.Live entry) — just
     -- want to lock the view type signature shape in lowered Go.
-    let _ = view 0
+    let
+        _ = view 0
     in
-    println "view typed"
+        println "view typed"

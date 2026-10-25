@@ -10,9 +10,11 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
+
 bad : Int
 bad =
     "text" + 1
+
 
 main =
     println (String.fromInt bad)

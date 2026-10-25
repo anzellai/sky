@@ -14,4 +14,6 @@ main =
         forced = Lib.generic "hello"
         dict = Lib.snapshotToDict "k" "v"
     in
-        println (forced ++ " — dict has " ++ String.fromInt (Dict.size dict) ++ " entries")
+        println
+            (forced ++ " — dict has " ++ String.fromInt (Dict.size dict)
+                ++ " entries")

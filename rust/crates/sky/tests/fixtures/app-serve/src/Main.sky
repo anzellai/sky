@@ -194,6 +194,7 @@ restart port =
                        |> Task.andThen (\s -> Log.println ("RESTART_A " ++ s))
                        |> Task.andThen (\_ -> App.stop again))
 
+
 -- A-2: two served apps on ONE sqlite session store (the default `sqlite`
 -- path in the project directory). The browser sends app pub's cookie to app
 -- adm (cookies ignore the port); adm must show its own init state.

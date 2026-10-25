@@ -32,34 +32,28 @@ import Std.Ui as Ui
 import Std.Ui.Events as Ev
 import Std.Html exposing (Html)
 
-
 type alias Item =
     { id : Int
     , title : String
     }
-
 
 -- The Model carries a RECORD-ALIAS field (`data : Data`) — the shape whose type
 -- the whole-model RPC path degraded to `any` in issue #195.
 type alias Data =
     { items : List Item }
 
-
 type alias Ui =
     { draft : String }
-
 
 type alias Model =
     { ui : Ui
     , data : Data
     }
 
-
 type Msg
     = DraftChanged String
     | GotItems (Result Error (List Item))
     | AddItem
-
 
 type alias NewItem =
     { title : String }
@@ -67,8 +61,7 @@ type alias NewItem =
 
 itemCodec : Codec Item
 itemCodec =
-    Codec.object Item
-        |> Codec.field "id" .id Codec.int
+    Codec.object Item |> Codec.field "id" .id Codec.int
         |> Codec.field "title" .title Codec.string
         |> Codec.buildObject
 
@@ -80,8 +73,7 @@ itemListCodec =
 
 newItemCodec : Codec NewItem
 newItemCodec =
-    Codec.object NewItem
-        |> Codec.field "title" .title Codec.string
+    Codec.object NewItem |> Codec.field "title" .title Codec.string
         |> Codec.buildObject
 
 
@@ -100,6 +92,7 @@ setUi f model =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         DraftChanged t ->
             ( setUi (\u -> { u | draft = t }) model, Cmd.none )
 
@@ -113,22 +106,29 @@ update msg model =
         -- `Spa.postJson` with its own request codec + a `{ title }` payload.
         AddItem ->
             ( setUi (\u -> { u | draft = "" }) model
-            , Spa.postJson newItemCodec itemListCodec "/api/items" { title = String.trim model.ui.draft } GotItems
+            , Spa.postJson
+                  newItemCodec
+                  itemListCodec
+                  "/api/items"
+                  { title = String.trim model.ui.draft }
+                  GotItems
             )
 
 
 view : Model -> Html Msg
 view model =
-    Ui.layout []
-        (Ui.column [ Ui.spacing 8 ]
-            [ Ui.text ("items: " ++ String.fromInt (List.length model.data.items))
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text
+                  ("items: " ++ String.fromInt (List.length model.data.items))
             , Ui.input
-                [ Ui.htmlAttribute "value" model.ui.draft
-                , Ev.onInput DraftChanged
-                ]
+                  [ Ui.htmlAttribute "value" model.ui.draft
+                  , Ev.onInput DraftChanged
+                  ]
             , Ui.el [ Ev.onClick AddItem ] (Ui.text "add")
-            ]
-        )
+            ])
 
 
 subscriptions : Model -> Sub Msg
@@ -144,5 +144,4 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            }
-        )
+            })
