@@ -1465,17 +1465,19 @@ func Std_Ui_MarkerFlags(p0 bool, p1 bool, p2 bool, p3 bool, p4 bool, p5 bool) St
 }
 
 type Std_Ui_Nesting_R struct {
-	Phrasing  bool `sky:"phrasing,bool"`
-	InLink    bool `sky:"inLink,bool"`
-	InButton  bool `sky:"inButton,bool"`
-	InForm    bool `sky:"inForm,bool"`
-	InHeading bool `sky:"inHeading,bool"`
+	Phrasing   bool `sky:"phrasing,bool"`
+	InLink     bool `sky:"inLink,bool"`
+	InButton   bool `sky:"inButton,bool"`
+	InForm     bool `sky:"inForm,bool"`
+	InHeading  bool `sky:"inHeading,bool"`
+	InListItem bool `sky:"inListItem,bool"`
+	InDefItem  bool `sky:"inDefItem,bool"`
 }
 
 func init() { rt.RegisterGobType(Std_Ui_Nesting_R{}) }
 
-func Std_Ui_Nesting(p0 bool, p1 bool, p2 bool, p3 bool, p4 bool) Std_Ui_Nesting_R {
-	return Std_Ui_Nesting_R{Phrasing: p0, InLink: p1, InButton: p2, InForm: p3, InHeading: p4}
+func Std_Ui_Nesting(p0 bool, p1 bool, p2 bool, p3 bool, p4 bool, p5 bool, p6 bool) Std_Ui_Nesting_R {
+	return Std_Ui_Nesting_R{Phrasing: p0, InLink: p1, InButton: p2, InForm: p3, InHeading: p4, InListItem: p5, InDefItem: p6}
 }
 
 type Std_Ui_PseudoClass int
@@ -5408,7 +5410,7 @@ func Std_Ui_renderElement(v_0 Std_Ui_LayoutContext, v_1 []Std_Ui_Attribute, v_2 
 var Std_Ui_topNesting__caf rt.LazyCaf[Std_Ui_Nesting_R]
 
 func Std_Ui_topNesting__cafInit() Std_Ui_Nesting_R {
-	return Std_Ui_Nesting_R{Phrasing: false, InLink: false, InButton: false, InForm: false, InHeading: false}
+	return Std_Ui_Nesting_R{Phrasing: false, InLink: false, InButton: false, InForm: false, InHeading: false, InListItem: false, InDefItem: false}
 }
 
 func Std_Ui_topNesting() Std_Ui_Nesting_R {
@@ -5461,7 +5463,7 @@ func Std_Ui_renderElementIn(v_0 Std_Ui_Nesting_R, v_1 Std_Ui_LayoutContext, v_2 
 
 func Std_Ui_renderNodeAs(v_0 string, v_1 Std_Ui_Nesting_R, v_2 Std_Ui_LayoutContext, v_3 []Std_Ui_Attribute, v_4 []Std_Ui_Attribute, v_5 []Std_Ui_Element) Std_Html_Html {
 	{
-		tag_6 := Std_Ui_parserSafeTag(v_1, v_0)
+		tag_6 := Std_Ui_parserSafeTag(v_1, Std_Ui_renderableTag(v_0))
 		_ = tag_6
 		childNest_7 := Std_Ui_nestingInside(v_1, tag_6)
 		_ = childNest_7
@@ -5646,7 +5648,7 @@ func Std_Ui_dispatchTag(v_0 string, v_1 []Std_Html_Attributes_Attribute, v_2 []S
 																					if v_0 == "textarea" {
 																						return Std_Html_textarea(v_1, v_2)
 																					} else {
-																						return Std_Html_div(v_1, v_2)
+																						return Std_Html_node(Std_Ui_renderableTag(v_0), v_1, v_2)
 																					}
 																				}
 																			}
@@ -5670,8 +5672,95 @@ func Std_Ui_dispatchTag(v_0 string, v_1 []Std_Html_Attributes_Attribute, v_2 []S
 	}
 }
 
-func Std_Html_div(v_0 []Std_Html_Attributes_Attribute, v_1 []Std_Html_Html) Std_Html_Html {
-	return Std_Html_Html_HElement("div", v_0, v_1)
+func Std_Ui_renderableTag(v_0 string) string {
+	if Std_Ui_tagIn(v_0, Std_Ui_refusedTags()) {
+		return "div"
+	} else {
+		if Std_Ui_isTagName(v_0) {
+			return v_0
+		} else {
+			return "div"
+		}
+	}
+}
+
+func Std_Ui_isTagName(v_0 string) bool {
+	{
+		_subj := /* FFI return */ rt.AsListT[string](rt.String_split(any(""), any(v_0)))
+		if rt.SkyLenT(_subj) >= 1 {
+			v_1 := rt.SkyElemT(_subj, 0)
+			v_2 := rt.SkyTailSliceT(_subj)
+			_ = v_1
+			_ = v_2
+			if (v_1 >= "a") && (v_1 <= "z") {
+				return Std_Ui_isTagNameRest(v_2)
+			} else {
+				return false
+			}
+		}
+		if rt.SkyLenT(_subj) == 0 {
+			return false
+		}
+		panic(rt.Unreachable("case"))
+	}
+}
+
+func Std_Ui_isTagNameRest(v_0 []string) bool {
+	for {
+		_subj0 := v_0
+		if rt.SkyLenT(_subj0) == 0 {
+			return true
+		}
+		if rt.SkyLenT(_subj0) >= 1 {
+			v_1 := rt.SkyElemT(_subj0, 0)
+			v_2 := rt.SkyTailSliceT(_subj0)
+			_ = v_1
+			_ = v_2
+			if ((v_1 >= "a") && (v_1 <= "z")) || (((v_1 >= "0") && (v_1 <= "9")) || (v_1 == "-")) {
+				_t1 := v_2
+				v_0 = _t1
+				continue
+			} else {
+				return false
+			}
+		}
+		panic(rt.Unreachable("case"))
+	}
+}
+
+var Std_Ui_refusedTags__caf rt.LazyCaf[[]string]
+
+func Std_Ui_refusedTags__cafInit() []string {
+	return []string{"script", "style", "iframe", "object", "embed", "applet", "template", "base", "link", "meta", "noscript", "frame", "frameset", "noframes", "noembed", "portal", "fencedframe", "video", "audio", "picture", "source", "track", "image", "svg", "math", "html", "head", "body", "title", "xmp", "plaintext", "listing", "select", "option", "optgroup", "table", "caption", "colgroup", "col", "thead", "tbody", "tfoot", "tr", "td", "th", "area", "br", "hr", "wbr", "param", "keygen", "menuitem"}
+}
+
+func Std_Ui_refusedTags() []string {
+	return Std_Ui_refusedTags__caf.Get(Std_Ui_refusedTags__cafInit)
+}
+
+func Std_Ui_tagIn(v_0 string, v_1 []string) bool {
+	for {
+		_subj0 := v_1
+		if rt.SkyLenT(_subj0) == 0 {
+			return false
+		}
+		if rt.SkyLenT(_subj0) >= 1 {
+			v_2 := rt.SkyElemT(_subj0, 0)
+			v_3 := rt.SkyTailSliceT(_subj0)
+			_ = v_2
+			_ = v_3
+			if v_2 == v_0 {
+				return true
+			} else {
+				_t1 := v_0
+				_t2 := v_3
+				v_0 = _t1
+				v_1 = _t2
+				continue
+			}
+		}
+		panic(rt.Unreachable("case"))
+	}
 }
 
 func Std_Html_textarea(v_0 []Std_Html_Attributes_Attribute, v_1 []Std_Html_Html) Std_Html_Html {
@@ -5814,14 +5903,50 @@ func Std_Ui_nestingInside(v_0 Std_Ui_Nesting_R, v_1 string) Std_Ui_Nesting_R {
 							return _u
 						}
 					} else {
-						if v_0.InHeading {
+						if v_1 == "li" {
 							{
 								_u := v_0
+								_u.InListItem = true
 								_u.InHeading = false
 								return _u
 							}
 						} else {
-							return v_0
+							if (v_1 == "ul") || ((v_1 == "ol") || (v_1 == "menu")) {
+								{
+									_u := v_0
+									_u.InListItem = false
+									_u.InHeading = false
+									return _u
+								}
+							} else {
+								if (v_1 == "dd") || (v_1 == "dt") {
+									{
+										_u := v_0
+										_u.InDefItem = true
+										_u.InHeading = false
+										return _u
+									}
+								} else {
+									if v_1 == "dl" {
+										{
+											_u := v_0
+											_u.InDefItem = false
+											_u.InHeading = false
+											return _u
+										}
+									} else {
+										if v_0.InHeading {
+											{
+												_u := v_0
+												_u.InHeading = false
+												return _u
+											}
+										} else {
+											return v_0
+										}
+									}
+								}
+							}
 						}
 					}
 				}
@@ -5850,7 +5975,15 @@ func Std_Ui_parserSafeTag(v_0 Std_Ui_Nesting_R, v_1 string) string {
 					if v_0.InHeading && Std_Ui_isHeadingTag(v_1) {
 						return "div"
 					} else {
-						return v_1
+						if v_0.InListItem && (v_1 == "li") {
+							return "div"
+						} else {
+							if v_0.InDefItem && ((v_1 == "dd") || (v_1 == "dt")) {
+								return "div"
+							} else {
+								return v_1
+							}
+						}
 					}
 				}
 			}
@@ -5859,7 +5992,17 @@ func Std_Ui_parserSafeTag(v_0 Std_Ui_Nesting_R, v_1 string) string {
 }
 
 func Std_Ui_isFlowOnlyTag(v_0 string) bool {
-	return ((v_0 == "div") || ((v_0 == "p") || (Std_Ui_isHeadingTag(v_0) || ((v_0 == "section") || ((v_0 == "form") || ((v_0 == "main") || ((v_0 == "nav") || ((v_0 == "footer") || ((v_0 == "header") || (v_0 == "aside"))))))))))
+	return ((v_0 == "div") || ((v_0 == "p") || (Std_Ui_isHeadingTag(v_0) || Std_Ui_tagIn(v_0, Std_Ui_flowOnlyTags()))))
+}
+
+var Std_Ui_flowOnlyTags__caf rt.LazyCaf[[]string]
+
+func Std_Ui_flowOnlyTags__cafInit() []string {
+	return []string{"section", "form", "main", "nav", "footer", "header", "aside", "address", "article", "blockquote", "center", "details", "dialog", "dir", "dl", "dd", "dt", "fieldset", "figcaption", "figure", "hgroup", "li", "menu", "ol", "ul", "pre", "search", "summary"}
+}
+
+func Std_Ui_flowOnlyTags() []string {
+	return Std_Ui_flowOnlyTags__caf.Get(Std_Ui_flowOnlyTags__cafInit)
 }
 
 func Std_Ui_locationCss(v_0 Std_Ui_Location) string {
@@ -7311,7 +7454,7 @@ func Std_Ui_keptRoleAttrs(v_0 string, v_1 string) []Std_Html_Attributes_Attribut
 		return []Std_Html_Attributes_Attribute{}
 	} else {
 		if Std_Ui_isHeadingTag(v_0) {
-			return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "heading"), Std_Html_Attributes_attribute("aria-level" /* FFI return */, rt.AsString(rt.String_dropLeft(any(1), any(v_0))))}
+			return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "heading"), Std_Html_Attributes_attribute("aria-level", Std_Ui_headingLevel(v_0))}
 		} else {
 			if v_0 == "main" {
 				return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "main")}
@@ -7328,9 +7471,37 @@ func Std_Ui_keptRoleAttrs(v_0 string, v_1 string) []Std_Html_Attributes_Attribut
 							if v_0 == "aside" {
 								return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "complementary")}
 							} else {
-								return []Std_Html_Attributes_Attribute{}
+								if v_0 == "li" {
+									return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "listitem")}
+								} else {
+									return []Std_Html_Attributes_Attribute{}
+								}
 							}
 						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func Std_Ui_headingLevel(v_0 string) string {
+	if v_0 == "h1" {
+		return "1"
+	} else {
+		if v_0 == "h2" {
+			return "2"
+		} else {
+			if v_0 == "h3" {
+				return "3"
+			} else {
+				if v_0 == "h4" {
+					return "4"
+				} else {
+					if v_0 == "h5" {
+						return "5"
+					} else {
+						return "6"
 					}
 				}
 			}
@@ -7445,6 +7616,10 @@ func Std_Ui_isParagraphContext(v_0 Std_Ui_LayoutContext) bool {
 		return false
 		panic(rt.Unreachable("case"))
 	}
+}
+
+func Std_Html_div(v_0 []Std_Html_Attributes_Attribute, v_1 []Std_Html_Html) Std_Html_Html {
+	return Std_Html_Html_HElement("div", v_0, v_1)
 }
 
 func Std_Ui_buildStyleString(v_0 bool, v_1 Std_Ui_LayoutContext, v_2 Std_Ui_LayoutContext, v_3 []Std_Ui_Attribute) string {
