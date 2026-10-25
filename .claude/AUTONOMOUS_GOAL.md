@@ -16,6 +16,13 @@ The previous mandates are complete: the single v0.27.0 release (v0.27.0 to v0.27
 >
 > when you stop, it's only when you're genuinely stuck, or e2e fully implemented, tested + ready for me to test
 
+Resumed 2026-10-25 after the 2026-10-17 park:
+
+> basically i want a fully working + correct sky.Ai module for e2e Ai training + application, including cloud serving or locally.
+> i want sky lang to become capable of replacing python or node is terms of ai application + basically training e2e.
+
+The park condition still binds: production apps rely on Sky, so the merge must not break an existing app, and every changed behaviour needs a clear migration path. No half-built module ships.
+
 ## Shipping scope decisions (user, 2026-10-16)
 
 - SageMaker is not supported yet in v0.28.0. It stays a typed `InvalidSetting` refusal with a clear message, and it is planned for about a month later. The docs and the testing guide say "not supported yet" in plain words.
