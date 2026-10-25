@@ -923,9 +923,12 @@ teardown deletes the bucket again until it is gone.
 * **Quotas and capacity.** A new project has no L4 quota. A region with no
   free L4 is `CapacityUnavailable`. Sky does not move a job to another region.
 * **Local engine.** A named adapter in `Local.withAdapters` is a pinned
-  file or Hugging Face reference, not a `registry:` reference (a registry
-  adapter is a slot's one adapter). The pins use the upstream llama.cpp release
-  assets. The managed engine runs on macOS arm64 and Linux x64 with glibc.
+  file or Hugging Face reference, or a `registry:<name>@<alias>` reference
+  when the slot has a registry (`Endpoint.fromRegistry`). The slot resolves it
+  when it starts and again as the alias moves, and checks the version's digest
+  and base model (`docs/ai/local.md`, "Several adapters on one engine"). The
+  pins use the upstream llama.cpp release assets. The managed engine runs on
+  macOS arm64 and Linux x64 with glibc.
 * **Training backends.** MLX needs Apple silicon. Unsloth needs Linux x86_64
   with an NVIDIA GPU and driver 580 or newer. The CLI knows only the
   development base (`--base dev`). Train another base from a program.
