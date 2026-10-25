@@ -515,7 +515,7 @@ answers both kinds.
 | `sky ai rollback <name>@<alias>` | `Registry.rollback` |
 | `sky ai lineage <name>@<alias>` / `--dataset <sha256>\|<name>@<n>` | `Registry.lineage` / `Registry.trainedOn` |
 | `sky ai data freeze <file.jsonl> [--name <n>] [--out <dir>] [--key <field>] [--split <t>/<e>/<x>] [--seed <n>] [--consent <basis>] [--retention <period>]` | `Dataset.fromJsonLines`, `split`, `freezeJson`; prints the digest and the counts per split ([`dataset.md`](dataset.md)) |
-| `sky ai provision --train mlx\|unsloth\|fake [--base dev]` | `Train.provision`, and `Train.provisionBase` for the dev base ([`train.md`](train.md)) |
+| `sky ai provision --train mlx\|unsloth\|fake [--base <base>]` | `Train.provision`, and `Train.provisionBase` for the base ([`train.md`](train.md)) |
 | `sky ai train --data <dir>/<name>[@<digest>] [options]` | `Train.drive` (`Train.start` with `--detach`) |
 | `sky ai train status [<run>] \| runs \| resume <run> \| cancel <run>` | `Train.progressAt`, `Train.runs`, `Train.resumeAt`, `Train.cancelAt` |
 | `sky ai export <run> [--out <file>] [--merged]` | `Train.exportAt` |

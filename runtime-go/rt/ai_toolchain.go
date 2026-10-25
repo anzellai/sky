@@ -598,27 +598,41 @@ func Ai_trainBaseEnsure(snapArg any) any {
 }
 
 func aiTrainBaseEnsure(snap string) (string, error) {
-	var s struct {
-		Repo     string `json:"repo"`
-		Revision string `json:"revision"`
-		Files    []struct {
-			Path   string `json:"path"`
-			Sha256 string `json:"sha256"`
-		} `json:"files"`
-	}
-	if err := json.Unmarshal([]byte(snap), &s); err != nil || s.Repo == "" || s.Revision == "" || len(s.Files) == 0 {
+	var s aiBaseSnapshot
+	if err := json.Unmarshal([]byte(snap), &s); err != nil || s.Repo == "" {
 		return "", aiFailf(aiInvalidSetting, "the base snapshot is not {repo, revision, files}").with("setting", "base")
-	}
-	if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$`).MatchString(s.Repo) || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(s.Revision) {
-		return "", aiFailf(aiInvalidSetting, "base snapshot %s@%s: write <org>/<repo> and the 40-digit commit", s.Repo, s.Revision).with("setting", "base")
 	}
 	for _, f := range s.Files {
 		if !aiValidSha256(f.Sha256) || f.Path == "" || strings.Contains(f.Path, "..") || strings.HasPrefix(f.Path, "/") {
 			return "", aiFailf(aiInvalidSetting, "base snapshot %s: file %q needs a relative path and a sha256", s.Repo, f.Path).with("setting", "base")
 		}
 	}
+	// A local base (`file:<dir>`) is verified where it lies. It must carry
+	// its pins: an unpinned directory could change between two attempts of
+	// one run.
+	if strings.HasPrefix(s.Repo, aiBaseFileScheme) {
+		if len(s.Files) == 0 {
+			return "", aiFailf(aiInvalidSetting, "the local base %s is not pinned; pin it with Train.pinWeights before the job is written", s.Repo).with("setting", "base")
+		}
+		if testModeActive() {
+			return filepath.Join(aiHome(), "bases", "test-mode"), nil
+		}
+		return aiLocalBaseEnsure(s)
+	}
+	if !aiBaseRepoRe.MatchString(s.Repo) || !aiBaseRevisionRe.MatchString(s.Revision) {
+		return "", aiFailf(aiInvalidSetting, "base snapshot %s@%s: write <org>/<repo> and the 40-digit commit", s.Repo, s.Revision).with("setting", "base")
+	}
 	if testModeActive() {
 		return filepath.Join(aiHome(), "bases", "test-mode"), nil
+	}
+	// A Hub base named by its commit alone (`Train.baseFromReference`) has
+	// its file list read at that commit first.
+	if len(s.Files) == 0 {
+		pinned, err := aiPinHubBase(s)
+		if err != nil {
+			return "", err
+		}
+		s = pinned
 	}
 	final := filepath.Join(aiHome(), "bases", strings.ReplaceAll(s.Repo, "/", "--")+"@"+s.Revision)
 	complete := func(dir string) bool {

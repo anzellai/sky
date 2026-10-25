@@ -930,8 +930,9 @@ teardown deletes the bucket again until it is gone.
   pins use the upstream llama.cpp release assets. The managed engine runs on
   macOS arm64 and Linux x64 with glibc.
 * **Training backends.** MLX needs Apple silicon. Unsloth needs Linux x86_64
-  with an NVIDIA GPU and driver 580 or newer. The CLI knows only the
-  development base (`--base dev`). Train another base from a program.
+  with an NVIDIA GPU and driver 580 or newer. The CLI trains the
+  development base or any base given as `--base hf:<org>/<repo>@<commit>`
+  or `--base file:<directory>` with `--serving <model reference>`.
 * **The pipeline.** Training runs as a pipeline task (`Pipeline.withTask`,
   as in `examples/74-ai-cloud`'s `train` task). There is no separate training
   member.

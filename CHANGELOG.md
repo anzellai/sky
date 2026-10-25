@@ -26,6 +26,19 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 
 ### Added
 
+- **`sky ai train --base` takes any base.** `--base hf:<org>/<repo>@<commit>`
+  trains on a Hub repository's safetensors weights at a 40-digit commit, and
+  `--base file:<directory>` on a local directory, each with
+  `--serving <model reference>` (the GGUF model that serves the adapter).
+  `sky ai provision --train <backend> --base <base>` provisions either. The
+  library form is `Train.baseFromReference ref serving`, with
+  `Train.pinWeights` to pin the files: a Hub base by its commit (LFS digests
+  as listed, other files checked against their git blob id, the list kept
+  under the AI home), a local base by hashing its directory (its id gains the
+  digest, so changed weights are another run). A malformed base is a typed
+  `InvalidSetting` (setting `base`) before anything trains. Pickled weights
+  are never listed or loaded. A Vertex job refuses a local base and an
+  unpinned one.
 - **`Std.Ai.Trace` covers the lifecycle: what each call did, and eval and
   training rows.** A row now records the slot, the tier (`local` or
   `remote`), the adapter, the queue wait, the start time (engine start,

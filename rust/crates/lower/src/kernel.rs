@@ -389,6 +389,8 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Ai", "trainResolve", "rt.Ai_trainResolve"),
     ("Ai", "trainShapes", "rt.Ai_trainShapes"),
     ("Ai", "trainBaseEnsure", "rt.Ai_trainBaseEnsure"),
+    ("Ai", "trainBaseReference", "rt.Ai_trainBaseReference"),
+    ("Ai", "trainBasePin", "rt.Ai_trainBasePin"),
     ("Ai", "trainStage", "rt.Ai_trainStage"),
     ("Ai", "trainLaunch", "rt.Ai_trainLaunch"),
     ("Ai", "trainWatch", "rt.Ai_trainWatch"),

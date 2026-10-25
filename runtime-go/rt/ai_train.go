@@ -12,6 +12,7 @@ package rt
 //	Ai_trainResolve     : String -> Task Error Setting      the backend
 //	Ai_trainShapes      : String -> Task Error Shape        a serving GGUF's shape
 //	Ai_trainBaseEnsure  : String -> Task Error String       a pinned weights snapshot
+//	Ai_trainBaseReference, Ai_trainBasePin                  ai_train_base.go
 //	Ai_trainStage       : String -> String -> String -> String -> Task Error Staged
 //	Ai_trainLaunch      : String -> String -> Task Error Launched
 //	Ai_trainWatch       : String -> Int -> Int -> Task Error Watched

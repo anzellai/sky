@@ -5,6 +5,8 @@ module Std.Ai.Train exposing
     , baseModel
     , withWeights
     , withServing
+    , baseFromReference
+    , pinWeights
     , devBase
     , baseId
     , baseServing
@@ -254,6 +256,164 @@ withWeights backend snap (BaseModel b) =
 withServing : Local.ModelRef -> BaseModel -> BaseModel
 withServing ref (BaseModel b) =
     BaseModel { b | serving = ref }
+
+
+-- | A base model from a reference, served by `serving`:
+--
+-- * `hf:<org>/<repo>@<commit>` trains on the repository's safetensors weights
+--   at that 40-digit commit (a branch or a tag can move, so it is refused).
+--   The commit pins every file: its tree names an LFS file by the SHA-256 of
+--   its content and any other file by its git blob id.
+-- * `file:<directory>` trains on a local directory of safetensors weights
+--   with its `config.json` and tokenizer files.
+--
+-- The weights serve Mlx, Unsloth and Vertex alike. Anything else, or a Hub
+-- reference without its commit, is `InvalidSetting` (setting `base`). Nothing
+-- is read here: `pinWeights` lists the files, and `provisionBase` lists them
+-- itself for a Hub base. `sky ai train --base` calls this.
+--
+--     Train.baseFromReference
+--         "hf:Qwen/Qwen2.5-1.5B-Instruct@989aa7980e4cf806f80c7fef2b1adb7bc71aa306"
+--         (Local.fromReference "file:models/qwen2.5-1.5b-q4_0.gguf#sha256=...")
+baseFromReference : String -> Local.ModelRef -> Task Error BaseModel
+baseFromReference ref serving =
+    baseReferenceRaw ref
+        |> Task.andThen
+               (\raw ->
+                   case JsonD.decodeString parsedBaseDecoder raw of
+
+                       Ok parsed ->
+                           Task.succeed
+                               (baseModel parsed.id serving
+                                   |> withWeights Mlx parsed.snapshot
+                                   |> withWeights Unsloth parsed.snapshot)
+
+                       Err _ ->
+                           Task.fail
+                               (invalid
+                                   "base"
+                                   ("the base reference " ++ ref
+                                       ++ " did not parse")))
+
+
+-- | Pin the weight files of every snapshot the base names by commit or by
+-- directory alone (`baseFromReference`): a Hub base lists its files at the
+-- commit (kept below the AI home, so a host with fetching off pins it again),
+-- a local base hashes its directory. A snapshot that lists its files is kept
+-- as it is. A job on a local base needs this before it is written, so a file
+-- that changes later is `ChecksumMismatch` rather than other weights, and
+-- the local base's id gains the digest of its files (`file:<dir>@<digest>`),
+-- so a job on changed weights is another run. A Vertex job needs it for any
+-- base, because the trainer runs elsewhere.
+pinWeights : BaseModel -> Task Error BaseModel
+pinWeights (BaseModel b) =
+    let
+        pin m =
+            case m of
+
+                Just snap ->
+                    if List.isEmpty snap.files then
+                        basePinRaw (snapshotJson snap)
+                            |> Task.andThen
+                                   (\raw ->
+                                       case JsonD.decodeString
+                                                snapshotDecoder
+                                                raw of
+
+                                           Ok pinned ->
+                                               Task.succeed (Just pinned)
+
+                                           Err _ ->
+                                               Task.fail
+                                                   (invalid
+                                                       "base"
+                                                       ("the pinned snapshot of "
+                                                           ++ snap.repo
+                                                           ++ " did not parse")))
+
+                    else
+                        Task.succeed (Just snap)
+
+                Nothing ->
+                    Task.succeed Nothing
+        -- A local base's id carries the digest of its pinned files, so a
+        -- job on changed weights is another run, never a resume of this one.
+        idOf mlx =
+            case mlx of
+
+                Just snap ->
+                    if String.startsWith "file:" b.id && b.id == snap.repo then
+                        snap.repo ++ "@" ++ snap.revision
+
+                    else
+                        b.id
+
+                Nothing ->
+                    b.id
+    in
+        pin b.mlx
+            |> Task.andThen
+                   (\mlx ->
+                       if b.unsloth == b.mlx then
+                           Task.succeed
+                               (BaseModel
+                                   { b
+                                       | id = idOf mlx
+                                       , mlx = mlx
+                                       , unsloth = mlx
+                                   })
+
+                       else
+                           pin b.unsloth
+                               |> Task.map
+                                      (\unsloth ->
+                                          BaseModel
+                                              { b
+                                                  | id = idOf mlx
+                                                  , mlx = mlx
+                                                  , unsloth = unsloth
+                                              }))
+
+type alias ParsedBase =
+    { id : String
+    , snapshot : Snapshot
+    }
+
+
+parsedBaseDecoder : JsonD.Decoder ParsedBase
+parsedBaseDecoder =
+    JsonD.map2
+        (\i s -> { id = i, snapshot = s })
+        (JsonD.field "id" JsonD.string)
+        (JsonD.field "snapshot" snapshotDecoder)
+
+
+snapshotDecoder : JsonD.Decoder Snapshot
+snapshotDecoder =
+    JsonD.map3
+        (\r v fs -> { repo = r, revision = v, files = fs })
+        (JsonD.field "repo" JsonD.string)
+        (JsonD.oneOf [ JsonD.field "revision" JsonD.string, JsonD.succeed "" ])
+        (JsonD.oneOf
+            [ JsonD.field
+                  "files"
+                  (JsonD.list
+                      (JsonD.map2
+                          (\p h -> { path = p, sha256 = h })
+                          (JsonD.field "path" JsonD.string)
+                          (JsonD.field "sha256" JsonD.string)))
+            , JsonD.succeed []
+            ])
+
+
+baseReferenceRaw : String -> Task Error String
+baseReferenceRaw =
+    Ffi.kernel "Ai_trainBaseReference"
+
+
+basePinRaw : String -> Task Error String
+basePinRaw =
+    Ffi.kernel "Ai_trainBasePin"
 
 
 -- | The development base: Qwen2.5 0.5B Instruct (Apache-2.0). Mlx trains on
@@ -4235,7 +4395,22 @@ inputsJson job cs shape key train valid =
                 case baseWeights Unsloth (baseOf job) of
 
                     Just snap ->
-                        Result.map Just (JsonE.raw (snapshotJson snap))
+                        if String.startsWith "file:" snap.repo then
+                            Err
+                                (invalid
+                                    "base"
+                                    (baseId (baseOf job)
+                                        ++ " is a local directory; a Vertex job trains in the cloud, so push the weights to the Hub and use an hf: base"))
+
+                        else if List.isEmpty snap.files then
+                            Err
+                                (invalid
+                                    "base"
+                                    (baseId (baseOf job)
+                                        ++ " does not list its weight files; pin them with Train.pinWeights before a Vertex job"))
+
+                        else
+                            Result.map Just (JsonE.raw (snapshotJson snap))
 
                     Nothing ->
                         Err

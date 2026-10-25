@@ -600,7 +600,7 @@ sky ai provision | pull | ps | start | stop                    # Std.Ai managed 
 sky ai promote <name> <v> --to <alias> | rollback <name>@<alias> | lineage <name>@<alias>   # Std.Ai.Registry
 sky ai eval <suite> [--against <alias>] [--candidate <m>@v<n>] [--promote-to <alias>]   # the project's Std.Ai.Pipeline (src/Ai.sky)
 sky ai data freeze <dataset> | run <task> [-- args] | members   # --test-mode answers model calls from tests/mocks/
-sky ai provision --train mlx|unsloth|fake [--base dev] | train --data <dir>/<name> | export <run>   # Std.Ai.Train
+sky ai provision --train mlx|unsloth|fake [--base <base>] | train --data <dir>/<name> [--base dev|hf:<org>/<repo>@<commit>|file:<dir> --serving <model>] | export <run>   # Std.Ai.Train
 sky ai train --backend vertex --budget "USD 2.00" ... | image build --train|--tier   # Std.Ai.Train on Google Vertex AI (one L4)
 sky ai serve | deploy --service <n> | teardown --service <n>|--run <k>|--all-sky | cloud ls | cloud prices   # Std.Ai.Serve GPU tier on Cloud Run
 sky ai provision --device web|ios|android [--from <dir>]   # Std.Ai.Device engines; sky build --ai-web-engine / --ai-embed <slot>

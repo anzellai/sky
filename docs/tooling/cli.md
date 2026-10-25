@@ -1688,8 +1688,9 @@ The `Std.Ai.Train` verbs, run by the same bundled program. Every verb takes
 `--format json`.
 
 ```
-sky ai provision --train mlx|unsloth|fake [--base dev]
-sky ai train --data <dir>/<name>[@<digest>] [--base dev] [--name <n>]
+sky ai provision --train mlx|unsloth|fake [--base <base>]
+sky ai train --data <dir>/<name>[@<digest>] [--base <base> --serving <model>]
+             [--name <n>]
              [--steps <n>] [--rank <r>] [--seed <s>] [--layers <n>]
              [--checkpoint-every <n>] [--eval-every <n>]
              [--backend mlx|unsloth|fake] [--gguf] [--merged] [--register]
@@ -1700,11 +1701,17 @@ sky ai start <slot> ... --adapter file:<path>#sha256=<hex>
 ```
 
 - `provision --train` installs a training toolchain (a pinned uv, a pinned
-  CPython and a hash-locked set of wheels) under the AI home. `--base dev`
-  also downloads and verifies the development base's weights for that backend.
+  CPython and a hash-locked set of wheels) under the AI home. `--base`
+  also downloads and verifies a base's weights for that backend.
+- `--base` is `dev` (the development base, the default),
+  `hf:<org>/<repo>@<commit>` (a Hub repository at a 40-digit commit) or
+  `file:<directory>` (local safetensors weights). A malformed base is a typed
+  `InvalidSetting` before anything trains. A base other than `dev` needs
+  `--serving <model reference>`, the pinned GGUF model that serves the
+  adapter. See [`../ai/train.md`](../ai/train.md).
   Run it in an image or at deploy, where fetching at run time is off.
 - `train` fine-tunes a LoRA adapter on the frozen dataset version `--data`
-  names (the newest when no digest is given) and the development base, in the
+  names (the newest when no digest is given) and the `--base`, in the
   foreground. Without `--format json` it prints the run id first. A Ctrl-C stops the watcher
   only: the trainer keeps training, and the same command, or
   `train resume <run>`, attaches to it again. `--gguf` converts the adapter

@@ -7,9 +7,9 @@ verb is a call to the Std.Ai.Train API a user's own program can make. It is
 apart from the `sky ai` engine and registry program (sky-bundled/ai) so that
 program stays small and the training verbs build only when they are used.
 
-    sky ai provision --train mlx|unsloth|fake [--base dev]
+    sky ai provision --train mlx|unsloth|fake [--base dev|hf:<org>/<repo>@<commit>|file:<dir>]
                                                  Train.provision, Train.provisionBase
-    sky ai train --data <dir>/<name>[@<digest>] [--base dev] [--name <n>]
+    sky ai train --data <dir>/<name>[@<digest>] [--base <base> --serving <model>] [--name <n>]
                  [--steps <n>] [--rank <r>] [--seed <s>] [--layers <n>]
                  [--checkpoint-every <n>] [--eval-every <n>]
                  [--backend mlx|unsloth|fake] [--gguf] [--merged] [--register]
@@ -39,6 +39,7 @@ import Sky.Core.File as File
 import Std.Log as Log exposing (println)
 import Std.Db as Db exposing (Db)
 import Std.Ai.Dataset as Dataset
+import Std.Ai.Local as Local
 import Std.Ai.Registry as Registry
 import Std.Ai.Train as Train exposing (Backend(..))
 import Std.Money as Money exposing (Money)
@@ -78,7 +79,7 @@ run args =
 
 usage : String
 usage =
-    "usage: sky ai provision --train mlx|unsloth|fake [--base dev] | train --data <dir>/<name>[@<digest>] [options] | train status [<run>] | train runs | train resume <run> | train cancel <run> | export <run> [--out <file>] [--merged]  (each takes --format json)"
+    "usage: sky ai provision --train mlx|unsloth|fake [--base dev|hf:<org>/<repo>@<commit>|file:<dir>] | train --data <dir>/<name>[@<digest>] [options] | train status [<run>] | train runs | train resume <run> | train cancel <run> | export <run> [--out <file>] [--merged]  (each takes --format json)"
 
 
 flag : String -> List String -> Maybe String
@@ -178,11 +179,19 @@ provisionTrain json name opts =
                    Train.provision backend
                        |> Task.andThen
                               (\tc ->
-                                  (if flag "--base" opts == Just "dev" then
-                                      Train.provisionBase backend Train.devBase
+                                  (case flag "--base" opts of
 
-                                  else
-                                      Task.succeed "")
+                                      Nothing ->
+                                          Task.succeed ""
+
+                                      Just _ ->
+                                          -- Provisioning reads only the
+                                          -- weights: the serving model is not
+                                          -- used, so the development model
+                                          -- stands in for it.
+                                          cliBase True Local.devModel opts
+                                              |> Task.andThen
+                                                     (Train.provisionBase backend))
                                       |> Task.map (\weights -> ( tc, weights ))))
         |> Task.andThen
                (\( tc, weights ) ->
@@ -214,6 +223,31 @@ provisionTrain json name opts =
 
                                   else
                                       [ "base      " ++ weights ]))))
+
+
+-- `--base dev` is the development base. `--base hf:<org>/<repo>@<commit>` or
+-- `--base file:<directory>` is any other base, checked by
+-- Train.baseFromReference (a malformed one is its typed InvalidSetting).
+-- A local base is always pinned, and any base when `pin` is set.
+cliBase : Bool -> Local.ModelRef -> List String -> Task Error Train.BaseModel
+cliBase pin serving opts =
+    case flag "--base" opts of
+
+        Just "dev" ->
+            Task.succeed Train.devBase
+
+        Just ref ->
+            Train.baseFromReference ref serving
+                |> Task.andThen
+                       (\b ->
+                           if pin || String.startsWith "file:" ref then
+                               Train.pinWeights b
+
+                           else
+                               Task.succeed b)
+
+        Nothing ->
+            Task.succeed Train.devBase
 
 
 workDirOf : List String -> String
@@ -474,11 +508,23 @@ jobOn ref digest opts =
                 Just "dev" ->
                     Task.succeed Train.devBase
 
-                Just other ->
-                    Task.fail
-                        (Error.invalidInput
-                            ("sky ai train: --base " ++ other
-                                ++ " is not a base the CLI knows; use --base dev, or train any base from a program with Train.baseModel"))
+                Just _ ->
+                    case flag "--serving" opts of
+
+                        Nothing ->
+                            Task.fail
+                                (Error.invalidInput
+                                    "sky ai train: a --base other than dev needs --serving <model reference>, the GGUF model that serves the adapter (hf:<org>/<repo>/<file>#sha256=<hex> or file:<path>#sha256=<hex>)")
+
+                        Just serving ->
+                            -- The scripted trainer reads no weights, so a fake
+                            -- run pins only a local base (offline). Any other
+                            -- backend, including one chosen at run time, pins
+                            -- the weights now.
+                            cliBase
+                                (flag "--backend" opts /= Just "fake")
+                                (Local.fromReference serving)
+                                opts
     in
         base
             |> Task.andThen

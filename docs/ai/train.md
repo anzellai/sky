@@ -175,6 +175,33 @@ myBase =
 `Unsloth` on the `unsloth` bnb 4-bit snapshot, and the adapter is served on
 `Local.devModel`, the Q4_0 GGUF of the same model.
 
+Any other base can come from a reference, with the model that serves it:
+
+```elm
+Train.baseFromReference
+    "hf:Qwen/Qwen2.5-1.5B-Instruct@989aa7980e4cf806f80c7fef2b1adb7bc71aa306"
+    servingModel
+    |> Task.andThen Train.pinWeights
+```
+
+- `hf:<org>/<repo>@<commit>` trains on the repository's safetensors weights
+  at that 40-digit commit. A branch or a tag can move, so it is refused. The
+  commit pins every file: its tree names an LFS file by the SHA-256 of its
+  content and any other file by its git blob id.
+- `file:<directory>` trains on a local directory with safetensors weights,
+  `config.json` and the tokenizer files.
+- Anything else is `InvalidSetting` (setting `base`), before any I/O.
+- `Train.pinWeights` lists the files. A Hub base reads its list at the commit
+  once (other files are fetched and checked against their blob id) and keeps
+  it under the AI home, so a host with fetching off pins it again. A local
+  base hashes its directory, and its id gains the digest
+  (`file:<dir>@<digest>`), so a job on changed weights is another run. A file
+  that changes after that is `ChecksumMismatch`.
+- A local base needs `pinWeights` before its job is written. A Vertex job
+  needs it for any base, and refuses a local base (the trainer runs in the
+  cloud). `provisionBase` lists a Hub base's files itself when it has to.
+- Pickled weights (`.bin`, `.pt`) are never listed or loaded.
+
 `baseId`, `baseServing` and `baseWeights backend base` read a base.
 `Train.provisionBase backend base` downloads and verifies a backend's weights
 and returns their directory (`""` for `Fake`). A base without weights for the
@@ -785,8 +812,9 @@ explain err =
 ## The CLI
 
 ```bash
-sky ai provision --train mlx|unsloth|fake [--base dev]
-sky ai train --data <dir>/<name>[@<digest>] [--base dev] [--name <n>]
+sky ai provision --train mlx|unsloth|fake [--base <base>]
+sky ai train --data <dir>/<name>[@<digest>] [--base <base> --serving <model>]
+             [--name <n>]
              [--steps <n>] [--rank <r>] [--seed <s>] [--layers <n>]
              [--checkpoint-every <n>] [--eval-every <n>]
              [--backend mlx|unsloth|fake] [--gguf] [--merged] [--register]
@@ -802,12 +830,20 @@ sky ai start <slot> --adapter file:<path>#sha256=<hex>
 Every verb takes `--format json`. The verbs run the bundled Sky program
 (`sky-bundled/ai-train`, built the first time a training verb runs, apart from the engine and registry program `sky-bundled/ai`), which calls the API above.
 
-- `provision --train` is `Train.provision`, and `--base dev` adds
-  `Train.provisionBase` for the dev base.
+- `--base` is `dev` (the development base, the default),
+  `hf:<org>/<repo>@<commit>` or `file:<directory>`, checked by
+  `Train.baseFromReference`. A malformed base is its `InvalidSetting`, before
+  anything trains. A base other than `dev` needs `--serving <model reference>`
+  (`hf:<org>/<repo>/<file>#sha256=<hex>` or `file:<path>#sha256=<hex>`), the
+  GGUF model that serves the adapter. The CLI pins the weights
+  (`Train.pinWeights`) unless `--backend fake`, which reads no weights; a
+  local base is always pinned.
+- `provision --train` is `Train.provision`, and `--base` adds
+  `Train.provisionBase` for that base.
 - `train` builds a job on the version `--data` names (the newest when no digest
   is given): `Train.lora` when the version's rows have `messages`, else
-  `Train.loraOnInstructions`. The base is `Train.devBase`. `--base dev` is the
-  only base the CLI knows, so train another base from a program. The job is
+  `Train.loraOnInstructions`. The base is `--base` (`Train.devBase` by
+  default). The job is
   marked QLoRA, the name is the dataset's name unless `--name` says otherwise,
   and the work directory is `.sky/ai/runs` unless `--work-dir` says otherwise.
   It runs `Train.drive` on `.sky/ai/train.db` (or `--db`). `--register` opens

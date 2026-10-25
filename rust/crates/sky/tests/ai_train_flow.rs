@@ -332,6 +332,115 @@ fn a_missing_toolchain_with_fetching_off_names_the_provision_command() {
     let _ = std::fs::remove_dir_all(&home);
 }
 
+/// `sky ai train --base` takes any base the library takes: a Hub repository at
+/// its commit (`hf:<org>/<repo>@<commit>`) or a local directory
+/// (`file:<dir>`), each with `--serving`, the model that serves the adapter.
+/// A malformed base is the library's typed `InvalidSetting`, before anything
+/// trains.
+#[test]
+fn sky_ai_train_takes_a_hub_or_local_base_and_refuses_a_malformed_one() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let home = scratch("anybase-home");
+    let dir = frozen_project("anybase", &home);
+    let serving = "hf:Qwen/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf\
+                   #sha256=7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed";
+    let commit = "7ae557604adf67be50417f59c2c2f167def9a775";
+    let train = |base: &str, extra: &[&str]| {
+        let mut args = vec![
+            "train",
+            "--data",
+            ".sky/ai/datasets/support",
+            "--backend",
+            "fake",
+            "--steps",
+            "3",
+            "--base",
+            base,
+        ];
+        args.extend_from_slice(extra);
+        args.extend_from_slice(&["--format", "json"]);
+        sky_ai(&dir, &home, true, &args, &[])
+    };
+    let job_of = |out: &Output| -> String {
+        let run = json(out)["run"].as_str().unwrap().to_string();
+        std::fs::read_to_string(dir.join(".sky/ai/runs").join(&run).join("job.json"))
+            .expect("job.json")
+    };
+
+    // A Hub base at its commit.
+    let hub = format!("hf:Qwen/Qwen2.5-1.5B-Instruct@{commit}");
+    let out = train(&hub, &["--serving", serving, "--name", "hub"]);
+    assert!(out.status.success(), "hf: base: {}", text(&out));
+    let job = job_of(&out);
+    assert!(
+        job.contains(&format!("Qwen/Qwen2.5-1.5B-Instruct@{commit}")),
+        "the job names the Hub base: {job}"
+    );
+
+    // A local directory of weights, pinned by hashing it.
+    let weights = scratch("anybase-weights");
+    std::fs::write(weights.join("config.json"), r#"{"model_type":"qwen2"}"#).unwrap();
+    std::fs::write(weights.join("model.safetensors"), b"weights").unwrap();
+    let local = format!("file:{}", weights.display());
+    let out = train(&local, &["--serving", serving, "--name", "local"]);
+    assert!(out.status.success(), "file: base: {}", text(&out));
+    let job = job_of(&out);
+    let at = job
+        .find(&format!("{local}@"))
+        .unwrap_or_else(|| panic!("the job names the local base with its digest: {job}"));
+    let digest: String = job[at + local.len() + 1..].chars().take(64).collect();
+    assert!(
+        digest.len() == 64 && digest.chars().all(|c| c.is_ascii_hexdigit()),
+        "{job}"
+    );
+    // Other weights in the same directory are another run, not a resume.
+    let first_run = json(&out)["run"].as_str().unwrap().to_string();
+    std::fs::write(weights.join("model.safetensors"), b"other weights").unwrap();
+    let out = train(&local, &["--serving", serving, "--name", "local"]);
+    assert!(out.status.success(), "file: base again: {}", text(&out));
+    assert_ne!(json(&out)["run"].as_str().unwrap(), first_run);
+
+    // Malformed bases: the library's typed refusal, naming the form.
+    for bad in [
+        "hf:Qwen/Qwen2.5-1.5B-Instruct",
+        "hf:Qwen/Qwen2.5-1.5B-Instruct@main",
+        "Qwen/Qwen2.5-1.5B-Instruct",
+        "file:",
+    ] {
+        let out = train(bad, &["--serving", serving]);
+        let t = text(&out);
+        assert!(!out.status.success(), "{bad} was accepted: {t}");
+        assert!(
+            t.contains("InvalidSetting") && t.contains("hf:<org>/<repo>@<40-digit commit>"),
+            "{bad}: {t}"
+        );
+    }
+    // A local directory with no weights.
+    let empty = scratch("anybase-empty");
+    let out = train(
+        &format!("file:{}", empty.display()),
+        &["--serving", serving],
+    );
+    assert!(
+        !out.status.success() && text(&out).contains("safetensors"),
+        "{}",
+        text(&out)
+    );
+    // A base other than dev without the model that serves it.
+    let out = train(&hub, &[]);
+    assert!(
+        !out.status.success() && text(&out).contains("--serving"),
+        "{}",
+        text(&out)
+    );
+
+    for d in [&dir, &home, &weights, &empty] {
+        let _ = std::fs::remove_dir_all(d);
+    }
+}
+
 #[test]
 fn a_bad_backend_variable_is_refused_naming_it() {
     if !required(Need::Go, have_go()) {
