@@ -194,3 +194,68 @@ func TestInjectMediaQueryStyles_Composition(t *testing.T) {
 		t.Errorf("inner leaked outer's query: %q", innerStyle)
 	}
 }
+
+// TestInjectMediaQueryStyles_OverridesInlineBase — v0.27.16. Std.Ui sets an
+// element's BASE styles as an inline `style=""` attribute, and the
+// `Ui.breakpoint` wrapper itself carries an inline `display: flex;
+// flex-direction: column;`. An inline declaration beats any selector rule, so
+// a breakpoint rule without `!important` emitted but never applied:
+// `Ui.breakpoint Ui.mdAndUp [ Ui.style "display" "none" ] child` never hid the
+// child, and `Ui.htmlAttribute "style" "flex-direction: column;"` under
+// `Ui.mobile` never changed the layout. Every declaration in the scoped rule is
+// now `!important`, the same fix the pseudo-class pass carries. A value that
+// already ends in `!important` (an earlier workaround) is not doubled.
+func TestInjectMediaQueryStyles_OverridesInlineBase(t *testing.T) {
+	cases := []struct {
+		name, rules string
+		want        []string
+		notWant     []string
+	}{
+		{
+			name:  "display none",
+			rules: "display: none;",
+			want:  []string{"{ display: none !important; }"},
+		},
+		{
+			name:  "several declarations",
+			rules: "padding: 8px; flex-direction: column;",
+			want:  []string{"padding: 8px !important;", "flex-direction: column !important;"},
+		},
+		{
+			name:    "workaround already important",
+			rules:   "display: none !important;",
+			want:    []string{"display: none !important;"},
+			notWant: []string{"!important !important"},
+		},
+		{
+			name:  "missing trailing semicolon",
+			rules: "display: none",
+			want:  []string{"display: none !important;"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tree := el("div", map[string]string{
+				"style":             "display: flex; flex-direction: column;",
+				"data-sky-mq-q":     "(min-width: 768px)",
+				"data-sky-mq-rules": c.rules,
+			}, txt("child"))
+			assignSkyIDs(&tree, "r")
+			injectMediaQueryStyles(&tree)
+			css := tree.Children[0].Children[0].Text
+			for _, w := range c.want {
+				if !strings.Contains(css, w) {
+					t.Errorf("media rule %q lacks %q", css, w)
+				}
+			}
+			for _, nw := range c.notWant {
+				if strings.Contains(css, nw) {
+					t.Errorf("media rule %q carries %q", css, nw)
+				}
+			}
+			if !strings.HasPrefix(css, `@media (min-width: 768px) { [sky-id="r"] {`) {
+				t.Errorf("media rule lost its scope: %q", css)
+			}
+		})
+	}
+}
