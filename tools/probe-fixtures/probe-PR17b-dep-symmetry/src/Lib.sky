@@ -1,8 +1,4 @@
-module Lib exposing
-    ( generic
-    , snapshotToDict
-    )
-
+module Lib exposing (generic, snapshotToDict)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict
@@ -16,8 +12,6 @@ import Sky.Core.Dict as Dict
 -- non-generic decl's body because the bodyExpr's IORef-reading
 -- thunks deferred evaluation until after the generic decl's
 -- scope push.
-
-
 -- Generic typed-param decl.  Forces the dep emission path to
 -- push T1 onto scopeStateRef.
 generic : a -> a

@@ -2279,8 +2279,11 @@ fn explicit_spa_rpc_branch_stays_client_not_a_synthesized_model_rpc() {
     // The frontend keeps the explicit `Spa.postJson` with the user's own codec —
     // it is NOT rewritten into a synthesized `Spa.postJson … "/_rpc/AddItem" …`.
     let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    // Compared with whitespace collapsed: the fixture is `sky fmt` clean, so the
+    // call is laid out one argument per line.
+    let front_flat = front.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        front.contains("Spa.postJson newItemCodec itemListCodec \"/api/items\""),
+        front_flat.contains("Spa.postJson newItemCodec itemListCodec \"/api/items\""),
         "frontend must keep the author's explicit Spa.postJson verbatim"
     );
     assert!(

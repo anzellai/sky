@@ -136,6 +136,8 @@ while IFS= read -r f; do
         *.go) add 01 "gofmt -l (must list nothing)" \
             "test -z \"\$(gofmt -l runtime-go tools 2>/dev/null)\"" ;;
         *.sh) [ -f "$f" ] && SH_CHANGED="$SH_CHANGED $f" ;;
+        *.sky | *.skyi) add 01 "sky fmt --check over every tracked .sky/.skyi (sky-fmt-check)" \
+            "$XTASK sky-fmt-check" ;;
     esac
     case "$f" in
         rust/crates/syntax/* | rust/crates/hir/* | rust/crates/ty/* | rust/crates/lower/* | rust/crates/codegen/* | rust/crates/base/* | rust/crates/diagnostics/*)

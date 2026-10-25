@@ -13,4 +13,5 @@ import Std.Log exposing (println)
 
 
 main =
-    println (String.fromInt (List.length (List.parallelMap (\x -> x) [ 1, 2, 3 ])))
+    println
+        (String.fromInt (List.length (List.parallelMap (\x -> x) [ 1, 2, 3 ])))

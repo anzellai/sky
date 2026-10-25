@@ -18,12 +18,10 @@ import Std.Ui as Ui
 import Std.Ui exposing (Element)
 import Std.Html exposing (Html)
 
-
 type alias Model =
     { n : Int
     , log : String
     }
-
 
 type Msg
     = Bump
@@ -46,25 +44,31 @@ saveN n =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Bump ->
             -- PURE -> client-local, zero round-trip
             ( { model | n = model.n + 1 }, Cmd.none )
 
         Persist ->
             -- EFFECTFUL (File) -> server; read-set {n}, write-set {log}
-            ( { model | log = Result.withDefault "err" (Task.run (saveN model.n)) }, Cmd.none )
+            ( { model
+                  | log = Result.withDefault "err" (Task.run (saveN model.n))
+              }
+            , Cmd.none
+            )
 
 
 view : Model -> Html Msg
 view model =
-    Ui.layout []
-        (Ui.column [ Ui.spacing 8 ]
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
             [ Ui.text ("n = " ++ String.fromInt model.n)
             , Ui.text model.log
             , Ui.button [] { onPress = Just Bump, label = Ui.text "Bump" }
             , Ui.button [] { onPress = Just Persist, label = Ui.text "Persist" }
-            ]
-        )
+            ])
 
 
 subscriptions : Model -> Sub Msg
@@ -80,5 +84,4 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            }
-        )
+            })

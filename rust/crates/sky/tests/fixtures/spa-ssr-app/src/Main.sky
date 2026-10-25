@@ -24,12 +24,10 @@ import Std.Sub as Sub
 import Std.Ui as Ui exposing (Element)
 import Std.Live.Head as Head
 
-
 type alias Model =
     { n : Int
     , log : String
     }
-
 
 type Msg
     = Bump
@@ -53,18 +51,24 @@ saveN n =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Bump ->
             -- PURE → client-local, zero round-trip.
             ( { model | n = model.n + 1 }, Cmd.none )
 
         Persist ->
             -- EFFECTFUL (File) → server branch; read-set {n}, write-set {log}.
-            ( { model | log = Result.withDefault "err" (Task.run (saveN model.n)) }, Cmd.none )
+            ( { model
+                  | log = Result.withDefault "err" (Task.run (saveN model.n))
+              }
+            , Cmd.none
+            )
 
 
 view : Model -> Element Msg
 view model =
-    Ui.column [ Ui.spacing 8 ]
+    Ui.column
+        [ Ui.spacing 8 ]
         [ Ui.text ("Sky SSR fixture — n = " ++ String.fromInt model.n)
         , Ui.text model.log
         , Ui.button [] { onPress = Just Bump, label = Ui.text "Bump" }
@@ -86,11 +90,10 @@ app =
         }
         |> App.withNotFound ()
         |> App.withHead
-            (\m ->
-                [ Head.title ("SSR Fixture n=" ++ String.fromInt m.n)
-                , Head.meta "description" "sky spa ssr p1 fixture"
-                ]
-            )
+               (\m ->
+                   [ Head.title ("SSR Fixture n=" ++ String.fromInt m.n)
+                   , Head.meta "description" "sky spa ssr p1 fixture"
+                   ])
 
 
 main : Task Error ()

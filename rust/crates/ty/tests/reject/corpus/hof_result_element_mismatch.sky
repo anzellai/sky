@@ -4,9 +4,12 @@
 --         this and silently coerce Int→string; the check-only precise List sig
 --         now rejects. oracle: reject [E2001].
 module Main exposing (main)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
 import Std.Log exposing (println)
+
+
 main =
     println (String.join "," (List.map String.length [ "ab", "cde" ]))

@@ -30,10 +30,10 @@ readEnv : String
 readEnv =
     Result.withDefault "x" (Task.run (System.getenv "X"))
 
-
 type alias Model =
-    { count : Int, note : String }
-
+    { count : Int
+    , note : String
+    }
 
 type Msg
     = DoServer
@@ -59,6 +59,7 @@ h model =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         DoServer ->
             ( { model | note = readEnv }, Cmd.none )
 
@@ -77,16 +78,19 @@ update msg model =
 
 view : Model -> any
 view model =
-    Ui.layout []
-        (Ui.column [ Ui.spacing 8, Ui.padding 12 ]
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8, Ui.padding 12 ]
             [ Ui.el [ Ev.onClick DoServer ] (Ui.text "do server")
-            , Ui.el [ Ev.onClick DoPure ] (Ui.text ("count " ++ String.fromInt model.count))
+            , Ui.el
+                  [ Ev.onClick DoPure ]
+                  (Ui.text ("count " ++ String.fromInt model.count))
             , Ui.el [ Ev.onClick ComposeServer ] (Ui.text "compose server")
             , Ui.el [ Ev.onClick ComposePure ] (Ui.text "compose pure")
             , Ui.el [ Ev.onClick ViaHelper ] (Ui.text "via helper")
             , Ui.el [] (Ui.text model.note)
-            ]
-        )
+            ])
 
 
 subscriptions : Model -> Sub Msg
@@ -102,5 +106,4 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            }
-        )
+            })

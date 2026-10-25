@@ -6,10 +6,15 @@
 --         Haskell oracle, which leniently widens int literals into cross-module
 --         Float params. Both reject this same-module binding form.) oracle: reject.
 module Main exposing (main)
+
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
+
+
 v : Float
 v =
     1
+
+
 main =
     println (String.fromFloat v)

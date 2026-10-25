@@ -25,17 +25,14 @@ import Sky.Core.File as File
 import Std.App as App
 import Std.Ui as Ui exposing (Element)
 
-
 type Page
     = Home
     | Items
-
 
 type alias Model =
     { page : Page
     , items : List String
     }
-
 
 type Msg
     = LoadItems
@@ -52,6 +49,7 @@ init () =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         LoadItems ->
             ( model, Cmd.perform (File.readFile "data/items.json") GotItems )
 
@@ -65,17 +63,18 @@ update msg model =
 view : Model -> Element Msg
 view model =
     case model.page of
+
         Home ->
-            Ui.column []
+            Ui.column
+                []
                 [ Ui.text "Welcome home"
                 , Ui.link [] { url = "/items", label = Ui.text "See items" }
                 ]
 
         Items ->
-            Ui.column []
-                (Ui.text "Item list:"
-                    :: List.map (\i -> Ui.text i) model.items
-                )
+            Ui.column
+                []
+                (Ui.text "Item list:" :: List.map (\i -> Ui.text i) model.items)
 
 
 subscriptions : Model -> Sub Msg

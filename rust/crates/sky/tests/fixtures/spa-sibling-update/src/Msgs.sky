@@ -7,7 +7,6 @@ module Msgs exposing (..)
 
 import Sky.Core.Prelude exposing (..)
 
-
 type Msg
     = DraftChanged String
     | Save

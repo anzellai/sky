@@ -19,13 +19,11 @@ import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Html exposing (Html)
 
-
 type alias Model =
     { n : Int
     , scale : Int
     , log : String
     }
-
 
 type Msg
     = Bump
@@ -64,6 +62,7 @@ stamp k m =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Bump ->
             -- PURE -> client-local.
             ( { model | n = model.n + 1 }, Cmd.none )
@@ -78,8 +77,7 @@ update msg model =
             -- Same read of `n`, but the model-derived value is `let`-bound first.
             -- The read-set analysis must thread `let` aliases or it drops `n`.
             let
-                scaled =
-                    { model | scale = k }
+                scaled = { model | scale = k }
             in
                 ( recompute scaled, Cmd.none )
 
@@ -101,18 +99,25 @@ update msg model =
 
 view : Model -> Html Msg
 view model =
-    Ui.layout []
-        (Ui.column [ Ui.spacing 8 ]
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
             [ Ui.text ("n = " ++ String.fromInt model.n)
             , Ui.text ("scale = " ++ String.fromInt model.scale)
             , Ui.text model.log
             , Ui.button [] { onPress = Just Bump, label = Ui.text "Bump" }
             , Ui.button [] { onPress = Just (SetScale 2), label = Ui.text "x2" }
-            , Ui.button [] { onPress = Just (SetScaleLet 3), label = Ui.text "x3" }
-            , Ui.button [] { onPress = Just (SetScaleVia 4), label = Ui.text "x4" }
-            , Ui.button [] { onPress = Just (SetScaleArg 5), label = Ui.text "x5" }
-            ]
-        )
+            , Ui.button
+                  []
+                  { onPress = Just (SetScaleLet 3), label = Ui.text "x3" }
+            , Ui.button
+                  []
+                  { onPress = Just (SetScaleVia 4), label = Ui.text "x4" }
+            , Ui.button
+                  []
+                  { onPress = Just (SetScaleArg 5), label = Ui.text "x5" }
+            ])
 
 
 subscriptions : Model -> Sub Msg
@@ -128,5 +133,4 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            }
-        )
+            })

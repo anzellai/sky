@@ -19,5 +19,6 @@ type Result a
     = Just a
     | Nothing
 
+
 main =
     println "hi"

@@ -13,7 +13,6 @@ module Types exposing (..)
 import Sky.Core.Prelude exposing (..)
 import Std.Codec as Codec exposing (Codec)
 
-
 type Page
     = HomePage
     | AccountPage
@@ -29,6 +28,7 @@ pageCodec =
     Codec.taggedUnion
         (\p ->
             case p of
+
                 HomePage ->
                     ( "HomePage", [] )
 
@@ -39,20 +39,17 @@ pageCodec =
                     ( "ProductPage", [ Codec.toValue Codec.string s ] )
 
                 NotFoundPage ->
-                    ( "NotFoundPage", [] )
-        )
+                    ( "NotFoundPage", [] ))
         [ Codec.var0 "HomePage" HomePage
         , Codec.var0 "AccountPage" AccountPage
         , Codec.var1 "ProductPage" ProductPage Codec.string
         , Codec.var0 "NotFoundPage" NotFoundPage
         ]
 
-
 type alias Model =
     { page : Page
     , user : String
     }
-
 
 type Msg
     = GoHome
@@ -64,6 +61,7 @@ type Msg
 pathOf : Page -> String
 pathOf page =
     case page of
+
         HomePage ->
             "/"
 

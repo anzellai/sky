@@ -26,14 +26,12 @@ import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Html exposing (Html)
 
-
 type alias Model =
     { busy : Bool
     , c : String
     , a : String
     , untouched : Int
     }
-
 
 type Msg
     = Kick String
@@ -54,37 +52,30 @@ fetchThing _ =
 
 saveA : String -> Task Error String
 saveA v =
-    File.writeFile "a.txt" v
-        |> Task.map (\_ -> v)
+    File.writeFile "a.txt" v |> Task.map (\_ -> v)
 
 
 record : String -> Model -> ( Model, Cmd Msg )
 record v model =
     let
-        _ =
-            File.readFile "audit.txt"
+        _ = File.readFile "audit.txt"
     in
-    ( { model | c = v }
-    , Cmd.perform (saveA v) SavedA
-    )
+        ( { model | c = v }, Cmd.perform (saveA v) SavedA )
 
 
 -- The LAST hop: a helper returning a `Cmd.perform` whose task is a `Std.Native`
 -- CLIENT effect. Reachable ONLY transitively (Kick -> Fetched -> SavedA).
 deepStep : String -> Model -> ( Model, Cmd Msg )
 deepStep v model =
-    ( { model | a = v }
-    , Cmd.perform (Native.clipboardWrite v) Copied
-    )
+    ( { model | a = v }, Cmd.perform (Native.clipboardWrite v) Copied )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Kick x ->
-            ( { model | busy = True }
-            , Cmd.perform (fetchThing x) Fetched
-            )
+            ( { model | busy = True }, Cmd.perform (fetchThing x) Fetched )
 
         Fetched (Ok v) ->
             record v model
@@ -111,10 +102,15 @@ view model =
             [ Ui.text ("c=" ++ model.c)
             , Ui.text ("a=" ++ model.a)
             , Ui.text ("untouched=" ++ String.fromInt model.untouched)
-            , Ui.text ("busy=" ++ (if model.busy then "yes" else "no"))
+            , Ui.text
+                  ("busy="
+                      ++ (if model.busy then
+                             "yes"
+
+                         else
+                             "no"))
             , Ui.el [ Ui.onClick (Kick "payload") ] (Ui.text "Kick")
-            ]
-        )
+            ])
 
 
 subscriptions : Model -> Sub Msg
@@ -130,5 +126,4 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            }
-        )
+            })

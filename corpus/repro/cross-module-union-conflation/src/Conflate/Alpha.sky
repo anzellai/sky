@@ -3,7 +3,6 @@ module Conflate.Alpha exposing (..)
 
 import Sky.Core.Prelude exposing (..)
 
-
 type Shape
     = Circle Int
 
@@ -11,5 +10,6 @@ type Shape
 alphaTag : Shape -> String
 alphaTag s =
     case s of
+
         Circle _n ->
             "alpha-circle"

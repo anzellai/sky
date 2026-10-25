@@ -35,7 +35,6 @@ import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Html exposing (Html)
 
-
 type alias Model =
     { picked : Maybe Int
     , label : String
@@ -43,7 +42,6 @@ type alias Model =
     , secret : String
     , basket : List Int
     }
-
 
 type Msg
     = Bump
@@ -53,7 +51,9 @@ type Msg
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { picked = Nothing, label = "", session = "", secret = "", basket = [] }, Cmd.none )
+    ( { picked = Nothing, label = "", session = "", secret = "", basket = [] }
+    , Cmd.none
+    )
 
 
 -- The higher-order auth guard: `Model -> (() -> ( Model, Cmd Msg )) -> ( Model,
@@ -79,13 +79,13 @@ labelFor id =
 -- SERVER effect (File) the continuation forces, making `Edit` a server branch.
 saveN : Int -> Task Error String
 saveN n =
-    File.writeFile "count.txt" (String.fromInt n)
-        |> Task.map (\_ -> "ok")
+    File.writeFile "count.txt" (String.fromInt n) |> Task.map (\_ -> "ok")
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Bump ->
             -- Pure client branch — no effect, no RPC.
             ( { model | picked = Nothing }, Cmd.none )
@@ -95,33 +95,31 @@ update msg model =
             -- I/O is the UNION of the guard's own I/O on `model` (reads {session})
             -- and the inline continuation's I/O (writes {label, picked}, reaches
             -- the File effect). MUST narrow — `secret` / `basket` do NOT ride.
-            requireSession model
+            requireSession
+                model
                 (\_ ->
                     let
-                        _ =
-                            Task.run (saveN id)
+                        _ = Task.run (saveN id)
                     in
-                    ( { model | picked = Just id, label = labelFor id }, Cmd.none )
-                )
+                        ( { model | picked = Just id, label = labelFor id }
+                        , Cmd.none
+                        ))
 
         SaveAll tagStr ->
             -- GENUINELY whole-model (opaque thread through `Result.withDefault`)
             -- server branch that ALSO binds a Msg arg. Its frontend request MUST
             -- carry every model field PLUS `tagStr` — never bare `model`.
             let
-                _ =
-                    Task.run (saveN (String.length tagStr))
+                _ = Task.run (saveN (String.length tagStr))
             in
-            ( Result.withDefault model (Ok model), Cmd.none )
+                ( Result.withDefault model (Ok model), Cmd.none )
 
 
 view : Model -> Html Msg
 view model =
     Ui.layout
         []
-        (Ui.column
-            [ Ui.spacing 8 ]
-            [ Ui.text (model.label ++ model.session) ])
+        (Ui.column [ Ui.spacing 8 ] [ Ui.text (model.label ++ model.session) ])
 
 
 subscriptions : Model -> Sub Msg

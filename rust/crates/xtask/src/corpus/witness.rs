@@ -29,7 +29,8 @@
 
 use super::axes::{
     Assignment, Axis, Stratum, ALIAS_NAMES, ANON_ROLE, AS_BINDER, COLLIDER, COLLISION, DICT_KEY,
-    EDGE, EQ_PAIR, ERASURE, IMPORT_SHAPE, INNER, LET_USES, POSITION, QUAL_USE, SHADOW, TASK_CALLEE,
+    EDGE, EQ_PAIR, ERASURE, GA_SLOT, IMPORT_SHAPE, INNER, LET_USES, POSITION, QUAL_USE, SHADOW,
+    TASK_CALLEE,
 };
 use super::gen;
 use super::runner;
@@ -99,6 +100,11 @@ fn axis_under_test(s: &Stratum) -> (Axis, &'static str) {
         // ACCUMULATOR over named elements is what took the element's pin. The
         // two are different programs, so the role axis is witnessed.
         "lambda_record_param" => (ANON_ROLE, "elem"),
+        // v0.27.16. A list element always built: a list literal lowers each
+        // element at the element slot, so the erased `Act_R[any]` was narrowed
+        // there. Each other slot is a different program (a different
+        // constructor or container), so the slot axis is witnessed.
+        "generic_alias_slot" => (GA_SLOT, "list"),
         other => panic!("no axis-under-test declared for stratum {other:?}"),
     }
 }

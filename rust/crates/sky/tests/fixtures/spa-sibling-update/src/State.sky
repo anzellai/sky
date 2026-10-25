@@ -5,7 +5,6 @@ module State exposing (..)
 import Sky.Core.Prelude exposing (..)
 import Domain exposing (..)
 
-
 type alias Model =
     { items : List Item
     , draft : String

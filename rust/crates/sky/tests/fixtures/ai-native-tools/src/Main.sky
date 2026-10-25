@@ -38,12 +38,20 @@ provider =
 
 lookup : Tool.Tool
 lookup =
-    Tool.tool "lookup" "look a value up by query" (\_ -> Task.succeed "the code is 4231")
+    Tool.tool
+        "lookup"
+        "look a value up by query"
+        (\_ -> Task.succeed "the code is 4231")
 
 
 agentDef : Durable.WorkflowDef Agent.Input Agent.ToolOutput
 agentDef =
-    Agent.nativeToolLoop "assistant" provider "You are terse. Use tools when needed." [ lookup ] 5
+    Agent.nativeToolLoop
+        "assistant"
+        provider
+        "You are terse. Use tools when needed."
+        [ lookup ]
+        5
 
 
 answerCodec : Codec Agent.ToolOutput
@@ -54,6 +62,7 @@ answerCodec =
 dictGet : String -> Dict String String -> String
 dictGet key row =
     case Dict.get key row of
+
         Just v ->
             v
 
@@ -63,21 +72,27 @@ dictGet key row =
 
 readOutput : Db -> String -> Task Error ( String, String )
 readOutput db id =
-    Db.query db "SELECT output, status FROM _sky_durable_runs WHERE id = ?" [ SqlString id ]
+    Db.query
+        db
+        "SELECT output, status FROM _sky_durable_runs WHERE id = ?"
+        [ SqlString id ]
         |> Task.map
-            (\rows ->
-                case List.head rows of
-                    Just row ->
-                        ( decodeAnswer (dictGet "output" row), dictGet "status" row )
+               (\rows ->
+                   case List.head rows of
 
-                    Nothing ->
-                        ( "", "?" )
-            )
+                       Just row ->
+                           ( decodeAnswer (dictGet "output" row)
+                           , dictGet "status" row
+                           )
+
+                       Nothing ->
+                           ( "", "?" ))
 
 
 decodeAnswer : String -> String
 decodeAnswer json =
     case Codec.fromJson answerCodec json of
+
         Ok o ->
             o.answer
 
@@ -89,13 +104,22 @@ main : Task Error ()
 main =
     Db.connect ()
         |> Task.andThen
-            (\db ->
-                Durable.setup db
-                    |> Task.andThen (\_ -> Durable.start db agentDef "native-1" { messages = [ Provider.user "what is the code?" ] })
-                    |> Task.andThen (\_ -> Durable.poll db [ Durable.erase agentDef ])
-                    |> Task.andThen (\_ -> readOutput db "native-1")
-                    |> Task.andThen
-                        (\( answer, status ) ->
-                            println ("native answer=" ++ answer ++ " status=" ++ status)
-                        )
-            )
+               (\db ->
+                   Durable.setup db
+                       |> Task.andThen
+                              (\_ ->
+                                  Durable.start
+                                      db
+                                      agentDef
+                                      "native-1"
+                                      { messages =
+                                          [ Provider.user "what is the code?" ]
+                                      })
+                       |> Task.andThen
+                              (\_ -> Durable.poll db [ Durable.erase agentDef ])
+                       |> Task.andThen (\_ -> readOutput db "native-1")
+                       |> Task.andThen
+                              (\( answer, status ) ->
+                                  println
+                                      ("native answer=" ++ answer ++ " status="
+                                          ++ status)))

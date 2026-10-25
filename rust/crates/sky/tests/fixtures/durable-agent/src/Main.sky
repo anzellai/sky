@@ -35,21 +35,25 @@ agentDef =
 
 readOutput : Db -> String -> Task Error ( String, String )
 readOutput db id =
-    Db.query db "SELECT output, status FROM _sky_durable_runs WHERE id = ?" [ SqlString id ]
+    Db.query
+        db
+        "SELECT output, status FROM _sky_durable_runs WHERE id = ?"
+        [ SqlString id ]
         |> Task.map
-            (\rows ->
-                case List.head rows of
-                    Just row ->
-                        ( dictGet "output" row, dictGet "status" row )
+               (\rows ->
+                   case List.head rows of
 
-                    Nothing ->
-                        ( "", "?" )
-            )
+                       Just row ->
+                           ( dictGet "output" row, dictGet "status" row )
+
+                       Nothing ->
+                           ( "", "?" ))
 
 
 dictGet : String -> Dict String String -> String
 dictGet key row =
     case Dict.get key row of
+
         Just v ->
             v
 
@@ -61,21 +65,29 @@ main : Task Error ()
 main =
     Db.connect ()
         |> Task.andThen
-            (\db ->
-                Durable.setup db
-                    |> Task.andThen (\_ -> Durable.start db agentDef "chat-1" { messages = [ Provider.user "Hi" ] })
-                    |> Task.andThen (\_ -> Durable.poll db [ Durable.erase agentDef ])
-                    |> Task.andThen (\_ -> readOutput db "chat-1")
-                    |> Task.andThen
-                        (\( output, status ) ->
-                            let
-                                answer =
-                                    if String.contains "MOCKED-ANSWER" output then
-                                        "MOCKED-ANSWER"
+               (\db ->
+                   Durable.setup db
+                       |> Task.andThen
+                              (\_ ->
+                                  Durable.start
+                                      db
+                                      agentDef
+                                      "chat-1"
+                                      { messages = [ Provider.user "Hi" ] })
+                       |> Task.andThen
+                              (\_ -> Durable.poll db [ Durable.erase agentDef ])
+                       |> Task.andThen (\_ -> readOutput db "chat-1")
+                       |> Task.andThen
+                              (\( output, status ) ->
+                                  let
+                                      answer =
+                                          if String.contains "MOCKED-ANSWER" output then
+                                              "MOCKED-ANSWER"
 
-                                    else
-                                        output
-                            in
-                            println ("agent answer=" ++ answer ++ " status=" ++ status)
-                        )
-            )
+                                          else
+                                              output
+                                  in
+                                      println
+                                          ("agent answer=" ++ answer
+                                              ++ " status="
+                                              ++ status)))

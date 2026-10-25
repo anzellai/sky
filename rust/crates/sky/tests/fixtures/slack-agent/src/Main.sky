@@ -54,6 +54,7 @@ slackToken =
 priceBook : Provider.PriceBook
 priceBook =
     case Provider.priceBook Money.USD "0.00015" "0.00060" of
+
         Ok b ->
             b
 
@@ -65,16 +66,17 @@ firewall : Policy.Action -> Policy.Decision
 firewall act =
     Policy.requireApprovalAbove Policy.Low act
 
-
 -- ─── The durable reply workflow (mirrors examples/66-slack-agent) ─
-
-
 type alias Mention =
-    { text : String, channel : String, threadTs : String }
-
+    { text : String
+    , channel : String
+    , threadTs : String
+    }
 
 type alias Reply =
-    { reply : String, posted : String }
+    { reply : String
+    , posted : String
+    }
 
 
 mentionCodec : Codec Mention
@@ -102,42 +104,57 @@ botDef =
 
 botBody : Ctx -> Mention -> Task Error Reply
 botBody ctx mention =
-    Durable.step ctx
+    Durable.step
+        ctx
         chatCodec
         "llm"
-        (Provider.chat provider [ Provider.system "You are terse.", Provider.user mention.text ])
+        (Provider.chat
+            provider
+            [ Provider.system "You are terse.", Provider.user mention.text ])
         |> Task.andThen
-            (\resp ->
-                let
-                    answer =
-                        resp.content
-
-                    postAction =
-                        Policy.action "slack.post" mention.channel Policy.Low
-                in
-                Durable.step ctx
-                    Codec.string
-                    "reply"
-                    (Policy.gate firewall postAction (postMessage mention.channel mention.threadTs answer)
-                        |> Task.map outcomeSummary
-                    )
-                    |> Task.andThen
-                        (\posted ->
-                            Durable.step ctx
-                                Codec.string
-                                "trace"
-                                (Trace.record (Durable.conn ctx)
-                                    (Trace.forResponse (Durable.runId ctx) modelName priceBook resp)
-                                    |> Task.map (\_ -> "ok")
-                                )
-                                |> Task.map (\_ -> { reply = answer, posted = posted })
-                        )
-            )
+               (\resp ->
+                   let
+                       answer = resp.content
+                       postAction =
+                           Policy.action "slack.post" mention.channel Policy.Low
+                   in
+                       Durable.step
+                           ctx
+                           Codec.string
+                           "reply"
+                           (Policy.gate
+                               firewall
+                               postAction
+                               (postMessage
+                                   mention.channel
+                                   mention.threadTs
+                                   answer)
+                               |> Task.map outcomeSummary)
+                           |> Task.andThen
+                                  (\posted ->
+                                      Durable.step
+                                          ctx
+                                          Codec.string
+                                          "trace"
+                                          (Trace.record
+                                              (Durable.conn ctx)
+                                              (Trace.forResponse
+                                                  (Durable.runId ctx)
+                                                  modelName
+                                                  priceBook
+                                                  resp)
+                                              |> Task.map (\_ -> "ok"))
+                                          |> Task.map
+                                                 (\_ ->
+                                                     { reply = answer
+                                                     , posted = posted
+                                                     })))
 
 
 outcomeSummary : Policy.Outcome String -> String
 outcomeSummary outcome =
     case outcome of
+
         Policy.Ran ts ->
             ts
 
@@ -147,12 +164,12 @@ outcomeSummary outcome =
         Policy.Pending reason ->
             "pending:" ++ reason
 
-
 -- ─── Slack client ────────────────────────────────────────────────
-
-
 type alias PostRequest =
-    { channel : String, thread_ts : String, text : String }
+    { channel : String
+    , thread_ts : String
+    , text : String
+    }
 
 
 postReqCodec : Codec PostRequest
@@ -164,28 +181,30 @@ postMessage : String -> String -> String -> Task Error String
 postMessage channel threadTs text =
     let
         payload =
-            Codec.toJson postReqCodec { channel = channel, thread_ts = threadTs, text = text }
-
-        req =
-            Http.defaultRequest "https://slack.com/api/chat.postMessage"
+            Codec.toJson
+                postReqCodec
+                { channel = channel, thread_ts = threadTs, text = text }
+        req = Http.defaultRequest "https://slack.com/api/chat.postMessage"
     in
-    { req | method = "POST" }
-        |> Http.withBearer slackToken
-        |> Http.withHeader "Content-Type" "application/json"
-        |> Http.withBody payload
-        |> Http.request
-        |> Task.andThen
-            (\resp ->
-                if resp.status >= 200 && resp.status < 300 then
-                    Task.succeed (readTs resp.body)
+        { req | method = "POST" } |> Http.withBearer slackToken
+            |> Http.withHeader "Content-Type" "application/json"
+            |> Http.withBody payload
+            |> Http.request
+            |> Task.andThen
+                   (\resp ->
+                       if resp.status >= 200 && resp.status < 300 then
+                           Task.succeed (readTs resp.body)
 
-                else
-                    Task.fail (Error.unexpected ("slack post failed: HTTP " ++ String.fromInt resp.status))
-            )
-
+                       else
+                           Task.fail
+                               (Error.unexpected
+                                   ("slack post failed: HTTP "
+                                       ++ String.fromInt resp.status)))
 
 type alias PostResult =
-    { ok : Bool, ts : String }
+    { ok : Bool
+    , ts : String
+    }
 
 
 postResultCodec : Codec PostResult
@@ -196,6 +215,7 @@ postResultCodec =
 readTs : String -> String
 readTs body =
     case Codec.fromJson postResultCodec body of
+
         Ok r ->
             r.ts
 
@@ -204,25 +224,29 @@ readTs body =
 
 
 -- ─── Drive one mention + read the result back ────────────────────
-
-
 readRun : Db -> String -> Task Error ( Reply, String )
 readRun db id =
-    Db.query db "SELECT output, status FROM _sky_durable_runs WHERE id = ?" [ SqlString id ]
+    Db.query
+        db
+        "SELECT output, status FROM _sky_durable_runs WHERE id = ?"
+        [ SqlString id ]
         |> Task.map
-            (\rows ->
-                case List.head rows of
-                    Just row ->
-                        ( decodeReply (dictGet "output" row), dictGet "status" row )
+               (\rows ->
+                   case List.head rows of
 
-                    Nothing ->
-                        ( { reply = "", posted = "" }, "?" )
-            )
+                       Just row ->
+                           ( decodeReply (dictGet "output" row)
+                           , dictGet "status" row
+                           )
+
+                       Nothing ->
+                           ( { reply = "", posted = "" }, "?" ))
 
 
 decodeReply : String -> Reply
 decodeReply json =
     case Codec.fromJson replyCodec json of
+
         Ok r ->
             r
 
@@ -233,6 +257,7 @@ decodeReply json =
 dictGet : String -> Dict String String -> String
 dictGet key row =
     case Dict.get key row of
+
         Just v ->
             v
 
@@ -249,33 +274,32 @@ main : Task Error ()
 main =
     Db.connect ()
         |> Task.andThen
-            (\db ->
-                Durable.setup db
-                    |> Task.andThen (\_ -> Trace.setup db)
-                    |> Task.andThen
-                        (\_ ->
-                            Durable.start db
-                                botDef
-                                runKey
-                                { text = "hello there", channel = "C123", threadTs = "1700000000.000001" }
-                        )
-                    |> Task.andThen (\_ -> Durable.poll db [ Durable.erase botDef ])
-                    |> Task.andThen (\_ -> readRun db runKey)
-                    |> Task.andThen
-                        (\( reply, status ) ->
-                            Trace.totalCost db runKey
-                                |> Task.andThen
-                                    (\cost ->
-                                        println
-                                            ("slack reply="
-                                                ++ reply.reply
-                                                ++ " posted="
-                                                ++ reply.posted
-                                                ++ " cost="
-                                                ++ cost
-                                                ++ " status="
-                                                ++ status
-                                            )
-                                    )
-                        )
-            )
+               (\db ->
+                   Durable.setup db |> Task.andThen (\_ -> Trace.setup db)
+                       |> Task.andThen
+                              (\_ ->
+                                  Durable.start
+                                      db
+                                      botDef
+                                      runKey
+                                      { text = "hello there"
+                                      , channel = "C123"
+                                      , threadTs = "1700000000.000001"
+                                      })
+                       |> Task.andThen
+                              (\_ -> Durable.poll db [ Durable.erase botDef ])
+                       |> Task.andThen (\_ -> readRun db runKey)
+                       |> Task.andThen
+                              (\( reply, status ) ->
+                                  Trace.totalCost db runKey
+                                      |> Task.andThen
+                                             (\cost ->
+                                                 println
+                                                     ("slack reply="
+                                                         ++ reply.reply
+                                                         ++ " posted="
+                                                         ++ reply.posted
+                                                         ++ " cost="
+                                                         ++ cost
+                                                         ++ " status="
+                                                         ++ status))))

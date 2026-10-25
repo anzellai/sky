@@ -5,11 +5,16 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
-type alias Person = { name : String, age : Int }
+type alias Person =
+    { name : String
+    , age : Int
+    }
+
 
 greet : Person -> String
 greet p =
     p.name
+
 
 main =
     println (greet { name = "Ann" })

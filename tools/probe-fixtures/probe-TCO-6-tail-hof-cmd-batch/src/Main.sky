@@ -4,7 +4,6 @@ import Sky.Core.Prelude exposing (..)
 import Std.Cmd as Cmd
 import Std.Log exposing (println)
 
-
 type Msg
     = Tick
 
@@ -17,6 +16,7 @@ seed =
 build : Int -> Cmd msg -> Cmd msg
 build n acc =
     case n of
+
         0 ->
             acc
 
@@ -26,7 +26,6 @@ build n acc =
 
 main =
     let
-        _ =
-            build 3 seed
+        _ = build 3 seed
     in
-    println "ok"
+        println "ok"

@@ -4699,10 +4699,27 @@ impl<'a> Ctx<'a> {
         // (`Ok (m :: ms)` in a `Result Error (List Msg)` slot). Narrow exactly
         // that case to the payload type; every argument that already compiled
         // (typed, or a payload of `any`) is passed through unchanged.
+        //
+        // The same holds for an argument whose Go type is the payload's own
+        // generic type at an ERASED instantiation. A call to a polymorphic Sky
+        // def returning a parametric record alias (`action : String -> msg ->
+        // Action msg`) has the def's declared Go return, `Lib_Action_R[any]`,
+        // because a top-level def's type variables erase (doc 14 R12), while the
+        // payload is monomorphised from the checked type to
+        // `Lib_Action_R[Main_Msg]`. Go converts neither way, so `Just (Lib.action
+        // "Edit" Noop)` passed `sky check` and failed `go build` (v0.27.16). The
+        // argument is lowered at `any` here (not at the payload slot, see
+        // `builtin_container_fn_field_gotys`), so the narrowing every other slot
+        // gets from `lower_expr` never ran. Narrow it as a list element is.
         let narrow_payload = |this: &mut Self, args: Vec<GoExpr>, payload: Option<&GoTy>| {
             args.into_iter()
                 .map(|a| match payload {
-                    Some(p) if a.ty == GoTy::Any && *p != GoTy::Any => this.coerce_if_needed(a, p),
+                    Some(p)
+                        if *p != GoTy::Any
+                            && (a.ty == GoTy::Any || erased_instance_of(&a.ty, p)) =>
+                    {
+                        this.coerce_if_needed(a, p)
+                    }
                     _ => a,
                 })
                 .collect::<Vec<_>>()
@@ -9256,6 +9273,34 @@ fn and_opt(a: Option<GoExpr>, b: Option<GoExpr>) -> Option<GoExpr> {
 /// The builtin container / bool constructors, which route through
 /// `rt.SkyResult` / `rt.SkyMaybe` / `bool` rather than a user nominal — never
 /// sealed-ADT variant dispatch.
+/// Whether `from` is `to` at an ERASED instantiation: the same Go type
+/// constructor all the way down, differing only where `from` holds `any` and
+/// `to` a concrete type (`Lib_Action_R[any]` against `Lib_Action_R[Main_Msg]`,
+/// `rt.SkyList[Pair_R[any, any]]` against `rt.SkyList[Pair_R[string, Msg]]`).
+///
+/// Go assigns neither way between two such types, so a value of the first in a
+/// slot of the second is a `go build` error unless it is narrowed. Both shapes
+/// are `GoTy`s in hand at emit time (doc 14 §1). A top-level `any` (`from ==
+/// Any`) is NOT counted here: callers already treat a bare `any` source as the
+/// ordinary narrowing it is.
+fn erased_instance_of(from: &GoTy, to: &GoTy) -> bool {
+    fn agrees(f: &GoTy, t: &GoTy) -> bool {
+        base::ensure_stack(|| match (f, t) {
+            (GoTy::Any, _) => true,
+            (GoTy::Named(a, xs), GoTy::Named(b, ys)) => {
+                a == b && xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| agrees(x, y))
+            }
+            (GoTy::Slice(a), GoTy::Slice(b)) => agrees(a, b),
+            (GoTy::Map(ka, va), GoTy::Map(kb, vb)) => agrees(ka, kb) && agrees(va, vb),
+            (GoTy::Tuple(xs), GoTy::Tuple(ys)) => {
+                xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| agrees(x, y))
+            }
+            _ => f == t,
+        })
+    }
+    from != to && *from != GoTy::Any && agrees(from, to)
+}
+
 fn is_builtin_ctor(cname: &str) -> bool {
     matches!(cname, "Ok" | "Err" | "Just" | "Nothing" | "True" | "False")
 }

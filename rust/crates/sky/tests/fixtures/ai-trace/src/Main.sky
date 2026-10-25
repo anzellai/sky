@@ -28,6 +28,7 @@ import Std.Ai.Trace as Trace
 book : Provider.PriceBook
 book =
     case Provider.priceBook Money.USD "0.15" "0.60" of
+
         Ok b ->
             b
 
@@ -50,17 +51,34 @@ main : Task Error ()
 main =
     Db.connect ()
         |> Task.andThen
-            (\db ->
-                Trace.setup db
-                    |> Task.andThen (\_ -> Trace.record db (Trace.forResponse "run-1" "gpt-4o-mini" book (response 1000 1000)))
-                    |> Task.andThen (\_ -> Trace.record db (Trace.forResponse "run-1" "gpt-4o-mini" book (response 2000 0)))
-                    |> Task.andThen (\_ -> Trace.spanCount db "run-1")
-                    |> Task.andThen
-                        (\spans ->
-                            Trace.totalCost db "run-1"
-                                |> Task.andThen
-                                    (\total ->
-                                        println ("trace spans=" ++ String.fromInt spans ++ " total=" ++ total)
-                                    )
-                        )
-            )
+               (\db ->
+                   Trace.setup db
+                       |> Task.andThen
+                              (\_ ->
+                                  Trace.record
+                                      db
+                                      (Trace.forResponse
+                                          "run-1"
+                                          "gpt-4o-mini"
+                                          book
+                                          (response 1000 1000)))
+                       |> Task.andThen
+                              (\_ ->
+                                  Trace.record
+                                      db
+                                      (Trace.forResponse
+                                          "run-1"
+                                          "gpt-4o-mini"
+                                          book
+                                          (response 2000 0)))
+                       |> Task.andThen (\_ -> Trace.spanCount db "run-1")
+                       |> Task.andThen
+                              (\spans ->
+                                  Trace.totalCost db "run-1"
+                                      |> Task.andThen
+                                             (\total ->
+                                                 println
+                                                     ("trace spans="
+                                                         ++ String.fromInt spans
+                                                         ++ " total="
+                                                         ++ total))))

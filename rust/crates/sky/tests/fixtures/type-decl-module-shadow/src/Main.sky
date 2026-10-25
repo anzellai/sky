@@ -15,8 +15,7 @@ brain =
                 { content = "hi"
                 , usage =
                     { promptTokens = 0, completionTokens = 0, totalTokens = 0 }
-                }
-        )
+                })
 
 
 state : Turn
@@ -30,10 +29,9 @@ main =
                (\r ->
                    println
                        (case state of
+
                            Idle ->
                                r.content
 
                            Busy s ->
-                               r.content ++ " " ++ s
-                       )
-               )
+                               r.content ++ " " ++ s))

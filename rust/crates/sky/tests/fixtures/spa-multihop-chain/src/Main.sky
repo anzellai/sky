@@ -28,7 +28,6 @@ import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Html exposing (Html)
 
-
 type alias Model =
     { busy : Bool
     , c : String
@@ -36,7 +35,6 @@ type alias Model =
     , b : String
     , untouched : Int
     }
-
 
 type Msg
     = Kick String
@@ -57,14 +55,12 @@ fetchThing _ =
 
 saveA : String -> Task Error String
 saveA v =
-    File.writeFile "a.txt" v
-        |> Task.map (\_ -> v)
+    File.writeFile "a.txt" v |> Task.map (\_ -> v)
 
 
 logB : String -> Task Error String
 logB v =
-    File.writeFile "b.txt" v
-        |> Task.map (\_ -> v)
+    File.writeFile "b.txt" v |> Task.map (\_ -> v)
 
 
 -- The continuation delegates to THIS helper, which returns `( model, cmd )` with
@@ -74,24 +70,20 @@ logB v =
 record : String -> Model -> ( Model, Cmd Msg )
 record v model =
     let
-        _ =
-            File.readFile "audit.txt"
+        _ = File.readFile "audit.txt"
     in
-    ( { model | c = v }
-    , Cmd.batch
-        [ Cmd.perform (saveA v) SavedA
-        , Cmd.perform (logB v) LoggedB
-        ]
-    )
+        ( { model | c = v }
+        , Cmd.batch
+              [ Cmd.perform (saveA v) SavedA, Cmd.perform (logB v) LoggedB ]
+        )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Kick x ->
-            ( { model | busy = True }
-            , Cmd.perform (fetchThing x) Fetched
-            )
+            ( { model | busy = True }, Cmd.perform (fetchThing x) Fetched )
 
         Fetched (Ok v) ->
             record v model
@@ -101,17 +93,15 @@ update msg model =
 
         SavedA _ ->
             let
-                _ =
-                    Log.println "[a] saved"
+                _ = Log.println "[a] saved"
             in
-            ( { model | a = "saved" }, Cmd.none )
+                ( { model | a = "saved" }, Cmd.none )
 
         LoggedB _ ->
             let
-                _ =
-                    Log.println "[b] logged"
+                _ = Log.println "[b] logged"
             in
-            ( { model | b = "logged" }, Cmd.none )
+                ( { model | b = "logged" }, Cmd.none )
 
 
 view : Model -> Html Msg
@@ -124,10 +114,15 @@ view model =
             , Ui.text ("a=" ++ model.a)
             , Ui.text ("b=" ++ model.b)
             , Ui.text ("untouched=" ++ String.fromInt model.untouched)
-            , Ui.text ("busy=" ++ (if model.busy then "yes" else "no"))
+            , Ui.text
+                  ("busy="
+                      ++ (if model.busy then
+                             "yes"
+
+                         else
+                             "no"))
             , Ui.el [ Ui.onClick (Kick "payload") ] (Ui.text "Kick")
-            ]
-        )
+            ])
 
 
 subscriptions : Model -> Sub Msg
@@ -143,5 +138,4 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            }
-        )
+            })

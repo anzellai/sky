@@ -32,10 +32,10 @@ mode : String
 mode =
     System.getenvOr "MODE" "dev"
 
-
 type alias Model =
-    { count : Int, note : String }
-
+    { count : Int
+    , note : String
+    }
 
 type Msg
     = Inc
@@ -52,6 +52,7 @@ init _ =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Inc ->
             ( { model | count = model.count + 1 }, Cmd.none )
 
@@ -67,15 +68,18 @@ update msg model =
 
 view : Model -> any
 view model =
-    Ui.layout []
-        (Ui.column [ Ui.spacing 8, Ui.padding 12 ]
-            [ Ui.el [ Ev.onClick Inc ] (Ui.text ("count " ++ String.fromInt model.count))
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8, Ui.padding 12 ]
+            [ Ui.el
+                  [ Ev.onClick Inc ]
+                  (Ui.text ("count " ++ String.fromInt model.count))
             , Ui.el [ Ev.onClick (AddN 5) ] (Ui.text "add 5")
             , Ui.el [ Ev.onClick UseBoot ] (Ui.text "use boot")
             , Ui.el [ Ev.onClick UseMode ] (Ui.text "use mode")
             , Ui.el [] (Ui.text model.note)
-            ]
-        )
+            ])
 
 
 subscriptions : Model -> Sub Msg
@@ -91,5 +95,4 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            }
-        )
+            })

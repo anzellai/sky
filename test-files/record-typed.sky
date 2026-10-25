@@ -6,7 +6,9 @@ import Std.Log exposing (println)
 import Sky.Core.Error as Error exposing (Error)
 
 type alias Person =
-    { name : String, age : Int }
+    { name : String
+    , age : Int
+    }
 
 
 greetPerson person =

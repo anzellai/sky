@@ -138,6 +138,35 @@ pub fn roundtrip(ctx: &GateCtx) -> GateOutcome {
     }
 }
 
+/// `xtask sky-fmt-check`: every tracked `.sky` / `.skyi` outside the
+/// reasoned exclusion list parses and is `sky fmt` clean (v0.27.16).
+pub fn sky_fmt_check(ctx: &GateCtx) -> GateOutcome {
+    let r = match crate::sky_fmt_check::scan(&ctx.repo_root) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    let mut bad: Vec<&str> = r.unformatted.iter().map(String::as_str).collect();
+    bad.extend(r.unparsable.iter().map(String::as_str));
+    bad.extend(r.bad_exclusions.iter().map(String::as_str));
+    GateOutcome::new(
+        r.ok(),
+        r.passed(),
+        if r.ok() {
+            format!(
+                "{} files formatted, {} excluded with a reason",
+                r.checked, r.excluded
+            )
+        } else {
+            format!(
+                "{} checked (floor {}): {}",
+                r.checked,
+                crate::sky_fmt_check::MIN_FILES,
+                preview(&bad)
+            )
+        },
+    )
+}
+
 pub fn reject(ctx: &GateCtx) -> GateOutcome {
     let rows = match crate::reject_gate::scan(&ctx.repo_root) {
         Ok(r) => r,
@@ -780,7 +809,12 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// `list_import`). A fold's
 /// anonymous-record accumulator was narrowed to the element's named record;
 /// see `corpus/lang_shapes.rs`.
-pub const CORPUS_EXPECTED: u64 = 712;
+///
+/// **744 since the v0.27.16 `generic_alias_slot` stratum** (+32, Family L:
+/// 8 `ga_slot` x 2 `ga_params` x 2 `ga_site`). A generic record-alias
+/// constructor's erased Go return reached a `Just` / `Ok` / `Err` payload
+/// unnarrowed; see `corpus/lang_shapes.rs`.
+pub const CORPUS_EXPECTED: u64 = 744;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -822,7 +856,10 @@ pub const CORPUS_EXPECTED: u64 = 712;
 ///
 /// **566 since the v0.27.14 `lambda_record_param` stratum** (+32, all built
 /// and run; the same +32 as `CORPUS_EXPECTED`).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 566;
+///
+/// **598 since the v0.27.16 `generic_alias_slot` stratum** (+32, all built
+/// and run; the same +32 as `CORPUS_EXPECTED`).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 598;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
@@ -2865,7 +2902,19 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 ///   `tests/conformance` to stay the sole Sky importer of `Sky.Core.Set`.
 ///
 /// 669 + 26 = 695.
-pub const SKY_SUITES_EXPECTED: u64 = 695;
+///
+/// 695 -> 879 (v0.27.16):
+///
+/// * `Std/UiTaggedNodeTest` (+28) — `Ui.TaggedNode` renders a plain tag name as
+///   itself and refuses script, embedding, foreign-root, table-internal and
+///   void tags.
+/// * `Std/UiParserSafeNestingTest` (+156) — the container x child matrix grows
+///   from 12 x 22 to 15 x 28 (list item, description term and details
+///   containers; details, list, list item, description, fieldset and custom
+///   element children).
+///
+/// 695 + 28 + 156 = 879.
+pub const SKY_SUITES_EXPECTED: u64 = 879;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.

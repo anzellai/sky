@@ -11,9 +11,11 @@ import Std.Log exposing (println)
 type alias P =
     { name : String }
 
+
 p : P
 p =
     { name = "a", age = 5 }
+
 
 main =
     println p.name

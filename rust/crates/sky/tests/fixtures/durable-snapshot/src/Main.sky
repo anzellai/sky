@@ -24,9 +24,10 @@ import Std.Db as Db exposing (Db)
 import Std.Codec as Codec exposing (Codec)
 import Std.Durable as Durable
 
-
 type alias Model =
-    { count : Int, label : String }
+    { count : Int
+    , label : String
+    }
 
 
 modelCodec : Codec Model
@@ -43,6 +44,7 @@ tick m =
 orDefault : Maybe Model -> Model
 orDefault maybe =
     case maybe of
+
         Just m ->
             m
 
@@ -54,46 +56,90 @@ main : Task Error ()
 main =
     Db.connect ()
         |> Task.andThen
-            (\db ->
-                Durable.setup db
-                    -- Phase 1: three updates, snapshot each (seq 1,2,3).
-                    |> Task.andThen (\_ -> Durable.saveSnapshot db "app" modelCodec 1 { count = 1, label = "a" })
-                    |> Task.andThen (\_ -> Durable.saveSnapshot db "app" modelCodec 2 { count = 2, label = "a" })
-                    |> Task.andThen (\_ -> Durable.saveSnapshot db "app" modelCodec 3 { count = 3, label = "a" })
-                    -- Simulate a restart: restore the model from the database.
-                    |> Task.andThen (\_ -> Durable.loadSnapshot db "app" modelCodec)
-                    |> Task.andThen
-                        (\restoredMaybe ->
-                            let
-                                restored =
-                                    orDefault restoredMaybe
-
-                                -- continue from the restored model: two more ticks
-                                m4 =
-                                    tick restored
-
-                                m5 =
-                                    tick m4
-                            in
-                            Durable.saveSnapshot db "app" modelCodec 4 m4
-                                |> Task.andThen (\_ -> Durable.saveSnapshot db "app" modelCodec 5 m5)
-                                -- a STALE write (lower seq) must be ignored
-                                |> Task.andThen (\_ -> Durable.saveSnapshot db "app" modelCodec 2 { count = 99, label = "stale" })
-                                |> Task.andThen (\_ -> Durable.loadSnapshot db "app" modelCodec)
-                                |> Task.andThen
-                                    (\finalMaybe ->
-                                        let
-                                            final =
-                                                orDefault finalMaybe
-                                        in
-                                        println
-                                            ("snapshot restored="
-                                                ++ String.fromInt restored.count
-                                                ++ " final="
-                                                ++ String.fromInt final.count
-                                                ++ " stale_ignored="
-                                                ++ String.fromInt final.count
-                                            )
-                                    )
-                        )
-            )
+               (\db ->
+                   Durable.setup db
+                       |> Task.andThen
+                              (\_ ->
+                                  -- Phase 1: three updates, snapshot each (seq 1,2,3).
+                                  Durable.saveSnapshot
+                                      db
+                                      "app"
+                                      modelCodec
+                                      1
+                                      { count = 1, label = "a" })
+                       |> Task.andThen
+                              (\_ ->
+                                  Durable.saveSnapshot
+                                      db
+                                      "app"
+                                      modelCodec
+                                      2
+                                      { count = 2, label = "a" })
+                       |> Task.andThen
+                              (\_ ->
+                                  Durable.saveSnapshot
+                                      db
+                                      "app"
+                                      modelCodec
+                                      3
+                                      { count = 3, label = "a" })
+                       |> Task.andThen
+                              (\_ ->
+                                  -- Simulate a restart: restore the model from the database.
+                                  Durable.loadSnapshot db "app" modelCodec)
+                       |> Task.andThen
+                              (\restoredMaybe ->
+                                  let
+                                      restored = orDefault restoredMaybe
+                                      m4 = tick restored
+                                      m5 = tick m4
+                                  in
+                                      Durable.saveSnapshot
+                                          db
+                                          "app"
+                                          modelCodec
+                                          4
+                                          m4
+                                          |> Task.andThen
+                                                 (\_ ->
+                                                     -- continue from the restored model: two more ticks
+                                                     Durable.saveSnapshot
+                                                         db
+                                                         "app"
+                                                         modelCodec
+                                                         5
+                                                         m5)
+                                          |> Task.andThen
+                                                 (\_ ->
+                                                     -- a STALE write (lower seq) must be ignored
+                                                     Durable.saveSnapshot
+                                                         db
+                                                         "app"
+                                                         modelCodec
+                                                         2
+                                                         { count = 99
+                                                         , label = "stale"
+                                                         })
+                                          |> Task.andThen
+                                                 (\_ ->
+                                                     Durable.loadSnapshot
+                                                         db
+                                                         "app"
+                                                         modelCodec)
+                                          |> Task.andThen
+                                                 (\finalMaybe ->
+                                                     let
+                                                         final =
+                                                             orDefault
+                                                                 finalMaybe
+                                                     in
+                                                         println
+                                                             ("snapshot restored="
+                                                                 ++ String.fromInt
+                                                                        restored.count
+                                                                 ++ " final="
+                                                                 ++ String.fromInt
+                                                                        final.count
+                                                                 ++ " stale_ignored="
+                                                                 ++ String.fromInt
+                                                                        final.count))))

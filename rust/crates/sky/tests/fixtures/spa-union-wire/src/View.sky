@@ -25,6 +25,7 @@ render model =
 label : Page -> String
 label page =
     case page of
+
         HomePage ->
             "home"
 

@@ -260,6 +260,26 @@ pub static GATES: &[Gate] = &[
         body: bodies::roundtrip,
     },
     Gate {
+        name: "sky-fmt-check",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 60,
+        expected: crate::sky_fmt_check::ASSERTIONS,
+        expect: Expect::Falsifiable,
+        summary: "every tracked .sky/.skyi is sky fmt clean, bar a reasoned exclusion list",
+        mutations: Mutations::new(&[Mutation {
+            id: "sky-fmt-check.drift",
+            description: "un-format one tracked Sky file; the formatted-files \
+                          assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "examples/01-hello-world/src/Main.sky",
+                from: "module Main exposing (main)",
+                to: "module Main exposing ( main )",
+            },
+        }]),
+        body: bodies::sky_fmt_check,
+    },
+    Gate {
         name: "reject",
         tier: Tier::T1,
         platforms: ALL_PLATFORMS,
@@ -476,9 +496,10 @@ pub static GATES: &[Gate] = &[
                 // 614 → 616), and the v0.27.7 adt_equality stratum (+60 cases,
                 // 616 → 676), and the v0.27.10 alias_ctor_collision stratum
                 // (+4 cases, 676 → 680), and the v0.27.14
-                // lambda_record_param stratum (+32 cases, 680 → 712).
-                from: "n_min = 712",
-                to: "n_min = 713",
+                // lambda_record_param stratum (+32 cases, 680 → 712), and the
+                // v0.27.16 generic_alias_slot stratum (+32 cases, 712 → 744).
+                from: "n_min = 744",
+                to: "n_min = 745",
             },
         }]),
         body: bodies::corpus_manifest,

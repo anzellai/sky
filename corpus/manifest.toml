@@ -17,15 +17,15 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 712
+n_min = 744
 n_iso = 61
 n_iso_ceiling = 62
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 711
+class_v = 743
 class_d = 1
 family_S = 170
-family_L = 397
+family_L = 429
 family_E = 10
 family_R = 135
 family_F = 0
@@ -7401,6 +7401,422 @@ axes       = { acc_pos = "second", anon_depth = "nested", anon_role = "elem", li
 coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
 expect     = "accept"
 stdout     = "42/2"
+
+[[case]]
+id         = "generic_alias_slot/one-inline-just"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "one", ga_site = "inline", ga_slot = "just" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/one-let_bound-just"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "one", ga_site = "let_bound", ga_slot = "just" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/two-inline-just"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "two", ga_site = "inline", ga_slot = "just" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/two-let_bound-just"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "two", ga_site = "let_bound", ga_slot = "just" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/one-inline-ok"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "one", ga_site = "inline", ga_slot = "ok" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/one-let_bound-ok"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "one", ga_site = "let_bound", ga_slot = "ok" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/two-inline-ok"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "two", ga_site = "inline", ga_slot = "ok" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/two-let_bound-ok"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "two", ga_site = "let_bound", ga_slot = "ok" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/one-inline-err"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "one", ga_site = "inline", ga_slot = "err" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/one-let_bound-err"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "one", ga_site = "let_bound", ga_slot = "err" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/two-inline-err"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "two", ga_site = "inline", ga_slot = "err" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/two-let_bound-err"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "two", ga_site = "let_bound", ga_slot = "err" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/one-inline-adt"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "one", ga_site = "inline", ga_slot = "adt" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/one-let_bound-adt"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "one", ga_site = "let_bound", ga_slot = "adt" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/two-inline-adt"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "two", ga_site = "inline", ga_slot = "adt" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/two-let_bound-adt"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "two", ga_site = "let_bound", ga_slot = "adt" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/one-inline-tuple"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "one", ga_site = "inline", ga_slot = "tuple" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/one-let_bound-tuple"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "one", ga_site = "let_bound", ga_slot = "tuple" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/two-inline-tuple"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "two", ga_site = "inline", ga_slot = "tuple" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/two-let_bound-tuple"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "two", ga_site = "let_bound", ga_slot = "tuple" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/one-inline-field"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "one", ga_site = "inline", ga_slot = "field" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/one-let_bound-field"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "one", ga_site = "let_bound", ga_slot = "field" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/two-inline-field"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "two", ga_site = "inline", ga_slot = "field" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/two-let_bound-field"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "two", ga_site = "let_bound", ga_slot = "field" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/one-inline-arg"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "one", ga_site = "inline", ga_slot = "arg" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/one-let_bound-arg"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "one", ga_site = "let_bound", ga_slot = "arg" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/two-inline-arg"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "two", ga_site = "inline", ga_slot = "arg" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/two-let_bound-arg"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "two", ga_site = "let_bound", ga_slot = "arg" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/one-inline-list"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "one", ga_site = "inline", ga_slot = "list" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/one-let_bound-list"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "one", ga_site = "let_bound", ga_slot = "list" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/two-inline-list"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "two", ga_site = "inline", ga_slot = "list" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
+
+[[case]]
+id         = "generic_alias_slot/two-let_bound-list"
+family     = "L"
+stratum    = "generic_alias_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { ga_params = "two", ga_site = "let_bound", ga_slot = "list" }
+coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
+expect     = "accept"
+stdout     = "42:Go"
 
 [[case]]
 id         = "reject_matrix/arity_over-plain-bare"

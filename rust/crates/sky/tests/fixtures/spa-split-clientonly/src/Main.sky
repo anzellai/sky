@@ -17,10 +17,8 @@ import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Html exposing (Html)
 
-
 type alias Model =
     { n : Int }
-
 
 type Msg
     = Bump
@@ -35,6 +33,7 @@ init _ =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Bump ->
             ( { model | n = model.n + 1 }, Cmd.none )
 
@@ -44,13 +43,14 @@ update msg model =
 
 view : Model -> Html Msg
 view model =
-    Ui.layout []
-        (Ui.column [ Ui.spacing 8 ]
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
             [ Ui.text ("n = " ++ String.fromInt model.n)
             , Ui.button [] { onPress = Just Bump, label = Ui.text "Bump" }
             , Ui.button [] { onPress = Just Reset, label = Ui.text "Reset" }
-            ]
-        )
+            ])
 
 
 subscriptions : Model -> Sub Msg
@@ -66,5 +66,4 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            }
-        )
+            })

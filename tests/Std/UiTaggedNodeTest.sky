@@ -1,0 +1,168 @@
+module Std.UiTaggedNodeTest exposing (tests)
+
+-- `Ui.TaggedNode tag` renders `tag` (v0.27.16).
+--
+-- THE BUG. `dispatchTag` in Std.Ui mapped a fixed list of tags to their
+-- Std.Html constructors and sent every other tag to `Html.div`, silently.
+-- `Ui.TaggedNode "details" Ui.NoDescription [] [ Ui.TaggedNode "summary" … ]`
+-- rendered `<div><div>More</div>…</div>`, so the disclosure widget never
+-- appeared, on the server render and after hydration alike.
+--
+-- THE RULE. A plain tag name (a lowercase letter, then lowercase letters,
+-- digits or `-`) renders as itself through `Html.node`. A tag that runs, loads
+-- or embeds content, a foreign root (svg, math), a document-level or raw-text
+-- tag, a table or select internal and the void tags are refused and render as
+-- a `<div>`, so Std.Ui still emits no script and no embedded document. A tag
+-- that is not a plain name renders as a `<div>` too.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Html as Html
+import Std.Ui as Ui exposing (Element)
+import Sky.Test as Test exposing (Test)
+
+type Msg
+    = Noop
+
+
+render : Element Msg -> String
+render el =
+    Html.render (Ui.layout [] el)
+
+
+tagged : String -> Element Msg
+tagged tag =
+    Ui.TaggedNode tag Ui.NoDescription [] [ Ui.text "body" ]
+
+
+details : Element Msg
+details =
+    Ui.TaggedNode
+        "details"
+        Ui.NoDescription
+        []
+        [ Ui.TaggedNode "summary" Ui.NoDescription [] [ Ui.text "More" ]
+        , Ui.text "Hidden until opened"
+        ]
+
+
+-- The markup holds an element named `tag`: `<tag ` or `<tag>`.
+hasElement : String -> String -> Bool
+hasElement tag markup =
+    String.contains ("<" ++ tag ++ " ") markup
+        || String.contains ("<" ++ tag ++ ">") markup
+
+
+-- `tag` renders exactly as a `<div>` would. (Comparing whole markup, not
+-- searching for `<style`, because `Ui.layout` itself emits a `<style>`.)
+rendersAsDiv : String -> Bool
+rendersAsDiv tag =
+    render (tagged tag) == render (tagged "div")
+
+
+refused : List String
+refused =
+    [ "script"
+    , "style"
+    , "iframe"
+    , "object"
+    , "embed"
+    , "template"
+    , "base"
+    , "link"
+    , "meta"
+    , "noscript"
+    , "frame"
+    , "frameset"
+    , "svg"
+    , "math"
+    , "video"
+    , "audio"
+    , "table"
+    , "tr"
+    , "td"
+    , "title"
+    , "br"
+    ]
+
+
+refusedTests : List Test
+refusedTests =
+    List.map
+        (\tag ->
+            Test.test
+                ("TaggedNode \"" ++ tag ++ "\" renders no <" ++ tag
+                    ++ "> element")
+                (\_ -> Test.isTrue (rendersAsDiv tag)))
+        refused
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "Std.Ui TaggedNode renders its tag"
+          ([ Test.test
+                "TaggedNode \"details\" renders a <details> element"
+                (\_ -> Test.isTrue (hasElement "details" (render details)))
+          , Test.test
+                "its TaggedNode \"summary\" child stays a <summary>"
+                (\_ -> Test.isTrue (hasElement "summary" (render details)))
+          , Test.test
+                "the details element keeps its other content"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains "Hidden until opened" (render details)))
+          , Test.test
+                "dialog, fieldset and a custom element render as themselves"
+                (\_ ->
+                    Test.isTrue
+                        (hasElement "dialog" (render (tagged "dialog"))
+                            && hasElement
+                                   "fieldset"
+                                   (render (tagged "fieldset"))
+                            && hasElement "x-card" (render (tagged "x-card"))
+                            && not (rendersAsDiv "dialog")))
+          , Test.test
+                "a tag that is not a plain lowercase name renders as a <div>"
+                (\_ ->
+                    Test.isTrue
+                        (List.all
+                            rendersAsDiv
+                            [ "Details"
+                            , "a onclick=x"
+                            , "x\""
+                            , ""
+                            , "1x"
+                            , "x>y"
+                            , "-x"
+                            ]))
+          , Test.test
+                "an <li> inside an <li> renders as a <div> with the listitem role"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "role=\"listitem\""
+                            (render
+                                (Ui.TaggedNode
+                                    "li"
+                                    Ui.NoDescription
+                                    []
+                                    [ Ui.TaggedNode
+                                          "li"
+                                          Ui.NoDescription
+                                          []
+                                          [ Ui.text "x" ]
+                                    ]))))
+          , Test.test
+                "a <details> inside a paragraph renders as a <span>"
+                (\_ ->
+                    Test.isTrue
+                        (not
+                            (hasElement
+                                "details"
+                                (render
+                                    (Ui.paragraph [] [ Ui.text "a ", details ])))))
+          ]
+              ++ refusedTests)
+    ]

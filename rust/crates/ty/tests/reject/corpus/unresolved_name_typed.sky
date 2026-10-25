@@ -14,9 +14,11 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
+
 answer : Int
 answer =
     nosuchbinding + 1
+
 
 main =
     println (String.fromInt answer)

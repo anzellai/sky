@@ -4,11 +4,8 @@ import Sky.Core.Prelude exposing (..)
 import Std.Cmd as Cmd
 import Std.Log exposing (println)
 
-
 type alias Model =
-    { count : Int
-    }
-
+    { count : Int }
 
 type Msg
     = Tick
@@ -21,7 +18,6 @@ init _ =
 
 main =
     let
-        ( model, _ ) =
-            init ()
+        ( model, _ ) = init ()
     in
-    println ("count=" ++ String.fromInt model.count)
+        println ("count=" ++ String.fromInt model.count)

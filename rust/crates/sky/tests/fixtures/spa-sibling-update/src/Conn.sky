@@ -12,7 +12,8 @@ import Std.Db as Db
 
 db : Db.Db
 db =
-    case Task.run (Db.open "sqlite" (System.getenvOr "SIBLING_DB_PATH" "app.db")) of
+    case Task.run
+             (Db.open "sqlite" (System.getenvOr "SIBLING_DB_PATH" "app.db")) of
 
         Ok c ->
             c

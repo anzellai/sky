@@ -46,6 +46,7 @@ recordTool =
 recordExec : String -> Task Error String
 recordExec args =
     case db of
+
         Ok conn ->
             Db.exec conn "INSERT INTO records (v) VALUES (?)" [ SqlString args ]
                 |> Task.map (\_ -> "recorded: " ++ args)
@@ -63,24 +64,28 @@ countAndStatus : Db -> String -> Task Error ( Int, String )
 countAndStatus conn id =
     Db.query conn "SELECT COUNT(*) AS n FROM records" []
         |> Task.andThen
-            (\rows ->
-                Db.query conn "SELECT status FROM _sky_durable_runs WHERE id = ?" [ SqlString id ]
-                    |> Task.map
-                        (\statusRows ->
-                            ( intOf "n" (List.head rows)
-                            , strOf "status" (List.head statusRows)
-                            )
-                        )
-            )
+               (\rows ->
+                   Db.query
+                       conn
+                       "SELECT status FROM _sky_durable_runs WHERE id = ?"
+                       [ SqlString id ]
+                       |> Task.map
+                              (\statusRows ->
+                                  ( intOf "n" (List.head rows)
+                                  , strOf "status" (List.head statusRows)
+                                  )))
 
 
 intOf : String -> Maybe (Dict String String) -> Int
 intOf key row =
     case row of
+
         Just r ->
             case Dict.get key r of
+
                 Just v ->
                     case String.toInt v of
+
                         Just n ->
                             n
 
@@ -97,8 +102,10 @@ intOf key row =
 strOf : String -> Maybe (Dict String String) -> String
 strOf key row =
     case row of
+
         Just r ->
             case Dict.get key r of
+
                 Just v ->
                     v
 
@@ -112,16 +119,26 @@ strOf key row =
 main : Task Error ()
 main =
     case db of
+
         Err _ ->
             println "db error"
 
         Ok conn ->
             Db.execRaw conn "CREATE TABLE IF NOT EXISTS records (v TEXT)"
                 |> Task.andThen (\_ -> Durable.setup conn)
-                |> Task.andThen (\_ -> Durable.start conn agentDef "run-1" { messages = [ Provider.user "do it" ] })
-                |> Task.andThen (\_ -> Durable.poll conn [ Durable.erase agentDef ])
+                |> Task.andThen
+                       (\_ ->
+                           Durable.start
+                               conn
+                               agentDef
+                               "run-1"
+                               { messages = [ Provider.user "do it" ] })
+                |> Task.andThen
+                       (\_ -> Durable.poll conn [ Durable.erase agentDef ])
                 |> Task.andThen (\_ -> countAndStatus conn "run-1")
                 |> Task.andThen
-                    (\( cnt, status ) ->
-                        println ("tools records=" ++ String.fromInt cnt ++ " status=" ++ status)
-                    )
+                       (\( cnt, status ) ->
+                           println
+                               ("tools records=" ++ String.fromInt cnt
+                                   ++ " status="
+                                   ++ status))

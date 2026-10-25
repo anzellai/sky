@@ -35,18 +35,11 @@
 --       sibling-call codegen bug.  Without the IIFE depth,
 --       the bug doesn't fire.
 -- ═══════════════════════════════════════════════════════════
-module Widget.Form exposing
-    ( Setup
-    , Payload
-    , view
-    , render
-    )
-
+module Widget.Form exposing (Setup, Payload, view, render)
 
 import Sky.Core.Prelude exposing (..)
 import Std.Ui as Ui exposing (Element)
 import Std.Html as Html
-
 
 -- L4 — parametric record alias with MIXED field types:
 -- a `_ -> msg` callback PLUS two bare `msg` fields.  This
@@ -63,7 +56,6 @@ type alias Setup msg =
     , wfLabel : String
     , wfBusy : Bool
     }
-
 
 type alias Payload =
     { wfPath : String
@@ -83,17 +75,14 @@ view cfg =
         check = cfg.wfCheck
         dismiss = cfg.wfDismiss
     in
-    Ui.column
-        [ Ui.spacing 8 ]
-        [ Ui.row
-              [ Ui.spacing 4 ]
-              [ Ui.text cfg.wfLabel
-              , body cfg
-              , toolbar cfg check
-              ]
-        , footer cfg dismiss
-        , submitProbe cfg submit
-        ]
+        Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.row
+                  [ Ui.spacing 4 ]
+                  [ Ui.text cfg.wfLabel, body cfg, toolbar cfg check ]
+            , footer cfg dismiss
+            , submitProbe cfg submit
+            ]
 
 
 -- L8 — passing a let-bound FUNC-typed field-access to a SAME-
@@ -125,7 +114,13 @@ submitProbe cfg _onSubmit =
 -- L1, L6 — sibling polymorphic helper returning Element msg.
 body : Setup msg -> Element msg
 body cfg =
-    Ui.text ("busy=" ++ (if cfg.wfBusy then "y" else "n"))
+    Ui.text
+        ("busy="
+            ++ (if cfg.wfBusy then
+                   "y"
+
+               else
+                   "n"))
 
 
 -- L3, L6 — same msg variable in TWO positions: `Setup msg`

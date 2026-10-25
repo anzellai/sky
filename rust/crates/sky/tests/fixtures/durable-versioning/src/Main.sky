@@ -47,12 +47,18 @@ v1Body ctx input =
 -- v2: same name, different version. Never actually advances a v1-stamped run.
 v2 : Durable.WorkflowDef String String
 v2 =
-    Durable.registerVersioned "wf" "2" strCodec strCodec (\_ _ -> Task.succeed "v2")
+    Durable.registerVersioned
+        "wf"
+        "2"
+        strCodec
+        strCodec
+        (\_ _ -> Task.succeed "v2")
 
 
 dictGet : String -> Dict String String -> String
 dictGet key row =
     case Dict.get key row of
+
         Just v ->
             v
 
@@ -62,16 +68,19 @@ dictGet key row =
 
 statusOf : Db -> String -> Task Error String
 statusOf db id =
-    Db.query db "SELECT status FROM _sky_durable_runs WHERE id = ?" [ SqlString id ]
+    Db.query
+        db
+        "SELECT status FROM _sky_durable_runs WHERE id = ?"
+        [ SqlString id ]
         |> Task.map
-            (\rows ->
-                case List.head rows of
-                    Just row ->
-                        dictGet "status" row
+               (\rows ->
+                   case List.head rows of
 
-                    Nothing ->
-                        "?"
-            )
+                       Just row ->
+                           dictGet "status" row
+
+                       Nothing ->
+                           "?")
 
 
 -- Start a v1 run and poll it (with the v1 def) so it suspends at `sleep 0`.
@@ -86,21 +95,35 @@ main : Task Error ()
 main =
     Db.connect ()
         |> Task.andThen
-            (\db ->
-                Durable.setup db
-                    -- FailSafe scenario
-                    |> Task.andThen (\_ -> startAndSuspend db "r-fail")
-                    |> Task.andThen (\_ -> Durable.pollWith db Durable.FailSafe [ Durable.erase v2 ])
-                    |> Task.andThen (\_ -> statusOf db "r-fail")
-                    |> Task.andThen
-                        (\failStatus ->
-                            -- PinToStart scenario
-                            startAndSuspend db "r-pin"
-                                |> Task.andThen (\_ -> Durable.pollWith db Durable.PinToStart [ Durable.erase v2 ])
-                                |> Task.andThen (\_ -> statusOf db "r-pin")
-                                |> Task.andThen
-                                    (\pinStatus ->
-                                        println ("versioning failsafe=" ++ failStatus ++ " pintostart=" ++ pinStatus)
-                                    )
-                        )
-            )
+               (\db ->
+                   Durable.setup db
+                       |> Task.andThen
+                              (\_ ->
+                                  -- FailSafe scenario
+                                  startAndSuspend db "r-fail")
+                       |> Task.andThen
+                              (\_ ->
+                                  Durable.pollWith
+                                      db
+                                      Durable.FailSafe
+                                      [ Durable.erase v2 ])
+                       |> Task.andThen (\_ -> statusOf db "r-fail")
+                       |> Task.andThen
+                              (\failStatus ->
+                                  -- PinToStart scenario
+                                  startAndSuspend db "r-pin"
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Durable.pollWith
+                                                     db
+                                                     Durable.PinToStart
+                                                     [ Durable.erase v2 ])
+                                      |> Task.andThen
+                                             (\_ -> statusOf db "r-pin")
+                                      |> Task.andThen
+                                             (\pinStatus ->
+                                                 println
+                                                     ("versioning failsafe="
+                                                         ++ failStatus
+                                                         ++ " pintostart="
+                                                         ++ pinStatus))))

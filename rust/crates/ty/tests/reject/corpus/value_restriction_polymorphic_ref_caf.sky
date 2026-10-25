@@ -26,6 +26,7 @@ shared =
 writeInts : Task Error ()
 writeInts =
     case shared of
+
         Ok r ->
             Sync.set [ 1, 2, 3 ] r
 
@@ -36,8 +37,12 @@ writeInts =
 readNames : Task Error String
 readNames =
     case shared of
+
         Ok r ->
-            Sync.get r |> Task.map (\xs -> String.join "," (List.map (\x -> x.name ++ "!") xs))
+            Sync.get r
+                |> Task.map
+                       (\xs ->
+                           String.join "," (List.map (\x -> x.name ++ "!") xs))
 
         Err e ->
             Task.fail e
@@ -45,6 +50,4 @@ readNames =
 
 main : Task Error ()
 main =
-    writeInts
-        |> Task.andThen (\_ -> readNames)
-        |> Task.andThen println
+    writeInts |> Task.andThen (\_ -> readNames) |> Task.andThen println

@@ -24,12 +24,13 @@ fetchThing =
 
 charge : Task Error Http.HttpResponse
 charge =
-    Http.defaultRequest (apiBase ++ "/charges")
-        |> Http.withMethod "POST"
+    Http.defaultRequest (apiBase ++ "/charges") |> Http.withMethod "POST"
         |> Http.withBody "amount=100"
         |> Http.request
 
 
 main : Task Error ()
 main =
-    Task.andThen (\_ -> Task.map (\_ -> ()) charge) (Task.map (\_ -> ()) fetchThing)
+    Task.andThen
+        (\_ -> Task.map (\_ -> ()) charge)
+        (Task.map (\_ -> ()) fetchThing)

@@ -3,17 +3,13 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
-
 type alias Cfg msg =
     { label : String
     , onPress : msg
     }
 
-
 type alias State =
-    { ticks : Int
-    }
-
+    { ticks : Int }
 
 type Msg
     = Tick
@@ -30,10 +26,6 @@ step ( cfg, state ) =
 
 main =
     let
-        ( _, s ) =
-            step
-                ( { label = "x", onPress = Tick }
-                , { ticks = 0 }
-                )
+        ( _, s ) = step ( { label = "x", onPress = Tick }, { ticks = 0 } )
     in
-    println (String.fromInt s.ticks)
+        println (String.fromInt s.ticks)

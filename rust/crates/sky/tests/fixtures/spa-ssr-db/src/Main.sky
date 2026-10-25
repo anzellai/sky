@@ -39,23 +39,21 @@ import Std.Ui as Ui exposing (Element)
 db : Db.Db
 db =
     case Task.run (Db.open "sqlite" (System.getenvOr "SSR_DB_PATH" "app.db")) of
+
         Ok c ->
             c
 
         Err _ ->
             System.exit 1
 
-
 type Page
     = Home
     | ItemsPage
-
 
 type alias Model =
     { page : Page
     , items : List String
     }
-
 
 type Msg
     = GotItems (Result Error (List (Dict String String)))
@@ -64,7 +62,9 @@ type Msg
 init : () -> ( Model, Cmd Msg )
 init () =
     ( { page = Home, items = [] }
-    , Cmd.perform (Db.query db "SELECT name FROM items ORDER BY name" []) GotItems
+    , Cmd.perform
+          (Db.query db "SELECT name FROM items ORDER BY name" [])
+          GotItems
     )
 
 
@@ -74,8 +74,16 @@ init () =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         GotItems (Ok rows) ->
-            ( { model | items = List.map (\r -> Maybe.withDefault "" (Dict.get "name" r)) rows }, Cmd.none )
+            ( { model
+                  | items =
+                      List.map
+                          (\r -> Maybe.withDefault "" (Dict.get "name" r))
+                          rows
+              }
+            , Cmd.none
+            )
 
         GotItems (Err _) ->
             ( { model | items = [] }, Cmd.none )
@@ -84,17 +92,18 @@ update msg model =
 view : Model -> Element Msg
 view model =
     case model.page of
+
         Home ->
-            Ui.column []
+            Ui.column
+                []
                 [ Ui.text "Welcome home"
                 , Ui.link [] { url = "/items", label = Ui.text "See items" }
                 ]
 
         ItemsPage ->
-            Ui.column []
-                (Ui.text "Item list:"
-                    :: List.map (\i -> Ui.text i) model.items
-                )
+            Ui.column
+                []
+                (Ui.text "Item list:" :: List.map (\i -> Ui.text i) model.items)
 
 
 subscriptions : Model -> Sub Msg

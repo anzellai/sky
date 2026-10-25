@@ -22,7 +22,11 @@ storePath =
 loadItems : () -> Task Error (List Item)
 loadItems _ =
     File.readFile storePath
-        |> Task.map (\s -> Result.withDefault [] (Codec.fromJson (Codec.list itemCodec) s))
+        |> Task.map
+               (\s ->
+                   Result.withDefault
+                       []
+                       (Codec.fromJson (Codec.list itemCodec) s))
         |> Task.onError (\_ -> Task.succeed [])
 
 

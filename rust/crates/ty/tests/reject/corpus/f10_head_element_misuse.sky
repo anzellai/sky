@@ -3,8 +3,14 @@
 --         `List String`. gap2 admits the poly scheme so the element/shape
 --         mismatch is caught at the call site. oracle: reject [E2001].
 module Main exposing (main)
+
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
-first xs = List.head xs
+
+
+first xs =
+    List.head xs
+
+
 main =
     println (String.join "," (first [ [ 1 ], [ 2 ] ]))
