@@ -25,7 +25,7 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | verdict `stronger` | 165 |
 | verdict `equal` | 15 |
 | verdict `weaker` | 0 |
-| corpus units | 136 |
+| corpus units | 137 |
 | stdlib modules (denominator) | 113 |
 | stdlib entries (denominator) | 2237 |
 
@@ -302,6 +302,7 @@ None.
 | `reject` | T1 | PROVEN | `compiler.reject` · `compiler.infer` |
 | `roundtrip` | T1 | PROVEN | `compiler.parse` · `lang.constructs` |
 | `shared-world` | T1 | PROVEN | `compiler.shared-world` · `compiler.resolve` |
+| `sky-fmt-check` | T1 | PROVEN | `compiler.fmt` |
 | `sky-suites` | T1 | PROVEN | `lang.constructs` |
 | `sky-verify` | T1 | PROVEN | `compiler.fmt` · `lang.constructs` |
 | `spa-diff-fuzz` | T2 | PROVEN | `stdlib.Std.Spa` |

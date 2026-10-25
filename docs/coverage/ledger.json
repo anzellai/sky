@@ -310,7 +310,7 @@
       "tier": "T1"
     },
     "corpus": {
-      "expected_assertions": 566,
+      "expected_assertions": 598,
       "falsifier_mutation": "corpus.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
@@ -370,7 +370,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 712,
+      "expected_assertions": 744,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -506,8 +506,18 @@
       ],
       "tier": "T1"
     },
+    "sky-fmt-check": {
+      "expected_assertions": 3,
+      "falsifier_mutation": "sky-fmt-check.drift",
+      "falsifier_proven": true,
+      "summary": "every tracked .sky/.skyi is sky fmt clean, bar a reasoned exclusion list",
+      "surfaces": [
+        "compiler.fmt"
+      ],
+      "tier": "T1"
+    },
     "sky-suites": {
-      "expected_assertions": 695,
+      "expected_assertions": 879,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
@@ -705,12 +715,12 @@
     "units_by_role": {
       "Conformance": 1,
       "Example": 64,
-      "FlowTest": 53,
+      "FlowTest": 54,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 136
+    "units_total": 137
   },
   "surfaces": [
     {
@@ -1475,12 +1485,22 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "gate `sky-fmt-check`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "gate `sky-verify`",
             "class": "Falsified",
             "strength": 4
           },
           {
             "by": ".github/workflows/rust-ci.yml: xtask fmt (`xtask:fmt` is not harness-registered — no proven falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": ".github/workflows/rust-ci.yml: xtask sky-fmt-check (`xtask:sky-fmt-check` is not harness-registered — no proven falsifier)",
             "class": "Asserted",
             "strength": 3
           }
@@ -4692,6 +4712,11 @@
             "strength": 3
           },
           {
+            "by": "flow:codegen_generic_record_alias_payload_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:codegen_model_subset_record_lambda_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -5109,6 +5134,11 @@
           },
           {
             "by": "examples/36-composite-server (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:codegen_generic_record_alias_payload_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -5536,6 +5566,11 @@
           },
           {
             "by": "flow:build_growth_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:codegen_generic_record_alias_payload_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -6165,6 +6200,11 @@
           },
           {
             "by": "flow:codegen_ctor_destructure_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:codegen_generic_record_alias_payload_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -12156,6 +12196,11 @@
           },
           {
             "by": "flow:codegen_ctor_destructure_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:codegen_generic_record_alias_payload_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -18867,6 +18912,18 @@
     {
       "db_drivers": [],
       "gate": null,
+      "id": "flow:codegen_generic_record_alias_payload_flow",
+      "modules_imported": 5,
+      "path": "rust/crates/sky/tests/codegen_generic_record_alias_payload_flow.rs",
+      "refs_generous": 7,
+      "refs_qualified": 6,
+      "role": "FlowTest",
+      "sky_files": 2,
+      "sky_toml_sections": []
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
       "id": "flow:codegen_model_subset_record_lambda_flow",
       "modules_imported": 5,
       "path": "rust/crates/sky/tests/codegen_model_subset_record_lambda_flow.rs",
@@ -19254,10 +19311,10 @@
       "id": "tests/Std",
       "modules_imported": 15,
       "path": "tests/Std",
-      "refs_generous": 137,
-      "refs_qualified": 135,
+      "refs_generous": 138,
+      "refs_qualified": 136,
       "role": "SkySuite",
-      "sky_files": 8,
+      "sky_files": 9,
       "sky_toml_sections": []
     },
     {
