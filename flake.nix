@@ -7,7 +7,7 @@
   # both entry points: default.nix reads it when it is called without inputs.
   inputs = {
     # Stable channel: Rust and the system libraries.
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     # Unstable: Go 1.26.
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   };
