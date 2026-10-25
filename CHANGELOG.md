@@ -11,6 +11,16 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.27.15 — Brotli advisory sweep, the nix dev shell moves to nixos-26.05 (2026-10-25)
+
+### Security
+
+- **CVE-2026-111497 (GHSA-9v8h-qqgm-4m35, Brotli decoder out-of-bounds write) does not reach a Sky app.** The flaw is in the Brotli *decoder*, and only a program that decompresses a Brotli stream an attacker controls is exposed. The Sky runtime and the Go a Sky app compiles to link no Brotli library and never decode Brotli. `sky build` uses the `brotli` tool only to *compress* its own `main.<hash>.wasm` and `wasm_exec.js` into `.br` files, and a server such as Caddy with `precompressed br gzip` sends those files as they are. The browser decodes them, and that content is yours. No change to the compiler, the runtime or a built app is needed, and a deployed app does not need a rebuild. What does need the fix is the host: update the system Brotli library (`libbrotli1` on Debian and Ubuntu, `brew upgrade brotli` on macOS) and Node.js (22.23.4, 24.22.1 or 26.12.1 and later), because tools such as `curl` and Node's `fetch` decode Brotli responses.
+
+### Changed
+
+- **The nix dev shell moves off the end-of-life `nixos-25.11` to `nixos-26.05`, and its lock is refreshed.** `nixos-25.11` gets no further fixes, the Brotli one included. The dev shell now has rustc 1.95.0 (the stable line CI builds with) and Go 1.26.10. The published `sky` binaries are built by the release workflow, not by nix, so they are unchanged apart from the version. (`flake.nix`, `flake.lock`.)
+
 ## v0.27.14 — `let` annotations are checked, record field errors name the right side (2026-10-24)
 
 ### ⚠ Breaking changes
