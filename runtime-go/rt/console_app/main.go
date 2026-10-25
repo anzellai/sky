@@ -2480,11 +2480,7 @@ func AiTab_registryPanel(v_0 State_AiFilter_R, v_1 []State_AiModel_R) Std_Ui_Ele
 		if rt.List_isEmptyT[State_AiModel_R](v_1) {
 			return []Std_Ui_Element{AiTab_emptyState("No Std.Ai.Registry model has been read or changed by this process yet.")}
 		} else {
-			return rt.List_mapT[State_AiModel_R, Std_Ui_Element](func(_e1 State_AiModel_R) Std_Ui_Element {
-				_p0 := _e1
-				_ = _p0
-				return AiTab_modelRow(v_0 /* FFI return */, rt.Coerce[State_AiModel_R](_p0))
-			}, v_1)
+			return rt.List_mapT[State_AiModel_R, Std_Ui_Element](func(_p0 State_AiModel_R) Std_Ui_Element { return AiTab_modelRow(v_0, _p0) }, v_1)
 		}
 	}())
 }
@@ -3317,11 +3313,7 @@ func AiTab_evalsPanel(v_0 State_AiFilter_R, v_1 []State_AiEval_R) Std_Ui_Element
 		if rt.List_isEmptyT[State_AiEval_R](v_1) {
 			return []Std_Ui_Element{AiTab_emptyState("No Std.Ai.Eval run in this process or in the app's database yet.")}
 		} else {
-			return rt.List_mapT[State_AiEval_R, Std_Ui_Element](func(_e1 State_AiEval_R) Std_Ui_Element {
-				_p0 := _e1
-				_ = _p0
-				return AiTab_evalRow(v_0 /* FFI return */, rt.Coerce[State_AiEval_R](_p0))
-			}, v_1)
+			return rt.List_mapT[State_AiEval_R, Std_Ui_Element](func(_p0 State_AiEval_R) Std_Ui_Element { return AiTab_evalRow(v_0, _p0) }, v_1)
 		}
 	}())
 }
@@ -3480,11 +3472,7 @@ func AiTab_slotsPanel(v_0 State_AiFilter_R, v_1 []State_AiSlot_R) Std_Ui_Element
 		if rt.List_isEmptyT[State_AiSlot_R](v_1) {
 			return []Std_Ui_Element{AiTab_emptyState("No Std.Ai slot has been used by this process yet.")}
 		} else {
-			return rt.List_mapT[State_AiSlot_R, Std_Ui_Element](func(_e1 State_AiSlot_R) Std_Ui_Element {
-				_p0 := _e1
-				_ = _p0
-				return AiTab_slotRow(v_0 /* FFI return */, rt.Coerce[State_AiSlot_R](_p0))
-			}, v_1)
+			return rt.List_mapT[State_AiSlot_R, Std_Ui_Element](func(_p0 State_AiSlot_R) Std_Ui_Element { return AiTab_slotRow(v_0, _p0) }, v_1)
 		}
 	}())
 }
@@ -3665,10 +3653,8 @@ func AnalyticsTab_revenuePanel(v_0 State_Analytics_R) Std_Ui_Element {
 		if rt.List_isEmptyT[State_CurrencyTotal_R](v_0.Revenue) {
 			return []Std_Ui_Element{AnalyticsTab_emptyState("No revenue captured — track a Money prop to see totals.")}
 		} else {
-			return rt.List_mapT[State_CurrencyTotal_R, Std_Ui_Element](func(_e1 State_CurrencyTotal_R) Std_Ui_Element {
-				_p0 := _e1
-				_ = _p0
-				return AnalyticsTab_currencyRowView(v_0.RowCapHit /* FFI return */, rt.Coerce[State_CurrencyTotal_R](_p0))
+			return rt.List_mapT[State_CurrencyTotal_R, Std_Ui_Element](func(_p0 State_CurrencyTotal_R) Std_Ui_Element {
+				return AnalyticsTab_currencyRowView(v_0.RowCapHit, _p0)
 			}, v_0.Revenue)
 		}
 	}())
@@ -3975,11 +3961,7 @@ func View_tracesView(v_0 string, v_1 bool, v_2 []State_TraceRow_R) []Std_Ui_Elem
 			if rt.List_isEmptyT[State_TraceRow_R](v_2) {
 				return []Std_Ui_Element{View_emptyState("No traces in this range.")}
 			} else {
-				return rt.List_mapT[string, Std_Ui_Element](func(_e1 string) Std_Ui_Element {
-					_p0 := _e1
-					_ = _p0
-					return View_traceGroupView(v_2 /* FFI return */, rt.AsString(_p0))
-				}, View_distinctTraceIds(v_2))
+				return rt.List_mapT[string, Std_Ui_Element](func(_p0 string) Std_Ui_Element { return View_traceGroupView(v_2, _p0) }, View_distinctTraceIds(v_2))
 			}
 		}
 	}())}
@@ -4070,11 +4052,7 @@ func View_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element {
 			Left   int
 			Right  int
 			Top    int
-		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(View_borderSoft())}, /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent()), Std_Ui_Background_color(View_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}, Std_Ui_text(("trace " + shortId_3))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(View_textSecondary())}, Std_Ui_text((rootName_4 + (" · " + (rt.String_fromIntT(rt.List_lengthT[State_TraceRow_R](spans_2)) + " spans")))))})), any(rt.List_mapT[State_TraceRow_R, Std_Ui_Element](func(_e1 State_TraceRow_R) Std_Ui_Element {
-			_p0 := _e1
-			_ = _p0
-			return View_spanRowView(v_0 /* FFI return */, rt.Coerce[State_TraceRow_R](_p0))
-		}, spans_2)))))
+		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(View_borderSoft())}, /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent()), Std_Ui_Background_color(View_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}, Std_Ui_text(("trace " + shortId_3))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(View_textSecondary())}, Std_Ui_text((rootName_4 + (" · " + (rt.String_fromIntT(rt.List_lengthT[State_TraceRow_R](spans_2)) + " spans")))))})), any(rt.List_mapT[State_TraceRow_R, Std_Ui_Element](func(_p0 State_TraceRow_R) Std_Ui_Element { return View_spanRowView(v_0, _p0) }, spans_2)))))
 	}
 }
 
@@ -4282,11 +4260,7 @@ func TracesTab_tracesPanel(v_0 string, v_1 []State_TraceRow_R) Std_Ui_Element {
 			if rt.List_isEmptyT[State_TraceRow_R](v_1) {
 				return []Std_Ui_Element{TracesTab_emptyState("No traces for this service in this range.")}
 			} else {
-				return rt.List_mapT[string, Std_Ui_Element](func(_e1 string) Std_Ui_Element {
-					_p0 := _e1
-					_ = _p0
-					return TracesTab_traceGroupView(v_1 /* FFI return */, rt.AsString(_p0))
-				}, TracesTab_distinctTraceIds(v_1))
+				return rt.List_mapT[string, Std_Ui_Element](func(_p0 string) Std_Ui_Element { return TracesTab_traceGroupView(v_1, _p0) }, TracesTab_distinctTraceIds(v_1))
 			}
 		}
 	}())
@@ -4352,11 +4326,7 @@ func TracesTab_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element
 			Left   int
 			Right  int
 			Top    int
-		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(TracesTab_borderSoft())}, /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(TracesTab_accent()), Std_Ui_Background_color(TracesTab_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}, Std_Ui_text(("trace " + shortId_3))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(TracesTab_textSecondary())}, Std_Ui_text((rootName_4 + (" · " + (rt.String_fromIntT(rt.List_lengthT[State_TraceRow_R](spans_2)) + " spans")))))})), any(rt.List_mapT[State_TraceRow_R, Std_Ui_Element](func(_e1 State_TraceRow_R) Std_Ui_Element {
-			_p0 := _e1
-			_ = _p0
-			return TracesTab_spanRowView(v_0 /* FFI return */, rt.Coerce[State_TraceRow_R](_p0))
-		}, spans_2)))))
+		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(TracesTab_borderSoft())}, /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(TracesTab_accent()), Std_Ui_Background_color(TracesTab_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}, Std_Ui_text(("trace " + shortId_3))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(TracesTab_textSecondary())}, Std_Ui_text((rootName_4 + (" · " + (rt.String_fromIntT(rt.List_lengthT[State_TraceRow_R](spans_2)) + " spans")))))})), any(rt.List_mapT[State_TraceRow_R, Std_Ui_Element](func(_p0 State_TraceRow_R) Std_Ui_Element { return TracesTab_spanRowView(v_0, _p0) }, spans_2)))))
 	}
 }
 
@@ -5498,9 +5468,7 @@ func Std_Ui_Chart_line(v_0 Std_Ui_Chart_Cfg_R, v_1 []Std_Ui_Chart_Series_R) Std_
 		yR_3 := Std_Ui_Chart_effectiveYRange(v_0, v_1)
 		_ = yR_3
 		seriesPaths_4 := /* FFI return */ rt.AsListT[Std_Html_Html](rt.List_concatMap(any(func(_w1 any) any {
-			return any(func(_p0 any) []Std_Html_Html {
-				return Std_Ui_Chart_lineOne(v_0, xR_2, yR_3 /* FFI return */, rt.Coerce[Std_Ui_Chart_Series_R](_p0))
-			}(_w1))
+			return any(func(_p0 Std_Ui_Chart_Series_R) []Std_Html_Html { return Std_Ui_Chart_lineOne(v_0, xR_2, yR_3, _p0) }( /* FFI return */ rt.Coerce[Std_Ui_Chart_Series_R](_w1)))
 		}), any(v_1)))
 		_ = seriesPaths_4
 		baseChildren_5 := rt.List_appendT[Std_Html_Html](Std_Ui_Chart_gridLines(v_0), rt.List_appendT[Std_Html_Html](Std_Ui_Chart_axesNodes(v_0), seriesPaths_4))
@@ -5635,10 +5603,8 @@ func Std_Ui_Chart_lineOne(v_0 Std_Ui_Chart_Cfg_R, v_1 rt.T2[float64, float64], v
 	{
 		col_4 := Std_Ui_colorCss(Std_Ui_Chart_seriesColor(v_0, v_3))
 		_ = col_4
-		projected_5 := rt.List_mapT[rt.T2[float64, float64], rt.T2[float64, float64]](func(_e1 rt.T2[float64, float64]) rt.T2[float64, float64] {
-			_p0 := _e1
-			_ = _p0
-			return Std_Ui_Chart_projectPoint(v_0.Width, v_0.Height, v_1, v_2 /* FFI return */, rt.Coerce[rt.T2[float64, float64]](_p0))
+		projected_5 := rt.List_mapT[rt.T2[float64, float64], rt.T2[float64, float64]](func(_p0 rt.T2[float64, float64]) rt.T2[float64, float64] {
+			return Std_Ui_Chart_projectPoint(v_0.Width, v_0.Height, v_1, v_2, _p0)
 		}, v_3.Points)
 		_ = projected_5
 		pathD_6 := Std_Ui_Chart_buildPathD(projected_5)
@@ -6205,11 +6171,7 @@ func Overview_serviceCardScroller(v_0 State_Model_R) Std_Ui_Element {
 		if rt.List_isEmptyT[State_ServiceStat_R](v_0.ServiceStats) {
 			return []Std_Ui_Element{Overview_emptyCard()}
 		} else {
-			return rt.List_mapT[State_ServiceStat_R, Std_Ui_Element](func(_e1 State_ServiceStat_R) Std_Ui_Element {
-				_p0 := _e1
-				_ = _p0
-				return Overview_serviceCard(v_0.SelectedService /* FFI return */, rt.Coerce[State_ServiceStat_R](_p0))
-			}, v_0.ServiceStats)
+			return rt.List_mapT[State_ServiceStat_R, Std_Ui_Element](func(_p0 State_ServiceStat_R) Std_Ui_Element { return Overview_serviceCard(v_0.SelectedService, _p0) }, v_0.ServiceStats)
 		}
 	}())
 }
@@ -6514,11 +6476,7 @@ func View_tabStrip(v_0 State_Tab) Std_Ui_Element {
 		Left   int
 		Right  int
 		Top    int
-	}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(View_border_())}, rt.List_mapT[State_Tab, Std_Ui_Element](func(_e1 State_Tab) Std_Ui_Element {
-		_p0 := _e1
-		_ = _p0
-		return View_tabButton(v_0 /* FFI return */, rt.Coerce[State_Tab](_p0))
-	}, []State_Tab{State_Tab_OverviewTab, State_Tab_MetricsTab, State_Tab_LogsTab, State_Tab_TracesTab, State_Tab_ErrorsTab, State_Tab_AnalyticsTab, State_Tab_AiTab}))
+	}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(View_border_())}, rt.List_mapT[State_Tab, Std_Ui_Element](func(_p0 State_Tab) Std_Ui_Element { return View_tabButton(v_0, _p0) }, []State_Tab{State_Tab_OverviewTab, State_Tab_MetricsTab, State_Tab_LogsTab, State_Tab_TracesTab, State_Tab_ErrorsTab, State_Tab_AnalyticsTab, State_Tab_AiTab}))
 }
 
 func View_tabButton(v_0 State_Tab, v_1 State_Tab) Std_Ui_Element {
@@ -6802,16 +6760,12 @@ func Std_Ui_renderNodeAs(v_0 string, v_1 Std_Ui_Nesting_R, v_2 Std_Ui_LayoutCont
 			}
 		}()
 		_ = animationAttrs_24
-		renderedMain_25 := rt.List_mapT[Std_Ui_Element, Std_Html_Html](func(_e1 Std_Ui_Element) Std_Html_Html {
-			_p0 := _e1
-			_ = _p0
-			return Std_Ui_renderElementIn(childNest_7, renderCtx_11, []Std_Ui_Attribute{} /* FFI return */, rt.Coerce[Std_Ui_Element](_p0))
+		renderedMain_25 := rt.List_mapT[Std_Ui_Element, Std_Html_Html](func(_p0 Std_Ui_Element) Std_Html_Html {
+			return Std_Ui_renderElementIn(childNest_7, renderCtx_11, []Std_Ui_Attribute{}, _p0)
 		}, v_5)
 		_ = renderedMain_25
-		renderedNearby_26 := rt.List_mapT[rt.T2[Std_Ui_Location, Std_Ui_Element], Std_Html_Html](func(_e3 rt.T2[Std_Ui_Location, Std_Ui_Element]) Std_Html_Html {
-			_p2 := _e3
-			_ = _p2
-			return Std_Ui_renderNearby(childNest_7 /* FFI return */, rt.Coerce[rt.T2[Std_Ui_Location, Std_Ui_Element]](_p2))
+		renderedNearby_26 := rt.List_mapT[rt.T2[Std_Ui_Location, Std_Ui_Element], Std_Html_Html](func(_p1 rt.T2[Std_Ui_Location, Std_Ui_Element]) Std_Html_Html {
+			return Std_Ui_renderNearby(childNest_7, _p1)
 		}, nearbyChildren_14)
 		_ = renderedNearby_26
 		renderedChildren_27 := func() []Std_Html_Html {
@@ -7532,13 +7486,7 @@ func Std_Ui_buildStyleStringWith(v_0 Std_Ui_MarkerFlags_R, v_1 bool, v_2 Std_Ui_
 			}
 		}()
 		_ = wrapPart_7
-		attrParts_8 := rt.List_foldlElemFirstT[Std_Ui_Attribute, string](func(_e2 Std_Ui_Attribute, _e3 string) string {
-			_p0 := _e2
-			_ = _p0
-			_p1 := _e3
-			_ = _p1
-			return Std_Ui_collectStyle(v_2, v_3 /* FFI return */, rt.Coerce[Std_Ui_Attribute](_p0) /* FFI return */, rt.AsString(_p1))
-		}, "", v_4)
+		attrParts_8 := rt.List_foldlElemFirstT[Std_Ui_Attribute, string](func(_p0 Std_Ui_Attribute, _p1 string) string { return Std_Ui_collectStyle(v_2, v_3, _p0, _p1) }, "", v_4)
 		_ = attrParts_8
 		borderStyleDefault_9 := func() string {
 			if rt.String_containsT("border-width", attrParts_8) && rt.Basics_notT(rt.String_containsT("border-style", attrParts_8)) {
@@ -8425,11 +8373,7 @@ func Std_Ui_isHeightAttr(v_0 Std_Ui_Attribute) bool {
 }
 
 func Std_Ui_anyChildMainAxisFill(v_0 Std_Ui_LayoutContext, v_1 []Std_Ui_Element) bool {
-	return rt.List_anyT[Std_Ui_Element](func(_e1 Std_Ui_Element) bool {
-		_p0 := _e1
-		_ = _p0
-		return Std_Ui_elementHasMainAxisFill(v_0 /* FFI return */, rt.Coerce[Std_Ui_Element](_p0))
-	}, v_1)
+	return rt.List_anyT[Std_Ui_Element](func(_p0 Std_Ui_Element) bool { return Std_Ui_elementHasMainAxisFill(v_0, _p0) }, v_1)
 }
 
 func Std_Ui_elementHasMainAxisFill(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Element) bool {
