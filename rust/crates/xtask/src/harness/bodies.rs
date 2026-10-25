@@ -780,7 +780,12 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// `list_import`). A fold's
 /// anonymous-record accumulator was narrowed to the element's named record;
 /// see `corpus/lang_shapes.rs`.
-pub const CORPUS_EXPECTED: u64 = 712;
+///
+/// **744 since the v0.27.16 `generic_alias_slot` stratum** (+32, Family L:
+/// 8 `ga_slot` x 2 `ga_params` x 2 `ga_site`). A generic record-alias
+/// constructor's erased Go return reached a `Just` / `Ok` / `Err` payload
+/// unnarrowed; see `corpus/lang_shapes.rs`.
+pub const CORPUS_EXPECTED: u64 = 744;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -822,7 +827,10 @@ pub const CORPUS_EXPECTED: u64 = 712;
 ///
 /// **566 since the v0.27.14 `lambda_record_param` stratum** (+32, all built
 /// and run; the same +32 as `CORPUS_EXPECTED`).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 566;
+///
+/// **598 since the v0.27.16 `generic_alias_slot` stratum** (+32, all built
+/// and run; the same +32 as `CORPUS_EXPECTED`).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 598;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.

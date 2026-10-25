@@ -1,0 +1,36 @@
+module Lib exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe as Maybe
+import Sky.Core.List as List
+import Sky.Core.String as String
+
+type alias Action msg =
+    { label : String
+    , onPress : msg
+    }
+
+type alias Pair a b =
+    { first : a
+    , second : b
+    }
+
+
+action : String -> msg -> Action msg
+action label msg =
+    { label = label, onPress = msg }
+
+
+pair : a -> b -> Pair a b
+pair a b =
+    { first = a, second = b }
+
+
+pick : Maybe (Action msg) -> String
+pick m =
+    Maybe.withDefault "" (Maybe.map .label m)
+
+
+labels : List (Action msg) -> String
+labels xs =
+    String.join "," (List.map .label xs)

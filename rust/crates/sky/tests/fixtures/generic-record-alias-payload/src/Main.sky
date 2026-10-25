@@ -1,0 +1,174 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Std.Log exposing (println)
+import Lib
+
+type Msg
+    = Noop
+    | Save
+
+
+msgName : Msg -> String
+msgName m =
+    case m of
+
+        Noop ->
+            "Noop"
+
+        Save ->
+            "Save"
+
+-- A same-module parametric record alias and its generic constructor.
+type alias Item msg =
+    { name : String
+    , msg : msg
+    }
+
+
+item : String -> msg -> Item msg
+item name msg =
+    { name = name, msg = msg }
+
+-- A user ADT with a type parameter.
+type Slot a
+    = Filled a
+    | Empty
+
+type alias Toolbar =
+    { primary : Lib.Action Msg
+    , extra : Maybe (Lib.Action Msg)
+    }
+
+
+describe : Lib.Action Msg -> String
+describe a =
+    a.label ++ ":" ++ msgName a.onPress
+
+
+describeMaybe : Maybe (Lib.Action Msg) -> String
+describeMaybe m =
+    case m of
+
+        Just a ->
+            describe a
+
+        Nothing ->
+            "none"
+
+
+describeResult : Result String (Lib.Action Msg) -> String
+describeResult r =
+    case r of
+
+        Ok a ->
+            "ok " ++ describe a
+
+        Err e ->
+            "err " ++ e
+
+
+describeErr : Result (Lib.Action Msg) Int -> String
+describeErr r =
+    case r of
+
+        Ok n ->
+            "ok " ++ String.fromInt n
+
+        Err a ->
+            "err " ++ describe a
+
+
+describeSlot : Slot (Lib.Action Msg) -> String
+describeSlot s =
+    case s of
+
+        Filled a ->
+            "slot " ++ describe a
+
+        Empty ->
+            "slot empty"
+
+
+describeTuple : ( Lib.Action Msg, Int ) -> String
+describeTuple ( a, n ) =
+    describe a ++ "/" ++ String.fromInt n
+
+
+describeItem : Maybe (Item Msg) -> String
+describeItem m =
+    case m of
+
+        Just i ->
+            i.name ++ ":" ++ msgName i.msg
+
+        Nothing ->
+            "none"
+
+
+describePair : Maybe (Lib.Pair String Msg) -> String
+describePair m =
+    case m of
+
+        Just p ->
+            p.first ++ ":" ++ msgName p.second
+
+        Nothing ->
+            "none"
+
+
+describeNested : Maybe (List (Lib.Action Msg)) -> String
+describeNested m =
+    case m of
+
+        Just xs ->
+            String.join "," (List.map describe xs)
+
+        Nothing ->
+            "none"
+
+
+annotated : Maybe (Lib.Action Msg)
+annotated =
+    Just (Lib.action "Annotated" Save)
+
+
+main =
+    let
+        unannotated = Just (Lib.action "Unannotated" Noop)
+        toolbar =
+            { primary = Lib.action "Primary" Save
+            , extra = Just (Lib.action "Extra" Noop)
+            }
+    in
+        println
+            (String.join
+                "\n"
+                [ "pick " ++ Lib.pick (Just (Lib.action "Edit" Noop))
+                , "list " ++ Lib.labels [ Lib.action "Edit" Noop ]
+                , "just " ++ describeMaybe (Just (Lib.action "Open" Save))
+                , "ok " ++ describeResult (Ok (Lib.action "Go" Save))
+                , "err " ++ describeErr (Err (Lib.action "Stop" Noop))
+                , describeSlot (Filled (Lib.action "Fill" Save))
+                , "tuple " ++ describeTuple ( Lib.action "Pair" Noop, 2 )
+                , "field " ++ describe toolbar.primary ++ " "
+                      ++ describeMaybe toolbar.extra
+                , "arg " ++ describe (Lib.action "Arg" Save)
+                , "maybeMap "
+                      ++ describeMaybe
+                             (Maybe.map (\l -> Lib.action l Save) (Just "Mapped"))
+                , "resultMap "
+                      ++ describeResult
+                             (Result.map (\l -> Lib.action l Noop) (Ok "Mapped"))
+                , "letAnnotated " ++ describeMaybe annotated
+                , "letBare " ++ describeMaybe unannotated
+                , "sameModule " ++ describeItem (Just (item "Local" Save))
+                , "twoParams " ++ describePair (Just (Lib.pair "Two" Noop))
+                , "nested "
+                      ++ describeNested
+                             (Just [ Lib.action "N1" Save, Lib.action "N2" Noop ])
+                ])

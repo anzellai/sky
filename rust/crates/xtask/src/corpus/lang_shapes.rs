@@ -11,9 +11,9 @@
 //! (and `42!` where a second type is involved).
 
 use super::axes::{
-    Assignment, ACC_POS, ANON_DEPTH, ANON_ROLE, AS_BINDER, EQ_CARRIER, EQ_PAIR, LET_BINDING,
-    LET_SITE, LET_USES, LIST_IMPORT, NESTED_PAYLOAD, QUAL_PATH, QUAL_USE, STEP_SITE, TASK_CALLEE,
-    TASK_LINK, TASK_RESULT, UNION_REP,
+    Assignment, ACC_POS, ANON_DEPTH, ANON_ROLE, AS_BINDER, EQ_CARRIER, EQ_PAIR, GA_PARAMS, GA_SITE,
+    GA_SLOT, LET_BINDING, LET_SITE, LET_USES, LIST_IMPORT, NESTED_PAYLOAD, QUAL_PATH, QUAL_USE,
+    STEP_SITE, TASK_CALLEE, TASK_LINK, TASK_RESULT, UNION_REP,
 };
 use super::gen::{Body, SURVIVOR, UPDATED};
 
@@ -458,5 +458,92 @@ pub fn lambda_record_param(a: &Assignment) -> (Body, String) {
             check,
         },
         out.to_string(),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// generic_alias_slot (v0.27.16)
+// ---------------------------------------------------------------------------
+
+/// A call to a polymorphic def that builds a parametric record alias (`act :
+/// String -> msg -> Act msg`) lands in a slot that fixes the type parameter
+/// (`Maybe (Act Sig)`). The def's Go return erases the parameter
+/// (`Act_R[any]`, doc 14 R12) while the slot is `Act_R[Sig]`, and `Just` /
+/// `Ok` / `Err` lowered their argument at `any` without narrowing it: `sky
+/// check` passed, `go build` failed. Every case reads the label AND the
+/// message back, so a value narrowed to the wrong type cannot print `42:Go`.
+pub fn generic_alias_slot(a: &Assignment) -> (Body, String) {
+    // The alias, its generic constructor, the slot type and a reader.
+    let (alias, call, ty, read) = match a.get(GA_PARAMS) {
+        "one" => (
+            "type alias Act msg =\n    { label : String, onPress : msg }\n\n\n\
+             act : String -> msg -> Act msg\nact label msg =\n    { label = label, onPress = msg }\n",
+            "act \"42\" Go",
+            "Act Sig",
+            "readIt v =\n    v.label ++ \":\" ++ sigName v.onPress\n",
+        ),
+        "two" => (
+            "type alias Duo a b =\n    { first : a, second : b }\n\n\n\
+             duo : a -> b -> Duo a b\nduo a b =\n    { first = a, second = b }\n",
+            "duo \"42\" Go",
+            "Duo String Sig",
+            "readIt v =\n    v.first ++ \":\" ++ sigName v.second\n",
+        ),
+        other => panic!("generic_alias_slot: unknown ga_params {other:?}"),
+    };
+    // The slot: a reader of the slot's type and the expression that fills it
+    // (`{v}` stands for the call, inline or by name).
+    let (slot_decl, slot_expr) = match a.get(GA_SLOT) {
+        "just" => (
+            format!("fromSlot : Maybe ({ty}) -> String\nfromSlot m =\n    case m of\n        Just v ->\n            readIt v\n\n        Nothing ->\n            \"none\"\n"),
+            "fromSlot (Just ({v}))",
+        ),
+        "ok" => (
+            format!("fromSlot : Result String ({ty}) -> String\nfromSlot r =\n    case r of\n        Ok v ->\n            readIt v\n\n        Err e ->\n            e\n"),
+            "fromSlot (Ok ({v}))",
+        ),
+        "err" => (
+            format!("fromSlot : Result ({ty}) Int -> String\nfromSlot r =\n    case r of\n        Ok _ ->\n            \"ok\"\n\n        Err v ->\n            readIt v\n"),
+            "fromSlot (Err ({v}))",
+        ),
+        "adt" => (
+            format!("type Box a\n    = Boxed a\n    | NoBox\n\n\nfromSlot : Box ({ty}) -> String\nfromSlot b =\n    case b of\n        Boxed v ->\n            readIt v\n\n        NoBox ->\n            \"none\"\n"),
+            "fromSlot (Boxed ({v}))",
+        ),
+        "tuple" => (
+            format!("fromSlot : ( {ty}, Int ) -> String\nfromSlot ( v, _ ) =\n    readIt v\n"),
+            "fromSlot ( {v}, 1 )",
+        ),
+        "field" => (
+            format!("fromSlot : {{ held : {ty} }} -> String\nfromSlot h =\n    readIt h.held\n"),
+            "fromSlot { held = {v} }",
+        ),
+        "arg" => (String::new(), "readIt ({v})"),
+        "list" => (
+            format!("fromSlot : List ({ty}) -> String\nfromSlot xs =\n    String.join \",\" (List.map readIt xs)\n"),
+            "fromSlot [ {v} ]",
+        ),
+        other => panic!("generic_alias_slot: unknown ga_slot {other:?}"),
+    };
+    let check = match a.get(GA_SITE) {
+        "inline" => slot_expr.replace("{v}", call),
+        "let_bound" => format!(
+            "let\n        made =\n            {call}\n    in\n    {}",
+            slot_expr.replace("{v}", "made")
+        ),
+        other => panic!("generic_alias_slot: unknown ga_site {other:?}"),
+    };
+    let decls = format!(
+        "type Sig\n    = Go\n    | Halt\n\n\n\
+         sigName : Sig -> String\nsigName s =\n    case s of\n        Go ->\n            \"Go\"\n\n        Halt ->\n            \"Halt\"\n\n\n\
+         {alias}\n\nreadIt : {ty} -> String\n{read}\n\n{slot_decl}"
+    );
+    (
+        Body {
+            imports: "import Sky.Core.String as String\nimport Sky.Core.List as List\n".to_string(),
+            decls,
+            check,
+        },
+        "42:Go".to_string(),
     )
 }
