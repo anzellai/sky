@@ -17,15 +17,15 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 704
+n_min = 736
 n_iso = 61
 n_iso_ceiling = 62
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 703
+class_v = 735
 class_d = 1
 family_S = 194
-family_L = 365
+family_L = 397
 family_E = 10
 family_R = 135
 family_F = 0
@@ -7297,6 +7297,422 @@ axes       = { alias_names = "same", ctor_use = "value" }
 coordinate = "v0.27.10: same-named record-alias constructors across modules"
 expect     = "accept"
 stdout     = "42+|42n"
+
+[[case]]
+id         = "lambda_record_param/first-flat-acc-autoloaded-inline"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "first", anon_depth = "flat", anon_role = "acc", list_import = "autoloaded", step_site = "inline" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/first-flat-acc-explicit-inline"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "first", anon_depth = "flat", anon_role = "acc", list_import = "explicit", step_site = "inline" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/first-nested-acc-autoloaded-inline"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "first", anon_depth = "nested", anon_role = "acc", list_import = "autoloaded", step_site = "inline" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2q"
+
+[[case]]
+id         = "lambda_record_param/first-nested-acc-explicit-inline"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "first", anon_depth = "nested", anon_role = "acc", list_import = "explicit", step_site = "inline" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2q"
+
+[[case]]
+id         = "lambda_record_param/first-flat-acc-autoloaded-let_bound"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "first", anon_depth = "flat", anon_role = "acc", list_import = "autoloaded", step_site = "let_bound" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/first-flat-acc-explicit-let_bound"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "first", anon_depth = "flat", anon_role = "acc", list_import = "explicit", step_site = "let_bound" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/first-nested-acc-autoloaded-let_bound"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "first", anon_depth = "nested", anon_role = "acc", list_import = "autoloaded", step_site = "let_bound" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2q"
+
+[[case]]
+id         = "lambda_record_param/first-nested-acc-explicit-let_bound"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "first", anon_depth = "nested", anon_role = "acc", list_import = "explicit", step_site = "let_bound" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2q"
+
+[[case]]
+id         = "lambda_record_param/second-flat-acc-autoloaded-inline"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "second", anon_depth = "flat", anon_role = "acc", list_import = "autoloaded", step_site = "inline" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/second-flat-acc-explicit-inline"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "second", anon_depth = "flat", anon_role = "acc", list_import = "explicit", step_site = "inline" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/second-nested-acc-autoloaded-inline"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "second", anon_depth = "nested", anon_role = "acc", list_import = "autoloaded", step_site = "inline" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2q"
+
+[[case]]
+id         = "lambda_record_param/second-nested-acc-explicit-inline"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "second", anon_depth = "nested", anon_role = "acc", list_import = "explicit", step_site = "inline" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2q"
+
+[[case]]
+id         = "lambda_record_param/second-flat-acc-autoloaded-let_bound"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "second", anon_depth = "flat", anon_role = "acc", list_import = "autoloaded", step_site = "let_bound" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/second-flat-acc-explicit-let_bound"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "second", anon_depth = "flat", anon_role = "acc", list_import = "explicit", step_site = "let_bound" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/second-nested-acc-autoloaded-let_bound"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "second", anon_depth = "nested", anon_role = "acc", list_import = "autoloaded", step_site = "let_bound" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2q"
+
+[[case]]
+id         = "lambda_record_param/second-nested-acc-explicit-let_bound"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "second", anon_depth = "nested", anon_role = "acc", list_import = "explicit", step_site = "let_bound" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2q"
+
+[[case]]
+id         = "lambda_record_param/first-flat-elem-autoloaded-inline"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "first", anon_depth = "flat", anon_role = "elem", list_import = "autoloaded", step_site = "inline" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/first-flat-elem-explicit-inline"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "first", anon_depth = "flat", anon_role = "elem", list_import = "explicit", step_site = "inline" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/first-nested-elem-autoloaded-inline"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "first", anon_depth = "nested", anon_role = "elem", list_import = "autoloaded", step_site = "inline" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/first-nested-elem-explicit-inline"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "first", anon_depth = "nested", anon_role = "elem", list_import = "explicit", step_site = "inline" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/first-flat-elem-autoloaded-let_bound"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "first", anon_depth = "flat", anon_role = "elem", list_import = "autoloaded", step_site = "let_bound" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/first-flat-elem-explicit-let_bound"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "first", anon_depth = "flat", anon_role = "elem", list_import = "explicit", step_site = "let_bound" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/first-nested-elem-autoloaded-let_bound"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "first", anon_depth = "nested", anon_role = "elem", list_import = "autoloaded", step_site = "let_bound" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/first-nested-elem-explicit-let_bound"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "first", anon_depth = "nested", anon_role = "elem", list_import = "explicit", step_site = "let_bound" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/second-flat-elem-autoloaded-inline"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "second", anon_depth = "flat", anon_role = "elem", list_import = "autoloaded", step_site = "inline" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/second-flat-elem-explicit-inline"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "second", anon_depth = "flat", anon_role = "elem", list_import = "explicit", step_site = "inline" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/second-nested-elem-autoloaded-inline"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "second", anon_depth = "nested", anon_role = "elem", list_import = "autoloaded", step_site = "inline" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/second-nested-elem-explicit-inline"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "second", anon_depth = "nested", anon_role = "elem", list_import = "explicit", step_site = "inline" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/second-flat-elem-autoloaded-let_bound"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "second", anon_depth = "flat", anon_role = "elem", list_import = "autoloaded", step_site = "let_bound" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/second-flat-elem-explicit-let_bound"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "second", anon_depth = "flat", anon_role = "elem", list_import = "explicit", step_site = "let_bound" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/second-nested-elem-autoloaded-let_bound"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "second", anon_depth = "nested", anon_role = "elem", list_import = "autoloaded", step_site = "let_bound" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
+
+[[case]]
+id         = "lambda_record_param/second-nested-elem-explicit-let_bound"
+family     = "L"
+stratum    = "lambda_record_param"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { acc_pos = "second", anon_depth = "nested", anon_role = "elem", list_import = "explicit", step_site = "let_bound" }
+coordinate = "v0.27.14: a fold's anonymous-record accumulator narrowed to the element"
+expect     = "accept"
+stdout     = "42/2"
 
 [[case]]
 id         = "reject_matrix/arity_over-plain-bare"

@@ -24,11 +24,14 @@ pub use exports::{compute_exports, ExportedAlias, ExportedCtor, ExportedUnion, M
 pub use ffi::{
     is_ffi_plumbing_elsewhere, FfiFnSig, FfiSurface, FfiTrust, SharedFfiSurface, FFI_PLUMBING,
 };
-pub use hir::{Body, CaseBranch, Expr, ExprId, LocalDef, PatId, Pattern, TopDef, Type, TypeId};
+pub use hir::{
+    Body, CaseBranch, Expr, ExprId, LetAnno, LocalDef, PatId, Pattern, TopDef, Type, TypeId,
+};
 pub use ids::{CtorRef, DefKind, DefLoc, DefTable, LocalId, Res, TypeRes};
 pub use kernel::{
     is_reserved_sky_namespace, kernel_functions, BUILTIN_CTORS, BUILTIN_TYPES, BUILTIN_VARS,
-    KERNEL_FUNCTIONS, KERNEL_IMPLICIT_TYPES, KERNEL_MODULES, PRELUDE_PROTECTED, PRELUDE_QUALIFIERS,
+    DEFAULT_QUALIFIED_IMPORTS, KERNEL_FUNCTIONS, KERNEL_IMPLICIT_TYPES, KERNEL_MODULES,
+    PRELUDE_PROTECTED, PRELUDE_QUALIFIERS,
 };
 pub use resolve::{
     resolve, BinderDef, ClassA, ClassB, FieldDecl, FieldOcc, FieldRecv, RefKind, RefOcc,
@@ -980,5 +983,97 @@ mod tests {
         assert_eq!(src[start..end].trim(), "1 + 2");
         // "foo =" is 5 bytes → node range [5, 11) (leading space is node trivia).
         assert_eq!((start, end), (5, 11), "unexpected byte range {span:?}");
+    }
+
+    /// Every `Var(Res::Def)` the module's bodies reference.
+    fn referenced_defs(r: &ResolveResult) -> Vec<base::DefId> {
+        r.bodies
+            .values()
+            .flat_map(|body| {
+                body.exprs.iter().filter_map(|(_, e)| match e {
+                    Expr::Var(Res::Def(d)) => Some(*d),
+                    _ => None,
+                })
+            })
+            .collect()
+    }
+
+    const TUPLE_SRC: &str = "module Sky.Core.Tuple exposing (first, second)\n\n\
+                             first t =\n    case t of\n        ( a, _ ) ->\n            a\n\n\
+                             second t =\n    case t of\n        ( _, b ) ->\n            b\n";
+
+    #[test]
+    fn tuple_qualifier_resolves_with_no_import() {
+        // Elm imports `Tuple` by default. Before the fix `Tuple.first` with no
+        // `import Sky.Core.Tuple` was `[E1001] Undefined name: Tuple.first`.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\n\
+                    main =\n    println (Tuple.first ( \"a\", \"b\" ) ++ Tuple.second ( \"a\", \"b\" ))\n";
+        let db = db_with(&[("Sky.Core.Tuple", TUPLE_SRC), ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(r.class_a.is_empty(), "class-a: {:?}", r.class_a);
+        let tuple = db.module_by_name("Sky.Core.Tuple").unwrap();
+        let ex = db.module_exports(tuple);
+        let defs = referenced_defs(&r);
+        for f in ["first", "second"] {
+            let d = ex.value(f).unwrap();
+            assert!(
+                defs.contains(&d),
+                "`Tuple.{f}` must name Sky.Core.Tuple.{f}"
+            );
+        }
+    }
+
+    #[test]
+    fn user_alias_tuple_wins_over_the_default_import() {
+        let pair = "module Pair exposing (first)\n\nfirst t =\n    \"mine\"\n";
+        let main = "module Main exposing (main)\n\
+                    import Pair as Tuple\n\
+                    import Std.Log exposing (println)\n\n\
+                    main =\n    println (Tuple.first ( \"a\", \"b\" ))\n";
+        let db = db_with(&[
+            ("Sky.Core.Tuple", TUPLE_SRC),
+            ("Pair", pair),
+            ("Main", main),
+        ]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(r.class_a.is_empty(), "class-a: {:?}", r.class_a);
+        let defs = referenced_defs(&r);
+        let mine = db
+            .module_exports(db.module_by_name("Pair").unwrap())
+            .value("first")
+            .unwrap();
+        let std = db
+            .module_exports(db.module_by_name("Sky.Core.Tuple").unwrap())
+            .value("first")
+            .unwrap();
+        assert!(defs.contains(&mine), "the user alias `Tuple` must win");
+        assert!(
+            !defs.contains(&std),
+            "the default import must not shadow the alias"
+        );
+    }
+
+    #[test]
+    fn user_module_named_tuple_wins_over_the_default_import() {
+        let user = "module Tuple exposing (first)\n\nfirst t =\n    \"mine\"\n";
+        let main = "module Main exposing (main)\n\
+                    import Tuple\n\
+                    import Std.Log exposing (println)\n\n\
+                    main =\n    println (Tuple.first ( \"a\", \"b\" ))\n";
+        let db = db_with(&[
+            ("Sky.Core.Tuple", TUPLE_SRC),
+            ("Tuple", user),
+            ("Main", main),
+        ]);
+        let r = resolve(&db, db.module_by_name("Main").unwrap());
+        assert!(r.class_a.is_empty(), "class-a: {:?}", r.class_a);
+        let mine = db
+            .module_exports(db.module_by_name("Tuple").unwrap())
+            .value("first")
+            .unwrap();
+        assert!(referenced_defs(&r).contains(&mine));
     }
 }

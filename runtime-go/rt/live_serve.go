@@ -443,6 +443,7 @@ func buildLiveServerFor(cfg any, embedded, served bool) (ls *liveServer, err err
 			"query":   "",
 			"params":  Dict_empty(),
 			"method":  "GET",
+			"host":    "",
 			"headers": Dict_empty(),
 			"cookies": Dict_empty(),
 		}

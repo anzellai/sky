@@ -127,6 +127,33 @@ expect_class "/usr/local/bin/pythonw" none
 expect_class "claude" panic
 expect_class "/opt/homebrew/bin/node" panic
 
+# Which process the pressure signal may stop. On 2026-10-23 free memory sat
+# just under the floor for an hour (a running app and a local model held the
+# memory, and swap at 89-90% doubled the floor to 2400MB). The guard sent
+# SIGTERM to every `sky` the user started, a 74MB `sky check --help` included,
+# because it was the heaviest WATCHED process. The user saw exit 143 and no
+# output, and stopping it freed nothing the floor needed. Under pressure only a
+# process large enough to matter is a victim. The per-process limit is unchanged.
+echo "pressure_victim()"
+eval "$(sed -n '/^MIN_VICTIM_MB=/p' "$GUARD")"
+eval "$(sed -n '/^pressure_victim()/,/^}/p' "$GUARD")"
+if ! declare -F pressure_victim >/dev/null; then
+    fail=$(( fail + 1 )); echo "  FAIL  pressure_victim not found in mem-guard.sh"
+fi
+expect_victim() {
+    local name="$1" rss="$2" want="$3" got
+    if declare -F pressure_victim >/dev/null && pressure_victim "$rss"; then got=stop; else got=spare; fi
+    if [[ "$got" == "$want" ]]; then
+        pass=$(( pass + 1 )); printf '  ok    %-38s rss=%-7s %s\n' "$name" "${rss}MB" "$got"
+    else
+        fail=$(( fail + 1 )); printf '  FAIL  %-38s rss=%-7s got=%s want=%s\n' "$name" "${rss}MB" "$got" "$want"
+    fi
+}
+expect_victim "the 2026-10-23 sky check --help"     74 spare
+expect_victim "a small sky check"                  668 spare
+expect_victim "a runaway go compile"              5600 stop
+expect_victim "exactly the minimum"   "${MIN_VICTIM_MB:-1024}" stop
+
 # Shadow sysctl with a failing stub rather than blanking PATH — blanking it
 # removes awk as well, which tests nothing about the guard. The guard runs
 # under `set -euo pipefail`, so a failing sysctl must not fail the pipeline:

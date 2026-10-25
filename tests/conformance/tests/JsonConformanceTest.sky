@@ -291,6 +291,104 @@ tests =
     , Test.test
           "pipeline: required field absent -> Err"
           (\_ -> Test.err (Decode.decodeString personDec "{\"nick\":\"x\"}"))
+    -- ─── Pipeline.optional is strict on a present value (v0.27.12) ──
+    , Test.test
+          "pipeline: optional field null -> default"
+          (\_ ->
+              Test.equal
+                  (Ok { name = "Ada", nick = "anon" })
+                  (Decode.decodeString
+                      personDec
+                      "{\"name\":\"Ada\",\"nick\":null}"))
+    , Test.test
+          "pipeline: optional field present with the wrong type -> Err"
+          (\_ ->
+              Test.err
+                  (Decode.decodeString personDec "{\"name\":\"Ada\",\"nick\":7}"))
+    , Test.test
+          "pipeline: optional wrong-type Err names the field"
+          (\_ ->
+              Test.equal
+                  True
+                  (case Decode.decodeString
+                           personDec
+                           "{\"name\":\"Ada\",\"nick\":7}" of
+
+                      Err e ->
+                          String.contains ".nick" (Error.toString e)
+
+                      Ok _ ->
+                          False))
+    , Test.test
+          "pipeline: lenient fallback kept explicitly with oneOf"
+          (\_ ->
+              Test.equal
+                  (Ok { name = "Ada", nick = "anon" })
+                  (Decode.decodeString
+                      (Decode.succeed makePerson
+                          |> Pipeline.required "name" Decode.string
+                          |> Pipeline.optional
+                                 "nick"
+                                 (Decode.oneOf
+                                     [ Decode.string, Decode.succeed "anon" ])
+                                 "anon")
+                      "{\"name\":\"Ada\",\"nick\":7}"))
+    , Test.test
+          "pipeline: optional with a nullable decoder reads null as Nothing"
+          (\_ ->
+              Test.equal
+                  (Ok Nothing)
+                  (Decode.decodeString
+                      (Decode.succeed identity
+                          |> Pipeline.optional
+                                 "n"
+                                 (Decode.nullable Decode.int)
+                                 (Just 0))
+                      "{\"n\":null}"))
+    -- ─── Decode.null / nullable / maybe (v0.27.12, Elm semantics) ──
+    , Test.test
+          "Decode.null on null -> the value"
+          (\_ -> Test.equal (Ok 0) (Decode.decodeString (Decode.null 0) "null"))
+    , Test.test
+          "Decode.null on a number -> Err"
+          (\_ -> Test.err (Decode.decodeString (Decode.null 0) "0"))
+    , Test.test
+          "Decode.nullable on null -> Nothing"
+          (\_ ->
+              Test.equal
+                  (Ok Nothing)
+                  (Decode.decodeString (Decode.nullable Decode.int) "null"))
+    , Test.test
+          "Decode.nullable on 3 -> Just 3"
+          (\_ ->
+              Test.equal
+                  (Ok (Just 3))
+                  (Decode.decodeString (Decode.nullable Decode.int) "3"))
+    , Test.test
+          "Decode.nullable on a wrong type -> Err"
+          (\_ ->
+              Test.err
+                  (Decode.decodeString (Decode.nullable Decode.int) "\"3\""))
+    , Test.test
+          "Decode.maybe on a wrong type -> Nothing"
+          (\_ ->
+              Test.equal
+                  (Ok Nothing)
+                  (Decode.decodeString (Decode.maybe Decode.int) "\"3\""))
+    , Test.test
+          "Decode.maybe on 4 -> Just 4"
+          (\_ ->
+              Test.equal
+                  (Ok (Just 4))
+                  (Decode.decodeString (Decode.maybe Decode.int) "4"))
+    , Test.test
+          "Decode.maybe over a missing field -> Nothing"
+          (\_ ->
+              Test.equal
+                  (Ok Nothing)
+                  (Decode.decodeString
+                      (Decode.maybe (Decode.field "x" Decode.int))
+                      "{}"))
     -- ─── null handling ─────────────────────────────────────────────
     , Test.test
           "null: encodes to the literal `null`"

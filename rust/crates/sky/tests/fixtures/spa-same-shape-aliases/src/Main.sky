@@ -1,0 +1,116 @@
+module Main exposing (main)
+
+-- Sky.Spa auto-split fixture: two record aliases with the same field names.
+--
+-- `TipForm` and `PasteForm` have the same shape (`{ text : String }`).
+-- `FlagForm` and `ToggleForm` have the same field NAMES, but `on` is a
+-- `String` in one and a `Bool` in the other. The solver expands a record alias
+-- to an un-named row, so the split recovers the alias from the row. Before the
+-- fix a field-name set held by two aliases was dropped, and every Msg argument
+-- of either alias failed with "no codec for an anonymous record". Each Msg
+-- below runs on the server (a `File.writeFile`), so each argument rides
+-- `/_rpc/<Msg>` and must keep its own field types.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.File as File
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type alias TipForm =
+    { text : String }
+
+type alias PasteForm =
+    { text : String }
+
+type alias FlagForm =
+    { label : String
+    , on : String
+    }
+
+type alias ToggleForm =
+    { label : String
+    , on : Bool
+    }
+
+type alias Model =
+    { log : String
+    , tip : TipForm
+    }
+
+type Msg
+    = DoTip TipForm
+    | DoPaste PasteForm
+    | DoFlag FlagForm
+    | DoToggle ToggleForm
+    | Done (Result Error ())
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { log = "", tip = { text = "" } }, Cmd.none )
+
+
+onText : Bool -> String
+onText b =
+    if b then
+        "yes"
+
+    else
+        "no"
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        DoTip form ->
+            ( { model | log = "tip:" ++ form.text, tip = form }
+            , Cmd.perform (File.writeFile "data/log.txt" form.text) Done
+            )
+
+        DoPaste paste ->
+            ( { model | log = "paste:" ++ paste.text }
+            , Cmd.perform (File.writeFile "data/log.txt" paste.text) Done
+            )
+
+        DoFlag flag ->
+            ( { model | log = "flag:" ++ flag.label ++ "=" ++ flag.on }
+            , Cmd.perform (File.writeFile "data/log.txt" flag.on) Done
+            )
+
+        DoToggle toggle ->
+            ( { model
+                  | log = "toggle:" ++ toggle.label ++ "=" ++ onText toggle.on
+              }
+            , Cmd.perform
+                  (File.writeFile "data/log.txt" (onText toggle.on))
+                  Done
+            )
+
+        Done _ ->
+            ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column [] [ Ui.text model.log, Ui.text model.tip.text ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+
+
+main : Task Error ()
+main =
+    App.run app

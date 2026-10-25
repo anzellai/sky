@@ -534,9 +534,11 @@ pub static GATES: &[Gate] = &[
                 // (+2 cases, 693 → 695), the v0.28.0 Std.Ai.Device surface
                 // (+2 cases, 695 → 697) and the v0.28.0 Std.Ai.Serve and
                 // Std.Ai.Cloud.Google surfaces (+3 cases, 697 → 700), and the
-                // v0.27.10 alias_ctor_collision stratum (+4 cases, 700 → 704).
-                from: "n_min = 704",
-                to: "n_min = 702",
+                // v0.27.10 alias_ctor_collision stratum (+4 cases, 700 → 704),
+                // and the v0.27.14 lambda_record_param stratum (+32 cases,
+                // 704 → 736).
+                from: "n_min = 736",
+                to: "n_min = 737",
             },
         }]),
         body: bodies::corpus_manifest,

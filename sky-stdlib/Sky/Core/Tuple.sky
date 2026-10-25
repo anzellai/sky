@@ -1,9 +1,8 @@
 -- | Sky.Core.Tuple — helpers for pairs `( a, b )` (Layer 3 Sky source).
 --
 -- The Elm `Tuple` module: build a pair, read either side, and map one or
--- both sides.  Pure Sky, no runtime kernel.  Import it by name:
---
---     import Sky.Core.Tuple as Tuple
+-- both sides.  Pure Sky, no runtime kernel.  As in Elm, the `Tuple`
+-- qualifier needs no import:
 --
 --     Tuple.pair 1 "one"                 -- ( 1, "one" )
 --     Tuple.mapFirst String.fromInt ( 1, "one" )  -- ( "1", "one" )

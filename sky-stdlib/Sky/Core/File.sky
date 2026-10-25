@@ -16,6 +16,7 @@ module Sky.Core.File exposing
     , readFileLimit
     , readFileBytes
     , writeFile
+    , writeBytes
     , append
     , exists
     , remove
@@ -68,6 +69,15 @@ readFileBytes =
 writeFile : String -> String -> Task Error ()
 writeFile =
     Ffi.kernel "File_writeFile"
+
+
+-- | `writeBytes path bytes` — overwrite the file with exactly these bytes.
+-- `bytes` is a `Sky.Core.Bytes` buffer (a `String` whose bytes need not be
+-- UTF-8), e.g. from `Bytes.fromBase64`. Nothing is re-encoded. Read it back
+-- with `readFileBytes`.
+writeBytes : String -> String -> Task Error ()
+writeBytes =
+    Ffi.kernel "File_writeBytes"
 
 
 -- | `append path content` — appends to the end of the file

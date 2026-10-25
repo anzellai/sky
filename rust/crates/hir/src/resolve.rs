@@ -6,11 +6,13 @@
 use crate::cst;
 use crate::db::{ImportSource, SkyDb};
 use crate::exports::ModuleExports;
-use crate::hir::{Body, CaseBranch, Expr, ExprId, LocalDef, PatId, Pattern, TopDef, Type, TypeId};
+use crate::hir::{
+    Body, CaseBranch, Expr, ExprId, LetAnno, LocalDef, PatId, Pattern, TopDef, Type, TypeId,
+};
 use crate::ids::{CtorRef, DefKind, LocalId, Res, TypeRes};
 use crate::kernel::{
     is_reserved_sky_namespace, kernel_functions, BUILTIN_CTORS, BUILTIN_TYPES, BUILTIN_VARS,
-    KERNEL_IMPLICIT_TYPES, PRELUDE_QUALIFIERS,
+    DEFAULT_QUALIFIED_IMPORTS, KERNEL_IMPLICIT_TYPES, PRELUDE_QUALIFIERS,
 };
 use base::{DefId, FileId, ModuleId, Name, Span};
 use diagnostics::Diagnostic;
@@ -1113,6 +1115,9 @@ impl<'a> Resolver<'a> {
         for imp in &imports {
             self.process_import(imp, &claims);
         }
+        // 2b. default qualified imports (Elm's implicit `import Tuple`). After
+        //     every real import, so any import binding the same qualifier wins.
+        self.bind_default_qualifiers();
 
         // 3. local declarations (after imports → local shadows import, C7)
         self.register_locals(&tree);
@@ -1206,7 +1211,7 @@ impl<'a> Resolver<'a> {
                         local_aliases.insert(t.text().to_string());
                     }
                 }
-                ast::Decl::TypeAnno(_) | ast::Decl::Foreign(_) => {}
+                ast::Decl::TypeAnno(_) => {}
             }
         }
         let module_name = self.self_module_name();
@@ -1491,6 +1496,26 @@ impl<'a> Resolver<'a> {
             (_, None) => {}
         }
         self.cur_import = None;
+    }
+
+    /// Bind each [`DEFAULT_QUALIFIED_IMPORTS`] qualifier that no import of this
+    /// module bound, as if the module had `import <path> as <qualifier>`. It
+    /// binds a qualifier only, never an unqualified name. A compilation that
+    /// does not carry the module (a narrow test db) binds nothing.
+    fn bind_default_qualifiers(&mut self) {
+        let own = self.db.module_name(self.module).to_string();
+        for (qual, path) in DEFAULT_QUALIFIED_IMPORTS {
+            if own == *path || self.import_aliases.contains_key(*qual) {
+                continue;
+            }
+            let source = self.db.classify_import(path);
+            if let ImportSource::Dep(dep) = &source {
+                self.import_aliases
+                    .insert((*qual).to_string(), source.clone());
+                let exports = self.db.module_exports(*dep);
+                self.bind_qual_from_exports(qual, &exports);
+            }
+        }
     }
 
     fn bind_qual_from_exports(&mut self, q: &str, exports: &ModuleExports) {
@@ -1971,7 +1996,7 @@ impl<'a> Resolver<'a> {
                         self.bind_var(an, Res::Def(d), BindLayer::Local);
                     }
                 }
-                ast::Decl::TypeAnno(_) | ast::Decl::Foreign(_) => {}
+                ast::Decl::TypeAnno(_) => {}
             }
         }
     }
@@ -2098,7 +2123,6 @@ impl<'a> Resolver<'a> {
                     }
                     self.finish_body(a.name().map(|t| t.text().to_string()));
                 }
-                ast::Decl::Foreign(_) => {}
             }
         }
     }
@@ -2615,6 +2639,9 @@ impl<'a> Resolver<'a> {
         // captures a not-yet-declared var — examples 26/37).
         let mut defs = Vec::new();
         let mut binding_ix = 0usize;
+        // An annotation-only binding (`n : Int`) waits here for the define of
+        // the same name that follows it.
+        let mut pending_anno: Option<(Name, LetAnno)> = None;
         for child in l.syntax().children() {
             match child.kind() {
                 SyntaxKind::LetBinding => {
@@ -2632,6 +2659,14 @@ impl<'a> Resolver<'a> {
                         .children()
                         .find(|c| c.kind() == SyntaxKind::ParamList);
                     let has_body = b.body().is_some();
+                    let anno = if has_body {
+                        match (pending_anno.take(), b.name()) {
+                            (Some((n, a)), Some(name)) if n.as_str() == name.text() => Some(a),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
                     if let Some(pl) = params_node {
                         self.push_scope();
                         let mut params = Vec::new();
@@ -2652,6 +2687,7 @@ impl<'a> Resolver<'a> {
                             pat: None,
                             params,
                             body,
+                            anno,
                         });
                     } else if has_body {
                         let body = self.resolve_expr(&b.body().unwrap());
@@ -2660,11 +2696,17 @@ impl<'a> Resolver<'a> {
                             pat: None,
                             params: Vec::new(),
                             body,
+                            anno,
                         });
                     } else {
-                        // annotation-only binding: resolve its type
+                        // annotation-only binding: resolve its type and keep it
+                        // for the define of the same name that follows.
                         if let Some(t) = b.syntax().children().find_map(ast::Type::cast) {
-                            let _ = self.resolve_type(&t);
+                            let ty = self.resolve_type(&t);
+                            let span = self.span_of(t.syntax().text_range());
+                            if let Some(name) = b.name() {
+                                pending_anno = Some((Name::new(name.text()), LetAnno { ty, span }));
+                            }
                         }
                     }
                 }
@@ -2686,6 +2728,7 @@ impl<'a> Resolver<'a> {
                         pat,
                         params: Vec::new(),
                         body: val,
+                        anno: None,
                     });
                 }
                 _ => {}

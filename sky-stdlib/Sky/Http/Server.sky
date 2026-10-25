@@ -27,6 +27,7 @@ module Sky.Http.Server exposing
     , text
     , json
     , html
+    , bytes
     , withStatus
     , redirect
     , param
@@ -55,6 +56,10 @@ import Sky.Core.Error exposing (Error)
 -- access (`req.method` / `.path` / `.headers` / `.body` / etc.)
 -- is the typed read path.  `params` carries URL path captures
 -- (e.g. `/users/:id`'s `id`); `query` carries `?k=v` pairs.
+-- `host` is the name the client used (`Host:` header), port included
+-- when the client sent one, e.g. `"a.example.com"` or
+-- `"a.localhost:8000"`. It is also in `headers` under `"Host"`. An app
+-- that serves several domains reads it to tell them apart.
 type alias Request =
     { method : String
     , path : String
@@ -64,6 +69,7 @@ type alias Request =
     , query : Dict String String
     , cookies : Dict String String
     , remoteAddr : String
+    , host : String
     }
 
 -- | The shape of an outbound HTTP response.  Built by the response
@@ -206,6 +212,19 @@ json =
 html : String -> Response
 html =
     Ffi.kernel "Server_html"
+
+
+-- | `bytes contentType body` — build a 200 OK response that sends `body`
+-- exactly as given, with `contentType` as its `Content-Type`. `body` is a
+-- `Sky.Core.Bytes` buffer (a `String` whose bytes need not be UTF-8), so it
+-- can carry an image, a PDF or any other binary file:
+--
+--     case Bytes.fromBase64 pngBase64 of
+--         Just png -> Task.succeed (Server.bytes "image/png" png)
+--         Nothing -> Task.succeed (Server.text "bad image" |> Server.withStatus 500)
+bytes : String -> String -> Response
+bytes =
+    Ffi.kernel "Server_bytes"
 
 
 -- | `withStatus code resp` — override the status code.

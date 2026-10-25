@@ -270,12 +270,13 @@ type Sky_Http_Server_Request_R struct {
 	Query      map[string]string `sky:"query,map[string]string"`
 	Cookies    map[string]string `sky:"cookies,map[string]string"`
 	RemoteAddr string            `sky:"remoteAddr,string"`
+	Host       string            `sky:"host,string"`
 }
 
 func init() { rt.RegisterGobType(Sky_Http_Server_Request_R{}) }
 
-func Sky_Http_Server_Request(p0 string, p1 string, p2 string, p3 map[string]string, p4 map[string]string, p5 map[string]string, p6 map[string]string, p7 string) Sky_Http_Server_Request_R {
-	return Sky_Http_Server_Request_R{Method: p0, Path: p1, Body: p2, Headers: p3, Params: p4, Query: p5, Cookies: p6, RemoteAddr: p7}
+func Sky_Http_Server_Request(p0 string, p1 string, p2 string, p3 map[string]string, p4 map[string]string, p5 map[string]string, p6 map[string]string, p7 string, p8 string) Sky_Http_Server_Request_R {
+	return Sky_Http_Server_Request_R{Method: p0, Path: p1, Body: p2, Headers: p3, Params: p4, Query: p5, Cookies: p6, RemoteAddr: p7, Host: p8}
 }
 
 type Sky_Http_Server_Response_R struct {
@@ -10584,6 +10585,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				}{Init: func(v_21 struct {
 					Cookies map[string]string
 					Headers map[string]string
+					Host    string
 					Method  string
 					Params  map[string]string
 					Path    string
@@ -10823,6 +10825,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 							return Std_App_requestFromSeed_( /* generic erase */ func(_s any) struct {
 								Cookies map[string]string
 								Headers map[string]string
+								Host    string
 								Method  string
 								Params  map[string]string
 								Path    string
@@ -10831,6 +10834,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 								if _m, _ok := _s.(struct {
 									Cookies any
 									Headers any
+									Host    any
 									Method  any
 									Params  any
 									Path    any
@@ -10839,15 +10843,17 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 									return struct {
 										Cookies map[string]string
 										Headers map[string]string
+										Host    string
 										Method  string
 										Params  map[string]string
 										Path    string
 										Query   string
-									}{Cookies: rt.AsMapT[string](_m.Cookies), Headers: rt.AsMapT[string](_m.Headers), Method: rt.AsString(_m.Method), Params: rt.AsMapT[string](_m.Params), Path: rt.AsString(_m.Path), Query: rt.AsString(_m.Query)}
+									}{Cookies: rt.AsMapT[string](_m.Cookies), Headers: rt.AsMapT[string](_m.Headers), Host: rt.AsString(_m.Host), Method: rt.AsString(_m.Method), Params: rt.AsMapT[string](_m.Params), Path: rt.AsString(_m.Path), Query: rt.AsString(_m.Query)}
 								}
 								return rt.Coerce[struct {
 									Cookies map[string]string
 									Headers map[string]string
+									Host    string
 									Method  string
 									Params  map[string]string
 									Path    string
@@ -11028,12 +11034,13 @@ func Std_App_embeddedIn_(v_0 []Std_App_Config) bool {
 func Std_App_requestFromSeed_(v_0 struct {
 	Cookies map[string]string
 	Headers map[string]string
+	Host    string
 	Method  string
 	Params  map[string]string
 	Path    string
 	Query   string
 }) Sky_Http_Server_Request_R {
-	return Sky_Http_Server_Request_R{Method: v_0.Method, Path: v_0.Path, Body: "", Headers: v_0.Headers, Params: v_0.Params, Query: /* FFI return */ rt.AsMapT[string](rt.Http_parseQuery(any(v_0.Query))), Cookies: v_0.Cookies, RemoteAddr: ""}
+	return Sky_Http_Server_Request_R{Method: v_0.Method, Path: v_0.Path, Body: "", Headers: v_0.Headers, Params: v_0.Params, Query: /* FFI return */ rt.AsMapT[string](rt.Http_parseQuery(any(v_0.Query))), Cookies: v_0.Cookies, RemoteAddr: "", Host: v_0.Host}
 }
 
 func Std_App_liveDurable_(v_0 func(any) Sky_Http_Server_Request_R, v_1 rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]], v_2 Std_App_DurableWiring_R[any]) struct {

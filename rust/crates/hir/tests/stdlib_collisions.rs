@@ -47,6 +47,15 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     "value Options",
     "value defaultOptions",
     "value embed",
+    // v0.27.12: Json.Decode.null / nullable / maybe (Elm). Json.Encode.null,
+    // Std.Codec.maybe, Std.Config.nullable and Std.Db.Decode.nullable already
+    // existed; see the v0.27.12 CHANGELOG.
+    "value maybe",
+    "value null",
+    "value nullable",
+    // v0.27.13: List.repeat (Elm). String.repeat, Std.Css and Std.Ui.Grid
+    // already export `repeat`; Elm has the same pair.
+    "value repeat",
     // v0.27.10: `Std.Image.trim` (crop away a uniform margin) shares its name
     // with `String.trim`; see the v0.27.10 CHANGELOG.
     "value trim",
@@ -318,6 +327,16 @@ fn same_kernel(a: &str, b: &str) -> bool {
     face(a, b) || face(b, a)
 }
 
+/// The ambient layer: the Prelude and its two import spellings. A binding from
+/// one of these enters at `BindLayer::Ambient` (`hir/src/resolve.rs`,
+/// `AMBIENT_IMPORTS`), so any other import shadows it silently and a pair with
+/// one of them is never `[E1012]`. A new Basics member (`toFloat`, v0.27.12)
+/// therefore collides with nothing: `import Sky.Core.String exposing (..)` keeps
+/// its bare `toFloat` meaning `String.toFloat`.
+fn is_ambient_module(m: &str) -> bool {
+    matches!(m, "kernel:Basics" | "Sky.Core.Basics" | "Sky.Core.Prelude")
+}
+
 /// `(namespace name) -> ["A + B", …]`: pairs of modules that both existed in
 /// the previous release and both export the name now, but did not both export
 /// it then. Exactly the pairs an old program can import together and newly
@@ -335,7 +354,11 @@ fn new_collisions(
         for (i, a) in mods.iter().enumerate() {
             for b in &mods[i + 1..] {
                 let both_before = before.is_some_and(|s| s.contains(*a) && s.contains(*b));
-                if !both_before && !same_kernel(a, b) {
+                if !both_before
+                    && !same_kernel(a, b)
+                    && !is_ambient_module(a)
+                    && !is_ambient_module(b)
+                {
                     out.entry(format!("{ns} {name}"))
                         .or_default()
                         .push(format!("{a} + {b}"));
@@ -481,7 +504,7 @@ fn no_new_stdlib_export_silently_rebinds_an_ambient_name() {
         };
         // The ambient layer itself (`kernel:Basics`) and modules no old program
         // could import are not a rebinding hazard.
-        if r.module == "kernel:Basics" || !old_mods.contains(&r.module) {
+        if is_ambient_module(&r.module) || !old_mods.contains(&r.module) {
             continue;
         }
         let existed = old

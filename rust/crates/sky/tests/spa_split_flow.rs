@@ -158,14 +158,20 @@ fn dist_has_wasm(dist: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
+/// A fresh directory per call. The tests of this file run in parallel in one
+/// process, and two calls in the same clock tick got the same name: one test
+/// then read the sources another had written. A counter keeps every name
+/// distinct.
 fn scratch() -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let uniq = format!(
-        "sky-spasplit-{}-{}",
+        "sky-spasplit-{}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
     std::env::temp_dir().join(uniq)
 }
@@ -3768,6 +3774,127 @@ fn spa_split_request_carries_a_preserved_write_field_round_trip() {
     assert!(
         body.contains("\"counter\":4"),
         "bug #1: the else-path must have bumped counter to 4, was {body:?}"
+    );
+}
+
+fn spa_same_shape_aliases_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-same-shape-aliases")
+}
+
+/// Two record aliases with the same field names (a user app). `TipForm` and
+/// `PasteForm` are both `{ text : String }`; `FlagForm` and `ToggleForm` share
+/// the field names `label` and `on`, but `on` is a `String` in one and a `Bool`
+/// in the other. The solver expands a record alias to an un-named row, and the
+/// split recovered the alias from the field NAMES alone, so a name set held by
+/// two aliases was dropped and `sky check` failed with "no codec for an
+/// anonymous record `{ text }`". Each Msg argument must take the codec of the
+/// alias its constructor names, and the two different shapes must never be one.
+#[test]
+#[cfg(unix)]
+fn spa_split_wires_two_aliases_with_the_same_field_names() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&spa_same_shape_aliases_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the spa-same-shape-aliases fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !log.contains("no codec for an anonymous record"),
+        "a named alias that shares its field names with another alias must get a codec:\n{log}"
+    );
+
+    // ── Always-run wire-shape leg: each argument names its own alias. ──
+    let shared = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/shared/Shared.sky"))
+        .unwrap_or_else(|e| panic!("generated shared module must exist ({e}):\n{log}"));
+    for alias in ["PasteForm", "FlagForm", "ToggleForm"] {
+        assert!(
+            shared.contains(&format!("type alias {alias} =")),
+            "Shared must declare `{alias}`, the alias the Msg constructor names:\n{shared}"
+        );
+    }
+
+    // ── Go-gated e2e: both pairs round-trip over /_rpc with their own types. ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "--target web:app must build end-to-end:\n{log}"
+    );
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+    std::fs::create_dir_all(backend_dir.join("data")).unwrap();
+
+    let port = 8993u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled spa-same-shape-aliases backend");
+    if !wait_for_spa_backend(&log_path, 80) {
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("spa-same-shape-aliases backend never reported listening on :{port}");
+    }
+    let calls = [
+        ("/_rpc/DoTip", r#"{"form":{"text":"a"}}"#, "\"tip:a\""),
+        ("/_rpc/DoPaste", r#"{"paste":{"text":"b"}}"#, "\"paste:b\""),
+        (
+            "/_rpc/DoFlag",
+            r#"{"flag":{"label":"x","on":"up"}}"#,
+            "\"flag:x=up\"",
+        ),
+        (
+            "/_rpc/DoToggle",
+            r#"{"toggle":{"label":"y","on":true}}"#,
+            "\"toggle:y=yes\"",
+        ),
+    ];
+    let mut results = Vec::new();
+    for (path, body, _) in &calls {
+        results.push(curl_post_status_body(port, path, body));
+    }
+    // A value of the wrong field type is refused: `on` is a Bool for DoToggle.
+    let wrong = curl_post_status_body(
+        port,
+        "/_rpc/DoToggle",
+        r#"{"toggle":{"label":"y","on":"up"}}"#,
+    );
+    child.kill();
+    let server_log = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    for ((path, body, want), got) in calls.iter().zip(results) {
+        let (code, resp) = got.unwrap_or_else(|| panic!("POST {path} should return"));
+        assert_eq!(
+            code, 200,
+            "POST {path} {body} must return 200; body {resp:?}\n{server_log}"
+        );
+        assert!(
+            resp.contains(want),
+            "POST {path} {body} must answer {want}; was {resp:?}"
+        );
+    }
+    let (code, resp) = wrong.expect("POST /_rpc/DoToggle with a String `on` should return");
+    assert_ne!(
+        code, 200,
+        "a String where ToggleForm has a Bool must be refused, not read as FlagForm; body {resp:?}"
     );
 }
 

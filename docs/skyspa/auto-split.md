@@ -1820,6 +1820,18 @@ its own `any`. Three shapes left a wire type open, and all are now named:
   `Paged Item`, and derives one codec per use (`autoPaged_ItemCodec_ : Codec
   (Paged Item)`). A parameter no field shows is refused with a request to
   declare a `Codec (Paged …)` binding.
+- **Two record aliases with the same field names.** `type alias TipForm = {
+  text : String }` and `type alias PasteForm = { text : String }` in one app
+  made a Msg argument of either alias fail with "no codec for an anonymous
+  record `{ text }`": the split recovered an alias from its field NAMES only,
+  and dropped a name set that two aliases held. The resolver now keeps every
+  alias with the name set and compares the field TYPES of the solved row, so
+  `{ label : String, on : String }` and `{ label : String, on : Bool }` are
+  never one shape. Aliases with identical fields are one structural type: a
+  Msg argument takes the alias its constructor names (`DoPaste PasteForm`).
+  Test: `spa_split_flow.rs`
+  `spa_split_wires_two_aliases_with_the_same_field_names` (fixture
+  `spa-same-shape-aliases`, both pairs round-trip over `/_rpc`).
 
 `build_wire` refuses any generated field type that still holds `any` or a type
 variable (`open_type_word`), so a future resolver gap fails the split with a

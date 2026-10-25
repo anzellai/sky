@@ -16,6 +16,7 @@
 //! | `annotation` | #166's annotated-vs-unannotated split | whether the signature is written |
 //! | `row` | #171 — closed vs open (row-polymorphic) records | record openness |
 //! | `alias_names` / `ctor_use` | v0.27.10 — two modules' `type alias Reply`, the wrong constructor | whether two record aliases share a name, and how the constructor is used |
+//! | `anon_role` / `acc_pos` / `step_site` / `anon_depth` / `list_import` | v0.27.14 — a fold's anonymous-record accumulator narrowed to the element's named record | which fold param is the anonymous record, where the accumulator sits, how the step is written, how deep the record is, and how `List` is imported |
 //!
 //! A **stratum** is a named subset of the space that gets FULL cross, because
 //! history says that triple produces bugs. Everything else is covered by a
@@ -344,6 +345,36 @@ pub const ALIAS_NAMES: Axis = Axis::new("alias_names", &["distinct", "same"]);
 /// or passed as a value (`Decode.map2 Reply …`, the reported shape).
 pub const CTOR_USE: Axis = Axis::new("ctor_use", &["applied", "value"]);
 
+/// **Which param of a two-param fold step is the ANONYMOUS record**
+/// (v0.27.14). A list combinator closure pins the param at the list element to
+/// the list's own Go element type. The pin went to the first `struct{…}` param
+/// whatever its position, so with a list of NAMED records (`it : Item`, not a
+/// `struct{…}`) and an anonymous accumulator, the ACCUMULATOR was narrowed to
+/// `Item`: `sky check` passed and `go build` failed on the accumulator's own
+/// fields. `elem` (the element is the anonymous record, the accumulator a named
+/// one) is the shape that always worked.
+pub const ANON_ROLE: Axis = Axis::new("anon_role", &["acc", "elem"]);
+
+/// **Where the accumulator sits in the step** (v0.27.14): `second` is
+/// `List.foldl (\it acc -> …)`, `first` a local fold `(b -> a -> b)` written
+/// `\acc it -> …`.
+pub const ACC_POS: Axis = Axis::new("acc_pos", &["first", "second"]);
+
+/// **How the step function reaches the fold** (v0.27.14): a lambda written at
+/// the call (the reported shape), or a let-bound lambda passed by name.
+pub const STEP_SITE: Axis = Axis::new("step_site", &["inline", "let_bound"]);
+
+/// **How deep the anonymous record is** (v0.27.14): flat, or holding a nested
+/// anonymous record that the step reads and rebuilds.
+pub const ANON_DEPTH: Axis = Axis::new("anon_depth", &["flat", "nested"]);
+
+/// **How `List` reaches the module** (v0.27.14): through the Prelude's
+/// autoload, or an explicit `import Sky.Core.List as List`. The two lower
+/// `List.foldl` differently (the kernel entry against the stdlib's own Sky
+/// definition), and only the explicit import reached the faulty pin in the
+/// reported program.
+pub const LIST_IMPORT: Axis = Axis::new("list_import", &["autoloaded", "explicit"]);
+
 /// **How a Task-returning function reaches a `Task.andThen` chain.** A
 /// parameter `f : Int -> Task Error ()` called in a middle link whose result
 /// the next link ignores (`\_ -> …`) was typed `SkyTask[E, any]` by inference
@@ -600,6 +631,14 @@ pub const STRATA: &[Stratum] = &[
         // subject (v2 §3.2 family 3), so it cannot share a compilation unit.
         isolated: true,
     },
+    // ---- v0.27.14 -----------------------------------------------------------
+    Stratum {
+        name: "lambda_record_param",
+        axes: &[ANON_ROLE, ACC_POS, STEP_SITE, ANON_DEPTH, LIST_IMPORT],
+        coordinate: Some("v0.27.14: a fold's anonymous-record accumulator narrowed to the element"),
+        // One module, one fold: nothing here depends on a neighbour.
+        isolated: false,
+    },
 ];
 
 /// Whether a point in a stratum's cross is a real case.
@@ -742,6 +781,16 @@ pub fn pinned_coordinate(stratum: &str) -> Option<Assignment> {
             Assignment::new()
                 .with(ALIAS_NAMES, "same")
                 .with(CTOR_USE, "value"),
+        ),
+        // v0.27.14: the reported reproduction, `List.foldl (\it acc -> …)`
+        // over named records into an anonymous record.
+        "lambda_record_param" => Some(
+            Assignment::new()
+                .with(ANON_ROLE, "acc")
+                .with(ACC_POS, "second")
+                .with(STEP_SITE, "inline")
+                .with(ANON_DEPTH, "flat")
+                .with(LIST_IMPORT, "explicit"),
         ),
         _ => None,
     }

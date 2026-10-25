@@ -119,6 +119,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Basics", "negate", "rt.Negate"),
     ("Basics", "abs", "rt.Math_abs"),
     ("Basics", "sqrt", "rt.Math_sqrt"),
+    ("Basics", "toFloat", "rt.Basics_toFloat"),
     // Prelude/Basics `min`/`max` reuse the Math kernels — the HIR kernel table
     // registers them as valid names, but they had no codegen mapping, so a
     // well-typed `min 3 5` passed `sky check` then failed `go build` (E4005).
@@ -222,6 +223,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("List", "any", "rt.List_any"),
     ("List", "all", "rt.List_all"),
     ("List", "range", "rt.List_range"),
+    ("List", "repeat", "rt.List_repeat"),
     ("List", "zip", "rt.List_zip"),
     ("List", "filterMap", "rt.List_filterMap"),
     ("Dict", "empty", "rt.Dict_empty"),
@@ -423,6 +425,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("File", "readFileLimit", "rt.File_readFileLimit"),
     ("File", "readFileBytes", "rt.File_readFileBytes"),
     ("File", "writeFile", "rt.File_writeFile"),
+    ("File", "writeBytes", "rt.File_writeBytes"),
     ("File", "append", "rt.File_append"),
     ("File", "exists", "rt.File_exists"),
     ("File", "remove", "rt.File_remove"),
@@ -604,6 +607,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Server", "text", "rt.Server_text"),
     ("Server", "json", "rt.Server_json"),
     ("Server", "html", "rt.Server_html"),
+    ("Server", "bytes", "rt.Server_bytes"),
     ("Server", "withStatus", "rt.Server_withStatus"),
     ("Server", "redirect", "rt.Server_redirect"),
     ("Server", "param", "rt.Server_param"),

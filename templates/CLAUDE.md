@@ -177,3 +177,11 @@ another way: its prompts must not reach the server. A registry adapter runs on
 devices only after `Registry.allowOnDevice`; do not clear one the user has not
 reviewed. `sky ai provision --device ios|android|web` and `--ai-embed` download
 hundreds of megabytes: run them when the task needs them.
+
+### After an upgrade to v0.27.12, run the tests that decode JSON
+
+`Pipeline.optional` now returns an `Err` for a present, non-null value its
+decoder rejects (it used to return the default). Run `sky test` and exercise
+each JSON input once after the upgrade. Where a lenient fallback is intended,
+write it out (`Decode.oneOf [ dec, Decode.succeed default ]`); do not loosen a
+decoder only to make a test pass. See AGENTS.md "JSON decoding is strict".

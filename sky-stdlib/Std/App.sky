@@ -879,7 +879,7 @@ withOnNavigate onNav (App a) =
 -- request is no longer smuggled through `init`'s argument.
 --
 -- Only the Live/web runner consumes it. At session init the request carries
--- `method` / `path` / `headers` / `params` / `query` / `cookies`; `body` and
+-- `method` / `host` / `path` / `headers` / `params` / `query` / `cookies`; `body` and
 -- `remoteAddr` are empty (init is a GET-time hook — read a POST body in a route
 -- handler or an `update` command instead). Do not key data by the Sky.Live
 -- session cookie: it changes at every sign-in (session-id rotation) and is named
@@ -1234,7 +1234,7 @@ apiServerRoute r =
 
 -- Build a `Sky.Http.Server.Request` from the request-shaped seed record the
 -- Live runtime hands `init` at session start (`runtime-go/rt/live.go`
--- `handleInitial`). That seed carries method / path / headers / params / query
+-- `handleInitial`). That seed carries method / host / path / headers / params / query
 -- / cookies; `body` and `remoteAddr` are not delivered at init, so they are
 -- empty. `query` arrives as a raw string and is parsed to the `Dict` shape
 -- `Request` declares. This is the ONE bridge — [`withRequest`] delivers this
@@ -1242,6 +1242,7 @@ apiServerRoute r =
 -- `()`), which is what keeps the app portable.
 requestFromSeed_ :
     { method : String
+    , host : String
     , path : String
     , headers : Dict String String
     , params : Dict String String
@@ -1258,6 +1259,7 @@ requestFromSeed_ s =
     , query = Http.parseQuery s.query
     , cookies = s.cookies
     , remoteAddr = ""
+    , host = s.host
     }
 
 

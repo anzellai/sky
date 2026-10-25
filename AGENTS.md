@@ -85,6 +85,13 @@ Core syntax you must get right:
 - **Import aliasing**: `import Std.Db as Db exposing (Store)`.
 - **Multiline strings**: triple-quoted with `{{expr}}` interpolation; `\{{` escapes.
 - **Negative literal args**: `f -1` parses as `f (-1)`; `f - 1` is subtraction.
+- **Int to Float**: `toFloat n` (Prelude, as in Elm). Float to Int: `Math.round` / `floor` / `ceil` / `trunc`.
+- **Reserved words**: `module exposing import as type alias if then else case of let in`.
+  One of them used as a name is one parse error that names it. `foreign`, `where`
+  and `port` are ordinary names.
+- **JSON**: `Pipeline.optional name dec default` gives `default` only when the
+  field is absent or `null`; a present value `dec` rejects is an `Err` (since
+  v0.27.12). `Decode.nullable` / `Decode.maybe` / `Decode.null` are as in Elm.
 - No custom operators, no `where` clauses (use `let`), no higher-kinded types (HM only).
 
 **Effect boundary — the single most important rule.** Every observable side
@@ -211,6 +218,14 @@ an app that wants its own indicator. `Sub.every` is a wake-up, not a clock:
 use `Sub.everyWithTime` and read the time the tick carries; a tick whose
 update calls the server is coalesced and held back while the page is hidden
 (`docs/skyspa/overview.md`, "Network resilience").
+
+**Request host and binary data.** A `Sky.Http.Server` handler, an `App.api`
+route and the `App.withRequest` hook get `req.host`: the name the client used,
+port included (`"a.localhost:8000"`), also in `req.headers` under `"Host"`. An
+app that serves several domains reads it. `Server.bytes contentType bytes`
+answers binary data byte for byte, and `File.writeBytes path bytes` writes it
+(a `Bytes` is a `String` whose bytes need not be UTF-8, e.g. from
+`Bytes.fromBase64`). `List.repeat n x` is `n` copies of `x`, as in Elm.
 
 **A host that cannot keep cookies** (a native shell whose custom scheme drops
 `Set-Cookie`, some embedded web views) uses `App.withSessionTransport

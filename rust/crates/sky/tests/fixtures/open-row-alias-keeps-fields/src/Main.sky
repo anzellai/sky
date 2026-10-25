@@ -12,7 +12,6 @@ import Sky.Core.Dict as Dict
 import Sky.Http.Server as Server exposing (Request)
 import Std.Log exposing (println)
 
-
 type alias Note =
     { body : String }
 
@@ -45,6 +44,7 @@ request =
     , query = Dict.empty
     , cookies = Dict.fromList [ ( "sid", "abc123" ) ]
     , remoteAddr = "127.0.0.1"
+    , host = "localhost"
     }
 
 

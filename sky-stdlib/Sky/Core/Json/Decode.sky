@@ -20,6 +20,9 @@ module Sky.Core.Json.Decode exposing
     , succeed
     , fail
     , oneOf
+    , null
+    , nullable
+    , maybe
     , map2
     , map3
     , map4
@@ -153,6 +156,34 @@ fail =
 oneOf : List (Decoder a) -> Decoder a
 oneOf =
     Ffi.kernel "JsonDec_oneOf"
+
+
+-- | Succeed with the given value when the JSON value is `null`; fail on
+-- anything else.
+--
+--     Decode.decodeString (Decode.null 0) "null" == Ok 0
+null : a -> Decoder a
+null =
+    Ffi.kernel "JsonDec_null"
+
+
+-- | Decode a value that may be `null`: `null` gives `Nothing`, any other
+-- value must satisfy the decoder and gives `Just`. A non-null value the
+-- decoder rejects is an `Err`.
+--
+--     Decode.decodeString (Decode.nullable Decode.int) "null" == Ok Nothing
+--     Decode.decodeString (Decode.nullable Decode.int) "3" == Ok (Just 3)
+nullable : Decoder a -> Decoder (Maybe a)
+nullable =
+    Ffi.kernel "JsonDec_nullable"
+
+
+-- | Run the decoder and never fail: `Just` its value when it succeeds,
+-- `Nothing` when it fails for ANY reason (a wrong type included). Prefer
+-- `nullable` when only `null` should become `Nothing`.
+maybe : Decoder a -> Decoder (Maybe a)
+maybe =
+    Ffi.kernel "JsonDec_maybe"
 
 
 -- ─── Map-N (combine multiple decoders) ─────────────────────────────

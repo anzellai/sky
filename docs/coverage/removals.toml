@@ -705,6 +705,18 @@ reason = "v0.28.0 (unreleased): an internal helper of Std.Ai.Cloud.Google, no lo
 owner  = "anzel"
 commit = "fix/stdlib-collisions"
 
+[[removal]]
+symbol = "syntax::SyntaxKind::ForeignKw"
+reason = "v0.27.12: `foreign` was a keyword in the Rust lexer only. docs/language/syntax.md never listed it, and its one rule (a top-level `foreign ...` line, ForeignDecl) was parsed and then dropped by hir with no meaning, a leftover of the retired TypeScript-era compiler. It blocked `foreign` as an ordinary name (`let foreign = ...` failed with `expected a pattern` and a cascade). Nothing in sky-stdlib, examples, tests, apps or templates used the rule. `foreign` is now a plain identifier; parse_tests.rs foreign_is_an_ordinary_name pins it."
+owner  = "anzel"
+commit = "fix/v0.27.12"
+
+[[removal]]
+symbol = "syntax::SyntaxKind::ForeignDecl"
+reason = "v0.27.12: the node of the dead `foreign ...` top-level rule removed with ForeignKw (see that stanza). hir, fmt, the LSP and the Sky.Spa splitter ignored or reprinted it verbatim; no construct with a meaning left the language."
+owner  = "anzel"
+commit = "fix/v0.27.12"
+
 # ===========================================================================
 # ## The FOURTH ledger: `[[correction]]` — a false credit removed
 # ===========================================================================

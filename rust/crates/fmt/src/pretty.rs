@@ -347,15 +347,6 @@ impl Printer {
             Decl::Value(v) => (self.fmt_value(v), true, 1),
             Decl::Alias(a) => (self.fmt_alias(a), false, 1),
             Decl::Union(u) => (self.fmt_union(u), false, 1),
-            Decl::Foreign(f) => {
-                // No opinionated shape yet: reprint verbatim (safety net will
-                // fall the file back if this ever loses a comment).
-                (
-                    f.syntax().text().to_string().trim_end().to_string(),
-                    true,
-                    1,
-                )
-            }
         }
     }
 
