@@ -31,6 +31,8 @@ module Std.Codec exposing
     , Shape(..)
     , ObjectCodec
     , shape
+    , JsonSchema
+    , jsonSchema
     , toValue
     , toJson
     , fromJson
@@ -85,12 +87,176 @@ type Shape
     | SScalar ColType
     | SBlob
 
--- | A bidirectional codec for `a`: encoder + decoder + shape.
+-- | A bidirectional codec for `a`: encoder + decoder + shape, and a
+-- description of its JSON that `jsonSchema` renders as a JSON Schema.
 type Codec a
-    = Codec { enc : a -> Value, dec : Decoder a, shp : Shape }
+    = Codec { enc : a -> Value, dec : Decoder a, shp : Shape, sch : SchemaNode }
+
+-- | The JSON Schema of the JSON a codec reads and writes. `exact` is `True`
+-- when the schema pins down every value; it is `False` when a part is the
+-- open schema `{}` (a `taggedUnion`, a `result`, a `dict`, a `Json.Value`
+-- field, `Codec.error`), which the codec's decoder still checks.
+type alias JsonSchema =
+    { schema : Value
+    , exact : Bool
+    }
+
+-- The description a codec carries. It is plain data, so a codec that never
+-- asks for its schema pays nothing at run time: `jsonSchema` renders it, and
+-- an `auto` codec reads its witness's fields only then.
+type SchemaNode
+    = SnType String
+    | SnNullable SchemaNode
+    | SnArray SchemaNode
+    | SnEnum (() -> List String)
+    | SnObject (List ( String, SchemaNode ))
+    | SnAuto (() -> String) (List ( String, SchemaNode ))
+    | SnOpen
 
 
 -- ── Introspection / run ──────────────────────────────────────────────────────
+-- | The JSON Schema of the codec's JSON: `"string"`, `"integer"`, `"number"`
+-- and `"boolean"` for the scalars, a nullable value for `maybe`, an array for
+-- `list`, the names for `enum`, and a closed object (every field required, no
+-- other key) for a record built with `object` / `field` or derived by `auto`.
+-- `Std.Ai` sends it as a tool's parameters and as a structured answer's
+-- `response_format`, then decodes the model's JSON with the same codec.
+--
+--     Codec.jsonSchema (Codec.auto { city = "", days = 0 })
+--     -- { schema = {"type":"object","properties":{"city":{"type":"string"},
+--     --   "days":{"type":"integer"}},"required":["city","days"],
+--     --   "additionalProperties":false}, exact = True }
+jsonSchema : Codec a -> JsonSchema
+jsonSchema (Codec c) =
+    renderSchema c.sch
+
+
+renderSchema : SchemaNode -> JsonSchema
+renderSchema node =
+    case node of
+
+        SnType t ->
+            { schema = E.object [ ( "type", E.string t ) ], exact = True }
+
+        SnNullable inner ->
+            let
+                r = renderSchema inner
+            in
+                { schema =
+                    E.object
+                        [ ( "anyOf"
+                          , E.list
+                                identity
+                                [ r.schema
+                                , E.object [ ( "type", E.string "null" ) ]
+                                ]
+                          )
+                        ]
+                , exact = r.exact
+                }
+
+        SnArray inner ->
+            let
+                r = renderSchema inner
+            in
+                { schema =
+                    E.object
+                        [ ( "type", E.string "array" ), ( "items", r.schema ) ]
+                , exact = r.exact
+                }
+
+        SnEnum names ->
+            { schema =
+                E.object
+                    [ ( "type", E.string "string" )
+                    , ( "enum", E.list E.string (names ()) )
+                    ]
+            , exact = True
+            }
+
+        SnObject fields ->
+            objectSchema (List.map (\( n, f ) -> ( n, renderSchema f )) fields)
+
+        SnAuto fieldsJson overrides ->
+            autoSchema (fieldsJson ()) overrides
+
+        SnOpen ->
+            { schema = E.object [], exact = False }
+
+
+-- A closed object: every field required, no other key.
+objectSchema : List ( String, JsonSchema ) -> JsonSchema
+objectSchema fields =
+    { schema =
+        E.object
+            [ ( "type", E.string "object" )
+            , ( "properties"
+              , E.object (List.map (\( n, js ) -> ( n, js.schema )) fields)
+              )
+            , ( "required", E.list (\( n, _ ) -> E.string n) fields )
+            , ( "additionalProperties", E.bool False )
+            ]
+    , exact = List.all (\( _, js ) -> js.exact) fields
+    }
+
+type alias AutoField =
+    { name : String
+    , schema : Value
+    , exact : Bool
+    }
+
+
+-- An auto codec's schema: the witness's fields as the runtime reads their
+-- types (`Codec_autoSchema`), each replaced by the override codec `autoWith`
+-- gives it.
+autoSchema : String -> List ( String, SchemaNode ) -> JsonSchema
+autoSchema fieldsJson overrides =
+    let
+        fieldDecoder =
+            D.map3
+                (\n v x -> { name = n, schema = v, exact = x })
+                (D.field "name" D.string)
+                (D.field "schema" D.value)
+                (D.field "exact" D.bool)
+    in
+        case D.decodeString
+                 (D.field "fields" (D.nullable (D.list fieldDecoder)))
+                 fieldsJson of
+
+            Ok (Just fields) ->
+                objectSchema
+                    (List.map
+                        (\f ->
+                            case lookupSchema f.name overrides of
+
+                                Just o ->
+                                    ( f.name, renderSchema o )
+
+                                Nothing ->
+                                    ( f.name
+                                    , { schema = f.schema, exact = f.exact }
+                                    ))
+                        fields)
+
+            _ ->
+                renderSchema SnOpen
+
+
+lookupSchema : String -> List ( String, SchemaNode ) -> Maybe SchemaNode
+lookupSchema col overrides =
+    case overrides of
+
+        [] ->
+            Nothing
+
+        ( c, s ) :: rest ->
+            if c == col then
+                Just s
+
+            else
+                lookupSchema col rest
+
+
 -- | The codec's structural shape — how the DB backend derives columns (record
 -- fields -> columns; nested/list/ADT -> a JSON blob column).
 shape : Codec a -> Shape
@@ -135,26 +301,42 @@ fromJsonSafe maxChars (Codec c) s =
 -- | Codec for a `String` — JSON string; TEXT column.
 string : Codec String
 string =
-    Codec { enc = E.string, dec = D.string, shp = SScalar CText }
+    Codec
+        { enc = E.string
+        , dec = D.string
+        , shp = SScalar CText
+        , sch = SnType "string"
+        }
 
 
 -- | Codec for an `Int` — JSON number; INTEGER/BIGINT column.
 int : Codec Int
 int =
-    Codec { enc = E.int, dec = D.int, shp = SScalar CInt }
+    Codec
+        { enc = E.int, dec = D.int, shp = SScalar CInt, sch = SnType "integer" }
 
 
 -- | Codec for a `Float` — JSON number; REAL column.
 float : Codec Float
 float =
-    Codec { enc = E.float, dec = D.float, shp = SScalar CReal }
+    Codec
+        { enc = E.float
+        , dec = D.float
+        , shp = SScalar CReal
+        , sch = SnType "number"
+        }
 
 
 -- | Codec for a `Bool` — JSON boolean; BOOLEAN on Postgres / 0-1 INTEGER on
 -- SQLite (a `SqlBool` param binds to either).
 bool : Codec Bool
 bool =
-    Codec { enc = E.bool, dec = D.bool, shp = SScalar CBool }
+    Codec
+        { enc = E.bool
+        , dec = D.bool
+        , shp = SScalar CBool
+        , sch = SnType "boolean"
+        }
 
 
 -- ── Combinators ──────────────────────────────────────────────────────────────
@@ -182,6 +364,7 @@ maybe (Codec c) =
 
                 _ ->
                     SBlob
+        , sch = SnNullable c.sch
         }
 
 
@@ -189,7 +372,12 @@ maybe (Codec c) =
 -- TEXT blob column on the DB side.
 list : Codec a -> Codec (List a)
 list (Codec c) =
-    Codec { enc = E.list c.enc, dec = D.list c.dec, shp = SBlob }
+    Codec
+        { enc = E.list c.enc
+        , dec = D.list c.dec
+        , shp = SBlob
+        , sch = SnArray c.sch
+        }
 
 
 -- | Codec for a `Result e a` given codecs for the error and the value. Encodes
@@ -219,6 +407,7 @@ result (Codec ce) (Codec ca) =
                         D.map Err (D.index 1 ce.dec))
                 (D.index 0 D.string)
         , shp = SBlob
+        , sch = SnOpen
         }
 
 
@@ -244,6 +433,7 @@ dict (Codec ck) (Codec cv) =
                         (D.index 0 ck.dec)
                         (D.index 1 cv.dec)))
         , shp = SBlob
+        , sch = SnOpen
         }
 
 
@@ -394,6 +584,7 @@ domainFailureCodec =
                     , D.succeed []
                     ])
         , shp = SBlob
+        , sch = SnOpen
         }
 
 
@@ -417,7 +608,12 @@ buildDomainFailure dom code retry after attrs =
 -- encode). Useful for newtype-style wrappers.
 map : (a -> b) -> (b -> a) -> Codec a -> Codec b
 map to from (Codec c) =
-    Codec { enc = \b -> c.enc (from b), dec = D.map to c.dec, shp = c.shp }
+    Codec
+        { enc = \b -> c.enc (from b)
+        , dec = D.map to c.dec
+        , shp = c.shp
+        , sch = c.sch
+        }
 
 -- ── Records (object builder) ─────────────────────────────────────────────────
 -- | Intermediate builder for a record codec. `a` is the record type; `b` is the
@@ -426,13 +622,19 @@ type ObjectCodec a b
     = ObjectCodec { encFields : a -> List ( String, Value )
 , decValue : Decoder b
 , cols : List ( String, ColType )
+, schs : List ( String, SchemaNode )
 }
 
 
 -- | Start a record codec from its constructor.
 object : b -> ObjectCodec a b
 object ctor =
-    ObjectCodec { encFields = \_ -> [], decValue = D.succeed ctor, cols = [] }
+    ObjectCodec
+        { encFields = \_ -> []
+        , decValue = D.succeed ctor
+        , cols = []
+        , schs = []
+        }
 
 
 -- | Add a field: its JSON key, a getter, and the field's codec.
@@ -443,6 +645,7 @@ field name getter (Codec fc) (ObjectCodec o) =
             \rec -> o.encFields rec ++ [ ( name, fc.enc (getter rec) ) ]
         , decValue = codecAndMap (D.field name fc.dec) o.decValue
         , cols = o.cols ++ [ ( name, colTypeOf fc.shp ) ]
+        , schs = o.schs ++ [ ( name, fc.sch ) ]
         }
 
 
@@ -472,6 +675,7 @@ inline getter (ObjectCodec inner) (ObjectCodec o) =
         { encFields = \rec -> o.encFields rec ++ inner.encFields (getter rec)
         , decValue = codecAndMap inner.decValue o.decValue
         , cols = o.cols ++ inner.cols
+        , schs = o.schs ++ inner.schs
         }
 
 
@@ -487,6 +691,7 @@ buildObject (ObjectCodec o) =
         { enc = \rec -> E.object (o.encFields rec)
         , dec = objectDecoder o.cols o.decValue
         , shp = SRecord o.cols
+        , sch = SnObject o.schs
         }
 
 
@@ -582,6 +787,7 @@ autoBase snake witness =
                 (List.map
                     (\( n, k ) -> ( n, kindToColType k ))
                     (autoColsK snake witness))
+        , sch = SnAuto (\_ -> autoSchemaK snake witness) []
         }
 
 
@@ -610,6 +816,10 @@ autoWith overrides witness =
                     (List.map
                         (\( n, k ) -> ( n, kindToColType k ))
                         (autoColsWith True shps witness))
+            , sch =
+                SnAuto
+                    (\_ -> autoSchemaK True witness)
+                    (List.map (\( col, Codec c ) -> ( col, c.sch )) overrides)
             }
 
 
@@ -705,6 +915,11 @@ autoColsK =
     Ffi.kernel "Codec_autoCols"
 
 
+autoSchemaK : Bool -> a -> String
+autoSchemaK =
+    Ffi.kernel "Codec_autoSchema"
+
+
 kindToColType : String -> ColType
 kindToColType k =
     if String.endsWith "?" k then
@@ -787,6 +1002,7 @@ taggedUnion toTagged variants =
         , dec =
             D.andThen (\tag -> pickVariant tag variants) (D.index 0 D.string)
         , shp = SBlob
+        , sch = SnOpen
         }
 
 
@@ -815,6 +1031,7 @@ enum pairs =
         { enc = \v -> E.string (enumNameFor v pairs)
         , dec = D.andThen (\name -> enumValueFor name pairs) D.string
         , shp = SScalar CText
+        , sch = SnEnum (\_ -> List.map (\( _, n ) -> n) pairs)
         }
 
 

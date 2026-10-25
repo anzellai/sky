@@ -1295,6 +1295,11 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   unique, across `field` and `inline`: a repeated key cannot be told apart when
   decoding, so that codec's `fromJson` is an `Err` naming the key (its
   encoding writes both pairs, unchanged).
+  `Codec.jsonSchema codec` (v0.28) is the JSON Schema of the codec's JSON
+  (`{ schema, exact }`; a record is a closed object with every field
+  required, `exact` is `False` where a part is open, as in `taggedUnion`).
+  `Std.Ai` sends it as a typed tool's parameters and as a structured answer's
+  `response_format`.
   `Codec.dict keyCodec valueCodec` (v0.27) encodes a `Dict` as a JSON array of
   `[key, value]` pairs, so any comparable key round-trips. `Codec.fromJson`
   reads exactly one JSON document: text after it is an `Err` (v0.27). A type
