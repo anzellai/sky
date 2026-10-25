@@ -34,6 +34,7 @@ mod repro_gate;
 mod resolve_gate;
 mod s8_gate;
 mod shared_world_gate;
+mod sky_fmt_check;
 mod welltyped_gate;
 
 #[cfg(test)]
@@ -74,6 +75,9 @@ const GATES: &[(&str, GateFn)] = &[
         divergences_gate::run(args, &repo_root())
     }),
     ("fmt", |args| fmt_gate::run(args, &repo_root())),
+    ("sky-fmt-check", |args| {
+        sky_fmt_check::run(args, &repo_root())
+    }),
     ("fuzz", |args| fuzz_gate::run(args, &repo_root())),
     ("erasure-fuzz", |args| erasure_fuzz::run(args, &repo_root())),
     ("welltyped", |args| welltyped_gate::run(args, &repo_root())),

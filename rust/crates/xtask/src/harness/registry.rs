@@ -260,6 +260,26 @@ pub static GATES: &[Gate] = &[
         body: bodies::roundtrip,
     },
     Gate {
+        name: "sky-fmt-check",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 60,
+        expected: crate::sky_fmt_check::ASSERTIONS,
+        expect: Expect::Falsifiable,
+        summary: "every tracked .sky/.skyi is sky fmt clean, bar a reasoned exclusion list",
+        mutations: Mutations::new(&[Mutation {
+            id: "sky-fmt-check.drift",
+            description: "un-format one tracked Sky file; the formatted-files \
+                          assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "examples/01-hello-world/src/Main.sky",
+                from: "module Main exposing (main)",
+                to: "module Main exposing ( main )",
+            },
+        }]),
+        body: bodies::sky_fmt_check,
+    },
+    Gate {
         name: "reject",
         tier: Tier::T1,
         platforms: ALL_PLATFORMS,

@@ -871,6 +871,8 @@ jobs:
       - run: cargo build --workspace --locked
       - name: Gate — fmt (sky fmt never drops a comment; idempotent)
         run: cargo run -q -p xtask -- fmt
+      - name: Gate — sky-fmt-check (every tracked .sky/.skyi is sky fmt clean)
+        run: cargo run -q -p xtask -- sky-fmt-check
       - name: Gate — reject (reject-parity)
         run: cargo run -q -p xtask -- reject
 
