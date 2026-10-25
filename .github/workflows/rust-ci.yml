@@ -2497,15 +2497,15 @@ jobs:
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
       SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Restore the Go build + module cache (saved on main only)
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -2518,13 +2518,13 @@ jobs:
       # own copy evicts main's entries from the repository budget.
       - name: Cache the Std.Ai engine and development model (saved on main only)
         id: ai-home
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.sky-ai/engines
             ${{ github.workspace }}/.sky-ai/models
           key: sky-ai-home-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go') }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: sky-linux
@@ -2538,7 +2538,7 @@ jobs:
         run: cargo test -p sky --locked --test ai_local_live -- --nocapture
       - name: Save the Std.Ai home (main only)
         if: always() && github.ref == 'refs/heads/main' && steps.ai-home.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.sky-ai/engines
@@ -2566,15 +2566,15 @@ jobs:
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
       SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         id: setup-go
         with:
           go-version: '1.26'
           cache: false
       - name: Restore the Go build + module cache (saved on main only)
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -2587,7 +2587,7 @@ jobs:
       # own copy evicts main's entries from the repository budget.
       - name: Cache the Std.Ai home (engine, model, managed Python) (saved on main only)
         id: ai-home
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.sky-ai/engines
@@ -2596,7 +2596,7 @@ jobs:
             ${{ github.workspace }}/.sky-ai/python
             ${{ github.workspace }}/.sky-ai/toolchains
           key: sky-ai-train-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go', 'runtime-go/rt/ai_train_assets/**') }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: sky-linux
@@ -2610,7 +2610,7 @@ jobs:
         run: cargo test -p sky --locked --test ai_train_live -- --nocapture
       - name: Save the Std.Ai home (main only)
         if: always() && github.ref == 'refs/heads/main' && steps.ai-home.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.sky-ai/engines
@@ -2637,9 +2637,9 @@ jobs:
       SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
       SKY_AI_ACCEL: cpu
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: '1.26'
           cache: false
@@ -2647,7 +2647,7 @@ jobs:
       # own copy evicts main's entries from the repository budget.
       - name: Cache the Std.Ai home (engine, model, MLX toolchain, base) (saved on main only)
         id: ai-home
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.sky-ai/engines
@@ -2657,7 +2657,7 @@ jobs:
             ${{ github.workspace }}/.sky-ai/toolchains
             ${{ github.workspace }}/.sky-ai/bases
           key: sky-ai-train-mlx-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go', 'runtime-go/rt/ai_train_assets/**', 'sky-stdlib/Std/Ai/Train.sky') }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: sky-macos
@@ -2671,7 +2671,7 @@ jobs:
         run: cargo test -p sky --locked --test ai_train_mlx_live -- --nocapture
       - name: Save the Std.Ai home (main only)
         if: always() && github.ref == 'refs/heads/main' && steps.ai-home.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.sky-ai/engines

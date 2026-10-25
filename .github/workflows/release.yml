@@ -1160,7 +1160,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/gate-setup
         with:
           postgres: 'true'
@@ -1185,13 +1185,13 @@ jobs:
     env:
       SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/gate-setup
         with:
           install-compiler: 'false'
       # Restore only: rust-ci `ai-local-live` saves it on main.
       - name: Restore the Std.Ai engine and development model (saved on main only)
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.sky-ai/engines
@@ -1218,13 +1218,13 @@ jobs:
     env:
       SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/gate-setup
         with:
           install-compiler: 'false'
       # Restore only: rust-ci `ai-train-live` saves it on main.
       - name: Restore the Std.Ai home (engine, model, managed Python; saved on main only)
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.sky-ai/engines
@@ -1258,20 +1258,20 @@ jobs:
       SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
       SKY_AI_ACCEL: cpu
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: '1.26'
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: sky-macos
           save-if: 'false'
       # Restore only: rust-ci `ai-train-mlx-live` saves it on main.
       - name: Restore the Std.Ai home (engine, model, MLX toolchain, base; saved on main only)
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.sky-ai/engines
@@ -1310,12 +1310,12 @@ jobs:
       SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
       GO_CACHE_BUDGET_MB: '6144'
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/gate-setup
       - uses: ./.github/actions/playwright-setup
       # Restore only: a release saves no cache.
       - name: Restore the Std.Ai home (the server's engine)
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ github.workspace }}/.sky-ai/engines
           key: sky-ai-engines-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go') }}
@@ -1368,16 +1368,16 @@ jobs:
       SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
       DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         id: setup-go
         with:
           go-version: '1.26'
           cache: false
       # Restore only: main writes these. See gate-native.
       - name: Restore the Go build + module cache (saved on main only)
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -1386,7 +1386,7 @@ jobs:
           restore-keys: |
             go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
             go-macos-
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: sky-macos
@@ -1434,16 +1434,16 @@ jobs:
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
       SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         id: setup-go
         with:
           go-version: '1.26'
           cache: false
       # Restore only: main writes these. See gate-native.
       - name: Restore the Go build + module cache (saved on main only)
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -1452,7 +1452,7 @@ jobs:
           restore-keys: |
             go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
             go-linux-
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: sky-linux
@@ -1477,7 +1477,7 @@ jobs:
           ./sky-out/sky ai provision --device android --from "$RUNNER_TEMP/engines"
           cd rust && cargo test -p sky --locked --test ai_device_native_flow --no-run
       - name: Android emulator on-device run
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         env:
           SKY_LIVE_TESTS: require
         with:

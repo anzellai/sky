@@ -51,19 +51,19 @@ jobs:
         run: |
           echo "ai-cloud-live: type 'spend' in the confirm input to run paid tests" >&2
           exit 1
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: "1.25"
           cache: false
       - name: Authenticate to Google Cloud (Workload Identity Federation)
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_DEPLOYER }}
           create_credentials_file: true
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
       - name: Build the compiler
         run: ./scripts/build.sh
       - name: Run the live stages
@@ -72,7 +72,7 @@ jobs:
         run: scripts/ai/gcp-live.sh --project "${{ secrets.GCP_PROJECT }}" --stages "${{ github.event.inputs.stages }}"
       - name: Upload the ledger line
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: gcp-ledger
           path: scripts/ai/live/gcp-ledger.jsonl
