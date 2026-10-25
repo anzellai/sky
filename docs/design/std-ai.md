@@ -111,9 +111,51 @@ protocol is the portable floor that works on any OpenAI-compatible endpoint.
 **Native function-calling** is also available: `Provider.chatTools` sends the
 OpenAI `tools` request and returns the model's real `tool_calls`, and
 `Agent.nativeToolLoop` drives it as a durable workflow (each turn and each tool
-call a journalled step). Tools are advertised by name + description and receive
-free-form JSON arguments; a typed, `Codec`-derived parameter schema is the
-remaining increment.
+call a journalled step). A tool made with `Tool.tool` is advertised by name and
+description with the permissive schema `{"type": "object"}` and receives
+free-form JSON arguments.
+
+### Typed tools and structured answers
+
+`Tool.typed name description codec exec` declares a tool's arguments with a
+`Codec`. The model is sent `Codec.jsonSchema codec` as the tool's
+`parameters`, and the arguments are decoded with the same codec before `exec`
+runs. Arguments that do not decode never reach `exec`: they are a `Decode`
+error, and both agent loops hand it back to the model as the tool's result, so
+it can call again. The prompt-based loop lists a typed tool's schema and takes
+its `args` as a JSON object.
+
+```elm
+forecast =
+    Tool.typed "forecast" "The forecast for a city"
+        (Codec.auto { city = "", days = 0 })
+        (\args -> Weather.forecast args.city args.days)
+```
+
+A structured answer works the same way. `Provider.responseShape name codec` is
+the shape, `Provider.chatStructured shape options provider messages` sends it as
+the OpenAI-compatible `response_format` (`{"type": "json_schema", ...}`, strict
+when the schema is exact) and decodes the answer into the codec's type.
+`Agent.structuredToolLoop shape ...` is `nativeToolLoop` with a typed final
+answer: an answer that does not decode is handed back to the model with the
+reason, and the run's output is the decoded value.
+
+```elm
+replyShape = Provider.responseShape "reply" (Codec.auto { answer = "", refund = False })
+
+Provider.chatStructured replyShape Provider.defaultOptions provider messages
+    |> Task.map (\r -> r.value.refund)
+```
+
+OpenAI, vLLM and llama.cpp honour `response_format`, so `compatible`, an
+`Endpoint` slot and a `Local` engine all work. A `custom` or `customTools`
+provider receives only the messages or the tool specs, so a shaped call fails
+there with `InvalidSetting` (setting `responseShape`) instead of returning free
+text; `Provider.customToolRequest` receives the whole `ToolRequest` (the tool
+schemas and the `responseFormat`) for a backend that can honour it. An answer
+that does not match the shape is a `Decode` error naming the shape, never a
+panic. Lower-level calls: `Provider.chatToolRequest` / `measureToolRequest`
+with a `ToolRequest`, `decodeStructured`, and `Codec.jsonSchema` itself.
 
 ## `Std.Ai.Policy` — the action firewall
 

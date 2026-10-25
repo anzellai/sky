@@ -3067,7 +3067,11 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 /// custom stream's clock; +1 `EvalTest`: a run's candidate and judge rows;
 /// +7 `ProviderEndpointTest`: `withDraft`, `withDraftTokens`, `withAdapters`
 /// and their settings), measured by the `sky-suites` gate (43 suites).
-pub const SKY_SUITES_EXPECTED: u64 = 1092;
+/// 1092 -> 1109 with typed tools and structured answers (+17
+/// `tests/Std/Ai/StructuredTest.sky`: `Codec.jsonSchema`, `Tool.typed`, the
+/// tool schemas and `response_format` a provider sends, and a durable agent
+/// with a typed tool call and a typed answer), 44 suites.
+pub const SKY_SUITES_EXPECTED: u64 = 1109;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.

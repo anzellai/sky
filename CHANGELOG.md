@@ -26,6 +26,31 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 
 ### Added
 
+- **Typed tools and structured answers.** `Codec.jsonSchema codec` gives the
+  JSON Schema of a codec's JSON (scalars, `maybe`, `list`, `enum`, records from
+  `object` / `field` or `auto`; `exact` is `False` where a part is open, as in
+  `taggedUnion`). `Tool.typed name description codec exec` sends that schema as
+  the tool's `parameters` and decodes the model's arguments with the codec:
+  arguments that do not decode never reach `exec`, and both agent loops hand
+  the `Decode` error back to the model as the tool's result.
+  `Provider.chatStructured (Provider.responseShape "name" codec) options
+  provider messages` sends the OpenAI-compatible `response_format`
+  (`json_schema`, strict when the schema is exact) and decodes the answer into
+  the codec's type; a mismatch is a `Decode` error naming the shape.
+  `Agent.structuredToolLoop` (and `structuredToolLoopWith`) is the durable
+  native tool loop with a typed final answer. `Provider.chatToolRequest`,
+  `measureToolRequest` and `customToolRequest` take a `ToolRequest` (tool
+  schemas plus an optional `responseFormat`). A `custom` or `customTools`
+  provider cannot ask for a shape and fails a shaped call with
+  `InvalidSetting` (setting `responseShape`) instead of returning free text.
+  `Tool.tool`, `ToolSpec`, `chatTools` and `customTools` are unchanged and
+  send the same request as before. `examples/72-ai-support-desk` triages a
+  ticket into a typed record (`Assist.triage`) and asks a durable assistant
+  with a typed tool (`Assist.ask`).
+- **Float `/` on two `Float` operands is typed.** It lowers to
+  `rt.DivF(float64, float64) float64` instead of the `any`-based `rt.Div`
+  (doc 14 R5, lever 5.3), with the same classified `DivisionByZero` on a zero
+  divisor and the same value.
 - **`sky ai train --base` takes any base.** `--base hf:<org>/<repo>@<commit>`
   trains on a Hub repository's safetensors weights at a 40-digit commit, and
   `--base file:<directory>` on a local directory, each with
@@ -1164,6 +1189,17 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   the kind rule.
 - **An older peer reads a domain failure as no details (silent).** Its kind
   and message survive.
+- **The prompt-based tool loop passes an object `args` on (silent).** When
+  the model gave `args` as a JSON object instead of a string,
+  `Agent.toolLoop` used to run the tool with an empty string. It now runs it
+  with the object's JSON text, which a typed tool decodes.
+- **New stdlib names.** `Std.Codec` exports `JsonSchema` and `jsonSchema`.
+  `Std.Ai.Provider` exports `ToolSchema`, `ToolRequest`, `ResponseFormat`,
+  `ResponseShape`, `Structured`, `responseShape`, `responseFormat`,
+  `shapeCodec`, `decodeStructured`, `chatStructured`, `chatToolRequest`,
+  `measureToolRequest` and `customToolRequest`; `Std.Ai.Tool` exports
+  `typed`, `parameters` and `checkArguments`; `Std.Ai.Agent` exports
+  `structuredToolLoop` and `structuredToolLoopWith`.
 - **New stdlib names.** `Std.Ai.Provider` now exports `Options`,
   `defaultOptions` and `embed`. A program that exposes it with `(..)` together
   with `Std.Watch` (`Options`, `defaultOptions`) or `Std.Html` (`embed`) and

@@ -42,6 +42,19 @@ module Std.Ai.Provider exposing
     , ToolResponse
     , Turn(..)
     , chatTools
+    , ToolSchema
+    , ToolRequest
+    , ResponseFormat
+    , chatToolRequest
+    , measureToolRequest
+    , customToolRequest
+    , ResponseShape
+    , responseShape
+    , responseFormat
+    , shapeCodec
+    , decodeStructured
+    , Structured
+    , chatStructured
     )
 
 {-| `Std.Ai.Provider` — a swappable LLM chat backend over `Sky.Core.Http`. The
@@ -74,6 +87,7 @@ import Sky.Core.Json.Encode as JsonE
 import Sky.Core.Json.Decode as JsonD
 import Sky.Core.Time as Time
 import Std.Codec as Codec exposing (Codec)
+import Std.Ai.Failure as Failure
 import Std.Money as Money exposing (Money)
 import Std.Decimal as Decimal
 
@@ -86,7 +100,7 @@ import Std.Decimal as Decimal
 -}
 type alias CustomImpl =
     { chat : List Message -> Task Error ChatResponse
-    , chatTools : List Turn -> List ToolSpec -> Task Error ToolResponse
+    , chatTools : List Turn -> ToolRequest -> Task Error ToolResponse
     }
 
 {-| How a `wire` provider reaches its server: `post path body` sends one
@@ -198,14 +212,20 @@ custom chatFn =
     Custom
         { chat = chatFn
         , chatTools =
-            \turns _tools ->
-                chatFn (turnMessages turns)
-                    |> Task.map
-                           (\r ->
-                               { content = r.content
-                               , toolCalls = []
-                               , usage = r.usage
-                               })
+            \turns req ->
+                case req.responseFormat of
+
+                    Just _ ->
+                        Task.fail (shapeUnsupported "Provider.custom")
+
+                    Nothing ->
+                        chatFn (turnMessages turns)
+                            |> Task.map
+                                   (\r ->
+                                       { content = r.content
+                                       , toolCalls = []
+                                       , usage = r.usage
+                                       })
         }
 
 
@@ -217,7 +237,43 @@ built-in `openai` provider — a wire format with its own native function-callin
 -}
 customTools : (List Message -> Task Error ChatResponse) -> (List Turn -> List ToolSpec -> Task Error ToolResponse) -> Provider
 customTools chatFn toolsFn =
-    Custom { chat = chatFn, chatTools = toolsFn }
+    Custom
+        { chat = chatFn
+        , chatTools =
+            \turns req ->
+                case req.responseFormat of
+
+                    Just _ ->
+                        Task.fail (shapeUnsupported "Provider.customTools")
+
+                    Nothing ->
+                        toolsFn turns (List.map specOf req.tools)
+        }
+
+
+{-| Like `customTools`, but the provider receives the whole `ToolRequest`:
+each tool's parameters as a JSON Schema, and the shape the answer must have
+(`responseFormat`). Use it for a backend that can honour both. A provider
+built with `custom` or `customTools` cannot, so a call that asks for a shaped
+answer fails there with `InvalidSetting` (setting `responseShape`) instead of
+returning free text.
+-}
+customToolRequest : (List Message -> Task Error ChatResponse) -> (List Turn -> ToolRequest -> Task Error ToolResponse) -> Provider
+customToolRequest chatFn requestFn =
+    Custom { chat = chatFn, chatTools = requestFn }
+
+
+-- A provider that receives only the messages cannot ask the model for a JSON
+-- answer: refuse rather than return free text the caller would mistake for one.
+shapeUnsupported : String -> Error
+shapeUnsupported what =
+    Failure.toError
+        (Failure.InvalidSetting
+            { setting = "responseShape"
+            , reason =
+                what
+                    ++ " cannot ask for a JSON answer of a shape; build the provider with Provider.customToolRequest, or use an OpenAI-compatible one (compatible, wire, an Endpoint slot)"
+            })
 
 
 {-| An OpenAI-compatible provider over your own transport. The provider builds
@@ -957,16 +1013,22 @@ wirePost w token what body =
 {-| `chatTools`, measured, for a native tool loop. -}
 measureTools : Provider -> List Turn -> List ToolSpec -> Task Error (Measured ToolResponse)
 measureTools provider turns tools =
+    measureToolRequest provider turns (specsRequest tools)
+
+
+{-| `chatToolRequest`, measured, for a native tool loop. -}
+measureToolRequest : Provider -> List Turn -> ToolRequest -> Task Error (Measured ToolResponse)
+measureToolRequest provider turns req =
     case provider of
 
         Routed select ->
-            measureTools (select (turnMessages turns)) turns tools
+            measureToolRequest (select (turnMessages turns)) turns req
 
         Custom c ->
             timed
                 { byRuntime = False
                 , adapter = ""
-                , call = \_ -> whole (c.chatTools turns tools)
+                , call = \_ -> whole (c.chatTools turns req)
                 , tokens = \r -> r.usage.completionTokens
                 }
 
@@ -981,9 +1043,7 @@ measureTools provider turns tools =
                                 w
                                 token
                                 "chatTools"
-                                (JsonE.encode
-                                    0
-                                    (requestValue w.model turns tools))
+                                (JsonE.encode 0 (requestValue w.model turns req))
                                 |> Task.andThen decodeToolResponse)
                 , tokens = \r -> r.usage.completionTokens
                 }
@@ -1093,35 +1153,37 @@ firstPieceAt seen =
 
 chatBody : Options -> String -> List Message -> String
 chatBody opts model messages =
-    JsonE.encode
-        0
-        (JsonE.object
-            (List.concat
-                [ [ ( "model", JsonE.string (modelFor opts model) )
-                  , ( "messages", JsonE.list messageValue messages )
-                  ]
-                , (case opts.temperature of
+    JsonE.encode 0 (JsonE.object (chatFields opts model messages))
 
-                      Just t ->
-                          [ ( "temperature", JsonE.float t ) ]
 
-                      Nothing ->
-                          [])
-                , (case opts.seed of
+chatFields : Options -> String -> List Message -> List ( String, JsonE.Value )
+chatFields opts model messages =
+    (List.concat
+        [ [ ( "model", JsonE.string (modelFor opts model) )
+          , ( "messages", JsonE.list messageValue messages )
+          ]
+        , (case opts.temperature of
 
-                      Just n ->
-                          [ ( "seed", JsonE.int n ) ]
+              Just t ->
+                  [ ( "temperature", JsonE.float t ) ]
 
-                      Nothing ->
-                          [])
-                , (case opts.maxTokens of
+              Nothing ->
+                  [])
+        , (case opts.seed of
 
-                      Just n ->
-                          [ ( "max_tokens", JsonE.int n ) ]
+              Just n ->
+                  [ ( "seed", JsonE.int n ) ]
 
-                      Nothing ->
-                          [])
-                ]))
+              Nothing ->
+                  [])
+        , (case opts.maxTokens of
+
+              Just n ->
+                  [ ( "max_tokens", JsonE.int n ) ]
+
+              Nothing ->
+                  [])
+        ])
 
 
 modelFor : Options -> String -> String
@@ -1282,15 +1344,189 @@ extract raw =
 -- ---------------------------------------------------------------------------
 -- Native function-calling (OpenAI tools API)
 -- ---------------------------------------------------------------------------
-{-| A tool the model may call, declared by name + description. Arguments are
-free-form JSON the model fills in and the tool parses (matching
-`Std.Ai.Tool`'s `exec : String -> Task Error String`). A typed, Codec-derived
-parameter schema is a later increment; v1 advertises a permissive object schema.
+{-| A tool the model may call, declared by name + description. Its arguments
+are free-form JSON the model fills in and the tool parses: `chatTools`
+advertises the permissive schema `{"type": "object"}`. A tool with typed
+arguments is a `ToolSchema` (`Std.Ai.Tool.typed` builds one from a `Codec`).
 -}
 type alias ToolSpec =
     { name : String
     , description : String
     }
+
+{-| A tool with its parameters as a JSON Schema, sent as the tool's
+`parameters`. `Std.Ai.Tool.typed` derives it from a `Codec`
+(`Codec.jsonSchema`), and the agent decodes the model's arguments with the
+same codec. -}
+type alias ToolSchema =
+    { name : String
+    , description : String
+    , parameters : JsonE.Value
+    }
+
+{-| A native tool-calling request: the tools, and the shape the final answer
+must have (`Nothing` for free text). -}
+type alias ToolRequest =
+    { tools : List ToolSchema
+    , responseFormat : Maybe ResponseFormat
+    }
+
+{-| An OpenAI-compatible `response_format` of type `json_schema`: a name, the
+JSON Schema of the answer, and `strict`, which asks the server to keep to the
+schema exactly (set when the schema pins every value). A hosted OpenAI model
+needs an object at the root of a strict schema. -}
+type alias ResponseFormat =
+    { name : String
+    , schema : JsonE.Value
+    , strict : Bool
+    }
+
+{-| The shape of a structured answer: a `ResponseFormat` derived from a
+`Codec`, and the codec that decodes the answer. -}
+type ResponseShape a
+    = ResponseShape { format : ResponseFormat, codec : Codec a }
+
+
+{-| The shape of an answer of type `a`, named `name` (letters, digits, `_`
+and `-`, as OpenAI requires). The schema is `Codec.jsonSchema codec`, sent
+strict when it is exact.
+
+    type alias Verdict = { label : String, confidence : Float }
+
+    verdictShape =
+        Provider.responseShape "verdict" (Codec.auto { label = "", confidence = 0.0 })
+-}
+responseShape : String -> Codec a -> ResponseShape a
+responseShape name codec =
+    let
+        js = Codec.jsonSchema codec
+    in
+        ResponseShape
+            { format = { name = name, schema = js.schema, strict = js.exact }
+            , codec = codec
+            }
+
+
+{-| The `response_format` a shape sends. -}
+responseFormat : ResponseShape a -> ResponseFormat
+responseFormat (ResponseShape s) =
+    s.format
+
+
+{-| The codec that decodes a shape's answer. -}
+shapeCodec : ResponseShape a -> Codec a
+shapeCodec (ResponseShape s) =
+    s.codec
+
+
+{-| Decode a model's answer with the shape's codec. An answer that is not JSON
+of the shape is a `Decode` error naming the shape; it is never a panic. -}
+decodeStructured : ResponseShape a -> String -> Result Error a
+decodeStructured (ResponseShape s) content =
+    case Codec.fromJson s.codec content of
+
+        Ok a ->
+            Ok a
+
+        Err e ->
+            Err
+                (Error.decode
+                    ("the answer does not match the shape " ++ s.format.name
+                        ++ ": "
+                        ++ Error.toString e))
+
+{-| A structured answer: the decoded value, the answer as the model wrote it,
+and the token usage. -}
+type alias Structured a =
+    { value : a
+    , content : String
+    , usage : Usage
+    }
+
+
+{-| `chatWith`, asking for an answer of a shape: the request carries the
+OpenAI-compatible `response_format` (`{"type": "json_schema", ...}`), which
+OpenAI, vLLM and llama.cpp (a `compatible` endpoint, an `Endpoint` slot, a
+`Local` engine) honour, and the answer is decoded with the shape's codec.
+
+An answer that does not decode is a `Decode` error naming the shape. A
+`custom` provider receives only the messages, so it fails with
+`InvalidSetting` (setting `responseShape`) instead of returning free text.
+
+    Provider.chatStructured verdictShape Provider.defaultOptions provider
+        [ Provider.user "Is this a bug report? ..." ]
+        |> Task.map (\r -> r.value.label)
+-}
+chatStructured : ResponseShape a -> Options -> Provider -> List Message -> Task Error (Structured a)
+chatStructured shape opts provider messages =
+    case provider of
+
+        Routed select ->
+            chatStructured shape opts (select messages) messages
+
+        Custom _ ->
+            Task.fail (shapeUnsupported "Provider.custom")
+
+        Wire w ->
+            w.post
+                "chat"
+                "/chat/completions"
+                (JsonE.encode
+                    0
+                    (JsonE.object
+                        (chatFields opts w.model messages
+                            ++ [ ( "response_format"
+                                 , formatValue (responseFormat shape)
+                                 )
+                               ])))
+                |> Task.andThen decodeChat
+                |> Task.andThen
+                       (\r ->
+                           case decodeStructured shape r.content of
+
+                               Ok v ->
+                                   Task.succeed
+                                       { value = v
+                                       , content = r.content
+                                       , usage = r.usage
+                                       }
+
+                               Err e ->
+                                   Task.fail e)
+
+
+formatValue : ResponseFormat -> JsonE.Value
+formatValue f =
+    JsonE.object
+        [ ( "type", JsonE.string "json_schema" )
+        , ( "json_schema"
+          , JsonE.object
+                [ ( "name", JsonE.string f.name )
+                , ( "schema", f.schema )
+                , ( "strict", JsonE.bool f.strict )
+                ]
+          )
+        ]
+
+
+-- A `ToolSpec` advertises the permissive object schema, exactly as before
+-- typed tools.
+permissiveSchema : ToolSpec -> ToolSchema
+permissiveSchema spec =
+    { name = spec.name
+    , description = spec.description
+    , parameters = JsonE.object [ ( "type", JsonE.string "object" ) ]
+    }
+
+
+specOf : ToolSchema -> ToolSpec
+specOf t =
+    { name = t.name, description = t.description }
+
+
+specsRequest : List ToolSpec -> ToolRequest
+specsRequest specs =
+    { tools = List.map permissiveSchema specs, responseFormat = Nothing }
 
 {-| A tool call the model requested: the provider-assigned `id` (echoed back with
 the result), the tool `name`, its `arguments` as a JSON string, and an optional
@@ -1340,19 +1576,31 @@ with `Std.Ai.Agent.nativeToolLoop`.
 -}
 chatTools : Provider -> List Turn -> List ToolSpec -> Task Error ToolResponse
 chatTools provider turns tools =
+    chatToolRequest provider turns (specsRequest tools)
+
+
+{-| `chatTools` with each tool's parameter schema and, optionally, the shape of
+the final answer (`responseFormat`, sent as the OpenAI-compatible
+`response_format`). When the model answers instead of calling a tool, decode
+its `content` with `decodeStructured`. `Std.Ai.Agent.nativeToolLoop` and
+`structuredToolLoop` call it. A `custom` / `customTools` provider fails a
+request with a `responseFormat` with `InvalidSetting`.
+-}
+chatToolRequest : Provider -> List Turn -> ToolRequest -> Task Error ToolResponse
+chatToolRequest provider turns req =
     case provider of
 
         Routed select ->
-            chatTools (select (turnMessages turns)) turns tools
+            chatToolRequest (select (turnMessages turns)) turns req
 
         Custom c ->
-            c.chatTools turns tools
+            c.chatTools turns req
 
         Wire w ->
             w.post
                 "chatTools"
                 "/chat/completions"
-                (JsonE.encode 0 (requestValue w.model turns tools))
+                (JsonE.encode 0 (requestValue w.model turns req))
                 |> Task.andThen decodeToolResponse
 
 
@@ -1386,16 +1634,23 @@ turnMessages turns =
         turns
 
 
-requestValue : String -> List Turn -> List ToolSpec -> JsonE.Value
-requestValue model turns tools =
+requestValue : String -> List Turn -> ToolRequest -> JsonE.Value
+requestValue model turns req =
     JsonE.object
         (( "model", JsonE.string model )
             :: ( "messages", JsonE.list turnValue turns )
-            :: (if List.isEmpty tools then
+            :: (if List.isEmpty req.tools then
                    []
 
                else
-                   [ ( "tools", JsonE.list toolSpecValue tools ) ]))
+                   [ ( "tools", JsonE.list toolSchemaValue req.tools ) ])
+            ++ (case req.responseFormat of
+
+                   Just f ->
+                       [ ( "response_format", formatValue f ) ]
+
+                   Nothing ->
+                       []))
 
 
 turnValue : Turn -> JsonE.Value
@@ -1436,17 +1691,15 @@ toolCallValue call =
         ]
 
 
-toolSpecValue : ToolSpec -> JsonE.Value
-toolSpecValue spec =
+toolSchemaValue : ToolSchema -> JsonE.Value
+toolSchemaValue t =
     JsonE.object
         [ ( "type", JsonE.string "function" )
         , ( "function"
           , JsonE.object
-                [ ( "name", JsonE.string spec.name )
-                , ( "description", JsonE.string spec.description )
-                , ( "parameters"
-                  , JsonE.object [ ( "type", JsonE.string "object" ) ]
-                  )
+                [ ( "name", JsonE.string t.name )
+                , ( "description", JsonE.string t.description )
+                , ( "parameters", t.parameters )
                 ]
           )
         ]

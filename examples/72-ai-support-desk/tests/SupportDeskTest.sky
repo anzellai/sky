@@ -101,6 +101,24 @@ tests =
                           ( "local", "base model, no adapter" )
                           ( s.mode, s.adapter )))
     , Test.test
+          "triage is a structured answer, decoded with the codec"
+          (\_ ->
+              check
+                  (Assist.triage "My parcel is two days late.")
+                  (\t ->
+                      Test.equal ( "delivery", False ) ( t.category, t.urgent )))
+    , Test.test
+          "the assistant calls the typed ticket tool and answers in its shape"
+          (\_ ->
+              check
+                  (Tickets.open |> Task.andThen (\db -> Tickets.seed db)
+                      |> Task.andThen
+                             (\_ -> Assist.ask "What is the status of ticket 1?"))
+                  (\a ->
+                      Test.equal
+                          ( 1, "Ticket 1 is about a refund." )
+                          ( a.ticket, a.reply )))
+    , Test.test
           "a chat row's split key is the customer's message"
           (\_ ->
               Test.equal

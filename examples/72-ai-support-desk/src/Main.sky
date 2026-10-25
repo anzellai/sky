@@ -11,7 +11,8 @@ serves: the base model until `support-lora@prod` exists, then the promoted
 version, followed through promote and rollback without a restart.
 
     sky run src/Main.sky            the app on http://localhost:8072
-                                    (and GET /api/assistant, GET /api/draft?q=…)
+                                    (and GET /api/assistant, GET /api/draft?q=…,
+                                    GET /api/triage?q=…, GET /api/ask?q=…)
     sky test tests/SupportDeskTest.sky
                                     the app's logic, offline (tests/mocks/)
 
@@ -384,6 +385,8 @@ detail model =
 --
 --     curl localhost:8000/api/assistant
 --     curl 'localhost:8000/api/draft?q=How%20do%20I%20get%20a%20refund%3F'
+--     curl 'localhost:8000/api/triage?q=My%20parcel%20is%20late'
+--     curl 'localhost:8000/api/ask?q=What%20is%20the%20status%20of%20ticket%201%3F'
 --
 -- Each draft is a model call: in production put these routes behind sign-in
 -- (or remove them), as for any endpoint that spends compute.
@@ -413,6 +416,36 @@ draftApi req =
                            (JsonE.object [ ( "reply", JsonE.string text ) ])))
 
 
+-- A structured answer: the model is held to the codec's schema.
+triageApi : Request -> Task Error Response
+triageApi req =
+    Assist.triage (Maybe.withDefault "" (Server.queryParam "q" req))
+        |> Task.map
+               (\t ->
+                   Server.json
+                       (JsonE.encode
+                           0
+                           (JsonE.object
+                               [ ( "category", JsonE.string t.category )
+                               , ( "urgent", JsonE.bool t.urgent )
+                               ])))
+
+
+-- The durable assistant: a typed tool call, then a typed answer.
+askApi : Request -> Task Error Response
+askApi req =
+    Assist.ask (Maybe.withDefault "" (Server.queryParam "q" req))
+        |> Task.map
+               (\a ->
+                   Server.json
+                       (JsonE.encode
+                           0
+                           (JsonE.object
+                               [ ( "reply", JsonE.string a.reply )
+                               , ( "ticket", JsonE.int a.ticket )
+                               ])))
+
+
 -- ── The app ─────────────────────────────────────────────────────────
 appDef =
     App.app
@@ -424,6 +457,8 @@ appDef =
         |> App.withRoutes
                [ App.api "GET /api/assistant" assistantApi
                , App.api "GET /api/draft" draftApi
+               , App.api "GET /api/triage" triageApi
+               , App.api "GET /api/ask" askApi
                ]
         |> App.withNotFound ()
         |> App.withConfig (App.WebConfig { App.webDefaults | port = 8072 })

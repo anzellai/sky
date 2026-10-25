@@ -20,19 +20,14 @@ import Std.Ai.Provider as Provider
 import Std.Ai.Eval as Eval exposing (Expect(..))
 import Assist
 
--- | How the app reads a triaged ticket.
+-- | How the app reads a triaged ticket (`Assist.triage` asks for it).
 type alias Triage =
-    { category : String
-    , urgent : Bool
-    }
+    Assist.Triage
 
 
 triageCodec : Codec Triage
 triageCodec =
-    Codec.object (\c u -> { category = c, urgent = u })
-        |> Codec.field "category" .category Codec.string
-        |> Codec.field "urgent" .urgent Codec.bool
-        |> Codec.buildObject
+    Assist.triageCodec
 
 
 -- | Answers a person labelled against the politeness rubric.

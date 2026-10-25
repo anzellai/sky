@@ -1,4 +1,14 @@
-module Std.Ai.Tool exposing (Tool, tool, name, describe, run, instructions)
+module Std.Ai.Tool exposing
+    ( Tool
+    , tool
+    , typed
+    , name
+    , describe
+    , parameters
+    , checkArguments
+    , run
+    , instructions
+    )
 
 {-| `Std.Ai.Tool` — a named capability the agent can call. A `Tool` carries a
 stable name, a description the model reads, and an executor `arguments -> result`
@@ -12,6 +22,16 @@ also available: `Agent.nativeToolLoop` runs it over the same `Tool` values, and
     weather =
         Tool.tool "weather" "Get the weather for a city (args: the city name)"
             (\city -> WeatherApi.lookup city)
+
+A typed tool (`typed`) declares its arguments with a `Codec`: the model is sent
+the codec's JSON Schema, and the arguments are decoded with the codec before
+the executor runs. Arguments that do not decode are a `Decode` error, which the
+agent loops hand back to the model as the tool's result so it can call again.
+
+    forecast =
+        Tool.typed "forecast" "The forecast for a city"
+            (Codec.auto { city = "", days = 0 })
+            (\args -> Weather.forecast args.city args.days)
 -}
 
 import Sky.Core.Prelude exposing (..)
@@ -19,9 +39,18 @@ import Sky.Core.Task as Task
 import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Sky.Core.Result as Result exposing (Result(..))
+import Sky.Core.Maybe exposing (Maybe(..))
+import Sky.Core.Json.Encode as JsonE
+import Std.Codec as Codec exposing (Codec)
 
 type Tool
-    = Tool { name : String, description : String, exec : String -> Task Error String }
+    = Tool { name : String
+, description : String
+, exec : String -> Task Error String
+, parameters : Maybe JsonE.Value
+, check : String -> Result Error ()
+}
 
 
 {-| Define a tool: a stable `name`, a `description` the model reads, and an
@@ -30,7 +59,79 @@ wire (parse a typed input inside the executor with a `Codec` as you wish).
 -}
 tool : String -> String -> (String -> Task Error String) -> Tool
 tool nm description exec =
-    Tool { name = nm, description = description, exec = exec }
+    Tool
+        { name = nm
+        , description = description
+        , exec = exec
+        , parameters = Nothing
+        , check = \_ -> Ok ()
+        }
+
+
+{-| Define a tool with typed arguments: the model is sent `codec`'s JSON
+Schema (`Codec.jsonSchema`) as the tool's parameters, and the executor gets
+the arguments decoded with `codec`. Arguments that do not decode never reach
+the executor: they are a `Decode` error naming the tool.
+-}
+typed : String -> String -> Codec a -> (a -> Task Error String) -> Tool
+typed nm description codec exec =
+    Tool
+        { name = nm
+        , description = description
+        , exec =
+            \args ->
+                case decodeArguments nm codec args of
+
+                    Ok a ->
+                        exec a
+
+                    Err e ->
+                        Task.fail e
+        , parameters = Just (Codec.jsonSchema codec).schema
+        , check = \args -> Result.map (\_ -> ()) (decodeArguments nm codec args)
+        }
+
+
+decodeArguments : String -> Codec a -> String -> Result Error a
+decodeArguments nm codec args =
+    case Codec.fromJson codec args of
+
+        Ok a ->
+            Ok a
+
+        Err e ->
+            Err
+                (Error.decode
+                    ("tool " ++ nm ++ ": the arguments do not match its schema: "
+                        ++ Error.toString e))
+
+
+{-| The JSON Schema of a tool's arguments: its codec's schema for a `typed`
+tool, the permissive `{"type": "object"}` otherwise. -}
+parameters : Tool -> JsonE.Value
+parameters (Tool t) =
+    case t.parameters of
+
+        Just p ->
+            p
+
+        Nothing ->
+            JsonE.object [ ( "type", JsonE.string "object" ) ]
+
+
+{-| Check the arguments the model gave the tool named `nm`, without running it:
+a `typed` tool decodes them with its codec, any other tool takes any string.
+An unknown name is `Ok`: `run` reports it. The agent loops call this first and
+hand a failure back to the model. -}
+checkArguments : List Tool -> String -> String -> Result Error ()
+checkArguments tools nm args =
+    case List.filter (\(Tool t) -> t.name == nm) tools of
+
+        (Tool t) :: _ ->
+            t.check args
+
+        [] ->
+            Ok ()
 
 
 {-| A tool's name. -}
@@ -67,10 +168,35 @@ concern; `tools` order is preserved), so it is stable across a durable replay.
 instructions : List Tool -> String
 instructions tools =
     let
-        one (Tool t) = "- " ++ t.name ++ ": " ++ t.description
+        one (Tool t) =
+            case t.parameters of
+
+                Just p ->
+                    "- " ++ t.name ++ ": " ++ t.description
+                        ++ "\n  args: a JSON object matching "
+                        ++ JsonE.encode 0 p
+
+                Nothing ->
+                    "- " ++ t.name ++ ": " ++ t.description
         listed = List.map one tools |> String.join "\n"
+        anyTyped =
+            List.any
+                (\(Tool t) ->
+                    case t.parameters of
+
+                        Just _ ->
+                            True
+
+                        Nothing ->
+                            False)
+                tools
     in
         "You can use these tools:\n" ++ listed
             ++ "\n\nTo use a tool, reply with ONLY a JSON object: "
             ++ "{\"tool\": \"<name>\", \"args\": \"<input string>\"}. "
+            ++ (if anyTyped then
+                   "For a tool that lists a JSON object for its args, give that object as args. "
+
+               else
+                   "")
             ++ "When you have the final answer, reply with ONLY: {\"answer\": \"<final answer>\"}."

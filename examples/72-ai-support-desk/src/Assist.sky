@@ -9,6 +9,13 @@ module Assist exposing
     , draft
     , Status
     , status
+    , Triage
+    , triageCodec
+    , triage
+    , Answer
+    , ticketTool
+    , assistant
+    , ask
     )
 
 {-| The assistant: the `"chat"` model slot the app drafts replies with, and
@@ -23,6 +30,12 @@ The app serves the adapter `support-lora@prod` once that alias exists in the
 registry (`sky ai eval … --promote-to prod`), and the base model before. The
 slot resolves the alias again every 30 seconds, so a promotion or a rollback
 reaches the running app without a restart.
+
+`triage` asks for a structured answer: the request carries the JSON Schema of
+`triageCodec` as its `response_format`, and the answer is decoded with the
+same codec into a `Triage`. `ask` runs `assistant`, a durable agent with one
+typed tool (`ticketTool`, whose arguments are a `Codec`) and a typed final
+answer (`Answer`).
 -}
 
 import Sky.Core.Prelude exposing (..)
@@ -31,8 +44,15 @@ import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Maybe as Maybe
+import Sky.Core.Dict as Dict
+import Sky.Core.Uuid as Uuid
+import Std.Codec as Codec exposing (Codec)
+import Std.Db as Db exposing (Db, SqlValue(..))
+import Std.Durable as Durable
 import Tickets
 import Std.Ai.Provider as Provider exposing (Message)
+import Std.Ai.Tool as Tool exposing (Tool)
+import Std.Ai.Agent as Agent
 import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
 import Std.Ai.Local as Local
 import Std.Ai.Registry as Registry
@@ -131,3 +151,144 @@ status =
                            |> Maybe.map .value
                            |> Maybe.withDefault "base model, no adapter"
                    })
+
+-- ── Structured output: triage ───────────────────────────────────────
+-- | How the app reads a triaged ticket.
+type alias Triage =
+    { category : String
+    , urgent : Bool
+    }
+
+
+triageCodec : Codec Triage
+triageCodec =
+    Codec.object (\c u -> { category = c, urgent = u })
+        |> Codec.field "category" .category Codec.string
+        |> Codec.field "urgent" .urgent Codec.bool
+        |> Codec.buildObject
+
+
+-- | Classify a customer's message. The model is held to `triageCodec`'s
+-- schema, and an answer that does not match it is a `Decode` error.
+triage : String -> Task Error Triage
+triage body =
+    servingSlot
+        |> Task.andThen
+               (\slot ->
+                   Provider.chatStructured
+                       (Provider.responseShape "triage" triageCodec)
+                       Provider.defaultOptions
+                       (Endpoint.provider slot)
+                       [ Provider.system systemPrompt
+                       , Provider.user
+                             ("Classify this ticket as JSON with the fields category and urgent: "
+                                 ++ body)
+                       ])
+        |> Task.map .value
+
+-- ── A typed tool and a typed answer: the assistant agent ────────────
+-- | What the assistant answers: a reply, and the ticket it is about (0 when
+-- none).
+type alias Answer =
+    { reply : String
+    , ticket : Int
+    }
+
+
+answerCodec : Codec Answer
+answerCodec =
+    Codec.auto { reply = "", ticket = 0 }
+
+
+-- | A tool the model calls with typed arguments: `{"id": <ticket id>}`. The
+-- model is sent the codec's schema, and arguments that do not decode are
+-- handed back to it instead of reaching this code.
+ticketTool : Db -> Tool
+ticketTool db =
+    Tool.typed
+        "ticket_status"
+        "The status and subject of a ticket, by its id"
+        (Codec.auto { id = 0 })
+        (\args ->
+            Tickets.all db
+                |> Task.map
+                       (\ts ->
+                           case List.filter (\t -> t.id == args.id) ts of
+
+                               t :: _ ->
+                                   "ticket " ++ String.fromInt t.id ++ ": "
+                                       ++ t.status
+                                       ++ ", "
+                                       ++ t.subject
+
+                               [] ->
+                                   "there is no ticket "
+                                       ++ String.fromInt args.id))
+
+
+-- | The assistant as a durable agent: each model turn and each tool call is
+-- a journalled step, and the final answer is an `Answer`.
+assistant : Db -> Durable.WorkflowDef Agent.Input Answer
+assistant db =
+    Agent.structuredToolLoop
+        (Provider.responseShape "answer" answerCodec)
+        "support-assistant"
+        (Endpoint.provider chatSlot)
+        "You answer agents' questions about tickets. Look up a ticket with ticket_status before you answer about it."
+        [ ticketTool db ]
+        4
+
+
+-- | Ask the assistant a question: start a run, drive it, read its answer.
+ask : String -> Task Error Answer
+ask question =
+    Tickets.open
+        |> Task.andThen
+               (\db ->
+                   Durable.setup db |> Task.andThen (\_ -> Uuid.v4)
+                       |> Task.andThen
+                              (\id ->
+                                  Durable.start
+                                      db
+                                      (assistant db)
+                                      id
+                                      { messages = [ Provider.user question ] }
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Durable.poll
+                                                     db
+                                                     [ Durable.erase
+                                                           (assistant db)
+                                                     ])
+                                      |> Task.andThen (\_ -> answerOf db id)))
+
+
+answerOf : Db -> String -> Task Error Answer
+answerOf db id =
+    Db.query
+        db
+        "SELECT output, last_error FROM _sky_durable_runs WHERE id = ?"
+        [ SqlString id ]
+        |> Task.andThen
+               (\rows ->
+                   case List.head rows of
+
+                       Just row ->
+                           case Codec.fromJson
+                                    answerCodec
+                                    (Maybe.withDefault "" (Dict.get "output" row)) of
+
+                               Ok a ->
+                                   Task.succeed a
+
+                               Err _ ->
+                                   Task.fail
+                                       (Error.unexpected
+                                           ("the assistant did not answer: "
+                                               ++ Maybe.withDefault
+                                                      ""
+                                                      (Dict.get "last_error" row)))
+
+                       Nothing ->
+                           Task.fail
+                               (Error.unexpected "the assistant's run is missing"))
