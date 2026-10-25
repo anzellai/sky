@@ -89,8 +89,18 @@ type Shape
 
 -- | A bidirectional codec for `a`: encoder + decoder + shape, and a
 -- description of its JSON that `jsonSchema` renders as a JSON Schema.
+--
+-- The payload is a named record, so a function that matches a `Codec` reads
+-- it with one runtime narrowing instead of one per field (doc 14 §4.5, R6).
 type Codec a
-    = Codec { enc : a -> Value, dec : Decoder a, shp : Shape, sch : SchemaNode }
+    = Codec (CodecPayload a)
+
+type alias CodecPayload a =
+    { enc : a -> Value
+    , dec : Decoder a
+    , shp : Shape
+    , sch : SchemaNode
+    }
 
 -- | The JSON Schema of the JSON a codec reads and writes. `exact` is `True`
 -- when the schema pins down every value; it is `False` when a part is the
