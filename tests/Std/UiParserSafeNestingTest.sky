@@ -195,8 +195,35 @@ restructure name stack =
     else if isHeading name && isHeading (firstOf stack) then
         "<" ++ name ++ "> directly inside <" ++ firstOf stack ++ ">"
 
+    else if name == "li" && openBefore [ "li" ] [ "ul", "ol", "menu" ] stack then
+        "<li> inside <li>"
+
+    else if (name == "dd" || name == "dt") && openBefore [ "dd", "dt" ] [ "dl" ] stack then
+        "<" ++ name ++ "> inside <dd>/<dt>"
+
     else
         ""
+
+
+-- Whether one of `items` is open before any of `stops`, innermost first. (The
+-- parser's real scope rule stops at more elements than these; stopping only at
+-- the list itself is the stricter model.)
+openBefore : List String -> List String -> List String -> Bool
+openBefore items stops stack =
+    case stack of
+
+        [] ->
+            False
+
+        t :: rest ->
+            if List.member t items then
+                True
+
+            else if List.member t stops then
+                False
+
+            else
+                openBefore items stops rest
 
 
 walk : List String -> List String -> String
@@ -279,6 +306,9 @@ containers =
     , ( "form", \k -> Ui.form [] [ k ] )
     , ( "heading", \k -> Ui.el [ Region.heading 2 ] k )
     , ( "column", \k -> Ui.column [] [ k ] )
+    , ( "list item", \k -> Ui.TaggedNode "li" Ui.NoDescription [] [ k ] )
+    , ( "description term", \k -> Ui.TaggedNode "dt" Ui.NoDescription [] [ k ] )
+    , ( "details", \k -> Ui.TaggedNode "details" Ui.NoDescription [] [ k ] )
     ]
 
 
@@ -305,6 +335,30 @@ children =
       , Ui.button [] { onPress = Just Noop, label = Ui.el [] (Ui.text "c") }
       )
     , ( "image", Ui.image [] { src = "/i.png", description = "i" } )
+    , ( "details"
+      , Ui.TaggedNode
+            "details"
+            Ui.NoDescription
+            []
+            [ Ui.TaggedNode "summary" Ui.NoDescription [] [ Ui.text "More" ]
+            , Ui.text "c"
+            ]
+      )
+    , ( "list"
+      , Ui.TaggedNode
+            "ul"
+            Ui.NoDescription
+            []
+            [ Ui.TaggedNode "li" Ui.NoDescription [] [ Ui.text "c" ] ]
+      )
+    , ( "list item", Ui.TaggedNode "li" Ui.NoDescription [] [ Ui.text "c" ] )
+    , ( "description", Ui.TaggedNode "dd" Ui.NoDescription [] [ Ui.text "c" ] )
+    , ( "fieldset"
+      , Ui.TaggedNode "fieldset" Ui.NoDescription [] [ Ui.text "c" ]
+      )
+    , ( "custom element"
+      , Ui.TaggedNode "x-card" Ui.NoDescription [] [ Ui.text "c" ]
+      )
     , ( "input", Ui.input [ Ui.name "q" ] )
     , ( "Input.text"
       , Input.text
