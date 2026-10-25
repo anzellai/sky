@@ -576,7 +576,11 @@
 #     apps/dispatch, apps/ledger), the AI programs by 3 to 27.
 #   72-ai-support-desk rose 435 -> 660 (+225) with its new typed tool,
 #   structured answer and durable assistant (it now links Std.Durable and
-#   Std.Ai.Agent). That row is NOT re-blessed here: it is reported as a finding.
+#   Std.Ai.Agent). Raised by hand on the user's decision (2026-10-25): no new
+#   kind of narrowing, only the existing Std.Durable and Std.Ai.Agent sites now
+#   counted in this example. The doc 14 section 5.3 Task and decoder callback twins and
+#   the R1 `Measured a` and R12 `timed` work target these sites, and this row must
+#   fall again when they land.
 00-standard-libs	adapter=0	dispatch=0	narrow=113
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=6
@@ -642,7 +646,7 @@
 69-ai-scrub	adapter=0	dispatch=0	narrow=60
 70-ai-synthetic	adapter=0	dispatch=0	narrow=401
 71-ai-registry	adapter=0	dispatch=0	narrow=828
-72-ai-support-desk	adapter=0	dispatch=0	narrow=435
+72-ai-support-desk	adapter=0	dispatch=0	narrow=660
 73-ai-train	adapter=0	dispatch=0	narrow=1272
 74-ai-cloud	adapter=0	dispatch=0	narrow=1371
 75-ai-everywhere	adapter=0	dispatch=0	narrow=838
