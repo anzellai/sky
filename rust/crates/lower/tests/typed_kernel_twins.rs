@@ -135,3 +135,27 @@ fn length_trim_replace_and_match_use_their_twins() {
         assert!(!body.contains("Coerce"), "{body}");
     }
 }
+
+const DIV_SRC: &str = "module Main exposing (main)\n\n\
+                       ratio : Float -> Float -> Float\nratio a b =\n    a / b\n\n\
+                       half : Float -> Float\nhalf x =\n    x / 2.0\n\n\
+                       main =\n    ( ratio 1.0 2.0, half 3.0 )\n";
+
+// Float `/` with both operands statically `Float` is the typed `rt.DivF`
+// (doc 14 R5, lever §5.3): no `any` boxing of the operands and no narrowing of
+// the result. It keeps the classified divide-by-zero panic of `rt.Div`.
+#[test]
+fn float_division_of_typed_operands_uses_the_float_twin() {
+    for name in ["Main_ratio", "Main_half"] {
+        let f = func_debug(DIV_SRC, name);
+        assert!(f.contains("rt.DivF"), "{name}: {f}");
+        assert!(
+            !f.contains("\"rt.Div\""),
+            "{name}: the erased rt.Div is gone: {f}"
+        );
+        assert!(
+            !f.contains("Coerce"),
+            "{name}: no narrowing of the result: {f}"
+        );
+    }
+}

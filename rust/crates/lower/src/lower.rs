@@ -7219,6 +7219,20 @@ impl<'a> Ctx<'a> {
                     };
                     call_rt(helper, vec![self.widen(l), self.widen(r)], GoTy::Any)
                 } else {
+                    // Float `/` over two operands that lower to Go `float64`:
+                    // the typed twin `rt.DivF(float64, float64) float64`
+                    // (doc 14 R5, lever §5.3). Both shapes are known at emit
+                    // time (§1), so neither operand is boxed into `any` and the
+                    // result is not narrowed back. `rt.DivF` keeps `rt.Div`'s
+                    // classified `DivisionByZero` panic, and one IEEE division
+                    // has nothing to fuse, so the value is the float64 `rt.Div`
+                    // returns (runtime-go/rt/div_float_test.go).
+                    if op == "/"
+                        && l.ty == GoTy::Bare(Prim::Float)
+                        && r.ty == GoTy::Bare(Prim::Float)
+                    {
+                        return call_rt("rt.DivF", vec![l, r], GoTy::Bare(Prim::Float));
+                    }
                     let rtname = match op {
                         "//" => "rt.IntDiv",
                         "%" => "rt.Rem",

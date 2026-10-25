@@ -2966,6 +2966,17 @@ func Div(a, b any) any {
 	return AsFloat(a) / db
 }
 
+// DivF is the typed twin of Div for float `/` when the compiler proves both
+// operands are `Float` (doc 14 R5, lever §5.3): no operand is boxed into `any`
+// and the result is not narrowed back. It panics with Div's exact message, so
+// a zero divisor (either sign) is the same classified DivisionByZero.
+func DivF(a, b float64) float64 {
+	if b == 0 {
+		panic("rt.Div: division by zero")
+	}
+	return a / b
+}
+
 func IntDiv(a, b any) any {
 	// TOTAL: `n // 0` from valid Sky source returns 0, matching Elm's `//`
 	// (`5 // 0 == 0`) and Sky's own `modBy 0` (which already returns 0). Integer
