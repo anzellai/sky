@@ -749,13 +749,6 @@ owner    = "v0.27.0 fix batch, stream S4"
 commit   = "fix/v027-s4-tooling G-2"
 
 [[correction]]
-surface  = "stdlib.Std.Ai.Tool"
-strength = "Asserted"
-reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
-owner    = "v0.27.0 fix batch, stream S4"
-commit   = "fix/v027-s4-tooling G-2"
-
-[[correction]]
 surface  = "stdlib.Std.Analytics"
 strength = "Asserted"
 reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
