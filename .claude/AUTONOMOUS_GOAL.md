@@ -35,6 +35,14 @@ Added 2026-10-17:
 - Draft models and several adapters: both ship in v0.28.0. A local engine takes a draft model for speculative decoding (`withDraft`), provisioned and pinned through the same registry and hash checks as the base. A local engine keeps several LoRA adapters loaded at once, and each call chooses one with a typed setting. An adapter that is not loaded is a typed error, never a silent answer from the base model. Trace records the draft acceptance and the tokens per second. Live tests on a tiny Qwen draft and base, plus offline unit tests, run in the release gate.
 - Bad AI environment values fail loudly. When an operator sets an AI environment variable to a value that does not parse, the app refuses to start, or the AI call fails with a typed `InvalidSetting`, whichever matches when the setting is read. The error names the variable and the form it expects, and never shows a value that could be secret. A bad value is never skipped silently. This applies to every AI setting. Sky.Live's general configuration rule is not changed in this release.
 
+Added 2026-10-25 (on resuming):
+
+- Cloud: GCP now. SageMaker stays the typed "not supported yet" refusal and follows in the next release.
+- Local engine bundles: Sky builds its own pinned llama-server bundles for darwin-arm64 (Metal), linux-x64 CPU, linux-x64 CUDA, linux-arm64 and windows-x64. This replaces the conditional "assess, then maybe" wording above. It also unlocks the device slots on desktop:windows and desktop:linux.
+- Billing: set up the billing export to BigQuery and run the live GCP training and serving tests within the cap in the private goal file. Trace and ledger costs are reconciled against the real bill.
+- Training engine: native and Python-free. The user's words: "my preference is no deps other than what sky requires, we could import C library etc. or tooling widely available on macos or linux". v0.28.0 ships with the native trainer and is held until it replaces the Python driver everywhere, locally and in the GCP trainer image. The engine (MLX through mlx-c, or candle) is chosen by a measured trial.
+- Gap list to close (planning review 2026-10-25): Codec-derived tool schemas and structured output (json_schema), multimodal messages, Parquet and Hugging Face Hub datasets, Durable journals for judge and synthetic runs, `Serve.plan`, `withParallel` and a llama-server serving tier, CLI training on any base (`hf:` / `file:`), the doc 14 items (§5.3 Task and decoder callback twins, R1 `Measured a`, R12 `timed`, R5 float `/`), and the migration guide made complete against v0.27.15.
+
 ## The user's binding decisions
 
 - Configuration: NO sky.toml keys for AI. Everything in code via carefully constructed `withX` builders with env-var fallback, so code always holds the local default and QA/production override it with .env files / env vars.
