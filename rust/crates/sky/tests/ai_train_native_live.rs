@@ -214,14 +214,55 @@ fn app(project: &Path, args: &[&str]) -> Output {
     app_command(project, args).output().unwrap()
 }
 
+/// Provision what the live tests need, once per test binary, the way a user
+/// does: `sky ai provision --train mlx --base dev` installs the pinned
+/// sky-trainer bundle and the dev base weights, and `sky ai provision
+/// --dev-model` the pinned engine and dev model. Nothing runs when the home
+/// already holds them, or when an operator's trainer is given and the rest is
+/// there, or when the hosts are not reachable (the gate then reports the
+/// missing need). A provision that runs and fails is a failure, never a skip.
+fn provision_for_tests(home: &Path) {
+    use std::sync::OnceLock;
+    static DONE: OnceLock<()> = OnceLock::new();
+    DONE.get_or_init(|| {
+        if !(reachable("github.com") && reachable("huggingface.co")) {
+            return;
+        }
+        let mut steps: Vec<&[&str]> = Vec::new();
+        if !have_trainer(home) || !home.join(DEV_BASE).join("model.safetensors").is_file() {
+            steps.push(&["ai", "provision", "--train", "mlx", "--base", "dev"]);
+        }
+        if !provisioned(home) {
+            steps.push(&["ai", "provision", "--dev-model"]);
+        }
+        for args in steps {
+            let out = Command::new(SKY)
+                .args(args)
+                .current_dir(std::env::temp_dir())
+                .env("SKY_AI_HOME", home)
+                .env_remove("SKY_AI_FETCH")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "sky {}: {}",
+                args.join(" "),
+                text(&out)
+            );
+        }
+    });
+}
+
 fn gate() -> bool {
     if !required(Need::Go, have_go()) {
         return false;
     }
     let home = ai_home();
-    let available = have_trainer(&home)
-        && (provisioned(&home) || (reachable("github.com") && reachable("huggingface.co")));
-    required(Need::AiTrainNative, available)
+    provision_for_tests(&home);
+    required(
+        Need::AiTrainNative,
+        have_trainer(&home) && provisioned(&home),
+    )
 }
 
 /// The run directory of the fixture's job, once it exists.
@@ -477,6 +518,7 @@ fn go_tokenizer_matches_llama_tokenize_on_the_dev_model() {
         return;
     }
     let home = ai_home();
+    provision_for_tests(&home);
     let gguf = home
         .join("models/sha256")
         .join(format!("{DEV_MODEL_SHA256}.gguf"));
