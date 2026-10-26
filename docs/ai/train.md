@@ -8,9 +8,12 @@ checkpoint, and the finished adapter is converted to GGUF and registered with
 its lineage ([`registry.md`](registry.md)). The managed local engine then
 serves it ([`local.md`](local.md)).
 
-The trainer is Python, but you never install or see Python. Sky installs a
-pinned interpreter and a hash-locked set of wheels under the AI home, and runs
-its own driver in it.
+The trainer needs no Python. `Mlx` trains with `sky-trainer`, Sky's native
+LoRA trainer (C on MLX through mlx-c), installed from a pinned, hash-checked
+bundle. `Fake` trains in the runtime itself. Only `Unsloth` (and `Vertex`,
+which runs the same driver in a container) still runs a Python driver, in a
+pinned interpreter with a hash-locked set of wheels that Sky installs under
+the AI home; you never install or see Python.
 
 The design is [`../design/std-ai-lifecycle.md`](../design/std-ai-lifecycle.md)
 §8.5 (the shipped notes in §14 P3 record where this release differs from it).
@@ -24,7 +27,7 @@ lifecycle offline.
 
 ```bash
 sky ai provision --dev-model              # the engine and the Q4_0 dev model
-sky ai provision --train mlx --base dev   # the Mlx toolchain and the 4-bit base weights
+sky ai provision --train mlx --base dev   # the native trainer and the 4-bit base weights
 sky ai data freeze data/support.jsonl --name support
 sky ai train --data .sky/ai/datasets/support --steps 60 --gguf
 ```
@@ -221,10 +224,10 @@ backend is `InvalidSetting`.
 
 ```elm
 type Backend
-    = Mlx       -- MLX-LM on Apple silicon
+    = Mlx       -- the native trainer (sky-trainer, MLX) on Apple silicon
     | Unsloth   -- Unsloth core on Linux x86_64 with an NVIDIA GPU (CUDA 13)
     | Vertex    -- the same driver in a container, as a Vertex AI custom job
-    | Fake      -- the scripted trainer: tests, CI, a machine with no accelerator
+    | Fake      -- the built-in scripted trainer: tests, CI, a machine with no accelerator
 ```
 
 The backend is resolved in this order:
@@ -243,8 +246,7 @@ Any other value of the variable is `InvalidSetting` naming the variable.
 A backend this host cannot run is `NoAccelerator`, never a silent fallback to
 another one. `Mlx` needs Apple silicon. `Unsloth` needs Linux x86_64 with an
 NVIDIA GPU and a driver for CUDA 13 (the PyPI torch wheels need driver 580 or
-newer). `Fake` runs wherever a pinned CPython does: macOS arm64, Linux x86_64
-and Linux arm64.
+newer). `Fake` runs everywhere a Sky program runs: it is the program itself.
 
 `SKY_AI_ACCEL=cpu` runs MLX on the CPU (a CI runner without Metal).
 
@@ -267,19 +269,24 @@ on the tiny model before the `sky-trainer-v<version>` release publishes it, and
 `Train.plan job` returns the resolved backend and where it came from: `env`,
 `code` or `detected`. `Train.backendName` gives the name the variable uses.
 
-The three backends share one driver. It has its own training loop, its own
-data order, its own protocol and its own checkpoint format, so a run gives the
-same files and the same lines on each:
+Every trainer speaks one protocol (the `events.jsonl` lines), uses one
+checkpoint format and reads one data order, so a run gives the same files and
+the same lines on each:
 
-- **Mlx** uses MLX-LM (MIT) as a library: `mlx_lm.load` reads the local base
-  snapshot and `linear_to_lora_layers` adds the adapters. The optimiser is Adam.
-  MLX-LM's own trainer saves no optimiser state, so the driver saves it with
-  the adapter and a resume continues it.
-- **Unsloth** uses Unsloth core (Apache-2.0): `FastLanguageModel` loads the
-  base and `get_peft_model` adds the adapters. The optimiser is AdamW. The
-  driver does not use TRL's `SFTTrainer`. Its checkpoints are safetensors,
-  never `torch.save`. The AGPL Unsloth Studio is never installed.
-- **Fake** is standard-library Python. It writes the whole protocol, real
+- **Mlx** is `sky-trainer`: C11 on MLX 0.32.4 through mlx-c. Go tokenizes the
+  data (Qwen2 byte-level BPE, ChatML) and passes the base's shapes as flags;
+  the trainer loads the local base snapshot with `mlx_load_safetensors`,
+  trains LoRA adapters with Adam, computes the loss in chunks and backpropagates
+  one layer at a time, and writes the adapter in the PEFT layout. A memory
+  guard, forked before MLX starts, ends a run that goes over the cap with
+  `ModelTooLarge`.
+- **Unsloth** is the Python driver with Unsloth core (Apache-2.0):
+  `FastLanguageModel` loads the base and `get_peft_model` adds the adapters.
+  The optimiser is AdamW. The driver does not use TRL's `SFTTrainer`. Its
+  checkpoints are safetensors, never `torch.save`. The AGPL Unsloth Studio is
+  never installed.
+- **Fake** is built into the runtime: the Sky program starts itself again as
+  the trainer (`--sky-ai-fake-trainer`). It writes the whole protocol, real
   checkpoints and a real adapter whose B matrices are zero (so the adapter
   changes nothing). `fakeCrashAt` makes its first attempt die, as a killed
   trainer does.
@@ -302,32 +309,50 @@ The bundle stays ahead of time because the download is once per trainer
 version and smaller than the base model it trains, while a kernel that fails
 to compile fails at build time in CI, never in a user's first training step.
 
-## The managed toolchains
+## The trainers
 
-A training toolchain is a pinned uv, a pinned CPython and a virtual
-environment installed from a hash lock. The system Python is never used.
+| Backend | Trainer | Host | Installed from |
+|---|---|---|---|
+| `mlx` | `sky-trainer` (native) | macOS arm64 | the pinned bundle `sky-trainer-<version>-darwin-arm64.tar.gz` |
+| `fake` | the runtime itself | everywhere | nothing to install (`fake@builtin-1`) |
+| `unsloth` | the Python driver | Linux x86_64, CUDA 13 | the managed Python toolchain (below) |
 
-| Toolchain | Host | Lock |
-|---|---|---|
-| `mlx` | macOS arm64 | `mlx-darwin-arm64.txt`: 34 packages (mlx 0.32.2, mlx-lm 0.31.3, transformers 5.17.0) |
-| `unsloth` | Linux x86_64, CUDA 13 | `unsloth-linux-x86_64-cuda13.txt` (unsloth 2026.9.11, torch 2.12.1) |
-| `fake` | macOS arm64, Linux x86_64, Linux arm64 | none: the standard library only |
-
-The interpreter is CPython 3.12.14 (python-build-standalone 20260924,
-`install_only_stripped`) and the installer is uv 0.12.16. Each archive is
-pinned by SHA-256 in `runtime-go/rt/ai_pins.go`.
-
-Install a toolchain ahead of time:
+Install a trainer ahead of time:
 
 ```bash
-sky ai provision --train mlx              # or unsloth, or fake
+sky ai provision --train mlx              # or unsloth; fake installs nothing
 sky ai provision --train mlx --base dev   # also the dev base's weights
 ```
 
 or from code with `Train.provision Mlx` (and `Train.provisionBase Mlx
-Train.devBase`). Both are idempotent: an installed toolchain returns at once.
-`Train.toolchainStatus ()` lists every toolchain this host can run, installed
-or not, with its id, its python and its package versions.
+Train.devBase`). Both are idempotent: an installed trainer returns at once.
+`Train.toolchainStatus ()` lists every backend's trainer on this host,
+installed or not, with its id and its versions.
+
+### The native trainer
+
+A bundle holds `sky-trainer`, `lib/` (libmlx, libmlxc, and on macOS
+`mlx.metallib`; on Linux the C++ runtime it was built with), the licences, a
+`NOTICE.txt` and an SPDX SBOM. It is pinned per host by its file and SHA-256
+in `runtime-go/rt/ai_pins.go`, downloaded, checked (a different digest is
+`ChecksumMismatch` and installs nothing), run once with `--version`, and
+installed under `trainers/mlx/<version>-<variant>/` with `ok.json` last.
+A `linux-x64` CPU bundle is built and tested with it; the `Mlx` backend
+itself runs on Apple silicon only, and CI runs the trainer's own contract
+(`scripts/ai/trainer/test-trainer.sh`) with the Linux bundle. An
+operator who builds their own (on a Mac, `scripts/ai/trainer/build.sh`) sets
+`SKY_AI_TRAINER_BIN` to it; a value that is not a `sky-trainer` is an error,
+never a silent fallback to the pinned bundle.
+
+### The managed Python toolchain (Unsloth)
+
+The Unsloth toolchain is a pinned uv, a pinned CPython and a virtual
+environment installed from a hash lock
+(`unsloth-linux-x86_64-cuda13.txt`: unsloth 2026.9.11, torch 2.12.1). The
+system Python is never used. The interpreter is CPython 3.12.14
+(python-build-standalone 20260924, `install_only_stripped`) and the installer
+is uv 0.12.16. Each archive is pinned by SHA-256 in
+`runtime-go/rt/ai_pins.go`.
 
 ### Layout
 
@@ -335,13 +360,14 @@ Everything goes under the AI home (`SKY_AI_HOME`, else `$SKY_HOME/ai`, else the
 user cache directory, for example `~/Library/Caches/sky/ai` on macOS):
 
 ```
-tools/uv/<version>/uv
-python/<tag>-<target>/bin/python3
-toolchains/<name>/<id>/venv/        the locked packages
-toolchains/<name>/<id>/driver/      the Sky training driver
-toolchains/<name>/<id>/sbom.json    every package with its version and hashes
-toolchains/<name>/<id>/ok.json      written last: the toolchain is complete
+trainers/mlx/<version>-<variant>/   the native trainer bundle (ok.json last)
 bases/<org>--<repo>@<revision>/     a pinned base snapshot
+tools/uv/<version>/uv               (Unsloth only)
+python/<tag>-<target>/bin/python3   (Unsloth only)
+toolchains/unsloth/<id>/venv/       the locked packages
+toolchains/unsloth/<id>/driver/     the Sky training driver
+toolchains/unsloth/<id>/sbom.json   every package with its version and hashes
+toolchains/unsloth/<id>/ok.json     written last: the toolchain is complete
 cache/uv/                           uv's wheel cache
 ```
 
@@ -350,7 +376,7 @@ input: the lock, the CPython archive, the uv archive and the driver's files. A
 changed pin or a changed driver installs a new toolchain beside the old one. It
 never changes an installed one.
 
-### How a toolchain is installed
+### How the Python toolchain is installed
 
 1. uv and CPython are downloaded, checked against their digests, unpacked in a
    staging directory, run once to check their version, and renamed into place.
@@ -362,7 +388,7 @@ never changes an installed one.
 4. The installed versions are read back from the environment's metadata and
    must equal the lock.
 5. The driver is copied in and runs its self-check, which must print a `hello`
-   line with the versions it imports.
+   line with the versions it carries.
 6. `sbom.json` and then `ok.json` are written, and the directory is renamed
    into place.
 
@@ -373,16 +399,16 @@ library paths, the GPU device selectors) plus the proxy and certificate
 variables. A `PIP_*` or `UV_*` setting of yours, a token or a key never reaches
 it.
 
-`scripts/ai/lock-toolchains.sh` regenerates the locks with `uv pip compile
---generate-hashes --only-binary :all:` for one platform and Python 3.12, with
+`scripts/ai/lock-toolchains.sh` regenerates the lock with `uv pip compile
+--generate-hashes --only-binary :all:` for its platform and Python 3.12, with
 a fixed publication cut-off, so running it again gives the same lock. A lock
 change is a reviewed edit.
 
 ### Fetching
 
 With fetching allowed (`SKY_AI_FETCH=on`, the default in development), the
-workflow installs a missing toolchain and downloads a missing base. With
-fetching off (the default in production), a missing toolchain or base is
+workflow installs a missing trainer and downloads a missing base. With
+fetching off (the default in production), a missing trainer or base is
 `NotProvisioned`, and the failure names the command to run:
 `sky ai provision --train <backend>`, or
 `sky ai provision --train mlx --base dev` for the weights. Provision a
@@ -805,8 +831,10 @@ A run of `crashy job` finishes at step 12 with `relaunches = 1` and
 the registered adapter through a slot answered by a fixture under
 `tests/mocks/`.
 
-Outside test mode, `Fake` runs the real driver under the managed CPython
-(`sky ai provision --train fake`). It needs the serving model for its shape.
+Outside test mode, `Fake` runs a real trainer process: the program starts
+itself again as the trainer (`--sky-ai-fake-trainer`), so the launch, the
+watch, a crash, the relaunch and cancel are all real. Nothing is installed for
+it. It needs the serving model for its shape.
 
 ## Failures
 
@@ -852,16 +880,17 @@ explain err =
   safetensors with a bounded header and checks every offset.
 - **No remote code.** The driver never passes `trust_remote_code`, so the
   libraries keep their default, off.
-- **An offline trainer.** The trainer reads the base from a local directory
-  and runs with `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1` and
-  `HF_DATASETS_OFFLINE=1`. It runs as `python -I -B` (isolated: no user site,
-  no environment variables of Python's, no bytecode written) in a cleared
-  environment, so a token, a key or a pip setting of yours never reaches it.
+- **An offline trainer.** Every trainer reads the base from a local directory
+  and runs in a cleared environment, so a token, a key or a pip setting of
+  yours never reaches it. The Python driver (Unsloth) also runs with
+  `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1` and `HF_DATASETS_OFFLINE=1`, as
+  `python -I -B` (isolated: no user site, no environment variables of
+  Python's, no bytecode written).
 - **Hash locks.** Every wheel is pinned by SHA-256 and installed from wheels
   only. A Go test checks the lock policy: every line hashed, no URL, VCS or
   editable requirement, and the AGPL Unsloth Studio is refused.
-- **Pinned downloads.** uv, CPython, the base snapshots, the engine and the
-  serving model are pinned by SHA-256. A mismatch installs nothing and names
+- **Pinned downloads.** The native trainer bundles, uv, CPython, the base
+  snapshots, the engine and the serving model are pinned by SHA-256. A mismatch installs nothing and names
   both digests.
 - **No dataset text in the console.** A protocol line holds numbers, a
   checkpoint path and an error code with the driver's message.
@@ -946,12 +975,18 @@ The Go converter's output loads in the pinned `llama-server` b11200 (its
 `/lora-adapters` route lists it), and `llama-export-lora` merges it into the
 Q4_0 dev model.
 
-The live tests are `rust/crates/sky/tests/ai_train_live.rs` (Fake under the
-managed CPython, a crash and a relaunch, the real engine) and
-`ai_train_native_live.rs` (a QLoRA run with the native trainer on Apple
-silicon under a 2.5 GB cap, whose trainer is killed after its first checkpoint
-and resumed). Without their toolchain or trainer they fail and name what to
-install, unless `SKY_LIVE_TESTS=skip`.
+The live tests are `rust/crates/sky/tests/ai_train_live.rs` (the Fake
+trainer as a real process of the app, a crash and a relaunch, the real engine;
+and the native trainer's contract, `scripts/ai/trainer/test-trainer.sh`, on
+the tiny model with the trainer a user gets), `ai_train_native_live.rs` (a
+QLoRA run with the native trainer on Apple silicon under a 2.5 GB cap, whose
+trainer is killed after its first checkpoint and resumed) and
+`runtime-go/rt/ai_python_suites_live_test.go` (the Unsloth driver's Python
+suites under the pinned CPython, `go test -tags ailive`). Without their
+trainer or engine they fail and name what to install, unless
+`SKY_LIVE_TESTS=skip`. CI takes the trainer from the pinned bundle, or until
+a bundle is pinned from the newest `ai-trainer-bundles.yml` run
+(`.github/actions/sky-trainer`).
 
 ## Training on Vertex AI
 

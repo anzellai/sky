@@ -41,8 +41,8 @@ Pick the tier you want to test. Each tier adds to the one before it.
 |---|---|---|
 | **0. None** | `sky` and Go (the build runs `go build`). No model, no network, no account. | Every example's `sky test` suite, the pure examples (68, 69, 70 plan, 71), the `sky ai` pipeline verbs with `--test-mode`, the cloud workflow against the emulator in the runtime. |
 | **1. Local engine** | `sky ai provision --dev-model` once. It installs the pinned `llama-server` (llama.cpp b11200) and the development model (Qwen2.5 0.5B Instruct, Q4_0, a 429 MB file) into the AI home. | Real answers in 72, 73 and 75. The judge and the teacher on a real model. `sky ai start`. |
-| **2. Apple silicon (MLX)** | A Mac with Apple silicon. `sky ai provision --dev-model` and `sky ai provision --train mlx --base dev`. About 700 MB more. | A real QLoRA run in `examples/73-ai-train`. |
-| **3. Managed Python** | Nothing to install yourself. Sky installs a pinned uv and CPython into the AI home. `sky ai provision --dev-model`, then `sky ai provision --train fake` (macOS arm64, Linux x86_64, Linux arm64), or `--train unsloth` (Linux x86_64 with an NVIDIA GPU and driver 580 or newer). The Fake trainer needs the development model for its shape. | The real driver process under a managed Python, outside test mode. |
+| **2. Apple silicon (MLX)** | A Mac with Apple silicon. `sky ai provision --dev-model` and `sky ai provision --train mlx --base dev`: the native trainer bundle (`sky-trainer`, pinned by SHA-256) and the 4-bit base weights. No Python. Until a bundle is pinned, set `SKY_AI_TRAINER_BIN` to a `sky-trainer` (an `ai-trainer-bundles.yml` artifact, or `scripts/ai/trainer/build.sh`). | A real QLoRA run in `examples/73-ai-train`. |
+| **3. Real trainer processes** | `sky ai provision --dev-model` only. The Fake trainer is built into the runtime: nothing else to install, on any host. For Unsloth (Linux x86_64 with an NVIDIA GPU and driver 580 or newer), `sky ai provision --train unsloth` installs the managed Python (a pinned uv and CPython). The Fake trainer needs the development model for its shape. | A real trainer process, a crash and a relaunch, outside test mode. |
 | **4. Google Cloud** | A project of your own, a service-account key, one L4 of quota for Vertex AI training and one for Cloud Run. See [Live GPU runs](#live-gpu-runs-on-google-cloud). | Training on Vertex AI, the GPU tier on Cloud Run, `scripts/ai/gcp-live.sh`. |
 | **Device** | The device engines: `sky ai provision --device web`, `--device ios` (Xcode), `--device android` (the Android SDK). | `examples/75-ai-everywhere` on `web:app`, `desktop:mac`, `mobile:ios` and `mobile:android`. |
 
@@ -627,7 +627,7 @@ cargo test -p sky --test ai_train_flow
 | `ai_device_flow`, `ai_device_engine_exports` | device build checks and the engine's exports | Go |
 | `ai_trace_flow`, `ai_policy_router_flow`, `ai_native_tools_flow`, `ai_toolcall_continuation_flow` | Trace, Policy, the router, native tools | Go |
 | `ai_local_live` | the real managed engine with no configuration, a draft model, and named adapters chosen per call | tier 1 |
-| `ai_train_live` | the real driver under the managed Python, a crash and a relaunch | tier 3 (`--train fake`) |
+| `ai_train_live` | the Fake trainer as a real process of the app, a crash and a relaunch; the native trainer's contract (`test-trainer.sh`) on the tiny model | tier 3, and `sky-trainer` (SKY_AI_TRAINER_BIN or a pinned bundle) |
 | `ai_train_native_live` | a real QLoRA run with the native trainer under a 2.5 GB cap, killed and resumed, served and evaluated | tier 2 (`sky-trainer`: SKY_AI_TRAINER_BIN or a pinned bundle) |
 | `ai_memory_pg_flow` (`--ignored`) | `Std.Ai.Memory.Pg` on a real cluster | PostgreSQL with pgvector |
 | `ai_device_native_flow` (`--ignored`) | the iOS simulator, the Android emulator, the Mac app | Xcode, Android SDK |
@@ -664,7 +664,8 @@ The runtime's AI tests are `runtime-go/rt/ai_*_test.go`: the console tab,
 datasets, dedupe, the device routes and worker, Google ID tokens, registry
 adapters, the engine watcher, the Google Cloud emulator, the GPU tier,
 startup lines, the store, streaming, the toolchains, the converter and the
-trainer. They are in the `rt` package:
+trainers (the native trainer's launch, and the Fake trainer, which the tests
+start as the test binary itself). They are in the `rt` package:
 
 ```
 cd runtime-go
@@ -673,6 +674,19 @@ go test -timeout 30m ./rt/
 
 Add `-run` with a pattern such as `'Ai|Train|Toolchain|Device|FakeGCP'` to
 run fewer tests. Many AI test names start with `TestAi`, but not all of them.
+The Unsloth driver's Python suites run under the pinned CPython with the
+`ailive` tag (it downloads the CPython once):
+
+```
+cd runtime-go
+go test -tags ailive ./rt -run TestTheDriverSuitesPassUnderThePinnedCPython
+```
+
+The native trainer has its own contract test, on the synthetic tiny model:
+
+```
+scripts/ai/trainer/test-trainer.sh --trainer <sky-trainer> --device cpu
+```
 
 ### xtask gates
 
@@ -715,9 +729,17 @@ a manual dispatch on a branch. For the AI lifecycle it runs:
 * The T1 harness shards, with the eight T1 `ai-*` gates and `sky-suites`,
   and the T2 shard with `ai-device-partition`. Each gate's falsifier is
   proven again with `--verify-falsifiers --all`.
-* `gate-ai-local` (`ai_local_live`), `gate-ai-train` (`ai_train_live`) and
+* `gate-ai-local` (`ai_local_live`), `gate-ai-train` (`ai_train_live` with
+  the linux-x64 trainer bundle, and the Unsloth driver's Python suites) and
   `gate-ai-train-mlx` (`ai_train_native_live`, the native trainer on the CPU with
-  `SKY_AI_ACCEL=cpu`).
+  `SKY_AI_ACCEL=cpu`). Both training gates take `sky-trainer` from
+  `.github/actions/sky-trainer`: the pinned bundle, or until one is pinned
+  the newest `ai-trainer-bundles.yml` artifact.
+* `ai-trainer-bundles.yml` builds the trainer bundles (darwin-arm64 Metal,
+  linux-x64 CPU) from pinned sources, runs `test-trainer.sh` on each unpacked
+  archive, checks that the archive packs again to the same bytes, and
+  publishes them only on a `sky-trainer-v*` tag or a dispatch with
+  `publish: true`.
 * `gate-ai-device-web`: `scripts/ai-device-e2e.sh` in Chromium and WebKit on
   the CPU engine, and the `ai-device-privacy` and `ai-device-csp` gates.
 * `gate-ai-device-native`: `ai_device_native_flow` in the iOS simulator and

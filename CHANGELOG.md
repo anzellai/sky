@@ -523,22 +523,48 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   `SKY_AI_TRAIN_BACKEND` (`mlx`, `unsloth`, `fake`) wins over `withBackend`,
   which wins over detection (Mlx on Apple silicon, Unsloth on Linux with an
   NVIDIA GPU). A host that cannot run the backend is `NoAccelerator`, never a
-  fallback. `sagemaker` is `InvalidSetting`; `vertex` is phase 4 (below). One
-  Sky-shipped driver runs every backend with its own loop, data order,
-  protocol and safetensors checkpoints: MLX-LM as a library with Adam, Unsloth
-  core with `FastLanguageModel`, `get_peft_model` and AdamW, and a
-  standard-library Fake that writes a real no-op adapter.
-- **Managed Python toolchains.** `provision backend` (`sky ai provision --train
-  mlx|unsloth|fake`) installs a pinned uv 0.12.16, a pinned CPython 3.12.14
+  fallback. `sagemaker` is `InvalidSetting`; `vertex` is phase 4 (below).
+  Every trainer speaks one protocol, reads one data order and writes one
+  safetensors checkpoint format.
+- **A native trainer for Mlx, no Python.** `sky-trainer` is Sky's own LoRA
+  trainer: C11 on MLX 0.32.4 through mlx-c. Go tokenizes the data (Qwen2
+  byte-level BPE, ChatML, the loss mask) and writes a per-step row schedule,
+  so a resumed run reads the same batches; the trainer trains with Adam,
+  computes the loss in chunks, backpropagates one layer at a time and writes
+  the adapter in the PEFT layout. A memory guard, forked before MLX starts,
+  watches the trainer's footprint and ends a run over the cap with
+  `ModelTooLarge`, and the workflow never relaunches it into the same cap.
+  `provision Mlx` (`sky ai provision --train mlx`) installs the pinned bundle
+  for the host (checked by SHA-256, `ChecksumMismatch` installs nothing);
+  `SKY_AI_TRAINER_BIN` (new) names an operator's own build. The bundles are
+  built only in CI by `.github/workflows/ai-trainer-bundles.yml`
+  (darwin-arm64 with ahead-of-time Metal kernels, linux-x64 on static
+  OpenBLAS with GCC 13's C++ runtime, glibc 2.35), from sources pinned by
+  SHA-256, with the licences, an SPDX SBOM and SHA256SUMS; each unpacked
+  archive passes `scripts/ai/trainer/test-trainer.sh` and packs again to the
+  same bytes before it is published.
+- **Fake trains in the runtime.** The program starts itself again as the
+  trainer (`--sky-ai-fake-trainer`): a real process with the real protocol,
+  verified checkpoints, crash, relaunch and cancel, and a real no-op adapter.
+  Nothing is installed for it (`fake@builtin-1`).
+- **Unsloth in a managed Python.** `provision Unsloth` (`sky ai provision
+  --train unsloth`) installs a pinned uv 0.12.16, a pinned CPython 3.12.14
   (python-build-standalone 20260924) and a virtual environment from a hash
   lock (`uv pip sync --require-hashes --only-binary :all:`) under the AI home,
   with a cleared environment, a self-check, an SBOM and an id that is the
-  digest of every pinned input. The Mlx lock pins 34 packages (mlx 0.32.2,
-  mlx-lm 0.31.3, transformers 5.17.0). The Unsloth lock targets Linux x86_64
-  with CUDA 13 (NVIDIA driver 580 or newer). `scripts/ai/lock-toolchains.sh`
-  makes the locks. With fetching off, a missing toolchain or base is
-  `NotProvisioned`, naming the command. `provisionBase` and
-  `toolchainStatus`.
+  digest of every pinned input, and runs the Sky driver with Unsloth core
+  (`FastLanguageModel`, `get_peft_model`, AdamW). The lock targets Linux
+  x86_64 with CUDA 13 (NVIDIA driver 580 or newer).
+  `scripts/ai/lock-toolchains.sh` makes it. With fetching off, a missing
+  trainer, toolchain or base is `NotProvisioned`, naming the command.
+  `provisionBase` and `toolchainStatus`.
+- **Memory controls.** `withQuantBits` (4, 8 or 16; `withQuantisedBase` is
+  `withQuantBits 4`) and `withMemoryCap`, with `SKY_AI_TRAIN_SEQUENCE_LENGTH`,
+  `SKY_AI_TRAIN_BATCH`, `SKY_AI_TRAIN_RANK`, `SKY_AI_TRAIN_QUANT_BITS` and
+  `SKY_AI_TRAIN_MEMORY_CAP` (new) over the builders. A variable that changes
+  the adapter is a new run, `plan` says where each value came from, and a
+  value that does not parse is `InvalidSetting` naming the variable, never
+  showing the value.
 - **`plan` and `estimateMemory`.** `plan` checks the job, resolves the backend,
   reads the host and the serving model's shape, and refuses a job that will
   not fit (`ModelTooLarge`) before anything is downloaded. The estimate is a
@@ -593,10 +619,11 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   at it and answers questions with it. Its test trains offline with a killed
   first trainer and checks the relaunch, the GGUF adapter, the registry and the
   served name.
-- Measured on an Apple M-series Mac with 16 GB: a direct MLX run of the driver
-  on the dev base (12 steps, 2 rows of 256 tokens, rank 4 on 4 layers, 4-bit
-  base) took 8.5 s with a peak memory footprint of 2.24 GB, and a resume from
-  the step-8 checkpoint gave bit-identical losses and the same adapter digest.
+- Measured on an Apple M-series Mac with 16 GB: the native trainer on the
+  4-bit dev base (rank 8 on the last 8 layers, q and v, Metal) peaked at
+  0.83 GB at 1 × 1024 tokens and 1.75 GB at 4 × 1024 (`docs/ai/train.md`,
+  "Measured on a Mac"), and a run killed after its step-8 checkpoint resumed
+  to the same adapter.
 
 #### Training on Vertex AI and the GPU tier (phase 4)
 

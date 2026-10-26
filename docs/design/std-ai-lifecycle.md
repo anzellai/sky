@@ -1391,8 +1391,15 @@ checkpoint. The toolchain contract suite is green.
 **Shipped (v0.28.0).**
 
 - `Std.Ai.Train` with `Mlx`, `Unsloth` and `Fake`.
-- The managed toolchains: uv 0.12.16, CPython 3.12.14 from
-  python-build-standalone 20260924, and hash locks made by
+- Where this release differs from the plan above: `Mlx` trains with
+  `sky-trainer`, Sky's native LoRA trainer (C on MLX 0.32.4 through mlx-c),
+  installed from a pinned, hash-checked bundle built in CI
+  (`.github/workflows/ai-trainer-bundles.yml`), not MLX-LM in a managed
+  Python; `Fake` trains in the runtime itself (the program starts itself
+  again as the trainer). Only `Unsloth`, and the `Vertex` container, keep the
+  Python driver.
+- The managed toolchain (Unsloth): uv 0.12.16, CPython 3.12.14 from
+  python-build-standalone 20260924, and the hash lock made by
   `scripts/ai/lock-toolchains.sh`.
 - The driver and its protocol, `plan` and `estimateMemory`.
 - The durable workflow with verified checkpoints, relaunch, resume and cancel.
@@ -1405,8 +1412,9 @@ checkpoint. The toolchain contract suite is green.
 
 The user guide is
 [`../ai/train.md`](../ai/train.md). The live tests are
-`rust/crates/sky/tests/ai_train_live.rs` (Fake under the managed CPython, a
-killed trainer relaunched, the adapter served by the real engine) and
+`rust/crates/sky/tests/ai_train_live.rs` (the Fake trainer as a real process
+of the app, a killed trainer relaunched, the adapter served by the real
+engine, and the native trainer's contract on the tiny model) and
 `ai_train_native_live.rs` (the native trainer on Apple silicon under a
 2.5 GB cap, the trainer's process group killed after the first checkpoint,
 then resumed, served and evaluated against the base). The Unsloth backend's driver part is tested without a GPU by a
