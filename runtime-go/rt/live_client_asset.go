@@ -85,7 +85,7 @@ var liveClientPath = "/_sky/live." + assetHash(liveClientJS) + ".js"
 // runtime (island_client.go), the Std.Ui.Canvas pointer runtime
 // (scene_client.go), the built-in terminal widget (island_terminal.go), then
 // the Live client proper.
-const liveClientJS = islandClientJS + sceneClientJS + terminalWidgetJS + liveClientCoreJS
+const liveClientJS = islandClientJS + sceneClientJS + terminalWidgetJS + selectHoldJS + liveClientCoreJS
 
 // liveClientCoreJS is the Sky.Live client proper.
 const liveClientCoreJS = `// Sky.Live client (runtime-go/rt/live_client_asset.go). Served as the
@@ -754,6 +754,8 @@ function __skyPatch(t) {
   // The URL is already updated before __skyPatch runs (sky-nav pushState /
   // popstate). So a page navigation scrolls the new page to the top; a
   // same-page full-body patch preserves the user's scroll so nothing jumps.
+  // The full body supersedes any patches held for an open <select>.
+  __skyHeld = null;
   var scrollX = window.scrollX, scrollY = window.scrollY;
   __skyReplaceHTMLPreservingFocus(root, t);
   if (__skyDidNavigate()) window.scrollTo(0, 0);
@@ -1430,17 +1432,8 @@ function __skyDrainQueue() {
 // textContent updates are fine as-is — they don't regenerate nodes.
 function __skyApplyPatches(patches) {
   if (!patches || patches.length === 0) return;
-  // Open <select> defence: native dropdowns close on ANY DOM mutation
-  // inside the open select OR any ancestor that would re-mount it.
-  // There's no JS API for "is the dropdown open", so use focus as the
-  // conservative proxy: if a SELECT is the active element, treat its
-  // subtree (and ancestors that would re-mount it) as off-limits for
-  // this patch cycle. The next user interaction (option click, blur)
-  // triggers a fresh response and reconciliation. Sibling subtrees
-  // and unrelated parts of the DOM apply normally — the dropdown is
-  // unaffected. See Bug 3 in docs/skylive/architecture.md.
-  var openSel = (document.activeElement && document.activeElement.tagName === "SELECT")
-      ? document.activeElement : null;
+  // The open-<select> defence (selectHoldJS, select_hold_client.go).
+  var openSel = __skyOpenSelect();
   // Track patches whose target sky-id isn't in the DOM. Old code
   // silently dropped these (continue), which produced the
   // "stuck at loading" UX class (issue triaged 2026-07-17,
@@ -1467,7 +1460,12 @@ function __skyApplyPatches(patches) {
   var missedTarget = 0;
   for (var i = 0; i < patches.length; i++) {
     var p = patches[i];
+    if (__skyHeld && __skyHeldTakes(p)) continue;
     var el = document.querySelector('[sky-id="' + p.id.replace(/"/g, '\\"') + '"]');
+    if (el && openSel && (el === openSel.el || el.contains(openSel.el) || openSel.el.contains(el))) {
+      __skyHold(p, openSel.el);
+      continue;
+    }
     if (!el) {
       missedTarget++;
       if (window.console && console.warn) {
@@ -1475,10 +1473,6 @@ function __skyApplyPatches(patches) {
             "(op=" + (p.text !== undefined ? "text" : p.html !== undefined ? "html" :
               p.kids !== undefined ? "kids" : p.replace !== undefined ? "replace" : "attrs") + ")");
       }
-      continue;
-    }
-    if (openSel && (el === openSel || el.contains(openSel) || openSel.contains(el))) {
-      // Skip: any mutation here would close the dropdown mid-pick.
       continue;
     }
     if (p.text !== undefined && p.text !== null) {
@@ -2529,17 +2523,17 @@ function __skyOpenSSE() {
       // Legacy frame (pre-v0.9.3 server) — raw HTML, no seq to gate on.
       // Open-<select> defence (Bug 3): same-cycle as the patches path.
       // SSE-pushed full-body re-renders during an open dropdown would
-      // collapse it; skip the body, the next user interaction triggers
-      // reconciliation. Active user paths (sky-nav, popstate, POST
-      // text fallback) are NOT defended — those are user-initiated and
-      // dropping them would be worse UX than the dropdown collapsing.
-      if (document.activeElement && document.activeElement.tagName === "SELECT") return;
-      return __skyPatch(e.data.replace(/\\n/g, "\n"));
+      // collapse it; the body is HELD and applies when the select closes
+      // (selectHoldJS). It used to be skipped, and the server's next diff
+      // ran against the tree it had sent, so the page stayed stale.
+      // Active user paths (sky-nav, popstate, POST text fallback) are NOT
+      // defended — those are user-initiated and holding them would be
+      // worse UX than the dropdown collapsing.
+      return __skyPatchOrHold(e.data.replace(/\\n/g, "\n"));
     }
     if (frame && typeof frame === "object") {
       __skyHandleResponse(frame.seq, frame.ackInputs, function() {
-        if (document.activeElement && document.activeElement.tagName === "SELECT") return;
-        if (frame.body) __skyPatch(frame.body.replace(/\\n/g, "\n"));
+        if (frame.body) __skyPatchOrHold(frame.body.replace(/\\n/g, "\n"));
       }, frame.globalSeq, frame.view, "", false);
     }
   });

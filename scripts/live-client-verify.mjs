@@ -41,7 +41,7 @@
 import pw from "playwright";
 import { spawn } from "node:child_process";
 import { guardChild } from "./lib/child-guard.mjs";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -549,10 +549,56 @@ async function runRestart(browser) {
 }
 
 // ── Desktop webview applier (webview.go) ──────────────────────────────
+// goStringConst evaluates a Go string constant built from raw literals and
+// other constants (`a` + name + `b`), the way the Go compiler does. Slicing to
+// the first closing backtick read only the first literal once webviewSharedJS
+// became a concatenation (it splices in selectHoldJS), and the page then had
+// no __skyApplyPatches. Named parts are looked up in file's own source first,
+// then in runtime-go/rt.
+function goStringConst(name, file) {
+  const rtDir = join(ROOT, "runtime-go/rt");
+  const sources = [readFileSync(file, "utf8")];
+  for (const f of readdirSync(rtDir)) {
+    if (f.endsWith(".go") && !f.endsWith("_test.go")) sources.push(readFileSync(join(rtDir, f), "utf8"));
+  }
+  const seen = new Set();
+  const resolve = (n) => {
+    if (seen.has(n)) throw new Error(`goStringConst: ${n} refers to itself`);
+    seen.add(n);
+    const head = new RegExp(`(?:^|\\n)const ${n} = `);
+    const src = sources.find((s) => head.test(s));
+    if (!src) throw new Error(`goStringConst: no const ${n} in ${file} or runtime-go/rt`);
+    let i = src.search(head);
+    i = src.indexOf(`const ${n} = `, i) + `const ${n} = `.length;
+    let out = "";
+    for (;;) {
+      while (/\s/.test(src[i])) i++;
+      if (src[i] === "`") {
+        const end = src.indexOf("`", i + 1);
+        out += src.slice(i + 1, end);
+        i = end + 1;
+      } else {
+        const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(src.slice(i));
+        if (!m) throw new Error(`goStringConst: cannot read ${n} at ${JSON.stringify(src.slice(i, i + 20))}`);
+        out += resolve(m[0]);
+        i += m[0].length;
+      }
+      let j = i;
+      while (src[j] === " " || src[j] === "\t") j++;
+      if (src[j] !== "+") break;
+      i = j + 1;
+    }
+    seen.delete(n);
+    return out;
+  };
+  return resolve(name);
+}
+
 async function runWebview(browser) {
-  const src = readFileSync(process.env.SKY_WEBVIEW_GO || join(ROOT, "runtime-go/rt/webview.go"), "utf8");
-  const start = src.indexOf("const webviewSharedJS = `") + "const webviewSharedJS = `".length;
-  const js = src.slice(start, src.indexOf("`", start));
+  const js = goStringConst("webviewSharedJS", process.env.SKY_WEBVIEW_GO || join(ROOT, "runtime-go/rt/webview.go"));
+  if (!js.includes("window.__skyApplyPatches = function") || !js.includes("function __skyHold(")) {
+    throw new Error("webviewSharedJS read without its patch applier or select hold; goStringConst no longer reads it whole");
+  }
   const page = await browser.newPage();
   await page.setContent(`<div id="sky-root">
     <textarea id="ta" sky-id="r.0#textarea" sky-enter="Send" sky-input="_" data-sky-hid="r.0#textarea.enter"></textarea>

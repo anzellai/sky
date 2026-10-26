@@ -16945,7 +16945,7 @@
           ]
         },
         "Std.Html": {
-          "count": 70,
+          "count": 67,
           "symbols": [
             "a",
             "area",
@@ -16985,7 +16985,6 @@
             "img",
             "label",
             "legend",
-            "li",
             "link",
             "linkNode",
             "mainNode",
@@ -16998,7 +16997,6 @@
             "section",
             "small",
             "source",
-            "strong",
             "styleNode",
             "summary",
             "table",
@@ -17013,7 +17011,6 @@
             "toString",
             "tr",
             "track",
-            "ul",
             "video",
             "voidNode",
             "wbr"
@@ -17066,7 +17063,7 @@
           ]
         },
         "Std.Html.Events": {
-          "count": 23,
+          "count": 22,
           "symbols": [
             "fileMaxHeight",
             "fileMaxSize",
@@ -17079,7 +17076,6 @@
             "onFile",
             "onFocus",
             "onImage",
-            "onInput",
             "onKeyPress",
             "onKeyUp",
             "onLoad",
@@ -17494,8 +17490,8 @@
           ]
         }
       },
-      "count": 751,
-      "pct_of_denominator": 33.6
+      "count": 747,
+      "pct_of_denominator": 33.4
     }
   },
   "units": [
@@ -17804,8 +17800,8 @@
       "id": "e2e:scripts/spa-vdom-identity-e2e.sh",
       "modules_imported": 13,
       "path": "scripts/spa-vdom-identity-e2e.sh",
-      "refs_generous": 53,
-      "refs_qualified": 52,
+      "refs_generous": 59,
+      "refs_qualified": 58,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []
