@@ -474,7 +474,7 @@
       "tier": "T1"
     },
     "reject": {
-      "expected_assertions": 89,
+      "expected_assertions": 91,
       "falsifier_mutation": "reject.neutralise-axis",
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
