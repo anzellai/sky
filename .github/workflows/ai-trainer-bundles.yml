@@ -10,9 +10,10 @@ name: Std.Ai.Train trainer bundles
 #                 compiled ahead of time (MLX_METAL_JIT=OFF)
 #   linux-x64     the CPU backend on OpenBLAS (BLAS and LAPACK), linked
 #                 statically into libmlx.so; built on ubuntu-22.04 with GCC 13
-#                 (mlx-c needs std::format), so the glibc floor is 2.35 and
-#                 GCC 13's libstdc++ and libgcc_s ship in lib/; sky-trainer
-#                 finds lib/ by $ORIGIN/lib
+#                 (mlx-c needs std::format), pinned package by package in
+#                 scripts/ai/trainer/gcc13-debs.txt, so the glibc floor is
+#                 2.35 and the toolchain's libstdc++ and libgcc_s ship in lib/;
+#                 sky-trainer finds lib/ by $ORIGIN/lib
 #
 # Each archive carries the licences (MLX MIT, mlx-c MIT, OpenBLAS BSD-3 and
 # the rest under licenses/), NOTICE.txt and an SPDX SBOM. Before an archive is
@@ -89,7 +90,9 @@ jobs:
             # libstdc++ and libgcc_s ship in the bundle.
             sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
             sudo apt-get update
-            sudo apt-get install -y ninja-build gcc-13 g++-13
+            # Exactly the pinned toolchain; build-trainer-bundle.sh checks
+            # each installed version against the same file.
+            grep -Ev '^(#|$)' scripts/ai/trainer/gcc13-debs.txt | xargs sudo apt-get install -y --allow-downgrades ninja-build
             g++-13 --version | head -1
           fi
           cmake --version

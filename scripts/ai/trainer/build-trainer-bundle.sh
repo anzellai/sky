@@ -123,6 +123,19 @@ if [ "$PLATFORM" = linux-x64 ]; then
   # ships GCC 11 (the workflow installs g++-13 from ubuntu-toolchain-r/test).
   require_tool gcc-13 "install gcc-13 and g++-13 (ppa:ubuntu-toolchain-r/test on ubuntu-22.04)"
   require_tool g++-13 "install g++-13 (ppa:ubuntu-toolchain-r/test on ubuntu-22.04)"
+  require_tool dpkg-query "build on Debian or Ubuntu"
+  # The toolchain is the pinned one, package by package (gcc13-debs.txt).
+  pin_bad=0
+  while IFS= read -r line; do
+    case "$line" in '' | '#'*) continue ;; esac
+    pkgname="${line%%=*}" want="${line#*=}"
+    have="$(dpkg-query -W -f='${Version}' "$pkgname" 2>/dev/null || true)"
+    if [ "$have" != "$want" ]; then
+      echo "build-trainer-bundle: $pkgname is '${have:-not installed}', the pin is $want (scripts/ai/trainer/gcc13-debs.txt)" >&2
+      pin_bad=1
+    fi
+  done < "$HERE/gcc13-debs.txt"
+  [ "$pin_bad" = 0 ] || exit 1
   require_tool readelf "install binutils"
 else
   require_tool xcrun "install the Xcode command line tools"
@@ -373,6 +386,20 @@ else
   /bin/cp -f "$SRC/OpenBLAS-$OPENBLAS_VERSION/lapack-netlib/LICENSE" "$BUNDLE/licenses/LICENSE-LAPACK"
   # libstdc++ and libgcc_s: GPL-3.0 with the GCC Runtime Library Exception.
   GCC_VERSION="$(g++-13 -dumpfullversion)"
+  # Each shipped runtime library is named by the package that installed it,
+  # at the version gcc13-debs.txt pins.
+  runtime_version() {
+    local real owner
+    real="$(readlink -f "$(g++-13 -print-file-name="$1")")"
+    # usrmerge: dpkg may record /lib/... for a file found under /usr/lib/...
+    owner="$(dpkg-query -S "$real" 2>/dev/null | head -1 | cut -d: -f1 || true)"
+    [ -n "$owner" ] || owner="$(dpkg-query -S "${real#/usr}" 2>/dev/null | head -1 | cut -d: -f1 || true)"
+    [ -n "$owner" ] || { echo "build-trainer-bundle: no package owns $real" >&2; return 1; }
+    grep -q "^$owner=" "$HERE/gcc13-debs.txt" || { echo "build-trainer-bundle: $real is from $owner, which gcc13-debs.txt does not pin" >&2; return 1; }
+    echo "$owner $(dpkg-query -W -f='${Version}' "$owner")"
+  }
+  STDCXX_PKG="$(runtime_version libstdc++.so.6)"
+  GCC_S_PKG="$(runtime_version libgcc_s.so.1)"
   for f in /usr/share/doc/libstdc++6/copyright /usr/share/common-licenses/GPL-3; do
     [ -f "$f" ] || { echo "build-trainer-bundle: $f is missing (the GCC runtime's licence)" >&2; exit 1; }
   done
@@ -402,8 +429,9 @@ fi
   else
     echo "  OpenBLAS $OPENBLAS_VERSION (BSD-3-Clause, with reference LAPACK; linked statically into libmlx.so)"
     echo "      sha256 $OPENBLAS_SHA256"
-    echo "  lib/libstdc++.so.6 and lib/libgcc_s.so.1 from GCC $GCC_VERSION (ubuntu-toolchain-r/test), under"
-    echo "      GPL-3.0 with the GCC Runtime Library Exception (licenses/LICENSE-gcc-runtime, LICENSE-GPL-3)"
+    echo "  Built with GCC $GCC_VERSION (ppa:ubuntu-toolchain-r/test, scripts/ai/trainer/gcc13-debs.txt)."
+    echo "  lib/libstdc++.so.6 from the package $STDCXX_PKG, and lib/libgcc_s.so.1 from $GCC_S_PKG,"
+    echo "      under GPL-3.0 with the GCC Runtime Library Exception (licenses/LICENSE-gcc-runtime, LICENSE-GPL-3)"
   fi
   echo
   echo "sky-trainer's own sources (sky_trainer.c, guard.c) are Sky's (Apache-2.0, licenses/LICENSE-sky); sha256.c is in the public domain."
@@ -428,7 +456,8 @@ files_json="$(cd "$BUNDLE" && find . -type f ! -name sbom.spdx.json | sed 's|^\.
     else
       pkg OpenBLAS "$OPENBLAS_VERSION" "$OPENBLAS_URL" "$OPENBLAS_SHA256" BSD-3-Clause
       for n in libstdc++.so.6 libgcc_s.so.1; do
-        pkg "gcc-runtime-$n" "$GCC_VERSION" NOASSERTION "$(shasum -a 256 "$BUNDLE/lib/$n" | cut -c1-64)" \
+        if [ "$n" = libstdc++.so.6 ]; then pv="$STDCXX_PKG"; else pv="$GCC_S_PKG"; fi
+        pkg "${pv%% *}" "${pv#* }" NOASSERTION "$(shasum -a 256 "$BUNDLE/lib/$n" | cut -c1-64)" \
           "GPL-3.0-or-later WITH GCC-exception-3.1"
       done
     fi

@@ -3528,6 +3528,7 @@ fn trainer_bundle_problems(
 }
 
 struct TrainerBundleInputs {
+    debs: String,
     doc: serde_yaml::Value,
     script: String,
     build_sh: String,
@@ -3540,6 +3541,7 @@ fn trainer_bundle_inputs() -> TrainerBundleInputs {
     let read =
         |p: &str| std::fs::read_to_string(root.join(p)).unwrap_or_else(|e| panic!("read {p}: {e}"));
     TrainerBundleInputs {
+        debs: read("scripts/ai/trainer/gcc13-debs.txt"),
         doc: read_workflow("ai-trainer-bundles.yml"),
         script: read("scripts/ai/trainer/build-trainer-bundle.sh"),
         build_sh: read("scripts/ai/trainer/build.sh"),
@@ -3751,4 +3753,124 @@ fn the_published_darwin_bundle_is_ahead_of_time_metal() {
         }
     }
     assert!(p.is_empty(), "{}", p.join("\n"));
+}
+
+/// What is wrong with the pinned linux toolchain: every package of
+/// gcc13-debs.txt at an exact version, the workflow installing exactly that
+/// list, and the bundle script refusing a toolchain that differs.
+fn gcc_pin_problems(debs: &str, doc: &serde_yaml::Value, script: &str) -> Vec<String> {
+    let mut p = Vec::new();
+    let pins: Vec<(&str, &str)> = debs
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| l.split_once('=').unwrap_or((l, "")))
+        .collect();
+    for (name, version) in &pins {
+        let exact = !version.is_empty()
+            && version.bytes().next().is_some_and(|b| b.is_ascii_digit())
+            && !version.contains('*');
+        if !exact {
+            p.push(format!(
+                "gcc13-debs.txt: {name} has no exact version ({version:?})"
+            ));
+        }
+    }
+    for need in [
+        "gcc-13",
+        "g++-13",
+        "libstdc++-13-dev",
+        "libstdc++6",
+        "libgcc-s1",
+    ] {
+        if !pins.iter().any(|(n, _)| *n == need) {
+            p.push(format!("gcc13-debs.txt does not pin {need}"));
+        }
+    }
+    let runs: Vec<String> = doc["jobs"]["build"]["steps"]
+        .as_sequence()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| s["run"].as_str().map(str::to_string))
+        .collect();
+    let installs: Vec<&String> = runs
+        .iter()
+        .filter(|r| r.contains("apt-get install"))
+        .collect();
+    if !installs
+        .iter()
+        .any(|r| r.contains("scripts/ai/trainer/gcc13-debs.txt"))
+    {
+        p.push("the build job does not install the toolchain from gcc13-debs.txt".into());
+    }
+    for r in &installs {
+        for line in r.lines().filter(|l| l.contains("apt-get install")) {
+            if line
+                .split_whitespace()
+                .any(|w| w.starts_with("gcc-") || w.starts_with("g++-"))
+            {
+                p.push(format!(
+                    "the build job installs an unpinned compiler: `{}`",
+                    line.trim()
+                ));
+            }
+        }
+    }
+    for need in [
+        "done < \"$HERE/gcc13-debs.txt\"",
+        "dpkg-query -W -f='${Version}' \"$pkgname\"",
+        "STDCXX_PKG=\"$(runtime_version libstdc++.so.6)\"",
+    ] {
+        if !script.contains(need) {
+            p.push(format!("build-trainer-bundle.sh: no `{need}` (the toolchain check, or the SBOM's runtime version)"));
+        }
+    }
+    p
+}
+
+/// The linux bundle's compiler is pinned package by package, and the build
+/// fails when an installed version differs.
+///
+/// # Why this exists
+///
+/// The PPA that provides GCC 13 on ubuntu-22.04 also replaces libstdc++6 and
+/// libgcc-s1 with its newest runtime (a GCC 16 snapshot in run 40339193271),
+/// and the bundle ships those two libraries. An unpinned install would change
+/// what every linux user runs, with no change in this tree.
+#[test]
+fn the_linux_trainer_toolchain_is_pinned_and_checked() {
+    let i = trainer_bundle_inputs();
+    let p = gcc_pin_problems(&i.debs, &i.doc, &i.script);
+    assert!(p.is_empty(), "{}", p.join("\n"));
+    // Each broken shape goes red.
+    let floating = i.debs.replace("g++-13=13.4.0-6ubuntu1~22~ppa2", "g++-13");
+    assert_ne!(floating, i.debs, "the mutation applies");
+    assert!(
+        !gcc_pin_problems(&floating, &i.doc, &i.script).is_empty(),
+        "missed: an unversioned pin"
+    );
+    let unpinned = i.debs.replace("libstdc++6=", "# libstdc++6=");
+    assert!(
+        !gcc_pin_problems(&unpinned, &i.doc, &i.script).is_empty(),
+        "missed: libstdc++6 unpinned"
+    );
+    let unchecked = i
+        .script
+        .replace("done < \"$HERE/gcc13-debs.txt\"", "done < /dev/null");
+    assert!(
+        !gcc_pin_problems(&i.debs, &i.doc, &unchecked).is_empty(),
+        "missed: no version check"
+    );
+    let mut d = i.doc.clone();
+    for s in d["jobs"]["build"]["steps"].as_sequence_mut().unwrap() {
+        if let Some(r) = s["run"].as_str() {
+            if r.contains("gcc13-debs.txt") {
+                s["run"] = r.replace("grep -Ev '^(#|$)' scripts/ai/trainer/gcc13-debs.txt | xargs sudo apt-get install -y --allow-downgrades ninja-build", "sudo apt-get install -y ninja-build gcc-13 g++-13").into();
+            }
+        }
+    }
+    assert!(
+        !gcc_pin_problems(&i.debs, &d, &i.script).is_empty(),
+        "missed: an unpinned install"
+    );
 }

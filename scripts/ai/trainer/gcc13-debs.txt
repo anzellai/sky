@@ -1,0 +1,31 @@
+# The exact GCC 13 toolchain the linux-x64 trainer bundle is built with, from
+# ppa:ubuntu-toolchain-r/test on ubuntu-22.04 (mlx-c needs C++20 std::format,
+# which ubuntu-22.04's GCC 11 lacks). One `package=version` per line, as
+# `apt-get install` takes it. The workflow installs exactly these, and
+# build-trainer-bundle.sh fails if an installed version differs.
+#
+# The PPA's libstdc++6 and libgcc-s1 are its newest runtime (a GCC 16
+# snapshot), which g++-13's programs run with; the bundle ships those two
+# libraries, and the SBOM names these versions.
+cpp-13=13.4.0-6ubuntu1~22~ppa2
+cpp-13-x86-64-linux-gnu=13.4.0-6ubuntu1~22~ppa2
+g++-13=13.4.0-6ubuntu1~22~ppa2
+g++-13-x86-64-linux-gnu=13.4.0-6ubuntu1~22~ppa2
+gcc-13=13.4.0-6ubuntu1~22~ppa2
+gcc-13-base=13.4.0-6ubuntu1~22~ppa2
+gcc-13-x86-64-linux-gnu=13.4.0-6ubuntu1~22~ppa2
+libgcc-13-dev=13.4.0-6ubuntu1~22~ppa2
+libstdc++-13-dev=13.4.0-6ubuntu1~22~ppa2
+gcc-16-base=16-20260315-1ubuntu1~22~ppa1
+libasan8=16-20260315-1ubuntu1~22~ppa1
+libatomic1=16-20260315-1ubuntu1~22~ppa1
+libcc1-0=16-20260315-1ubuntu1~22~ppa1
+libgcc-s1=16-20260315-1ubuntu1~22~ppa1
+libgomp1=16-20260315-1ubuntu1~22~ppa1
+libhwasan0=16-20260315-1ubuntu1~22~ppa1
+libitm1=16-20260315-1ubuntu1~22~ppa1
+liblsan0=16-20260315-1ubuntu1~22~ppa1
+libquadmath0=16-20260315-1ubuntu1~22~ppa1
+libstdc++6=16-20260315-1ubuntu1~22~ppa1
+libtsan2=16-20260315-1ubuntu1~22~ppa1
+libubsan1=16-20260315-1ubuntu1~22~ppa1
