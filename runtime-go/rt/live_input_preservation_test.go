@@ -160,14 +160,17 @@ func TestLiveJS_PreserveAllUncontrolledInputs(t *testing.T) {
 func TestLiveJS_OpenSelectDefence(t *testing.T) {
 	js := liveClientJS
 	required := []string{
-		// Detection: focused SELECT is the proxy for "dropdown open".
-		`document.activeElement.tagName === "SELECT"`,
-		// Skip rule covers the SELECT itself, ancestors that would
+		// Detection: a focused SELECT that has not just been picked is the
+		// proxy for "dropdown open".
+		`a.tagName !== "SELECT" || a === __skySettledSelect`,
+		// Hold rule covers the SELECT itself, ancestors that would
 		// re-mount it, and descendants (option attribute changes
-		// also collapse the dropdown in some browsers).
-		`el === openSel || el.contains(openSel) || openSel.contains(el)`,
+		// also collapse the dropdown in some browsers). Held, never
+		// dropped (live_js_select_hold_test.go drives the behaviour).
+		`el === openSel.el || el.contains(openSel.el) || openSel.el.contains(el)`,
+		`__skyHold(p, openSel.el)`,
 		// Comment marker so the intent isn't obscured by a refactor.
-		`Open <select> defence`,
+		`open-<select> defence`,
 	}
 	for _, want := range required {
 		if !strings.Contains(js, want) {

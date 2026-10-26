@@ -779,13 +779,27 @@ func renderCurrent() {
 		// right now, so it skips emitting a value patch that would only
 		// re-assert (and caret-reset) the user's own in-flight typing. This is
 		// what keeps the typing case a MINIMAL patch set.
-		patches := diffTrees(spaPrev, &vn, snapshotFocusedInput())
-		spaApplyPatches(patches, spaPrev, &vn)
+		//
+		// spaPlanRender also holds back the patches that would close an open
+		// <select>'s picker, and returns the tree the DOM really holds after
+		// the rest: the new tree, with each held region keeping its old
+		// subtree. That tree is what spaPrev records, so the next render once
+		// the select is closed re-sends what was held. Recording &vn here
+		// lost those patches for good.
+		spaInstallSelectTracker()
+		plan := spaPlanRender(spaPrev, &vn, snapshotFocusedInput(), spaCurrentSelect())
+		missing := spaApplyPatches(plan.Apply, spaPrev, &vn)
+		spaNoteHeld(plan)
+		spaResyncMissing(missing, *plan.DOM)
 		// The diff compares handlers by constructor name, so a payload-only
 		// change emits no patch and no rebind. Refresh every element's handler
-		// slot from the new tree so its listener dispatches the CURRENT payload.
-		spaNodeHandlers.refresh(&vn)
+		// slot from the recorded tree so its listener dispatches the CURRENT
+		// payload (a held region keeps the handlers its DOM was built with).
+		spaNodeHandlers.refresh(plan.DOM)
+		spaPrev = plan.DOM
+		return
 	}
+	spaInstallSelectTracker()
 	spaPrev = &vn
 }
 

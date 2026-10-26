@@ -359,6 +359,73 @@ try {
     await ctx.close();
   }
 
+  // ── /fsel: a FOCUSED select (a real app's filter on a phone) ─────────
+  // A phone keeps focus on a <select> after its picker closes. A pick that
+  // changes a SIBLING's tag makes a patch on the common parent, which
+  // contains the select. The open-select defence skipped it and the client
+  // recorded it as applied, so the list never followed the filter. A pick is
+  // made here with focus() first; selectOption alone does not show the bug.
+  {
+    const page = await browser.newPage();
+    const warn = [];
+    watch(page, warn);
+    await boot(page, "/fsel");
+    const sel = page.locator("#fsel");
+    const shows = async () => ({
+      list: await page.locator("#flist").count(),
+      empty: await page.locator("#fempty").count(),
+    });
+    await sel.focus();
+    await sel.selectOption("none");
+    await settle(page);
+    let s = await shows();
+    check(s.empty === 1 && s.list === 0, "a pick on a focused select updates the sibling (list -> paragraph)",
+      `list=${s.list} empty=${s.empty} state=${await text(page, "#fstate")}`);
+    await sel.selectOption("all");
+    await settle(page);
+    s = await shows();
+    check(s.list === 1 && s.empty === 0, "a second pick on the still-focused select updates the sibling back",
+      `list=${s.list} empty=${s.empty}`);
+    await sel.selectOption("none");
+    await settle(page);
+    s = await shows();
+    check(s.empty === 1 && s.list === 0, "a third pick on the focused select still updates the sibling");
+
+    // Sub ticks while the select is focused and NOT picked (its picker may
+    // be open): the select and its options are never rewritten, and the
+    // region catches up once the select loses focus.
+    await page.locator("#b-fstart").click();
+    await sel.focus();
+    await page.evaluate(() => {
+      const el = document.getElementById("fsel");
+      el.__skyE2E = 1;
+      window.__fselMut = 0;
+      new MutationObserver((ms) => { window.__fselMut += ms.length; })
+        .observe(el, { subtree: true, childList: true, attributes: true, characterData: true });
+    });
+    await page.waitForFunction(() => /ticking=F/.test(document.getElementById("fstate").textContent), null, { timeout: 15000 });
+    await settle(page);
+    const during = await page.evaluate(() => ({
+      same: !!document.getElementById("fsel") && document.getElementById("fsel").__skyE2E === 1,
+      muts: window.__fselMut,
+      focused: !!document.activeElement && document.activeElement.id === "fsel",
+    }));
+    check(during.same && during.muts === 0 && during.focused,
+      "Sub ticks while a select is focused never rewrite the select or its options", JSON.stringify(during));
+    await page.evaluate(() => document.getElementById("fsel").blur());
+    await settle(page);
+    const tick = await page.evaluate(() => {
+      const t = document.getElementById("ftick");
+      return t ? t.tagName + ":" + t.textContent : "none";
+    });
+    const st = await text(page, "#fstate");
+    check(tick === "STRONG:tick=9" && st.includes("ticks=9"),
+      "the ticks held while the select was focused apply once it loses focus", `tick=${tick} state=${st}`);
+    const real = warn.filter((w) => !w.includes("deferred while a <select> is open"));
+    check(real.length === 0, "no warnings or page errors on /fsel", real.join(" | "));
+    await page.close();
+  }
+
   // ── JS disabled: a native POST of the SSR form passes the CSRF check ──
   // Before the wasm client runs (or with JS off) a submit is a native form
   // POST. The server-injected token must travel with it: no 403.

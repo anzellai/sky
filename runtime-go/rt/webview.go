@@ -327,6 +327,20 @@ func webviewAppRun(cfg any) any {
 		fmt.Fprintf(os.Stderr, "[sky.webview] Bind __skyLog failed: %v\n", err)
 	}
 
+	// `__skyResync` is called by the shim when a patch target is missing:
+	// the page drifted from the tree this loop diffs against, so the next
+	// diff would never repair it. Reload the current render (resyncPage is
+	// set once the first page is shown).
+	var resyncPage atomic.Value // func()
+	if err := w.Bind("__skyResync", func() error {
+		if f, ok := resyncPage.Load().(func()); ok {
+			w.Dispatch(f)
+		}
+		return nil
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "[sky.webview] Bind __skyResync failed: %v\n", err)
+	}
+
 	// Install the patch-applier shim BEFORE the first render so the
 	// initial SetHtml's onload handlers can call `__skyApplyPatches`
 	// during late hydration.
@@ -364,6 +378,10 @@ func webviewAppRun(cfg any) any {
 	// When no static dir is configured, fall through to the original
 	// SetHtml path — no behaviour change for Sky.Ui-only apps
 	// (examples/31-webview-stopwatch-ui etc).
+	resyncPage.Store(func() {
+		b, _ := state.currentBody.Load().(string)
+		w.SetHtml(webviewPageWrap(b))
+	})
 	staticDir := webviewStaticDir()
 	var loopbackSrv *http.Server
 	if staticDir != "" {
@@ -380,6 +398,7 @@ func webviewAppRun(cfg any) any {
 				"[sky.webview] loopback server on %s (static=%q)\n",
 				url, staticDir)
 			w.Navigate(url)
+			resyncPage.Store(func() { w.Navigate(url) })
 		}
 	} else {
 		w.SetHtml(webviewPageWrap(body))
@@ -649,6 +668,7 @@ func webviewWindowSize(windowCfg any) (int, int) {
 const webviewSharedJS = `
 (function () {
   if (window.__skyApplyPatches) { return; } // hot-reload safety
+` + selectHoldJS + `
   function logTo(level) {
     return function (msg) {
       try { window.__skyLog && window.__skyLog(level, String(msg)); }
@@ -780,6 +800,7 @@ const webviewSharedJS = `
 
   function __skyApplyKids(el, kids) {
     var byId = {}, kept = {}, renames = [], c, i, k;
+    var missed = 0; // kept children the DOM no longer has (a desync)
     for (c = el.firstElementChild; c; c = c.nextElementSibling) {
       var sid = c.getAttribute("sky-id");
       if (sid) byId[sid] = c;
@@ -791,6 +812,8 @@ const webviewSharedJS = `
       if (k.keep && byId[k.keep] && !kept[k.keep]) {
         kept[k.keep] = byId[k.keep];
         if (k.id && k.id !== k.keep) renames.push([byId[k.keep], k.keep, k.id]);
+      } else if (k.keep && !byId[k.keep]) {
+        missed++;
       }
     }
     for (c = el.firstChild; c; ) {
@@ -814,22 +837,33 @@ const webviewSharedJS = `
     if (focusInside && focused.isConnected && document.activeElement !== focused) {
       try { focused.focus(); } catch (_) {}
     }
+    return missed;
   }
 
   // __skyApplyPatches: identical wire shape to Sky.Live's. Walks
   // patches in order, applies via querySelector('[sky-id=…]'),
-  // skips any whose target is inside the open <select> ancestor
-  // chain. Revives scripts at the end so newly-mounted JS bundles
+  // HOLDS any whose target is the open <select>, inside it or an
+  // ancestor of it, and applies them when it closes (selectHoldJS:
+  // the Go side diffs against the tree it sent, so a skipped patch was
+  // lost). Revives scripts at the end so newly-mounted JS bundles
   // bootstrap.
   window.__skyApplyPatches = function (patches) {
     if (!patches || patches.length === 0) return;
-    var openSel = (document.activeElement && document.activeElement.tagName === "SELECT")
-        ? document.activeElement : null;
+    var missed = 0;
+    var openSel = __skyOpenSelect();
     for (var i = 0; i < patches.length; i++) {
       var p = patches[i];
+      if (__skyHeld && __skyHeldTakes(p)) continue;
       var el = document.querySelector('[sky-id="' + p.id.replace(/"/g, '\\"') + '"]');
-      if (!el) continue;
-      if (openSel && (el === openSel || el.contains(openSel) || openSel.contains(el))) {
+      if (el && openSel && (el === openSel.el || el.contains(openSel.el) || openSel.el.contains(el))) {
+        __skyHold(p, openSel.el);
+        continue;
+      }
+      if (!el) {
+        // The DOM drifted from the tree the Go side diffs against: a
+        // skipped patch would be lost for good. Resync below.
+        missed++;
+        __skyWarn("patch target not found, resyncing: " + p.id);
         continue;
       }
       if (p.text !== undefined && p.text !== null) {
@@ -847,7 +881,7 @@ const webviewSharedJS = `
         __skyReplaceHTMLPreservingFocus(el, p.html);
       }
       if (p.kids) {
-        __skyApplyKids(el, p.kids);
+        missed += __skyApplyKids(el, p.kids);
       }
       if (p.attrs) {
         var keys = Object.keys(p.attrs);
@@ -896,6 +930,11 @@ const webviewSharedJS = `
         }
       }
       if (p.remove) el.remove();
+    }
+    // Rebuild the page from the current render (Go side, __skyResync).
+    if (missed > 0 && window.__skyResync) {
+      try { window.__skyResync(); } catch (_) {}
+      return;
     }
     __skyBindEvents(document);
     var skyRoot = document.getElementById("sky-root");

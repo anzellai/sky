@@ -7,7 +7,8 @@
 # injected hover styles, hydration text parity, hydration of text runs and
 # inputs (server nodes kept), hydration of nestings the HTML parser used to
 # restructure and of a form served with the CSRF cookie, and route-param
-# decoding.
+# decoding, and a focused <select> whose pick changes a sibling (patches held
+# while its picker may be open are applied, never lost).
 #
 # Builds the spa-vdom-identity fixture (--target web:app) and drives the real
 # wasm client in headless Chromium (scripts/spa-vdom-identity-verify.mjs lists
