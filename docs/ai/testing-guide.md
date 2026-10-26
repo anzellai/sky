@@ -628,7 +628,7 @@ cargo test -p sky --test ai_train_flow
 | `ai_trace_flow`, `ai_policy_router_flow`, `ai_native_tools_flow`, `ai_toolcall_continuation_flow` | Trace, Policy, the router, native tools | Go |
 | `ai_local_live` | the real managed engine with no configuration, a draft model, and named adapters chosen per call | tier 1 |
 | `ai_train_live` | the real driver under the managed Python, a crash and a relaunch | tier 3 (`--train fake`) |
-| `ai_train_mlx_live` | a real MLX QLoRA run, killed and resumed | tier 2 |
+| `ai_train_native_live` | a real QLoRA run with the native trainer under a 2.5 GB cap, killed and resumed, served and evaluated | tier 2 (`sky-trainer`: SKY_AI_TRAINER_BIN or a pinned bundle) |
 | `ai_memory_pg_flow` (`--ignored`) | `Std.Ai.Memory.Pg` on a real cluster | PostgreSQL with pgvector |
 | `ai_device_native_flow` (`--ignored`) | the iOS simulator, the Android emulator, the Mac app | Xcode, Android SDK |
 | `ai_gcp_live` (`--ignored`) | the paid live stages | `scripts/ai/gcp-live.sh` only |
@@ -716,7 +716,7 @@ a manual dispatch on a branch. For the AI lifecycle it runs:
   and the T2 shard with `ai-device-partition`. Each gate's falsifier is
   proven again with `--verify-falsifiers --all`.
 * `gate-ai-local` (`ai_local_live`), `gate-ai-train` (`ai_train_live`) and
-  `gate-ai-train-mlx` (`ai_train_mlx_live`, MLX on the CPU with
+  `gate-ai-train-mlx` (`ai_train_native_live`, the native trainer on the CPU with
   `SKY_AI_ACCEL=cpu`).
 * `gate-ai-device-web`: `scripts/ai-device-e2e.sh` in Chromium and WebKit on
   the CPU engine, and the `ai-device-privacy` and `ai-device-csp` gates.

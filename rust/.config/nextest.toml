@@ -44,7 +44,7 @@ serial-servers = { max-threads = 1 }
 # through scripts/ai/gcp-live.sh (its ledger cap, teardown and leak check),
 # locally or from the manually dispatched `ai-cloud-live.yml`, never in a
 # commit or release run.
-default-filter = 'not (binary(ai_local_live) | binary(ai_train_live) | binary(ai_train_mlx_live) | binary(ai_gcp_live))'
+default-filter = 'not (binary(ai_local_live) | binary(ai_train_live) | binary(ai_train_native_live) | binary(ai_gcp_live))'
 retries = 2
 slow-timeout = { period = "120s", terminate-after = 4 }
 

@@ -79,3 +79,19 @@ func AiAdapterMaxDiff(a, b string) (map[string]any, error) {
 	}
 	return map[string]any{"maxAbsDiff": worst, "tensors": len(ta)}, nil
 }
+
+// AiTokenizeFile tokenizes a file's text with the base's tokenizer.json, the
+// way the tokenize step does (added tokens first, then NFC, the Qwen2
+// pre-tokenizer and BPE). The live parity test compares it with
+// llama-tokenize on the GGUF.
+func AiTokenizeFile(baseDir, textFile string) ([]int, error) {
+	tok, err := aiLoadTokenizer(baseDir)
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(textFile)
+	if err != nil {
+		return nil, aiTrainFail("cannot read %s: %v", textFile, err)
+	}
+	return tok.Encode(string(b))
+}

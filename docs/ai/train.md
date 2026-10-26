@@ -892,17 +892,27 @@ Every verb takes `--format json`. The verbs run the bundled Sky program
 
 ## Measured on a Mac
 
-On an Apple M-series Mac with 16 GB, a direct MLX run of the driver on the
-development base (12 steps, 2 rows of 256 tokens, rank 4 on 4 layers, the
-4-bit base) took 8.5 s wall time with a peak memory footprint of 2.24 GB. Its
-eval loss went from 2.83 at step 6 to 2.57 at step 12. A resume from the
-step-8 checkpoint gave bit-identical losses for steps 9 to 12 and an adapter
-with the same SHA-256, because the optimiser state is restored.
+On an Apple M-series Mac with 16 GB, the native trainer (`sky-trainer`) on the
+4-bit development base (rank 8 on the last 8 layers, q and v, Metal) peaked at
+these memory footprints, with these throughputs:
 
-The same job driven from Sky (`ai_train_mlx_live.rs`, with the trainer's
-process group killed by SIGKILL after its step-4 checkpoint) relaunched once
-from step 4, finished at step 12 with an eval loss of 2.40, and its GGUF
-adapter answered a chat on the managed engine.
+| rows × tokens | peak footprint | tokens per second |
+|---|---|---|
+| 1 × 256 | 0.71 GB | 689 |
+| 1 × 512 | 0.72 GB | 706 |
+| 1 × 1024 | 0.83 GB | 725 |
+| 4 × 1024 | 1.75 GB | 741 |
+
+The loss is computed over chunks of tokens and the backward pass runs one
+layer at a time, so the logits of the whole batch never exist at once. Before
+that, 1 × 256 peaked at 1.77 GB and each token added about 5.3 MB.
+
+The same trainer driven from Sky (`ai_train_native_live.rs`: 24 steps of 1 ×
+256 under a 2.5 GB cap, the trainer's process group killed by SIGKILL after
+its step-8 checkpoint) relaunched once from step 8, finished at step 24 with
+an eval loss of 2.89 and a peak footprint of 0.61 GB, and its GGUF adapter
+answered a chat on the managed engine after the trainer had exited. The whole
+test took 25 s.
 
 The Go converter's output loads in the pinned `llama-server` b11200 (its
 `/lora-adapters` route lists it), and `llama-export-lora` merges it into the
@@ -910,9 +920,10 @@ Q4_0 dev model.
 
 The live tests are `rust/crates/sky/tests/ai_train_live.rs` (Fake under the
 managed CPython, a crash and a relaunch, the real engine) and
-`ai_train_mlx_live.rs` (a QLoRA run on Apple silicon whose trainer is killed
-after its first checkpoint and resumed). Without their toolchain they fail and
-name the `sky ai provision --train` command, unless `SKY_LIVE_TESTS=skip`.
+`ai_train_native_live.rs` (a QLoRA run with the native trainer on Apple
+silicon under a 2.5 GB cap, whose trainer is killed after its first checkpoint
+and resumed). Without their toolchain or trainer they fail and name what to
+install, unless `SKY_LIVE_TESTS=skip`.
 
 ## Training on Vertex AI
 

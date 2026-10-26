@@ -8,7 +8,7 @@
 //! these tests prove the workflow, the relaunch from the newest checkpoint, the
 //! GGUF conversion, the registry and the `sky ai train` verbs in seconds. The
 //! real trainers are the live tests `ai_train_live.rs` (Fake under the managed
-//! Python) and `ai_train_mlx_live.rs` (MLX on Apple silicon).
+//! Python) and `ai_train_native_live.rs` (the native trainer on Apple silicon).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};

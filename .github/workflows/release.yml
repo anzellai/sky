@@ -1245,8 +1245,8 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  # gate-ai-train-mlx — a real MLX QLoRA run, killed and resumed, served and
-  # evaluated (rust/crates/sky/tests/ai_train_mlx_live.rs). MLX runs on the
+  # gate-ai-train-mlx — a real QLoRA run with the native trainer (sky-trainer,
+  # MLX through mlx-c), killed and resumed, served and evaluated (rust/crates/sky/tests/ai_train_native_live.rs). MLX runs on the
   # CPU (SKY_AI_ACCEL=cpu): the runner has no usable Metal device. Same job as
   # rust-ci.yml `ai-train-mlx-live`.
   gate-ai-train-mlx:
@@ -1287,7 +1287,7 @@ jobs:
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
-        run: cargo test -p sky --locked --test ai_train_mlx_live -- --nocapture
+        run: cargo test -p sky --locked --test ai_train_native_live -- --nocapture
 
   # gate-ai-device-web — Std.Ai.Device in real browsers
   # (scripts/ai-device-e2e.sh, docs/ai/device.md): the web engine is built

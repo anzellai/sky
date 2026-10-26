@@ -1,13 +1,14 @@
 module Main exposing (main)
 
-{-| Fixture for the live training tests (ai_train_live.rs, ai_train_mlx_live.rs).
+{-| Fixture for the live training tests (ai_train_live.rs, ai_train_native_live.rs).
 
     app drive fake <dir>      train with the Fake trainer under the managed
                               Python: 10 steps, a checkpoint every 2, the
                               first trainer dies after step 3
-    app drive mlx <dir>       train with MLX on the dev base: 12 steps of 2
-                              rows of 256 tokens, rank 4 on 4 layers, a
-                              checkpoint every 4, an evaluation every 6
+    app drive mlx <dir>       train with the native trainer on the dev base:
+                              24 steps of 1 row of 256 tokens, rank 8 on the
+                              last 8 layers (q and v), a checkpoint every 8,
+                              an evaluation every 12, a 2.5 GB memory cap
     app serve <gguf> <sha>    serve the adapter on the dev model and ask it
     app mismatch <gguf> <sha> <dir>
                               register the adapter as trained on another base
@@ -93,14 +94,17 @@ job backend dir v =
                 |> Train.withSeed 7
     in
         if backend == "mlx" then
-            common |> Train.withBackend Mlx |> Train.withMaxSteps 12
-                |> Train.withBatch { perDevice = 2, accumulate = 1 }
+            common |> Train.withBackend Mlx |> Train.withMaxSteps 24
+                |> Train.withBatch { perDevice = 1, accumulate = 1 }
                 |> Train.withSequenceLength 256
-                |> Train.withRank 4
-                |> Train.withLayers 4
+                |> Train.withRank 8
+                |> Train.withLayers 8
+                |> Train.withTargets [ "self_attn.q_proj", "self_attn.v_proj" ]
                 |> Train.withLearningRate 2.0e-4
-                |> Train.withCheckpointEvery 4
-                |> Train.withEvalEvery 6
+                |> Train.withCheckpointEvery 8
+                |> Train.withEvalEvery 12
+                |> Train.withGradientCheckpointing
+                |> Train.withMemoryCap 2500000000
                 |> Train.withWatchWindow 2000
 
         else

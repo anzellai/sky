@@ -1407,9 +1407,9 @@ The user guide is
 [`../ai/train.md`](../ai/train.md). The live tests are
 `rust/crates/sky/tests/ai_train_live.rs` (Fake under the managed CPython, a
 killed trainer relaunched, the adapter served by the real engine) and
-`ai_train_mlx_live.rs` (MLX on Apple silicon, the trainer's process group
-killed after the first checkpoint, then resumed, served and evaluated against
-the base). The Unsloth backend's driver part is tested without a GPU by a
+`ai_train_native_live.rs` (the native trainer on Apple silicon under a
+2.5 GB cap, the trainer's process group killed after the first checkpoint,
+then resumed, served and evaluated against the base). The Unsloth backend's driver part is tested without a GPU by a
 recording fixture (`runtime-go/rt/testdata/train_driver_tests/test_unsloth_fixture.py`),
 and its lock installs on Linux x86_64.
 

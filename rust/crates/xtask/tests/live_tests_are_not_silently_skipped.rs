@@ -789,6 +789,11 @@ const GO_SKIPS_ALLOWED: &[(&str, &str, &str)] = &[
         "no home directory",
         "no durable home directory exists at all on this host",
     ),
+    (
+        "ai_trainer_bundle_test.go",
+        "the fake trainer is a shell script",
+        "Windows runs no shell-script stand-in for sky-trainer; not a missing tool",
+    ),
 ];
 
 /// G-8: a Go runtime test may skip only through `live_gate_test.go` or for a

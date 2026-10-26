@@ -2627,9 +2627,12 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   # ── Std.Ai.Train: a real MLX QLoRA run on Apple silicon ─────────────────
-  # ai_train_mlx_live.rs trains the dev base with MLX for 12 steps, SIGKILLs
+  # ai_train_native_live.rs trains the dev base with the native trainer
+  # (sky-trainer, MLX through mlx-c) for 24 steps under a 2.5 GB cap, SIGKILLs
   # the trainer after its first checkpoint and asserts the durable relaunch
-  # from it, then serves and evaluates the adapter against the base. GitHub's
+  # from it, then serves and evaluates the adapter against the base. The
+  # trainer comes from the pinned bundle (ai_pins.go aiTrainerAssets); until
+  # one is pinned the test FAILS naming SKY_AI_TRAINER_BIN. GitHub's
   # macOS runners have no usable Metal device for MLX, so SKY_AI_ACCEL=cpu runs
   # MLX on the CPU (the same code path; slower). The Std.Ai home is cached.
   ai-train-mlx-live:
@@ -2670,7 +2673,7 @@ jobs:
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
-        run: cargo test -p sky --locked --test ai_train_mlx_live -- --nocapture
+        run: cargo test -p sky --locked --test ai_train_native_live -- --nocapture
       - name: Save the Std.Ai home (main only)
         if: always() && github.ref == 'refs/heads/main' && steps.ai-home.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6

@@ -89,10 +89,11 @@ pub enum Need {
     /// by `sky ai provision --train fake`) plus the engine and the dev model,
     /// or the network to fetch them. CI caches the Std.Ai home.
     AiTrainToolchain,
-    /// The Std.Ai.Train Mlx toolchain and the dev base's MLX weights on Apple
-    /// silicon (`sky ai provision --train mlx --base dev`), or the network to
-    /// fetch them.
-    AiTrainMlx,
+    /// Apple silicon with the native trainer `sky-trainer` (the operator's
+    /// SKY_AI_TRAINER_BIN, or the pinned bundle `sky ai provision --train mlx`
+    /// installs), plus the dev base's MLX weights, the engine and the dev
+    /// model in the Std.Ai home, or the network to fetch them.
+    AiTrainNative,
     /// A Google Cloud project prepared for Std.Ai's live tests, entered only
     /// through the wrapper `scripts/ai/gcp-live.sh`, which sets
     /// `SKY_AI_GCP_LIVE=1`, builds the run's bucket, repositories, secret and
@@ -146,11 +147,13 @@ impl Need {
                  (the pinned engine, the dev model, uv and CPython into the Std.Ai home), or \
                  give the test network access to github.com and huggingface.co"
             }
-            Need::AiTrainMlx => {
-                "on Apple silicon, run `sky ai provision --dev-model` and `sky ai provision \
-                 --train mlx --base dev` once (the MLX toolchain from PyPI by hash, and the \
-                 4-bit Qwen dev weights), or give the test network access to github.com, \
-                 pypi.org, files.pythonhosted.org and huggingface.co"
+            Need::AiTrainNative => {
+                "on Apple silicon, build the native trainer (`scripts/ai/trainer/build.sh --mlx \
+                 <MLX 0.32.4 prefix> --mlx-c <mlx-c checkout>`) and set SKY_AI_TRAINER_BIN to \
+                 it, or run `sky ai provision --train mlx --base dev` where a trainer bundle is \
+                 pinned; run `sky ai provision --dev-model` once (or give the test network \
+                 access to github.com and huggingface.co for the engine, the dev model and \
+                 the 4-bit Qwen dev weights)"
             }
             Need::GcpLive => {
                 "run these tests through `scripts/ai/gcp-live.sh --project <id>` (after \
@@ -174,7 +177,7 @@ impl Need {
             Need::Node => "Node.js",
             Need::AiEngine => "the Std.Ai engine and development model",
             Need::AiTrainToolchain => "the Std.Ai.Train Fake toolchain and the dev model",
-            Need::AiTrainMlx => "the Std.Ai.Train Mlx toolchain and the dev base weights",
+            Need::AiTrainNative => "the native trainer (sky-trainer) and the dev base weights",
             Need::GcpLive => "the Google Cloud live-test wrapper (scripts/ai/gcp-live.sh)",
             Need::Brotli => "the brotli tool",
         }
