@@ -213,8 +213,8 @@ func aiEnsureTrainer(ctx context.Context, backend string) (aiTrainerBinary, erro
 	}
 	if !allowed {
 		return aiTrainerBinary{}, aiFailf(aiNotProvisioned,
-			"sky-trainer %s (%s) is not installed and fetching is off (%s); run `sky ai provision --train %s` on this host first",
-			aiTrainerVersion, a.variant, skyEnvName("AI_FETCH"), backend).
+			"sky-trainer %s (%s) is not installed and fetching is off (%s); turn fetching on and run `sky ai provision --train %s` on this host, or set %s to a sky-trainer built with scripts/ai/trainer/build.sh",
+			aiTrainerVersion, a.variant, skyEnvName("AI_FETCH"), backend, skyEnvName("AI_TRAINER_BIN")).
 			with("what", aiTrainerExe+" "+aiTrainerVersion).with("command", "sky ai provision --train "+backend)
 	}
 	return aiInstallTrainer(ctx, backend, a)
