@@ -11,13 +11,19 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.27.18 - a patch held for an open `<select>` is never lost, every stdlib body is type-checked, a bare constructor with two meanings is `[E1017]` (2026-10-26)
+## v0.27.19 - a navigation no longer loses a concurrent update, a patch held for an open `<select>` is never lost, every stdlib body is type-checked, a bare constructor with two meanings is `[E1017]` (2026-10-26)
+
+v0.27.18 was tagged but never published: its release gate found the pre-existing navigation bug below. Every change v0.27.18 held ships in v0.27.19.
 
 ### Migration
 
 - **A bare `Error` after `import Sky.Config exposing (LogLevel(..))` is now a compile error, `[E1017]`.** `LogLevel` has a constructor named `Error`, which is also the name of the Prelude's `Error`. Write `Config.Error` for the log level, for example `Config.withLog Json Config.Error`. For the Prelude's `Error`, write `E.Error` after `import Sky.Core.Error as E`. A module that imports `LogLevel(..)` and uses only `Debug`, `Info` or `Warn` needs no change. The same applies to any constructor that an `exposing (T(..))` import binds over a different constructor from an `exposing (..)` import.
 
 ### Fixed
+
+- **A Sky.Live page navigation could overwrite an update that committed while it routed.** A page fetch on an existing session (a sky-nav link, Back / Forward, `Nav.pushUrl`) read the session's model without the session lock, ran the route and `onNavigate` on that copy, and then stored it. An update committed in between, such as a `Cmd.perform` result, a `Time.every` tick or a published message, was lost for good: the model, the page and every later diff kept the old value. An arm returning `Cmd.batch [ Cmd.perform … Saved, Nav.pushUrl "/about" ]` lost its `Saved` about one time in four. The bug is older than this release (v0.27.17 shows it at the same rate). The route and `onNavigate` now run under the session lock, on the model the session holds at that moment. (`runtime-go/rt/live.go` `handleInitial`, `live_nav_lost_update_test.go`.)
+
+- **A Sky.Live session-lost reload no longer aborts a navigation already in flight.** The Sky Console's "Sign out" link ends the console cookie, and the open console stream then ends with `auth-required` at once. The client reloaded while the browser was still following the sign-out's redirect to the login form, so the navigation was cut off and the page loaded twice. A page that has started to leave (`beforeunload`) now waits up to 5 s before such a reload, and reloads only if it is still there. (`runtime-go/rt/live_client_asset.go`, `live_js_lost_session_leaving_test.go`.)
 
 - **Sky.Spa, Sky.Live and the webview lost a patch held for an open `<select>`.** On a phone, a filter `<select>` keeps focus after the native picker closes. When a pick changed a sibling's tag, the diff patched the common parent, which contains the select. The open-select defence skipped that patch, but the client recorded the new tree as applied. The next diff ran against a tree the DOM never got, found no change, and the region stayed wrong until a reload. Sky.Spa now holds back only the patches that touch an open select, applies the rest, and records the tree the DOM really holds. The render after the select closes sends what was held. A select is not defended against its own pick. A held render logs one `[sky.spa] patches deferred` warning. A patch target missing from the DOM is no longer skipped: the nearest present ancestor is rebuilt. Sky.Live and the webview now hold skipped patches and SSE full bodies in order and apply them when the select closes. The webview asks for the current render again when a patch target is missing. (`runtime-go/rt/spa_select_defer.go`, `spa_select_wasm.go`, `select_hold_client.go`, `spa_select_defer_test.go`, `live_js_select_hold_test.go`, `webview_select_hold_test.go`, and a `/fsel` page in the spa-vdom-identity e2e.)
 
