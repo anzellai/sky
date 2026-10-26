@@ -3123,7 +3123,11 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 ///
 /// 1109 + 184 = 1293 at the merge of v0.27.17 into the v0.28.0 line (the
 /// v0.27.16 Std.Ui suites above on top of the v0.28.0 count).
-pub const SKY_SUITES_EXPECTED: u64 = 1293;
+///
+/// 1293 + 7 = 1300 with the native trainer: `Std/Ai/TrainTest` gains 7 cases
+/// (17 -> 24: memory settings with env fallback, the calibrated estimate,
+/// chunked loss, eval loss and peak memory per step).
+pub const SKY_SUITES_EXPECTED: u64 = 1300;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.
