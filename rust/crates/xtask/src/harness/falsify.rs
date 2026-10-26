@@ -297,12 +297,7 @@ pub fn verify_gate(
         budget,
         &result_path(&opts.scratch, gate.name, base_gen),
     );
-    let base_green = !base.timed_out
-        && base
-            .result
-            .as_ref()
-            .map(|r| r.passed && r.assertions > 0)
-            .unwrap_or(false);
+    let base_green = baseline_green(gate, &base);
 
     if !base_green {
         let why = if base.timed_out {
@@ -403,12 +398,7 @@ fn verify_one(
     // a runner whose every answer is "it went red" — makes the canary report
     // PROVEN, and the canary is the ONLY gate that notices, failing the whole
     // falsifier run. Every other gate's PROVEN looks identical either way.
-    let went_red = run.timed_out
-        || run
-            .result
-            .as_ref()
-            .map(|r| !r.passed || r.assertions == 0)
-            .unwrap_or(true);
+    let went_red = mutated_went_red(gate, &run);
 
     let outcome = if went_red {
         Falsified::Proven
@@ -701,9 +691,68 @@ fn cargo_build_in(
     }
 }
 
+/// Is the baseline green, by the SAME verdict a suite run gives the gate
+/// (`super::classify`)?
+///
+/// This used to read only `passed && assertions > 0`, and ignored the exact
+/// assertion count a suite run enforces. A gate that the suite reports as
+/// `FAIL 157/155: expected EXACTLY 155 assertions` was therefore a green
+/// baseline here, and its falsifier was recorded PROVEN on a red tree
+/// (`shared-world`, v0.27.18). A falsifier proof must judge the gate the way
+/// the suite does, or a PROVEN record certifies a gate that fails.
+fn baseline_green(gate: &Gate, run: &super::child::ChildRun) -> bool {
+    super::classify(gate, run).0 == super::state::GateState::Pass
+}
+
+/// Did the mutated run go red? Anything a suite run would not report as
+/// PASS counts: a failed assertion, a timeout, a wrong assertion count, or no
+/// usable result.
+fn mutated_went_red(gate: &Gate, run: &super::child::ChildRun) -> bool {
+    super::classify(gate, run).0 != super::state::GateState::Pass
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn run_with(passed: bool, assertions: u64) -> super::super::child::ChildRun {
+        super::super::child::ChildRun {
+            result: Some(super::super::child::ChildResult {
+                generation: 1,
+                passed,
+                assertions,
+                detail: String::new(),
+            }),
+            timed_out: false,
+            exit_code: Some(0),
+            elapsed: Duration::from_secs(1),
+            spawn_error: None,
+            generation_mismatch: false,
+        }
+    }
+
+    // The v0.27.18 defect: `shared-world` reported 157 assertions against an
+    // exact 155, the suite said FAIL, and the falsifier still took the
+    // baseline as green and recorded PROVEN.
+    #[test]
+    fn a_baseline_with_the_wrong_assertion_count_is_not_green() {
+        let gate = super::super::registry::find("shared-world").expect("registered");
+        assert!(baseline_green(gate, &run_with(true, gate.expected)));
+        assert!(!baseline_green(gate, &run_with(true, gate.expected + 2)));
+        assert!(!baseline_green(gate, &run_with(false, gate.expected)));
+        assert!(!baseline_green(gate, &run_with(true, 0)));
+    }
+
+    #[test]
+    fn a_mutated_run_with_the_wrong_assertion_count_went_red() {
+        let gate = super::super::registry::find("shared-world").expect("registered");
+        assert!(!mutated_went_red(gate, &run_with(true, gate.expected)));
+        assert!(mutated_went_red(gate, &run_with(true, gate.expected - 1)));
+        assert!(mutated_went_red(gate, &run_with(false, gate.expected)));
+        let mut hung = run_with(true, gate.expected);
+        hung.timed_out = true;
+        assert!(mutated_went_red(gate, &hung));
+    }
 
     // A debug `sky` the `lsp` gate built under a mutation must be rebuilt
     // after the revert: its source gets its old mtime back, so cargo would
