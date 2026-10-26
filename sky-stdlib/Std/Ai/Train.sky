@@ -2121,6 +2121,12 @@ type alias RawStaged =
     , eval : Int
     }
 
+type alias RawTokenized =
+    { train : Int
+    , eval : Int
+    , steps : Int
+    }
+
 type alias RawVersion =
     { name : String
     , version : String
@@ -2197,6 +2203,11 @@ type alias RawRun =
 stageRaw : String -> String -> String -> String -> Task Error RawStaged
 stageRaw =
     Ffi.kernel "Ai_trainStage"
+
+
+tokenizeRaw : String -> String -> Task Error RawTokenized
+tokenizeRaw =
+    Ffi.kernel "Ai_trainTokenize"
 
 
 toolchainRaw : String -> Task Error Toolchain
@@ -3105,6 +3116,7 @@ setupFrom : Durable.Ctx -> Job -> String -> Task Error Setup
 setupFrom ctx job backend =
     stageStep ctx job backend |> Task.andThen (toolchainStep ctx)
         |> Task.andThen (baseStep ctx job)
+        |> Task.andThen (tokenizeStep ctx job)
         |> Task.andThen (shapeStep ctx job)
 
 
@@ -3136,6 +3148,24 @@ baseStep : Durable.Ctx -> Job -> ( String, Tool ) -> Task Error ( String, Tool, 
 baseStep ctx job ( backend, tool ) =
     Durable.step ctx Codec.string "base" (weightsFor backend job)
         |> Task.map (\w -> ( backend, tool, w ))
+
+
+-- The native trainer's data: the staged rows tokenized with the base's own
+-- tokenizer and chat format, and the order of every step (data/train.tok,
+-- data/valid.tok, data/order.bin). Only the MLX backend trains natively; the
+-- other backends read data/*.jsonl themselves.
+tokenizeStep : Durable.Ctx -> Job -> ( String, Tool, String ) -> Task Error ( String, Tool, String )
+tokenizeStep ctx job ( backend, tool, weights ) =
+    if backend == "mlx" && weights /= "" then
+        Durable.step
+            ctx
+            Codec.int
+            "tokenize"
+            (tokenizeRaw (runDir job) weights |> Task.map .steps)
+            |> Task.map (\_ -> ( backend, tool, weights ))
+
+    else
+        Task.succeed ( backend, tool, weights )
 
 
 shapeStep : Durable.Ctx -> Job -> ( String, Tool, String ) -> Task Error Setup
