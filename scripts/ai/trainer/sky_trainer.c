@@ -45,7 +45,7 @@
 #include "mlx/c/mlx.h"
 #include "sha256.h"
 
-#define SKY_TRAINER_VERSION "0.1.0"
+#define SKY_TRAINER_VERSION "0.1.1"
 #ifndef SKY_MLX_VERSION
 #error "build with -DSKY_MLX_VERSION=\"x.y.z\" (scripts/ai/trainer/build.sh does)"
 #endif

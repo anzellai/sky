@@ -64,7 +64,7 @@ pass() { echo "ok    $*"; }
 
 footprint() {
   if [ "$(uname -s)" = Darwin ]; then
-    { /usr/bin/footprint -f bytes --noCategories "$1" 2>/dev/null || true; } | sed -n 's/.*Footprint: \([0-9][0-9]*\) B.*/\1/p' | head -1
+    { /usr/bin/footprint -f bytes --noCategories "$1" 2>/dev/null || true; } | sed -n '/Footprint: [0-9][0-9]* B/{s/.*Footprint: \([0-9][0-9]*\) B.*/\1/p;q;}'
   else
     awk '/^VmRSS:/ {print $2 * 1024}' "/proc/$1/status" 2>/dev/null || true
   fi
@@ -99,7 +99,9 @@ run() {
   echo "      $name: exit $RC, peak footprint $PEAK bytes"
 }
 
-first_loss() { grep '"type":"progress"' "$1" | head -1 | sed -n 's/.*"loss":\([^,]*\),.*/\1/p'; }
+# One sed, no pipe: under `set -o pipefail`, `grep | head -1` fails when head
+# exits before grep has written everything (SIGPIPE, "grep: write error").
+first_loss() { sed -n '/"type":"progress"/{s/.*"loss":\([^,]*\),.*/\1/p;q;}' "$1"; }
 
 # ─── the model and the data ─────────────────────────────────────────────
 TINY="$(cd "$ROOT/runtime-go" && with_timeout 600 go run ./cmd/sky-tiny-gguf "$WORK/model")"
@@ -236,7 +238,7 @@ for dev in "${devices[@]}"; do
   run "guard-$dev" 120 --run "$M" "${SHAPE[@]}" "${LORA[@]}" ${D[@]+"${D[@]}"} --lr 0.005 --batch 2 --accumulate 1 \
     --checkpoint-every 0 --eval-every 0 --memory-cap 5000000 --pace-ms 100
   if [ "$RC" = 137 ] && grep -q '"code":"ModelTooLarge"' "$M/guard.json" 2>/dev/null \
-    && tail -1 "$WORK/guard-$dev.events" | grep -q '"code":"ModelTooLarge".*"type":"error"'; then
+    && grep -q '"code":"ModelTooLarge".*"type":"error"' <<<"$(tail -1 "$WORK/guard-$dev.events")"; then
     pass "a 5 MB cap: the guard kills the trainer with ModelTooLarge ($dev)"
   else
     fail "guard ($dev): rc $RC, guard.json $(cat "$M/guard.json" 2>/dev/null || echo absent)"
@@ -293,7 +295,7 @@ for dev in "${devices[@]}"; do
   done
   if [ "${#ARGV[@]}" -gt 0 ] && [ "$argv_rc0" = 137 ] && [ "$argv_rc1" = 0 ] \
     && grep -q '"resumeFrom":4' "$WORK/argv1-$dev.events" && grep -q '"type":"done"' "$WORK/argv1-$dev.events" \
-    && printf '%s\n' "${ARGV[@]}" | grep -qx -- --launch; then
+    && grep -qx -- --launch <<<"$(printf '%s\n' "${ARGV[@]}")"; then
     pass "the runtime's command line trains and resumes ($dev)"
   else
     fail "argv ($dev): first rc ${argv_rc0:-?}, resume rc ${argv_rc1:-?}; $(tail -3 "$WORK/argv1-$dev.err" 2>/dev/null)"

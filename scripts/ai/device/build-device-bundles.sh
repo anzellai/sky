@@ -68,7 +68,7 @@ cmake_build() {
         -DLLAMA_SRC="$LLAMA_SRC" "$@" > "$dir.configure.log" 2>&1 \
         || { tail -40 "$dir.configure.log"; exit 1; }
     with_timeout 3600 cmake --build "$dir" -j "$JOBS" > "$dir.build.log" 2>&1 \
-        || { grep -E 'error' "$dir.build.log" | head -40; tail -20 "$dir.build.log"; exit 1; }
+        || { grep -E 'error' "$dir.build.log" | sed -n 1,40p; tail -20 "$dir.build.log"; exit 1; }
 }
 
 build_web() {

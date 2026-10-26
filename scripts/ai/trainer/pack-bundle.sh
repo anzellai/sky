@@ -41,7 +41,7 @@ OUTF="$(cd "$(dirname "$OUTF")" && pwd)/$(basename "$OUTF")"
 find "$SRC" -type d -exec chmod 0755 {} +
 find "$SRC" -type f -perm -u+x -exec chmod 0755 {} +
 find "$SRC" -type f ! -perm -u+x -exec chmod 0644 {} +
-if find "$SRC" ! -type f ! -type d | grep -q .; then
+if [ -n "$(find "$SRC" ! -type f ! -type d -print)" ]; then
   echo "pack-bundle: $SRC holds something that is neither a file nor a directory:" >&2
   find "$SRC" ! -type f ! -type d >&2
   exit 1
@@ -51,7 +51,7 @@ LIST="$(mktemp "${TMPDIR:-/tmp}/pack-bundle.XXXXXX")"
 trap 'rm -f "$LIST"' EXIT
 (cd "$PARENT" && find "$NAME" -print | LC_ALL=C sort > "$LIST")
 
-if tar --version 2>/dev/null | grep -q 'GNU tar'; then
+if grep -q 'GNU tar' <<<"$(tar --version 2>/dev/null)"; then
   tar -C "$PARENT" --format=ustar --owner=0 --group=0 --numeric-owner \
     --mtime="@$EPOCH" --no-recursion -T "$LIST" -cf - | gzip -n -9 > "$OUTF"
 else

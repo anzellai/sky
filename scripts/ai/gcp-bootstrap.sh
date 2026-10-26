@@ -46,7 +46,7 @@ cloudbilling.googleapis.com iam.googleapis.com"
 
 enabled="$(with_timeout 120 gcloud services list --enabled --project "$PROJECT" --format='value(config.name)')"
 for api in $APIS; do
-    if printf '%s\n' "$enabled" | grep -qx "$api"; then
+    if grep -qx "$api" <<<"$enabled"; then
         echo "gcp-bootstrap: $api is on"
     else
         echo "gcp-bootstrap: turning on $api"

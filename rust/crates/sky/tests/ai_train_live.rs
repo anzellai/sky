@@ -317,7 +317,7 @@ fn a_guard_kill_ends_model_too_large_without_a_relaunch() {
     std::fs::write(
         &bin,
         r#"#!/bin/sh
-if [ "$1" = "--version" ]; then echo 'sky-trainer 0.1.0 (mlx-c)'; exit 0; fi
+if [ "$1" = "--version" ]; then echo 'sky-trainer 0.1.1 (mlx-c)'; exit 0; fi
 run=""
 while [ $# -gt 0 ]; do if [ "$1" = "--run" ]; then run="$2"; fi; shift; done
 echo '{"attempt":0,"backend":"mlx","resumeFrom":0,"toolchain":"native","totalSteps":12,"type":"hello","v":1}'

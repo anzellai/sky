@@ -22,7 +22,7 @@ import (
 // records its arguments and writes a hello and a done line.
 const fakeSkyTrainerScript = `#!/bin/sh
 case "$1" in
---version) echo "sky-trainer 0.1.0 (mlx-c)"; exit 0 ;;
+--version) echo "sky-trainer 0.1.1 (mlx-c)"; exit 0 ;;
 esac
 for a in "$@"; do printf '%s\n' "$a"; done > "$(dirname "$0")/argv.txt"
 echo '{"attempt":0,"backend":"mlx","resumeFrom":0,"toolchain":"native","totalSteps":1,"type":"hello","v":1}'

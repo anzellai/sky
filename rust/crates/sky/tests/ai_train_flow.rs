@@ -361,7 +361,7 @@ fn provision_train_mlx_takes_the_operators_native_trainer() {
     let bin = dir.join("sky-trainer");
     std::fs::write(
         &bin,
-        "#!/bin/sh\ncase \"$1\" in --version) echo 'sky-trainer 0.1.0 (mlx-c)' ;; *) exit 3 ;; esac\n",
+        "#!/bin/sh\ncase \"$1\" in --version) echo 'sky-trainer 0.1.1 (mlx-c)' ;; *) exit 3 ;; esac\n",
     )
     .unwrap();
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -377,7 +377,7 @@ fn provision_train_mlx_takes_the_operators_native_trainer() {
     let j = json(&out);
     assert_eq!(j["toolchain"], "mlx", "{j}");
     assert_eq!(j["trainer"], b.as_str(), "{j}");
-    assert_eq!(j["versions"]["sky-trainer"], "0.1.0", "{j}");
+    assert_eq!(j["versions"]["sky-trainer"], "0.1.1", "{j}");
     assert!(
         !home.join("toolchains").exists() && !home.join("python").exists(),
         "no Python toolchain is installed for mlx"

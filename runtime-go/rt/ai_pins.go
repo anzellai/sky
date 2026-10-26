@@ -145,7 +145,7 @@ const aiPyPIIndex = "https://pypi.org/simple"
 
 // aiTrainerVersion is the sky-trainer version the bundles carry; a bundle's
 // `sky-trainer --version` must print it.
-const aiTrainerVersion = "0.1.0"
+const aiTrainerVersion = "0.1.1"
 
 // aiTrainerAsset is one pinned trainer bundle for one host.
 type aiTrainerAsset struct {

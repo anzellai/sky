@@ -232,7 +232,7 @@ if has_stage l0; then
     apis="aiplatform storage artifactregistry cloudbuild cloudquotas"
     if has_stage l5; then apis="$apis run secretmanager"; fi
     for api in $apis; do
-        gcloud services list --enabled --project "$PROJECT" --format='value(config.name)' | grep -qx "$api.googleapis.com" \
+        grep -qx "$api.googleapis.com" <<<"$(gcloud services list --enabled --project "$PROJECT" --format='value(config.name)')" \
             || { echo "gcp-live: the $api API is off; run scripts/ai/gcp-bootstrap.sh --project <id>" >&2; exit 2; }
     done
     train_l4="$(gcloud beta quotas info describe CustomModelTrainingL4GPUsPerProjectPerRegion --service=aiplatform.googleapis.com \

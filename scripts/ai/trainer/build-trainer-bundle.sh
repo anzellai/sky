@@ -248,7 +248,7 @@ fi
 MLX_PREFIX="$WORK/mlx-install"
 # A failed configure names the symbols its link checks could not resolve.
 with_timeout 600 cmake -S "$MLX_SRC" -B "$WORK/build-mlx" "${CMAKE_COMMON[@]}" "${MLX_FLAGS[@]}" -DCMAKE_INSTALL_PREFIX="$MLX_PREFIX" || {
-  grep -ho "undefined reference to [^ ]*" "$WORK/build-mlx/CMakeFiles/CMakeConfigureLog.yaml" 2>/dev/null | sort | uniq -c | sort -rn | head -20 >&2
+  grep -ho "undefined reference to [^ ]*" "$WORK/build-mlx/CMakeFiles/CMakeConfigureLog.yaml" 2>/dev/null | sort | uniq -c | sort -rn | sed -n 1,20p >&2
   exit 1
 }
 with_timeout 7200 cmake --build "$WORK/build-mlx" -j "$JOBS"
@@ -335,12 +335,14 @@ done
 if [ "$PLATFORM" = linux-x64 ]; then
   # No host BLAS and no OpenMP or Fortran runtime: OpenBLAS is in libmlx.so.
   for obj in "$BUNDLE"/lib/lib*; do
-    if deps "$obj" | grep -Eq 'openblas|blas|lapack|gomp|gfortran|quadmath'; then
+    if grep -Eq 'openblas|blas|lapack|gomp|gfortran|quadmath' <<<"$(deps "$obj")"; then
       echo "::error::$(basename "$obj") loads a BLAS, OpenMP or Fortran library: $(deps "$obj" | tr '\n' ' ')" >&2
       bad=1
     fi
   done
-  readelf -sW "$BUNDLE/lib/libmlx.so" | grep -q ' cblas_sgemm$' ||
+  # Never `producer | grep -q` under pipefail: grep -q exits at the first match,
+  # the producer dies of SIGPIPE, and the pipeline reports a miss.
+  grep -q ' cblas_sgemm$' <<<"$(readelf -sW "$BUNDLE/lib/libmlx.so")" ||
     { echo "::error::libmlx.so does not carry OpenBLAS (no cblas_sgemm)" >&2; bad=1; }
   # The glibc floor: no symbol newer than GLIBC_2.35 (ubuntu-22.04).
   newest="$(for o in "$BUNDLE/sky-trainer" "$BUNDLE"/lib/lib*; do readelf -VW "$o"; done |
@@ -350,10 +352,10 @@ if [ "$PLATFORM" = linux-x64 ]; then
     bad=1
   fi
   # The rpaths: the trainer finds lib/, libmlxc finds libmlx beside itself.
-  readelf -dW "$BUNDLE/sky-trainer" | grep -Eq '(RUNPATH|RPATH).*\[\$ORIGIN/lib\]' ||
+  grep -Eq '(RUNPATH|RPATH).*\[\$ORIGIN/lib\]' <<<"$(readelf -dW "$BUNDLE/sky-trainer")" ||
     { echo "::error::sky-trainer's rpath is not \$ORIGIN/lib" >&2; bad=1; }
   for o in libmlxc.so libmlx.so; do
-    readelf -dW "$BUNDLE/lib/$o" | grep -Eq '(RUNPATH|RPATH).*\[\$ORIGIN\]' ||
+    grep -Eq '(RUNPATH|RPATH).*\[\$ORIGIN\]' <<<"$(readelf -dW "$BUNDLE/lib/$o")" ||
       { echo "::error::$o's rpath is not \$ORIGIN" >&2; bad=1; }
   done
   # The C++ runtime the trainer loads is the bundle's, not the host's.
@@ -366,7 +368,7 @@ if [ "$PLATFORM" = linux-x64 ]; then
     esac
   done
 else
-  otool -l "$BUNDLE/sky-trainer" | grep -A2 LC_RPATH | grep -q '@executable_path/lib' ||
+  grep -q '@executable_path/lib' <<<"$(otool -l "$BUNDLE/sky-trainer" | grep -A2 LC_RPATH)" ||
     { echo "::error::sky-trainer's rpath is not @executable_path/lib" >&2; bad=1; }
 fi
 [ "$bad" = 0 ] || exit 1
@@ -392,8 +394,8 @@ else
     local real owner
     real="$(readlink -f "$(g++-13 -print-file-name="$1")")"
     # usrmerge: dpkg may record /lib/... for a file found under /usr/lib/...
-    owner="$(dpkg-query -S "$real" 2>/dev/null | head -1 | cut -d: -f1 || true)"
-    [ -n "$owner" ] || owner="$(dpkg-query -S "${real#/usr}" 2>/dev/null | head -1 | cut -d: -f1 || true)"
+    owner="$(dpkg-query -S "$real" 2>/dev/null | sed -n '1s/:.*//p' || true)"
+    [ -n "$owner" ] || owner="$(dpkg-query -S "${real#/usr}" 2>/dev/null | sed -n '1s/:.*//p' || true)"
     [ -n "$owner" ] || { echo "build-trainer-bundle: no package owns $real" >&2; return 1; }
     grep -q "^$owner=" "$HERE/gcc13-debs.txt" || { echo "build-trainer-bundle: $real is from $owner, which gcc13-debs.txt does not pin" >&2; return 1; }
     echo "$owner $(dpkg-query -W -f='${Version}' "$owner")"
