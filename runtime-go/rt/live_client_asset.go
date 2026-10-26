@@ -2840,7 +2840,19 @@ function __skyRecoverLostSession(reason) {
 // session ping, and reload when anything but a network error or a gateway
 // error (502 / 503 / 504, a proxy with no upstream) answers; else ask again a
 // second later. After two minutes it reloads anyway.
+//
+// A page that is already leaving does not reload: its next document is on the
+// way, and a reload would abort that navigation. The Sky Console's "Sign out"
+// link is the case that hit it: /_sky/console/_logout revokes the cookie, the
+// open stream ends with auth-required at once, and the reload raced the
+// logout's redirect to the login form (net::ERR_ABORTED). The reload waits
+// while __skyLeavingUntil is in the future and runs only if the page is
+// still here after it.
 function __skyReloadWhenServerAnswers(tries) {
+  if (Date.now() < __skyLeavingUntil) {
+    setTimeout(function() { __skyReloadWhenServerAnswers(tries); }, 1000);
+    return;
+  }
   var again = function() {
     if (tries >= 120) { window.location.reload(); return; }
     setTimeout(function() { __skyReloadWhenServerAnswers(tries + 1); }, 1000);
@@ -2854,9 +2866,15 @@ function __skyReloadWhenServerAnswers(tries) {
     credentials: "same-origin"
   }).then(function(r) {
     if (r.status === 502 || r.status === 503 || r.status === 504) { again(); return; }
+    if (Date.now() < __skyLeavingUntil) { __skyReloadWhenServerAnswers(tries); return; }
     window.location.reload();
   }).catch(again);
 }
+// __skyLeavingUntil — beforeunload fired: a navigation has started. For a few
+// seconds the page counts as leaving; a navigation that does not replace the
+// page (a download, a 204) ends the window and a held reload then runs.
+var __skyLeavingUntil = 0;
+window.addEventListener("beforeunload", function() { __skyLeavingUntil = Date.now() + 5000; });
 
 // __skyWatchdog — runs every 5s. Two wedge detectors layered:
 //   1. Connection has been quiet for longer than __skyHeartbeatTtlMs
