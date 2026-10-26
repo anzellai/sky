@@ -1190,6 +1190,14 @@ fallback). Where a setting has both a `Sky.Config.withX` and a more-specific
 `Live.withX` (only the session store — `withSessions` vs
 `Live.withStore`/`withStorePath`), the app-shape `Live.withX` wins.
 
+`LogLevel` has a constructor named `Error`, which is also the name of the
+Prelude's `Error`. After `exposing (LogLevel(..))`, a bare `Error` is a
+compile error, `[E1017]` (see
+[E1017-constructor-clash.md](errors/E1017-constructor-clash.md)). Write
+`Config.Error` for the log level. For the Prelude's `Error`, import
+`Sky.Core.Error as E` and write `E.Error`. The import alone is fine: a module
+that uses only `Info` or `Warn` needs no change.
+
 The full surface — `default`, `withLog`, `withDatabase`, `withSessions`,
 `withJobs`, `withCsrf`, `withTelemetry`, `withLiveBroker`, and the strategy
 ADTs — is the live API: **`sky doc Sky.Config`** (generated from source, never

@@ -779,6 +779,33 @@ Mitigations:
 - **3 attempts on the same approach → halt and reclassify**, not
   a 4th retry. Per N-strikes above.
 
+### 0.5 Roadmap sync — every change is checked against the v1 roadmap (INVIOLABLE)
+
+The v1 roadmap is public: the `v1.0` milestone, five epics (#223 language,
+#224 tooling, #225 AI, #226 dogfood, #227 v1-lock) with their child issues,
+and the "Sky v1 roadmap" project
+(https://github.com/users/anzellai/projects/2), whose `Target` field puts each
+item in a month.
+
+1. **Before a change**, find the roadmap items it touches (`gh issue list -R
+   anzellai/sky --milestone v1.0 --search "<terms>"`). Work that no item
+   covers but that v1 needs gets a new child issue, labelled with its
+   `track:*`, added to the milestone, linked from its epic's task list, and
+   added to the project with its Track and Target.
+2. **When the change lands or ships**, update every item it touches in the
+   same session: tick the epic's task list, close a finished issue with a
+   comment naming the commit or release, and comment with progress on an
+   issue that is only part done. Reference the issue in the commit or PR
+   (`#N`).
+3. **When an item misses its Target month**, move it to the next month, and
+   move everything that depends on it (the v1-lock epic depends on the AI and
+   dogfood epics). The timeline is shifted, never left stale. Say in an issue
+   comment why it moved. Tell the user when a move pushes the v1 date.
+4. **Public content.** The issues and the project are public. They never name
+   a private app, client, path, domain or cloud project id. Use the public
+   names: "ecommerce production webapp", "clinical management production
+   platform", "mobile + ipad QA networking app".
+
 ### 1. Memory safety — `scripts/mem-guard.sh` MUST run during dev
 
 A runaway `sky` / `cargo` / `rustc` / `rust-analyzer` process

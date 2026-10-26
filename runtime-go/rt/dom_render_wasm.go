@@ -810,22 +810,17 @@ func dispatchEvent(handler any, payload any) {
 // node the patches create (so real listeners get attached); listeners of
 // removed nodes are released by walking the removed DOM. Focus/cursor/
 // dirty-input authority is ported from live.go's __skyApplyPatches.
-func spaApplyPatches(patches []Patch, oldRoot, newRoot *VNode) {
+//
+// The open-<select> defence is not here: renderCurrent passes only the
+// patches spaPlanRender lets through (spa_select_defer.go), so every patch
+// given here is applied. It returns the sky-ids of patch targets missing from
+// the DOM (the DOM drifted from the recorded tree); renderCurrent rebuilds
+// around them (spaResyncMissing) instead of dropping them.
+func spaApplyPatches(patches []Patch, oldRoot, newRoot *VNode) (missing []string) {
 	if len(patches) == 0 {
-		return
+		return nil
 	}
 	doc := js.Global().Get("document")
-
-	// Open-<select> defence: a native dropdown closes on ANY DOM mutation
-	// inside the open select or an ancestor that would re-mount it. There is no
-	// API for "is the dropdown open", so use focus as the conservative proxy —
-	// if a SELECT is the active element, treat its subtree (and its ancestors)
-	// as off-limits this cycle. The next interaction ships a fresh render.
-	active := doc.Get("activeElement")
-	var openSel js.Value
-	if active.Truthy() && tagName(active) == "SELECT" {
-		openSel = active
-	}
 
 	// Patches inside a Std.Ui.Canvas scene drawn on a canvas have no DOM node
 	// to land on: they become draw-list updates, sent after the loop.
@@ -838,12 +833,9 @@ func spaApplyPatches(patches []Patch, oldRoot, newRoot *VNode) {
 		el := doc.Call("querySelector", `[sky-id="`+escAttr(p.ID)+`"]`)
 		if !el.Truthy() {
 			if c := js.Global().Get("console"); c.Truthy() {
-				c.Call("warn", "[sky.spa] patch target not found:", p.ID)
+				c.Call("warn", "[sky.spa] patch target not found, rebuilding around it:", p.ID)
 			}
-			continue
-		}
-		if openSel.Truthy() &&
-			(el.Equal(openSel) || el.Call("contains", openSel).Bool() || openSel.Call("contains", el).Bool()) {
+			missing = append(missing, p.ID)
 			continue
 		}
 
@@ -883,6 +875,37 @@ func spaApplyPatches(patches []Patch, oldRoot, newRoot *VNode) {
 	}
 	if scenes != nil {
 		scenes.finish(newRoot)
+	}
+	return missing
+}
+
+// spaResyncMissing brings the DOM back to the recorded tree around patch
+// targets that were missing: each nearest present ancestor gets its children
+// rebuilt from dom (the tree renderCurrent records as applied), keeping a
+// focused input's focus and caret. Before this, a missing target was skipped
+// and its region stayed wrong for good, since the next diff ran against a
+// tree the DOM never got.
+func spaResyncMissing(missing []string, dom VNode) {
+	if len(missing) == 0 {
+		return
+	}
+	doc := js.Global().Get("document")
+	find := func(id string) js.Value {
+		return doc.Call("querySelector", `[sky-id="`+escAttr(id)+`"]`)
+	}
+	done := map[string]bool{}
+	for _, id := range missing {
+		anchor := spaResyncAnchor(id, func(c string) bool { return find(c).Truthy() })
+		if anchor == "" {
+			// Not even the root is there: mount the recorded tree afresh.
+			spaMount(spaRoot, dom)
+			return
+		}
+		if done[anchor] {
+			continue
+		}
+		done[anchor] = true
+		rebuildChildrenPreservingFocus(find(anchor), anchor, &dom)
 	}
 }
 

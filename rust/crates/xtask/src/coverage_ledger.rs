@@ -599,6 +599,7 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     ),
     ("roundtrip", &["compiler.parse", "lang.constructs"]),
     ("sky-fmt-check", &["compiler.fmt"]),
+    ("stdlib-bodies", &["compiler.infer", "compiler.reject"]),
     ("reject", &["compiler.reject", "compiler.infer"]),
     (
         "conformance",

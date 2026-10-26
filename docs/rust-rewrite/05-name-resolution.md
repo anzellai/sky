@@ -541,6 +541,41 @@ Sky.Core.String exposing (..)` + `import Sky.Core.List exposing (..)` with a bar
 `length` reported `[E2001] type mismatch: List _ vs String` and never mentioned
 the ambiguity.
 
+### `[E1017] CONSTRUCTOR CLASH`: a constructor an import wins silently
+
+The lattice lets a higher layer win with no message. That is right for values
+(`Sky.Core.Math`'s `abs` over the Prelude's) and wrong for constructors. A
+constructor is a value and a pattern head, and the two candidates belong to
+different types, so the hidden one never fails where it is written. The case
+that found it (v0.27.18): `import Sky.Config as Config exposing (LogLevel(..))`
+made a bare `Error` mean `LogLevel.Error`, and a program written for the
+Prelude's `Error kind info` got `type mismatch: LogLevel vs ErrorKind -> _`,
+with no word about the import.
+
+`hir::resolve` raises `[E1017]` at a BARE constructor reference, in an
+expression (`resolve_var`) or a pattern head (`ast::Pattern::Ctor`), in two
+cases:
+
+- `ctor_shadow`: the winner came in through an import (`Open` or `Explicit`)
+  and a lower layer holds a DIFFERENT constructor of the same name (an
+  `exposing (T(..))` import over an `exposing (..)` one). The `BUILTIN_CTORS`
+  never count as hidden: they are the Prelude's spelling of the stdlib's own
+  `Maybe` / `Result` / `Bool` constructors.
+- `flag_prelude_named_ctors`: the winner is an imported constructor with a
+  Prelude-reserved name that the Prelude's own module does not declare. The
+  Prelude exposes the `Error` type and binds no `Error` constructor, so the
+  first rule has no second origin to find. A user module cannot declare such a
+  constructor (`[E1004]`), so in practice this is `Sky.Config.LogLevel.Error`.
+
+Like `[E1012]` it is reported at the use and never at the import: a module that
+imports `exposing (LogLevel(..))` and uses only `Info` compiles, and real apps
+do exactly that. A qualified reference and a local
+constructor are unchanged. It is gated before the type gate with `[E1012]` and
+`[E1013]`, because the type error under it is the consequence. Measured before
+landing: no module in the repository's 282 projects or the private apps
+reports it. Tests: `hir/tests/ctor_clash.rs` and the reject-corpus files
+`constructor_clash_*.sky`. Reference: `docs/errors/E1017-constructor-clash.md`.
+
 ### Scope — values, constructors, and types
 
 All three namespaces. The **type** namespace was excluded when the lattice first

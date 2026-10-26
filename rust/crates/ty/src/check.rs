@@ -941,6 +941,9 @@ pub fn check_modules_with_world(
         // because its name sat in the reserved namespace. The only exemptions
         // are the build's explicit grants (`hir::FfiTrust`: compiler-owned
         // bundled source, and the Sky.Spa split's generated `Spa_*` plumbing).
+        // `ty::stdlib_bodies` (the `stdlib-bodies` gate) checks the stdlib's
+        // own bodies through this function and grants each stdlib module the
+        // same way the editor does.
         {
             for body in resolved.bodies.values() {
                 // The literal symbol of each `Ffi.kernel "Sym"` application in

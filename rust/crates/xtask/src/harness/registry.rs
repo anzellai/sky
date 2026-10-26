@@ -350,6 +350,30 @@ pub static GATES: &[Gate] = &[
         body: bodies::reject,
     },
     Gate {
+        name: "stdlib-bodies",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 60,
+        expected: bodies::STDLIB_BODIES_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "every sky-stdlib module body type-checks (a build trusts stdlib signatures)",
+        // The defect that motivated the gate: a stdlib record literal that lacks
+        // a field its annotated type requires. `toolRespCodec : Codec
+        // Provider.ToolResponse` with `continuation` dropped from its `ToolCall`
+        // witness built clean and emitted a codec that loses the field.
+        mutations: Mutations::new(&[Mutation {
+            id: "stdlib-bodies.record-missing-field",
+            description: "drop a required field from a record literal in a stdlib \
+                          body; the every-body-type-checks assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "sky-stdlib/Std/Ai/Agent.sky",
+                from: "arguments = \"\", continuation = Nothing }",
+                to: "arguments = \"\" }",
+            },
+        }]),
+        body: bodies::stdlib_bodies,
+    },
+    Gate {
         name: "conformance",
         tier: Tier::T1,
         platforms: UNIX,

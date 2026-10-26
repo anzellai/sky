@@ -27,6 +27,11 @@
 --     ...
 -- ```
 --
+-- `LogLevel(..)` brings a constructor named `Error`, the name of the Prelude's
+-- `Error` too. A bare `Error` in such a module is `[E1017]`: write
+-- `Config.withLog Json Config.Error` for the log level. The import is fine on
+-- its own, and `Debug`, `Info` and `Warn` stay usable bare.
+--
 -- ## The one precedence rule (shared with `Live.withX`)
 --
 -- Every builder here resolves through the SAME order the `Live.withX` builders
@@ -79,6 +84,12 @@ type LogFormat
     | Text
 
 -- | Minimum log level emitted. Maps to `<PREFIX>_LOG_LEVEL`.
+--
+-- `Error` is also the name of the Prelude's `Error`. After
+-- `exposing (LogLevel(..))`, a bare `Error` is `[E1017]`: write
+-- `Config.Error` for this level, and `E.Error` (after
+-- `import Sky.Core.Error as E`) for the Prelude's. `Debug`, `Info` and
+-- `Warn` stay usable bare.
 type LogLevel
     = Debug
     | Info

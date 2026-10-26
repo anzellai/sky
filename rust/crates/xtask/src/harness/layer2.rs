@@ -637,8 +637,22 @@ pub fn tail(s: &str, n: usize) -> String {
 mod tests {
     use super::*;
 
+    /// The three port tests run in one process, in parallel by default, and
+    /// each asks the OS for an ephemeral port. `free_port` drops its listener
+    /// before it returns, so the OS may hand that same port to the listener
+    /// `wait_port_released_is_false_while_a_listener_holds_it` binds at the
+    /// same moment. That race made `free_port_returns_a_port_nothing_holds`
+    /// fail with "port N was reported free but is in use" (seen 2026-10-26).
+    /// The lock runs them one at a time, so each test sees only its own port.
+    static PORTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn ports() -> std::sync::MutexGuard<'static, ()> {
+        PORTS.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     #[test]
     fn free_port_returns_a_port_nothing_holds() {
+        let _g = ports();
         let p = free_port().expect("a free port");
         assert!(p > 0);
         assert!(!port_in_use(p), "port {p} was reported free but is in use");
@@ -646,6 +660,7 @@ mod tests {
 
     #[test]
     fn wait_port_released_is_true_for_an_unheld_port() {
+        let _g = ports();
         let p = free_port().expect("a free port");
         assert!(wait_port_released(p, Duration::from_millis(200)));
     }
@@ -654,6 +669,7 @@ mod tests {
     fn wait_port_released_is_false_while_a_listener_holds_it() {
         // The negative control for the teardown assertion: if this could not
         // report `false`, `Server::shutdown`'s port check would be decorative.
+        let _g = ports();
         let l = TcpListener::bind("127.0.0.1:0").expect("bind");
         let p = l.local_addr().unwrap().port();
         assert!(!wait_port_released(p, Duration::from_millis(300)));
