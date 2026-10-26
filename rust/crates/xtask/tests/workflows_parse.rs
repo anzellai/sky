@@ -3986,7 +3986,7 @@ fn the_training_jobs_get_their_trainer_from_the_bundle() {
     let action = std::fs::read_to_string(root.join(".github/actions/sky-trainer/action.yml"))
         .unwrap_or_default();
     for need in [
-        "sed -n '/^var aiTrainerAssets = /,/^}/p' \"$pins\" | grep -qF \"\\\"$file\\\"\"",
+        "grep -qF \"\\\"$file\\\"\" <<<\"$(sed -n '/^var aiTrainerAssets = /,/^}/p' \"$pins\")\"",
         "shasum -a 256 -c \"$file.sha256\"",
         "echo \"SKY_AI_TRAINER_BIN=$bin\" >> \"$GITHUB_ENV\"",
     ] {

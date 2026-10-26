@@ -158,7 +158,10 @@ type aiTrainerAsset struct {
 // aiTrainerAssets lists the pinned trainer bundles. The bundle workflow
 // (.github/workflows/ai-trainer-bundles.yml) publishes them; until a bundle
 // is pinned for a host, that host trains with <PREFIX>_AI_TRAINER_BIN.
-var aiTrainerAssets = []aiTrainerAsset{}
+var aiTrainerAssets = []aiTrainerAsset{
+	{goos: "darwin", goarch: "arm64", variant: "metal", file: "sky-trainer-0.1.1-darwin-arm64.tar.gz", sha256: "609d0a14af81e1045616b09647af8bb9ceea830eff62d9a886b0f7a30173125e"},
+	{goos: "linux", goarch: "amd64", variant: "cpu", file: "sky-trainer-0.1.1-linux-x64.tar.gz", sha256: "54a050c387eab636cdb077d9253793add98fa08980b5e66325ce8d24bceafc65"},
+}
 
 // aiTrainerReleaseURL is where a pinned bundle is downloaded from. A variable
 // so the tests can point it at a local server.

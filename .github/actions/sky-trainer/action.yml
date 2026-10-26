@@ -42,7 +42,7 @@ runs:
         version="$(sed -n 's/^const aiTrainerVersion = "\(.*\)"$/\1/p' "$pins")"
         [ -n "$version" ] || { echo "::error::no aiTrainerVersion in $pins" >&2; exit 1; }
         file="sky-trainer-$version-$PLATFORM.tar.gz"
-        if sed -n '/^var aiTrainerAssets = /,/^}/p' "$pins" | grep -qF "\"$file\""; then
+        if grep -qF "\"$file\"" <<<"$(sed -n '/^var aiTrainerAssets = /,/^}/p' "$pins")"; then
           echo "sky-trainer: $file is pinned in ai_pins.go; the runtime installs it (no SKY_AI_TRAINER_BIN)"
           exit 0
         fi
