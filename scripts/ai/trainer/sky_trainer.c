@@ -141,6 +141,7 @@ typedef struct {
   int quant_bits, quant_group; /* quantise a dense base on load */
   int base_bits, base_group;   /* an already-quantised base */
   int grad_ckpt, use_cpu;
+  int loss_chunk; /* tokens per loss chunk; 0 unchunked, -1 automatic */
   uint64_t cap, cache_limit;
   int resume_step;
   const char* resume_dir;
@@ -523,8 +524,9 @@ static void checkpoint_closures(void) {
   }
 }
 
-/* logits [B, len, vocab] float32; prm NULL runs the base alone. */
-static mlx_array forward(const mlx_array* prm, mlx_array ids) {
+/* The hidden states after the final norm, [B, len, hidden]; prm NULL runs
+ * the base alone. */
+static mlx_array hidden_states(const mlx_array* prm, mlx_array ids) {
   mlx_array x = embed(ids);
   for (int li = 0; li < C.layers; li++) {
     if (prm && C.grad_ckpt && CKL && li >= first_lora_layer()) {
@@ -546,11 +548,26 @@ static mlx_array forward(const mlx_array* prm, mlx_array ids) {
       x = layer_fwd(li, x, prm);
     }
   }
-  x = rms(x, NORM);
-  return ast(linear(OUT, x), MLX_FLOAT32);
+  return rms(x, NORM);
 }
 
-/* The loss closure: [P..., ids, targets, mask] -> [mean masked NLL]. */
+/* The summed masked NLL of some tokens: logits [..., vocab] float32, targets
+ * and mask of the same leading shape. */
+static mlx_array masked_nll_sum(mlx_array logits, mlx_array tg, mlx_array mk) {
+  mlx_array *lse = TP(), *te = TP(), *tl = TP(), *tl2 = TP(), *s = TP();
+  CK(mlx_logsumexp_axis(lse, logits, -1, false, S));
+  CK(mlx_expand_dims(te, tg, -1, S));
+  CK(mlx_take_along_axis(tl, logits, *te, -1, S));
+  CK(mlx_squeeze_axis(tl2, *tl, -1, S));
+  CK(mlx_sum(s, mul(sub(*lse, *tl2), mk), false, S));
+  return *s;
+}
+
+/* ─── the loss ───────────────────────────────────────────────────────── */
+
+/* The unchunked loss closure: [P..., ids, targets, mask] -> [mean masked
+ * NLL], over the whole [tokens x vocab] logits. --loss-chunk 0 trains with it,
+ * and the selftest holds the chunked loss to it. */
 static int loss_closure(mlx_vector_array* res, const mlx_vector_array in, void* payload) {
   int use_params = payload != NULL;
   mlx_array* prm = calloc((size_t)NP + 1, sizeof *prm);
@@ -563,23 +580,235 @@ static int loss_closure(mlx_vector_array* res, const mlx_vector_array in, void* 
   mlx_vector_array_get(&ids, in, (size_t)base);
   mlx_vector_array_get(&tg, in, (size_t)base + 1);
   mlx_vector_array_get(&mk, in, (size_t)base + 2);
-  mlx_array logits = forward(use_params ? prm : NULL, ids);
-  mlx_array *lse = TP(), *te = TP(), *tl = TP(), *tl2 = TP(), *s1 = TP(), *s2 = TP(), *s2c = TP();
-  CK(mlx_logsumexp_axis(lse, logits, -1, false, S));
-  CK(mlx_expand_dims(te, tg, -1, S));
-  CK(mlx_take_along_axis(tl, logits, *te, -1, S));
-  CK(mlx_squeeze_axis(tl2, *tl, -1, S));
-  mlx_array nll = mul(sub(*lse, *tl2), mk);
-  CK(mlx_sum(s1, nll, false, S));
+  mlx_array h = hidden_states(use_params ? prm : NULL, ids);
+  mlx_array nll = masked_nll_sum(ast(linear(OUT, h), MLX_FLOAT32), tg, mk);
+  mlx_array *s2 = TP(), *s2c = TP();
   CK(mlx_sum(s2, mk, false, S));
   CK(mlx_maximum(s2c, *s2, sc(1.0f), S));
-  mlx_vector_array_set_value(res, dv(*s1, *s2c));
+  mlx_vector_array_set_value(res, dv(nll, *s2c));
   for (int i = 0; i < base; i++) mlx_array_free(prm[i]);
   free(prm);
   mlx_array_free(ids);
   mlx_array_free(tg);
   mlx_array_free(mk);
   return 0;
+}
+
+/* The chunked loss, backpropagated one block at a time. The lm_head and the
+ * cross-entropy run over chunks of tokens, and every block of the backward
+ * pass is evaluated before the next one starts, so the [tokens x vocab]
+ * logits never exist at once and only one LoRA layer's activations are live.
+ * (Chunks or layers wrapped in mlx_checkpoint inside one lazy graph do not do
+ * this: MLX keeps every recomputed chunk's logits and every layer's
+ * activations until the whole graph is evaluated, measured on the dev base
+ * at a higher peak than the unchunked loss.) The steps:
+ *
+ *   1. the frozen layers below the first LoRA layer, each evaluated;
+ *   2. each LoRA layer forward, evaluated; its input is kept ([tokens x
+ *      hidden] a layer);
+ *   3. each chunk of tokens: the final norm, the lm_head and the summed masked
+ *      NLL, with its gradient on the chunk's rows of the last layer's output,
+ *      evaluated;
+ *   4. each LoRA layer from the top: one vjp with the gradient from above,
+ *      giving the gradient for the layer below and the layer's LoRA
+ *      gradients, evaluated.
+ *
+ * Step 4 recomputes each LoRA layer's forward, as gradient checkpointing does,
+ * so --grad-checkpoint changes only the unchunked loss. A chunk's targets and
+ * mask are its closure's payload, not its inputs: the gradient goes to the
+ * hidden states only. */
+typedef struct {
+  mlx_array tg, mk;
+} ChunkData;
+static void chunk_free(void* p) {
+  ChunkData* d = p;
+  mlx_array_free(d->tg);
+  mlx_array_free(d->mk);
+  free(d);
+}
+/* [x rows before the final norm] -> [summed masked NLL of those rows] */
+static int chunk_closure(mlx_vector_array* res, const mlx_vector_array in, void* payload) {
+  const ChunkData* d = payload;
+  mlx_array x = mlx_array_new();
+  mlx_vector_array_get(&x, in, 0);
+  mlx_array logits = ast(linear(OUT, rms(x, NORM)), MLX_FLOAT32);
+  mlx_vector_array_set_value(res, masked_nll_sum(logits, d->tg, d->mk));
+  mlx_array_free(x);
+  return 0;
+}
+
+/* Tokens per loss chunk: --loss-chunk, else about 8M logits (32 MB of
+ * float32) a chunk. 0 is the unchunked loss. */
+static int loss_chunk_tokens(void) {
+  if (C.loss_chunk >= 0) return C.loss_chunk;
+  int k = (1 << 23) / (C.vocab > 0 ? C.vocab : 1);
+  return k < 1 ? 1 : k;
+}
+
+static mlx_array keep(mlx_array a) {
+  mlx_array k = mlx_array_new();
+  mlx_array_set(&k, a);
+  return k;
+}
+static float scalar(mlx_array a) {
+  CK(mlx_array_eval(a));
+  float v = 0;
+  CK(mlx_array_item_float32(&v, a));
+  return v;
+}
+static void eval2(mlx_array a, mlx_array b) {
+  mlx_vector_array ev = mlx_vector_array_new();
+  mlx_vector_array_append_value(ev, a);
+  mlx_vector_array_append_value(ev, b);
+  CK(mlx_eval(ev));
+  mlx_vector_array_free(ev);
+}
+
+/* The mean masked NLL of a micro-batch over chunks of k tokens. prm NULL runs
+ * the base alone. With G (NP handles), G receives the gradient over prm,
+ * evaluated. Frees every temporary it made. */
+static float chunked_loss(const mlx_array* prm, mlx_array ids, mlx_array tg, mlx_array mk, int k, mlx_array* G) {
+  int first = G ? first_lora_layer() : C.layers;
+  int nl = C.layers - first;
+  mlx_array* xs = calloc((size_t)nl + 1, sizeof *xs); /* xs[j]: the input of layer first + j */
+  /* The layers below, one evaluated at a time: a lazy stack of them keeps
+     every layer's activations live until the stack is evaluated. */
+  xs[0] = keep(embed(ids));
+  CK(mlx_array_eval(xs[0]));
+  pool_free();
+  for (int li = 0; li < first; li++) {
+    mlx_array y = keep(layer_fwd(li, xs[0], prm));
+    CK(mlx_array_eval(y));
+    mlx_array_free(xs[0]);
+    xs[0] = y;
+    pool_free();
+  }
+  for (int j = 0; j < nl; j++) {
+    xs[j + 1] = keep(layer_fwd(first + j, xs[j], prm));
+    CK(mlx_array_eval(xs[j + 1]));
+    pool_free();
+  }
+  mlx_array top = xs[nl];
+  mlx_array* ms = TP();
+  CK(mlx_sum(ms, mk, false, S));
+  float den = scalar(*ms);
+  if (den < 1.0f) den = 1.0f;
+  const int* hs = mlx_array_shape(top);
+  int bsz = hs[0], len = hs[1], n = bsz * len;
+  int sh2[2] = {n, C.hidden}, sh1[1] = {n}, sh3[3] = {bsz, len, C.hidden};
+  mlx_array hf = rs(top, sh2, 2), tf = rs(tg, sh1, 1), mf = rs(mk, sh1, 1);
+  int nchunks = (n + k - 1) / k;
+  mlx_vector_array hv = mlx_vector_array_new(), tv = mlx_vector_array_new(), mv = mlx_vector_array_new();
+  if (nchunks > 1) {
+    int* at = malloc((size_t)(nchunks - 1) * sizeof *at);
+    for (int c = 1; c < nchunks; c++) at[c - 1] = c * k;
+    CK(mlx_split_sections(&hv, hf, at, (size_t)(nchunks - 1), 0, S));
+    CK(mlx_split_sections(&tv, tf, at, (size_t)(nchunks - 1), 0, S));
+    CK(mlx_split_sections(&mv, mf, at, (size_t)(nchunks - 1), 0, S));
+    free(at);
+  } else {
+    mlx_vector_array_append_value(hv, hf);
+    mlx_vector_array_append_value(tv, tf);
+    mlx_vector_array_append_value(mv, mf);
+  }
+  pool_free();
+  double sum = 0;
+  mlx_vector_array dhv = mlx_vector_array_new();
+  int arg0 = 0;
+  for (int c = 0; c < nchunks; c++) {
+    ChunkData* d = malloc(sizeof *d);
+    d->tg = mlx_array_new();
+    d->mk = mlx_array_new();
+    mlx_vector_array_get(&d->tg, tv, (size_t)c);
+    mlx_vector_array_get(&d->mk, mv, (size_t)c);
+    mlx_closure f = mlx_closure_new_func_payload(chunk_closure, d, chunk_free);
+    mlx_array hc = mlx_array_new();
+    mlx_vector_array_get(&hc, hv, (size_t)c);
+    mlx_vector_array in = mlx_vector_array_new_value(hc), vals = mlx_vector_array_new();
+    mlx_array l = mlx_array_new();
+    if (G) {
+      mlx_closure_value_and_grad vg = mlx_closure_value_and_grad_new();
+      CK(mlx_value_and_grad(&vg, f, &arg0, 1));
+      mlx_vector_array grads = mlx_vector_array_new();
+      CK(mlx_closure_value_and_grad_apply(&vals, &grads, vg, in));
+      mlx_array g = mlx_array_new();
+      mlx_vector_array_get(&l, vals, 0);
+      mlx_vector_array_get(&g, grads, 0);
+      eval2(l, g);
+      mlx_vector_array_append_value(dhv, g);
+      mlx_array_free(g);
+      mlx_vector_array_free(grads);
+      mlx_closure_value_and_grad_free(vg);
+    } else {
+      CK(mlx_closure_apply(&vals, f, in));
+      mlx_vector_array_get(&l, vals, 0);
+    }
+    sum += scalar(l);
+    mlx_array_free(l);
+    mlx_vector_array_free(vals);
+    mlx_vector_array_free(in);
+    mlx_array_free(hc);
+    mlx_closure_free(f);
+    pool_free();
+  }
+  mlx_vector_array_free(hv);
+  mlx_vector_array_free(tv);
+  mlx_vector_array_free(mv);
+  if (G) {
+    mlx_array* dh = TP();
+    CK(mlx_concatenate_axis(dh, dhv, 0, S));
+    mlx_array dx = keep(mul(rs(*dh, sh3, 3), sc(1.0f / den)));
+    CK(mlx_array_eval(dx));
+    pool_free();
+    for (int j = nl - 1; j >= 0; j--) {
+      int li = first + j;
+      mlx_closure f = mlx_closure_new_func_payload(layer_closure, (void*)(intptr_t)li, NULL);
+      mlx_vector_array primals = mlx_vector_array_new_value(xs[j]), cots = mlx_vector_array_new_value(dx);
+      for (int t = 0; t < NTARGET; t++) {
+        int i = param_index(li, t);
+        if (i < 0) continue;
+        mlx_vector_array_append_value(primals, prm[i]);
+        mlx_vector_array_append_value(primals, prm[i + 1]);
+      }
+      mlx_vector_array outs = mlx_vector_array_new(), vjps = mlx_vector_array_new();
+      CK(mlx_vjp(&outs, &vjps, f, primals, cots));
+      mlx_vector_array ev = mlx_vector_array_new();
+      size_t at = 1;
+      for (int t = 0; t < NTARGET; t++) {
+        int i = param_index(li, t);
+        if (i < 0) continue;
+        G[i] = mlx_array_new();
+        G[i + 1] = mlx_array_new();
+        mlx_vector_array_get(&G[i], vjps, at++);
+        mlx_vector_array_get(&G[i + 1], vjps, at++);
+        mlx_vector_array_append_value(ev, G[i]);
+        mlx_vector_array_append_value(ev, G[i + 1]);
+      }
+      mlx_array below = mlx_array_new();
+      if (j > 0) {
+        mlx_vector_array_get(&below, vjps, 0);
+        mlx_vector_array_append_value(ev, below);
+      }
+      CK(mlx_eval(ev));
+      mlx_vector_array_free(ev);
+      mlx_array_free(dx);
+      dx = below;
+      mlx_vector_array_free(primals);
+      mlx_vector_array_free(cots);
+      mlx_vector_array_free(outs);
+      mlx_vector_array_free(vjps);
+      mlx_closure_free(f);
+      mlx_array_free(xs[j + 1]);
+      xs[j + 1] = (mlx_array){0};
+      pool_free();
+    }
+    mlx_array_free(dx);
+  }
+  mlx_vector_array_free(dhv);
+  for (int j = 0; j <= nl; j++)
+    if (xs[j].ctx) mlx_array_free(xs[j]);
+  free(xs);
+  return (float)(sum / den);
 }
 
 /* ─── data ───────────────────────────────────────────────────────────── */
@@ -976,6 +1205,33 @@ static float apply_loss(mlx_closure cls, const mlx_array* prm, mlx_array ids, ml
   return v;
 }
 
+/* The mean masked NLL of one micro-batch: chunked unless --loss-chunk 0.
+ * With G (NP handles), G receives the gradient over P, lazily: the caller
+ * evaluates it and then frees the temporaries. */
+static float micro_loss(const mlx_array* prm, mlx_array ids, mlx_array tg, mlx_array mk, mlx_array* G) {
+  int k = loss_chunk_tokens();
+  if (k > 0) return chunked_loss(prm, ids, tg, mk, k, G);
+  if (!G) return apply_loss(g_loss_p, prm, ids, tg, mk);
+  mlx_vector_array in = inputs(prm, ids, tg, mk), vals = mlx_vector_array_new(), grads = mlx_vector_array_new();
+  CK(mlx_closure_value_and_grad_apply(&vals, &grads, g_vg, in));
+  for (int i = 0; i < NP; i++) {
+    G[i] = mlx_array_new();
+    mlx_vector_array_get(&G[i], grads, (size_t)i);
+  }
+  mlx_array l = mlx_array_new();
+  mlx_vector_array_get(&l, vals, 0);
+  mlx_vector_array ev = mlx_vector_array_new_data(G, (size_t)NP);
+  mlx_vector_array_append_value(ev, l);
+  CK(mlx_eval(ev));
+  mlx_vector_array_free(ev);
+  float v = scalar(l);
+  mlx_array_free(l);
+  mlx_vector_array_free(vals);
+  mlx_vector_array_free(grads);
+  mlx_vector_array_free(in);
+  return v;
+}
+
 /* The mean masked NLL over the eval rows, weighted by their target tokens. */
 static double evaluate(const Tok* valid) {
   int rows = (int)valid->rows;
@@ -988,7 +1244,7 @@ static double evaluate(const Tok* valid) {
     mlx_array ids, tg, mk;
     float m = 0;
     make_batch(valid, idx, n, &ids, &tg, &mk, &m);
-    float l = apply_loss(g_loss_p, P, ids, tg, mk);
+    float l = micro_loss(P, ids, tg, mk, NULL);
     mlx_array_free(ids);
     mlx_array_free(tg);
     mlx_array_free(mk);
@@ -1011,7 +1267,7 @@ static void usage(void) {
       "train:    --lr F [--weight-decay F] --batch N --accumulate N --checkpoint-every N\n"
       "          --eval-every N [--max-eval-rows N] --seed N\n"
       "memory:   [--quant-bits 0|4|8] [--quant-group-size G] [--grad-checkpoint 0|1]\n"
-      "          [--memory-cap BYTES] [--cache-limit BYTES]\n"
+      "          [--memory-cap BYTES] [--cache-limit BYTES] [--loss-chunk TOKENS (0: unchunked)]\n"
       "run:      [--cpu] [--attempt N] [--resume-step N --resume-dir REL] [--launch TOKEN]\n"
       "tests:    [--crash-at N] [--pace-ms N] [--quantise-snapshot OUT]\n",
       stderr);
@@ -1066,6 +1322,7 @@ static void defaults(void) {
   C.quant_group = 64;
   C.base_group = 64;
   C.base_bits = 4;
+  C.loss_chunk = -1;
 }
 
 static int selftest(void);
@@ -1113,6 +1370,7 @@ int main(int argc, char** argv) {
     else if (FLAG("--base-bits")) C.base_bits = parse_int(a, v);
     else if (FLAG("--base-group-size")) C.base_group = parse_int(a, v);
     else if (FLAG("--grad-checkpoint")) C.grad_ckpt = parse_int(a, v);
+    else if (FLAG("--loss-chunk")) C.loss_chunk = parse_int(a, v);
     else if (FLAG("--memory-cap")) C.cap = parse_u64(a, v);
     else if (FLAG("--cache-limit")) C.cache_limit = parse_u64(a, v);
     else if (FLAG("--attempt")) C.attempt = parse_int(a, v);
@@ -1238,14 +1496,10 @@ int main(int argc, char** argv) {
       const uint32_t* rows = order.idx + (size_t)step * per + (size_t)a * C.batch;
       mlx_array ids, tg, mk;
       toks += make_batch(&train, rows, C.batch, &ids, &tg, &mk, NULL);
-      mlx_vector_array in = inputs(P, ids, tg, mk);
-      mlx_vector_array vals = mlx_vector_array_new(), grads = mlx_vector_array_new();
-      CK(mlx_closure_value_and_grad_apply(&vals, &grads, g_vg, in));
-      mlx_array l = mlx_array_new();
-      mlx_vector_array_get(&l, vals, 0);
+      mlx_array* gm = calloc((size_t)NP, sizeof *gm);
+      float lv = micro_loss(P, ids, tg, mk, gm);
       for (int i = 0; i < NP; i++) {
-        mlx_array g = mlx_array_new();
-        mlx_vector_array_get(&g, grads, (size_t)i);
+        mlx_array g = gm[i];
         if (a == 0) {
           G[i] = g;
         } else {
@@ -1256,17 +1510,11 @@ int main(int argc, char** argv) {
           G[i] = s;
         }
       }
+      free(gm);
       mlx_vector_array ev = mlx_vector_array_new_data(G, (size_t)NP);
-      mlx_vector_array_append_value(ev, l);
       CK(mlx_eval(ev));
       mlx_vector_array_free(ev);
-      float lv = 0;
-      CK(mlx_array_item_float32(&lv, l));
       loss_sum += lv;
-      mlx_array_free(l);
-      mlx_vector_array_free(vals);
-      mlx_vector_array_free(grads);
-      mlx_vector_array_free(in);
       mlx_array_free(ids);
       mlx_array_free(tg);
       mlx_array_free(mk);
@@ -1404,7 +1652,9 @@ static void quantise_snapshot(const char* out) {
 
 /* --selftest: the analytic LoRA gradient against central finite differences
  * on a small random Qwen2 model, dense and quantised, tied and untied, with
- * and without gradient checkpointing (which must not change the gradient). */
+ * and without gradient checkpointing (which must not change the gradient),
+ * with a frozen layer below the LoRA layers; and the chunked loss against
+ * the unchunked one (the same loss and gradient). */
 static void random_lin(Lin* l, int out, int in, int bias, mlx_array* key, float scale) {
   memset(l, 0, sizeof *l);
   int sh[2] = {out, in}, shb[1] = {out};
@@ -1442,7 +1692,42 @@ static void random_lin(Lin* l, int out, int in, int bias, mlx_array* key, float 
   }
 }
 
-static int gradcheck_case(int tied, int ckpt, int qbits) {
+/* The loss and gradient of vg on in against a reference: each must agree to
+ * tol (absolute). Returns the number of disagreements; *checked counts the
+ * comparisons. */
+static int grad_diff(mlx_array ids, mlx_array tg, mlx_array mk, const mlx_array* G, float ref_loss, float tol,
+                     const char* what, int* checked) {
+  int bad = 0;
+  mlx_array* g2 = calloc((size_t)NP, sizeof *g2);
+  float lv = micro_loss(P, ids, tg, mk, g2);
+  eval_arrays(g2, NP);
+  (*checked)++;
+  if (fabsf(lv - ref_loss) > tol) {
+    fprintf(stderr, "selftest: %s loss %.9g differs from %.9g\n", what, lv, ref_loss);
+    bad++;
+  }
+  for (int i = 0; i < NP; i++) {
+    mlx_array d = mlx_array_new(), ad = mlx_array_new(), mx = mlx_array_new();
+    CK(mlx_subtract(&d, g2[i], G[i], S));
+    CK(mlx_abs(&ad, d, S));
+    CK(mlx_max(&mx, ad, false, S));
+    float m = scalar(mx);
+    if (m > tol) {
+      fprintf(stderr, "selftest: %s gradient of %s differs by %g\n", what, PNAME[i], m);
+      bad++;
+    }
+    (*checked)++;
+    mlx_array_free(g2[i]);
+    mlx_array_free(d);
+    mlx_array_free(ad);
+    mlx_array_free(mx);
+  }
+  free(g2);
+  pool_free();
+  return bad;
+}
+
+static int gradcheck_case(int tied, int ckpt, int qbits, int lora_layers) {
   C.layers = 2;
   C.hidden = 32;
   C.heads = 4;
@@ -1453,11 +1738,12 @@ static int gradcheck_case(int tied, int ckpt, int qbits) {
   C.tied = tied;
   C.rank = 4;
   C.alpha = 8;
-  C.lora_layers = 2;
+  C.lora_layers = lora_layers;
   C.targets = (1u << NTARGET) - 1;
   C.quant_bits = qbits;
   C.quant_group = 32;
   C.grad_ckpt = 0;
+  C.loss_chunk = 0; /* the reference: the unchunked loss */
   mlx_array key = mlx_array_new();
   CK(mlx_random_key(&key, 1234));
   L = calloc((size_t)C.layers, sizeof *L);
@@ -1501,6 +1787,8 @@ static int gradcheck_case(int tied, int ckpt, int qbits) {
   for (int i = 0; i < NP; i++) argn[i] = i;
   mlx_closure_value_and_grad vg = mlx_closure_value_and_grad_new();
   CK(mlx_value_and_grad(&vg, cls, argn, (size_t)NP));
+  g_loss_p = cls;
+  g_vg = vg;
   mlx_vector_array in = inputs(P, ids, tg, mk), vals = mlx_vector_array_new(), grads = mlx_vector_array_new();
   CK(mlx_closure_value_and_grad_apply(&vals, &grads, vg, in));
   mlx_array* G = calloc((size_t)NP, sizeof *G);
@@ -1511,35 +1799,32 @@ static int gradcheck_case(int tied, int ckpt, int qbits) {
   eval_arrays(G, NP);
   pool_free();
   int bad = 0, checked = 0;
+  mlx_array l0 = mlx_array_new();
+  mlx_vector_array_get(&l0, vals, 0);
+  CK(mlx_array_eval(l0));
+  float ref_loss = 0;
+  CK(mlx_array_item_float32(&ref_loss, l0));
+  mlx_array_free(l0);
+  /* The chunked loss: the same loss and gradient as the unchunked one, with
+     chunks that divide the 16 target tokens unevenly (5) and one token a
+     chunk (1). */
+  int chunks[2] = {5, 1};
+  for (int c = 0; c < 2; c++) {
+    char what[64];
+    snprintf(what, sizeof what, "loss chunk %d:", chunks[c]);
+    C.loss_chunk = chunks[c];
+    bad += grad_diff(ids, tg, mk, G, ref_loss, 1e-5f, what, &checked);
+  }
   if (ckpt) {
-    /* The same gradient through the checkpointed layers. */
+    /* The same gradient through the checkpointed layers (the unchunked loss:
+       the chunked loss recomputes each layer in its own backward pass). */
     C.grad_ckpt = 1;
     checkpoint_closures();
-    mlx_vector_array v2 = mlx_vector_array_new(), g2 = mlx_vector_array_new();
-    CK(mlx_closure_value_and_grad_apply(&v2, &g2, vg, in));
-    for (int i = 0; i < NP; i++) {
-      mlx_array g = mlx_array_new(), d = mlx_array_new(), ad = mlx_array_new(), mx = mlx_array_new();
-      mlx_vector_array_get(&g, g2, (size_t)i);
-      CK(mlx_subtract(&d, g, G[i], S));
-      CK(mlx_abs(&ad, d, S));
-      CK(mlx_max(&mx, ad, false, S));
-      CK(mlx_array_eval(mx));
-      float m = 0;
-      CK(mlx_array_item_float32(&m, mx));
-      if (m > 1e-5f) {
-        fprintf(stderr, "selftest: checkpointed gradient of %s differs by %g\n", PNAME[i], m);
-        bad++;
-      }
-      checked++;
-      mlx_array_free(g);
-      mlx_array_free(d);
-      mlx_array_free(ad);
-      mlx_array_free(mx);
-    }
-    mlx_vector_array_free(v2);
-    mlx_vector_array_free(g2);
-    pool_free();
+    C.loss_chunk = 0;
+    bad += grad_diff(ids, tg, mk, G, ref_loss, 1e-5f, "checkpointed:", &checked);
   }
+  /* The finite differences check the chunked loss, the trainer's default. */
+  C.loss_chunk = 5;
   const float eps = 1e-2f;
   for (int i = 0; i < NP; i++) {
     mlx_array gc = mlx_array_new(), pc = mlx_array_new();
@@ -1561,11 +1846,11 @@ static int gradcheck_case(int tied, int ckpt, int qbits) {
       host[e] = keep + eps;
       mlx_array plus = mlx_array_new_data(host, shc, 2, MLX_FLOAT32);
       prm[i] = plus;
-      float lp = apply_loss(cls, prm, ids, tg, mk);
+      float lp = micro_loss(prm, ids, tg, mk, NULL);
       host[e] = keep - eps;
       mlx_array minus = mlx_array_new_data(host, shc, 2, MLX_FLOAT32);
       prm[i] = minus;
-      float lm = apply_loss(cls, prm, ids, tg, mk);
+      float lm = micro_loss(prm, ids, tg, mk, NULL);
       host[e] = keep;
       pool_free();
       mlx_array_free(plus);
@@ -1583,7 +1868,8 @@ static int gradcheck_case(int tied, int ckpt, int qbits) {
     mlx_array_free(gc);
     mlx_array_free(pc);
   }
-  fprintf(stderr, "selftest: tied=%d checkpoint=%d bits=%d: %d checks, %d bad\n", tied, ckpt, qbits, checked, bad);
+  fprintf(stderr, "selftest: tied=%d checkpoint=%d bits=%d lora layers=%d: %d checks, %d bad\n", tied, ckpt, qbits,
+          lora_layers, checked, bad);
   mlx_vector_array_free(in);
   mlx_vector_array_free(vals);
   mlx_vector_array_free(grads);
@@ -1592,10 +1878,12 @@ static int gradcheck_case(int tied, int ckpt, int qbits) {
 
 static int selftest(void) {
   int bad = 0;
-  bad += gradcheck_case(0, 0, 0);
-  bad += gradcheck_case(1, 1, 0);
-  bad += gradcheck_case(1, 0, 4);
-  bad += gradcheck_case(0, 1, 8);
+  bad += gradcheck_case(0, 0, 0, 2);
+  bad += gradcheck_case(1, 1, 0, 2);
+  bad += gradcheck_case(1, 0, 4, 2);
+  bad += gradcheck_case(0, 1, 8, 2);
+  /* A frozen layer below the LoRA layer: the chunked loss runs it forward only. */
+  bad += gradcheck_case(1, 1, 4, 1);
   printf("selftest %s\n", bad ? "FAILED" : "ok");
   return bad ? 1 : 0;
 }

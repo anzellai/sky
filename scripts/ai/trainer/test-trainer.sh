@@ -5,7 +5,8 @@
 # twin), never a real model:
 #
 #   1. --selftest: the LoRA gradient matches central finite differences
-#      (dense, quantised, tied, untied, with and without checkpointing).
+#      (dense, quantised, tied, untied, with and without checkpointing),
+#      and the chunked loss has the unchunked loss and gradient.
 #   2. The training loss falls.
 #   3. A run killed after its step-4 checkpoint and resumed from it ends with
 #      the same adapter, byte for byte, as a run that was never killed (CPU).
@@ -17,6 +18,8 @@
 #   8. The Go converter turns the adapter into a GGUF LoRA for the GGUF model.
 #   9. The command line the runtime launches an attempt with (driver.json ->
 #      argv, launch token included) trains, and resumes from a checkpoint.
+#  10. The chunked loss (lm_head and cross-entropy over chunks of tokens) gives
+#      the adapter of the unchunked loss, within CHUNK_TOL on the CPU.
 #
 #   test-trainer.sh (--trainer <sky-trainer> | --mlx <prefix> --mlx-c <src>)
 #                   [--device cpu|gpu|both] [--work <dir>]
@@ -54,6 +57,7 @@ fi
 
 CAP=2500000000
 KILL_BYTES="${SKY_TRAINER_TEST_KILL_BYTES:-3000000000}"
+CHUNK_TOL=1e-6
 FAILS=0
 fail() { echo "FAIL: $*" >&2; FAILS=$((FAILS + 1)); }
 pass() { echo "ok    $*"; }
@@ -181,12 +185,18 @@ for dev in "${devices[@]}"; do
     fail "resume ($dev): crash rc $crash_rc, resume rc $RC; $(tail -3 "$WORK/resume-$dev.err")"
   fi
 
-  # 4. gradient checkpointing gives the same adapter
-  G="$WORK/ckpt-$dev"
+  # 4. gradient checkpointing gives the same adapter (the unchunked loss: the
+  # chunked loss recomputes each layer in its own backward pass either way)
+  G0="$WORK/plain-$dev" G="$WORK/ckpt-$dev"
+  stage "$G0" 8 2 2
   stage "$G" 8 2 2
+  run "plain-$dev" 300 --run "$G0" "${SHAPE[@]}" "${LORA[@]}" ${D[@]+"${D[@]}"} --lr 0.005 --batch 2 --accumulate 2 \
+    --checkpoint-every 4 --eval-every 0 --memory-cap "$CAP" --loss-chunk 0
+  plain_rc=$RC
   run "ckpt-$dev" 300 --run "$G" "${SHAPE[@]}" "${LORA[@]}" ${D[@]+"${D[@]}"} --lr 0.005 --batch 2 --accumulate 2 \
-    --checkpoint-every 4 --eval-every 0 --memory-cap "$CAP" --grad-checkpoint 1
-  if [ "$RC" = 0 ] && cmp -s "$A/adapter/adapter_model.safetensors" "$G/adapter/adapter_model.safetensors"; then
+    --checkpoint-every 4 --eval-every 0 --memory-cap "$CAP" --loss-chunk 0 --grad-checkpoint 1
+  [ "$plain_rc" = 0 ] || RC=$plain_rc
+  if [ "$RC" = 0 ] && cmp -s "$G0/adapter/adapter_model.safetensors" "$G/adapter/adapter_model.safetensors"; then
     pass "gradient checkpointing keeps the adapter ($dev)"
   elif [ "$RC" = 0 ] && [ "$dev" = gpu ]; then
     echo "note  gradient checkpointing ($dev): not byte-identical on the GPU"
@@ -287,6 +297,39 @@ for dev in "${devices[@]}"; do
     pass "the runtime's command line trains and resumes ($dev)"
   else
     fail "argv ($dev): first rc ${argv_rc0:-?}, resume rc ${argv_rc1:-?}; $(tail -3 "$WORK/argv1-$dev.err" 2>/dev/null)"
+  fi
+
+  # 10. the chunked loss trains the same adapter as the unchunked loss: the
+  # whole [tokens x vocab] logits (--loss-chunk 0) against chunks of 5 tokens
+  # and chunks of 1 token (with --grad-checkpoint 1, which the chunked loss
+  # accepts and does not need). On the CPU the
+  # adapters agree to CHUNK_TOL (summation order is the only difference); on
+  # the GPU to 10x that.
+  tol="$CHUNK_TOL"
+  [ "$dev" = gpu ] && tol="$(awk -v t="$CHUNK_TOL" 'BEGIN{print t * 10}')"
+  chunk_ok=1
+  for variant in "u:0:0" "c5:5:0" "c1:1:1"; do
+    IFS=: read -r tag chunk gck <<< "$variant"
+    U="$WORK/chunk$tag-$dev"
+    stage "$U" 8 2 2
+    run "chunk$tag-$dev" 300 --run "$U" "${SHAPE[@]}" "${LORA[@]}" ${D[@]+"${D[@]}"} --lr 0.005 --batch 2 --accumulate 2 \
+      --checkpoint-every 0 --eval-every 0 --memory-cap "$CAP" --loss-chunk "$chunk" --grad-checkpoint "$gck"
+    [ "$RC" = 0 ] || { chunk_ok=0; fail "chunked loss ($dev): --loss-chunk $chunk exit $RC; $(tail -3 "$WORK/chunk$tag-$dev.err")"; }
+  done
+  if [ "$chunk_ok" = 1 ]; then
+    for tag in c5 c1; do
+      a="$WORK/chunku-$dev/adapter/adapter_model.safetensors" b="$WORK/chunk$tag-$dev/adapter/adapter_model.safetensors"
+      if cmp -s "$a" "$b"; then
+        pass "the chunked loss ($tag) gives the unchunked adapter byte for byte ($dev)"
+        continue
+      fi
+      d="$("$WORK/sky-train-tool" diff "$a" "$b" | sed -n 's/.*"maxAbsDiff":\([^,}]*\).*/\1/p')"
+      if [ -n "$d" ] && awk -v d="$d" -v t="$tol" 'BEGIN{exit !(d <= t)}'; then
+        pass "the chunked loss ($tag) gives the unchunked adapter within $tol (max difference $d) ($dev)"
+      else
+        fail "chunked loss ($tag, $dev): the adapter differs from the unchunked one by '${d}' (tolerance $tol)"
+      fi
+    done
   fi
 done
 

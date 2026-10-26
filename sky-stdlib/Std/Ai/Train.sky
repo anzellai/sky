@@ -1344,6 +1344,7 @@ type alias ModelShape =
     , intermediate : Int
     , qDim : Int
     , kvDim : Int
+    , heads : Int
     , vocab : Int
     , parameters : Int
     }
@@ -1405,36 +1406,42 @@ dims shape target =
 
 -- | The memory the native trainer (`Mlx`) needs for a job, in bytes: a
 -- documented estimate on the high side, calibrated against the trainer's
--- measured peak footprint (Qwen2.5 0.5B, 4-bit, rank 8, 8 layers, q and v,
--- one row: 1.09 GB at 128 tokens and 1.77 GB at 256 on Metal; this formula
--- gives 1.26 GB and 1.97 GB):
+-- measured peak footprint on Metal (Qwen2.5 0.5B, 4-bit, rank 8, 8 layers,
+-- q and v): 0.71 GB for 1 row of 256 tokens, 0.72 GB for 1 × 512, 0.83 GB
+-- for 1 × 1024 and 1.75 GB for 4 × 1024; this formula gives 0.79, 0.86, 1.09
+-- and 2.10 GB. The trainer computes the loss over chunks of tokens and
+-- backpropagates one layer at a time, so the logits of one chunk and the
+-- activations of one layer are live at once:
 --
 --   * weights: parameters × 0.5625 bytes at 4 bits (4.5 bits with the
 --     scales), × 1.0625 at 8, × 2 at 16;
 --   * the adapter: its parameters (rank × (in + out) per adapted projection)
 --     × 16 bytes (the value, its gradient and Adam's two moments, as f32);
---   * activations, per token (rows × sequence length): adapted layers × (16 ×
---     hidden + 4 × intermediate) × 2 bytes, or with gradient checkpointing
---     adapted layers × hidden × 4 bytes plus one layer's full set;
---   * the logits and the loss: tokens × vocabulary × 36 bytes (measured:
---     about nine f32 copies of each row's logits are alive at the peak);
+--   * one loss chunk: its tokens (about 8M logits' worth, at most the micro
+--     batch's) × vocabulary × 24 bytes;
+--   * per token (rows × sequence length): the kept input of each adapted
+--     layer and the last output, (adapted layers + 1) × hidden × 4 bytes, and
+--     one layer's backward pass, (16 × hidden + 4 × intermediate) × 2 bytes;
+--   * attention in one layer's backward pass: rows × sequence length² ×
+--     heads × 16 bytes;
 --   * 256 MiB for MLX's cache and the runtime.
+--
+-- Gradient checkpointing changes nothing here: the trainer recomputes each
+-- layer in its own backward pass either way.
 estimateMemory : ModelShape -> Job -> Int
 estimateMemory shape job =
     let
         s = settings job
         layers = trainedLayers shape s
-        tokens = s.batch.perDevice * s.sequenceLength
+        rows = s.batch.perDevice
+        tokens = rows * s.sequenceLength
         full = 16 * shape.hidden + 4 * shape.intermediate
-        activations =
-            if s.gradientCheckpointing then
-                tokens * (layers * shape.hidden * 4 + full * 2)
-
-            else
-                tokens * layers * full * 2
+        perChunk = Math.max 1 (8388608 // Math.max 1 shape.vocab)
+        chunk = Math.min tokens perChunk
     in
-        weightBytes shape s + adapterBytes shape s + activations
-            + tokens * shape.vocab * 36
+        weightBytes shape s + adapterBytes shape s + chunk * shape.vocab * 24
+            + tokens * ((layers + 1) * shape.hidden * 4 + full * 2)
+            + rows * s.sequenceLength * s.sequenceLength * shape.heads * 16
             + 268435456
 
 
@@ -2678,13 +2685,14 @@ settingCodec =
 shapeCodec : Codec ModelShape
 shapeCodec =
     Codec.object
-        (\a l h i q k v p ->
+        (\a l h i q k n v p ->
             { architecture = a
             , layers = l
             , hidden = h
             , intermediate = i
             , qDim = q
             , kvDim = k
+            , heads = n
             , vocab = v
             , parameters = p
             })
@@ -2694,6 +2702,7 @@ shapeCodec =
         |> Codec.field "intermediate" .intermediate Codec.int
         |> Codec.field "qDim" .qDim Codec.int
         |> Codec.field "kvDim" .kvDim Codec.int
+        |> Codec.field "heads" .heads Codec.int
         |> Codec.field "vocab" .vocab Codec.int
         |> Codec.field "parameters" .parameters Codec.int
         |> Codec.buildObject

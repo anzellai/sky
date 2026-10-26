@@ -121,6 +121,7 @@ shape =
     , intermediate = 4864
     , qDim = 896
     , kvDim = 128
+    , heads = 14
     , vocab = 151936
     , parameters = 494032768
     }
@@ -339,7 +340,10 @@ tests =
                               2 * (4 * (896 + 896) + 4 * (896 + 128)) * 16
                           tokens = 2 * 256
                           full = 16 * 896 + 4 * 4864
-                          logits = tokens * 151936 * 36
+                          -- one loss chunk: 8388608 // 151936 = 55 tokens
+                          chunk = 55 * 151936 * 24
+                          perToken = 3 * 896 * 4 + full * 2
+                          attention = 2 * 256 * 256 * 14 * 16
                           runtime = 268435456
                       in
                           Test.equal
@@ -352,15 +356,32 @@ tests =
                                     (j |> Train.withQuantBits 16)
                                     - Train.estimateMemory shape j
                               )
-                              ( weights + adapter + tokens * 2 * full * 2
-                                    + logits
+                              ( weights + adapter + chunk + tokens * perToken
+                                    + attention
                                     + runtime
-                              , weights + adapter
-                                    + tokens * (2 * 896 * 4 + full * 2)
-                                    + logits
+                              , weights + adapter + chunk + tokens * perToken
+                                    + attention
                                     + runtime
                               , 494032768 * 2 - weights
                               )))
+    , Test.test
+          "the default batch of 4 × 1024 tokens on the 4-bit dev base estimates under 2.5 GB"
+          (\_ ->
+              withVersion
+                  (\v ->
+                      let
+                          j =
+                              Train.lora Train.devBase v
+                                  |> Train.withQuantisedBase
+                          s = Train.settings j
+                          e = Train.estimateMemory shape j
+                      in
+                          Test.equal
+                              ( s.batch.perDevice
+                              , s.sequenceLength
+                              , e > 2000000000 && e < 2500000000
+                              )
+                              ( 4, 1024, True )))
     , Test.test
           "decodeEvent reads every protocol line"
           (\_ ->

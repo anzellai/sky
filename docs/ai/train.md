@@ -85,7 +85,7 @@ lineage: the adapter records the version's name and digest.
 | `withName n` | `adapter` | the run directory's prefix and the registry model name. Lower case letters, digits and `-`, at most 48 characters, not starting with `-` |
 | `withQuantisedBase` | off | mark the job QLoRA (the base weights are 4-bit). The same as `withQuantBits 4`. Recorded in the lineage and the registry method |
 | `withQuantBits b` | 16 | the bits the base is held in while training: 4 or 8 quantise a 16-bit base as it loads, 16 keeps it. An already-quantised snapshot trains as it is. `SKY_AI_TRAIN_QUANT_BITS` |
-| `withGradientCheckpointing` | off | recompute each adapted layer's activations in the backward pass: less memory, more time, the same adapter. `SKY_AI_TRAIN_GRAD_CHECKPOINT` (`on` or `off`) |
+| `withGradientCheckpointing` | off | recompute each adapted layer's activations in the backward pass: less memory, more time, the same adapter. The native trainer (`Mlx`) already backpropagates one layer at a time, recomputing each layer, so there it changes nothing. `SKY_AI_TRAIN_GRAD_CHECKPOINT` (`on` or `off`) |
 | `withMemoryCap bytes` | this machine's memory (three quarters of it on Apple silicon) | the most memory the trainer may use. A job whose estimate is above it is `ModelTooLarge` before it starts, and the native trainer's guard ends a run that goes over it with `ModelTooLarge`, never relaunching it. `SKY_AI_TRAIN_MEMORY_CAP` (bytes, or `2500MB`, `2.5GB`, `2GiB`) |
 | `withRank r` | 8 | the LoRA rank. `SKY_AI_TRAIN_RANK` |
 | `withAlpha a` | twice the rank | the update is scaled by alpha / rank |
@@ -378,18 +378,31 @@ the base weights are in place and before the trainer starts: a job that will
 not fit ends as `ModelTooLarge` without launching a trainer. Call `plan`
 yourself to learn this before anything is downloaded.
 
-`Train.estimateMemory shape job` is the estimate, in bytes. It is a documented
-formula, deliberately on the high side, not a measurement:
+`Train.estimateMemory shape job` is the native trainer's estimate, in bytes. It
+is a documented formula, deliberately on the high side, calibrated against the
+trainer's measured peak footprint on Metal (Qwen2.5 0.5B 4-bit, rank 8, 8
+layers, q and v): 0.71 GB for one row of 256 tokens, 0.72 GB for 1 × 512,
+0.83 GB for 1 × 1024 and 1.75 GB for 4 × 1024, where the formula gives 0.79,
+0.86, 1.09 and 2.10 GB. The trainer computes the loss over chunks of tokens and
+backpropagates one layer at a time, so only one chunk's logits and one layer's
+activations are live at once:
 
 - weights: parameters × 0.5625 bytes for a 4-bit base (4.5 bits with the
-  scales), × 2 for a 16-bit one
+  scales), × 1.0625 for an 8-bit one, × 2 for a 16-bit one
 - the adapter: its parameters (rank × (in + out) for each adapted projection
   in each adapted layer) × 16 bytes (the value, its gradient and Adam's two
   moments, as f32)
-- activations: rows × tokens × adapted layers × (16 × hidden + 4 ×
-  intermediate) × 2 bytes
-- the logits: rows × tokens × vocabulary × 8 bytes (values and gradient)
-- 512 MiB for the runtime
+- one loss chunk: about 8M logits' worth of tokens (55 for a 151,936-entry
+  vocabulary), at most the micro-batch's, × vocabulary × 24 bytes
+- per token (rows × sequence length): (adapted layers + 1) × hidden × 4 bytes
+  (each adapted layer's kept input) plus (16 × hidden + 4 × intermediate) × 2
+  bytes (one layer's backward pass)
+- attention in one layer's backward pass: rows × sequence length² × heads × 16
+  bytes
+- 256 MiB for MLX's cache and the runtime
+
+A Python backend (Unsloth) keeps its own estimate: its activations for every
+adapted layer, 8 bytes per logit and 512 MiB for the Python runtime.
 
 Rows is `perDevice`. The memory the backend may use is three quarters of the
 total memory on Apple silicon (Metal works within about that much of the

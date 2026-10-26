@@ -4,12 +4,14 @@
 //	go run ./cmd/sky-train-tool tokenize <run dir> <base dir>
 //	go run ./cmd/sky-train-tool convert <run dir> <serving gguf>
 //	go run ./cmd/sky-train-tool argv <run dir> <driver.json>
+//	go run ./cmd/sky-train-tool diff <adapter a> <adapter b>
 //
 // tokenize writes <run>/data/{train,valid}.tok and order.bin from the staged
 // data/*.jsonl and job.json (the `tokenize` durable step). convert turns the
 // trained <run>/adapter into <run>/adapter.gguf for the serving model (the
 // `convert` step). Each prints its result as JSON. argv prints, one per line,
-// the sky-trainer arguments the runtime launches an attempt with.
+// the sky-trainer arguments the runtime launches an attempt with. diff prints
+// the largest absolute difference between two adapters (safetensors).
 package main
 
 import (
@@ -21,8 +23,8 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 4 || (os.Args[1] != "tokenize" && os.Args[1] != "convert" && os.Args[1] != "argv") {
-		fmt.Fprintln(os.Stderr, "usage: sky-train-tool tokenize <run> <base> | convert <run> <serving.gguf> | argv <run> <driver.json>")
+	if len(os.Args) != 4 || (os.Args[1] != "tokenize" && os.Args[1] != "convert" && os.Args[1] != "argv" && os.Args[1] != "diff") {
+		fmt.Fprintln(os.Stderr, "usage: sky-train-tool tokenize <run> <base> | convert <run> <serving.gguf> | argv <run> <driver.json> | diff <a> <b>")
 		os.Exit(2)
 	}
 	var out map[string]any
@@ -32,6 +34,8 @@ func main() {
 		out, err = rt.AiTrainTokenizeDir(os.Args[2], os.Args[3])
 	case "convert":
 		out, err = rt.AiTrainConvertFile(os.Args[2], os.Args[3])
+	case "diff":
+		out, err = rt.AiAdapterMaxDiff(os.Args[2], os.Args[3])
 	default:
 		var args []string
 		args, err = rt.AiTrainNativeArgv(os.Args[2], os.Args[3])

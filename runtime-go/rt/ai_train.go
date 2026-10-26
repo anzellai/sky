@@ -336,13 +336,14 @@ func Ai_trainResolve(codeArg any) any {
 type aiTrainShape struct {
 	arch                                   string
 	layers, hidden, intermediate, qDim, kv int
+	heads                                  int // attention heads (query)
 	vocab                                  int
 	params                                 int64
 }
 
 // aiDevShape is Qwen2.5 0.5B Instruct, the development base. Test mode uses it
 // without reading the model file, which is not on a test machine.
-var aiDevShape = aiTrainShape{arch: "qwen2", layers: 24, hidden: 896, intermediate: 4864, qDim: 896, kv: 128, vocab: 151936, params: 494032768}
+var aiDevShape = aiTrainShape{arch: "qwen2", layers: 24, hidden: 896, intermediate: 4864, qDim: 896, kv: 128, heads: 14, vocab: 151936, params: 494032768}
 
 func aiTrainShapeOf(path string) (aiTrainShape, error) {
 	kv, tensors, err := readGGUFHeader(path)
@@ -372,6 +373,11 @@ func aiTrainShapeOf(path string) (aiTrainShape, error) {
 	if s.qDim == 0 {
 		s.qDim = s.hidden
 	}
+	s.heads = m.headCount
+	if s.heads == 0 {
+		// No head count in the metadata: 64-wide heads, the common size.
+		s.heads = max(1, s.qDim/64)
+	}
 	if s.kv == 0 {
 		s.kv = s.hidden
 	}
@@ -396,6 +402,7 @@ func aiTrainShapeValue(s aiTrainShape) map[string]any {
 		"intermediate": s.intermediate,
 		"qDim":         s.qDim,
 		"kvDim":        s.kv,
+		"heads":        s.heads,
 		"vocab":        s.vocab,
 		"parameters":   int(s.params),
 	}
