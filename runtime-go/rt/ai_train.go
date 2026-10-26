@@ -1018,16 +1018,31 @@ func Ai_trainCancel(runArg any) any {
 	}
 }
 
+// aiTrainCancelWritten runs right after the cancel file is written. Tests set
+// it to hold the cancel there until the trainer has seen the file and exited,
+// the window in which a cancel used to answer that no trainer was running.
+var aiTrainCancelWritten = func(runDir string) {}
+
 func aiTrainCancel(runDir string) (bool, error) {
 	if !fileExists(filepath.Join(runDir, aiTrainJobFile)) {
 		return false, aiFailf(aiNotRegistered, "there is no training run at %s", runDir).with("ref", runDir)
 	}
+	// Whether a live trainer is cancelled is read BEFORE the cancel file
+	// exists. The trainer polls that file at every step, so a fast one
+	// checkpoints and exits between the write and a later liveness check,
+	// and the answer would say no trainer was running when one was.
+	t, ok := aiReadTrainer(runDir)
+	running := ok && aiTrainerAlive(t)
 	if err := os.WriteFile(filepath.Join(runDir, aiTrainCancelFile), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
 		return false, aiTrainFail("cannot write the cancel file: %v", err)
 	}
-	t, ok := aiReadTrainer(runDir)
-	if !ok || !aiTrainerAlive(t) {
+	aiTrainCancelWritten(runDir)
+	if !running {
 		return false, nil
+	}
+	if !aiTrainerAlive(t) {
+		// It saw the cancel file and stopped on its own.
+		return true, nil
 	}
 	_ = aiTrainSignal(t.Pid, syscall.SIGTERM)
 	deadline := time.Now().Add(aiTrainCancelGrace)

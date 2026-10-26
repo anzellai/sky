@@ -271,7 +271,9 @@ func TestTrainCancelCheckpointsThenStops(t *testing.T) {
 	}
 	signalled, err := aiTrainCancel(dir)
 	if err != nil || !signalled {
-		t.Fatalf("cancel %v %v", signalled, err)
+		lines, _, _ := aiTrainReadLines(dir, 0, 1<<20)
+		tr, _ := aiReadTrainer(dir)
+		t.Fatalf("cancel %v %v; trainer %+v; events %v", signalled, err, tr, lines)
 	}
 	lines, _ := watchToEnd(t, dir)
 	types := eventTypes(lines)
@@ -280,6 +282,41 @@ func TestTrainCancelCheckpointsThenStops(t *testing.T) {
 	}
 	if !fileExists(filepath.Join(dir, aiTrainCancelFile)) {
 		t.Fatal("no cancel file")
+	}
+}
+
+// A trainer that sees the cancel file and stops before the cancel looks at it
+// was still a live trainer the cancel stopped: the answer is True. The hook
+// holds the cancel until the trainer has exited, the window CI hit.
+func TestTrainCancelOfATrainerThatStopsAtOnceIsSignalled(t *testing.T) {
+	fakeTrainer(t)
+	dir := trainRun(t)
+	if _, err := aiTrainLaunch(dir, driverJSON(t, map[string]any{"maxSteps": 100000, "checkpointEvery": 0, "fakeStepMs": 20})); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 200; i++ {
+		if lines, _, _ := aiTrainReadLines(dir, 0, 1<<20); len(lines) > 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	tr, ok := aiReadTrainer(dir)
+	if !ok || !aiTrainerAlive(tr) {
+		t.Fatalf("the trainer is not running: %+v", tr)
+	}
+	saved := aiTrainCancelWritten
+	t.Cleanup(func() { aiTrainCancelWritten = saved })
+	aiTrainCancelWritten = func(string) {
+		for i := 0; i < 500 && aiTrainerAlive(tr); i++ {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	signalled, err := aiTrainCancel(dir)
+	if aiTrainerAlive(tr) {
+		t.Fatal("the trainer did not stop on the cancel file")
+	}
+	if err != nil || !signalled {
+		t.Fatalf("a live trainer that stopped at once: cancel %v %v", signalled, err)
 	}
 }
 
