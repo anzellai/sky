@@ -3925,3 +3925,13 @@ pub fn build_new_dir_compiles_nothing(ctx: &GateCtx) -> GateOutcome {
         "a_copy_in_a_new_directory_compiles_nothing",
     )
 }
+
+/// `xtask stdlib-bodies`: every stdlib module BODY type-checks, under the
+/// checker a user module gets. A build trusts stdlib signatures and never
+/// checks the bodies, so this gate is what holds them.
+pub const STDLIB_BODIES_EXPECTED: u64 = crate::stdlib_bodies_gate::EXPECTED_MODULES;
+
+pub fn stdlib_bodies(ctx: &GateCtx) -> GateOutcome {
+    let (passed, assertions, detail) = crate::stdlib_bodies_gate::check_body(&ctx.repo_root);
+    GateOutcome::new(passed, assertions, detail)
+}
