@@ -11,16 +11,21 @@ package rt
 // without the 430 MB development model. Its answers are noise; the flows
 // assert where a call ran and what it carried, not what it said.
 //
-// `go run ./cmd/sky-tiny-gguf <dir>` writes both files (scripts/ai-device-e2e.sh).
+// `go run ./cmd/sky-tiny-gguf <dir>` writes both files (scripts/ai-device-e2e.sh)
+// and the model's Hugging Face twin (AiTinyQwenHF), which the native trainer
+// trains on (scripts/ai/trainer/test-trainer.sh).
 
 import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -293,4 +298,140 @@ func tinyQwenLora(rng *rand.Rand, layers int) []tinyTensor {
 		)
 	}
 	return lora
+}
+
+// tinyHFNames maps the tiny model's GGUF tensor names to Hugging Face Qwen2
+// names. A GGUF dimension list is innermost first, so the HF shape is the
+// list reversed and the row-major data is the same bytes.
+func tinyHFName(gguf string) (string, bool) {
+	switch gguf {
+	case "token_embd.weight":
+		return "model.embed_tokens.weight", true
+	case "output_norm.weight":
+		return "model.norm.weight", true
+	case "output.weight":
+		return "lm_head.weight", true
+	}
+	rest, ok := strings.CutPrefix(gguf, "blk.")
+	if !ok {
+		return "", false
+	}
+	layer, part, ok := strings.Cut(rest, ".")
+	if !ok {
+		return "", false
+	}
+	p := "model.layers." + layer + "."
+	parts := map[string]string{
+		"attn_norm.weight":   "input_layernorm.weight",
+		"ffn_norm.weight":    "post_attention_layernorm.weight",
+		"attn_output.weight": "self_attn.o_proj.weight",
+	}
+	if hf, ok := parts[part]; ok {
+		return p + hf, true
+	}
+	for proj, g := range aiGGUFTensorNames {
+		for _, suffix := range []string{".weight", ".bias"} {
+			if part == g+suffix {
+				return p + proj + suffix, true
+			}
+		}
+	}
+	return "", false
+}
+
+// AiTinyQwenHF writes the Hugging Face twin of AiTinyQwen's model into dir:
+// config.json, model.safetensors (the same F32 weights, from the same seed,
+// under Hugging Face names), tokenizer.json (the same byte-level vocabulary,
+// no merges) and tokenizer_config.json (the same ChatML template). The native
+// trainer trains on the twin, and its adapter converts to a GGUF LoRA that
+// the GGUF model loads. It returns the directory.
+func AiTinyQwenHF(dir string) (string, error) {
+	kvs, ts := tinyQwenModel(rand.New(rand.NewSource(7)), tinyLayers, 0)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	tensors := map[string]aiTensor{}
+	for _, t := range ts {
+		name, ok := tinyHFName(t.name)
+		if !ok {
+			return "", fmt.Errorf("the tiny model's tensor %s has no Hugging Face name", t.name)
+		}
+		shape := make([]int, len(t.dims))
+		for i, d := range t.dims {
+			shape[len(t.dims)-1-i] = int(d)
+		}
+		tensors[name] = aiTensor{shape: shape, data: t.data}
+	}
+	var tokens []string
+	var tmpl string
+	for _, kv := range kvs {
+		switch kv.key {
+		case "tokenizer.ggml.tokens":
+			tokens = kv.val.([]string)
+		case "tokenizer.chat_template":
+			tmpl = kv.val.(string)
+		}
+	}
+	vocab := map[string]int{}
+	var added []map[string]any
+	for id, tok := range tokens {
+		if strings.HasPrefix(tok, "<|") && strings.HasSuffix(tok, "|>") {
+			added = append(added, map[string]any{
+				"id": id, "content": tok, "single_word": false, "lstrip": false,
+				"rstrip": false, "normalized": false, "special": true,
+			})
+			continue
+		}
+		vocab[tok] = id
+	}
+	tokenizer := map[string]any{
+		"version":      "1.0",
+		"added_tokens": added,
+		"normalizer":   map[string]any{"type": "NFC"},
+		"pre_tokenizer": map[string]any{"type": "Sequence", "pretokenizers": []any{
+			map[string]any{"type": "Split", "behavior": "Isolated", "invert": false, "pattern": map[string]any{
+				"Regex": `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
+			}},
+			map[string]any{"type": "ByteLevel", "add_prefix_space": false, "trim_offsets": false, "use_regex": false},
+		}},
+		"decoder": map[string]any{"type": "ByteLevel", "add_prefix_space": false, "trim_offsets": false, "use_regex": false},
+		"model":   map[string]any{"type": "BPE", "vocab": vocab, "merges": []string{}, "byte_fallback": false},
+	}
+	config := map[string]any{
+		"architectures":           []string{"Qwen2ForCausalLM"},
+		"model_type":              "qwen2",
+		"hidden_size":             tinyEmbd,
+		"intermediate_size":       tinyFF,
+		"num_hidden_layers":       tinyLayers,
+		"num_attention_heads":     tinyHeads,
+		"num_key_value_heads":     tinyKVHeads,
+		"vocab_size":              len(tokens),
+		"max_position_embeddings": 2048,
+		"rms_norm_eps":            1e-6,
+		"rope_theta":              1e6,
+		"tie_word_embeddings":     false,
+		"torch_dtype":             "float32",
+		"eos_token_id":            len(tokens) - 1,
+	}
+	tokConfig := map[string]any{
+		"chat_template":    tmpl,
+		"eos_token":        "<|im_end|>",
+		"pad_token":        "<|endoftext|>",
+		"model_max_length": 2048,
+		"tokenizer_class":  "Qwen2Tokenizer",
+	}
+	files := map[string][]byte{"model.safetensors": aiSafetensorsBytes(tensors, map[string]string{"format": "pt"})}
+	for name, v := range map[string]any{"config.json": config, "tokenizer.json": tokenizer, "tokenizer_config.json": tokConfig} {
+		b, err := json.MarshalIndent(v, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		files[name] = append(b, '\n')
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+			return "", err
+		}
+	}
+	return dir, nil
 }
