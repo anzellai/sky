@@ -103,7 +103,6 @@ job backend dir v =
                 |> Train.withLearningRate 2.0e-4
                 |> Train.withCheckpointEvery 8
                 |> Train.withEvalEvery 12
-                |> Train.withGradientCheckpointing
                 |> Train.withMemoryCap 2500000000
                 |> Train.withWatchWindow 2000
 

@@ -717,6 +717,12 @@ reason = "v0.27.12: the node of the dead `foreign ...` top-level rule removed wi
 owner  = "anzel"
 commit = "fix/v0.27.12"
 
+[[removal]]
+symbol = "Std.Ai.Train.withGradientCheckpointing"
+reason = "v0.28.0 (unreleased, branch-only, never shipped): with SKY_AI_TRAIN_GRAD_CHECKPOINT. The native trainer's chunked loss recomputes each adapted layer in its own backward pass, so the setting changed nothing for Mlx, and Unsloth manages its own checkpointing. No released Sky had it, so no user breaks. ai_train_settings_test.go TestTrainSettingsHaveNoGradientCheckpointing pins that the variable is not read and the trainer is never passed --grad-checkpoint."
+owner  = "anzel"
+commit = "feat/std-ai-lifecycle"
+
 # ===========================================================================
 # ## The FOURTH ledger: `[[correction]]` — a false credit removed
 # ===========================================================================

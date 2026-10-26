@@ -488,9 +488,12 @@ static mlx_array layer_fwd(int li, mlx_array x, const mlx_array* prm) {
   return add(x, proj(li, T_DOWN, prm, act));
 }
 
-/* Gradient checkpointing: each LoRA layer is an MLX closure wrapped by
- * mlx_checkpoint, so its activations are recomputed in the backward pass
- * instead of kept. Inputs: [x, the layer's parameters in param order]. */
+/* Gradient checkpointing of the unchunked loss (--loss-chunk 0, a test path):
+ * each LoRA layer is an MLX closure wrapped by mlx_checkpoint, so its
+ * activations are recomputed in the backward pass instead of kept. The
+ * chunked loss, which Std.Ai.Train runs, recomputes each layer anyway, so Sky
+ * never passes --grad-checkpoint. Inputs: [x, the layer's parameters in param
+ * order]. */
 static mlx_closure* CKL = NULL;
 static int layer_closure(mlx_vector_array* res, const mlx_vector_array in, void* payload) {
   int li = (int)(intptr_t)payload;
@@ -1266,10 +1269,11 @@ static void usage(void) {
       "lora:     --rank N --alpha F --lora-layers N --targets q_proj,v_proj,...\n"
       "train:    --lr F [--weight-decay F] --batch N --accumulate N --checkpoint-every N\n"
       "          --eval-every N [--max-eval-rows N] --seed N\n"
-      "memory:   [--quant-bits 0|4|8] [--quant-group-size G] [--grad-checkpoint 0|1]\n"
-      "          [--memory-cap BYTES] [--cache-limit BYTES] [--loss-chunk TOKENS (0: unchunked)]\n"
+      "memory:   [--quant-bits 0|4|8] [--quant-group-size G]\n"
+      "          [--memory-cap BYTES] [--cache-limit BYTES]\n"
       "run:      [--cpu] [--attempt N] [--resume-step N --resume-dir REL] [--launch TOKEN]\n"
-      "tests:    [--crash-at N] [--pace-ms N] [--quantise-snapshot OUT]\n",
+      "tests:    [--crash-at N] [--pace-ms N] [--quantise-snapshot OUT]\n"
+      "          [--loss-chunk TOKENS (0: unchunked)] [--grad-checkpoint 0|1 (the unchunked loss)]\n",
       stderr);
 }
 

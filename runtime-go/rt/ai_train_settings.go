@@ -12,14 +12,13 @@ package rt
 // shown. Train.sky applies the result to the job before it computes the run
 // id, so a variable that changes the adapter (sequence length, batch, rank,
 // quantisation) is a new run, and `Train.plan` names where each value came
-// from. The memory cap and gradient checkpointing do not change the adapter,
-// so they stay out of the job's JSON.
+// from. The memory cap does not change the adapter, so it stays out of the
+// job's JSON.
 //
 //	SEQUENCE_LENGTH   Train.withSequenceLength      tokens per row
 //	BATCH             Train.withBatch               "4" or "1x4" (rows x accumulate)
 //	RANK              Train.withRank                the LoRA rank
 //	QUANT_BITS        Train.withQuantBits           4, 8 or 16 (16: not quantised)
-//	GRAD_CHECKPOINT   Train.withGradientCheckpointing  on or off
 //	MEMORY_CAP        Train.withMemoryCap           bytes, or with a unit (2.5GB)
 
 import (
@@ -34,7 +33,6 @@ var (
 	aiExpectBatch     = aiExpect{accept: aiBatchText, form: "rows per step, optionally times the steps accumulated (4, or 1x4)", secret: true}
 	aiExpectRank      = aiExpect{accept: aiAtLeast(1), form: "a whole number above 0", secret: true}
 	aiExpectQuantBits = aiExpect{accept: aiOneOf("4", "8", "16"), form: "4, 8 or 16 (16: not quantised)", secret: true}
-	aiExpectOnOff     = aiExpect{accept: aiOneOf("on", "off", "1", "0", "true", "false", "yes", "no"), form: "on or off", secret: true}
 	aiExpectSize      = aiExpect{accept: func(s string) bool { _, ok := aiParseSize(s); return ok }, form: "a size in bytes, or with a unit (2500MB, 2.5GB, 2GiB)", secret: true}
 )
 
@@ -92,17 +90,9 @@ func aiParseSize(s string) (int64, bool) {
 	return int64(n), true
 }
 
-func aiOnOff(s string) string {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "on", "1", "true", "yes":
-		return "on"
-	}
-	return "off"
-}
-
-// aiTrainSettingsResolve resolves the six settings in a fixed order, each
-// value normalised: BATCH as "<rows>x<accumulate>", GRAD_CHECKPOINT as on or
-// off, MEMORY_CAP in bytes ("" when nobody set one).
+// aiTrainSettingsResolve resolves the five settings in a fixed order, each
+// value normalised: BATCH as "<rows>x<accumulate>", MEMORY_CAP in bytes (""
+// when nobody set one).
 func aiTrainSettingsResolve(code any) ([]map[string]any, error) {
 	type one struct {
 		key, field string
@@ -127,9 +117,6 @@ func aiTrainSettingsResolve(code any) ([]map[string]any, error) {
 		{"QUANT_BITS", "quantBits", skyEnvName("AI_TRAIN_QUANT_BITS"), func(c string) (string, string, error) {
 			return aiLayerChecked("AI_TRAIN_QUANT_BITS", c, "Train.withQuantBits", aiExpectQuantBits)
 		}, trim},
-		{"GRAD_CHECKPOINT", "gradientCheckpointing", skyEnvName("AI_TRAIN_GRAD_CHECKPOINT"), func(c string) (string, string, error) {
-			return aiLayerChecked("AI_TRAIN_GRAD_CHECKPOINT", c, "Train.withGradientCheckpointing", aiExpectOnOff)
-		}, aiOnOff},
 		{"MEMORY_CAP", "memoryCap", skyEnvName("AI_TRAIN_MEMORY_CAP"), func(c string) (string, string, error) {
 			return aiLayerChecked("AI_TRAIN_MEMORY_CAP", c, "Train.withMemoryCap", aiExpectSize)
 		}, func(v string) string {

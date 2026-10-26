@@ -20,7 +20,6 @@ module Std.Ai.Train exposing
     , withName
     , withQuantisedBase
     , withQuantBits
-    , withGradientCheckpointing
     , withMemoryCap
     , withRank
     , withAlpha
@@ -600,7 +599,6 @@ type alias Settings =
     , trainRows : Int
     , evalRows : Int
     , quantBits : Int
-    , gradientCheckpointing : Bool
     , memoryCap : Int
     , rank : Int
     , alpha : Int
@@ -678,7 +676,6 @@ newJob base format m file =
             , trainRows = m.train
             , evalRows = m.eval
             , quantBits = 16
-            , gradientCheckpointing = False
             , memoryCap = 0
             , rank = 8
             , alpha = 0
@@ -756,14 +753,6 @@ withQuantisedBase =
 withQuantBits : Int -> Job -> Job
 withQuantBits n =
     update (\s -> { s | quantBits = n })
-
-
--- | Recompute each adapted layer's activations in the backward pass instead
--- of keeping them: less memory, more time. The adapter is the same. Default:
--- off. `SKY_AI_TRAIN_GRAD_CHECKPOINT` (`on` or `off`) overrides it.
-withGradientCheckpointing : Job -> Job
-withGradientCheckpointing =
-    update (\s -> { s | gradientCheckpointing = True })
 
 
 -- | The most memory the trainer may use, in bytes. The plan refuses a job
@@ -1426,8 +1415,8 @@ dims shape target =
 --     heads × 16 bytes;
 --   * 256 MiB for MLX's cache and the runtime.
 --
--- Gradient checkpointing changes nothing here: the trainer recomputes each
--- layer in its own backward pass either way.
+-- The trainer recomputes each adapted layer in its own backward pass, so the
+-- activations it keeps are one layer's.
 estimateMemory : ModelShape -> Job -> Int
 estimateMemory shape job =
     let
@@ -1490,7 +1479,7 @@ estimatePython shape job =
             + 536870912
 
 -- | One training setting as it was resolved: its key (`SEQUENCE_LENGTH`,
--- `BATCH`, `RANK`, `QUANT_BITS`, `GRAD_CHECKPOINT`, `MEMORY_CAP`), the
+-- `BATCH`, `RANK`, `QUANT_BITS`, `MEMORY_CAP`), the
 -- variable that overrides it, its value, and where the value came from:
 -- `env` (the operator), `code` (the job, its builder or its default) or
 -- `default` (nobody set it).
@@ -1508,7 +1497,6 @@ type alias TrainCode =
     , batch : String
     , rank : String
     , quantBits : String
-    , gradientCheckpointing : String
     , memoryCap : String
     }
 
@@ -1526,12 +1514,6 @@ trainCode s =
             ++ String.fromInt s.batch.accumulate
     , rank = String.fromInt s.rank
     , quantBits = String.fromInt s.quantBits
-    , gradientCheckpointing =
-        if s.gradientCheckpointing then
-            "on"
-
-        else
-            "off"
     , memoryCap =
         if s.memoryCap > 0 then
             String.fromInt s.memoryCap
@@ -1577,9 +1559,6 @@ applySetting st s =
                         Maybe.withDefault s.quantBits (String.toInt st.value)
                 }
 
-            "GRAD_CHECKPOINT" ->
-                { s | gradientCheckpointing = st.value == "on" }
-
             "MEMORY_CAP" ->
                 { s | memoryCap = num }
 
@@ -1600,7 +1579,7 @@ applyAll sts job =
 
 
 -- | The job as it runs on this machine: the sequence length, the batch, the
--- rank, the quantisation bits, gradient checkpointing and the memory cap
+-- rank, the quantisation bits and the memory cap
 -- from `SKY_AI_TRAIN_*` when the operator set them, else the job's own. A
 -- variable that changes the adapter is a different run (`runId` of the
 -- effective job). `plan`, `start`, `drive`, `progress`, `result`, `resume`
@@ -3634,9 +3613,6 @@ driverJson job st attempt from =
                 , ( "fakeCrashAt", JsonE.int s.fakeCrashAt )
                 , ( "fakeStepMs", JsonE.int s.fakeStepMs )
                 , ( "format", JsonE.string s.format )
-                , ( "gradientCheckpointing"
-                  , JsonE.bool s.gradientCheckpointing
-                  )
                 , ( "layers", JsonE.int s.layers )
                 , ( "learningRate", JsonE.float s.learningRate )
                 , ( "maxSteps", JsonE.int s.maxSteps )

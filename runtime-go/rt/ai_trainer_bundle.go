@@ -410,11 +410,7 @@ func aiTrainNativeArgs(cfg map[string]any, runDir, token string) ([]string, erro
 	if from := aiJNum(cfg, "resumeFrom", 0); from > 0 {
 		args = append(args, "--resume-step", strconv.Itoa(from), "--resume-dir", aiJStr(cfg, "resumeDir"))
 	}
-	ckpt := "0"
-	if b, _ := cfg["gradientCheckpointing"].(bool); b {
-		ckpt = "1"
-	}
-	args = append(args, "--grad-checkpoint", ckpt, "--cache-limit", strconv.Itoa(aiTrainerCacheLimit))
+	args = append(args, "--cache-limit", strconv.Itoa(aiTrainerCacheLimit))
 	if capBytes := aiJNum(cfg, "memoryCap", 0); capBytes > 0 {
 		args = append(args, "--memory-cap", strconv.Itoa(capBytes))
 	}

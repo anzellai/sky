@@ -10,7 +10,7 @@ import (
 func trainCode(over map[string]string) map[string]any {
 	c := map[string]any{
 		"sequenceLength": "1024", "batch": "4x1", "rank": "8", "quantBits": "16",
-		"gradientCheckpointing": "off", "memoryCap": "",
+		"memoryCap": "",
 	}
 	for k, v := range over {
 		c[k] = v
@@ -35,13 +35,13 @@ func settingsByKey(t *testing.T, code map[string]any) map[string][2]string {
 }
 
 func TestTrainSettingsResolveTheOperatorsVariablesOverTheCode(t *testing.T) {
-	for _, k := range []string{"SEQUENCE_LENGTH", "BATCH", "RANK", "QUANT_BITS", "GRAD_CHECKPOINT", "MEMORY_CAP"} {
+	for _, k := range aiTrainSettingKeys {
 		t.Setenv("SKY_AI_TRAIN_"+k, "")
 	}
 	got := settingsByKey(t, trainCode(nil))
 	want := map[string][2]string{
 		"SEQUENCE_LENGTH": {"1024", "code"}, "BATCH": {"4x1", "code"}, "RANK": {"8", "code"},
-		"QUANT_BITS": {"16", "code"}, "GRAD_CHECKPOINT": {"off", "code"}, "MEMORY_CAP": {"", "default"},
+		"QUANT_BITS": {"16", "code"}, "MEMORY_CAP": {"", "default"},
 	}
 	for k, w := range want {
 		if got[k] != w {
@@ -52,12 +52,11 @@ func TestTrainSettingsResolveTheOperatorsVariablesOverTheCode(t *testing.T) {
 	t.Setenv("SKY_AI_TRAIN_BATCH", "2")
 	t.Setenv("SKY_AI_TRAIN_RANK", " 16 ")
 	t.Setenv("SKY_AI_TRAIN_QUANT_BITS", "4")
-	t.Setenv("SKY_AI_TRAIN_GRAD_CHECKPOINT", "yes")
 	t.Setenv("SKY_AI_TRAIN_MEMORY_CAP", "2.5GB")
 	got = settingsByKey(t, trainCode(nil))
 	want = map[string][2]string{
 		"SEQUENCE_LENGTH": {"256", "env"}, "BATCH": {"2x1", "env"}, "RANK": {"16", "env"},
-		"QUANT_BITS": {"4", "env"}, "GRAD_CHECKPOINT": {"on", "env"}, "MEMORY_CAP": {"2500000000", "env"},
+		"QUANT_BITS": {"4", "env"}, "MEMORY_CAP": {"2500000000", "env"},
 	}
 	for k, w := range want {
 		if got[k] != w {
@@ -75,11 +74,11 @@ func TestTrainSettingsResolveTheOperatorsVariablesOverTheCode(t *testing.T) {
 func TestTrainSettingsResolveRefusesABadValueWithoutShowingIt(t *testing.T) {
 	cases := map[string]string{
 		"SEQUENCE_LENGTH": "-12", "BATCH": "2x0", "RANK": "-3", "QUANT_BITS": "5",
-		"GRAD_CHECKPOINT": "sometimes", "MEMORY_CAP": "10 parsecs",
+		"MEMORY_CAP": "10 parsecs",
 	}
 	for k, bad := range cases {
 		t.Run(k, func(t *testing.T) {
-			for _, other := range []string{"SEQUENCE_LENGTH", "BATCH", "RANK", "QUANT_BITS", "GRAD_CHECKPOINT", "MEMORY_CAP"} {
+			for _, other := range aiTrainSettingKeys {
 				t.Setenv("SKY_AI_TRAIN_"+other, "")
 			}
 			t.Setenv("SKY_AI_TRAIN_"+k, bad)
@@ -106,23 +105,57 @@ func TestTrainNativeArgsCarryTheMemorySettings(t *testing.T) {
 	dense := t.TempDir()
 	writeQwen2Config(t, dense, nil)
 	args, err := aiTrainNativeArgs(nativeDriver(dense, "/x/sky-trainer", map[string]any{
-		"quantised": true, "quantBits": 8, "gradientCheckpointing": true, "memoryCap": 2500000000,
+		"quantised": true, "quantBits": 8, "memoryCap": 2500000000,
 	}), "/r", "tok")
 	if err != nil {
 		t.Fatal(err)
 	}
 	m := argMap(t, args)
-	for k, v := range map[string]string{"--quant-bits": "8", "--grad-checkpoint": "1", "--memory-cap": "2500000000", "--cache-limit": "268435456"} {
+	for k, v := range map[string]string{"--quant-bits": "8", "--memory-cap": "2500000000", "--cache-limit": "268435456"} {
 		if m[k] != v {
 			t.Errorf("%s = %q, want %q", k, m[k], v)
 		}
 	}
 	args, _ = aiTrainNativeArgs(nativeDriver(dense, "/x/sky-trainer", map[string]any{"quantised": false, "quantBits": 16}), "/r", "tok")
 	m = argMap(t, args)
-	if _, ok := m["--quant-bits"]; ok || m["--grad-checkpoint"] != "0" {
+	if _, ok := m["--quant-bits"]; ok {
 		t.Fatalf("%v", m)
 	}
 	if _, ok := m["--memory-cap"]; ok {
 		t.Fatal("no cap in the driver, no --memory-cap")
+	}
+}
+
+// aiTrainSettingKeys are the settings an operator may override, in the
+// resolver's order.
+var aiTrainSettingKeys = []string{"SEQUENCE_LENGTH", "BATCH", "RANK", "QUANT_BITS", "MEMORY_CAP"}
+
+// Gradient checkpointing is not a setting: the native trainer's chunked loss
+// recomputes each adapted layer in its own backward pass, and Unsloth manages
+// its own checkpointing. SKY_AI_TRAIN_GRAD_CHECKPOINT is not read, and the
+// trainer is never passed --grad-checkpoint.
+func TestTrainSettingsHaveNoGradientCheckpointing(t *testing.T) {
+	t.Setenv("SKY_AI_TRAIN_GRAD_CHECKPOINT", "sometimes")
+	got, err := aiTrainSettingsResolve(trainCode(nil))
+	if err != nil {
+		t.Fatalf("SKY_AI_TRAIN_GRAD_CHECKPOINT was read: %v", err)
+	}
+	var keys []string
+	for _, s := range got {
+		keys = append(keys, s["key"].(string))
+	}
+	if strings.Join(keys, ",") != strings.Join(aiTrainSettingKeys, ",") {
+		t.Fatalf("settings %v, want %v", keys, aiTrainSettingKeys)
+	}
+	dense := t.TempDir()
+	writeQwen2Config(t, dense, nil)
+	args, err := aiTrainNativeArgs(nativeDriver(dense, "/x/sky-trainer", map[string]any{"gradientCheckpointing": true}), "/r", "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range args {
+		if a == "--grad-checkpoint" {
+			t.Fatalf("the trainer is passed --grad-checkpoint: %v", args)
+		}
 	}
 }

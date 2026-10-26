@@ -85,7 +85,6 @@ lineage: the adapter records the version's name and digest.
 | `withName n` | `adapter` | the run directory's prefix and the registry model name. Lower case letters, digits and `-`, at most 48 characters, not starting with `-` |
 | `withQuantisedBase` | off | mark the job QLoRA (the base weights are 4-bit). The same as `withQuantBits 4`. Recorded in the lineage and the registry method |
 | `withQuantBits b` | 16 | the bits the base is held in while training: 4 or 8 quantise a 16-bit base as it loads, 16 keeps it. An already-quantised snapshot trains as it is. `SKY_AI_TRAIN_QUANT_BITS` |
-| `withGradientCheckpointing` | off | recompute each adapted layer's activations in the backward pass: less memory, more time, the same adapter. The native trainer (`Mlx`) already backpropagates one layer at a time, recomputing each layer, so there it changes nothing. `SKY_AI_TRAIN_GRAD_CHECKPOINT` (`on` or `off`) |
 | `withMemoryCap bytes` | this machine's memory (three quarters of it on Apple silicon) | the most memory the trainer may use. A job whose estimate is above it is `ModelTooLarge` before it starts, and the native trainer's guard ends a run that goes over it with `ModelTooLarge`, never relaunching it. `SKY_AI_TRAIN_MEMORY_CAP` (bytes, or `2500MB`, `2.5GB`, `2GiB`) |
 | `withRank r` | 8 | the LoRA rank. `SKY_AI_TRAIN_RANK` |
 | `withAlpha a` | twice the rank | the update is scaled by alpha / rank |
