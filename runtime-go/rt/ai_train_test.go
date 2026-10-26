@@ -558,3 +558,43 @@ func TestTrainerImageRuntimeStageHasACCompiler(t *testing.T) {
 		t.Fatalf("the runtime stage installs no C compiler:\n%s", runtime)
 	}
 }
+
+// The native trainer's guard SIGKILLs the trainer over its memory cap and
+// writes guard.json first. However late its error line comes, a watch that
+// finds the trainer gone ends on ModelTooLarge, never on a death the workflow
+// would relaunch.
+func TestTrainWatchTreatsTheGuardsKillAsTerminal(t *testing.T) {
+	fakeTrainer(t)
+	dir := trainRun(t)
+	if _, err := aiTrainLaunch(dir, driverJSON(t, map[string]any{"fakeMode": "oom"})); err != nil {
+		t.Fatal(err)
+	}
+	lines, _ := watchToEnd(t, dir)
+	if len(lines) == 0 {
+		t.Fatal("no lines")
+	}
+	last := lines[len(lines)-1]
+	for _, want := range []string{`"type":"error"`, `"code":"ModelTooLarge"`, `"peakBytes":2600000000`, `"capBytes":2500000000`} {
+		if !strings.Contains(last, want) {
+			t.Fatalf("the last line %s lacks %s", last, want)
+		}
+	}
+	if !aiTrainTerminal(last) {
+		t.Fatalf("%s is not terminal", last)
+	}
+
+	// A guard.json from an earlier attempt is not this attempt's: a launch
+	// clears it, and a run that finishes is not read as killed.
+	dir2 := trainRun(t)
+	os.WriteFile(filepath.Join(dir2, "guard.json"), []byte(`{"capBytes":1,"code":"ModelTooLarge","peakBytes":2}`), 0o644)
+	if _, err := aiTrainLaunch(dir2, driverJSON(t, nil)); err != nil {
+		t.Fatal(err)
+	}
+	lines, _ = watchToEnd(t, dir2)
+	if got := eventTypes(lines); got[len(got)-1] != "done" {
+		t.Fatalf("events %v", got)
+	}
+	if fileExists(filepath.Join(dir2, "guard.json")) {
+		t.Fatal("the stale guard.json is still there")
+	}
+}

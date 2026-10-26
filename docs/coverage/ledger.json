@@ -935,7 +935,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2953,
+    "stdlib_entries": 2958,
     "stdlib_modules": 127,
     "surfaces_covered": 185,
     "surfaces_covered_pct": 94.9,
@@ -7938,6 +7938,11 @@
             "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "tests/Std (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -8029,6 +8034,11 @@
             "by": "examples/74-ai-cloud (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
           }
         ],
         "strength": 3
@@ -19151,7 +19161,7 @@
           ]
         },
         "Std.Ai.Train": {
-          "count": 31,
+          "count": 32,
           "symbols": [
             "Artefact",
             "Batch",
@@ -19160,6 +19170,7 @@
             "Host",
             "MachineRate",
             "RunRequest",
+            "Setting",
             "Settings",
             "Snapshot",
             "SnapshotFile",
@@ -19950,7 +19961,7 @@
           ]
         }
       },
-      "count": 821,
+      "count": 822,
       "pct_of_denominator": 27.8
     },
     "symbols_unreferenced_strict": {
@@ -20498,7 +20509,7 @@
           ]
         },
         "Std.Ai.Train": {
-          "count": 34,
+          "count": 35,
           "symbols": [
             "Artefact",
             "Backend",
@@ -20509,6 +20520,7 @@
             "Host",
             "MachineRate",
             "RunRequest",
+            "Setting",
             "Settings",
             "Snapshot",
             "SnapshotFile",
@@ -21385,8 +21397,8 @@
           ]
         }
       },
-      "count": 929,
-      "pct_of_denominator": 31.5
+      "count": 930,
+      "pct_of_denominator": 31.4
     }
   },
   "units": [
@@ -23396,10 +23408,10 @@
       "db_drivers": [],
       "gate": "sky-suites",
       "id": "tests/Std",
-      "modules_imported": 51,
+      "modules_imported": 52,
       "path": "tests/Std",
-      "refs_generous": 696,
-      "refs_qualified": 670,
+      "refs_generous": 704,
+      "refs_qualified": 678,
       "role": "SkySuite",
       "sky_files": 25,
       "sky_toml_sections": []

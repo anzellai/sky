@@ -19,6 +19,9 @@ module Std.Ai.Train exposing
     , loraOnInstructions
     , withName
     , withQuantisedBase
+    , withQuantBits
+    , withGradientCheckpointing
+    , withMemoryCap
     , withRank
     , withAlpha
     , withLayers
@@ -76,6 +79,8 @@ module Std.Ai.Train exposing
     , host
     , shapeOf
     , estimateMemory
+    , Setting
+    , effective
     , Plan
     , plan
     , Status(..)
@@ -594,7 +599,9 @@ type alias Settings =
     , dataFile : String
     , trainRows : Int
     , evalRows : Int
-    , quantised : Bool
+    , quantBits : Int
+    , gradientCheckpointing : Bool
+    , memoryCap : Int
     , rank : Int
     , alpha : Int
     , layers : Int
@@ -670,7 +677,9 @@ newJob base format m file =
             , dataFile = file
             , trainRows = m.train
             , evalRows = m.eval
-            , quantised = False
+            , quantBits = 16
+            , gradientCheckpointing = False
+            , memoryCap = 0
             , rank = 8
             , alpha = 0
             , layers = 16
@@ -733,13 +742,42 @@ withName n =
 
 
 -- | Mark the job QLoRA: the base weights are 4-bit (the snapshot already is,
--- for `devBase`). Recorded in the lineage and the registry method.
+-- for `devBase`). The same as `withQuantBits 4`. Recorded in the lineage and
+-- the registry method.
 withQuantisedBase : Job -> Job
 withQuantisedBase =
-    update (\s -> { s | quantised = True })
+    withQuantBits 4
 
 
--- | The LoRA rank. Default: 8.
+-- | The bits the base weights are held in while training: 4 or 8 quantise a
+-- 16-bit base as it loads (QLoRA), 16 keeps it as it is. A base snapshot that
+-- is already quantised (`devBase`'s MLX weights) trains as it is. Default:
+-- 16. `SKY_AI_TRAIN_QUANT_BITS` overrides it.
+withQuantBits : Int -> Job -> Job
+withQuantBits n =
+    update (\s -> { s | quantBits = n })
+
+
+-- | Recompute each adapted layer's activations in the backward pass instead
+-- of keeping them: less memory, more time. The adapter is the same. Default:
+-- off. `SKY_AI_TRAIN_GRAD_CHECKPOINT` (`on` or `off`) overrides it.
+withGradientCheckpointing : Job -> Job
+withGradientCheckpointing =
+    update (\s -> { s | gradientCheckpointing = True })
+
+
+-- | The most memory the trainer may use, in bytes. The plan refuses a job
+-- whose estimate is above it (`ModelTooLarge`), and the native trainer's
+-- guard kills a run that goes over it and ends it with `ModelTooLarge`, never
+-- relaunching it. Default: the memory this machine can give (three quarters
+-- of it on Apple silicon). `SKY_AI_TRAIN_MEMORY_CAP` (bytes, or `2.5GB`)
+-- overrides it.
+withMemoryCap : Int -> Job -> Job
+withMemoryCap bytes =
+    update (\s -> { s | memoryCap = bytes })
+
+
+-- | The LoRA rank. Default: 8. `SKY_AI_TRAIN_RANK` overrides it.
 withRank : Int -> Job -> Job
 withRank n =
     update (\s -> { s | rank = n })
@@ -786,12 +824,14 @@ withMaxSteps n =
 
 
 -- | Rows per step. Default: `{ perDevice = 4, accumulate = 1 }`.
+-- `SKY_AI_TRAIN_BATCH` (`4`, or rows x accumulate: `1x4`) overrides it.
 withBatch : Batch -> Job -> Job
 withBatch b =
     update (\s -> { s | batch = b })
 
 
 -- | Tokens per row; a longer row is cut. Default: 1024.
+-- `SKY_AI_TRAIN_SEQUENCE_LENGTH` overrides it.
 withSequenceLength : Int -> Job -> Job
 withSequenceLength n =
     update (\s -> { s | sequenceLength = n })
@@ -1136,7 +1176,7 @@ jobJson (Job j) =
                        , ( "maxSteps", JsonE.int s.maxSteps )
                        , ( "merged", JsonE.bool s.mergedExport )
                        , ( "name", JsonE.string s.name )
-                       , ( "quantised", JsonE.bool s.quantised )
+                       , ( "quantBits", JsonE.int s.quantBits )
                        , ( "rank", JsonE.int s.rank )
                        , ( "seed", JsonE.int s.seed )
                        , ( "sequenceLength", JsonE.int s.sequenceLength )
@@ -1228,6 +1268,14 @@ check job =
                 , failIf
                       (s.maxRelaunches < 0)
                       ( "maxRelaunches", "use 0 or more" )
+                , failIf
+                      (not (List.member s.quantBits [ 4, 8, 16 ]))
+                      ( "quantBits", "use 4, 8 or 16 bits (16: not quantised)" )
+                , failIf
+                      (s.memoryCap < 0)
+                      ( "memoryCap"
+                      , "use a number of bytes, or 0 for this machine's memory"
+                      )
                 ]
     in
         case fails of
@@ -1355,28 +1403,56 @@ dims shape target =
             ( shape.hidden, shape.intermediate )
 
 
--- | The memory a job needs, in bytes. A documented estimate, deliberately on
--- the high side, not a measurement:
+-- | The memory the native trainer (`Mlx`) needs for a job, in bytes: a
+-- documented estimate on the high side, calibrated against the trainer's
+-- measured peak footprint (Qwen2.5 0.5B, 4-bit, rank 8, 8 layers, q and v,
+-- one row: 1.09 GB at 128 tokens and 1.77 GB at 256 on Metal; this formula
+-- gives 1.26 GB and 1.97 GB):
 --
---   * weights: parameters × 0.5625 bytes for a 4-bit base (4.5 bits with the
---     scales), × 2 for a 16-bit one;
+--   * weights: parameters × 0.5625 bytes at 4 bits (4.5 bits with the
+--     scales), × 1.0625 at 8, × 2 at 16;
 --   * the adapter: its parameters (rank × (in + out) per adapted projection)
 --     × 16 bytes (the value, its gradient and Adam's two moments, as f32);
---   * activations: rows × tokens × adapted layers × (16 × hidden + 4 ×
---     intermediate) × 2 bytes;
---   * the logits: rows × tokens × vocabulary × 8 bytes (values and gradient);
---   * 512 MiB for the runtime.
+--   * activations, per token (rows × sequence length): adapted layers × (16 ×
+--     hidden + 4 × intermediate) × 2 bytes, or with gradient checkpointing
+--     adapted layers × hidden × 4 bytes plus one layer's full set;
+--   * the logits and the loss: tokens × vocabulary × 36 bytes (measured:
+--     about nine f32 copies of each row's logits are alive at the peak);
+--   * 256 MiB for MLX's cache and the runtime.
 estimateMemory : ModelShape -> Job -> Int
 estimateMemory shape job =
     let
         s = settings job
         layers = trainedLayers shape s
-        weights =
-            if s.quantised then
-                shape.parameters * 9 // 16
+        tokens = s.batch.perDevice * s.sequenceLength
+        full = 16 * shape.hidden + 4 * shape.intermediate
+        activations =
+            if s.gradientCheckpointing then
+                tokens * (layers * shape.hidden * 4 + full * 2)
 
             else
-                shape.parameters * 2
+                tokens * layers * full * 2
+    in
+        weightBytes shape s + adapterBytes shape s + activations
+            + tokens * shape.vocab * 36
+            + 268435456
+
+
+weightBytes : ModelShape -> Settings -> Int
+weightBytes shape s =
+    if s.quantBits == 4 then
+        shape.parameters * 9 // 16
+
+    else if s.quantBits == 8 then
+        shape.parameters * 17 // 16
+
+    else
+        shape.parameters * 2
+
+
+adapterBytes : ModelShape -> Settings -> Int
+adapterBytes shape s =
+    let
         perLayer =
             List.foldl
                 (\t acc ->
@@ -1386,15 +1462,146 @@ estimateMemory shape job =
                         acc + s.rank * (i + o))
                 0
                 s.targets
-        adapter = layers * perLayer * 16
-        rows = s.batch.perDevice
-        activations =
-            rows * s.sequenceLength * layers
-                * (16 * shape.hidden + 4 * shape.intermediate)
-                * 2
-        logits = rows * s.sequenceLength * shape.vocab * 8
     in
-        weights + adapter + activations + logits + 536870912
+        trainedLayers shape s * perLayer * 16
+
+
+-- The memory a Python backend (Unsloth) needs: the estimate the driver was
+-- sized with, which counts its fused loss (8 bytes per logit) and 512 MiB
+-- for the Python runtime.
+estimatePython : ModelShape -> Job -> Int
+estimatePython shape job =
+    let
+        s = settings job
+        tokens = s.batch.perDevice * s.sequenceLength
+    in
+        weightBytes shape s + adapterBytes shape s
+            + tokens * trainedLayers shape s
+                  * (16 * shape.hidden + 4 * shape.intermediate)
+                  * 2
+            + tokens * shape.vocab * 8
+            + 536870912
+
+-- | One training setting as it was resolved: its key (`SEQUENCE_LENGTH`,
+-- `BATCH`, `RANK`, `QUANT_BITS`, `GRAD_CHECKPOINT`, `MEMORY_CAP`), the
+-- variable that overrides it, its value, and where the value came from:
+-- `env` (the operator), `code` (the job, its builder or its default) or
+-- `default` (nobody set it).
+type alias Setting =
+    { key : String
+    , name : String
+    , value : String
+    , source : String
+    }
+
+-- The job's own values, for the resolver: the code layer under the
+-- `SKY_AI_TRAIN_*` variables.
+type alias TrainCode =
+    { sequenceLength : String
+    , batch : String
+    , rank : String
+    , quantBits : String
+    , gradientCheckpointing : String
+    , memoryCap : String
+    }
+
+
+trainSettingsRaw : TrainCode -> Task Error (List Setting)
+trainSettingsRaw =
+    Ffi.kernel "Ai_trainSettingsResolve"
+
+
+trainCode : Settings -> TrainCode
+trainCode s =
+    { sequenceLength = String.fromInt s.sequenceLength
+    , batch =
+        String.fromInt s.batch.perDevice ++ "x"
+            ++ String.fromInt s.batch.accumulate
+    , rank = String.fromInt s.rank
+    , quantBits = String.fromInt s.quantBits
+    , gradientCheckpointing =
+        if s.gradientCheckpointing then
+            "on"
+
+        else
+            "off"
+    , memoryCap =
+        if s.memoryCap > 0 then
+            String.fromInt s.memoryCap
+
+        else
+            ""
+    }
+
+
+-- One resolved setting written into the job's settings. The resolver hands
+-- back normalised text (`1x4`, `on`, bytes), so a value that does not read
+-- here cannot occur; it leaves the setting as it was.
+applySetting : Setting -> Settings -> Settings
+applySetting st s =
+    let
+        num = Maybe.withDefault 0 (String.toInt st.value)
+    in
+        case st.key of
+
+            "SEQUENCE_LENGTH" ->
+                { s
+                    | sequenceLength =
+                        Maybe.withDefault
+                            s.sequenceLength
+                            (String.toInt st.value)
+                }
+
+            "BATCH" ->
+                case List.map String.toInt (String.split "x" st.value) of
+
+                    [ Just rows, Just acc ] ->
+                        { s | batch = { perDevice = rows, accumulate = acc } }
+
+                    _ ->
+                        s
+
+            "RANK" ->
+                { s | rank = Maybe.withDefault s.rank (String.toInt st.value) }
+
+            "QUANT_BITS" ->
+                { s
+                    | quantBits =
+                        Maybe.withDefault s.quantBits (String.toInt st.value)
+                }
+
+            "GRAD_CHECKPOINT" ->
+                { s | gradientCheckpointing = st.value == "on" }
+
+            "MEMORY_CAP" ->
+                { s | memoryCap = num }
+
+            _ ->
+                s
+
+
+-- The job as it runs here, and how each setting was resolved.
+effectiveWith : Job -> Task Error ( Job, List Setting )
+effectiveWith job =
+    trainSettingsRaw (trainCode (settings job))
+        |> Task.map (\sts -> ( applyAll sts job, sts ))
+
+
+applyAll : List Setting -> Job -> Job
+applyAll sts job =
+    update (\s -> List.foldl applySetting s sts) job
+
+
+-- | The job as it runs on this machine: the sequence length, the batch, the
+-- rank, the quantisation bits, gradient checkpointing and the memory cap
+-- from `SKY_AI_TRAIN_*` when the operator set them, else the job's own. A
+-- variable that changes the adapter is a different run (`runId` of the
+-- effective job). `plan`, `start`, `drive`, `progress`, `result`, `resume`
+-- and `cancel` all take the job through it; a value that does not parse is
+-- `InvalidSetting` naming the variable.
+effective : Job -> Task Error Job
+effective job =
+    effectiveWith job |> Task.map Tuple.first
 
 -- | What `plan` found: the backend and where it came from (`env`, `code`,
 -- `detected`), the machine, the base's shape, the steps, the estimate and
@@ -1410,6 +1617,8 @@ type alias Plan =
     , evalRows : Int
     , estimateBytes : Int
     , availableBytes : Int
+    , capBytes : Int
+    , settings : List Setting
     , cloud : Maybe CloudPlan
     }
 
@@ -1442,12 +1651,18 @@ usable h =
         h.availableBytes
 
 
--- | Plan a job before it runs: check it, resolve the backend, read the host
--- and the base's shape, and estimate the memory. A job that will not fit is
--- `ModelTooLarge` before anything is downloaded or started; a backend this
--- host cannot run is `NoAccelerator`.
+-- | Plan a job before it runs: resolve its settings (`effective`), check it,
+-- resolve the backend, read the host and the base's shape, and estimate the
+-- memory. A job that will not fit under the memory cap is `ModelTooLarge`
+-- before anything is downloaded or started; a backend this host cannot run
+-- is `NoAccelerator`. `settings` says where each setting came from.
 plan : Job -> Task Error Plan
-plan job =
+plan job0 =
+    effectiveWith job0 |> Task.andThen (\( job, sts ) -> planWith job sts)
+
+
+planWith : Job -> List Setting -> Task Error Plan
+planWith job sts =
     let
         s = settings job
     in
@@ -1462,7 +1677,12 @@ plan job =
                                           |> Task.andThen
                                                  (\shape ->
                                                      if b.value == "vertex" then
-                                                         fitPlan job b h shape
+                                                         fitPlan
+                                                             job
+                                                             sts
+                                                             b
+                                                             h
+                                                             shape
                                                              |> Task.andThen
                                                                     (\p ->
                                                                         planCloudWith
@@ -1477,15 +1697,37 @@ plan job =
                                                                                        }))
 
                                                      else
-                                                         fitPlan job b h shape)))
+                                                         fitPlan
+                                                             job
+                                                             sts
+                                                             b
+                                                             h
+                                                             shape)))
 
 
-fitPlan : Job -> RawSetting -> Host -> ModelShape -> Task Error Plan
-fitPlan job b h shape =
+-- The memory the trainer may use: the job's cap, else what this machine can
+-- give.
+capOf : Settings -> Host -> Int
+capOf s h =
+    if s.memoryCap > 0 then
+        s.memoryCap
+
+    else
+        usable h
+
+
+fitPlan : Job -> List Setting -> RawSetting -> Host -> ModelShape -> Task Error Plan
+fitPlan job sts b h shape =
     let
         s = settings job
-        need = estimateMemory shape job
+        need =
+            if b.value == "mlx" then
+                estimateMemory shape job
+
+            else
+                estimatePython shape job
         avail = usable h
+        cap = Math.min avail (capOf s h)
         p =
             { runId = runId job
             , backend = b.value
@@ -1497,13 +1739,15 @@ fitPlan job b h shape =
             , evalRows = s.evalRows
             , estimateBytes = need
             , availableBytes = avail
+            , capBytes = cap
+            , settings = sts
             , cloud = Nothing
             }
     in
-        if b.value /= "fake" && b.value /= "vertex" && need > avail then
+        if b.value /= "fake" && b.value /= "vertex" && need > cap then
             Task.fail
                 (Failure.toError
-                    (ModelTooLarge { needBytes = need, availableBytes = avail }))
+                    (ModelTooLarge { needBytes = need, availableBytes = cap }))
 
         else
             Task.succeed p
@@ -1658,6 +1902,8 @@ type alias CancelledEventPayload =
 type alias DriverErrorPayload =
     { code : String
     , message : String
+    , peakBytes : Int
+    , capBytes : Int
     }
 
 -- ── The driver protocol ─────────────────────────────────────────────
@@ -1810,10 +2056,18 @@ eventDecoder typ =
 
         "error" ->
             Just
-                (JsonD.map2
-                    (\c m -> DriverError { code = c, message = m })
+                (JsonD.map4
+                    (\c m pk cp ->
+                        DriverError
+                            { code = c
+                            , message = m
+                            , peakBytes = pk
+                            , capBytes = cp
+                            })
                     (JsonD.field "code" JsonD.string)
-                    (strOr "message"))
+                    (strOr "message")
+                    (intOr "peakBytes" 0)
+                    (intOr "capBytes" 0))
 
         _ ->
             Nothing
@@ -2480,13 +2734,15 @@ type alias Seen =
     , peft : String
     , relaunches : Int
     , resumedFrom : Int
+    , peakBytes : Int
+    , capBytes : Int
     }
 
 
 seenCodec : Codec Seen
 seenCodec =
     Codec.object
-        (\o c s cd m tl vl pf rl rf ->
+        (\o c s cd m tl vl pf rl rf pk cp ->
             { offset = o
             , outcome = c
             , step = s
@@ -2497,6 +2753,8 @@ seenCodec =
             , peft = pf
             , relaunches = rl
             , resumedFrom = rf
+            , peakBytes = pk
+            , capBytes = cp
             })
         |> Codec.field "offset" .offset Codec.int
         |> Codec.field "outcome" .outcome Codec.string
@@ -2508,6 +2766,8 @@ seenCodec =
         |> Codec.field "peft" .peft Codec.string
         |> Codec.field "relaunches" .relaunches Codec.int
         |> Codec.field "resumedFrom" .resumedFrom Codec.int
+        |> Codec.field "peakBytes" .peakBytes Codec.int
+        |> Codec.field "capBytes" .capBytes Codec.int
         |> Codec.buildObject
 
 
@@ -2529,6 +2789,7 @@ type alias Setup =
     , shape : ModelShape
     , tool : Tool
     , weights : String
+    , capBytes : Int
     }
 
 
@@ -2541,8 +2802,9 @@ type alias Setup =
 --                  installed if allowed
 --     base         the backend's base weights, downloaded and verified
 --     shape        the serving model's shape (fetched if allowed)
---     plan         the memory estimate against this host: a job that will
---                  not fit is ModelTooLarge before the trainer starts
+--     fit          the memory estimate against the cap (the job's, else this
+--                  host's): a job that will not fit is ModelTooLarge before
+--                  the trainer starts; the cap is the trainer's guard
 --     origin       the run directory's last attempt, if any
 --     launch-<a>   the trainer, detached (attaches if it already runs)
 --     watch-<a>-<n>, tick-<a>-<n>
@@ -2586,7 +2848,12 @@ durableId job generation =
 -- and its backend resolved first, so a job that cannot run here (a bad
 -- setting, a backend this host lacks) fails at once and starts no run.
 start : Db -> Job -> Task Error String
-start db job =
+start db code =
+    effective code |> Task.andThen (startEffective db code)
+
+
+startEffective : Db -> Job -> Job -> Task Error String
+startEffective db code job =
     Task.fromResult (check job)
         |> Task.andThen (\_ -> resolveRaw (backendCode (settings job)))
         |> Task.andThen
@@ -2606,9 +2873,12 @@ start db job =
         |> Task.andThen (\_ -> readRaw (runDir job))
         |> Task.andThen
                (\state ->
+                   -- The workflow is named after the job as written (a
+                   -- worker's `workflows` list is pure); the run is the
+                   -- effective job's.
                    Durable.start
                        db
-                       (defaultWorkflow job)
+                       (defaultWorkflow code)
                        (durableId job state.generation)
                        (request job))
         |> Task.map (\_ -> runId job)
@@ -2627,12 +2897,17 @@ poll db jobs =
 -- Ctrl-C stops this program only: the trainer keeps training, and `drive` or
 -- `start` picks it up again.
 drive : Db -> Job -> Task Error Adapter
-drive db job =
-    start db job |> Task.andThen (\_ -> Task.loop (driveStep db job) 0)
+drive db code =
+    effective code
+        |> Task.andThen
+               (\job ->
+                   startEffective db code job
+                       |> Task.andThen
+                              (\_ -> Task.loop (driveStep db code job) 0))
 
 
-driveStep : Db -> Job -> Int -> Task Error (Task.Step Int Adapter)
-driveStep db job n =
+driveStep : Db -> Job -> Job -> Int -> Task Error (Task.Step Int Adapter)
+driveStep db code job n =
     readRaw (runDir job)
         |> Task.andThen
                (\state ->
@@ -2645,7 +2920,7 @@ driveStep db job n =
                            Task.fail e
 
                        Nothing ->
-                           poll db [ job ]
+                           poll db [ code ]
                                |> Task.andThen
                                       (\worked ->
                                           if worked then
@@ -2709,7 +2984,7 @@ errorIn text =
 -- the run's new generation.
 resume : Job -> Task Error Int
 resume job =
-    resumeRaw (runDir job)
+    effective job |> Task.andThen (\e -> resumeRaw (runDir e))
 
 
 -- | `resume` for the run in a run directory.
@@ -2752,7 +3027,7 @@ exportAt dir merged =
 -- `True` when a live trainer was signalled.
 cancel : Job -> Task Error Bool
 cancel job =
-    cancelAt (runDir job)
+    effective job |> Task.andThen (\e -> cancelAt (runDir e))
 
 
 -- | Cancel the run in a run directory. A Vertex run is cancelled in the
@@ -2779,15 +3054,15 @@ cancelAt dir =
 -- | The job's run's progress, from its run directory (no database needed).
 progress : Job -> Task Error Progress
 progress job =
-    progressAt (runDir job)
+    effective job |> Task.andThen (\e -> progressAt (runDir e))
 
 
 -- | The job's finished adapter: `Nothing` while the run has not finished, the
 -- adapter when it has, and the run's typed failure (`TrainingFailed`,
 -- `TrainingCancelled`, …) when it failed.
 result : Job -> Task Error (Maybe Adapter)
-result job =
-    readRaw (runDir job)
+result code =
+    effective code |> Task.andThen (\job -> readRaw (runDir job))
         |> Task.andThen
                (\state ->
                    case resultOf state.result of
@@ -2887,8 +3162,25 @@ runs workDir =
 
 
 -- ── The workflow body ───────────────────────────────────────────────
+-- The worker resolves the job's settings once, as a journalled step, so a
+-- replay runs the job the first attempt ran; a worker whose environment makes
+-- it a different run refuses it.
 body : Job -> Durable.Ctx -> RunRequest -> Task Error Adapter
-body job ctx req =
+body code ctx req =
+    Durable.step
+        ctx
+        (Codec.list settingCodec)
+        "settings"
+        (effectiveWith code |> Task.map Tuple.second)
+        |> Task.onError
+               (\e ->
+                   recordFailure ((settings code).workDir ++ "/" ++ req.runId) e
+                       |> Task.map (\_ -> []))
+        |> Task.andThen (\sts -> bodyFor (applyAll sts code) ctx req)
+
+
+bodyFor : Job -> Durable.Ctx -> RunRequest -> Task Error Adapter
+bodyFor job ctx req =
     if req.runId /= runId job then
         Task.fail
             (invalid
@@ -2896,7 +3188,7 @@ body job ctx req =
                 ("this worker's job is run " ++ runId job
                     ++ ", and the durable run is "
                     ++ req.runId
-                    ++ "; the job changed after the run started (a new job is a new run)"))
+                    ++ "; the job or its SKY_AI_TRAIN_* settings changed after the run started (a new job is a new run)"))
             |> Task.onError (\e -> recordFailure (runDir job) e)
 
     else
@@ -3202,12 +3494,13 @@ shapeStep ctx job ( backend, tool, weights ) =
                    Durable.step
                        ctx
                        Codec.int
-                       "plan"
+                       "fit"
                        (host ()
                            |> Task.andThen
                                   (\h ->
                                       fitPlan
                                           job
+                                          []
                                           { key = ""
                                           , name = ""
                                           , value = backend
@@ -3215,13 +3508,14 @@ shapeStep ctx job ( backend, tool, weights ) =
                                           }
                                           h
                                           shape)
-                           |> Task.map .estimateBytes)
+                           |> Task.map .capBytes)
                        |> Task.map
-                              (\_ ->
+                              (\cap ->
                                   { backend = backend
                                   , shape = shape
                                   , tool = tool
                                   , weights = weights
+                                  , capBytes = cap
                                   }))
 
 
@@ -3284,11 +3578,16 @@ driverJson job st attempt from =
                 , ( "fakeCrashAt", JsonE.int s.fakeCrashAt )
                 , ( "fakeStepMs", JsonE.int s.fakeStepMs )
                 , ( "format", JsonE.string s.format )
+                , ( "gradientCheckpointing"
+                  , JsonE.bool s.gradientCheckpointing
+                  )
                 , ( "layers", JsonE.int s.layers )
                 , ( "learningRate", JsonE.float s.learningRate )
                 , ( "maxSteps", JsonE.int s.maxSteps )
+                , ( "memoryCap", JsonE.int st.capBytes )
                 , ( "python", JsonE.string st.tool.python )
-                , ( "quantised", JsonE.bool s.quantised )
+                , ( "quantBits", JsonE.int s.quantBits )
+                , ( "quantised", JsonE.bool (s.quantBits < 16) )
                 , ( "rank", JsonE.int s.rank )
                 , ( "resumeDir"
                   , JsonE.string (Maybe.withDefault "" (Maybe.map .path from))
@@ -3522,6 +3821,8 @@ seenOf from w =
             , peft = ""
             , relaunches = 0
             , resumedFrom = 0
+            , peakBytes = 0
+            , capBytes = 0
             }
         folded =
             List.foldl
@@ -3599,7 +3900,13 @@ seeEvent ev acc =
             { acc | outcome = "cancelled", step = c.step }
 
         DriverError e ->
-            { acc | outcome = "error", code = e.code, message = e.message }
+            { acc
+                | outcome = "error"
+                , code = e.code
+                , message = e.message
+                , peakBytes = e.peakBytes
+                , capBytes = e.capBytes
+            }
 
 
 cancelled : Job -> Int -> Error
@@ -3635,8 +3942,13 @@ driverFailure job seen =
     case seen.code of
 
         "ModelTooLarge" ->
+            -- The memory guard's kill: what the trainer had reached, and its
+            -- cap.
             Failure.toError
-                (ModelTooLarge { needBytes = 0, availableBytes = 0 })
+                (ModelTooLarge
+                    { needBytes = seen.peakBytes
+                    , availableBytes = seen.capBytes
+                    })
 
         "NoAccelerator" ->
             Failure.toError (NoAccelerator { wanted = seen.message })
@@ -3775,7 +4087,7 @@ adapterOf job st seen peft gguf merged =
         , backend = st.backend
         , toolchain = st.tool.name ++ "@" ++ st.tool.id
         , method =
-            if s.quantised then
+            if s.quantBits < 16 then
                 "qlora"
 
             else
@@ -4451,6 +4763,7 @@ inputsJson job cs shape key train valid =
                 , trainer = ""
                 }
             , weights = ""
+            , capBytes = 0
             }
         blobValue b =
             JsonE.object
@@ -4926,6 +5239,7 @@ cloudLaunchAndWatch ctx job cs p shape key =
                 , trainer = ""
                 }
             , weights = ""
+            , capBytes = 0
             }
     in
         Task.fromResult (Store.fromUrl cs.staging)
@@ -5025,6 +5339,10 @@ cloudLaunchAndWatch ctx job cs p shape key =
                                                                           w.relaunches
                                                                       , resumedFrom =
                                                                           w.resumedFrom
+                                                                      , peakBytes =
+                                                                          0
+                                                                      , capBytes =
+                                                                          0
                                                                       }
                                                                     , { settings =
                                                                           cs
@@ -5555,6 +5873,8 @@ cloudWatchLoop ctx job cs p store key attempt name n segment relaunched spentBef
                                            , peft = ""
                                            , relaunches = relaunched
                                            , resumedFrom = w.resumedFrom
+                                           , peakBytes = 0
+                                           , capBytes = 0
                                            })
 
                                "cancelled" ->

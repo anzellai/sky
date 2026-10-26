@@ -39,6 +39,10 @@ import (
 
 const aiTrainerExe = "sky-trainer"
 
+// aiTrainerCacheLimit bounds MLX's buffer cache (256 MiB): freed buffers MLX
+// keeps for reuse count in the process's footprint, and so against the cap.
+const aiTrainerCacheLimit = 256 << 20
+
 // aiTrainerBinary is a usable sky-trainer.
 type aiTrainerBinary struct {
 	backend string
@@ -383,10 +387,14 @@ func aiTrainNativeArgs(cfg map[string]any, runDir, token string) ([]string, erro
 		"--vocab", strconv.Itoa(c.Vocab), "--tied", tied,
 		"--rope-theta", aiFloatArg(c.RopeTheta), "--rms-eps", aiFloatArg(c.RmsEps),
 	}
+	bits := aiJNum(cfg, "quantBits", 0)
+	if quantised, _ := cfg["quantised"].(bool); bits == 0 && quantised {
+		bits = 4
+	}
 	if q := c.Quantization; q != nil {
 		args = append(args, "--base-bits", strconv.Itoa(q.Bits), "--base-group-size", strconv.Itoa(q.GroupSize))
-	} else if b, _ := cfg["quantised"].(bool); b {
-		args = append(args, "--quant-bits", "4")
+	} else if bits == 4 || bits == 8 {
+		args = append(args, "--quant-bits", strconv.Itoa(bits))
 	}
 	args = append(args,
 		"--rank", strconv.Itoa(aiJNum(cfg, "rank", 8)), "--alpha", strconv.Itoa(aiJNum(cfg, "alpha", 16)),
@@ -401,6 +409,14 @@ func aiTrainNativeArgs(cfg map[string]any, runDir, token string) ([]string, erro
 	)
 	if from := aiJNum(cfg, "resumeFrom", 0); from > 0 {
 		args = append(args, "--resume-step", strconv.Itoa(from), "--resume-dir", aiJStr(cfg, "resumeDir"))
+	}
+	ckpt := "0"
+	if b, _ := cfg["gradientCheckpointing"].(bool); b {
+		ckpt = "1"
+	}
+	args = append(args, "--grad-checkpoint", ckpt, "--cache-limit", strconv.Itoa(aiTrainerCacheLimit))
+	if capBytes := aiJNum(cfg, "memoryCap", 0); capBytes > 0 {
+		args = append(args, "--memory-cap", strconv.Itoa(capBytes))
 	}
 	if aiJStr(cfg, "device") == "cpu" {
 		args = append(args, "--cpu")

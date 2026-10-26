@@ -260,3 +260,70 @@ fn the_driver_suites_pass_under_the_managed_cpython() {
     );
     assert!(report.contains("OK"), "{report}");
 }
+
+/// The native trainer's memory guard SIGKILLs the trainer over its cap,
+/// writing guard.json first and its error line after. The durable workflow
+/// ends the run with `ModelTooLarge` and never relaunches it into the same
+/// cap. A stand-in `sky-trainer` (SKY_AI_TRAINER_BIN) leaves the worst case:
+/// guard.json and a SIGKILL, no error line. The rest of the workflow is real:
+/// the pinned dev base, the tokenize step, the shape and the fit plan.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[test]
+fn a_guard_kill_ends_model_too_large_without_a_relaunch() {
+    use std::os::unix::fs::PermissionsExt;
+    if !gate() {
+        return;
+    }
+    let project = fixture();
+    let work = scratch("guard");
+    let bin = work.join("sky-trainer");
+    std::fs::write(
+        &bin,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then echo 'sky-trainer 0.1.0 (mlx-c)'; exit 0; fi
+run=""
+while [ $# -gt 0 ]; do if [ "$1" = "--run" ]; then run="$2"; fi; shift; done
+echo '{"attempt":0,"backend":"mlx","resumeFrom":0,"toolchain":"native","totalSteps":12,"type":"hello","v":1}'
+printf '{"capBytes":2500000000,"code":"ModelTooLarge","peakBytes":2600000000}\n' > "$run/guard.json"
+kill -9 $$
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let w = work.to_string_lossy().to_string();
+    let mut cmd = Command::new(project.join("sky-out/app"));
+    cmd.args(["drive", "mlx", &w])
+        .current_dir(&project)
+        .env_remove("ENV")
+        .env_remove("SKY_TEST_MODE");
+    for (k, _) in std::env::vars() {
+        if k.starts_with("SKY_AI_") && k != "SKY_AI_HOME" {
+            cmd.env_remove(k);
+        }
+    }
+    let out = cmd.env("SKY_AI_TRAINER_BIN", &bin).output().unwrap();
+    let t = text(&out);
+    assert!(!out.status.success(), "the run must fail: {t}");
+    assert!(t.contains("ModelTooLarge"), "{t}");
+    let runs: Vec<_> = std::fs::read_dir(work.join("runs"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.join("events.jsonl").is_file())
+        .collect();
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    let events = std::fs::read_to_string(runs[0].join("events.jsonl")).unwrap();
+    assert_eq!(
+        events.matches("\"type\":\"hello\"").count(),
+        1,
+        "no relaunch after the guard's kill:\n{events}"
+    );
+    let result = std::fs::read_to_string(runs[0].join("result.json")).unwrap();
+    assert!(result.contains("ModelTooLarge"), "{result}");
+    assert!(
+        result.contains("2600000000"),
+        "the peak it reached: {result}"
+    );
+    let _ = std::fs::remove_dir_all(&project);
+    let _ = std::fs::remove_dir_all(&work);
+}

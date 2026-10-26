@@ -8,6 +8,8 @@
 //	"hang"    like "", but ignore SIGTERM (a trainer that must be killed)
 //	"partial" write one line without its newline, then sleep
 //	"error"   write an error line and exit 1
+//	"oom"     what the native trainer's memory guard leaves when it kills
+//	          the trainer before writing its error line: guard.json, exit 137
 //
 // fakeCrashAt crashes the first attempt after that step (exit 137, no
 // terminal line). SIGTERM checkpoints and writes `cancelled`.
@@ -69,6 +71,9 @@ func main() {
 	case "error":
 		emit(map[string]any{"type": "error", "code": "TrainingFailed", "message": "scripted failure"})
 		os.Exit(1)
+	case "oom":
+		os.WriteFile(filepath.Join(run, "guard.json"), []byte(`{"capBytes":2500000000,"code":"ModelTooLarge","peakBytes":2600000000}`+"\n"), 0o644)
+		os.Exit(137)
 	}
 	last := cfg.ResumeFrom
 	for step := cfg.ResumeFrom; step < cfg.MaxSteps; step++ {

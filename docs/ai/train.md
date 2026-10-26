@@ -83,16 +83,19 @@ lineage: the adapter records the version's name and digest.
 | Builder | Default | Meaning |
 |---|---|---|
 | `withName n` | `adapter` | the run directory's prefix and the registry model name. Lower case letters, digits and `-`, at most 48 characters, not starting with `-` |
-| `withQuantisedBase` | off | mark the job QLoRA (the base weights are 4-bit). Recorded in the lineage and the registry method |
-| `withRank r` | 8 | the LoRA rank |
+| `withQuantisedBase` | off | mark the job QLoRA (the base weights are 4-bit). The same as `withQuantBits 4`. Recorded in the lineage and the registry method |
+| `withQuantBits b` | 16 | the bits the base is held in while training: 4 or 8 quantise a 16-bit base as it loads, 16 keeps it. An already-quantised snapshot trains as it is. `SKY_AI_TRAIN_QUANT_BITS` |
+| `withGradientCheckpointing` | off | recompute each adapted layer's activations in the backward pass: less memory, more time, the same adapter. `SKY_AI_TRAIN_GRAD_CHECKPOINT` (`on` or `off`) |
+| `withMemoryCap bytes` | this machine's memory (three quarters of it on Apple silicon) | the most memory the trainer may use. A job whose estimate is above it is `ModelTooLarge` before it starts, and the native trainer's guard ends a run that goes over it with `ModelTooLarge`, never relaunching it. `SKY_AI_TRAIN_MEMORY_CAP` (bytes, or `2500MB`, `2.5GB`, `2GiB`) |
+| `withRank r` | 8 | the LoRA rank. `SKY_AI_TRAIN_RANK` |
 | `withAlpha a` | twice the rank | the update is scaled by alpha / rank |
 | `withLayers n` | 16 | how many of the last decoder layers get adapters. `-1` for all |
 | `withTargets ts` | the four attention projections | the projections that get adapters, as Hugging Face module paths |
 | `withLearningRate r` | `1e-4` | the learning rate (Adam) |
 | `withEpochs n` | 1 | passes over the train split. `withMaxSteps` wins |
 | `withMaxSteps n` | 0 (not set) | stop after this many optimiser steps |
-| `withBatch { perDevice, accumulate }` | `{ perDevice = 4, accumulate = 1 }` | rows per step, and the gradients accumulated over that many of them |
-| `withSequenceLength n` | 1024 | tokens per row. A longer row is cut |
+| `withBatch { perDevice, accumulate }` | `{ perDevice = 4, accumulate = 1 }` | rows per step, and the gradients accumulated over that many of them. `SKY_AI_TRAIN_BATCH` (`4`, or rows x accumulate: `1x4`) |
+| `withSequenceLength n` | 1024 | tokens per row. A longer row is cut. `SKY_AI_TRAIN_SEQUENCE_LENGTH` |
 | `withSeed s` | 0 | the seed of the adapter's initial values and of the data order |
 | `withCheckpointEvery n` | 100 | write a checkpoint every n steps (0: none) |
 | `withEvalEvery n` | 50 | measure the eval split's loss every n steps (0: at the end only) |
@@ -105,6 +108,14 @@ lineage: the adapter records the version's name and digest.
 | `withWatchWindow ms` | 300000 | the longest one watch of the trainer lasts (at most five minutes) |
 | `fakeCrashAt n` | 0 | `Fake` only: the first attempt dies after step n |
 | `fakeStepMs n` | 20 | `Fake` only: the time one step takes |
+
+An operator overrides the six settings marked with a variable from the
+environment, and the variable wins over the code. `Train.effective job` is the
+job as it runs here, and `Train.plan` lists each setting with its source
+(`env`, `code` or `default`). A variable that changes the adapter (sequence
+length, batch, rank, bits) makes a different run, with its own run id. A value
+that does not parse is `InvalidSetting` naming the variable and the form it
+takes; the value itself is never shown.
 
 The targets are `self_attn.q_proj`, `self_attn.k_proj`, `self_attn.v_proj`,
 `self_attn.o_proj` (the default) and `mlp.gate_proj`, `mlp.up_proj`,

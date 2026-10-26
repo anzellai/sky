@@ -83,6 +83,9 @@ const (
 	aiTrainCancelFile  = "cancel"
 	aiTrainResultFile  = "result.json"
 	aiTrainStageFile   = "stage.json"
+	// aiTrainGuardFile is written by sky-trainer's memory guard before it
+	// kills the trainer over its cap (scripts/ai/trainer/guard.c).
+	aiTrainGuardFile = "guard.json"
 )
 
 // aiTrainMaxWatch bounds one watch. A durable step must end well inside the
@@ -650,6 +653,10 @@ func aiTrainLaunch(runDir, driver string) (map[string]any, error) {
 			return nil, aiFailf(aiNotProvisioned, "the %s toolchain's python (%s) is not installed; run `sky ai provision --train %s`",
 				backend, python, backend).with("what", backend+" toolchain").with("command", "sky ai provision --train "+backend)
 		}
+		// A guard.json from an earlier attempt is not this attempt's.
+		if err := os.Remove(filepath.Join(runDir, aiTrainGuardFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, aiTrainFail("cannot clear %s: %v", aiTrainGuardFile, err)
+		}
 		pid, err := aiTrainSpawn(runDir, t.Launch, cfg)
 		if err != nil {
 			return nil, err
@@ -831,6 +838,7 @@ func aiTrainWatch(runDir string, offset int64, wait time.Duration) (map[string]a
 			lines = append(lines, got...)
 			offset = next
 		}
+		lines, offset = aiTrainGuardEnd(runDir, lines, offset)
 	}
 	out := make([]any, len(lines))
 	for i, l := range lines {
@@ -843,6 +851,51 @@ func aiTrainWatch(runDir string, offset int64, wait time.Duration) (map[string]a
 		"cancelRequested": fileExists(filepath.Join(runDir, aiTrainCancelFile)),
 		"stderrTail":      aiTrainStderrTail(runDir),
 	}, nil
+}
+
+// aiTrainGuardEnd: a trainer gone without a terminal line, whose guard wrote
+// guard.json, was killed over its memory cap. The guard writes guard.json
+// before the kill and its error line after, so the line may still be on its
+// way: wait for it a little, else end the attempt with the line guard.json
+// stands for. Either way the workflow sees ModelTooLarge, never a death it
+// would relaunch into the same cap.
+func aiTrainGuardEnd(runDir string, lines []string, offset int64) ([]string, int64) {
+	for _, l := range lines {
+		if aiTrainTerminal(l) {
+			return lines, offset
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(runDir, aiTrainGuardFile))
+	if err != nil {
+		return lines, offset
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		got, next, err := aiTrainReadLines(runDir, offset, aiTrainWatchLimit)
+		if err == nil {
+			lines = append(lines, got...)
+			offset = next
+			for _, l := range got {
+				if aiTrainTerminal(l) {
+					return lines, offset
+				}
+			}
+		}
+		time.Sleep(aiTrainPollEvery)
+	}
+	var g struct {
+		CapBytes  int64  `json:"capBytes"`
+		PeakBytes int64  `json:"peakBytes"`
+		Code      string `json:"code"`
+	}
+	if json.Unmarshal(b, &g) != nil || g.Code == "" {
+		g.Code = "ModelTooLarge"
+	}
+	line, _ := json.Marshal(map[string]any{
+		"type": "error", "v": 1, "code": g.Code, "capBytes": g.CapBytes, "peakBytes": g.PeakBytes,
+		"message": fmt.Sprintf("the trainer used %d bytes, over its memory cap of %d bytes; give the job a smaller sequence length, batch or rank, a quantised base, or a larger cap", g.PeakBytes, g.CapBytes),
+	})
+	return append(lines, string(line)), offset
 }
 
 func aiTrainStderrTail(runDir string) string {

@@ -76,8 +76,9 @@ static void guard_loop(pid_t trainer, const char* run_dir, uint64_t cap) {
     uint64_t now = sky_mem_footprint(trainer);
     if (now > peak) peak = now;
     if (now > cap) {
-      kill(trainer, SIGKILL);
-      for (int i = 0; i < 100 && getppid() == trainer; i++) nap_ms(10);
+      /* guard.json first, then the kill, then the error line: the runtime
+         treats a trainer gone with a guard.json as killed over its cap
+         (never relaunched), so the file must exist before the trainer dies. */
       char json[512];
       snprintf(json, sizeof json, "{\"capBytes\":%llu,\"code\":\"ModelTooLarge\",\"peakBytes\":%llu}\n",
                (unsigned long long)cap, (unsigned long long)peak);
@@ -91,6 +92,8 @@ static void guard_loop(pid_t trainer, const char* run_dir, uint64_t cap) {
         close(fd);
         rename(tmp, fin);
       }
+      kill(trainer, SIGKILL);
+      for (int i = 0; i < 100 && getppid() == trainer; i++) nap_ms(10);
       char line[1024];
       snprintf(line, sizeof line,
                "{\"capBytes\":%llu,\"code\":\"ModelTooLarge\",\"message\":\"the trainer used %llu bytes, "
