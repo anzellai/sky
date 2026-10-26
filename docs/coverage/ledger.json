@@ -547,6 +547,17 @@
       ],
       "tier": "T2"
     },
+    "stdlib-bodies": {
+      "expected_assertions": 113,
+      "falsifier_mutation": "stdlib-bodies.record-missing-field",
+      "falsifier_proven": true,
+      "summary": "every sky-stdlib module body type-checks (a build trusts stdlib signatures)",
+      "surfaces": [
+        "compiler.infer",
+        "compiler.reject"
+      ],
+      "tier": "T1"
+    },
     "verify-cli": {
       "expected_assertions": 13,
       "falsifier_mutation": "verify-cli.drop-expected-output",
@@ -1561,6 +1572,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "gate `stdlib-bodies`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "gate `reject`",
             "class": "Falsified",
             "strength": 4
@@ -1722,6 +1738,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "gate `stdlib-bodies`",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "gate `reject`",
             "class": "Falsified",

@@ -146,14 +146,14 @@
     },
     "build-new-dir-compiles-nothing": {
       "inputs_files": 493,
-      "inputs_hash": "80179b6b2bf5598495d1de5c5b5b69da8e2880e8",
+      "inputs_hash": "267d8e5643d6bc19b5a27b15dc7ab7da074eb9fe",
       "mutation": "build-new-dir.no-trimpath",
       "mutations": [
         "build-new-dir.no-trimpath"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793016074
+      "proven_at_unix": 1793019199
     },
     "canary": {
       "inputs_files": 2,
@@ -164,7 +164,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1793016074
+      "proven_at_unix": 1793019222
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -201,25 +201,25 @@
     },
     "config-migration": {
       "inputs_files": 5,
-      "inputs_hash": "40799bf15d94d07266263ecd22efed0fa3aa8b87",
+      "inputs_hash": "9d3b9c894214ed0e8690909cbc695a0dc9f0aef2",
       "mutation": "config-migration.drop-a-builder-label",
       "mutations": [
         "config-migration.drop-a-builder-label"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1792791781
+      "proven_at_unix": 1793019199
     },
     "config-surface": {
       "inputs_files": 815,
-      "inputs_hash": "9c6d8e6aeb13329d4b76695a6166982b00e8890f",
+      "inputs_hash": "d1a7a48d59a86c6ac3a2ec151fdd2ee080031933",
       "mutation": "config-surface.seed-a-suffix-nothing-reads",
       "mutations": [
         "config-surface.seed-a-suffix-nothing-reads"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793016074
+      "proven_at_unix": 1793019199
     },
     "conformance": {
       "inputs_files": 83,
@@ -316,14 +316,14 @@
     },
     "coverage-ledger": {
       "inputs_files": 4375,
-      "inputs_hash": "2c70066ff34ac079905cf0ee182a36cf51496f23",
+      "inputs_hash": "0543f70e0948b983df00bf9925c3424b6d3e5441",
       "mutation": "coverage-ledger.drop-a-sole-owner-import",
       "mutations": [
         "coverage-ledger.drop-a-sole-owner-import"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793016074
+      "proven_at_unix": 1793019222
     },
     "erasure-path-uses-an-index": {
       "inputs_files": 808,
@@ -471,6 +471,17 @@
       "observed": "PROVEN",
       "outcome": "as-declared",
       "proven_at_unix": 1792957831
+    },
+    "stdlib-bodies": {
+      "inputs_files": 4,
+      "inputs_hash": "22885433b47369806ea87888e0fe4098b23ec58a",
+      "mutation": "stdlib-bodies.record-missing-field",
+      "mutations": [
+        "stdlib-bodies.record-missing-field"
+      ],
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1793019199
     },
     "verify-cli": {
       "inputs_files": 440,
