@@ -951,8 +951,12 @@ async function runEmbedded() {
   // Sign out
   await check("sign-out: ends the console session", async () => {
     navigating(5000);
-    await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded" }), clickText("Sign out")]);
-    await waitFor("login form", async () => ({ ok: (await page.locator("input[name=token]").count()) === 1 }));
+    // Wait for the outcome (the login form), not for one navigation event:
+    // the link goes to _logout, which redirects to the login form, and a
+    // waitForNavigation pinned to the first hop fails if any later step of
+    // the chain replaces it.
+    await clickText("Sign out");
+    await waitFor("login form", async () => ({ ok: (await page.locator("input[name=token]").count()) === 1, why: page.url() }), 15000);
     navigating();
     await page.goto(PAGE_ORIGIN + BASE, { waitUntil: "domcontentloaded" });
     expect((await page.locator("input[name=token]").count()) === 1, "the console opened again without a sign-in");

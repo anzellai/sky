@@ -116,8 +116,8 @@ web_e2e() {
 
 compiler_core() {
     needs_compiler
-    add 40 "corpus gates: roundtrip / resolve / infer / reject / repro" \
-        "for g in roundtrip resolve infer reject repro; do $XTASK \$g || exit 1; done"
+    add 40 "corpus gates: roundtrip / resolve / infer / reject / repro / stdlib-bodies" \
+        "for g in roundtrip resolve infer reject repro stdlib-bodies; do $XTASK \$g || exit 1; done"
     add 45 "coerce-floor (runtime-narrowing floor)" "$XTASK coerce-floor"
     add 50 "harness T1: shared-world + corpus gates" \
         "$HARNESS --only shared-world,corpus-manifest,corpus-reject,corpus-emit-shape"
@@ -190,6 +190,7 @@ while IFS= read -r f; do
             web_e2e
             add 58 "stdlib conformance" "scripts/conformance.sh" ;;
         sky-stdlib/Std/Ui.sky | sky-stdlib/Std/Ui/*)
+            add 15 "every stdlib body type-checks (stdlib-bodies)" "$XTASK stdlib-bodies"
             # Std.Ui renders in the browser: the canvas / text / terminal e2e
             # is the gate that sees the markup a browser keeps.
             needs_compiler
@@ -198,6 +199,7 @@ while IFS= read -r f; do
             add 60 "e2e: Std.Ui canvas, text wrapping + terminal (Sky.Live + Sky.Spa)" "scripts/ui-canvas-terminal-e2e.sh"
             add 62 "live-docs examples" "scripts/doc-examples.sh" ;;
         sky-stdlib/*)
+            add 15 "every stdlib body type-checks (stdlib-bodies)" "$XTASK stdlib-bodies"
             needs_compiler
             add 58 "stdlib conformance" "scripts/conformance.sh"
             add 50 "harness: sky-suites" "$HARNESS --only sky-suites"

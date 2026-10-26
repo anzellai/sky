@@ -34,7 +34,7 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 8 | 7.1% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 751 | 33.6% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 747 | 33.4% |
 | symbols unreferenced under the generous rule | 660 | 29.5% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
@@ -306,4 +306,5 @@ None.
 | `sky-suites` | T1 | PROVEN | `lang.constructs` |
 | `sky-verify` | T1 | PROVEN | `compiler.fmt` · `lang.constructs` |
 | `spa-diff-fuzz` | T2 | PROVEN | `stdlib.Std.Spa` |
+| `stdlib-bodies` | T1 | PROVEN | `compiler.infer` · `compiler.reject` |
 | `verify-cli` | T1 | PROVEN | `ui.tui` · `config.sky-toml` |

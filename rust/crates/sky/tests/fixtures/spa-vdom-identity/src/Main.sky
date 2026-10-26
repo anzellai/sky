@@ -38,6 +38,11 @@ module Main exposing (main)
 --                  skipped" may be logged.
 --   navs      Back / Forward (popstate) runs onNavigate once per step, on
 --                  Sky.Spa and on Sky.Live alike
+--   /fsel     a FOCUSED select whose pick changes a sibling's tag (a patch on
+--                  the common parent) must update the sibling, pick after
+--                  pick; and while the select is focused and unpicked, Sub
+--                  ticks must not rewrite it, and the held region catches
+--                  up when it loses focus
 --
 -- `Reload` reads a file (a SERVER branch), which puts the app on the SSR path.
 
@@ -61,6 +66,7 @@ type Page
     | UserPage String
     | Plain
     | Nested
+    | FSel
     | NotFoundPage
 
 type alias Model =
@@ -79,6 +85,9 @@ type alias Model =
     , log : List String
     , navs : List String
     , rows : List String
+    , ffilter : String
+    , fticks : Int
+    , fticking : Bool
     }
 
 type Msg
@@ -103,6 +112,9 @@ type Msg
     | Ime String
     | Toggle
     | Navigated Page
+    | FPick String
+    | FStart
+    | FTick
     | DoSignIn { email : String
 , password : String
 }
@@ -125,6 +137,9 @@ init () =
       , log = []
       , navs = []
       , rows = []
+      , ffilter = "all"
+      , fticks = 0
+      , fticking = False
       }
     , Cmd.none
     )
@@ -221,6 +236,20 @@ update msg model =
         DoSignIn creds ->
             ( logm ("SignIn:" ++ creds.email) model, Cmd.none )
 
+        FPick f ->
+            ( { model | ffilter = f }, Cmd.none )
+
+        FStart ->
+            ( { model | fticks = 0, fticking = True }, Cmd.none )
+
+        FTick ->
+            ( { model
+                  | fticks = model.fticks + 1
+                  , fticking = model.fticks + 1 < 9
+              }
+            , Cmd.none
+            )
+
 
 pageName : Page -> String
 pageName p =
@@ -237,6 +266,9 @@ pageName p =
 
         Nested ->
             "nested"
+
+        FSel ->
+            "fsel"
 
         NotFoundPage ->
             "notfound"
@@ -463,13 +495,20 @@ view model =
         Nested ->
             nested model
 
+        FSel ->
+            fselPage model
+
         NotFoundPage ->
             Ui.column [] [ Ui.text "No such page here" ]
 
 
 subscriptions : Model -> Sub Msg
-subscriptions _ =
-    Sub.none
+subscriptions model =
+    if model.fticking then
+        Sub.every 150 FTick
+
+    else
+        Sub.none
 
 
 app =
@@ -483,6 +522,7 @@ app =
                [ App.route "/" Home
                , App.route "/plain" Plain
                , App.route "/nested" Nested
+               , App.route "/fsel" FSel
                , App.routeParam "/u/:name" UserPage
                ]
         |> App.withNotFound NotFoundPage
@@ -573,3 +613,56 @@ nestExtra model =
 
     else
         []
+
+
+-- /fsel: a filter select and, in the SAME parent, a list that becomes a
+-- paragraph when nothing matches (a tag change, so the diff patches the
+-- parent, which contains the select) and a tick that changes tag on every
+-- tick. #fstate sits outside that parent: it always shows the model.
+fselPage : Model -> Element Msg
+fselPage model =
+    Ui.column
+        []
+        [ Ui.html
+              (Html.div
+                  [ HA.id "fbox" ]
+                  [ Html.select
+                        [ HA.id "fsel"
+                        , HA.value model.ffilter
+                        , HE.onInput FPick
+                        ]
+                        [ Html.option [ HA.value "all" ] [ Html.text "All" ]
+                        , Html.option [ HA.value "none" ] [ Html.text "None" ]
+                        ]
+                  , if model.ffilter == "none" then
+                        Html.p
+                            [ HA.id "fempty" ]
+                            [ Html.text "Nothing matches." ]
+
+                    else
+                        Html.ul
+                            [ HA.id "flist" ]
+                            [ Html.li [] [ Html.text "row 1" ]
+                            , Html.li [] [ Html.text "row 2" ]
+                            ]
+                  , if modBy 2 model.fticks == 0 then
+                        Html.span
+                            [ HA.id "ftick" ]
+                            [ Html.text ("tick=" ++ String.fromInt model.fticks)
+                            ]
+
+                    else
+                        Html.strong
+                            [ HA.id "ftick" ]
+                            [ Html.text ("tick=" ++ String.fromInt model.fticks)
+                            ]
+                  ])
+        , btn "fstart" FStart
+        , Ui.el
+              [ Ui.htmlAttribute "id" "fstate" ]
+              (Ui.text
+                  ("filter=" ++ model.ffilter ++ " ticks="
+                      ++ String.fromInt model.fticks
+                      ++ " ticking="
+                      ++ flag model.fticking))
+        ]

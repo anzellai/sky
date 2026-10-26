@@ -1,0 +1,27 @@
+-- gate: reject
+-- defect: a bare constructor an import binds over the Prelude's of the same name
+-- rust: reject [E1017] constructor clash, reported at the use site
+--
+-- Found 2026-10-26. `Sky.Config.LogLevel` has a constructor `Error`, the name
+-- of the Prelude's `Error` too. After `exposing (LogLevel(..))`, the bare
+-- `Error` below, written for the Prelude's `Error`, silently meant
+-- `LogLevel.Error`, and the user got `type mismatch: LogLevel vs ErrorKind ->
+-- _` with no word about the import. Now the reference is `[E1017]`, which names
+-- both meanings and the qualified forms (`Config.Error`, `E.Error`).
+--
+-- The ACCEPTED twins (the qualified forms, an import whose `Error` is never
+-- written bare, a local constructor) are in `hir/tests/ctor_clash.rs`.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as E
+import Sky.Config as Config exposing (LogLevel(..))
+
+
+failure : E.Error
+failure =
+    Error E.Io { message = "disk full", details = Nothing }
+
+
+main =
+    failure

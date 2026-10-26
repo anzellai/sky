@@ -474,7 +474,7 @@
       "tier": "T1"
     },
     "reject": {
-      "expected_assertions": 89,
+      "expected_assertions": 91,
       "falsifier_mutation": "reject.neutralise-axis",
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
@@ -496,7 +496,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 155,
+      "expected_assertions": 157,
       "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
@@ -546,6 +546,17 @@
         "stdlib.Std.Spa"
       ],
       "tier": "T2"
+    },
+    "stdlib-bodies": {
+      "expected_assertions": 113,
+      "falsifier_mutation": "stdlib-bodies.record-missing-field",
+      "falsifier_proven": true,
+      "summary": "every sky-stdlib module body type-checks (a build trusts stdlib signatures)",
+      "surfaces": [
+        "compiler.infer",
+        "compiler.reject"
+      ],
+      "tier": "T1"
     },
     "verify-cli": {
       "expected_assertions": 13,
@@ -1561,6 +1572,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "gate `stdlib-bodies`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "gate `reject`",
             "class": "Falsified",
             "strength": 4
@@ -1722,6 +1738,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "gate `stdlib-bodies`",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "gate `reject`",
             "class": "Falsified",
@@ -16945,7 +16966,7 @@
           ]
         },
         "Std.Html": {
-          "count": 70,
+          "count": 67,
           "symbols": [
             "a",
             "area",
@@ -16985,7 +17006,6 @@
             "img",
             "label",
             "legend",
-            "li",
             "link",
             "linkNode",
             "mainNode",
@@ -16998,7 +17018,6 @@
             "section",
             "small",
             "source",
-            "strong",
             "styleNode",
             "summary",
             "table",
@@ -17013,7 +17032,6 @@
             "toString",
             "tr",
             "track",
-            "ul",
             "video",
             "voidNode",
             "wbr"
@@ -17066,7 +17084,7 @@
           ]
         },
         "Std.Html.Events": {
-          "count": 23,
+          "count": 22,
           "symbols": [
             "fileMaxHeight",
             "fileMaxSize",
@@ -17079,7 +17097,6 @@
             "onFile",
             "onFocus",
             "onImage",
-            "onInput",
             "onKeyPress",
             "onKeyUp",
             "onLoad",
@@ -17494,8 +17511,8 @@
           ]
         }
       },
-      "count": 751,
-      "pct_of_denominator": 33.6
+      "count": 747,
+      "pct_of_denominator": 33.4
     }
   },
   "units": [
@@ -17804,8 +17821,8 @@
       "id": "e2e:scripts/spa-vdom-identity-e2e.sh",
       "modules_imported": 13,
       "path": "scripts/spa-vdom-identity-e2e.sh",
-      "refs_generous": 53,
-      "refs_qualified": 52,
+      "refs_generous": 59,
+      "refs_qualified": 58,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []

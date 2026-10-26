@@ -458,6 +458,52 @@ fn settle_one_type(origins: &[TypeOrigin]) -> Option<SettledType> {
     }
 }
 
+/// `[E1017]`: the constructors an IMPORTED winner hides.
+///
+/// The lattice lets a higher layer win silently, which is right for values
+/// (`import Sky.Core.Math exposing (..)` over the Prelude's `abs`) but wrong
+/// for constructors. A constructor is both a value and a pattern head, and the
+/// two candidates belong to different TYPES, so the hidden one never fails
+/// loudly: `import Sky.Config exposing (LogLevel(..))` made a bare `Error`
+/// mean `LogLevel.Error`, and a program that meant the Prelude's `Error kind
+/// info` got `type mismatch: LogLevel vs ErrorKind -> _` with no mention of the
+/// import. Elm reports a constructor exposed twice as ambiguous.
+///
+/// Returns the winner and the DIFFERENT constructors it hides when the winner
+/// came in through an import (`Open` / `Explicit`). A local definition still
+/// wins silently (doc 05 C7). The `BUILTIN_CTORS` (`True`, `Just`, `Ok`, …)
+/// never count as hidden: they are the Prelude's spelling of the stdlib's own
+/// `Bool` / `Maybe` / `Result` constructors, which a user module cannot declare
+/// (`[E1004]`), so `import Sky.Core.Maybe exposing (Maybe(..))` restates them
+/// rather than hiding them.
+/// Key prefix of a `BUILTIN_CTORS` binding. Distinct from every `ctor:<DefId>`
+/// key, as the `DefId` form already was, so ambiguity is unchanged.
+const BUILTIN_CTOR_KEY: &str = "builtin-ctor:";
+
+fn ctor_shadow(origins: &[Origin]) -> Option<(Origin, Vec<Origin>)> {
+    if origins.len() < 2 {
+        return None;
+    }
+    let top = origins.iter().map(|o| o.layer).max()?;
+    if !matches!(top, BindLayer::Open | BindLayer::Explicit) {
+        return None;
+    }
+    let winner = origins.iter().find(|o| o.layer == top)?;
+    let mut hidden: Vec<Origin> = Vec::new();
+    for o in origins.iter().filter(|o| o.layer < top) {
+        let builtin = o.key.starts_with(BUILTIN_CTOR_KEY);
+        if builtin || o.key == winner.key || hidden.iter().any(|h| h.key == o.key) {
+            continue;
+        }
+        hidden.push(o.clone());
+    }
+    if hidden.is_empty() {
+        None
+    } else {
+        Some((winner.clone(), hidden))
+    }
+}
+
 fn join_and(items: &[String]) -> String {
     join_with(items, "and")
 }
@@ -511,6 +557,10 @@ struct Resolver<'a> {
     ambiguous_vars: HashMap<String, Vec<Origin>>,
     ambiguous_ctors: HashMap<String, Vec<Origin>>,
     ambiguous_types: HashMap<String, Vec<TypeOrigin>>,
+    /// Constructor names whose imported winner hides a DIFFERENT constructor
+    /// from a lower layer (`[E1017]`, see [`ctor_shadow`]). Reported at the use
+    /// site, like `[E1012]`; an import that is never read stays legal.
+    shadowed_ctors: HashMap<String, (Origin, Vec<Origin>)>,
     /// The import being processed, for provenance stamping. `None` outside
     /// `process_import` (builtins and local decls stamp their layer directly).
     cur_import: Option<ImportCtx>,
@@ -566,6 +616,7 @@ impl<'a> Resolver<'a> {
             type_origins: HashMap::new(),
             ambiguous_vars: HashMap::new(),
             ambiguous_ctors: HashMap::new(),
+            shadowed_ctors: HashMap::new(),
             ambiguous_types: HashMap::new(),
             cur_import: None,
             reported_ambiguous: HashSet::new(),
@@ -715,9 +766,15 @@ impl<'a> Resolver<'a> {
 
     /// Bind an unqualified CONSTRUCTOR name. Same contract as [`bind_var`].
     fn bind_ctor(&mut self, name: String, ctor: CtorRef, layer: BindLayer) {
+        self.bind_ctor_keyed(name, ctor, layer, "ctor:");
+    }
+
+    /// [`bind_ctor`] with the identity-key prefix chosen by the caller
+    /// (`BUILTIN_CTOR_KEY` for the `BUILTIN_CTORS`, see [`ctor_shadow`]).
+    fn bind_ctor_keyed(&mut self, name: String, ctor: CtorRef, layer: BindLayer, prefix: &str) {
         let origin = self.origin_of(
             layer,
-            format!("ctor:{}", ctor.def.0),
+            format!("{prefix}{}", ctor.def.0),
             Res::Ctor(ctor.clone()),
         );
         self.ctor_origins
@@ -899,7 +956,11 @@ impl<'a> Resolver<'a> {
 
         let mut cwins: Vec<(String, CtorRef)> = Vec::new();
         let mut cambig: Vec<(String, Vec<Origin>)> = Vec::new();
+        let mut cshadow: Vec<(String, (Origin, Vec<Origin>))> = Vec::new();
         for (name, origins) in &self.ctor_origins {
+            if let Some(s) = ctor_shadow(origins) {
+                cshadow.push((name.clone(), s));
+            }
             if let Some(outcome) = settle_one(origins) {
                 match outcome {
                     Settled::Winner(Res::Ctor(c)) => cwins.push((name.clone(), c)),
@@ -912,6 +973,8 @@ impl<'a> Resolver<'a> {
             self.ctors.insert(name, c);
         }
         self.ambiguous_ctors = cambig.into_iter().collect();
+        self.shadowed_ctors = cshadow.into_iter().collect();
+        self.flag_prelude_named_ctors();
 
         // Types. Same lattice, same use-site reporting; the difference is that a
         // fabricated identity abstains instead of voting (see `TypeKey`).
@@ -957,6 +1020,139 @@ impl<'a> Resolver<'a> {
             .map(|o| (o.module.clone(), o.qualifier.clone()))
             .collect();
         self.report_ambiguous_sources(name, &sources, span, "type");
+    }
+
+    /// `[E1017]`, second face: an IMPORTED constructor that carries a
+    /// Prelude-reserved name but is not the Prelude's own constructor of that
+    /// name.
+    ///
+    /// The Prelude exposes the `Error` TYPE and binds no `Error` constructor, so
+    /// there is no second origin for [`ctor_shadow`] to find. A user module
+    /// cannot declare such a constructor (`[E1004]`), but a stdlib module can:
+    /// `Sky.Config.LogLevel` has `Error`. After `import Sky.Config exposing
+    /// (LogLevel(..))`, a bare `Error kind info`, written for the Prelude's
+    /// `Error` type, silently meant `LogLevel.Error` and failed as `type
+    /// mismatch: LogLevel vs ErrorKind -> _`. Everywhere else the name means the
+    /// Prelude's `Error`, so a bare use of the other one must say which it is.
+    fn flag_prelude_named_ctors(&mut self) {
+        // The module that declares the Prelude's constructor of each reserved
+        // constructor name. The others (`True`, `Just`, `Ok`, …) are
+        // `BUILTIN_CTORS`, declared in no `.sky` module.
+        const PRELUDE_CTOR_OWNERS: &[(&str, &str)] = &[("Error", "Sky.Core.Error")];
+        for (name, owner) in PRELUDE_CTOR_OWNERS {
+            if self.shadowed_ctors.contains_key(*name) || self.ambiguous_ctors.contains_key(*name) {
+                continue;
+            }
+            let Some(origins) = self.ctor_origins.get(*name) else {
+                continue;
+            };
+            let Some(top) = origins.iter().map(|o| o.layer).max() else {
+                continue;
+            };
+            if !matches!(top, BindLayer::Open | BindLayer::Explicit) {
+                continue;
+            }
+            let Some(winner) = origins.iter().find(|o| o.layer == top).cloned() else {
+                continue;
+            };
+            let Res::Ctor(c) = &winner.res else {
+                continue;
+            };
+            let declared_in = self
+                .db
+                .def_loc(c.def)
+                .filter(|l| l.module != BUILTIN_MOD)
+                .map(|l| self.db.module_name(l.module).to_string());
+            match declared_in {
+                Some(m) if m != *owner => {}
+                _ => continue,
+            }
+            let prelude = Origin {
+                layer: BindLayer::Ambient,
+                module: (*owner).to_string(),
+                qualifier: self.qualifier_for_module(owner),
+                key: format!("prelude-ctor:{name}"),
+                res: winner.res.clone(),
+            };
+            self.shadowed_ctors
+                .insert((*name).to_string(), (winner, vec![prelude]));
+        }
+    }
+
+    /// A qualifier this module already binds to `module`, if any (`E` after
+    /// `import Sky.Core.Error as E`). The shortest one, so the hint is stable.
+    fn qualifier_for_module(&self, module: &str) -> Option<String> {
+        let mut quals: Vec<&String> = self
+            .import_aliases
+            .iter()
+            .filter(
+                |(_, src)| matches!(src, ImportSource::Dep(d) if self.db.module_name(*d) == module),
+            )
+            .map(|(q, _)| q)
+            .collect();
+        quals.sort_by_key(|q| (q.len(), (*q).clone()));
+        quals.first().map(|q| (*q).clone())
+    }
+
+    /// `[E1017]` at a bare constructor reference that an import binds over a
+    /// DIFFERENT constructor (see [`ctor_shadow`]). Reported once per site, at
+    /// the use, never at the import: an import whose clashing constructor is
+    /// never written stays legal.
+    fn report_shadowed_ctor(
+        &mut self,
+        name: &str,
+        winner: &Origin,
+        hidden: &[Origin],
+        span: Option<Span>,
+    ) {
+        if self.quiet > 0 {
+            return;
+        }
+        let key = span.map(|sp| sp.range.0).unwrap_or(u32::MAX);
+        if !self.reported_ambiguous.insert((name.to_string(), key)) {
+            return;
+        }
+        let all: Vec<&Origin> = std::iter::once(winner).chain(hidden.iter()).collect();
+        let mods: Vec<String> = all
+            .iter()
+            .map(|o| {
+                if o.key.starts_with("prelude-ctor:") {
+                    format!("`{}` (the Prelude's `{name}`)", o.module)
+                } else {
+                    format!("`{}`", o.module)
+                }
+            })
+            .collect();
+        let forms: Vec<String> = all
+            .iter()
+            .map(|o| match &o.qualifier {
+                Some(q) => format!("`{q}.{name}` for the one from `{}`", o.module),
+                None => format!(
+                    "`X.{name}` for the one from `{m}` (after `import {m} as X`)",
+                    m = o.module
+                ),
+            })
+            .collect();
+        let diag = Diagnostic::error(
+            "E1017",
+            format!(
+                "The constructor `{name}` here could mean the `{name}` from {}. The import of \
+                 `{}` puts its `{name}` in front of the other, so this reference would silently \
+                 mean `{}.{name}`, and a program that meant the other one fails later with an \
+                 error that never names the import. Sky rejects it instead of picking one. \
+                 Qualify the reference: write {}. An import whose `{name}` is never written \
+                 unqualified needs no change.",
+                join_or(&mods),
+                winner.module,
+                winner.module,
+                join_or(&forms),
+            ),
+        );
+        let diag = match span {
+            Some(sp) => diag.with_label(sp, format!("this `{name}` has {} meanings", all.len())),
+            None => diag,
+        };
+        self.result.diagnostics.push(diag);
     }
 
     fn report_ambiguous_sources(
@@ -1084,7 +1280,7 @@ impl<'a> Resolver<'a> {
         for (cn, ty, index, arity) in BUILTIN_CTORS {
             let type_ = self.def(BUILTIN_MOD, ty, DefKind::TypeCon);
             let d = self.def(BUILTIN_MOD, cn, DefKind::Ctor);
-            self.bind_ctor(
+            self.bind_ctor_keyed(
                 (*cn).to_string(),
                 CtorRef {
                     def: d,
@@ -1093,6 +1289,7 @@ impl<'a> Resolver<'a> {
                     arity: *arity,
                 },
                 BindLayer::Ambient,
+                BUILTIN_CTOR_KEY,
             );
         }
         for (qual, funcs) in PRELUDE_QUALIFIERS {
@@ -3016,6 +3213,12 @@ impl<'a> Resolver<'a> {
                 if let Some(cands) = self.ambiguous_ctors.get(&name).cloned() {
                     let sp = cst::first_upper_tok(c.syntax()).map(|t| self.span_of(t.text_range()));
                     self.report_ambiguous(&name, &cands, sp, "constructor");
+                } else if let Some((winner, hidden)) = self.shadowed_ctors.get(&name).cloned() {
+                    // `[E1017]`: a bare head an import binds over a different
+                    // constructor. A qualified head (`Config.Error`) is the
+                    // `CtorQual` arm below and never reaches here.
+                    let sp = cst::first_upper_tok(c.syntax()).map(|t| self.span_of(t.text_range()));
+                    self.report_shadowed_ctor(&name, &winner, &hidden, sp);
                 }
                 let ctor = self.ctors.get(&name).cloned();
                 // Record the ctor NAME token as a use-site so hover / goto-def /
@@ -3325,6 +3528,8 @@ impl<'a> Resolver<'a> {
         // total; the build halts on the diagnostic before lowering ever runs.
         if let Some(cands) = self.ambiguous_ctors.get(name).cloned() {
             self.report_ambiguous(name, &cands, span, "constructor");
+        } else if let Some((winner, hidden)) = self.shadowed_ctors.get(name).cloned() {
+            self.report_shadowed_ctor(name, &winner, &hidden, span);
         }
         if let Some(c) = self.ctors.get(name) {
             return Res::Ctor(c.clone());

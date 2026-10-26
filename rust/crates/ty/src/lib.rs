@@ -30,6 +30,7 @@ pub mod pubsub_topic;
 pub mod reject_corpus;
 pub mod shared;
 mod sig;
+pub mod stdlib_bodies;
 pub mod tytable;
 mod unify;
 pub mod variance;

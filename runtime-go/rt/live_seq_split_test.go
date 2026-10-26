@@ -633,7 +633,7 @@ func Test_LiveJS_EmitsGlobalSeqGuard(t *testing.T) {
 		// HTTP /_sky/event JSON reply (data.globalSeq).
 		"            delete __skyBaseBySeq[body.seq];\n          }\n        }, data.globalSeq, data.view, data.base, true);",
 		// Legacy SSE event:patch handler (frame.globalSeq).
-		"if (frame.body) __skyPatch(frame.body.replace(/\\\\n/g, \"\\n\"));\n      }, frame.globalSeq",
+		"if (frame.body) __skyPatchOrHold(frame.body.replace(/\\\\n/g, \"\\n\"));\n      }, frame.globalSeq",
 		// P50b SSE event:patches handler (frame.globalSeq).
 		"__skyApplyPatches(frame.patches);\n    }, frame.globalSeq",
 	}

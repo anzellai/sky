@@ -523,8 +523,11 @@ fn assemble_and_emit_loaded(
         // Every module in this loop (the project's own `src/`, any `extra_dirs`
         // like `tests/`, the path dependencies and the fetched `.skydeps`
         // packages) is type-checked. Only the stdlib is trusted signatures,
-        // never re-checked — mirrors the `xtask infer` gate, whose
-        // zero-type-error accept-parity property this preserves. A module
+        // never re-checked here — mirrors the `xtask infer` gate, whose
+        // zero-type-error accept-parity property this preserves. The stdlib
+        // bodies are checked once per change instead, by the `stdlib-bodies`
+        // gate and `cargo test -p ty --test stdlib_bodies`
+        // (`ty::stdlib_bodies`). A module
         // reached through two source roots (`add_module` returns the existing
         // id) is checked once, so its diagnostics are not printed twice.
         if check_ids.contains(&id) {
@@ -665,7 +668,7 @@ fn assemble_and_emit_loaded(
         .iter()
         .filter(|d| {
             d.severity == diagnostics::Severity::Error
-                && (d.code.0 == "E1012" || d.code.0 == "E1013")
+                && (d.code.0 == "E1012" || d.code.0 == "E1013" || d.code.0 == "E1017")
         })
         .cloned()
         .collect();

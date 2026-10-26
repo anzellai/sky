@@ -200,6 +200,21 @@ rejection corpus includes dead-arm and redundant-guard fixtures so the Rust
 compiler's reachability analysis is directly tested rather than trusted — a class
 invisible to *both* an accept-only oracle and a self-hosted checker.
 
+**Stdlib bodies (`stdlib-bodies`).** A build trusts the stdlib's signatures and
+never type-checks its bodies: `project::build` checks only the project, its path
+dependencies and its `.skydeps` packages. The stdlib is fixed per compiler
+version, so checking it on every user build would prove the same fact each time
+(measured: about 65 ms of release-build checking on a 0.5 s warm `sky check`).
+The proof runs once per change instead. `ty::stdlib_bodies` checks every
+`sky-stdlib/` module with the checker a user module gets, with the stdlib's
+`Sky.Ffi` grant. Two faces read it: `cargo test -p ty --test stdlib_bodies`
+(per commit) and `xtask stdlib-bodies`, a T1 harness gate whose falsifier drops
+a required field from a record literal in `Std.Ai.Agent`. That is the defect
+that motivated the gate: such a literal built clean and emitted a codec that
+lost the field. `[E1004]` (a name that shadows the Prelude) is a user-module
+rule. The stdlib's exceptions are listed, each with a reason, in
+`ALLOWED_PRELUDE_SHADOWS`, and an entry that stops firing fails the gate.
+
 ---
 
 ## 3. The reproducibility gate (L4)

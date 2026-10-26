@@ -31,6 +31,8 @@ fi
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/with-timeout.sh
 source "$here/../lib/with-timeout.sh"
+# shellcheck source=../lib/apt-mirror.sh
+source "$here/../lib/apt-mirror.sh"
 
 attempt_secs="${SKY_APT_ATTEMPT_SECS:-600}"
 mirrors=(
@@ -39,18 +41,27 @@ mirrors=(
   "http://mirrors.edge.kernel.org/ubuntu/"
 )
 
-# The archive mirror lines in the runner's apt sources (deb822 and classic).
+# Every file that can name the runner's archive mirror: the deb822 and
+# classic sources, and the apt mirrorlist they may point at through
+# `mirror+file:` (the runner image does, see scripts/lib/apt-mirror.sh).
 # security.ubuntu.com lines are left as they are.
 sources=()
-for f in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
+for f in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
   [ -f "$f" ] && sources+=("$f")
 done
 
 use_mirror() {
-  local url="$1" f
+  local url="$1" f new
   for f in "${sources[@]}"; do
-    sudo sed -E -i "s#https?://[a-z0-9.-]*archive\.ubuntu\.com/ubuntu/?#${url}#g; s#https?://mirrors\.edge\.kernel\.org/ubuntu/?#${url}#g" "$f"
+    new="$(apt_mirror_rewrite "$f" "$url")"
+    printf '%s\n' "$new" | sudo tee "$f" >/dev/null
   done
+  # A rewrite that changed nothing would retry the same slow mirror while the
+  # log claimed another one (release run 40338067557). Say so and stop.
+  if ! grep -qF "$url" "${sources[@]}" 2>/dev/null; then
+    echo "::error::apt mirror: no apt source names ${url} after the rewrite (${sources[*]:-none found})" >&2
+    exit 1
+  fi
   echo "apt mirror: ${url}"
 }
 
