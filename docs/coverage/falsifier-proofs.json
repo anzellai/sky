@@ -243,18 +243,6 @@
       "outcome": "as-declared",
       "proven_at_unix": 1793036657
     },
-    "corpus": {
-      "inputs_files": 128,
-      "inputs_hash": "d1116098cce178d69ec96755138d2442aa77298c",
-      "mutation": "corpus.wrong-expected-value",
-      "mutations": [
-        "corpus.wrong-expected-value",
-        "corpus.wrong-stdlib-digest"
-      ],
-      "observed": "PROVEN",
-      "outcome": "as-declared",
-      "proven_at_unix": 1793032230
-    },
     "corpus-emit-shape": {
       "inputs_files": 128,
       "inputs_hash": "fa92696077dac2d3f2d4997f3e2a8197b119d003",
