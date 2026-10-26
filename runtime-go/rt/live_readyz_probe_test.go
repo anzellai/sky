@@ -14,10 +14,10 @@ import (
 // entire silent-store-failure class from orchestrators: every operator signal
 // (process up, healthz, readyz) stayed green while sessions were ephemeral.
 func TestReadyzReflectsStoreHealth(t *testing.T) {
-	// Isolate from any probes other tests registered on the package globals.
-	empty := []func() error{}
-	readinessProbes.Store(&empty)
-	readinessReady.Store(true)
+	// Isolate from any probes other tests registered on the package globals,
+	// and restore them afterwards: the down probe below must not outlive this
+	// test (it used to, and every later readyz check in the package read 503).
+	resetReadiness(t)
 
 	// The in-memory store is always healthy → readyz 200.
 	mem := newMemoryStore(time.Minute)

@@ -241,13 +241,13 @@ func buildLiveServerFor(cfg any, embedded, served bool) (ls *liveServer, err err
 	app.sessionTTL = ttl
 	// Wire the session store into /_sky/readyz so the endpoint reports 503 when
 	// the backing DB is unreachable — instead of returning 200 while the store
-	// is down (the "readyz lies by default" class). Main app only — sub-apps
-	// (the inline console) don't own the readiness surface; the parent does.
+	// is down (the "readyz lies by default" class). Every app built here owns
+	// its process: an in-process sub-app (the inline console) is built by
+	// newLiveAppFromCfg and never reaches this function, and a base path here
+	// means a standalone app behind a prefix-stripping proxy, not a sub-app.
 	// Scoped: a stopped app removes its probe, so readyz does not report a
 	// store that was closed on purpose.
-	if app.basePath == "" {
-		ls.addCleanup(registerReadinessProbeScoped("session-store", app.store.Ping))
-	}
+	ls.addCleanup(registerReadinessProbeScoped("session-store", app.store.Ping))
 	// Cycle 3 P46: cache the store-bound broker on the app for
 	// hot-path Subscribe/Publish call sites.
 	app.topics = app.store.Broker()
@@ -389,11 +389,13 @@ func buildLiveServerFor(cfg any, embedded, served bool) (ls *liveServer, err err
 	// kick the push exporter — Log.* / counter / span writes flow
 	// to the parent. No-op for standalone (parent) runs.
 	StartPushExporter()
-	// Observability endpoints — healthz / readyz / metrics / buildinfo.
-	// Skipped when this app is running AS a sub-app (basePath set).
-	if app.basePath == "" {
-		MountObservabilityEndpoints(mux)
-	}
+	// Observability endpoints — healthz / readyz / metrics / buildinfo. Mounted
+	// with or without SKY_LIVE_BASE_PATH: the base path names a prefix-stripping
+	// proxy in front of THIS process, which owns its listener and so its health
+	// surface. (It used to mean a fork+exec sub-app whose parent owned them; that
+	// mode was deleted with subapp.go, and the skip left a standalone app behind
+	// such a proxy with a 404 /_sky/readyz.)
+	MountObservabilityEndpoints(mux)
 	// v0.16.1 PR 2 — boot-time mount-precedence invariant. When the user
 	// EXPLICITLY asked for a console (SKY_CONSOLE_AUTH=token|app) but no
 	// mount claimed /_sky/console, a process-owning app exits; an embedded

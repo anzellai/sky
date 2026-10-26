@@ -174,6 +174,16 @@ if require_tool caddy "Caddy 2 (https://caddyserver.com/docs/install) — the pr
       mx notes "$NOTES" "$via" --dist "$NOTES_DIST"
     fi
   done
+  # The readiness race (release run 40240280881, todos/caddy-static: a 502 in
+  # the console). Caddy answers the static page before the backend listens, so
+  # a harness that waits for the page path loads the page and the client's
+  # first RPC gets a 502. Here the backend starts 3 s after Caddy: the harness
+  # must wait for the backend's /_sky/readyz through Caddy, or these go red
+  # every time. Both Sky.Spa apps behind the static host (where the page needs
+  # no backend), and one Sky.Live app behind a Caddy that proxies every path.
+  mx todos "$TODOS" caddy-static --dist "$TODOS_DIST" --start-delay 3000
+  mx notes "$NOTES" caddy-static --dist "$NOTES_DIST" --start-delay 3000
+  mx counter "$COUNTER" caddy-all --dist "$EMPTY_DIST" --start-delay 3000
   mx counter "$COUNTER" caddy-base
   mx stale "$NOTES" caddy-wasm --dist "$NOTES_DIST" --slot --kind spa
   mx stale "$COUNTER" caddy-wasm --dist "$EMPTY_DIST" --kind live
