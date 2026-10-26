@@ -10,13 +10,21 @@ Price book: input 0.15 / 1k tokens, output 0.60 / 1k tokens (USD).
     call 2: 2000 prompt +    0 completion -> 2*0.15 + 0      = 0.30
     run total                                                = 1.05
 
+It then records a training run's steps with their memory: step 1, step 1
+again as a resumed run replays it (a different peak, and the eval loss the
+first write lacked), and step 2. The replay adds no row and changes no value
+that was recorded; it fills the eval loss that was missing.
+
 Expected stdout (asserted by `ai_trace_flow.rs`):
 
     trace spans=2 total=1.05
+    progress steps=2 peak1=1089914008 eval1=2.5 peak2=1100000000
 -}
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
 import Sky.Core.Error exposing (Error)
 import Std.Log exposing (println)
 import Std.Db as Db exposing (Db)
@@ -45,6 +53,66 @@ response prompt completion =
         , totalTokens = prompt + completion
         }
     }
+
+
+step : Int -> Maybe Float -> Int -> Trace.TrainingStep
+step n evalLoss peak =
+    { step = n
+    , total = 2
+    , loss = Just 2.0
+    , tokensPerSecond = Just 700.0
+    , checkpoint = ""
+    , evalLoss = evalLoss
+    , peakMemoryBytes = Just peak
+    }
+
+
+showInt : Maybe Int -> String
+showInt m =
+    Maybe.withDefault "none" (Maybe.map String.fromInt m)
+
+
+showFloat : Maybe Float -> String
+showFloat m =
+    Maybe.withDefault "none" (Maybe.map String.fromFloat m)
+
+
+progress : Db -> Task Error ()
+progress db =
+    -- setup again: it is idempotent, and it brings the progress table's
+    -- memory and eval columns.
+    Trace.setup db
+        |> Task.andThen
+               (\_ ->
+                   Trace.recordTrainingStep
+                       db
+                       "run-1"
+                       (step 1 Nothing 1089914008))
+        |> Task.andThen
+               (\_ -> Trace.recordTrainingStep db "run-1" (step 1 (Just 2.5) 5))
+        |> Task.andThen
+               (\_ ->
+                   Trace.recordTrainingStep
+                       db
+                       "run-1"
+                       (step 2 Nothing 1100000000))
+        |> Task.andThen (\_ -> Trace.trainingSteps db "run-1")
+        |> Task.andThen
+               (\steps ->
+                   let
+                       first = List.head steps
+                       second = List.head (List.drop 1 steps)
+                   in
+                       println
+                           ("progress steps="
+                               ++ String.fromInt (List.length steps)
+                               ++ " peak1="
+                               ++ showInt (Maybe.andThen .peakMemoryBytes first)
+                               ++ " eval1="
+                               ++ showFloat (Maybe.andThen .evalLoss first)
+                               ++ " peak2="
+                               ++ showInt
+                                      (Maybe.andThen .peakMemoryBytes second)))
 
 
 main : Task Error ()
@@ -81,4 +149,5 @@ main =
                                                      ("trace spans="
                                                          ++ String.fromInt spans
                                                          ++ " total="
-                                                         ++ total))))
+                                                         ++ total)))
+                       |> Task.andThen (\_ -> progress db))

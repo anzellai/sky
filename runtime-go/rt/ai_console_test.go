@@ -278,3 +278,35 @@ func TestConsoleAIShowsTrainingRuns(t *testing.T) {
 		t.Fatalf("%s", b)
 	}
 }
+
+// The native trainer reports its memory in each progress line (footprint
+// now, peak so far) and the guard's error line carries the peak it killed
+// at. The panel shows the highest peak and the latest footprint.
+func TestConsoleAITrainingRunShowsItsMemory(t *testing.T) {
+	aiResetTrainConsole()
+	t.Cleanup(aiResetTrainConsole)
+	dir := filepath.Join(t.TempDir(), "orders-memory000001")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, aiTrainJobFile), []byte(`{"name":"orders"}`), 0o644)
+	lines := []string{
+		`{"v":1,"type":"hello","backend":"mlx","attempt":0,"resumeFrom":0,"totalSteps":3}`,
+		`{"v":1,"type":"progress","step":1,"total":3,"loss":2.2,"footprintBytes":866124952,"peakBytes":1056343192}`,
+		`{"v":1,"type":"progress","step":2,"total":3,"loss":2.1,"footprintBytes":656049304,"peakBytes":1087489176}`,
+	}
+	os.WriteFile(filepath.Join(dir, aiTrainEventsFile), []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+	aiTrainNoteRun(dir)
+	r := aiConsoleSnapshot("", "").Training[0]
+	if r.PeakBytes != 1087489176 || r.FootprintBytes != 656049304 {
+		t.Fatalf("peak %d, footprint %d", r.PeakBytes, r.FootprintBytes)
+	}
+	lines = append(lines, `{"capBytes":2500000000,"code":"ModelTooLarge","message":"over","peakBytes":2600000000,"type":"error","v":1}`)
+	os.WriteFile(filepath.Join(dir, aiTrainEventsFile), []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+	r = aiConsoleSnapshot("", "").Training[0]
+	if r.PeakBytes != 2600000000 || r.Status != "failed" {
+		t.Fatalf("peak %d, status %s", r.PeakBytes, r.Status)
+	}
+	b, _ := json.Marshal(r)
+	if !strings.Contains(string(b), `"peakBytes":2600000000`) {
+		t.Fatalf("%s", b)
+	}
+}

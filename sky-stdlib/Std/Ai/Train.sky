@@ -1831,6 +1831,7 @@ type alias Progress =
     , relaunches : Int
     , resumedFrom : Int
     , lastCheckpoint : Int
+    , peakBytes : Int
     , losses : List LossPoint
     , valLosses : List LossPoint
     , message : String
@@ -1852,6 +1853,7 @@ emptyProgress id =
     , relaunches = 0
     , resumedFrom = 0
     , lastCheckpoint = 0
+    , peakBytes = 0
     , losses = []
     , valLosses = []
     , message = ""
@@ -1871,6 +1873,8 @@ type alias StepProgressPayload =
     , total : Int
     , loss : Float
     , tokensPerSecond : Float
+    , footprintBytes : Int
+    , peakBytes : Int
     }
 
 type alias MetricPayload =
@@ -2004,18 +2008,28 @@ eventDecoder typ =
 
         "progress" ->
             Just
-                (JsonD.map4
-                    (\s t l tps ->
+                (JsonD.map3
+                    (\( s, t ) ( l, tps ) ( fp, pk ) ->
                         StepProgress
                             { step = s
                             , total = t
                             , loss = l
                             , tokensPerSecond = tps
+                            , footprintBytes = fp
+                            , peakBytes = pk
                             })
-                    (JsonD.field "step" JsonD.int)
-                    (intOr "total" 0)
-                    (num "loss")
-                    (num "tokensPerSecond"))
+                    (JsonD.map2
+                        Tuple.pair
+                        (JsonD.field "step" JsonD.int)
+                        (intOr "total" 0))
+                    (JsonD.map2 Tuple.pair (num "loss") (num "tokensPerSecond"))
+                    -- The native trainer's memory: its footprint now and its
+                    -- peak so far, in bytes (-1 from a trainer that does not
+                    -- report them).
+                    (JsonD.map2
+                        Tuple.pair
+                        (intOr "footprintBytes" (-1))
+                        (intOr "peakBytes" (-1))))
 
         "metric" ->
             Just
@@ -2142,6 +2156,7 @@ foldProgress ev p =
                         p.totalSteps
                 , loss = Just e.loss
                 , tokensPerSecond = e.tokensPerSecond
+                , peakBytes = Math.max p.peakBytes e.peakBytes
                 , losses =
                     if e.loss >= 0.0 then
                         addPoint { step = e.step, value = e.loss } p.losses
@@ -2174,7 +2189,11 @@ foldProgress ev p =
             { p | status = Cancelled, step = c.step, message = "cancelled" }
 
         DriverError e ->
-            { p | status = Failed, message = e.code ++ ": " ++ e.message }
+            { p
+                | status = Failed
+                , message = e.code ++ ": " ++ e.message
+                , peakBytes = Math.max p.peakBytes e.peakBytes
+            }
 
 
 -- Fold every decodable line; an undecodable one is noted in the message and
@@ -3226,7 +3245,8 @@ trainOn ctx job backend =
 -- money; a run on this machine has no price, so its row is unpriced. Every
 -- row is keyed (the step; "cost"), so a replayed step writes nothing twice.
 -- The progress in a run's protocol lines: one entry per step, with the
--- checkpoint written at that step.
+-- checkpoint written at that step, the eval loss measured at it and the
+-- trainer's peak memory so far.
 traceProgressOf : List String -> List Trace.TrainingStep
 traceProgressOf lines =
     List.foldl addProgressLine [] lines
@@ -3245,14 +3265,39 @@ addProgressLine line acc =
                     , loss = finite p.loss
                     , tokensPerSecond = finite p.tokensPerSecond
                     , checkpoint =
+                        Maybe.withDefault "" (Maybe.map .checkpoint old)
+                    , evalLoss = Maybe.andThen .evalLoss old
+                    , peakMemoryBytes =
+                        if p.peakBytes > 0 then
+                            Just p.peakBytes
+
+                        else
+                            Maybe.andThen .peakMemoryBytes old
+                    })
+                acc
+
+        Ok (Just (Metric m)) ->
+            if m.name == "val_loss" then
+                upsertStep
+                    m.step
+                    (\old ->
                         case old of
 
                             Just pr ->
-                                pr.checkpoint
+                                { pr | evalLoss = finite m.value }
 
                             Nothing ->
-                                ""
-                    })
+                                { step = m.step
+                                , total = 0
+                                , loss = Nothing
+                                , tokensPerSecond = Nothing
+                                , checkpoint = ""
+                                , evalLoss = finite m.value
+                                , peakMemoryBytes = Nothing
+                                })
+                    acc
+
+            else
                 acc
 
         Ok (Just (Checkpoint c)) ->
@@ -3270,6 +3315,8 @@ addProgressLine line acc =
                             , loss = Nothing
                             , tokensPerSecond = Nothing
                             , checkpoint = c.path
+                            , evalLoss = Nothing
+                            , peakMemoryBytes = Nothing
                             })
                 acc
 

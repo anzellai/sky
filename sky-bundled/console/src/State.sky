@@ -300,7 +300,8 @@ type alias AiModel =
     }
 
 -- One Std.Ai.Train run (`aiTrainRun` in runtime-go/rt/ai_train_console.go):
--- its status, steps, latest losses, relaunches and the registered version.
+-- its status, steps, latest losses, relaunches, the trainer's peak memory (0
+-- when the trainer reports none) and the registered version.
 -- `loss` / `valLoss` are Nothing before the trainer reports one. `losses` and
 -- `valLosses` are the curve values in step order (at most 200 points each);
 -- the runtime sends them as [step, value] pairs and the console keeps the
@@ -316,6 +317,7 @@ type alias AiTrainingRun =
     , relaunches : Int
     , resumedFrom : Int
     , lastCheckpoint : Int
+    , peakBytes : Int
     , message : String
     , registered : String
     , losses : List Float

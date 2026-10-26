@@ -473,6 +473,17 @@ trainingRow r =
                     [ muted ("loss " ++ maybeLoss r.loss)
                     , muted ("eval loss " ++ maybeLoss r.valLoss)
                     , muted (relaunchText r)
+                    , if r.peakBytes > 0 then
+                          Ui.el
+                              [ Font.size 12
+                              , Ui.htmlAttribute
+                                    "data-ai-train-peak"
+                                    (String.fromInt r.peakBytes)
+                              ]
+                              (Ui.text ("peak memory " ++ bytesText r.peakBytes))
+
+                      else
+                          Ui.none
                     , if r.cloud == "" then
                           Ui.none
 
@@ -622,6 +633,32 @@ statusColour status =
 
     else
         accent
+
+
+-- A byte count for a person: 1089914008 → "1.09 GB", 52428800 → "52.4 MB".
+bytesText : Int -> String
+bytesText n =
+    if n >= 1000000000 then
+        fixed 100 (toFloat n / 1.0e9) ++ " GB"
+
+    else
+        fixed 10 (toFloat n / 1000000.0) ++ " MB"
+
+
+-- f rounded to 1 / scale (scale 10 or 100): fixed 100 1.0899 → "1.09".
+fixed : Int -> Float -> String
+fixed scale f =
+    let
+        scaled = Math.round (f * toFloat scale)
+        width =
+            if scale == 100 then
+                2
+
+            else
+                1
+    in
+        String.fromInt (scaled // scale) ++ "."
+            ++ String.padLeft width '0' (String.fromInt (modBy scale scaled))
 
 
 maybeLoss : Maybe Float -> String

@@ -208,6 +208,7 @@ aiTrainingDecoder =
         |> Pipeline.optional "relaunches" intFromFloat 0
         |> Pipeline.optional "resumedFrom" intFromFloat 0
         |> Pipeline.optional "lastCheckpoint" intFromFloat 0
+        |> Pipeline.optional "peakBytes" intFromFloat 0
         |> Pipeline.optional "message" Decode.string ""
         |> Pipeline.optional "registered" Decode.string ""
         |> Pipeline.optional "losses" (Decode.list curvePoint) []

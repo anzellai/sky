@@ -348,6 +348,7 @@ progressValue p =
         , ( "relaunches", JsonE.int p.relaunches )
         , ( "resumedFrom", JsonE.int p.resumedFrom )
         , ( "lastCheckpoint", JsonE.int p.lastCheckpoint )
+        , ( "peakBytes", JsonE.int p.peakBytes )
         , ( "message", JsonE.string p.message )
         ]
 
@@ -365,6 +366,11 @@ progressText p =
 
                Nothing ->
                    "")
+        ++ (if p.peakBytes > 0 then
+               "  peak " ++ String.fromInt (p.peakBytes // 1000000) ++ " MB"
+
+           else
+               "")
         ++ (if String.isEmpty p.message then
                ""
 

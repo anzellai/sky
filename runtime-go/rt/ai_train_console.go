@@ -24,18 +24,23 @@ const aiTrainConsolePoints = 200
 
 // aiTrainRun is one training run in the panel.
 type aiTrainRun struct {
-	Run            string       `json:"run"`
-	Dir            string       `json:"dir"`
-	Status         string       `json:"status"`
-	Backend        string       `json:"backend"`
-	Step           int          `json:"step"`
-	TotalSteps     int          `json:"totalSteps"`
-	Loss           *float64     `json:"loss"`
-	ValLoss        *float64     `json:"valLoss"`
-	Attempt        int          `json:"attempt"`
-	Relaunches     int          `json:"relaunches"`
-	ResumedFrom    int          `json:"resumedFrom"`
-	LastCheckpoint int          `json:"lastCheckpoint"`
+	Run            string   `json:"run"`
+	Dir            string   `json:"dir"`
+	Status         string   `json:"status"`
+	Backend        string   `json:"backend"`
+	Step           int      `json:"step"`
+	TotalSteps     int      `json:"totalSteps"`
+	Loss           *float64 `json:"loss"`
+	ValLoss        *float64 `json:"valLoss"`
+	Attempt        int      `json:"attempt"`
+	Relaunches     int      `json:"relaunches"`
+	ResumedFrom    int      `json:"resumedFrom"`
+	LastCheckpoint int      `json:"lastCheckpoint"`
+	// The native trainer's memory in bytes: the highest peak it reported
+	// (the guard's kill included) and its latest footprint; 0 when the
+	// trainer reports none.
+	PeakBytes      int64        `json:"peakBytes"`
+	FootprintBytes int64        `json:"footprintBytes"`
 	Message        string       `json:"message"`
 	Registered     string       `json:"registered"`
 	UpdatedMs      int64        `json:"updatedMs"`
@@ -81,6 +86,8 @@ func aiTrainConsoleRun(dir string) aiTrainRun {
 			ValLoss    *float64 `json:"valLoss"`
 			Code       string   `json:"code"`
 			Message    string   `json:"message"`
+			Peak       int64    `json:"peakBytes"`
+			Footprint  int64    `json:"footprintBytes"`
 		}
 		if json.Unmarshal([]byte(l.(string)), &ev) != nil {
 			continue
@@ -97,6 +104,10 @@ func aiTrainConsoleRun(dir string) aiTrainRun {
 			}
 		case "progress":
 			r.Step = ev.Step
+			if ev.Footprint > 0 {
+				r.FootprintBytes = ev.Footprint
+			}
+			r.PeakBytes = max(r.PeakBytes, ev.Peak)
 			if ev.Total > 0 {
 				r.TotalSteps = ev.Total
 			}
@@ -117,6 +128,7 @@ func aiTrainConsoleRun(dir string) aiTrainRun {
 			terminal, r.Step = "cancelled", ev.Step
 		case "error":
 			terminal, r.Message = "failed", ev.Code+": "+ev.Message
+			r.PeakBytes = max(r.PeakBytes, ev.Peak)
 		}
 	}
 	r.Losses, r.ValLosses = aiThin(r.Losses), aiThin(r.ValLosses)

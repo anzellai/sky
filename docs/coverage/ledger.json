@@ -5450,6 +5450,11 @@
             "strength": 3
           },
           {
+            "by": "flow:ai_trace_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:codegen_anon_record_lambda_param_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -6012,6 +6017,11 @@
           },
           {
             "by": "flow:ai_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:ai_trace_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -22940,10 +22950,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "flow:ai_trace_flow",
-      "modules_imported": 7,
+      "modules_imported": 9,
       "path": "rust/crates/sky/tests/ai_trace_flow.rs",
-      "refs_generous": 13,
-      "refs_qualified": 11,
+      "refs_generous": 22,
+      "refs_qualified": 20,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []

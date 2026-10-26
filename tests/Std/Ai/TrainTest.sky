@@ -396,6 +396,8 @@ tests =
                             , total = 12
                             , loss = 1.5
                             , tokensPerSecond = 800.0
+                            , footprintBytes = -1
+                            , peakBytes = -1
                             })
                   , Just (Metric { step = 6, name = "val_loss", value = 1.25 })
                   , Just (Checkpoint { step = 8, path = "checkpoints/0000008" })
@@ -435,8 +437,37 @@ tests =
                             , total = 0
                             , loss = -1.0
                             , tokensPerSecond = -1.0
+                            , footprintBytes = -1
+                            , peakBytes = -1
                             })
                   ))
+    , Test.test
+          "a progress line's memory: decoded, and the run's highest peak in its progress"
+          (\_ ->
+              let
+                  p =
+                      fold
+                          [ "{\"v\":1,\"type\":\"hello\",\"backend\":\"mlx\",\"attempt\":0,\"resumeFrom\":0,\"totalSteps\":3}"
+                          , "{\"v\":1,\"type\":\"progress\",\"step\":1,\"total\":3,\"loss\":2.2,\"tokensPerSecond\":700.0,\"footprintBytes\":866124952,\"peakBytes\":1056343192}"
+                          , "{\"v\":1,\"type\":\"progress\",\"step\":2,\"total\":3,\"loss\":2.1,\"tokensPerSecond\":710.0,\"footprintBytes\":656049304,\"peakBytes\":1087489176}"
+                          ]
+              in
+                  Test.equal
+                      ( decoded
+                            "{\"v\":1,\"type\":\"progress\",\"step\":2,\"total\":3,\"loss\":2.1,\"tokensPerSecond\":710.0,\"footprintBytes\":656049304,\"peakBytes\":1087489176}"
+                      , p.peakBytes
+                      )
+                      ( Just
+                            (StepProgress
+                                { step = 2
+                                , total = 3
+                                , loss = 2.1
+                                , tokensPerSecond = 710.0
+                                , footprintBytes = 656049304
+                                , peakBytes = 1087489176
+                                })
+                      , 1087489176
+                      ))
     , Test.test
           "protocol version 2, a non-JSON line and a line without its fields are ToolchainFailed"
           (\_ ->
