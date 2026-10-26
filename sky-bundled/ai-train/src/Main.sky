@@ -201,6 +201,7 @@ provisionTrain json name opts =
                            [ ( "toolchain", JsonE.string tc.name )
                            , ( "id", JsonE.string tc.id )
                            , ( "python", JsonE.string tc.python )
+                           , ( "trainer", JsonE.string tc.trainer )
                            , ( "dir", JsonE.string tc.dir )
                            , ( "packages", JsonE.int tc.packages )
                            , ( "versions"
@@ -213,11 +214,17 @@ provisionTrain json name opts =
                            ])
                        (String.join
                            "\n"
-                           ([ "toolchain " ++ tc.name ++ " " ++ tc.id ++ " ("
-                                 ++ String.fromInt tc.packages
-                                 ++ " locked packages)"
-                           , "python    " ++ tc.python
-                           ]
+                           ((if String.isEmpty tc.trainer then
+                               [ "toolchain " ++ tc.name ++ " " ++ tc.id ++ " ("
+                                     ++ String.fromInt tc.packages
+                                     ++ " locked packages)"
+                               , "python    " ++ tc.python
+                               ]
+
+                           else
+                               [ "trainer   " ++ tc.name ++ " " ++ tc.id
+                               , "binary    " ++ tc.trainer
+                               ])
                                ++ (if String.isEmpty weights then
                                       []
 

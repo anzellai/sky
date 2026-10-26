@@ -15,6 +15,8 @@
 #      reports ModelTooLarge (guard.json and the error line).
 #   7. An MLX-quantised base and a base quantised on load both train.
 #   8. The Go converter turns the adapter into a GGUF LoRA for the GGUF model.
+#   9. The command line the runtime launches an attempt with (driver.json ->
+#      argv, launch token included) trains, and resumes from a checkpoint.
 #
 #   test-trainer.sh (--trainer <sky-trainer> | --mlx <prefix> --mlx-c <src>)
 #                   [--device cpu|gpu|both] [--work <dir>]
@@ -260,6 +262,31 @@ for dev in "${devices[@]}"; do
     pass "the adapter converts to a GGUF LoRA for the GGUF model ($dev)"
   else
     fail "convert ($dev): $(cat "$WORK/convert-$dev.err" "$WORK/convert-$dev.json" 2>/dev/null | tail -3)"
+  fi
+
+  # 9. the runtime's command line: driver.json -> argv -> a run, then a resume
+  N="$WORK/argv-$dev"
+  stage "$N" 8 2 1
+  device=""
+  [ "$dev" = cpu ] && device=',"device":"cpu"'
+  for attempt in 0 1; do
+    resume='"resumeFrom":0,"resumeDir":""'
+    [ "$attempt" = 1 ] && resume='"resumeFrom":4,"resumeDir":"checkpoints/0000004"'
+    printf '{"alpha":8,"attempt":%d,"backend":"mlx","base":{"id":"sky-tiny-qwen2","weights":"%s"},"batch":{"accumulate":1,"perDevice":2},"checkpointEvery":4,"evalEvery":0,"layers":-1,"learningRate":0.005,"quantised":false,"rank":4,%s,"seed":7,"targets":["self_attn.q_proj","self_attn.v_proj","mlp.down_proj"],"trainer":"%s","v":1%s}\n' \
+      "$attempt" "$HF" "$resume" "$TRAINER" "$device" > "$N/driver.json"
+    ARGV=()
+    while IFS= read -r a; do ARGV+=("$a"); done < <("$WORK/sky-train-tool" argv "$N" "$N/driver.json")
+    crash=()
+    [ "$attempt" = 0 ] && crash=(--crash-at 4)
+    run "argv$attempt-$dev" 300 "${ARGV[@]}" --memory-cap "$CAP" ${crash[@]+"${crash[@]}"}
+    eval "argv_rc$attempt=$RC"
+  done
+  if [ "${#ARGV[@]}" -gt 0 ] && [ "$argv_rc0" = 137 ] && [ "$argv_rc1" = 0 ] \
+    && grep -q '"resumeFrom":4' "$WORK/argv1-$dev.events" && grep -q '"type":"done"' "$WORK/argv1-$dev.events" \
+    && printf '%s\n' "${ARGV[@]}" | grep -qx -- --launch; then
+    pass "the runtime's command line trains and resumes ($dev)"
+  else
+    fail "argv ($dev): first rc ${argv_rc0:-?}, resume rc ${argv_rc1:-?}; $(tail -3 "$WORK/argv1-$dev.err" 2>/dev/null)"
   fi
 done
 

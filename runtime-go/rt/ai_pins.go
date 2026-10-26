@@ -133,3 +133,35 @@ var aiHuggingFaceRevisionURL = func(repo, revision, file string) string {
 // is pinned by its SHA-256 in the lock, so the index is trusted for
 // availability only, never for content.
 const aiPyPIIndex = "https://pypi.org/simple"
+
+// ─── the native trainer (Std.Ai.Train, the Mlx backend) ─────────────────
+//
+// sky-trainer is Sky's own LoRA trainer: C11 on mlx-c, built from
+// scripts/ai/trainer/ into a bundle (the trainer, libmlx, libmlxc, on macOS
+// the Metal library, the licences and an SBOM). A bundle is pinned per host
+// by its file and SHA-256, like the engine builds, and installs under
+// <AI home>/trainers/<backend>/<version>-<variant>/. A host with no pin, or an
+// operator who builds their own, sets <PREFIX>_AI_TRAINER_BIN.
+
+// aiTrainerVersion is the sky-trainer version the bundles carry; a bundle's
+// `sky-trainer --version` must print it.
+const aiTrainerVersion = "0.1.0"
+
+// aiTrainerAsset is one pinned trainer bundle for one host.
+type aiTrainerAsset struct {
+	goos, goarch string
+	variant      string // "metal" or "cpu"
+	file         string
+	sha256       string
+}
+
+// aiTrainerAssets lists the pinned trainer bundles. The bundle workflow
+// (.github/workflows/ai-trainer-bundles.yml) publishes them; until a bundle
+// is pinned for a host, that host trains with <PREFIX>_AI_TRAINER_BIN.
+var aiTrainerAssets = []aiTrainerAsset{}
+
+// aiTrainerReleaseURL is where a pinned bundle is downloaded from. A variable
+// so the tests can point it at a local server.
+var aiTrainerReleaseURL = func(file string) string {
+	return "https://github.com/anzellai/sky/releases/download/sky-trainer-v" + aiTrainerVersion + "/" + file
+}

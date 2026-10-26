@@ -56,12 +56,12 @@ func fakeTrainer(t *testing.T) {
 	// Every trainer this test launches is ended with the test.
 	var launchedMu sync.Mutex
 	var launched []*exec.Cmd
-	aiTrainLauncher = func(python, driverDir, runDir, token string) *exec.Cmd {
+	aiTrainLauncher = func(_ map[string]any, runDir, token string) (*exec.Cmd, error) {
 		c := exec.Command(fakeTrainerBin, "--run", runDir, "--launch", token)
 		launchedMu.Lock()
 		launched = append(launched, c)
 		launchedMu.Unlock()
-		return c
+		return c, nil
 	}
 	t.Cleanup(func() {
 		launchedMu.Lock()

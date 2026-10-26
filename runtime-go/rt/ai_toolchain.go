@@ -222,7 +222,7 @@ func (t aiToolchainInfo) value() map[string]any {
 	}
 	return map[string]any{
 		"name": t.Name, "id": t.ID, "python": t.Python, "driverDir": t.DriverDir,
-		"dir": t.Dir, "versions": versions, "packages": t.Packages, "installed": true,
+		"dir": t.Dir, "versions": versions, "packages": t.Packages, "installed": true, "trainer": "",
 	}
 }
 
@@ -533,7 +533,7 @@ func aiInstalledDists(venv string) map[string]string {
 // aiTestToolchain is the toolchain test mode reports: no install, no network.
 func aiTestToolchain(name string) map[string]any {
 	return map[string]any{"name": name, "id": "test-mode", "python": "", "driverDir": "", "dir": "",
-		"versions": []any{}, "packages": 0, "installed": true}
+		"versions": []any{}, "packages": 0, "installed": true, "trainer": ""}
 }
 
 // Ai_toolchainEnsure : String -> Task Error Toolchain
@@ -566,12 +566,19 @@ func Ai_toolchainStatus(_ any) any {
 			if err != nil {
 				continue
 			}
+			// The Mlx backend trains with the native trainer.
+			if name == "mlx" {
+				if v, ok := aiTrainerStatus(name); ok {
+					out = append(out, v)
+				}
+				continue
+			}
 			if t, ok := aiInstalledToolchain(d); ok {
 				out = append(out, t.value())
 				continue
 			}
 			out = append(out, map[string]any{"name": name, "id": d.id(), "python": "", "driverDir": "", "dir": d.dir(),
-				"versions": []any{}, "packages": 0, "installed": false})
+				"versions": []any{}, "packages": 0, "installed": false, "trainer": ""})
 		}
 		return Ok[any, any](out)
 	}

@@ -143,11 +143,14 @@ backend is `Mlx` (MLX-LM), on Linux with an NVIDIA GPU it is `Unsloth`, and
 whole protocol and writes a real, no-op adapter. A backend this host cannot
 run is `NoAccelerator`, never a silent fallback.
 
-**Python is managed and invisible.** The trainer is a Sky-shipped driver that
-runs in a toolchain Sky installs under the AI home: a pinned uv, a pinned
-CPython and a hash-locked set of wheels. `provision` (and `sky ai provision
---train mlx`) installs it ahead of time; a missing toolchain with fetching off
-is `NotProvisioned`, naming the command.
+**The Mlx trainer is native.** `Mlx` trains with `sky-trainer`, Sky's own
+LoRA trainer (C on MLX), with no Python: a pinned, hash-checked bundle Sky
+installs under the AI home, or the operator's own build named by
+`SKY_AI_TRAINER_BIN`. `Unsloth` and `Fake` still run a Sky-shipped driver in
+a managed Python toolchain (a pinned uv, a pinned CPython and a hash-locked
+set of wheels). `provision` (and `sky ai provision --train mlx`) installs the
+trainer ahead of time; a missing one with fetching off is `NotProvisioned`,
+naming the command.
 
 **Training is durable.** `workflow` is a `Std.Durable` workflow: resolve,
 check, stage the data, provision, launch the trainer, watch it, convert the
@@ -2137,7 +2140,8 @@ type alias ToolchainVersion =
     RawVersion
 
 -- | A training toolchain: its id (a digest of every pinned input), its
--- managed python, the driver, and the versions it carries.
+-- managed python and driver, or its native `trainer` (the Mlx backend's
+-- `sky-trainer`; `""` for a Python toolchain), and the versions it carries.
 type alias Toolchain =
     { name : String
     , id : String
@@ -2147,6 +2151,7 @@ type alias Toolchain =
     , versions : List ToolchainVersion
     , packages : Int
     , installed : Bool
+    , trainer : String
     }
 
 type alias RawLaunched =
@@ -2213,6 +2218,11 @@ tokenizeRaw =
 toolchainRaw : String -> Task Error Toolchain
 toolchainRaw =
     Ffi.kernel "Ai_toolchainEnsure"
+
+
+trainerRaw : String -> Task Error Toolchain
+trainerRaw =
+    Ffi.kernel "Ai_trainerEnsure"
 
 
 toolchainStatusRaw : () -> Task Error (List Toolchain)
@@ -2287,10 +2297,21 @@ digestRaw =
 
 -- ── Toolchains ──────────────────────────────────────────────────────
 -- | Install the toolchain a backend trains in (`sky ai provision --train
--- <backend>` calls this). Idempotent: an installed toolchain returns at once.
+-- <backend>` calls this): the native trainer for `Mlx`, the managed Python
+-- for the others. Idempotent: an installed toolchain returns at once.
 provision : Backend -> Task Error Toolchain
 provision backend =
-    toolchainRaw (backendName backend)
+    ensureTrainer (backendName backend)
+
+
+-- The Mlx backend trains natively; the others in their Python toolchain.
+ensureTrainer : String -> Task Error Toolchain
+ensureTrainer backend =
+    if backend == "mlx" then
+        trainerRaw backend
+
+    else
+        toolchainRaw backend
 
 
 -- | Download and verify the weights a backend trains the base on, returning
@@ -2410,16 +2431,20 @@ type alias Tool =
     , id : String
     , python : String
     , driverDir : String
+    , trainer : String
     }
 
 
 toolCodec : Codec Tool
 toolCodec =
-    Codec.object (\n i p d -> { name = n, id = i, python = p, driverDir = d })
+    Codec.object
+        (\n i p d t ->
+            { name = n, id = i, python = p, driverDir = d, trainer = t })
         |> Codec.field "name" .name Codec.string
         |> Codec.field "id" .id Codec.string
         |> Codec.field "python" .python Codec.string
         |> Codec.field "driverDir" .driverDir Codec.string
+        |> Codec.field "trainer" .trainer Codec.string
         |> Codec.buildObject
 
 -- Where the run stands when the workflow takes it up: the last attempt
@@ -2512,7 +2537,8 @@ type alias Setup =
 --
 --     resolve      the backend (env > code > detection)
 --     stage        the version's Train and Eval rows into the run directory
---     toolchain    the managed toolchain, installed if allowed
+--     trainer      the native trainer (Mlx) or the managed toolchain,
+--                  installed if allowed
 --     base         the backend's base weights, downloaded and verified
 --     shape        the serving model's shape (fetched if allowed)
 --     plan         the memory estimate against this host: a job that will
@@ -2831,7 +2857,7 @@ progressOf id state =
 
                 else if not state.launched then
                     { folded
-                        -- Staged; the toolchain and the base are on their way.
+                        -- Staged; the trainer and the base are on their way.
                         | status = Provisioning
                     }
 
@@ -3114,7 +3140,7 @@ resolveStep ctx job =
 
 setupFrom : Durable.Ctx -> Job -> String -> Task Error Setup
 setupFrom ctx job backend =
-    stageStep ctx job backend |> Task.andThen (toolchainStep ctx)
+    stageStep ctx job backend |> Task.andThen (trainerStep ctx)
         |> Task.andThen (baseStep ctx job)
         |> Task.andThen (tokenizeStep ctx job)
         |> Task.andThen (shapeStep ctx job)
@@ -3134,13 +3160,13 @@ stageStep ctx job backend =
             |> Task.map (\_ -> backend)
 
 
-toolchainStep : Durable.Ctx -> String -> Task Error ( String, Tool )
-toolchainStep ctx backend =
+trainerStep : Durable.Ctx -> String -> Task Error ( String, Tool )
+trainerStep ctx backend =
     Durable.step
         ctx
         toolCodec
-        "toolchain"
-        (toolchainRaw backend |> Task.map toolOf)
+        "trainer"
+        (ensureTrainer backend |> Task.map toolOf)
         |> Task.map (\tool -> ( backend, tool ))
 
 
@@ -3201,7 +3227,12 @@ shapeStep ctx job ( backend, tool, weights ) =
 
 toolOf : Toolchain -> Tool
 toolOf t =
-    { name = t.name, id = t.id, python = t.python, driverDir = t.driverDir }
+    { name = t.name
+    , id = t.id
+    , python = t.python
+    , driverDir = t.driverDir
+    , trainer = t.trainer
+    }
 
 
 weightsFor : String -> Job -> Task Error String
@@ -3278,6 +3309,7 @@ driverJson job st attempt from =
                   )
                 , ( "targets", JsonE.list JsonE.string s.targets )
                 , ( "toolchain", JsonE.string st.tool.id )
+                , ( "trainer", JsonE.string st.tool.trainer )
                 , ( "v", JsonE.int 1 )
                 ])
 
@@ -4412,7 +4444,12 @@ inputsJson job cs shape key train valid =
             { backend = backend
             , shape = shape
             , tool =
-                { name = "vertex", id = cs.image, python = "", driverDir = "" }
+                { name = "vertex"
+                , id = cs.image
+                , python = ""
+                , driverDir = ""
+                , trainer = ""
+                }
             , weights = ""
             }
         blobValue b =
@@ -4882,7 +4919,12 @@ cloudLaunchAndWatch ctx job cs p shape key =
             { backend = "vertex"
             , shape = shape
             , tool =
-                { name = "vertex", id = cs.image, python = "", driverDir = "" }
+                { name = "vertex"
+                , id = cs.image
+                , python = ""
+                , driverDir = ""
+                , trainer = ""
+                }
             , weights = ""
             }
     in

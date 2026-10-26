@@ -404,6 +404,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Ai", "trainConvert", "rt.Ai_trainConvert"),
     ("Ai", "trainMerge", "rt.Ai_trainMerge"),
     ("Ai", "toolchainEnsure", "rt.Ai_toolchainEnsure"),
+    ("Ai", "trainerEnsure", "rt.Ai_trainerEnsure"),
     ("Ai", "toolchainStatus", "rt.Ai_toolchainStatus"),
     ("Ai", "gcpEndpoint", "rt.Ai_gcpEndpoint"),
     ("Ai", "tarGz", "rt.Ai_tarGz"),

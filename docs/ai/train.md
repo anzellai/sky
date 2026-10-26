@@ -238,6 +238,11 @@ and Linux arm64.
 
 `SKY_AI_ACCEL=cpu` runs MLX on the CPU (a CI runner without Metal).
 
+`Mlx` trains with `sky-trainer`, Sky's native LoRA trainer (C on MLX, no
+Python). `sky ai provision --train mlx` installs the pinned bundle for the
+host. Where no bundle is pinned yet, build one with
+`scripts/ai/trainer/build.sh` and set `SKY_AI_TRAINER_BIN` to it.
+
 `Train.plan job` returns the resolved backend and where it came from: `env`,
 `code` or `detected`. `Train.backendName` gives the name the variable uses.
 

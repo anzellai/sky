@@ -97,10 +97,20 @@ var aiTrainCancelGrace = 60 * time.Second
 // aiTrainPollEvery is the watch loop's poll interval.
 var aiTrainPollEvery = 200 * time.Millisecond
 
-// aiTrainLauncher builds the trainer command. A variable so the Go tests run
-// testdata/faketrainer instead of Python.
-var aiTrainLauncher = func(python, driverDir, runDir, token string) *exec.Cmd {
-	return exec.Command(python, "-I", "-B", filepath.Join(driverDir, "sky_train.py"), "--run", runDir, "--launch", token)
+// aiTrainLauncher builds the trainer command for one attempt (driver.json as
+// cfg): the native sky-trainer when the attempt names one (the Mlx backend,
+// ai_trainer_bundle.go), else the Python driver in its toolchain. A variable
+// so the Go tests run testdata/faketrainer instead.
+var aiTrainLauncher = func(cfg map[string]any, runDir, token string) (*exec.Cmd, error) {
+	if bin := aiJStr(cfg, "trainer"); bin != "" {
+		args, err := aiTrainNativeArgs(cfg, runDir, token)
+		if err != nil {
+			return nil, err
+		}
+		return exec.Command(bin, args...), nil
+	}
+	return exec.Command(aiJStr(cfg, "python"), "-I", "-B", filepath.Join(aiJStr(cfg, "driverDir"), "sky_train.py"),
+		"--run", runDir, "--launch", token), nil
 }
 
 // ─── run directories seen by this process (for the console) ─────────────
@@ -630,12 +640,17 @@ func aiTrainLaunch(runDir, driver string) (map[string]any, error) {
 			return nil, err
 		}
 	} else {
-		python, driverDir := aiJStr(cfg, "python"), aiJStr(cfg, "driverDir")
-		if python == "" || !fileExists(python) {
+		backend := aiJStr(cfg, "backend")
+		if bin := aiJStr(cfg, "trainer"); bin != "" {
+			if !fileExists(bin) {
+				return nil, aiFailf(aiNotProvisioned, "the %s trainer (%s) is not installed; run `sky ai provision --train %s`",
+					backend, bin, backend).with("what", aiTrainerExe).with("command", "sky ai provision --train "+backend)
+			}
+		} else if python := aiJStr(cfg, "python"); python == "" || !fileExists(python) {
 			return nil, aiFailf(aiNotProvisioned, "the %s toolchain's python (%s) is not installed; run `sky ai provision --train %s`",
-				aiJStr(cfg, "backend"), python, aiJStr(cfg, "backend")).with("what", aiJStr(cfg, "backend")+" toolchain").with("command", "sky ai provision --train "+aiJStr(cfg, "backend"))
+				backend, python, backend).with("what", backend+" toolchain").with("command", "sky ai provision --train "+backend)
 		}
-		pid, err := aiTrainSpawn(runDir, python, driverDir, t.Launch, cfg)
+		pid, err := aiTrainSpawn(runDir, t.Launch, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -665,7 +680,7 @@ func aiTrainEnv(cfg map[string]any) []string {
 	return env
 }
 
-func aiTrainSpawn(runDir, python, driverDir, token string, cfg map[string]any) (int, error) {
+func aiTrainSpawn(runDir, token string, cfg map[string]any) (int, error) {
 	abs, err := filepath.Abs(runDir)
 	if err != nil {
 		return 0, aiTrainFail("cannot resolve %s: %v", runDir, err)
@@ -680,7 +695,10 @@ func aiTrainSpawn(runDir, python, driverDir, token string, cfg map[string]any) (
 		return 0, aiTrainFail("cannot open %s: %v", aiTrainStderrFile, err)
 	}
 	defer stderr.Close()
-	cmd := aiTrainLauncher(python, driverDir, abs, token)
+	cmd, err := aiTrainLauncher(cfg, abs, token)
+	if err != nil {
+		return 0, err
+	}
 	cmd.Dir = abs
 	cmd.Stdin = nil
 	cmd.Stdout = events
@@ -688,7 +706,7 @@ func aiTrainSpawn(runDir, python, driverDir, token string, cfg map[string]any) (
 	cmd.Env = aiTrainEnv(cfg)
 	cmd.SysProcAttr = aiTrainSysAttr()
 	if err := cmd.Start(); err != nil {
-		return 0, aiFailf(aiToolchainFailed, "cannot start the trainer %s: %v", python, err).with("tool", "trainer").with("logTail", err.Error())
+		return 0, aiFailf(aiToolchainFailed, "cannot start the trainer %s: %v", cmd.Path, err).with("tool", "trainer").with("logTail", err.Error())
 	}
 	pid := cmd.Process.Pid
 	// Reap the trainer if it ends while this program runs; if this program

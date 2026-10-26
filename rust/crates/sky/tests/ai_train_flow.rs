@@ -93,6 +93,7 @@ fn sky_ai(dir: &Path, home: &Path, test_mode: bool, args: &[&str], env: &[(&str,
         .env("SKY_AI_HOME", home)
         .env_remove("SKY_AI_TRAIN_BACKEND")
         .env_remove("SKY_AI_LLAMA_BIN")
+        .env_remove("SKY_AI_TRAINER_BIN")
         .env_remove("SKY_AI_REGISTRY")
         .env_remove("SKY_DB_PATH")
         .env_remove("DATABASE_URL")
@@ -165,6 +166,7 @@ fn the_train_example_trains_registers_and_serves_offline() {
         .env("SKY_AI_FETCH", "off")
         .env_remove("SKY_AI_TRAIN_BACKEND")
         .env_remove("SKY_AI_LLAMA_BIN")
+        .env_remove("SKY_AI_TRAINER_BIN")
         .stdin(Stdio::null())
         .output()
         .expect("run sky test");
@@ -328,6 +330,59 @@ fn a_missing_toolchain_with_fetching_off_names_the_provision_command() {
     assert!(t.contains("NotProvisioned"), "{t}");
     assert!(t.contains("sky ai provision --train fake"), "{t}");
     assert!(!home.join("toolchains").exists() && !home.join("python").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+/// `sky ai provision --train mlx` provisions the native trainer, never a
+/// Python toolchain: the operator's `SKY_AI_TRAINER_BIN` is checked
+/// (`--version`) and reported, and without it a host with no pinned bundle is
+/// `NotProvisioned` naming the variable.
+#[cfg(unix)]
+#[test]
+fn provision_train_mlx_takes_the_operators_native_trainer() {
+    use std::os::unix::fs::PermissionsExt;
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let home = scratch("trainer-home");
+    let dir = scratch("trainer");
+    let bin = dir.join("sky-trainer");
+    std::fs::write(
+        &bin,
+        "#!/bin/sh\ncase \"$1\" in --version) echo 'sky-trainer 0.1.0 (mlx-c)' ;; *) exit 3 ;; esac\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let b = bin.to_string_lossy().to_string();
+    let out = sky_ai(
+        &dir,
+        &home,
+        false,
+        &["provision", "--train", "mlx", "--format", "json"],
+        &[("SKY_AI_TRAINER_BIN", &b), ("SKY_AI_FETCH", "off")],
+    );
+    assert!(out.status.success(), "provision: {}", text(&out));
+    let j = json(&out);
+    assert_eq!(j["toolchain"], "mlx", "{j}");
+    assert_eq!(j["trainer"], b.as_str(), "{j}");
+    assert_eq!(j["versions"]["sky-trainer"], "0.1.0", "{j}");
+    assert!(
+        !home.join("toolchains").exists() && !home.join("python").exists(),
+        "no Python toolchain is installed for mlx"
+    );
+
+    let out = sky_ai(
+        &dir,
+        &home,
+        false,
+        &["provision", "--train", "mlx", "--format", "json"],
+        &[("SKY_AI_FETCH", "off")],
+    );
+    assert!(!out.status.success(), "{}", text(&out));
+    let t = text(&out);
+    assert!(t.contains("NotProvisioned"), "{t}");
+    assert!(t.contains("SKY_AI_TRAINER_BIN"), "{t}");
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&home);
 }

@@ -312,6 +312,7 @@ variables are:
 |---|---|
 | `SKY_AI_HOME` | the engine and model cache, one per user (default `$SKY_HOME/ai`, else the user cache directory) |
 | `SKY_AI_LLAMA_BIN` | the directory of your own `llama-server` build, instead of the pinned one |
+| `SKY_AI_TRAINER_BIN` | your own `sky-trainer` (the executable, or the directory that holds it), for example one built with `scripts/ai/trainer/build.sh`, instead of the pinned bundle. The `Mlx` backend trains with it. Set to anything that is not a `sky-trainer` is `NotProvisioned`, never a fallback |
 | `SKY_AI_FETCH` | `on` / `off`: may a missing engine or model be downloaded at run time (default on in development, off otherwise) |
 | `SKY_AI_ACCEL` | force the accelerator the fit plan assumes: `cpu`, `metal`, `cuda`, `rocm`, `vulkan` |
 | `SKY_AI_REGISTRY` | where the model registry's artefacts live: `file://<dir>`, `gs://<bucket>/<prefix>` or `s3://<bucket>/<prefix>` (default: the location in code, else `file://.sky/ai/registry`); the registry's records are rows in the app's own database |

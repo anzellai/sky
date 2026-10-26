@@ -1012,7 +1012,7 @@ static void usage(void) {
       "          --eval-every N [--max-eval-rows N] --seed N\n"
       "memory:   [--quant-bits 0|4|8] [--quant-group-size G] [--grad-checkpoint 0|1]\n"
       "          [--memory-cap BYTES] [--cache-limit BYTES]\n"
-      "run:      [--cpu] [--attempt N] [--resume-step N --resume-dir REL]\n"
+      "run:      [--cpu] [--attempt N] [--resume-step N --resume-dir REL] [--launch TOKEN]\n"
       "tests:    [--crash-at N] [--pace-ms N] [--quantise-snapshot OUT]\n",
       stderr);
 }
@@ -1118,6 +1118,9 @@ int main(int argc, char** argv) {
     else if (FLAG("--attempt")) C.attempt = parse_int(a, v);
     else if (FLAG("--resume-step")) C.resume_step = parse_int(a, v);
     else if (FLAG("--resume-dir")) C.resume_dir = v;
+    /* The launch token is the trainer's identity on its command line: the
+       runtime finds a running trainer by it, never by its pid alone. */
+    else if (FLAG("--launch")) (void)v;
     else if (FLAG("--crash-at")) C.crash_at = parse_int(a, v);
     else if (FLAG("--pace-ms")) C.pace_ms = parse_int(a, v);
     else if (FLAG("--quantise-snapshot")) quant_out = v;
