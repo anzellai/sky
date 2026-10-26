@@ -257,8 +257,8 @@ The bundles are built in CI only, by `.github/workflows/ai-trainer-bundles.yml`
 (`scripts/ai/trainer/build-trainer-bundle.sh`), from MLX 0.32.4, mlx-c
 57731b00e and their dependencies, each pinned by SHA-256. There are two:
 `darwin-arm64` (Metal, with the kernels in `lib/mlx.metallib`) and `linux-x64`
-(the CPU, on OpenBLAS linked into `libmlx.so`; glibc 2.35 or newer and
-`libstdc++`). Each carries `sky-trainer`, `lib/`, the licences, a `NOTICE.txt`
+(the CPU, on OpenBLAS linked into `libmlx.so`, with GCC 13's `libstdc++` and
+`libgcc_s` in `lib/`; it needs glibc 2.35 or newer and nothing else). Each carries `sky-trainer`, `lib/`, the licences, a `NOTICE.txt`
 and an SPDX SBOM. The unpacked archive passes `scripts/ai/trainer/test-trainer.sh`
 on the tiny model before the `sky-trainer-v<version>` release publishes it, and
 `ai_pins.go` pins each archive's SHA-256.

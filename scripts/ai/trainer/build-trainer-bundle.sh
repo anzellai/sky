@@ -119,7 +119,10 @@ require_tool ninja "install Ninja"
 require_tool jq "install jq (the SBOM)"
 if [ "$PLATFORM" = linux-x64 ]; then
   require_tool make "install make"
-  require_tool gcc "install gcc"
+  # mlx-c uses C++20 std::format, which libstdc++ has from GCC 13; ubuntu-22.04
+  # ships GCC 11 (the workflow installs g++-13 from ubuntu-toolchain-r/test).
+  require_tool gcc-13 "install gcc-13 and g++-13 (ppa:ubuntu-toolchain-r/test on ubuntu-22.04)"
+  require_tool g++-13 "install g++-13 (ppa:ubuntu-toolchain-r/test on ubuntu-22.04)"
   require_tool readelf "install binutils"
 else
   require_tool xcrun "install the Xcode command line tools"
@@ -196,8 +199,8 @@ else
   # static, position-independent (it goes into libmlx.so), with kernels for
   # every x86-64 CPU picked at run time (DYNAMIC_ARCH) over a PRESCOTT
   # baseline, pthreads and no OpenMP (no libgomp).
-  OB_FLAGS=(NO_SHARED=1 NOFORTRAN=1 C_LAPACK=1 DYNAMIC_ARCH=1 TARGET=PRESCOTT
-    USE_OPENMP=0 USE_THREAD=1 NUM_THREADS=64 NO_AFFINITY=1)
+  OB_FLAGS=(CC=gcc-13 HOSTCC=gcc-13 NO_SHARED=1 NOFORTRAN=1 C_LAPACK=1 DYNAMIC_ARCH=1
+    TARGET=PRESCOTT USE_OPENMP=0 USE_THREAD=1 NUM_THREADS=64 NO_AFFINITY=1)
   OB_PREFIX="$WORK/openblas"
   with_timeout 3600 make -C "$SRC/OpenBLAS-$OPENBLAS_VERSION" -j"$JOBS" "${OB_FLAGS[@]}" libs netlib > "$WORK/openblas-build.log" 2>&1 ||
     { tail -60 "$WORK/openblas-build.log" >&2; exit 1; }
@@ -211,11 +214,16 @@ else
   # off), so the flag reaches the configure checks only. --no-as-needed keeps
   # libm although it comes before the archive on the check's command line.
   # libmlx.so itself gets libm from the C++ driver.
-  MLX_FLAGS+=(-DMLX_BUILD_METAL=OFF -DBLA_VENDOR=OpenBLAS -DBLA_STATIC=ON
+  # One compiler, one C++ runtime: MLX, mlx-c and the trainer are built with
+  # GCC 13, and its libstdc++ and libgcc_s ship in lib/ (below). libmlx.so
+  # finds them beside itself by its $ORIGIN rpath.
+  LINUX_CC=(-DCMAKE_C_COMPILER=gcc-13 -DCMAKE_CXX_COMPILER=g++-13)
+  MLX_FLAGS+=("${LINUX_CC[@]}" "-DCMAKE_INSTALL_RPATH=\$ORIGIN"
+    -DMLX_BUILD_METAL=OFF -DBLA_VENDOR=OpenBLAS -DBLA_STATIC=ON
     -DCMAKE_PREFIX_PATH="$OB_PREFIX"
     "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--no-as-needed -lm"
     -DLAPACK_INCLUDE_DIRS="$OB_PREFIX/include" -DBLAS_INCLUDE_DIRS="$OB_PREFIX/include")
-  TRAINER_FLAGS=()
+  TRAINER_FLAGS=("${LINUX_CC[@]}")
 fi
 MLX_PREFIX="$WORK/mlx-install"
 # A failed configure names the symbols its link checks could not resolve.
@@ -251,7 +259,7 @@ is_system() {
     esac
   else
     case "$1" in
-      libc.so.6 | libm.so.6 | libstdc++.so.6 | libgcc_s.so.1 | libpthread.so.0 | libdl.so.2 | librt.so.1 | ld-linux-x86-64.so.2) return 0 ;;
+      libc.so.6 | libm.so.6 | libpthread.so.0 | libdl.so.2 | librt.so.1 | ld-linux-x86-64.so.2) return 0 ;;
     esac
   fi
   return 1
@@ -276,8 +284,11 @@ while [ "$changed" = 1 ]; do
       n="$(bundled_name "$d")" || { echo "build-trainer-bundle: $(basename "$obj") loads $d, outside the bundle" >&2; exit 1; }
       [ "$n" = "$(basename "$obj")" ] && continue
       if [ ! -e "$BUNDLE/lib/$n" ]; then
-        [ -e "$MLX_LIBDIR/$n" ] || { echo "build-trainer-bundle: $(basename "$obj") loads $n, which is neither a system library nor in $MLX_LIBDIR" >&2; exit 1; }
-        /bin/cp -fL "$MLX_LIBDIR/$n" "$BUNDLE/lib/$n"
+        from="$MLX_LIBDIR/$n"
+        # The C++ runtime comes from the compiler that built the libraries.
+        case "$PLATFORM:$n" in linux-x64:libstdc++.so.6 | linux-x64:libgcc_s.so.1) from="$(g++-13 -print-file-name="$n")" ;; esac
+        [ -e "$from" ] || { echo "build-trainer-bundle: $(basename "$obj") loads $n, which is neither a system library nor at $from" >&2; exit 1; }
+        /bin/cp -fL "$from" "$BUNDLE/lib/$n"
         changed=1
       fi
     done < <(deps "$obj")
@@ -321,8 +332,19 @@ if [ "$PLATFORM" = linux-x64 ]; then
   # The rpaths: the trainer finds lib/, libmlxc finds libmlx beside itself.
   readelf -dW "$BUNDLE/sky-trainer" | grep -Eq '(RUNPATH|RPATH).*\[\$ORIGIN/lib\]' ||
     { echo "::error::sky-trainer's rpath is not \$ORIGIN/lib" >&2; bad=1; }
-  readelf -dW "$BUNDLE/lib/libmlxc.so" | grep -Eq '(RUNPATH|RPATH).*\[\$ORIGIN\]' ||
-    { echo "::error::libmlxc.so's rpath is not \$ORIGIN" >&2; bad=1; }
+  for o in libmlxc.so libmlx.so; do
+    readelf -dW "$BUNDLE/lib/$o" | grep -Eq '(RUNPATH|RPATH).*\[\$ORIGIN\]' ||
+      { echo "::error::$o's rpath is not \$ORIGIN" >&2; bad=1; }
+  done
+  # The C++ runtime the trainer loads is the bundle's, not the host's.
+  for n in libstdc++.so.6 libgcc_s.so.1; do
+    [ -f "$BUNDLE/lib/$n" ] || { echo "::error::the bundle carries no $n" >&2; bad=1; }
+    where="$(ldd "$BUNDLE/sky-trainer" | awk -v n="$n" '$1 == n {print $3}')"
+    case "$where" in
+      "$BUNDLE"/lib/*) ;;
+      *) echo "::error::sky-trainer loads $n from '$where', not the bundle" >&2; bad=1 ;;
+    esac
+  done
 else
   otool -l "$BUNDLE/sky-trainer" | grep -A2 LC_RPATH | grep -q '@executable_path/lib' ||
     { echo "::error::sky-trainer's rpath is not @executable_path/lib" >&2; bad=1; }
@@ -342,6 +364,15 @@ if [ "$PLATFORM" = darwin-arm64 ]; then
 else
   /bin/cp -f "$SRC/OpenBLAS-$OPENBLAS_VERSION/LICENSE" "$BUNDLE/licenses/LICENSE-OpenBLAS"
   /bin/cp -f "$SRC/OpenBLAS-$OPENBLAS_VERSION/lapack-netlib/LICENSE" "$BUNDLE/licenses/LICENSE-LAPACK"
+  # libstdc++ and libgcc_s: GPL-3.0 with the GCC Runtime Library Exception.
+  GCC_VERSION="$(g++-13 -dumpfullversion)"
+  for f in /usr/share/doc/libstdc++6/copyright /usr/share/common-licenses/GPL-3; do
+    [ -f "$f" ] || { echo "build-trainer-bundle: $f is missing (the GCC runtime's licence)" >&2; exit 1; }
+  done
+  grep -q "GCC RUNTIME LIBRARY EXCEPTION" /usr/share/doc/libstdc++6/copyright ||
+    { echo "build-trainer-bundle: /usr/share/doc/libstdc++6/copyright has no runtime library exception text" >&2; exit 1; }
+  /bin/cp -f /usr/share/doc/libstdc++6/copyright "$BUNDLE/licenses/LICENSE-gcc-runtime"
+  /bin/cp -f /usr/share/common-licenses/GPL-3 "$BUNDLE/licenses/LICENSE-GPL-3"
 fi
 
 {
@@ -364,6 +395,8 @@ fi
   else
     echo "  OpenBLAS $OPENBLAS_VERSION (BSD-3-Clause, with reference LAPACK; linked statically into libmlx.so)"
     echo "      sha256 $OPENBLAS_SHA256"
+    echo "  lib/libstdc++.so.6 and lib/libgcc_s.so.1 from GCC $GCC_VERSION (ubuntu-toolchain-r/test), under"
+    echo "      GPL-3.0 with the GCC Runtime Library Exception (licenses/LICENSE-gcc-runtime, LICENSE-GPL-3)"
   fi
   echo
   echo "sky-trainer's own sources (sky_trainer.c, guard.c) are Sky's (Apache-2.0, licenses/LICENSE-sky); sha256.c is in the public domain."
@@ -387,6 +420,10 @@ files_json="$(cd "$BUNDLE" && find . -type f ! -name sbom.spdx.json | sed 's|^\.
       pkg metal-cpp "$METALCPP_VERSION" "$METALCPP_URL" "$METALCPP_SHA256" Apache-2.0
     else
       pkg OpenBLAS "$OPENBLAS_VERSION" "$OPENBLAS_URL" "$OPENBLAS_SHA256" BSD-3-Clause
+      for n in libstdc++.so.6 libgcc_s.so.1; do
+        pkg "gcc-runtime-$n" "$GCC_VERSION" NOASSERTION "$(shasum -a 256 "$BUNDLE/lib/$n" | cut -c1-64)" \
+          "GPL-3.0-or-later WITH GCC-exception-3.1"
+      done
     fi
   } | jq -s .)"
   jq -n --arg name "$NAME" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson files "$files_json" --argjson pkgs "$pkgs" \
