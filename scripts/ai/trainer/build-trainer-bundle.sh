@@ -204,13 +204,25 @@ else
   with_timeout 600 make -C "$SRC/OpenBLAS-$OPENBLAS_VERSION" "${OB_FLAGS[@]}" PREFIX="$OB_PREFIX" install > "$WORK/openblas-install.log" 2>&1 ||
     { tail -60 "$WORK/openblas-install.log" >&2; exit 1; }
   [ -f "$OB_PREFIX/lib/libopenblas.a" ] || { echo "build-trainer-bundle: OpenBLAS built no libopenblas.a" >&2; exit 1; }
+  # A static libopenblas.a needs libm on Linux (OpenBLAS's own Makefile adds
+  # EXTRALIB += -lm), and FindBLAS/FindLAPACK's link test of a static OpenBLAS
+  # adds only the thread libraries, so sgemm_ and cheev_ "are not found". The
+  # checks link executables, and MLX builds none here (tests and examples are
+  # off), so the flag reaches the configure checks only. --no-as-needed keeps
+  # libm although it comes before the archive on the check's command line.
+  # libmlx.so itself gets libm from the C++ driver.
   MLX_FLAGS+=(-DMLX_BUILD_METAL=OFF -DBLA_VENDOR=OpenBLAS -DBLA_STATIC=ON
     -DCMAKE_PREFIX_PATH="$OB_PREFIX"
+    "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--no-as-needed -lm"
     -DLAPACK_INCLUDE_DIRS="$OB_PREFIX/include" -DBLAS_INCLUDE_DIRS="$OB_PREFIX/include")
   TRAINER_FLAGS=()
 fi
 MLX_PREFIX="$WORK/mlx-install"
-with_timeout 600 cmake -S "$MLX_SRC" -B "$WORK/build-mlx" "${CMAKE_COMMON[@]}" "${MLX_FLAGS[@]}" -DCMAKE_INSTALL_PREFIX="$MLX_PREFIX"
+# A failed configure names the symbols its link checks could not resolve.
+with_timeout 600 cmake -S "$MLX_SRC" -B "$WORK/build-mlx" "${CMAKE_COMMON[@]}" "${MLX_FLAGS[@]}" -DCMAKE_INSTALL_PREFIX="$MLX_PREFIX" || {
+  grep -ho "undefined reference to [^ ]*" "$WORK/build-mlx/CMakeFiles/CMakeConfigureLog.yaml" 2>/dev/null | sort | uniq -c | sort -rn | head -20 >&2
+  exit 1
+}
 with_timeout 7200 cmake --build "$WORK/build-mlx" -j "$JOBS"
 with_timeout 600 cmake --install "$WORK/build-mlx"
 with_timeout 600 cmake -S "$HERE" -B "$WORK/build-trainer" "${CMAKE_COMMON[@]}" ${TRAINER_FLAGS[@]+"${TRAINER_FLAGS[@]}"} \
