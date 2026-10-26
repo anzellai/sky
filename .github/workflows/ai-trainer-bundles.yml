@@ -137,6 +137,26 @@ jobs:
           "$trainer" --selftest --cpu
           ./scripts/ai/trainer/test-trainer.sh --trainer "$trainer" --device cpu --work "$RUNNER_TEMP/test"
 
+      # The archive is reproducible: the unpacked bundle, its mtimes and modes
+      # disturbed, packs again to the same bytes at the commit's time.
+      - name: The archive packs again to the same bytes
+        run: |
+          set -euo pipefail
+          epoch="$(git log -1 --format=%ct)"
+          rm -rf "$RUNNER_TEMP/repack" && mkdir -p "$RUNNER_TEMP/repack"
+          tar -xzf "$RUNNER_TEMP"/out/sky-trainer-*-"${{ matrix.platform }}".tar.gz -C "$RUNNER_TEMP/repack"
+          tree="$(echo "$RUNNER_TEMP"/repack/sky-trainer-*-"${{ matrix.platform }}")"
+          find "$tree" -exec touch {} +
+          find "$tree" -type f -exec chmod u+w,g+w {} +
+          ./scripts/ai/trainer/pack-bundle.sh "$tree" "$RUNNER_TEMP/repacked.tar.gz" "$epoch" > /dev/null
+          one="$(shasum -a 256 "$RUNNER_TEMP"/out/sky-trainer-*-"${{ matrix.platform }}".tar.gz | cut -c1-64)"
+          two="$(shasum -a 256 "$RUNNER_TEMP/repacked.tar.gz" | cut -c1-64)"
+          echo "built $one"
+          echo "again $two"
+          echo "${{ matrix.platform }}: built $one, packed again $two" >> "$GITHUB_STEP_SUMMARY"
+          [ "$one" = "$two" ] || { echo "::error::the archive is not reproducible: $one then $two" >&2; exit 1; }
+          ./scripts/ai/trainer/test-pack-bundle.sh --work "$RUNNER_TEMP/test-pack"
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: sky-trainer-${{ matrix.platform }}

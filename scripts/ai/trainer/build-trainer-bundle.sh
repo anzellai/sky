@@ -136,6 +136,13 @@ WORK="$(cd "$WORK" && pwd)" SOURCES="$(cd "$SOURCES" && pwd)" OUT="$(cd "$OUT" &
 SRC="$WORK/src"
 rm -rf "$SRC" && mkdir -p "$SRC"
 start=$(date +%s)
+# Every time in the bundle (the SBOM's creation time, the archive's mtimes) is
+# the commit's, so a rebuild of the same commit packs the same bytes.
+if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+  SOURCE_DATE_EPOCH="$(git -C "$ROOT" log -1 --format=%ct)"
+fi
+case "$SOURCE_DATE_EPOCH" in '' | *[!0-9]*) echo "build-trainer-bundle: SOURCE_DATE_EPOCH is not a time" >&2; exit 1 ;; esac
+export SOURCE_DATE_EPOCH
 
 # fetch <url> <sha256> <file>: the file in the cache, checked; a cached file
 # with another digest is fetched again, and a fetched one that does not match
@@ -426,7 +433,7 @@ files_json="$(cd "$BUNDLE" && find . -type f ! -name sbom.spdx.json | sed 's|^\.
       done
     fi
   } | jq -s .)"
-  jq -n --arg name "$NAME" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson files "$files_json" --argjson pkgs "$pkgs" \
+  jq -n --arg name "$NAME" --arg created "$(perl -MPOSIX=strftime -e 'print strftime("%Y-%m-%dT%H:%M:%SZ", gmtime($ARGV[0]))' "$SOURCE_DATE_EPOCH")" --argjson files "$files_json" --argjson pkgs "$pkgs" \
     '{spdxVersion: "SPDX-2.3", dataLicense: "CC0-1.0", SPDXID: "SPDXRef-DOCUMENT", name: $name,
       documentNamespace: ("https://github.com/anzellai/sky/spdx/" + $name),
       creationInfo: {created: $created, creators: ["Tool: scripts/ai/trainer/build-trainer-bundle.sh"]},
@@ -434,13 +441,9 @@ files_json="$(cd "$BUNDLE" && find . -type f ! -name sbom.spdx.json | sed 's|^\.
 
 # ─── the archive ────────────────────────────────────────────────────────
 ARCHIVE="$OUT/$NAME.tar.gz"
-# Fixed order, owner and mtime, so a rebuild of the same tree archives the same.
-(cd "$WORK" && find "$NAME" -print | LC_ALL=C sort > "$WORK/files.txt")
-if tar --version 2>/dev/null | grep -q GNU; then
-  tar -C "$WORK" --owner=0 --group=0 --numeric-owner --mtime='@0' --no-recursion -T "$WORK/files.txt" -cf - | gzip -n -9 > "$ARCHIVE"
-else
-  COPYFILE_DISABLE=1 tar -C "$WORK" --uid 0 --gid 0 --no-recursion -T "$WORK/files.txt" -cf - | gzip -n -9 > "$ARCHIVE"
-fi
+# Name order, owner 0, the commit's mtime, normalised modes, ustar, gzip -n:
+# the archive is a function of the bundle's content (pack-bundle.sh).
+"$HERE/pack-bundle.sh" "$BUNDLE" "$ARCHIVE" "$SOURCE_DATE_EPOCH" > /dev/null
 /bin/cp -f "$BUNDLE/sbom.spdx.json" "$OUT/$NAME.sbom.spdx.json"
 (cd "$OUT" && shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256")
 

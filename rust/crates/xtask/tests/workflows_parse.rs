@@ -3359,6 +3359,30 @@ fn trainer_bundle_problems(
             "build: the steps are not build, then test-trainer.sh on the unpacked archive, then upload ({other:?})"
         )),
     }
+    // Reproducible: the archive is packed by pack-bundle.sh at the commit's
+    // time (SOURCE_DATE_EPOCH, the SBOM's creation time too), and each leg
+    // packs the unpacked bundle again and compares the bytes before upload.
+    let repacked = at(&|s| {
+        let r = run(s);
+        r.contains("pack-bundle.sh") && r.contains("[ \"$one\" = \"$two\" ]")
+    });
+    match (repacked, uploaded) {
+        (Some(r), Some(u)) if r < u && steps[r]["if"].is_null() => {}
+        other => p.push(format!(
+            "build: no unconditional step packs the bundle again and compares the bytes before the upload ({other:?})"
+        )),
+    }
+    for need in [
+        "\"$HERE/pack-bundle.sh\" \"$BUNDLE\" \"$ARCHIVE\" \"$SOURCE_DATE_EPOCH\"",
+        "export SOURCE_DATE_EPOCH",
+        "gmtime($ARGV[0]))' \"$SOURCE_DATE_EPOCH\")\"",
+    ] {
+        if !script.contains(need) {
+            p.push(format!(
+                "script: no `{need}` (the archive and the SBOM take the commit's time)"
+            ));
+        }
+    }
     // Publishing: after every leg, from a tag named by the pin, the two
     // platforms only (never the JIT measurement), with SHA256SUMS.
     let publish = &doc["jobs"]["publish"];
@@ -3613,6 +3637,32 @@ fn the_trainer_bundle_check_catches_each_broken_shape() {
     assert!(
         !check(&d, &i.script, &i.build_sh).is_empty(),
         "missed: publish needs the JIT build"
+    );
+    // The reproducibility check is removed.
+    let mut d = i.doc.clone();
+    let r = d["jobs"]["build"]["steps"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .position(|s| s["run"].as_str().unwrap_or("").contains("pack-bundle.sh"))
+        .expect("a repack step");
+    d["jobs"]["build"]["steps"]
+        .as_sequence_mut()
+        .unwrap()
+        .remove(r);
+    assert!(
+        !check(&d, &i.script, &i.build_sh).is_empty(),
+        "missed: no repack check"
+    );
+    // The SBOM takes the wall clock again.
+    let clock = i.script.replace(
+        "gmtime($ARGV[0]))' \"$SOURCE_DATE_EPOCH\")\"",
+        "gmtime(time))')\"",
+    );
+    assert_ne!(clock, i.script, "the mutation applies");
+    assert!(
+        !check(&i.doc, &clock, &i.build_sh).is_empty(),
+        "missed: a wall-clock SBOM time"
     );
     // A branch push reaches publish.
     for cond in [
