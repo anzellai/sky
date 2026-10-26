@@ -399,6 +399,8 @@ steps =
                        , loss = Just 1.5
                        , tokensPerSecond = Just 900.0
                        , checkpoint = ""
+                       , evalLoss = Nothing
+                       , peakMemoryBytes = Just 1000
                        }
                        |> Task.andThen
                               (\_ ->
@@ -410,6 +412,8 @@ steps =
                                       , loss = Just 0.75
                                       , tokensPerSecond = Nothing
                                       , checkpoint = "ckpt-20"
+                                      , evalLoss = Just 0.5
+                                      , peakMemoryBytes = Nothing
                                       })
                        |> Task.andThen
                               (\_ ->
@@ -421,6 +425,8 @@ steps =
                                       , loss = Just 9.0
                                       , tokensPerSecond = Nothing
                                       , checkpoint = ""
+                                      , evalLoss = Just 2.0
+                                      , peakMemoryBytes = Just 9999
                                       })
                        |> Task.andThen (\_ -> Trace.trainingSteps db "train-1"))
         |> Task.run
@@ -432,6 +438,8 @@ stepsKept found =
         [ Test.equal [ 10, 20 ] (List.map .step found)
         , Test.equal [ Just 1.5, Just 0.75 ] (List.map .loss found)
         , Test.equal [ "", "ckpt-20" ] (List.map .checkpoint found)
+        , Test.equal [ Just 2.0, Just 0.5 ] (List.map .evalLoss found)
+        , Test.equal [ Just 1000, Nothing ] (List.map .peakMemoryBytes found)
         ]
 
 
