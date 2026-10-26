@@ -244,6 +244,60 @@ fn fake_trains_in_its_own_process_relaunches_and_serves_on_the_real_engine() {
     let _ = std::fs::remove_dir_all(&work);
 }
 
+/// The native trainer's contract (scripts/ai/trainer/test-trainer.sh: the
+/// gradient check, the falling loss, kill and resume to the same adapter,
+/// cancel, the memory guard, quantised bases, the GGUF conversion, the
+/// runtime's command line and the chunked loss) on the synthetic tiny model,
+/// on the CPU, with the trainer a user gets: the operator's
+/// SKY_AI_TRAINER_BIN, else the pinned bundle `sky ai provision --train mlx`
+/// installs. CI's linux job takes it from the bundle workflow until the
+/// bundles are pinned (.github/actions/sky-trainer).
+#[test]
+fn the_native_trainer_passes_its_contract_on_the_tiny_model() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let trainer = match std::env::var("SKY_AI_TRAINER_BIN") {
+        Ok(b) if !b.trim().is_empty() => Some(PathBuf::from(b)),
+        _ => {
+            let out = Command::new(SKY)
+                .args(["ai", "provision", "--train", "mlx", "--format", "json"])
+                .current_dir(scratch("provision-trainer"))
+                .output()
+                .unwrap();
+            if out.status.success() {
+                json(&out)["trainer"].as_str().map(PathBuf::from)
+            } else {
+                None
+            }
+        }
+    };
+    if !required(
+        Need::AiTrainer,
+        trainer.as_ref().is_some_and(|t| t.is_file()),
+    ) {
+        return;
+    }
+    let trainer = trainer.unwrap();
+    let work = scratch("trainer-contract");
+    let out = Command::new("bash")
+        .arg(repo_root().join("scripts/ai/trainer/test-trainer.sh"))
+        .arg("--trainer")
+        .arg(&trainer)
+        .args(["--device", "cpu", "--work"])
+        .arg(&work)
+        .output()
+        .unwrap();
+    let report = text(&out);
+    assert!(
+        out.status.success(),
+        "test-trainer.sh with {}:\n{report}",
+        trainer.display()
+    );
+    assert!(report.contains("test-trainer: all passed"), "{report}");
+    let _ = std::fs::remove_dir_all(&work);
+}
+
 /// The native trainer's memory guard SIGKILLs the trainer over its cap,
 /// writing guard.json first and its error line after. The durable workflow
 /// ends the run with `ModelTooLarge` and never relaunches it into the same

@@ -1209,12 +1209,17 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  # gate-ai-train — Std.Ai.Train with a real trainer under the managed Python
-  # (rust/crates/sky/tests/ai_train_live.rs). Same job as rust-ci.yml
-  # `ai-train-live`.
+  # gate-ai-train — Std.Ai.Train with real trainer processes and no Python for
+  # Mlx or Fake (rust/crates/sky/tests/ai_train_live.rs: the Fake trainer in
+  # the runtime, and the native trainer's contract on the tiny model with the
+  # linux-x64 bundle), plus the Unsloth driver's Python suites under the
+  # pinned CPython. Same job as rust-ci.yml `ai-train-live`.
   gate-ai-train:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
     env:
       SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
     steps:
@@ -1223,35 +1228,48 @@ jobs:
         with:
           install-compiler: 'false'
       # Restore only: rust-ci `ai-train-live` saves it on main.
-      - name: Restore the Std.Ai home (engine, model, managed Python; saved on main only)
+      - name: Restore the Std.Ai home (engine, model, CPython, trainers; saved on main only)
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.sky-ai/engines
             ${{ github.workspace }}/.sky-ai/models
-            ${{ github.workspace }}/.sky-ai/tools
             ${{ github.workspace }}/.sky-ai/python
-            ${{ github.workspace }}/.sky-ai/toolchains
-          key: sky-ai-train-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go', 'runtime-go/rt/ai_train_assets/**') }}
+            ${{ github.workspace }}/.sky-ai/trainers
+          key: sky-ai-train-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go') }}
       - name: sqlite3 and brotli for the sky crate's tests
         run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
-      - name: Std.Ai.Train live (Fake trainer under the managed Python)
+      - uses: ./.github/actions/sky-trainer
+        with:
+          platform: linux-x64
+          token: ${{ github.token }}
+      - name: Std.Ai.Train live (the Fake trainer in the runtime, the native trainer on the tiny model)
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
         run: cargo test -p sky --locked --test ai_train_live -- --nocapture
+      - name: The Unsloth driver's Python suites under the pinned CPython
+        working-directory: runtime-go
+        env:
+          SKY_LIVE_TESTS: require
+        run: go test -tags ailive ./rt -run TestTheDriverSuitesPassUnderThePinnedCPython -count=1 -timeout 15m -v
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
   # gate-ai-train-mlx — a real QLoRA run with the native trainer (sky-trainer,
-  # MLX through mlx-c), killed and resumed, served and evaluated (rust/crates/sky/tests/ai_train_native_live.rs). MLX runs on the
-  # CPU (SKY_AI_ACCEL=cpu): the runner has no usable Metal device. Same job as
+  # MLX through mlx-c), killed and resumed, served and evaluated
+  # (rust/crates/sky/tests/ai_train_native_live.rs), with the darwin-arm64
+  # bundle .github/actions/sky-trainer provides. MLX runs on the CPU
+  # (SKY_AI_ACCEL=cpu): the runner has no usable Metal device. Same job as
   # rust-ci.yml `ai-train-mlx-live`.
   gate-ai-train-mlx:
     runs-on: macos-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -1270,19 +1288,21 @@ jobs:
           shared-key: sky-macos
           save-if: 'false'
       # Restore only: rust-ci `ai-train-mlx-live` saves it on main.
-      - name: Restore the Std.Ai home (engine, model, MLX toolchain, base; saved on main only)
+      - name: Restore the Std.Ai home (engine, model, trainer, base; saved on main only)
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.sky-ai/engines
             ${{ github.workspace }}/.sky-ai/models
-            ${{ github.workspace }}/.sky-ai/tools
-            ${{ github.workspace }}/.sky-ai/python
-            ${{ github.workspace }}/.sky-ai/toolchains
+            ${{ github.workspace }}/.sky-ai/trainers
             ${{ github.workspace }}/.sky-ai/bases
-          key: sky-ai-train-mlx-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go', 'runtime-go/rt/ai_train_assets/**', 'sky-stdlib/Std/Ai/Train.sky') }}
+          key: sky-ai-train-mlx-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go', 'sky-stdlib/Std/Ai/Train.sky') }}
       - name: brotli for the sky crate's tests
         run: command -v brotli >/dev/null || brew install brotli
+      - uses: ./.github/actions/sky-trainer
+        with:
+          platform: darwin-arm64
+          token: ${{ github.token }}
       - name: Std.Ai.Train live (MLX on Apple silicon)
         working-directory: rust
         env:

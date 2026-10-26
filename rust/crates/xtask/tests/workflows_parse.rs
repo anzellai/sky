@@ -3874,3 +3874,125 @@ fn the_linux_trainer_toolchain_is_pinned_and_checked() {
         "missed: an unpinned install"
     );
 }
+
+/// What is wrong with how a training job gets its trainer.
+fn training_job_problems(
+    file: &str,
+    doc: &serde_yaml::Value,
+    job: &str,
+    platform: &str,
+    test: &str,
+) -> Vec<String> {
+    let mut p = Vec::new();
+    let j = &doc["jobs"][job];
+    if j.is_null() {
+        return vec![format!("{file}: no job `{job}`")];
+    }
+    if j["permissions"]["actions"].as_str() != Some("read") {
+        p.push(format!(
+            "{file} `{job}`: no `permissions: actions: read` (the bundle artifact)"
+        ));
+    }
+    let steps: Vec<&serde_yaml::Value> = j["steps"].as_sequence().into_iter().flatten().collect();
+    let trainer = steps.iter().position(|s| {
+        s["uses"].as_str() == Some("./.github/actions/sky-trainer")
+            && s["with"]["platform"].as_str() == Some(platform)
+    });
+    let tested = steps.iter().position(|s| {
+        s["run"]
+            .as_str()
+            .unwrap_or("")
+            .contains(&format!("--test {test}"))
+    });
+    match (trainer, tested) {
+        (Some(a), Some(b)) if a < b => {}
+        other => p.push(format!(
+            "{file} `{job}`: the {platform} trainer (.github/actions/sky-trainer) does not come before `--test {test}` ({other:?})"
+        )),
+    }
+    for s in &steps {
+        let key = format!("{:?}", s["with"]["key"]);
+        if key.contains("ai_train_assets") {
+            p.push(format!("{file} `{job}`: a cache key still hashes ai_train_assets ({key}); key it on the trainer pins (ai_pins.go)"));
+        }
+    }
+    p
+}
+
+/// The training jobs take the native trainer from .github/actions/sky-trainer
+/// (the pinned bundle once ai_pins.go pins it, else the newest bundle
+/// workflow artifact), key their caches on the pins, and the linux jobs run
+/// the Unsloth driver's Python suites under the pinned CPython.
+///
+/// # Why this exists
+///
+/// Before this, `ai-train-mlx-live` and `gate-ai-train-mlx` failed on every
+/// run: CI had no sky-trainer. The same jobs must keep working, unchanged,
+/// when the bundles are pinned, so the action is a no-op for a pinned
+/// platform rather than a branch-only workaround.
+#[test]
+fn the_training_jobs_get_their_trainer_from_the_bundle() {
+    let rust_ci = read_workflow("rust-ci.yml");
+    let release = read_workflow("release.yml");
+    let mut p = Vec::new();
+    p.extend(training_job_problems(
+        "rust-ci.yml",
+        &rust_ci,
+        "ai-train-live",
+        "linux-x64",
+        "ai_train_live",
+    ));
+    p.extend(training_job_problems(
+        "rust-ci.yml",
+        &rust_ci,
+        "ai-train-mlx-live",
+        "darwin-arm64",
+        "ai_train_native_live",
+    ));
+    p.extend(training_job_problems(
+        "release.yml",
+        &release,
+        "gate-ai-train",
+        "linux-x64",
+        "ai_train_live",
+    ));
+    p.extend(training_job_problems(
+        "release.yml",
+        &release,
+        "gate-ai-train-mlx",
+        "darwin-arm64",
+        "ai_train_native_live",
+    ));
+    for (file, doc, job) in [
+        ("rust-ci.yml", &rust_ci, "ai-train-live"),
+        ("release.yml", &release, "gate-ai-train"),
+    ] {
+        let runs: String = doc["jobs"][job]["steps"]
+            .as_sequence()
+            .into_iter()
+            .flatten()
+            .filter_map(|s| s["run"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !runs
+            .contains("go test -tags ailive ./rt -run TestTheDriverSuitesPassUnderThePinnedCPython")
+        {
+            p.push(format!(
+                "{file} `{job}`: the Unsloth driver's Python suites do not run"
+            ));
+        }
+    }
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let action = std::fs::read_to_string(root.join(".github/actions/sky-trainer/action.yml"))
+        .unwrap_or_default();
+    for need in [
+        "sed -n '/^var aiTrainerAssets = /,/^}/p' \"$pins\" | grep -qF \"\\\"$file\\\"\"",
+        "shasum -a 256 -c \"$file.sha256\"",
+        "echo \"SKY_AI_TRAINER_BIN=$bin\" >> \"$GITHUB_ENV\"",
+    ] {
+        if !action.contains(need) {
+            p.push(format!(".github/actions/sky-trainer: no `{need}`"));
+        }
+    }
+    assert!(p.is_empty(), "{}", p.join("\n"));
+}

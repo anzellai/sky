@@ -2551,18 +2551,25 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  # ── Std.Ai.Train: a real trainer under the managed Python ───────────────
-  # ai_train_live.rs trains with the Fake backend in the Sky-managed CPython
-  # (pinned uv + python-build-standalone, both verified by SHA-256), kills the
-  # first trainer after step 3 and asserts the relaunch from the newest
-  # checkpoint, converts the adapter to GGUF, serves it on the real
-  # llama-server, refuses it on a forged base, and runs the driver's Python
-  # suites (incl. the Unsloth fixture) under the managed CPython. The Std.Ai
-  # home (engine, model, uv, CPython, toolchains) is cached on the pins and the
-  # training assets. Excluded from the sliced runs (rust/.config/nextest.toml).
+  # ── Std.Ai.Train: real trainer processes, no Python for Mlx or Fake ─────
+  # ai_train_live.rs trains with the Fake backend, which the fixture app runs
+  # by starting itself again as the trainer (runtime-go/rt/ai_fake_trainer.go),
+  # kills the first trainer after step 3 and asserts the relaunch from the
+  # newest checkpoint, converts the adapter to GGUF, serves it on the real
+  # llama-server and refuses it on a forged base. It also runs the native
+  # trainer's contract (scripts/ai/trainer/test-trainer.sh) on the tiny model
+  # with the linux-x64 CPU bundle, which .github/actions/sky-trainer provides
+  # (the pinned bundle once ai_pins.go pins it, else the newest
+  # ai-trainer-bundles.yml artifact). The Unsloth driver's Python suites run
+  # under the pinned CPython (go test -tags ailive). The Std.Ai home (engine,
+  # model, CPython, trainers) is cached on the pins (ai_pins.go). Excluded
+  # from the sliced runs (rust/.config/nextest.toml).
   ai-train-live:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -2587,17 +2594,16 @@ jobs:
             go-linux-
       # Only main writes a cache (restore everywhere): a branch saving its
       # own copy evicts main's entries from the repository budget.
-      - name: Cache the Std.Ai home (engine, model, managed Python) (saved on main only)
+      - name: Cache the Std.Ai home (engine, model, CPython, trainers) (saved on main only)
         id: ai-home
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.sky-ai/engines
             ${{ github.workspace }}/.sky-ai/models
-            ${{ github.workspace }}/.sky-ai/tools
             ${{ github.workspace }}/.sky-ai/python
-            ${{ github.workspace }}/.sky-ai/toolchains
-          key: sky-ai-train-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go', 'runtime-go/rt/ai_train_assets/**') }}
+            ${{ github.workspace }}/.sky-ai/trainers
+          key: sky-ai-train-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go') }}
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
@@ -2605,11 +2611,20 @@ jobs:
           save-if: 'false'
       - name: sqlite3 and brotli for the sky crate's tests
         run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
-      - name: Std.Ai.Train live (Fake trainer under the managed Python)
+      - uses: ./.github/actions/sky-trainer
+        with:
+          platform: linux-x64
+          token: ${{ github.token }}
+      - name: Std.Ai.Train live (the Fake trainer in the runtime, the native trainer on the tiny model)
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
         run: cargo test -p sky --locked --test ai_train_live -- --nocapture
+      - name: The Unsloth driver's Python suites under the pinned CPython
+        working-directory: runtime-go
+        env:
+          SKY_LIVE_TESTS: require
+        run: go test -tags ailive ./rt -run TestTheDriverSuitesPassUnderThePinnedCPython -count=1 -timeout 15m -v
       - name: Save the Std.Ai home (main only)
         if: always() && github.ref == 'refs/heads/main' && steps.ai-home.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -2617,9 +2632,8 @@ jobs:
           path: |
             ${{ github.workspace }}/.sky-ai/engines
             ${{ github.workspace }}/.sky-ai/models
-            ${{ github.workspace }}/.sky-ai/tools
             ${{ github.workspace }}/.sky-ai/python
-            ${{ github.workspace }}/.sky-ai/toolchains
+            ${{ github.workspace }}/.sky-ai/trainers
           key: ${{ steps.ai-home.outputs.cache-primary-key }}
       - name: Bound the Go caches before save
         if: always()
@@ -2631,13 +2645,17 @@ jobs:
   # (sky-trainer, MLX through mlx-c) for 24 steps under a 2.5 GB cap, SIGKILLs
   # the trainer after its first checkpoint and asserts the durable relaunch
   # from it, then serves and evaluates the adapter against the base. The
-  # trainer comes from the pinned bundle (ai_pins.go aiTrainerAssets); until
-  # one is pinned the test FAILS naming SKY_AI_TRAINER_BIN. GitHub's
-  # macOS runners have no usable Metal device for MLX, so SKY_AI_ACCEL=cpu runs
-  # MLX on the CPU (the same code path; slower). The Std.Ai home is cached.
+  # trainer is the darwin-arm64 bundle .github/actions/sky-trainer provides
+  # (the pinned bundle once ai_pins.go pins it, else the newest
+  # ai-trainer-bundles.yml artifact). GitHub's macOS runners have no usable
+  # Metal device for MLX, so SKY_AI_ACCEL=cpu runs MLX on the CPU (the same
+  # code path; slower). The Std.Ai home is cached on the pins.
   ai-train-mlx-live:
     runs-on: macos-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
     env:
       SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
       SKY_AI_ACCEL: cpu
@@ -2650,18 +2668,16 @@ jobs:
           cache: false
       # Only main writes a cache (restore everywhere): a branch saving its
       # own copy evicts main's entries from the repository budget.
-      - name: Cache the Std.Ai home (engine, model, MLX toolchain, base) (saved on main only)
+      - name: Cache the Std.Ai home (engine, model, trainer, base) (saved on main only)
         id: ai-home
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ github.workspace }}/.sky-ai/engines
             ${{ github.workspace }}/.sky-ai/models
-            ${{ github.workspace }}/.sky-ai/tools
-            ${{ github.workspace }}/.sky-ai/python
-            ${{ github.workspace }}/.sky-ai/toolchains
+            ${{ github.workspace }}/.sky-ai/trainers
             ${{ github.workspace }}/.sky-ai/bases
-          key: sky-ai-train-mlx-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go', 'runtime-go/rt/ai_train_assets/**', 'sky-stdlib/Std/Ai/Train.sky') }}
+          key: sky-ai-train-mlx-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go', 'sky-stdlib/Std/Ai/Train.sky') }}
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
@@ -2669,6 +2685,10 @@ jobs:
           save-if: 'false'
       - name: brotli for the sky crate's tests
         run: command -v brotli >/dev/null || brew install brotli
+      - uses: ./.github/actions/sky-trainer
+        with:
+          platform: darwin-arm64
+          token: ${{ github.token }}
       - name: Std.Ai.Train live (MLX on Apple silicon)
         working-directory: rust
         env:
@@ -2681,9 +2701,7 @@ jobs:
           path: |
             ${{ github.workspace }}/.sky-ai/engines
             ${{ github.workspace }}/.sky-ai/models
-            ${{ github.workspace }}/.sky-ai/tools
-            ${{ github.workspace }}/.sky-ai/python
-            ${{ github.workspace }}/.sky-ai/toolchains
+            ${{ github.workspace }}/.sky-ai/trainers
             ${{ github.workspace }}/.sky-ai/bases
           key: ${{ steps.ai-home.outputs.cache-primary-key }}
 

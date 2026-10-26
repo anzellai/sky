@@ -1,0 +1,68 @@
+name: 'sky-trainer for a training job'
+description: >-
+  Makes the native trainer (sky-trainer, Std.Ai.Train's Mlx backend)
+  available to a CI job, the same way before and after its bundles are pinned.
+
+  When runtime-go/rt/ai_pins.go pins this platform's bundle (aiTrainerAssets
+  names `sky-trainer-<version>-<platform>.tar.gz`), this action does nothing:
+  the runtime downloads the pinned bundle, checks its SHA-256 and installs it
+  under the Std.Ai home, which is exactly what a user gets. The job needs no
+  change when the pins land.
+
+  Until then it takes the bundle from the newest successful
+  ai-trainer-bundles.yml run (on this branch first, else on any branch): it
+  downloads the `sky-trainer-<platform>` artifact, checks the archive against
+  the `.sha256` that run wrote, unpacks it, runs `sky-trainer --version`, and
+  exports SKY_AI_TRAINER_BIN, the operator override the runtime already
+  honours. The caller needs `permissions: actions: read` and passes the token.
+
+  NOTE ON CHECKOUT: like every local composite action, this one is referenced
+  after `actions/checkout`.
+
+inputs:
+  platform:
+    description: "The bundle's platform: darwin-arm64 or linux-x64."
+    required: true
+  token:
+    description: 'A token that can read this repository''s Actions artifacts (github.token with actions: read).'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: sky-trainer (the pinned bundle, else the newest bundle workflow run)
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PLATFORM: ${{ inputs.platform }}
+      run: |
+        set -euo pipefail
+        case "$PLATFORM" in darwin-arm64 | linux-x64) ;; *) echo "::error::platform is darwin-arm64 or linux-x64, not '$PLATFORM'" >&2; exit 1 ;; esac
+        pins=runtime-go/rt/ai_pins.go
+        version="$(sed -n 's/^const aiTrainerVersion = "\(.*\)"$/\1/p' "$pins")"
+        [ -n "$version" ] || { echo "::error::no aiTrainerVersion in $pins" >&2; exit 1; }
+        file="sky-trainer-$version-$PLATFORM.tar.gz"
+        if sed -n '/^var aiTrainerAssets = /,/^}/p' "$pins" | grep -qF "\"$file\""; then
+          echo "sky-trainer: $file is pinned in ai_pins.go; the runtime installs it (no SKY_AI_TRAINER_BIN)"
+          exit 0
+        fi
+        branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+        pick() {
+          gh run list -R "$GITHUB_REPOSITORY" --workflow ai-trainer-bundles.yml --status success \
+            --limit 1 --json databaseId,headSha "$@" --jq '.[0] | select(.) | "\(.databaseId) \(.headSha)"'
+        }
+        found="$(pick --branch "$branch" || true)"
+        [ -n "$found" ] || found="$(pick || true)"
+        [ -n "$found" ] || { echo "::error::no pinned $file and no successful ai-trainer-bundles.yml run to take it from" >&2; exit 1; }
+        run_id="${found%% *}" sha="${found#* }"
+        dir="$RUNNER_TEMP/sky-trainer-artifact"
+        rm -rf "$dir" && mkdir -p "$dir"
+        gh run download "$run_id" -R "$GITHUB_REPOSITORY" -n "sky-trainer-$PLATFORM" -D "$dir"
+        (cd "$dir" && shasum -a 256 -c "$file.sha256")
+        mkdir -p "$RUNNER_TEMP/sky-trainer"
+        tar -xzf "$dir/$file" -C "$RUNNER_TEMP/sky-trainer"
+        bin="$RUNNER_TEMP/sky-trainer/sky-trainer-$version-$PLATFORM/sky-trainer"
+        "$bin" --version
+        echo "SKY_AI_TRAINER_BIN=$bin" >> "$GITHUB_ENV"
+        echo "sky-trainer: $file from ai-trainer-bundles run $run_id (commit $sha), not pinned yet"
+        echo "sky-trainer $PLATFORM: run $run_id, $(cut -c1-64 "$dir/$file.sha256")" >> "$GITHUB_STEP_SUMMARY"

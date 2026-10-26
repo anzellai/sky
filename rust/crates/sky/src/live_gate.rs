@@ -95,6 +95,10 @@ pub enum Need {
     /// installs), plus the dev base's MLX weights, the engine and the dev
     /// model in the Std.Ai home, or the network to fetch them.
     AiTrainNative,
+    /// The native trainer `sky-trainer` on any host it has a bundle for: the
+    /// operator's SKY_AI_TRAINER_BIN, or the pinned bundle `sky ai provision
+    /// --train mlx` installs.
+    AiTrainer,
     /// A Google Cloud project prepared for Std.Ai's live tests, entered only
     /// through the wrapper `scripts/ai/gcp-live.sh`, which sets
     /// `SKY_AI_GCP_LIVE=1`, builds the run's bucket, repositories, secret and
@@ -148,6 +152,12 @@ impl Need {
                  into the Std.Ai home; the Fake trainer is built in), or give the test network \
                  access to github.com and huggingface.co"
             }
+            Need::AiTrainer => {
+                "set SKY_AI_TRAINER_BIN to a sky-trainer (unpack a bundle from the \
+                 ai-trainer-bundles.yml workflow, or build one on a Mac with \
+                 scripts/ai/trainer/build.sh), or run `sky ai provision --train mlx` where its \
+                 bundle is pinned in runtime-go/rt/ai_pins.go"
+            }
             Need::AiTrainNative => {
                 "on Apple silicon, build the native trainer (`scripts/ai/trainer/build.sh --mlx \
                  <MLX 0.32.4 prefix> --mlx-c <mlx-c checkout>`) and set SKY_AI_TRAINER_BIN to \
@@ -179,6 +189,7 @@ impl Need {
             Need::AiEngine => "the Std.Ai engine and development model",
             Need::AiTrainToolchain => "the engine and the dev model a Fake training run serves on",
             Need::AiTrainNative => "the native trainer (sky-trainer) and the dev base weights",
+            Need::AiTrainer => "the native trainer (sky-trainer)",
             Need::GcpLive => "the Google Cloud live-test wrapper (scripts/ai/gcp-live.sh)",
             Need::Brotli => "the brotli tool",
         }
