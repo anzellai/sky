@@ -59,6 +59,15 @@ CAP=2500000000
 KILL_BYTES="${SKY_TRAINER_TEST_KILL_BYTES:-3000000000}"
 CHUNK_TOL=1e-6
 FAILS=0
+# The trainer run and the canceller in flight: an exit or a signal stops these
+# exact PIDs, so an interrupted test never leaves a trainer holding memory.
+RUN_PID="" CANCELLER_PID=""
+stop_children() {
+  for p in $RUN_PID $CANCELLER_PID; do kill -9 "$p" 2>/dev/null || true; done
+}
+trap stop_children EXIT
+trap 'stop_children; exit 130' INT
+trap 'stop_children; exit 143' TERM
 fail() { echo "FAIL: $*" >&2; FAILS=$((FAILS + 1)); }
 pass() { echo "ok    $*"; }
 
@@ -76,6 +85,7 @@ run() {
   local name="$1" deadline="$2"; shift 2
   "$TRAINER" "$@" > "$WORK/$name.events" 2> "$WORK/$name.err" &
   local pid=$! peak=0 t0=$SECONDS fp
+  RUN_PID=$pid
   while kill -0 "$pid" 2>/dev/null; do
     fp="$(footprint "$pid" || true)"
     if [ -n "$fp" ]; then
@@ -95,6 +105,7 @@ run() {
   wait "$pid"
   RC=$?
   set -e
+  RUN_PID=""
   PEAK=$peak
   echo "      $name: exit $RC, peak footprint $PEAK bytes"
 }
@@ -216,9 +227,11 @@ for dev in "${devices[@]}"; do
     done
   ) &
   canceller=$!
+  CANCELLER_PID=$canceller
   run "cancel-$dev" 300 --run "$K" "${SHAPE[@]}" "${LORA[@]}" ${D[@]+"${D[@]}"} --lr 0.005 --batch 2 --accumulate 1 \
     --checkpoint-every 0 --eval-every 0 --memory-cap "$CAP" --pace-ms 100
   wait "$canceller" 2>/dev/null || true
+  CANCELLER_PID=""
   cstep="$(sed -n 's/.*"step":\([0-9]*\),"type":"cancelled".*/\1/p' "$WORK/cancel-$dev.events")"
   cdir="$K/checkpoints/$(printf '%07d' "${cstep:-0}")"
   ok=0
