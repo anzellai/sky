@@ -40,9 +40,9 @@ subscriptions _m =
 view model =
     div
         []
-        [ h1 [] [text "Auto-ticker"]
-        , div [] [text (String.fromInt model.count)]
-        , button [onClick Reset] [text "Reset"]
+        [ h1 [] [ text "Auto-ticker" ]
+        , div [] [ text (String.fromInt model.count) ]
+        , button [ onClick Reset ] [ text "Reset" ]
         ]
 
 
@@ -52,6 +52,6 @@ main =
         , update = update
         , view = view
         , subscriptions = subscriptions
-        , routes = [route "/" 0]
+        , routes = [ route "/" 0 ]
         , notFound = 0
         }

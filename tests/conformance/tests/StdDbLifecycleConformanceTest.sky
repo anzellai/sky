@@ -46,9 +46,7 @@ itemDecoder =
         |> Decode.andMap (Decode.string "status")
 
 
-returnDecoder : Decode.Decoder { id : Int
-, name : String
-}
+returnDecoder : Decode.Decoder { id : Int, name : String }
 returnDecoder =
     Decode.map2
         (\i n -> { id = i, name = n })

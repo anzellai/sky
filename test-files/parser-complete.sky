@@ -12,11 +12,15 @@ import Sky.Core.Error as Error exposing (Error)
 
 -- Type alias — data record
 type alias Point =
-    { x : Float, y : Float }
+    { x : Float
+    , y : Float
+    }
 
 -- Type alias — parameterised
 type alias Pair a b =
-    { first : a, second : b }
+    { first : a
+    , second : b
+    }
 
 -- ADTs: enum + parameterised
 type Colour
@@ -58,8 +62,6 @@ origin =
 -- through silently; v0.12.1's new constraint surfaces the bug. The
 -- `move` declaration is removed here for the same reason as above:
 -- this fixture tests parsing, not Float-defaulting in arithmetic.
-
-
 -- Tuple destructuring in let
 swap pair =
     let
@@ -76,10 +78,10 @@ describe xs =
         [] ->
             "empty"
 
-        [1] ->
+        [ 1 ] ->
             "singleton one"
 
-        [x, y] ->
+        [ x, y ] ->
             "two elements"
 
         1 :: 2 :: _ ->

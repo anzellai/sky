@@ -7,18 +7,20 @@ import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Ui as Ui exposing (Element)
 
-
 type alias Clinic =
-    { id : String, billingOverride : String }
-
+    { id : String
+    , billingOverride : String
+    }
 
 type alias ClinicRow =
-    { clinic : Clinic, ownerEmail : String }
-
+    { clinic : Clinic
+    , ownerEmail : String
+    }
 
 type alias Model =
-    { clinic : Maybe Clinic, note : String }
-
+    { clinic : Maybe Clinic
+    , note : String
+    }
 
 type Msg
     = Noop
@@ -36,7 +38,16 @@ allComped =
 
 init : a -> ( Model, Cmd Msg )
 init _ =
-    ( { clinic = Nothing, note = if allComped then "all" else "some" }, Cmd.none )
+    ( { clinic = Nothing
+      , note =
+          if allComped then
+              "all"
+
+          else
+              "some"
+      }
+    , Cmd.none
+    )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -50,7 +61,12 @@ view m =
 
 
 appDef =
-    App.app { init = init, update = update, view = view, subscriptions = \_ -> Sub.none }
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
         |> App.withNotFound Noop
 
 

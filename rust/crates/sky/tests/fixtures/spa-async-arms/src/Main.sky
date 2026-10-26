@@ -23,7 +23,6 @@ import Std.Cmd as Cmd
 import Std.Ui as Ui exposing (Element)
 import Std.Ui.Input as Input
 
-
 type alias Model =
     { selected : Int
     , busy : Bool
@@ -31,7 +30,6 @@ type alias Model =
     , typed : String
     , hold : String
     }
-
 
 type Msg
     = Select Int
@@ -43,12 +41,16 @@ type Msg
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { selected = 0, busy = False, draft = "-", typed = "", hold = "-" }, Cmd.none )
+    ( { selected = 0, busy = False, draft = "-", typed = "", hold = "-" }
+    , Cmd.none
+    )
 
 
 askModel : Int -> Task Error String
 askModel id =
-    Http.get (System.getenvOr "SPA_ASYNC_MODEL_URL" "http://127.0.0.1:9/" ++ "?id=" ++ String.fromInt id)
+    Http.get
+        (System.getenvOr "SPA_ASYNC_MODEL_URL" "http://127.0.0.1:9/" ++ "?id="
+            ++ String.fromInt id)
         |> Task.map (\r -> r.body)
 
 
@@ -66,7 +68,9 @@ selectItem id model =
             ( { opened | draft = "saved reply", busy = False }, Cmd.none )
 
         else
-            ( { opened | draft = "-", busy = True }, Cmd.perform (askModel id) Drafted )
+            ( { opened | draft = "-", busy = True }
+            , Cmd.perform (askModel id) Drafted
+            )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -86,7 +90,9 @@ update msg model =
             ( { model | typed = s }, Cmd.none )
 
         HoldPick ->
-            ( { model | hold = serverLabel }, Cmd.perform (askModel 9) HoldDone )
+            ( { model | hold = serverLabel }
+            , Cmd.perform (askModel 9) HoldDone
+            )
 
         HoldDone _ ->
             ( { model | hold = model.hold ++ " done" }, Cmd.none )
@@ -99,7 +105,9 @@ row id txt =
 
 btn : String -> Msg -> Element Msg
 btn id m =
-    Ui.button [ Ui.htmlAttribute "id" id ] { onPress = Just m, label = Ui.text id }
+    Ui.button
+        [ Ui.htmlAttribute "id" id ]
+        { onPress = Just m, label = Ui.text id }
 
 
 busyLabel : Model -> String
@@ -124,12 +132,12 @@ view model =
         , btn "t2" (Select 2)
         , btn "holdbtn" HoldPick
         , Input.text
-            [ Ui.htmlAttribute "id" "type" ]
-            { onChange = Type
-            , text = model.typed
-            , placeholder = Nothing
-            , label = Input.labelHidden "type"
-            }
+              [ Ui.htmlAttribute "id" "type" ]
+              { onChange = Type
+              , text = model.typed
+              , placeholder = Nothing
+              , label = Input.labelHidden "type"
+              }
         ]
 
 

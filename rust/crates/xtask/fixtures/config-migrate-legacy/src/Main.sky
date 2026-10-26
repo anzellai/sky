@@ -4,13 +4,13 @@ module Main exposing (main)
 -- Std.App: this fixture is the config-migrate gate's real-project subject, so it
 -- must keep the shape `sky config migrate` rewrites — a `Live.config(…)` the
 -- planner attaches `.withPort` / `.withInput` builders to. Do not migrate it.
+
 import Std.Live as Live
 import Std.Ui as Ui
 
 
 main =
-    Live.app
-        (Live.config { init = init, update = update, view = view })
+    Live.app (Live.config { init = init, update = update, view = view })
 
 
 init _ =

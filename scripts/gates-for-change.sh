@@ -137,8 +137,13 @@ while IFS= read -r f; do
         *.go) add 01 "gofmt -l (must list nothing)" \
             "test -z \"\$(gofmt -l runtime-go tools 2>/dev/null)\"" ;;
         *.sh) [ -f "$f" ] && SH_CHANGED="$SH_CHANGED $f" ;;
-        sky-stdlib/*.sky | sky-bundled/*.sky | apps/*.sky | examples/*.sky | templates/*.sky)
-            add 02 "fmt-clean (tracked .sky files are sky fmt-clean)" "$HARNESS --only fmt-clean" ;;
+        *.sky | *.skyi)
+            add 01 "sky fmt --check over every tracked .sky/.skyi (sky-fmt-check)" \
+                "$XTASK sky-fmt-check"
+            case "$f" in
+                sky-stdlib/* | sky-bundled/* | apps/* | examples/* | templates/*)
+                    add 02 "fmt-clean (tracked .sky files are sky fmt-clean)" "$HARNESS --only fmt-clean" ;;
+            esac ;;
     esac
     case "$f" in
         rust/crates/syntax/* | rust/crates/hir/* | rust/crates/ty/* | rust/crates/lower/* | rust/crates/codegen/* | rust/crates/base/* | rust/crates/diagnostics/*)
@@ -159,7 +164,8 @@ while IFS= read -r f; do
         rust/crates/fmt/*)
             add 20 "cargo test -p fmt" "(cd rust && cargo test -p fmt)"
             add 40 "fmt gate (never drops a comment; idempotent)" "$XTASK fmt"
-            add 40 "fmt-clean (tracked .sky files are sky fmt-clean)" "$HARNESS --only fmt-clean" ;;
+            add 40 "fmt-clean (tracked .sky files are sky fmt-clean)" "$HARNESS --only fmt-clean"
+            add 40 "sky fmt --check over every tracked .sky/.skyi (sky-fmt-check)" "$XTASK sky-fmt-check" ;;
         rust/crates/sky-lsp/*)
             add 20 "cargo test -p sky-lsp" "(cd rust && cargo test -p sky-lsp)"
             add 50 "harness: lsp (Neovim editor parity)" "$HARNESS --only lsp" ;;

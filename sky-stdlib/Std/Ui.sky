@@ -1493,6 +1493,10 @@ customRangeQuery minPx maxPx =
 -- runtime. Sky.Tui silently ignores the `<style>` (terminal renders
 -- the base layer only); Sky.Webview honours media queries identically
 -- to Sky.Live because they share the runtime VNode pipeline.
+-- The attrs style the WRAPPER, and the runtime emits each declaration
+-- `!important` so it wins over the wrapper's inline base style:
+-- `breakpoint mdAndUp [ style "display" "none" ] child` hides `child`
+-- at 768 px and up.
 breakpoint : Breakpoint -> List (Attribute msg) -> Element msg -> Element msg
 breakpoint bp attrs child =
     mediaQuery (breakpointToQuery bp) attrs child
@@ -2279,7 +2283,7 @@ renderNodeAs wantedTag nest ctx extraAttrs attrs children =
     let
         -- The tag the HTML parser keeps where this element sits (see
         -- `Nesting`), and the state its own children render under.
-        tag = parserSafeTag nest wantedTag
+        tag = parserSafeTag nest (renderableTag wantedTag)
         childNest = nestingInside nest tag
         keptRole = keptRoleAttrs wantedTag tag
         -- `extraAttrs` is `[]` for every non-root element — the recursive
@@ -2434,6 +2438,8 @@ type alias Nesting =
     , inButton : Bool
     , inForm : Bool
     , inHeading : Bool
+    , inListItem : Bool
+    , inDefItem : Bool
     }
 
 
@@ -2444,6 +2450,8 @@ topNesting =
     , inButton = False
     , inForm = False
     , inHeading = False
+    , inListItem = False
+    , inDefItem = False
     }
 
 
@@ -2452,16 +2460,182 @@ isHeadingTag t =
     t == "h1" || t == "h2" || t == "h3" || t == "h4" || t == "h5" || t == "h6"
 
 
--- The Std.Ui tags that are flow content only: their start tag closes an open
--- `<p>`, so none may sit inside a paragraph.
+-- The tags whose start tag closes an open `<p>` (the HTML parser's own list),
+-- so none may sit inside a paragraph. It covers every tag `renderableTag`
+-- lets through, not only the ones Std.Ui builds itself, because a
+-- `TaggedNode "details"` inside a paragraph is moved by the parser exactly
+-- like a `<div>`.
 isFlowOnlyTag : String -> Bool
 isFlowOnlyTag t =
-    t == "div" || t == "p" || isHeadingTag t || t == "section" || t == "form"
-        || t == "main"
-        || t == "nav"
-        || t == "footer"
-        || t == "header"
-        || t == "aside"
+    t == "div" || t == "p" || isHeadingTag t || tagIn t flowOnlyTags
+
+
+flowOnlyTags : List String
+flowOnlyTags =
+    [ "section"
+    , "form"
+    , "main"
+    , "nav"
+    , "footer"
+    , "header"
+    , "aside"
+    , "address"
+    , "article"
+    , "blockquote"
+    , "center"
+    , "details"
+    , "dialog"
+    , "dir"
+    , "dl"
+    , "dd"
+    , "dt"
+    , "fieldset"
+    , "figcaption"
+    , "figure"
+    , "hgroup"
+    , "li"
+    , "menu"
+    , "ol"
+    , "ul"
+    , "pre"
+    , "search"
+    , "summary"
+    ]
+
+
+-- The tag a `TaggedNode` renders as. Std.Ui promises no raw HTML or script, so
+-- a tag is used as written only when it is a plain tag name (a lowercase
+-- letter, then lowercase letters, digits or `-`, which admits a custom
+-- element) and is not one that runs, loads or embeds content, or one the HTML
+-- parser restructures. Every other tag renders as a `<div>`. The typed tags
+-- (`a`, `img`, `input`, `textarea`, …) pass through to `dispatchTag`.
+renderableTag : String -> String
+renderableTag tag =
+    if tagIn tag refusedTags then
+        "div"
+
+    else if isTagName tag then
+        tag
+
+    else
+        "div"
+
+
+-- `List.member` over the tag lists, written as a typed walk: the generic
+-- `List.member` takes an erased `List a`, so a call to it rebuilds the list as
+-- `[]any` on every render.
+tagIn : String -> List String -> Bool
+tagIn tag tags =
+    case tags of
+
+        [] ->
+            False
+
+        t :: rest ->
+            if t == tag then
+                True
+
+            else
+                tagIn tag rest
+
+
+-- Walked one character at a time as one-character strings (`String.split ""`
+-- has a typed runtime entry, `String.toList` does not), so each test is a
+-- plain string comparison. A non-ASCII character sorts after "z" and fails.
+isTagName : String -> Bool
+isTagName tag =
+    case String.split "" tag of
+
+        first :: rest ->
+            if first >= "a" && first <= "z" then
+                isTagNameRest rest
+
+            else
+                False
+
+        [] ->
+            False
+
+
+isTagNameRest : List String -> Bool
+isTagNameRest cs =
+    case cs of
+
+        [] ->
+            True
+
+        c :: rest ->
+            if (c >= "a" && c <= "z") || (c >= "0" && c <= "9") || c == "-" then
+                isTagNameRest rest
+
+            else
+                False
+
+
+-- Refused, and rendered as a `<div>`:
+--   * tags that run or load code or embed another document or resource
+--     (script, style, iframe, object, …, video, audio, picture, source);
+--   * the foreign roots svg and math, which change how the parser reads
+--     everything under them;
+--   * document-level and raw-text tags (html, head, body, title, xmp, …);
+--   * table and select internals and the other void tags, which the parser
+--     drops, moves or empties when they are not where it expects them, so the
+--     server markup and the client tree would disagree.
+refusedTags : List String
+refusedTags =
+    [ "script"
+    , "style"
+    , "iframe"
+    , "object"
+    , "embed"
+    , "applet"
+    , "template"
+    , "base"
+    , "link"
+    , "meta"
+    , "noscript"
+    , "frame"
+    , "frameset"
+    , "noframes"
+    , "noembed"
+    , "portal"
+    , "fencedframe"
+    , "video"
+    , "audio"
+    , "picture"
+    , "source"
+    , "track"
+    , "image"
+    , "svg"
+    , "math"
+    , "html"
+    , "head"
+    , "body"
+    , "title"
+    , "xmp"
+    , "plaintext"
+    , "listing"
+    , "select"
+    , "option"
+    , "optgroup"
+    , "table"
+    , "caption"
+    , "colgroup"
+    , "col"
+    , "thead"
+    , "tbody"
+    , "tfoot"
+    , "tr"
+    , "td"
+    , "th"
+    , "area"
+    , "br"
+    , "hr"
+    , "wbr"
+    , "param"
+    , "keygen"
+    , "menuitem"
+    ]
 
 
 parserSafeTag : Nesting -> String -> String
@@ -2479,6 +2653,12 @@ parserSafeTag nest tag =
         "div"
 
     else if nest.inHeading && isHeadingTag tag then
+        "div"
+
+    else if nest.inListItem && tag == "li" then
+        "div"
+
+    else if nest.inDefItem && (tag == "dd" || tag == "dt") then
         "div"
 
     else
@@ -2505,11 +2685,46 @@ nestingInside nest tag =
     else if isHeadingTag tag then
         { nest | inHeading = True }
 
+    else if tag == "li" then
+        { nest | inListItem = True, inHeading = False }
+
+    else if tag == "ul" || tag == "ol" || tag == "menu" then
+        { nest | inListItem = False, inHeading = False }
+
+    else if tag == "dd" || tag == "dt" then
+        { nest | inDefItem = True, inHeading = False }
+
+    else if tag == "dl" then
+        { nest | inDefItem = False, inHeading = False }
+
     else if nest.inHeading then
         { nest | inHeading = False }
 
     else
         nest
+
+
+-- The digit of a heading tag (`"h3"` is `"3"`). A plain case rather than
+-- `String.dropLeft 1`, whose kernel return is narrowed on every render.
+headingLevel : String -> String
+headingLevel t =
+    if t == "h1" then
+        "1"
+
+    else if t == "h2" then
+        "2"
+
+    else if t == "h3" then
+        "3"
+
+    else if t == "h4" then
+        "4"
+
+    else if t == "h5" then
+        "5"
+
+    else
+        "6"
 
 
 -- The role a heading or landmark keeps when `parserSafeTag` replaced its tag.
@@ -2520,7 +2735,7 @@ keptRoleAttrs wanted actual =
 
     else if isHeadingTag wanted then
         [ Attr.attribute "role" "heading"
-        , Attr.attribute "aria-level" (String.dropLeft 1 wanted)
+        , Attr.attribute "aria-level" (headingLevel wanted)
         ]
 
     else if wanted == "main" then
@@ -2537,6 +2752,9 @@ keptRoleAttrs wanted actual =
 
     else if wanted == "aside" then
         [ Attr.attribute "role" "complementary" ]
+
+    else if wanted == "li" then
+        [ Attr.attribute "role" "listitem" ]
 
     else
         []
@@ -2796,7 +3014,10 @@ locationCss loc =
 
 -- Dispatch to the right Std.Html constructor by tag name. <img>
 -- is void (no children); other tags take children unchanged.
--- Unknown tags fall back to <div>.
+-- Any other tag renders as itself through `Html.node` once
+-- `renderableTag` admits it (before v0.27.16 every tag outside this
+-- list silently became a <div>, so `TaggedNode "details"` lost its
+-- element).
 dispatchTag : String -> List (Attr.Attribute msg) -> List (Html.Html msg) -> Html.Html msg
 dispatchTag tag attrs children =
     if tag == "a" then
@@ -2874,7 +3095,7 @@ dispatchTag tag attrs children =
         Html.textarea attrs children
 
     else
-        Html.div attrs children
+        Html.node (renderableTag tag) attrs children
     -- <img> is void in HTML; Sky's Html.img takes attrs only.
     -- <textarea> is NOT a void element — its value lives between
     -- the tags as text content. The `Std.Ui.Input.multiline` path

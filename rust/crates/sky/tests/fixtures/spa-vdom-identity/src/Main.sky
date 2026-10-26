@@ -103,9 +103,7 @@ type Msg
     | Ime String
     | Toggle
     | Navigated Page
-    | DoSignIn { email : String
-, password : String
-}
+    | DoSignIn { email : String, password : String }
 
 
 init : () -> ( Model, Cmd Msg )

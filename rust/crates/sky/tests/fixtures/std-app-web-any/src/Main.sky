@@ -14,10 +14,8 @@ import Sky.Core.String as String
 import Std.App as App
 import Std.Ui as Ui
 
-
 type alias Model =
     { n : Int }
-
 
 type Msg
     = Bump
@@ -44,7 +42,12 @@ view model =
 
 
 appDef =
-    App.web { init = init, update = update, view = view, subscriptions = subscriptions }
+    App.web
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
         |> App.withNotFound ()
 
 

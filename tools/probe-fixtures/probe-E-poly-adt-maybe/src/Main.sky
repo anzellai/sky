@@ -3,7 +3,6 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
-
 -- User-defined polymorphic ADT (Cause E surface) — exercises the
 -- _vars propagation path in generateUnionForDep + caller-side TVar
 -- routing through ctor functions.
@@ -15,8 +14,12 @@ type Box a
 unwrap : a -> Box a -> a
 unwrap fallback box =
     case box of
-        Box v -> v
-        EmptyBox -> fallback
+
+        Box v ->
+            v
+
+        EmptyBox ->
+            fallback
 
 
 main =

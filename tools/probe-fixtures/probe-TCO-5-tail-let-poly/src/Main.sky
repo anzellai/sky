@@ -9,13 +9,14 @@ walk xs n =
     let
         helper ys acc =
             case ys of
+
                 [] ->
                     acc
 
                 _ :: rest ->
                     helper rest (acc + 1)
     in
-    helper xs n
+        helper xs n
 
 
 main =

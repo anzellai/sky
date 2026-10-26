@@ -18,19 +18,16 @@ import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Html exposing (Html)
 
-
 type alias Todo =
     { id : Int
     , title : String
     , done : Bool
     }
 
-
 type alias Model =
     { todos : List Todo
     , draft : String
     }
-
 
 type Msg
     = DraftChanged String
@@ -41,8 +38,7 @@ type Msg
 
 todoCodec : Codec Todo
 todoCodec =
-    Codec.object Todo
-        |> Codec.field "id" .id Codec.int
+    Codec.object Todo |> Codec.field "id" .id Codec.int
         |> Codec.field "title" .title Codec.string
         |> Codec.field "done" .done Codec.bool
         |> Codec.buildObject
@@ -62,7 +58,8 @@ storePath =
 loadTodos : () -> Task Error (List Todo)
 loadTodos _ =
     File.readFile storePath
-        |> Task.map (\s -> Result.withDefault [] (Codec.fromJson todoListCodec s))
+        |> Task.map
+               (\s -> Result.withDefault [] (Codec.fromJson todoListCodec s))
         |> Task.onError (\_ -> Task.succeed [])
 
 
@@ -80,6 +77,7 @@ init _ =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         DraftChanged s ->
             -- PURE -> client
             ( { model | draft = s }, Cmd.none )
@@ -87,48 +85,53 @@ update msg model =
         Add ->
             -- SERVER: read-set {draft}, write-set {todos, draft}
             let
-                current =
-                    Result.withDefault [] (Task.run (loadTodos ()))
-
+                current = Result.withDefault [] (Task.run (loadTodos ()))
                 next =
-                    current ++ [ { id = List.length current + 1, title = model.draft, done = False } ]
-
-                _ =
-                    Task.run (saveTodos next)
+                    current
+                        ++ [ { id = List.length current + 1
+                             , title = model.draft
+                             , done = False
+                             }
+                           ]
+                _ = Task.run (saveTodos next)
             in
-            ( { model | todos = next, draft = "" }, Cmd.none )
+                ( { model | todos = next, draft = "" }, Cmd.none )
 
         Toggle id ->
             -- SERVER: Msg arg {id}, write-set {todos}
             let
                 next =
                     List.map
-                        (\t -> if t.id == id then { t | done = not t.done } else t)
-                        (Result.withDefault [] (Task.run (loadTodos ())))
+                        (\t ->
+                            if t.id == id then
+                                { t | done = not t.done }
 
-                _ =
-                    Task.run (saveTodos next)
+                            else
+                                t)
+                        (Result.withDefault [] (Task.run (loadTodos ())))
+                _ = Task.run (saveTodos next)
             in
-            ( { model | todos = next }, Cmd.none )
+                ( { model | todos = next }, Cmd.none )
 
         Remove id ->
             -- SERVER: Msg arg {id}, write-set {todos}
             let
                 next =
-                    List.filter (\t -> t.id /= id) (Result.withDefault [] (Task.run (loadTodos ())))
-
-                _ =
-                    Task.run (saveTodos next)
+                    List.filter
+                        (\t -> t.id /= id)
+                        (Result.withDefault [] (Task.run (loadTodos ())))
+                _ = Task.run (saveTodos next)
             in
-            ( { model | todos = next }, Cmd.none )
+                ( { model | todos = next }, Cmd.none )
 
 
 view : Model -> Html Msg
 view model =
-    Ui.layout []
-        (Ui.column [ Ui.spacing 8 ]
-            [ Ui.text ("todos: " ++ String.fromInt (List.length model.todos)) ]
-        )
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text ("todos: " ++ String.fromInt (List.length model.todos)) ])
 
 
 subscriptions : Model -> Sub Msg
@@ -144,5 +147,4 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            }
-        )
+            })

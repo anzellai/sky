@@ -817,7 +817,7 @@ These apply to any Sky code you write or any compiler change you make:
   call across lines, the config-surface detector (which matched a CONTIGUOUS
   literal) stopped seeing two DB env vars, they fell out of the census, and the
   config-matrix gate went red with a failure that pointed nowhere near the edit.
-  Format-as-you-go keeps every layout-scanning gate honest and every diff small.
+  Format-as-you-go keeps every layout-scanning gate honest and every diff small. For Sky source this is enforced: `cargo run -p xtask -- sky-fmt-check` (in `rust-ci`, and in `scripts/gates-for-change.sh` for any `.sky`/`.skyi` change) fails on any tracked `.sky`/`.skyi` file that `sky fmt --check` would change or cannot parse, apart from the entries in `rust/crates/xtask/sky-fmt-exclusions.txt`, each of which carries its reason.
   (Detectors that scan source for a literal must themselves be whitespace-robust
   — see `xtask/src/config_surface.rs::seeded_suffixes`.)
 - **No-deferral principle.** A bug you spot — yours or pre-existing, in dev, CI,

@@ -39,8 +39,7 @@ update msg model =
             -- write-set {items, draft}. The response rides `List Item`.
             let
                 current = Result.withDefault [] (Task.run (loadItems ()))
-                next =
-                    current ++ [ { name = model.draft, qty = 1 } ]
+                next = current ++ [ { name = model.draft, qty = 1 } ]
                 _ = Task.run (saveItems next)
             in
                 ( { model | items = next, draft = "" }, Cmd.none )

@@ -598,6 +598,7 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
         &["runtime.periodic-goroutines"],
     ),
     ("roundtrip", &["compiler.parse", "lang.constructs"]),
+    ("sky-fmt-check", &["compiler.fmt"]),
     ("reject", &["compiler.reject", "compiler.infer"]),
     (
         "conformance",
@@ -798,6 +799,7 @@ static CI_SURFACES: &[(&str, &[&str])] = &[
     ("xtask:infer", &["compiler.infer"]),
     ("xtask:reject", &["compiler.reject"]),
     ("xtask:fmt", &["compiler.fmt"]),
+    ("xtask:sky-fmt-check", &["compiler.fmt"]),
     ("xtask:repro", &["compiler.codegen-determinism"]),
     ("xtask:coerce-floor", &["compiler.coerce-floor"]),
     ("xtask:fuzz", &["compiler.fuzz"]),

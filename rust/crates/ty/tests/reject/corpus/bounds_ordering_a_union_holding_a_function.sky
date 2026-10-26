@@ -15,7 +15,6 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Std.Log exposing (println)
 
-
 type Handler
     = Handler (Int -> Int)
 
@@ -26,4 +25,6 @@ mySort xs =
 
 main : Task Error ()
 main =
-    println (String.fromInt (List.length (mySort [ Handler identity, Handler (\n -> n + 1) ])))
+    println
+        (String.fromInt
+            (List.length (mySort [ Handler identity, Handler (\n -> n + 1) ])))

@@ -34,18 +34,17 @@ import Std.Ui as Ui exposing (Element)
 db : Db.Db
 db =
     case Task.run (Db.open "sqlite" (System.getenvOr "SSR_DB_PATH" "app.db")) of
+
         Ok c ->
             c
 
         Err _ ->
             System.exit 1
 
-
 type alias Model =
     { n : Int
     , items : List String
     }
-
 
 type Msg
     = GotItems (Result Error (List (Dict String String)))
@@ -55,15 +54,25 @@ type Msg
 init : () -> ( Model, Cmd Msg )
 init () =
     ( { n = 0, items = [] }
-    , Cmd.perform (Db.query db "SELECT name FROM items ORDER BY name" []) GotItems
+    , Cmd.perform
+          (Db.query db "SELECT name FROM items ORDER BY name" [])
+          GotItems
     )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         GotItems (Ok rows) ->
-            ( { model | items = List.map (\r -> Maybe.withDefault "" (Dict.get "name" r)) rows }, Cmd.none )
+            ( { model
+                  | items =
+                      List.map
+                          (\r -> Maybe.withDefault "" (Dict.get "name" r))
+                          rows
+              }
+            , Cmd.none
+            )
 
         GotItems (Err _) ->
             ( { model | items = [] }, Cmd.none )
@@ -74,9 +83,12 @@ update msg model =
 
 view : Model -> Element Msg
 view model =
-    Ui.column [ Ui.spacing 8 ]
+    Ui.column
+        [ Ui.spacing 8 ]
         [ Ui.row [] [ Ui.text ("count=" ++ String.fromInt model.n) ]
-        , Ui.row [] [ Ui.text ("items=" ++ String.fromInt (List.length model.items)) ]
+        , Ui.row
+              []
+              [ Ui.text ("items=" ++ String.fromInt (List.length model.items)) ]
         , Ui.button [] { onPress = Just Bump, label = Ui.text "increment" }
         ]
 

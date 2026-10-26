@@ -6,6 +6,7 @@ import Std.Log exposing (println)
 import Std.Ui as Ui exposing (..)
 import Std.Ai.Provider as Provider exposing (Provider(..))
 
+
 brain : Provider
 brain =
     Provider.custom
@@ -13,18 +14,20 @@ brain =
             Task.succeed
                 { content = "hi"
                 , usage =
-                    { promptTokens = 0
-                    , completionTokens = 0
-                    , totalTokens = 0
-                    }
-                }
-        )
+                    { promptTokens = 0, completionTokens = 0, totalTokens = 0 }
+                })
+
 
 describe : Provider -> String
 describe p =
     case p of
-        Custom _ -> "custom"
-        _ -> "other"
+
+        Custom _ ->
+            "custom"
+
+        _ ->
+            "other"
+
 
 main =
     println (describe brain)

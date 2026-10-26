@@ -6,7 +6,6 @@ module Domain exposing (..)
 import Sky.Core.Prelude exposing (..)
 import Std.Codec as Codec exposing (Codec)
 
-
 type alias Item =
     { id : Int
     , name : String

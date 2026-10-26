@@ -13,5 +13,7 @@ import State exposing (..)
 init : () -> ( Model, Cmd Msg )
 init _ =
     ( { page = HomePage, items = [] }
-    , Cmd.perform (Db.query db "SELECT name FROM items ORDER BY name" []) GotItems
+    , Cmd.perform
+          (Db.query db "SELECT name FROM items ORDER BY name" [])
+          GotItems
     )

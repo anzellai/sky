@@ -5,8 +5,14 @@
 --         param's domain to Int, clashing with String.toUpper's String domain.
 --         gap2 admits the poly scheme so the caller is checked. oracle: reject.
 module Main exposing (main)
+
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
-usef f = f 5
+
+
+usef f =
+    f 5
+
+
 main =
     println (usef String.toUpper)

@@ -34,17 +34,16 @@ import Std.Ui as Ui exposing (Element)
 db : Db.Db
 db =
     case Task.run (Db.open "sqlite" (System.getenvOr "SSR_DB_PATH" "app.db")) of
+
         Ok c ->
             c
 
         Err _ ->
             System.exit 1
 
-
 type Page
     = Home
     | BlogIndex
-
 
 -- The nested record whose element type must survive the client decoder blank.
 type alias Post =
@@ -53,12 +52,10 @@ type alias Post =
     , bodyHtml : String
     }
 
-
 type alias Model =
     { page : Page
     , posts : List Post
     }
-
 
 type Msg
     = GotPosts (Result Error (List (Dict String String)))
@@ -66,7 +63,10 @@ type Msg
 
 rowToPost : Dict String String -> Post
 rowToPost r =
-    { id = Maybe.withDefault 0 (String.toInt (Maybe.withDefault "0" (Dict.get "id" r)))
+    { id =
+        Maybe.withDefault
+            0
+            (String.toInt (Maybe.withDefault "0" (Dict.get "id" r)))
     , title = Maybe.withDefault "" (Dict.get "title" r)
     , bodyHtml = Maybe.withDefault "" (Dict.get "body_html" r)
     }
@@ -75,7 +75,9 @@ rowToPost r =
 init : () -> ( Model, Cmd Msg )
 init () =
     ( { page = Home, posts = [] }
-    , Cmd.perform (Db.query db "SELECT id, title, body_html FROM posts ORDER BY id" []) GotPosts
+    , Cmd.perform
+          (Db.query db "SELECT id, title, body_html FROM posts ORDER BY id" [])
+          GotPosts
     )
 
 
@@ -84,6 +86,7 @@ init () =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         GotPosts (Ok rows) ->
             ( { model | posts = List.map rowToPost rows }, Cmd.none )
 
@@ -94,17 +97,21 @@ update msg model =
 view : Model -> Element Msg
 view model =
     case model.page of
+
         Home ->
-            Ui.column []
+            Ui.column
+                []
                 [ Ui.text "Welcome home"
                 , Ui.link [] { url = "/blog", label = Ui.text "Read the blog" }
                 ]
 
         BlogIndex ->
-            Ui.column []
+            Ui.column
+                []
                 (Ui.text "Posts:"
-                    :: List.map (\p -> Ui.text (p.title ++ " — " ++ p.bodyHtml)) model.posts
-                )
+                    :: List.map
+                           (\p -> Ui.text (p.title ++ " — " ++ p.bodyHtml))
+                           model.posts)
 
 
 subscriptions : Model -> Sub Msg

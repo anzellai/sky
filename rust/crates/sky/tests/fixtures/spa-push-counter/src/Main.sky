@@ -27,11 +27,8 @@ import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Html exposing (Html)
 
-
 type alias Model =
-    { count : Int
-    }
-
+    { count : Int }
 
 type Msg
     = Increment
@@ -46,23 +43,22 @@ init _ =
 -- server effect (File): persist the new count to disk.
 saveCount : Int -> Task Error String
 saveCount n =
-    File.writeFile "count.txt" (String.fromInt n)
-        |> Task.map (\_ -> "saved")
+    File.writeFile "count.txt" (String.fromInt n) |> Task.map (\_ -> "saved")
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Increment ->
             -- EFFECTFUL (File) -> server; read-set {count}, write-set {count}.
             -- Persist inline, then broadcast the new count to every subscriber.
             let
-                _ =
-                    Task.run (saveCount (model.count + 1))
+                _ = Task.run (saveCount (model.count + 1))
             in
-            ( { model | count = model.count + 1 }
-            , Cmd.publish "count" (model.count + 1)
-            )
+                ( { model | count = model.count + 1 }
+                , Cmd.publish "count" (model.count + 1)
+                )
 
         GotCount n ->
             -- PURE -> client-local; fold a pushed count into the model.
@@ -71,12 +67,15 @@ update msg model =
 
 view : Model -> Html Msg
 view model =
-    Ui.layout []
-        (Ui.column [ Ui.spacing 8 ]
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
             [ Ui.text ("count = " ++ String.fromInt model.count)
-            , Ui.button [] { onPress = Just Increment, label = Ui.text "Increment" }
-            ]
-        )
+            , Ui.button
+                  []
+                  { onPress = Just Increment, label = Ui.text "Increment" }
+            ])
 
 
 subscriptions : Model -> Sub Msg
@@ -92,5 +91,4 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            }
-        )
+            })

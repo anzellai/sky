@@ -17,8 +17,12 @@ runDb db =
                     db
                     "CREATE TABLE notes (id INTEGER PRIMARY KEY, text TEXT)"
                     [])
-        _ = Task.run (Db.exec db "INSERT INTO notes (text) VALUES (?)" ["hello"])
-        _ = Task.run (Db.exec db "INSERT INTO notes (text) VALUES (?)" ["world"])
+        _ =
+            Task.run
+                (Db.exec db "INSERT INTO notes (text) VALUES (?)" [ "hello" ])
+        _ =
+            Task.run
+                (Db.exec db "INSERT INTO notes (text) VALUES (?)" [ "world" ])
     in
         queryAll db
 

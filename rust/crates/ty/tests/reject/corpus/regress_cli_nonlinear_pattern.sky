@@ -12,10 +12,13 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
+
 pick p =
     case p of
+
         ( a, a ) ->
             a
+
 
 main =
     println (String.fromInt (pick ( 1, 2 )))

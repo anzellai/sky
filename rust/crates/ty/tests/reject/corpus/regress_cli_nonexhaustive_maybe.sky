@@ -9,6 +9,9 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
+
 main =
     case Just 5 of
-        Just n -> println (String.fromInt n)
+
+        Just n ->
+            println (String.fromInt n)

@@ -8,13 +8,8 @@ import Github.Com.Google.Uuid as Uuid
 
 main =
     let
-        greeting =
-            bar
-
-        computed =
-            Foo.baz 41
-
-        newId =
-            Uuid.newString ()
+        greeting = bar
+        computed = Foo.baz 41
+        newId = Uuid.newString ()
     in
-    println (String.append greeting (String.fromInt computed))
+        println (String.append greeting (String.fromInt computed))

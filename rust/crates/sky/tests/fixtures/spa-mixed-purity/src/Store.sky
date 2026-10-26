@@ -30,7 +30,8 @@ formatTotal cents =
 loadTodos : () -> Task Error (List Todo)
 loadTodos _ =
     File.readFile "todos.json"
-        |> Task.map (\s -> Result.withDefault [] (Codec.fromJson todoListCodec s))
+        |> Task.map
+               (\s -> Result.withDefault [] (Codec.fromJson todoListCodec s))
         |> Task.onError (\_ -> Task.succeed [])
 
 

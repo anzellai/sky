@@ -15,13 +15,16 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
+
 name n =
     case n of
+
         1 ->
             "one"
 
         2 ->
             "two"
+
 
 main =
     println (name 1)

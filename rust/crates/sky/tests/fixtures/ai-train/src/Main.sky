@@ -49,16 +49,16 @@ run : List String -> Task Error ()
 run args =
     case args of
 
-        ["drive", backend, dir] ->
+        [ "drive", backend, dir ] ->
             drive backend dir
 
-        ["serve", gguf, sha] ->
+        [ "serve", gguf, sha ] ->
             serve gguf sha
 
-        ["mismatch", gguf, sha, dir] ->
+        [ "mismatch", gguf, sha, dir ] ->
             mismatch gguf sha dir
 
-        ["eval", gguf, sha, dir] ->
+        [ "eval", gguf, sha, dir ] ->
             evaluate gguf sha dir
 
         _ ->

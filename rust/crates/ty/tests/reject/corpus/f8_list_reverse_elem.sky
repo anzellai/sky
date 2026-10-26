@@ -4,9 +4,12 @@
 --         precise `List.reverse : List a -> List a` sig now pins the element and
 --         rejects. oracle: reject [E2001].
 module Main exposing (main)
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
 import Std.Log exposing (println)
+
+
 main =
     println (String.join "," (List.reverse [ 1, 2, 3 ]))

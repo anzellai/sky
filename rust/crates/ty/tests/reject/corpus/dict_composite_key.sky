@@ -28,7 +28,6 @@ import Sky.Core.Dict as Dict exposing (Dict)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
-
 type alias Coord =
     ( Int, Int )
 

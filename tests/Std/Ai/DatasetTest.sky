@@ -402,12 +402,10 @@ tests =
                   n s = List.length (List.filter (\p -> p == s) parts)
               in
                   Test.isTrue
-                      (n Train > 1500 && n Train < 1700 && n Eval > 150 && n Eval
-                          < 250
-                          && n Test
-                          > 150
-                          && n Test
-                          < 250))
+                      (n Train > 1500 && n Train < 1700 && n Eval > 150
+                          && n Eval < 250
+                          && n Test > 150
+                          && n Test < 250))
     , Test.test
           "adding rows never moves an existing row to another split"
           (\_ ->

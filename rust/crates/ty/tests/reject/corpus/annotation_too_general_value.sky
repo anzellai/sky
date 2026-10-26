@@ -12,9 +12,11 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
+
 x : a
 x =
     5
+
 
 main =
     println (String.toUpper x)

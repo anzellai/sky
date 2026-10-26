@@ -19,7 +19,6 @@ import Sky.Core.File as File
 import Std.App as App
 import Std.Ui as Ui exposing (Element)
 
-
 type alias Model =
     { page : String
     , body : String
@@ -30,7 +29,6 @@ init : () -> ( Model, Cmd Msg )
 init () =
     ( { page = "home", body = "" }, Cmd.none )
 
-
 type Msg
     = Enter String
     | Loaded (Result Error String)
@@ -39,6 +37,7 @@ type Msg
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Enter page ->
             ( { model | page = page }
             , Cmd.perform (File.readFile ("data/" ++ page ++ ".txt")) Loaded
@@ -81,10 +80,7 @@ app =
         , subscriptions = subscriptions
         }
         |> App.withRoutes
-            [ App.route "/" "home"
-            , App.route "/a" "a"
-            , App.route "/b" "b"
-            ]
+               [ App.route "/" "home", App.route "/a" "a", App.route "/b" "b" ]
         |> App.withNotFound "home"
         |> App.withOnNavigate onNav
 

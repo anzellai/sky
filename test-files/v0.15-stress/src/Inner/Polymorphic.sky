@@ -1,11 +1,7 @@
 -- Polymorphic helper module — same-module polymorphic limitation
 -- workaround: putting the helpers in a dep module so CForeign
 -- re-instantiates per call site.
-module Inner.Polymorphic exposing
-    ( applyHandler
-    , identityM
-    , mkPair
-    )
+module Inner.Polymorphic exposing (applyHandler, identityM, mkPair)
 
 import Sky.Core.Prelude exposing (..)
 import Widget.Editor exposing (Cfg)

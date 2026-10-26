@@ -18,12 +18,10 @@ import Std.Ui as Ui
 import Std.Html exposing (Html)
 import Std.Db as Db
 
-
 type alias Model =
     { items : List String
     , draft : String
     }
-
 
 type Msg
     = DraftChanged String
@@ -43,8 +41,7 @@ db =
 
 loadAll : () -> Task Error (List String)
 loadAll _ =
-    Db.query db "SELECT name FROM items ORDER BY name" []
-        |> Task.map (\_ -> [])
+    Db.query db "SELECT name FROM items ORDER BY name" [] |> Task.map (\_ -> [])
 
 
 init : () -> ( Model, Cmd Msg )
@@ -63,7 +60,10 @@ update msg model =
             ( { model | draft = s }, Cmd.none )
 
         Save ->
-            ( { model | items = Result.withDefault [] (Task.run (loadAll ())), draft = "" }
+            ( { model
+                  | items = Result.withDefault [] (Task.run (loadAll ()))
+                  , draft = ""
+              }
             , Cmd.none
             )
 

@@ -23,10 +23,10 @@ bootId : String
 bootId =
     Result.withDefault "boot" (Task.run (System.getenv "BOOT_ID"))
 
-
 type alias Model =
-    { count : Int, note : String }
-
+    { count : Int
+    , note : String
+    }
 
 type Msg
     = Inc
@@ -41,6 +41,7 @@ init _ =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Inc ->
             ( { model | count = model.count + 1 }, Cmd.none )
 
@@ -50,8 +51,11 @@ update msg model =
 
 view : Model -> Element Msg
 view model =
-    Ui.column [ Ui.spacing 8, Ui.padding 12 ]
-        [ Ui.el [ Ev.onClick Inc ] (Ui.text ("count " ++ String.fromInt model.count))
+    Ui.column
+        [ Ui.spacing 8, Ui.padding 12 ]
+        [ Ui.el
+              [ Ev.onClick Inc ]
+              (Ui.text ("count " ++ String.fromInt model.count))
         , Ui.el [ Ev.onClick Save ] (Ui.text "save")
         , Ui.el [] (Ui.text model.note)
         ]

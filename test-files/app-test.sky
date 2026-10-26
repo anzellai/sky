@@ -34,8 +34,7 @@ main =
             ]
         formatted =
             List.map
-                (\item ->
-                     "[" ++ priorityLabel item.priority ++ "] " ++ item.name)
+                (\item -> "[" ++ priorityLabel item.priority ++ "] " ++ item.name)
                 items
     in
         println (String.join ", " formatted)

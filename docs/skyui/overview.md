@@ -125,6 +125,8 @@ Before v0.27.0 a text outside a paragraph was a bare text node, so two adjacent 
 
 **Markup the HTML parser keeps.** Std.Ui never emits a nesting the browser's HTML parser restructures. Inside a `Ui.paragraph` (at any depth, for example in a link label or a checkbox caption) a block element renders as a `<span>` with the same inline style, so the box on screen does not change. A link inside a link and a button inside a button render the inner one as a `<span>`, and a form inside a form or a heading directly inside a heading renders the inner one as a `<div>`. A heading or landmark that loses its tag keeps its role (`role="heading" aria-level`, `role="navigation"`, and so on). Sky.Live, the Sky.Spa server and the Sky.Spa client share this renderer, so the served page hydrates in place.
 
+**An element with any tag.** `Ui.TaggedNode tag description attrs children` renders `tag` when it is a plain tag name (a lowercase letter, then lowercase letters, digits or `-`, so a custom element such as `x-card` works): `Ui.TaggedNode "details" Ui.NoDescription [] [ Ui.TaggedNode "summary" Ui.NoDescription [] [ Ui.text "More" ], body ]` is a disclosure widget. A tag that runs, loads or embeds content (`script`, `style`, `iframe`, `object`, `embed`, `template`, `link`, `meta`, `video`, `audio`, …), the foreign roots `svg` and `math`, a document-level or raw-text tag, a table or select internal and the void tags render as a `<div>`, so Std.Ui still emits no script. The parser rules above apply to these tags too: inside a paragraph a `details`, `fieldset`, `ul` or `li` becomes a `<span>`, and an `li` inside an `li` with no list between them (or a `dd`/`dt` inside another) becomes a `<div>`.
+
 `row` and `column` use flexbox under the hood, with `gap` driven by `Ui.spacing`. The default flex direction matches the helper name. Mix freely:
 
 ```elm
@@ -663,13 +665,11 @@ view _ =
     Ui.layout []
         (Ui.row
             [ Ui.spacing 16, Ui.padding 16 ]
-            [ -- Typed-constant breakpoint: stacks vertically + red bg
-              -- ONLY when viewport ≤ 767 px wide. Above the breakpoint
-              -- the wrapper keeps its base layout (none here).
+            [ -- Typed-constant breakpoint: hides the sidebar ONLY when
+              -- the viewport is ≤ 767 px wide. Above the breakpoint the
+              -- wrapper keeps its base layout.
               Ui.breakpoint Ui.mobile
-                  [ Ui.htmlAttribute "style" "flex-direction: column;"
-                  , Background.color (Ui.rgb 240 0 0)
-                  ]
+                  [ Ui.style "display" "none" ]
                   sidebar
 
               -- Escape hatch: any raw CSS media-query string. The
@@ -726,12 +726,14 @@ Ui.breakpoint Ui.mobile
 <div sky-id="r.0.2#div" style="display: flex; flex-direction: column;">
     <style sky-id="r.0.2#div.~mq" data-sky-mq="r.0.2#div">
         @media (max-width: 767px) {
-            [sky-id="r.0.2#div"] { padding: 8px 8px 8px 8px; }
+            [sky-id="r.0.2#div"] { padding: 8px 8px 8px 8px !important; }
         }
     </style>
     <!-- child content -->
 </div>
 ```
+
+**The attributes style the wrapper, and they win over its inline style.** The wrapper `<div>` carries the same inline `style` as any `Std.Ui` element (`display: flex; flex-direction: column;`), and an inline declaration beats a selector rule. So every declaration in the scoped rule is emitted `!important`, the same rule `Ui.onPseudo` follows: `Ui.breakpoint Ui.mdAndUp [ Ui.style "display" "none" ] child` hides the child at 768 px and up, and padding, background, border, width and alignment apply to the wrapper box around the child. A value that already ends in `!important` is not doubled. The rule targets the wrapper, not the child: a layout attribute such as `flex-direction: row` arranges the wrapper's one child, so it does not re-flow the child's own children. To change how a `Ui.row` lays out its children at a breakpoint, render a different element under each breakpoint (`Ui.breakpoint Ui.mobile [ Ui.style "display" "none" ] wide` beside `Ui.breakpoint Ui.mdAndUp [ Ui.style "display" "none" ] narrow`), or drive it from the model with `Std.Ui.Responsive`. (Before v0.27.16 the rule had no `!important`, so `display` and `flex-direction` from a breakpoint never applied.)
 
 The selector keys off the wrapper's runtime-assigned `sky-id` — so two breakpoints on the same page cannot cross-contaminate each other's rules. Sky.Tui silently ignores the injected `<style>` (terminal renders the base layer only); Sky.Webview honours media queries identically to Sky.Live because they share the runtime VNode pipeline.
 

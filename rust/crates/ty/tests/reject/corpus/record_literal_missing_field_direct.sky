@@ -10,11 +10,15 @@ import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
 type alias P =
-    { name : String, age : Int }
+    { name : String
+    , age : Int
+    }
+
 
 p : P
 p =
     { name = "a" }
+
 
 main =
     println (String.fromInt (p.age + 100))

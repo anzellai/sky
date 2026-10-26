@@ -9,6 +9,6 @@ import Sky.Core.Error as Error exposing (Error)
 
 main =
     let
-        _ = div [class "app"] [text "Hello"]
+        _ = div [ class "app" ] [ text "Hello" ]
     in
         println "done"

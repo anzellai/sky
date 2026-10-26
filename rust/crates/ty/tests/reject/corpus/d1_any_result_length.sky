@@ -5,10 +5,15 @@
 --         `any` result instantiated to a fresh flex that silently absorbed the
 --         List.length use and RAN, printing 0. oracle: reject [E2001].
 module Main exposing (main)
+
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
+
+
 f : Int -> any
 f x =
     x
+
+
 main =
     println (String.fromInt (List.length (f 5)))

@@ -21,14 +21,12 @@ import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Html exposing (Html)
 
-
 type alias Model =
     { n : Int
     , log : String
     , tag : String
     , extra : Int
     }
-
 
 type Msg
     = Bump
@@ -51,8 +49,7 @@ init _ =
 
 saveN : Int -> Task Error String
 saveN n =
-    File.writeFile "count.txt" (String.fromInt n)
-        |> Task.map (\_ -> "ok")
+    File.writeFile "count.txt" (String.fromInt n) |> Task.map (\_ -> "ok")
 
 
 -- PURE, field-preserving `Model -> Model`: sets `tag` only.
@@ -86,8 +83,7 @@ pluck m =
 
 saveTag : String -> Task Error String
 saveTag t =
-    File.writeFile "tag.txt" t
-        |> Task.map (\_ -> "ok")
+    File.writeFile "tag.txt" t |> Task.map (\_ -> "ok")
 
 
 -- Single-parameter `Model -> ( Model, Cmd Msg )` whole-arm delegate (GAP #6c):
@@ -116,12 +112,14 @@ deepNarrow label m =
 
         else
             case m.n of
+
                 0 ->
                     if String.isEmpty label then
                         ( { m | log = "empty" }, Cmd.none )
 
                     else
                         case label of
+
                             "x" ->
                                 ( { m | log = "x" }, Cmd.none )
 
@@ -172,6 +170,7 @@ rebuild m =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Bump ->
             ( { model | n = model.n + 1 }, Cmd.none )
 
@@ -221,11 +220,10 @@ update msg model =
             -- {tag} — the whole model does NOT ride the response.
             let
                 _ = Task.run (saveN model.n)
-
-                stamped =
-                    ( { model | tag = "lb" }, Cmd.none )
+                stamped = ( { model | tag = "lb" }, Cmd.none )
             in
                 case model.n of
+
                     0 ->
                         stamped
 

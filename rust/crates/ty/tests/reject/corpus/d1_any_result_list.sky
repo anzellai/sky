@@ -5,10 +5,15 @@
 --         result pin (monomorphic body) closes the wildcard-List absorb. oracle:
 --         reject [E2001].
 module Main exposing (main)
+
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
+
+
 f : Int -> List any
 f x =
     [ x ]
+
+
 main =
     always (println "z") (List.map String.toUpper (f 5))

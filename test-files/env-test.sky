@@ -12,7 +12,10 @@ import Sky.Core.Error as Error exposing (Error)
 main =
     let
         _ = println (System.getenvOr "UNSET_VAR" "default-value")
-        _ = println (String.fromInt (Result.withDefault 8080 (Task.run (System.getenvInt "PORT"))))
+        _ =
+            println
+                (String.fromInt
+                    (Result.withDefault 8080 (Task.run (System.getenvInt "PORT"))))
         _ =
             if Result.withDefault False (Task.run (System.getenvBool "DEBUG")) then
                 println "debug on"

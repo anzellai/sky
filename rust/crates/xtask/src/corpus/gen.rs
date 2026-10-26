@@ -889,9 +889,11 @@ pub fn build(stratum: &Stratum, assignment: &Assignment) -> GenCase {
         | "let_polymorphism"
         | "qualified_field"
         | "adt_equality"
-        | "lambda_record_param" => {
+        | "lambda_record_param"
+        | "generic_alias_slot" => {
             let (body, out) = match stratum.name {
                 "lambda_record_param" => super::lang_shapes::lambda_record_param(assignment),
+                "generic_alias_slot" => super::lang_shapes::generic_alias_slot(assignment),
                 "as_pattern_nesting" => super::lang_shapes::as_pattern_nesting(assignment),
                 "task_slot" => super::lang_shapes::task_slot(assignment),
                 "let_polymorphism" => super::lang_shapes::let_polymorphism(assignment),

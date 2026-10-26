@@ -12,7 +12,12 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
 import Std.Log exposing (println)
 
+
 main =
     case Maybe.andMap (Just 1) (Just (\s -> s ++ "!")) of
-        Just v -> println v
-        Nothing -> println "nothing"
+
+        Just v ->
+            println v
+
+        Nothing ->
+            println "nothing"

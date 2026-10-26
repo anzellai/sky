@@ -3,7 +3,6 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
-
 -- Cause J — safeReturnType policy split.  C7 renamed the three
 -- variants to safeReturnTypeFull / safeReturnTypeBootstrap /
 -- safeReturnTypePure.  This fixture exercises a typed record-alias
@@ -23,5 +22,7 @@ mkPerson n a =
 
 
 main =
-    let alice = mkPerson "Alice" 30
-    in println (alice.name ++ " is " ++ String.fromInt alice.age)
+    let
+        alice = mkPerson "Alice" 30
+    in
+        println (alice.name ++ " is " ++ String.fromInt alice.age)

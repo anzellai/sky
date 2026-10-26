@@ -60,7 +60,12 @@
 //
 // Usage: node scripts/csp-e2e-verify.mjs <scenario> <app-binary> --port N
 //          [--via MODE] [--dist DIR] [--slot] [--kind spa|live] [--cwd DIR]
-//          [--env K=V ...]
+//          [--env K=V ...] [--start-delay MS]
+//
+// Every scenario first waits for the BACKEND's /_sky/readyz (200, "ready")
+// through the topology under test, never for the page path alone: a static
+// host answers the page while the backend is still starting. --start-delay MS
+// starts the backend MS after the proxy, the regression case for that race.
 // Exit: 0 PASS · 2 FAIL · 1 harness error.
 import pw from "playwright";
 const { chromium } = pw;
@@ -169,12 +174,22 @@ const env = {
 if (VIA === "strict") env.SKY_CSP = "strict";
 else delete env.SKY_CSP;
 
-const proc = guardChild(spawn(RUN_APP, [], { cwd: CWD, env }));
+// --start-delay MS holds the backend back while the proxy / Caddy is already
+// answering: the regression case for the readiness race (see waitReady). A
+// harness that loads the page before the BACKEND is ready sees a 502 here.
+const START_DELAY = Number(arg("--start-delay", "0"));
+let proc = null;
 let serverLog = "";
-proc.stdout.on("data", (d) => (serverLog += d));
-proc.stderr.on("data", (d) => (serverLog += d));
 let exited = null;
-proc.on("exit", (code, sig) => (exited = { code, sig }));
+function startApp() {
+  proc = guardChild(spawn(RUN_APP, [], { cwd: CWD, env }));
+  proc.stdout.on("data", (d) => (serverLog += d));
+  proc.stderr.on("data", (d) => (serverLog += d));
+  proc.on("exit", (code, sig) => (exited = { code, sig }));
+}
+let startTimer = null;
+if (START_DELAY > 0) startTimer = setTimeout(startApp, START_DELAY);
+else startApp();
 
 // ── the node proxy (proxy, slot): pipes every request, sets STRICT_CSP ──
 let proxy = null;
@@ -260,16 +275,36 @@ function check(step, ok, detail) {
   if (!ok) failures.push(step);
 }
 
-async function waitListening(path) {
+// The BACKEND is ready only when its own /_sky/readyz answers 200 with
+// {"status":"ready"} THROUGH the topology under test. Probing the page path is
+// not enough: under caddy-static, Caddy's file_server answers `/` from the dist
+// while the backend is still starting, so the page loaded, its first /api call
+// reached a backend that was not listening yet, and Caddy answered 502 (release
+// run 40240280881, todos/caddy-static). /_sky/* reaches the backend in every
+// topology (caddy-base strips /app), and the body check refuses a fallback
+// page that merely answers 200.
+async function waitReady() {
+  let last = "no answer";
   for (let i = 0; i < 160; i++) {
     if (exited) throw new Error(`app exited early (${JSON.stringify(exited)})\n${serverLog}`);
     try {
-      const r = await fetch(APP_ORIGIN + path);
-      if (r.status < 500) return r;
-    } catch (_) {}
+      const r = await fetch(APP_ORIGIN + "/_sky/readyz", { signal: AbortSignal.timeout(2000) });
+      const body = await r.text();
+      if (r.status === 200 && /"status"\s*:\s*"ready"/.test(body)) return;
+      last = `${r.status} ${body.slice(0, 80)}`;
+    } catch (e) {
+      last = e.message;
+    }
     await new Promise((r) => setTimeout(r, 250));
   }
-  throw new Error("app never listened\n" + serverLog + (caddyLog ? "\n--- caddy ---\n" + caddyLog : ""));
+  throw new Error(`the backend never became ready through ${VIA} (last /_sky/readyz: ${last})\n` + serverLog + (caddyLog ? "\n--- caddy ---\n" + caddyLog : ""));
+}
+
+async function waitListening(path) {
+  await waitReady();
+  const r = await fetch(APP_ORIGIN + path);
+  if (r.status >= 500) throw new Error(`${path} answered ${r.status} after the backend was ready\n${serverLog}`);
+  return r;
 }
 
 const violations = [];
@@ -303,7 +338,12 @@ async function newPage(browser) {
       cspConsole.push(t);
       console.log(`FAIL [${TAG}] console: ${t}`);
     }
-    if (m.type() === "error") consoleErrors.push(t);
+    // Name the resource: "Failed to load resource: … 502" alone does not say
+    // which request failed.
+    if (m.type() === "error") {
+      const at = (m.location() || {}).url || "";
+      consoleErrors.push(at && !t.includes(at) ? `${t} (${at})` : t);
+    }
   });
   // Every script, wasm and style sheet must come back as itself: a script
   // answered with HTML is the v0.25.19 failure.
@@ -461,8 +501,9 @@ async function scenarioTodos(browser) {
   const page = await newPage(browser);
   const loaded = page.waitForResponse((r) => r.url().includes("/api/todos") && r.request().method() === "GET", { timeout: 20000 });
   await page.goto(APP_ORIGIN + "/", { waitUntil: "load" });
-  const ok = await loaded.then(() => true).catch(() => false);
-  check("the wasm client boots and loads the list over RPC", ok);
+  const lr = await loaded.catch(() => null);
+  const ok = !!lr && lr.ok();
+  check("the wasm client boots and loads the list over RPC", ok, lr ? String(lr.status()) : "no GET");
   if (!ok) return;
   await page.locator("#new-input").waitFor({ timeout: 10000 });
   const before = Number(await textOf(page, "#total"));
@@ -497,19 +538,22 @@ async function scenarioNotes(browser) {
   }
   const loaded = page.waitForResponse((r) => r.url().includes("/_rpc/Load"), { timeout: 20000 });
   await page.goto(APP_ORIGIN + "/", { waitUntil: "load" });
-  const ok = await loaded.then(() => true).catch(() => false);
-  check("the SSR page hydrates and the client runs its Load RPC", ok);
+  const lr = await loaded.catch(() => null);
+  const ok = !!lr && lr.ok();
+  check("the SSR page hydrates and the client runs its Load RPC", ok, lr ? String(lr.status()) : "no Load");
   if (!ok) return;
   const hydrated = await waitFor(async () => (await page.evaluate(() => !document.documentElement.hasAttribute("data-sky-hydrating"))), 8000, "hydration").catch(() => false);
   check("the hydrating overlay clears", !!hydrated);
   const created = page.waitForResponse((r) => r.url().includes("/_rpc/Create"), { timeout: 10000 });
   await page.locator("#new-btn").click();
-  check("New note runs the Create RPC", !!(await created.catch(() => null)));
+  const cr = await created.catch(() => null);
+  check("New note runs the Create RPC", !!cr && cr.ok(), cr ? String(cr.status()) : "no Create");
   await page.waitForTimeout(300);
   await page.locator("#title-input").pressSequentially("CSP note");
   const saved = page.waitForResponse((r) => r.url().includes("/_rpc/Save"), { timeout: 10000 });
   await page.locator("#save-btn").click();
-  check("Save runs the Save RPC", !!(await saved.catch(() => null)));
+  const sr = await saved.catch(() => null);
+  check("Save runs the Save RPC", !!sr && sr.ok(), sr ? String(sr.status()) : "no Save");
   const listed = await waitFor(async () => (await page.locator("#note-list").innerText()).includes("CSP note"), 6000, "the saved note").catch(() => false);
   check("the saved note is listed", !!listed);
   // In the slot layout the static host serves only the wasm pair, so there is
@@ -519,7 +563,8 @@ async function scenarioNotes(browser) {
   const shell = await newPage(browser);
   const shellLoaded = shell.waitForResponse((r) => r.url().includes("/_rpc/Load"), { timeout: 20000 });
   await shell.goto(APP_ORIGIN + "/index.html", { waitUntil: "load" });
-  check("the static dist/index.html shell boots the client", await shellLoaded.then(() => true).catch(() => false));
+  const slr = await shellLoaded.catch(() => null);
+  check("the static dist/index.html shell boots the client", !!slr && slr.ok(), slr ? String(slr.status()) : "no Load");
   const shellList = await waitFor(async () => (await shell.locator("#note-list").innerText()).includes("CSP note"), 8000, "the list in the static shell").catch(() => false);
   check("the static shell renders the saved note", !!shellList);
 }
@@ -583,12 +628,13 @@ try {
   try {
     if (caddy) caddy.kill("SIGTERM");
   } catch (_) {}
+  if (startTimer) clearTimeout(startTimer);
   try {
-    proc.kill("SIGTERM");
+    if (proc) proc.kill("SIGTERM");
   } catch (_) {}
   await new Promise((r) => setTimeout(r, 300));
   try {
-    proc.kill("SIGKILL");
+    if (proc) proc.kill("SIGKILL");
   } catch (_) {}
   if (code !== 0) console.log(`--- server log (tail) ---\n${serverLog.split("\n").slice(-25).join("\n")}`);
   process.exit(code);

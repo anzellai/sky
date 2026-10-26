@@ -22,12 +22,10 @@ withLet : String -> String
 withLet map =
     let
         select = map ++ "!"
-
         defer = select ++ "?"
-
         len = String.fromInt (String.length defer)
     in
-    defer ++ "/" ++ len
+        defer ++ "/" ++ len
 
 
 main =

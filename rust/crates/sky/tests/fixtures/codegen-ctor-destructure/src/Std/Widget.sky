@@ -4,7 +4,6 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
 
-
 type W
     = W { label : String }
 
@@ -24,7 +23,6 @@ mk s =
 labels : List W -> String
 labels xs =
     let
-        one (W w) =
-            w.label
+        one (W w) = w.label
     in
-    String.join "," (List.map one xs)
+        String.join "," (List.map one xs)

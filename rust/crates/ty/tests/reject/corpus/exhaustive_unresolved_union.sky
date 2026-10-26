@@ -15,13 +15,23 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
-type Light = Red | Amber | Green | Off
+type Light
+    = Red
+    | Amber
+    | Green
+    | Off
+
 
 name : Light -> String
 name c =
     case c of
-        Red -> "red"
-        Green -> "green"
+
+        Red ->
+            "red"
+
+        Green ->
+            "green"
+
 
 main =
     println (name Red)

@@ -91,7 +91,7 @@ run : List String -> Task Error ()
 run args =
     case args of
 
-        ["register", dir] ->
+        [ "register", dir ] ->
             open dir
                 |> Task.andThen
                        (\reg ->
@@ -112,7 +112,7 @@ run args =
                                           println
                                               "registered support@v1 and support@v2; qa -> v1"))
 
-        ["promote", dir, n] ->
+        [ "promote", dir, n ] ->
             open dir
                 |> Task.andThen
                        (\reg ->

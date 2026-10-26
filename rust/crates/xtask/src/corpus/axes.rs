@@ -17,6 +17,7 @@
 //! | `row` | #171 — closed vs open (row-polymorphic) records | record openness |
 //! | `alias_names` / `ctor_use` | v0.27.10 — two modules' `type alias Reply`, the wrong constructor | whether two record aliases share a name, and how the constructor is used |
 //! | `anon_role` / `acc_pos` / `step_site` / `anon_depth` / `list_import` | v0.27.14 — a fold's anonymous-record accumulator narrowed to the element's named record | which fold param is the anonymous record, where the accumulator sits, how the step is written, how deep the record is, and how `List` is imported |
+//! | `ga_slot` / `ga_params` / `ga_site` | v0.27.16 — `Just (act "Edit" Noop)` with a generic record-alias constructor failed `go build` | which slot the call lands in, how many type parameters the alias has, and whether the call is let-bound first |
 //!
 //! A **stratum** is a named subset of the space that gets FULL cross, because
 //! history says that triple produces bugs. Everything else is covered by a
@@ -375,6 +376,28 @@ pub const ANON_DEPTH: Axis = Axis::new("anon_depth", &["flat", "nested"]);
 /// reported program.
 pub const LIST_IMPORT: Axis = Axis::new("list_import", &["autoloaded", "explicit"]);
 
+/// **Which slot a call to a generic record-alias constructor lands in**
+/// (v0.27.16). A polymorphic def returning a parametric record alias (`act :
+/// String -> msg -> Act msg`) has an erased Go return, `Act_R[any]`, because a
+/// def's type variables erase (doc 14 R12), while the slot is monomorphised from
+/// the checked type, `Act_R[Sig]`. `just` / `ok` / `err` lowered their argument
+/// at `any` and never narrowed it: `sky check` passed and `go build` failed.
+/// `list` is the shape that always built; the rest are its neighbours (a user
+/// ADT with a type parameter, a tuple, a record field, a function argument).
+pub const GA_SLOT: Axis = Axis::new(
+    "ga_slot",
+    &["just", "ok", "err", "adt", "tuple", "field", "arg", "list"],
+);
+
+/// **How many type parameters the alias has** (v0.27.16): `one` is `Act msg =
+/// { label : String, onPress : msg }`, `two` is `Duo a b = { first : a, second
+/// : b }`, instantiated at two different types.
+pub const GA_PARAMS: Axis = Axis::new("ga_params", &["one", "two"]);
+
+/// **Where the call is written** (v0.27.16): `inline` at the slot (the reported
+/// shape), or bound by an unannotated `let` first and passed by name.
+pub const GA_SITE: Axis = Axis::new("ga_site", &["inline", "let_bound"]);
+
 /// **How a Task-returning function reaches a `Task.andThen` chain.** A
 /// parameter `f : Int -> Task Error ()` called in a middle link whose result
 /// the next link ignores (`\_ -> …`) was typed `SkyTask[E, any]` by inference
@@ -639,6 +662,16 @@ pub const STRATA: &[Stratum] = &[
         // One module, one fold: nothing here depends on a neighbour.
         isolated: false,
     },
+    // ---- v0.27.16 -----------------------------------------------------------
+    Stratum {
+        name: "generic_alias_slot",
+        axes: &[GA_SLOT, GA_PARAMS, GA_SITE],
+        coordinate: Some(
+            "v0.27.16: `Just (act \"Edit\" Noop)` with `act : String -> msg -> Act msg`",
+        ),
+        // One module: the alias, its constructor and the slot are all local.
+        isolated: false,
+    },
 ];
 
 /// Whether a point in a stratum's cross is a real case.
@@ -791,6 +824,13 @@ pub fn pinned_coordinate(stratum: &str) -> Option<Assignment> {
                 .with(STEP_SITE, "inline")
                 .with(ANON_DEPTH, "flat")
                 .with(LIST_IMPORT, "explicit"),
+        ),
+        // v0.27.16: the reported reproduction, `Just (Lib.action "Edit" Noop)`.
+        "generic_alias_slot" => Some(
+            Assignment::new()
+                .with(GA_SLOT, "just")
+                .with(GA_PARAMS, "one")
+                .with(GA_SITE, "inline"),
         ),
         _ => None,
     }

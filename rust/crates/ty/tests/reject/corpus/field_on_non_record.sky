@@ -6,9 +6,11 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
+
 grab : Int -> String
 grab n =
     n.name
+
 
 main =
     println (grab 5)

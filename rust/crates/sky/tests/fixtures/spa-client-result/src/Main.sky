@@ -34,13 +34,11 @@ import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Html exposing (Html)
 
-
 type alias Model =
     { items : List String
     , busy : Bool
     , error : String
     }
-
 
 type Msg
     = Upload String
@@ -56,8 +54,7 @@ init _ =
 
 saveBlob : String -> Task Error String
 saveBlob data =
-    File.writeFile "blob.txt" data
-        |> Task.map (\_ -> "blob.txt")
+    File.writeFile "blob.txt" data |> Task.map (\_ -> "blob.txt")
 
 
 persist : String -> Task Error ()
@@ -76,13 +73,9 @@ guard model thunk =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Upload data ->
-            guard
-                model
-                (\_ ->
-                    ( model
-                    , Cmd.perform (saveBlob data) Saved
-                    ))
+            guard model (\_ -> ( model, Cmd.perform (saveBlob data) Saved ))
 
         Saved (Ok url) ->
             ( { model | items = url :: model.items, busy = False }, Cmd.none )
@@ -91,15 +84,15 @@ update msg model =
             ( { model | busy = False, error = Error.toString e }, Cmd.none )
 
         Store data ->
-            ( { model | busy = True }
-            , Cmd.perform (saveBlob data) Stored
-            )
+            ( { model | busy = True }, Cmd.perform (saveBlob data) Stored )
 
         Stored (Ok url) ->
             let
                 _ = persist url
             in
-            ( { model | items = url :: model.items, busy = False }, Cmd.none )
+                ( { model | items = url :: model.items, busy = False }
+                , Cmd.none
+                )
 
         Stored (Err _) ->
             ( { model | busy = False }, Cmd.none )
@@ -111,12 +104,17 @@ view model =
         []
         (Ui.column
             [ Ui.spacing 8 ]
-            [ Ui.text ("busy=" ++ (if model.busy then "yes" else "no"))
+            [ Ui.text
+                  ("busy="
+                      ++ (if model.busy then
+                             "yes"
+
+                         else
+                             "no"))
             , Ui.text ("count=" ++ String.fromInt (List.length model.items))
             , Ui.el [ Ui.onClick (Upload "data:xyz") ] (Ui.text "Upload")
             , Ui.el [ Ui.onClick (Store "data:abc") ] (Ui.text "Store")
-            ]
-        )
+            ])
 
 
 subscriptions : Model -> Sub Msg
@@ -132,5 +130,4 @@ main =
             , update = update
             , view = view
             , subscriptions = subscriptions
-            }
-        )
+            })

@@ -310,6 +310,26 @@ pub static GATES: &[Gate] = &[
         body: bodies::roundtrip,
     },
     Gate {
+        name: "sky-fmt-check",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 60,
+        expected: crate::sky_fmt_check::ASSERTIONS,
+        expect: Expect::Falsifiable,
+        summary: "every tracked .sky/.skyi is sky fmt clean, bar a reasoned exclusion list",
+        mutations: Mutations::new(&[Mutation {
+            id: "sky-fmt-check.drift",
+            description: "un-format one tracked Sky file; the formatted-files \
+                          assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "examples/01-hello-world/src/Main.sky",
+                from: "module Main exposing (main)",
+                to: "module Main exposing ( main )",
+            },
+        }]),
+        body: bodies::sky_fmt_check,
+    },
+    Gate {
         name: "reject",
         tier: Tier::T1,
         platforms: ALL_PLATFORMS,
@@ -524,21 +544,13 @@ pub static GATES: &[Gate] = &[
                 // task_slot, let_polymorphism and qualified_field (+95 cases,
                 // 519 → 614), and the v0.27.0 Std.Sync surface (+2 cases,
                 // 614 → 616), and the v0.27.7 adt_equality stratum (+60 cases,
-                // 616 → 676), and the v0.28.0 Std.Ai.Local surface (+2 cases,
-                // 676 → 678), and the v0.28.0 Std.Ai.Failure and
-                // Std.Ai.Eval surfaces (+4 cases, 678 → 682), and the v0.28.0
-                // Std.Ai.Store and Std.Ai.Registry surfaces (+3 cases, 682 → 685),
-                // and the v0.28.0 Std.Ai.Dataset, Scrub and Synthetic surfaces
-                // (+6 cases, 685 → 691), the v0.28.0 Std.Ai.Pipeline surface
-                // (+2 cases, 691 → 693), the v0.28.0 Std.Ai.Train surface
-                // (+2 cases, 693 → 695), the v0.28.0 Std.Ai.Device surface
-                // (+2 cases, 695 → 697) and the v0.28.0 Std.Ai.Serve and
-                // Std.Ai.Cloud.Google surfaces (+3 cases, 697 → 700), and the
-                // v0.27.10 alias_ctor_collision stratum (+4 cases, 700 → 704),
-                // and the v0.27.14 lambda_record_param stratum (+32 cases,
-                // 704 → 736).
-                from: "n_min = 736",
-                to: "n_min = 737",
+                // 616 → 676), and the v0.27.10 alias_ctor_collision stratum
+                // (+4 cases, 676 → 680), and the v0.27.14
+                // lambda_record_param stratum (+32 cases, 680 → 712), and the
+                // v0.27.16 generic_alias_slot stratum (+32 cases, 712 → 744), and the
+                // v0.28.0 Std.Ai surfaces (+24 cases, 744 → 768).
+                from: "n_min = 768",
+                to: "n_min = 769",
             },
         }]),
         body: bodies::corpus_manifest,

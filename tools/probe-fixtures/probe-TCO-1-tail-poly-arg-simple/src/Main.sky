@@ -7,6 +7,7 @@ import Std.Log exposing (println)
 loop : Int -> List a -> List a
 loop n acc =
     case n of
+
         0 ->
             acc
 

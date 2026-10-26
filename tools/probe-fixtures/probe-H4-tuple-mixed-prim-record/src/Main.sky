@@ -11,7 +11,6 @@ makeIt =
 
 main =
     let
-        ( n, r ) =
-            makeIt
+        ( n, r ) = makeIt
     in
-    println (r.name ++ " #" ++ String.fromInt n)
+        println (r.name ++ " #" ++ String.fromInt n)

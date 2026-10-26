@@ -421,14 +421,15 @@ A Sky-side ergonomic API (`Live.app { subApps = [Live.subApp "/admin" "./admin-a
 
 ### Sub-app-aware `SKY_LIVE_BASE_PATH`
 
-When a Sky.Live runtime starts with `SKY_LIVE_BASE_PATH` set (which `MountSubApp` does automatically for child processes), four behaviours flip:
+When a Sky.Live runtime starts with `SKY_LIVE_BASE_PATH` set, three behaviours flip:
 
 1. `<meta name="sky-base" content="<prefix>">` injected into every page wrap. The client (loaded from `<prefix>/_sky/live.<hash>.js`) reads the base from its `sky-live-cfg` block into `__skyBase` and prefixes every hardcoded `/_sky/event` / `/_sky/sse` / `/_sky/config` URL — without this, sub-app fetches would hit the parent's wire endpoint and silently drop.
 2. Dev banner suppressed (no recursive "click for console" inside the console).
-3. `MountObservabilityEndpoints` skipped (the parent owns `/_sky/{healthz,readyz,metrics,buildinfo}` — sub-app duplicates would just pollute).
-4. `maybeAutoMountConsole` early-returns (sub-apps don't get to spawn sub-apps — fork-bomb prevention).
+3. `maybeAutoMountConsole` early-returns (sub-apps don't get to spawn sub-apps — fork-bomb prevention).
 
 Set `SKY_LIVE_BASE_PATH` manually for advanced reverse-proxy setups where Sky.Live runs behind a fronting Nginx / Cloudflare / Envoy that does the prefix-strip.
+
+The app still owns its process, so `/_sky/healthz`, `/_sky/readyz`, `/_sky/metrics` and `/_sky/buildinfo` stay mounted, and the session store stays wired into `/_sky/readyz`. Behind a proxy that strips `/app`, a readiness probe reaches them at `/app/_sky/readyz`. (Up to v0.27.16 they were skipped under a base path, a leftover from the retired fork-and-exec sub-app, and `/_sky/readyz` answered 404.)
 
 ### Process supervision + shutdown
 

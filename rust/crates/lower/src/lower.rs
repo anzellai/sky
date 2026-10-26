@@ -5036,6 +5036,15 @@ impl<'a> Ctx<'a> {
         // passed through unchanged. A different RECORD struct at the payload
         // position (two same-shape record aliases, see `go_unassignable`) is
         // narrowed the same way.
+        //
+        // The erased instance also arises for a call to a polymorphic Sky def
+        // returning a parametric record alias (`action : String -> msg -> Action
+        // msg`): its declared Go return is `Lib_Action_R[any]` (doc 14 R12)
+        // while the payload is `Lib_Action_R[Main_Msg]`, so `Just (Lib.action
+        // "Edit" Noop)` passed `sky check` and failed `go build` (v0.27.16). The
+        // argument is lowered at `any` here (not at the payload slot, see
+        // `builtin_container_fn_field_gotys`), so the narrowing every other slot
+        // gets from `lower_expr` never ran.
         let narrow_payload = |this: &mut Self, args: Vec<GoExpr>, payload: Option<&GoTy>| {
             let records = this.record_fields;
             let is_record = |n: &str| records.contains_key(n);

@@ -29,7 +29,11 @@ update msg model =
 
 
 view model =
-    div [] [ button [onClick Inc] [text "+"], button [onClick Dec] [text "-"] ]
+    div
+        []
+        [ button [ onClick Inc ] [ text "+" ]
+        , button [ onClick Dec ] [ text "-" ]
+        ]
 
 
 subs _m =
@@ -42,6 +46,6 @@ main =
         , update = update
         , view = view
         , subscriptions = subs
-        , routes = [route "/" 0]
+        , routes = [ route "/" 0 ]
         , notFound = 0
         }

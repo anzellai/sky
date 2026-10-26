@@ -118,7 +118,7 @@ seed =
                                              (\vs ->
                                                  case vs of
 
-                                                     [v1, v2, _] ->
+                                                     [ v1, v2, _ ] ->
                                                          attachEvidence
                                                              db
                                                              reg
@@ -203,13 +203,13 @@ main =
                (\args ->
                    case args of
 
-                       ["seed"] ->
+                       [ "seed" ] ->
                            seed
 
-                       ["serve"] ->
+                       [ "serve" ] ->
                            serve
 
-                       ["mismatch"] ->
+                       [ "mismatch" ] ->
                            mismatch
 
                        _ ->

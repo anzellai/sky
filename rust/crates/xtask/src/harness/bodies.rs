@@ -152,6 +152,35 @@ pub fn roundtrip(ctx: &GateCtx) -> GateOutcome {
     }
 }
 
+/// `xtask sky-fmt-check`: every tracked `.sky` / `.skyi` outside the
+/// reasoned exclusion list parses and is `sky fmt` clean (v0.27.16).
+pub fn sky_fmt_check(ctx: &GateCtx) -> GateOutcome {
+    let r = match crate::sky_fmt_check::scan(&ctx.repo_root) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    let mut bad: Vec<&str> = r.unformatted.iter().map(String::as_str).collect();
+    bad.extend(r.unparsable.iter().map(String::as_str));
+    bad.extend(r.bad_exclusions.iter().map(String::as_str));
+    GateOutcome::new(
+        r.ok(),
+        r.passed(),
+        if r.ok() {
+            format!(
+                "{} files formatted, {} excluded with a reason",
+                r.checked, r.excluded
+            )
+        } else {
+            format!(
+                "{} checked (floor {}): {}",
+                r.checked,
+                crate::sky_fmt_check::MIN_FILES,
+                preview(&bad)
+            )
+        },
+    )
+}
+
 pub fn reject(ctx: &GateCtx) -> GateOutcome {
     let rows = match crate::reject_gate::scan(&ctx.repo_root) {
         Ok(r) => r,
@@ -828,12 +857,16 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// 2 `anon_role` x 2 `acc_pos` x 2 `step_site` x 2 `anon_depth` x 2
 /// `list_import`). A fold's
 /// anonymous-record accumulator was narrowed to the element's named record;
-/// see `corpus/lang_shapes.rs`. (Counted on the v0.27.x line, without the
-/// v0.28.0 surfaces.)
+/// see `corpus/lang_shapes.rs`.
 ///
-/// **736 at the merge of v0.27.15 into the v0.28.0 line** (704 + the 32
-/// `lambda_record_param` cases).
-pub const CORPUS_EXPECTED: u64 = 736;
+/// **744 since the v0.27.16 `generic_alias_slot` stratum** (+32, Family L:
+/// 8 `ga_slot` x 2 `ga_params` x 2 `ga_site`). A generic record-alias
+/// constructor's erased Go return reached a `Just` / `Ok` / `Err` payload
+/// unnarrowed; see `corpus/lang_shapes.rs`.
+///
+/// **768 at the merge of v0.27.17 into the v0.28.0 line** (744 + the 24
+/// v0.28.0 Std.Ai surface cases).
+pub const CORPUS_EXPECTED: u64 = 768;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -909,10 +942,14 @@ pub const CORPUS_EXPECTED: u64 = 736;
 /// **558 at the merge of v0.27.10 into the v0.28.0 line** (554 + 4).
 ///
 /// **566 since the v0.27.14 `lambda_record_param` stratum** (+32, all built
-/// and run; the same +32 as `CORPUS_EXPECTED`; counted on the v0.27.x line).
+/// and run; the same +32 as `CORPUS_EXPECTED`).
 ///
-/// **590 at the merge of v0.27.15 into the v0.28.0 line** (558 + 32).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 590;
+/// **598 since the v0.27.16 `generic_alias_slot` stratum** (+32, all built
+/// and run; the same +32 as `CORPUS_EXPECTED`).
+///
+/// **622 at the merge of v0.27.17 into the v0.28.0 line** (598 + the 24
+/// v0.28.0 Std.Ai surface cases).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 622;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
@@ -3071,7 +3108,22 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 /// `tests/Std/Ai/StructuredTest.sky`: `Codec.jsonSchema`, `Tool.typed`, the
 /// tool schemas and `response_format` a provider sends, and a durable agent
 /// with a typed tool call and a typed answer), 44 suites.
-pub const SKY_SUITES_EXPECTED: u64 = 1109;
+///
+/// 695 -> 879 (v0.27.16):
+///
+/// * `Std/UiTaggedNodeTest` (+28) — `Ui.TaggedNode` renders a plain tag name as
+///   itself and refuses script, embedding, foreign-root, table-internal and
+///   void tags.
+/// * `Std/UiParserSafeNestingTest` (+156) — the container x child matrix grows
+///   from 12 x 22 to 15 x 28 (list item, description term and details
+///   containers; details, list, list item, description, fieldset and custom
+///   element children).
+///
+/// 695 + 28 + 156 = 879.
+///
+/// 1109 + 184 = 1293 at the merge of v0.27.17 into the v0.28.0 line (the
+/// v0.27.16 Std.Ui suites above on top of the v0.28.0 count).
+pub const SKY_SUITES_EXPECTED: u64 = 1293;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.

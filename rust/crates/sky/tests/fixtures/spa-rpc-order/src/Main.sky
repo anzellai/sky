@@ -164,12 +164,13 @@ update msg model =
                     ( model, Cmd.none )
 
         SlowDone _ ->
-            ( { model | status =
-                  if String.startsWith "STALE" model.status then
-                      model.status
+            ( { model
+                  | status =
+                      if String.startsWith "STALE" model.status then
+                          model.status
 
-                  else
-                      "rpc done"
+                      else
+                          "rpc done"
               }
             , Cmd.none
             )
@@ -181,17 +182,20 @@ update msg model =
                     case Noise.encrypt "hello" t of
 
                         Ok ( next, _ ) ->
-                            ( { model | tr = Just next
-                              , seals = model.seals + 1
+                            ( { model
+                                  | tr = Just next
+                                  , seals = model.seals + 1
                               }
                             , Cmd.none
                             )
 
                         Err e ->
-                            ( { model | status =
-                                  "STALE after " ++ String.fromInt model.seals
-                                      ++ " seals: "
-                                      ++ errorToString e
+                            ( { model
+                                  | status =
+                                      "STALE after "
+                                          ++ String.fromInt model.seals
+                                          ++ " seals: "
+                                          ++ errorToString e
                               }
                             , Cmd.none
                             )
@@ -207,9 +211,10 @@ update msg model =
                 ( { model | ticks = model.ticks + 1 }, Cmd.none )
 
             else
-                ( { model | ticks = model.ticks + 1
-                  , busy = True
-                  , started = model.started + 1
+                ( { model
+                      | ticks = model.ticks + 1
+                      , busy = True
+                      , started = model.started + 1
                   }
                 , Cmd.perform (Task.succeed "call") Call
                 )
@@ -313,10 +318,7 @@ view m =
         , row "pair" ("A=" ++ m.pairA ++ " B=" ++ m.pairB)
         , row
               "basket"
-              ("BASKET="
-                  ++ String.join "," m.basket
-                  ++ " USER="
-                  ++ m.user
+              ("BASKET=" ++ String.join "," m.basket ++ " USER=" ++ m.user
                   ++ " TRACKS="
                   ++ String.fromInt m.tracks)
         , btn "start" Start

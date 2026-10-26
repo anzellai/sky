@@ -24,9 +24,12 @@ items =
 
 -- The reported shape: the accumulator (second param) is an anonymous record,
 -- the element (first param) a named one.
-collect : List Item -> Dict.Dict String Int -> { entries : List String
-, counts : Dict.Dict String Int
-}
+collect :
+    List Item
+    -> Dict.Dict String Int
+    -> { entries : List String
+       , counts : Dict.Dict String Int
+       }
 collect xs counts =
     List.foldl
         (\it acc ->
@@ -49,9 +52,11 @@ myFold f z xs =
 
 
 -- The anonymous accumulator is the FIRST param.
-accFirst : List Item -> { names : List String
-, n : Int
-}
+accFirst :
+    List Item
+    -> { names : List String
+       , n : Int
+       }
 accFirst xs =
     myFold
         (\acc it -> { names = it.label :: acc.names, n = acc.n + 1 })
@@ -60,17 +65,17 @@ accFirst xs =
 
 
 -- An anonymous record built per element.
-mapped : List Item -> List { name : String
-, size : Int
-}
+mapped : List Item -> List { name : String, size : Int }
 mapped xs =
     List.map (\it -> { name = it.label, size = String.length it.path }) xs
 
 
 -- The step function is let-bound, not written at the call.
-letBound : List Item -> { total : Int
-, seen : List String
-}
+letBound :
+    List Item
+    -> { total : Int
+       , seen : List String
+       }
 letBound xs =
     let
         step =
@@ -83,11 +88,11 @@ letBound xs =
 
 
 -- A nested anonymous accumulator.
-nested : List Item -> { inner : { labels : List String
-      , count : Int
-      }
-, last : String
-}
+nested :
+    List Item
+    -> { inner : { labels : List String, count : Int }
+       , last : String
+       }
 nested xs =
     List.foldl
         (\it acc ->
@@ -130,9 +135,7 @@ sameType =
 
 
 -- An index first, then the element, into an anonymous record.
-indexed : List { pos : Int
-, name : String
-}
+indexed : List { pos : Int, name : String }
 indexed =
     List.indexedMap (\i it -> { pos = i, name = it.label }) items
 

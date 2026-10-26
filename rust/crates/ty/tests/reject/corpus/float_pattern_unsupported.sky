@@ -12,6 +12,7 @@ import Sky.Core.Prelude exposing (..)
 classify : Float -> String
 classify f =
     case f of
+
         1.0 ->
             "one"
 

@@ -978,8 +978,16 @@ var mediaQuerySpec = styleMarkerSpec{
 		safeRules = strings.ReplaceAll(safeRules, "</STYLE", "")
 		safeQuery := strings.ReplaceAll(query, "</style", "")
 		safeQuery = strings.ReplaceAll(safeQuery, "</STYLE", "")
+		// The wrapper `Ui.breakpoint` / `Ui.mediaQuery` builds carries Std.Ui's
+		// inline base style (`display: flex; flex-direction: column;`), and an
+		// inline declaration beats any selector rule. Without `!important` a
+		// breakpoint could set only what the wrapper does not set inline, so
+		// `Ui.breakpoint Ui.mdAndUp [ Ui.style "display" "none" ] child` never
+		// hid the child (v0.27.16). The rule is scoped to one sky-id, so the
+		// `!important` reaches nothing else. Same fix as the pseudo-class pass.
+		safeRules = markImportant(safeRules)
 		return "@media " + safeQuery + " { " + selector +
-			" { " + safeRules + " } }"
+			" {" + safeRules + " } }"
 	},
 }
 
@@ -1274,19 +1282,53 @@ func buildPseudoClassStyleText(skyID, encoded string) string {
 // is left as-is.
 func markImportant(css string) string {
 	var b strings.Builder
-	for _, decl := range strings.Split(css, ";") {
+	for _, decl := range splitDeclarations(css) {
 		t := strings.TrimSpace(decl)
 		if t == "" {
 			continue
 		}
 		b.WriteByte(' ')
 		b.WriteString(t)
-		if !strings.Contains(t, "!important") {
+		if !strings.HasSuffix(strings.ToLower(strings.ReplaceAll(t, " ", "")), "!important") {
 			b.WriteString(" !important")
 		}
 		b.WriteByte(';')
 	}
 	return b.String()
+}
+
+// splitDeclarations splits a CSS declaration list at the `;` that END a
+// declaration, not at one inside a quoted string or a parenthesised value
+// (`url("data:image/svg+xml;utf8,…")`), so `markImportant` never cuts a value
+// in two and appends `!important` to its middle.
+func splitDeclarations(css string) []string {
+	var out []string
+	depth := 0
+	var quote byte
+	start := 0
+	for i := 0; i < len(css); i++ {
+		c := css[i]
+		switch {
+		case quote != 0:
+			if c == '\\' {
+				i++
+			} else if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == '(':
+			depth++
+		case c == ')':
+			if depth > 0 {
+				depth--
+			}
+		case c == ';' && depth == 0:
+			out = append(out, css[start:i])
+			start = i + 1
+		}
+	}
+	return append(out, css[start:])
 }
 
 // pseudoSelectorForTag maps a wire-format pseudo-class tag (single

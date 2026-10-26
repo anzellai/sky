@@ -2,7 +2,6 @@ module Types exposing (Model, Msg(..), Step)
 
 import Sky.Core.Prelude exposing (..)
 
-
 type alias Model =
     { n : Int
     , flag : Bool
@@ -10,7 +9,6 @@ type alias Model =
     , log : String
     , busy : Bool
     }
-
 
 type Msg
     = CaseWrap
@@ -40,7 +38,6 @@ type Msg
     | AliasAnno
     | MultiAnno
     | Got (Result Error String)
-
 
 type alias Step =
     ( Model, Cmd Msg )

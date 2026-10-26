@@ -16,6 +16,7 @@ import Std.Log exposing (println)
 classify : Maybe Int -> Maybe Int -> String
 classify ma mb =
     case ( ma, mb ) of
+
         ( Just a, Just b ) ->
             String.fromInt (a + b)
 
@@ -28,6 +29,7 @@ classify ma mb =
 deep : ( Maybe Int, Maybe Int ) -> Bool -> String
 deep pair flag =
     case ( pair, flag ) of
+
         ( ( Just a, Just b ), True ) ->
             String.fromInt (a * b)
 
@@ -42,4 +44,4 @@ main =
         _ = println (classify Nothing (Just 3))
         _ = println (deep ( Nothing, Just 9 ) True)
     in
-    println (deep ( Just 4, Just 5 ) True)
+        println (deep ( Just 4, Just 5 ) True)

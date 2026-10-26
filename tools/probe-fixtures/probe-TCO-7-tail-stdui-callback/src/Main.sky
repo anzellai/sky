@@ -4,7 +4,6 @@ import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 import Std.Ui as Ui
 
-
 type Msg
     = Nope
 
@@ -12,6 +11,7 @@ type Msg
 build : Int -> Ui.Element msg -> Ui.Element msg
 build n el =
     case n of
+
         0 ->
             el
 
@@ -21,7 +21,6 @@ build n el =
 
 main =
     let
-        _ =
-            build 3 (Ui.text "hi")
+        _ = build 3 (Ui.text "hi")
     in
-    println "ok"
+        println "ok"

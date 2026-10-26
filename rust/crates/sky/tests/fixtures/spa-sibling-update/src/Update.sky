@@ -44,6 +44,7 @@ update msg model =
         Save ->
             -- SERVER: reaches `persist` -> `Db` (backend-only)
             let
-                saved = Result.withDefault [] (Task.run (persist model.draft))
+                saved =
+                    Result.withDefault [] (Task.run (persist model.draft))
             in
                 ( { model | items = saved, draft = "" }, Cmd.none )

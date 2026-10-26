@@ -16,14 +16,13 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
-
 type alias Form =
-    { name : String, action : String }
-
+    { name : String
+    , action : String
+    }
 
 type Msg
     = SaveFile Int String Form
-
 
 type alias Cfg msg =
     { onSubmit : Form -> msg
@@ -44,14 +43,16 @@ runWidget cfg form =
 -- func(Form_R) Msg{...})` and panicked at runtime pre-fix.
 main =
     let
-        cfg = { onSubmit = SaveFile 42 "Main.sky"
-              , label = "Save Main.sky"
-              }
+        cfg = { onSubmit = SaveFile 42 "Main.sky", label = "Save Main.sky" }
         form = { name = "Main.sky", action = "save" }
         result = runWidget cfg form
     in
-    case result of
-        SaveFile aid fn frm ->
-            println
-                ("SaveFile " ++ String.fromInt aid ++ " " ++ fn
-                    ++ " {" ++ frm.name ++ "," ++ frm.action ++ "}")
+        case result of
+
+            SaveFile aid fn frm ->
+                println
+                    ("SaveFile " ++ String.fromInt aid ++ " " ++ fn ++ " {"
+                        ++ frm.name
+                        ++ ","
+                        ++ frm.action
+                        ++ "}")
