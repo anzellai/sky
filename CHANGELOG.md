@@ -11,6 +11,16 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.27.17 — a Sky.Live app under a base path serves its health endpoints, the strict-CSP e2e waits for the backend (2026-10-26)
+
+### Fixed
+
+- **A Sky.Live app with `SKY_LIVE_BASE_PATH` set had no `/_sky/healthz` or `/_sky/readyz`.** A standalone app behind a proxy that strips the prefix answered `/_sky/readyz` with 404, so a readiness probe never passed. It also registered no session-store probe, so readiness could not report a store that was down. The guard was written for the fork-and-exec sub-app, which was deleted with `subapp.go`. An in-process sub-app (the inline console) is built elsewhere and never reaches this code. The app now mounts `/_sky/healthz`, `/_sky/readyz`, `/_sky/metrics` and `/_sky/buildinfo` and wires its session store into readiness, with or without a base path. Behind a proxy that strips `/app`, a probe reaches them at `/app/_sky/readyz`. (`runtime-go/rt/live_serve.go`, `buildLiveServerFor`; `TestLiveServe_BasePathAppServesHealthAndReadiness`. `TestReadyzReflectsStoreHealth` no longer leaves a failing readiness probe behind for later tests.)
+
+### Changed (repository)
+
+- **The strict-CSP e2e waits for the backend, not for the page.** The v0.27.16 release run failed once with `[todos/caddy-static] zero console errors: ... 502 (Bad Gateway)`. In the caddy-static topology, Caddy serves the page from the dist. The harness waited only for the page path, so it loaded the page before the backend listened. The client's first `/api/todos` call then reached no backend, and Caddy answered 502. Before any page loads, the harness now waits for the backend's `/_sky/readyz` to answer 200 `ready` through the topology under test, in every topology. The RPC checks need a 2xx answer, because a 502 used to pass "loads the list over RPC". A console error now names the URL that failed. Three cases start the backend 3 s after the proxy (`--start-delay`): todos and notes behind caddy-static, and counter behind caddy-all. The old harness fails them every time. (`scripts/csp-e2e-verify.mjs`, `waitReady`; `scripts/csp-e2e.sh`.)
+
 ## v0.27.16 — breakpoints hide and re-lay out their wrapper, a generic record alias builds inside `Just`, `TaggedNode` keeps its tag (2026-10-25)
 
 ### Fixed
