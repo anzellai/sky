@@ -2968,8 +2968,8 @@ fn cause_errors_only(ds: &mut Vec<diagnostics::Diagnostic>) {
     let has = |code: &str, ds: &[diagnostics::Diagnostic]| {
         ds.iter().any(|d| is_err(d) && d.code.0 == code)
     };
-    let keep: fn(&str) -> bool = if has("E1012", ds) || has("E1013", ds) {
-        |c| c == "E0001" || c == "E1012" || c == "E1013"
+    let keep: fn(&str) -> bool = if has("E1012", ds) || has("E1013", ds) || has("E1017", ds) {
+        |c| c == "E0001" || c == "E1012" || c == "E1013" || c == "E1017"
     } else if has("E1015", ds) {
         |c| c == "E0001" || c.starts_with("E1")
     } else {

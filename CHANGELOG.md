@@ -11,6 +11,22 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.27.18 - a patch held for an open `<select>` is never lost, every stdlib body is type-checked, a bare constructor with two meanings is `[E1017]` (2026-10-26)
+
+### Migration
+
+- **A bare `Error` after `import Sky.Config exposing (LogLevel(..))` is now a compile error, `[E1017]`.** `LogLevel` has a constructor named `Error`, which is also the name of the Prelude's `Error`. Write `Config.Error` for the log level, for example `Config.withLog Json Config.Error`. For the Prelude's `Error`, write `E.Error` after `import Sky.Core.Error as E`. A module that imports `LogLevel(..)` and uses only `Debug`, `Info` or `Warn` needs no change. The same applies to any constructor that an `exposing (T(..))` import binds over a different constructor from an `exposing (..)` import.
+
+### Fixed
+
+- **Sky.Spa, Sky.Live and the webview lost a patch held for an open `<select>`.** On a phone, a filter `<select>` keeps focus after the native picker closes. When a pick changed a sibling's tag, the diff patched the common parent, which contains the select. The open-select defence skipped that patch, but the client recorded the new tree as applied. The next diff ran against a tree the DOM never got, found no change, and the region stayed wrong until a reload. Sky.Spa now holds back only the patches that touch an open select, applies the rest, and records the tree the DOM really holds. The render after the select closes sends what was held. A select is not defended against its own pick. A held render logs one `[sky.spa] patches deferred` warning. A patch target missing from the DOM is no longer skipped: the nearest present ancestor is rebuilt. Sky.Live and the webview now hold skipped patches and SSE full bodies in order and apply them when the select closes. The webview asks for the current render again when a patch target is missing. (`runtime-go/rt/spa_select_defer.go`, `spa_select_wasm.go`, `select_hold_client.go`, `spa_select_defer_test.go`, `live_js_select_hold_test.go`, `webview_select_hold_test.go`, and a `/fsel` page in the spa-vdom-identity e2e.)
+
+- **A bare constructor with two meanings is `[E1017]` CONSTRUCTOR CLASH.** An import used to win silently. After `import Sky.Config exposing (LogLevel(..))`, a bare `Error kind info`, written for the Prelude's `Error`, built a `LogLevel`, and the user got `type mismatch: LogLevel vs ErrorKind -> _` with no word about the import. In a pattern, the wrong constructor picks the wrong branch. The error is reported at the use, in an expression or a pattern. It names both modules and the qualified forms. An import whose clashing constructor is never written bare stays legal, a qualified reference is unchanged, and a constructor your own module defines still wins. Two imports of the same kind that bind one name stay `[E1012]`. (`rust/crates/hir/src/resolve.rs`, `ctor_shadow` and `flag_prelude_named_ctors`, `hir/tests/ctor_clash.rs`, reject corpus `constructor_clash_expression.sky`, `constructor_clash_pattern.sky`, `docs/errors/E1017-constructor-clash.md`.)
+
+### Changed (repository)
+
+- **Every stdlib module body is type-checked, and a gate keeps it so.** A build trusts the stdlib's signatures and never checks its bodies. A stdlib record literal that lacked a newly added field built clean, passed every gate, and emitted a codec that dropped the field. `ty::stdlib_bodies` runs the checker a user module gets over every `sky-stdlib` module. It runs per commit in `cargo test -p ty --test stdlib_bodies` and in the new T1 harness gate `xtask stdlib-bodies`, whose falsifier drops a required field from a record literal in `Std.Ai.Agent`. Today's stdlib has no type errors in its bodies. Checking at build time instead would add about 65 ms to a warm `sky check` of about 0.5 s for a fact that is fixed per compiler version. (`rust/crates/ty/src/stdlib_bodies.rs`, `rust/crates/xtask/src/stdlib_bodies_gate.rs`.)
+
 ## v0.27.17 — a Sky.Live app under a base path serves its health endpoints, the strict-CSP e2e waits for the backend (2026-10-26)
 
 ### Fixed

@@ -50,10 +50,13 @@ pub const ALLOWED_PRELUDE_SHADOWS: &[PreludeShadow] = &[
     PreludeShadow {
         module: "Sky.Config",
         message: "Constructor `Error` shadows a Prelude-exposed name — pick a different name",
-        reason: "the public `LogLevel` constructor `Sky.Config.Error`. Renaming it \
-                 changes a published API and the runtime enum name \
-                 (`Sky_Config_LogLevel`), so it needs an explicit user decision. \
-                 Inside Sky.Config it is used only as a `LogLevel` pattern",
+        reason: "the public `LogLevel` constructor `Sky.Config.Error`. Kept by \
+                 decision (v0.27.18): a rename would change a published API and \
+                 the runtime enum name (`Sky_Config_LogLevel`). A user module \
+                 that imports `LogLevel(..)` and writes a bare `Error` gets \
+                 `[E1017]` CONSTRUCTOR CLASH, which names both meanings and the \
+                 qualified forms. Inside Sky.Config it is used only as a \
+                 `LogLevel` pattern",
     },
 ];
 

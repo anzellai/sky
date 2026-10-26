@@ -1,0 +1,27 @@
+-- gate: reject
+-- defect: a bare constructor PATTERN an import binds over the Prelude's name
+-- rust: reject [E1017] constructor clash, reported at the pattern head
+--
+-- The pattern face of `constructor_clash_expression.sky`. A bare `Error ->`
+-- head after `exposing (LogLevel(..))` could be `LogLevel.Error` or the
+-- Prelude's `Error`, and in a pattern the wrong one picks the wrong branch.
+-- The qualified head `Config.Error ->` is accepted (`hir/tests/ctor_clash.rs`).
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Config as Config exposing (LogLevel(..))
+
+
+levelName : LogLevel -> String
+levelName level =
+    case level of
+
+        Error ->
+            "error"
+
+        _ ->
+            "other"
+
+
+main =
+    levelName Info

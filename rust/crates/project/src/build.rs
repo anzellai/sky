@@ -668,7 +668,7 @@ fn assemble_and_emit_loaded(
         .iter()
         .filter(|d| {
             d.severity == diagnostics::Severity::Error
-                && (d.code.0 == "E1012" || d.code.0 == "E1013")
+                && (d.code.0 == "E1012" || d.code.0 == "E1013" || d.code.0 == "E1017")
         })
         .cloned()
         .collect();
