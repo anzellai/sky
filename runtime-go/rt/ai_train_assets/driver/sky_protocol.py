@@ -256,8 +256,25 @@ def read_rows(path):
 
 
 # ---------------------------------------------------------------------------
-# PEFT
+# MLX to PEFT
 # ---------------------------------------------------------------------------
+
+
+def mlx_to_peft_name(key):
+    """`model.layers.0.self_attn.q_proj.lora_a` to the PEFT tensor name.
+
+    Returns None for a key that is not a LoRA matrix.
+    """
+    if key.endswith(".lora_a"):
+        return "base_model.model." + key[: -len(".lora_a")] + ".lora_A.weight"
+    if key.endswith(".lora_b"):
+        return "base_model.model." + key[: -len(".lora_b")] + ".lora_B.weight"
+    return None
+
+
+def transpose(rows):
+    """Transpose a row-major matrix given as a list of rows."""
+    return [list(col) for col in zip(*rows)]
 
 
 def peft_config(base, rank, alpha, targets):

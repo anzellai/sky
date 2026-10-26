@@ -4,14 +4,14 @@ Standard library only, so they run under any CPython 3.10+:
 
     python3 -I -B -m unittest discover -s runtime-go/rt/testdata/train_driver_tests
 
-The driver runs the Unsloth backend; its loop is driven here by a scripted
-backend (scripted_backend.py), in a separate isolated process as the Go
-runtime starts the driver. `ai_python_suites_live_test.go` (go test -tags
-ailive) runs these suites under the pinned CPython.
+`ai_python_suites_live_test.go` (go test -tags ailive) runs them under the
+pinned CPython. The driver runs the Unsloth backend, and the Fake backend in
+the Vertex container on a CPU machine.
 """
 
 import json
 import os
+import random
 import shutil
 import subprocess
 import sys
@@ -25,7 +25,7 @@ sys.path.insert(0, DRIVER)
 import sky_protocol as P  # noqa: E402
 import sky_rows as R  # noqa: E402
 import sky_train  # noqa: E402
-import scripted_backend  # noqa: E402
+from backends import fake  # noqa: E402
 
 SHAPES = {"layers": 4, "hidden": 8, "intermediate": 16, "qDim": 8, "kvDim": 4}
 
@@ -70,16 +70,11 @@ def make_run(cfg, rows=10):
     return d
 
 
-def driver_command(run_dir):
-    """The driver's main() with the scripted backend, in its own process."""
-    return scripted_backend.driver_argv(DRIVER, HERE) + ["--run", run_dir, "--launch", "t"]
-
-
 def run_driver(run_dir):
     """The driver as the Go runtime starts it: a separate process, isolated."""
     with open(os.path.join(run_dir, "events.jsonl"), "ab") as out:
         p = subprocess.run(
-            driver_command(run_dir),
+            [sys.executable, "-I", "-B", os.path.join(DRIVER, "sky_train.py"), "--run", run_dir, "--launch", "t"],
             stdout=out,
             stderr=subprocess.PIPE,
             cwd=run_dir,
@@ -155,6 +150,38 @@ class DataOrderTest(unittest.TestCase):
         self.assertEqual(P.total_steps(cfg, 20), 5)
 
 
+class MlxToPeftTest(unittest.TestCase):
+    def test_names(self):
+        self.assertEqual(
+            P.mlx_to_peft_name("model.layers.3.self_attn.q_proj.lora_a"),
+            "base_model.model.model.layers.3.self_attn.q_proj.lora_A.weight",
+        )
+        self.assertEqual(
+            P.mlx_to_peft_name("model.layers.3.mlp.down_proj.lora_b"),
+            "base_model.model.model.layers.3.mlp.down_proj.lora_B.weight",
+        )
+        self.assertIsNone(P.mlx_to_peft_name("model.layers.3.mlp.down_proj.weight"))
+
+    def test_delta_is_identical(self):
+        # MLX: y += scale * (x @ lora_a) @ lora_b, lora_a (in, r), lora_b (r, out).
+        # PEFT: y += (alpha / r) * B (A x), A (r, in), B (out, r).
+        rng = random.Random(1)
+        din, dout, r, scale = 5, 3, 2, 2.5
+        lora_a = [[rng.uniform(-1, 1) for _ in range(r)] for _ in range(din)]
+        lora_b = [[rng.uniform(-1, 1) for _ in range(dout)] for _ in range(r)]
+        x = [rng.uniform(-1, 1) for _ in range(din)]
+        xa = [sum(x[i] * lora_a[i][k] for i in range(din)) for k in range(r)]
+        mlx = [scale * sum(xa[k] * lora_b[k][j] for k in range(r)) for j in range(dout)]
+        A, B = P.transpose(lora_a), P.transpose(lora_b)
+        alpha = scale * r
+        ax = [sum(A[k][i] * x[i] for i in range(din)) for k in range(r)]
+        peft = [(alpha / r) * sum(B[j][k] * ax[k] for k in range(r)) for j in range(dout)]
+        for m, p in zip(mlx, peft):
+            self.assertAlmostEqual(m, p, places=12)
+        self.assertEqual((len(A), len(A[0])), (r, din))
+        self.assertEqual((len(B), len(B[0])), (dout, r))
+
+
 class RowsTest(unittest.TestCase):
     class Tok(object):
         pad_token_id = 0
@@ -177,7 +204,7 @@ class RowsTest(unittest.TestCase):
         self.assertEqual(mask, [[0.0, 0.0, 1.0, 1.0, 0.0]])
 
 
-class DriverRunTest(unittest.TestCase):
+class FakeRunTest(unittest.TestCase):
     def test_full_run_writes_protocol_checkpoints_and_adapter(self):
         d = make_run(job())
         try:
@@ -265,7 +292,11 @@ class DriverRunTest(unittest.TestCase):
         d = make_run(job(maxSteps=400, checkpointEvery=0, fakeStepMs=10))
         try:
             with open(os.path.join(d, "events.jsonl"), "ab") as out:
-                p = subprocess.Popen(driver_command(d), stdout=out, cwd=d)
+                p = subprocess.Popen(
+                    [sys.executable, "-I", "-B", os.path.join(DRIVER, "sky_train.py"), "--run", d, "--launch", "t"],
+                    stdout=out,
+                    cwd=d,
+                )
                 import time
 
                 deadline = time.time() + 30
@@ -295,31 +326,11 @@ class DriverRunTest(unittest.TestCase):
         finally:
             shutil.rmtree(d)
 
-    def test_scripted_adapter_shapes(self):
+    def test_fake_adapter_shapes(self):
         cfg = job(layers=-1, targets=["self_attn.q_proj", "self_attn.k_proj", "self_attn.o_proj", "mlp.gate_proj", "mlp.down_proj"])
-        self.assertEqual(scripted_backend.lora_layers(cfg), [0, 1, 2, 3])
-        self.assertEqual(scripted_backend.target_dims("self_attn.k_proj", SHAPES), (8, 4))
-        self.assertEqual(scripted_backend.target_dims("mlp.down_proj", SHAPES), (16, 8))
-
-    def test_the_driver_runs_unsloth_only(self):
-        # Mlx and Fake train without Python: the driver refuses them.
-        d = make_run(job(backend="fake"))
-        try:
-            with open(os.path.join(d, "events.jsonl"), "ab") as out:
-                p = subprocess.run(
-                    [sys.executable, "-I", "-B", os.path.join(DRIVER, "sky_train.py"), "--run", d, "--launch", "t"],
-                    stdout=out,
-                    stderr=subprocess.PIPE,
-                    cwd=d,
-                    timeout=120,
-                )
-            self.assertEqual(p.returncode, 1)
-            last = events(d)[-1]
-            self.assertEqual((last["type"], last["code"]), ("error", "TrainingFailed"))
-            self.assertFalse(os.path.exists(os.path.join(DRIVER, "backends", "fake.py")))
-            self.assertFalse(os.path.exists(os.path.join(DRIVER, "backends", "mlx.py")))
-        finally:
-            shutil.rmtree(d)
+        self.assertEqual(fake.lora_layers(cfg), [0, 1, 2, 3])
+        self.assertEqual(fake.target_dims("self_attn.k_proj", SHAPES), (8, 4))
+        self.assertEqual(fake.target_dims("mlp.down_proj", SHAPES), (16, 8))
 
 
 if __name__ == "__main__":

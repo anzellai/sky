@@ -53,6 +53,12 @@ def cancel_requested(run_dir):
 
 def load_backend(name):
     try:
+        if name == "fake":
+            # The Vertex container on a CPU machine only. A local Fake run
+            # trains in the Sky runtime (runtime-go/rt/ai_fake_trainer.go).
+            from backends import fake
+
+            return fake.FakeBackend()
         if name == "unsloth":
             from backends import unsloth
 

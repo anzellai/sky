@@ -356,9 +356,11 @@ func TestToolchainForHost(t *testing.T) {
 	if err != nil || files["sky_train.py"] == nil || files["backends/unsloth.py"] == nil {
 		t.Fatalf("driver files %v", err)
 	}
-	// Mlx and Fake train without Python: no driver backend and no toolchain.
-	if files["backends/fake.py"] != nil || files["backends/mlx.py"] != nil {
-		t.Fatal("the driver still carries a Python Mlx or Fake backend")
+	// Mlx trains natively, with no Python backend. The Python Fake backend
+	// stays for the Vertex container on a CPU machine; a local Fake run is the
+	// runtime's own trainer.
+	if files["backends/mlx.py"] != nil || files["backends/fake.py"] == nil {
+		t.Fatal("the driver carries a Python Mlx backend, or lost the Vertex Fake backend")
 	}
 	for _, name := range []string{"mlx", "fake"} {
 		f, ok := func() (*aiFailure, bool) { _, err := aiToolchainFor(name); f, ok := err.(*aiFailure); return f, ok }()
