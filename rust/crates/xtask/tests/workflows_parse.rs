@@ -3264,3 +3264,327 @@ fn the_pin_check_catches_a_tag_or_branch_ref() {
     let doc: serde_yaml::Value = serde_yaml::from_str(ok).unwrap();
     assert_eq!(unpinned_actions("t.yml", &doc), Vec::<String>::new());
 }
+
+/// The `NAME="value"` assignments of a shell script, in order.
+fn shell_pins(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|l| {
+            let (k, v) = l.split_once('=')?;
+            let ok = !k.is_empty()
+                && k.bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
+            let v = v.strip_prefix('"')?.strip_suffix('"')?;
+            ok.then(|| (k.to_string(), v.to_string()))
+        })
+        .collect()
+}
+
+/// What is wrong with the trainer bundle workflow and the sources it pins.
+fn trainer_bundle_problems(
+    doc: &serde_yaml::Value,
+    script: &str,
+    build_sh: &str,
+    cmake: &str,
+    pins_go: &str,
+) -> Vec<String> {
+    let mut p = Vec::new();
+    // The two platforms, each on its runner: linux on ubuntu-22.04 (the glibc
+    // floor 2.35), darwin on an arm64 macOS runner.
+    let build = &doc["jobs"]["build"];
+    let legs: Vec<(String, String)> = build["strategy"]["matrix"]["include"]
+        .as_sequence()
+        .into_iter()
+        .flatten()
+        .map(|m| {
+            (
+                m["platform"].as_str().unwrap_or("").to_string(),
+                m["os"].as_str().unwrap_or("").to_string(),
+            )
+        })
+        .collect();
+    if !legs.contains(&("linux-x64".into(), "ubuntu-22.04".into())) {
+        p.push(format!(
+            "build: no linux-x64 leg on ubuntu-22.04 ({legs:?})"
+        ));
+    }
+    if !legs
+        .iter()
+        .any(|(pl, os)| pl == "darwin-arm64" && os.starts_with("macos-") && !os.contains("intel"))
+    {
+        p.push(format!(
+            "build: no darwin-arm64 leg on an arm64 macOS runner ({legs:?})"
+        ));
+    }
+    // In each leg: the bundle is built, then the unpacked archive passes
+    // test-trainer.sh, then it is uploaded. The test step has no `if`, so the
+    // linux leg runs it.
+    let steps: Vec<&serde_yaml::Value> =
+        build["steps"].as_sequence().into_iter().flatten().collect();
+    let run = |s: &serde_yaml::Value| s["run"].as_str().unwrap_or("").to_string();
+    let at = |f: &dyn Fn(&serde_yaml::Value) -> bool| steps.iter().position(|s| f(s));
+    let built = at(&|s| run(s).contains("build-trainer-bundle.sh"));
+    let tested = at(&|s| run(s).contains("test-trainer.sh --trainer"));
+    let uploaded = at(&|s| {
+        s["uses"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("actions/upload-artifact@")
+    });
+    match (built, tested, uploaded) {
+        (Some(b), Some(t), Some(u)) if b < t && t < u => {
+            let s = steps[t];
+            if !s["if"].is_null() {
+                p.push("build: the test-trainer.sh step is conditional; every leg must run it".into());
+            }
+            let r = run(s);
+            for need in ["shasum -a 256 -c", "tar -xzf", "--device cpu"] {
+                if !r.contains(need) {
+                    p.push(format!("build: the test step does not run `{need}` (the archive is what is tested)"));
+                }
+            }
+        }
+        other => p.push(format!(
+            "build: the steps are not build, then test-trainer.sh on the unpacked archive, then upload ({other:?})"
+        )),
+    }
+    // Publishing: after every leg, from a tag named by the pin, the two
+    // platforms only (never the JIT measurement), with SHA256SUMS.
+    let publish = &doc["jobs"]["publish"];
+    let needs: Vec<String> = match &publish["needs"] {
+        serde_yaml::Value::String(s) => vec![s.clone()],
+        v => v
+            .as_sequence()
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect(),
+    };
+    if needs != ["build"] {
+        p.push(format!("publish: needs {needs:?}, want [build]"));
+    }
+    if !publish["if"]
+        .as_str()
+        .unwrap_or("")
+        .contains("refs/tags/sky-trainer-v")
+    {
+        p.push("publish: does not run on a sky-trainer-v tag".into());
+    }
+    let tags = format!("{:?}", doc["on"]["push"]["tags"]);
+    if !tags.contains("sky-trainer-v*") {
+        p.push(format!("on.push.tags is {tags}, want sky-trainer-v*"));
+    }
+    let publish_runs: String = publish["steps"]
+        .as_sequence()
+        .into_iter()
+        .flatten()
+        .map(|s| run(s))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for need in [
+        "aiTrainerVersion",
+        "for p in darwin-arm64 linux-x64",
+        "SHA256SUMS",
+        "gh release create",
+    ] {
+        if !publish_runs.contains(need) {
+            p.push(format!("publish: no `{need}`"));
+        }
+    }
+    if !pins_go.contains("releases/download/sky-trainer-v\" + aiTrainerVersion") {
+        p.push("ai_pins.go: aiTrainerReleaseURL does not download from sky-trainer-v<aiTrainerVersion>".into());
+    }
+    // The sources: each pinned by URL and a full SHA-256, MLX and mlx-c at
+    // the versions build.sh and CMakeLists.txt build, OpenBLAS static.
+    let sp = shell_pins(script);
+    let get = |k: &str| sp.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+    for dep in ["MLX", "MLXC", "JSON", "FMT", "METALCPP", "OPENBLAS"] {
+        match get(&format!("{dep}_SHA256")) {
+            Some(s)
+                if s.len() == 64
+                    && s.bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) => {}
+            other => p.push(format!("script: {dep}_SHA256 is {other:?}, not a SHA-256")),
+        }
+        if !get(&format!("{dep}_URL")).is_some_and(|u| u.starts_with("https://")) {
+            p.push(format!("script: {dep}_URL is not an https URL"));
+        }
+    }
+    let bp = shell_pins(build_sh);
+    let bget = |k: &str| bp.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+    let (mlx, mlxc) = (get("MLX_PIN"), get("MLXC_PIN"));
+    if mlx.is_none() || mlx != bget("MLX_PIN") {
+        p.push(format!(
+            "MLX_PIN: script {mlx:?}, build.sh {:?}",
+            bget("MLX_PIN")
+        ));
+    }
+    if mlxc.is_none() || mlxc != bget("MLXC_PIN") {
+        p.push(format!(
+            "MLXC_PIN: script {mlxc:?}, build.sh {:?}",
+            bget("MLXC_PIN")
+        ));
+    }
+    if let Some(v) = &mlx {
+        if !cmake.contains(&format!("set(SKY_MLX_PIN \"{v}\")")) {
+            p.push(format!("CMakeLists.txt does not pin MLX {v}"));
+        }
+        if !get("MLX_URL").is_some_and(|u| u.ends_with(&format!("/v{v}.tar.gz"))) {
+            p.push(format!("MLX_URL is not the v{v} source"));
+        }
+    }
+    match (get("MLXC_COMMIT"), &mlxc) {
+        (Some(c), Some(pin)) if c.len() == 40 && c.starts_with(pin.as_str()) => {
+            if !get("MLXC_URL").is_some_and(|u| u.contains(&c)) {
+                p.push("MLXC_URL is not the MLXC_COMMIT source".into());
+            }
+        }
+        other => p.push(format!(
+            "MLXC_COMMIT is not the full commit of MLXC_PIN ({other:?})"
+        )),
+    }
+    // Linux links OpenBLAS statically, and MLX's own downloads are pointed at
+    // the checked sources.
+    for need in [
+        "NO_SHARED=1",
+        "-DBLA_STATIC=ON",
+        "-DFETCHCONTENT_FULLY_DISCONNECTED=ON",
+    ] {
+        if !script.contains(need) {
+            p.push(format!("script: no `{need}`"));
+        }
+    }
+    p
+}
+
+struct TrainerBundleInputs {
+    doc: serde_yaml::Value,
+    script: String,
+    build_sh: String,
+    cmake: String,
+    pins: String,
+}
+
+fn trainer_bundle_inputs() -> TrainerBundleInputs {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let read =
+        |p: &str| std::fs::read_to_string(root.join(p)).unwrap_or_else(|e| panic!("read {p}: {e}"));
+    TrainerBundleInputs {
+        doc: read_workflow("ai-trainer-bundles.yml"),
+        script: read("scripts/ai/trainer/build-trainer-bundle.sh"),
+        build_sh: read("scripts/ai/trainer/build.sh"),
+        cmake: read("scripts/ai/trainer/CMakeLists.txt"),
+        pins: read("runtime-go/rt/ai_pins.go"),
+    }
+}
+
+/// The trainer bundles are built in CI only, from sources pinned by SHA-256,
+/// and published only after the unpacked linux and darwin archives pass the
+/// trainer's contract (test-trainer.sh on the tiny model).
+///
+/// # Why this exists
+///
+/// `sky ai provision --train mlx` installs whatever the `sky-trainer-v<version>`
+/// release holds, checked only against the digest pinned in ai_pins.go. So
+/// the release is the last point where a broken bundle (a host BLAS left
+/// linked, a source that drifted from build.sh's pin, a step reordered so the
+/// test runs after the upload) can be stopped. Parsed, not grepped.
+#[test]
+fn the_trainer_bundles_are_pinned_tested_and_published_from_the_pin() {
+    let i = trainer_bundle_inputs();
+    let problems = trainer_bundle_problems(&i.doc, &i.script, &i.build_sh, &i.cmake, &i.pins);
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// The check above goes red on each broken shape.
+#[test]
+fn the_trainer_bundle_check_catches_each_broken_shape() {
+    let i = trainer_bundle_inputs();
+    let check = |doc: &serde_yaml::Value, script: &str, build_sh: &str| {
+        trainer_bundle_problems(doc, script, build_sh, &i.cmake, &i.pins)
+    };
+    assert!(check(&i.doc, &i.script, &i.build_sh).is_empty());
+    let test_step = |doc: &serde_yaml::Value| {
+        doc["jobs"]["build"]["steps"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .position(|s| {
+                s["run"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("test-trainer.sh --trainer")
+            })
+            .expect("a test step")
+    };
+    // The test step is removed.
+    let mut d = i.doc.clone();
+    let t = test_step(&d);
+    d["jobs"]["build"]["steps"]
+        .as_sequence_mut()
+        .unwrap()
+        .remove(t);
+    assert!(
+        !check(&d, &i.script, &i.build_sh).is_empty(),
+        "missed: no test step"
+    );
+    // The test step runs after the upload.
+    let mut d = i.doc.clone();
+    let t = test_step(&d);
+    let steps = d["jobs"]["build"]["steps"].as_sequence_mut().unwrap();
+    let s = steps.remove(t);
+    steps.push(s);
+    assert!(
+        !check(&d, &i.script, &i.build_sh).is_empty(),
+        "missed: test after upload"
+    );
+    // The test step is skipped on linux.
+    let mut d = i.doc.clone();
+    let t = test_step(&d);
+    d["jobs"]["build"]["steps"][t]["if"] = "matrix.platform == 'darwin-arm64'".into();
+    assert!(
+        !check(&d, &i.script, &i.build_sh).is_empty(),
+        "missed: test skipped on linux"
+    );
+    // The linux leg moves off ubuntu-22.04.
+    let mut d = i.doc.clone();
+    for m in d["jobs"]["build"]["strategy"]["matrix"]["include"]
+        .as_sequence_mut()
+        .unwrap()
+    {
+        if m["platform"] == "linux-x64" {
+            m["os"] = "ubuntu-24.04".into();
+        }
+    }
+    assert!(
+        !check(&d, &i.script, &i.build_sh).is_empty(),
+        "missed: linux off 22.04"
+    );
+    // Publishing waits on nothing, or also takes the JIT measurement.
+    let mut d = i.doc.clone();
+    d["jobs"]["publish"]["needs"] =
+        serde_yaml::Value::Sequence(vec!["build".into(), "measure-metal-jit".into()]);
+    assert!(
+        !check(&d, &i.script, &i.build_sh).is_empty(),
+        "missed: publish needs the JIT build"
+    );
+    // A source pin is cut short, or build.sh moves to another MLX.
+    let short = i.script.replacen("MLX_SHA256=\"0", "MLX_SHA256=\"", 1);
+    assert_ne!(short, i.script, "the mutation applies");
+    assert!(
+        !check(&i.doc, &short, &i.build_sh).is_empty(),
+        "missed: a short digest"
+    );
+    let moved = i
+        .build_sh
+        .replacen("MLX_PIN=\"0.32.4\"", "MLX_PIN=\"0.33.0\"", 1);
+    assert_ne!(moved, i.build_sh, "the mutation applies");
+    assert!(
+        !check(&i.doc, &i.script, &moved).is_empty(),
+        "missed: build.sh on another MLX"
+    );
+    let dynamic = i.script.replace("-DBLA_STATIC=ON", "-DBLA_STATIC=OFF");
+    assert!(
+        !check(&i.doc, &dynamic, &i.build_sh).is_empty(),
+        "missed: a dynamic BLAS"
+    );
+}

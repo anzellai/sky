@@ -253,6 +253,16 @@ Python). `sky ai provision --train mlx` installs the pinned bundle for the
 host. Where no bundle is pinned yet, build one with
 `scripts/ai/trainer/build.sh` and set `SKY_AI_TRAINER_BIN` to it.
 
+The bundles are built in CI only, by `.github/workflows/ai-trainer-bundles.yml`
+(`scripts/ai/trainer/build-trainer-bundle.sh`), from MLX 0.32.4, mlx-c
+57731b00e and their dependencies, each pinned by SHA-256. There are two:
+`darwin-arm64` (Metal, with the kernels in `lib/mlx.metallib`) and `linux-x64`
+(the CPU, on OpenBLAS linked into `libmlx.so`; glibc 2.35 or newer and
+`libstdc++`). Each carries `sky-trainer`, `lib/`, the licences, a `NOTICE.txt`
+and an SPDX SBOM. The unpacked archive passes `scripts/ai/trainer/test-trainer.sh`
+on the tiny model before the `sky-trainer-v<version>` release publishes it, and
+`ai_pins.go` pins each archive's SHA-256.
+
 `Train.plan job` returns the resolved backend and where it came from: `env`,
 `code` or `detected`. `Train.backendName` gives the name the variable uses.
 

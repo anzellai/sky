@@ -2,7 +2,8 @@
 #
 # scripts/ai/trainer/build.sh - build sky-trainer, the native LoRA trainer of
 # Std.Ai.Train, against a pinned MLX and mlx-c. The contributor bootstrap: the
-# release bundle (a later phase) is built from the same sources by CI.
+# release bundles are built from the same sources, in CI only, by
+# build-trainer-bundle.sh (.github/workflows/ai-trainer-bundles.yml).
 #
 #   build.sh --mlx <prefix> --mlx-c <src> [--out <dir>]
 #
