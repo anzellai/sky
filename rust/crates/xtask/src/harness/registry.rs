@@ -367,8 +367,8 @@ pub static GATES: &[Gate] = &[
                           body; the every-body-type-checks assertion must go red",
             kind: MutationKind::ReplaceOnce {
                 path: "sky-stdlib/Std/Ai/Agent.sky",
-                from: "arguments = \"\", continuation = Nothing }",
-                to: "arguments = \"\" }",
+                from: "arguments = \"\", continuation = Nothing } ]",
+                to: "arguments = \"\" } ]",
             },
         }]),
         body: bodies::stdlib_bodies,
