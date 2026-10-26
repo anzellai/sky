@@ -3655,3 +3655,50 @@ fn the_trainer_bundle_check_catches_each_broken_shape() {
         "missed: a dynamic BLAS"
     );
 }
+
+/// The published darwin bundle compiles its Metal kernels ahead of time
+/// (MLX_METAL_JIT=OFF), and docs/ai/train.md records the measurement and the
+/// reason. The JIT build exists only as the unpublished measurement leg.
+///
+/// # Why this exists
+///
+/// The choice was measured (run 40333010053): the JIT archive is 6.2 MB
+/// against 43.6 MB, and its first launch on a Mac GPU took 8.9 s against
+/// 4.2 s. A later edit that flips the flag, or publishes the JIT archive,
+/// changes what every user downloads and how long their first step takes; it
+/// must change the recorded decision with it.
+#[test]
+fn the_published_darwin_bundle_is_ahead_of_time_metal() {
+    let i = trainer_bundle_inputs();
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let doc = std::fs::read_to_string(root.join("docs/ai/train.md")).expect("train.md");
+    let mut p = Vec::new();
+    if !i
+        .script
+        .contains("else MLX_FLAGS+=(-DMLX_METAL_JIT=OFF); fi")
+    {
+        p.push(
+            "build-trainer-bundle.sh: the default darwin build is not MLX_METAL_JIT=OFF"
+                .to_string(),
+        );
+    }
+    let steps = i.doc["jobs"]["build"]["steps"]
+        .as_sequence()
+        .expect("steps");
+    for s in steps {
+        if s["run"].as_str().unwrap_or("").contains("--metal-jit") {
+            p.push("the build job (the published legs) passes --metal-jit".into());
+        }
+    }
+    let section = doc
+        .split("### Metal kernels: ahead of time")
+        .nth(1)
+        .map(|s| s.split("\n#").next().unwrap_or(""))
+        .unwrap_or("");
+    for need in ["MLX_METAL_JIT", "6.2 MB", "43.6 MB", "8.9 s", "4.2 s"] {
+        if !section.contains(need) {
+            p.push(format!("docs/ai/train.md: the \"Metal kernels: ahead of time\" section does not record `{need}`"));
+        }
+    }
+    assert!(p.is_empty(), "{}", p.join("\n"));
+}

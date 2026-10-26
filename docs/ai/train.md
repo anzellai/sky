@@ -283,6 +283,24 @@ same files and the same lines on each:
   changes nothing). `fakeCrashAt` makes its first attempt die, as a killed
   trainer does.
 
+### Metal kernels: ahead of time
+
+The `darwin-arm64` bundle compiles MLX's Metal kernels ahead of time
+(`MLX_METAL_JIT=OFF`), into `lib/mlx.metallib`. The workflow also builds an
+`MLX_METAL_JIT=ON` bundle on every branch push, as a measurement that is never
+published. Measured (run 40333010053, the selftest on an Apple M-series GPU):
+
+| | Archive | Unpacked | First launch | Second launch |
+|---|---|---|---|---|
+| ahead of time (shipped) | 43.6 MB | 161 MB | 4.2 s | 2.0 s |
+| `MLX_METAL_JIT=ON` | 6.2 MB | 26 MB | 8.9 s | 2.1 s |
+
+The JIT build compiles each kernel the first time a process uses it; the macOS
+shader cache then keeps it, so the cost is about 5 seconds once per machine.
+The bundle stays ahead of time because the download is once per trainer
+version and smaller than the base model it trains, while a kernel that fails
+to compile fails at build time in CI, never in a user's first training step.
+
 ## The managed toolchains
 
 A training toolchain is a pinned uv, a pinned CPython and a virtual
