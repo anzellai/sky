@@ -2372,7 +2372,8 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 
 	var model any
 	var cmd any
-	if existing && sess != nil && sess.model != nil {
+	fromSession := existing && sess != nil && sess.model != nil
+	if fromSession {
 		model = sess.model
 	} else {
 		// v0.16.7 #417 — extend init's `req` with `params : Dict
@@ -2491,31 +2492,42 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// Route dispatch: pick the page ADT value for this URL path and
 	// splice it into model.Page via RecordUpdate. Always run so the
 	// returning visitor lands on the URL they requested.
-	model = applyRoute(app, model, r.URL.Path)
-	// Opt-in Std.Analytics auto page-view. handleInitial is the single funnel
-	// for every full page render (initial mount, sky-nav fetch, popstate), and
-	// the session is stamped above, so this one call captures all navigations,
-	// consent-gated + session-scoped. Referer gives the previous page.
-	if app.analyticsPageViews {
-		analyticsSetContext(r.Header.Get("User-Agent"), r.RemoteAddr)
-		// Attribute an already-authenticated session BEFORE the page-view, so even
-		// the first render carries the user (the returning-visitor case a manual
-		// `identify` in an update handler can't reach).
-		analyticsApplyIdentity(app.analyticsIdentify, model)
-		analyticsTrackPageView(r.URL.Path, r.Header.Get("Referer"))
-	}
-	// v0.16.7 #418 — onNavigate Msg dispatch after every URL-driven
-	// route update.  No-op when cfg.onNavigate is nil (the default).
-	// Fires on initial mount, sky-nav fetches, and popstate
-	// Back/Forward — every code path that calls applyRoute reaches
-	// here, so the app sees a uniform Msg on every route change.
-	model, navCmd := dispatchOnNavigate(app, model)
-	if navCmd != nil {
-		if cmd == nil {
-			cmd = navCmd
-		} else {
-			cmd = Cmd_batch([]any{cmd, navCmd})
+	//
+	// It runs under sess.mu (below), on the model the session holds at that
+	// moment. It used to run here, outside the lock, on the model read at the
+	// top of this handler, and the result was then written back under the
+	// lock: an update another goroutine committed in between (a Cmd.perform
+	// result, a Time.every tick, a published message) was overwritten. A
+	// server arm returning `Cmd.batch [ Cmd.perform … Saved, Nav.pushUrl … ]`
+	// lost its Saved that way, for good (nav-e2e, release run 40381185989).
+	routeAndNavigate := func(model any) any {
+		model = applyRoute(app, model, r.URL.Path)
+		// Opt-in Std.Analytics auto page-view. handleInitial is the single funnel
+		// for every full page render (initial mount, sky-nav fetch, popstate), and
+		// the session is stamped above, so this one call captures all navigations,
+		// consent-gated + session-scoped. Referer gives the previous page.
+		if app.analyticsPageViews {
+			analyticsSetContext(r.Header.Get("User-Agent"), r.RemoteAddr)
+			// Attribute an already-authenticated session BEFORE the page-view, so even
+			// the first render carries the user (the returning-visitor case a manual
+			// `identify` in an update handler can't reach).
+			analyticsApplyIdentity(app.analyticsIdentify, model)
+			analyticsTrackPageView(r.URL.Path, r.Header.Get("Referer"))
 		}
+		// v0.16.7 #418 — onNavigate Msg dispatch after every URL-driven
+		// route update.  No-op when cfg.onNavigate is nil (the default).
+		// Fires on initial mount, sky-nav fetches, and popstate
+		// Back/Forward — every code path that calls applyRoute reaches
+		// here, so the app sees a uniform Msg on every route change.
+		model, navCmd := dispatchOnNavigate(app, model)
+		if navCmd != nil {
+			if cmd == nil {
+				cmd = navCmd
+			} else {
+				cmd = Cmd_batch([]any{cmd, navCmd})
+			}
+		}
+		return model
 	}
 	// Hold sess.mu across the model mutation + Cmd/subscription spawn +
 	// initial render so the render's write to sess.handlers cannot race
@@ -2548,6 +2560,12 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		writeSessionLost(w)
 		return
 	}
+	// An existing session's model is read again here, under the lock, so
+	// nothing committed since the read at the top of this handler is lost.
+	if fromSession && sess.model != nil {
+		model = sess.model
+	}
+	model = routeAndNavigate(model)
 	sess.model = model
 	sess.handlers = map[string]any{}
 
