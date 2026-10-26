@@ -46,7 +46,7 @@ const aiFakeTrainerVersion = "1"
 
 func init() {
 	if len(os.Args) >= 2 && os.Args[1] == aiFakeTrainerFlag {
-		os.Exit(aiFakeTrainerMain(os.Args[2:], os.Stdout))
+		ExitProcess(aiFakeTrainerMain(os.Args[2:], os.Stdout))
 	}
 }
 
@@ -156,7 +156,7 @@ func aiFakeTrainerMain(args []string, out io.Writer) int {
 			}
 			return term.Load() || fileExists(filepath.Join(run, aiTrainCancelFile))
 		},
-		crash: func() { os.Exit(137) },
+		crash: func() { ExitProcess(137) },
 	}
 	if err := aiFakeTrain(run, cfg, out, hooks); err != nil {
 		fmt.Fprintln(os.Stderr, err)
