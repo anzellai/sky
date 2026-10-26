@@ -581,6 +581,23 @@
 #   counted in this example. The doc 14 section 5.3 Task and decoder callback twins and
 #   the R1 `Measured a` and R12 `timed` work target these sites, and this row must
 #   fall again when they land.
+#
+# Native trainer, feat/std-ai-lifecycle P0-P11 (2026-10-26). Cause (2), new
+# source: four rows rose, 73-ai-train 1272 -> 1305 (+33), 74-ai-cloud
+# 1371 -> 1403 (+32), sky-bundled/ai-train 1182 -> 1214 (+32),
+# sky-bundled/console 167 -> 170 (+3). Bisected the source, not the commit:
+# with Std/Ai/Train.sky, Std/Ai/Trace.sky, sky-bundled/ai-train/src/Main.sky
+# and sky-bundled/console/src/{AiTab,Main,State}.sky reverted to c2d81cada
+# (the last bless) and the HEAD compiler (v0.27.18 merged),
+# sky-bundled/ai-train measured 1182 and sky-bundled/console 167, exactly the
+# golden, so the compiler is innocent. The tokens are the per-call-site
+# kernel-ABI narrowings of the new code: the native trainer's launch through
+# `trainerEnsure`, `trainSettingsResolve` (memory settings with env fallback),
+# the tokenize step, the chunked-loss settings, and each step's eval loss and
+# peak memory read from the trainer's progress lines into Trace and shown in
+# the console's AI tab. adapter stays 0 and dispatch 0 on every row. The same
+# levers as row 72 (doc 14 section 5.3 callback twins, R12 `timed`) target
+# these sites.
 00-standard-libs	adapter=0	dispatch=0	narrow=113
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=6
@@ -647,8 +664,8 @@
 70-ai-synthetic	adapter=0	dispatch=0	narrow=401
 71-ai-registry	adapter=0	dispatch=0	narrow=828
 72-ai-support-desk	adapter=0	dispatch=0	narrow=660
-73-ai-train	adapter=0	dispatch=0	narrow=1272
-74-ai-cloud	adapter=0	dispatch=0	narrow=1371
+73-ai-train	adapter=0	dispatch=0	narrow=1305
+74-ai-cloud	adapter=0	dispatch=0	narrow=1403
 75-ai-everywhere	adapter=0	dispatch=0	narrow=838
 apps/dispatch	adapter=0	dispatch=0	narrow=304
 apps/fieldbook	adapter=0	dispatch=0	narrow=440
@@ -663,7 +680,7 @@ examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=174
 simple	adapter=0	dispatch=0	narrow=3
 sky-bundled/ai	adapter=0	dispatch=0	narrow=637
 sky-bundled/ai-cloud	adapter=0	dispatch=0	narrow=520
-sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1182
-sky-bundled/console	adapter=0	dispatch=0	narrow=167
+sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1214
+sky-bundled/console	adapter=0	dispatch=0	narrow=170
 sky-bundled/doc	adapter=0	dispatch=0	narrow=46
 test_pkg	adapter=0	dispatch=0	narrow=1
