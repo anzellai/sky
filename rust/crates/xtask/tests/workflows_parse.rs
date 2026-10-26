@@ -350,12 +350,24 @@ fn every_harness_tier_with_gates_is_invoked_somewhere() {
 /// Workflows triggered only by tags, schedules, or manual dispatch are out of
 /// scope: they do not gate a commit, and their coverage is asserted by
 /// `every_harness_tier_with_gates_is_invoked_somewhere` instead.
-const NON_BLOCKING_PER_COMMIT_WORKFLOWS: &[(&str, &str)] = &[(
-    "docs-site.yml",
-    "publishes the GitHub Pages docs site. A publish failure is a broken \
-     deploy, not a broken compiler, and holding merges on it would couple the \
-     source of truth to a hosting side effect.",
-)];
+const NON_BLOCKING_PER_COMMIT_WORKFLOWS: &[(&str, &str)] = &[
+    (
+        "docs-site.yml",
+        "publishes the GitHub Pages docs site. A publish failure is a broken \
+         deploy, not a broken compiler, and holding merges on it would couple the \
+         source of truth to a hosting side effect.",
+    ),
+    (
+        "ai-trainer-bundles.yml",
+        "builds the sky-trainer release bundles (MLX from source, 30 to 90 \
+         minutes). Its push trigger is the feat/std-ai-lifecycle branch only, \
+         filtered to the trainer's own files, so it never runs on a commit to \
+         main; a dispatch only works for a workflow on the default branch, and \
+         this push is how the branch builds and tests a bundle before it merges. \
+         It never publishes from a branch push (the_trainer_bundles_are_pinned_\
+         tested_and_published_from_the_pin), and a release gates on its own run.",
+    ),
+];
 
 #[test]
 fn every_per_commit_workflow_is_covered_by_the_required_check_or_declared() {
@@ -3362,16 +3374,51 @@ fn trainer_bundle_problems(
     if needs != ["build"] {
         p.push(format!("publish: needs {needs:?}, want [build]"));
     }
-    if !publish["if"]
+    // A branch push builds and tests only: publish runs on the tag, or on a
+    // dispatch that sets publish. The condition is exactly this one, so no
+    // extra clause can let a branch push through.
+    let cond: String = publish["if"]
         .as_str()
         .unwrap_or("")
-        .contains("refs/tags/sky-trainer-v")
-    {
-        p.push("publish: does not run on a sky-trainer-v tag".into());
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let want =
+        "(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/sky-trainer-v')) \
+                || (github.event_name == 'workflow_dispatch' && inputs.publish)";
+    if cond != want {
+        p.push(format!(
+            "publish: runs when `{cond}`; want `{want}`, so a branch push never publishes"
+        ));
     }
-    let tags = format!("{:?}", doc["on"]["push"]["tags"]);
-    if !tags.contains("sky-trainer-v*") {
-        p.push(format!("on.push.tags is {tags}, want sky-trainer-v*"));
+    let seq = |v: &serde_yaml::Value| -> Vec<String> {
+        v.as_sequence()
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect()
+    };
+    let push = &doc["on"]["push"];
+    if seq(&push["tags"]) != ["sky-trainer-v*"] {
+        p.push(format!(
+            "on.push.tags is {:?}, want [sky-trainer-v*]",
+            seq(&push["tags"])
+        ));
+    }
+    // A branch push runs only when the trainer changes: the filter covers the
+    // workflow, the trainer sources and the pins, and nothing else widens it.
+    let paths = seq(&push["paths"]);
+    for need in [
+        ".github/workflows/ai-trainer-bundles.yml",
+        "scripts/ai/trainer/**",
+        "runtime-go/rt/ai_pins.go",
+    ] {
+        if !paths.iter().any(|x| x == need) {
+            p.push(format!("on.push.paths {paths:?} does not include {need}"));
+        }
+    }
+    if !push["branches"].is_null() && paths.is_empty() {
+        p.push("on.push.branches has no paths filter".into());
     }
     let publish_runs: String = publish["steps"]
         .as_sequence()
@@ -3567,6 +3614,26 @@ fn the_trainer_bundle_check_catches_each_broken_shape() {
         !check(&d, &i.script, &i.build_sh).is_empty(),
         "missed: publish needs the JIT build"
     );
+    // A branch push reaches publish.
+    for cond in [
+        "always()",
+        "startsWith(github.ref, 'refs/tags/sky-trainer-v') || inputs.publish || github.event_name == 'push'",
+        "(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/sky-trainer-v')) || (github.event_name == 'workflow_dispatch' && inputs.publish) || startsWith(github.ref, 'refs/heads/')",
+    ] {
+        let mut d = i.doc.clone();
+        d["jobs"]["publish"]["if"] = cond.into();
+        assert!(!check(&d, &i.script, &i.build_sh).is_empty(), "missed: publish on `{cond}`");
+    }
+    // The paths filter drops the trainer sources, or the pins.
+    for gone in ["scripts/ai/trainer/**", "runtime-go/rt/ai_pins.go"] {
+        let mut d = i.doc.clone();
+        let paths = d["on"]["push"]["paths"].as_sequence_mut().unwrap();
+        paths.retain(|x| x.as_str() != Some(gone));
+        assert!(
+            !check(&d, &i.script, &i.build_sh).is_empty(),
+            "missed: paths without {gone}"
+        );
+    }
     // A source pin is cut short, or build.sh moves to another MLX.
     let short = i.script.replacen("MLX_SHA256=\"0", "MLX_SHA256=\"", 1);
     assert_ne!(short, i.script, "the mutation applies");

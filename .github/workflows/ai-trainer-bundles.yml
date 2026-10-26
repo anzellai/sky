@@ -24,9 +24,13 @@ name: Std.Ai.Train trainer bundles
 # Bundles are built here only, never on a contributor's machine; a
 # contributor builds the trainer with scripts/ai/trainer/build.sh.
 #
-# TRIGGERS: workflow_dispatch and a `sky-trainer-v*` tag. The MLX builds take
-# 30 to 90 minutes, so this is a per-trainer-bump job, not a per-commit one.
-# The `metal_jit` input adds a darwin build with MLX_METAL_JIT=ON, to measure
+# TRIGGERS: workflow_dispatch, a `sky-trainer-v*` tag, and a push to
+# feat/std-ai-lifecycle that touches the trainer (this file,
+# scripts/ai/trainer/**, the pins in runtime-go/rt/ai_pins.go). The MLX builds
+# take 30 to 90 minutes, so this is a per-trainer-change job, not a per-commit
+# one. PUBLISHING happens only on the tag or on a dispatch with publish: true;
+# a branch push builds and tests and never publishes. The `metal_jit` input,
+# and every branch push, add a darwin build with MLX_METAL_JIT=ON, to measure
 # its size against the ahead-of-time metallib; that build is never published.
 
 on:
@@ -42,6 +46,12 @@ on:
         default: false
   push:
     tags: ['sky-trainer-v*']
+    branches: ['feat/std-ai-lifecycle']
+    # Path filters apply to the branch push only; a tag push always runs.
+    paths:
+      - '.github/workflows/ai-trainer-bundles.yml'
+      - 'scripts/ai/trainer/**'
+      - 'runtime-go/rt/ai_pins.go'
 
 permissions:
   contents: read
@@ -131,7 +141,7 @@ jobs:
   # with a GPU, by running this artifact's trainer there.
   measure-metal-jit:
     name: Measure MLX_METAL_JIT=ON (darwin-arm64)
-    if: inputs.metal_jit
+    if: inputs.metal_jit || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/'))
     runs-on: macos-15
     timeout-minutes: 180
     steps:
@@ -167,7 +177,8 @@ jobs:
   publish:
     name: Publish the bundles
     needs: build
-    if: startsWith(github.ref, 'refs/tags/sky-trainer-v') || inputs.publish
+    # Never on a branch push: only the tag, or a dispatch that asks for it.
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/sky-trainer-v')) || (github.event_name == 'workflow_dispatch' && inputs.publish)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
