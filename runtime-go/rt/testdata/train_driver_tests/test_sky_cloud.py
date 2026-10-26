@@ -3,8 +3,8 @@
 Standard library only, offline. A fake server on 127.0.0.1 answers the
 metadata token endpoint, the Cloud Storage JSON API (media upload with
 ifGenerationMatch, media read, list with prefix and pageToken) and a Hugging
-Face resolve endpoint. The real shim runs as a subprocess with the Fake
-backend:
+Face resolve endpoint. The real shim runs as a subprocess, and starts the
+real driver with the tests' scripted backend (scripted_backend.py):
 
     python3 -I -B -m unittest discover -s runtime-go/rt/testdata/train_driver_tests -p test_sky_cloud.py -v
 """
@@ -223,11 +223,19 @@ class ShimTest(unittest.TestCase):
         return os.path.join(self.tmp, "work-%d" % attempt)
 
     def command(self, attempt=0, resume=0):
+        # The real shim (sky_cloud.main), with the driver it starts given the
+        # scripted backend.
+        code = (
+            "import sys; sys.path[:0] = [%r, %r]; import sky_cloud, scripted_backend; "
+            "sky_cloud.DRIVER_ARGV = scripted_backend.driver_argv(%r, %r); "
+            "sys.exit(sky_cloud.main(sys.argv[1:]))"
+        ) % (DRIVER, HERE, DRIVER, HERE)
         return [
             sys.executable,
             "-I",
             "-B",
-            os.path.join(DRIVER, "sky_cloud.py"),
+            "-c",
+            code,
             "--inputs",
             "gs://%s/%s/inputs.json" % (BUCKET, RUN),
             "--run",

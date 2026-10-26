@@ -303,8 +303,12 @@ fn sky_ai_train_runs_reports_exports_and_cancels_in_test_mode() {
     let _ = std::fs::remove_dir_all(&home);
 }
 
+/// A Fake run installs no toolchain: with fetching off, the first thing it
+/// misses is the dev model the shape is read from, never a Python toolchain,
+/// and nothing is installed. (Before the Fake trainer moved into the runtime,
+/// this run stopped at `sky ai provision --train fake`.)
 #[test]
-fn a_missing_toolchain_with_fetching_off_names_the_provision_command() {
+fn a_fake_run_with_fetching_off_needs_no_toolchain_and_names_the_missing_model() {
     if !required(Need::Go, have_go()) {
         return;
     }
@@ -328,7 +332,14 @@ fn a_missing_toolchain_with_fetching_off_names_the_provision_command() {
     assert!(!out.status.success(), "{}", text(&out));
     let t = text(&out);
     assert!(t.contains("NotProvisioned"), "{t}");
-    assert!(t.contains("sky ai provision --train fake"), "{t}");
+    assert!(
+        !t.contains("--train fake") && !t.contains("toolchain"),
+        "a Fake run asked for a toolchain: {t}"
+    );
+    assert!(
+        t.contains("sky ai pull Qwen/Qwen2.5-0.5B-Instruct-GGUF"),
+        "{t}"
+    );
     assert!(!home.join("toolchains").exists() && !home.join("python").exists());
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&home);

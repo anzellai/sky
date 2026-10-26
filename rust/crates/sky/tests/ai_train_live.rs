@@ -1,19 +1,19 @@
-//! LIVE: `Std.Ai.Train` with a real trainer process under the managed Python.
+//! LIVE: `Std.Ai.Train` with a real trainer process, and no Python.
 //!
-//! The Fake backend runs the Sky-shipped driver (`sky_train.py`) in the pinned
-//! CPython that the runtime installs with the pinned uv. The first trainer is
+//! The Fake backend trains in the runtime itself: the fixture app starts
+//! itself again as the trainer (`--sky-ai-fake-trainer`). The first trainer is
 //! made to die after step 3; the durable workflow relaunches it from the newest
 //! verified checkpoint and the run finishes. The adapter is converted to GGUF
 //! and loaded by the real llama-server on the development model, and the same
 //! adapter registered as trained on another base is refused (AdapterMismatch).
-//! The driver's own Python suites (the protocol, MLX to PEFT, the batch order,
-//! the Unsloth fixture) run under the managed CPython too.
 //!
-//! It needs Go, the engine and the dev model, and uv plus CPython in the
-//! Std.Ai home, or the network to fetch them. Without them it FAILS naming
-//! `sky ai provision --train fake` (`live_gate`, `Need::AiTrainToolchain`). CI
-//! runs it in `.github/workflows/rust-ci.yml`, job `ai-train-live`, with the
-//! Std.Ai home cached on `runtime-go/rt/ai_pins.go` and the training assets.
+//! It needs Go, the engine and the dev model in the Std.Ai home, or the
+//! network to fetch them. Without them it FAILS naming `sky ai provision
+//! --dev-model` (`live_gate`, `Need::AiTrainToolchain`). CI runs it in
+//! `.github/workflows/rust-ci.yml`, job `ai-train-live`, with the Std.Ai home
+//! cached on `runtime-go/rt/ai_pins.go`. The Unsloth driver's Python suites
+//! run in `runtime-go/rt/ai_python_suites_live_test.go` (`go test -tags
+//! ailive`) in the same job.
 
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -92,7 +92,6 @@ fn provisioned(home: &Path) -> bool {
             .join("models/sha256")
             .join(format!("{DEV_MODEL_SHA256}.gguf"))
             .is_file()
-        && has_child(&home.join("toolchains/fake"), "ok.json")
 }
 
 fn reachable(host: &str) -> bool {
@@ -178,7 +177,7 @@ fn gate() -> bool {
 }
 
 #[test]
-fn fake_trains_under_the_managed_python_relaunches_and_serves_on_the_real_engine() {
+fn fake_trains_in_its_own_process_relaunches_and_serves_on_the_real_engine() {
     if !gate() {
         return;
     }
@@ -199,7 +198,13 @@ fn fake_trains_under_the_managed_python_relaunches_and_serves_on_the_real_engine
         a["resumedFrom"], 2,
         "the relaunch resumes from checkpoint 2: {a}"
     );
-    assert!(a["toolchain"].as_str().unwrap().starts_with("fake@"), "{a}");
+    assert!(
+        a["toolchain"]
+            .as_str()
+            .unwrap()
+            .starts_with("fake@builtin-"),
+        "the built-in Fake trainer, no Python toolchain: {a}"
+    );
     let run_dir = work.join("runs").join(a["run"].as_str().unwrap());
     let events = std::fs::read_to_string(run_dir.join("events.jsonl")).unwrap();
     assert_eq!(events.matches("\"type\":\"hello\"").count(), 2, "{events}");
@@ -211,6 +216,12 @@ fn fake_trains_under_the_managed_python_relaunches_and_serves_on_the_real_engine
         serde_json::from_str(&std::fs::read_to_string(run_dir.join("trainer.json")).unwrap())
             .unwrap();
     assert_eq!(trainer["simulated"], false, "a real trainer ran: {trainer}");
+    // The trainer was the app itself, started again: its hello names the
+    // built-in trainer.
+    assert!(
+        events.contains("\"sky-fake-trainer\""),
+        "the built-in Fake trainer: {events}"
+    );
 
     // The GGUF adapter loads in the real llama-server on the dev model.
     let gguf = a["gguf"].as_str().unwrap().to_string();
@@ -231,34 +242,6 @@ fn fake_trains_under_the_managed_python_relaunches_and_serves_on_the_real_engine
 
     let _ = std::fs::remove_dir_all(&project);
     let _ = std::fs::remove_dir_all(&work);
-}
-
-#[test]
-fn the_driver_suites_pass_under_the_managed_cpython() {
-    if !gate() {
-        return;
-    }
-    let out = Command::new(SKY)
-        .args(["ai", "provision", "--train", "fake", "--format", "json"])
-        .current_dir(scratch("provision"))
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "provision: {}", text(&out));
-    let python = PathBuf::from(json(&out)["python"].as_str().unwrap());
-    assert!(python.is_file(), "{}", python.display());
-    let suites = repo_root().join("runtime-go/rt/testdata/train_driver_tests");
-    let out = Command::new(&python)
-        .args(["-I", "-B", "-m", "unittest", "discover", "-s"])
-        .arg(&suites)
-        .current_dir(&suites)
-        .output()
-        .unwrap();
-    let report = text(&out);
-    assert!(
-        out.status.success(),
-        "the driver's Python suites:\n{report}"
-    );
-    assert!(report.contains("OK"), "{report}");
 }
 
 /// The native trainer's memory guard SIGKILLs the trainer over its cap,

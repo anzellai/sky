@@ -59,7 +59,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -102,8 +101,9 @@ var aiTrainPollEvery = 200 * time.Millisecond
 
 // aiTrainLauncher builds the trainer command for one attempt (driver.json as
 // cfg): the native sky-trainer when the attempt names one (the Mlx backend,
-// ai_trainer_bundle.go), else the Python driver in its toolchain. A variable
-// so the Go tests run testdata/faketrainer instead.
+// ai_trainer_bundle.go), this program again for the Fake backend
+// (ai_fake_trainer.go), else the Python driver in its toolchain (Unsloth). A
+// variable so the Go tests can record the commands they start.
 var aiTrainLauncher = func(cfg map[string]any, runDir, token string) (*exec.Cmd, error) {
 	if bin := aiJStr(cfg, "trainer"); bin != "" {
 		args, err := aiTrainNativeArgs(cfg, runDir, token)
@@ -111,6 +111,9 @@ var aiTrainLauncher = func(cfg map[string]any, runDir, token string) (*exec.Cmd,
 			return nil, err
 		}
 		return exec.Command(bin, args...), nil
+	}
+	if aiJStr(cfg, "backend") == "fake" {
+		return aiFakeTrainerCommand(runDir, token)
 	}
 	return exec.Command(aiJStr(cfg, "python"), "-I", "-B", filepath.Join(aiJStr(cfg, "driverDir"), "sky_train.py"),
 		"--run", runDir, "--launch", token), nil
@@ -656,7 +659,7 @@ func aiTrainLaunch(runDir, driver string) (map[string]any, error) {
 				return nil, aiFailf(aiNotProvisioned, "the %s trainer (%s) is not installed; run `sky ai provision --train %s`",
 					backend, bin, backend).with("what", aiTrainerExe).with("command", "sky ai provision --train "+backend)
 			}
-		} else if python := aiJStr(cfg, "python"); python == "" || !fileExists(python) {
+		} else if python := aiJStr(cfg, "python"); backend != "fake" && (python == "" || !fileExists(python)) {
 			return nil, aiFailf(aiNotProvisioned, "the %s toolchain's python (%s) is not installed; run `sky ai provision --train %s`",
 				backend, python, backend).with("what", backend+" toolchain").with("command", "sky ai provision --train "+backend)
 		}
@@ -1233,93 +1236,21 @@ func Ai_trainFinish(runArg, resultArg any) any {
 
 // ─── test mode ──────────────────────────────────────────────────────────
 
-// aiTrainSimulate writes what a Fake attempt writes, synchronously: the
-// protocol lines, verified checkpoints, and (when the attempt finishes) a
-// rank-`rank` PEFT adapter with zero B matrices. It honours fakeCrashAt on the
-// first attempt (no terminal line, as a killed trainer leaves it) and the
-// cancel file.
+// aiTrainSimulate is a Fake attempt in test mode: the Fake trainer's loop
+// (ai_fake_trainer.go), run synchronously in this process with no step delay.
+// A fakeCrashAt crash leaves no terminal line, as a killed trainer does.
 func aiTrainSimulate(runDir string, cfg map[string]any) error {
 	ev, err := os.OpenFile(filepath.Join(runDir, aiTrainEventsFile), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return aiTrainFail("cannot open %s: %v", aiTrainEventsFile, err)
 	}
 	defer ev.Close()
-	emit := func(typ string, fields map[string]any) {
-		fields["v"] = 1
-		fields["type"] = typ
-		b, _ := json.Marshal(fields)
-		ev.Write(append(b, '\n'))
-	}
-	nTrain, nValid := aiCountLines(filepath.Join(runDir, "data", "train.jsonl")), aiCountLines(filepath.Join(runDir, "data", "valid.jsonl"))
-	attempt := aiJNum(cfg, "attempt", 0)
-	start := aiJNum(cfg, "resumeFrom", 0)
-	if nTrain == 0 || nValid == 0 {
-		emit("error", map[string]any{"code": "DatasetInvalid", "message": "the train or eval split is empty"})
-		return nil
-	}
-	batch := aiJMap(cfg, "batch")
-	eff := aiJNum(batch, "perDevice", 4) * aiJNum(batch, "accumulate", 1)
-	if eff < 1 {
-		eff = 1
-	}
-	total := aiJNum(cfg, "maxSteps", 0)
-	if total <= 0 {
-		epochs := 1.0
-		if f, err := strconv.ParseFloat(fmt.Sprint(cfg["epochs"]), 64); err == nil {
-			epochs = f
-		}
-		total = int(math.Ceil(epochs * float64(nTrain) / float64(eff)))
-	}
-	if total < 1 {
-		total = 1
-	}
-	seed := aiJNum(cfg, "seed", 0)
-	loss := func(k int) float64 {
-		frac := float64(k) / float64(total)
-		return 0.45 + 1.6*math.Exp(-3*frac) + 0.02*math.Sin(float64(k)*0.7+float64(seed))
-	}
-	emit("hello", map[string]any{"backend": "fake", "toolchain": "test-mode", "versions": map[string]any{"simulated": "1"},
-		"attempt": attempt, "resumeFrom": start, "totalSteps": total, "pid": 0})
-	every, evalEvery, crash := aiJNum(cfg, "checkpointEvery", 0), aiJNum(cfg, "evalEvery", 0), aiJNum(cfg, "fakeCrashAt", 0)
-	cancelled := func() bool { return fileExists(filepath.Join(runDir, aiTrainCancelFile)) }
-	lastCk := start
-	epochLen := (nTrain + eff - 1) / eff
-	for step := start; step < total; step++ {
-		if cancelled() {
-			if step > lastCk {
-				if err := aiTrainSimCheckpoint(runDir, step); err != nil {
-					return err
-				}
-				emit("checkpoint", map[string]any{"step": step, "path": filepath.Join("checkpoints", fmt.Sprintf("%07d", step))})
-			}
-			emit("cancelled", map[string]any{"step": step})
-			return nil
-		}
-		done := step + 1
-		emit("progress", map[string]any{"step": done, "total": total, "loss": loss(done), "learningRate": cfg["learningRate"],
-			"tokensPerSecond": 1000.0, "epoch": step / max(1, epochLen)})
-		if evalEvery > 0 && done%evalEvery == 0 && done < total {
-			emit("metric", map[string]any{"step": done, "name": "val_loss", "value": loss(done) + 0.08})
-		}
-		if every > 0 && done%every == 0 && done < total {
-			if err := aiTrainSimCheckpoint(runDir, done); err != nil {
-				return err
-			}
-			emit("checkpoint", map[string]any{"step": done, "path": filepath.Join("checkpoints", fmt.Sprintf("%07d", done))})
-			lastCk = done
-		}
-		if crash > 0 && attempt == 0 && done == crash {
-			return nil // the simulated crash: no terminal line
-		}
-	}
-	emit("metric", map[string]any{"step": total, "name": "val_loss", "value": loss(total) + 0.08})
-	sum, err := aiTrainSimAdapter(runDir, cfg)
-	if err != nil {
-		return err
-	}
-	emit("artefact", map[string]any{"kind": "peft", "path": "adapter", "sha256": sum})
-	emit("done", map[string]any{"step": total, "trainLoss": loss(total), "valLoss": loss(total) + 0.08})
-	return nil
+	return aiFakeTrain(runDir, cfg, ev, aiFakeHooks{
+		toolchain: "test-mode",
+		versions:  map[string]any{"simulated": "1"},
+		cancelled: func() bool { return fileExists(filepath.Join(runDir, aiTrainCancelFile)) },
+		crash:     func() {},
+	})
 }
 
 func aiCountLines(path string) int {
@@ -1336,15 +1267,29 @@ func aiCountLines(path string) int {
 	return n
 }
 
+// aiTrainSimCheckpoint writes a Fake checkpoint as every trainer does: into a
+// staging directory, manifest.json last, then renamed into place, so a
+// checkpoint directory is either complete or absent.
 func aiTrainSimCheckpoint(runDir string, step int) error {
-	dir := filepath.Join(runDir, "checkpoints", fmt.Sprintf("%07d", step))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	parent := filepath.Join(runDir, "checkpoints")
+	dir := filepath.Join(parent, fmt.Sprintf("%07d", step))
+	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return aiTrainFail("cannot write a checkpoint: %v", err)
 	}
-	for name, data := range aiTrainSimCheckpointFiles(step) {
-		if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+	tmp, err := os.MkdirTemp(parent, fmt.Sprintf(".%07d-", step))
+	if err != nil {
+		return aiTrainFail("cannot write a checkpoint: %v", err)
+	}
+	defer os.RemoveAll(tmp)
+	files := aiTrainSimCheckpointFiles(step)
+	for _, name := range []string{"adapter.safetensors", "optimizer.safetensors", "state.json", "manifest.json"} {
+		if err := os.WriteFile(filepath.Join(tmp, name), files[name], 0o644); err != nil {
 			return aiTrainFail("cannot write a checkpoint: %v", err)
 		}
+	}
+	os.RemoveAll(dir)
+	if err := os.Rename(tmp, dir); err != nil {
+		return aiTrainFail("cannot write a checkpoint: %v", err)
 	}
 	return nil
 }

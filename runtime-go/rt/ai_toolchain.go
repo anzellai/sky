@@ -2,8 +2,11 @@
 
 package rt
 
-// ai_toolchain.go — the managed Python toolchains Std.Ai.Train runs its
-// driver in. The user never installs Python, and the system Python is never
+// ai_toolchain.go — the managed Python toolchain Std.Ai.Train runs its
+// driver in for the Unsloth backend (until its native CUDA trainer). The Mlx
+// backend trains with the native sky-trainer (ai_trainer_bundle.go) and the
+// Fake backend in the runtime itself (ai_fake_trainer.go); neither needs
+// Python. The user never installs Python, and the system Python is never
 // used.
 //
 // A toolchain is built from pinned parts only (ai_pins.go): the uv release,
@@ -56,36 +59,29 @@ var aiTrainAssets embed.FS
 // aiToolchainDef is one toolchain for this host.
 type aiToolchainDef struct {
 	name     string
-	lock     string // the embedded lock path, "" for the standard-library-only Fake toolchain
+	lock     string // the embedded lock path
 	lockData []byte // the tests' own lock, instead of the embedded one
 }
 
-// aiToolchainNames are the toolchains `sky ai provision --train` knows.
+// aiToolchainNames are the backends `sky ai provision --train` knows, in
+// the order Ai_toolchainStatus lists them.
 var aiToolchainNames = []string{"mlx", "unsloth", "fake"}
 
-// aiToolchainFor is the toolchain called name on this host. Mlx has a lock for
-// Apple silicon, Unsloth for Linux x86_64 with CUDA 13; Fake (the standard
-// library only) runs wherever a pinned CPython does.
+// aiToolchainFor is the Python toolchain called name on this host: Unsloth,
+// for Linux x86_64 with CUDA 13. Mlx and Fake have no Python toolchain.
 func aiToolchainFor(name string) (aiToolchainDef, error) {
 	host := runtime.GOOS + "/" + runtime.GOARCH
 	switch name {
-	case "mlx":
-		if host != "darwin/arm64" {
-			return aiToolchainDef{}, aiFailf(aiNoAccelerator, "the mlx toolchain runs on Apple silicon, and this host is %s", host).with("wanted", "apple-silicon")
-		}
-		return aiToolchainDef{name: "mlx", lock: "ai_train_assets/locks/mlx-darwin-arm64.txt"}, nil
 	case "unsloth":
 		if host != "linux/amd64" {
 			return aiToolchainDef{}, aiFailf(aiNoAccelerator, "the unsloth toolchain runs on Linux x86_64 with an NVIDIA GPU, and this host is %s", host).with("wanted", "cuda")
 		}
 		return aiToolchainDef{name: "unsloth", lock: "ai_train_assets/locks/unsloth-linux-x86_64-cuda13.txt"}, nil
-	case "fake":
-		if _, ok := aiHostTool(aiPythonAssets); !ok {
-			return aiToolchainDef{}, aiFailf(aiNotProvisioned, "there is no pinned CPython for %s", host).with("what", "python").with("command", "train on darwin/arm64, linux/amd64 or linux/arm64")
-		}
-		return aiToolchainDef{name: "fake"}, nil
+	case "mlx", "fake":
+		return aiToolchainDef{}, aiFailf(aiInvalidSetting, "the %s backend has no Python toolchain: it trains with %s", name, map[string]string{
+			"mlx": "the native trainer (sky-trainer)", "fake": "the runtime's built-in Fake trainer"}[name]).with("setting", "toolchain")
 	}
-	return aiToolchainDef{}, aiFailf(aiInvalidSetting, "toolchain %q: use mlx, unsloth or fake", name).with("setting", "toolchain")
+	return aiToolchainDef{}, aiFailf(aiInvalidSetting, "toolchain %q: the Python toolchain is unsloth", name).with("setting", "toolchain")
 }
 
 func aiHostTool(assets []aiToolAsset) (aiToolAsset, bool) {
@@ -277,6 +273,11 @@ func aiEnsureToolchain(ctx context.Context, name string) (aiToolchainInfo, error
 	if err != nil {
 		return aiToolchainInfo{}, err
 	}
+	return aiEnsureToolchainDef(ctx, d)
+}
+
+func aiEnsureToolchainDef(ctx context.Context, d aiToolchainDef) (aiToolchainInfo, error) {
+	name := d.name
 	if t, ok := aiInstalledToolchain(d); ok {
 		return t, nil
 	}
@@ -536,12 +537,13 @@ func aiTestToolchain(name string) map[string]any {
 		"versions": []any{}, "packages": 0, "installed": true, "trainer": ""}
 }
 
-// Ai_toolchainEnsure : String -> Task Error Toolchain
+// Ai_toolchainEnsure : String -> Task Error Toolchain — the Python toolchain
+// (Unsloth).
 func Ai_toolchainEnsure(nameArg any) any {
 	name := strings.ToLower(strings.TrimSpace(AsString(nameArg)))
 	return func() any {
 		if testModeActive() {
-			if _, err := aiToolchainFor(name); err != nil && name != "fake" {
+			if _, err := aiToolchainFor(name); err != nil {
 				return aiTaskErr(err)
 			}
 			return Ok[any, any](aiTestToolchain(name))
@@ -562,15 +564,20 @@ func Ai_toolchainStatus(_ any) any {
 	return func() any {
 		out := []any{}
 		for _, name := range aiToolchainNames {
-			d, err := aiToolchainFor(name)
-			if err != nil {
-				continue
-			}
-			// The Mlx backend trains with the native trainer.
-			if name == "mlx" {
+			// The Mlx backend trains with the native trainer, Fake in the
+			// runtime.
+			switch name {
+			case "mlx":
 				if v, ok := aiTrainerStatus(name); ok {
 					out = append(out, v)
 				}
+				continue
+			case "fake":
+				out = append(out, aiFakeToolchain())
+				continue
+			}
+			d, err := aiToolchainFor(name)
+			if err != nil {
 				continue
 			}
 			if t, ok := aiInstalledToolchain(d); ok {

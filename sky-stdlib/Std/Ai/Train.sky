@@ -2555,18 +2555,19 @@ digestRaw =
 
 
 -- ── Toolchains ──────────────────────────────────────────────────────
--- | Install the toolchain a backend trains in (`sky ai provision --train
--- <backend>` calls this): the native trainer for `Mlx`, the managed Python
--- for the others. Idempotent: an installed toolchain returns at once.
+-- | Install the trainer a backend trains with (`sky ai provision --train
+-- <backend>` calls this): the native trainer for `Mlx`, the runtime's
+-- built-in trainer for `Fake` (nothing to install), and the managed Python
+-- toolchain for `Unsloth`. Idempotent: an installed trainer returns at once.
 provision : Backend -> Task Error Toolchain
 provision backend =
     ensureTrainer (backendName backend)
 
 
--- The Mlx backend trains natively; the others in their Python toolchain.
+-- Mlx and Fake train without Python; Unsloth in its Python toolchain.
 ensureTrainer : String -> Task Error Toolchain
 ensureTrainer backend =
-    if backend == "mlx" then
+    if backend == "mlx" || backend == "fake" then
         trainerRaw backend
 
     else

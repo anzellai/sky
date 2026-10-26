@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# lock-toolchains.sh — regenerate the hash locks of the Std.Ai.Train toolchains.
+# lock-toolchains.sh — regenerate the hash lock of the Std.Ai.Train Python
+# toolchain (Unsloth; Mlx and Fake train without Python).
 #
 #   scripts/ai/lock-toolchains.sh            all locks
-#   scripts/ai/lock-toolchains.sh mlx        one lock
+#   scripts/ai/lock-toolchains.sh unsloth    one lock
 #
 # Each lock is `uv pip compile` of its `.in` file for ONE target platform and
 # Python, with every wheel's SHA-256 (`--generate-hashes`), wheels only
@@ -39,9 +40,6 @@ lock() {
 }
 
 want="${1:-all}"
-if [ "$want" = all ] || [ "$want" = mlx ]; then
-  lock mlx-darwin-arm64 aarch64-apple-darwin
-fi
 if [ "$want" = all ] || [ "$want" = unsloth ]; then
   lock unsloth-linux-x86_64-cuda13 x86_64-manylinux_2_28
 fi

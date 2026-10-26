@@ -423,10 +423,17 @@ func aiTrainNativeArgs(cfg map[string]any, runDir, token string) ([]string, erro
 // ─── kernels ────────────────────────────────────────────────────────────
 
 // Ai_trainerEnsure : String -> Task Error Toolchain — the native trainer of a
-// backend, installed if fetching is allowed.
+// backend, installed if fetching is allowed: sky-trainer for Mlx, the
+// runtime's built-in trainer for Fake (nothing to install).
 func Ai_trainerEnsure(nameArg any) any {
 	name := strings.ToLower(strings.TrimSpace(AsString(nameArg)))
 	return func() any {
+		if name == "fake" {
+			if testModeActive() {
+				return Ok[any, any](aiTestToolchain(name))
+			}
+			return Ok[any, any](aiFakeToolchain())
+		}
 		if err := aiTrainerSupported(name); err != nil {
 			return aiTaskErr(err)
 		}

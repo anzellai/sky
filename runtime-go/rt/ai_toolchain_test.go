@@ -36,8 +36,9 @@ func TestToolchainLocksFollowThePolicy(t *testing.T) {
 		}
 		return nil
 	})
-	if len(locks) < 2 {
-		t.Fatalf("expected the mlx and unsloth locks, found %v", locks)
+	// Unsloth is the one Python toolchain; Mlx and Fake train without Python.
+	if len(locks) != 1 || !strings.Contains(locks[0], "unsloth") {
+		t.Fatalf("expected the unsloth lock only, found %v", locks)
 	}
 	deny := []string{"unsloth-studio", "unsloth_studio", "studio"}
 	for _, p := range locks {
@@ -75,13 +76,6 @@ func TestToolchainLocksFollowThePolicy(t *testing.T) {
 				}
 			}
 		}
-		if strings.Contains(p, "mlx") {
-			for _, pin := range pins {
-				if pin.name == "torch" || strings.HasPrefix(pin.name, "nvidia-") {
-					t.Errorf("%s pins %s: the Mlx toolchain has no PyTorch or CUDA", p, pin.name)
-				}
-			}
-		}
 	}
 }
 
@@ -96,15 +90,15 @@ func TestParseLockReadsPinsAndHashes(t *testing.T) {
 }
 
 func TestToolchainIDChangesWithEveryInput(t *testing.T) {
-	a := aiToolchainDef{name: "fake", lockData: []byte("x==1\n")}
+	a := aiToolchainDef{name: "unsloth", lockData: []byte("x==1\n")}
 	if a.id() != a.id() {
 		t.Fatal("the id is not stable")
 	}
-	b := aiToolchainDef{name: "fake", lockData: []byte("x==2\n")}
+	b := aiToolchainDef{name: "unsloth", lockData: []byte("x==2\n")}
 	if a.id() == b.id() {
 		t.Fatal("a lock change kept the id")
 	}
-	c := aiToolchainDef{name: "mlx", lockData: []byte("x==1\n")}
+	c := aiToolchainDef{name: "other", lockData: []byte("x==1\n")}
 	if a.id() == c.id() {
 		t.Fatal("two toolchains share an id")
 	}
@@ -231,7 +225,7 @@ func TestToolchainInstallsFromPinsAndChecksTheLock(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-must-not-leak")
 	t.Setenv("PIP_INDEX_URL", "https://evil.example/simple")
 	t.Setenv("UV_INDEX_URL", "https://evil.example/simple")
-	d := aiToolchainDef{name: "fake", lockData: []byte(testLock)}
+	d := aiToolchainDef{name: "unsloth", lockData: []byte(testLock)}
 	info, err := aiInstallToolchain(context.Background(), d)
 	if err != nil {
 		t.Fatal(err)
@@ -278,7 +272,7 @@ func TestToolchainInstallsFromPinsAndChecksTheLock(t *testing.T) {
 
 func TestToolchainRefusesAnEnvironmentThatDiffersFromTheLock(t *testing.T) {
 	toolchainWorld(t, worldOpts{wrongVersion: true})
-	d := aiToolchainDef{name: "fake", lockData: []byte(testLock)}
+	d := aiToolchainDef{name: "unsloth", lockData: []byte(testLock)}
 	_, err := aiInstallToolchain(context.Background(), d)
 	f, ok := err.(*aiFailure)
 	if !ok || f.code != aiToolchainFailed || !strings.Contains(f.msg, "alpha 1.0") {
@@ -291,7 +285,7 @@ func TestToolchainRefusesAnEnvironmentThatDiffersFromTheLock(t *testing.T) {
 
 func TestToolchainChecksumMismatchInstallsNothing(t *testing.T) {
 	toolchainWorld(t, worldOpts{corruptPython: true})
-	_, err := aiInstallToolchain(context.Background(), aiToolchainDef{name: "fake"})
+	_, err := aiInstallToolchain(context.Background(), aiToolchainDef{name: "unsloth", lockData: []byte(testLock)})
 	f, ok := err.(*aiFailure)
 	if !ok || f.code != aiChecksumMismatch {
 		t.Fatalf("%v", err)
@@ -312,19 +306,19 @@ func TestToolchainChecksumMismatchInstallsNothing(t *testing.T) {
 func TestToolchainNotProvisionedWhenFetchIsOff(t *testing.T) {
 	toolchainWorld(t, worldOpts{})
 	t.Setenv("SKY_AI_FETCH", "off")
-	_, err := aiEnsureToolchain(context.Background(), "fake")
+	_, err := aiEnsureToolchainDef(context.Background(), aiToolchainDef{name: "unsloth", lockData: []byte(testLock)})
 	f, ok := err.(*aiFailure)
 	if !ok || f.code != aiNotProvisioned {
 		t.Fatalf("%v", err)
 	}
-	if cmd, _ := f.attrValue("command"); cmd != "sky ai provision --train fake" {
+	if cmd, _ := f.attrValue("command"); cmd != "sky ai provision --train unsloth" {
 		t.Fatalf("command %q", cmd)
 	}
 }
 
 func TestToolchainConcurrentProvisionInstallsOnce(t *testing.T) {
 	_, logs := toolchainWorld(t, worldOpts{})
-	d := aiToolchainDef{name: "fake", lockData: []byte(testLock)}
+	d := aiToolchainDef{name: "unsloth", lockData: []byte(testLock)}
 	var wg sync.WaitGroup
 	ids := make([]string, 4)
 	errs := make([]error, 4)
@@ -359,8 +353,18 @@ func TestToolchainForHost(t *testing.T) {
 		t.Fatal("an unknown toolchain")
 	}
 	files, err := aiDriverFiles()
-	if err != nil || files["sky_train.py"] == nil || files["backends/fake.py"] == nil || files["backends/mlx.py"] == nil {
+	if err != nil || files["sky_train.py"] == nil || files["backends/unsloth.py"] == nil {
 		t.Fatalf("driver files %v", err)
+	}
+	// Mlx and Fake train without Python: no driver backend and no toolchain.
+	if files["backends/fake.py"] != nil || files["backends/mlx.py"] != nil {
+		t.Fatal("the driver still carries a Python Mlx or Fake backend")
+	}
+	for _, name := range []string{"mlx", "fake"} {
+		f, ok := func() (*aiFailure, bool) { _, err := aiToolchainFor(name); f, ok := err.(*aiFailure); return f, ok }()
+		if !ok || f.code != aiInvalidSetting {
+			t.Fatalf("%s has a Python toolchain", name)
+		}
 	}
 	for name := range files {
 		if strings.Contains(name, "__pycache__") || strings.HasPrefix(filepath.Base(name), ".") {

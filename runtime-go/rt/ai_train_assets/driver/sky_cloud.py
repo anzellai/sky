@@ -627,7 +627,7 @@ class Shim(object):
             json.dump(cfg, f, sort_keys=True, separators=(",", ":"))
 
     def start_driver(self, env):
-        cmd = [sys.executable, "-I", "-B", os.path.join(HERE, "sky_train.py"), "--run", self.local, "--launch", "cloud-%d" % self.attempt]
+        cmd = DRIVER_ARGV + ["--run", self.local, "--launch", "cloud-%d" % self.attempt]
         out = open(os.path.join(self.local, "events.jsonl"), "ab")
         err = open(os.path.join(self.local, "stderr.log"), "ab")
         try:
@@ -735,6 +735,11 @@ class Shim(object):
         except ShimError as e:
             log(e.message)
             return 1
+
+
+# The training driver the shim starts, before its --run and --launch
+# arguments. The driver's tests put a scripted backend in its place.
+DRIVER_ARGV = [sys.executable, "-I", "-B", os.path.join(HERE, "sky_train.py")]
 
 
 def main(argv, environ=None, clock=time.time, sleep=time.sleep):

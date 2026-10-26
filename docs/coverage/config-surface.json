@@ -55,7 +55,7 @@
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1657 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:16059 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:16060 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:151 (toml_value)"
@@ -78,7 +78,7 @@
     "env.prefix": [
       "rust/crates/sky/src/db_cluster.rs:1666 (sky_toml_section_key)",
       "rust/crates/sky/src/db_pool_sizing.rs:161 (toml_value)",
-      "rust/crates/sky/src/main.rs:15934 (sky_toml_section_key)"
+      "rust/crates/sky/src/main.rs:15935 (sky_toml_section_key)"
     ],
     "go.dependencies": [
       "structural: rust/crates/project/src/ffi_ops.rs fn read_dependencies — same reader, same verbs; materialises the go.mod pins a build needs before it can start."

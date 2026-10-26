@@ -85,9 +85,10 @@ pub enum Need {
     /// Std.Ai home, or the network to fetch them (`sky ai provision
     /// --dev-model` fills the home; CI caches it).
     AiEngine,
-    /// The Std.Ai.Train Fake toolchain (the pinned uv and CPython, installed
-    /// by `sky ai provision --train fake`) plus the engine and the dev model,
-    /// or the network to fetch them. CI caches the Std.Ai home.
+    /// What a Fake training run serves on: the engine and the dev model in
+    /// the Std.Ai home, or the network to fetch them. The Fake trainer is
+    /// built into the runtime, so nothing else is installed. CI caches the
+    /// Std.Ai home.
     AiTrainToolchain,
     /// Apple silicon with the native trainer `sky-trainer` (the operator's
     /// SKY_AI_TRAINER_BIN, or the pinned bundle `sky ai provision --train mlx`
@@ -143,9 +144,9 @@ impl Need {
                  network access to github.com and huggingface.co"
             }
             Need::AiTrainToolchain => {
-                "run `sky ai provision --dev-model` and `sky ai provision --train fake` once \
-                 (the pinned engine, the dev model, uv and CPython into the Std.Ai home), or \
-                 give the test network access to github.com and huggingface.co"
+                "run `sky ai provision --dev-model` once (the pinned engine and the dev model \
+                 into the Std.Ai home; the Fake trainer is built in), or give the test network \
+                 access to github.com and huggingface.co"
             }
             Need::AiTrainNative => {
                 "on Apple silicon, build the native trainer (`scripts/ai/trainer/build.sh --mlx \
@@ -176,7 +177,7 @@ impl Need {
             Need::AndroidEmulator => "the Android emulator with an AVD",
             Need::Node => "Node.js",
             Need::AiEngine => "the Std.Ai engine and development model",
-            Need::AiTrainToolchain => "the Std.Ai.Train Fake toolchain and the dev model",
+            Need::AiTrainToolchain => "the engine and the dev model a Fake training run serves on",
             Need::AiTrainNative => "the native trainer (sky-trainer) and the dev base weights",
             Need::GcpLive => "the Google Cloud live-test wrapper (scripts/ai/gcp-live.sh)",
             Need::Brotli => "the brotli tool",

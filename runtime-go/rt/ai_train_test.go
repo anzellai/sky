@@ -2,12 +2,12 @@
 
 package rt
 
-// Tests of ai_train.go. The trainer is testdata/faketrainer (a Go program
-// launched exactly as the Python driver is), so the process handling, the
-// protocol file, checkpoints, cancel and resume are exercised for real and in
-// seconds. The Python driver has its own tests
-// (testdata/train_driver_tests), and rust/crates/sky/tests/ai_train_live.rs
-// runs it under the managed toolchain.
+// Tests of ai_train.go. The trainer is the Fake trainer the runtime itself
+// runs (ai_fake_trainer.go): the launcher starts this test binary again with
+// --sky-ai-fake-trainer, exactly as a Sky program starts itself, so the
+// process handling, the protocol file, checkpoints, cancel and resume are
+// exercised for real and in seconds. The Unsloth driver (Python) has its own
+// tests (testdata/train_driver_tests).
 
 import (
 	"encoding/json"
@@ -23,31 +23,10 @@ import (
 	"time"
 )
 
-var (
-	fakeTrainerOnce sync.Once
-	fakeTrainerBin  string
-	fakeTrainerErr  error
-)
-
 func fakeTrainer(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the trainer's process group handling is Unix")
-	}
-	fakeTrainerOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "sky-faketrainer-")
-		if err != nil {
-			fakeTrainerErr = err
-			return
-		}
-		fakeTrainerBin = filepath.Join(dir, "faketrainer")
-		out, err := exec.Command("go", "build", "-o", fakeTrainerBin, "./testdata/faketrainer").CombinedOutput()
-		if err != nil {
-			fakeTrainerErr = fmt.Errorf("build faketrainer: %v\n%s", err, out)
-		}
-	})
-	if fakeTrainerErr != nil {
-		t.Fatal(fakeTrainerErr)
 	}
 	saved := aiTrainLauncher
 	// The trainer runs detached in a session of its own (aiTrainSysAttr), so
@@ -56,8 +35,11 @@ func fakeTrainer(t *testing.T) {
 	// Every trainer this test launches is ended with the test.
 	var launchedMu sync.Mutex
 	var launched []*exec.Cmd
-	aiTrainLauncher = func(_ map[string]any, runDir, token string) (*exec.Cmd, error) {
-		c := exec.Command(fakeTrainerBin, "--run", runDir, "--launch", token)
+	aiTrainLauncher = func(cfg map[string]any, runDir, token string) (*exec.Cmd, error) {
+		c, err := saved(cfg, runDir, token)
+		if err != nil {
+			return nil, err
+		}
 		launchedMu.Lock()
 		launched = append(launched, c)
 		launchedMu.Unlock()
@@ -80,13 +62,18 @@ func fakeTrainer(t *testing.T) {
 	})
 }
 
-// trainRun makes a staged run directory. The python path must exist (launch
-// checks it), so it is the faketrainer binary itself.
+// trainRun makes a staged run directory: the job and both splits.
 func trainRun(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "data"), 0o755)
 	os.WriteFile(filepath.Join(dir, aiTrainJobFile), []byte(`{"name":"t"}`), 0o644)
+	var rows strings.Builder
+	for i := 0; i < 8; i++ {
+		fmt.Fprintf(&rows, `{"messages":[{"role":"user","content":"q%d"},{"role":"assistant","content":"a%d"}]}`+"\n", i, i)
+	}
+	os.WriteFile(filepath.Join(dir, "data", "train.jsonl"), []byte(rows.String()), 0o644)
+	os.WriteFile(filepath.Join(dir, "data", "valid.jsonl"), []byte(rows.String()), 0o644)
 	return dir
 }
 
@@ -94,7 +81,11 @@ func driverJSON(t *testing.T, over map[string]any) string {
 	t.Helper()
 	cfg := map[string]any{
 		"backend": "fake", "attempt": 0, "resumeFrom": 0, "maxSteps": 6, "checkpointEvery": 2,
-		"fakeStepMs": 5, "python": fakeTrainerBin, "driverDir": filepath.Dir(fakeTrainerBin),
+		"fakeStepMs": 5, "seed": 1, "learningRate": 0.0001,
+		"batch": map[string]any{"perDevice": 1, "accumulate": 1}, "rank": 2, "alpha": 4, "layers": 2,
+		"targets": []any{"self_attn.q_proj", "self_attn.v_proj"},
+		"shapes":  map[string]any{"layers": 2, "hidden": 8, "intermediate": 16, "qDim": 8, "kvDim": 4},
+		"base":    map[string]any{"id": "test/base"},
 	}
 	for k, v := range over {
 		cfg[k] = v
@@ -596,5 +587,61 @@ func TestTrainWatchTreatsTheGuardsKillAsTerminal(t *testing.T) {
 	}
 	if fileExists(filepath.Join(dir2, "guard.json")) {
 		t.Fatal("the stale guard.json is still there")
+	}
+}
+
+// The Fake backend needs no Python and nothing installed: the launch starts
+// this program again as the Fake trainer, which writes the protocol, verified
+// checkpoints and a real PEFT adapter with zero B matrices. Red before the
+// trainer moved into the runtime: a Fake launch with no toolchain python was
+// NotProvisioned.
+func TestFakeTrainerRunsInTheRuntimeWithoutPython(t *testing.T) {
+	fakeTrainer(t)
+	dir := trainRun(t)
+	v, err := aiTrainLaunch(dir, driverJSON(t, map[string]any{"maxSteps": 4, "checkpointEvery": 2, "toolchain": "builtin-1"}))
+	if err != nil {
+		t.Fatalf("a Fake launch with no python: %v", err)
+	}
+	lines, _ := watchToEnd(t, dir)
+	types := eventTypes(lines)
+	if types[0] != "hello" || types[len(types)-1] != "done" {
+		t.Fatalf("events %v", types)
+	}
+	var hello struct {
+		Pid       int            `json:"pid"`
+		Versions  map[string]any `json:"versions"`
+		Toolchain string         `json:"toolchain"`
+	}
+	json.Unmarshal([]byte(lines[0]), &hello)
+	if hello.Pid != v["pid"].(int) || hello.Versions["sky-fake-trainer"] != aiFakeTrainerVersion || hello.Toolchain != "builtin-1" {
+		t.Fatalf("hello %+v, launched pid %v", hello, v["pid"])
+	}
+	if cks := aiTrainCheckpoints(dir); len(cks) != 1 || cks[0].step != 2 {
+		t.Fatalf("checkpoints %+v", cks)
+	}
+	tensors, err := aiReadSafetensors(filepath.Join(dir, "adapter", "adapter_model.safetensors"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rank 2 over 2 layers and 2 targets: q (8 -> 8) and v (8 -> 4).
+	a := tensors["base_model.model.model.layers.1.self_attn.v_proj.lora_A.weight"]
+	b := tensors["base_model.model.model.layers.1.self_attn.v_proj.lora_B.weight"]
+	if len(tensors) != 8 || fmt.Sprint(a.shape) != "[2 8]" || fmt.Sprint(b.shape) != "[4 2]" {
+		t.Fatalf("adapter tensors %d, A %v, B %v", len(tensors), a.shape, b.shape)
+	}
+	for _, x := range b.data {
+		if x != 0 {
+			t.Fatal("a Fake adapter's B is not zero")
+		}
+	}
+}
+
+// The Fake trainer refuses a driver.json for another backend.
+func TestFakeTrainerRunsOnlyTheFakeBackend(t *testing.T) {
+	dir := trainRun(t)
+	os.WriteFile(filepath.Join(dir, aiTrainDriverFile), []byte(`{"backend":"mlx"}`), 0o644)
+	var out strings.Builder
+	if code := aiFakeTrainerMain([]string{"--run", dir, "--launch", "t"}, &out); code != 1 || !strings.Contains(out.String(), `"code":"TrainingFailed"`) {
+		t.Fatalf("exit %d, %s", code, out.String())
 	}
 }

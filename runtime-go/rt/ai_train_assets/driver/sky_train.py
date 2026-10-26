@@ -53,14 +53,6 @@ def cancel_requested(run_dir):
 
 def load_backend(name):
     try:
-        if name == "fake":
-            from backends import fake
-
-            return fake.FakeBackend()
-        if name == "mlx":
-            from backends import mlx
-
-            return mlx.MlxBackend()
         if name == "unsloth":
             from backends import unsloth
 
@@ -162,7 +154,7 @@ def run(run_dir, backend=None, now=time.time):
                 checkpoint(done)
                 last_ckpt = done
             if crash_at > 0 and attempt == 0 and done == crash_at:
-                # The fake backend's crash: no terminal line, no cleanup, the
+                # A test's scripted crash: no terminal line, no cleanup, the
                 # way a SIGKILL or a power cut ends a trainer.
                 os._exit(137)
         val = float(backend.evaluate())
@@ -200,20 +192,13 @@ def run(run_dir, backend=None, now=time.time):
 
 def selfcheck(backend):
     """The toolchain's self-check: one `hello` line with the versions the
-    toolchain actually imports. Mlx imports its libraries; Unsloth reads its
-    package metadata only (importing Unsloth needs a GPU, and the install is
-    checked on machines without one)."""
+    toolchain carries. Unsloth reads its package metadata only (importing
+    Unsloth needs a GPU, and the install is checked on machines without one)."""
     import importlib.metadata as md
     import platform
 
     versions = {"python": platform.python_version()}
-    if backend == "mlx":
-        import mlx.core  # noqa: F401
-        import mlx_lm  # noqa: F401
-
-        versions["mlx"] = md.version("mlx")
-        versions["mlx-lm"] = md.version("mlx-lm")
-    elif backend == "unsloth":
+    if backend == "unsloth":
         versions["unsloth"] = md.version("unsloth")
         versions["torch"] = md.version("torch")
     P.emit("hello", backend=backend, versions=versions, selfcheck=True)

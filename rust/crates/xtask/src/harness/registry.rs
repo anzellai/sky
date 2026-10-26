@@ -1280,7 +1280,8 @@ pub static GATES: &[Gate] = &[
     Gate {
         name: "ai-train-resume",
         tier: Tier::T1,
-        // The test runs a real trainer process (testdata/faketrainer) in its
+        // The test runs a real trainer process (the runtime's Fake trainer:
+        // the test binary started again with --sky-ai-fake-trainer) in its
         // own session and signals its process group: Unix.
         platforms: UNIX,
         budget_s: 600,

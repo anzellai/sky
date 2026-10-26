@@ -13569,7 +13569,8 @@ const AI_USAGE: &str = "usage: sky ai <verb> [--format json]
               [--consent <basis>] [--retention <period>]
                      freeze a JSONL file into a content-addressed dataset version
   provision --train mlx|unsloth|fake [--base dev]
-                     install a training toolchain (managed Python) and the dev base weights
+                     install the trainer (mlx: the native trainer; fake: built in, nothing
+                     to install; unsloth: the managed Python) and the dev base weights
   train --data <dir>/<name>[@<digest>] [--base dev] [--name <n>] [--steps <n>] [--rank <r>]
         [--seed <s>] [--layers <n>] [--checkpoint-every <n>] [--eval-every <n>]
         [--backend mlx|unsloth|fake] [--gguf] [--merged]
