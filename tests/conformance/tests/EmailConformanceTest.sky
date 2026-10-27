@@ -26,6 +26,8 @@ needs a live provider or a wire-level fixture. That surface is covered at the
 Layer-2 tier, not by this pure-surface conformance suite. -}
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (ErrorKind(..))
+import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Email as Email exposing (EmailProvider(..))
 import Sky.Test as Test exposing (Test)
@@ -40,6 +42,43 @@ noStrings =
 noAttachments : List Email.Attachment
 noAttachments =
     []
+
+
+noHeaders : List Email.Header
+noHeaders =
+    []
+
+
+-- | A header that `Email.header` accepts. A refusal yields a header that
+-- no assertion expects, so the test that uses it fails by value.
+validHeader : String -> String -> Email.Header
+validHeader name value =
+    case Email.header name value of
+        Ok h ->
+            h
+
+        Err _ ->
+            Email.listUnsubscribe { url = "refused:" ++ name, mailto = Nothing, oneClick = False }
+
+
+campaignHeader : Email.Header
+campaignHeader =
+    validHeader "X-Campaign" "spring"
+
+
+isOk : Result e a -> Bool
+isOk r =
+    case r of
+        Ok _ ->
+            True
+
+        Err _ ->
+            False
+
+
+unsubscribe : String -> Maybe String -> Bool -> Email.Header
+unsubscribe url mailto oneClick =
+    Email.listUnsubscribe { url = url, mailto = mailto, oneClick = oneClick }
 
 
 -- | The baseline message under test, built through the public constructor.
@@ -83,6 +122,7 @@ fullMessage =
     , htmlBody = "<p>populated html body</p>"
     , attachments = [ pdfAttachment ]
     , replyTo = "reply@example.com"
+    , headers = [ campaignHeader ]
     }
 
 
@@ -173,6 +213,7 @@ tests =
                 , htmlBody = ""
                 , attachments = noAttachments
                 , replyTo = ""
+                , headers = noHeaders
                 }
                 baseMessage
         )
@@ -273,6 +314,7 @@ tests =
                 , htmlBody = "<p>rich</p>"
                 , attachments = [ pdfAttachment, csvAttachment ]
                 , replyTo = "support@example.com"
+                , headers = noHeaders
                 }
                 (baseMessage
                     |> Email.withCc [ "carol@example.com" ]
@@ -432,6 +474,154 @@ tests =
                     |> Email.withSmtpUser "mailer"
                     |> Email.withSmtpPass "smtp-secret"
                 )
+        )
+
+      -- ── Custom headers: header / listUnsubscribe / withHeader (#300) ──
+    , Test.test "defaultMessage defaults headers to []"
+        (\_ -> Test.equal noHeaders baseMessage.headers)
+    , Test.test "header accepts an ordinary X- header"
+        (\_ -> Test.equal True (isOk (Email.header "X-Campaign" "spring")))
+    , Test.test "header accepts a non-ASCII value (it is sent RFC 2047 encoded)"
+        (\_ -> Test.equal True (isOk (Email.header "X-Note" "Übersicht")))
+    , Test.test "header refuses a CRLF-injected value as InvalidInput"
+        (\_ -> Test.expectErrorKind InvalidInput (Email.header "X-Note" "ok\r\nBcc: x@example.com"))
+    , Test.test "header refuses a lone LF in the value"
+        (\_ -> Test.expectErrorKind InvalidInput (Email.header "X-Note" "ok\nBcc: x@example.com"))
+    , Test.test "header refuses a lone CR in the value"
+        (\_ -> Test.expectErrorKind InvalidInput (Email.header "X-Note" "ok\rBcc: x@example.com"))
+    , Test.test "header refuses the reserved name Bcc (lower case)"
+        (\_ -> Test.expectErrorKind InvalidInput (Email.header "bcc" "x@example.com"))
+    , Test.test "header refuses the reserved name Subject (mixed case)"
+        (\_ -> Test.expectErrorKind InvalidInput (Email.header "SuBjEcT" "spoofed"))
+    , Test.test "header refuses every name Std.Email sets itself"
+        (\_ ->
+            Test.equal []
+                (List.filter (\n -> isOk (Email.header n "v"))
+                    [ "From", "To", "Cc", "Bcc", "Subject", "Reply-To", "Sender", "Date"
+                    , "Message-ID", "Content-Type", "Content-Transfer-Encoding", "MIME-Version"
+                    ]
+                )
+        )
+    , Test.test "header refuses List-Unsubscribe (listUnsubscribe builds it)"
+        (\_ -> Test.expectErrorKind InvalidInput (Email.header "List-Unsubscribe" "<https://example.com/u>"))
+    , Test.test "header refuses List-Unsubscribe-Post (listUnsubscribe builds it)"
+        (\_ -> Test.expectErrorKind InvalidInput (Email.header "list-unsubscribe-post" "List-Unsubscribe=One-Click"))
+    , Test.test "header refuses a name with a colon"
+        (\_ -> Test.expectErrorKind InvalidInput (Email.header "X-A:B" "v"))
+    , Test.test "header refuses a name with a space"
+        (\_ -> Test.expectErrorKind InvalidInput (Email.header "X A" "v"))
+    , Test.test "header refuses an empty name"
+        (\_ -> Test.expectErrorKind InvalidInput (Email.header "" "v"))
+    , Test.test "header refuses a name with CRLF"
+        (\_ -> Test.expectErrorKind InvalidInput (Email.header "X-A\r\nBcc" "v"))
+    , Test.test "header refuses a non-ASCII name"
+        (\_ -> Test.expectErrorKind InvalidInput (Email.header "X-Übersicht" "v"))
+    , Test.test "withHeader appends and preserves every other field"
+        (\_ ->
+            Test.equal { fullMessage | headers = [ campaignHeader, validHeader "X-Other" "o" ] }
+                (Email.withHeader (validHeader "X-Other" "o") fullMessage)
+        )
+    , Test.test "withHeader keeps distinct names in call order"
+        (\_ ->
+            Test.equal [ validHeader "X-A" "1", validHeader "X-B" "2" ]
+                (baseMessage
+                    |> Email.withHeader (validHeader "X-A" "1")
+                    |> Email.withHeader (validHeader "X-B" "2")
+                ).headers
+        )
+    , Test.test "withHeader with the same name replaces the earlier header"
+        (\_ ->
+            Test.equal [ validHeader "X-Campaign" "autumn" ]
+                (baseMessage
+                    |> Email.withHeader (validHeader "X-Campaign" "spring")
+                    |> Email.withHeader (validHeader "X-Campaign" "autumn")
+                ).headers
+        )
+    , Test.test "withHeader replaces case-insensitively"
+        (\_ ->
+            Test.equal [ validHeader "x-campaign" "autumn" ]
+                (baseMessage
+                    |> Email.withHeader (validHeader "X-CAMPAIGN" "spring")
+                    |> Email.withHeader (validHeader "x-campaign" "autumn")
+                ).headers
+        )
+    , Test.test "a replaced header moves to the end; the others keep their order"
+        (\_ ->
+            Test.equal [ validHeader "X-B" "2", validHeader "X-A" "3" ]
+                (baseMessage
+                    |> Email.withHeader (validHeader "X-A" "1")
+                    |> Email.withHeader (validHeader "X-B" "2")
+                    |> Email.withHeader (validHeader "X-A" "3")
+                ).headers
+        )
+    , Test.test "a later listUnsubscribe replaces the earlier one as a pair"
+        (\_ ->
+            Test.equal [ unsubscribe "https://example.com/u/2" Nothing False ]
+                (baseMessage
+                    |> Email.withHeader (unsubscribe "https://example.com/u/1" Nothing True)
+                    |> Email.withHeader (unsubscribe "https://example.com/u/2" Nothing False)
+                ).headers
+        )
+    , Test.test "listUnsubscribe and a custom header live side by side"
+        (\_ ->
+            Test.equal [ unsubscribe "https://example.com/u" Nothing True, campaignHeader ]
+                (baseMessage
+                    |> Email.withHeader (unsubscribe "https://example.com/u" Nothing True)
+                    |> Email.withHeader campaignHeader
+                ).headers
+        )
+    , Test.test "listUnsubscribe lists the url, then the mailto address"
+        (\_ ->
+            Test.equal True
+                (String.contains "<https://example.com/u/abc>, <mailto:unsub@example.com>"
+                    (toString (unsubscribe "https://example.com/u/abc" (Just "unsub@example.com") False))
+                )
+        )
+    , Test.test "listUnsubscribe adds mailto: only when it is absent"
+        (\_ ->
+            Test.equal (unsubscribe "https://example.com/u" (Just "unsub@example.com") False)
+                (unsubscribe "https://example.com/u" (Just "mailto:unsub@example.com") False)
+        )
+    , Test.test "listUnsubscribe with oneClick makes the One-Click Post header"
+        (\_ ->
+            Test.equal True
+                (String.contains "List-Unsubscribe=One-Click"
+                    (toString (unsubscribe "https://example.com/u" Nothing True))
+                )
+        )
+    , Test.test "listUnsubscribe without oneClick makes no Post header"
+        (\_ ->
+            Test.equal False
+                (String.contains "One-Click"
+                    (toString (unsubscribe "https://example.com/u" Nothing False))
+                )
+        )
+    , Test.test "listUnsubscribe with an empty url makes no Post header"
+        (\_ ->
+            Test.equal False
+                (String.contains "One-Click"
+                    (toString (unsubscribe "  " (Just "unsub@example.com") True))
+                )
+        )
+    , Test.test "listUnsubscribe percent-encodes CR and LF in the url (no injection)"
+        (\_ ->
+            Test.equal (unsubscribe "https://example.com/u%0D%0ABcc:%20x" Nothing True)
+                (unsubscribe "https://example.com/u\r\nBcc: x" Nothing True)
+        )
+    , Test.test "listUnsubscribe percent-encodes <, > and , in the url"
+        (\_ ->
+            Test.equal (unsubscribe "https://example.com/%3Ca%3E%2Cb" Nothing False)
+                (unsubscribe "https://example.com/<a>,b" Nothing False)
+        )
+    , Test.test "listUnsubscribe percent-encodes CR, LF and > in the mailto address"
+        (\_ ->
+            Test.equal (unsubscribe "" (Just "mailto:a@example.com%3E%0D%0ABcc:%20x") False)
+                (unsubscribe "" (Just "a@example.com>\r\nBcc: x") False)
+        )
+    , Test.test "listUnsubscribe trims the url"
+        (\_ ->
+            Test.equal (unsubscribe "https://example.com/u" Nothing True)
+                (unsubscribe "  https://example.com/u \n" Nothing True)
         )
 
       -- ── EmailProvider ADT — all four variants marshal their payload ──

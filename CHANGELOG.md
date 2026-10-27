@@ -1247,13 +1247,34 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   collision it guards used to arrive only through Provider's internal
   `Request` alias, which this release removed.
 
-## v0.27.18 - a patch held for an open `<select>` is never lost, every stdlib body is type-checked, a bare constructor with two meanings is `[E1017]` (2026-10-26)
+## v0.27.20 - `Std.Email` sends custom headers, including the one-click unsubscribe pair (2026-10-27)
+
+### ⚠ Breaking changes
+
+- **`EmailMessage` has a new field, `headers : List Header`.** A message built with `Email.defaultMessage` and the `with*` builders needs no change. A message written as a full record literal does not compile until it gains `, headers = []`.
+- **`Std.Email` now exports `header` and `withHeader`.** `header` is also exported by `Sky.Http.Server` and `Std.Html`, and `withHeader` by `Sky.Core.Http`, `Sky.Http.Server` and `Std.Csv`. A module that imports `Std.Email` and one of those with `exposing (..)` and uses the name bare now gets `[E1012]`. To migrate, qualify the name (`Email.header`, `Http.withHeader`), or narrow one of the `exposing` lists.
+
+### Added
+
+- **`Std.Email` sends custom headers** (#300). Gmail and Yahoo require bulk senders to send the RFC 2369 `List-Unsubscribe` header and the RFC 8058 `List-Unsubscribe-Post` header, and `EmailMessage` had no field for any header, so no Sky app could send them with any provider. A message now carries a list of `Header` values. `Header` is opaque, so a message can only hold a header that was valid when it was made:
+  - `Email.listUnsubscribe { url, mailto, oneClick }` is total. It makes `List-Unsubscribe: <url>` or `<url>, <mailto:addr>` (`mailto:` is added when it is absent) and, when `oneClick` is `True`, also `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, so the pair cannot be wrong. Each URL is trimmed, and a space, a control character (CR and LF included), `<`, `>`, `,`, `"` or a non-ASCII character in it is percent-encoded, so a URL can never add a header line.
+  - `Email.header name value : Result Error Header` returns an `InvalidInput` error for a CR, LF or NUL in the value, a name that is not an RFC 5322 field name, a name Std.Email sets itself (From, To, Cc, Bcc, Subject, Reply-To, Sender, Date, Message-ID, Content-Type, Content-Transfer-Encoding, MIME-Version) and the two unsubscribe names, which go through `listUnsubscribe`.
+  - `Email.withHeader` adds a header. A header with the same name (case-insensitive) replaces the earlier one, and a `listUnsubscribe` replaces an earlier one as a pair.
+  - Resend and SendGrid send a `headers` object. SMTP writes the headers into the MIME header block. SES uses the raw MIME path whenever a message has headers, as it does for attachments, so SES and SMTP send the same bytes. A non-ASCII value is RFC 2047 encoded for every provider. `Email.send` checks every header again before it sends, and a message with no headers sends byte-identical request bodies to v0.27.19. (`sky-stdlib/Std/Email.sky`, `runtime-go/rt/email_kernel.go`, `email_mime.go`, `email_header_test.go`, `tests/conformance/tests/EmailConformanceTest.sky`.)
+
+## v0.27.19 - a navigation no longer loses a concurrent update, a patch held for an open `<select>` is never lost, every stdlib body is type-checked, a bare constructor with two meanings is `[E1017]` (2026-10-26)
+
+v0.27.18 was tagged but never published: its release gate found the pre-existing navigation bug below. Every change v0.27.18 held ships in v0.27.19.
 
 ### Migration
 
 - **A bare `Error` after `import Sky.Config exposing (LogLevel(..))` is now a compile error, `[E1017]`.** `LogLevel` has a constructor named `Error`, which is also the name of the Prelude's `Error`. Write `Config.Error` for the log level, for example `Config.withLog Json Config.Error`. For the Prelude's `Error`, write `E.Error` after `import Sky.Core.Error as E`. A module that imports `LogLevel(..)` and uses only `Debug`, `Info` or `Warn` needs no change. The same applies to any constructor that an `exposing (T(..))` import binds over a different constructor from an `exposing (..)` import.
 
 ### Fixed
+
+- **A Sky.Live page navigation could overwrite an update that committed while it routed.** A page fetch on an existing session (a sky-nav link, Back / Forward, `Nav.pushUrl`) read the session's model without the session lock, ran the route and `onNavigate` on that copy, and then stored it. An update committed in between, such as a `Cmd.perform` result, a `Time.every` tick or a published message, was lost for good: the model, the page and every later diff kept the old value. An arm returning `Cmd.batch [ Cmd.perform … Saved, Nav.pushUrl "/about" ]` lost its `Saved` about one time in four. The bug is older than this release (v0.27.17 shows it at the same rate). The route and `onNavigate` now run under the session lock, on the model the session holds at that moment. (`runtime-go/rt/live.go` `handleInitial`, `live_nav_lost_update_test.go`.)
+
+- **A Sky.Live session-lost reload no longer aborts a navigation already in flight.** The Sky Console's "Sign out" link ends the console cookie, and the open console stream then ends with `auth-required` at once. The client reloaded while the browser was still following the sign-out's redirect to the login form, so the navigation was cut off and the page loaded twice. A page that has started to leave (`beforeunload`) now waits up to 5 s before such a reload, and reloads only if it is still there. (`runtime-go/rt/live_client_asset.go`, `live_js_lost_session_leaving_test.go`.)
 
 - **Sky.Spa, Sky.Live and the webview lost a patch held for an open `<select>`.** On a phone, a filter `<select>` keeps focus after the native picker closes. When a pick changed a sibling's tag, the diff patched the common parent, which contains the select. The open-select defence skipped that patch, but the client recorded the new tree as applied. The next diff ran against a tree the DOM never got, found no change, and the region stayed wrong until a reload. Sky.Spa now holds back only the patches that touch an open select, applies the rest, and records the tree the DOM really holds. The render after the select closes sends what was held. A select is not defended against its own pick. A held render logs one `[sky.spa] patches deferred` warning. A patch target missing from the DOM is no longer skipped: the nearest present ancestor is rebuilt. Sky.Live and the webview now hold skipped patches and SSE full bodies in order and apply them when the select closes. The webview asks for the current render again when a patch target is missing. (`runtime-go/rt/spa_select_defer.go`, `spa_select_wasm.go`, `select_hold_client.go`, `spa_select_defer_test.go`, `live_js_select_hold_test.go`, `webview_select_hold_test.go`, and a `/fsel` page in the spa-vdom-identity e2e.)
 

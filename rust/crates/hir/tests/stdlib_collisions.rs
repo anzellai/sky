@@ -47,6 +47,9 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     "value Options",
     "value defaultOptions",
     "value embed",
+    // v0.27.20: Std.Email.header (#300). Sky.Http.Server, Std.Html and the
+    // Server kernel already export `header`; the agreed design names it so.
+    "value header",
     // v0.27.12: Json.Decode.null / nullable / maybe (Elm). Json.Encode.null,
     // Std.Codec.maybe, Std.Config.nullable and Std.Db.Decode.nullable already
     // existed; see the v0.27.12 CHANGELOG.
@@ -59,6 +62,9 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     // v0.27.10: `Std.Image.trim` (crop away a uniform margin) shares its name
     // with `String.trim`; see the v0.27.10 CHANGELOG.
     "value trim",
+    // v0.27.20: Std.Email.withHeader (#300). Sky.Core.Http, Sky.Http.Server,
+    // Std.Csv and the Server kernel already export `withHeader`.
+    "value withHeader",
 ];
 
 /// Names a module NEW in this release shares with a module that existed

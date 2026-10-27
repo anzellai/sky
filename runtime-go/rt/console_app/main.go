@@ -517,6 +517,7 @@ type State_AiTrainingRun_R struct {
 	Relaunches     int                  `sky:"relaunches,int"`
 	ResumedFrom    int                  `sky:"resumedFrom,int"`
 	LastCheckpoint int                  `sky:"lastCheckpoint,int"`
+	PeakBytes      int                  `sky:"peakBytes,int"`
 	Message        string               `sky:"message,string"`
 	Registered     string               `sky:"registered,string"`
 	Losses         []float64            `sky:"losses,[]float64"`
@@ -529,8 +530,8 @@ type State_AiTrainingRun_R struct {
 
 func init() { rt.RegisterGobType(State_AiTrainingRun_R{}) }
 
-func State_AiTrainingRun(p0 string, p1 string, p2 string, p3 int, p4 int, p5 rt.SkyMaybe[float64], p6 rt.SkyMaybe[float64], p7 int, p8 int, p9 int, p10 string, p11 string, p12 []float64, p13 []float64, p14 string, p15 string, p16 string, p17 string) State_AiTrainingRun_R {
-	return State_AiTrainingRun_R{Run: p0, Status: p1, Backend: p2, Step: p3, TotalSteps: p4, Loss: p5, ValLoss: p6, Relaunches: p7, ResumedFrom: p8, LastCheckpoint: p9, Message: p10, Registered: p11, Losses: p12, ValLosses: p13, Cloud: p14, CloudState: p15, Spent: p16, Budget: p17}
+func State_AiTrainingRun(p0 string, p1 string, p2 string, p3 int, p4 int, p5 rt.SkyMaybe[float64], p6 rt.SkyMaybe[float64], p7 int, p8 int, p9 int, p10 int, p11 string, p12 string, p13 []float64, p14 []float64, p15 string, p16 string, p17 string, p18 string) State_AiTrainingRun_R {
+	return State_AiTrainingRun_R{Run: p0, Status: p1, Backend: p2, Step: p3, TotalSteps: p4, Loss: p5, ValLoss: p6, Relaunches: p7, ResumedFrom: p8, LastCheckpoint: p9, PeakBytes: p10, Message: p11, Registered: p12, Losses: p13, ValLosses: p14, Cloud: p15, CloudState: p16, Spent: p17, Budget: p18}
 }
 
 type State_AiVersion_R struct {
@@ -2936,6 +2937,12 @@ func AiTab_trainingRow(v_0 State_AiTrainingRun_R) Std_Ui_Element {
 			return ("backend " + v_0.Backend)
 		}
 	}()), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_htmlAttribute("data-ai-train-step", rt.String_fromIntT(v_0.Step))}, Std_Ui_text(AiTab_stepText(v_0)))}), Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12)}, []Std_Ui_Element{AiTab_muted(("loss " + AiTab_maybeLoss(v_0.Loss))), AiTab_muted(("eval loss " + AiTab_maybeLoss(v_0.ValLoss))), AiTab_muted(AiTab_relaunchText(v_0)), func() Std_Ui_Element {
+		if v_0.PeakBytes > 0 {
+			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_htmlAttribute("data-ai-train-peak", rt.String_fromIntT(v_0.PeakBytes))}, Std_Ui_text(("peak memory " + AiTab_bytesText(v_0.PeakBytes))))
+		} else {
+			return Std_Ui_none()
+		}
+	}(), func() Std_Ui_Element {
 		if v_0.Cloud == "" {
 			return Std_Ui_none()
 		} else {
@@ -3244,6 +3251,30 @@ func Std_Ui_paragraphMarker__cafInit() Std_Ui_Attribute {
 
 func Std_Ui_paragraphMarker() Std_Ui_Attribute {
 	return Std_Ui_paragraphMarker__caf.Get(Std_Ui_paragraphMarker__cafInit)
+}
+
+func AiTab_bytesText(v_0 int) string {
+	if v_0 >= 1000000000 {
+		return (AiTab_fixed(100, rt.DivF(rt.Basics_toFloatT(v_0), 1000000000.0)) + " GB")
+	} else {
+		return (AiTab_fixed(10, rt.DivF(rt.Basics_toFloatT(v_0), 1000000.0)) + " MB")
+	}
+}
+
+func AiTab_fixed(v_0 int, v_1 float64) string {
+	{
+		scaled_2 := /* FFI return */ rt.AsInt(rt.Math_round(rt.Mul(any(v_1), any(rt.Basics_toFloatT(v_0)))))
+		_ = scaled_2
+		width_3 := func() int {
+			if v_0 == 100 {
+				return 2
+			} else {
+				return 1
+			}
+		}()
+		_ = width_3
+		return ( /* FFI return */ rt.AsString(rt.String_fromInt(rt.IntDiv(any(scaled_2), any(v_0)))) + ("." + /* FFI return */ rt.AsString(rt.String_padLeft(any(width_3), any(rune(48)), any(rt.String_fromIntT(rt.Basics_modByT(v_0, scaled_2)))))))
+	}
 }
 
 func AiTab_relaunchText(v_0 State_AiTrainingRun_R) string {
@@ -9674,9 +9705,9 @@ func Main_aiReportLinkDecoder() any {
 var Main_aiTrainingDecoder__caf rt.LazyCaf[any]
 
 func Main_aiTrainingDecoder__cafInit() any {
-	return rt.JsonDecP_optional(any("budget"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("spent"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("cloudState"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("cloud"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("valLosses"), rt.JsonDec_list(Main_curvePoint()), any([]float64{}), rt.JsonDecP_optional(any("losses"), rt.JsonDec_list(Main_curvePoint()), any([]float64{}), rt.JsonDecP_optional(any("registered"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("message"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("lastCheckpoint"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("resumedFrom"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("relaunches"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("valLoss"), rt.JsonDec_map(any(func(_p0 any) any { return any(rt.Just[float64]( /* FFI return */ rt.AsFloat(_p0))) }), rt.JsonDec_float()), any(rt.Nothing[float64]()), rt.JsonDecP_optional(any("loss"), rt.JsonDec_map(any(func(_p1 any) any { return any(rt.Just[float64]( /* FFI return */ rt.AsFloat(_p1))) }), rt.JsonDec_float()), any(rt.Nothing[float64]()), rt.JsonDecP_optional(any("totalSteps"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("step"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("backend"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("status"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("run"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(rt.CurryN(18, func(_ps2 []any) any {
-		return any(State_AiTrainingRun( /* FFI return */ rt.AsString(_ps2[0]) /* FFI return */, rt.AsString(_ps2[1]) /* FFI return */, rt.AsString(_ps2[2]) /* FFI return */, rt.AsInt(_ps2[3]) /* FFI return */, rt.AsInt(_ps2[4]) /* FFI return */, rt.MaybeCoerce[float64](_ps2[5]) /* FFI return */, rt.MaybeCoerce[float64](_ps2[6]) /* FFI return */, rt.AsInt(_ps2[7]) /* FFI return */, rt.AsInt(_ps2[8]) /* FFI return */, rt.AsInt(_ps2[9]) /* FFI return */, rt.AsString(_ps2[10]) /* FFI return */, rt.AsString(_ps2[11]) /* FFI return */, rt.AsListT[float64](_ps2[12]) /* FFI return */, rt.AsListT[float64](_ps2[13]) /* FFI return */, rt.AsString(_ps2[14]) /* FFI return */, rt.AsString(_ps2[15]) /* FFI return */, rt.AsString(_ps2[16]) /* FFI return */, rt.AsString(_ps2[17])))
-	})))))))))))))))))))))
+	return rt.JsonDecP_optional(any("budget"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("spent"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("cloudState"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("cloud"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("valLosses"), rt.JsonDec_list(Main_curvePoint()), any([]float64{}), rt.JsonDecP_optional(any("losses"), rt.JsonDec_list(Main_curvePoint()), any([]float64{}), rt.JsonDecP_optional(any("registered"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("message"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("peakBytes"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("lastCheckpoint"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("resumedFrom"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("relaunches"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("valLoss"), rt.JsonDec_map(any(func(_p0 any) any { return any(rt.Just[float64]( /* FFI return */ rt.AsFloat(_p0))) }), rt.JsonDec_float()), any(rt.Nothing[float64]()), rt.JsonDecP_optional(any("loss"), rt.JsonDec_map(any(func(_p1 any) any { return any(rt.Just[float64]( /* FFI return */ rt.AsFloat(_p1))) }), rt.JsonDec_float()), any(rt.Nothing[float64]()), rt.JsonDecP_optional(any("totalSteps"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("step"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("backend"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("status"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("run"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(rt.CurryN(19, func(_ps2 []any) any {
+		return any(State_AiTrainingRun( /* FFI return */ rt.AsString(_ps2[0]) /* FFI return */, rt.AsString(_ps2[1]) /* FFI return */, rt.AsString(_ps2[2]) /* FFI return */, rt.AsInt(_ps2[3]) /* FFI return */, rt.AsInt(_ps2[4]) /* FFI return */, rt.MaybeCoerce[float64](_ps2[5]) /* FFI return */, rt.MaybeCoerce[float64](_ps2[6]) /* FFI return */, rt.AsInt(_ps2[7]) /* FFI return */, rt.AsInt(_ps2[8]) /* FFI return */, rt.AsInt(_ps2[9]) /* FFI return */, rt.AsInt(_ps2[10]) /* FFI return */, rt.AsString(_ps2[11]) /* FFI return */, rt.AsString(_ps2[12]) /* FFI return */, rt.AsListT[float64](_ps2[13]) /* FFI return */, rt.AsListT[float64](_ps2[14]) /* FFI return */, rt.AsString(_ps2[15]) /* FFI return */, rt.AsString(_ps2[16]) /* FFI return */, rt.AsString(_ps2[17]) /* FFI return */, rt.AsString(_ps2[18])))
+	}))))))))))))))))))))))
 }
 
 func Main_aiTrainingDecoder() any {
