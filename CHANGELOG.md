@@ -11,6 +11,21 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.27.20 - `Std.Email` sends custom headers, including the one-click unsubscribe pair (2026-10-27)
+
+### ⚠ Breaking changes
+
+- **`EmailMessage` has a new field, `headers : List Header`.** A message built with `Email.defaultMessage` and the `with*` builders needs no change. A message written as a full record literal does not compile until it gains `, headers = []`.
+- **`Std.Email` now exports `header` and `withHeader`.** `header` is also exported by `Sky.Http.Server` and `Std.Html`, and `withHeader` by `Sky.Core.Http`, `Sky.Http.Server` and `Std.Csv`. A module that imports `Std.Email` and one of those with `exposing (..)` and uses the name bare now gets `[E1012]`. To migrate, qualify the name (`Email.header`, `Http.withHeader`), or narrow one of the `exposing` lists.
+
+### Added
+
+- **`Std.Email` sends custom headers** (#300). Gmail and Yahoo require bulk senders to send the RFC 2369 `List-Unsubscribe` header and the RFC 8058 `List-Unsubscribe-Post` header, and `EmailMessage` had no field for any header, so no Sky app could send them with any provider. A message now carries a list of `Header` values. `Header` is opaque, so a message can only hold a header that was valid when it was made:
+  - `Email.listUnsubscribe { url, mailto, oneClick }` is total. It makes `List-Unsubscribe: <url>` or `<url>, <mailto:addr>` (`mailto:` is added when it is absent) and, when `oneClick` is `True`, also `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, so the pair cannot be wrong. Each URL is trimmed, and a space, a control character (CR and LF included), `<`, `>`, `,`, `"` or a non-ASCII character in it is percent-encoded, so a URL can never add a header line.
+  - `Email.header name value : Result Error Header` returns an `InvalidInput` error for a CR, LF or NUL in the value, a name that is not an RFC 5322 field name, a name Std.Email sets itself (From, To, Cc, Bcc, Subject, Reply-To, Sender, Date, Message-ID, Content-Type, Content-Transfer-Encoding, MIME-Version) and the two unsubscribe names, which go through `listUnsubscribe`.
+  - `Email.withHeader` adds a header. A header with the same name (case-insensitive) replaces the earlier one, and a `listUnsubscribe` replaces an earlier one as a pair.
+  - Resend and SendGrid send a `headers` object. SMTP writes the headers into the MIME header block. SES uses the raw MIME path whenever a message has headers, as it does for attachments, so SES and SMTP send the same bytes. A non-ASCII value is RFC 2047 encoded for every provider. `Email.send` checks every header again before it sends, and a message with no headers sends byte-identical request bodies to v0.27.19. (`sky-stdlib/Std/Email.sky`, `runtime-go/rt/email_kernel.go`, `email_mime.go`, `email_header_test.go`, `tests/conformance/tests/EmailConformanceTest.sky`.)
+
 ## v0.27.19 - a navigation no longer loses a concurrent update, a patch held for an open `<select>` is never lost, every stdlib body is type-checked, a bare constructor with two meanings is `[E1017]` (2026-10-26)
 
 v0.27.18 was tagged but never published: its release gate found the pre-existing navigation bug below. Every change v0.27.18 held ships in v0.27.19.

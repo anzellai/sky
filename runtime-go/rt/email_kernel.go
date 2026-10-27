@@ -45,6 +45,9 @@ func Email_send(providerArg, msgArg any) any {
 		if len(msg.To) == 0 {
 			return Err[any, any](ErrInvalidInput("email.send: at least one recipient required"))
 		}
+		if problem := checkEmailHeaders(msg.Headers); problem != "" {
+			return Err[any, any](ErrInvalidInput("email.send: " + problem))
+		}
 
 		// Provider is a Sky ADT — Resend/Ses/SendGrid/Smtp.
 		tag, args := readEmailProvider(providerArg)
@@ -68,10 +71,95 @@ type emailMsg struct {
 	From, Subject, TextBody, HtmlBody, ReplyTo string
 	To, Cc, Bcc                                []string
 	Attachments                                []emailAttachment
+	// Headers is every custom header field, in the order the message's
+	// `headers : List Header` lists them, flattened out of their groups.
+	Headers []emailHeader
 }
 
 type emailAttachment struct {
 	Filename, MimeType, Content string
+}
+
+// emailHeader is one custom header field. On the Sky side a `Header` is the
+// opaque ADT `HeaderGroup keys [HeaderField name value]`, built only by `Email.header` (which
+// validates) or `Email.listUnsubscribe` (which is total and sanitises), so a
+// message cannot hold an unsafe header. [checkEmailHeaders] checks again here.
+type emailHeader struct {
+	Name, Value string
+}
+
+// readEmailHeaders flattens `headers : List Header` into its fields. A message
+// built before the field existed (a record with no `headers`) reads as none.
+func readEmailHeaders(v any) []emailHeader {
+	var out []emailHeader
+	for _, h := range AsList(v) {
+		_, fields := reflectExtractCtor(h)
+		if len(fields) < 2 {
+			continue
+		}
+		// Each field is `HeaderField name value`.
+		for _, f := range AsList(fields[1]) {
+			_, nv := reflectExtractCtor(f)
+			out = append(out, emailHeader{Name: strOf(nv, 0), Value: strOf(nv, 1)})
+		}
+	}
+	return out
+}
+
+// emailCoreHeaders are the fields Std.Email writes itself. A custom header may
+// never set one: a second `Bcc` or `From` would change who receives the mail
+// or who it claims to come from. (`List-Unsubscribe` and
+// `List-Unsubscribe-Post` are refused by `Email.header` too, but only so that
+// they go through `Email.listUnsubscribe`, which builds them; they are allowed
+// here.)
+var emailCoreHeaders = map[string]bool{
+	"from": true, "to": true, "cc": true, "bcc": true, "subject": true,
+	"reply-to": true, "sender": true, "date": true, "message-id": true,
+	"content-type": true, "content-transfer-encoding": true, "mime-version": true,
+}
+
+// emailFieldName reports whether s is an RFC 5322 field name: one or more
+// printable ASCII characters (33 to 126) other than ':'.
+func emailFieldName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c < 33 || c > 126 || c == ':' {
+			return false
+		}
+	}
+	return true
+}
+
+// checkEmailHeaders returns "" when every header is safe to send, or a message
+// naming the first one that is not. It is the run-time half of the guarantee
+// `Email.header` gives at construction: a Header that reached the kernel some
+// other way still cannot inject a header line or override a core field.
+func checkEmailHeaders(hs []emailHeader) string {
+	for _, h := range hs {
+		if !emailFieldName(h.Name) {
+			return fmt.Sprintf("header name %q is not an RFC 5322 field name", h.Name)
+		}
+		if emailCoreHeaders[strings.ToLower(h.Name)] {
+			return "header " + h.Name + " is set by Std.Email itself and cannot be a custom header"
+		}
+		if strings.ContainsAny(h.Value, "\r\n\x00") {
+			return "header " + h.Name + " has a CR, LF or NUL in its value"
+		}
+	}
+	return ""
+}
+
+// emailHeadersJSON is the `headers` object of the HTTP providers. Values are
+// RFC 2047 encoded exactly as the MIME path writes them, so every provider
+// sends the same header text.
+func emailHeadersJSON(hs []emailHeader) map[string]string {
+	out := make(map[string]string, len(hs))
+	for _, h := range hs {
+		out[h.Name] = emailHeaderValue(h.Value)
+	}
+	return out
 }
 
 func readEmailMessage(arg any) emailMsg {
@@ -85,6 +173,7 @@ func readEmailMessage(arg any) emailMsg {
 		Cc:          asStringList(recordField(arg, "Cc", "cc")),
 		Bcc:         asStringList(recordField(arg, "Bcc", "bcc")),
 		Attachments: readAttachments(recordField(arg, "Attachments", "attachments")),
+		Headers:     readEmailHeaders(recordField(arg, "Headers", "headers")),
 	}
 }
 
@@ -228,6 +317,9 @@ func sendResend(apiKey string, m emailMsg) any {
 		// takes no `disposition`.
 		body["attachments"] = emailAttachmentsJSON(m.Attachments, "content_type", "")
 	}
+	if len(m.Headers) > 0 {
+		body["headers"] = emailHeadersJSON(m.Headers)
+	}
 	resp, err := emailDoJSON("POST", emailEndpoint("resend", "https://api.resend.com/emails"),
 		map[string]string{
 			"Authorization": "Bearer " + apiKey,
@@ -282,6 +374,10 @@ func sendSendGrid(apiKey string, m emailMsg) any {
 		// the MIME type under `type`, and an explicit `disposition`.
 		body["attachments"] = emailAttachmentsJSON(m.Attachments, "type", "attachment")
 	}
+	if len(m.Headers) > 0 {
+		// SendGrid v3 takes custom headers as a top-level `headers` object.
+		body["headers"] = emailHeadersJSON(m.Headers)
+	}
 	_, err := emailDoJSON("POST", emailEndpoint("sendgrid", "https://api.sendgrid.com/v3/mail/send"),
 		map[string]string{
 			"Authorization": "Bearer " + apiKey,
@@ -317,11 +413,12 @@ func sendSes(cfgArg any, m emailMsg) any {
 			"ToAddresses": m.To,
 		},
 	}
-	if len(m.Attachments) > 0 {
+	if len(m.Attachments) > 0 || len(m.Headers) > 0 {
 		// SES v2's `Content.Simple` has no attachment field, so this used to
 		// drop every attachment silently. `Content.Raw` takes a base64 MIME
 		// message — the SAME bytes SMTP sends, so the two transports cannot
-		// drift apart in what they carry.
+		// drift apart in what they carry. `Content.Simple` has no general
+		// custom-header field either, so a message with headers goes Raw too.
 		body["Content"] = map[string]any{
 			"Raw": map[string]any{
 				"Data": base64.StdEncoding.EncodeToString(buildEmailMIME(m)),
