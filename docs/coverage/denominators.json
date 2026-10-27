@@ -9,11 +9,11 @@
   "removals_accounted": 77,
   "stdlib": {
     "_source": "api/symbols.json, via project::render_doc_site_export (the `sky doc --export` code path)",
-    "entries": 2237,
+    "entries": 2241,
     "explicit_exposing": {
-      "entries": 2036,
+      "entries": 2040,
       "modules": 109,
-      "unfiltered_entries": 2572
+      "unfiltered_entries": 2585
     },
     "exposing_all": {
       "_note": "modules whose header is `exposing (..)`: no public-API curation exists, so their filtered count IS their unfiltered count — every top-level declaration, including helpers never intended as API. Migrating these to explicit `exposing` lists is a tracked task.",
@@ -27,32 +27,32 @@
       "modules": 4
     },
     "modules": 113,
-    "types": 219,
+    "types": 220,
     "unfiltered": {
       "_note": "every top-level declaration, ignoring `exposing` lists. NEVER average these with the filtered counts — they answer a different question.",
-      "entries": 2773,
-      "hidden_by_exposing": 536,
-      "types": 247,
-      "values": 2526
+      "entries": 2786,
+      "hidden_by_exposing": 545,
+      "types": 249,
+      "values": 2537
     },
-    "values": 2018
+    "values": 2021
   },
   "tests": {
     "_note": "a CASE is one `Test.test` leaf. An ASSERTION is one call to Test.{equal,notEqual,ok,err,expectErrorKind,isTrue,isFalse,fail}. `Test.pass` is VACUOUS and excluded from `assertions`; `assertion_calls_incl_pass` is the looser reading, reported so the two are never confused.",
     "conformance": {
-      "assertion_calls_incl_pass": 1532,
-      "assertions": 1525,
+      "assertion_calls_incl_pass": 1564,
+      "assertions": 1557,
       "by_assertion_fn": {
-        "equal": 1120,
+        "equal": 1140,
         "err": 126,
-        "expectErrorKind": 35,
+        "expectErrorKind": 47,
         "fail": 48,
         "isFalse": 48,
         "isTrue": 109,
         "notEqual": 24,
         "ok": 15
       },
-      "cases": 1531,
+      "cases": 1563,
       "vacuous_pass": 7
     },
     "examples": {

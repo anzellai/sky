@@ -27,9 +27,24 @@
 --
 --     Email.send provider msg
 --         |> Task.run
+--
+-- Custom headers (v0.27.20): a message carries a list of opaque
+-- `Header` values. Build one with `listUnsubscribe` (the RFC 2369 /
+-- RFC 8058 pair that Gmail and Yahoo require from bulk senders) or
+-- with `header` (any other field, validated), and add it with
+-- `withHeader`:
+--
+--     msg
+--         |> Email.withHeader
+--             (Email.listUnsubscribe
+--                 { url = "https://example.com/unsubscribe/abc123"
+--                 , mailto = Just "unsubscribe@example.com"
+--                 , oneClick = True
+--                 })
 module Std.Email exposing
     ( EmailMessage
     , Attachment
+    , Header
     , EmailProvider(..)
     , SesConfig
     , SmtpConfig
@@ -50,11 +65,19 @@ module Std.Email exposing
     , withHtmlBody
     , withAttachment
     , withReplyTo
+    , header
+    , listUnsubscribe
+    , withHeader
     , send
     )
 
+import Sky.Core.Prelude exposing (..)
 import Sky.Ffi as Ffi
-import Sky.Core.Error exposing (Error)
+import Sky.Core.Char as Char
+import Sky.Core.Encoding as Encoding
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
 
 -- `Attachment.content` carries arbitrary bytes; we type it as
 -- `String` so callers can pass `File.readFileBytes` output
@@ -74,7 +97,23 @@ type alias EmailMessage =
     , htmlBody : String
     , attachments : List Attachment
     , replyTo : String
+    , headers : List Header
     }
+
+-- | A custom header for an `EmailMessage`.
+--
+-- Opaque: the only ways to make one are `header` (which refuses an
+-- unsafe name or value) and `listUnsubscribe` (which is total), so a
+-- message can only hold a header that was valid when it was made.
+-- Add it with `withHeader`.
+type Header
+    = HeaderGroup (List String) (List HeaderField)
+
+-- One `Name: value` line of a `Header`. A `Header` holds a group of
+-- them (`listUnsubscribe` makes two) plus the lower-case names it
+-- governs, which is what `withHeader` replaces by.
+type HeaderField
+    = HeaderField String String
 
 -- | A file attachment.  `content` carries the raw bytes — type is
 -- `String` (Sky.Core.Bytes alias).
@@ -123,6 +162,7 @@ defaultMessage core =
     , htmlBody = ""
     , attachments = []
     , replyTo = ""
+    , headers = []
     }
 
 
@@ -167,6 +207,212 @@ withAttachment att msg =
 withReplyTo : String -> EmailMessage -> EmailMessage
 withReplyTo addr msg =
     { msg | replyTo = addr }
+
+
+-- | `header "X-Campaign" "spring-sale"` — a custom header.
+--
+-- Returns `Err` (an `InvalidInput` error) when:
+--
+--   * the name is not an RFC 5322 field name: it must be one or more
+--     printable ASCII characters (33 to 126), with no space and no `:`;
+--   * the name is one Std.Email sets itself (case-insensitive): From,
+--     To, Cc, Bcc, Subject, Reply-To, Sender, Date, Message-ID,
+--     Content-Type, Content-Transfer-Encoding, MIME-Version. Use the
+--     matching field or builder instead;
+--   * the name is List-Unsubscribe or List-Unsubscribe-Post. Use
+--     `listUnsubscribe`, which builds the pair correctly;
+--   * the value contains a CR, an LF or a NUL. A line break in a value
+--     would start a new header, so `"x\r\nBcc: a@b.c"` is refused.
+--
+-- A value outside ASCII is allowed. It is sent RFC 2047 encoded.
+header : String -> String -> Result Error Header
+header name value =
+    if not (isFieldName name) then
+        Err
+            (Error.invalidInput
+                "Email.header: the name must be printable ASCII with no space and no ':'")
+
+    else if List.member (String.toLower name) reservedHeaderNames then
+        Err
+            (Error.invalidInput
+                ("Email.header: " ++ name
+                    ++ " cannot be a custom header (Std.Email sets it, or listUnsubscribe builds it)"))
+
+    else if hasBreakingChar value then
+        Err
+            (Error.invalidInput
+                ("Email.header: the value of " ++ name
+                    ++ " contains a CR, LF or NUL"))
+
+    else
+        Ok (HeaderGroup [ String.toLower name ] [ HeaderField name value ])
+
+
+-- | `listUnsubscribe { url, mailto, oneClick }` — the unsubscribe
+-- headers of RFC 2369 and RFC 8058.
+--
+-- Makes `List-Unsubscribe: <url>`, or `<url>, <mailto:addr>` when
+-- `mailto` is `Just addr` (`mailto:` is added when `addr` does not
+-- start with it). When `oneClick` is `True` it also makes
+-- `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, so the pair
+-- cannot be wrong. For one-click to count, `url` must be an `https`
+-- URL that accepts a POST.
+--
+-- Total, and never injects a header: each URL is trimmed, and then
+-- every space, control character (CR and LF included), `<`, `>`, `,`,
+-- `"` and non-ASCII character in it is percent-encoded (UTF-8). An
+-- empty `url` is left out of the list, and then no Post header is
+-- made. If both are empty the header is empty, and it still replaces
+-- an earlier `listUnsubscribe`.
+listUnsubscribe : { url : String
+, mailto : Maybe String
+, oneClick : Bool
+} -> Header
+listUnsubscribe opts =
+    let
+        url = uriText opts.url
+        mailto =
+            case opts.mailto of
+
+                Just addr ->
+                    mailtoUri (uriText addr)
+
+                Nothing ->
+                    ""
+        entries = List.filter (\e -> not (String.isEmpty e)) [ url, mailto ]
+        listField =
+            if List.isEmpty entries then
+                []
+
+            else
+                [ HeaderField
+                      "List-Unsubscribe"
+                      (String.join
+                          ", "
+                          (List.map (\e -> "<" ++ e ++ ">") entries))
+                ]
+        postField =
+            if opts.oneClick && not (String.isEmpty url) then
+                [ HeaderField
+                      "List-Unsubscribe-Post"
+                      "List-Unsubscribe=One-Click"
+                ]
+
+            else
+                []
+    in
+        HeaderGroup
+            [ "list-unsubscribe", "list-unsubscribe-post" ]
+            (listField ++ postField)
+
+
+-- | `withHeader h msg` — add a custom header.
+--
+-- A header with the same name as one already on the message
+-- (case-insensitive) replaces it, so the last call wins. A
+-- `listUnsubscribe` header replaces an earlier one as a pair, so a
+-- stale `List-Unsubscribe-Post` never outlives its URL.
+-- `defaultMessage` starts with no custom headers.
+withHeader : Header -> EmailMessage -> EmailMessage
+withHeader h msg =
+    let
+        keys = headerKeys h
+        overlaps other =
+            List.any (\k -> List.member k keys) (headerKeys other)
+    in
+        { msg
+            | headers =
+                List.filter (\other -> not (overlaps other)) msg.headers
+                    ++ [ h ]
+        }
+
+
+headerKeys : Header -> List String
+headerKeys h =
+    case h of
+
+        HeaderGroup keys _ ->
+            keys
+
+
+-- The lower-case names `header` refuses.
+reservedHeaderNames : List String
+reservedHeaderNames =
+    [ "from"
+    , "to"
+    , "cc"
+    , "bcc"
+    , "subject"
+    , "reply-to"
+    , "sender"
+    , "date"
+    , "message-id"
+    , "content-type"
+    , "content-transfer-encoding"
+    , "mime-version"
+    , "list-unsubscribe"
+    , "list-unsubscribe-post"
+    ]
+
+
+-- An RFC 5322 field name: one or more of the characters 33 to 126
+-- except ':' (58).
+isFieldName : String -> Bool
+isFieldName name =
+    not (String.isEmpty name) && List.all isFieldNameChar (String.toList name)
+
+
+isFieldNameChar : Char -> Bool
+isFieldNameChar c =
+    let
+        n = Char.toCode c
+    in
+        n >= 33 && n <= 126 && n /= 58
+
+
+-- CR (13), LF (10) or NUL (0) anywhere in a value.
+hasBreakingChar : String -> Bool
+hasBreakingChar value =
+    List.any
+        (\c ->
+            let
+                n = Char.toCode c
+            in
+                n == 13 || n == 10 || n == 0)
+        (String.toList value)
+
+
+-- A URL made safe to place between `<` and `>` in a header.
+uriText : String -> String
+uriText raw =
+    String.concat (List.map uriChar (String.toList (String.trim raw)))
+
+
+uriChar : Char -> String
+uriChar c =
+    let
+        n = Char.toCode c
+    in
+        if n == 32 then
+            "%20"
+
+        else if n < 32 || n >= 127 || n == 60 || n == 62 || n == 44 || n == 34 then
+            Encoding.urlEncode (String.fromChar c)
+
+        else
+            String.fromChar c
+
+
+mailtoUri : String -> String
+mailtoUri addr =
+    if String.isEmpty addr then
+        ""
+
+    else if String.toLower (String.left 7 addr) == "mailto:" then
+        addr
+
+    else
+        "mailto:" ++ addr
 
 
 -- | `defaultAttachment "report.pdf"` — Attachment named with empty

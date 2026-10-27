@@ -1504,6 +1504,40 @@ An attachment with no `mimeType` goes out as `application/octet-stream`. A
 message carrying BOTH `withTextBody` and `withHtmlBody` is sent as
 `multipart/alternative` — both bodies reach the recipient, and the client picks.
 
+**Custom headers** (v0.27.20). A message carries `headers : List Header`, and
+`Header` is opaque, so a message can only hold a header that was valid when it
+was made. `defaultMessage` starts with none.
+
+```elm
+msg
+    |> Email.withHeader
+        (Email.listUnsubscribe
+            { url = "https://example.com/unsubscribe/abc123"
+            , mailto = Just "unsubscribe@example.com"
+            , oneClick = True
+            })
+```
+
+- `listUnsubscribe { url, mailto, oneClick }` is total. It makes
+  `List-Unsubscribe: <url>, <mailto:addr>` (`mailto:` is added when absent; an
+  empty `url` or a `Nothing` mailto is left out) and, when `oneClick` is `True`,
+  also `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058; the URL
+  must be `https` and accept a POST). Each URL is trimmed, and a space, a
+  control character (CR and LF included), `<`, `>`, `,`, `"` or a non-ASCII
+  character in it is percent-encoded, so it can never add a header line.
+- `header name value : Result Error Header` returns an `InvalidInput` error for
+  a CR, LF or NUL in the value, a name that is not an RFC 5322 field name
+  (printable ASCII, no space, no `:`), a name Std.Email sets itself (From, To,
+  Cc, Bcc, Subject, Reply-To, Sender, Date, Message-ID, Content-Type,
+  Content-Transfer-Encoding, MIME-Version), and `List-Unsubscribe` /
+  `List-Unsubscribe-Post` (use `listUnsubscribe`).
+- `withHeader` adds a header. The same name again (case-insensitive) replaces
+  the earlier header, and a `listUnsubscribe` replaces an earlier one as a pair.
+
+Resend and SendGrid send a `headers` object, SMTP writes the MIME header block,
+and SES switches to its raw MIME path whenever a message has headers (as for
+attachments). A non-ASCII value is RFC 2047 encoded for every provider.
+
 ### `Std.Compression` — gzip + zstd
 
 ```elm

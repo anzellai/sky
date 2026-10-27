@@ -104,6 +104,13 @@ func buildEmailMIME(m emailMsg) []byte {
 	writeHeader("Cc", emailAddressHeader(m.Cc))
 	writeHeader("Reply-To", emailAddressHeader([]string{m.ReplyTo}))
 	writeHeader("Subject", emailHeaderValue(m.Subject))
+	// Custom headers (`Email.withHeader`), after the addressing fields and
+	// before the MIME fields. `checkEmailHeaders` has already refused a CR/LF
+	// and every core name; the value still goes through emailHeaderValue so a
+	// non-ASCII value is RFC 2047 encoded.
+	for _, h := range m.Headers {
+		writeHeader(h.Name, emailHeaderValue(h.Value))
+	}
 	b.WriteString("MIME-Version: 1.0\r\n")
 
 	bodyParts := emailBodyParts(m)
