@@ -13,9 +13,10 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## v0.27.20 - `Std.Email` sends custom headers, including the one-click unsubscribe pair (2026-10-27)
 
-### Migration
+### ⚠ Breaking changes
 
 - **`EmailMessage` has a new field, `headers : List Header`.** A message built with `Email.defaultMessage` and the `with*` builders needs no change. A message written as a full record literal does not compile until it gains `, headers = []`.
+- **`Std.Email` now exports `header` and `withHeader`.** `header` is also exported by `Sky.Http.Server` and `Std.Html`, and `withHeader` by `Sky.Core.Http`, `Sky.Http.Server` and `Std.Csv`. A module that imports `Std.Email` and one of those with `exposing (..)` and uses the name bare now gets `[E1012]`. To migrate, qualify the name (`Email.header`, `Http.withHeader`), or narrow one of the `exposing` lists.
 
 ### Added
 

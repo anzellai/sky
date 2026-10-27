@@ -43,6 +43,9 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     "type Step",
     "value address",
     "value close",
+    // v0.27.20: Std.Email.header (#300). Sky.Http.Server, Std.Html and the
+    // Server kernel already export `header`; the agreed design names it so.
+    "value header",
     "value island",
     "value maybe",
     "value null",
@@ -61,6 +64,9 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     "value value",
     "value withClientCrypto",
     "value withEmbedded",
+    // v0.27.20: Std.Email.withHeader (#300). Sky.Core.Http, Sky.Http.Server,
+    // Std.Csv and the Server kernel already export `withHeader`.
+    "value withHeader",
     "value withName",
     "value withSessionTransport",
 ];

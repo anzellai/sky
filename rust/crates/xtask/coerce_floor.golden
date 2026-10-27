@@ -208,6 +208,16 @@
 #   instead of `rt.Coerce` to an unrelated stdlib alias (`Std.Durable.ResultRow`,
 #   `Std.Ai.Provider.RawChoice`); ledger's `addAccount` form parameter is now
 #   `any` because another nominal collects the same three fields and more.
+# ── Recorded transition, 2026-10-27 — v0.27.20: Std.Email custom headers ──
+#   narrow  apps/dispatch 399 -> 400 (+1); adapter and dispatch unchanged (0);
+#   no other row moved. Cause (2), a STDLIB source change: `EmailMessage`
+#   gained `headers : List Header` (#300), and `defaultMessage` sets it to `[]`.
+#   The one new token is that empty list literal narrowed into the typed record
+#   slot, `/* primitive join */ rt.AsListT[Std_Email_Header]([]any{})` in
+#   `Std_Email_defaultMessage` (doc 14 R1, `coerce_if_needed`, PrimitiveJoin),
+#   the same narrowing the sibling `cc`, `bcc` and `attachments` fields already
+#   pay in the same expression. The new header functions are not reachable from
+#   the app, so DCE drops them. Only apps/dispatch imports Std.Email.
 00-standard-libs	adapter=0	dispatch=0	narrow=164
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=8
@@ -269,7 +279,7 @@
 65-metadata-service	adapter=0	dispatch=0	narrow=26
 66-slack-agent	adapter=0	dispatch=0	narrow=142
 67-durable-counter	adapter=0	dispatch=0	narrow=77
-apps/dispatch	adapter=0	dispatch=0	narrow=399
+apps/dispatch	adapter=0	dispatch=0	narrow=400
 apps/fieldbook	adapter=0	dispatch=0	narrow=657
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
 apps/ledger	adapter=0	dispatch=0	narrow=497
