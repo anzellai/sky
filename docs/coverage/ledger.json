@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1545,
+      "expected_assertions": 1577,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -946,7 +946,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2957,
+    "stdlib_entries": 2961,
     "stdlib_modules": 127,
     "surfaces_covered": 185,
     "surfaces_covered_pct": 94.9,
@@ -23449,8 +23449,8 @@
       "id": "tests/conformance",
       "modules_imported": 56,
       "path": "tests/conformance",
-      "refs_generous": 768,
-      "refs_qualified": 751,
+      "refs_generous": 772,
+      "refs_qualified": 755,
       "role": "Conformance",
       "sky_files": 45,
       "sky_toml_sections": []
