@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1638,
+      "expected_assertions": 1664,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -795,7 +795,7 @@
       "tier": "T2"
     },
     "stdlib-bodies": {
-      "expected_assertions": 127,
+      "expected_assertions": 128,
       "falsifier_mutation": "stdlib-bodies.record-missing-field",
       "falsifier_proven": true,
       "summary": "every sky-stdlib module body type-checks (a build trusts stdlib signatures)",
@@ -870,6 +870,12 @@
       "Std.Ui.Transition": "examples/26-ui-showcase"
     },
     "stdlib_modules_repo_wide": {
+      "Sky.Core.Array": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
       "Sky.Core.Set": {
         "path": "tests/conformance",
         "units": [
@@ -940,13 +946,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2976,
-    "stdlib_modules": 127,
-    "surfaces_covered": 185,
+    "stdlib_entries": 2998,
+    "stdlib_modules": 128,
+    "surfaces_covered": 186,
     "surfaces_covered_pct": 94.9,
     "surfaces_equal": 15,
-    "surfaces_stronger": 180,
-    "surfaces_total": 195,
+    "surfaces_stronger": 181,
+    "surfaces_total": 196,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -3125,6 +3131,34 @@
       },
       "description": "the Sky.Config public API",
       "id": "stdlib.Sky.Config",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Sky.Core.Array public API",
+      "id": "stdlib.Sky.Core.Array",
       "verdict": "stronger"
     },
     {
@@ -19995,7 +20029,7 @@
         }
       },
       "count": 822,
-      "pct_of_denominator": 27.6
+      "pct_of_denominator": 27.4
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -20018,6 +20052,12 @@
             "withTelemetryDbCapacity",
             "withTelemetryHistogramWindow",
             "withTelemetrySynchronousCommit"
+          ]
+        },
+        "Sky.Core.Array": {
+          "count": 1,
+          "symbols": [
+            "Array"
           ]
         },
         "Sky.Core.Basics": {
@@ -21432,8 +21472,8 @@
           ]
         }
       },
-      "count": 927,
-      "pct_of_denominator": 31.1
+      "count": 928,
+      "pct_of_denominator": 31.0
     }
   },
   "units": [
@@ -23455,12 +23495,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 57,
+      "modules_imported": 58,
       "path": "tests/conformance",
-      "refs_generous": 790,
-      "refs_qualified": 772,
+      "refs_generous": 815,
+      "refs_qualified": 796,
       "role": "Conformance",
-      "sky_files": 48,
+      "sky_files": 50,
       "sky_toml_sections": []
     }
   ]

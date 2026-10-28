@@ -803,6 +803,10 @@ static CI_SURFACES: &[(&str, &[&str])] = &[
     ("xtask:sky-fmt-check", &["compiler.fmt"]),
     ("xtask:repro", &["compiler.codegen-determinism"]),
     ("xtask:coerce-floor", &["compiler.coerce-floor"]),
+    // The collection performance gate (tests/perf): growth ratio and
+    // allocations per element of List / Dict / String programs. It measures
+    // cost, not behaviour, so it claims no product surface.
+    ("xtask:perf-gate", &[]),
     ("xtask:fuzz", &["compiler.fuzz"]),
     ("xtask:welltyped", &["compiler.fuzz"]),
     // The erasure-boundary soundness fuzzer (type-check ⟹ go build ⟹ no panic

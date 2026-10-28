@@ -277,6 +277,8 @@ any pred list =
                 any pred rest
 
 
+-- | `all pred xs` — `True` when every element passes `pred` (`True` for `[]`).
+--
 -- Cost: O(n), stops at the first failure.
 all pred list =
     case list of
@@ -292,6 +294,8 @@ all pred list =
                 False
 
 
+-- | `find pred xs` — the first element that passes `pred`, or `Nothing`.
+--
 -- Cost: O(n), stops at the first match.
 find pred list =
     case list of
@@ -344,6 +348,8 @@ length =
     Ffi.kernel "List_length"
 
 
+-- | `head xs` — the first element, or `Nothing` for `[]`.
+--
 -- Cost: O(1).
 head list =
     case list of
@@ -355,6 +361,8 @@ head list =
             Just x
 
 
+-- | `tail xs` — every element but the first, or `Nothing` for `[]`.
+--
 -- Cost: O(1); the tail shares the list's memory.
 tail list =
     case list of
@@ -375,6 +383,8 @@ cons x list =
     x :: list
 
 
+-- | `member x xs` — `True` when `x` is an element of `xs`.
+--
 -- Cost: O(n).
 member x list =
     case list of

@@ -88,24 +88,32 @@ import Sky.Ffi as Ffi
 
 
 -- ─── Construction ──────────────────────────────────────────────────
+-- | `fromInt n` — the decimal text of `n`.
+--
 -- Cost: O(number of digits).
 fromInt : Int -> String
 fromInt =
     Ffi.kernel "String_fromInt"
 
 
+-- | `fromFloat x` — the decimal text of `x`.
+--
 -- Cost: O(number of digits).
 fromFloat : Float -> String
 fromFloat =
     Ffi.kernel "String_fromFloat"
 
 
+-- | `fromChar c` — the one-character string of `c`.
+--
 -- Cost: O(1).
 fromChar : Char -> String
 fromChar =
     Ffi.kernel "String_fromChar"
 
 
+-- | `fromList chars` — the string of the characters, in order.
+--
 -- Cost: O(n).
 fromList : List Char -> String
 fromList =
@@ -113,30 +121,40 @@ fromList =
 
 
 -- ─── Sizes + predicates ────────────────────────────────────────────
+-- | `length s` — the number of characters (code points) in `s`.
+--
 -- Cost: O(n), no allocation.
 length : String -> Int
 length =
     Ffi.kernel "String_length"
 
 
+-- | `isEmpty s` — `True` for `""`.
+--
 -- Cost: O(1).
 isEmpty : String -> Bool
 isEmpty =
     Ffi.kernel "String_isEmpty"
 
 
+-- | `contains needle haystack` — `True` when `needle` occurs in `haystack`.
+--
 -- Cost: O(n).
 contains : String -> String -> Bool
 contains =
     Ffi.kernel "String_contains"
 
 
+-- | `startsWith prefix s` — `True` when `s` starts with `prefix`.
+--
 -- Cost: O(length of the prefix).
 startsWith : String -> String -> Bool
 startsWith =
     Ffi.kernel "String_startsWith"
 
 
+-- | `endsWith suffix s` — `True` when `s` ends with `suffix`.
+--
 -- Cost: O(length of the suffix).
 endsWith : String -> String -> Bool
 endsWith =
@@ -175,18 +193,24 @@ endsWithIn haystack suffix =
     endsWith suffix haystack
 
 
+-- | `isEmail s` — `True` when `s` has the form of an email address.
+--
 -- Cost: O(n).
 isEmail : String -> Bool
 isEmail =
     Ffi.kernel "String_isEmail"
 
 
+-- | `isUrl s` — `True` when `s` has the form of an absolute URL.
+--
 -- Cost: O(n).
 isUrl : String -> Bool
 isUrl =
     Ffi.kernel "String_isUrl"
 
 
+-- | `equalFold a b` — `True` when `a` and `b` are equal after Unicode case folding.
+--
 -- Cost: O(n).
 equalFold : String -> String -> Bool
 equalFold =
@@ -194,12 +218,16 @@ equalFold =
 
 
 -- ─── Parsing ───────────────────────────────────────────────────────
+-- | `toInt s` — the whole number `s` spells, or `Nothing`.
+--
 -- Cost: O(n).
 toInt : String -> Maybe Int
 toInt =
     Ffi.kernel "String_toInt"
 
 
+-- | `toFloat s` — the number `s` spells, or `Nothing`.
+--
 -- Cost: O(n).
 toFloat : String -> Maybe Float
 toFloat =
@@ -207,36 +235,48 @@ toFloat =
 
 
 -- ─── Case + whitespace ─────────────────────────────────────────────
+-- | `toUpper s` — `s` in upper case (Unicode).
+--
 -- Cost: O(n).
 toUpper : String -> String
 toUpper =
     Ffi.kernel "String_toUpper"
 
 
+-- | `toLower s` — `s` in lower case (Unicode).
+--
 -- Cost: O(n).
 toLower : String -> String
 toLower =
     Ffi.kernel "String_toLower"
 
 
+-- | `casefold s` — `s` in Unicode case-folded form, for case-insensitive comparison.
+--
 -- Cost: O(n).
 casefold : String -> String
 casefold =
     Ffi.kernel "String_casefold"
 
 
+-- | `trim s` — `s` without white space at either end.
+--
 -- Cost: O(n).
 trim : String -> String
 trim =
     Ffi.kernel "String_trim"
 
 
+-- | `trimStart s` — `s` without white space at the start.
+--
 -- Cost: O(n).
 trimStart : String -> String
 trimStart =
     Ffi.kernel "String_trimStart"
 
 
+-- | `trimEnd s` — `s` without white space at the end.
+--
 -- Cost: O(n).
 trimEnd : String -> String
 trimEnd =
@@ -244,36 +284,48 @@ trimEnd =
 
 
 -- ─── Slicing + assembly ────────────────────────────────────────────
+-- | `reverse s` — the characters of `s` in reverse order.
+--
 -- Cost: O(n).
 reverse : String -> String
 reverse =
     Ffi.kernel "String_reverse"
 
 
+-- | `append a b` — `a` followed by `b` (the same as `a ++ b`).
+--
 -- Cost: O(length a + length b); in a loop that is O(n²), use `concat`.
 append : String -> String -> String
 append =
     Ffi.kernel "String_append"
 
 
+-- | `concat parts` — the strings of the list joined with nothing between them.
+--
 -- Cost: O(total length); the result is sized once.
 concat : List String -> String
 concat =
     Ffi.kernel "String_concat"
 
 
+-- | `join sep parts` — the strings of the list with `sep` between each pair.
+--
 -- Cost: O(total length); the result is sized once.
 join : String -> List String -> String
 join =
     Ffi.kernel "String_join"
 
 
+-- | `split sep s` — the parts of `s` between each `sep`.
+--
 -- Cost: O(n).
 split : String -> String -> List String
 split =
     Ffi.kernel "String_split"
 
 
+-- | `replace old new s` — `s` with every `old` replaced by `new`.
+--
 -- Cost: O(n).
 replace : String -> String -> String -> String
 replace =
@@ -317,6 +369,8 @@ foldr f acc s =
     foldl f acc (reverse s)
 
 
+-- | `slice start end s` — the characters from `start` up to, not including, `end`. A negative index counts from the end; the range is clamped.
+--
 -- Cost: O(end) for indexes >= 0, with no copy (the result shares the input's bytes); O(n) when an index is negative.
 slice : Int -> Int -> String -> String
 slice =
@@ -355,18 +409,24 @@ dropRight =
     Ffi.kernel "String_dropRight"
 
 
+-- | `repeat n s` — `n` copies of `s` joined together (`""` when `n` is 0 or less).
+--
 -- Cost: O(n * length s).
 repeat : Int -> String -> String
 repeat =
     Ffi.kernel "String_repeat"
 
 
+-- | `padLeft n c s` — `s` with `c` added in front until it is `n` characters long.
+--
 -- Cost: O(n).
 padLeft : Int -> Char -> String -> String
 padLeft =
     Ffi.kernel "String_padLeft"
 
 
+-- | `padRight n c s` — `s` with `c` added at the end until it is `n` characters long.
+--
 -- Cost: O(n).
 padRight : Int -> Char -> String -> String
 padRight =
@@ -374,18 +434,24 @@ padRight =
 
 
 -- ─── Word / line / character views ─────────────────────────────────
+-- | `words s` — the words of `s`, split at runs of white space.
+--
 -- Cost: O(n).
 words : String -> List String
 words =
     Ffi.kernel "String_words"
 
 
+-- | `lines s` — `s` split at each newline.
+--
 -- Cost: O(n).
 lines : String -> List String
 lines =
     Ffi.kernel "String_lines"
 
 
+-- | `toList s` — the characters (code points) of `s`, in order.
+--
 -- Cost: O(n).
 toList : String -> List Char
 toList =

@@ -45,9 +45,9 @@ fn doc_above(src: &str, name: &str) -> Option<Vec<String>> {
         .iter()
         .position(|l| l.starts_with(&format!("{name} :")))
         .or_else(|| {
-            lines.iter().position(|l| {
-                l.starts_with(&format!("{name} ")) && l.trim_end().ends_with('=')
-            })
+            lines
+                .iter()
+                .position(|l| l.starts_with(&format!("{name} ")) && l.trim_end().ends_with('='))
         })?;
     let mut doc = Vec::new();
     let mut i = at;
