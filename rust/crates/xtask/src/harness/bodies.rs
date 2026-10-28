@@ -3694,7 +3694,10 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// `stdlib.Std.Ai.Cloud.Google`, covered by `tests/Std/Ai/ServeTest.sky`,
 /// `tests/Std/Ai/TrainCloudTest.sky` and the `aiserve` and `aigooglecloud`
 /// corpus surfaces.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 199;
+/// 199 -> 200 in v0.29.0: `stdlib.Sky.Core.Array`, covered by
+/// `tests/conformance/tests/ArrayConformanceTest.sky` (the `conformance` gate)
+/// and `runtime-go/rt/array_trie_test.go`.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 200;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///
@@ -3753,8 +3756,9 @@ pub const KERNEL_MEMBERS_EXPECTED: u64 = 116;
 
 /// One assertion per tracked `.sky` file under `sky-stdlib/`, `sky-bundled/`,
 /// `apps/`, `examples/` and `templates/`. EXACT: it moves when such a file is
-/// added or removed, measured by running the gate.
-pub const FMT_CLEAN_EXPECTED: u64 = 395;
+/// added or removed, measured by running the gate. 395 -> 396 in v0.29.0:
+/// `sky-stdlib/Sky/Core/Array.sky`.
+pub const FMT_CLEAN_EXPECTED: u64 = 396;
 
 /// Every tracked `.sky` file in scope is already `sky fmt`-clean.
 pub fn fmt_clean(ctx: &GateCtx) -> GateOutcome {

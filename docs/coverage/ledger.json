@@ -640,7 +640,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 199,
+      "expected_assertions": 200,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -660,7 +660,7 @@
       "tier": "T1"
     },
     "fmt-clean": {
-      "expected_assertions": 395,
+      "expected_assertions": 396,
       "falsifier_mutation": "fmt-clean.unformat-a-tracked-file",
       "falsifier_proven": true,
       "summary": "every tracked .sky file in sky-stdlib/, sky-bundled/, apps/, examples/ and templates/ is already `sky fmt`-clean",
