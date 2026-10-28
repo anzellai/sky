@@ -417,6 +417,13 @@ hidden: the split is inferred but always inspectable.
 same-origin; `--embed` and `--target` compose (`sky run --embed src/Main.sky`
 runs the backend with its own bundled PostgreSQL).
 
+**Program arguments.** Everything after `--` goes to the program, as with `go
+run` and `cargo run`: `sky run src/Main.sky -- a "b c"` gives `System.args ()`
+the two arguments `a` and `b c`. A flag after `--` is the program's, so `sky
+run src/Main.sky -- --help` passes `--help` to it. Without `--` the program gets
+no arguments. `sky run --help` (or `-h`) before any `--` prints the `sky run`
+usage and builds nothing.
+
 For a plain (non-Spa) app in development you do not need `--embed` (and `sky run
 --embed` on such an app is refused with a pointer): set `[database] embedded =
 true` in `sky.toml` and `sky run` starts a local cluster, injects the DSN, and

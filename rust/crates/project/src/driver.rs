@@ -183,6 +183,16 @@ fn cap_first(s: &str) -> String {
 /// share this). The child inherits stdin/stdout/stderr so interactive CLIs and
 /// test output surface directly; the exit code propagates for CI.
 pub fn run_app(out_dir: &Path, envs: &[(String, String)]) -> std::io::Result<ExitStatus> {
+    run_app_with_args(out_dir, envs, &[])
+}
+
+/// [`run_app`] with program arguments: `sky run <file> -- <args>` passes
+/// everything after `--` to the program (its `System.args`).
+pub fn run_app_with_args(
+    out_dir: &Path,
+    envs: &[(String, String)],
+    args: &[String],
+) -> std::io::Result<ExitStatus> {
     // The project root is the out dir's parent (`<project>/sky-out` ->
     // `<project>`) — the directory that holds THIS app's `sky.toml`. `resolve()`
     // walks up from the entry file to the NEAREST sky.toml, so a sub-app with its
@@ -201,6 +211,7 @@ pub fn run_app(out_dir: &Path, envs: &[(String, String)]) -> std::io::Result<Exi
         std::fs::canonicalize(out_dir.join(&bin_name)).unwrap_or_else(|_| out_dir.join(&bin_name));
     let mut cmd = Command::new(&bin_abs);
     cmd.current_dir(app_run_cwd(out_dir));
+    cmd.args(args);
     for (k, v) in envs {
         cmd.env(k, v);
     }

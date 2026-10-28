@@ -172,6 +172,13 @@ fn take_go_build_flags(
     let mut env = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
+        // Everything after `--` belongs to the program `sky run` starts, so a
+        // `--go-jobs` there is the program's argument, not a build flag.
+        if a == "--" {
+            rest.push(a.clone());
+            rest.extend(it.by_ref().cloned());
+            break;
+        }
         let jobs = if a == "--go-jobs" {
             Some(
                 it.next()
@@ -3735,6 +3742,7 @@ fn build_std_app(
                     if embed {
                         backend_cmd.arg("--embed");
                     }
+                    backend_cmd.args(run_program_args());
                     match backend_cmd.spawn() {
                         Ok(mut backend_child) => {
                             let shell_status = Command::new(&desktop_shell).status();
@@ -3767,6 +3775,7 @@ fn build_std_app(
                     if embed {
                         proc.arg("--embed");
                     }
+                    proc.args(run_program_args());
                     match proc.status() {
                         Ok(s) if s.success() => ExitCode::SUCCESS,
                         Ok(_) => ExitCode::FAILURE,
@@ -3927,6 +3936,7 @@ fn build_std_app(
     if embed {
         proc.arg("--embed");
     }
+    proc.args(run_program_args());
     match proc.status() {
         Ok(s) if s.success() => ExitCode::SUCCESS,
         Ok(_) => ExitCode::FAILURE,
@@ -11280,7 +11290,49 @@ fn maybe_fetch_sky_deps(repo_root: &Path, project_dir: &Path) {
 
 /// `sky run <file>` — build, then exec the produced binary with inherited
 /// stdio, propagating its exit code.
+/// The arguments `sky run` hands to the program it starts: everything after
+/// the first `--`, as `go run` and `cargo run` do. Set once by `cmd_run`
+/// before any build or run path reads it.
+static RUN_PROGRAM_ARGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// The program arguments of this `sky run` (empty for every other verb).
+fn run_program_args() -> &'static [String] {
+    RUN_PROGRAM_ARGS.get().map(Vec::as_slice).unwrap_or(&[])
+}
+
+/// Split `sky run`'s arguments at the first `--`: the part before is for
+/// `sky run`, the part after is for the program. Pure, so it is unit-tested.
+fn split_program_args(args: &[String]) -> (Vec<String>, Vec<String>) {
+    match args.iter().position(|a| a == "--") {
+        Some(i) => (args[..i].to_vec(), args[i + 1..].to_vec()),
+        None => (args.to_vec(), Vec::new()),
+    }
+}
+
+const RUN_USAGE: &str = "sky run [<file.sky>] [options] [-- <program args>...]\n\n\
+Build the project and run it. The entry defaults to the sky.toml `entry`\n\
+(else src/Main.sky). Everything after `--` is passed to the program\n\
+(System.args), so `sky run src/Main.sky -- a \"b c\"` gives it `a` and `b c`.\n\n\
+OPTIONS:\n\
+\x20 --target <family[:variant]>   the Std.App backend (default: sky.toml [app] target, else web)\n\
+\x20 --open                       open the browser at the app's listening URL\n\
+\x20 --embed                      Sky.Spa / Std.App entry: run with embedded PostgreSQL\n\
+\x20 --db-push | --db-migrate | --db-seed   database steps before the app starts\n\
+\x20 --profile [--profile-dir <dir>] [--profile-timeout <dur>]   write pprof profiles\n\
+\x20 --out <dir>                  the build output directory (default sky-out)\n\
+\x20 --go-jobs <n|auto> | --no-trimpath   Go build flags\n\
+\x20 -h, --help                   print this help and build nothing";
+
 fn cmd_run(args: &[String]) -> ExitCode {
+    // `sky run --help` prints help and builds nothing. Only a flag BEFORE `--`
+    // counts: `sky run -- --help` passes `--help` to the program.
+    let (args, program_args) = split_program_args(args);
+    if wants_help(&args) {
+        println!("{RUN_USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    let _ = RUN_PROGRAM_ARGS.set(program_args);
+    let args = args.as_slice();
     // Pre-run DB steps (composed by re-invoking this binary's own `db`
     // subcommands, so they reuse the exact migrate/seed logic + env inheritance).
     // Order: db push/migrate, then seed, then serve — the container-entrypoint
@@ -11458,6 +11510,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
             // RUNTIME to bring its own cluster up (mirrors `./sky-out/app --embed`).
             run.arg("--embed");
         }
+        run.args(run_program_args());
         return match run.status() {
             Ok(s) => propagate(s.code()),
             Err(e) => {
@@ -11681,7 +11734,7 @@ fn run_app_open(
     open: bool,
 ) -> std::io::Result<std::process::ExitStatus> {
     if !open {
-        return run_app(out_dir, envs);
+        return project::run_app_with_args(out_dir, envs, run_program_args());
     }
     let project_dir = out_dir.parent().filter(|p| !p.as_os_str().is_empty());
     let bin_name = project_dir
@@ -11691,6 +11744,7 @@ fn run_app_open(
         std::fs::canonicalize(out_dir.join(&bin_name)).unwrap_or_else(|_| out_dir.join(&bin_name));
     let mut cmd = Command::new(&bin_abs);
     cmd.current_dir(project::app_run_cwd(out_dir));
+    cmd.args(run_program_args());
     for (k, v) in envs {
         cmd.env(k, v);
     }
@@ -17516,7 +17570,8 @@ fn print_help() {
          \x20                   + native backend under .split/ (--out to override)\n\
          \x20 check <file>     type-check + go build (no binary run; --target scopes a backend)\n\
          \x20 run   <file>     build + execute (--target selects the backend; a Sky.Spa entry\n\
-         \x20                   auto-splits, then runs the backend, serving the frontend + /_rpc)\n\
+         \x20                   auto-splits, then runs the backend, serving the frontend + /_rpc;\n\
+         \x20                   args after `--` go to the program: sky run src/Main.sky -- a b)\n\
          \x20 --target <t>     the app target for a Std.App/Sky.Spa entry (optional → web):\n\
          \x20                   web · tablet (Sky.Live) · desktop (Live in a window) ·\n\
          \x20                   terminal:tui|cli · web:app · desktop:mac|windows|linux ·\n\
@@ -19102,6 +19157,22 @@ echo key > "$ks"
         ] {
             assert!(take_go_build_flags(&v(bad)).is_err(), "{bad:?}");
         }
+        // After `--` every argument is the program's, a bad `--go-jobs` too.
+        let (rest, env) =
+            take_go_build_flags(&v(&["run", "a.sky", "--", "--go-jobs", "x"])).unwrap();
+        assert_eq!(rest, ["run", "a.sky", "--", "--go-jobs", "x"]);
+        assert!(env.is_empty());
+    }
+
+    #[test]
+    fn run_splits_program_args_at_the_first_double_dash() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (own, prog) = split_program_args(&v(&["src/Main.sky", "--", "a", "b c", "--", "-h"]));
+        assert_eq!(own, ["src/Main.sky"]);
+        assert_eq!(prog, ["a", "b c", "--", "-h"]);
+        let (own, prog) = split_program_args(&v(&["src/Main.sky", "--open"]));
+        assert_eq!(own, ["src/Main.sky", "--open"]);
+        assert!(prog.is_empty());
     }
 
     #[test]

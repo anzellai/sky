@@ -560,7 +560,7 @@ on the payload type, or the build fails naming both sites (`[E2011]`).
 ```sh
 sky init [name] [--production]  # new project — SQLite default; --production = Postgres one-DB + docker-compose
 sky build src/Main.sky       # compile → sky-out/app
-sky run src/Main.sky         # build + run   (--profile for runtime CPU/mem/hang profiling)
+sky run src/Main.sky [-- args] # build + run; args after -- reach System.args (--profile for runtime CPU/mem/hang profiling)
 sky check src/Main.sky       # type-check + go build (keeps no binary — but DOES compile)
 sky check --format json src/Main.sky   # NDJSON diagnostics on stdout, for CI and tools (also build / test / fmt --check)
 sky verify                   # one-shot project gate: fmt + check + build + tests

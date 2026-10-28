@@ -11,6 +11,22 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.0 — Real-world capabilities (unreleased)
+
+### Added
+
+- **`sky run` passes arguments to the program.** Everything after `--` goes to
+  the program, as with `go run` and `cargo run`: `sky run src/Main.sky -- a "b
+  c"` gives `System.args ()` the arguments `a` and `b c`. A flag after `--`
+  belongs to the program (`sky run src/Main.sky -- --help`). Without `--` the
+  program gets no arguments, as before. This works for a plain app, a Sky.Spa
+  entry (the backend gets them) and a `Std.App` entry.
+
+### Fixed
+
+- **`sky run --help` prints help and builds nothing.** Before, `sky run --help`
+  in a project directory built and ran the project.
+
 ## v0.28.1 — Insert text at the caret (Std.Native.insertAtCursor) (2026-10-28)
 
 ### Added

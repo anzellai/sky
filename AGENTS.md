@@ -578,7 +578,7 @@ Env var reference: `docs/sky-toml.md` + `docs/skylive/architecture.md`.
 ```bash
 sky init [name] [--production]   # new project
 sky build src/Main.sky           # compile → sky-out/app
-sky run src/Main.sky             # build + run  (--profile for pprof)
+sky run src/Main.sky [-- args]   # build + run; args after -- reach System.args (--profile for pprof)
 sky check src/Main.sky           # type-check + go build  (≡ sky build)
 sky check --format json src/Main.sky   # NDJSON diagnostics on stdout (also build / test / fmt --check)
 sky watch src/Main.sky           # file-watch rebuild + restart

@@ -37,13 +37,18 @@ fn read(rel: &str) -> String {
 ///
 /// The newest heading wins, so this tracks the release being prepared as soon as
 /// its section is written — which is the same moment `release-notes.sh` starts
-/// succeeding for that tag.
+/// succeeding for that tag. A heading marked `(unreleased)` is skipped: work
+/// collected for a future release states no current version until the
+/// release dates its heading and bumps the workspace version.
 fn current_minor_line() -> (u32, u32) {
     let ch = read("CHANGELOG.md");
     for line in ch.lines() {
         let Some(rest) = line.strip_prefix("## v") else {
             continue;
         };
+        if line.contains("(unreleased)") {
+            continue;
+        }
         let ver: String = rest
             .chars()
             .take_while(|c| c.is_ascii_digit() || *c == '.')
@@ -223,13 +228,17 @@ fn sample_output_in_live_docs_shows_the_current_version() {
 }
 
 /// The full `X.Y.Z` of the newest `## vX.Y.Z` heading in CHANGELOG.md: the
-/// first line matching `^## v([0-9]+\.[0-9]+\.[0-9]+)( |$)`.
+/// first line matching `^## v([0-9]+\.[0-9]+\.[0-9]+)( |$)` that is not
+/// marked `(unreleased)`.
 fn newest_changelog_version() -> String {
     let ch = read("CHANGELOG.md");
     for line in ch.lines() {
         let Some(rest) = line.strip_prefix("## v") else {
             continue;
         };
+        if line.contains("(unreleased)") {
+            continue;
+        }
         let ver: String = rest
             .chars()
             .take_while(|c| c.is_ascii_digit() || *c == '.')
