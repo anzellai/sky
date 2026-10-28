@@ -37,6 +37,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   already the same.** A write of an identical value can move the caret to the
   end on some engines, and the model often catches up with what the control
   already shows.
+- **OTLP export is no longer disabled for a collector on a port that starts
+  with 4317.** The gRPC-port guard tested the endpoint's host for the text
+  `:4317`, so a collector at port 43170 to 43179 (or 4317x…) lost its traces
+  and metrics with only a startup warning. The guard now compares the whole
+  port.
 
 ## v0.28.0 — Model slots, a managed local model engine, typed AI failures, evals, datasets, the model registry, the project's AI pipeline, adapter training, cloud training and a GPU serving tier (Std.Ai.Endpoint, Std.Ai.Local, Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Dataset, Std.Ai.Registry, Std.Ai.Pipeline, Std.Ai.Train, Std.Ai.Serve, Std.Ai.Cloud.Google) (2026-10-28)
 

@@ -104,7 +104,7 @@ func OTLPGuard(signal, url string) string {
 			"Set OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf and point OTEL_EXPORTER_OTLP_ENDPOINT at the "+
 			"collector's HTTP port (typically :4318). OTLP %s export DISABLED for this run.", signal)
 	}
-	if url != "" && strings.Contains(hostPart(url), ":4317") {
+	if url != "" && portOf(hostPart(url)) == "4317" {
 		return fmt.Sprintf("the OTLP %s endpoint %s targets port 4317 (the OTLP/gRPC port) but this Sky build "+
 			"only ships HTTP/protobuf. Point at the collector's HTTP port (typically :4318). OTLP %s export "+
 			"DISABLED for this run.", signal, url, signal)
@@ -123,6 +123,20 @@ func hostPart(u string) string {
 		rest = rest[:i]
 	}
 	return rest
+}
+
+// portOf is the port of a scheme-less authority ("user@host:port",
+// "[::1]:port"), or "" when it names none. The guard compares it whole: a
+// substring test read port 43173 as the gRPC port 4317.
+func portOf(authority string) string {
+	if i := strings.LastIndex(authority, "@"); i >= 0 {
+		authority = authority[i+1:]
+	}
+	i := strings.LastIndex(authority, ":")
+	if i < 0 || strings.Contains(authority[i:], "]") {
+		return ""
+	}
+	return authority[i+1:]
 }
 
 var otlpWarned sync.Map
