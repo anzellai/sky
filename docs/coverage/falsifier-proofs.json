@@ -296,7 +296,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1793177735
+      "proven_at_unix": 1793180227
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -506,14 +506,14 @@
     },
     "fmt-clean": {
       "inputs_files": 725,
-      "inputs_hash": "6f71d4d778d74f0a6394fb29e075e2af69b32f25",
+      "inputs_hash": "3e3e5fd94e5a20079981348c71befe09241a6d68",
       "mutation": "fmt-clean.unformat-a-tracked-file",
       "mutations": [
         "fmt-clean.unformat-a-tracked-file"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793167109
+      "proven_at_unix": 1793180227
     },
     "jobs-complete-failure-is-reported": {
       "inputs_files": 923,
