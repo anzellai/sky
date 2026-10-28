@@ -317,6 +317,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Random", "seededChoice", "rt.Random_seededChoice"),
     ("Process", "run", "rt.Process_run"),
     ("Subprocess", "spawn", "rt.Subprocess_spawn"),
+    ("Subprocess", "runCommand", "rt.Subprocess_runCommand"),
     ("Subprocess", "readFrom", "rt.Subprocess_readFrom"),
     ("Subprocess", "readWithin", "rt.Subprocess_readWithin"),
     ("Subprocess", "write", "rt.Subprocess_write"),

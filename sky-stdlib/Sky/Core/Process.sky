@@ -42,6 +42,8 @@
 --         |> Task.andThen (\p -> Process.wait p)
 module Sky.Core.Process exposing
     ( run
+    , runCommand
+    , Completed
     , Process
     , Command
     , Stream(..)
@@ -54,6 +56,7 @@ module Sky.Core.Process exposing
     , withEnv
     , withClearEnv
     , withCwd
+    , withStdin
     , withPty
     , withBufferSize
     , spawn
@@ -83,6 +86,42 @@ run : String -> List String -> Task Error String
 run =
     Ffi.kernel "Process_run"
 
+-- | What `runCommand` returns: the exit code and both outputs, kept apart.
+-- A child killed by a signal has `code = 128 + signal` (the shell's rule).
+type alias Completed =
+    { code : Int
+    , stdout : String
+    , stderr : String
+    }
+
+
+runCommandRaw : CommandSpec -> Task Error Completed
+runCommandRaw =
+    Ffi.kernel "Subprocess_runCommand"
+
+
+-- | `runCommand command` — run the command to completion and return its
+-- exit code, standard output and standard error separately. A non-zero
+-- exit is a RESULT (`code`), not an `Err`: only a child that cannot start
+-- is an error (`NotFound`, `PermissionDenied`, `InvalidInput` for an empty
+-- program name or a PTY, `Io`). It uses the command's `withArgs`,
+-- `withEnv`, `withClearEnv`, `withCwd` and `withStdin`. Server side only
+-- (a server, a CLI or a TUI; a Sky.Spa client runs it through its server
+-- RPC). Cost: both outputs are held in memory in full; for a long-running
+-- or very chatty child, `spawn` it and read its bounded output rings.
+--
+--     Process.command "psql"
+--         |> Process.withArgs [ "-v", "ON_ERROR_STOP=1", "-f", "-" ]
+--         |> Process.withStdin script
+--         |> Process.runCommand
+--         |> Task.map (\r -> if r.code == 0 then r.stdout else r.stderr)
+runCommand : Command -> Task Error Completed
+runCommand cmd =
+    case cmd of
+
+        Command spec ->
+            runCommandRaw spec
+
 -- | A running (or finished) child process. Opaque.
 type Process
     = Process Int
@@ -101,6 +140,8 @@ type alias CommandSpec =
     , ptyCols : Int
     , ptyRows : Int
     , bufferSize : Int
+    , stdin : String
+    , stdinSet : Bool
     }
 
 -- | An output stream. With a PTY all output is on `Stdout`.
@@ -162,6 +203,8 @@ command program =
         , ptyCols = 0
         , ptyRows = 0
         , bufferSize = 0
+        , stdin = ""
+        , stdinSet = False
         }
 
 
@@ -200,6 +243,19 @@ withCwd dir cmd =
 
         Command spec ->
             Command { spec | cwd = dir }
+
+
+-- | Give the child this text on its standard input, then end of file.
+-- With `runCommand` the child reads it from the start; with `spawn` the
+-- runtime writes it after the child starts and then closes stdin (so do
+-- not also `write` to it). Without `withStdin`, `runCommand` gives the
+-- child an empty standard input. Not with `withPty` (`Err InvalidInput`).
+withStdin : String -> Command -> Command
+withStdin text cmd =
+    case cmd of
+
+        Command spec ->
+            Command { spec | stdin = text, stdinSet = True }
 
 
 -- | Run the child on a pseudo-terminal of this size (Linux and macOS).

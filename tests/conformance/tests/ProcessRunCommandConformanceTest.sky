@@ -1,0 +1,126 @@
+module ProcessRunCommandConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for `Process.runCommand` and `Process.withStdin`
+-- (v0.29.0): run a command to completion with text on its standard input,
+-- and get `{ code, stdout, stderr }`. A non-zero exit is a result, not an
+-- Err; only a child that cannot start is an Err. Uses `/bin/sh`, `cat`
+-- and `sort` (POSIX).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error
+import Sky.Core.List as List
+import Sky.Core.Process as Process exposing (Stream(..))
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Test as Test exposing (Test)
+
+
+shell : String -> Process.Command
+shell script =
+    Process.command "/bin/sh" |> Process.withArgs [ "-c", script ]
+
+
+run : Process.Command -> Result Error Process.Completed
+run cmd =
+    Task.run (Process.runCommand cmd)
+
+
+-- Read a spawned child's stdout to end of file.
+readAll : Process.Process -> Int -> String -> Task Error String
+readAll p offset acc =
+    Process.readFrom p Stdout offset
+        |> Task.andThen
+               (\chunk ->
+                   if chunk.eof then
+                       Task.succeed (acc ++ chunk.data)
+
+                   else
+                       readAll p chunk.next (acc ++ chunk.data))
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "runCommand: text sent to cat comes back on stdout"
+          (\_ ->
+              Test.equal
+                  (Ok { code = 0, stdout = "hello\nwörld £─\n", stderr = "" })
+                  (run
+                      (Process.command "cat"
+                          |> Process.withStdin "hello\nwörld £─\n")))
+    , Test.test
+          "runCommand: a non-zero exit is a result, not an Err"
+          (\_ -> Test.equal (Ok 3) (run (shell "exit 3") |> Result.map .code))
+    , Test.test
+          "runCommand: stderr is kept apart from stdout"
+          (\_ ->
+              Test.equal
+                  (Ok { code = 2, stdout = "out\n", stderr = "err\n" })
+                  (run (shell "echo out; echo err >&2; exit 2")))
+    , Test.test
+          "runCommand: no withStdin means an empty standard input"
+          (\_ ->
+              Test.equal
+                  (Ok "")
+                  (run (Process.command "cat") |> Result.map .stdout))
+    , Test.test
+          "runCommand: a script on stdin, as psql -f - reads one"
+          (\_ ->
+              Test.equal
+                  (Ok "a\nb\nc\n")
+                  (run (Process.command "sort" |> Process.withStdin "c\na\nb\n")
+                      |> Result.map .stdout))
+    , Test.test
+          "runCommand: withArgs, withEnv and withCwd apply"
+          (\_ ->
+              Test.equal
+                  (Ok "x=1 /\n")
+                  (run
+                      (Process.command "/bin/sh"
+                          |> Process.withArgs
+                                 [ "-c", "echo \"x=$SKY_RUNCMD_TEST $(pwd)\"" ]
+                          |> Process.withEnv [ ( "SKY_RUNCMD_TEST", "1" ) ]
+                          |> Process.withCwd "/")
+                      |> Result.map .stdout))
+    , Test.test
+          "runCommand: a program that does not exist is Err NotFound"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.NotFound
+                  (run (Process.command "sky-no-such-program-xyz")))
+    , Test.test
+          "runCommand: an empty program name is Err InvalidInput"
+          (\_ ->
+              Test.expectErrorKind Error.InvalidInput (run (Process.command "")))
+    , Test.test
+          "runCommand: a PTY command is Err InvalidInput"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.InvalidInput
+                  (run
+                      (Process.command "cat"
+                          |> Process.withPty { cols = 80, rows = 24 })))
+    , Test.test
+          "runCommand: a large input passes through whole"
+          (\_ ->
+              Test.equal
+                  (Ok 200000)
+                  (run
+                      (Process.command "cat"
+                          |> Process.withStdin
+                                 (String.repeat 20000 "0123456789"))
+                      |> Result.map (\r -> String.length r.stdout)))
+    , Test.test
+          "spawn with withStdin: the child reads the text, then end of file"
+          (\_ ->
+              Test.equal
+                  (Ok "fed\n")
+                  (Task.run
+                      (Process.spawn
+                          (Process.command "cat" |> Process.withStdin "fed\n")
+                          |> Task.andThen (\p -> readAll p 0 ""))))
+    ]
+
+
+main =
+    Test.runMain tests

@@ -88,6 +88,10 @@ type procSpec struct {
 	cols     int
 	rows     int
 	ringSize int
+	// stdin, when stdinSet, is written to the child's standard input after it
+	// starts, and the pipe is then closed (`Process.withStdin`).
+	stdin    string
+	stdinSet bool
 	// guestOwned marks a child started on behalf of a Sky.Live session's
 	// call although the spawn runs on another goroutine (a managed AI
 	// engine). Such a child, like one spawned on the session itself, does
@@ -238,6 +242,8 @@ func parseProcSpec(cfg any) procSpec {
 		rows:     AsInt(recordField(cfg, "PtyRows", "ptyRows")),
 		ringSize: AsInt(recordField(cfg, "BufferSize", "bufferSize")),
 	}
+	s.stdin = asBytesString(recordField(cfg, "Stdin", "stdin"))
+	s.stdinSet = AsBool(recordField(cfg, "StdinSet", "stdinSet"))
 	s.pty = AsBool(recordField(cfg, "Pty", "pty"))
 	for _, a := range AsList(recordField(cfg, "Args", "args")) {
 		s.args = append(s.args, asBytesString(a))
@@ -285,13 +291,19 @@ func procEnviron(s procSpec) []string {
 }
 
 func procStartError(program string, err error) any {
+	return procStartErrorFor("Process.spawn", program, err)
+}
+
+// procStartErrorFor classifies a failure to start `program` for the named
+// Sky function: NotFound, PermissionDenied, else Io.
+func procStartErrorFor(fn, program string, err error) any {
 	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
-		return makeError(5, "NotFound", fmt.Sprintf("Process.spawn: %s: %v", program, err))
+		return makeError(5, "NotFound", fmt.Sprintf("%s: %s: %v", fn, program, err))
 	}
 	if errors.Is(err, fs.ErrPermission) {
-		return ErrPermissionDenied(fmt.Sprintf("Process.spawn: %s: %v", program, err))
+		return ErrPermissionDenied(fmt.Sprintf("%s: %s: %v", fn, program, err))
 	}
-	return ErrIo(fmt.Sprintf("Process.spawn: %s: %v", program, err))
+	return ErrIo(fmt.Sprintf("%s: %s: %v", fn, program, err))
 }
 
 // spawnProcess starts the child and its pump + reaper goroutines.
@@ -303,6 +315,9 @@ func spawnProcess(s procSpec) (*procHandle, any) {
 		return nil, ErrInvalidInput(fmt.Sprintf(
 			"Process.spawn: a PTY needs 1 to %d cols and 1 to %d rows, got %dx%d. In v0.27.0 the PTY size is bounded: pass a smaller size. see docs/migration/v0.27.md#pty-size-bound",
 			procPtyMaxCols, procPtyMaxRows, s.cols, s.rows))
+	}
+	if s.pty && s.stdinSet {
+		return nil, ErrInvalidInput("Process.spawn: withStdin needs plain pipes, not a PTY: write to a PTY child with Process.write")
 	}
 	cmd := exec.Command(s.program, s.args...)
 	cmd.Dir = s.cwd
@@ -456,6 +471,21 @@ func spawnProcess(s procSpec) (*procHandle, any) {
 	}
 	if sess := h.sess; sess != nil {
 		sess.addOwned(h.ownedKey(), func() { h.shutdown() })
+	}
+	if s.stdinSet {
+		// Feed the text and close the pipe off this goroutine: a child that
+		// reads slowly (or not at all) never blocks the spawn.
+		go func(data string) {
+			h.stdinMu.Lock()
+			defer h.stdinMu.Unlock()
+			if h.stdinClosed.Load() {
+				return
+			}
+			_, _ = io.WriteString(h.stdin, data)
+			if h.stdinClosed.CompareAndSwap(false, true) {
+				h.stdin.Close()
+			}
+		}(s.stdin)
 	}
 	return h, nil
 }

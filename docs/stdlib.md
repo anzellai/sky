@@ -1163,6 +1163,39 @@ main =
         |> Task.andThen Log.println
 ```
 
+#### Standard input and a structured result (`Process.runCommand`, v0.29.0)
+
+`runCommand command` runs a command built with `command` and the `with*`
+helpers to completion and returns `{ code : Int, stdout : String, stderr : String }`
+(`Process.Completed`). A non-zero exit is a result in `code`, not an `Err`; the
+only errors are a child that cannot start (`NotFound`, `PermissionDenied`, `Io`)
+and `InvalidInput` for an empty program name or a PTY. `withStdin text` gives the
+child that text on its standard input, then end of file (with `spawn` the runtime
+writes it and closes stdin). A child killed by a signal reports `code = 128 +
+signal`. Server side only. Both outputs are held in memory in full: for a
+long-running or chatty child, use `spawn`.
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Process as Process
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.Log as Log
+
+
+main : Task Error ()
+main =
+    Process.command "sort"
+        |> Process.withStdin "pear\napple\n"
+        |> Process.runCommand
+        |> Task.andThen
+            (\r ->
+                Log.println (String.fromInt r.code ++ ": " ++ r.stdout ++ r.stderr)
+            )
+```
+
 #### Streaming child processes (`Process.spawn`, v0.27.0)
 
 `spawn` starts a long-running child and returns an opaque `Process`. Build the

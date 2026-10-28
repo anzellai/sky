@@ -45,6 +45,16 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   each replacement from the whole match. Pure (client and server), linear in
   the input. An invalid pattern gives no match, like the other Regex functions.
 
+- **`Process.runCommand` and `Process.withStdin`: standard input and a
+  structured result.** `runCommand` runs a command built with
+  `Process.command` and the `with*` helpers to completion and returns
+  `{ code, stdout, stderr }` (`Process.Completed`). A non-zero exit is a result,
+  not an `Err`; only a child that cannot start is an error. `withStdin text`
+  gives the child that text on its standard input, then end of file, so a
+  script reaches `psql -f -` or `sh` without squeezing it into an argument;
+  with `spawn` the runtime writes it and closes stdin. Server side only. Both
+  outputs are held in memory: use `spawn` for a long-running or chatty child.
+
 ### Migration
 
 - **New stdlib names `map2`, `map3` and `unique` in `Sky.Core.List`.** A
