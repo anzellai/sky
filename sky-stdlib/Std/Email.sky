@@ -266,10 +266,12 @@ header name value =
 -- empty `url` is left out of the list, and then no Post header is
 -- made. If both are empty the header is empty, and it still replaces
 -- an earlier `listUnsubscribe`.
-listUnsubscribe : { url : String
-, mailto : Maybe String
-, oneClick : Bool
-} -> Header
+listUnsubscribe :
+    { url : String
+    , mailto : Maybe String
+    , oneClick : Bool
+    }
+    -> Header
 listUnsubscribe opts =
     let
         url = uriText opts.url
