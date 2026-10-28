@@ -34,7 +34,7 @@ the reference is `find . -type f -name '*.md'`.
 | macOS (BSD tools, `fd` and `rg` installed) | 10 of 33 (30 %) | 17 of 33 (51 %) |
 | Linux, Debian (GNU tools, no `fd`, no `rg`) | 13 of 33 (39 %) | 22 of 33 (66 %) |
 
-Measured at commit RESULT_COMMIT on the Mac (Apple silicon, 16 GB) and on a throwaway Debian 12 VM (e2-standard-4). Both models are Qwen2.5 0.5B Instruct (Q4_0)
+Measured at commit `f7717844b` on the Mac (Apple silicon, 16 GB) and on a throwaway Debian 12 VM (e2-standard-4). Both models are Qwen2.5 0.5B Instruct (Q4_0)
 on the managed local engine, with greedy decoding. The baseline sees six
 solved examples in its prompt. The fine-tuned model sees none. The adapter was
 trained once, on a Mac, and the Linux eval loads the same adapter file.
