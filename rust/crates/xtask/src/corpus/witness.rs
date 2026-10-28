@@ -29,8 +29,8 @@
 
 use super::axes::{
     Assignment, Axis, Stratum, ALIAS_NAMES, ANON_ROLE, AS_BINDER, COLLIDER, COLLISION, DICT_KEY,
-    EDGE, EQ_PAIR, ERASURE, GA_SLOT, IMPORT_SHAPE, INNER, LET_USES, POSITION, QUAL_USE, SHADOW,
-    TASK_CALLEE,
+    EDGE, EQ_PAIR, ERASURE, GA_SLOT, IMPORT_SHAPE, INNER, LETREC_GROUP, LET_USES, POSITION,
+    QUAL_USE, SHADOW, TASK_CALLEE,
 };
 use super::gen;
 use super::runner;
@@ -105,6 +105,10 @@ fn axis_under_test(s: &Stratum) -> (Axis, &'static str) {
         // there. Each other slot is a different program (a different
         // constructor or container), so the slot axis is witnessed.
         "generic_alias_slot" => (GA_SLOT, "list"),
+        // v0.29.0. A SELF-recursive local always built; two or three locals
+        // that call each other are what failed `go build`. Each group size is
+        // a different program, so the group axis is witnessed.
+        "let_mutual_recursion" => (LETREC_GROUP, "self"),
         other => panic!("no axis-under-test declared for stratum {other:?}"),
     }
 }

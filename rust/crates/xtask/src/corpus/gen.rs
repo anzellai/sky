@@ -890,8 +890,10 @@ pub fn build(stratum: &Stratum, assignment: &Assignment) -> GenCase {
         | "qualified_field"
         | "adt_equality"
         | "lambda_record_param"
-        | "generic_alias_slot" => {
+        | "generic_alias_slot"
+        | "let_mutual_recursion" => {
             let (body, out) = match stratum.name {
+                "let_mutual_recursion" => super::lang_shapes::let_mutual_recursion(assignment),
                 "lambda_record_param" => super::lang_shapes::lambda_record_param(assignment),
                 "generic_alias_slot" => super::lang_shapes::generic_alias_slot(assignment),
                 "as_pattern_nesting" => super::lang_shapes::as_pattern_nesting(assignment),

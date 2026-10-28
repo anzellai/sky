@@ -78,6 +78,32 @@ A let-bound function is polymorphic, like a top-level one: `square` above
 could be used at `Int` and at `Float` in the same body. See
 [types.md](types.md) ("Type annotations") for the value restriction.
 
+The bindings of one `let` may refer to each other in any order, and local
+functions may call each other (mutual recursion):
+
+```elm
+parity n =
+    let
+        isEven k =
+            if k == 0 then
+                True
+
+            else
+                isOdd (k - 1)
+
+        isOdd k =
+            if k == 0 then
+                False
+
+            else
+                isEven (k - 1)
+    in
+    isEven n
+```
+
+A cycle through a plain value (`a = f 1` where `f` reads `a`) is not allowed:
+it has no value to start from.
+
 ## Case / of
 
 ```elm

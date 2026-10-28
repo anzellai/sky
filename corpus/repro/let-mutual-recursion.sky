@@ -1,0 +1,77 @@
+-- PINNED REPRO — v0.29.0, a downstream report
+--
+-- Two local functions of one `let` that call each other passed the type
+-- check, then failed `go build` with `undefined: piece_6`: the lowering
+-- emitted each closure with `:=` in dependency order, so the first closure
+-- named the second before it was declared. Lifting both to the top level
+-- worked. Fixed in `lower.rs` (`order_let_defs` + `lower_let_defs`): a
+-- mutually recursive group is declared (`var follow_1 func(int) int`) before
+-- any member is assigned.
+--
+-- `follow 10` walks 10 → 0 through the pair and ends in `follow 0` (0);
+-- `follow 9` ends in `piece 0` (1). `three 4` rings a → b → c → a and ends in
+-- `b 0` (10) after four increments (14), read through `label`, a plain binding
+-- written BEFORE the group that calls it, and `step`, a plain binding the group
+-- reads, written AFTER it.
+--
+-- coordinate: letrec_group=two letrec_dep=none letrec_site=in_def
+-- expect: accept, stdout "0 1 r14"
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+statements : Int -> Int
+statements src =
+    let
+        follow n =
+            if n > 0 then
+                piece (n - 1)
+
+            else
+                0
+        piece n =
+            if n > 0 then
+                follow (n - 1)
+
+            else
+                1
+    in
+        follow src
+
+
+three : Int -> String
+three start =
+    let
+        label = "r" ++ String.fromInt (a start)
+        a n =
+            if n <= 0 then
+                0
+
+            else
+                b (n - step) + 1
+        b n =
+            if n <= 0 then
+                10
+
+            else
+                c (n - step) + 1
+        c n =
+            if n <= 0 then
+                100
+
+            else
+                a (n - step) + 1
+        step = 1
+    in
+        label
+
+
+main =
+    println
+        (String.fromInt (statements 10) ++ " " ++ String.fromInt (statements 9)
+            ++ " "
+            ++ three 4)

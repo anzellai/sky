@@ -17,15 +17,15 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 768
+n_min = 804
 n_iso = 61
 n_iso_ceiling = 62
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 767
+class_v = 803
 class_d = 1
 family_S = 194
-family_L = 429
+family_L = 465
 family_E = 10
 family_R = 135
 family_F = 0
@@ -8129,6 +8129,474 @@ axes       = { ga_params = "two", ga_site = "let_bound", ga_slot = "list" }
 coordinate = "v0.27.16: `Just (act "Edit" Noop)` with `act : String -> msg -> Act msg`"
 expect     = "accept"
 stdout     = "42:Go"
+
+[[case]]
+id         = "let_mutual_recursion/none-self-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "self", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-self-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "self", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-self-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "self", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-self-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "self", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-self-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "self", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-self-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "self", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-self-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "self", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-self-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "self", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-self-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "self", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-self-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "self", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-self-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "self", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-self-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "self", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-two-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "two", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-two-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "two", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-two-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "two", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-two-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "two", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-two-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "two", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-two-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "two", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-two-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "two", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-two-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "two", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-two-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "two", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-two-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "two", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-two-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "two", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-two-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "two", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-three-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "three", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-three-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "three", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-three-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "three", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-three-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "three", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-three-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "three", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-three-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "three", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-three-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "three", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-three-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "three", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-three-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "three", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-three-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "three", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-three-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "three", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-three-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "three", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
 
 [[case]]
 id         = "reject_matrix/arity_over-plain-bare"

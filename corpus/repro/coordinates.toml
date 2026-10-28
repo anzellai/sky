@@ -149,3 +149,12 @@ coordinate    = { qual_path = "alias", qual_use = "arg" }
 expect        = "accept"
 expect_stdout = "3"
 summary       = "FIXED: `Shape.origin.x` was one qualified name and failed `[E1001] Undefined name: Shape.origin.x`. The parser now ends a qualified path at its first lower-case segment and reads the rest as field access. A directory, because the second module IS the reproduction."
+
+[[repro]]
+file          = "let-mutual-recursion.sky"
+issue         = "v0.29.0 downstream report"
+stratum       = "let_mutual_recursion"
+coordinate    = { letrec_group = "two", letrec_dep = "none", letrec_site = "in_def" }
+expect        = "accept"
+expect_stdout = "0 1 r14"
+summary       = "FIXED: two local functions of one `let` that call each other type-checked, then failed `go build` with `undefined: piece_6`. A mutually recursive group is now declared before any member is assigned."

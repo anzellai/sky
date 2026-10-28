@@ -27,6 +27,16 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 - **`sky run --help` prints help and builds nothing.** Before, `sky run --help`
   in a project directory built and ran the project.
 
+- **Local functions of one `let` that call each other build.** Two (or more)
+  local functions that call each other (`follow n = … piece … ; piece n = …
+  follow …`) passed the type check, then failed `go build` with `undefined:
+  piece_6`; the workaround was to lift them to the top level. The lowering now
+  declares the whole group before it assigns any closure. A plain binding
+  beside the group, before or after it in source order, is emitted around it.
+  A `let` in the `else` branch of a tail-recursive function now orders its
+  forward references like every other `let` (it was emitted in source order,
+  so a forward reference there failed `go build` too).
+
 ## v0.28.1 — Insert text at the caret (Std.Native.insertAtCursor) (2026-10-28)
 
 ### Added

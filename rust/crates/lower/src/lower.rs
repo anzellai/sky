@@ -3158,9 +3158,7 @@ impl<'a> Ctx<'a> {
             }
             // Dependency-order the defs (Go declare-before-use vs Sky's out-of-order
             // forward references — `let a = b + 1; b = 5`).
-            for &i in &self.order_let_defs(&defs) {
-                self.lower_let_def(&defs[i], out);
-            }
+            self.lower_let_defs(&defs, out);
             self.lower_main_body(body, out);
         } else {
             let ty = self.types.expr(e);
@@ -7561,9 +7559,10 @@ impl<'a> Ctx<'a> {
                             let _ = self.fresh_local_named(*lid, Some(bn.as_str()));
                         }
                     }
-                    for d in &defs {
-                        self.lower_let_def(d, out);
-                    }
+                    // Same dependency order + mutual-recursion handling as
+                    // every other `let` (a forward reference in a tail `let`
+                    // was emitted in source order here before).
+                    self.lower_let_defs(&defs, out);
                     self.lower_tail_stmts(body, ret, out);
                 }
                 Expr::Case {
@@ -7712,15 +7711,24 @@ impl<'a> Ctx<'a> {
         })
     }
 
-    /// Return the emission order of a `let` group's defs so each def is emitted
-    /// AFTER every sibling whose binder it references (Kahn topo-sort). A cycle
-    /// (mutual value recursion — ill-typed; or mutually-recursive local functions,
-    /// whose names are pre-registered so closures still resolve) leaves the
-    /// remaining defs in source order.
-    fn order_let_defs(&self, defs: &[hir::LocalDef]) -> Vec<usize> {
+    /// Return the emission order of a `let` group's defs as dependency
+    /// GROUPS, so each group is emitted AFTER every sibling group whose binders
+    /// it references. Go requires declare-before-use; Sky's `let` is
+    /// forward-referencing (doc 05 §4, "`let` is forward-referencing").
+    ///
+    /// The acyclic part is a stable Kahn topo-sort (each pass emits, in source
+    /// order, every def whose deps are emitted), one def per group, so a `let`
+    /// with no cycle keeps its prior emission order byte for byte. What is left
+    /// after Kahn is every def on, or downstream of, a cycle: those are split
+    /// into strongly connected components (Tarjan) and emitted in dependency
+    /// order. A component of two or more defs is a MUTUALLY RECURSIVE group
+    /// (`follow n = … piece …; piece n = … follow …`), which
+    /// [`Self::lower_let_defs`] emits as `var` declarations first and closure
+    /// assignments after, so every closure can name every other.
+    fn order_let_defs(&self, defs: &[hir::LocalDef]) -> Vec<Vec<usize>> {
         let n = defs.len();
         if n <= 1 {
-            return (0..n).collect();
+            return (0..n).map(|i| vec![i]).collect();
         }
         // binder LocalId -> the def index that introduces it.
         let mut owner: HashMap<LocalId, usize> = HashMap::new();
@@ -7746,13 +7754,13 @@ impl<'a> Ctx<'a> {
         // all satisfied, scanning in source order so independent defs keep their
         // original order.
         let mut emitted = vec![false; n];
-        let mut order = Vec::with_capacity(n);
+        let mut order: Vec<Vec<usize>> = Vec::with_capacity(n);
         loop {
             let mut progressed = false;
             for i in 0..n {
                 if !emitted[i] && deps[i].iter().all(|&j| emitted[j]) {
                     emitted[i] = true;
-                    order.push(i);
+                    order.push(vec![i]);
                     progressed = true;
                 }
             }
@@ -7760,13 +7768,130 @@ impl<'a> Ctx<'a> {
                 break;
             }
         }
-        // Any defs left in a cycle: append in source order (prior behaviour).
-        for i in 0..n {
-            if !emitted[i] {
-                order.push(i);
+        if emitted.iter().all(|&e| e) {
+            return order;
+        }
+        // The rest: strongly connected components of the remaining defs,
+        // emitted dependencies first. Tarjan finishes a component only after
+        // every component it reaches, which is exactly deps-first order;
+        // starting the walks in source order keeps the result deterministic.
+        struct Tarjan<'a> {
+            deps: &'a [HashSet<usize>],
+            live: &'a [bool],
+            index: Vec<Option<usize>>,
+            low: Vec<usize>,
+            on_stack: Vec<bool>,
+            stack: Vec<usize>,
+            next: usize,
+            out: Vec<Vec<usize>>,
+        }
+        impl Tarjan<'_> {
+            fn visit(&mut self, v: usize) {
+                self.index[v] = Some(self.next);
+                self.low[v] = self.next;
+                self.next += 1;
+                self.stack.push(v);
+                self.on_stack[v] = true;
+                let mut ws: Vec<usize> = self.deps[v]
+                    .iter()
+                    .copied()
+                    .filter(|&w| self.live[w])
+                    .collect();
+                ws.sort_unstable();
+                for w in ws {
+                    match self.index[w] {
+                        None => {
+                            self.visit(w);
+                            self.low[v] = self.low[v].min(self.low[w]);
+                        }
+                        Some(iw) if self.on_stack[w] => {
+                            self.low[v] = self.low[v].min(iw);
+                        }
+                        Some(_) => {}
+                    }
+                }
+                if Some(self.low[v]) == self.index[v] {
+                    let mut comp = Vec::new();
+                    while let Some(w) = self.stack.pop() {
+                        self.on_stack[w] = false;
+                        comp.push(w);
+                        if w == v {
+                            break;
+                        }
+                    }
+                    comp.sort_unstable();
+                    self.out.push(comp);
+                }
             }
         }
+        let live: Vec<bool> = emitted.iter().map(|&e| !e).collect();
+        let mut t = Tarjan {
+            deps: &deps,
+            live: &live,
+            index: vec![None; n],
+            low: vec![0; n],
+            on_stack: vec![false; n],
+            stack: Vec::new(),
+            next: 0,
+            out: Vec::new(),
+        };
+        for i in 0..n {
+            if live[i] && t.index[i].is_none() {
+                t.visit(i);
+            }
+        }
+        order.extend(t.out);
         order
+    }
+
+    /// Lower a `let` group's defs into `out`, in [`Self::order_let_defs`]
+    /// order. The ONE place every `let` form (an expression `let`, a tail
+    /// `let`, `main`'s `let`) emits its bindings, so all three order forward
+    /// references and mutual recursion the same way.
+    ///
+    /// A singleton group goes through [`Self::lower_let_def`], which already
+    /// handles a SELF-recursive local function (`var f T; f = func…`, #162).
+    /// A group of two or more MUTUALLY recursive local functions declares every
+    /// member before assigning any: `var follow_1 func(int) int`, `var piece_2
+    /// func(int) int`, then `follow_1 = func…`, `piece_2 = func…`. Go's `:=`
+    /// would leave the later name undefined inside the earlier closure
+    /// (`undefined: piece_2`). Only parameterised functions qualify: a closure
+    /// does not run when it is assigned, so the order of the assignments is
+    /// free. A cycle through a plain VALUE (`a = f 1; f n = … a …`) has no
+    /// such freedom (the value would read its partner before it is set), so it
+    /// keeps the source-order emission.
+    fn lower_let_defs(&mut self, defs: &[hir::LocalDef], out: &mut Vec<GoStmt>) {
+        for group in self.order_let_defs(defs) {
+            let all_fns = group.len() > 1
+                && group
+                    .iter()
+                    .all(|&i| !defs[i].params.is_empty() && defs[i].binders.len() == 1);
+            if !all_fns {
+                for i in group {
+                    self.lower_let_def(&defs[i], out);
+                }
+                continue;
+            }
+            let mut assigns: Vec<(String, GoExpr)> = Vec::with_capacity(group.len());
+            for &i in &group {
+                let d = &defs[i];
+                let (bn, lid) = d.binders[0].clone();
+                let gname = self.fresh_local_named(lid, Some(bn.as_str()));
+                let lowered = self.lower_local_fn(&d.params, d.body);
+                self.local_tys.insert(lid, lowered.ty.clone());
+                assigns.push((gname, lowered));
+            }
+            for (gname, lowered) in &assigns {
+                out.push(GoStmt::VarDecl(gname.clone(), lowered.ty.clone()));
+            }
+            for (gname, lowered) in assigns {
+                out.push(GoStmt::Assign(gname.clone(), lowered));
+                out.push(GoStmt::Expr(GoExpr::new(
+                    GoExprKind::Ident(format!("_ = {gname}")),
+                    GoTy::Unit,
+                )));
+            }
+        }
     }
 
     fn lower_let_expr(&mut self, defs: &[hir::LocalDef], body: ExprId, actual: &GoTy) -> GoExpr {
@@ -7787,9 +7912,7 @@ impl<'a> Ctx<'a> {
         // Dependency-order the defs so a forward reference emits its target first
         // (Go requires declare-before-use; names are pre-registered above so a
         // genuine cycle still resolves by name).
-        for &i in &self.order_let_defs(&defs) {
-            self.lower_let_def(&defs[i], &mut stmts);
-        }
+        self.lower_let_defs(&defs, &mut stmts);
         let b = self.lower_expr(body, actual);
         stmts.push(GoStmt::Return(Some(b)));
         GoExpr::new(GoExprKind::Block(stmts), actual.clone())

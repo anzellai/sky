@@ -871,7 +871,12 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 ///
 /// **768 at the merge of v0.27.17 into the v0.28.0 line** (744 + the 24
 /// v0.28.0 Std.Ai surface cases).
-pub const CORPUS_EXPECTED: u64 = 768;
+///
+/// **804 since the v0.29.0 `let_mutual_recursion` stratum** (+36, Family L:
+/// 3 `letrec_group` x 3 `letrec_dep` x 4 `letrec_site`). Two local functions
+/// of one `let` that call each other failed `go build`; see
+/// `corpus/lang_shapes.rs`.
+pub const CORPUS_EXPECTED: u64 = 804;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -954,7 +959,10 @@ pub const CORPUS_EXPECTED: u64 = 768;
 ///
 /// **622 at the merge of v0.27.17 into the v0.28.0 line** (598 + the 24
 /// v0.28.0 Std.Ai surface cases).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 622;
+///
+/// **658 since the v0.29.0 `let_mutual_recursion` stratum** (+36, all built
+/// and run; the same +36 as `CORPUS_EXPECTED`).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 658;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.

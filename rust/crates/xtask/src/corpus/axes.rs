@@ -398,6 +398,25 @@ pub const GA_PARAMS: Axis = Axis::new("ga_params", &["one", "two"]);
 /// shape), or bound by an unannotated `let` first and passed by name.
 pub const GA_SITE: Axis = Axis::new("ga_site", &["inline", "let_bound"]);
 
+/// **How many local functions of one `let` call each other** (v0.29.0). A
+/// SELF-recursive local always built (`var f T; f = func…`, #162); two
+/// functions that call each other type-checked, then failed `go build` with
+/// `undefined: piece_6`: the first closure named the second before its `:=`.
+pub const LETREC_GROUP: Axis = Axis::new("letrec_group", &["self", "two", "three"]);
+
+/// **A plain binding beside the recursive group.** `before`: a value the group
+/// reads, written AFTER the group in source; `after`: a value that calls the
+/// group, written BEFORE it. Each is a forward reference the emission order
+/// must resolve around the group.
+pub const LETREC_DEP: Axis = Axis::new("letrec_dep", &["none", "before", "after"]);
+
+/// **Where the recursive `let` sits.** `tail_loop` is the `else` branch of a
+/// tail-recursive function, whose `let` takes the TCO path (`lower_tail_stmts`).
+pub const LETREC_SITE: Axis = Axis::new(
+    "letrec_site",
+    &["in_def", "in_case_branch", "in_lambda", "tail_loop"],
+);
+
 /// **How a Task-returning function reaches a `Task.andThen` chain.** A
 /// parameter `f : Int -> Task Error ()` called in a middle link whose result
 /// the next link ignores (`\_ -> …`) was typed `SkyTask[E, any]` by inference
@@ -672,6 +691,14 @@ pub const STRATA: &[Stratum] = &[
         // One module: the alias, its constructor and the slot are all local.
         isolated: false,
     },
+    // ---- v0.29.0 ------------------------------------------------------------
+    Stratum {
+        name: "let_mutual_recursion",
+        axes: &[LETREC_GROUP, LETREC_DEP, LETREC_SITE],
+        coordinate: Some("v0.29.0: two local functions of one `let` that call each other"),
+        // One module, one `let`: nothing here depends on a neighbour.
+        isolated: false,
+    },
 ];
 
 /// Whether a point in a stratum's cross is a real case.
@@ -831,6 +858,13 @@ pub fn pinned_coordinate(stratum: &str) -> Option<Assignment> {
                 .with(GA_SLOT, "just")
                 .with(GA_PARAMS, "one")
                 .with(GA_SITE, "inline"),
+        ),
+        // v0.29.0: the reported reproduction, `follow` and `piece` in a `let`.
+        "let_mutual_recursion" => Some(
+            Assignment::new()
+                .with(LETREC_GROUP, "two")
+                .with(LETREC_DEP, "none")
+                .with(LETREC_SITE, "in_def"),
         ),
         _ => None,
     }

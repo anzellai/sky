@@ -78,7 +78,8 @@ Core syntax you must get right:
 - **Lambdas**: `\x -> x + 1`. **Cons**: `head :: tail`. **Lists**: `[ 1, 2, 3 ]`.
 - **`let … in`** for locals; **`case … of`** for pattern matching (must be exhaustive).
   A let-bound function is polymorphic, like a top-level one (let-generalisation
-  under the value restriction, `docs/language/types.md`).
+  under the value restriction, `docs/language/types.md`). Local functions of one
+  `let` may call each other (mutual recursion), in any source order.
 - **Field access**: `model.user.name`; `Shape.origin.x` is field `x` of the
   qualified value `Shape.origin`.
 - **Record update**: `{ user | age = 41 }` (keeps every other field).
