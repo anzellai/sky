@@ -143,6 +143,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Migration
 
+The full list, with old and new code, is `docs/migration/v0.29.md`.
+
+- **Go code reached through FFI must not change a list argument.** A list
+  built by cons now shares memory with the older lists it was built on, so a
+  Go function that sorts a slice argument in place also changes them. Copy
+  first (`slices.Clone`). See `docs/ffi/boundary-philosophy.md`.
+
 - **New stdlib names `foldl` and `foldr` in `Sky.Core.String`.** A module that
   imports `Sky.Core.String exposing (..)` together with `Sky.Core.List` or
   `Sky.Core.Dict` `exposing (..)`, and uses the bare name, now gets `[E1012]`

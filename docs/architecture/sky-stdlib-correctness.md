@@ -345,9 +345,10 @@ union; `examples/00-standard-libs` exercises both modules in the
 
 **Known gaps**:
 * Writes are O(n) and enumeration sorts on every call (above).
-* A composite (tuple) key is refused in `Dict.foldl` / `Dict.map`
-  (`requireDecodableDictKey`, rt.go): the tagged string cannot be decoded
-  back to the tuple. Open; the persistent tree would store real keys.
+* A composite (tuple, list, record, custom type) key is rejected at check
+  time, `[E2008]` (`docs/KNOWN_LIMITATIONS.md`): its string encoding is not
+  injective and cannot be decoded. A persistent tree with real keys would
+  lift this; it was prototyped, not shipped.
 
 ---
 
