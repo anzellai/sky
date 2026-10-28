@@ -5484,6 +5484,46 @@ func Dict_memberT[V any](key string, d map[string]V) bool {
 	return ok
 }
 
+// dictProbeKeyT is dictProbeKey over a typed map: the encoded key first, then
+// the bare `%v` form that an FFI / Std.Db / JSON map holds ("10", not the
+// tagged "\x01i10"). The same two lookups, with no reflect copy of the map.
+func dictProbeKeyT[V any](m map[string]V, key any) string {
+	enc := encodeDictKey(key)
+	if len(enc) < 2 || enc[0] != dictKeyTagByte {
+		return enc
+	}
+	if _, ok := m[enc]; ok {
+		return enc
+	}
+	plain := fmt.Sprintf("%v", derefPointer(unwrapAny(key)))
+	if _, ok := m[plain]; ok {
+		return plain
+	}
+	return enc
+}
+
+// Dict_getProbeT / Dict_memberProbeT — `Dict.get` / `Dict.member` over a
+// typed `map[string]V` (lower.rs routes a call whose dict lowers to one). The
+// erased Dict_get / Dict_member first copy the whole typed map into a
+// `map[string]any` through reflect (AsDict): O(n) per lookup. These do the
+// erased kernel's two probes on the typed map itself: O(1).
+func Dict_getProbeT[V any](key any, d map[string]V) SkyMaybe[V] {
+	v, ok := d[dictProbeKeyT(d, key)]
+	if !ok {
+		return Nothing[V]()
+	}
+	// Dict_get dereferences a stored pointer; keep that for an erased V.
+	if dv, ok := derefPointer(v).(V); ok {
+		return Just[V](dv)
+	}
+	return Just[V](v)
+}
+
+func Dict_memberProbeT[V any](key any, d map[string]V) bool {
+	_, ok := d[dictProbeKeyT(d, key)]
+	return ok
+}
+
 // The `Dict_*T` family below takes and returns the runtime map's key as a bare
 // Go `string`. The Rust compiler does not emit any of them — `kernel.rs` maps
 // every `Sky.Core.Dict` entry to the `any` kernel above (plus the routed

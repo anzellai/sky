@@ -642,7 +642,7 @@
 32-sse-relay	adapter=0	dispatch=0	narrow=18
 33-websocket-echo	adapter=0	dispatch=0	narrow=4
 34-multi-tier-console	adapter=0	dispatch=0	narrow=59
-35-composite-generics	adapter=0	dispatch=0	narrow=107
+35-composite-generics	adapter=0	dispatch=0	narrow=106
 36-composite-server	adapter=0	dispatch=0	narrow=210
 37-composite-live-shop	adapter=0	dispatch=0	narrow=246
 38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=203
@@ -681,7 +681,7 @@ apps/dispatch	adapter=0	dispatch=0	narrow=233
 apps/fieldbook	adapter=0	dispatch=0	narrow=401
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
 apps/ledger	adapter=0	dispatch=0	narrow=384
-apps/relay	adapter=0	dispatch=0	narrow=117
+apps/relay	adapter=0	dispatch=0	narrow=115
 examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=61
 examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=61
 examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=163

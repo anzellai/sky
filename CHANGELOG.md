@@ -84,6 +84,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   called through FFI must treat a slice argument as read-only
   (`docs/ffi/boundary-philosophy.md`).
 
+- **`Dict.get` and `Dict.member` on a typed dict are O(1).** They copied the
+  whole typed map into a `map[string]any` through reflect on every lookup.
+  A call whose dict lowers to a typed `map[string]V` now goes to the probe-key
+  twins `rt.Dict_getProbeT` / `rt.Dict_memberProbeT`, which do the erased
+  kernel's two lookups (the tagged key, then the bare key that a `Std.Db`,
+  JSON or FFI map holds) on the typed map itself.
+
 - **`String.uncons`, `String.foldl` and `String.foldr`, and String kernels that
   walk instead of copying.** `uncons s` gives `Just ( first, rest )` in O(1),
   and the rest shares the bytes of `s`; over a proven string it returns its

@@ -6333,7 +6333,7 @@ impl<'a> Ctx<'a> {
         // `[]any` that the slot then narrows back element by element. Doc 14
         // R5, lever §5.3; measured by `xtask perf-gate` (cons-reverse).
         if args.len() == 1 && go == "rt.List_reverseAny" {
-            let xs = self.lower_expr(args[0], &GoTy::Any);
+            let xs = Self::kernel_to_kernel(self.lower_expr(args[0], &GoTy::Any));
             if let GoTy::Slice(e) = &xs.ty {
                 if provable(e) {
                     let elem = (**e).clone();
@@ -6350,8 +6350,45 @@ impl<'a> Ctx<'a> {
                 }
             }
             // Unproven: exactly the general path below.
-            let wxs = self.widen(Self::kernel_to_kernel(xs));
+            let wxs = self.widen(xs);
             return self.kernel_call_lowered(go, vec![wxs], actual);
+        }
+        // `Dict.get k d` / `Dict.member k d` over a typed `map[string]V`: the
+        // probe-key twins `rt.Dict_getProbeT[V]` / `Dict_memberProbeT[V]`. The
+        // erased kernels reflect-copy the whole typed map into a
+        // `map[string]any` (`rt.AsDict`) on every lookup, O(n); the twins do
+        // the same two probes (the tagged key, then the bare `%v` key an FFI /
+        // Std.Db map holds) on the typed map, O(1). The key stays erased: the
+        // probe needs its runtime kind. Doc 14 R5, lever §5.3; floor check
+        // (§1): the dict's Go type is the argument's own lowered `map[string]V`
+        // and the result is `SkyMaybe[V]` / `bool`, both known at emit time.
+        if args.len() == 2 && (go == "rt.Dict_get" || go == "rt.Dict_member") {
+            let k = self.lower_expr(args[0], &GoTy::Any);
+            // A dict that is itself a direct kernel result stays erased (its R5
+            // narrowing is dropped, `kernel_to_kernel`), so it takes the erased
+            // kernel exactly as before rather than a narrowing into the twin.
+            let d = Self::kernel_to_kernel(self.lower_expr(args[1], &GoTy::Any));
+            if let GoTy::Map(kt, v) = &d.ty {
+                if **kt == GoTy::Bare(Prim::Str) {
+                    let v = (**v).clone();
+                    let (sym, ret) = if go == "rt.Dict_get" {
+                        (
+                            "rt.Dict_getProbeT",
+                            GoTy::Named("rt.SkyMaybe".into(), vec![v.clone()]),
+                        )
+                    } else {
+                        ("rt.Dict_memberProbeT", GoTy::Bare(Prim::Bool))
+                    };
+                    let wk = self.widen(k);
+                    let call = GoExpr::new(
+                        GoExprKind::GenericCall(sym.to_string(), vec![v], vec![wk, d]),
+                        ret,
+                    );
+                    return self.coerce_if_needed(call, actual);
+                }
+            }
+            let largs = vec![self.widen(Self::kernel_to_kernel(k)), self.widen(d)];
+            return self.kernel_call_lowered(go, largs, actual);
         }
         // `List.take k` / `List.drop k` over a proven Int and slice: the typed
         // twins `rt.List_takeT[T]` / `List_dropT[T]` are a re-slice, O(1),
@@ -6359,7 +6396,7 @@ impl<'a> Ctx<'a> {
         // narrows it back, O(n). Same lever and proof as `reverse` above.
         if args.len() == 2 && (go == "rt.List_take" || go == "rt.List_drop") {
             let k = self.lower_expr(args[0], &GoTy::Any);
-            let xs = self.lower_expr(args[1], &GoTy::Any);
+            let xs = Self::kernel_to_kernel(self.lower_expr(args[1], &GoTy::Any));
             if let (GoTy::Bare(Prim::Int), GoTy::Slice(e)) = (&k.ty, &xs.ty) {
                 if provable(e) {
                     let elem = (**e).clone();
@@ -6376,10 +6413,7 @@ impl<'a> Ctx<'a> {
                     return self.coerce_if_needed(call, actual);
                 }
             }
-            let largs = vec![
-                self.widen(Self::kernel_to_kernel(k)),
-                self.widen(Self::kernel_to_kernel(xs)),
-            ];
+            let largs = vec![self.widen(Self::kernel_to_kernel(k)), self.widen(xs)];
             return self.kernel_call_lowered(go, largs, actual);
         }
         if args.len() == 1 {
