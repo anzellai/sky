@@ -22,6 +22,7 @@ module Sky.Core.String exposing
     , split
     , replace
     , slice
+    , indexes
     , dropLeft
     , dropRight
     , toInt
@@ -234,6 +235,20 @@ replace =
 slice : Int -> Int -> String -> String
 slice =
     Ffi.kernel "String_slice"
+
+
+-- | `indexes sub s` — the start of every non-overlapping occurrence of
+-- `sub` in `s`, left to right, counted in characters (Unicode code
+-- points: the unit of `String.slice` and `String.length`, never bytes).
+-- An empty `sub` gives `[]`, as in Elm. Runs anywhere (pure: client and
+-- server). Cost: O(n) in the length of `s`.
+--
+--     String.indexes "i" "Mississippi" == [ 1, 4, 7, 10 ]
+--     String.indexes "ss" "Mississippi" == [ 2, 5 ]
+--     String.indexes "=" "£1=─2" == [ 2 ]
+indexes : String -> String -> List Int
+indexes =
+    Ffi.kernel "String_indexes"
 
 
 -- | Drop the first n characters (runes) from s.  Elm semantics:

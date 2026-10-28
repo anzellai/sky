@@ -22,6 +22,30 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   program gets no arguments, as before. This works for a plain app, a Sky.Spa
   entry (the backend gets them) and a `Std.App` entry.
 
+- **Small core functions: `Char.isAlphaNum`, `Char.isSpace`, `List.map2`,
+  `List.map3`, `List.unique` and `String.indexes`.** All pure, so they run on
+  the client and the server. `Char.isAlphaNum` is `isAlpha || isDigit`
+  (Unicode, like both). `Char.isSpace` is the Unicode White_Space property,
+  the set `String.trim` removes. `List.map2` / `map3` apply a function pairwise
+  and stop at the shorter list, as in Elm, in one pass with one allocation and
+  no tuples: with a typed callback the lowering calls a typed runtime twin
+  (`rt.List_map2T`), which over 1,000,000 Ints is about 35x faster than
+  `List.map` over `List.zip`, with 1 allocation instead of 2,000,006.
+  `List.unique` keeps the first occurrence of each `comparable` value, in
+  order, in O(n) expected time. `String.indexes sub s` gives the start of
+  every non-overlapping occurrence of `sub`, counted in characters (the unit
+  of `String.slice`), O(n); an empty `sub` gives `[]`, as in Elm.
+
+### Migration
+
+- **New stdlib names `map2`, `map3` and `unique` in `Sky.Core.List`.** A
+  module that imports `Sky.Core.List exposing (..)` together with
+  `Sky.Core.Maybe`, `Sky.Core.Result`, `Sky.Core.Task`, `Sky.Core.Json.Decode`
+  or `Std.Db.Decode` `exposing (..)` (for `map2` / `map3`), or with
+  `Std.Db.Schema`, `Std.Db.Store` or `Std.Db.Table` `exposing (..)` (for
+  `unique`), and uses the bare name, now gets `[E1012]` at the use. Qualify the
+  name (`Maybe.map2`, `Schema.unique`), or narrow one `exposing` list.
+
 ### Fixed
 
 - **`sky run --help` prints help and builds nothing.** Before, `sky run --help`

@@ -64,7 +64,8 @@ main =
         ++ println (String.split "," "a,b,c") -- ["a","b","c"]
 ```
 
-All 33 entries: `length`, `isEmpty`, `reverse`, `append`, `concat`, `split`, `join`, `replace`, `slice`, `contains`, `startsWith`, `endsWith`, `toInt`, `fromInt`, `toFloat`, `fromFloat`, `toUpper`, `toLower`, `trim`, `trimStart`, `trimEnd`, `repeat`, `padLeft`, `padRight`, `lines`, `words`, `fromChar`, `toList`, `fromList`, `casefold`, `equalFold`, `isEmail`, `isUrl`.
+All 34 entries: `length`, `isEmpty`, `reverse`, `append`, `concat`, `split`, `join`, `replace`, `slice`, `contains`, `startsWith`, `endsWith`, `toInt`, `fromInt`, `toFloat`, `fromFloat`, `toUpper`, `toLower`, `trim`, `trimStart`, `trimEnd`, `repeat`, `padLeft`, `padRight`, `lines`, `words`, `fromChar`, `toList`, `fromList`, `casefold`, `equalFold`, `isEmail`, `isUrl`, `indexes`.
+`String.indexes sub s` gives the start of every non-overlapping occurrence of `sub`, counted in characters (the unit of `slice`), O(n) (v0.29.0).
 
 ### `List` — sequences
 
@@ -76,7 +77,8 @@ sum     = List.foldl (\n acc -> n + acc) 0 [ 1, 2, 3 ]    -- 6
 evens   = List.filter (\n -> modBy 2 n == 0) [ 1, 2, 3, 4 ] -- [2, 4]
 ```
 
-`map`, `filter`, `foldl`, `foldr`, `length`, `head`, `tail`, `take`, `drop`, `append`, `concat`, `concatMap`, `reverse`, `member`, `any`, `all`, `range`, `repeat`, `zip`, `isEmpty`, `indexedMap`, `find`, `cons`.
+`map`, `filter`, `foldl`, `foldr`, `length`, `head`, `tail`, `take`, `drop`, `append`, `concat`, `concatMap`, `reverse`, `member`, `any`, `all`, `range`, `repeat`, `zip`, `isEmpty`, `indexedMap`, `find`, `cons`, `map2`, `map3`, `unique`.
+`List.map2 f xs ys` / `map3` apply `f` pairwise and stop at the shorter list (Elm), in one pass with one allocation, so they are cheaper than `List.map` over `List.zip`. `List.unique xs` keeps the first occurrence of each `comparable` value, in order, in O(n) expected time (v0.29.0).
 `List.repeat n x` is `n` copies of `x` (Elm); `n` of 0 or less gives `[]`.
 
 > v0.17 closed Limitation #8 — all 13 list ops in scope now run
@@ -180,7 +182,8 @@ match = Regex.match "^[a-z]+$" "hello"   -- True
 
 ### `Char` — character predicates
 
-`isUpper`, `isLower`, `isDigit`, `isAlpha`, `toUpper`, `toLower`.
+`isUpper`, `isLower`, `isDigit`, `isAlpha`, `isAlphaNum`, `isSpace`, `toUpper`, `toLower`, `toCode`, `fromCode`.
+`isAlphaNum` is `isAlpha || isDigit` (Unicode, like both). `isSpace` is the Unicode White_Space property, the set `String.trim` removes (v0.29.0).
 
 ### `Path` — file path manipulation
 

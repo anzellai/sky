@@ -35,6 +35,9 @@ module Sky.Core.List exposing
     , range
     , repeat
     , zip
+    , map2
+    , map3
+    , unique
     , map
     , filter
     , filterMap
@@ -169,6 +172,43 @@ repeat =
 zip : List a -> List b -> List ( a, b )
 zip =
     Ffi.kernel "List_zip"
+
+
+-- | `map2 f xs ys` — `f` applied to the elements of `xs` and `ys` pair by
+-- pair, stopping at the end of the shorter list (Elm semantics).
+-- Runs anywhere (pure). Cost: O(min(n, m)) time, one allocation of the
+-- result; no intermediate list of tuples, so it is cheaper than
+-- `List.map (\( a, b ) -> f a b) (List.zip xs ys)`.
+--
+--     List.map2 (\a b -> a + b) [ 1, 2, 3 ] [ 10, 20 ] == [ 11, 22 ]
+--     List.map2 Tuple.pair xs ys == List.zip xs ys
+map2 : (a -> b -> c) -> List a -> List b -> List c
+map2 =
+    Ffi.kernel "List_map2"
+
+
+-- | `map3 f xs ys zs` — like `map2` over three lists, stopping at the end
+-- of the shortest. Runs anywhere (pure). Cost: O(min(n, m, k)) time, one
+-- allocation of the result.
+--
+--     List.map3 (\a b c -> a + b + c) [ 1, 2 ] [ 10, 20 ] [ 100, 200, 300 ] == [ 111, 222 ]
+map3 : (a -> b -> c -> d) -> List a -> List b -> List c -> List d
+map3 =
+    Ffi.kernel "List_map3"
+
+
+-- | `unique xs` — `xs` with every value kept only at its FIRST occurrence,
+-- in the original order. Two values are the same when `==` says so; the
+-- check uses the identity key `Set` uses, so the element type must be
+-- `comparable` (Int, Float, String, Char, and tuples and lists of them).
+-- Runs anywhere (pure). Cost: O(n) expected time (plus the size of each
+-- element's key) and O(n) extra memory. Use `Set.fromList` when the order
+-- does not matter and you want a set.
+--
+--     List.unique [ 3, 1, 3, 2, 1 ] == [ 3, 1, 2 ]
+unique : List comparable -> List comparable
+unique =
+    Ffi.kernel "List_unique"
 
 
 -- ─── Scalar-accumulating / O(1) ops (pure Sky, auto-TCO'd) ──────────

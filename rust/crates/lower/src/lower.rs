@@ -6236,6 +6236,26 @@ impl<'a> Ctx<'a> {
                 return self.list_hof_typed(hof, go, f, xs, actual);
             }
         }
+        // `List.map2` / `List.map3`, fully applied: the typed one-pass twin
+        // when every list and the callback are provable (`list_map_n_typed`).
+        let map_n = match go {
+            "rt.List_map2" => Some(("rt.List_map2T", 3)),
+            "rt.List_map3" => Some(("rt.List_map3T", 4)),
+            _ => None,
+        };
+        if let Some((typed_symbol, n)) = map_n {
+            if args.len() == n {
+                // Same proof rules as `List.map` (`list_hof_typed`): the callback
+                // and the lists are lowered at `any` and the typed twin is used
+                // only when every Go type is proven.
+                let f = self.lower_expr(args[0], &GoTy::Any);
+                let lists: Vec<GoExpr> = args[1..]
+                    .iter()
+                    .map(|a| self.lower_expr(*a, &GoTy::Any))
+                    .collect();
+                return self.list_map_n_typed(go, typed_symbol, f, lists, actual);
+            }
+        }
         // `toFloat` over a proven Go `int` goes to its typed twin
         // `rt.Basics_toFloatT(int) float64`, so the call carries no `any` box
         // and no R5 return narrowing. Doc 14: origin R5 (the kernel return),
@@ -6860,6 +6880,74 @@ impl<'a> Ctx<'a> {
         let call = GoExpr::new(
             GoExprKind::GenericCall(hof.typed_symbol().to_string(), targs, vec![typed_f, xs]),
             out,
+        );
+        self.coerce_if_needed(call, actual)
+    }
+
+    /// `List.map2` / `List.map3` at a call site whose list element types and
+    /// callback shape are all statically known: the typed one-pass twin
+    /// `rt.List_map2T[A, B, C](fn func(A, B) C, xs []A, ys []B) []C` (and
+    /// `List_map3T`), so no element is boxed through `any` and the callback is
+    /// called directly, not through `SkyCall`. The same proof rules as
+    /// [`Self::list_hof_typed`]'s `Map` arm, one element type per list; any
+    /// unproven piece keeps the erased `rt.List_map2` call, byte-identical.
+    ///
+    /// Doc 14: origin R1 (the HOF callback slot) and R5 (the erased kernel's
+    /// `any` return); lever §5.3 (a typed kernel entry point). Floor check
+    /// (§1): every slice element type, the callback's Go shape and the result
+    /// element are known at emit time, or the site is left erased.
+    fn list_map_n_typed(
+        &mut self,
+        go: &str,
+        typed_symbol: &str,
+        f: GoExpr,
+        lists: Vec<GoExpr>,
+        actual: &GoTy,
+    ) -> GoExpr {
+        let erased = |s: &mut Self, f: GoExpr, lists: Vec<GoExpr>| {
+            let mut largs = vec![s.widen(f)];
+            for l in lists {
+                largs.push(s.widen(l));
+            }
+            s.kernel_call_lowered(go, largs, actual)
+        };
+        let mut elems: Vec<GoTy> = Vec::with_capacity(lists.len());
+        for l in &lists {
+            match l.ty.clone().into_slice() {
+                Ok(e) if provable(&e) => elems.push(e),
+                _ => return erased(self, f, lists),
+            }
+        }
+        let Ok((f_ps, f_r)) = f.ty.clone().into_func() else {
+            return erased(self, f, lists);
+        };
+        if f_ps.len() != lists.len() || !provable(&f_r) {
+            return erased(self, f, lists);
+        }
+        // A kernel referenced as a value types as its inferred Sky shape, not
+        // as the `any`-based runtime symbol it emits (see `list_hof_typed`).
+        if matches!(&f.kind, GoExprKind::Ident(n) if n.starts_with("rt.") || n.starts_with("skyffi."))
+        {
+            return erased(self, f, lists);
+        }
+        let want_cb = GoTy::Func(elems.clone(), Box::new(f_r.clone()));
+        let typed_f = if f.ty == want_cb {
+            f.clone()
+        } else if Self::func_shape_eta_applies(&f, &want_cb) {
+            match self.func_shape_eta(&f, &want_cb) {
+                Some(e) if e.ty == want_cb => e,
+                _ => return erased(self, f, lists),
+            }
+        } else {
+            return erased(self, f, lists);
+        };
+        let mut targs = elems;
+        targs.push(f_r.clone());
+        let mut cargs = vec![typed_f];
+        cargs.extend(lists);
+        let call = GoExpr::new(
+            GoExprKind::GenericCall(typed_symbol.to_string(), targs, cargs),
+            GoTy::Slice(Box::new(f_r)),
         );
         self.coerce_if_needed(call, actual)
     }
@@ -10174,6 +10262,23 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
             str_(),
         ),
         ("rt.Regex_match", 2) => twin("rt.Regex_matchT", vec![Some(str_()), Some(str_())], bool_()),
+        // v0.29.0 core helpers (runtime-go/rt/core_helpers_test.go checks
+        // each against its erased kernel).
+        ("rt.String_indexes", 2) => twin(
+            "rt.String_indexesT",
+            vec![Some(str_()), Some(str_())],
+            GoTy::Slice(Box::new(int())),
+        ),
+        ("rt.Char_isAlphaNum", 1) => twin(
+            "rt.Char_isAlphaNumT",
+            vec![Some(GoTy::Bare(Prim::Rune))],
+            bool_(),
+        ),
+        ("rt.Char_isSpace", 1) => twin(
+            "rt.Char_isSpaceT",
+            vec![Some(GoTy::Bare(Prim::Rune))],
+            bool_(),
+        ),
         // `Std.Db`'s row readers already return their Go type
         // (runtime-go/rt/db_auth.go), so each is its own twin: a column read
         // narrows nothing (doc 14 R5, lever §5.3).

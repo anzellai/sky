@@ -56,12 +56,21 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     "value maybe",
     "value null",
     "value nullable",
+    // v0.29.0: List.map2 / List.map3 (Elm). Maybe, Result, Task, Json.Decode
+    // and Std.Db.Decode already export `map2` / `map3`; Elm has the same
+    // set. A program that exposes List and one of them with `(..)` and uses
+    // the bare name gets `[E1012]`; see the v0.29.0 CHANGELOG.
+    "value map2",
+    "value map3",
     // v0.27.13: List.repeat (Elm). String.repeat, Std.Css and Std.Ui.Grid
     // already export `repeat`; Elm has the same pair.
     "value repeat",
     // v0.27.10: `Std.Image.trim` (crop away a uniform margin) shares its name
     // with `String.trim`; see the v0.27.10 CHANGELOG.
     "value trim",
+    // v0.29.0: List.unique (keep the first occurrence of each value).
+    // Std.Db.Schema / Store / Table export the `unique` column modifier.
+    "value unique",
     // v0.27.20: Std.Email.withHeader (#300). Sky.Core.Http, Sky.Http.Server,
     // Std.Csv and the Server kernel already export `withHeader`.
     "value withHeader",
