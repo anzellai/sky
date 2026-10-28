@@ -1,0 +1,191 @@
+-- | Sky.Core.Array — a persistent array with fast indexed access (Elm's
+-- `Array`).
+--
+-- An `Array a` is a 32-way persistent trie with a separate tail
+-- (`runtime-go/rt/array_trie.go`). Every value is immutable: `set` and
+-- `push` copy one path of at most a few nodes and share the rest, so the
+-- old array stays as it was. Use it where a `List` would need an index:
+-- a dynamic-programming table, a ring of recent values, a lookup by
+-- position. Indexes start at 0. `get` and `set` outside
+-- `0 .. length - 1` give `Nothing` / the array unchanged, as in Elm.
+--
+-- Pure: runs on the client and on the server.
+module Sky.Core.Array exposing
+    ( Array
+    , empty
+    , initialize
+    , repeat
+    , fromList
+    , isEmpty
+    , length
+    , get
+    , set
+    , push
+    , toList
+    , toIndexedList
+    , map
+    , indexedMap
+    , foldl
+    , foldr
+    , filter
+    , append
+    , slice
+    )
+
+import Sky.Ffi as Ffi
+
+type Array a
+    = Array_OPAQUE
+
+
+-- ─── Construction ──────────────────────────────────────────────────
+-- | The empty array.
+--
+-- Cost: O(1).
+empty : Array a
+empty =
+    Ffi.kernel "Array_empty"
+
+
+-- | `initialize n f` — the array `[ f 0, f 1, …, f (n - 1) ]`. A
+-- non-positive `n` gives the empty array.
+--
+-- Cost: O(n).
+initialize : Int -> (Int -> a) -> Array a
+initialize =
+    Ffi.kernel "Array_initialize"
+
+
+-- | `repeat n x` — `n` copies of `x`.
+--
+-- Cost: O(n).
+repeat : Int -> a -> Array a
+repeat =
+    Ffi.kernel "Array_repeat"
+
+
+-- | The elements of a list, in order.
+--
+-- Cost: O(n).
+fromList : List a -> Array a
+fromList =
+    Ffi.kernel "Array_fromList"
+
+
+-- ─── Queries ───────────────────────────────────────────────────────
+-- | `True` for the empty array.
+--
+-- Cost: O(1).
+isEmpty : Array a -> Bool
+isEmpty =
+    Ffi.kernel "Array_isEmpty"
+
+
+-- | The number of elements.
+--
+-- Cost: O(1).
+length : Array a -> Int
+length =
+    Ffi.kernel "Array_length"
+
+
+-- | `get i a` — the element at index `i`, or `Nothing` when `i` is
+-- outside `0 .. length a - 1`.
+--
+-- Cost: O(log32 n), at most 4 steps for a million elements.
+get : Int -> Array a -> Maybe a
+get =
+    Ffi.kernel "Array_get"
+
+
+-- ─── Updates (each returns a new array) ────────────────────────────
+-- | `set i x a` — `a` with index `i` replaced by `x`; `a` unchanged
+-- when `i` is out of range.
+--
+-- Cost: O(log32 n).
+set : Int -> a -> Array a -> Array a
+set =
+    Ffi.kernel "Array_set"
+
+
+-- | `push x a` — `a` with `x` added at the end.
+--
+-- Cost: amortised O(1).
+push : a -> Array a -> Array a
+push =
+    Ffi.kernel "Array_push"
+
+
+-- | `append a b` — the elements of `a`, then those of `b`.
+--
+-- Cost: O(length b).
+append : Array a -> Array a -> Array a
+append =
+    Ffi.kernel "Array_append"
+
+
+-- | `slice start end a` — the elements from `start` up to, not
+-- including, `end`. A negative index counts from the end; the range is
+-- clamped, as in Elm.
+--
+-- Cost: O(end - start).
+slice : Int -> Int -> Array a -> Array a
+slice =
+    Ffi.kernel "Array_slice"
+
+
+-- ─── Conversion and traversal ──────────────────────────────────────
+-- | The elements, in order.
+--
+-- Cost: O(n).
+toList : Array a -> List a
+toList =
+    Ffi.kernel "Array_toList"
+
+
+-- | `( index, element )` pairs, in order.
+--
+-- Cost: O(n).
+toIndexedList : Array a -> List ( Int, a )
+toIndexedList =
+    Ffi.kernel "Array_toIndexedList"
+
+
+-- | Apply a function to every element.
+--
+-- Cost: O(n).
+map : (a -> b) -> Array a -> Array b
+map =
+    Ffi.kernel "Array_map"
+
+
+-- | Apply a function to every element and its index.
+--
+-- Cost: O(n).
+indexedMap : (Int -> a -> b) -> Array a -> Array b
+indexedMap =
+    Ffi.kernel "Array_indexedMap"
+
+
+-- | Fold from the first element.
+--
+-- Cost: O(n).
+foldl : (a -> b -> b) -> b -> Array a -> b
+foldl =
+    Ffi.kernel "Array_foldl"
+
+
+-- | Fold from the last element.
+--
+-- Cost: O(n).
+foldr : (a -> b -> b) -> b -> Array a -> b
+foldr =
+    Ffi.kernel "Array_foldr"
+
+
+-- | Keep the elements for which the test is `True`.
+--
+-- Cost: O(n).
+filter : (a -> Bool) -> Array a -> Array a
+filter =
+    Ffi.kernel "Array_filter"

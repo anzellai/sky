@@ -74,6 +74,17 @@ func skyShow(rv reflect.Value, depth int, enumType string) (string, bool) {
 		}
 		rv = rv.Elem()
 	}
+	if rv.IsValid() && rv.CanInterface() {
+		if a, ok := rv.Interface().(SkyArray); ok {
+			parts := make([]string, 0, a.t.length())
+			a.t.each(func(_ int, x any) bool {
+				p, _ := skyShow(reflect.ValueOf(x), depth+1, "")
+				parts = append(parts, p)
+				return true
+			})
+			return "Array.fromList [" + strings.Join(parts, ", ") + "]", false
+		}
+	}
 	if !rv.IsValid() {
 		return "()", true
 	}

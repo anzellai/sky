@@ -222,6 +222,8 @@ const KNOWN_PURE_KERNELS: &[&str] = &[
     "String",
     "List",
     "Dict",
+    // v0.29.0: Sky.Core.Array, a persistent vector (pure).
+    "Array",
     "Set",
     "Maybe",
     "Result",

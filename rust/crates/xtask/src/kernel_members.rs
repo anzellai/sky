@@ -75,7 +75,10 @@ fn internal_runtime_bases(module: &str) -> &'static [&'static str] {
         ],
         // `Dict_map2T` is the typed variant of a `map2` the surface never
         // exposes (no bare `rt.Dict_map2`); it is internal dispatch.
-        "Dict" => &["map2"],
+        // `Dict_getProbeT` / `Dict_memberProbeT` are the typed-map twins the
+        // lowerer picks for `Dict.get` / `Dict.member` (v0.29.0 D1); a user
+        // calls `get` / `member`.
+        "Dict" => &["map2", "getProbe", "memberProbe"],
         // Std.Db Store/Codec/migration machinery — invoked by generated code and
         // the `Std.Db.Store` layer, NOT a `Db.<name>` user surface. (`getFloat`
         // is deliberately NOT here: it parallels `getString`/`getInt`/`getBool`

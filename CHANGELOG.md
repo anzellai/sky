@@ -66,6 +66,19 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   it, the same rule as `insertAtCursor`, with the same errors. A Sky.Spa
   client capability: `Err Unavailable` on Sky.Live, a server, a CLI or a TUI.
 
+- **`Sky.Core.Array`: Elm's persistent array.** `empty`, `initialize`,
+  `repeat`, `fromList`, `isEmpty`, `length`, `get`, `set`, `push`, `toList`,
+  `toIndexedList`, `map`, `indexedMap`, `foldl`, `foldr`, `filter`, `append`
+  and `slice`, over a 32-way persistent trie with a tail
+  (`runtime-go/rt/array_trie.go`): `get` / `set` O(log32 n), `push`
+  amortised O(1), `length` O(1). Every value is immutable; `set` copies one
+  path and shares the rest. `get` / `set` out of range give `Nothing` / the
+  array unchanged, as in Elm. `==` compares elements, `toString` prints
+  `Array.fromList [ … ]`, and an Array in a Sky.Live model survives the
+  session store (gob). Pure: client and server. A new module, so no existing
+  program changes; read it qualified, since its names match List, Dict and
+  String.
+
 - **`x :: xs` is amortised O(1).** A typed `::` lowered to
   `rt.AsListT[T](rt.List_cons(any(x), any(xs)))`, which reflect-widened the
   whole tail and narrowed it back on every cons: an accumulator loop of n

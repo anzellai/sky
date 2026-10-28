@@ -169,24 +169,24 @@ func TestStaleEntriesAfterGCAreNeverUsed(t *testing.T) {
 func TestAppendClaimAndCopy(t *testing.T) {
 	ys := buildCons(100)
 	xs := []int{-3, -2, -1}
-	a := List_appendBlockT(xs, ys)
+	a := listAppendBlock(xs, ys)
 	if !slices.Equal(a, append(append([]int{}, xs...), ys...)) {
 		t.Fatalf("append: %v", a[:5])
 	}
 	if &a[3] != &ys[0] {
 		t.Fatal("append at the frontier copied ys instead of claiming room")
 	}
-	b := List_appendBlockT([]int{9}, ys) // ys is no longer at the frontier
+	b := listAppendBlock([]int{9}, ys) // ys is no longer at the frontier
 	if b[0] != 9 || a[2] != -1 || &b[1] == &ys[0] {
 		t.Fatal("a second append onto ys must copy")
 	}
 	// The left operand is never written: append a block list onto another.
 	left := buildCons(50)
-	c := List_appendBlockT(left, buildCons(60))
+	c := listAppendBlock(left, buildCons(60))
 	if len(c) != 110 || c[0] != 1 || c[50] != 1 || left[0] != 1 {
 		t.Fatal("append of two block lists")
 	}
-	if got := List_appendBlockT([]int{}, ys); &got[0] != &ys[0] {
+	if got := listAppendBlock([]int{}, ys); &got[0] != &ys[0] {
 		t.Fatal("[] ++ ys must be ys")
 	}
 }

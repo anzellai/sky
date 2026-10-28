@@ -1,0 +1,173 @@
+module ArrayConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for Sky.Core.Array (v0.29.0): Elm's Array API
+-- over a persistent 32-way trie. Indexes start at 0; out of range is
+-- Nothing / unchanged. The use case beyond the API: an edit-distance
+-- table (dynamic programming over one row at a time).
+
+import Sky.Core.Array as Array exposing (Array)
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Test as Test exposing (Test)
+
+
+at : Int -> Array Int -> Int
+at i a =
+    Maybe.withDefault 0 (Array.get i a)
+
+
+-- One row of the edit-distance table from the previous one.
+nextRow : Array Char -> Array Int -> Int -> Char -> Array Int
+nextRow target prev i c =
+    List.foldl
+        (\j row ->
+            let
+                cost =
+                    if Array.get (j - 1) target == Just c then
+                        0
+
+                    else
+                        1
+                best =
+                    min
+                        (min (at j prev + 1) (at (j - 1) row + 1))
+                        (at (j - 1) prev + cost)
+            in
+                Array.push best row)
+        (Array.fromList [ i ])
+        (List.range 1 (Array.length target))
+
+
+editDistance : String -> String -> Int
+editDistance a b =
+    let
+        target = Array.fromList (String.toList b)
+        first = Array.initialize (Array.length target + 1) identity
+        ( _, final ) =
+            List.foldl
+                (\c ( i, prev ) -> ( i + 1, nextRow target prev i c ))
+                ( 1, first )
+                (String.toList a)
+    in
+        at (Array.length target) final
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "Array.fromList / toList round trip"
+          (\_ ->
+              Test.equal [ 1, 2, 3 ] (Array.toList (Array.fromList [ 1, 2, 3 ])))
+    , Test.test
+          "Array.get in and out of range"
+          (\_ ->
+              Test.equal
+                  ( Just "b", Nothing, Nothing )
+                  ( Array.get 1 (Array.fromList [ "a", "b" ])
+                  , Array.get 2 (Array.fromList [ "a", "b" ])
+                  , Array.get (-1) (Array.fromList [ "a" ])
+                  ))
+    , Test.test
+          "Array.set replaces one element and leaves the old array alone"
+          (\_ ->
+              let
+                  a = Array.fromList [ 1, 2, 3 ]
+              in
+                  Test.equal
+                      ( [ 1, 9, 3 ], [ 1, 2, 3 ] )
+                      ( Array.toList (Array.set 1 9 a), Array.toList a ))
+    , Test.test
+          "Array.set out of range is unchanged"
+          (\_ ->
+              Test.equal
+                  [ 1 ]
+                  (Array.toList (Array.set 5 9 (Array.fromList [ 1 ]))))
+    , Test.test
+          "Array.push across the 32 and 1024 boundaries"
+          (\_ ->
+              let
+                  a = List.foldl Array.push Array.empty (List.range 0 2000)
+              in
+                  Test.equal
+                      ( 2001, Just 31, Just 1024 )
+                      ( Array.length a, Array.get 31 a, Array.get 1024 a ))
+    , Test.test
+          "Array.initialize and repeat"
+          (\_ ->
+              Test.equal
+                  ( [ 0, 1, 4 ], [ "x", "x" ] )
+                  ( Array.toList (Array.initialize 3 (\i -> i * i))
+                  , Array.toList (Array.repeat 2 "x")
+                  ))
+    , Test.test
+          "Array.map, indexedMap and filter"
+          (\_ ->
+              Test.equal
+                  ( [ 2, 4 ], [ 1, 3 ], [ 2 ] )
+                  ( Array.toList
+                        (Array.map (\x -> x * 2) (Array.fromList [ 1, 2 ]))
+                  , Array.toList
+                        (Array.indexedMap
+                            (\i x -> i + x)
+                            (Array.fromList [ 1, 2 ]))
+                  , Array.toList
+                        (Array.filter (\x -> x > 1) (Array.fromList [ 1, 2 ]))
+                  ))
+    , Test.test
+          "Array.foldl and foldr visit in opposite orders"
+          (\_ ->
+              Test.equal
+                  ( [ 3, 2, 1 ], [ 1, 2, 3 ] )
+                  ( Array.foldl
+                        (\x acc -> x :: acc)
+                        []
+                        (Array.fromList [ 1, 2, 3 ])
+                  , Array.foldr
+                        (\x acc -> x :: acc)
+                        []
+                        (Array.fromList [ 1, 2, 3 ])
+                  ))
+    , Test.test
+          "Array.append and slice (negative index from the end)"
+          (\_ ->
+              Test.equal
+                  ( [ 1, 2, 3, 4 ], [ 2, 3 ] )
+                  ( Array.toList
+                        (Array.append
+                            (Array.fromList [ 1, 2 ])
+                            (Array.fromList [ 3, 4 ]))
+                  , Array.toList
+                        (Array.slice 1 (-1) (Array.fromList [ 1, 2, 3, 4 ]))
+                  ))
+    , Test.test
+          "Array.toIndexedList and isEmpty"
+          (\_ ->
+              Test.equal
+                  ( [ ( 0, "a" ), ( 1, "b" ) ], True, False )
+                  ( Array.toIndexedList (Array.fromList [ "a", "b" ])
+                  , Array.isEmpty Array.empty
+                  , Array.isEmpty (Array.fromList [ 1 ])
+                  ))
+    , Test.test
+          "== compares arrays by their elements"
+          (\_ ->
+              Test.equal
+                  True
+                  (Array.fromList [ 1, 2 ]
+                      == Array.push 2 (Array.push 1 Array.empty)))
+    , Test.test
+          "an edit-distance table built row by row"
+          (\_ ->
+              Test.equal
+                  ( 3, 0, 4 )
+                  ( editDistance "kitten" "sitting"
+                  , editDistance "sky" "sky"
+                  , editDistance "" "abcd"
+                  ))
+    ]
+
+
+main =
+    Test.runMain tests

@@ -55,6 +55,7 @@ pub fn is_nullary_kernel_value(module: &str, func: &str) -> bool {
         (module, func),
         ("Dict", "empty")
             | ("Set", "empty")
+            | ("Array", "empty")
             | ("Cmd", "none")
             | ("Sub", "none")
             | ("Uuid", "v4")
@@ -336,6 +337,25 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Watch", "next", "rt.Watch_next"),
     ("Watch", "close", "rt.Watch_close"),
     ("Watch", "changes", "rt.Watch_changes"),
+    // v0.29.0 Sky.Core.Array (runtime-go/rt/array_trie.go).
+    ("Array", "empty", "rt.Array_empty"),
+    ("Array", "initialize", "rt.Array_initialize"),
+    ("Array", "repeat", "rt.Array_repeat"),
+    ("Array", "fromList", "rt.Array_fromList"),
+    ("Array", "isEmpty", "rt.Array_isEmpty"),
+    ("Array", "length", "rt.Array_length"),
+    ("Array", "get", "rt.Array_get"),
+    ("Array", "set", "rt.Array_set"),
+    ("Array", "push", "rt.Array_push"),
+    ("Array", "toList", "rt.Array_toList"),
+    ("Array", "toIndexedList", "rt.Array_toIndexedList"),
+    ("Array", "map", "rt.Array_map"),
+    ("Array", "indexedMap", "rt.Array_indexedMap"),
+    ("Array", "foldl", "rt.Array_foldl"),
+    ("Array", "foldr", "rt.Array_foldr"),
+    ("Array", "filter", "rt.Array_filter"),
+    ("Array", "append", "rt.Array_append"),
+    ("Array", "slice", "rt.Array_slice"),
     ("Sync", "newRef", "rt.Sync_newRef"),
     ("Sync", "get", "rt.Sync_get"),
     ("Sync", "set", "rt.Sync_set"),

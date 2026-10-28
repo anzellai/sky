@@ -188,12 +188,12 @@ func consCopy[T any](x T, xs []T, size uintptr) []T {
 	return block[h:]
 }
 
-// List_appendBlockT is `xs ++ ys` on typed slices. When ys is a registered
+// listAppendBlock is `xs ++ ys` on typed slices. When ys is a registered
 // block suffix at its block's frontier with room for xs, it claims len(xs)
 // slots with one CAS and copies xs in front: O(|xs|). Otherwise it copies
 // both into a fresh slice: O(|xs| + |ys|). The result never aliases a slot
 // another list can see.
-func List_appendBlockT[T any](xs, ys []T) []T {
+func listAppendBlock[T any](xs, ys []T) []T {
 	if len(xs) == 0 {
 		if ys == nil {
 			return []T{}

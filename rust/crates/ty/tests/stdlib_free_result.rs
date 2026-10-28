@@ -39,6 +39,10 @@ const ALLOWED: &[(&str, &str)] = &[
         "phantom: the empty Set holds no element",
     ),
     (
+        "Sky.Core.Array.empty",
+        "phantom: the empty Array holds no element",
+    ),
+    (
         "Sky.Core.Json.Decode.fail",
         "phantom: a decoder that always fails never yields an `a`",
     ),

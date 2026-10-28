@@ -120,6 +120,10 @@ pub const COVARIANT_STDLIB: &[&str] = &[
     "Result",
     "Dict",
     "Set",
+    // v0.29.0: `type Array a = Array_OPAQUE` hides an immutable
+    // persistent trie; no operation writes into an existing array, so an
+    // `Array a` shared at many types can never be written at one of them.
+    "Sky.Core.Array.Array",
     "Task",
     "Cmd",
     "Sub",

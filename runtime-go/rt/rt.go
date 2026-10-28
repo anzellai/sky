@@ -3039,6 +3039,11 @@ func deepEq(a, b any) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
+	if x, ok := a.(SkyArray); ok {
+		if y, ok := b.(SkyArray); ok {
+			return arraysEqual(x.t, y.t)
+		}
+	}
 	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
 	if ra.Kind() != rb.Kind() {
 		// Cross-kind: when one side is a string and the other is a
@@ -3941,7 +3946,7 @@ func List_dropT[A any](n int, xs []A) []A {
 // list can see: the result is fresh memory, or room in front of b that b's
 // block had not given to any list yet (list_block.go, O(|a|)).
 func List_appendT[A any](a, b []A) []A {
-	return List_appendBlockT(a, b)
+	return listAppendBlock(a, b)
 }
 
 func List_range(lo any, hi any) any {

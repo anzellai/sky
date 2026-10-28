@@ -93,6 +93,20 @@ evens   = List.filter (\n -> modBy 2 n == 0) [ 1, 2, 3, 4 ] -- [2, 4]
 > through the same constant-stack form. Million-entry lists are
 > safe across the surface.
 
+**Costs (v0.29.0).** `x :: xs` is amortised O(1): a typed `::` writes into free room in front of the list's backing block. Three shapes still copy, O(n): replacing a head (`case xs of y :: rest -> z :: rest`), a second cons onto one shared tail, and the first cons onto a list that is not a cons block (a literal, `List.map`, JSON, a database row). The accumulator loop `go (x :: acc) rest` followed by one `List.reverse` is O(n). `head`, `tail`, `length`, `isEmpty`, `take`, `drop` are O(1) on a typed list; `reverse`, `map`, `filter`, `++` and `member` are O(n); `sort` is O(n log n). An old list keeps its whole block alive (the space cost of O(1) cons), and Go code reached through FFI must treat a list argument as read-only.
+
+### `Array` — indexed sequences (`Sky.Core.Array`, v0.29.0)
+
+```elm
+import Sky.Core.Array as Array exposing (Array)
+
+row  = Array.initialize 4 (\i -> i * i)   -- [0, 1, 4, 9]
+next = Array.set 2 7 row                 -- [0, 1, 7, 9]; row is unchanged
+v    = Array.get 3 next                  -- Just 9
+```
+
+Elm's `Array`: `empty`, `initialize`, `repeat`, `fromList`, `isEmpty`, `length`, `get`, `set`, `push`, `toList`, `toIndexedList`, `map`, `indexedMap`, `foldl`, `foldr`, `filter`, `append`, `slice`. A persistent 32-way trie with a tail: `get` and `set` are O(log32 n) (at most 4 steps for a million elements), `push` is amortised O(1), `length` O(1), the folds and maps O(n), `append a b` O(length b), `slice` O(n). `get` / `set` outside `0 .. length - 1` give `Nothing` / the array unchanged. Pure (client and server). Use it where a list would need an index, such as a dynamic-programming table.
+
 ### `Dict` — key-value maps
 
 ```elm
@@ -109,6 +123,8 @@ theme = Dict.get "theme" prefs   -- Just "dark"
 > The encoded key carries its own type tag, so the decode works with no type information from the call site — a helper written over `Dict k v`, where the compiler has erased the key, hands back Ints from a `Dict Int v` just as a `Dict Int v`-typed call site does. A `Dict String v` is encoded verbatim, so the shape that crosses into JSON objects, `Std.Db` rows and HTTP headers keeps exactly the keys you gave it.
 >
 > Composite keys (tuple, list, record, custom type) do **not** decode — their stringification is not reversible; see [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md).
+
+> **Costs.** `get` and `member` are O(1) on a typed dict. `insert`, `remove` and `update` copy the map: O(n) per write, so a fold of n inserts is O(n²). `toList`, `keys`, `values`, `foldl` and `map` sort the keys: O(n log n). For many writes, build the entries as a list and call `Dict.fromList` once: O(n).
 
 ### `Set` — unique-element collections
 
