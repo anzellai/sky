@@ -64,8 +64,10 @@ main =
         ++ println (String.split "," "a,b,c") -- ["a","b","c"]
 ```
 
-All 34 entries: `length`, `isEmpty`, `reverse`, `append`, `concat`, `split`, `join`, `replace`, `slice`, `contains`, `startsWith`, `endsWith`, `toInt`, `fromInt`, `toFloat`, `fromFloat`, `toUpper`, `toLower`, `trim`, `trimStart`, `trimEnd`, `repeat`, `padLeft`, `padRight`, `lines`, `words`, `fromChar`, `toList`, `fromList`, `casefold`, `equalFold`, `isEmail`, `isUrl`, `indexes`.
+All 37 entries: `length`, `isEmpty`, `reverse`, `append`, `concat`, `split`, `join`, `replace`, `slice`, `contains`, `startsWith`, `endsWith`, `toInt`, `fromInt`, `toFloat`, `fromFloat`, `toUpper`, `toLower`, `trim`, `trimStart`, `trimEnd`, `repeat`, `padLeft`, `padRight`, `lines`, `words`, `fromChar`, `toList`, `fromList`, `casefold`, `equalFold`, `isEmail`, `isUrl`, `indexes`, `uncons`, `foldl`, `foldr`.
 `String.indexes sub s` gives the start of every non-overlapping occurrence of `sub`, counted in characters (the unit of `slice`), O(n) (v0.29.0).
+
+**The unit is the code point.** Every index and length in `String` counts Unicode code points: not bytes (`Sky.Core.Bytes`) and not graphemes (`String.graphemes`). Since v0.29.0 `slice`, `left`, `dropLeft` (O(k) for index k) and `right`, `dropRight` (O(k) from the end) walk to the index and return a substring that shares the input's bytes, instead of converting the whole string. A negative `slice` index needs the length: O(n). `String.uncons s` gives `Just ( first, rest )` in O(1); `String.foldl` / `foldr` fold over the characters in O(n). To walk a string one character at a time use `uncons`, `foldl` or `toList`. To build a string, cons the pieces onto a list and call `String.concat (List.reverse pieces)` once: `++` in a loop is O(n²). A loop of `slice i (i + 1)` over a string of 4 kB or more uses a one-entry index cache (O(64) per call after the second call), but concurrent loops over different large strings replace each other's entry; prefer `uncons`.
 
 ### `List` — sequences
 

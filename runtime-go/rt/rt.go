@@ -1680,12 +1680,7 @@ func String_fromFloat(f any) any {
 // String.length returns the number of Unicode *code points* (runes), not bytes.
 // So "世界" has length 2, not 6.
 func String_length(s any) any {
-	str := fmt.Sprintf("%v", s)
-	n := 0
-	for range str {
-		n++
-	}
-	return n
+	return utf8.RuneCountInString(skyStr(s))
 }
 
 func String_isEmpty(s any) any {
@@ -3982,17 +3977,11 @@ func List_repeat(n any, x any) any {
 // ═══════════════════════════════════════════════════════════
 
 func String_join(sep any, list any) any {
-	s := fmt.Sprintf("%v", sep)
-	// AsList — not a hard `.([]any)` assertion: v0.13 typed codegen
-	// can hand this kernel a typed `[]string` (e.g. from a typed
-	// `List.map renderProp props` in Sky-source Std.Css). A hard
-	// assertion panics on those; AsList boxes any Go slice.
-	items := AsList(list)
-	parts := make([]string, len(items))
-	for i, item := range items {
-		parts[i] = fmt.Sprintf("%v", item)
-	}
-	return strings.Join(parts, s)
+	// joinErased takes a typed `[]string` directly (v0.13 typed codegen
+	// hands this kernel one, e.g. from a typed `List.map renderProp
+	// props` in Sky-source Std.Css) and any other list through AsList,
+	// with one sized copy (string_fast.go).
+	return joinErased(skyStr(sep), list)
 }
 
 func String_split(sep any, s any) any {
@@ -4059,24 +4048,7 @@ func String_splitT(sep, s string) []string           { return strings.Split(s, s
 func String_joinT(sep string, parts []string) string { return strings.Join(parts, sep) }
 func String_replaceT(old, new_, s string) string     { return strings.ReplaceAll(s, old, new_) }
 func String_sliceT(start, end int, s string) string {
-	runes := []rune(s)
-	total := len(runes)
-	if start < 0 {
-		start += total
-	}
-	if end < 0 {
-		end += total
-	}
-	if start < 0 {
-		start = 0
-	}
-	if end > total {
-		end = total
-	}
-	if start > end {
-		return ""
-	}
-	return string(runes[start:end])
+	return stringSlice(start, end, s)
 }
 func String_fromIntT(n int) string       { return strconv.Itoa(n) }
 func String_fromFloatT(f float64) string { return strconv.FormatFloat(f, 'g', -1, 64) }
@@ -8478,7 +8450,7 @@ func Math_isNaNT(x float64) bool           { return math.IsNaN(x) }
 // boxed as a Go rune so downstream Char_* helpers (firstRune) keep
 // the typed fast path.
 func String_toList(s any) any {
-	str := fmt.Sprintf("%v", s)
+	str := skyStr(s)
 	out := make([]any, 0, runeCount(str))
 	for _, r := range str {
 		out = append(out, r)
@@ -8491,6 +8463,9 @@ func String_toList(s any) any {
 // Accepts any-slice or typed slice; AsList unwraps the latter
 // element-wise so Sky-source `[ 'a', 'b' ]` literals round-trip.
 func String_fromList(chars any) any {
+	if cs, ok := chars.([]rune); ok {
+		return string(cs)
+	}
 	xs := AsList(chars)
 	var b strings.Builder
 	b.Grow(len(xs))
@@ -8515,12 +8490,7 @@ func String_fromList(chars any) any {
 // the typed-codegen path can flow through without `rt.SkyCall` per
 // element.
 func String_concat(parts any) any {
-	xs := AsList(parts)
-	var b strings.Builder
-	for _, p := range xs {
-		b.WriteString(fmt.Sprintf("%v", p))
-	}
-	return b.String()
+	return joinErased("", parts)
 }
 
 func String_lines(s any) any {
@@ -8600,57 +8570,25 @@ func String_padRight(n any, ch any, s any) any {
 }
 
 func String_left(n any, s any) any {
-	runes := []rune(fmt.Sprintf("%v", s))
-	nn := AsInt(n)
-	if nn > len(runes) {
-		nn = len(runes)
-	}
-	if nn < 0 {
-		nn = 0
-	}
-	return string(runes[:nn])
+	return stringLeft(AsInt(n), skyStr(s))
 }
 
 func String_right(n any, s any) any {
-	runes := []rune(fmt.Sprintf("%v", s))
-	nn := AsInt(n)
-	if nn > len(runes) {
-		nn = len(runes)
-	}
-	if nn < 0 {
-		nn = 0
-	}
-	return string(runes[len(runes)-nn:])
+	return stringRight(AsInt(n), skyStr(s))
 }
 
 // String_dropLeft drops the first n characters (runes) of s. Elm
 // String.dropLeft semantics: negative n returns s unchanged; n
 // >= length returns "".
 func String_dropLeft(n any, s any) any {
-	runes := []rune(fmt.Sprintf("%v", s))
-	nn := AsInt(n)
-	if nn <= 0 {
-		return string(runes)
-	}
-	if nn >= len(runes) {
-		return ""
-	}
-	return string(runes[nn:])
+	return stringDropLeft(AsInt(n), skyStr(s))
 }
 
 // String_dropRight drops the last n characters (runes) of s. Elm
 // String.dropRight semantics: negative n returns s unchanged; n
 // >= length returns "".
 func String_dropRight(n any, s any) any {
-	runes := []rune(fmt.Sprintf("%v", s))
-	nn := AsInt(n)
-	if nn <= 0 {
-		return string(runes)
-	}
-	if nn >= len(runes) {
-		return ""
-	}
-	return string(runes[:len(runes)-nn])
+	return stringDropRight(AsInt(n), skyStr(s))
 }
 
 func String_replace(old any, new_ any, s any) any {
@@ -8659,26 +8597,7 @@ func String_replace(old any, new_ any, s any) any {
 
 // String.slice is rune-based. Negative indices count from the end.
 func String_slice(start any, end any, s any) any {
-	runes := []rune(fmt.Sprintf("%v", s))
-	total := len(runes)
-	st := AsInt(start)
-	en := AsInt(end)
-	if st < 0 {
-		st = total + st
-	}
-	if en < 0 {
-		en = total + en
-	}
-	if st < 0 {
-		st = 0
-	}
-	if en > total {
-		en = total
-	}
-	if st > en {
-		return ""
-	}
-	return string(runes[st:en])
+	return stringSlice(AsInt(start), AsInt(end), skyStr(s))
 }
 
 // ═══════════════════════════════════════════════════════════

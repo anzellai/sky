@@ -60,6 +60,10 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     // and Std.Db.Decode already export `map2` / `map3`; Elm has the same
     // set. A program that exposes List and one of them with `(..)` and uses
     // the bare name gets `[E1012]`; see the v0.29.0 CHANGELOG.
+    // v0.29.0: String.foldl / String.foldr (Elm). List and Dict already
+    // export `foldl` (List `foldr` too); Elm has the same set.
+    "value foldl",
+    "value foldr",
     "value map2",
     "value map3",
     // v0.27.13: List.repeat (Elm). String.repeat, Std.Css and Std.Ui.Grid

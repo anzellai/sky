@@ -49,10 +49,42 @@ fn a_typed_string_argument_uses_the_string_twin() {
 }
 
 #[test]
-fn an_erased_argument_twin_returns_a_typed_string() {
+fn a_proven_index_and_string_use_the_walking_twin() {
+    // v0.29.0: over a proven Int and String the twin takes both typed (no
+    // box for an index above 255); the erased-argument `String_dropRightT`
+    // is the `kernel_typed_return_alt` shape for an unproven argument.
     let f = func_debug(SRC, "Main_tail2");
-    assert!(f.contains("rt.String_dropRightT"), "{f}");
+    assert!(f.contains("rt.String_dropRightTA"), "{f}");
     assert!(!f.contains("Coerce"), "{f}");
+}
+
+const WALK_SRC: &str = "module Main exposing (main)\n\n\
+                        first : String -> Maybe ( Char, String )\nfirst s =\n    String.uncons s\n\n\
+                        chars : String -> List Char\nchars s =\n    String.toList s\n\n\
+                        back : List Char -> String\nback cs =\n    String.fromList cs\n\n\
+                        glue : List String -> String\nglue xs =\n    String.concat xs\n\n\
+                        mid : Int -> String -> String\nmid i s =\n    String.slice i (i + 1) s\n\n\
+                        main =\n    ( first \"ab\", back (chars \"ab\"), ( glue [ \"a\" ], mid 1 \"abc\" ) )\n";
+
+#[test]
+fn string_uncons_returns_a_typed_tuple_with_no_box() {
+    let f = func_debug(WALK_SRC, "Main_first");
+    assert!(f.contains("rt.String_unconsT"), "{f}");
+    assert!(!f.contains("Coerce"), "{f}");
+}
+
+#[test]
+fn string_list_twins_and_slice_are_typed() {
+    for (name, twin) in [
+        ("Main_chars", "rt.String_toListT"),
+        ("Main_back", "rt.String_fromListT"),
+        ("Main_glue", "rt.String_concatT"),
+        ("Main_mid", "rt.String_sliceT"),
+    ] {
+        let f = func_debug(WALK_SRC, name);
+        assert!(f.contains(twin), "{name} must call {twin}: {f}");
+        assert!(!f.contains("Coerce"), "{name}: {f}");
+    }
 }
 
 #[test]

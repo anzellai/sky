@@ -66,6 +66,24 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   it, the same rule as `insertAtCursor`, with the same errors. A Sky.Spa
   client capability: `Err Unavailable` on Sky.Live, a server, a CLI or a TUI.
 
+- **`String.uncons`, `String.foldl` and `String.foldr`, and String kernels that
+  walk instead of copying.** `uncons s` gives `Just ( first, rest )` in O(1),
+  and the rest shares the bytes of `s`; over a proven string it returns its
+  tuple by value (`rt.String_unconsT`), so a character loop allocates nothing
+  per character. `foldl` / `foldr` fold over the characters in O(n).
+  `slice`, `left`, `dropLeft` (O(k) for index k), `right` and `dropRight`
+  (O(k) from the end) walk to the index and return a substring, where they
+  converted the whole string to runes before (O(n) time and 4n bytes per
+  call). Over a proven `Int` and `String` they lower to typed twins, and so do
+  `toList`, `fromList`, `concat` and `slice`. The erased kernels take a Go
+  string without the `fmt.Sprintf` copy, and `concat` / `join` size the result
+  once. Every index counts Unicode code points; this is now stated in the
+  module and in `docs/stdlib.md`. A per-character `slice` loop over a string
+  of 4 kB or more uses a one-entry index cache, with the limits stated in
+  `runtime-go/rt/string_fast.go`. One change for invalid UTF-8: the walking
+  kernels keep an invalid byte inside the result as it was (the rune round
+  trip replaced it with U+FFFD); valid text gives the same bytes as before.
+
 - **`xtask perf-gate`: a collection performance gate.** Six Sky programs
   under `tests/perf/` (cons and reverse of 1e6 Ints; a fold of 1e6 Ints into a
   `Dict` of counts with 1e5 keys; `String.toList` and `fromList` over 4M code
@@ -78,6 +96,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   with `runtime.MemStats` to stderr. It runs in the release gate.
 
 ### Migration
+
+- **New stdlib names `foldl` and `foldr` in `Sky.Core.String`.** A module that
+  imports `Sky.Core.String exposing (..)` together with `Sky.Core.List` or
+  `Sky.Core.Dict` `exposing (..)`, and uses the bare name, now gets `[E1012]`
+  at the use. Qualify the name (`List.foldl`), or narrow one `exposing` list.
 
 - **New stdlib names `map2`, `map3` and `unique` in `Sky.Core.List`.** A
   module that imports `Sky.Core.List exposing (..)` together with

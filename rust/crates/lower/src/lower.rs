@@ -10314,12 +10314,52 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
         ),
         ("rt.Encoding_urlEncode", 1) => twin("rt.Encoding_urlEncodeT", vec![Some(str_())], str_()),
         ("rt.Basics_not", 1) => twin("rt.Basics_notT", vec![Some(bool_())], bool_()),
-        // Erased-argument twins that assert the erased result's one Go type
-        // inside the runtime (runtime-go/rt/kernel_twins.go).
-        ("rt.String_left", 2) => twin("rt.String_leftT", vec![None, None], str_()),
-        ("rt.String_right", 2) => twin("rt.String_rightT", vec![None, None], str_()),
-        ("rt.String_dropLeft", 2) => twin("rt.String_dropLeftT", vec![None, None], str_()),
-        ("rt.String_dropRight", 2) => twin("rt.String_dropRightT", vec![None, None], str_()),
+        // v0.29.0 String walking twins (runtime-go/rt/string_fast.go,
+        // string_fast_test.go checks each against the []rune reference): over
+        // a proven Int and String they walk to the index without converting
+        // the whole string. The erased-argument twins below are the
+        // `kernel_typed_return_alt` shape for an erased argument.
+        ("rt.String_left", 2) => twin("rt.String_leftTA", vec![Some(int()), Some(str_())], str_()),
+        ("rt.String_right", 2) => {
+            twin("rt.String_rightTA", vec![Some(int()), Some(str_())], str_())
+        }
+        ("rt.String_dropLeft", 2) => twin(
+            "rt.String_dropLeftTA",
+            vec![Some(int()), Some(str_())],
+            str_(),
+        ),
+        ("rt.String_dropRight", 2) => twin(
+            "rt.String_dropRightTA",
+            vec![Some(int()), Some(str_())],
+            str_(),
+        ),
+        ("rt.String_slice", 3) => twin(
+            "rt.String_sliceT",
+            vec![Some(int()), Some(int()), Some(str_())],
+            str_(),
+        ),
+        // `String.uncons` returns its tuple by value: no `any` box per
+        // character (`SkyMaybe[T2[rune, string]]`).
+        ("rt.String_uncons", 1) => twin(
+            "rt.String_unconsT",
+            vec![Some(str_())],
+            maybe(GoTy::Tuple(vec![GoTy::Bare(Prim::Rune), str_()])),
+        ),
+        ("rt.String_toList", 1) => twin(
+            "rt.String_toListT",
+            vec![Some(str_())],
+            GoTy::Slice(Box::new(GoTy::Bare(Prim::Rune))),
+        ),
+        ("rt.String_fromList", 1) => twin(
+            "rt.String_fromListT",
+            vec![Some(GoTy::Slice(Box::new(GoTy::Bare(Prim::Rune))))],
+            str_(),
+        ),
+        ("rt.String_concat", 1) => twin(
+            "rt.String_concatT",
+            vec![Some(GoTy::Slice(Box::new(str_())))],
+            str_(),
+        ),
         ("rt.JsonEnc_encode", 2) => twin("rt.JsonEnc_encodeT", vec![None, None], str_()),
         ("rt.String_fromFloat", 1) => twin("rt.String_fromFloatAnyT", vec![None], str_()),
         // Typed Math / Basics / List / Regex companions (P8), checked against
@@ -10383,9 +10423,23 @@ fn kernel_typed_return_alt(go: &str, nargs: usize) -> Option<TypedTwin> {
             ret,
         })
     };
+    // Erased-argument twins that assert the erased result's one Go type
+    // inside the runtime (runtime-go/rt/kernel_twins.go): the shape for an
+    // index or a string that is not proven.
+    let erased2 = |symbol: &'static str| {
+        Some(TypedTwin {
+            symbol,
+            params: vec![None, None],
+            ret: GoTy::Bare(Prim::Str),
+        })
+    };
     match (go, nargs) {
         ("rt.Math_min", 2) => twin("rt.Math_minFloatT", float()),
         ("rt.Math_max", 2) => twin("rt.Math_maxFloatT", float()),
+        ("rt.String_left", 2) => erased2("rt.String_leftT"),
+        ("rt.String_right", 2) => erased2("rt.String_rightT"),
+        ("rt.String_dropLeft", 2) => erased2("rt.String_dropLeftT"),
+        ("rt.String_dropRight", 2) => erased2("rt.String_dropRightT"),
         _ => None,
     }
 }

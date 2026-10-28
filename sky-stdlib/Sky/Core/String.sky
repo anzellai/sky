@@ -13,6 +13,19 @@
 -- conformance + so `sky doc` shows a stable source location for
 -- every entry.  The runtime bodies live in `runtime-go/rt/rt.go`
 -- (`String_*` helpers).
+--
+-- THE UNIT. Every index and every length in this module counts
+-- Unicode code points (Go runes): not bytes (that is
+-- `Sky.Core.Bytes`) and not graphemes (that is `String.graphemes`).
+-- `String.length "€5" == 2`, `String.slice 1 2 "é!" == "!"`.
+--
+-- BUILDING A STRING. `a ++ b` copies both sides, so `++` in a loop is
+-- O(n²). Cons the pieces onto a list and call
+-- `String.concat (List.reverse pieces)` once: O(n). To walk a string
+-- one character at a time, use `uncons`, `foldl` or `toList` (O(n) in
+-- all); a loop of `slice i (i + 1)` is O(n) per call except on the one
+-- large string the runtime's index cache holds
+-- (`runtime-go/rt/string_fast.go` states its limits).
 module Sky.Core.String exposing
     ( fromInt
     , fromFloat
@@ -23,6 +36,9 @@ module Sky.Core.String exposing
     , replace
     , slice
     , indexes
+    , uncons
+    , foldl
+    , foldr
     , dropLeft
     , dropRight
     , toInt
@@ -230,6 +246,43 @@ split =
 replace : String -> String -> String -> String
 replace =
     Ffi.kernel "String_replace"
+
+
+-- | `uncons s` — the first character and the rest of the string, or
+-- `Nothing` for `""`. The rest shares the bytes of `s` (no copy).
+--
+--     String.uncons "é!" == Just ( 'é', "!" )
+--
+-- Cost: O(1).
+uncons : String -> Maybe ( Char, String )
+uncons =
+    Ffi.kernel "String_uncons"
+
+
+-- | `foldl f acc s` — fold over the characters of `s` from the first.
+--
+--     String.foldl (::) [] "abc" == [ 'c', 'b', 'a' ]
+--
+-- Cost: O(n).
+foldl : (Char -> b -> b) -> b -> String -> b
+foldl f acc s =
+    case uncons s of
+
+        Nothing ->
+            acc
+
+        Just ( c, rest ) ->
+            foldl f (f c acc) rest
+
+
+-- | `foldr f acc s` — fold over the characters of `s` from the last.
+--
+--     String.foldr (::) [] "abc" == [ 'a', 'b', 'c' ]
+--
+-- Cost: O(n).
+foldr : (Char -> b -> b) -> b -> String -> b
+foldr f acc s =
+    foldl f acc (reverse s)
 
 
 slice : Int -> Int -> String -> String
