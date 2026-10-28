@@ -693,6 +693,14 @@ jobs:
           echo "── xtask coerce-floor (SKY_LIVE_TESTS=skip: FFI-gitignored rows) ──"
           SKY_LIVE_TESTS=skip cargo run --release --locked -q -p xtask -- coerce-floor
 
+      # The collection performance gate: six Sky programs under tests/perf/
+      # run at n and 4n (growth ratio <= 6, mallocs per element within a
+      # budget, no erased cons on a typed tail, 3 s ceiling). A return to an
+      # O(n^2) List/Dict/String path goes red here, on any runner.
+      - name: Collection perf gate (xtask perf-gate)
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- perf-gate
+
       # Every full-module Sky example in the live docs must still `sky check`.
       # Ran per-commit only (rust-ci behaviour-docs); a release runs it too.
       - name: Live docs (full-module doc examples still compile)

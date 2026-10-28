@@ -587,6 +587,7 @@ already works from a container image or a systemd unit that never reads
 | `GOGC` | (derived — `400`; Go's `100` on serverless and on machines too small for the bound) | Go's own heap-growth multiplier. **Set it and sky derives nothing for it.** |
 | `GOMEMLIMIT` | (derived — three quarters of RAM after the OS and any embedded cluster) | Go's own soft memory limit. **Set it and sky derives nothing for it.** Setting one of these does not suppress the other. |
 | `SKY_GC_QUIET` | (unset) | Suppresses the one-line `[sky.gc]` startup banner on stderr. For a one-shot CLI whose stderr is somebody else's input; it does not change what is derived. |
+| `SKY_RT_MEMSTATS_ON_EXIT` | (unset) | `1` prints one JSON line to stderr when `main` returns normally: `{"skyMemStats":{"mallocs":…,"totalAlloc":…,"erasedTypedCons":…}}`. `xtask perf-gate` reads it to count allocations per element. It does not change behaviour. |
 
 A value written into `sky.toml` would travel to machines it was not sized for,
 which is the whole reason the figure is derived at runtime rather than

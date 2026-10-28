@@ -1147,6 +1147,10 @@ fn the_release_workflow_is_the_full_suite() {
         ("config-migration --check", "census: config migration"),
         ("build-run --all", "the codegen build of every example"),
         ("coerce-floor", "the runtime-narrowing floor"),
+        (
+            "-- perf-gate",
+            "the collection performance gate (tests/perf: growth ratio, mallocs per element)",
+        ),
         ("scripts/example-sweep.sh", "the full clean-slate sweep"),
         ("scripts/verify-all-web.sh", "the browser tier"),
         ("scripts/doc-examples.sh", "the live-docs examples"),

@@ -149,6 +149,15 @@ while IFS= read -r f; do
                     add 02 "fmt-clean (tracked .sky files are sky fmt-clean)" "$HARNESS --only fmt-clean" ;;
             esac ;;
     esac
+    # The collection perf gate: an addition, not an alternative, to the
+    # mapping below (a file here still maps to its own crate's gates).
+    case "$f" in
+        tests/perf/* | rust/crates/xtask/src/perf_gate.rs | runtime-go/rt/rt.go | \
+            runtime-go/rt/list_block*.go | runtime-go/rt/dict_tree*.go | runtime-go/rt/array_trie*.go | \
+            runtime-go/rt/perf_hook*.go | runtime-go/rt/kernel_twins*.go | \
+            rust/crates/lower/src/lower.rs | rust/crates/lower/src/goty.rs | rust/crates/lower/src/kernel.rs)
+            add 52 "collection perf gate (tests/perf: growth ratio + mallocs per element)" "$XTASK perf-gate" ;;
+    esac
     case "$f" in
         rust/crates/syntax/* | rust/crates/hir/* | rust/crates/ty/* | rust/crates/lower/* | rust/crates/codegen/* | rust/crates/base/* | rust/crates/diagnostics/*)
             crate="${f#rust/crates/}"; crate="${crate%%/*}"

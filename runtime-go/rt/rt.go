@@ -2183,7 +2183,9 @@ func List_cons(head, tail any) any {
 		return out
 	}
 	// Typed-slice fallback: widen via AsList (handles any Go slice
-	// kind via reflect) and then prepend.
+	// kind via reflect) and then prepend. O(n) per cons; a typed `::`
+	// lowers to List_consT instead (perf_hook.go counts this path).
+	noteErasedTypedCons()
 	xs := AsList(tail)
 	out := make([]any, 0, len(xs)+1)
 	out = append(out, head)

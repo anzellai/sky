@@ -66,6 +66,17 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   it, the same rule as `insertAtCursor`, with the same errors. A Sky.Spa
   client capability: `Err Unavailable` on Sky.Live, a server, a CLI or a TUI.
 
+- **`xtask perf-gate`: a collection performance gate.** Six Sky programs
+  under `tests/perf/` (cons and reverse of 1e6 Ints; a fold of 1e6 Ints into a
+  `Dict` of counts with 1e5 keys; `String.toList` and `fromList` over 4M code
+  points; a character tokeniser with `String.uncons`, against
+  `Regex.findAll`; cons over `List ()`; eight Tasks that each cons their own
+  1e5 list) run at n and 4n. The gate requires `t(4n)/t(n) <= 6` (quadratic
+  growth gives 16), an allocation budget per element, no erased cons on a
+  typed tail and a 3 s ceiling (`--strict`: 1 s). It reads the counters from
+  `SKY_RT_MEMSTATS_ON_EXIT=1`, which makes a normal exit print one JSON line
+  with `runtime.MemStats` to stderr. It runs in the release gate.
+
 ### Migration
 
 - **New stdlib names `map2`, `map3` and `unique` in `Sky.Core.List`.** A

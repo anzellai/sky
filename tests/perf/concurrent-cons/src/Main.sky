@@ -1,0 +1,49 @@
+module Main exposing (main)
+
+-- Perf gate program 6: eight Tasks in parallel, each consing its own
+-- list of n Ints (1e5 at 4n). Concurrent builders must not evict each
+-- other's cons blocks into quadratic copying.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import System
+import Std.Log exposing (println)
+
+
+build : Int -> List Int -> List Int
+build n acc =
+    if n <= 0 then
+        acc
+
+    else
+        build (n - 1) (n :: acc)
+
+
+one : Int -> Task Error Int
+one n =
+    Task.lazy (\_ -> List.length (List.reverse (build n [])))
+
+
+work : Int -> Task Error String
+work n =
+    List.repeat 8 n |> List.map one |> Task.parallel
+        |> Task.map
+               (\lens -> String.fromInt (List.foldl (\a b -> a + b) 0 lens))
+
+
+main =
+    let
+        _ =
+            System.getArg 1
+                |> Task.map
+                       (\m ->
+                           m |> Maybe.andThen String.toInt
+                               |> Maybe.withDefault 1000)
+                |> Task.andThen work
+                |> Task.andThen println
+                |> Task.run
+    in
+        ()

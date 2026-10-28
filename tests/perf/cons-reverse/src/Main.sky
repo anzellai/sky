@@ -1,0 +1,43 @@
+module Main exposing (main)
+
+-- Perf gate program 1: cons n Ints onto an accumulator, then reverse.
+-- `xtask perf-gate` runs it at n and 4n and checks linear growth.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import System
+import Std.Log exposing (println)
+
+
+build : Int -> List Int -> List Int
+build n acc =
+    if n <= 0 then
+        acc
+
+    else
+        build (n - 1) (n :: acc)
+
+
+work : Int -> String
+work n =
+    let
+        xs = List.reverse (build n [])
+    in
+        String.fromInt (List.length xs)
+
+
+main =
+    let
+        _ =
+            System.getArg 1
+                |> Task.map
+                       (\m ->
+                           m |> Maybe.andThen String.toInt
+                               |> Maybe.withDefault 1000)
+                |> Task.andThen (\n -> println (work n))
+                |> Task.run
+    in
+        ()

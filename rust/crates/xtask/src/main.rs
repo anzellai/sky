@@ -30,6 +30,7 @@ mod harness;
 mod infer_gate;
 mod kernel_members;
 mod lsp_gate;
+mod perf_gate;
 mod reject_gate;
 mod repro_gate;
 mod resolve_gate;
@@ -92,6 +93,7 @@ const GATES: &[(&str, GateFn)] = &[
     ("shared-world", |args| {
         shared_world_gate::run(args, &repo_root())
     }),
+    ("perf-gate", |args| perf_gate::run(args, &repo_root())),
     ("corpus-bench", |args| corpus_bench::run(args, &repo_root())),
     ("bench-gen", bench_gen::run),
     ("corpus", |args| corpus::run(args, &repo_root())),
