@@ -2107,6 +2107,24 @@ text-like input. It runs in a Sky.Spa client only: on Sky.Live (whose `update`
 runs on the server), a server, a CLI or a terminal it is `Err Unavailable`, as
 is every `Std.Native` capability there.
 
+`selection` reads a text control's selection and `setSelection` sets it
+(v0.29.0), for a toolbar that acts on the selected text or puts the caret
+somewhere:
+
+```elm
+-- doc-example: skip  (signatures)
+type alias Selection = { start : Int, end : Int, text : String }
+selection : String -> Task Error Selection          -- element id
+setSelection : String -> Int -> Int -> Task Error () -- element id, start, end
+```
+
+Positions are characters (the unit of `String.slice`); the runtime converts
+from the browser's UTF-16 units. `selection` uses the remembered selection
+when the control is not focused, the same rule as `insertAtCursor`.
+`setSelection` clamps the range to the value, focuses the control and records
+the range, so a later `insertAtCursor` replaces it. Same errors as
+`insertAtCursor`, and the same client-only rule.
+
 `Std.Bundle` declares what the native shells ship with: identity (`withId`,
 `withName`, `withVersion`, `withBuild`, `withIcon`), assets, permissions with
 their purpose strings (`withPermission`, `withUsage Bundle.Camera "…"`) and

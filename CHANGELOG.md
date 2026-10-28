@@ -55,6 +55,17 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   with `spawn` the runtime writes it and closes stdin. Server side only. Both
   outputs are held in memory: use `spawn` for a long-running or chatty child.
 
+- **`Native.selection` and `Native.setSelection`: read and set a text
+  control's selection.** `selection elementId` yields
+  `{ start, end, text }` (`Native.Selection`) for a textarea or a text input;
+  `setSelection elementId start end` selects a range (clamped to the value),
+  focuses the control and records the range, so a later `insertAtCursor` from
+  a menu button replaces it. Positions are characters, the unit of
+  `String.slice`; the runtime converts from the browser's UTF-16 units. A
+  control that is not focused reports the last selection the person made in
+  it, the same rule as `insertAtCursor`, with the same errors. A Sky.Spa
+  client capability: `Err Unavailable` on Sky.Live, a server, a CLI or a TUI.
+
 ### Migration
 
 - **New stdlib names `map2`, `map3` and `unique` in `Sky.Core.List`.** A

@@ -663,6 +663,13 @@ textarea or a text-like input (text, search, url, tel, password). On Sky.Live
 the `update` runs on the server, so there it is `Err Unavailable`, like every
 `Std.Native` capability.
 
+To act on the selected text (a "Link" or "Bold" button) or to move the caret,
+`Native.selection elementId` yields `{ start, end, text }` and
+`Native.setSelection elementId start end` selects a range and focuses the
+control. Positions are characters, the unit of `String.slice`. Both follow the
+same rules: the remembered selection of a blurred control, `Err NotFound` /
+`Err InvalidInput`, and `Err Unavailable` off a Sky.Spa client.
+
 ## Honest limits
 
 These are real, current scope boundaries — not roadmap optimism:

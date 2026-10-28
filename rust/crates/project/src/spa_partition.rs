@@ -7735,6 +7735,10 @@ mod tests {
             classify_kernel("Native", "insertAtCursor"),
             KernelClass::ClientEffect
         );
+        // Reading and setting a text control's selection is the same DOM.
+        for f in ["selection", "setSelection"] {
+            assert_eq!(classify_kernel("Native", f), KernelClass::ClientEffect);
+        }
         // Unknown family -> conservative SERVER (fail-closed), never Neutral.
         assert_eq!(
             classify_kernel("BrandNewEffect", "boom"),
@@ -8218,6 +8222,8 @@ mod tests {
         record_ffi_symbol("Native_clipboardWrite", &mut acc, false);
         record_ffi_symbol("Native_geolocation", &mut acc, false);
         record_ffi_symbol("Native_insertAtCursor", &mut acc, false);
+        record_ffi_symbol("Native_selection", &mut acc, false);
+        record_ffi_symbol("Native_setSelection", &mut acc, false);
         assert!(
             acc.server_kernels.is_empty(),
             "Std.Native must not record as a server kernel: {:?}",
@@ -8229,7 +8235,7 @@ mod tests {
         );
         assert_eq!(
             acc.client_kernels.len(),
-            3,
+            5,
             "every Native symbol lands in client_kernels"
         );
         assert!(

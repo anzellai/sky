@@ -466,6 +466,8 @@ signed `.ipa` to App Store Connect with `xcrun altool` (API key from
 caret with `Native.insertAtCursor "body" "{{first_name}}"` (`Task Error String`,
 the control's new value; it uses the selection the person left when focus moved
 to the menu; a Sky.Spa client only, `Err Unavailable` on Sky.Live).
+`Native.selection "body"` reads a control's selection (`{ start, end, text }`,
+in characters) and `Native.setSelection "body" s e` sets it, with the same rules.
 `web` requires `App.withNotFound` (compile-enforced). Invalid combos are rejected
 at parse time (`web:ios` → *"did you mean `mobile:ios`?"*). `sky check` checks
 the same target a bare `sky build` builds (`--target`, else `[app] target`, else

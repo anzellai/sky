@@ -618,7 +618,9 @@ entitlements with `Bundle.withEntitlement`, keep secrets in `Native.secureSet`
 `localStorage`), scan a QR code or barcode with `Native.scanCode`, insert text
 at a textarea's caret (an editor's "Insert" menu) with `Native.insertAtCursor
 "body" "{{first_name}}"` (it yields the new value and uses the selection the
-person left when focus moved to the menu; `Err Unavailable` on Sky.Live), and make the
+person left when focus moved to the menu; `Err Unavailable` on Sky.Live), read or set a
+control's selection with `Native.selection` / `Native.setSelection` (positions in
+characters), and make the
 store build with `sky package
 --release` (it refuses a local or `http` backend address). Guide:
 `docs/skyapp/native.md`. `sky

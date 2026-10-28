@@ -22,7 +22,9 @@ import (
 // for an input type with no text selection, like a browser.
 const stubDOM = `
 (function () {
-  const listeners = {};
+  // Kept across a re-evaluation of the stub (each test sets the DOM up
+  // again): the caret tracker binds its listeners once per process.
+  const listeners = globalThis.__skyListeners = (globalThis.__skyListeners || {});
   const fire = (type, target) => { for (const f of (listeners[type] || [])) f({ type: type, target: target }); };
   const textTypes = ["", "text", "search", "url", "tel", "password"];
   class Ctl {
