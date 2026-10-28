@@ -198,8 +198,18 @@ test suite (`cargo test`, error-shape gates).
 **File**: `sky-stdlib/Sky/Core/List.sky` (543 lines, the largest core
 algebraic module).
 
-**Type**: builtin `List a` (compiler ADT, not Sky-source declared —
-the Sky type is `[a]` syntactic sugar over a cons cell).
+**Type**: builtin `List a`. At run time a list is a Go slice (`[]T` under
+typed emission, `[]any` erased), not a cons cell.
+
+**Costs (v0.29.0)**: `x :: xs` is amortised O(1): a typed `::` lowers to
+`rt.List_consT[T]`, which writes into free room in front of the list's
+backing block, claimed with one compare-and-swap so no other list sees the
+slot (`runtime-go/rt/list_block.go`). Three shapes still copy, O(n): replacing
+a head, a second cons onto a shared tail, and the first cons onto a list that
+is not a cons block. `head`, `tail`, `length`, `isEmpty` and (typed) `take` /
+`drop` are O(1); `reverse`, `map`, `filter`, `++` are O(n). An old list keeps
+its whole block alive (the space cost). Go code must not change a list it is
+given (`docs/ffi/boundary-philosophy.md`).
 
 **Surface (key entries)**:
 
@@ -270,10 +280,19 @@ the law itself). Law-by-inspection for the algebraic content.
 
 **Types**:
 ```elm
-type Dict k v  -- opaque; runtime is sync.Map for typed-key dicts,
-               -- plain map[K]V for monomorphic specialisations
-type Set a     -- opaque; sorted slice or hashset depending on a
+type Dict k v  -- runtime: a Go map[string]V; the key is encoded to a
+               -- tagged string (encodeDictKey, rt.go)
+type Set a     -- runtime: SkySet{items map[string]any} keyed by
+               -- identityKey (stdlib_extra.go); typed code may hold a []A
 ```
+
+**Costs (v0.29.0, measured from the code)**: `Dict.get` / `member` over a
+typed dict are O(1) (`rt.Dict_getProbeT` / `Dict_memberProbeT`); erased they
+copy the map first, O(n). `Dict.insert` / `remove` / `update` copy the whole
+map: O(n) per write, so a fold of n inserts is O(n²). Enumeration (`toList`,
+`keys`, `values`, `foldl`, `map`) sorts the keys on every call: O(n log n).
+The persistent B+-tree that would make writes O(log n) was prototyped and did
+not meet its per-insert gate (`docs/perf/runs/dict-btree-prototype-20261028/`).
 
 **Surface highlights**:
 
@@ -305,19 +324,18 @@ type Set a     -- opaque; sorted slice or hashset depending on a
   `Set.size (Set.fromList [ A, B ]) == 2` for two distinct nullary
   constructors (v0.27.7; before it, every nullary constructor of a
   sealed type compared and keyed alike).
-* **Persistence**: every operation returns a new value; the runtime
-  has copy-on-write semantics so reads are O(log n) and writes are
-  O(log n) (UNVERIFIED claim — runtime detail; the contract is
-  immutability, not the complexity bound).
+* **Persistence**: every operation returns a new value. The runtime
+  gets it by copying: a write copies the whole map (O(n)), it does not
+  share structure. The earlier "O(log n)" claim here was false.
 
 **Partial functions**: NONE.
 
 **Invariants**:
-* Iteration order of `Dict.toList` is by sorted key (for
-  `Comparable` keys); for typed-key dicts (since v0.15.45), the
-  order is insertion-order on the runtime side and stable per
-  process. AI-written code must NOT rely on a specific order beyond
-  "stable within a single run".
+* Iteration order of `Dict.toList` / `keys` / `values` / `foldl` is
+  ascending key order, as in Elm, for every key type the runtime can
+  decode (`dictEntries` / `sortedDictKeys`, rt.go). There is no
+  insertion-order or `sync.Map` path; the earlier text that said so
+  was stale.
 * `Limitation #5` was CLOSED in v0.17: `Dict.toList (Dict.fromList
   [(1,"a")])` now type-checks both inline and let-bound.
 
@@ -326,19 +344,30 @@ union; `examples/00-standard-libs` exercises both modules in the
 120-assertion stdlib smoke test.
 
 **Known gaps**:
-* Iteration order documented above is "by sorted key" for
-  comparable keys but the Go runtime uses Go's map iteration
-  (randomised) — Sky inserts a sort pass at `Dict.toList`. UNVERIFIED
-  whether this sort is stable under custom-Ord types (Sky has no
-  custom Ord; the comparable interface is structural).
+* Writes are O(n) and enumeration sorts on every call (above).
+* A composite (tuple) key is refused in `Dict.foldl` / `Dict.map`
+  (`requireDecodableDictKey`, rt.go): the tagged string cannot be decoded
+  back to the tuple. Open; the persistent tree would store real keys.
 
 ---
 
 ### 2.5 `Sky.Core.String`
 
-**File**: `String.sky` (218 lines). 38 entries. All `Ffi.kernel`
-aliases backed by Go runtime functions that respect Unicode where
-the documentation says they do.
+**File**: `String.sky`. Every entry is an `Ffi.kernel` alias backed by
+a Go runtime function, except `foldl` / `foldr` (Sky over `uncons`).
+
+**The unit** is the Unicode code point (a Go rune): every index and
+length. Not bytes (`Sky.Core.Bytes`), not graphemes (`String.graphemes`).
+
+**Costs (v0.29.0)**: `length` O(n), no allocation; `slice` / `left` /
+`dropLeft` O(k) for index k and `right` / `dropRight` O(k) from the end,
+each returning a substring that shares the input's bytes; a negative
+`slice` index O(n); `uncons` O(1); `foldl` / `foldr` / `toList` /
+`fromList` / `concat` / `join` O(n). `++` is O(|a|+|b|), so `++` in a
+loop is O(n²): cons pieces and `String.concat (List.reverse pieces)`
+once. A per-character `slice` loop over a string of 4 kB or more uses a
+one-entry index cache (`runtime-go/rt/string_fast.go` states its
+limits).
 
 **Key signatures**:
 
@@ -356,6 +385,8 @@ contains/startsWith/endsWith : String -> String -> Bool  -- needle-first
 containsIn/startsWithIn/endsWithIn : String -> String -> Bool  -- haystack-first (v0.15.47+)
 slice          : Int -> Int -> String -> String   -- rune indices, Elm semantics
 dropLeft/dropRight : Int -> String -> String       -- rune-based (v0.16.31)
+uncons         : String -> Maybe ( Char, String )  -- O(1) (v0.29.0)
+foldl/foldr    : (Char -> b -> b) -> b -> String -> b  -- O(n) (v0.29.0)
 casefold/equalFold : ...                            -- Unicode case-folded comparison
 isEmail/isUrl   : String -> Bool                    -- format checks
 words/lines    : String -> List String
@@ -381,10 +412,8 @@ words/lines    : String -> List String
   regardless of UTF-8 byte length.
 * `String.toList : String -> List Char` produces `List Char` where
   `Char` is one Unicode code point — not a grapheme cluster.
-  Grapheme handling is via Sky.Tui's uniseg dependency for cell
-  width; user code that needs grapheme clusters must call the
-  appropriate Unicode primitive (none currently exposed —
-  documented gap).
+  `String.graphemes` counts grapheme clusters; no function splits a
+  string into them (documented gap).
 
 **Verification**: stdlib smoke test (examples/00) hits ~30 of 38
 entries. The compiler test suite's UI-layout specs don't cover
@@ -395,9 +424,8 @@ trim, and contains.
 * `Limitation #462` (CLOSED v0.16.4 region): `String.padLeft /
   padRight` previously emitted the char as decimal codepoint. Now
   fixed.
-* No grapheme-cluster API exposed; would need
-  `String.toGraphemes : String -> List String` for full Unicode
-  Annex #29 segmentation.
+* The walking kernels keep an invalid UTF-8 byte inside a result as it
+  was (the old rune round trip wrote U+FFFD); valid text is unchanged.
 
 ---
 

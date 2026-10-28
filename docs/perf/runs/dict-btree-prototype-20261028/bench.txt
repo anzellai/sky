@@ -1,0 +1,44 @@
+# go test -bench . -benchmem (GOGC default 100), go version go1.26.1 darwin/arm64, Apple M1
+BenchmarkV2Insert1e5-8   	      13	  86621298 ns/op	       866.2 ns/insert	191568108 B/op	  756841 allocs/op
+BenchmarkV2Counts1e6-8   	       2	 927935812 ns/op	       927.9 ns/update	2330904688 B/op	 9979826 allocs/op
+BenchmarkV3/insert1e5/w8-8         	      16	  69895271 ns/op	       699.0 ns/insert	98560828 B/op	 1513710 allocs/op
+BenchmarkV3/counts1e6/w8-8         	       2	 641303021 ns/op	       641.3 ns/update	994189072 B/op	17064740 allocs/op
+BenchmarkV3/insert1e5/w16-8        	      19	  62170469 ns/op	       621.7 ns/insert	103766704 B/op	 1169054 allocs/op
+BenchmarkV3/counts1e6/w16-8        	       2	 528148438 ns/op	       528.1 ns/update	964879960 B/op	12968100 allocs/op
+BenchmarkV3/insert1e5/w32-8        	      18	  67844465 ns/op	       678.4 ns/insert	134569918 B/op	  969478 allocs/op
+BenchmarkV3/counts1e6/w32-8        	       3	 484708417 ns/op	       484.7 ns/update	1085354688 B/op	 9095288 allocs/op
+BenchmarkV4/insert1e5/w8-8         	      16	  76944492 ns/op	       769.4 ns/insert	114048837 B/op	 1392459 allocs/op
+BenchmarkV4/counts1e6/w8-8         	       2	 755023688 ns/op	       755.0 ns/update	1140755576 B/op	16931430 allocs/op
+BenchmarkV4/insert1e5/w16-8        	      15	  76037250 ns/op	       760.4 ns/insert	141192876 B/op	 1059266 allocs/op
+BenchmarkV4/counts1e6/w16-8        	       2	 746679166 ns/op	       746.7 ns/update	1384309928 B/op	12853831 allocs/op
+BenchmarkV4/insert1e5/w32-8        	      14	  84147095 ns/op	       841.5 ns/insert	204543152 B/op	  864775 allocs/op
+BenchmarkV4/counts1e6/w32-8        	       2	 760314312 ns/op	       760.3 ns/update	1984296184 B/op	 8988673 allocs/op
+BenchmarkInsert1e5/w8-8            	      12	  94981250 ns/op	       949.8 ns/insert	116936344 B/op	 1513707 allocs/op
+BenchmarkInsert1e5/w16-8           	      13	  84270317 ns/op	       842.7 ns/insert	124040191 B/op	 1169048 allocs/op
+BenchmarkInsert1e5/w32-8           	      12	  94195830 ns/op	       942.0 ns/insert	163210049 B/op	  969476 allocs/op
+BenchmarkCounts1e6/w8-8            	       2	 819656500 ns/op	       819.7 ns/update	1161331264 B/op	19059618 allocs/op
+BenchmarkCounts1e6/w16-8           	       2	 665542375 ns/op	       665.5 ns/update	1103895928 B/op	14962990 allocs/op
+BenchmarkCounts1e6/w32-8           	       2	 628145416 ns/op	       628.1 ns/update	1203561480 B/op	11090186 allocs/op
+ok  	btproto	34.698s
+# GOGC=400 (the Sky runtime default)
+BenchmarkV2Insert1e5-8   	      18	  63114685 ns/op	       631.1 ns/insert	191566774 B/op	  756830 allocs/op
+BenchmarkV2Counts1e6-8   	       2	 624729521 ns/op	       624.7 ns/update	2330900496 B/op	 9979807 allocs/op
+BenchmarkV3/insert1e5/w8-8         	      20	  59038308 ns/op	       590.4 ns/insert	98559527 B/op	 1513701 allocs/op
+BenchmarkV3/counts1e6/w8-8         	       2	 521193584 ns/op	       521.2 ns/update	994187728 B/op	17064728 allocs/op
+BenchmarkV3/insert1e5/w16-8        	      22	  50430269 ns/op	       504.3 ns/insert	103765389 B/op	 1169043 allocs/op
+BenchmarkV3/counts1e6/w16-8        	       3	 421410500 ns/op	       421.4 ns/update	964878205 B/op	12968084 allocs/op
+BenchmarkV3/insert1e5/w32-8        	      24	  51675727 ns/op	       516.8 ns/insert	134569268 B/op	  969472 allocs/op
+BenchmarkV3/counts1e6/w32-8        	       3	 364404486 ns/op	       364.4 ns/update	1085353754 B/op	 9095279 allocs/op
+BenchmarkV4/insert1e5/w8-8         	      19	  60822498 ns/op	       608.2 ns/insert	114047575 B/op	 1392448 allocs/op
+BenchmarkV4/counts1e6/w8-8         	       2	 590513062 ns/op	       590.5 ns/update	1140753000 B/op	16931407 allocs/op
+BenchmarkV4/insert1e5/w16-8        	      21	  55899123 ns/op	       559.0 ns/insert	141191501 B/op	 1059254 allocs/op
+BenchmarkV4/counts1e6/w16-8        	       2	 532724042 ns/op	       532.7 ns/update	1384306456 B/op	12853800 allocs/op
+BenchmarkV4/insert1e5/w32-8        	      20	  54981479 ns/op	       549.8 ns/insert	204541417 B/op	  864760 allocs/op
+BenchmarkV4/counts1e6/w32-8        	       2	 510003792 ns/op	       510.0 ns/update	1984292852 B/op	 8988622 allocs/op
+BenchmarkInsert1e5/w8-8            	      15	  75727589 ns/op	       757.3 ns/insert	116935574 B/op	 1513700 allocs/op
+BenchmarkInsert1e5/w16-8           	      18	  68169495 ns/op	       681.7 ns/insert	124039403 B/op	 1169041 allocs/op
+BenchmarkInsert1e5/w32-8           	      16	  69125656 ns/op	       691.3 ns/insert	163209585 B/op	  969471 allocs/op
+BenchmarkCounts1e6/w8-8            	       2	 664277667 ns/op	       664.3 ns/update	1161329776 B/op	19059609 allocs/op
+BenchmarkCounts1e6/w16-8           	       2	 543027666 ns/op	       543.0 ns/update	1103892280 B/op	14962962 allocs/op
+BenchmarkCounts1e6/w32-8           	       3	 475006250 ns/op	       475.0 ns/update	1203557877 B/op	11090161 allocs/op
+ok  	btproto	31.788s
