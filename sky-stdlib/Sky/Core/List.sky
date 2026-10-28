@@ -1,25 +1,38 @@
 -- | Sky.Core.List — list combinators.
 --
--- Sky lists are Go `[]any` slices (see `runtime-go/rt`), so `::`-cons
--- (`rt.List_cons`) is an O(n) immutable prepend — it copies the whole
--- accumulator on every step. That means a pure-Sky CPS/accumulator loop
--- that conses per element (the v0.17 rewrite shape) is O(n) in stack but
--- O(n²) in TIME (conformance finding L1). So every list-BUILDING op is an
--- `Ffi.kernel "List_<name>"` alias backed by an O(n) Go loop that grows the
--- result slice with `append` in forward order (NO per-element cons). This
--- keeps the `[]any` representation (so all FFI / interop / `rt.AsListT`
--- typed-widening is unchanged), stays constant Go stack (a plain loop), and
--- drops the ops to O(n). The runtime bodies live in `runtime-go/rt/rt.go`
--- (`List_*` helpers). Explicit HM signatures are load-bearing on every
--- kernel alias — `Ffi.kernel` has no body for HM to walk, so the signature
--- is the sole type source (same shape as `Sky.Core.Dict`'s HOF kernels,
--- e.g. `Dict.map : (k -> v -> w) -> Dict k v -> Dict k w`).
+-- Sky lists are Go slices (`[]T` typed, `[]any` erased; see
+-- `runtime-go/rt`). Since v0.29.0 `x :: xs` is AMORTISED O(1): a typed
+-- `::` lowers to `rt.List_consT[T]`, which writes into free room in
+-- front of the list's backing block (`runtime-go/rt/list_block.go`).
+-- The accumulator loop `go (x :: acc) rest` is therefore O(n), and so
+-- is `String.concat (List.reverse pieces)` after it. Three shapes stay
+-- O(n) per cons, by design:
+--
+--   * replacing a head (`case xs of y :: rest -> z :: rest`): `y`
+--     still owns the slot in front of `rest`, so `z :: rest` copies;
+--   * two lists consed onto ONE shared tail: the second cons copies;
+--   * the first cons onto a list that is not a cons block (a literal,
+--     `List.map`, JSON, a database row, FFI, `List.take`) copies once;
+--     the conses after it are O(1).
+--
+-- A short list (under 32 elements) is copied exactly, so short lists
+-- cost what they always did. The price of O(1) cons is SPACE: an old
+-- list keeps its whole block alive, and so every element of every
+-- newer list built on that block. A long-lived short suffix of a large
+-- accumulator (kept in a Sky.Live model, say) holds the large block.
+--
+-- Every list-BUILDING op is an `Ffi.kernel "List_<name>"` alias backed
+-- by an O(n) Go loop that grows the result in forward order. Explicit
+-- HM signatures are load-bearing on every kernel alias — `Ffi.kernel`
+-- has no body for HM to walk, so the signature is the sole type source
+-- (same shape as `Sky.Core.Dict`'s HOF kernels, e.g.
+-- `Dict.map : (k -> v -> w) -> Dict k v -> Dict k w`).
 --
 -- The SCALAR-accumulating ops (`foldl` / `length` / `member` / `any` /
--- `all` / `find` / `isEmpty`) stay pure Sky: they are already O(n) — the
--- accumulator is a scalar, not a growing list — and are auto-TCO'd by
--- `Sky.Build.TailCallOpt` to a `for { ... continue }` loop, so they run in
--- constant Go stack. `head` / `tail` / `cons` are O(1) pure Sky.
+-- `all` / `find` / `isEmpty`) stay pure Sky: they are O(n) and are
+-- compiled to a Go `for` loop, so they run in constant Go stack.
+-- `head` and `tail` are O(1) (`tail` shares the list's memory), and
+-- `drop k` is O(1) on a typed list.
 module Sky.Core.List exposing
     ( isEmpty
     , length
@@ -308,6 +321,9 @@ tail list =
 
 
 -- | `cons x list` — prepend `x` (the `::` operator as a named function).
+--
+-- Cost: amortised O(1); see the module header for the three shapes that
+-- copy (O(n)).
 cons : a -> List a -> List a
 cons x list =
     x :: list

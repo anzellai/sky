@@ -4474,6 +4474,50 @@ impl<'a> Ctx<'a> {
         let GoTy::Func(params, ret) = expected else {
             return None;
         };
+        // The `(::)` value in a slot of shape `func(T, []T) []T`
+        // (`List.foldl (::) [] xs`): a closure over the typed twin
+        // `rt.List_consT[T]`, the same entry point as the `::` operator, so
+        // the value form is amortised O(1) too (doc 14 R5, lever §5.1 at the
+        // slot's shape + §5.3). An all-`any` slot keeps the bare symbol.
+        if go == "rt.List_cons" {
+            if let ([h, GoTy::Slice(t)], GoTy::Slice(rt_)) = (params.as_slice(), &**ret) {
+                if h == &**t && t == rt_ && *h != GoTy::Any {
+                    let (p0, p1) = (
+                        format!("_p{}", self.local_counter),
+                        format!("_p{}", self.local_counter + 1),
+                    );
+                    self.local_counter += 2;
+                    let call = GoExpr::new(
+                        GoExprKind::GenericCall(
+                            "rt.List_consT".to_string(),
+                            vec![h.clone()],
+                            vec![
+                                GoExpr::new(GoExprKind::Ident(p0.clone()), h.clone()),
+                                GoExpr::new(GoExprKind::Ident(p1.clone()), params[1].clone()),
+                            ],
+                        ),
+                        (**ret).clone(),
+                    );
+                    return Some(GoExpr::new(
+                        GoExprKind::FuncLit(
+                            vec![
+                                GoParam {
+                                    name: p0,
+                                    ty: h.clone(),
+                                },
+                                GoParam {
+                                    name: p1,
+                                    ty: params[1].clone(),
+                                },
+                            ],
+                            (**ret).clone(),
+                            vec![GoStmt::Return(Some(call))],
+                        ),
+                        expected.clone(),
+                    ));
+                }
+            }
+        }
         let arity = self.kernel_runtime_arity(go)?;
         if arity == 0 {
             return None;
@@ -6283,6 +6327,61 @@ impl<'a> Ctx<'a> {
         // A UNARY list kernel that only needs the list's LENGTH, over a proven
         // slice, goes to its typed twin. See `list_unary_prim_twin` for why the
         // table stops where it does.
+        // `List.reverse` over a proven slice: the typed twin
+        // `rt.List_reverseT[T]` (one fresh `[]T`), instead of the erased
+        // `rt.List_reverseAny`, which reflect-boxes every element into a
+        // `[]any` that the slot then narrows back element by element. Doc 14
+        // R5, lever §5.3; measured by `xtask perf-gate` (cons-reverse).
+        if args.len() == 1 && go == "rt.List_reverseAny" {
+            let xs = self.lower_expr(args[0], &GoTy::Any);
+            if let GoTy::Slice(e) = &xs.ty {
+                if provable(e) {
+                    let elem = (**e).clone();
+                    let ret = xs.ty.clone();
+                    let call = GoExpr::new(
+                        GoExprKind::GenericCall(
+                            "rt.List_reverseT".to_string(),
+                            vec![elem],
+                            vec![xs],
+                        ),
+                        ret,
+                    );
+                    return self.coerce_if_needed(call, actual);
+                }
+            }
+            // Unproven: exactly the general path below.
+            let wxs = self.widen(Self::kernel_to_kernel(xs));
+            return self.kernel_call_lowered(go, vec![wxs], actual);
+        }
+        // `List.take k` / `List.drop k` over a proven Int and slice: the typed
+        // twins `rt.List_takeT[T]` / `List_dropT[T]` are a re-slice, O(1),
+        // where the erased kernels reflect-widen the whole list and the slot
+        // narrows it back, O(n). Same lever and proof as `reverse` above.
+        if args.len() == 2 && (go == "rt.List_take" || go == "rt.List_drop") {
+            let k = self.lower_expr(args[0], &GoTy::Any);
+            let xs = self.lower_expr(args[1], &GoTy::Any);
+            if let (GoTy::Bare(Prim::Int), GoTy::Slice(e)) = (&k.ty, &xs.ty) {
+                if provable(e) {
+                    let elem = (**e).clone();
+                    let ret = xs.ty.clone();
+                    let typed = if go == "rt.List_take" {
+                        "rt.List_takeT"
+                    } else {
+                        "rt.List_dropT"
+                    };
+                    let call = GoExpr::new(
+                        GoExprKind::GenericCall(typed.to_string(), vec![elem], vec![k, xs]),
+                        ret,
+                    );
+                    return self.coerce_if_needed(call, actual);
+                }
+            }
+            let largs = vec![
+                self.widen(Self::kernel_to_kernel(k)),
+                self.widen(Self::kernel_to_kernel(xs)),
+            ];
+            return self.kernel_call_lowered(go, largs, actual);
+        }
         if args.len() == 1 {
             if let Some((typed, ret)) = list_unary_prim_twin(go) {
                 let xs = self.lower_expr(args[0], &GoTy::Any);
@@ -7216,6 +7315,52 @@ impl<'a> Ctx<'a> {
                 let elem = actual.elem_ty();
                 let l = self.lower_expr(lhs, &elem);
                 let r = self.lower_expr(rhs, actual);
+                // A tail that lowers to a Go slice `[]T` conses through the
+                // typed twin `rt.List_consT[T]`, typed `[]T`, with no widen of
+                // the tail and no `rt.AsListT` narrow of the result: amortised
+                // O(1) on the cons blocks of `runtime-go/rt/list_block.go`.
+                //
+                // Doc 14: origin R5 (the erased kernel return `any` narrowed
+                // back with `rt.AsListT[T]` by `coerce_if_needed`, R1), lever
+                // §5.3 (a typed kernel entry point). Floor check (§1): the
+                // tail's Go type is `r.ty`, the slot's is `actual`, both known
+                // at emit time; the twin is used only when they are the same
+                // `[]T` (or the slot is `any`, which only widens). `T` may be
+                // `any`, a struct or a type parameter: Go's type checker
+                // decides the claim, so a wrong one is a `go build` error,
+                // never a silent miscompile (§5.3, first property). The head
+                // is used as it is when it lowers to `T`, widened when `T` is
+                // `any`, and narrowed by one O(1) element coerce when it is an
+                // erased `any` under a provable `T`; any other head shape keeps
+                // the erased call. Verified by `xtask perf-gate`
+                // (`erasedTypedCons` must be 0) and `coerce-floor` (narrow goes
+                // down). The erased `rt.List_cons` stays for a tail that is
+                // genuinely erased.
+                if let GoTy::Slice(e) = &r.ty {
+                    let t = (**e).clone();
+                    let out_ty = r.ty.clone();
+                    let slot_ok = *actual == r.ty || *actual == GoTy::Any;
+                    let head = if l.ty == t {
+                        Some(l.clone())
+                    } else if t == GoTy::Any {
+                        Some(self.widen(l.clone()))
+                    } else if l.ty == GoTy::Any && provable(&t) {
+                        Some(self.coerce_if_needed(l.clone(), &t))
+                    } else {
+                        None
+                    };
+                    if let (true, Some(head)) = (slot_ok, head) {
+                        let call = GoExpr::new(
+                            GoExprKind::GenericCall(
+                                "rt.List_consT".to_string(),
+                                vec![t],
+                                vec![head, r],
+                            ),
+                            out_ty,
+                        );
+                        return self.coerce_if_needed(call, actual);
+                    }
+                }
                 // x :: xs  →  rt.List_cons(x, xs). `rt.List_cons` returns Go
                 // `any`, so the node's type is `Any`; the enclosing slot
                 // (`lower_expr`) coerces to the expected `[]T` via `rt.AsListT`.
@@ -10205,10 +10350,9 @@ const SKY_LIST_HOF_TWINS: &[(&str, &str, &str, usize)] = &[
 /// `rt.SkyMaybe[any]`, a distinct Go instantiation needing a reflective
 /// `rt.MaybeCoerce` rebuild — it RELOCATES the cost rather than removing it,
 /// which is the same reason `head` is absent from `SKY_LIST_HOF_TWINS` above.
-/// `rt.List_reverseT` returns `[]A` and would qualify on that test, but it is a
-/// different measurement (it is O(n) work, not an O(1) length read) and doc 14
-/// §5.5's staged-rollout rule is that widening the table re-runs the
-/// measurement. It is deliberately left for a later tranche.
+/// `rt.List_reverseT` / `takeT` / `dropT` return `[]A` and qualify on that
+/// test; since v0.29.0 `kernel_call` routes them separately (with `::` and
+/// the `List.cons` value, doc 14 §5.3), measured by `xtask perf-gate`.
 ///
 /// Fields: `(typed runtime symbol, the twin's Go return type)`.
 /// A kernel whose runtime has a TYPED twin taking the same `any` arguments and

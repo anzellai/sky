@@ -454,7 +454,7 @@ in `runtime-go/rt/kernel_twins_test.go`; the new erased-argument twins
 `runtime-go/rt/kernel_twins.go`) call the erased kernel and assert its one
 result type, so their semantics are the erased kernel's by construction.
 Measured: narrow 14423 -> 12669 over all 80 coerce-floor rows, adapter 0.
-`::` stays untouched, as above.
+(`::` was left untouched at that stage; v0.29.0 routes it, below.)
 
 The table also covers the typed Math companions (`Math_sqrtT` … `Math_roundT`,
 `Math_absT`, `Math_minT` / `Math_maxT`), `Basics_modByT`, `List_rangeT`,
@@ -482,12 +482,34 @@ and that boundary is load-bearing rather than a convenient stopping point:
 strict removal. `rt.List_headT` returns `rt.SkyMaybe[A]` where its consumers take
 `rt.SkyMaybe[any]` — a distinct instantiation needing a reflective
 `rt.MaybeCoerce` rebuild, so it RELOCATES cost, which is the same reason `head`
-is absent from `SKY_LIST_HOF_TWINS`. `rt.List_reverseT` / `takeT` / `dropT` pass
-that test but are O(n) work rather than an O(1) length read, so they are a
-different measurement and are left for a later tranche per §5.5's staged-rollout
-rule. **`::` is deliberately untouched** — it was this stage's negative control,
-and re-pointing it would have destroyed the only evidence that the routing keys
-on proven operand types rather than on operator shape.
+is absent from `SKY_LIST_HOF_TWINS`.
+
+**v0.29.0: `::`, `List.reverse`, `List.take` and `List.drop`.** `::` was this
+stage's negative control. It is now routed, because the erased form was not a
+narrowing cost but a complexity defect: `rt.AsListT[T](rt.List_cons(any(x),
+any(xs)))` reflect-widened the whole tail and narrowed it back on every cons,
+O(n) per cons and O(n²) for the accumulator loop. A `::` whose tail lowers to
+`[]T` (the slot `[]T` or `any`) emits `rt.List_consT[T](x, xs)` typed `[]T`,
+with no widen of the tail and no `AsListT` of the result; the runtime twin is
+amortised O(1) on the cons blocks of `runtime-go/rt/list_block.go`. The head
+is used as it is when it lowers to `T`, widened when `T` is `any`, and
+narrowed by one O(1) element coerce when it is an erased `any` under a
+provable `T`; every other head shape keeps the erased call. The `List.cons`
+value in a typed `func(T, []T) []T` slot goes through `kernel_value_eta` to
+the same twin (§5.1), and stays the bare symbol in an `any` slot. `reverse`,
+`take` and `drop` over a proven slice go to `rt.List_reverseT` / `takeT` /
+`dropT` (one fresh slice / a re-slice). Measured: narrow 17301 -> 16733 over
+all 86 coerce-floor rows, adapter 0; `xtask perf-gate` cons-reverse (1e6
+conses then reverse) 0.032 s and 0.000 mallocs per element, where the erased
+form did not finish 32,000 conses in 13 s.
+
+**The new negative control is `List.head`.** It stays off every twin table for
+the reason given above: `rt.List_headT` returns `rt.SkyMaybe[A]` where its
+consumers take `rt.SkyMaybe[any]`, so routing it relocates the cost into a
+`rt.MaybeCoerce` rebuild instead of removing it. It is the evidence that the
+routing keys on what a twin removes, not on operator or kernel shape. A change
+that routes `head` must measure that it removes cost, and must name a new
+control here.
 
 Three properties of this lever are worth carrying:
 

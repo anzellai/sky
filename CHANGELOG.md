@@ -66,6 +66,24 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   it, the same rule as `insertAtCursor`, with the same errors. A Sky.Spa
   client capability: `Err Unavailable` on Sky.Live, a server, a CLI or a TUI.
 
+- **`x :: xs` is amortised O(1).** A typed `::` lowered to
+  `rt.AsListT[T](rt.List_cons(any(x), any(xs)))`, which reflect-widened the
+  whole tail and narrowed it back on every cons: an accumulator loop of n
+  conses was O(n²) (32,000 conses took 13 s). It now lowers to the typed twin
+  `rt.List_consT[T]`, which writes into free room in front of the list's
+  backing block, claimed with one compare-and-swap, so no other list can see
+  the slot (`runtime-go/rt/list_block.go`). 1e6 conses then `List.reverse`
+  take about 0.03 s. A list under 32 elements is copied exactly, as before.
+  Three shapes still copy (replacing a head, two conses onto one shared tail,
+  the first cons onto a list that is not a cons block); `Sky.Core.List`
+  states them, and the space cost: an old list keeps its whole block alive.
+  The `List.cons` value in a typed slot, the erased `[]any` cons, and typed
+  `xs ++ ys` (which claims room in front of `ys` when it can) use the same
+  blocks. `List.reverse`, `List.take` and `List.drop` over a typed list lower
+  to their typed twins (`take` / `drop` are now O(1) re-slices). Go code
+  called through FFI must treat a slice argument as read-only
+  (`docs/ffi/boundary-philosophy.md`).
+
 - **`String.uncons`, `String.foldl` and `String.foldr`, and String kernels that
   walk instead of copying.** `uncons s` gives `Just ( first, rest )` in O(1),
   and the rest shares the bytes of `s`; over a proven string it returns its

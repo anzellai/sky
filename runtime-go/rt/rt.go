@@ -2172,10 +2172,8 @@ func List_cons(head, tail any) any {
 		return []any{head}
 	}
 	if xs, ok := tail.([]any); ok {
-		out := make([]any, 0, len(xs)+1)
-		out = append(out, head)
-		out = append(out, xs...)
-		return out
+		// Amortised O(1): the cons blocks of list_block.go.
+		return List_consT[any](head, xs)
 	}
 	// Typed-slice fallback: widen via AsList (handles any Go slice
 	// kind via reflect) and then prepend. O(n) per cons; a typed `::`
@@ -3645,7 +3643,7 @@ func List_takeAnyT(n int, xs []any) []any {
 }
 
 func List_consAnyT(x any, xs []any) []any {
-	return append([]any{x}, xs...)
+	return List_consT[any](x, xs)
 }
 
 func List_foldlAnyT(fn any, seed any, xs []any) any {
@@ -3904,7 +3902,9 @@ func List_takeT[A any](n int, xs []A) []A {
 	if n < 0 {
 		n = 0
 	}
-	return xs[:n]
+	// Capped at n: a Go `append` onto the prefix reallocates instead of
+	// writing over the source list's element n.
+	return xs[:n:n]
 }
 
 func List_isEmptyT[A any](xs []A) bool { return len(xs) == 0 }
@@ -3937,11 +3937,11 @@ func List_dropT[A any](n int, xs []A) []A {
 // The result is non-nil even when both operands are empty, matching what
 // `rt.AsListT` hands the rest of the emitted program (`nil` and `[]T{}` marshal
 // as JSON `null` and `[]` respectively, so the two are not interchangeable).
+// List_appendT is the typed `a ++ b`. It never writes into a slot another
+// list can see: the result is fresh memory, or room in front of b that b's
+// block had not given to any list yet (list_block.go, O(|a|)).
 func List_appendT[A any](a, b []A) []A {
-	out := make([]A, 0, len(a)+len(b))
-	out = append(out, a...)
-	out = append(out, b...)
-	return out
+	return List_appendBlockT(a, b)
 }
 
 func List_range(lo any, hi any) any {
