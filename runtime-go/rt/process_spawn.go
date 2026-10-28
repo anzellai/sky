@@ -242,8 +242,12 @@ func parseProcSpec(cfg any) procSpec {
 		rows:     AsInt(recordField(cfg, "PtyRows", "ptyRows")),
 		ringSize: AsInt(recordField(cfg, "BufferSize", "bufferSize")),
 	}
-	s.stdin = asBytesString(recordField(cfg, "Stdin", "stdin"))
-	s.stdinSet = AsBool(recordField(cfg, "StdinSet", "stdinSet"))
+	// A spec built without the stdin fields (a runtime caller, a test, an
+	// older record) has no stdin.
+	if flag := recordField(cfg, "StdinSet", "stdinSet"); flag != nil && AsBool(flag) {
+		s.stdin = asBytesString(recordField(cfg, "Stdin", "stdin"))
+		s.stdinSet = true
+	}
 	s.pty = AsBool(recordField(cfg, "Pty", "pty"))
 	for _, a := range AsList(recordField(cfg, "Args", "args")) {
 		s.args = append(s.args, asBytesString(a))
