@@ -8234,11 +8234,14 @@ func Regex_find(pattern any, s any) any {
 	if err != nil {
 		return Nothing[any]()
 	}
-	match := re.FindString(fmt.Sprintf("%v", s))
-	if match == "" {
+	// An empty match is a match (`find "x*" "abc"` is `Just ""`): test the
+	// location, not the matched text.
+	str := fmt.Sprintf("%v", s)
+	loc := re.FindStringIndex(str)
+	if loc == nil {
 		return Nothing[any]()
 	}
-	return Just[any](match)
+	return Just[any](str[loc[0]:loc[1]])
 }
 
 func Regex_findAll(pattern any, s any) any {
@@ -8286,11 +8289,11 @@ func Regex_findT(pattern, s string) SkyMaybe[string] {
 	if err != nil {
 		return Nothing[string]()
 	}
-	m := re.FindString(s)
-	if m == "" {
+	loc := re.FindStringIndex(s)
+	if loc == nil {
 		return Nothing[string]()
 	}
-	return Just[string](m)
+	return Just[string](s[loc[0]:loc[1]])
 }
 func Regex_findAllT(pattern, s string) []string {
 	re, err := regexp.Compile(pattern)

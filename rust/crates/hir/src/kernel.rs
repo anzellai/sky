@@ -750,7 +750,19 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "hexDecode",
         ],
     ),
-    ("Regex", &["match", "find", "findAll", "replace", "split"]),
+    (
+        "Regex",
+        &[
+            "match",
+            "find",
+            "findAll",
+            "findMatch",
+            "findAllMatches",
+            "replace",
+            "replaceWith",
+            "split",
+        ],
+    ),
     (
         "Char",
         &[

@@ -36,6 +36,15 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   every non-overlapping occurrence of `sub`, counted in characters (the unit
   of `String.slice`), O(n); an empty `sub` gives `[]`, as in Elm.
 
+- **Regex matches with positions and capture groups: `Regex.findMatch`,
+  `Regex.findAllMatches` and `Regex.replaceWith`.** Each match is a
+  `Regex.Match`, Elm's shape: `{ match : String, index : Int, number : Int,
+  submatches : List (Maybe String) }`. `index` counts characters, the unit of
+  `String.slice`, never bytes, so it stays right after `£` or `─`. A capture
+  group that did not take part is `Nothing`. `replaceWith pattern f s` builds
+  each replacement from the whole match. Pure (client and server), linear in
+  the input. An invalid pattern gives no match, like the other Regex functions.
+
 ### Migration
 
 - **New stdlib names `map2`, `map3` and `unique` in `Sky.Core.List`.** A
@@ -47,6 +56,10 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   name (`Maybe.map2`, `Schema.unique`), or narrow one `exposing` list.
 
 ### Fixed
+
+- **`Regex.find` finds an empty match.** `Regex.find "x*" "abc"` was `Nothing`
+  because an empty matched text was read as "no match"; it is `Just ""`, as
+  `findAll` and Elm have it.
 
 - **`sky run --help` prints help and builds nothing.** Before, `sky run --help`
   in a project directory built and ran the project.

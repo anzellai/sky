@@ -178,7 +178,14 @@ match : Bool
 match = Regex.match "^[a-z]+$" "hello"   -- True
 ```
 
-`match`, `find`, `findAll`, `replace`, `split`.
+`match`, `find`, `findAll`, `findMatch`, `findAllMatches`, `replace`, `replaceWith`, `split`.
+
+`findMatch` / `findAllMatches` return a `Match` (Elm's shape): `{ match : String, index : Int, number : Int, submatches : List (Maybe String) }`. `index` counts characters (the unit of `String.slice`), never bytes; `number` is 1-based; a capture group that did not take part is `Nothing`. `replaceWith pattern f s` replaces each match with `f match`. All are pure (client and server) and linear in the input (RE2). An invalid pattern gives no match (`False`, `Nothing`, `[]`, the input unchanged), not an error. (v0.29.0)
+
+```elm
+Regex.findMatch "(\\w+) = \"([^\"]*)\"" "video = \"abc\"" |> Maybe.map .submatches
+-- Just [ Just "video", Just "abc" ]
+```
 
 ### `Char` — character predicates
 
