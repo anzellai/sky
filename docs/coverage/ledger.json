@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1577,
+      "expected_assertions": 1638,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -433,7 +433,7 @@
       "tier": "T1"
     },
     "corpus-1": {
-      "expected_assertions": 156,
+      "expected_assertions": 165,
       "falsifier_mutation": "corpus-1.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 0 of 4: each case built + run; values compared against the generator's own",
@@ -471,7 +471,7 @@
       "tier": "T2"
     },
     "corpus-2": {
-      "expected_assertions": 156,
+      "expected_assertions": 165,
       "falsifier_mutation": "corpus-2.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 1 of 4: each case built + run; values compared against the generator's own",
@@ -509,7 +509,7 @@
       "tier": "T2"
     },
     "corpus-3": {
-      "expected_assertions": 155,
+      "expected_assertions": 164,
       "falsifier_mutation": "corpus-3.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 2 of 4: each case built + run; values compared against the generator's own",
@@ -547,7 +547,7 @@
       "tier": "T2"
     },
     "corpus-4": {
-      "expected_assertions": 155,
+      "expected_assertions": 164,
       "falsifier_mutation": "corpus-4.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 3 of 4: each case built + run; values compared against the generator's own",
@@ -607,7 +607,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 768,
+      "expected_assertions": 804,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -870,12 +870,6 @@
       "Std.Ui.Transition": "examples/26-ui-showcase"
     },
     "stdlib_modules_repo_wide": {
-      "Sky.Core.Char": {
-        "path": "tests/Core",
-        "units": [
-          "tests/Core"
-        ]
-      },
       "Sky.Core.Set": {
         "path": "tests/conformance",
         "units": [
@@ -946,7 +940,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2962,
+    "stdlib_entries": 2976,
     "stdlib_modules": 127,
     "surfaces_covered": 185,
     "surfaces_covered_pct": 94.9,
@@ -3204,6 +3198,11 @@
             "strength": 4
           },
           {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
@@ -3212,15 +3211,20 @@
         "strength": 4
       },
       "cover_today": {
-        "class": "None",
+        "class": "Asserted",
         "evidence": [
           {
             "by": "tests/Core — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
+          },
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
-        "strength": 0
+        "strength": 3
       },
       "description": "the Sky.Core.Char public API",
       "id": "stdlib.Sky.Core.Char",
@@ -18673,10 +18677,8 @@
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
-      "count": 1,
-      "modules": [
-        "Sky.Core.Char"
-      ]
+      "count": 0,
+      "modules": []
     },
     "surfaces_with_zero_new_cover": {
       "count": 9,
@@ -18732,9 +18734,8 @@
           ]
         },
         "Sky.Core.Char": {
-          "count": 7,
+          "count": 6,
           "symbols": [
-            "fromCode",
             "isAlpha",
             "isDigit",
             "isLower",
@@ -19711,11 +19712,12 @@
           ]
         },
         "Std.Native": {
-          "count": 4,
+          "count": 5,
           "symbols": [
             "CodeFormat",
             "ScanOptions",
             "ScannedCode",
+            "Selection",
             "ShareContent"
           ]
         },
@@ -19993,7 +19995,7 @@
         }
       },
       "count": 822,
-      "pct_of_denominator": 27.8
+      "pct_of_denominator": 27.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -20037,9 +20039,8 @@
           ]
         },
         "Sky.Core.Char": {
-          "count": 7,
+          "count": 6,
           "symbols": [
-            "fromCode",
             "isAlpha",
             "isDigit",
             "isLower",
@@ -20152,6 +20153,12 @@
             "range",
             "shuffle",
             "weighted"
+          ]
+        },
+        "Sky.Core.Regex": {
+          "count": 1,
+          "symbols": [
+            "Match"
           ]
         },
         "Sky.Core.Result": {
@@ -21122,12 +21129,13 @@
           ]
         },
         "Std.Native": {
-          "count": 5,
+          "count": 6,
           "symbols": [
             "CodeFormat",
             "Coords",
             "ScanOptions",
             "ScannedCode",
+            "Selection",
             "ShareContent"
           ]
         },
@@ -21424,8 +21432,8 @@
           ]
         }
       },
-      "count": 926,
-      "pct_of_denominator": 31.3
+      "count": 927,
+      "pct_of_denominator": 31.1
     }
   },
   "units": [
@@ -23447,12 +23455,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 56,
+      "modules_imported": 57,
       "path": "tests/conformance",
-      "refs_generous": 772,
-      "refs_qualified": 755,
+      "refs_generous": 790,
+      "refs_qualified": 772,
       "role": "Conformance",
-      "sky_files": 45,
+      "sky_files": 48,
       "sky_toml_sections": []
     }
   ]

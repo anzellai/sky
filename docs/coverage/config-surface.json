@@ -55,7 +55,7 @@
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1657 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:16060 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:16114 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:151 (toml_value)"
@@ -78,7 +78,7 @@
     "env.prefix": [
       "rust/crates/sky/src/db_cluster.rs:1666 (sky_toml_section_key)",
       "rust/crates/sky/src/db_pool_sizing.rs:161 (toml_value)",
-      "rust/crates/sky/src/main.rs:15935 (sky_toml_section_key)"
+      "rust/crates/sky/src/main.rs:15989 (sky_toml_section_key)"
     ],
     "go.dependencies": [
       "structural: rust/crates/project/src/ffi_ops.rs fn read_dependencies — same reader, same verbs; materialises the go.mod pins a build needs before it can start."
@@ -90,17 +90,17 @@
       "structural: rust/crates/sky/src/main.rs fn check_auth_secret — `sky doctor` tests for the `[live]` / `[auth]` section HEADERS inline, with no key read at all, to decide whether to check for an auth secret. Neither section is a key the scan can see."
     ],
     "name": [
-      "rust/crates/sky/src/main.rs:12729 (sky_toml_project_key)",
-      "rust/crates/sky/src/main.rs:12849 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:12783 (sky_toml_project_key)",
+      "rust/crates/sky/src/main.rs:12903 (sky_toml_project_key)"
     ],
     "root": [
       "rust/crates/project/src/build.rs:2700 (sky_toml_project_key)"
     ],
     "spa.wire": [
-      "rust/crates/sky/src/main.rs:5796 (sky_toml_section_key)"
+      "rust/crates/sky/src/main.rs:5806 (sky_toml_section_key)"
     ],
     "version": [
-      "rust/crates/sky/src/main.rs:12736 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:12790 (sky_toml_project_key)"
     ]
   },
   "read_without_doc": [

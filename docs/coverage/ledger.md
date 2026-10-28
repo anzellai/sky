@@ -27,16 +27,16 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | verdict `weaker` | 0 |
 | corpus units | 152 |
 | stdlib modules (denominator) | 127 |
-| stdlib entries (denominator) | 2962 |
+| stdlib entries (denominator) | 2976 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 8 | 6.3% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 926 | 31.3% |
-| symbols unreferenced under the generous rule | 822 | 27.8% |
-| stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 927 | 31.1% |
+| symbols unreferenced under the generous rule | 822 | 27.6% |
+| stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 0 | — |
 
 ### Surfaces with zero new cover
 
@@ -57,7 +57,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 26 |
-| stdlib modules owned by exactly one unit of any role | 11 |
+| stdlib modules owned by exactly one unit of any role | 10 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **0** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -148,7 +148,7 @@ None.
 | `stdlib.Sky.Config` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Basics` | stdlib | None | Falsified | stronger |
 | `stdlib.Sky.Core.Bytes` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Sky.Core.Char` | stdlib | None | Falsified | stronger |
+| `stdlib.Sky.Core.Char` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Crypto` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Dict` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Encoding` | stdlib | Asserted | Falsified | stronger |
