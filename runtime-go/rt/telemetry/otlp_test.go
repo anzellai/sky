@@ -90,6 +90,18 @@ func TestOTLPGuardRefusesGRPC(t *testing.T) {
 	if why := OTLPGuard("metrics", "http://collector:4318/v4317/v1/metrics"); why != "" {
 		t.Fatalf("4317 in a path is not the gRPC port: %s", why)
 	}
+	// A port that only starts with 4317 is not the gRPC port. CI picked
+	// 127.0.0.1:43173 for a test collector and export was disabled.
+	for _, u := range []string{"http://127.0.0.1:43173/x", "http://collector:43170", "http://[::1]:43179/v1/traces", "https://collector:4317000"} {
+		if why := OTLPGuard("traces", u); why != "" {
+			t.Fatalf("%s is not port 4317: %s", u, why)
+		}
+	}
+	for _, u := range []string{"collector:4317", "https://collector:4317", "http://[::1]:4317/v1/traces", "http://user@collector:4317/"} {
+		if why := OTLPGuard("traces", u); why == "" {
+			t.Fatalf("%s is port 4317 and must trip the guard", u)
+		}
+	}
 	t.Setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
 	if why := OTLPGuard("traces", "http://collector:4318/v1/traces"); why == "" {
 		t.Fatal("protocol grpc must trip the guard")
