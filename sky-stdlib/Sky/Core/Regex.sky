@@ -11,10 +11,19 @@
 -- False, `find` / `findMatch` are Nothing, `findAll` /
 -- `findAllMatches` are [], `replace` / `replaceWith` return the input
 -- unchanged and `split` returns [ input ].
-module Sky.Core.Regex exposing (Match, match, find, findAll, findMatch, findAllMatches, replace, replaceWith, split)
+module Sky.Core.Regex exposing
+    ( Match
+    , match
+    , find
+    , findAll
+    , findMatch
+    , findAllMatches
+    , replace
+    , replaceWith
+    , split
+    )
 
 import Sky.Ffi as Ffi
-
 
 -- | One match of a pattern (Elm's `Regex.Match`).
 --
