@@ -11,7 +11,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.28.0 — Model slots, a managed local model engine, typed AI failures, evals, datasets, the model registry, the project's AI pipeline, adapter training, cloud training and a GPU serving tier (Std.Ai.Endpoint, Std.Ai.Local, Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Dataset, Std.Ai.Registry, Std.Ai.Pipeline, Std.Ai.Train, Std.Ai.Serve, Std.Ai.Cloud.Google) (unreleased)
+## v0.28.0 — Model slots, a managed local model engine, typed AI failures, evals, datasets, the model registry, the project's AI pipeline, adapter training, cloud training and a GPU serving tier (Std.Ai.Endpoint, Std.Ai.Local, Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Dataset, Std.Ai.Registry, Std.Ai.Pipeline, Std.Ai.Train, Std.Ai.Serve, Std.Ai.Cloud.Google) (2026-10-28)
 
 Phase 1, phase 2 (the dataset, registry and pipeline parts), phase 3 (local
 training and GGUF export) and phase 4 (training on Google Cloud Vertex AI and
@@ -1231,6 +1231,16 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   the kind rule.
 - **An older peer reads a domain failure as no details (silent).** Its kind
   and message survive.
+- **Std.Ai failures carry typed details (silent).** `info.details` is now
+  `Just (Domain …)` where it was `Nothing`. Code that matched `Nothing` to
+  mean "an AI failure" matches the domain instead (`Error.domain err ==
+  Just "ai"`).
+- **`Provider.chat` sends the same request (silent).** It is
+  `Provider.chatWith Provider.defaultOptions`.
+- **Typed tools are opt-in (silent).** `Tool.tool`, `Provider.ToolSpec`,
+  `Provider.chatTools`, `Provider.customTools` and `Agent.nativeToolLoop` keep
+  their types and send the permissive `"parameters": {"type": "object"}` as
+  before. Use `Tool.typed` and `Provider.chatStructured` to opt in.
 - **The prompt-based tool loop passes an object `args` on (silent).** When
   the model gave `args` as a JSON object instead of a string,
   `Agent.toolLoop` used to run the tool with an empty string. It now runs it
@@ -1248,6 +1258,10 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   uses one of those names bare gets `[E1012]`, which names both modules. Qualify
   the name (`Html.embed`) or import it by name
   (`import Std.Html exposing (embed)`). `docs/migration/v0.28.md`.
+- **Training is new.** Nothing in `Std.Ai.Train` breaks a v0.27.20 program.
+  A host that ran a pre-release v0.28 build cleans `toolchains/mlx/` and
+  `toolchains/fake/` from the AI home, and a run that a Python Mlx driver
+  started is started again. `docs/migration/v0.28.md#training-stdaitrain-new-in-v0280`.
 
 ### Changed
 

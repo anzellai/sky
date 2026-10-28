@@ -185,3 +185,16 @@ decoder rejects (it used to return the default). Run `sky test` and exercise
 each JSON input once after the upgrade. Where a lenient fallback is intended,
 write it out (`Decode.oneOf [ dec, Decode.succeed default ]`); do not loosen a
 decoder only to make a test pass. See AGENTS.md "JSON decoding is strict".
+
+### After an upgrade to v0.28.0, read the migration guide first
+
+Sky's `docs/migration/v0.28.md` (in the Sky repository) lists every change.
+A `case` over `ErrorDetails`
+without `_ ->` is now `[E3001]`: add `_ ->` rather than listing the new
+`Domain` variant by hand. An `[E1012]` on `Options`, `defaultOptions` or
+`embed` is a new `Std.Ai.Provider` name: qualify the name. An app with an
+`SKY_AI_*` value that does not parse no longer starts: fix the value, do not
+unset it to get the default. `Trace.totalCost` refuses two currencies: read
+`Trace.runSummary`. Give a new tool typed arguments with `Tool.typed` and a
+`Codec`, and ask for a typed answer with `Provider.chatStructured`, rather
+than parsing a string by hand.

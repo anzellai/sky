@@ -275,7 +275,7 @@
   "seeded_without_reader": [],
   "summary": {
     "accepted_sky_toml_keys": 27,
-    "documented_names": 183,
+    "documented_names": 184,
     "documented_without_reader": 13,
     "pre_binary_surfaces": 17,
     "read_without_doc": 25,

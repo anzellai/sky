@@ -1,6 +1,6 @@
 //! The Std.Ai.Train docs state the trainers as they ship: Mlx on the native
 //! `sky-trainer`, Fake in the runtime, Python for Unsloth only; and the v0.28
-//! migration guide is measured from the newest released version.
+//! migration guide is measured from the newest release before the v0.28 line.
 //!
 //! # Why this exists
 //!
@@ -19,13 +19,17 @@ fn read(rel: &str) -> String {
     std::fs::read_to_string(root.join(rel)).unwrap_or_else(|e| panic!("read {rel}: {e}"))
 }
 
-/// The newest released version: the first `## vX.Y.Z` heading of
-/// CHANGELOG.md that is not marked unreleased.
-fn newest_release(changelog: &str) -> String {
+/// The newest released version before the `line` (`"v0.28"`): the first
+/// `## vX.Y.Z` heading of CHANGELOG.md that is not marked unreleased and is
+/// not on that line. The v0.28 migration guide is measured from it, so it stays
+/// right both while v0.28.0 is unreleased and once its heading is dated.
+fn newest_release_before(changelog: &str, line: &str) -> String {
+    let prefix = format!("{line}.");
     changelog
         .lines()
         .filter(|l| l.starts_with("## v") && !l.contains("(unreleased)"))
-        .find_map(|l| l.trim_start_matches("## ").split_whitespace().next())
+        .filter_map(|l| l.trim_start_matches("## ").split_whitespace().next())
+        .find(|v| !v.starts_with(&prefix))
         .map(str::to_string)
         .expect("a released version in CHANGELOG.md")
 }
@@ -74,7 +78,7 @@ fn the_training_docs_state_the_trainers_as_they_ship() {
     if v028.contains("MLX-LM as a library") {
         p.push("CHANGELOG.md v0.28.0 still says Mlx trains with MLX-LM".into());
     }
-    let release = newest_release(&changelog);
+    let release = newest_release_before(&changelog, "v0.28");
     let baseline = format!("worked on {release}.");
     if !migration.contains(&baseline) {
         p.push(format!(
@@ -92,5 +96,11 @@ fn the_training_docs_state_the_trainers_as_they_ship() {
 #[test]
 fn the_newest_release_skips_an_unreleased_heading() {
     let c = "# Changelog\n\n## v0.28.0 — x (unreleased)\n\n## v0.27.17 — y (2026-10-26)\n\n## v0.27.16 — z\n";
-    assert_eq!(newest_release(c), "v0.27.17");
+    assert_eq!(newest_release_before(c, "v0.28"), "v0.27.17");
+}
+
+#[test]
+fn the_baseline_skips_the_line_once_it_is_released() {
+    let c = "# Changelog\n\n## v0.28.0 — x (2026-10-28)\n\n## v0.27.20 - y (2026-10-27)\n\n## v0.27.19 - z\n";
+    assert_eq!(newest_release_before(c, "v0.28"), "v0.27.20");
 }
