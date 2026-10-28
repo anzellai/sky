@@ -920,6 +920,10 @@ These apply to any Sky code you write or any compiler change you make:
   (each `Ffi.kernel` alias names a real `rt` function),
   `kernel_signature_coverage.rs` (an advertised member has a signature) and
   `kernel_signature_runtime_arity.rs` (the signature arity matches the runtime).
+  The public surfaces follow in the same commit too: `README.md` (when a module,
+  CLI verb, target, install step or headline capability changes; every README
+  sample is a copy of a file CI builds) and the docs index `docs/README.md`.
+  The sky-lang.org site is checked and redeployed at each release.
 - **Release = bump the version and write the notes in one commit, then the
   version claims follow.** The ONE version source is `[workspace.package]
   version` in `rust/Cargo.toml`: every crate inherits it, `sky --version` prints

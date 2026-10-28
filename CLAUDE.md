@@ -806,6 +806,37 @@ item in a month.
    names: "ecommerce production webapp", "clinical management production
    platform", "mobile + ipad QA networking app".
 
+### 0.6 Public docs sync — README, docs site and sky-lang.org stay current (INVIOLABLE)
+
+A change that a user can see is not done until every public surface that
+describes it says so. This sits on top of AGENTS.md's "Template + doc sync"
+rule (which covers `AGENTS.md`, `templates/` and `docs/*`) and adds the three
+surfaces a visitor reads first.
+
+1. **`README.md`, in the same commit.** When a change adds, removes or renames
+   a stdlib module, a CLI verb, an app target or a headline capability, or
+   changes the install steps or the minimum Go version, update `README.md` in
+   the same commit. Keep it short and conversion-first: the pitch, install,
+   the visitor router, a few samples, what you get. Detail goes in `docs/` and
+   is linked, never pasted in. Every Sky sample in the README must be a copy of
+   a file that CI builds (an `examples/` member or a `doc-examples.sh` doc), so
+   a README sample cannot rot. Numbers in it (example count, module count) come
+   from a script or a `ls`, never from memory.
+2. **The docs site (GitHub Pages, `.github/workflows/docs-site.yml`).** The API
+   pages are generated from `sky-stdlib/`, so they follow the source. The prose
+   and the navigation are not: a new module or a removed one updates the docs
+   index (`docs/README.md`) and its deep-dive page in the same commit. Check
+   that the docs-site workflow ran green after a merge to `main`.
+3. **sky-lang.org (a separate repo, deployed after a release).** Every release
+   checks the landing page, the docs and learn pages and the examples gallery
+   against the release notes: new modules, removed APIs, `Std.App` as the one
+   entry point, counts, the current version. Update the site and redeploy it as
+   part of the release rollout, not later.
+4. **At release prep**, read `README.md` top to bottom against the CHANGELOG
+   heading being released. Anything stale (a version banner, a removed API, a
+   count, a superseded caveat) is fixed before the tag. A stale README is a
+   release defect, under §0.2.2.
+
 ### 1. Memory safety — `scripts/mem-guard.sh` MUST run during dev
 
 A runaway `sky` / `cargo` / `rustc` / `rust-analyzer` process
