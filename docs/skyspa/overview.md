@@ -622,6 +622,47 @@ the server's environment and stays on the server. A `Secret` has no codec and
 never crosses the wire. Purpose strings, entitlements and `sky package
 --release`: [`docs/skyapp/native.md`](../skyapp/native.md).
 
+### Inserting text at the caret
+
+An editor's "Insert" menu (a heading marker, a link, a `{{first_name}}`
+placeholder) needs the text at the caret, not at the end. The app writes no
+JavaScript: `Native.insertAtCursor elementId text` does it in the client.
+
+```elm
+-- doc-example: skip  (fragment — the rest of the app is elided)
+update msg model =
+    case msg of
+        InsertName ->
+            ( model, Cmd.perform (Native.insertAtCursor "body" "{{first_name}}") Inserted )
+
+        Inserted (Ok body) ->
+            ( { model | body = body }, Cmd.none )
+
+        Inserted (Err _) ->
+            ( model, Cmd.none )
+
+        BodyChanged body ->
+            ( { model | body = body }, Cmd.none )
+
+view model =
+    Input.multiline [ Ui.htmlAttribute "id" "body" ]
+        { onChange = BodyChanged, text = model.body, placeholder = Nothing
+        , label = Input.labelHidden "Body", spellcheck = True }
+```
+
+The Task inserts at the control's selection (a selected range is replaced),
+puts the caret after the text, focuses the control and yields its new whole
+value. The person pressed a menu button, so the control is not focused when the
+Task runs: the client records the last selection the person made in each text
+control, by its `id`, and uses it. A caret move the person did not make (a
+re-render that writes the control's value while it is blurred) is not
+recorded, and a re-render whose value is the same as the control's is not
+written at all, so storing the yielded value does not move the caret. `Err
+NotFound` for an unknown id, `Err InvalidInput` for an element that is not a
+textarea or a text-like input (text, search, url, tel, password). On Sky.Live
+the `update` runs on the server, so there it is `Err Unavailable`, like every
+`Std.Native` capability.
+
 ## Honest limits
 
 These are real, current scope boundaries — not roadmap optimism:

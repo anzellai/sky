@@ -67,10 +67,11 @@ fn the_training_docs_state_the_trainers_as_they_ship() {
             p.push(format!("docs/ai/train.md does not name `{need}`"));
         }
     }
+    // The v0.28.0 section wherever it sits: a later patch heading comes first.
     let v028 = changelog
         .split("\n## v")
-        .nth(1)
-        .filter(|s| s.starts_with("0.28.0"))
+        .skip(1)
+        .find(|s| s.starts_with("0.28.0 "))
         .unwrap_or("");
     if !v028.contains("sky-trainer") || !v028.contains("--sky-ai-fake-trainer") {
         p.push("CHANGELOG.md v0.28.0 does not describe the native trainer and the runtime's Fake trainer".into());

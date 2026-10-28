@@ -7730,6 +7730,11 @@ mod tests {
             classify_kernel("Native", "clipboardWrite"),
             KernelClass::ClientEffect
         );
+        // A caret insert reaches the browser DOM: it must never be an RPC.
+        assert_eq!(
+            classify_kernel("Native", "insertAtCursor"),
+            KernelClass::ClientEffect
+        );
         // Unknown family -> conservative SERVER (fail-closed), never Neutral.
         assert_eq!(
             classify_kernel("BrandNewEffect", "boom"),
@@ -8212,6 +8217,7 @@ mod tests {
         let mut acc = Refs::default();
         record_ffi_symbol("Native_clipboardWrite", &mut acc, false);
         record_ffi_symbol("Native_geolocation", &mut acc, false);
+        record_ffi_symbol("Native_insertAtCursor", &mut acc, false);
         assert!(
             acc.server_kernels.is_empty(),
             "Std.Native must not record as a server kernel: {:?}",
@@ -8223,8 +8229,8 @@ mod tests {
         );
         assert_eq!(
             acc.client_kernels.len(),
-            2,
-            "both Native symbols land in client_kernels"
+            3,
+            "every Native symbol lands in client_kernels"
         );
         assert!(
             acc.client_effect_note().is_some(),

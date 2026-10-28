@@ -787,6 +787,7 @@ func renderCurrent() {
 		// the select is closed re-sends what was held. Recording &vn here
 		// lost those patches for good.
 		spaInstallSelectTracker()
+		NativeInstallCaretTracker()
 		plan := spaPlanRender(spaPrev, &vn, snapshotFocusedInput(), spaCurrentSelect())
 		missing := spaApplyPatches(plan.Apply, spaPrev, &vn)
 		spaNoteHeld(plan)
@@ -800,6 +801,7 @@ func renderCurrent() {
 		return
 	}
 	spaInstallSelectTracker()
+	NativeInstallCaretTracker()
 	spaPrev = &vn
 }
 

@@ -693,7 +693,9 @@ fn native_effects_stay_client_side_not_rpc() {
     // wasm client. (Both are inside a `Cmd.perform (Native.… ) Done`.)
     let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
     assert!(
-        front.contains("Native.clipboardWrite") && front.contains("Native.share"),
+        front.contains("Native.clipboardWrite")
+            && front.contains("Native.share")
+            && front.contains("Native.insertAtCursor"),
         "frontend must keep the Std.Native kernel calls (they run client-side)"
     );
 

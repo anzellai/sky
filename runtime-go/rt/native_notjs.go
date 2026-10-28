@@ -181,3 +181,14 @@ func Native_scanCode(formats any, prompt any) any {
 	fs, pr := nativeFormatArgs(formats), AsString(prompt)
 	return func() any { return nativeScanCodeVia(nativeNoShellTransport, fs, pr) }
 }
+
+// Native_insertAtCursor on a non-client build: Err Unavailable. The text
+// control lives in the browser DOM of a Sky.Spa client (native_cursor_wasm.go).
+// A server, a CLI or a terminal UI has no such DOM, and on Sky.Live the update
+// runs on the server, so there is no caret here to insert at.
+func Native_insertAtCursor(_ any, _ any) any {
+	return func() any {
+		return Err[any, any](ErrUnavailable(
+			"Native.insertAtCursor is a client-only capability: it needs the browser DOM of a Sky.Spa client"))
+	}
+}

@@ -461,7 +461,10 @@ address is refused); `--upload testflight` then validates and uploads the
 signed `.ipa` to App Store Connect with `xcrun altool` (API key from
 `SKY_ASC_KEY_ID` / `SKY_ASC_ISSUER_ID` / `SKY_ASC_KEY_PATH`; needs
 `Bundle.withId` and a `Bundle.withBuild` that rises per upload). See
-`docs/skyapp/native.md`.
+`docs/skyapp/native.md`. An editor's "Insert" menu puts text at a textarea's
+caret with `Native.insertAtCursor "body" "{{first_name}}"` (`Task Error String`,
+the control's new value; it uses the selection the person left when focus moved
+to the menu; a Sky.Spa client only, `Err Unavailable` on Sky.Live).
 `web` requires `App.withNotFound` (compile-enforced). Invalid combos are rejected
 at parse time (`web:ios` → *"did you mean `mobile:ios`?"*). `sky check` checks
 the same target a bare `sky build` builds (`--target`, else `[app] target`, else

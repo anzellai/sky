@@ -1170,6 +1170,13 @@ func applyAttrs(el js.Value, attrs map[string]string, id string, newRoot *VNode)
 			if el.Get("__skyComposing").Truthy() {
 				continue
 			}
+			// An identical value is not written: a write moves the caret
+			// to the end on some engines, and the model often catches up
+			// with what the control already shows (the person's typing,
+			// or the value Native.insertAtCursor returned).
+			if cur := el.Get("value"); cur.Type() == js.TypeString && cur.String() == v {
+				continue
+			}
 			el.Set("value", v)
 			valueChanged = true
 		case "checked":
