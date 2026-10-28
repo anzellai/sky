@@ -668,6 +668,11 @@ fn projects_with_tests(root: &Path) -> Vec<PathBuf> {
         if !d.is_dir() {
             continue;
         }
+        // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+        // from CI in general; skip every `crate::ci_excluded` example by name.
+        if crate::ci_excluded::is_ci_excluded_path(&d) {
+            continue;
+        }
         let tests = d.join("tests");
         let has_suite = std::fs::read_dir(&tests)
             .map(|rd| {

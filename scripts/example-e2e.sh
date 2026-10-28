@@ -68,7 +68,13 @@ examples=()
 if [[ $# -gt 0 ]]; then
     for n in "$@"; do examples+=("$n"); done
 else
-    for d in examples/*/; do examples+=("$(basename "$d")"); done
+    for d in examples/*/; do
+        # USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded from
+        # CI in general (no CI job builds, trains, evaluates or runs it), so it is
+        # skipped here by name.
+        case "$d" in examples/76-ai-shell-command/) continue ;; esac
+        examples+=("$(basename "$d")")
+    done
 fi
 
 # ── helpers ──────────────────────────────────────────────────────

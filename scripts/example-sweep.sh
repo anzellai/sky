@@ -161,14 +161,19 @@ if [[ -n "$WORKDIR" ]]; then
     # `.skycache/go` (the sweep recreates them) but KEEP `.skycache/ffi`
     # (15+ min to regenerate for skyshop's 76k FFI symbols), `.skydeps`,
     # and `sky.lock`.
+    # USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded from
+    # CI in general (no CI job builds, trains, evaluates or runs it), so it is
+    # skipped here by name.
     if command -v rsync >/dev/null 2>&1; then
         rsync -a \
+            --exclude='/76-ai-shell-command' \
             --exclude='sky-out' \
             --exclude='.skycache/lowered' \
             --exclude='.skycache/go' \
             "$ROOT/examples/" "$EXAMPLES_ROOT/"
     else
         cp -R "$ROOT/examples/." "$EXAMPLES_ROOT/"
+        rm -rf "$EXAMPLES_ROOT/76-ai-shell-command"
         find "$EXAMPLES_ROOT" -mindepth 2 -maxdepth 3 \
             \( -name 'sky-out' -o -path '*/.skycache/lowered' \
                -o -path '*/.skycache/go' \) \
@@ -229,6 +234,10 @@ mirror_back_to_intree() {
 # cli examples: exit 0, stdout non-empty.
 #
 # Entries: "name:kind[:port][:path]"
+#
+# USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded from
+# CI in general (no CI job builds, trains, evaluates or runs it), so it is
+# deliberately absent from this table. Never add it.
 declare -a EXAMPLES=(
     "01-hello-world:cli"
     "02-go-stdlib:cli"

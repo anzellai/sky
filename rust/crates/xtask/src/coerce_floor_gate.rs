@@ -1564,6 +1564,11 @@ const NOT_A_PROJECT_ROOT: &[&str] = &[
 ];
 
 fn walk_projects(root: &Path, dir: &Path, out: &mut Vec<String>) {
+    // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+    // from CI in general; skip every `crate::ci_excluded` example by name.
+    if crate::ci_excluded::is_ci_excluded_path(dir) {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };

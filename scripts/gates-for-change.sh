@@ -131,6 +131,10 @@ compiler_core() {
 
 while IFS= read -r f; do
     [ -n "$f" ] || continue
+    # USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded from
+    # CI in general (no CI job builds, trains, evaluates or runs it), so it is
+    # skipped here by name.
+    case "$f" in examples/76-ai-shell-command/*) continue ;; esac
     mapped=1
     case "$f" in
         *.rs) add 01 "rustfmt --check" "(cd rust && cargo fmt --all -- --check)" ;;

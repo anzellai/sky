@@ -1,0 +1,273 @@
+module Model exposing
+    ( home
+    , trainingRows
+    , freeze
+    , job
+    , train
+    , AdapterFile
+    , saveAdapter
+    , loadAdapter
+    , baselineSpec
+    , tunedSpec
+    , ask
+    , options
+    )
+
+{-| The dataset, the training job, the trained adapter and the two models
+the eval compares.
+
+  - the baseline: Qwen2.5 0.5B Instruct (Q4_0) on the managed local engine,
+    with a few solved examples in the prompt
+  - the fine-tuned model: the same model with the LoRA adapter this example
+    trains, and no examples in the prompt
+
+Everything the example writes is under `.sky/` (git ignores it): the tldr
+cache, the frozen dataset, the training run, the adapter and the eval reports.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.File as File
+import Sky.Core.Time as Time
+import Std.Db as Db exposing (Db)
+import Std.Log exposing (println)
+import Std.Ai.Dataset as Dataset
+import Std.Ai.Local as Local
+import Std.Ai.Provider as Provider exposing (Provider)
+import Std.Ai.Train as Train exposing (Status(..))
+import Grammar
+import Prompt exposing (Platform)
+import Tldr
+
+
+home : String
+home =
+    ".sky/ai"
+
+
+-- | Every training row: the grammar's and tldr-pages'.
+trainingRows : Task Error (List ( Platform, String, String ))
+trainingRows =
+    Tldr.fetchAll ".sky/tldr"
+        |> Task.map (\fetched -> Grammar.rows ++ Tldr.rows fetched)
+
+
+toChat : ( Platform, String, String ) -> Dataset.Chat
+toChat ( p, request, command ) =
+    { messages = Prompt.messages p request ++ [ Provider.assistant command ] }
+
+
+-- The user turn: the platform and the request.
+key : Dataset.Chat -> String
+key row =
+    row.messages |> List.filter (\m -> m.role == "user") |> List.map .content
+        |> String.join "\n"
+
+
+-- | Freeze the rows into a dataset version under `.sky/ai/datasets/shell`.
+-- 90 % train the adapter and 10 % measure its loss. The same rows freeze to
+-- the same version.
+freeze : List ( Platform, String, String ) -> Task Error (Dataset.Version Dataset.Chat)
+freeze rows =
+    Dataset.fromList (List.map toChat rows) |> Dataset.dedupeBy key
+        |> Dataset.split { train = 90, eval = 10, test = 0, seed = 7 } key
+        |> Dataset.freeze
+               (Dataset.folder (home ++ "/datasets") "shell")
+               Dataset.chatCodec
+
+
+-- | The most memory training may use: 2.5 GB, well inside a 16 GB laptop.
+-- The native trainer's guard ends a run that goes over it.
+memoryCap : Int
+memoryCap =
+    2500 * 1024 * 1024
+
+
+-- | QLoRA on the development base (Qwen2.5 0.5B Instruct, 4-bit): rank 16 on
+-- the attention projections of the last 16 layers, 1200 steps of 8 rows of up
+-- to 192 tokens, seed 7. The adapter is converted to GGUF for the engine.
+job : Dataset.Version Dataset.Chat -> Train.Job
+job version =
+    Train.lora Train.devBase version |> Train.withName "shell"
+        |> Train.withQuantisedBase
+        |> Train.withRank 16
+        |> Train.withLayers 16
+        |> Train.withLearningRate 2.0e-4
+        |> Train.withMaxSteps 1200
+        |> Train.withBatch { perDevice = 8, accumulate = 1 }
+        |> Train.withSequenceLength 192
+        |> Train.withSeed 7
+        |> Train.withCheckpointEvery 100
+        |> Train.withEvalEvery 100
+        |> Train.withMemoryCap memoryCap
+        |> Train.withGgufExport
+        |> Train.withWorkDir (home ++ "/runs")
+        |> Train.withWatchWindow 5000
+
+
+-- | Train in the foreground and print the progress. A run that already
+-- finished returns its adapter at once; a run that is still training (the
+-- trainer runs detached) is followed again.
+train : Train.Job -> Task Error Train.Adapter
+train j =
+    Db.open "sqlite" (home ++ "/shell.db")
+        |> Task.andThen
+               (\db ->
+                   Train.start db j
+                       |> Task.andThen (\_ -> Task.loop (step db j) (-1)))
+
+
+step : Db -> Train.Job -> Int -> Task Error (Task.Step Int Train.Adapter)
+step db j shown =
+    Train.result j
+        |> Task.andThen
+               (\done ->
+                   case done of
+
+                       Just adapter ->
+                           Task.succeed (Task.Done adapter)
+
+                       Nothing ->
+                           Train.poll db [ j ]
+                               |> Task.andThen
+                                      (\worked ->
+                                          if worked then
+                                              Task.succeed ()
+
+                                          else
+                                              Time.sleep 500)
+                               |> Task.andThen (\_ -> Train.progress j)
+                               |> Task.andThen
+                                      (\p ->
+                                          if p.step /= shown
+                                              && modBy 25 p.step == 0 then
+                                              println (progressLine p)
+                                                  |> Task.map
+                                                         (\_ -> Task.Loop p.step)
+
+                                          else
+                                              Task.succeed (Task.Loop shown)))
+
+
+progressLine : Train.Progress -> String
+progressLine p =
+    "  " ++ Train.statusText p.status ++ "  step " ++ String.fromInt p.step
+        ++ "/"
+        ++ String.fromInt p.totalSteps
+        ++ "  loss "
+        ++ lossText p.loss
+        ++ "  eval loss "
+        ++ lossText p.valLoss
+
+
+lossText : Maybe Float -> String
+lossText l =
+    case l of
+
+        Just v ->
+            String.left 6 (String.fromFloat v)
+
+        Nothing ->
+            "-"
+
+-- | The trained adapter as the eval and `ask` find it: a GGUF file and its
+-- SHA-256, recorded in `.sky/ai/shell-adapter.txt`. The file is copied to
+-- `.sky/ai/shell-adapter.gguf`.
+type alias AdapterFile =
+    { path : String
+    , sha256 : String
+    }
+
+
+adapterRecord : String
+adapterRecord =
+    home ++ "/shell-adapter.txt"
+
+
+saveAdapter : Train.Adapter -> Task Error AdapterFile
+saveAdapter a =
+    case a.gguf of
+
+        Just g ->
+            -- A copy under .sky/ai with a relative path, so the folder can be
+            -- copied to another machine (the Linux eval) as it is.
+            File.copy g.path adapterCopy
+                |> Task.andThen
+                       (\_ ->
+                           File.writeFile
+                               adapterRecord
+                               (adapterCopy ++ "\n" ++ g.sha256 ++ "\n"))
+                |> Task.map (\_ -> { path = adapterCopy, sha256 = g.sha256 })
+
+        Nothing ->
+            Task.fail (Error.invalidInput "the run wrote no GGUF adapter")
+
+
+adapterCopy : String
+adapterCopy =
+    home ++ "/shell-adapter.gguf"
+
+
+-- | The adapter `train` recorded, if there is one.
+loadAdapter : Task Error (Maybe AdapterFile)
+loadAdapter =
+    File.exists adapterRecord
+        |> Task.andThen
+               (\present ->
+                   if present then
+                       File.readFile adapterRecord
+                           |> Task.map
+                                  (\text ->
+                                      case String.lines text
+                                               |> List.map String.trim of
+
+                                          path :: sha :: _ ->
+                                              Just { path = path, sha256 = sha }
+
+                                          _ ->
+                                              Nothing)
+
+                   else
+                       Task.succeed Nothing)
+
+
+-- | The baseline: the base model on the managed local engine.
+baselineSpec : Local.Spec
+baselineSpec =
+    Local.model Local.devModel |> Local.withContext 4096 |> Local.withParallel 1
+
+
+-- | The fine-tuned model: the same engine with the adapter loaded.
+tunedSpec : AdapterFile -> Local.Spec
+tunedSpec a =
+    baselineSpec
+        |> Local.withAdapter (Local.file { path = a.path, sha256 = a.sha256 })
+
+
+-- | Greedy decoding, a short answer.
+options : Provider.Options
+options =
+    { temperature = Just 0.0
+    , seed = Just 7
+    , maxTokens = Just 64
+    , adapter = Nothing
+    }
+
+
+-- | Ask a model for a command: `fewShot` for the baseline.
+ask : Provider -> Bool -> Platform -> String -> Task Error String
+ask provider fewShot p request =
+    let
+        msgs =
+            if fewShot then
+                Prompt.fewShot p request
+
+            else
+                Prompt.messages p request
+    in
+        Provider.chatWith options provider msgs
+            |> Task.map (\r -> Prompt.clean r.content)

@@ -418,6 +418,12 @@ impl Tracked {
                 .split(|b| *b == 0)
                 .filter(|s| !s.is_empty())
                 .map(|s| String::from_utf8_lossy(s).into_owned())
+                // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is
+                // excluded from CI in general. It is never a proof input and
+                // never a coverage-ledger unit, so skip every
+                // `crate::ci_excluded` example by name here, at the one set
+                // both read.
+                .filter(|f| !crate::ci_excluded::is_ci_excluded_rel(f))
                 .collect(),
         })
     }

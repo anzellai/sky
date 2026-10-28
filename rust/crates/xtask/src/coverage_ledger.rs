@@ -2698,6 +2698,11 @@ fn enumerate_units(
     // An example is a tracked `examples/<name>/` that carries a tracked
     // `sky.toml` or tracked sources under `src/`.
     for name in tracked.subdirs("examples") {
+        // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+        // from CI in general; skip every `crate::ci_excluded` example by name.
+        if crate::ci_excluded::is_ci_excluded(&name) {
+            continue;
+        }
         let rel = format!("examples/{name}");
         if !(tracked.has(&format!("{rel}/sky.toml")) || tracked.has_under(&format!("{rel}/src"))) {
             continue;

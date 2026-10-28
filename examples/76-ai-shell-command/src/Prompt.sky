@@ -1,0 +1,168 @@
+module Prompt exposing
+    ( Os(..)
+    , Platform
+    , platforms
+    , describe
+    , osName
+    , instruction
+    , messages
+    , fewShot
+    , clean
+    )
+
+{-| The prompt: the target platform is part of it, so the same request gets
+`stat -f %z` on macOS and `stat -c %s` on Linux, and `fd` only where it is
+installed.
+
+The fine-tuned model sees the system line and the request. The baseline (the
+base model with no adapter) sees the same system line and a few solved
+examples first.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Regex as Regex
+import Std.Ai.Provider as Provider exposing (Message)
+
+type Os
+    = MacOs
+    | Linux
+
+-- | Where the command runs: the operating system, and whether `fd` and `rg`
+-- are installed.
+type alias Platform =
+    { os : Os
+    , fd : Bool
+    , rg : Bool
+    }
+
+
+-- | Every platform the training data covers.
+platforms : List Platform
+platforms =
+    [ { os = MacOs, fd = False, rg = False }
+    , { os = MacOs, fd = True, rg = True }
+    , { os = Linux, fd = False, rg = False }
+    , { os = Linux, fd = True, rg = True }
+    ]
+
+
+osName : Os -> String
+osName os =
+    case os of
+
+        MacOs ->
+            "macos"
+
+        Linux ->
+            "linux"
+
+
+-- | The platform line of the prompt.
+describe : Platform -> String
+describe p =
+    let
+        system =
+            case p.os of
+
+                MacOs ->
+                    "macOS (BSD tools)"
+
+                Linux ->
+                    "Linux (GNU tools)"
+        tool name present =
+            if present then
+                name ++ " installed"
+
+            else
+                "no " ++ name
+    in
+        "Platform: " ++ system ++ ", " ++ tool "fd" p.fd ++ ", "
+            ++ tool "rg" p.rg
+
+
+instruction : String
+instruction =
+    "You turn a request into one shell command for the platform given. The command runs in the current folder. Reply with the command only."
+
+
+-- | The messages the fine-tuned model sees, and the shape of every training
+-- row (with the command as the assistant's answer).
+messages : Platform -> String -> List Message
+messages p request =
+    [ Provider.system instruction
+    , Provider.user (describe p ++ "\nRequest: " ++ request)
+    ]
+
+
+-- | The baseline's messages: the same system line, then solved examples.
+fewShot : Platform -> String -> List Message
+fewShot p request =
+    let
+        shots =
+            List.concatMap
+                (\( q, a ) ->
+                    [ Provider.user (describe p ++ "\nRequest: " ++ q)
+                    , Provider.assistant a
+                    ])
+                (examples p)
+    in
+        Provider.system instruction :: shots
+            ++ [ Provider.user (describe p ++ "\nRequest: " ++ request) ]
+
+
+examples : Platform -> List ( String, String )
+examples p =
+    let
+        size =
+            case p.os of
+
+                MacOs ->
+                    "stat -f %z report.pdf"
+
+                Linux ->
+                    "stat -c %s report.pdf"
+        byName =
+            if p.fd then
+                "fd -g invoice.txt"
+
+            else
+                "find . -name invoice.txt"
+        search =
+            if p.rg then
+                "rg -l TODO"
+
+            else
+                "grep -rl TODO ."
+    in
+        [ ( "where is invoice.txt", byName )
+        , ( "which files mention TODO", search )
+        , ( "how many lines are in app.log", "wc -l < app.log" )
+        , ( "size of report.pdf in bytes", size )
+        , ( "show the last 5 lines of server.log", "tail -n 5 server.log" )
+        , ( "make a folder called backup", "mkdir -p backup" )
+        ]
+
+
+-- | The command in a model's answer: the first line that is not a code
+-- fence, without a `$ ` prompt or surrounding backticks.
+clean : String -> String
+clean answer =
+    answer |> String.lines |> List.map String.trim
+        |> List.filter
+               (\l -> not (String.isEmpty l) && not (String.startsWith "```" l))
+        |> List.head
+        |> Maybe.withDefault ""
+        |> Regex.replace "^\\$\\s+" ""
+        |> stripTicks
+
+
+stripTicks : String -> String
+stripTicks s =
+    if String.startsWith "`" s && String.endsWith "`" s && String.length s >= 2 then
+        String.slice 1 (String.length s - 1) s |> String.trim
+
+    else
+        s

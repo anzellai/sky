@@ -425,6 +425,10 @@ fn table_readback_matches_owned_readback_examples() {
             .unwrap()
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.join("src").is_dir())
+            // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+            // from CI in general, so it is skipped here by name (this crate cannot read
+            // xtask's `ci_excluded` list; tests/ci_excluded_examples.rs checks this site).
+            .filter(|p| !p.ends_with("76-ai-shell-command"))
             .collect();
         dirs.sort();
         assert!(dirs.len() >= 50, "examples found: {}", dirs.len());
@@ -586,6 +590,10 @@ fn world_is_the_same_with_and_without_fast_paths() {
             .unwrap()
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.join("src").is_dir())
+            // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+            // from CI in general, so it is skipped here by name (this crate cannot read
+            // xtask's `ci_excluded` list; tests/ci_excluded_examples.rs checks this site).
+            .filter(|p| !p.ends_with("76-ai-shell-command"))
             .collect();
         dirs.sort();
         for d in &dirs {

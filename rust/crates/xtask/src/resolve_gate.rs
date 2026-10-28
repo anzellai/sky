@@ -29,6 +29,9 @@ pub fn run(_args: &[String], root: &Path) -> i32 {
         .map(|rd| {
             rd.filter_map(|e| e.ok().map(|e| e.path()))
                 .filter(|p| p.is_dir())
+                // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+                // from CI in general; skip every `crate::ci_excluded` example by name.
+                .filter(|p| !crate::ci_excluded::is_ci_excluded_path(p))
                 .collect()
         })
         .unwrap_or_default();

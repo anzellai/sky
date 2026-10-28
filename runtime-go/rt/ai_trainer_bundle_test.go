@@ -248,6 +248,31 @@ func argMap(t *testing.T, args []string) map[string]string {
 	return m
 }
 
+// The launcher reads driver.json through aiTrainJSON, which decodes numbers as
+// json.Number. A learning rate set in code (Train.withLearningRate) must reach
+// sky-trainer's --lr: it used to fall back to 1e-4 for every job, because the
+// float reader only accepted float64 (found by examples/76-ai-shell-command,
+// whose job asks for 2e-4).
+func TestTrainNativeArgsReadTheLearningRateFromDriverJSON(t *testing.T) {
+	weights := t.TempDir()
+	writeQwen2Config(t, weights, map[string]any{"quantization": map[string]any{"bits": 4, "group_size": 64}})
+	raw, err := json.Marshal(nativeDriver(weights, "/x/sky-trainer", map[string]any{"learningRate": 0.0002}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := aiTrainJSON(string(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, err := aiTrainNativeArgs(cfg, "/runs/r", "sky-train-abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := argMap(t, args)["--lr"]; got != "0.0002" {
+		t.Fatalf("--lr = %q, want 0.0002 (the job's learning rate, read from driver.json)", got)
+	}
+}
+
 func TestTrainNativeArgsComeFromTheDriverAndTheBaseConfig(t *testing.T) {
 	weights := t.TempDir()
 	writeQwen2Config(t, weights, map[string]any{"quantization": map[string]any{"bits": 4, "group_size": 64}})

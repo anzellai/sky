@@ -336,11 +336,28 @@ func aiReadQwen2Config(weights string) (aiQwen2Config, error) {
 
 func aiFloatArg(x float64) string { return strconv.FormatFloat(x, 'g', -1, 64) }
 
+// aiJFloat reads a finite number. driver.json is decoded by aiTrainJSON with
+// UseNumber, so a number arrives as json.Number; a float64 is accepted too.
 func aiJFloat(m map[string]any, key string, def float64) float64 {
-	if x, ok := m[key].(float64); ok && !math.IsNaN(x) && !math.IsInf(x, 0) {
-		return x
+	var x float64
+	switch v := m[key].(type) {
+	case json.Number:
+		f, err := v.Float64()
+		if err != nil {
+			return def
+		}
+		x = f
+	case float64:
+		x = v
+	case int:
+		x = float64(v)
+	default:
+		return def
 	}
-	return def
+	if math.IsNaN(x) || math.IsInf(x, 0) {
+		return def
+	}
+	return x
 }
 
 // aiTrainNativeArgs is sky-trainer's command line for one attempt, from the

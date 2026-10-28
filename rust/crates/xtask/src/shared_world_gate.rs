@@ -311,6 +311,9 @@ fn infer_items(root: &Path) -> Vec<Item> {
         Ok(rd) => rd
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.is_dir())
+            // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+            // from CI in general; skip every `crate::ci_excluded` example by name.
+            .filter(|p| !crate::ci_excluded::is_ci_excluded_path(p))
             .collect(),
         Err(_) => return Vec::new(),
     };

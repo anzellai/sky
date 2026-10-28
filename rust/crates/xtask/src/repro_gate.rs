@@ -484,6 +484,9 @@ fn corpus(root: &Path) -> Vec<String> {
                 .filter_map(|e| e.file_name().to_str().map(String::from))
                 .filter(|n| root.join("examples").join(n).join("src").is_dir())
                 .filter(|n| n != "simple" && n != "test_pkg")
+                // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+                // from CI in general; skip every `crate::ci_excluded` example by name.
+                .filter(|n| !crate::ci_excluded::is_ci_excluded(n))
                 .collect()
         })
         .unwrap_or_default();

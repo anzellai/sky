@@ -443,6 +443,11 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         let mut dirs: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
         dirs.sort();
         for d in dirs {
+            // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+            // from CI in general; skip every `crate::ci_excluded` example by name.
+            if crate::ci_excluded::is_ci_excluded_path(&d) {
+                continue;
+            }
             let src_dir = d.join("src");
             if src_dir.is_dir() {
                 collect_sources(&src_dir, root, &mut seeds);

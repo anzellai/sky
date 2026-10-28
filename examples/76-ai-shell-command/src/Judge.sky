@@ -1,0 +1,102 @@
+module Judge exposing (judge, Observed, inFixture)
+
+{-| Score one proposed command by running it, not by reading it. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.File as File
+import Sky.Core.Process as Process
+import Std.Ai.Policy exposing (Decision(..))
+import Cases exposing (Case)
+import Firewall
+import Fixture
+import Shell
+
+
+-- | Run the reference and the proposal, each in a fresh fixture, and compare
+-- the output and the folder's state. The eval approves a `NeedsApproval`
+-- command, because it runs in a throwaway folder; a `Deny` never runs and
+-- the case fails.
+judge : Case -> String -> Task Error ( String, Bool )
+judge c command =
+    let
+        act = Firewall.propose command
+    in
+        case Firewall.firewall act of
+
+            Deny reason ->
+                Task.succeed ( "deny: " ++ reason, False )
+
+            decision ->
+                let
+                    label =
+                        case decision of
+
+                            NeedsApproval _ ->
+                                "approved in the fixture"
+
+                            _ ->
+                                "allow"
+                in
+                    inFixture c.reference
+                        |> Task.andThen
+                               (\expected ->
+                                   inFixture command
+                                       |> Task.map
+                                              (\actual ->
+                                                  ( label
+                                                  , not actual.timedOut
+                                                        && actual.exit
+                                                               == expected.exit
+                                                        && Cases.normalise
+                                                               c.unordered
+                                                               actual.stdout
+                                                               == Cases.normalise
+                                                                      c.unordered
+                                                                      expected.stdout
+                                                        && actual.state
+                                                               == expected.state
+                                                  )))
+                        |> Task.onError
+                               (\e ->
+                                   Task.succeed
+                                       ( label ++ ", error: "
+                                             ++ Error.toString e
+                                       , False
+                                       ))
+
+-- | What a command did in a fresh fixture.
+type alias Observed =
+    { stdout : String
+    , exit : Int
+    , timedOut : Bool
+    , state : List String
+    }
+
+
+-- | Run a command in a fresh fixture and observe it.
+inFixture : String -> Task Error Observed
+inFixture command =
+    File.tempDir "sky-shell-eval"
+        |> Task.andThen
+               (\dir ->
+                   Fixture.create dir
+                       |> Task.andThen (\_ -> Shell.run 10000 dir command)
+                       |> Task.andThen
+                              (\r ->
+                                  Fixture.snapshot dir
+                                      |> Task.map
+                                             (\state ->
+                                                 { stdout = r.stdout
+                                                 , exit = r.exit
+                                                 , timedOut = r.timedOut
+                                                 , state = state
+                                                 }))
+                       |> Task.andThen
+                              (\r -> removeDir dir |> Task.map (\_ -> r)))
+
+
+removeDir : String -> Task Error ()
+removeDir dir =
+    Process.run "rm" [ "-rf", dir ] |> Task.map (\_ -> ())

@@ -65,6 +65,10 @@ fn example_projects(root: &Path) -> Vec<(String, PathBuf)> {
         .expect("examples dir")
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.is_dir())
+        // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+        // from CI in general, so it is skipped here by name (this crate cannot read
+        // xtask's `ci_excluded` list; tests/ci_excluded_examples.rs checks this site).
+        .filter(|p| !p.ends_with("76-ai-shell-command"))
         .collect();
     tops.sort();
     for top in tops {

@@ -26,6 +26,16 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 
 ### Added
 
+- **`examples/76-ai-shell-command`: a request in, one terminal command out.**
+  It trains a QLoRA adapter on Qwen2.5 0.5B with `Std.Ai.Train`, on data from
+  a template grammar (task x tool x platform) and tldr-pages (CC BY 4.0). Its
+  eval runs each proposed command in a fixture folder and compares the output,
+  against the few-shot base model as the baseline. `Std.Ai.Policy` is the
+  firewall: read-only commands run, writes need approval, and `sudo`,
+  `curl | sh` and `rm -rf /` are refused. The example is excluded from CI by a
+  user rule (anzellai/sky#299): every gate that enumerates `examples/` skips
+  it by name, and `xtask`'s `ci_excluded_examples` test fails if a workflow or
+  a gate would touch it.
 - **Typed tools and structured answers.** `Codec.jsonSchema codec` gives the
   JSON Schema of a codec's JSON (scalars, `maybe`, `list`, `enum`, records from
   `object` / `field` or `auto`; `exact` is `False` where a part is open, as in
@@ -722,6 +732,11 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 
 ### Fixed
 
+- **`Train.withLearningRate` reaches the native trainer.** The runtime read
+  the learning rate from `driver.json` as a plain float, but it decodes that
+  file with exact numbers, so every `Mlx` run trained at the default `1e-4`
+  whatever the job set. It now reads the number the job wrote (found by
+  `examples/76-ai-shell-command`, whose job asks for `2e-4`).
 - **`Trace.totalCost` no longer adds two currencies, or drops a bad row.** It
   added every row's amount whatever its currency, so a run priced in USD and
   in EUR gave one wrong number, and it skipped a stored cost that was not a

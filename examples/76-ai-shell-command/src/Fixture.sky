@@ -1,0 +1,142 @@
+module Fixture exposing (create, snapshot, files)
+
+{-| The fixture folder every eval case runs in: a small project with notes,
+CSV data, logs, source files and a few files to delete. Each case gets a
+fresh copy, so a command that writes cannot change the next case.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.File as File
+import Sky.Core.Crypto as Crypto
+import Shell
+
+
+-- | The fixture's files: `(path, content)`.
+files : List ( String, String )
+files =
+    [ ( "notes.txt"
+      , "apple pie\nbanana bread\napple juice\ncarrot cake\nbanana bread\nTODO buy milk\napple pie\n"
+      )
+    , ( "todo.md"
+      , "# Todo\n\n- write the report\n- call the bank\n- fix the TODO in src/main.go\n"
+      )
+    , ( "data/sales.csv"
+      , "date,item,amount\n2026-01-03,tea,4\n2026-01-04,coffee,7\n2026-01-04,tea,3\n2026-01-05,cake,12\n2026-01-06,coffee,5\n"
+      )
+    , ( "data/users.csv"
+      , "id,name,city\n1,Ada,London\n2,Grace,New York\n3,Alan,Manchester\n4,Linus,Helsinki\n"
+      )
+    , ( "data/xyz.csv", "a,b\n1,2\n" )
+    , ( "data/old.tmp", "scratch\n" )
+    , ( "data/empty.txt", "" )
+    , ( "data/big.log", String.repeat 2048 "INFO tick\n" )
+    , ( "src/main.go"
+      , "package main\n\nimport \"fmt\"\n\n// FUNC note: TODO\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n"
+      )
+    , ( "src/util.go"
+      , "package main\n\nfunc add(a, b int) int { return a + b }\n"
+      )
+    , ( "src/app.py", "import sys\n\nprint(sys.argv)\n" )
+    , ( "src/helper.py", "def helper():\n    return 42\n" )
+    , ( "docs/guide.md", "# Guide\n\nRun the app with ERROR logging off.\n" )
+    , ( "docs/report.txt", "Quarterly report\nRevenue up\n" )
+    , ( "logs/app.log"
+      , "INFO start\nWARN slow disk\nERROR timeout\nINFO retry\nERROR failed\nINFO done\n"
+      )
+    , ( "logs/error.log", "ERROR timeout\nERROR failed\n" )
+    , ( "logs/cache.tmp", "cache\n" )
+    ]
+
+
+-- | Write a fresh fixture into `dir` (which must be empty).
+create : String -> Task Error ()
+create dir =
+    files
+        |> List.map
+               (\( path, content ) ->
+                   File.mkdirAll (dir ++ "/" ++ parent path)
+                       |> Task.andThen
+                              (\_ -> File.writeFile (dir ++ "/" ++ path) content))
+        |> Task.sequence
+        |> Task.andThen
+               (\_ ->
+                   -- One fixed time on every file and folder, so a case that
+                   -- reads a modification time gets the same answer each run.
+                   Shell.run 5000 dir "find . -exec touch -t 202601020304 {} +")
+        |> Task.map (\_ -> ())
+
+
+parent : String -> String
+parent path =
+    case String.split "/" path |> List.reverse of
+
+        _ :: rest ->
+            if List.isEmpty rest then
+                "."
+
+            else
+                String.join "/" (List.reverse rest)
+
+        [] ->
+            "."
+
+
+-- | The folder's state: every path under it with the SHA-256 of a file's
+-- content (`/` for a folder), sorted.
+snapshot : String -> Task Error (List String)
+snapshot dir =
+    walk dir "" |> Task.map List.sort
+
+
+walk : String -> String -> Task Error (List String)
+walk root rel =
+    let
+        here =
+            if String.isEmpty rel then
+                root
+
+            else
+                root ++ "/" ++ rel
+    in
+        File.readDir here
+            |> Task.andThen
+                   (\names ->
+                       names
+                           |> List.map
+                                  (\name ->
+                                      let
+                                          path =
+                                              if String.isEmpty rel then
+                                                  name
+
+                                              else
+                                                  rel ++ "/" ++ name
+                                      in
+                                          File.isDir (root ++ "/" ++ path)
+                                              |> Task.andThen
+                                                     (\isDir ->
+                                                         if isDir then
+                                                             walk root path
+                                                                 |> Task.map
+                                                                        (\inner ->
+                                                                            (path
+                                                                                ++ " /")
+                                                                                :: inner)
+
+                                                         else
+                                                             File.readFile
+                                                                 (root ++ "/"
+                                                                     ++ path)
+                                                                 |> Task.map
+                                                                        (\c ->
+                                                                            [ path
+                                                                                  ++ " "
+                                                                                  ++ Crypto.sha256
+                                                                                         c
+                                                                            ])))
+                           |> Task.sequence
+                           |> Task.map List.concat)

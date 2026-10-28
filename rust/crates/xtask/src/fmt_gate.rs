@@ -154,7 +154,13 @@ pub fn check_clean(repo_root: &Path) -> (bool, u64, String) {
         Err(e) => return (false, 0, format!("git ls-files could not run: {e}")),
     };
     let listing = String::from_utf8_lossy(&out.stdout).to_string();
-    let mut files: Vec<&str> = listing.split('\0').filter(|f| !f.is_empty()).collect();
+    let mut files: Vec<&str> = listing
+        .split('\0')
+        .filter(|f| !f.is_empty())
+        // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+        // from CI in general; skip every `crate::ci_excluded` example by name.
+        .filter(|f| !crate::ci_excluded::is_ci_excluded_rel(f))
+        .collect();
     files.sort_unstable();
     let mut assertions = 0u64;
     let mut unclean = Vec::new();
@@ -252,7 +258,9 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
                 path.file_name().and_then(|s| s.to_str()),
                 Some("sky-out") | Some(".skycache") | Some(".skydeps")
             );
-            if !skip {
+            // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+            // from CI in general; skip every `crate::ci_excluded` example by name.
+            if !skip && !crate::ci_excluded::is_ci_excluded_path(&path) {
                 collect_sky(&path, out);
             }
         } else if path.extension().and_then(|s| s.to_str()) == Some("sky") {

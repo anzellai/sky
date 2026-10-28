@@ -1,0 +1,166 @@
+module Shell exposing (Ran, run, runHere, detect, toolPath)
+
+{-| Run one command with `sh -c`, with a time limit, and detect the platform.
+
+The eval runs commands with a fixed environment: `PATH` holds the system
+tools (`/usr/bin`, `/bin` ...) and the package manager's folder for `fd` and
+`rg`, `HOME` is the fixture folder and the locale is `C`. So on a Mac the BSD
+tools answer, even when GNU tools come first on the user's own `PATH`.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Process as Process exposing (ExitStatus(..), Stream(..))
+import Prompt exposing (Os(..), Platform)
+
+-- | What a run gave: the standard output, the exit code (`-1` for a signal)
+-- and whether it was stopped at the time limit.
+type alias Ran =
+    { stdout : String
+    , exit : Int
+    , timedOut : Bool
+    }
+
+
+-- | The `PATH` commands run with.
+toolPath : String
+toolPath =
+    "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
+
+
+-- | Run `command` in `dir` with the fixed environment, for at most
+-- `limitMs` milliseconds.
+run : Int -> String -> String -> Task Error Ran
+run limitMs dir command =
+    Process.command "sh" |> Process.withArgs [ "-c", command ]
+        |> Process.withCwd dir
+        |> Process.withClearEnv
+        |> Process.withEnv
+               [ ( "PATH", toolPath )
+               , ( "HOME", dir )
+               , ( "LC_ALL", "C" )
+               , ( "LANG", "C" )
+               ]
+        |> Process.spawn
+        |> Task.andThen (collect limitMs)
+
+
+-- | Run `command` in `dir` with the user's own environment (for `ask`).
+runHere : Int -> String -> String -> Task Error Ran
+runHere limitMs dir command =
+    Process.command "sh" |> Process.withArgs [ "-c", command ]
+        |> Process.withCwd dir
+        |> Process.spawn
+        |> Task.andThen (collect limitMs)
+
+type alias Reading =
+    { offset : Int
+    , out : String
+    , waited : Int
+    }
+
+
+collect : Int -> Process.Process -> Task Error Ran
+collect limitMs proc =
+    Process.closeStdin proc
+        |> Task.andThen
+               (\_ ->
+                   Task.loop
+                       (readStep limitMs proc)
+                       { offset = 0, out = "", waited = 0 })
+        |> Task.andThen
+               (\( out, timedOut ) ->
+                   (if timedOut then
+                       Process.kill proc Process.Kill
+
+                   else
+                       Task.succeed ())
+                       |> Task.andThen (\_ -> Process.wait proc)
+                       |> Task.andThen
+                              (\status ->
+                                  Process.close proc
+                                      |> Task.map
+                                             (\_ ->
+                                                 { stdout = out
+                                                 , exit = exitCode status
+                                                 , timedOut = timedOut
+                                                 })))
+
+
+readStep : Int -> Process.Process -> Reading -> Task Error (Task.Step Reading ( String, Bool ))
+readStep limitMs proc r =
+    if r.waited >= limitMs then
+        Task.succeed (Task.Done ( r.out, True ))
+
+    else
+        Process.readWithin 100 proc Stdout r.offset
+            |> Task.map
+                   (\chunk ->
+                       let
+                           out = r.out ++ chunk.data
+                       in
+                           if chunk.eof then
+                               Task.Done ( out, False )
+
+                           else if String.length out > 200000 then
+                               -- A command that never stops writing (`yes`).
+                               Task.Done ( String.left 200000 out, True )
+
+                           else
+                               Task.Loop
+                                   { offset = chunk.next
+                                   , out = out
+                                   , waited =
+                                       if chunk.next == r.offset then
+                                           r.waited + 100
+
+                                       else
+                                           r.waited
+                                   })
+
+
+exitCode : ExitStatus -> Int
+exitCode status =
+    case status of
+
+        ExitCode n ->
+            n
+
+        Signalled _ ->
+            -1
+
+
+-- | The platform this program runs on: `uname -s`, and whether `fd` and `rg`
+-- are on the tool `PATH`.
+detect : () -> Task Error Platform
+detect _ =
+    Task.map3
+        (\os fd rg -> { os = os, fd = fd, rg = rg })
+        (Process.run "uname" [ "-s" ]
+            |> Task.andThen
+                   (\name ->
+                       case String.trim name of
+
+                           "Darwin" ->
+                               Task.succeed MacOs
+
+                           "Linux" ->
+                               Task.succeed Linux
+
+                           other ->
+                               Task.fail
+                                   (Error.invalidInput
+                                       ("unsupported operating system " ++ other))))
+        (installed "fd")
+        (installed "rg")
+
+
+installed : String -> Task Error Bool
+installed tool =
+    Process.run "sh" [ "-c", "PATH=" ++ toolPath ++ " command -v " ++ tool ]
+        |> Task.map (\out -> not (String.isEmpty (String.trim out)))
+        |> Task.onError (\_ -> Task.succeed False)
