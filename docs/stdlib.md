@@ -2009,8 +2009,8 @@ a runtime `Err Error` on call.  Example: `examples/31-webview-stopwatch-ui`.
 `Std.Native` is the device from a Sky.Spa client (web, or the `mobile:ios`,
 `mobile:android` and `desktop:mac` shells). Each capability is a `Task Error a`
 run through `Cmd.perform`, so a denial or an absent API is an `Err`, never a
-crash: `geolocation`, `clipboardWrite` / `clipboardRead`, `vibrate`, `share`,
-`storageSet` / `storageGet` / `storageRemove` (`localStorage`), `isOnline`,
+crash: `geolocation`, `clipboardWrite` / `clipboardRead`, `insertAtCursor`,
+`vibrate`, `share`, `storageSet` / `storageGet` / `storageRemove` (`localStorage`), `isOnline`,
 `language`, `setTitle`, `prefersDarkMode`, `openUrl`, `notify`,
 `batteryStatus`, `pickFile` / `pickImage` / `capturePhoto`, and `bridge` for a
 capability the app registers itself.
@@ -2044,6 +2044,25 @@ all of them), `Ok Nothing` means the user closed the scanner, `Err
 PermissionDenied` means the camera was refused, and `Err Unavailable` means
 there is no camera scanner (a browser, the desktop window, a server, the iOS
 simulator). A UPC-A code is reported as `Ean13`.
+
+`insertAtCursor` inserts text at the caret of a textarea or a text input, for
+an editor's "Insert" menu (a heading marker, a link, a `{{first_name}}`
+placeholder):
+
+```elm
+-- doc-example: skip  (signatures)
+insertAtCursor : String -> String -> Task Error String   -- element id, text; yields the new whole value
+```
+
+It inserts at the selection (a selected range is replaced), puts the caret
+after the text, focuses the control and yields its new value, which the app
+stores in its model (`Inserted (Ok v) -> { model | body = v }`). Focus may
+have moved to the menu button: the client remembers the last selection the
+person made in each text control, by `id`, and uses it. `Err NotFound` for an
+unknown id, `Err InvalidInput` for an element that is not a textarea or a
+text-like input. It runs in a Sky.Spa client only: on Sky.Live (whose `update`
+runs on the server), a server, a CLI or a terminal it is `Err Unavailable`, as
+is every `Std.Native` capability there.
 
 `Std.Bundle` declares what the native shells ship with: identity (`withId`,
 `withName`, `withVersion`, `withBuild`, `withIcon`), assets, permissions with

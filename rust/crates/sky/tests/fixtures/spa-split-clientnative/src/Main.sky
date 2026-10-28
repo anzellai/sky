@@ -23,7 +23,9 @@ type alias Model =
 type Msg
     = Copy
     | Share
+    | InsertName
     | Done (Result Error ())
+    | Inserted (Result Error String)
 
 
 init : () -> ( Model, Cmd Msg )
@@ -51,6 +53,19 @@ update msg model =
                   Done
             )
 
+        InsertName ->
+            ( model
+            , Cmd.perform
+                  (Native.insertAtCursor "body" "{{first_name}}")
+                  Inserted
+            )
+
+        Inserted (Ok body) ->
+            ( { model | status = body }, Cmd.none )
+
+        Inserted (Err _) ->
+            ( { model | status = "err" }, Cmd.none )
+
         Done (Ok _) ->
             ( { model | status = "ok" }, Cmd.none )
 
@@ -67,6 +82,9 @@ view model =
             [ Ui.text ("status: " ++ model.status)
             , Ui.button [] { onPress = Just Copy, label = Ui.text "Copy" }
             , Ui.button [] { onPress = Just Share, label = Ui.text "Share" }
+            , Ui.button
+                  []
+                  { onPress = Just InsertName, label = Ui.text "Insert" }
             ])
 
 

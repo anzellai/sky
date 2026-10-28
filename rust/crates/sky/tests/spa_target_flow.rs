@@ -959,3 +959,136 @@ fn web_app_archive_build_reports_the_ci_commit() {
     assert_eq!(bi["source"], "ci:GITHUB_SHA", "{bi}");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// An email editor with an Insert menu: the menu puts `{{first_name}}` at the
+/// body's caret with `Native.insertAtCursor` and stores the value it yields.
+const INSERT_AT_CURSOR_APP: &str = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Std.App as App
+import Std.Sub as Sub
+import Std.Cmd as Cmd
+import Std.Native as Native
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Input as Input
+
+
+type alias Model =
+    { body : String
+    , note : String
+    }
+
+
+type Msg
+    = BodyChanged String
+    | InsertName
+    | Inserted (Result Error String)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { body = "Hello world", note = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        BodyChanged body ->
+            ( { model | body = body }, Cmd.none )
+
+        InsertName ->
+            ( model, Cmd.perform (Native.insertAtCursor "body" "{{first_name}}") Inserted )
+
+        Inserted (Ok body) ->
+            ( { model | body = body, note = "" }, Cmd.none )
+
+        Inserted (Err _) ->
+            ( { model | note = "could not insert" }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column []
+        [ Ui.el [ Ui.onClick InsertName ] (Ui.text "Insert first name")
+        , Input.multiline
+            [ Ui.htmlAttribute "id" "body" ]
+            { onChange = BodyChanged
+            , text = model.body
+            , placeholder = Nothing
+            , label = Input.labelHidden "Body"
+            , spellcheck = True
+            }
+        , Ui.text model.note
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+
+
+main : Task Error ()
+main =
+    App.run app
+"#;
+
+/// `Native.insertAtCursor` builds for `--target web:app` and stays in the wasm
+/// client: the frontend keeps the call, the frontend's Go calls the runtime
+/// kernel, and the backend generates no RPC for it (the kernel's server half
+/// is `Err Unavailable`, so an RPC would fail every insert).
+///
+/// It runs per commit, like the Secret-model build above: it shares that
+/// build's Go cache, so it adds about 12 s on a warm cache.
+#[test]
+fn web_app_builds_insert_at_cursor_as_a_client_effect() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = scratch("insertatcursor");
+    std::fs::write(dir.join("src").join("Main.sky"), INSERT_AT_CURSOR_APP).unwrap();
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.status.success(),
+        "an app using Native.insertAtCursor must build for web:app:\n{log}"
+    );
+    let split = dir.join(".skyapp/web-app/.split");
+    let front = std::fs::read_to_string(split.join("frontend/src/Main.sky"))
+        .expect("generated frontend entry must exist");
+    assert!(
+        front.contains("Native.insertAtCursor"),
+        "the frontend must keep the insert (it runs in the client):\n{front}"
+    );
+    let front_go = std::fs::read_to_string(split.join("frontend/sky-out/main.go"))
+        .expect("generated frontend Go must exist");
+    assert!(
+        front_go.contains("rt.Native_insertAtCursor"),
+        "the frontend Go must call the runtime kernel"
+    );
+    let back = std::fs::read_to_string(split.join("backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+    assert!(
+        !back.contains("/_rpc/InsertName"),
+        "the insert must not become an RPC:\n{back}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

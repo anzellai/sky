@@ -3,6 +3,7 @@ module Std.Native exposing
     , geolocation
     , clipboardWrite
     , clipboardRead
+    , insertAtCursor
     , vibrate
     , ShareContent
     , share
@@ -95,6 +96,38 @@ clipboardWrite =
 clipboardRead : () -> Task Error String
 clipboardRead =
     Ffi.kernel "Native_clipboardRead"
+
+
+-- | Insert text at the caret of a textarea or a text input, the "Insert" menu
+-- of an editor (a heading marker, a link, a `{{first_name}}` placeholder).
+-- `insertAtCursor elementId text` puts `text` at the element's selection (a
+-- selected range is replaced), moves the caret after it, focuses the element,
+-- and yields the element's new whole value. Store that value in the model.
+--
+-- It works when focus has moved to the menu button: the client remembers the
+-- last selection the person made in each text control (by its `id`), and an
+-- insert into a control that is not focused uses it. A control the person has
+-- not touched gets the text at the end.
+--
+--     InsertName ->
+--         ( model, Cmd.perform (Native.insertAtCursor "body" "{{first_name}}") Inserted )
+--
+--     Inserted (Ok body) ->
+--         ( { model | body = body }, Cmd.none )
+--
+--     Inserted (Err _) ->
+--         ( model, Cmd.none )
+--
+-- Give the control an `id` (`Ui.htmlAttribute "id" "body"`). `Err NotFound`
+-- when no element has that id, `Err InvalidInput` when the element is not a
+-- textarea or a text-like input (text, search, url, tel, password). A Sky.Spa
+-- client only (`--target web:app` and the other client targets): with no
+-- browser DOM it is `Err Unavailable`. That includes Sky.Live (the default
+-- `web` target), whose `update` runs on the server, like every `Std.Native`
+-- capability, and a server, CLI or terminal build.
+insertAtCursor : String -> String -> Task Error String
+insertAtCursor =
+    Ffi.kernel "Native_insertAtCursor"
 
 
 -- | Vibrate the device for `ms` milliseconds — a haptic tap on a phone. On

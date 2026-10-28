@@ -946,7 +946,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2961,
+    "stdlib_entries": 2962,
     "stdlib_modules": 127,
     "surfaces_covered": 185,
     "surfaces_covered_pct": 94.9,
@@ -23293,8 +23293,8 @@
       "id": "flow:spa_split_flow",
       "modules_imported": 41,
       "path": "rust/crates/sky/tests/spa_split_flow.rs",
-      "refs_generous": 171,
-      "refs_qualified": 163,
+      "refs_generous": 172,
+      "refs_qualified": 164,
       "role": "FlowTest",
       "sky_files": 136,
       "sky_toml_sections": []

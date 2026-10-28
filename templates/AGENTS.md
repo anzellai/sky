@@ -615,7 +615,10 @@ permission with the text its prompt shows (`Bundle.withUsage Bundle.Camera
 needs `Bundle.Camera`, and the iOS / Android build fails without it), Apple
 entitlements with `Bundle.withEntitlement`, keep secrets in `Native.secureSet`
 (Keychain / Android Keystore; `Err Unavailable` in a browser, never
-`localStorage`), scan a QR code or barcode with `Native.scanCode`, and make the
+`localStorage`), scan a QR code or barcode with `Native.scanCode`, insert text
+at a textarea's caret (an editor's "Insert" menu) with `Native.insertAtCursor
+"body" "{{first_name}}"` (it yields the new value and uses the selection the
+person left when focus moved to the menu; `Err Unavailable` on Sky.Live), and make the
 store build with `sky package
 --release` (it refuses a local or `http` backend address). Guide:
 `docs/skyapp/native.md`. `sky

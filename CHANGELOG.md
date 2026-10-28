@@ -11,6 +11,33 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## Unreleased
+
+### Added
+
+- **`Native.insertAtCursor elementId text` inserts text at the caret of a
+  textarea or a text input** (`String -> String -> Task Error String`), for an
+  editor's "Insert" menu (a heading marker, a link, a `{{first_name}}`
+  placeholder). Before, an app could only replace a control's whole value, so
+  an insert always went at the end. It inserts at the selection (a selected
+  range is replaced), puts the caret after the inserted text, focuses the
+  control and yields its new whole value for the model. It works when focus
+  has moved to the menu button: the Sky.Spa client records the last selection
+  the person made in each text control (by `id`) and uses it, and a caret move
+  the person did not make (a value write on a blurred control) is not
+  recorded. `Err NotFound` for an unknown id, `Err InvalidInput` for an element
+  that is not a textarea or a text-like input. A Sky.Spa client capability
+  (`--target web:app` and the other client targets): on Sky.Live, a server, a
+  CLI or a terminal build it is `Err Unavailable`, like every `Std.Native`
+  capability there.
+
+### Fixed
+
+- **A Sky.Spa re-render no longer writes a text control's value when it is
+  already the same.** A write of an identical value can move the caret to the
+  end on some engines, and the model often catches up with what the control
+  already shows.
+
 ## v0.28.0 — Model slots, a managed local model engine, typed AI failures, evals, datasets, the model registry, the project's AI pipeline, adapter training, cloud training and a GPU serving tier (Std.Ai.Endpoint, Std.Ai.Local, Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Dataset, Std.Ai.Registry, Std.Ai.Pipeline, Std.Ai.Train, Std.Ai.Serve, Std.Ai.Cloud.Google) (2026-10-28)
 
 Phase 1, phase 2 (the dataset, registry and pipeline parts), phase 3 (local
