@@ -432,6 +432,50 @@ into every binary and unreachable" condition Stage 2 and Stage 3 found:
   unexported `asList` and therefore reflect-walks the list and boxes every
   element in order to compute `len(items) == 0`.
 
+A third instance, `kernel_typed_return_twin` (`lower.rs`), routes a fully
+applied call of `Error.isRetryable` / `Error.domain` / `Error.retryAfter` to
+`rt.Error_isRetryableT` / `Error_domainT` / `Error_retryAfterT`
+(`runtime-go/rt/error_kernels.go`). They take the erased `Error` and return
+`bool` / `SkyMaybe[string]` / `SkyMaybe[int]`, so the call site narrows
+nothing, and the read of the stdlib ADT (R6, §4.5) happens once inside the
+runtime instead of as three Sky payload narrowings. The ADT's representation
+is unchanged. A value reference keeps the erased symbol.
+
+The same table now carries the String / Encoding / Basics / Json.Encode
+kernels whose erased result has one Go type. Each entry names its parameter
+shapes: a parameter typed `Some(t)` (`String.fromInt` takes `int`,
+`String.endsWith` takes two `string`s, `String.join` a `[]string`) is used only
+when the argument already lowers to exactly `t`, which is the §1 test applied
+per call site; otherwise the erased call stays, byte for byte. The pre-existing
+typed twins (`rt.String_fromIntT`, `String_toUpperT`, `String_endsWithT`,
+`Encoding_urlEncodeT`, `Basics_notT`, …) are checked against their erased forms
+in `runtime-go/rt/kernel_twins_test.go`; the new erased-argument twins
+(`String_leftT`, `String_dropRightT`, `JsonEnc_encodeT`, …,
+`runtime-go/rt/kernel_twins.go`) call the erased kernel and assert its one
+result type, so their semantics are the erased kernel's by construction.
+Measured: narrow 14423 -> 12669 over all 80 coerce-floor rows, adapter 0.
+`::` stays untouched, as above.
+
+The table also covers the typed Math companions (`Math_sqrtT` … `Math_roundT`,
+`Math_absT`, `Math_minT` / `Math_maxT`), `Basics_modByT`, `List_rangeT`,
+`Regex_replaceT` and `String_fromFloatAnyT`. A kernel with two typed shapes
+(`Math.min` over two `Int`s or two `Float`s) has a second entry
+(`kernel_typed_return_alt`), and the call site takes the one whose parameter
+types the lowered arguments match. `String_fromFloatT` is NOT used: it formats
+with `'g'` where the erased kernel uses `'f'`, so it is a different function.
+
+The v0.28.0 phase 4 entries route `String.split` / `String.isEmpty` /
+`String.lines` over proven strings to `rt.String_splitT` / `String_isEmptyT`
+(both pre-existing and, until then, never called) and `String_linesT`, and
+`System.getenvOr`, `Secret.reveal` and `Crypto.sha256` over erased arguments
+to `System_getenvOrT` / `Secret_revealT` / `Crypto_sha256T`, which assert the
+erased kernel's one result type inside the runtime
+(`kernel_twins_test.go`, `TestSplitLinesEnvSecretShaTwinsMatchErased`).
+
+An empty list literal `[]` in a typed slot is built at the slot's slice type
+(`lower_expr_at`, lever §5.2): it carries no element, so `[]T{}` is exactly the
+value the former `rt.AsListT[T]([]any{})` produced.
+
 `list_unary_prim_twin` (`lower.rs`) stops at twins returning a Go **primitive**,
 and that boundary is load-bearing rather than a convenient stopping point:
 `bool` and `int` need no container rebuilt on the way out, so the twin is a
@@ -916,6 +960,16 @@ user `Game` row resolved to the stdlib `Std.Durable.ResultRow { result }`.
   (the value keeps its cookie and path at run time) and
   `spa_split_flow.rs::spa_rpc_keeps_its_cookie_when_an_alias_is_exactly_body`.
   `coerce-floor` recorded the widening: narrow +8 over three rows, adapter 0.
+- **Scope (v0.28.0):** the build interns the whole stdlib, so the check
+  counts only record aliases declared in a module the program loads: the
+  entry's transitive import closure, seeded with the source modules behind the
+  kernel qualifiers (`hir::KERNEL_MODULES`), `Sky.Core.Error`, and any module
+  declaring a record alias named like a kernel-implicit type (a bare `Request`
+  expands through the bare alias table). A value of an alias outside that set
+  cannot exist in the program (`lower.rs::program_type_closure`,
+  `lower/tests/open_row_wider_nominal_scope.rs`). Without it a new
+  `Std.Ai.Eval.ScorerScore { scorer, mean, count }` widened
+  `09-live-counter`'s `{ count | r }` view row.
 
 ## 10. How to cite this document
 

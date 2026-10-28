@@ -1,0 +1,2222 @@
+module Std.Ai.Dataset exposing
+    ( Dataset
+    , Chat
+    , Instruction
+    , Preference
+    , messageCodec
+    , chatCodec
+    , instructionCodec
+    , preferenceCodec
+    , fromList
+    , fromJsonl
+    , fromJsonLines
+    , fromCsv
+    , fromStore
+    , withSource
+    , sources
+    , steps
+    , map
+    , filter
+    , filterMap
+    , dedupeBy
+    , dedupeBounded
+    , dedupeMemoryKeys
+    , scrub
+    , upTo
+    , toChat
+    , toInstruction
+    , rows
+    , countRows
+    , toJsonl
+    , writeJsonl
+    , Split(..)
+    , SplitSpec
+    , defaultSplit
+    , Splits
+    , split
+    , unsplit
+    , splitOf
+    , part
+    , Limits
+    , limits
+    , withMaxTokens
+    , withMinTurns
+    , withMaxTurns
+    , withMaxDuplicateRate
+    , withMinRows
+    , withMaxIssues
+    , withTokenizer
+    , withEngineTokenizer
+    , withMemoryKeys
+    , estimateTokens
+    , Issue(..)
+    , describeIssue
+    , Report
+    , inspect
+    , validate
+    , Folder
+    , folder
+    , withConsentBasis
+    , withRetention
+    , Manifest
+    , Version
+    , freeze
+    , freezeJson
+    , load
+    , loadJson
+    , versions
+    , manifest
+    , digest
+    , versionName
+    , blobPath
+    , versionRows
+    , versionPart
+    , fromVersion
+    , manifestJson
+    , manifestFromJson
+    )
+
+{-| `Std.Ai.Dataset` — typed training and evaluation data: load it, clean it,
+split it, check it, and freeze it into a content-addressed version.
+
+    import Std.Ai.Dataset as Dataset exposing (Instruction, Split(..))
+    import Std.Ai.Dataset.Scrub as Scrub
+
+    support : Dataset.Dataset Instruction
+    support =
+        Dataset.fromJsonl Dataset.instructionCodec "data/support.jsonl"
+            |> Dataset.scrub (Scrub.forInstruction Scrub.defaults)
+            |> Dataset.dedupeBy .prompt
+
+    freezeSupport : Task Error (Dataset.Version Instruction)
+    freezeSupport =
+        support
+            |> Dataset.split Dataset.defaultSplit .prompt
+            |> Dataset.freeze (Dataset.folder "data/versions" "support") Dataset.instructionCodec
+
+A `Dataset row` is a description. Nothing is read until you freeze it,
+validate it or ask for its rows, and a JSONL file is read in chunks of lines,
+so a large file never sits in memory (`fromCsv` and `fromStore` read their
+source whole, because a CSV field can span lines and a store is one query).
+
+A split puts each row in `Train`, `Eval` or `Test` by a SHA-256 hash of the
+row's key and the split's seed, not by a random draw. The same row is in the
+same split in every version, so the eval rows never leak into training when
+new data arrives.
+
+A frozen `Version` is canonical JSONL (each line `{"row":…,"split":…}`, object
+keys sorted, no insignificant white space, `\n` endings) named by the SHA-256
+of its bytes, and a manifest that records the sources, the steps, the row
+counts per split, the scrub report, the schema of the row codec, the creation
+time and an optional consent basis and retention period. The same rows frozen
+twice give the same digest. A training job takes a `Version`, never a live
+`Dataset`, so its lineage is fixed by the type.
+
+A file that cannot be read, a line that is not JSON or a row that does not
+decode is the typed `Std.Ai.Failure.DatasetInvalid` (`InvalidInput`), which
+names the file and the line, never the row's text. A version whose bytes do
+not match its digest is `ChecksumMismatch`. See `docs/ai/dataset.md`.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Ffi as Ffi
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Dict as Dict exposing (Dict)
+import Sky.Core.Result as Result
+import Sky.Core.Tuple as Tuple
+import Sky.Core.Char as Char
+import Sky.Core.Math as Math
+import Sky.Core.Set as Set exposing (Set)
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Time as Time
+import Sky.Core.File as File
+import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Json.Decode as JsonD
+import Std.Codec as Codec exposing (Codec)
+import Std.Csv as Csv
+import Std.Db exposing (Db)
+import Std.Db.Store as Store exposing (Store)
+import Std.Ai.Provider as Provider exposing (Message)
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Dataset.Scrub as Scrub exposing (Scrubber)
+
+-- ── Row shapes ──────────────────────────────────────────────────────
+-- | A conversation: system, user and assistant messages in order. The shape
+-- chat fine-tuning uses.
+type alias Chat =
+    { messages : List Message }
+
+-- | A prompt and the completion to learn.
+type alias Instruction =
+    { prompt : String
+    , completion : String
+    }
+
+-- | A prompt with a preferred and a rejected answer, for preference tuning.
+type alias Preference =
+    { prompt : String
+    , chosen : String
+    , rejected : String
+    }
+
+
+-- | `{"role":…,"content":…}`.
+messageCodec : Codec Message
+messageCodec =
+    Codec.object (\r c -> { role = r, content = c })
+        |> Codec.field "role" .role Codec.string
+        |> Codec.field "content" .content Codec.string
+        |> Codec.buildObject
+
+
+-- | `{"messages":[…]}`, the common chat fine-tuning format.
+chatCodec : Codec Chat
+chatCodec =
+    Codec.object (\ms -> { messages = ms })
+        |> Codec.field "messages" .messages (Codec.list messageCodec)
+        |> Codec.buildObject
+
+
+-- | `{"prompt":…,"completion":…}`.
+instructionCodec : Codec Instruction
+instructionCodec =
+    Codec.object (\p c -> { prompt = p, completion = c })
+        |> Codec.field "prompt" .prompt Codec.string
+        |> Codec.field "completion" .completion Codec.string
+        |> Codec.buildObject
+
+
+-- | `{"prompt":…,"chosen":…,"rejected":…}`.
+preferenceCodec : Codec Preference
+preferenceCodec =
+    Codec.object (\p c r -> { prompt = p, chosen = c, rejected = r })
+        |> Codec.field "prompt" .prompt Codec.string
+        |> Codec.field "chosen" .chosen Codec.string
+        |> Codec.field "rejected" .rejected Codec.string
+        |> Codec.buildObject
+
+-- ── The pipeline ────────────────────────────────────────────────────
+-- What the steps did to the rows, carried with each chunk so a frozen
+-- version can record it.
+type alias Stats =
+    { scrub : Scrub.Report
+    , duplicates : Int
+    , filtered : Int
+    }
+
+
+noStats : Stats
+noStats =
+    { scrub = Scrub.emptyReport, duplicates = 0, filtered = 0 }
+
+
+addStats : Stats -> Stats -> Stats
+addStats a b =
+    { scrub = Scrub.merge a.scrub b.scrub
+    , duplicates = a.duplicates + b.duplicates
+    , filtered = a.filtered + b.filtered
+    }
+
+-- A lazy list of chunks: the rows of one chunk, what the steps did to them,
+-- and how to read the next chunk.
+type Chunks row
+    = Done
+    | More (List row) Stats (() -> Task Error (Chunks row))
+
+-- | A dataset: where the rows come from and the steps applied to them. A
+-- description only; rows flow when it is frozen, validated or read.
+type Dataset row
+    = Dataset { sources : List String
+, steps : List String
+, open : () -> Task Error (Chunks row)
+}
+
+
+-- The number of lines read from a file at a time.
+chunkLines : Int
+chunkLines =
+    1000
+
+
+invalid : String -> String -> Error
+invalid dataset reasons =
+    Failure.toError (DatasetInvalid { dataset = dataset, reasons = reasons })
+
+
+-- | Rows held in memory.
+fromList : List row -> Dataset row
+fromList rs =
+    Dataset
+        { sources = [ "list:" ++ String.fromInt (List.length rs) ]
+        , steps = []
+        , open = \_ -> Task.succeed (More rs noStats (\_ -> Task.succeed Done))
+        }
+
+type alias RawLines =
+    { lines : List String
+    , next : Int
+    , done : Bool
+    }
+
+
+readLines : String -> Int -> Int -> Task Error RawLines
+readLines =
+    Ffi.kernel "Ai_datasetReadLines"
+
+
+canonical : String -> Result Error String
+canonical =
+    Ffi.kernel "Ai_datasetCanonical"
+
+
+sha256File : String -> Task Error String
+sha256File =
+    Ffi.kernel "Ai_datasetSha256File"
+
+
+-- | Each non-blank line of a JSONL file as its canonical JSON text (keys
+-- sorted, no white space). A line that is not one JSON value fails with
+-- `DatasetInvalid`, naming the line.
+fromJsonLines : String -> Dataset String
+fromJsonLines path =
+    Dataset
+        { sources = [ "jsonl:" ++ path ]
+        , steps = []
+        , open = \_ -> jsonLinesFrom path 0 1
+        }
+
+
+jsonLinesFrom : String -> Int -> Int -> Task Error (Chunks String)
+jsonLinesFrom path offset lineNo =
+    readLines path offset chunkLines
+        |> Task.andThen
+               (\raw ->
+                   case canonicalLines path lineNo raw.lines of
+
+                       Ok texts ->
+                           let
+                               next =
+                                   if raw.done then
+                                       \_ -> Task.succeed Done
+
+                                   else
+                                       \_ ->
+                                           jsonLinesFrom
+                                               path
+                                               raw.next
+                                               (lineNo + List.length raw.lines)
+                           in
+                               Task.succeed (More texts noStats next)
+
+                       Err e ->
+                           Task.fail e)
+
+
+canonicalLines : String -> Int -> List String -> Result Error (List String)
+canonicalLines path firstLine lines =
+    let
+        step line ( n, acc ) =
+            case acc of
+
+                Err e ->
+                    ( n + 1, Err e )
+
+                Ok kept ->
+                    if String.trim line == "" then
+                        ( n + 1, Ok kept )
+
+                    else
+                        case canonical line of
+
+                            Ok c ->
+                                ( n + 1, Ok (c :: kept) )
+
+                            Err e ->
+                                ( n + 1
+                                , Err
+                                      (invalid
+                                          path
+                                          ("line " ++ String.fromInt n ++ ": "
+                                              ++ reasonOf e))
+                                )
+        ( _, result ) = List.foldl step ( firstLine, Ok [] ) lines
+    in
+        Result.map List.reverse result
+
+
+-- The reasons of a DatasetInvalid error, else its message.
+reasonOf : Error -> String
+reasonOf e =
+    case Failure.fromError e of
+
+        Just (DatasetInvalid d) ->
+            d.reasons
+
+        _ ->
+            Error.toString e
+
+
+-- | Rows of a JSONL file, one JSON object per line, decoded with the codec.
+-- A line that is not JSON, or does not decode with the codec, fails with
+-- `DatasetInvalid` naming the row (never its text). Rows count from 1 and
+-- blank lines are skipped.
+fromJsonl : Codec row -> String -> Dataset row
+fromJsonl codec path =
+    let
+        (Dataset lines) = fromJsonLines path
+        decoded =
+            transform
+                "decode"
+                1
+                (decodeTexts (Codec.fromJson codec) path)
+                (Dataset lines)
+        (Dataset d) = decoded
+    in
+        Dataset { d | steps = [] }
+
+
+-- Decode a chunk of row texts, numbering rows from `firstRow`.
+decodeTexts : (String -> Result Error row) -> String -> Int -> List String -> Result Error ( List row, Stats, Int )
+decodeTexts decode path firstRow texts =
+    let
+        step text acc =
+            case acc of
+
+                Err e ->
+                    Err e
+
+                Ok ( n, kept ) ->
+                    case decode text of
+
+                        Ok r ->
+                            Ok ( n + 1, r :: kept )
+
+                        Err _ ->
+                            Err (rowError path n)
+    in
+        List.foldl step (Ok ( firstRow, [] )) texts
+            |> Result.map (\( n, kept ) -> ( List.reverse kept, noStats, n ))
+
+
+rowError : String -> Int -> Error
+rowError path n =
+    invalid
+        path
+        ("row " ++ String.fromInt n ++ ": does not decode with the row codec")
+
+
+-- | Rows of a CSV file with a header line: each row is given to `decode` as
+-- a dictionary from column name to cell. The file is read whole (a quoted
+-- CSV field can span lines). A row `decode` rejects fails with
+-- `DatasetInvalid` naming the row.
+fromCsv : (Dict String String -> Result Error row) -> String -> Dataset row
+fromCsv decode path =
+    Dataset
+        { sources = [ "csv:" ++ path ]
+        , steps = []
+        , open =
+            \_ ->
+                File.readFile path
+                    |> Task.onError
+                           (\_ -> Task.fail (invalid path "cannot read the file"))
+                    |> Task.andThen
+                           (\body ->
+                               case Csv.parse body of
+
+                                   Ok csv ->
+                                       csvRows decode path csv.header csv.rows
+                                           |> Result.map
+                                                  (\rs ->
+                                                      More
+                                                          rs
+                                                          noStats
+                                                          (\_ ->
+                                                              Task.succeed Done))
+                                           |> Task.fromResult
+
+                                   Err _ ->
+                                       Task.fail (invalid path "not CSV"))
+        }
+
+
+csvRows : (Dict String String -> Result Error row) -> String -> List String -> List (List String) -> Result Error (List row)
+csvRows decode path header cells =
+    let
+        step cs ( n, acc ) =
+            case acc of
+
+                Err e ->
+                    ( n + 1, Err e )
+
+                Ok kept ->
+                    case decode (Dict.fromList (List.zip header cs)) of
+
+                        Ok r ->
+                            ( n + 1, Ok (r :: kept) )
+
+                        Err _ ->
+                            ( n + 1
+                            , Err
+                                  (invalid
+                                      path
+                                      ("row " ++ String.fromInt n
+                                          ++ ": the decoder rejected it"))
+                            )
+        ( _, result ) = List.foldl step ( 1, Ok [] ) cells
+    in
+        Result.map List.reverse result
+
+
+-- | Rows of a `Std.Db.Store` table, mapped to dataset rows (`Nothing` skips a
+-- row). The table is read with one query when the dataset is used.
+fromStore : Db -> Store a -> (a -> Maybe row) -> Dataset row
+fromStore db store toRow =
+    Dataset
+        { sources = [ "store" ]
+        , steps = []
+        , open =
+            \_ ->
+                Store.all db store
+                    |> Task.map
+                           (\items ->
+                               let
+                                   kept = List.filterMap toRow items
+                               in
+                                   More
+                                       kept
+                                       { noStats
+                                           | filtered =
+                                               List.length items
+                                                   - List.length kept
+                                       }
+                                       (\_ -> Task.succeed Done))
+        }
+
+
+-- | Replace the source description recorded in the lineage (for example
+-- `"synthetic:support teacher=qwen2.5-0.5b seed=7"`).
+withSource : String -> Dataset row -> Dataset row
+withSource description (Dataset d) =
+    Dataset { d | sources = [ description ] }
+
+
+-- | The source descriptions the lineage records.
+sources : Dataset row -> List String
+sources (Dataset d) =
+    d.sources
+
+
+-- | The steps applied, in order (`map`, `filter`, `dedupe`, `scrub`, …).
+steps : Dataset row -> List String
+steps (Dataset d) =
+    d.steps
+
+
+-- A step over chunks with state carried from chunk to chunk. A step that
+-- fails ends the dataset with its error when the reader reaches it.
+transform : String -> state -> (state -> List a -> Result Error ( List b, Stats, state )) -> Dataset a -> Dataset b
+transform step initial f (Dataset d) =
+    Dataset
+        { sources = d.sources
+        , steps = d.steps ++ [ step ]
+        , open = \_ -> d.open () |> Task.map (transformChunks initial f)
+        }
+
+
+transformChunks : state -> (state -> List a -> Result Error ( List b, Stats, state )) -> Chunks a -> Chunks b
+transformChunks st f chunks =
+    case chunks of
+
+        Done ->
+            Done
+
+        More rs stats next ->
+            case f st rs of
+
+                Ok ( out, delta, st2 ) ->
+                    More
+                        out
+                        (addStats stats delta)
+                        (\_ -> next () |> Task.map (transformChunks st2 f))
+
+                Err e ->
+                    More [] stats (\_ -> Task.fail e)
+
+
+-- A step whose work is a Task, with state opened when the rows start to
+-- flow and finished when they end (or fail): `dedupeBy`'s spill set.
+transformTask : String -> (() -> Task Error state) -> (state -> List a -> Task Error ( List b, Stats, state )) -> (state -> Task Error ()) -> Dataset a -> Dataset b
+transformTask step start f finish (Dataset d) =
+    Dataset
+        { sources = d.sources
+        , steps = d.steps ++ [ step ]
+        , open =
+            \_ ->
+                start ()
+                    |> Task.andThen
+                           (\st ->
+                               d.open ()
+                                   |> Task.onError (finishThenFail finish st)
+                                   |> Task.andThen (taskChunks st f finish))
+        }
+
+
+finishThenFail : (state -> Task Error ()) -> state -> Error -> Task Error a
+finishThenFail finish st e =
+    finish st |> Task.onError (\_ -> Task.succeed ())
+        |> Task.andThen (\_ -> Task.fail e)
+
+
+taskChunks : state -> (state -> List a -> Task Error ( List b, Stats, state )) -> (state -> Task Error ()) -> Chunks a -> Task Error (Chunks b)
+taskChunks st f finish chunks =
+    case chunks of
+
+        Done ->
+            finish st |> Task.map (\_ -> Done)
+
+        More rs stats next ->
+            f st rs |> Task.onError (finishThenFail finish st)
+                |> Task.map
+                       (\result ->
+                           case result of
+
+                               ( out, delta, st2 ) ->
+                                   More
+                                       out
+                                       (addStats stats delta)
+                                       (\_ ->
+                                           next ()
+                                               |> Task.onError
+                                                      (finishThenFail finish st2)
+                                               |> Task.andThen
+                                                      (taskChunks st2 f finish)))
+
+
+-- | Change every row.
+map : (a -> b) -> Dataset a -> Dataset b
+map f ds =
+    transform "map" () (\_ rs -> Ok ( List.map f rs, noStats, () )) ds
+
+
+-- | Keep the rows the predicate holds for. The lineage counts the rest.
+filter : (row -> Bool) -> Dataset row -> Dataset row
+filter keep ds =
+    filterMap
+        (\r ->
+            if keep r then
+                Just r
+
+            else
+                Nothing)
+        ds
+        |> renameLastStep "filter"
+
+
+-- | Change rows and drop the ones that map to `Nothing`. The lineage counts
+-- the dropped rows.
+filterMap : (a -> Maybe b) -> Dataset a -> Dataset b
+filterMap f ds =
+    transform
+        "filterMap"
+        ()
+        (\_ rs ->
+            let
+                kept = List.filterMap f rs
+            in
+                Ok
+                    ( kept
+                    , { noStats | filtered = List.length rs - List.length kept }
+                    , ()
+                    ))
+        ds
+
+
+renameLastStep : String -> Dataset row -> Dataset row
+renameLastStep name (Dataset d) =
+    Dataset
+        { d | steps = List.take (List.length d.steps - 1) d.steps ++ [ name ] }
+
+
+-- | Keep the first row for each key and drop the later ones. The set of keys
+-- seen holds the SHA-256 of each distinct key (never the key itself), at most
+-- `dedupeMemoryKeys` of them in memory: past that it spills them, sorted, to
+-- files under `.sky/ai/work/dedupe` in the working directory and looks them up
+-- there, so a dataset larger than memory dedupes in bounded memory. The files
+-- are removed when the rows have been read.
+dedupeBy : (row -> String) -> Dataset row -> Dataset row
+dedupeBy key ds =
+    dedupeBounded dedupeMemoryKeys key ds
+
+
+-- | How many key digests `dedupeBy` keeps in memory before it spills to disk:
+-- 250000 (about 20 MB).
+dedupeMemoryKeys : Int
+dedupeMemoryKeys =
+    250000
+
+
+-- | `dedupeBy` with the number of key digests held in memory before the set
+-- spills to disk (at least 1).
+dedupeBounded : Int -> (row -> String) -> Dataset row -> Dataset row
+dedupeBounded memoryKeys key ds =
+    transformTask
+        "dedupe"
+        (\_ -> dedupeOpen "" (max 1 memoryKeys))
+        (\handle rs ->
+            dedupeAdd handle (List.map key rs)
+                |> Task.map
+                       (\fresh ->
+                           let
+                               kept = keepFresh rs fresh
+                           in
+                               ( kept
+                               , { noStats
+                                     | duplicates =
+                                         List.length rs - List.length kept
+                                 }
+                               , handle
+                               )))
+        (\handle -> dedupeClose handle |> Task.map (\_ -> ()))
+        ds
+
+
+-- The rows whose key was new.
+keepFresh : List row -> List Bool -> List row
+keepFresh rs fresh =
+    case rs of
+
+        [] ->
+            []
+
+        r :: more ->
+            case fresh of
+
+                f :: rest ->
+                    if f then
+                        r :: keepFresh more rest
+
+                    else
+                        keepFresh more rest
+
+                [] ->
+                    []
+
+
+dedupeOpen : String -> Int -> Task Error String
+dedupeOpen =
+    Ffi.kernel "Ai_dedupeOpen"
+
+
+dedupeAdd : String -> List String -> Task Error (List Bool)
+dedupeAdd =
+    Ffi.kernel "Ai_dedupeAdd"
+
+
+dedupeClose : String -> Task Error Int
+dedupeClose =
+    Ffi.kernel "Ai_dedupeClose"
+
+
+-- | Scrub every row (`Std.Ai.Dataset.Scrub`). The counts of what was
+-- replaced, and the rows dropped, go into the frozen version's manifest.
+scrub : Scrubber row -> Dataset row -> Dataset row
+scrub sc ds =
+    transform
+        "scrub"
+        ()
+        (\_ rs ->
+            let
+                ( kept, report ) = Scrub.scrubRows sc rs
+            in
+                Ok ( kept, { noStats | scrub = report }, () ))
+        ds
+
+
+-- | Only the first `n` rows.
+upTo : Int -> Dataset row -> Dataset row
+upTo n ds =
+    transform
+        ("upTo " ++ String.fromInt n)
+        n
+        (\left rs ->
+            Ok ( List.take left rs, noStats, max 0 (left - List.length rs) ))
+        ds
+
+
+-- | Rows as chat records.
+toChat : (row -> Chat) -> Dataset row -> Dataset Chat
+toChat f ds =
+    map f ds |> renameLastStep "toChat"
+
+
+-- | Rows as instruction records.
+toInstruction : (row -> Instruction) -> Dataset row -> Dataset Instruction
+toInstruction f ds =
+    map f ds |> renameLastStep "toInstruction"
+
+
+-- Fold over every chunk.
+foldChunks : (acc -> List row -> Stats -> Task Error acc) -> acc -> Chunks row -> Task Error acc
+foldChunks f acc chunks =
+    case chunks of
+
+        Done ->
+            Task.succeed acc
+
+        More rs stats next ->
+            f acc rs stats
+                |> Task.andThen
+                       (\acc2 -> next () |> Task.andThen (foldChunks f acc2))
+
+
+fold : (acc -> List row -> Stats -> Task Error acc) -> acc -> Dataset row -> Task Error acc
+fold f acc (Dataset d) =
+    d.open () |> Task.andThen (foldChunks f acc)
+
+
+-- | Every row, read into memory.
+rows : Dataset row -> Task Error (List row)
+rows ds =
+    fold (\acc rs _ -> Task.succeed (List.reverse rs ++ acc)) [] ds
+        |> Task.map List.reverse
+
+
+-- | The number of rows, read in chunks.
+countRows : Dataset row -> Task Error Int
+countRows ds =
+    fold (\n rs _ -> Task.succeed (n + List.length rs)) 0 ds
+
+
+-- | Rows as JSONL text: one canonical JSON object per line, `\n` after each.
+toJsonl : Codec row -> List row -> Result Error String
+toJsonl codec rs =
+    rs
+        |> List.foldl
+               (\r acc ->
+                   case acc of
+
+                       Ok lines ->
+                           canonical (Codec.toJson codec r)
+                               |> Result.map (\l -> l :: lines)
+
+                       Err e ->
+                           Err e)
+               (Ok [])
+        |> Result.map
+               (\lines ->
+                   String.concat
+                       (List.map (\l -> l ++ "\n") (List.reverse lines)))
+
+
+-- | Write the rows to a JSONL file chunk by chunk (canonical lines). The file
+-- appears whole or not at all: it is written beside the target and renamed.
+-- Returns the number of rows written.
+writeJsonl : String -> Codec row -> Dataset row -> Task Error Int
+writeJsonl path codec ds =
+    let
+        tmp = path ++ ".tmp"
+    in
+        File.writeFile tmp ""
+            |> Task.andThen
+                   (\_ ->
+                       fold
+                           (\n rs _ ->
+                               case toJsonl codec rs of
+
+                                   Ok text ->
+                                       File.append tmp text
+                                           |> Task.map
+                                                  (\_ -> n + List.length rs)
+
+                                   Err e ->
+                                       Task.fail e)
+                           0
+                           ds)
+            |> Task.andThen (\n -> File.rename tmp path |> Task.map (\_ -> n))
+            |> Task.onError
+                   (\e ->
+                       File.remove tmp |> Task.onError (\_ -> Task.succeed ())
+                           |> Task.andThen (\_ -> Task.fail e))
+
+-- ── Splits ──────────────────────────────────────────────────────────
+-- | The three parts of a dataset.
+type Split
+    = Train
+    | Eval
+    | Test
+
+-- | The weights of the three parts and the seed of the assignment. Weights
+-- are relative: `{ train = 8, eval = 1, test = 1, seed = 0 }` is 80/10/10.
+type alias SplitSpec =
+    { train : Int
+    , eval : Int
+    , test : Int
+    , seed : Int
+    }
+
+
+-- | 80 / 10 / 10 with seed 0.
+defaultSplit : SplitSpec
+defaultSplit =
+    { train = 80, eval = 10, test = 10, seed = 0 }
+
+-- | A dataset with a split assignment.
+type Splits row
+    = Splits { spec : SplitSpec, key : row -> String, data : Dataset row }
+
+
+-- | Assign each row to a part by the hash of its key: the same key and seed
+-- always give the same part.
+split : SplitSpec -> (row -> String) -> Dataset row -> Splits row
+split spec key ds =
+    Splits { spec = spec, key = key, data = ds }
+
+
+-- | Every row in `Train`.
+unsplit : Dataset row -> Splits row
+unsplit ds =
+    Splits
+        { spec = { train = 1, eval = 0, test = 0, seed = 0 }
+        , key = \_ -> ""
+        , data = ds
+        }
+
+
+-- | The part a key goes to. Pure: the first 28 bits of
+-- `sha256 (seed ++ ":" ++ key)` modulo the weights' sum pick the part.
+splitOf : SplitSpec -> String -> Split
+splitOf spec key =
+    let
+        weights = max 0 spec.train + max 0 spec.eval + max 0 spec.test
+        h =
+            hexValue
+                (String.left
+                    7
+                    (Crypto.sha256 (String.fromInt spec.seed ++ ":" ++ key)))
+        bucket =
+            if weights <= 0 then
+                0
+
+            else
+                modBy weights h
+    in
+        if weights <= 0 || bucket < max 0 spec.train then
+            Train
+
+        else if bucket < max 0 spec.train + max 0 spec.eval then
+            Eval
+
+        else
+            Test
+
+
+hexValue : String -> Int
+hexValue s =
+    String.toList (String.toLower s)
+        |> List.foldl
+               (\c acc ->
+                   let
+                       code = Char.toCode c
+                       d =
+                           if code >= 48 && code <= 57 then
+                               code - 48
+
+                           else if code >= 97 && code <= 102 then
+                               code - 87
+
+                           else
+                               0
+                   in
+                       acc * 16 + d)
+               0
+
+
+-- | One part of a split dataset, as a dataset.
+part : Split -> Splits row -> Dataset row
+part which (Splits s) =
+    filter (\r -> splitOf s.spec (s.key r) == which) s.data
+        |> renameLastStep ("part " ++ splitName which)
+
+
+splitName : Split -> String
+splitName s =
+    case s of
+
+        Train ->
+            "train"
+
+        Eval ->
+            "eval"
+
+        Test ->
+            "test"
+
+
+splitFromName : String -> Maybe Split
+splitFromName s =
+    case s of
+
+        "train" ->
+            Just Train
+
+        "eval" ->
+            Just Eval
+
+        "test" ->
+            Just Test
+
+        _ ->
+            Nothing
+
+-- ── Validation ──────────────────────────────────────────────────────
+-- | The limits `validate` checks a chat dataset against.
+type Limits
+    = Limits { maxTokens : Int
+, minTurns : Int
+, maxTurns : Int
+, maxDuplicateRate : Float
+, minRows : Int
+, maxIssues : Int
+, tokenizer : Maybe (String -> Task Error Int)
+, engine : Maybe Endpoint
+, memoryKeys : Int
+}
+
+
+-- | At most 4096 tokens per conversation, 2 to 64 turns (system messages do
+-- not count), at most 5% duplicate conversations, at least 1 row, and no
+-- issue at all. Tokens are estimated (`estimateTokens`) unless
+-- `withEngineTokenizer` or `withTokenizer` gives the model's own count.
+limits : Limits
+limits =
+    Limits
+        { maxTokens = 4096
+        , minTurns = 2
+        , maxTurns = 64
+        , maxDuplicateRate = 5.0e-2
+        , minRows = 1
+        , maxIssues = 0
+        , tokenizer = Nothing
+        , engine = Nothing
+        , memoryKeys = dedupeMemoryKeys
+        }
+
+
+-- | The most tokens one conversation may have.
+withMaxTokens : Int -> Limits -> Limits
+withMaxTokens n (Limits l) =
+    Limits { l | maxTokens = n }
+
+
+-- | The fewest user and assistant messages a conversation may have.
+withMinTurns : Int -> Limits -> Limits
+withMinTurns n (Limits l) =
+    Limits { l | minTurns = n }
+
+
+-- | The most user and assistant messages a conversation may have.
+withMaxTurns : Int -> Limits -> Limits
+withMaxTurns n (Limits l) =
+    Limits { l | maxTurns = n }
+
+
+-- | The largest share of conversations that may repeat an earlier one
+-- (0 to 1).
+withMaxDuplicateRate : Float -> Limits -> Limits
+withMaxDuplicateRate r (Limits l) =
+    Limits { l | maxDuplicateRate = r }
+
+
+-- | The fewest rows the dataset may have.
+withMinRows : Int -> Limits -> Limits
+withMinRows n (Limits l) =
+    Limits { l | minRows = n }
+
+
+-- | The most issues (empty turns, role order, length, turns) allowed.
+withMaxIssues : Int -> Limits -> Limits
+withMaxIssues n (Limits l) =
+    Limits { l | maxIssues = n }
+
+
+-- | How many conversation digests the duplicate check keeps in memory before
+-- it spills them to disk (at least 1; default `dedupeMemoryKeys`). The check
+-- uses the same bounded set as `dedupeBy`, so a dataset larger than memory is
+-- inspected in bounded memory.
+withMemoryKeys : Int -> Limits -> Limits
+withMemoryKeys n (Limits l) =
+    Limits { l | memoryKeys = max 1 n }
+
+
+-- | Count tokens with the model's own tokenizer instead of the estimate. The
+-- function gets one message's content.
+withTokenizer : (String -> Task Error Int) -> Limits -> Limits
+withTokenizer f (Limits l) =
+    Limits { l | tokenizer = Just f }
+
+
+-- | Count tokens with the engine's own tokenizer: each message's content is
+-- sent to the slot's `/tokenize` route (`Endpoint.tokenize`; llama-server
+-- and vLLM serve it), so the count is the model's, not an estimate. When the
+-- engine cannot answer (no network, no engine installed and fetching off, a
+-- server without the route), the count falls back to the `withTokenizer`
+-- function if one is given, else to `estimateTokens`, so a check runs offline
+-- too. Under `sky test` in test mode a fixture answers the route (match
+-- `urlContains "/tokenize"`), or the fallback counts.
+--
+--     Dataset.limits |> Dataset.withEngineTokenizer chatSlot
+withEngineTokenizer : Endpoint -> Limits -> Limits
+withEngineTokenizer slot (Limits l) =
+    Limits { l | engine = Just slot }
+
+
+-- | The token estimate used without a tokenizer: a quarter of the characters,
+-- rounded up. Close for English text on current tokenizers, not exact.
+estimateTokens : String -> Int
+estimateTokens s =
+    (String.length s + 3) // 4
+
+-- `Issue`'s payloads are named records, so a match reads each payload with
+-- one runtime narrowing instead of one per field (doc 14 §4.5, R6).
+type alias EmptyTurnPayload =
+    { row : Int
+    , turn : Int
+    }
+
+type alias RoleOrderPayload =
+    { row : Int
+    , reason : String
+    }
+
+type alias TooManyTokensPayload =
+    { row : Int
+    , tokens : Int
+    , limit : Int
+    }
+
+type alias TooFewTurnsPayload =
+    { row : Int
+    , turns : Int
+    , limit : Int
+    }
+
+type alias DuplicateRowPayload =
+    { row : Int
+    , firstRow : Int
+    }
+
+-- | One problem in one row (rows count from 1).
+type Issue
+    = EmptyTurn EmptyTurnPayload
+    | RoleOrder RoleOrderPayload
+    | TooManyTokens TooManyTokensPayload
+    | TooFewTurns TooFewTurnsPayload
+    | TooManyTurns TooFewTurnsPayload
+    | DuplicateRow DuplicateRowPayload
+
+
+-- | An issue as one line, with no message text.
+describeIssue : Issue -> String
+describeIssue issue =
+    case issue of
+
+        EmptyTurn i ->
+            "row " ++ String.fromInt i.row ++ ": message "
+                ++ String.fromInt i.turn
+                ++ " is empty"
+
+        RoleOrder i ->
+            "row " ++ String.fromInt i.row ++ ": " ++ i.reason
+
+        TooManyTokens i ->
+            "row " ++ String.fromInt i.row ++ ": " ++ String.fromInt i.tokens
+                ++ " tokens, the limit is "
+                ++ String.fromInt i.limit
+
+        TooFewTurns i ->
+            "row " ++ String.fromInt i.row ++ ": " ++ String.fromInt i.turns
+                ++ " turns, at least "
+                ++ String.fromInt i.limit
+                ++ " needed"
+
+        TooManyTurns i ->
+            "row " ++ String.fromInt i.row ++ ": " ++ String.fromInt i.turns
+                ++ " turns, the limit is "
+                ++ String.fromInt i.limit
+
+        DuplicateRow i ->
+            "row " ++ String.fromInt i.row ++ " repeats row "
+                ++ String.fromInt i.firstRow
+
+-- | What `inspect` found. `issues` holds the first 100 issues in row order
+-- and `issueCount` all of them (duplicates are counted in `duplicates`, not
+-- in `issueCount`). `problems` names each limit the dataset breaks, and
+-- `passed` is `True` when there is none.
+type alias Report =
+    { rows : Int
+    , issues : List Issue
+    , issueCount : Int
+    , duplicates : Int
+    , duplicateRate : Float
+    , maxTokens : Int
+    , meanTokens : Float
+    , problems : List String
+    , passed : Bool
+    }
+
+type alias Acc =
+    { rows : Int
+    , issues : List Issue
+    , issueCount : Int
+    , duplicates : Int
+    , maxTokens : Int
+    , totalTokens : Int
+    }
+
+
+-- | Check every conversation and report, without failing on the limits.
+inspect : Limits -> Dataset Chat -> Task Error Report
+inspect (Limits l) ds =
+    usableEngine l.engine
+        |> Task.andThen (\engine -> inspectWith { l | engine = engine } ds)
+
+
+-- The engine counts tokens when it answers one request; otherwise the run
+-- uses the fallback for every row, so an offline check does not wait on a
+-- failing connection per message.
+usableEngine : Maybe Endpoint -> Task Error (Maybe Endpoint)
+usableEngine engine =
+    case engine of
+
+        Just slot ->
+            Endpoint.tokenize slot "tokenizer check"
+                |> Task.map (\_ -> Just slot)
+                |> Task.onError (\_ -> Task.succeed Nothing)
+
+        Nothing ->
+            Task.succeed Nothing
+
+
+inspectWith :
+    { maxTokens : Int
+    , minTurns : Int
+    , maxTurns : Int
+    , maxDuplicateRate : Float
+    , minRows : Int
+    , maxIssues : Int
+    , tokenizer : Maybe (String -> Task Error Int)
+    , engine : Maybe Endpoint
+    , memoryKeys : Int
+    }
+    -> Dataset Chat
+    -> Task Error Report
+inspectWith l ds =
+    dedupeOpen "" (max 1 l.memoryKeys)
+        |> Task.andThen
+               (\handle ->
+                   fold
+                       (\acc rs _ -> checkChunk l handle acc rs)
+                       { rows = 0
+                       , issues = []
+                       , issueCount = 0
+                       , duplicates = 0
+                       , maxTokens = 0
+                       , totalTokens = 0
+                       }
+                       ds
+                       |> Task.andThen
+                              (\acc -> dedupeClose handle |> Task.map (\_ -> acc))
+                       |> Task.onError
+                              (\e ->
+                                  dedupeClose handle
+                                      |> Task.andThen (\_ -> Task.fail e)))
+        |> Task.map (finishReport l)
+
+
+-- | `inspect`, then fail with `DatasetInvalid` (naming every limit broken)
+-- when the dataset breaks a limit.
+validate : Limits -> Dataset Chat -> Task Error Report
+validate lim ds =
+    inspect lim ds
+        |> Task.andThen
+               (\report ->
+                   if report.passed then
+                       Task.succeed report
+
+                   else
+                       Task.fail
+                           (invalid
+                               (String.join "," (sources ds))
+                               (String.join "; " report.problems)))
+
+
+checkChunk :
+    { maxTokens : Int
+    , minTurns : Int
+    , maxTurns : Int
+    , maxDuplicateRate : Float
+    , minRows : Int
+    , maxIssues : Int
+    , tokenizer : Maybe (String -> Task Error Int)
+    , engine : Maybe Endpoint
+    , memoryKeys : Int
+    }
+    -> String
+    -> Acc
+    -> List Chat
+    -> Task Error Acc
+checkChunk l handle acc rs =
+    dedupeFirst handle (acc.rows + 1) (List.map rowKey rs)
+        |> Task.andThen (\firsts -> checkRows l acc rs firsts)
+
+
+-- Each row with the row it repeats (0 when it is the first of its kind).
+checkRows :
+    { maxTokens : Int
+    , minTurns : Int
+    , maxTurns : Int
+    , maxDuplicateRate : Float
+    , minRows : Int
+    , maxIssues : Int
+    , tokenizer : Maybe (String -> Task Error Int)
+    , engine : Maybe Endpoint
+    , memoryKeys : Int
+    }
+    -> Acc
+    -> List Chat
+    -> List Int
+    -> Task Error Acc
+checkRows l acc rs firsts =
+    case ( rs, firsts ) of
+
+        ( r :: more, first :: rest ) ->
+            tokensOf l.tokenizer l.engine r
+                |> Task.andThen
+                       (\tokens ->
+                           checkRows l (checkRow l acc r tokens first) more rest)
+
+        _ ->
+            Task.succeed acc
+
+
+-- The duplicate check's key for a conversation: its roles and contents. The
+-- set keeps its SHA-256, never the text.
+rowKey : Chat -> String
+rowKey r =
+    String.join
+        "\u{0}"
+        (List.map (\m -> m.role ++ "\u{1}" ++ m.content) r.messages)
+
+
+dedupeFirst : String -> Int -> List String -> Task Error (List Int)
+dedupeFirst =
+    Ffi.kernel "Ai_dedupeFirst"
+
+
+tokensOf : Maybe (String -> Task Error Int) -> Maybe Endpoint -> Chat -> Task Error Int
+tokensOf tokenizer engine r =
+    Task.sequence
+        (List.map (\m -> messageTokens tokenizer engine m.content) r.messages)
+        |> Task.map (List.foldl (\t n -> n + 4 + t) 0)
+
+
+-- One message's tokens: the engine's count, else the tokenizer function's,
+-- else the estimate.
+messageTokens : Maybe (String -> Task Error Int) -> Maybe Endpoint -> String -> Task Error Int
+messageTokens tokenizer engine text =
+    let
+        fallback =
+            case tokenizer of
+
+                Just f ->
+                    f text
+
+                Nothing ->
+                    Task.succeed (estimateTokens text)
+    in
+        case engine of
+
+            Just slot ->
+                Endpoint.tokenize slot text |> Task.onError (\_ -> fallback)
+
+            Nothing ->
+                fallback
+
+
+checkRow :
+    { maxTokens : Int
+    , minTurns : Int
+    , maxTurns : Int
+    , maxDuplicateRate : Float
+    , minRows : Int
+    , maxIssues : Int
+    , tokenizer : Maybe (String -> Task Error Int)
+    , engine : Maybe Endpoint
+    , memoryKeys : Int
+    }
+    -> Acc
+    -> Chat
+    -> Int
+    -> Int
+    -> Acc
+checkRow l acc r tokens first =
+    let
+        n = acc.rows + 1
+        turns =
+            List.length (List.filter (\m -> m.role /= "system") r.messages)
+        empties =
+            r.messages |> List.indexedMap Tuple.pair
+                |> List.filterMap
+                       (\( i, m ) ->
+                           if String.trim m.content == "" then
+                               Just (EmptyTurn { row = n, turn = i + 1 })
+
+                           else
+                               Nothing)
+        order =
+            case roleOrder r.messages of
+
+                Just reason ->
+                    [ RoleOrder { row = n, reason = reason } ]
+
+                Nothing ->
+                    []
+        length =
+            if tokens > l.maxTokens then
+                [ TooManyTokens
+                      { row = n, tokens = tokens, limit = l.maxTokens }
+                ]
+
+            else
+                []
+        turnIssues =
+            if turns < l.minTurns then
+                [ TooFewTurns { row = n, turns = turns, limit = l.minTurns } ]
+
+            else if turns > l.maxTurns then
+                [ TooManyTurns { row = n, turns = turns, limit = l.maxTurns } ]
+
+            else
+                []
+        found = empties ++ order ++ length ++ turnIssues
+        dup =
+            if first > 0 then
+                [ DuplicateRow { row = n, firstRow = first } ]
+
+            else
+                []
+        listed = found ++ dup
+        room = max 0 (100 - List.length acc.issues)
+    in
+        { rows = n
+        , issues = acc.issues ++ List.take room listed
+        , issueCount = acc.issueCount + List.length found
+        , duplicates = acc.duplicates + List.length dup
+        , maxTokens = max acc.maxTokens tokens
+        , totalTokens = acc.totalTokens + tokens
+        }
+
+
+-- `Just reason` when the roles are out of order: an optional system message
+-- first, then user and assistant in turn, starting with user and ending with
+-- assistant.
+roleOrder : List Message -> Maybe String
+roleOrder messages =
+    let
+        body =
+            case messages of
+
+                first :: rest ->
+                    if first.role == "system" then
+                        rest
+
+                    else
+                        messages
+
+                [] ->
+                    []
+        expected i =
+            if modBy 2 i == 0 then
+                "user"
+
+            else
+                "assistant"
+        wrong =
+            body |> List.indexedMap Tuple.pair
+                |> List.find (\( i, m ) -> m.role /= expected i)
+    in
+        case wrong of
+
+            Just ( i, m ) ->
+                if List.member m.role [ "system", "user", "assistant" ] then
+                    Just
+                        ("message "
+                            ++ String.fromInt
+                                   (i + 1 + List.length messages
+                                       - List.length body)
+                            ++ " is "
+                            ++ m.role
+                            ++ ", expected "
+                            ++ expected i)
+
+                else
+                    Just ("unknown role " ++ quoteRole m.role)
+
+            Nothing ->
+                case List.reverse body of
+
+                    last :: _ ->
+                        if last.role == "assistant" then
+                            Nothing
+
+                        else
+                            Just "the last message is not from the assistant"
+
+                    [] ->
+                        Just "no user or assistant message"
+
+
+quoteRole : String -> String
+quoteRole r =
+    "\"" ++ String.left 20 r ++ "\""
+
+
+finishReport :
+    { maxTokens : Int
+    , minTurns : Int
+    , maxTurns : Int
+    , maxDuplicateRate : Float
+    , minRows : Int
+    , maxIssues : Int
+    , tokenizer : Maybe (String -> Task Error Int)
+    , engine : Maybe Endpoint
+    , memoryKeys : Int
+    }
+    -> Acc
+    -> Report
+finishReport l acc =
+    let
+        rate =
+            if acc.rows == 0 then
+                0.0
+
+            else
+                intToFloat acc.duplicates / intToFloat acc.rows
+        problems =
+            List.filterMap
+                identity
+                [ if acc.rows < l.minRows then
+                      Just
+                          (String.fromInt acc.rows ++ " rows, at least "
+                              ++ String.fromInt l.minRows
+                              ++ " needed")
+
+                  else
+                      Nothing
+                , if acc.issueCount > l.maxIssues then
+                      Just
+                          (String.fromInt acc.issueCount ++ " issues, at most "
+                              ++ String.fromInt l.maxIssues
+                              ++ " allowed"
+                              ++ firstIssue acc.issues)
+
+                  else
+                      Nothing
+                , if rate > l.maxDuplicateRate then
+                      Just
+                          (String.fromInt acc.duplicates ++ " duplicate rows ("
+                              ++ percent rate
+                              ++ "), at most "
+                              ++ percent l.maxDuplicateRate
+                              ++ " allowed")
+
+                  else
+                      Nothing
+                ]
+    in
+        { rows = acc.rows
+        , issues = acc.issues
+        , issueCount = acc.issueCount
+        , duplicates = acc.duplicates
+        , duplicateRate = rate
+        , maxTokens = acc.maxTokens
+        , meanTokens =
+            if acc.rows == 0 then
+                0.0
+
+            else
+                intToFloat acc.totalTokens / intToFloat acc.rows
+        , problems = problems
+        , passed = List.isEmpty problems
+        }
+
+
+firstIssue : List Issue -> String
+firstIssue issues =
+    case List.filter (\i -> not (isDuplicate i)) issues of
+
+        i :: _ ->
+            " (first: " ++ describeIssue i ++ ")"
+
+        [] ->
+            ""
+
+
+isDuplicate : Issue -> Bool
+isDuplicate i =
+    case i of
+
+        DuplicateRow _ ->
+            True
+
+        _ ->
+            False
+
+
+percent : Float -> String
+percent r =
+    String.fromInt (Math.round (r * 1000.0) // 10) ++ "."
+        ++ String.fromInt (modBy 10 (Math.round (r * 1000.0)))
+        ++ "%"
+
+-- ── Frozen versions ─────────────────────────────────────────────────
+-- | Where a version is written: a directory and the dataset's name, and the
+-- governance facts the manifest records.
+type Folder
+    = Folder { dir : String
+, name : String
+, consentBasis : Maybe String
+, retention : Maybe String
+}
+
+
+-- | Versions of the dataset `name` under `dir`: the data in
+-- `<dir>/<name>/<sha256>.jsonl` and the manifest in `<dir>/<name>/<sha256>.json`.
+folder : String -> String -> Folder
+folder dir name =
+    Folder
+        { dir = dir, name = name, consentBasis = Nothing, retention = Nothing }
+
+
+-- | The legal basis for using the data (for example `"contract"` or
+-- `"consent:2026-10 support opt-in"`), recorded in the manifest.
+withConsentBasis : String -> Folder -> Folder
+withConsentBasis basis (Folder t) =
+    Folder { t | consentBasis = Just basis }
+
+
+-- | How long the data may be kept (for example `"P2Y"`), recorded in the
+-- manifest.
+withRetention : String -> Folder -> Folder
+withRetention period (Folder t) =
+    Folder { t | retention = Just period }
+
+-- | The record of a frozen version: what a registry stores as the dataset's
+-- lineage. `schema` is the row codec's shape (field and column type), and
+-- `scrub` the scrub report (rule to count).
+type alias Manifest =
+    { format : String
+    , name : String
+    , digest : String
+    , file : String
+    , rows : Int
+    , train : Int
+    , eval : Int
+    , test : Int
+    , splitWeights : List Int
+    , splitSeed : Int
+    , sources : List String
+    , steps : List String
+    , scrub : Dict String Int
+    , duplicatesRemoved : Int
+    , filtered : Int
+    , schema : String
+    , createdMs : Int
+    , consentBasis : Maybe String
+    , retention : Maybe String
+    }
+
+-- | A frozen, content-addressed dataset version.
+type Version row
+    = Version { manifest : Manifest, dir : String, decode : String -> Result Error row }
+
+
+manifestFormat : String
+manifestFormat =
+    "sky-dataset-v1"
+
+type alias Tally =
+    { rows : Int
+    , train : Int
+    , eval : Int
+    , test : Int
+    , stats : Stats
+    }
+
+
+-- | Freeze a split dataset: write its canonical JSONL, take its SHA-256, and
+-- write the manifest. The data file appears whole or not at all. Freezing the
+-- same rows again writes nothing new and returns the version already there,
+-- with its first manifest.
+freeze : Folder -> Codec row -> Splits row -> Task Error (Version row)
+freeze tgt codec splits =
+    freezeEncoded
+        tgt
+        (\r -> canonical (Codec.toJson codec r))
+        (shapeText (Codec.shape codec))
+        splits
+        |> Task.map
+               (\( m, dir ) ->
+                   Version
+                       { manifest = m
+                       , dir = dir
+                       , decode = Codec.fromJson codec
+                       })
+
+
+-- | Freeze rows that are already JSON texts (as `fromJsonLines` reads them).
+-- This is what `sky ai data freeze` runs.
+freezeJson : Folder -> Splits String -> Task Error (Version String)
+freezeJson tgt splits =
+    freezeEncoded tgt canonical "json" splits
+        |> Task.map
+               (\( m, dir ) -> Version { manifest = m, dir = dir, decode = Ok })
+
+
+shapeText : Codec.Shape -> String
+shapeText shape =
+    case shape of
+
+        Codec.SRecord fields ->
+            "{"
+                ++ String.join
+                       ","
+                       (List.map (\( f, c ) -> f ++ ":" ++ colText c) fields)
+                ++ "}"
+
+        Codec.SScalar c ->
+            colText c
+
+        Codec.SBlob ->
+            "blob"
+
+
+colText : Codec.ColType -> String
+colText c =
+    case c of
+
+        Codec.CText ->
+            "text"
+
+        Codec.CInt ->
+            "int"
+
+        Codec.CReal ->
+            "real"
+
+        Codec.CBool ->
+            "bool"
+
+        Codec.CBlob ->
+            "blob"
+
+        Codec.CNull inner ->
+            colText inner ++ "?"
+
+
+freezeEncoded : Folder -> (row -> Result Error String) -> String -> Splits row -> Task Error ( Manifest, String )
+freezeEncoded (Folder t) encode schema (Splits s) =
+    let
+        dir = t.dir ++ "/" ++ t.name
+    in
+        File.mkdirAll dir |> Task.andThen (\_ -> Crypto.randomToken 8)
+            |> Task.andThen
+                   (\token ->
+                       let
+                           tmp = dir ++ "/.freeze-" ++ token ++ ".tmp"
+                       in
+                           File.writeFile tmp ""
+                               |> Task.andThen
+                                      (\_ ->
+                                          fold
+                                              (writeChunk tmp encode s.spec s.key)
+                                              { rows = 0
+                                              , train = 0
+                                              , eval = 0
+                                              , test = 0
+                                              , stats = noStats
+                                              }
+                                              s.data)
+                               |> Task.andThen
+                                      (\tally ->
+                                          sha256File tmp
+                                              |> Task.andThen
+                                                     (\d ->
+                                                         settle
+                                                             t
+                                                             dir
+                                                             tmp
+                                                             d
+                                                             tally
+                                                             schema
+                                                             s.spec
+                                                             (sources s.data)
+                                                             (steps s.data)))
+                               |> Task.onError
+                                      (\e ->
+                                          File.remove tmp
+                                              |> Task.onError
+                                                     (\_ -> Task.succeed ())
+                                              |> Task.andThen
+                                                     (\_ -> Task.fail e)))
+
+
+writeChunk : String -> (row -> Result Error String) -> SplitSpec -> (row -> String) -> Tally -> List row -> Stats -> Task Error Tally
+writeChunk tmp encode spec key tally rs stats =
+    let
+        step r acc =
+            case acc of
+
+                Err e ->
+                    Err e
+
+                Ok ( lines, t ) ->
+                    case encode r of
+
+                        Ok text ->
+                            let
+                                which = splitOf spec (key r)
+                                line =
+                                    "{\"row\":" ++ text ++ ",\"split\":\""
+                                        ++ splitName which
+                                        ++ "\"}\n"
+                            in
+                                Ok ( line :: lines, bump which t )
+
+                        Err e ->
+                            Err e
+        bump which t =
+            case which of
+
+                Train ->
+                    { t | rows = t.rows + 1, train = t.train + 1 }
+
+                Eval ->
+                    { t | rows = t.rows + 1, eval = t.eval + 1 }
+
+                Test ->
+                    { t | rows = t.rows + 1, test = t.test + 1 }
+    in
+        case List.foldl step (Ok ( [], tally )) rs of
+
+            Ok ( lines, t2 ) ->
+                File.append tmp (String.concat (List.reverse lines))
+                    |> Task.map (\_ -> { t2 | stats = addStats t2.stats stats })
+
+            Err e ->
+                Task.fail e
+
+
+-- Move the written file to its content address and write the manifest, or
+-- keep the version already there.
+settle :
+    { dir : String
+    , name : String
+    , consentBasis : Maybe String
+    , retention : Maybe String
+    }
+    -> String
+    -> String
+    -> String
+    -> Tally
+    -> String
+    -> SplitSpec
+    -> List String
+    -> List String
+    -> Task Error ( Manifest, String )
+settle t dir tmp d tally schema spec srcs stps =
+    let
+        blob = dir ++ "/" ++ d ++ ".jsonl"
+        manifestPath = dir ++ "/" ++ d ++ ".json"
+    in
+        File.exists manifestPath
+            |> Task.andThen
+                   (\exists ->
+                       if exists then
+                           File.remove tmp
+                               |> Task.andThen (\_ -> readManifest manifestPath)
+                               |> Task.map (\m -> ( m, t.dir ))
+
+                       else
+                           Time.unixMillis ()
+                               |> Task.andThen
+                                      (\now ->
+                                          let
+                                              m =
+                                                  { format = manifestFormat
+                                                  , name = t.name
+                                                  , digest = d
+                                                  , file = d ++ ".jsonl"
+                                                  , rows = tally.rows
+                                                  , train = tally.train
+                                                  , eval = tally.eval
+                                                  , test = tally.test
+                                                  , splitWeights =
+                                                      [ spec.train
+                                                      , spec.eval
+                                                      , spec.test
+                                                      ]
+                                                  , splitSeed = spec.seed
+                                                  , sources = srcs
+                                                  , steps = stps
+                                                  , scrub = tally.stats.scrub
+                                                  , duplicatesRemoved =
+                                                      tally.stats.duplicates
+                                                  , filtered =
+                                                      tally.stats.filtered
+                                                  , schema = schema
+                                                  , createdMs = now
+                                                  , consentBasis =
+                                                      t.consentBasis
+                                                  , retention = t.retention
+                                                  }
+                                          in
+                                              File.rename tmp blob
+                                                  |> Task.andThen
+                                                         (\_ ->
+                                                             File.writeFile
+                                                                 (manifestPath
+                                                                     ++ ".tmp")
+                                                                 (manifestJson m))
+                                                  |> Task.andThen
+                                                         (\_ ->
+                                                             File.rename
+                                                                 (manifestPath
+                                                                     ++ ".tmp")
+                                                                 manifestPath)
+                                                  |> Task.map
+                                                         (\_ -> ( m, t.dir ))))
+
+
+readManifest : String -> Task Error Manifest
+readManifest path =
+    File.readFile path
+        |> Task.onError
+               (\_ -> Task.fail (invalid path "cannot read the manifest"))
+        |> Task.andThen
+               (\body ->
+                   case manifestFromJson body of
+
+                       Ok m ->
+                           Task.succeed m
+
+                       Err _ ->
+                           Task.fail
+                               (invalid path "the manifest does not decode"))
+
+
+-- | The manifest as canonical JSON.
+manifestJson : Manifest -> String
+manifestJson m =
+    let
+        optional v =
+            case v of
+
+                Just s ->
+                    JsonE.string s
+
+                Nothing ->
+                    JsonE.null
+        text =
+            JsonE.encode
+                0
+                (JsonE.object
+                    [ ( "format", JsonE.string m.format )
+                    , ( "name", JsonE.string m.name )
+                    , ( "digest", JsonE.string m.digest )
+                    , ( "file", JsonE.string m.file )
+                    , ( "rows", JsonE.int m.rows )
+                    , ( "splits"
+                      , JsonE.object
+                            [ ( "train", JsonE.int m.train )
+                            , ( "eval", JsonE.int m.eval )
+                            , ( "test", JsonE.int m.test )
+                            , ( "weights", JsonE.list JsonE.int m.splitWeights )
+                            , ( "seed", JsonE.int m.splitSeed )
+                            ]
+                      )
+                    , ( "sources", JsonE.list JsonE.string m.sources )
+                    , ( "steps", JsonE.list JsonE.string m.steps )
+                    , ( "scrub"
+                      , JsonE.list
+                            (\( k, n ) ->
+                                JsonE.object
+                                    [ ( "rule", JsonE.string k )
+                                    , ( "count", JsonE.int n )
+                                    ])
+                            (Dict.toList m.scrub)
+                      )
+                    , ( "duplicatesRemoved", JsonE.int m.duplicatesRemoved )
+                    , ( "filtered", JsonE.int m.filtered )
+                    , ( "schema", JsonE.string m.schema )
+                    , ( "createdMs", JsonE.int m.createdMs )
+                    , ( "consentBasis", optional m.consentBasis )
+                    , ( "retention", optional m.retention )
+                    ])
+    in
+        Result.withDefault text (canonical text)
+
+
+-- | Read a manifest back from its JSON.
+manifestFromJson : String -> Result Error Manifest
+manifestFromJson text =
+    let
+        str k = JsonD.field k JsonD.string
+        int k = JsonD.field k JsonD.int
+        opt k =
+            JsonD.field
+                k
+                (JsonD.oneOf
+                    [ JsonD.map Just JsonD.string, JsonD.succeed Nothing ])
+        splitInt k = JsonD.at [ "splits", k ] JsonD.int
+        decoder =
+            JsonD.succeed
+                (\format name dg file n tr ev te w sd srcs stps sc dups filt schema created consent retention ->
+                    { format = format
+                    , name = name
+                    , digest = dg
+                    , file = file
+                    , rows = n
+                    , train = tr
+                    , eval = ev
+                    , test = te
+                    , splitWeights = w
+                    , splitSeed = sd
+                    , sources = srcs
+                    , steps = stps
+                    , scrub = sc
+                    , duplicatesRemoved = dups
+                    , filtered = filt
+                    , schema = schema
+                    , createdMs = created
+                    , consentBasis = consent
+                    , retention = retention
+                    })
+                |> andMap (str "format")
+                |> andMap (str "name")
+                |> andMap (str "digest")
+                |> andMap (str "file")
+                |> andMap (int "rows")
+                |> andMap (splitInt "train")
+                |> andMap (splitInt "eval")
+                |> andMap (splitInt "test")
+                |> andMap
+                       (JsonD.at [ "splits", "weights" ] (JsonD.list JsonD.int))
+                |> andMap (splitInt "seed")
+                |> andMap (JsonD.field "sources" (JsonD.list JsonD.string))
+                |> andMap (JsonD.field "steps" (JsonD.list JsonD.string))
+                |> andMap
+                       (JsonD.field
+                           "scrub"
+                           (JsonD.list
+                               (JsonD.map2
+                                   Tuple.pair
+                                   (JsonD.field "rule" JsonD.string)
+                                   (JsonD.field "count" JsonD.int))
+                               |> JsonD.map Dict.fromList))
+                |> andMap (int "duplicatesRemoved")
+                |> andMap (int "filtered")
+                |> andMap (str "schema")
+                |> andMap (int "createdMs")
+                |> andMap (opt "consentBasis")
+                |> andMap (opt "retention")
+    in
+        JsonD.decodeString decoder text
+
+
+andMap : JsonD.Decoder a -> JsonD.Decoder (a -> b) -> JsonD.Decoder b
+andMap da df =
+    JsonD.andThen (\f -> JsonD.map f da) df
+
+
+-- | Load a frozen version by its digest (with or without a `sha256:`
+-- prefix) and check that its data file still has that digest: a changed file
+-- fails with `ChecksumMismatch`, a missing one with `DatasetInvalid`.
+load : Folder -> String -> Codec row -> Task Error (Version row)
+load tgt wanted codec =
+    loadWith tgt wanted (Codec.fromJson codec)
+
+
+-- | `load` for a version frozen with `freezeJson`: each row is its canonical
+-- JSON text.
+loadJson : Folder -> String -> Task Error (Version String)
+loadJson tgt wanted =
+    loadWith tgt wanted Ok
+
+
+loadWith : Folder -> String -> (String -> Result Error row) -> Task Error (Version row)
+loadWith (Folder t) wanted decode =
+    let
+        d =
+            if String.startsWith "sha256:" wanted then
+                String.dropLeft 7 wanted
+
+            else
+                wanted
+        dir = t.dir ++ "/" ++ t.name
+    in
+        readManifest (dir ++ "/" ++ d ++ ".json")
+            |> Task.andThen
+                   (\m ->
+                       sha256File (dir ++ "/" ++ m.file)
+                           |> Task.andThen
+                                  (\actual ->
+                                      if actual == d && m.digest == d then
+                                          Task.succeed
+                                              (Version
+                                                  { manifest = m
+                                                  , dir = t.dir
+                                                  , decode = decode
+                                                  })
+
+                                      else
+                                          Task.fail
+                                              (Failure.toError
+                                                  (ChecksumMismatch
+                                                      { expected = d
+                                                      , actual = actual
+                                                      }))))
+
+
+-- | The manifests of every version of a dataset, newest first.
+versions : Folder -> Task Error (List Manifest)
+versions (Folder t) =
+    let
+        dir = t.dir ++ "/" ++ t.name
+    in
+        File.exists dir
+            |> Task.andThen
+                   (\exists ->
+                       if not exists then
+                           Task.succeed []
+
+                       else
+                           File.readDir dir
+                               |> Task.andThen
+                                      (\names ->
+                                          names
+                                              |> List.filter
+                                                     (\n ->
+                                                         String.endsWith
+                                                             ".json"
+                                                             n
+                                                             && not
+                                                                    (String.startsWith
+                                                                        "."
+                                                                        n))
+                                              |> List.map
+                                                     (\n ->
+                                                         readManifest
+                                                             (dir ++ "/" ++ n))
+                                              |> Task.sequence)
+                               |> Task.map (List.sortBy (\m -> 0 - m.createdMs)))
+
+
+-- | A version's manifest.
+manifest : Version row -> Manifest
+manifest (Version v) =
+    v.manifest
+
+
+-- | A version's digest: the SHA-256 of its data file, in lower-case hex.
+digest : Version row -> String
+digest (Version v) =
+    v.manifest.digest
+
+
+-- | The dataset's name.
+versionName : Version row -> String
+versionName (Version v) =
+    v.manifest.name
+
+
+-- | The path of the version's data file.
+blobPath : Version row -> String
+blobPath (Version v) =
+    v.dir ++ "/" ++ v.manifest.name ++ "/" ++ v.manifest.file
+
+
+-- | One part of a frozen version, as a dataset that streams its data file.
+fromVersion : Split -> Version row -> Dataset row
+fromVersion which v =
+    versionData (\s -> s == splitName which) ("part " ++ splitName which) v
+
+
+versionData : (String -> Bool) -> String -> Version row -> Dataset row
+versionData keep step (Version v) =
+    let
+        path = blobPath (Version v)
+        (Dataset lines) = fromJsonLines path
+        rowDecoder =
+            JsonD.map2
+                Tuple.pair
+                (JsonD.field "split" JsonD.string)
+                (JsonD.field "row" JsonD.value)
+        decodeLine text =
+            case JsonD.decodeString rowDecoder text of
+
+                Ok ( s, value ) ->
+                    if keep s then
+                        canonical (JsonE.encode 0 value)
+                            |> Result.andThen v.decode
+                            |> Result.map Just
+
+                    else
+                        Ok Nothing
+
+                Err e ->
+                    Err e
+        (Dataset d) =
+            transform
+                step
+                1
+                (\n texts ->
+                    decodeTexts decodeLine path n texts
+                        |> Result.map
+                               (\( found, stats, next ) ->
+                                   ( List.filterMap identity found
+                                   , stats
+                                   , next
+                                   )))
+                (Dataset lines)
+    in
+        Dataset
+            { d
+                | sources =
+                    [ "version:" ++ v.manifest.name ++ "@sha256:"
+                          ++ v.manifest.digest
+                    ]
+                , steps = [ step ]
+            }
+
+
+-- | Every row of one part of a frozen version.
+versionPart : Split -> Version row -> Task Error (List row)
+versionPart which v =
+    rows (fromVersion which v)
+
+
+-- | Every row of a frozen version, in file order.
+versionRows : Version row -> Task Error (List row)
+versionRows v =
+    rows (versionData (\_ -> True) "all" v)
+
+
+intToFloat : Int -> Float
+intToFloat n =
+    Maybe.withDefault 0.0 (String.toFloat (String.fromInt n))

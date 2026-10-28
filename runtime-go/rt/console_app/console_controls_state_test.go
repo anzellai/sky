@@ -38,13 +38,13 @@ func TestConsoleUpdate_DropsAnAnswerToAnOlderRead(t *testing.T) {
 	rows := func(msg string) rt.SkyResult[Sky_Core_Error_Error, []State_LogEntry_R] {
 		return rt.SkyResult[Sky_Core_Error_Error, []State_LogEntry_R]{OkValue: []State_LogEntry_R{{Message: msg}}}
 	}
-	stale := Main_update(State_Msg_GotLogs(any(m.Gen), any(rows("answer to 24h"))), next).V0
+	stale := Main_update(State_Msg_GotLogs(m.Gen, rows("answer to 24h")), next).V0
 	for _, l := range stale.Logs {
 		if l.Message == "answer to 24h" {
 			t.Fatalf("an answer read under the previous range replaced the logs: %+v", stale.Logs)
 		}
 	}
-	fresh := Main_update(State_Msg_GotLogs(any(next.Gen), any(rows("answer to 1h"))), next).V0
+	fresh := Main_update(State_Msg_GotLogs(next.Gen, rows("answer to 1h")), next).V0
 	if len(fresh.Logs) != 1 || fresh.Logs[0].Message != "answer to 1h" {
 		t.Fatalf("the current answer was not taken: %+v", fresh.Logs)
 	}
@@ -53,17 +53,17 @@ func TestConsoleUpdate_DropsAnAnswerToAnOlderRead(t *testing.T) {
 func TestConsoleUpdate_AGoodOverviewDoesNotHideAFailedTabRead(t *testing.T) {
 	m := Main_initWith("tab=logs").V0
 	failedLogs := rt.SkyResult[Sky_Core_Error_Error, []State_LogEntry_R]{Tag: 1, ErrValue: Sky_Core_Error_unavailable("console API /_sky/console/api/logs answered HTTP 500")}
-	m = Main_update(State_Msg_GotLogs(any(m.Gen), any(failedLogs)), m).V0
+	m = Main_update(State_Msg_GotLogs(m.Gen, failedLogs), m).V0
 	if m.LastError == "" {
 		t.Fatal("a failed logs read shows no error")
 	}
 	okOverview := rt.SkyResult[Sky_Core_Error_Error, State_Overview_R]{OkValue: State_emptyOverview()}
-	m = Main_update(State_Msg_GotOverview(any(okOverview)), m).V0
+	m = Main_update(State_Msg_GotOverview(okOverview), m).V0
 	if m.LastError == "" {
 		t.Fatal("the overview read's answer cleared the logs read's error")
 	}
 	okLogs := rt.SkyResult[Sky_Core_Error_Error, []State_LogEntry_R]{}
-	m = Main_update(State_Msg_GotLogs(any(m.Gen), any(okLogs)), m).V0
+	m = Main_update(State_Msg_GotLogs(m.Gen, okLogs), m).V0
 	if m.LastError != "" {
 		t.Fatalf("a good logs read did not clear its own error: %q", m.LastError)
 	}

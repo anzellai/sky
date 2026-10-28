@@ -61,10 +61,10 @@ fn every_stdlib_module_body_type_checks() {
 /// `ToolCall` witness must be refused, as it is in a user module.
 #[test]
 fn a_record_literal_missing_a_field_in_a_stdlib_body_is_refused() {
-    let from = "arguments = \"\", continuation = Nothing }";
+    let from = "arguments = \"\", continuation = Nothing } ]";
     let world = overlay("Std.Ai.Agent", |src| {
         assert_eq!(src.matches(from).count(), 1, "mutation site moved");
-        src.replacen(from, "arguments = \"\" }", 1)
+        src.replacen(from, "arguments = \"\" } ]", 1)
     });
     let report = check_stdlib_modules(&world);
     let agent = report

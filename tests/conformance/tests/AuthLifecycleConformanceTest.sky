@@ -31,16 +31,18 @@ shortSecret =
     Secret.fromString "tooShort"
 
 
-slidingWindow : { windowSeconds : Int
-, maxLifetimeSeconds : Int
-}
+slidingWindow :
+    { windowSeconds : Int
+    , maxLifetimeSeconds : Int
+    }
 slidingWindow =
     { windowSeconds = 900, maxLifetimeSeconds = 86400 }
 
 
-invertedWindow : { windowSeconds : Int
-, maxLifetimeSeconds : Int
-}
+invertedWindow :
+    { windowSeconds : Int
+    , maxLifetimeSeconds : Int
+    }
 invertedWindow =
     { windowSeconds = 86400, maxLifetimeSeconds = 900 }
 

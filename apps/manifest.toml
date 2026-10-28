@@ -169,6 +169,7 @@ tier = "T1"
 owns = [
     "sky-bundled/console — 5,746 lines linked into every emitted binary",
     "sky-bundled/doc — backs `sky doc --serve`",
+    "sky-bundled/ai — backs `sky ai provision | pull | ps | start | stop`",
 ]
 
 # ---------------------------------------------------------------------------

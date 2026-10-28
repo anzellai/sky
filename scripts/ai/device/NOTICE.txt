@@ -1,0 +1,16 @@
+Sky device engine (sky-llama-b11200)
+
+This bundle is the Std.Ai.Device engine of the Sky programming language:
+sky_llama.cpp (Sky, MIT licence) compiled over the following third-party
+software. Each keeps its own licence.
+
+- llama.cpp and ggml, build b11200 (https://github.com/ggml-org/llama.cpp):
+  MIT licence, copyright (c) 2023-2026 The ggml authors. See LICENSE-llama.cpp.
+- nlohmann/json, vendored by llama.cpp (https://github.com/nlohmann/json):
+  MIT licence, copyright (c) 2013-2026 Niels Lohmann.
+- The browser builds link the Emscripten runtime (https://emscripten.org,
+  version 6.0.12): MIT licence and University of Illinois/NCSA Open Source
+  Licence, copyright (c) 2010-2026 Emscripten authors.
+- The WebGPU browser build links emdawnwebgpu from Dawn
+  (https://dawn.googlesource.com/dawn, release v20260423.175430): BSD
+  3-Clause licence, copyright 2017-2026 The Dawn and Tint Authors.

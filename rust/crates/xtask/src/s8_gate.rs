@@ -136,6 +136,11 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
         if skip {
             continue;
         }
+        // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+        // from CI in general; skip every `crate::ci_excluded` example by name.
+        if crate::ci_excluded::is_ci_excluded_path(&path) {
+            continue;
+        }
         if path.is_dir() {
             collect_sky(&path, out);
         } else if path.extension().and_then(|e| e.to_str()) == Some("sky") {

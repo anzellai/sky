@@ -1,0 +1,106 @@
+module Main exposing (main)
+
+-- A Sky.Spa app whose server arm's task opens a server effect and then asks
+-- the device slot (`Std.Ai.Device` on the server answers as the slot), and
+-- whose client arm asks the device alone. The split runs the first on the
+-- server and the second in the client
+-- (rust/crates/project/tests/spa_ai_device_mixed.rs).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Log as Log
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Input as Input
+import Std.Ai.Device as Device
+import Assist
+
+type alias Model =
+    { status : String }
+
+type Msg
+    = Check
+    | Checked (Result Error String)
+    | Prepare
+    | Prepared (Result Error String)
+
+
+describe : Device.Status -> String
+describe s =
+    case s of
+
+        Device.Ready r ->
+            "ready:" ++ Device.backendText r.backend
+
+        Device.NotDownloaded r ->
+            "not-downloaded:" ++ Device.backendText r.backend
+
+        Device.Downloading _ ->
+            "downloading"
+
+        Device.ServerSide _ ->
+            "server"
+
+        Device.Unsupported _ ->
+            "unsupported"
+
+
+-- The server logs, then reads the slot's status as the server sees it.
+serverCheck : Task.Task Error String
+serverCheck =
+    Log.println "checking" |> Task.andThen (\_ -> Device.status "probe")
+        |> Task.map describe
+
+
+init : () -> ( Model, Cmd.Cmd Msg )
+init _ =
+    ( { status = "starting" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd.Cmd Msg )
+update msg model =
+    case msg of
+
+        Check ->
+            ( model, Cmd.perform serverCheck Checked )
+
+        Checked (Ok s) ->
+            ( { model | status = s }, Cmd.none )
+
+        Checked (Err e) ->
+            ( { model | status = Error.toString e }, Cmd.none )
+
+        Prepare ->
+            ( model
+            , Cmd.perform (Device.prepare "probe" |> Task.map describe) Prepared
+            )
+
+        Prepared (Ok s) ->
+            ( { model | status = s }, Cmd.none )
+
+        Prepared (Err e) ->
+            ( { model | status = Error.toString e }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text model.status
+        , Input.button [] { onPress = Just Check, label = Ui.text "check" }
+        , Input.button [] { onPress = Just Prepare, label = Ui.text "prepare" }
+        ]
+
+
+main =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound ()
+        |> App.run

@@ -1,0 +1,121 @@
+module Main exposing (main)
+
+{-| Generate a support FAQ dataset with a teacher model, keep the rows the
+judge passes, scrub them and freeze a content-addressed version.
+
+    sky run src/Main.sky              print the plan: every teacher call, offline
+    sky run src/Main.sky -- generate  run it on the local model (or the slot's remote model)
+    sky test tests/FaqTest.sky        run it offline, answered by tests/mocks/
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Dict as Dict
+import Sky.Core.System as System
+import Std.Log exposing (println)
+import Std.Ai.Dataset as Dataset exposing (Instruction)
+import Std.Ai.Dataset.Scrub as Scrub
+import Std.Ai.Dataset.Synthetic as Synthetic exposing (Stop(..))
+import Faq
+
+
+main : Task Error ()
+main =
+    System.args () |> Task.andThen run
+
+
+run : List String -> Task Error ()
+run args =
+    case args of
+
+        [ "generate" ] ->
+            generate
+
+        _ ->
+            showPlan
+
+
+showPlan : Task Error ()
+showPlan =
+    println
+        (String.join
+            "\n"
+            ("plan for support-faq (seed 7): at most 12 teacher calls"
+                :: List.map
+                       (\r ->
+                           "  call " ++ String.fromInt r.index ++ "  seed "
+                               ++ String.fromInt r.seed
+                               ++ "  "
+                               ++ r.topic
+                               ++ " / "
+                               ++ r.persona)
+                       (List.take 6 (Synthetic.plan Faq.generator))
+                ++ [ "run `sky run src/Main.sky -- generate` to call the teacher"
+                   ]))
+
+
+generate : Task Error ()
+generate =
+    Synthetic.run Faq.generator
+        |> Task.andThen
+               (\gen ->
+                   showReport gen.report
+                       |> Task.andThen
+                              (\_ ->
+                                  Synthetic.toDataset gen
+                                      |> Dataset.scrub
+                                             (Scrub.forInstruction Scrub.defaults)
+                                      |> Dataset.split
+                                             Dataset.defaultSplit
+                                             .prompt
+                                      |> Dataset.freeze
+                                             Faq.versions
+                                             Dataset.instructionCodec))
+        |> Task.andThen
+               (\v ->
+                   let
+                       m = Dataset.manifest v
+                   in
+                       println
+                           ("froze " ++ m.name ++ " sha256:" ++ m.digest ++ " ("
+                               ++ String.fromInt m.rows
+                               ++ " rows)"))
+
+
+showReport : Synthetic.Report -> Task Error ()
+showReport r =
+    println
+        (String.join
+            "\n"
+            [ "teacher " ++ r.teacher
+            , "calls " ++ String.fromInt r.calls ++ ", judge calls "
+                  ++ String.fromInt r.judgeCalls
+            , "generated " ++ String.fromInt r.generated ++ ", kept "
+                  ++ String.fromInt r.kept
+            , "dropped: duplicates " ++ String.fromInt r.duplicates
+                  ++ ", unparsed "
+                  ++ String.fromInt r.unparsed
+                  ++ ", judged out "
+                  ++ String.fromInt r.judgedOut
+                  ++ ", filtered "
+                  ++ String.fromInt
+                         (Dict.foldl (\_ n acc -> acc + n) 0 r.filtered)
+            , "stopped: " ++ stopText r.stop
+            ])
+
+
+stopText : Stop -> String
+stopText s =
+    case s of
+
+        TargetReached ->
+            "target reached"
+
+        CallLimit ->
+            "call limit"
+
+        BudgetReached ->
+            "budget reached"

@@ -6,9 +6,13 @@
 //! Sky over `Std.Decimal`, never a float. It prints:
 //!
 //!     trace spans=2 total=1.05
+//!     progress steps=2 peak1=1089914008 eval1=2.5 peak2=1100000000
 //!
 //! which proves `record` persists a trace, `spanCount` counts the calls, and
-//! `totalCost` sums the per-call costs exactly. Needs a `go` toolchain. No network.
+//! `totalCost` sums the per-call costs exactly; and that a training step's
+//! peak memory is recorded once (a replayed step adds no row and keeps the
+//! first peak) while a replay fills the eval loss the first write lacked.
+//! Needs a `go` toolchain. No network.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -78,6 +82,10 @@ fn trace_records_and_rolls_up_cost_exactly() {
     assert!(
         stdout.contains("trace spans=2 total=1.05"),
         "two traces should record and roll up to an exact 1.05 total; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("progress steps=2 peak1=1089914008 eval1=2.5 peak2=1100000000"),
+        "a replayed step records its peak memory once and fills its eval loss; got:\n{stdout}"
     );
 
     let _ = std::fs::remove_dir_all(&dir);

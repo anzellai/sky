@@ -209,6 +209,10 @@ A fixture is one JSON file under `tests/mocks/` (or the dir named by
   (case-insensitive otherwise).
 - **`match.urlContains`** — optional substring of the full URL. Empty or absent
   matches any URL, so one fixture can cover a whole host or path prefix.
+- **`match.bodyContains`** — optional substring of the request body. Empty or
+  absent matches any body. It tells apart two calls to the same URL: the turns
+  of a model tool loop, or a teacher model asked about different topics
+  (`"bodyContains": "Topic: refunds"`, [`../ai/dataset.md`](../ai/dataset.md)).
 - **`status`** — the response status; `0` or absent means `200`.
 - **`body`** — the response body, verbatim. Paste a real captured payload here.
 
@@ -227,15 +231,18 @@ fail-closed error names the method, the URL, the mocks dir, and the exact
   case (a `create` call and a `retrieve` call have different URLs).
 - **The failure outcome comes for free** — omit the fixture (fail-closed), or
   give it a `status` of `402`/`500` with an error `body`.
-- **The same URL, different outcomes** — keep separate mock directories
+- **The same URL, a different request body** — one fixture each, with
+  `match.bodyContains`. Put the more specific fixture first (the first match
+  wins, in filename order).
+- **The same URL and body, different outcomes** — keep separate mock directories
   (`tests/mocks/success/`, `tests/mocks/pending/`, `tests/mocks/failure/`) and
   select one per run with `SKY_TEST_MOCKS_DIR`. Fixtures load once per process,
   so this switch is per-run.
 
 Two shapes are **not** expressible today, and are worth knowing before you design
-around them: two responses for the **same** method+URL told apart by request
-**body**/query/headers (the matcher does not read the body), and a **sequenced**
-response (first call `pending`, second `succeeded`). Use distinct URLs or
+around them: two responses told apart by request **query/headers** alone (the
+matcher reads the method, the URL and the body), and a **sequenced** response
+(first call `pending`, second `succeeded`). Use distinct URLs, distinct bodies or
 separate directories until the matcher grows those fields.
 
 ### Determinism (opt-in, decoupled from test mode)
@@ -258,6 +265,63 @@ database. A DSN in the environment (`DATABASE_URL`) opts back out — the test t
 targets that database. An empty `DATABASE_URL` (`DATABASE_URL=`, the usual way to
 clear one in CI) is no DSN: the run still gets its throwaway database.
 
+### Training runs (`Std.Ai.Train`)
+
+In test mode a `Std.Ai.Train` run starts no trainer, installs no toolchain and
+downloads nothing. The durable workflow runs for real on the test database,
+and its launch step writes what the scripted Fake trainer writes: the protocol
+lines, verified checkpoints and a real, no-op PEFT adapter. The GGUF
+conversion and the registry steps run too. So `Train.drive` returns an
+adapter in milliseconds, and a test can assert the steps, the losses, the
+relaunches and the registered version.
+
+Put `SKY_AI_TRAIN_BACKEND=fake` in `.env.test`, so the test does not depend on
+the host's accelerator. `Train.fakeCrashAt n` makes the first attempt stop
+after step n with no terminal line, so a test sees the relaunch from the newest
+checkpoint. `examples/73-ai-train/tests/TrainExampleTest.sky` trains, crashes,
+resumes, registers and serves an adapter this way. See
+[`../ai/train.md`](../ai/train.md#tests).
+
+### Google Cloud (`Std.Ai.Cloud.Google`, `Train.Vertex`, `Std.Ai.Serve`)
+
+Put `SKY_AI_GCP_ENDPOINT=http://sky-gcp.invalid` in `.env.test`. In test mode
+every Google Cloud call to that host is answered in process by an emulator in
+the runtime: OAuth and the metadata server, Cloud Storage (with generation
+preconditions), Vertex AI custom jobs (which run the Fake trainer's protocol
+into the staging bucket), Cloud Run services and their operations, IAM,
+Artifact Registry, Cloud Build, Cloud Quotas, the Cloud Billing catalogue and
+Cloud Logging. Its state lives for the test process, so a test can launch,
+watch, cancel, deploy and tear down, and assert what is left.
+`examples/74-ai-cloud/tests/CloudTest.sky` trains on Vertex AI, registers,
+deploys the tier and calls it this way.
+
+When several processes must share one emulated project (an app and the
+`sky ai` verbs, as the cargo flows do), run `runtime-go/rt/testdata/fakegcp`
+on a loopback port and point `SKY_AI_GCP_ENDPOINT` at it. Test mode lets
+requests to that one loopback host through and keeps every other request
+mocked.
+
+The paid tests on a real project are `rust/crates/sky/tests/ai_gcp_live.rs`.
+They need `Need::GcpLive`: they fail unless the wrapper set
+`SKY_AI_GCP_LIVE=1` (or `SKY_LIVE_TESTS=skip`). Run them only
+through `scripts/ai/gcp-live.sh`, which checks the cost ledger before it
+starts, labels every resource, tears everything down on exit and fails the
+run if anything is left. CI runs them on manual dispatch only
+(`.github/workflows/ai-cloud-live.yml`), never on a commit or a release.
+
+### On-device slots (`Std.Ai.Device`)
+
+A test runs on the server, so `Device.provider "<slot>"` is the slot itself:
+its calls are answered by `tests/mocks/` like any slot's, `Device.status`
+reports `ServerSide OnTheServer`, and `Device.recordPrompts` with `Eval.prompts`
+followed by `Device.replay` and `Eval.runAs` scores a recording offline.
+`examples/75-ai-everywhere/tests/NotesTest.sky` does all three. The device
+itself (the browser worker, the iOS and Android apps, the Mac app) is tested
+by `scripts/ai-device-e2e.sh` and `rust/crates/sky/tests/ai_device_native_flow.rs`
+on a synthetic model (`go run ./cmd/sky-tiny-gguf <dir>` in `runtime-go/`),
+set through the slot's own variables (`SKY_AI_<SLOT>_MODEL`). See
+[`../ai/device.md`](../ai/device.md#testing).
+
 ### Log capture
 
 Set **`SKY_TEST_LOG_CAPTURE=<path>`** and the app's `Std.Log` output is written
@@ -275,6 +339,26 @@ code is reproducible; the outbound "send email" call is intercepted by a fixture
 code and asserts the account is active. The only thing that stays mocked is a
 real message actually delivered by a third party — automated tests prove the
 app's handling of the flow, never a provider's delivery.
+
+### AI models in test mode, and `sky ai --test-mode`
+
+The step-by-step guide for the whole AI lifecycle, from the offline checks to
+the paid live runs, is [`../ai/testing-guide.md`](../ai/testing-guide.md).
+
+A model slot (`Std.Ai.Endpoint`) is mocked like any other outbound call: in
+test mode a local slot's calls go to `http://sky-ai-local.invalid/<slot>/v1/…`
+and are answered by `tests/mocks/` fixtures (`match.bodyContains` picks the
+answer per question, model or topic), so no engine starts and nothing is
+downloaded. An eval suite is then an ordinary test:
+`Pipeline.evalSuite Ai.pipeline "support" |> Task.run |> Test.ok`
+([`../ai/pipeline.md`](../ai/pipeline.md)).
+
+The project-mode `sky ai` verbs take `--test-mode`: they load `.env.test` and
+answer model calls from the same fixtures, so CI can run `sky ai eval <suite>
+--test-mode` and `sky ai data freeze <dataset> --test-mode` with no engine.
+Unlike `sky test`, a `sky ai` verb keeps the project's own database (it acts on
+the project's data), unless `--db` names another.
+`examples/72-ai-support-desk` runs its whole lifecycle this way.
 
 ## Property-based fuzzing — `sky fuzz [--target <t>]`
 

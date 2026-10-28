@@ -1606,9 +1606,9 @@ jobs:
       # form per-PR is what makes the tag gate boring. (conformance's count also
       # drifts tier-only, but it needs an installed sky-out/sky to run the suites,
       # so it stays in the nightly/release tier until config-gates installs one.)
-      - name: 'Gate — cli-verbs + analytics + roundtrip/shared-world (fast T1 counting gates)'
+      - name: 'Gate — cli-verbs + analytics + roundtrip/shared-world + fmt-clean (fast T1 counting gates)'
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --only cli-verbs,analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index,roundtrip,shared-world
+        run: cargo run --release --locked -q -p xtask -- harness --only cli-verbs,analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index,roundtrip,shared-world,fmt-clean
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -2478,6 +2478,233 @@ jobs:
           source ../scripts/lib/cargo-target.sh
           SKY_BIN="$(cargo_bin_path "$PWD" sky --release)" ../scripts/conformance.sh
 
+  # ── Std.Ai: the real managed engine, zero configuration ─────────────────
+  # ai_local_live.rs builds a Sky program whose code names only the pinned
+  # development model, runs it with no SKY_AI_* variable, and asserts a chat
+  # answer and an embedding from the real llama-server. It also runs a draft
+  # model (the development model drafting for itself, a draft of another
+  # vocabulary refused typed) and named LoRA adapters chosen per call (on the
+  # synthetic Qwen2 model `go run ./cmd/sky-tiny-gguf` writes, no download). The pinned engine
+  # build (~17 MB) and the Qwen2.5 0.5B Q4_0 model (~430 MB) live in the
+  # Std.Ai home, cached here and keyed on the file that pins them, so a pin
+  # change refetches and anything else restores. The test is excluded from the
+  # sliced `test-sky` runs (rust/.config/nextest.toml, default-filter) so the
+  # model is fetched and cached in this one job only. Measured locally: a
+  # cached run is under 10 s; ×1.5 and the build ≈ 25 min.
+  ai-local-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+      SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        id: setup-go
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Restore the Go build + module cache (saved on main only)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
+      # Only main writes a cache (restore everywhere): a branch saving its
+      # own copy evicts main's entries from the repository budget.
+      - name: Cache the Std.Ai engine and development model (saved on main only)
+        id: ai-home
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ github.workspace }}/.sky-ai/engines
+            ${{ github.workspace }}/.sky-ai/models
+          key: sky-ai-home-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go') }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - name: sqlite3 and brotli for the sky crate's tests
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
+      - name: Std.Ai live end to end (real llama-server, zero configuration)
+        working-directory: rust
+        env:
+          SKY_LIVE_TESTS: require
+        run: cargo test -p sky --locked --test ai_local_live -- --nocapture
+      - name: Save the Std.Ai home (main only)
+        if: always() && github.ref == 'refs/heads/main' && steps.ai-home.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ github.workspace }}/.sky-ai/engines
+            ${{ github.workspace }}/.sky-ai/models
+          key: ${{ steps.ai-home.outputs.cache-primary-key }}
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # ── Std.Ai.Train: real trainer processes, no Python for Mlx or Fake ─────
+  # ai_train_live.rs trains with the Fake backend, which the fixture app runs
+  # by starting itself again as the trainer (runtime-go/rt/ai_fake_trainer.go),
+  # kills the first trainer after step 3 and asserts the relaunch from the
+  # newest checkpoint, converts the adapter to GGUF, serves it on the real
+  # llama-server and refuses it on a forged base. It also runs the native
+  # trainer's contract (scripts/ai/trainer/test-trainer.sh) on the tiny model
+  # with the linux-x64 CPU bundle, which .github/actions/sky-trainer provides
+  # (the pinned bundle once ai_pins.go pins it, else the newest
+  # ai-trainer-bundles.yml artifact). The Unsloth driver's Python suites run
+  # under the pinned CPython (go test -tags ailive). The Std.Ai home (engine,
+  # model, CPython, trainers) is cached on the pins (ai_pins.go). Excluded
+  # from the sliced runs (rust/.config/nextest.toml).
+  ai-train-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+      SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        id: setup-go
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Restore the Go build + module cache (saved on main only)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
+      # Only main writes a cache (restore everywhere): a branch saving its
+      # own copy evicts main's entries from the repository budget.
+      - name: Cache the Std.Ai home (engine, model, CPython, trainers) (saved on main only)
+        id: ai-home
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ github.workspace }}/.sky-ai/engines
+            ${{ github.workspace }}/.sky-ai/models
+            ${{ github.workspace }}/.sky-ai/python
+            ${{ github.workspace }}/.sky-ai/trainers
+          key: sky-ai-train-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go') }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - name: sqlite3 and brotli for the sky crate's tests
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
+      - uses: ./.github/actions/sky-trainer
+        with:
+          platform: linux-x64
+          token: ${{ github.token }}
+      - name: Std.Ai.Train live (the Fake trainer in the runtime, the native trainer on the tiny model)
+        working-directory: rust
+        env:
+          SKY_LIVE_TESTS: require
+        run: cargo test -p sky --locked --test ai_train_live -- --nocapture
+      - name: The Unsloth driver's Python suites under the pinned CPython
+        working-directory: runtime-go
+        env:
+          SKY_LIVE_TESTS: require
+        run: go test -tags ailive ./rt -run TestTheDriverSuitesPassUnderThePinnedCPython -count=1 -timeout 15m -v
+      - name: Save the Std.Ai home (main only)
+        if: always() && github.ref == 'refs/heads/main' && steps.ai-home.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ github.workspace }}/.sky-ai/engines
+            ${{ github.workspace }}/.sky-ai/models
+            ${{ github.workspace }}/.sky-ai/python
+            ${{ github.workspace }}/.sky-ai/trainers
+          key: ${{ steps.ai-home.outputs.cache-primary-key }}
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # ── Std.Ai.Train: a real MLX QLoRA run on Apple silicon ─────────────────
+  # ai_train_native_live.rs trains the dev base with the native trainer
+  # (sky-trainer, MLX through mlx-c) for 24 steps under a 2.5 GB cap, SIGKILLs
+  # the trainer after its first checkpoint and asserts the durable relaunch
+  # from it, then serves and evaluates the adapter against the base. The
+  # trainer is the darwin-arm64 bundle .github/actions/sky-trainer provides
+  # (the pinned bundle once ai_pins.go pins it, else the newest
+  # ai-trainer-bundles.yml artifact). GitHub's macOS runners have no usable
+  # Metal device for MLX, so SKY_AI_ACCEL=cpu runs MLX on the CPU (the same
+  # code path; slower). The Std.Ai home is cached on the pins.
+  ai-train-mlx-live:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    env:
+      SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
+      SKY_AI_ACCEL: cpu
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.26'
+          cache: false
+      # Only main writes a cache (restore everywhere): a branch saving its
+      # own copy evicts main's entries from the repository budget.
+      - name: Cache the Std.Ai home (engine, model, trainer, base) (saved on main only)
+        id: ai-home
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ github.workspace }}/.sky-ai/engines
+            ${{ github.workspace }}/.sky-ai/models
+            ${{ github.workspace }}/.sky-ai/trainers
+            ${{ github.workspace }}/.sky-ai/bases
+          key: sky-ai-train-mlx-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go', 'sky-stdlib/Std/Ai/Train.sky') }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: rust
+          shared-key: sky-macos
+          save-if: 'false'
+      - name: brotli for the sky crate's tests
+        run: command -v brotli >/dev/null || brew install brotli
+      - uses: ./.github/actions/sky-trainer
+        with:
+          platform: darwin-arm64
+          token: ${{ github.token }}
+      - name: Std.Ai.Train live (MLX on Apple silicon)
+        working-directory: rust
+        env:
+          SKY_LIVE_TESTS: require
+        run: cargo test -p sky --locked --test ai_train_native_live -- --nocapture
+      - name: Save the Std.Ai home (main only)
+        if: always() && github.ref == 'refs/heads/main' && steps.ai-home.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ github.workspace }}/.sky-ai/engines
+            ${{ github.workspace }}/.sky-ai/models
+            ${{ github.workspace }}/.sky-ai/trainers
+            ${{ github.workspace }}/.sky-ai/bases
+          key: ${{ steps.ai-home.outputs.cache-primary-key }}
+
   # ONE check that is true iff every job above succeeded, plus the tier-budget
   # assertion that per-job `timeout-minutes` structurally cannot make (§8.2).
   #
@@ -2525,6 +2752,9 @@ jobs:
       - macos-determinism-3
       - macos-behaviour
       - macos-conformance
+      - ai-local-live
+      - ai-train-live
+      - ai-train-mlx-live
     # `always()` so a FAILED dependency still reaches the assertion below and is
     # reported as a failure here. Without it this job would be SKIPPED when an
     # upstream job failed, and a skipped required check is treated as neutral by
@@ -2582,8 +2812,8 @@ jobs:
           # REST-API name contains a space (a `matrix` leg reports as
           # `name (leg)`) could never match one. That is why the licence gate is
           # two explicitly-named jobs rather than one two-legged matrix.
-          SETUP_INDEPENDENT_JOBS: 'test-ty test-rest parity-accept parity-reject repro repro-2 codegen-build behaviour-docs config-gates lsp-fuzz integration-postgres integration-postgres-2 build-perf build-perf-2 build-corpus build-corpus-2 build-corpus-3 erasure-fuzz erasure-fuzz-2 test-sky test-sky-2 test-sky-3 test-sky-4 test-sky-5 test-sky-6 test-sky-7 test-sky-8 test-sky-9 runtime-rt licence-gate-linux'
-          MACOS_JOBS: 'macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour macos-conformance'
+          SETUP_INDEPENDENT_JOBS: 'test-ty test-rest parity-accept parity-reject repro repro-2 codegen-build behaviour-docs config-gates lsp-fuzz integration-postgres integration-postgres-2 ai-local-live ai-train-live build-perf build-perf-2 build-corpus build-corpus-2 build-corpus-3 erasure-fuzz erasure-fuzz-2 test-sky test-sky-2 test-sky-3 test-sky-4 test-sky-5 test-sky-6 test-sky-7 test-sky-8 test-sky-9 runtime-rt licence-gate-linux'
+          MACOS_JOBS: 'macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour macos-conformance ai-train-mlx-live'
         run: |
           set -euo pipefail
           gh api \

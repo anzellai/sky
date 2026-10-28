@@ -42,6 +42,21 @@ Auto-instrumented (Tier 1 — always on):
   that collector (Tempo / Jaeger / Honeycomb / Datadog / Cloud
   Trace — anything that speaks OTLP).
 
+The endpoint is a base URL. Sky keeps its path and appends `v1/traces`, as
+the OpenTelemetry specification says: `https://otlp.example/otlp` sends
+spans to `https://otlp.example/otlp/v1/traces`. (Before this, Sky kept only
+the host and port of a value set through `Sky.Config.withTelemetry`, so a
+collector behind a path saw no spans.) `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
+is a full traces URL and is used as given.
+
+**OTLP metrics are pushed for the GPU tier signals only.** A
+`Std.Ai.Serve` tier pushes its autoscale signals (`sky_ai_tier_*`,
+`sky_ai_engine_*`) as OTLP/HTTP protobuf to `<base>/v1/metrics`, or to
+`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, on each 15-second scrape. The app's
+own counters, gauges and histograms are not pushed: they stay on
+`/_sky/metrics` and in the console. See
+[ai/serve.md](ai/serve.md#the-signals-in-opentelemetry) for the metric names.
+
 ### The Console behind a strict Content-Security-Policy
 
 The Sky Console at `/_sky/console` is a Sky.Live sub-app. It works behind a
@@ -103,7 +118,7 @@ cross-compile (`CGO_ENABLED=0 GOOS=linux go build .`), a Dockerfile or a custom
 CI step. The same values are served at `/_sky/buildinfo`:
 
 ```json
-{"commit":"4832428108f7","builtAt":"2026-09-21T14:13:20Z","skyVersion":"v0.27.0","goVersion":"go1.26.1","source":"ci:GITHUB_SHA"}
+{"commit":"4832428108f7","builtAt":"2026-09-21T14:13:20Z","skyVersion":"v0.28.0","goVersion":"go1.26.1","source":"ci:GITHUB_SHA"}
 ```
 
 The identity is resolved once, at the project root (the directory with your
@@ -128,7 +143,7 @@ would change the client's bytes and its hashed file name on every commit.
   every file the commit time, so an archive build reports its commit time.
   It is never the wall clock, so a rebuild of unchanged sources writes the same
   file and Go links nothing again.
-- **Sky version**: the compiler's release version (`v0.27.0`): the
+- **Sky version**: the compiler's release version (`v0.28.0`): the
   `[workspace.package] version` in `rust/Cargo.toml` it was built from, also
   for a compiler built from source.
 - **Source**: where the commit came from, as above. `ldflags` means a user's own
@@ -162,7 +177,7 @@ missed everything older.
 
 | Control | Where | What it does | Msg | Read / parameters |
 |---|---|---|---|---|
-| Tab buttons (Overview, Metrics, Logs, Traces, Errors, Analytics) | every page | shows the tab, reads its data at once, puts `tab=` in the URL | `SelectTab` | the tab's endpoint |
+| Tab buttons (Overview, Metrics, Logs, Traces, Errors, Analytics, AI) | every page | shows the tab, reads its data at once, puts `tab=` in the URL | `SelectTab` | the tab's endpoint |
 | Range chips (15m, 1h, 24h, 7d, All) | Logs, Traces, Errors, Analytics | narrows the tab to the range, reads it again at once, puts `range=` in the URL (24h is the default and is left out) | `SelectRange` | `range=15m\|1h\|24h\|7d\|all` |
 | Search box (global) | Logs, Traces, Errors | case-insensitive search: logs by message, route, request id, session, subapp, error; traces by span name or trace id (whole traces kept); errors by message | `GlobalQuery` | `q=` |
 | Level toggles (DEBUG, INFO, WARN, ERROR) | Logs | shows only the levels left on; debug is off by default; all off shows nothing | `LogFilterToggleLevel` | `level=info,warn,error` (absent when all four are on, `none` when all are off) |
@@ -173,6 +188,9 @@ missed everything older.
 | Traces search box, clear | Traces | searches span names and trace ids; clear empties it | `TraceFilterQuery` | a second `q=` on `/traces` |
 | Service chips, service cards, "All services" | hub: every tab | scopes every read to one service, puts `service=` in the URL | `SelectService` | the reader's service filter |
 | Auto-refresh | every tab | reads the active tab again every 3 s (Logs 1.5 s, Errors 5 s) | `Tick` | the tab's endpoint |
+| Outcome chips (All, Failed) | AI, recent model calls | shows every call, or only the failed ones, and puts `calls=failed` in the URL | `AiShowFailed` | `calls=failed` on `/ai` |
+| Slot chip (`slot <name>`), All slots | AI, slots | shows only that slot's calls (the slots stay listed), puts `slot=` in the URL; All slots clears it | `AiPickSlot` | `slot=` on `/ai` |
+| Eval run row (`eval <suite>`) | AI, eval runs | opens the run's cases (each verdict and reason) and its gate failures, puts `eval=<digest>` in the URL; a second click closes them | `AiOpenEval` | none (the run is already read) |
 | Sign out | header, token mode only | ends the console session (`/_sky/console/_logout`) and shows the sign-in form | link | |
 
 A failed read shows a red "Telemetry read failed: …" bar under the header; the
@@ -180,9 +198,9 @@ next good answer from the same read clears it. Every list has an empty state
 ("No log entries match the current filter.", "No traces match the filter.",
 "No errors recorded — nice work.", "No events captured yet.").
 
-Overview and Metrics are process snapshots, so they show no range chips; the
-Analytics tab has no text search. The URL carries `tab`, `range`, `q` and
-`service`: a console link opens on the state it names, through the sign-in form
+Overview, Metrics and AI are process snapshots, so they show no range chips; the
+Analytics and AI tabs have no text search. The URL carries `tab`, `range`, `q`,
+`service`, and on the AI tab `calls`, `slot` and `eval`: a console link opens on the state it names, through the sign-in form
 when there is one (the form returns to the link). "Sign out" shows only under
 `SKY_CONSOLE_AUTH=token`: in dev mode there is no sign-in, and under `app` the
 app's own sign-in admits the user again, so they sign out of the app.
@@ -192,6 +210,30 @@ tasks and the spans they open (its loopback reads included) are not written to
 the telemetry it shows. Before v0.27.8 an open console tab added about one
 `msg_dispatch GotLogs` line a second to the host app's 10k-line log ring, and
 its own spans and `sky_live_msg_*` series to the Traces and Metrics tabs.
+
+The **AI** tab (v0.28.0) reads `/_sky/console/api/ai`: the `Std.Ai` slots the
+process resolved (each setting with its source, `env`, `code` or `default`;
+a key shows as `(secret)` and a URL as scheme, host and port), its local
+engines, its last 200 model calls (slot, kind, outcome, latency, token counts)
+and the last 50 `Std.Ai.Eval` runs (this process's, and the newest ones in the
+app's database, read when the tab asks, so a `sky ai eval` run in CI or a
+terminal appears too; each run says `process` or `database`), and the model
+registry: each
+`Std.Ai.Registry` model the process read or changed, with its aliases, and on
+a click (`model=<name>` in the URL) its versions, alias log and eval history.
+A Training section lists the `Std.Ai.Train` runs the process touched and the
+runs under `.sky/ai/runs`: each with its status, its step of the total, its
+latest loss and eval loss, its relaunches (and the step it resumed from), its
+last checkpoint, the version it registered, the error of a failed or cancelled
+run, and a small loss curve (at most 200 points). A run on Vertex AI also
+shows its job's state and its spend against its budget. A row holds no
+dataset text. A "GPU tiers" section shows each `Std.Ai.Serve` tier the
+process runs: whether it is ready, the adapters it holds, the requests in
+flight, the loads and unloads, and vLLM's running and waiting requests and KV
+cache use. The tier also answers `/metrics` in Prometheus text
+(`sky_ai_tier_*`, `sky_ai_engine_*`, see [`ai/serve.md`](ai/serve.md)).
+The rings hold no prompt, no answer and no secret. The hub has no AI data, so its AI tab is empty. Guide:
+[`ai/local.md`](ai/local.md#in-the-sky-console).
 
 `scripts/console-controls-e2e.sh` operates every control above in Chromium and
 WebKit, against the embedded console in production shape (token sign-in,
@@ -296,11 +338,13 @@ opt back in with `SKY_TRACE_HONOR_REMOTE_PARENT=1`.
 
 | Env | Default | Meaning |
 |---|---|---|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | (unset) | Export OTLP here in addition to the in-process ring. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | (unset) | Export OTLP here in addition to the in-process ring. A base URL: its path is kept and `v1/traces` (or `v1/metrics`) is appended. |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` / `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | (unset) | The full URL for one signal, used as given. Wins over the base. Metrics are the GPU tier signals only. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | (unset) | `grpc` disables OTLP export with a warning: Sky sends HTTP/protobuf only. An endpoint on port 4317 does the same. |
 | `OTEL_TRACES_SAMPLER_ARG` | (mode default) | Fixed sample fraction `0.0–1.0`. |
 | `SKY_TRACE_HONOR_REMOTE_PARENT` | (unset) | `1` restores parent-based inheritance for *remote* `traceparent` sampling decisions. Set only behind a trusted head-sampling gateway — the default treats the inbound flag as untrusted and ratio-samples instead. |
-| `SKY_SERVICE_NAME` / `OTEL_SERVICE_NAME` | `sky-app` | `service.name` the backend groups by. |
-| `OTEL_EXPORTER_OTLP_HEADERS` | (unset) | Comma-separated `k=v` headers (auth tokens for managed collectors). |
+| `SKY_SERVICE_NAME` / `OTEL_SERVICE_NAME` / `K_SERVICE` | `sky-app` | `service.name` the backend groups by, first set wins. Traces, the GPU tier metrics and the console hub envelope carry the same one. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | (unset) | Comma-separated `k=v` headers (auth tokens for managed collectors). `OTEL_EXPORTER_OTLP_TRACES_HEADERS` / `_METRICS_HEADERS` add per-signal headers that win on a clash. |
 | `SKY_CONSOLE_DB_PATH` | (unset) | When set, dual-writes every log / metric / span to the SQLite file at this path so the bundled console mini-app can render history beyond the 10 k-line / 1 k-span in-RAM caps. WAL mode, 24 h log/span retention, 7 d metric retention. Unset keeps the pure in-RAM path. |
 | `SKY_TELEMETRY_AGGREGATION_WINDOW` | `0` (off) | A Go duration (e.g. `10s`). When `> 0`, **counter** metric rows are coalesced within the window: only the last cumulative value per `(name, labels)` is persisted, so a busy app writes one row per counter per window instead of one per interaction. Lossless for rate/delta reads — only sub-window time-resolution is lost. **Gauges are never coalesced** (intra-window peaks would be lost); histograms have their own knob below. Off by default because it changes the persisted-row resolution the remote SkyDeploy console sees; `10s` is the recommended production value on a busy Sky.Live app. |
 | `SKY_TELEMETRY_DB_CAPACITY` | (unset) | Operator-declared database capacity in human units (`100GB`, `1.5TB`, `512MB`, `100GiB`, or a bare byte count). The size report warns when the whole database exceeds 90% of it — the only "near full" signal available for a **remote** database, whose host disk the app cannot see. Unset → size + growth reported, no capacity danger flag. A malformed value logs one warning and disables the check (never silently). See "Database size report". |

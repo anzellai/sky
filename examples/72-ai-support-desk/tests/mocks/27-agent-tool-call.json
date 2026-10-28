@@ -1,0 +1,9 @@
+{
+  "match": {
+    "method": "POST",
+    "urlContains": "sky-ai-local.invalid/chat/",
+    "bodyContains": "Look up a ticket with ticket_status"
+  },
+  "status": 200,
+  "body": "{\"choices\": [{\"message\": {\"role\": \"assistant\", \"content\": null, \"tool_calls\": [{\"id\": \"call-1\", \"type\": \"function\", \"function\": {\"name\": \"ticket_status\", \"arguments\": \"{\\\"id\\\":1}\"}}]}}], \"usage\": {\"prompt_tokens\": 50, \"completion_tokens\": 8, \"total_tokens\": 58}}"
+}

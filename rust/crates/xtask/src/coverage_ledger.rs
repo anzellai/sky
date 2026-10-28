@@ -90,7 +90,7 @@
 //! `cover_new` fell, or when a surface is `weaker` without a `[[weakening]]`
 //! stanza naming it. An INCREASE is always fine and rewrites the file.
 
-use crate::harness::registry::{MutationKind, Tier, GATES};
+use crate::harness::registry::{MutationKind, Tier, CORPUS_SHARD_GATES, GATES};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -564,6 +564,31 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
         "periodic-loops-recover-per-cycle",
         &["runtime.periodic-goroutines"],
     ),
+    // v0.28.0 phase 3: a relaunched Std.Ai.Train trainer resumes from the
+    // newest verified checkpoint (runtime-go/rt/ai_train.go).
+    ("ai-train-resume", &["stdlib.Std.Ai.Train"]),
+    // v0.28.0 phase 4: a Vertex launch is exactly once across a lost journal
+    // row (sky-stdlib/Std/Ai/Train.sky), and the GPU tier hot-loads a
+    // promotion with no failed request (runtime-go/rt/ai_serve.go).
+    ("ai-train-exactly-once", &["stdlib.Std.Ai.Train"]),
+    ("ai-serve-hot-load", &["stdlib.Std.Ai.Serve"]),
+    // v0.28.0 phase 5: Std.Ai.Device (docs/ai/device.md).
+    ("ai-device-decide", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-no-silent-fallback", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-digest", &["stdlib.Std.Ai.Device"]),
+    (
+        "ai-stream-pieces",
+        &[
+            "stdlib.Std.Ai.Provider",
+            "stdlib.Std.Ai.Endpoint",
+            "stdlib.Std.Ai.Device",
+        ],
+    ),
+    ("ai-device-blob-allowlist", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-partition", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-privacy", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-csp", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-ios-sim", &["stdlib.Std.Ai.Device"]),
     (
         "live-time-every-mutex-survives-a-panic",
         &["runtime.periodic-goroutines", "skylive.session-sse-csrf"],
@@ -589,6 +614,9 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     ("coverage-ledger", &["meta.coverage-accounting"]),
     ("config-surface", &["meta.config-surface"]),
     ("kernel-members", &["meta.kernel-members"]),
+    // Every tracked .sky file in the product roots is `sky fmt`-clean: the
+    // formatter's output on real code is what users get.
+    ("fmt-clean", &["compiler.fmt"]),
     ("config-matrix", &["meta.config-effective-values"]),
     ("config-migration", &["meta.config-migration"]),
     ("config-migrate", &["meta.config-migrate"]),
@@ -1734,7 +1762,19 @@ fn inapplicable_proof_violations(
 /// false for `Blocked`, and that property is the entire reason the state was
 /// affordable: a block that still counted as coverage would be a skip with
 /// better paperwork.
+///
+/// A **logical** gate the registry runs in shards (`corpus`, see
+/// [`gate_members`]) has the strength of its WEAKEST shard: the surface is
+/// covered only as strongly as the shard that covers it least.
 fn gate_strength(gate: &str, proofs: &BTreeMap<String, RecordedProof>) -> Strength {
+    gate_members(gate)
+        .iter()
+        .map(|m| member_strength(m, proofs))
+        .min()
+        .unwrap_or(Strength::None)
+}
+
+fn member_strength(gate: &str, proofs: &BTreeMap<String, RecordedProof>) -> Strength {
     if crate::harness::registry::block_for(gate).is_some() {
         return Strength::None;
     }
@@ -1744,8 +1784,33 @@ fn gate_strength(gate: &str, proofs: &BTreeMap<String, RecordedProof>) -> Streng
     }
 }
 
+/// The registered gates a ledger gate name stands for. `corpus` is the
+/// behavioural corpus, which the registry runs as the shard gates
+/// [`CORPUS_SHARD_GATES`]; every other name stands for itself.
+fn gate_members(gate: &str) -> Vec<&str> {
+    if gate == "corpus" {
+        CORPUS_SHARD_GATES.to_vec()
+    } else {
+        vec![gate]
+    }
+}
+
+/// The ledger gate name a registered gate's surfaces are declared under: a
+/// corpus shard gate declares through `corpus`.
+fn surface_owner(gate: &str) -> &str {
+    if CORPUS_SHARD_GATES.contains(&gate) {
+        "corpus"
+    } else {
+        gate
+    }
+}
+
+/// A ledger gate is registered when every gate it stands for is. A sharded gate
+/// with a shard missing from the registry has cases nothing runs.
 fn registered(gate: &str) -> bool {
-    GATES.iter().any(|g| g.name == gate)
+    gate_members(gate)
+        .iter()
+        .all(|m| GATES.iter().any(|g| g.name == *m))
 }
 
 /// The `.github/workflows/**` tree — the only place a step "runs in CI".
@@ -2389,7 +2454,7 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
             .map(|g| {
                 let ids: Vec<&str> = GATE_SURFACES
                     .iter()
-                    .find(|(n, _)| *n == g.name)
+                    .find(|(n, _)| *n == surface_owner(g.name))
                     .map(|(_, ids)| ids.to_vec())
                     .unwrap_or_default();
                 (
@@ -2633,6 +2698,11 @@ fn enumerate_units(
     // An example is a tracked `examples/<name>/` that carries a tracked
     // `sky.toml` or tracked sources under `src/`.
     for name in tracked.subdirs("examples") {
+        // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+        // from CI in general; skip every `crate::ci_excluded` example by name.
+        if crate::ci_excluded::is_ci_excluded(&name) {
+            continue;
+        }
         let rel = format!("examples/{name}");
         if !(tracked.has(&format!("{rel}/sky.toml")) || tracked.has_under(&format!("{rel}/src"))) {
             continue;
@@ -4671,7 +4741,7 @@ fn t() {
             .iter()
             .filter(|g| g.tier != Tier::SelfTest)
             .map(|g| g.name)
-            .filter(|n| !declared.contains(n))
+            .filter(|n| !declared.contains(surface_owner(n)))
             .collect();
         assert!(
             missing.is_empty(),
@@ -4823,6 +4893,35 @@ fn t() {
                 .into_iter()
                 .collect();
         assert_eq!(gate_strength(unblocked, &proven), Strength::Falsified);
+    }
+
+    /// The behavioural corpus runs as shard gates, and the ledger scores it as
+    /// the one logical gate `corpus`. It is `Falsified` only when EVERY shard's
+    /// falsifier is proven: one unproven shard means part of the corpus has not
+    /// shown it can go red, so the whole claim drops to `Asserted`.
+    #[test]
+    fn the_sharded_corpus_scores_as_its_weakest_shard() {
+        assert!(
+            registered("corpus"),
+            "every corpus shard gate is registered"
+        );
+        let all: BTreeMap<String, RecordedProof> = CORPUS_SHARD_GATES
+            .iter()
+            .map(|g| (g.to_string(), live_proof(g)))
+            .collect();
+        assert_eq!(gate_strength("corpus", &all), Strength::Falsified);
+        for missing in CORPUS_SHARD_GATES {
+            let mut some = all.clone();
+            some.remove(*missing);
+            assert_eq!(
+                gate_strength("corpus", &some),
+                Strength::Asserted,
+                "`corpus` scored Falsified with shard `{missing}` unproven"
+            );
+        }
+        for shard in CORPUS_SHARD_GATES {
+            assert_eq!(surface_owner(shard), "corpus");
+        }
     }
 
     /// THE REGRESSION for GAP 1. A recorded proof is evidence about a

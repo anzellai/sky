@@ -1,0 +1,38 @@
+module Suites exposing (support, thresholds)
+
+{-| The eval suite that gates a cloud-trained adapter before `prod`: each case
+is a customer message and what a good reply must say. `sky ai eval support
+--candidate support@v1 --against prod --promote-to prod` runs it on the
+candidate (on the GPU tier when the slot is remote) and on production, and
+promotes the candidate only when it passes and does not regress.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ai.Provider as Provider
+import Std.Ai.Eval as Eval exposing (Expect(..))
+
+
+support : Eval.Suite String
+support =
+    Eval.suite
+        "support"
+        (\question ->
+            [ Provider.system "You answer customers of a small shop."
+            , Provider.user question
+            ])
+        [ { id = "refund"
+          , input = "I returned the lamp last week. How do I get a refund?"
+          , expect = Contains "refund"
+          , tags = [ "policy" ]
+          }
+        , { id = "hours"
+          , input = "When are you open?"
+          , expect = Contains "9"
+          , tags = [ "facts" ]
+          }
+        ]
+
+
+thresholds : Eval.Thresholds
+thresholds =
+    Eval.thresholds

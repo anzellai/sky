@@ -1,0 +1,77 @@
+module Suites exposing (summaries, score, scoreText)
+
+{-| The self-check: one eval suite measures the model where it runs. The
+client records the device's answers to the suite's prompts
+(`Device.recordPrompts` over `Eval.prompts`), the server scores the recording
+(`Device.replay`, `Eval.runAs`) and the server slot itself, and compares the
+two pass rates.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.Math as Math
+import Std.Ai.Eval as Eval exposing (Expect(..))
+import Std.Ai.Device as Device
+import Assist
+import Notes
+
+
+summaries : Eval.Suite String
+summaries =
+    Eval.suite
+        "summaries"
+        Assist.summaryPrompt
+        [ { id = "paris"
+          , input = "Booked the train to Paris for the conference on Monday."
+          , expect = Contains "Paris"
+          , tags = []
+          }
+        , { id = "dentist"
+          , input = "Dentist appointment moved to Thursday at 3pm."
+          , expect = Contains "Thursday"
+          , tags = []
+          }
+        , { id = "groceries"
+          , input = "Buy milk, eggs and bread on the way home."
+          , expect = Contains "milk"
+          , tags = []
+          }
+        ]
+        |> Eval.withOptions Assist.summaryOptions
+
+
+percent : Float -> String
+percent r =
+    String.fromInt (Math.round (r * 100.0)) ++ "%"
+
+
+-- | Score a device's recording and the server slot with the same suite.
+score : Device.Recording -> Task Error String
+score rec =
+    Notes.connect
+        |> Task.andThen
+               (\db ->
+                   Eval.runAs rec.label db (Device.replay rec) summaries
+                       |> Task.andThen
+                              (\onDevice ->
+                                  Eval.runAs
+                                      "server:notes"
+                                      db
+                                      (Device.provider "notes")
+                                      summaries
+                                      |> Task.map
+                                             (\onServer ->
+                                                 rec.label ++ " passed "
+                                                     ++ percent
+                                                            onDevice.passRate
+                                                     ++ ", the server passed "
+                                                     ++ percent
+                                                            onServer.passRate)))
+
+
+-- | Score a recording the client sent as JSON (`Device.encodeRecording`).
+scoreText : String -> Task Error String
+scoreText text =
+    Task.fromResult (Device.decodeRecording text) |> Task.andThen score

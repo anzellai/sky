@@ -1,0 +1,373 @@
+module Std.Ai.FailureTest exposing (tests)
+
+-- The typed AI failure view (Std.Ai.Failure) and the generic domain helpers of
+-- Sky.Core.Error it is built on. The Go side (aiErrorValue) is covered by
+-- runtime-go/rt/error_domain_test.go, which also checks that both sides hold
+-- the same table of codes, kinds, retryable flags and attributes.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Test as Test exposing (Test)
+import Std.Money as Money exposing (Currency(..))
+import Std.Ai.Failure as Failure exposing (Failure(..))
+
+
+every : List Failure
+every =
+    [ NotConfigured { setting = "SKY_AI_CHAT_URL" }
+    , InvalidSetting
+          { setting = "SKY_AI_CHAT_MODE", reason = "use local or remote" }
+    , Unreachable { target = "https://gpu.internal:8443" }
+    , Overloaded { retryAfterMs = Just 1500, status = Just 429 }
+    , Overloaded { retryAfterMs = Nothing, status = Nothing }
+    , TimedOut { afterMs = Just 30000 }
+    , TimedOut { afterMs = Nothing }
+    , EngineCrashed { exitCode = Just 139, logTail = "segfault" }
+    , EngineCrashed { exitCode = Nothing, logTail = "killed" }
+    , EngineFailed { reason = "no free port" }
+    , ModelTooLarge { needBytes = 9000000000, availableBytes = 4000000000 }
+    , NoAccelerator { wanted = "all" }
+    , NotProvisioned
+          { what = "llama-server b11200", command = "sky ai provision" }
+    , ChecksumMismatch { expected = "aa", actual = "bb" }
+    , RemoteRejected { status = 400 }
+    , RemoteRejected { status = 503 }
+    , BudgetExceeded
+          { budget = Money.fromMinor USD 4000
+          , estimate = Money.fromMinor USD 5250
+          }
+    , ToolchainFailed { tool = "mlx", logTail = "out of memory" }
+    , GateFailed { suite = "support", reasons = "pass rate 50% is below 90%" }
+    , NotRegistered { ref = "support-lora@prod" }
+    , NotPromotable
+          { ref = "support-lora@v3", reason = "it is blocked: erasure request" }
+    , PromotionConflict
+          { ref = "support-lora@prod", expected = "v2", actual = "v3" }
+    , AdapterMismatch
+          { adapter = "support-lora@v3", adapterBase = "aa", engineBase = "bb" }
+    , DatasetInvalid
+          { dataset = "data/support.jsonl"
+          , reasons = "line 7: not JSON (byte 12)"
+          }
+    , TrainingFailed
+          { runId = "support-0123456789ab"
+          , step = 120
+          , reason = "the trainer died without finishing 4 times"
+          , logTail = "Killed"
+          }
+    , TrainingCancelled { runId = "support-0123456789ab", step = 40 }
+    , QuotaExceeded
+          { resource = "custom_model_training_nvidia_l4_gpus"
+          , region = "us-central1"
+          , limit = 0
+          }
+    , CapacityUnavailable { resource = "NVIDIA_L4", region = "us-central1" }
+    , DeploymentFailed
+          { target = "cloudrun:support-tier"
+          , reason = "the revision never became ready"
+          , logTail = "engine: CUDA error"
+          }
+    , DeviceUnsupported
+          { backend = "webgpu", reason = "WebGPU registered no GPU device" }
+    , StorageDenied { needBytes = 472000000, availableBytes = 100000000 }
+    ]
+
+
+roundTrip : Failure -> Test
+roundTrip f =
+    Test.test
+        ("fromError (toError f) == Just f: " ++ Failure.code f)
+        (\_ -> Test.equal (Just f) (Failure.fromError (Failure.toError f)))
+
+
+kindOf : Error -> ErrorKind
+kindOf err =
+    case err of
+
+        Error.Error k _ ->
+            k
+
+
+messageOf : Error -> String
+messageOf err =
+    case err of
+
+        Error.Error _ info ->
+            info.message
+
+
+kindCase : String -> Failure -> ErrorKind -> Test
+kindCase name f k =
+    Test.test
+        ("kind: " ++ name)
+        (\_ -> Test.equal k (kindOf (Failure.toError f)))
+
+
+retryCase : String -> Failure -> Bool -> Test
+retryCase name f r =
+    Test.test
+        ("isRetryable: " ++ name)
+        (\_ -> Test.equal r (Error.isRetryable (Failure.toError f)))
+
+
+tests : List Test
+tests =
+    List.map roundTrip every
+        ++ [ kindCase
+                 "NotConfigured"
+                 (NotConfigured { setting = "x" })
+                 InvalidInput
+           , kindCase
+                 "InvalidSetting"
+                 (InvalidSetting { setting = "x", reason = "y" })
+                 InvalidInput
+           , kindCase
+                 "ModelTooLarge"
+                 (ModelTooLarge { needBytes = 2, availableBytes = 1 })
+                 InvalidInput
+           , kindCase "Unreachable" (Unreachable { target = "t" }) Unavailable
+           , kindCase
+                 "Overloaded"
+                 (Overloaded { retryAfterMs = Nothing, status = Nothing })
+                 Unavailable
+           , kindCase
+                 "EngineCrashed"
+                 (EngineCrashed { exitCode = Nothing, logTail = "" })
+                 Unavailable
+           , kindCase "EngineFailed" (EngineFailed { reason = "" }) Unavailable
+           , kindCase
+                 "NoAccelerator"
+                 (NoAccelerator { wanted = "all" })
+                 Unavailable
+           , kindCase
+                 "ToolchainFailed"
+                 (ToolchainFailed { tool = "mlx", logTail = "" })
+                 Unavailable
+           , kindCase "TimedOut" (TimedOut { afterMs = Nothing }) Timeout
+           , kindCase
+                 "NotProvisioned"
+                 (NotProvisioned { what = "w", command = "c" })
+                 NotFound
+           , kindCase
+                 "ChecksumMismatch"
+                 (ChecksumMismatch { expected = "a", actual = "b" })
+                 Conflict
+           , kindCase
+                 "BudgetExceeded"
+                 (BudgetExceeded
+                     { budget = Money.fromMinor USD 1
+                     , estimate = Money.fromMinor USD 2
+                     })
+                 PermissionDenied
+           , kindCase
+                 "GateFailed"
+                 (GateFailed { suite = "s", reasons = "r" })
+                 PermissionDenied
+           , kindCase "NotRegistered" (NotRegistered { ref = "r" }) NotFound
+           , kindCase
+                 "NotPromotable"
+                 (NotPromotable { ref = "r", reason = "x" })
+                 PermissionDenied
+           , kindCase
+                 "PromotionConflict"
+                 (PromotionConflict { ref = "a", expected = "v1", actual = "v2" })
+                 Conflict
+           , kindCase
+                 "AdapterMismatch"
+                 (AdapterMismatch
+                     { adapter = "a", adapterBase = "b", engineBase = "c" })
+                 InvalidInput
+           , kindCase
+                 "DatasetInvalid"
+                 (DatasetInvalid { dataset = "d", reasons = "r" })
+                 InvalidInput
+           , kindCase
+                 "TrainingFailed"
+                 (TrainingFailed
+                     { runId = "r", step = 1, reason = "x", logTail = "" })
+                 Unavailable
+           , kindCase
+                 "TrainingCancelled"
+                 (TrainingCancelled { runId = "r", step = 1 })
+                 Conflict
+           , kindCase
+                 "QuotaExceeded"
+                 (QuotaExceeded { resource = "r", region = "g", limit = 0 })
+                 PermissionDenied
+           , kindCase
+                 "CapacityUnavailable"
+                 (CapacityUnavailable { resource = "r", region = "g" })
+                 Unavailable
+           , kindCase
+                 "DeploymentFailed"
+                 (DeploymentFailed { target = "t", reason = "r", logTail = "" })
+                 Unavailable
+           , kindCase
+                 "DeviceUnsupported"
+                 (DeviceUnsupported { backend = "webgpu", reason = "no GPU" })
+                 Unavailable
+           , kindCase
+                 "StorageDenied"
+                 (StorageDenied { needBytes = 2, availableBytes = 1 })
+                 PermissionDenied
+           , kindCase
+                 "RemoteRejected 400"
+                 (RemoteRejected { status = 400 })
+                 InvalidInput
+           , kindCase
+                 "RemoteRejected 422"
+                 (RemoteRejected { status = 422 })
+                 InvalidInput
+           , kindCase
+                 "RemoteRejected 401"
+                 (RemoteRejected { status = 401 })
+                 PermissionDenied
+           , kindCase
+                 "RemoteRejected 403"
+                 (RemoteRejected { status = 403 })
+                 PermissionDenied
+           , kindCase
+                 "RemoteRejected 404"
+                 (RemoteRejected { status = 404 })
+                 NotFound
+           , kindCase
+                 "RemoteRejected 502"
+                 (RemoteRejected { status = 502 })
+                 Unavailable
+           , kindCase
+                 "RemoteRejected 418"
+                 (RemoteRejected { status = 418 })
+                 Unexpected
+           , retryCase "Unreachable" (Unreachable { target = "t" }) True
+           , retryCase
+                 "Overloaded"
+                 (Overloaded { retryAfterMs = Nothing, status = Nothing })
+                 True
+           , retryCase "TimedOut" (TimedOut { afterMs = Nothing }) True
+           , retryCase
+                 "RemoteRejected 503"
+                 (RemoteRejected { status = 503 })
+                 True
+           , retryCase
+                 "RemoteRejected 400"
+                 (RemoteRejected { status = 400 })
+                 False
+           , retryCase
+                 "EngineCrashed (Unavailable, but the flag wins)"
+                 (EngineCrashed { exitCode = Just 1, logTail = "" })
+                 False
+           , retryCase "NoAccelerator" (NoAccelerator { wanted = "all" }) False
+           , retryCase
+                 "CapacityUnavailable"
+                 (CapacityUnavailable { resource = "NVIDIA_L4", region = "g" })
+                 True
+           , retryCase
+                 "QuotaExceeded"
+                 (QuotaExceeded { resource = "r", region = "g", limit = 0 })
+                 False
+           , retryCase
+                 "ModelTooLarge"
+                 (ModelTooLarge { needBytes = 2, availableBytes = 1 })
+                 False
+           , retryCase
+                 "BudgetExceeded"
+                 (BudgetExceeded
+                     { budget = Money.fromMinor USD 1
+                     , estimate = Money.fromMinor USD 2
+                     })
+                 False
+           , Test.test
+                 "Error.domain names the ai domain"
+                 (\_ ->
+                     Test.equal
+                         (Just "ai")
+                         (Error.domain
+                             (Failure.toError (TimedOut { afterMs = Nothing }))))
+           , Test.test
+                 "Error.retryAfter reads an Overloaded delay"
+                 (\_ ->
+                     Test.equal
+                         (Just 1500)
+                         (Error.retryAfter
+                             (Failure.toError
+                                 (Overloaded
+                                     { retryAfterMs = Just 1500
+                                     , status = Just 429
+                                     }))))
+           , Test.test
+                 "Error.retryAfter is Nothing without a delay"
+                 (\_ ->
+                     Test.equal
+                         Nothing
+                         (Error.retryAfter
+                             (Failure.toError (TimedOut { afterMs = Just 5 }))))
+           , Test.test
+                 "the message names the code"
+                 (\_ ->
+                     Test.isTrue
+                         (String.startsWith
+                             "Std.Ai Overloaded: "
+                             (messageOf
+                                 (Failure.toError
+                                     (Overloaded
+                                         { retryAfterMs = Nothing
+                                         , status = Nothing
+                                         })))))
+           , Test.test
+                 "code is the constructor name"
+                 (\_ ->
+                     Test.equal
+                         "ChecksumMismatch"
+                         (Failure.code
+                             (ChecksumMismatch { expected = "a", actual = "b" })))
+           , Test.test
+                 "fromError of a plain error is Nothing"
+                 (\_ ->
+                     Test.equal
+                         Nothing
+                         (Failure.fromError (Error.io "disk gone")))
+           , Test.test
+                 "fromError of another domain is Nothing"
+                 (\_ ->
+                     Test.equal
+                         Nothing
+                         (Failure.fromError
+                             (Error.fromDomain
+                                 Conflict
+                                 "deadlock"
+                                 (Error.failure "db" "Deadlock"))))
+           , Test.test
+                 "fromError of an unknown ai code is Nothing"
+                 (\_ ->
+                     Test.equal
+                         Nothing
+                         (Failure.fromError
+                             (Error.fromDomain
+                                 Unavailable
+                                 "new"
+                                 (Error.failure "ai" "SomethingNew"))))
+           , Test.test
+                 "fromError of an ai failure with a malformed Int attribute is Nothing"
+                 (\_ ->
+                     Test.equal
+                         Nothing
+                         (Failure.fromError
+                             (Error.fromDomain
+                                 InvalidInput
+                                 "x"
+                                 (Error.failure "ai" "ModelTooLarge"
+                                     |> Error.withAttr "needBytes" "lots"
+                                     |> Error.withAttr "availableBytes" "1"))))
+           , Test.test
+                 "an unknown ai code still keeps its kind and retry flag"
+                 (\_ ->
+                     Test.isTrue
+                         (Error.isRetryable
+                             (Error.fromDomain
+                                 InvalidInput
+                                 "new"
+                                 (Error.failure "ai" "SomethingNew"
+                                     |> Error.withRetryable True))))
+           ]

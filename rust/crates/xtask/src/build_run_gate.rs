@@ -38,7 +38,7 @@
 use project::{build_example, BuildOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -83,7 +83,32 @@ const FFI_BUILD_ONLY: &[&str] = &["11-fyne-stopwatch"];
 // (67 by the behavioural restart test `durable_tea_cli_flow.rs`). A durable
 // example also cannot get an ORACLE-verified golden — the frozen legacy compiler
 // has no `App.withDurable` — which is a second, independent reason it is here.
-const NONDETERMINISTIC_OUTPUT: &[&str] = &["02-go-stdlib", "67-durable-counter"];
+// 68-ai-dataset, 69-ai-scrub and 70-ai-synthetic (v0.28.0) use Std.Ai.Dataset,
+// which the frozen legacy oracle does not have, so no oracle-verified golden
+// can exist for them; their behaviour is pinned by their own `sky test` suites,
+// run offline by rust/crates/sky/tests/ai_dataset_flow.rs. 71-ai-registry uses
+// Std.Ai.Registry, which the legacy compiler does not have either; its stdout
+// is pinned by `rust/crates/sky/tests/ai_registry_flow.rs` instead.
+// 73-ai-train uses Std.Ai.Train (no legacy oracle either); its page and its
+// training workflow are pinned by its own `sky test` suite, run offline by
+// `rust/crates/sky/tests/ai_train_flow.rs`. 75-ai-everywhere uses
+// Std.Ai.Device (no legacy oracle); its server side is pinned by its own
+// `sky test` suite and its device flows by `rust/crates/sky/tests/ai_device_*.rs`.
+// 74-ai-cloud uses Std.Ai.Serve and Std.Ai.Cloud.Google (no legacy oracle
+// either); its cloud workflow is pinned by its own `sky test` suite against
+// the runtime's Google Cloud emulator, and by
+// `rust/crates/sky/tests/ai_cloud_train_flow.rs`.
+const NONDETERMINISTIC_OUTPUT: &[&str] = &[
+    "02-go-stdlib",
+    "67-durable-counter",
+    "68-ai-dataset",
+    "69-ai-scrub",
+    "70-ai-synthetic",
+    "71-ai-registry",
+    "73-ai-train",
+    "74-ai-cloud",
+    "75-ai-everywhere",
+];
 
 /// Hand-authored multi-project splits — an example that is NOT a single project
 /// under a top-level `src/` but several sibling projects (a `Spa.app` client, a
@@ -179,6 +204,41 @@ fn cached_sky_build(
     cmd.args(["--", "build", "src/Main.sky"])
         .current_dir(dir)
         .output()
+}
+
+/// The working directory every built app in this gate runs in: the project
+/// folder, exactly as `sky run` runs it (`project::app_run_cwd`, the one shared
+/// definition). It used to be the output folder (`sky-out-rust/` or `sky-out/`),
+/// so an example that reads a project-relative file (68-ai-dataset reads
+/// `data/tickets.jsonl`) failed here and worked for a user. What a run writes
+/// (`*.db`, `.sky/`, `.skydata/`) now lands where `sky run` puts it, and the
+/// repo `.gitignore` covers those paths.
+fn app_cwd(out_dir: &Path) -> PathBuf {
+    project::app_run_cwd(out_dir)
+}
+
+/// The absolute path of the binary `<out_dir>/app`. A relative program path
+/// combined with a `current_dir` resolves platform-specifically, so a run
+/// whose cwd is not `out_dir` names the binary absolutely.
+fn app_bin(out_dir: &Path) -> PathBuf {
+    let app = out_dir.join("app");
+    std::fs::canonicalize(&app).unwrap_or(app)
+}
+
+/// A `script` invocation that runs `app` under a pty with `cwd` as its working
+/// directory. `script`'s CLI is NOT portable: macOS/BSD takes the command as
+/// trailing args (`script -q <file> cmd…`), while Linux util-linux needs
+/// `-c "cmd"` + a typescript FILE.
+fn script_pty_command(app: &Path, cwd: &Path) -> Command {
+    let mut cmd = Command::new("script");
+    if cfg!(target_os = "linux") {
+        let quoted = format!("'{}'", app.display().to_string().replace('\'', "'\\''"));
+        cmd.arg("-q").arg("-c").arg(quoted).arg("/dev/null");
+    } else {
+        cmd.arg("-q").arg("/dev/null").arg(app);
+    }
+    cmd.current_dir(cwd);
+    cmd
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -488,6 +548,9 @@ fn corpus(root: &Path) -> Vec<String> {
                 .filter(|n| root.join("examples").join(n).join("src").is_dir())
                 // skip the non-example scratch dirs
                 .filter(|n| n != "simple" && n != "test_pkg")
+                // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+                // from CI in general; skip every `crate::ci_excluded` example by name.
+                .filter(|n| !crate::ci_excluded::is_ci_excluded(n))
                 .collect()
         })
         .unwrap_or_default();
@@ -1254,14 +1317,8 @@ fn verify_tui_boots(out_dir: &Path, _name: &str) -> (bool, String) {
     // killed — either way the CODE is not a boot signal, and a non-zero code from
     // a benign quit made the gate FAIL with a blank blocker. We judge boot by
     // "no panic / no FATAL", not by exit code (see the exit arm below).
-    let mut cmd = Command::new("script");
-    if cfg!(target_os = "linux") {
-        cmd.arg("-q").arg("-c").arg("./app").arg("/dev/null");
-    } else {
-        cmd.arg("-q").arg("/dev/null").arg("./app");
-    }
-    cmd.current_dir(out_dir)
-        .env("TERM", "xterm")
+    let mut cmd = script_pty_command(&app_bin(out_dir), &app_cwd(out_dir));
+    cmd.env("TERM", "xterm")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1316,8 +1373,8 @@ fn run_cli_capture(out_dir: &Path, name: &str) -> (bool, Option<String>, String)
     if !app.exists() {
         return (false, None, "no binary".into());
     }
-    let mut cmd = Command::new(&app);
-    cmd.current_dir(out_dir)
+    let mut cmd = Command::new(app_bin(out_dir));
+    cmd.current_dir(app_cwd(out_dir))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1421,12 +1478,12 @@ fn run_oracle_stdout(dir: &Path, stdin: Option<String>) -> Option<String> {
     if !app.exists() {
         return None;
     }
-    let mut cmd = Command::new(&app);
-    cmd.current_dir(dir.join("sky-out"))
+    let mut cmd = Command::new(app_bin(&dir.join("sky-out")));
+    cmd.current_dir(app_cwd(&dir.join("sky-out")))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = cmd.spawn().ok()?;
+    let mut child = spawn_when_not_busy(&mut cmd).ok()?;
     if let Some(data) = &stdin {
         if let Some(mut si) = child.stdin.take() {
             let _ = si.write_all(data.as_bytes());
@@ -1441,17 +1498,42 @@ fn run_oracle_stdout(dir: &Path, stdin: Option<String>) -> Option<String> {
 /// Run the RUST binary at `<out_dir>/app` (the `sky-out-rust/` build), feed
 /// `stdin`, return its RAW stdout. Used for the `--bless` double-capture guard
 /// (run twice; refuse to bless if the two normalised captures differ).
+/// `cmd.spawn()`, retried while the program is "text file busy" (ETXTBSY).
+///
+/// On Linux, `exec` of a file fails with ETXTBSY while any process holds it
+/// open for writing. A binary or script written just before it runs can still
+/// be open in a child that another thread forked in that window: the child
+/// holds the inherited descriptor until its own `exec` closes it. The window
+/// is short, so a few short retries end it. Observed on a CI runner:
+/// `run_cwd_tests::gate_runs_apps_in_the_dir_sky_run_uses` read an empty
+/// stdout because the spawn of its freshly written fake app failed.
+fn spawn_when_not_busy(cmd: &mut Command) -> std::io::Result<std::process::Child> {
+    const ETXTBSY: i32 = 26;
+    let mut tries = 0;
+    loop {
+        match cmd.spawn() {
+            Err(e)
+                if e.raw_os_error() == Some(ETXTBSY) && cfg!(target_os = "linux") && tries < 50 =>
+            {
+                tries += 1;
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            other => return other,
+        }
+    }
+}
+
 fn run_rust_stdout(out_dir: &Path, stdin: Option<String>) -> Option<String> {
     let app = out_dir.join("app");
     if !app.exists() {
         return None;
     }
-    let mut cmd = Command::new(&app);
-    cmd.current_dir(out_dir)
+    let mut cmd = Command::new(app_bin(out_dir));
+    cmd.current_dir(app_cwd(out_dir))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = cmd.spawn().ok()?;
+    let mut child = spawn_when_not_busy(&mut cmd).ok()?;
     if let Some(data) = &stdin {
         if let Some(mut si) = child.stdin.take() {
             let _ = si.write_all(data.as_bytes());
@@ -1475,8 +1557,8 @@ fn verify_server(
     verbose: bool,
 ) -> (bool, Option<bool>, String) {
     let port = free_port().unwrap_or(0);
-    let rust_app = out_dir.join("app");
-    let rust = serve_and_fetch(&rust_app, out_dir, port, shape, name);
+    let rust_app = app_bin(out_dir);
+    let rust = serve_and_fetch(&rust_app, &app_cwd(out_dir), port, shape, name);
     if verbose {
         eprintln!(
             "  [{name}] rust: started={} port={:?}",
@@ -1487,12 +1569,18 @@ fn verify_server(
         return (false, None, truncate(&rust.note, 60));
     }
 
-    let oracle_app = dir.join("sky-out").join("app");
+    let oracle_app = app_bin(&dir.join("sky-out"));
     if !oracle_app.exists() {
         // rust served but no oracle to compare against.
         return (true, None, "no oracle binary".into());
     }
-    let oracle = serve_and_fetch(&oracle_app, &dir.join("sky-out"), port, shape, name);
+    let oracle = serve_and_fetch(
+        &oracle_app,
+        &app_cwd(&dir.join("sky-out")),
+        port,
+        shape,
+        name,
+    );
     if verbose {
         eprintln!(
             "  [{name}] oracle: started={} port={:?}",
@@ -1731,14 +1819,8 @@ fn verify_tui(out_dir: &Path, _name: &str) -> (bool, String) {
     // coreutils only), which would also make this spawn a redundant double-bound.
     // `script`'s CLI is NOT portable — see verify_tui_boots: macOS/BSD takes the
     // command as trailing args, Linux util-linux needs `-c "cmd"` + `-e`.
-    let mut cmd = Command::new("script");
-    if cfg!(target_os = "linux") {
-        cmd.arg("-q").arg("-c").arg("./app").arg("/dev/null");
-    } else {
-        cmd.arg("-q").arg("/dev/null").arg("./app");
-    }
-    cmd.current_dir(out_dir)
-        .env("TERM", "xterm")
+    let mut cmd = script_pty_command(&app_bin(out_dir), &app_cwd(out_dir));
+    cmd.env("TERM", "xterm")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -3322,5 +3404,63 @@ mod gate_classification_tests {
         assert!(!is_native_link_failure("undefined: rt.RecordUpdate"));
         // A clean build has no blocker.
         assert!(!is_native_link_failure(""));
+    }
+}
+
+#[cfg(test)]
+mod run_cwd_tests {
+    use super::*;
+
+    /// A fake built app: a shell script at `<out_dir>/app` that prints the
+    /// physical working directory it was started in.
+    #[cfg(unix)]
+    fn fake_app(out_dir: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(out_dir).unwrap();
+        let app = out_dir.join("app");
+        std::fs::write(&app, "#!/bin/sh\npwd -P\n").unwrap();
+        std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// Every run in this gate starts the program in the PROJECT folder, the
+    /// directory `sky run` uses, never in the output folder. Before the fix the
+    /// runs used `sky-out-rust/` (rust build) and `sky-out/` (oracle and
+    /// dispatched Std.App builds), so `examples/68-ai-dataset`, which reads the
+    /// project-relative `data/tickets.jsonl`, failed only under this gate.
+    #[cfg(unix)]
+    #[test]
+    fn gate_runs_apps_in_the_dir_sky_run_uses() {
+        let base = std::env::temp_dir().join(format!("sky-br-cwd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let project = base.join("proj");
+        let rust_out = project.join("sky-out-rust");
+        let oracle_out = project.join("sky-out");
+        fake_app(&rust_out);
+        fake_app(&oracle_out);
+        let want = std::fs::canonicalize(&project).unwrap();
+        // The gate and `sky run` share one definition of the cwd.
+        assert_eq!(app_cwd(&rust_out), project::app_run_cwd(&rust_out));
+        assert_eq!(app_cwd(&rust_out), want);
+
+        let got = |s: Option<String>| PathBuf::from(s.unwrap_or_default().trim());
+        assert_eq!(
+            got(run_rust_stdout(&rust_out, None)),
+            want,
+            "run_rust_stdout"
+        );
+        assert_eq!(
+            got(run_oracle_stdout(&project, None)),
+            want,
+            "run_oracle_stdout"
+        );
+        let (ok, stdout, note) = run_cli_capture(&oracle_out, "no-such-example");
+        assert!(ok, "run_cli_capture failed: {note}");
+        assert_eq!(got(stdout), want, "run_cli_capture");
+
+        // The pty runs (TUI shapes) and the server runs take the same cwd.
+        let pty = script_pty_command(&app_bin(&rust_out), &app_cwd(&rust_out));
+        assert_eq!(pty.get_current_dir(), Some(want.as_path()), "pty run");
+        assert!(app_bin(&rust_out).is_absolute());
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

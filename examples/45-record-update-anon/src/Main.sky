@@ -13,18 +13,20 @@ import Std.Log exposing (println)
 -- normalised result type (`struct{Active;Age;Name}`) and `go build` rejected the
 -- update. Both now sort by Go field name (oracle parity: the oracle emits
 -- `struct{ Active; Age; Name }` too — the Rust build is additionally typed).
-base : { name : String
-, age : Int
-, active : Bool
-}
+base :
+    { name : String
+    , age : Int
+    , active : Bool
+    }
 base =
     { name = "ada", age = 36, active = True }
 
 
-older : { name : String
-, age : Int
-, active : Bool
-}
+older :
+    { name : String
+    , age : Int
+    , active : Bool
+    }
 older =
     { base | age = base.age + 1 }
 

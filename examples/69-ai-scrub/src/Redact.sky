@@ -1,0 +1,71 @@
+module Redact exposing (Ticket, tickets, rules, scrubber)
+
+{-| Support tickets and the scrubber that cleans them before they become
+training data. `Main` and the tests share it. Every value here is made up:
+the card and IBAN are published test numbers.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ai.Dataset.Scrub as Scrub
+
+type alias Ticket =
+    { subject : String
+    , body : String
+    , internal : Bool
+    }
+
+
+tickets : List Ticket
+tickets =
+    [ { subject = "Refund for ORD-104233"
+      , body =
+          "Hi, I am ada@example.com. Please refund card 4111 1111 1111 1111 or pay GB82 WEST 1234 5698 7654 32."
+      , internal = False
+      }
+    , { subject = "Call back please"
+      , body = "Ring me on +44 20 7946 0958 or (415) 555-0132 after 2024-06-01."
+      , internal = False
+      }
+    , { subject = "Staff note"
+      , body = "Escalated to the billing team."
+      , internal = True
+      }
+    , { subject = "Integration broke"
+      , body =
+          "Our script sends api_key=Zx9Qw8Er7Ty6Ui5Op and now gets 401. Order ORD-220981."
+      , internal = False
+      }
+    ]
+
+
+-- | The built-in rules plus the shop's own order numbers. A pattern is
+-- checked when it is built, so a typo is an error, not a rule that never
+-- matches.
+rules : List Scrub.Rule
+rules =
+    case Scrub.pattern "order_id" "ORD-[0-9]{6}" of
+
+        Ok orderIds ->
+            Scrub.defaults ++ [ orderIds ]
+
+        Err _ ->
+            Scrub.defaults
+
+
+-- | Scrub the subject and the body; drop staff-only tickets entirely.
+scrubber : Scrub.Scrubber Ticket
+scrubber =
+    Scrub.scrubber
+        rules
+        (\t -> [ t.subject, t.body ])
+        (\texts t ->
+            case texts of
+
+                [ subject, body ] ->
+                    { t | subject = subject, body = body }
+
+                _ ->
+                    t)
+        |> Scrub.dropIf "internal" .internal

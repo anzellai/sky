@@ -25,6 +25,12 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+// The xtask crate is a binary, so the exclusion list is included by path: the
+// same file the gates read, never a copy of it.
+#[path = "../src/ci_excluded.rs"]
+#[allow(dead_code)]
+mod ci_excluded;
+
 fn repo_root() -> PathBuf {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."))
         .canonicalize()
@@ -167,6 +173,11 @@ fn every_example_is_covered_by_a_fresh_build_gate() {
 
     let uncovered: Vec<String> = examples
         .iter()
+        // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is
+        // excluded from CI in general, so no gate may fresh-build it. It is
+        // the reviewed exception, by name, and tests/ci_excluded_examples.rs
+        // proves that no gate builds it.
+        .filter(|name| !ci_excluded::is_ci_excluded(name))
         .filter(|name| {
             !(has_top_level_src(&root, name)   // build-run corpus() auto-discovery
                 || manual.contains(*name)      // build-run MANUAL_SPLIT registry

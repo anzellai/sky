@@ -126,6 +126,7 @@ pub const ALL_PLATFORMS: Platforms =
     Platforms::new(&[Platform::Linux, Platform::Macos, Platform::Windows]);
 /// Unix only — anything that depends on `killpg`, PTYs, or POSIX shell.
 pub const UNIX: Platforms = Platforms::new(&[Platform::Linux, Platform::Macos]);
+pub const MACOS: Platforms = Platforms::new(&[Platform::Macos]);
 
 /// How a gate's source is perturbed to prove its assertion is live.
 #[derive(Clone, Copy, Debug)]
@@ -237,6 +238,55 @@ pub struct Gate {
     pub summary: &'static str,
 }
 
+/// The shard gates that together run the behavioural corpus, in shard order:
+/// `CORPUS_SHARD_GATES[k]` runs every behavioural case whose index is `k` mod
+/// [`bodies::CORPUS_SHARDS`]. The coverage ledger scores them as ONE logical
+/// gate, `corpus`, at the strength of the weakest shard; CI must run all of
+/// them (`tests/workflows_parse.rs`).
+pub const CORPUS_SHARD_GATES: &[&str] = &["corpus-1", "corpus-2", "corpus-3", "corpus-4"];
+
+/// The falsifying mutations of one corpus shard gate. Every shard declares the
+/// same two, because each corrupts the EXPECTATION of a whole family and every
+/// shard holds cases of both families (`corpus::tests::
+/// every_shard_holds_the_families_its_falsifiers_corrupt`). A mutation that
+/// touched one case would bite one shard only and leave the other three
+/// VACUOUS; that is why the single-case `wrong-stdlib-digest` mutation of the
+/// unsharded `corpus` gate became the Family-S-wide `wrong-stdlib-expectation`.
+macro_rules! corpus_shard_mutations {
+    ($gate:literal) => {
+        Mutations::new(&[
+            Mutation {
+                id: concat!($gate, ".wrong-expected-value"),
+                description: "corrupt the EXPECTED value the generator constructs for \
+                              the record_update family, leaving the program correct; \
+                              that family's value comparison must go red in this shard",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/xtask/src/corpus/gen.rs",
+                    from: "(decls, check, format!(\"{UPDATED}/{SURVIVOR}\"))",
+                    to: "(decls, check, format!(\"{UPDATED}/999\"))",
+                },
+            },
+            // Family-specific, because the mutation above proves only that
+            // `record_update` bites. Family S is the largest family, and a
+            // mutation that never touches it would let it be vacuous behind a
+            // PROVEN badge. The program stays correct; only the expectation the
+            // generator joins for every `stdlib_edge` case gains an item no
+            // program prints, so only a live value comparison can catch it.
+            Mutation {
+                id: concat!($gate, ".wrong-stdlib-expectation"),
+                description: "append an item to the expectation Family S constructs for \
+                              every stdlib_edge case, leaving each program correct; the \
+                              stdlib_edge value comparisons in this shard must go red",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/xtask/src/corpus/stdlib.rs",
+                    from: "        expected.join(\"|\"),\n    )",
+                    to: "        expected.join(\"|\") + \"|999\",\n    )",
+                },
+            },
+        ])
+    };
+}
+
 /// THE registry. Membership authority for every harness run.
 pub static GATES: &[Gate] = &[
     Gate {
@@ -317,8 +367,8 @@ pub static GATES: &[Gate] = &[
                           body; the every-body-type-checks assertion must go red",
             kind: MutationKind::ReplaceOnce {
                 path: "sky-stdlib/Std/Ai/Agent.sky",
-                from: "arguments = \"\", continuation = Nothing }",
-                to: "arguments = \"\" }",
+                from: "arguments = \"\", continuation = Nothing } ]",
+                to: "arguments = \"\" } ]",
             },
         }]),
         body: bodies::stdlib_bodies,
@@ -521,9 +571,10 @@ pub static GATES: &[Gate] = &[
                 // 616 → 676), and the v0.27.10 alias_ctor_collision stratum
                 // (+4 cases, 676 → 680), and the v0.27.14
                 // lambda_record_param stratum (+32 cases, 680 → 712), and the
-                // v0.27.16 generic_alias_slot stratum (+32 cases, 712 → 744).
-                from: "n_min = 744",
-                to: "n_min = 745",
+                // v0.27.16 generic_alias_slot stratum (+32 cases, 712 → 744), and the
+                // v0.28.0 Std.Ai surfaces (+24 cases, 744 → 768).
+                from: "n_min = 768",
+                to: "n_min = 769",
             },
         }]),
         body: bodies::corpus_manifest,
@@ -643,54 +694,75 @@ pub static GATES: &[Gate] = &[
         ]),
         body: bodies::corpus_emit_shape,
     },
+    // ---- the behavioural corpus, in four shards ----------------------------
+    //
+    // Was one gate, `corpus`. 1800 s held 341 cases, 3000 s held 373, 4000 s
+    // held 468. At 554 cases a CI runner reached about case 350 when the
+    // harness killed it at 4000 s (release run, 2026-10-14): about 11.4 s of
+    // wall clock per case with the Go build cache restored, so the whole
+    // corpus needs about 6,300 s on one runner and keeps growing.
+    //
+    // Each shard is a gate of its own, so each keeps the harness rules: an
+    // exact assertion count (`bodies::corpus_shard_expected`, 139 / 139 / 138
+    // / 138 at 554 cases), a killpg budget, and its own falsifier proof. A
+    // shard runs every behavioural case whose index is k mod 4
+    // (`corpus::shard_slice`, interleaved like `repro --shard`), so the four
+    // are disjoint and their union is the corpus.
+    //
+    // Budget: the v0.27.9 build-speed work took the per-case cost from about
+    // 11.4 s to about 0.8 s on a runner (the whole corpus, 530 cases, in 422 s:
+    // release run 38922351710), so a 139-case shard needs about 110 s. 1200 s
+    // keeps about ten times that, and the four together hold the 4000 s the
+    // single gate had. CI runs the four in one job (release.yml
+    // `gate-t2-corpus`). If a shard nears half its budget, give each shard
+    // its own job before raising the budget.
     Gate {
-        name: "corpus",
+        name: "corpus-1",
         tier: Tier::T2,
         platforms: UNIX,
-        // 1800 s held 341 cases; v0.27.0 took the corpus to 373, and a CI
-        // runner reached 325 at 30 min. 3000 s kept headroom for that. The
-        // v0.27.0 round-3 language strata took it to 468 (+95, all built and
-        // run); at the same CI rate that is about 2,600 s, so 4000 s restores
-        // the headroom.
-        budget_s: 4000,
-        expected: bodies::CORPUS_BEHAVIOURAL_EXPECTED,
+        budget_s: 1200,
+        expected: bodies::corpus_shard_expected(0),
         expect: Expect::Falsifiable,
-        summary: "every generated case built + run; values compared against the generator's own",
-        mutations: Mutations::new(&[
-            Mutation {
-                id: "corpus.wrong-expected-value",
-                description: "corrupt the EXPECTED value the generator constructs for \
-                              the record_update family, leaving the program correct; \
-                              that family's value comparison must go red",
-                kind: MutationKind::ReplaceOnce {
-                    path: "rust/crates/xtask/src/corpus/gen.rs",
-                    from: "(decls, check, format!(\"{UPDATED}/{SURVIVOR}\"))",
-                    to: "(decls, check, format!(\"{UPDATED}/999\"))",
-                },
-            },
-            // A family-specific mutation, because the one above proves only
-            // that `record_update` bites. Family S is 90 of the 296 cases and a
-            // mutation that never touches it would let the whole family be
-            // vacuous behind a PROVEN badge — the exact accounting failure this
-            // branch exists to remove.
-            //
-            // The target is the published SHA-256 of the empty string, which is
-            // the strongest class-V assertion in the corpus: it is fixed by
-            // FIPS 180-4, so corrupting the EXPECTATION while leaving the
-            // program correct can only be caught by a live comparison.
-            Mutation {
-                id: "corpus.wrong-stdlib-digest",
-                description: "corrupt the published SHA-256 digest Family S asserts \
-                              for the empty string, leaving the program correct; the \
-                              stdlib_edge/empty-crypto value comparison must go red",
-                kind: MutationKind::ReplaceOnce {
-                    path: "rust/crates/xtask/src/corpus/stdlib.rs",
-                    from: "\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"",
-                    to: "\"0000000000000000000000000000000000000000000000000000000000000000\"",
-                },
-            },
-        ]),
-        body: bodies::corpus,
+        summary: "behavioural corpus shard 0 of 4: each case built + run; values compared \
+                  against the generator's own",
+        mutations: corpus_shard_mutations!("corpus-1"),
+        body: bodies::corpus_1,
+    },
+    Gate {
+        name: "corpus-2",
+        tier: Tier::T2,
+        platforms: UNIX,
+        budget_s: 1200,
+        expected: bodies::corpus_shard_expected(1),
+        expect: Expect::Falsifiable,
+        summary: "behavioural corpus shard 1 of 4: each case built + run; values compared \
+                  against the generator's own",
+        mutations: corpus_shard_mutations!("corpus-2"),
+        body: bodies::corpus_2,
+    },
+    Gate {
+        name: "corpus-3",
+        tier: Tier::T2,
+        platforms: UNIX,
+        budget_s: 1200,
+        expected: bodies::corpus_shard_expected(2),
+        expect: Expect::Falsifiable,
+        summary: "behavioural corpus shard 2 of 4: each case built + run; values compared \
+                  against the generator's own",
+        mutations: corpus_shard_mutations!("corpus-3"),
+        body: bodies::corpus_3,
+    },
+    Gate {
+        name: "corpus-4",
+        tier: Tier::T2,
+        platforms: UNIX,
+        budget_s: 1200,
+        expected: bodies::corpus_shard_expected(3),
+        expect: Expect::Falsifiable,
+        summary: "behavioural corpus shard 3 of 4: each case built + run; values compared \
+                  against the generator's own",
+        mutations: corpus_shard_mutations!("corpus-4"),
+        body: bodies::corpus_4,
     },
     Gate {
         name: "corpus-isolation",
@@ -739,8 +811,9 @@ pub static GATES: &[Gate] = &[
         name: "apps-bundled",
         tier: Tier::T1,
         platforms: UNIX,
-        // Two full `go build`s of ~35 MB binaries from a wiped slate. Measured
-        // ~13 s warm on the dev host; the ceiling is sized for a cold CI runner
+        // Three full `go build`s from a wiped slate (console, doc, and since
+        // v0.28.0 the `sky ai` program). Measured ~13 s warm for the first two
+        // on the dev host; the ceiling is sized for a cold CI runner
         // with no Go build cache.
         budget_s: 900,
         expected: bodies::APPS_BUNDLED_EXPECTED,
@@ -1226,6 +1299,263 @@ pub static GATES: &[Gate] = &[
         }]),
         body: bodies::periodic_loops_recover_per_cycle,
     },
+    // ---- Std.Ai.Train: a relaunched trainer resumes from the newest
+    // verified checkpoint ---------------------------------------------------
+    Gate {
+        name: "ai-train-resume",
+        tier: Tier::T1,
+        // The test runs a real trainer process (the runtime's Fake trainer:
+        // the test binary started again with --sky-ai-fake-trainer) in its
+        // own session and signals its process group: Unix.
+        platforms: UNIX,
+        budget_s: 600,
+        expected: bodies::AI_TRAIN_RESUME_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a Std.Ai.Train relaunch resumes from the newest verified checkpoint, skipping a torn one",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-train-resume.from-the-oldest-checkpoint",
+            description: "sort the verified checkpoints oldest first, so a relaunched \
+                          trainer resumes from the first checkpoint and repeats every step \
+                          after it; the newest-first assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/ai_train.go",
+                from: "sort.Slice(out, func(i, j int) bool { return out[i].step > out[j].step })",
+                to: "sort.Slice(out, func(i, j int) bool { return out[i].step < out[j].step })",
+            },
+        }]),
+        body: bodies::ai_train_resumes_from_the_newest_checkpoint,
+    },
+    // ---- Std.Ai.Train on Vertex AI: a launch is exactly once ----------------
+    Gate {
+        name: "ai-train-exactly-once",
+        tier: Tier::T1,
+        // `sky test` of the fixture against the runtime's in-process emulator:
+        // no network, no account.
+        platforms: UNIX,
+        budget_s: 600,
+        expected: bodies::AI_TRAIN_EXACTLY_ONCE_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a Vertex launch whose journal row was lost attaches to its job: one create, never two",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-train-exactly-once.ignore-the-intent",
+            description: "create the Vertex job whether or not this attempt's create-only \
+                          intent object was ours, so a launch replayed after a lost journal \
+                          row creates a second paid job; the one-create assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "sky-stdlib/Std/Ai/Train.sky",
+                from: "if mine then",
+                to: "if True then",
+            },
+        }]),
+        body: bodies::ai_train_vertex_launches_exactly_once,
+    },
+    // ---- Std.Ai.Serve: a promotion is hot-loaded with no failed request ----
+    Gate {
+        name: "ai-serve-hot-load",
+        tier: Tier::T1,
+        // The test runs the fake vLLM (testdata/fakevllm) as a process.
+        platforms: UNIX,
+        budget_s: 300,
+        expected: bodies::AI_SERVE_HOT_LOAD_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a GPU tier hot-loads a promoted adapter and drains the old one with no failed request",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-serve-hot-load.unload-while-in-use",
+            description: "let drain unload a retired adapter while a request still uses it; \
+                          the in-flight requests for v1 lose their adapter and the \
+                          v1-stays-loaded assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/ai_serve.go",
+                from: "if r.retired && !pinned[r.served] && r.inflight == 0 && r.loading == nil {",
+                to: "if r.retired && !pinned[r.served] && r.loading == nil {",
+            },
+        }]),
+        body: bodies::ai_serve_hot_loads_without_dropping_a_request,
+    },
+    // ---- Std.Ai.Device (v0.28.0 phase 5) --------------------------------
+    Gate {
+        name: "ai-device-decide",
+        tier: Tier::T1,
+        platforms: UNIX,
+        budget_s: 120,
+        expected: bodies::AI_DEVICE_DECIDE_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "Std.Ai.Device's decision: every rule, in order, as a pure function",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-device-decide.no-storage-margin",
+            description: "drop the 1.1x storage margin, so a download that fills the \
+                          device to the last byte is offered; the margin cases must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "sky-stdlib/Std/Ai/Device.sky",
+                from: "if missing > 0 && missing + missing // 10 > caps.storageAvailableBytes then",
+                to: "if missing > 0 && missing > caps.storageAvailableBytes then",
+            },
+        }]),
+        body: bodies::ai_device_decide,
+    },
+    Gate {
+        name: "ai-device-no-silent-fallback",
+        tier: Tier::T1,
+        platforms: UNIX,
+        budget_s: 120,
+        expected: bodies::AI_DEVICE_NO_SILENT_FALLBACK_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a WebGPU engine that registers no GPU device is DeviceUnsupported, never a silent CPU run",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-device-no-silent-fallback.run-without-a-gpu",
+            description: "let the worker load the model on a WebGPU engine with no GPU \
+                          device (ggml then runs it on the CPU in silence); the \
+                          DeviceUnsupported assertions must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/ai_device_worker.go",
+                from: "    if (gpus === 0) {",
+                to: "    if (gpus < 0) {",
+            },
+        }]),
+        body: bodies::ai_device_no_silent_fallback,
+    },
+    Gate {
+        name: "ai-device-digest",
+        tier: Tier::T1,
+        platforms: UNIX,
+        budget_s: 120,
+        expected: bodies::AI_DEVICE_DIGEST_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a device stores a downloaded file only after every chunk and the whole file match their SHA-256",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-device-digest.skip-the-chunk-check",
+            description: "accept a chunk whatever its digest; a chunk list that does not \
+                          describe the bytes is then stored, and the corrupt-chunk \
+                          assertions must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/ai_device_worker.go",
+                from: "    if (got !== list.chunks[i]) {",
+                to: "    if (false && got !== list.chunks[i]) {",
+            },
+        }]),
+        body: bodies::ai_device_digest,
+    },
+    Gate {
+        name: "ai-stream-pieces",
+        tier: Tier::T1,
+        platforms: UNIX,
+        budget_s: 120,
+        expected: bodies::AI_STREAM_PIECES_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a streamed answer arrives piece by piece, from a server slot and from the browser worker",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-stream-pieces.buffer-the-answer",
+            description: "keep every piece of a server's event stream and send none until the \
+                          end (a silent non-stream); the arrived-in-pieces assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/ai_stream.go",
+                from: "\t\t\t\t\tst.content.WriteString(d)\n\t\t\t\t\tst.pieceSeen()\n\t\t\t\t\treturn aiDeltaEvent(d), false, nil",
+                to: "\t\t\t\t\tst.content.WriteString(d)\n\t\t\t\t\tcontinue",
+            },
+        }]),
+        body: bodies::ai_stream_pieces,
+    },
+    Gate {
+        name: "ai-device-blob-allowlist",
+        tier: Tier::T1,
+        platforms: UNIX,
+        budget_s: 120,
+        expected: bodies::AI_DEVICE_BLOB_ALLOWLIST_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the blob route serves only the digests a current offer names",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-device-blob-allowlist.serve-the-store",
+            description: "serve any model the host holds when no offer names the digest; \
+                          the not-offered assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/ai_device_serve.go",
+                from: "\t\tif p := e.fileFor(sum); p != \"\" {\n\t\t\treturn p\n\t\t}\n\t}\n\treturn \"\"",
+                to: "\t\tif p := e.fileFor(sum); p != \"\" {\n\t\t\treturn p\n\t\t}\n\t}\n\tif fileExists(aiModelStorePath(sum)) {\n\t\treturn aiModelStorePath(sum)\n\t}\n\treturn \"\"",
+            },
+        }]),
+        body: bodies::ai_device_blob_allowlist,
+    },
+    Gate {
+        name: "ai-device-partition",
+        tier: Tier::T2,
+        platforms: UNIX,
+        budget_s: 600,
+        expected: bodies::AI_DEVICE_PARTITION_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the AiDevice kernels run in the Sky.Spa client and the slot registers on the server",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-device-partition.server-side-device",
+            description: "classify the AiDevice kernels as server effects, so a device call \
+                          becomes an RPC to the server; the split assertions must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/project/src/spa_partition.rs",
+                from: "const CLIENT_EFFECT_KERNELS: &[&str] = &[\"Native\", \"WebSocket\", \"Nav\", \"AiDevice\"];",
+                to: "const CLIENT_EFFECT_KERNELS: &[&str] = &[\"Native\", \"WebSocket\", \"Nav\"];",
+            },
+        }]),
+        body: bodies::ai_device_partition,
+    },
+    Gate {
+        name: "ai-device-privacy",
+        tier: Tier::T4,
+        platforms: UNIX,
+        budget_s: 2400,
+        expected: bodies::AI_DEVICE_BROWSER_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a call that runs on the device sends nothing to the server (Chromium, strict CSP)",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-device-privacy.device-calls-the-server",
+            description: "send an on-device call to the server's fallback as well; the \
+                          no-call-reached-the-server check must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "sky-stdlib/Std/Ai/Device.sky",
+                from: "runRaw (backendText b) ctx.slot ctx.offerJson path body",
+                to: "serverRaw ctx.slot path body |> Task.andThen (\\_ -> runRaw (backendText b) ctx.slot ctx.offerJson path body)",
+            },
+        }]),
+        body: bodies::ai_device_browser,
+    },
+    Gate {
+        name: "ai-device-csp",
+        tier: Tier::T4,
+        platforms: UNIX,
+        budget_s: 2400,
+        expected: bodies::AI_DEVICE_BROWSER_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the device worker and engines run under script-src 'self' 'wasm-unsafe-eval' with no violation",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-device-csp.evaluate-a-string",
+            description: "make the worker evaluate a string; the strict policy refuses it, \
+                          the worker never answers on the device and the run goes red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/ai_device_worker.go",
+                from: "'use strict';\nconst CHUNK = 64 * 1024 * 1024;",
+                to: "'use strict';\nnew Function('return 1')();\nconst CHUNK = 64 * 1024 * 1024;",
+            },
+        }]),
+        body: bodies::ai_device_browser,
+    },
+    Gate {
+        name: "ai-device-ios-sim",
+        tier: Tier::T4,
+        platforms: MACOS,
+        budget_s: 2400,
+        expected: bodies::AI_DEVICE_IOS_SIM_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the iOS simulator runs a device slot on its own llama.cpp",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-device-ios-sim.shell-ignores-the-ai-ops",
+            description: "make the iOS shell answer the capability op as unknown, so the \
+                          client falls back to the worker; the native-backend \
+                          assertions must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/sky/src/main.rs",
+                from: "case \"sky:aiCaps\", \"sky:aiPrepare\", \"sky:aiStatus\", \"sky:aiChat\", \"sky:aiEvict\",",
+                to: "case \"sky:aiCapsOff\", \"sky:aiPrepare\", \"sky:aiStatus\", \"sky:aiChat\", \"sky:aiEvict\",",
+            },
+        }]),
+        body: bodies::ai_device_ios_sim,
+    },
     Gate {
         name: "live-time-every-mutex-survives-a-panic",
         tier: Tier::T1,
@@ -1418,6 +1748,31 @@ pub static GATES: &[Gate] = &[
             },
         }]),
         body: bodies::config_surface,
+    },
+    Gate {
+        name: "fmt-clean",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        // A pure in-process scan: `git ls-files` plus one format pass per file.
+        budget_s: 120,
+        expected: bodies::FMT_CLEAN_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "every tracked .sky file in sky-stdlib/, sky-bundled/, apps/, examples/ \
+                  and templates/ is already `sky fmt`-clean",
+        // The mutation is the defect the gate exists to catch: a tracked file
+        // that `sky fmt` would rewrite. The gate READS the file at run time, so
+        // no rebuild stands between the mutation and red.
+        mutations: Mutations::new(&[Mutation {
+            id: "fmt-clean.unformat-a-tracked-file",
+            description: "put extra spaces into a call in examples/01-hello-world; \
+                          `sky fmt` would rewrite the file, so the gate must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "examples/01-hello-world/src/Main.sky",
+                from: "    println \"Hello from Sky!\"",
+                to: "    println   \"Hello from Sky!\"",
+            },
+        }]),
+        body: bodies::fmt_clean,
     },
     Gate {
         name: "kernel-members",
@@ -1741,6 +2096,59 @@ mod tests {
         let mut seen = HashSet::new();
         for g in GATES {
             assert!(seen.insert(g.name), "duplicate gate name `{}`", g.name);
+        }
+    }
+
+    /// The corpus shard gates are exactly `corpus::SHARDS` registered T2 gates,
+    /// one per shard, whose exact counts sum to the whole behavioural corpus.
+    /// A shard missing from the registry (or a fifth shard nobody declared)
+    /// would leave cases that no gate runs.
+    #[test]
+    fn the_corpus_shard_gates_cover_the_behavioural_corpus_exactly_once() {
+        assert_eq!(
+            CORPUS_SHARD_GATES.len(),
+            crate::corpus::SHARDS,
+            "CORPUS_SHARD_GATES must name one gate per corpus shard"
+        );
+        let mut sum = 0u64;
+        for (k, name) in CORPUS_SHARD_GATES.iter().enumerate() {
+            let g = find(name)
+                .unwrap_or_else(|| panic!("corpus shard gate `{name}` is not registered"));
+            assert_eq!(
+                g.tier,
+                Tier::T2,
+                "`{name}` must run at T2 with the other corpus shards"
+            );
+            assert_eq!(
+                g.expected,
+                bodies::corpus_shard_expected(k),
+                "`{name}` must declare the exact size of shard {k}"
+            );
+            assert!(
+                g.mutations
+                    .as_slice()
+                    .iter()
+                    .all(|m| m.id.starts_with(&format!("{name}."))),
+                "`{name}` carries a mutation id that names another gate"
+            );
+            sum += g.expected;
+        }
+        assert_eq!(
+            sum,
+            bodies::CORPUS_BEHAVIOURAL_EXPECTED,
+            "the corpus shards' exact counts must sum to the whole behavioural corpus"
+        );
+        // No stray shard-shaped gate outside the list, and the unsharded name is gone.
+        for g in GATES {
+            let shard_shaped = g
+                .name
+                .strip_prefix("corpus-")
+                .is_some_and(|r| r.chars().all(|c| c.is_ascii_digit()));
+            assert!(
+                g.name != "corpus" && (!shard_shaped || CORPUS_SHARD_GATES.contains(&g.name)),
+                "gate `{}` looks like a corpus shard but is not in CORPUS_SHARD_GATES",
+                g.name
+            );
         }
     }
 

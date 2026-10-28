@@ -33,9 +33,11 @@ type DeviceClass
     | BigDesktop
 
 
-classifyDevice : { width : Int
-, height : Int
-} -> DeviceClass
+classifyDevice :
+    { width : Int
+    , height : Int
+    }
+    -> DeviceClass
 classifyDevice viewport =
     if viewport.width < 600 then
         Phone

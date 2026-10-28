@@ -115,6 +115,9 @@ fn tracked_sky_files(root: &Path) -> Result<Vec<String>, String> {
         .split(|b| *b == 0)
         .filter(|s| !s.is_empty())
         .map(|s| String::from_utf8_lossy(s).into_owned())
+        // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+        // from CI in general; skip every `crate::ci_excluded` example by name.
+        .filter(|f| !crate::ci_excluded::is_ci_excluded_rel(f))
         .collect();
     files.sort();
     Ok(files)

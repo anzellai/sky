@@ -1,0 +1,1050 @@
+-- | Std.Ai.Failure — the typed view of every AI failure.
+--
+-- An AI call fails with an ordinary `Error` (every signature stays
+-- `Task Error a`). The error carries a `Domain` failure in the `"ai"` domain,
+-- and `fromError` gives it back as a typed `Failure`:
+--
+-- ```elm
+-- import Sky.Core.Error as Error exposing (Error)
+-- import Std.Ai.Failure as Failure exposing (Failure(..))
+--
+-- explain : Error -> String
+-- explain err =
+--     case Failure.fromError err of
+--         Just (Overloaded o) ->
+--             "busy, try again later"
+--
+--         Just (ModelTooLarge m) ->
+--             "the model needs " ++ String.fromInt m.needBytes ++ " bytes"
+--
+--         _ ->
+--             Error.toString err
+-- ```
+--
+-- Match with a `_ ->` branch: later releases add failures, and a match
+-- without one stops compiling (`[E3001]`) when they do. Code that only needs
+-- to decide whether to retry uses `Error.isRetryable` and `Error.retryAfter`,
+-- which work for every domain.
+--
+-- Every failure also sets an existing `ErrorKind`, so code that matches on
+-- the kind keeps working:
+--
+-- | Failure | `ErrorKind` | retryable |
+-- |---|---|---|
+-- | `NotConfigured`, `InvalidSetting`, `ModelTooLarge`, `DatasetInvalid` | `InvalidInput` | no |
+-- | `Unreachable`, `Overloaded` | `Unavailable` | yes |
+-- | `TimedOut` | `Timeout` | yes |
+-- | `EngineCrashed`, `EngineFailed`, `NoAccelerator`, `ToolchainFailed`, `TrainingFailed` | `Unavailable` | no |
+-- | `NotProvisioned` | `NotFound` | no |
+-- | `DeviceUnsupported` | `Unavailable` | no |
+-- | `StorageDenied` | `PermissionDenied` | no |
+-- | `ChecksumMismatch` | `Conflict` | no |
+-- | `BudgetExceeded`, `GateFailed`, `NotPromotable` | `PermissionDenied` | no |
+-- | `NotRegistered` | `NotFound` | no |
+-- | `TrainingCancelled` | `Conflict` | no |
+-- | `QuotaExceeded` | `PermissionDenied` | no |
+-- | `CapacityUnavailable` | `Unavailable` | yes |
+-- | `DeploymentFailed` | `Unavailable` | no |
+-- | `PromotionConflict` | `Conflict` | no |
+-- | `AdapterMismatch` | `InvalidInput` | no |
+-- | `RemoteRejected` | by status: 400 / 422 `InvalidInput`, 401 / 403 `PermissionDenied`, 404 `NotFound`, 5xx `Unavailable`, else `Unexpected` | 5xx only |
+--
+-- An engine crash is not retryable: the engine's supervisor restarts it, and a
+-- crash loop must not be retried blindly.
+module Std.Ai.Failure exposing (Failure(..), fromError, toError, toErrorWith, code, kind, retryable)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..), DomainFailure)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Std.Money as Money exposing (Money)
+import Std.Decimal as Decimal
+
+-- The payload of each constructor is a named record, so a function that
+-- matches a `Failure` reads the stdlib constructor's payload with one runtime
+-- narrowing instead of one per field (doc 14 §4.5, R6). Constructing and
+-- matching are unchanged: `NotConfigured { setting = "x" }` still builds one,
+-- and `NotConfigured r -> r.setting` still reads it. Constructors with the
+-- same fields share one record.
+type alias NotConfiguredPayload =
+    { setting : String }
+
+type alias InvalidSettingPayload =
+    { setting : String
+    , reason : String
+    }
+
+type alias UnreachablePayload =
+    { target : String }
+
+type alias OverloadedPayload =
+    { retryAfterMs : Maybe Int
+    , status : Maybe Int
+    }
+
+type alias TimedOutPayload =
+    { afterMs : Maybe Int }
+
+type alias EngineCrashedPayload =
+    { exitCode : Maybe Int
+    , logTail : String
+    }
+
+type alias EngineFailedPayload =
+    { reason : String }
+
+type alias BytesPayload =
+    { needBytes : Int
+    , availableBytes : Int
+    }
+
+type alias NoAcceleratorPayload =
+    { wanted : String }
+
+type alias NotProvisionedPayload =
+    { what : String
+    , command : String
+    }
+
+type alias ChecksumMismatchPayload =
+    { expected : String
+    , actual : String
+    }
+
+type alias RemoteRejectedPayload =
+    { status : Int }
+
+type alias BudgetExceededPayload =
+    { budget : Money
+    , estimate : Money
+    }
+
+type alias ToolchainFailedPayload =
+    { tool : String
+    , logTail : String
+    }
+
+type alias GateFailedPayload =
+    { suite : String
+    , reasons : String
+    }
+
+type alias NotRegisteredPayload =
+    { ref : String }
+
+type alias NotPromotablePayload =
+    { ref : String
+    , reason : String
+    }
+
+type alias PromotionConflictPayload =
+    { ref : String
+    , expected : String
+    , actual : String
+    }
+
+type alias AdapterMismatchPayload =
+    { adapter : String
+    , adapterBase : String
+    , engineBase : String
+    }
+
+type alias DatasetInvalidPayload =
+    { dataset : String
+    , reasons : String
+    }
+
+type alias TrainingFailedPayload =
+    { runId : String
+    , step : Int
+    , reason : String
+    , logTail : String
+    }
+
+type alias TrainingCancelledPayload =
+    { runId : String
+    , step : Int
+    }
+
+type alias QuotaExceededPayload =
+    { resource : String
+    , region : String
+    , limit : Int
+    }
+
+type alias CapacityUnavailablePayload =
+    { resource : String
+    , region : String
+    }
+
+type alias DeploymentFailedPayload =
+    { target : String
+    , reason : String
+    , logTail : String
+    }
+
+type alias DeviceUnsupportedPayload =
+    { backend : String
+    , reason : String
+    }
+
+-- | Every AI failure. Attributes hold no secret: a URL is reduced to its
+-- scheme, host and port, and a log tail is the end of an engine's own log.
+type Failure
+    = NotConfigured NotConfiguredPayload
+    | InvalidSetting InvalidSettingPayload
+    | Unreachable UnreachablePayload
+    | Overloaded OverloadedPayload
+    | TimedOut TimedOutPayload
+    | EngineCrashed EngineCrashedPayload
+    | EngineFailed EngineFailedPayload
+    | ModelTooLarge BytesPayload
+    | NoAccelerator NoAcceleratorPayload
+    | NotProvisioned NotProvisionedPayload
+    | ChecksumMismatch ChecksumMismatchPayload
+    | RemoteRejected RemoteRejectedPayload
+    | BudgetExceeded BudgetExceededPayload
+    | ToolchainFailed ToolchainFailedPayload
+    | GateFailed GateFailedPayload
+    | NotRegistered NotRegisteredPayload
+    | NotPromotable NotPromotablePayload
+    | PromotionConflict PromotionConflictPayload
+    | AdapterMismatch AdapterMismatchPayload
+    | DatasetInvalid DatasetInvalidPayload
+    | TrainingFailed TrainingFailedPayload
+    | TrainingCancelled TrainingCancelledPayload
+    | QuotaExceeded QuotaExceededPayload
+    | CapacityUnavailable CapacityUnavailablePayload
+    | DeploymentFailed DeploymentFailedPayload
+    | DeviceUnsupported DeviceUnsupportedPayload
+    | StorageDenied BytesPayload
+
+
+-- | The domain every AI failure is recorded in.
+aiDomain : String
+aiDomain =
+    "ai"
+
+
+-- | The stable code of a failure: its constructor name. It is the
+-- `DomainFailure` code, so a log line or a dashboard can group by it.
+code : Failure -> String
+code f =
+    case f of
+
+        NotConfigured _ ->
+            "NotConfigured"
+
+        InvalidSetting _ ->
+            "InvalidSetting"
+
+        Unreachable _ ->
+            "Unreachable"
+
+        Overloaded _ ->
+            "Overloaded"
+
+        TimedOut _ ->
+            "TimedOut"
+
+        EngineCrashed _ ->
+            "EngineCrashed"
+
+        EngineFailed _ ->
+            "EngineFailed"
+
+        ModelTooLarge _ ->
+            "ModelTooLarge"
+
+        NoAccelerator _ ->
+            "NoAccelerator"
+
+        NotProvisioned _ ->
+            "NotProvisioned"
+
+        ChecksumMismatch _ ->
+            "ChecksumMismatch"
+
+        RemoteRejected _ ->
+            "RemoteRejected"
+
+        BudgetExceeded _ ->
+            "BudgetExceeded"
+
+        ToolchainFailed _ ->
+            "ToolchainFailed"
+
+        GateFailed _ ->
+            "GateFailed"
+
+        NotRegistered _ ->
+            "NotRegistered"
+
+        NotPromotable _ ->
+            "NotPromotable"
+
+        PromotionConflict _ ->
+            "PromotionConflict"
+
+        AdapterMismatch _ ->
+            "AdapterMismatch"
+
+        DatasetInvalid _ ->
+            "DatasetInvalid"
+
+        TrainingFailed _ ->
+            "TrainingFailed"
+
+        TrainingCancelled _ ->
+            "TrainingCancelled"
+
+        QuotaExceeded _ ->
+            "QuotaExceeded"
+
+        CapacityUnavailable _ ->
+            "CapacityUnavailable"
+
+        DeploymentFailed _ ->
+            "DeploymentFailed"
+
+        DeviceUnsupported _ ->
+            "DeviceUnsupported"
+
+        StorageDenied _ ->
+            "StorageDenied"
+
+
+-- | The `ErrorKind` a failure sets.
+kind : Failure -> ErrorKind
+kind f =
+    case f of
+
+        NotConfigured _ ->
+            InvalidInput
+
+        InvalidSetting _ ->
+            InvalidInput
+
+        ModelTooLarge _ ->
+            InvalidInput
+
+        DatasetInvalid _ ->
+            InvalidInput
+
+        Unreachable _ ->
+            Unavailable
+
+        Overloaded _ ->
+            Unavailable
+
+        EngineCrashed _ ->
+            Unavailable
+
+        EngineFailed _ ->
+            Unavailable
+
+        NoAccelerator _ ->
+            Unavailable
+
+        ToolchainFailed _ ->
+            Unavailable
+
+        TrainingFailed _ ->
+            Unavailable
+
+        TrainingCancelled _ ->
+            Conflict
+
+        QuotaExceeded _ ->
+            PermissionDenied
+
+        CapacityUnavailable _ ->
+            Unavailable
+
+        DeploymentFailed _ ->
+            Unavailable
+
+        DeviceUnsupported _ ->
+            Unavailable
+
+        StorageDenied _ ->
+            PermissionDenied
+
+        TimedOut _ ->
+            Timeout
+
+        NotProvisioned _ ->
+            NotFound
+
+        ChecksumMismatch _ ->
+            Conflict
+
+        BudgetExceeded _ ->
+            PermissionDenied
+
+        GateFailed _ ->
+            PermissionDenied
+
+        NotPromotable _ ->
+            PermissionDenied
+
+        NotRegistered _ ->
+            NotFound
+
+        PromotionConflict _ ->
+            Conflict
+
+        AdapterMismatch _ ->
+            InvalidInput
+
+        RemoteRejected r ->
+            remoteKind r.status
+
+
+remoteKind : Int -> ErrorKind
+remoteKind status =
+    if status == 400 || status == 422 then
+        InvalidInput
+
+    else if status == 401 || status == 403 then
+        PermissionDenied
+
+    else if status == 404 then
+        NotFound
+
+    else if status >= 500 then
+        Unavailable
+
+    else
+        Unexpected
+
+
+-- | Whether a retry of the same call can succeed.
+retryable : Failure -> Bool
+retryable f =
+    case f of
+
+        Unreachable _ ->
+            True
+
+        Overloaded _ ->
+            True
+
+        TimedOut _ ->
+            True
+
+        CapacityUnavailable _ ->
+            True
+
+        RemoteRejected r ->
+            r.status >= 500
+
+        _ ->
+            False
+
+
+-- | The `Error` for a failure: its kind, a message that starts with
+-- `Std.Ai <code>:`, and the `Domain` failure `fromError` reads back.
+toError : Failure -> Error
+toError f =
+    let
+        base =
+            Error.failure aiDomain (code f) |> Error.withRetryable (retryable f)
+        withAfter =
+            case f of
+
+                Overloaded o ->
+                    case o.retryAfterMs of
+
+                        Just ms ->
+                            Error.withRetryAfter ms base
+
+                        Nothing ->
+                            base
+
+                _ ->
+                    base
+    in
+        case facts f of
+
+            ( text, attrs ) ->
+                Error.fromDomain
+                    (kind f)
+                    ("Std.Ai " ++ code f ++ ": " ++ text)
+                    (List.foldl
+                        (\( k, v ) acc -> Error.withAttr k v acc)
+                        withAfter
+                        attrs)
+
+
+-- | `toError` with more detail in the message: `"Std.Ai <code>: <text>
+-- (<detail>)"`. A cloud call adds the provider's own message this way. The
+-- typed view is the same as `toError`'s; an empty detail adds nothing.
+toErrorWith : String -> Failure -> Error
+toErrorWith detail f =
+    if String.isEmpty (String.trim detail) then
+        toError f
+
+    else
+        let
+            base =
+                Error.failure aiDomain (code f)
+                    |> Error.withRetryable (retryable f)
+        in
+            case facts f of
+
+                ( text, attrs ) ->
+                    Error.fromDomain
+                        (kind f)
+                        ("Std.Ai " ++ code f ++ ": " ++ text ++ " (" ++ detail
+                            ++ ")")
+                        (List.foldl
+                            (\( k, v ) acc -> Error.withAttr k v acc)
+                            base
+                            attrs)
+
+
+-- | The typed failure an error carries, or `Nothing` for an error from
+-- another domain, an error with no domain failure, or a code this release
+-- does not know (a newer peer's failure keeps its `ErrorKind`, its message
+-- and `Error.isRetryable`).
+fromError : Error -> Maybe Failure
+fromError err =
+    case Error.failureOf err of
+
+        Just df ->
+            if Error.failureDomain df == aiDomain then
+                decode df
+
+            else
+                Nothing
+
+        Nothing ->
+            Nothing
+
+
+-- ── Internal: description and attributes ────────────────────────────
+-- The message text and the attributes of a failure, from ONE match. A
+-- stdlib constructor's payload is read through a runtime narrowing (doc 14
+-- §4.5), so one match reads each payload once where two would read it twice.
+facts : Failure -> ( String, List ( String, String ) )
+facts f =
+    case f of
+
+        NotConfigured r ->
+            ( "not configured; set " ++ r.setting
+            , [ ( "setting", r.setting ) ]
+            )
+
+        InvalidSetting r ->
+            ( r.setting ++ ": " ++ r.reason
+            , [ ( "setting", r.setting ), ( "reason", r.reason ) ]
+            )
+
+        Unreachable r ->
+            ( r.target ++ " cannot be reached", [ ( "target", r.target ) ] )
+
+        Overloaded r ->
+            ( "the model is busy", optInt "status" r.status )
+
+        TimedOut r ->
+            ( "no answer in time", optInt "afterMs" r.afterMs )
+
+        EngineCrashed r ->
+            ( "the local engine crashed: " ++ r.logTail
+            , ( "logTail", r.logTail ) :: optInt "exitCode" r.exitCode
+            )
+
+        EngineFailed r ->
+            ( r.reason, [ ( "reason", r.reason ) ] )
+
+        ModelTooLarge r ->
+            let
+                need = String.fromInt r.needBytes
+                available = String.fromInt r.availableBytes
+            in
+                ( "the model needs " ++ need ++ " bytes and " ++ available
+                      ++ " are available"
+                , [ ( "needBytes", need ), ( "availableBytes", available ) ]
+                )
+
+        NoAccelerator r ->
+            ( "no accelerator for " ++ r.wanted, [ ( "wanted", r.wanted ) ] )
+
+        NotProvisioned r ->
+            ( r.what ++ " is not installed; run " ++ r.command
+            , [ ( "what", r.what ), ( "command", r.command ) ]
+            )
+
+        ChecksumMismatch r ->
+            ( "expected sha256 " ++ r.expected ++ ", got " ++ r.actual
+            , [ ( "expected", r.expected ), ( "actual", r.actual ) ]
+            )
+
+        RemoteRejected r ->
+            let
+                status = String.fromInt r.status
+            in
+                ( "the server answered HTTP " ++ status
+                , [ ( "status", status ) ]
+                )
+
+        BudgetExceeded r ->
+            let
+                budget = moneyText r.budget
+                estimate = moneyText r.estimate
+            in
+                ( "the estimate " ++ estimate ++ " exceeds the budget "
+                      ++ budget
+                , [ ( "budget", budget ), ( "estimate", estimate ) ]
+                )
+
+        ToolchainFailed r ->
+            ( r.tool ++ " failed: " ++ r.logTail
+            , [ ( "tool", r.tool ), ( "logTail", r.logTail ) ]
+            )
+
+        GateFailed r ->
+            ( "the eval gate for " ++ r.suite ++ " failed: " ++ r.reasons
+            , [ ( "suite", r.suite ), ( "reasons", r.reasons ) ]
+            )
+
+        NotRegistered r ->
+            ( r.ref ++ " is not in the registry", [ ( "ref", r.ref ) ] )
+
+        NotPromotable r ->
+            ( r.ref ++ " cannot be promoted: " ++ r.reason
+            , [ ( "ref", r.ref ), ( "reason", r.reason ) ]
+            )
+
+        PromotionConflict r ->
+            ( r.ref ++ " moved: expected " ++ r.expected ++ ", found "
+                  ++ r.actual
+            , [ ( "ref", r.ref )
+              , ( "expected", r.expected )
+              , ( "actual", r.actual )
+              ]
+            )
+
+        AdapterMismatch r ->
+            ( r.adapter ++ " was trained on base sha256 " ++ r.adapterBase
+                  ++ ", but the engine runs base sha256 "
+                  ++ r.engineBase
+            , [ ( "adapter", r.adapter )
+              , ( "adapterBase", r.adapterBase )
+              , ( "engineBase", r.engineBase )
+              ]
+            )
+
+        DatasetInvalid r ->
+            ( "the dataset " ++ r.dataset ++ " is not valid: " ++ r.reasons
+            , [ ( "dataset", r.dataset ), ( "reasons", r.reasons ) ]
+            )
+
+        TrainingFailed r ->
+            let
+                step = String.fromInt r.step
+            in
+                ( "the training run " ++ r.runId ++ " failed at step " ++ step
+                      ++ ": "
+                      ++ r.reason
+                , [ ( "runId", r.runId )
+                  , ( "step", step )
+                  , ( "reason", r.reason )
+                  , ( "logTail", r.logTail )
+                  ]
+                )
+
+        TrainingCancelled r ->
+            let
+                step = String.fromInt r.step
+            in
+                ( "the training run " ++ r.runId ++ " was cancelled at step "
+                      ++ step
+                , [ ( "runId", r.runId ), ( "step", step ) ]
+                )
+
+        QuotaExceeded r ->
+            let
+                limit = String.fromInt r.limit
+            in
+                ( "the quota for " ++ r.resource ++ " in " ++ r.region ++ " is "
+                      ++ limit
+                      ++ "; ask for more on the console's Quotas page"
+                , [ ( "resource", r.resource )
+                  , ( "region", r.region )
+                  , ( "limit", limit )
+                  ]
+                )
+
+        CapacityUnavailable r ->
+            ( "no " ++ r.resource ++ " is free in " ++ r.region
+                  ++ " now; try again later"
+            , [ ( "resource", r.resource ), ( "region", r.region ) ]
+            )
+
+        DeploymentFailed r ->
+            ( "the deployment to " ++ r.target ++ " failed: " ++ r.reason
+            , [ ( "target", r.target )
+              , ( "reason", r.reason )
+              , ( "logTail", r.logTail )
+              ]
+            )
+
+        DeviceUnsupported r ->
+            ( "this device cannot run the model on " ++ r.backend ++ ": "
+                  ++ r.reason
+            , [ ( "backend", r.backend ), ( "reason", r.reason ) ]
+            )
+
+        StorageDenied r ->
+            let
+                need = String.fromInt r.needBytes
+                available = String.fromInt r.availableBytes
+            in
+                ( "the device model needs " ++ need ++ " bytes of storage and "
+                      ++ available
+                      ++ " are available"
+                , [ ( "needBytes", need ), ( "availableBytes", available ) ]
+                )
+
+
+optInt : String -> Maybe Int -> List ( String, String )
+optInt key m =
+    case m of
+
+        Just n ->
+            [ ( key, String.fromInt n ) ]
+
+        Nothing ->
+            []
+
+
+-- Money as "<ISO code> <exact decimal>", for example "USD 40.00".
+moneyText : Money -> String
+moneyText m =
+    Money.currencyCode (Money.currency m) ++ " "
+        ++ Decimal.toString (Money.amount m)
+
+
+moneyFromText : String -> Maybe Money
+moneyFromText s =
+    case String.split " " (String.trim s) of
+
+        [ c, amount ] ->
+            case Money.fromString (Money.parseCurrency c) amount of
+
+                Ok m ->
+                    Just (canonical m)
+
+                Err _ ->
+                    Nothing
+
+        _ ->
+            Nothing
+
+
+-- An amount that whole minor units express exactly reads back as
+-- `Money.fromMinor`, so a failure built with `fromMinor` round-trips to an
+-- equal value; a finer amount (a per-token cost) keeps its exact decimal.
+canonical : Money -> Money
+canonical m =
+    let
+        minor = Money.fromMinor (Money.currency m) (Money.toMinor m)
+    in
+        if Money.eq minor m then
+            minor
+
+        else
+            m
+
+
+-- ── Internal: decoding ──────────────────────────────────────────────
+-- A required String attribute that is missing, or a required Int that does not
+-- parse, gives `Nothing`: the typed view is exact or absent, never invented.
+decode : DomainFailure -> Maybe Failure
+decode df =
+    case Error.failureCode df of
+
+        "NotConfigured" ->
+            one (\s -> NotConfigured { setting = s }) (str df "setting")
+
+        "InvalidSetting" ->
+            two
+                (\s r -> InvalidSetting { setting = s, reason = r })
+                (str df "setting")
+                (str df "reason")
+
+        "Unreachable" ->
+            one (\t -> Unreachable { target = t }) (str df "target")
+
+        "Overloaded" ->
+            case optional df "status" of
+
+                Ok st ->
+                    Just
+                        (Overloaded
+                            { retryAfterMs = Error.failureRetryAfter df
+                            , status = st
+                            })
+
+                Err _ ->
+                    Nothing
+
+        "TimedOut" ->
+            case optional df "afterMs" of
+
+                Ok a ->
+                    Just (TimedOut { afterMs = a })
+
+                Err _ ->
+                    Nothing
+
+        "EngineCrashed" ->
+            case optional df "exitCode" of
+
+                Ok c ->
+                    one
+                        (\t -> EngineCrashed { exitCode = c, logTail = t })
+                        (str df "logTail")
+
+                Err _ ->
+                    Nothing
+
+        "EngineFailed" ->
+            one (\r -> EngineFailed { reason = r }) (str df "reason")
+
+        "ModelTooLarge" ->
+            case ( int df "needBytes", int df "availableBytes" ) of
+
+                ( Just n, Just a ) ->
+                    Just (ModelTooLarge { needBytes = n, availableBytes = a })
+
+                _ ->
+                    Nothing
+
+        "NoAccelerator" ->
+            one (\w -> NoAccelerator { wanted = w }) (str df "wanted")
+
+        "NotProvisioned" ->
+            two
+                (\w c -> NotProvisioned { what = w, command = c })
+                (str df "what")
+                (str df "command")
+
+        "ChecksumMismatch" ->
+            two
+                (\e a -> ChecksumMismatch { expected = e, actual = a })
+                (str df "expected")
+                (str df "actual")
+
+        "RemoteRejected" ->
+            case int df "status" of
+
+                Just st ->
+                    Just (RemoteRejected { status = st })
+
+                Nothing ->
+                    Nothing
+
+        "BudgetExceeded" ->
+            case ( money df "budget", money df "estimate" ) of
+
+                ( Just b, Just e ) ->
+                    Just (BudgetExceeded { budget = b, estimate = e })
+
+                _ ->
+                    Nothing
+
+        "ToolchainFailed" ->
+            two
+                (\t l -> ToolchainFailed { tool = t, logTail = l })
+                (str df "tool")
+                (str df "logTail")
+
+        "GateFailed" ->
+            two
+                (\st r -> GateFailed { suite = st, reasons = r })
+                (str df "suite")
+                (str df "reasons")
+
+        "NotRegistered" ->
+            one (\r -> NotRegistered { ref = r }) (str df "ref")
+
+        "NotPromotable" ->
+            two
+                (\r why -> NotPromotable { ref = r, reason = why })
+                (str df "ref")
+                (str df "reason")
+
+        "PromotionConflict" ->
+            three
+                (\r e x ->
+                    PromotionConflict { ref = r, expected = e, actual = x })
+                (str df "ref")
+                (str df "expected")
+                (str df "actual")
+
+        "AdapterMismatch" ->
+            three
+                (\a ab eb ->
+                    AdapterMismatch
+                        { adapter = a, adapterBase = ab, engineBase = eb })
+                (str df "adapter")
+                (str df "adapterBase")
+                (str df "engineBase")
+
+        "DatasetInvalid" ->
+            two
+                (\d r -> DatasetInvalid { dataset = d, reasons = r })
+                (str df "dataset")
+                (str df "reasons")
+
+        "TrainingFailed" ->
+            case ( ( str df "runId", int df "step" )
+                 , ( str df "reason", str df "logTail" )
+                 ) of
+
+                ( ( Just r, Just st ), ( Just why, Just l ) ) ->
+                    Just
+                        (TrainingFailed
+                            { runId = r, step = st, reason = why, logTail = l })
+
+                _ ->
+                    Nothing
+
+        "TrainingCancelled" ->
+            case ( str df "runId", int df "step" ) of
+
+                ( Just r, Just st ) ->
+                    Just (TrainingCancelled { runId = r, step = st })
+
+                _ ->
+                    Nothing
+
+        "QuotaExceeded" ->
+            case ( str df "resource", str df "region", int df "limit" ) of
+
+                ( Just r, Just g, Just l ) ->
+                    Just (QuotaExceeded { resource = r, region = g, limit = l })
+
+                _ ->
+                    Nothing
+
+        "DeviceUnsupported" ->
+            two
+                (\b r -> DeviceUnsupported { backend = b, reason = r })
+                (str df "backend")
+                (str df "reason")
+
+        "StorageDenied" ->
+            case ( int df "needBytes", int df "availableBytes" ) of
+
+                ( Just n, Just a ) ->
+                    Just (StorageDenied { needBytes = n, availableBytes = a })
+
+                _ ->
+                    Nothing
+
+        "CapacityUnavailable" ->
+            two
+                (\r g -> CapacityUnavailable { resource = r, region = g })
+                (str df "resource")
+                (str df "region")
+
+        "DeploymentFailed" ->
+            three
+                (\t r l ->
+                    DeploymentFailed { target = t, reason = r, logTail = l })
+                (str df "target")
+                (str df "reason")
+                (str df "logTail")
+
+        _ ->
+            Nothing
+
+
+-- A required String attribute.
+str : DomainFailure -> String -> Maybe String
+str df key =
+    Error.failureAttr key df
+
+
+-- A required Int attribute: missing or not an integer gives `Nothing`.
+int : DomainFailure -> String -> Maybe Int
+int df key =
+    case Error.failureAttr key df of
+
+        Just s ->
+            String.toInt s
+
+        Nothing ->
+            Nothing
+
+
+-- An optional Int attribute: absent is `Ok Nothing`, present but not an
+-- integer is `Err ()`.
+optional : DomainFailure -> String -> Result () (Maybe Int)
+optional df key =
+    case Error.failureAttr key df of
+
+        Just s ->
+            case String.toInt s of
+
+                Just n ->
+                    Ok (Just n)
+
+                Nothing ->
+                    Err ()
+
+        Nothing ->
+            Ok Nothing
+
+
+-- A required Money attribute, written by `moneyText`.
+money : DomainFailure -> String -> Maybe Money
+money df key =
+    case Error.failureAttr key df of
+
+        Just s ->
+            moneyFromText s
+
+        Nothing ->
+            Nothing
+
+
+-- The typed `Maybe.map`, `Maybe.map2` and `Maybe.map3` over String attributes.
+-- A monomorphic signature keeps each payload typed: the polymorphic kernels
+-- take and return erased values, and each lambda parameter is narrowed back.
+one : (String -> Failure) -> Maybe String -> Maybe Failure
+one make a =
+    case a of
+
+        Just x ->
+            Just (make x)
+
+        Nothing ->
+            Nothing
+
+
+two : (String -> String -> Failure) -> Maybe String -> Maybe String -> Maybe Failure
+two make a b =
+    case ( a, b ) of
+
+        ( Just x, Just y ) ->
+            Just (make x y)
+
+        _ ->
+            Nothing
+
+
+three : (String -> String -> String -> Failure) -> Maybe String -> Maybe String -> Maybe String -> Maybe Failure
+three make a b c =
+    case ( a, b, c ) of
+
+        ( Just x, Just y, Just z ) ->
+            Just (make x y z)
+
+        _ ->
+            Nothing

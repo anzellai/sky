@@ -382,8 +382,9 @@ jobs:
   #     pattern: `--shard=N/3`, disjoint + total by
   #     `build_run_gate::shards_are_disjoint_and_total`). The `go clean -cache`
   #     step is GONE — it only existed to make room for that in-job sweep.
-  #   * the T2 tier splits across `gate-t2-corpus` (the ~10-min `corpus` gate
-  #     alone) + `gate-t2-rest` (the four lighter T2 gates).
+  #   * the T2 tier splits across `gate-t2-corpus` (the behavioural corpus
+  #     shard gates `corpus-1` … `corpus-4`) + `gate-t2-rest` (the lighter T2
+  #     gates).
   #   * the T1 falsifier sweep splits across `gate-falsifiers-1/2/3` by `--only`
   #     gate groups; their union is the whole T1 tier.
   # NOTHING is dropped: every tier T1-T4, the corpus gates, the workspace tests,
@@ -754,16 +755,19 @@ jobs:
     # The harness runs this job's gates one after another: their summed budget
     # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
     # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
-    timeout-minutes: 100
+    # v0.28.0 adds the Std.Ai T1 gates (ai-train-resume 600 s,
+    # ai-train-exactly-once 600 s, ai-serve-hot-load 300 s, five device and
+    # streaming gates at 120 s) and fmt-clean (120 s): 7,320 s + 15 min = 137.
+    timeout-minutes: 140
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/gate-setup
         with:
           postgres: 'true'
           neovim: 'true'
-      - name: Gate harness (T1 shard 2/3 — sky-verify, sky-suites, lsp) with proof requirement
+      - name: Gate harness (T1 shard 2/3 — sky-verify, sky-suites, lsp, Std.Ai, fmt-clean) with proof requirement
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only sky-verify,sky-suites,lsp
+        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only sky-verify,sky-suites,lsp,ai-train-resume,ai-train-exactly-once,ai-serve-hot-load,ai-device-decide,ai-device-no-silent-fallback,ai-device-digest,ai-stream-pieces,ai-device-blob-allowlist,fmt-clean
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -825,55 +829,57 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  # gate-t2-corpus — the behavioural corpus (`corpus` gate ALONE). This is the
-  # tier that caught the v0.21.0 `record_update` codegen regression the MORNING
-  # AFTER the release, because it ran ONLY in the nightly (§0.2.1). It `go
-  # build`s AND RUNS every combinatorial fixture and is ~10 min locally — the
-  # single heaviest T2 gate, so it gets its own runner. The gate has no internal
-  # shard flag, so it stays one gate; the OTHER four T2 gates run in
-  # gate-t2-rest. `--require-proofs` matches the rigor of the T1 line.
+  # gate-t2-corpus — the behavioural corpus, as its four shard gates
+  # (`corpus-1` … `corpus-4`, each the cases whose index is k mod 4). This is
+  # the tier that caught the v0.21.0 `record_update` codegen regression the
+  # MORNING AFTER the release, because it ran ONLY in the nightly (§0.2.1). It
+  # `go build`s AND RUNS every combinatorial fixture. The whole corpus ran in
+  # 422 s at 530 cases (release run 38922351710), so the four shards share one
+  # runner; a shard gate per job is the step to take if that stops holding.
+  # The OTHER T2 gates run in gate-t2-rest. `--require-proofs` matches the
+  # rigor of the T1 line.
   gate-t2-corpus:
     runs-on: ubuntu-latest
-    # The gate budget is 4000 s (registry.rs, 468 behavioural cases); the job
-    # needs setup on top, so the job limit stays above the gate budget.
-    # The harness runs this job's gates one after another: their summed budget
-    # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
-    # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
-    timeout-minutes: 85
+    # Four shard budgets of 1200 s (registry.rs). The harness runs this job's
+    # gates one after another: their summed budget plus ~15 min of setup must
+    # fit, or a slow gate ends as a cancelled job instead of a harness verdict
+    # (G-18; `e2e_scripts_are_gated.rs` checks it). 80 + 15 = 95.
+    timeout-minutes: 95
     env:
       GO_CACHE_BUDGET_MB: '4096'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/gate-setup
 
-      - name: Gate harness (T2 — corpus, build+run every fixture) with proof requirement
+      - name: Gate harness (T2 — corpus shards 1-4, build+run every fixture) with proof requirement
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --tier t2 --only corpus --require-proofs
+        run: cargo run --release --locked -q -p xtask -- harness --tier t2 --only corpus-1,corpus-2,corpus-3,corpus-4 --require-proofs
 
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  # gate-t2-rest — the remaining four T2 gates: spa-diff-fuzz, corpus-isolation,
-  # corpus-witness, apps-fieldbook. Union with gate-t2-corpus = the whole T2
-  # tier. spa-diff-fuzz + apps-fieldbook drive the installed compiler
+  # gate-t2-rest — the remaining T2 gates: spa-diff-fuzz, corpus-isolation,
+  # corpus-witness, apps-fieldbook, build-new-dir-compiles-nothing,
+  # ai-device-partition. Union with gate-t2-corpus = the whole T2 tier. spa-diff-fuzz + apps-fieldbook drive the installed compiler
   # (sky-out/sky), which the composite installs. `--require-proofs` retained.
   gate-t2-rest:
     runs-on: ubuntu-latest
     # The harness runs this job's gates one after another: their summed budget
     # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
     # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
-    timeout-minutes: 85
+    # 4,800 s of budgets (ai-device-partition 600 s since v0.28.0) + 15 = 95.
+    timeout-minutes: 95
     env:
       GO_CACHE_BUDGET_MB: '4096'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/gate-setup
 
-      - name: Gate harness (T2 — isolation / witness / spa-diff-fuzz / fieldbook) with proof requirement
+      - name: Gate harness (T2 — isolation / witness / spa-diff-fuzz / fieldbook / ai-device-partition) with proof requirement
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --tier t2 --only corpus-isolation,corpus-witness,spa-diff-fuzz,apps-fieldbook,build-new-dir-compiles-nothing --require-proofs
+        run: cargo run --release --locked -q -p xtask -- harness --tier t2 --only corpus-isolation,corpus-witness,spa-diff-fuzz,apps-fieldbook,build-new-dir-compiles-nothing,ai-device-partition --require-proofs
 
       - name: Bound the Go caches before save
         if: always()
@@ -930,10 +936,12 @@ jobs:
 
       # T4 is the PRE-RELEASE tier — the one whose whole purpose is to run
       # exactly here. Gate selection is exact tier equality, so the `--tier t1`
-      # line in gate-core cannot reach it; this is the only place it runs.
+      # line in gate-core cannot reach it. The Std.Ai.Device T4 gates need
+      # browsers, the device engines and a simulator, so they run in
+      # gate-ai-device-web and gate-ai-device-native instead.
       - name: Gate harness (T4 — pre-release tier)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --tier t4
+        run: cargo run --release --locked -q -p xtask -- harness --tier t4 --only apps-ffi-scale
 
       # `ai_memory_pg_flow` needs the pgvector extension in the PostgreSQL the
       # gate-setup composite resolved (it does not install pgvector). The
@@ -950,8 +958,10 @@ jobs:
         env:
           SKY_LIVE_TESTS: require
         # The Android emulator test runs in gate-native-android (it needs a
-        # running emulator); skip it here by name.
-        run: cargo test -p sky --locked -- --ignored --skip android_emulator
+        # running emulator); skip it here by name. The `gcp_live_*` tests
+        # rent cloud GPUs: they run only through scripts/ai/gcp-live.sh (the
+        # ai-cloud-live workflow, with a spend confirmation), never here.
+        run: cargo test -p sky --locked -- --ignored --skip android_emulator --skip gcp_live_
 
       - name: Bound the Go caches before save
         if: always()
@@ -959,7 +969,7 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   # ════════════════════════════════════════════════════════════════════════
-  # gate-falsifiers-1..9 — the falsifier verification. `--require-proofs` on
+  # gate-falsifiers-1..10 — the falsifier verification. `--require-proofs` on
   # the tier lines DEMOTES a PASS whose proof lapsed, but only these runs
   # ESTABLISH that each gate's declared mutation still reddens it. `--all`:
   # nothing is carried from the checked-in proof ledger. The union of the
@@ -1119,29 +1129,385 @@ jobs:
 
   gate-falsifiers-8:
     runs-on: ubuntu-latest
-    # The baseline builds and runs every behavioural case from a cold per-case
-    # state, then the mutated run does it again (1,256 s for the baseline and
-    # both mutations in one job, release run 38764879819). About 1.5x.
+    # Two corpus shard gates, each a baseline and two mutated runs over a
+    # quarter of the cases: one and a half passes over the corpus in all.
+    # The baseline and both mutations of the whole corpus took 1,256 s in one
+    # job (release run 38764879819). About 1.5x with setup.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/gate-setup
-      - name: Falsifier verification (group 8 — the T2 behavioural corpus, corpus.wrong-expected-value)
+      - name: Falsifier verification (group 8 — the T2 behavioural corpus, shards 1 and 2)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus --mutation corpus.wrong-expected-value
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus-1,corpus-2
 
   gate-falsifiers-9:
     runs-on: ubuntu-latest
-    # The baseline builds and runs every behavioural case from a cold per-case
-    # state, then the mutated run does it again (1,256 s for the baseline and
-    # both mutations in one job, release run 38764879819). About 1.5x.
+    # As group 8, for the other two shards.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/gate-setup
-      - name: Falsifier verification (group 9 — the T2 behavioural corpus, corpus.wrong-stdlib-digest)
+      - name: Falsifier verification (group 9 — the T2 behavioural corpus, shards 3 and 4)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus --mutation corpus.wrong-stdlib-digest
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus-3,corpus-4
+
+  # gate-falsifiers-10 — the Std.Ai gates (v0.28.0) and fmt-clean: the T1
+  # training, serving, device and streaming gates and the T2
+  # ai-device-partition. The runner's PostgreSQL binaries, as groups 1-5. The
+  # device browser and simulator gates are proven in their own jobs.
+  gate-falsifiers-10:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/gate-setup
+        with:
+          postgres: 'true'
+      - name: Falsifier verification (group 10 — Std.Ai and fmt-clean)
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only ai-train-resume,ai-train-exactly-once,ai-serve-hot-load,ai-device-decide,ai-device-no-silent-fallback,ai-device-digest,ai-stream-pieces,ai-device-blob-allowlist,ai-device-partition,fmt-clean
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # gate-ai-local — the real managed engine with zero configuration, and a
+  # draft model and named LoRA adapters on it (draft_and_named_adapters_on_
+  # the_real_engine; the adapters run on the synthetic Qwen2 model that
+  # `go run ./cmd/sky-tiny-gguf` writes, so nothing more is fetched)
+  # (rust/crates/sky/tests/ai_local_live.rs). The sliced core-sky runs exclude
+  # it (rust/.config/nextest.toml, default-filter), so the model is fetched and
+  # cached in this one job. Same job as rust-ci.yml `ai-local-live`.
+  gate-ai-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/gate-setup
+        with:
+          install-compiler: 'false'
+      # Restore only: rust-ci `ai-local-live` saves it on main.
+      - name: Restore the Std.Ai engine and development model (saved on main only)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ github.workspace }}/.sky-ai/engines
+            ${{ github.workspace }}/.sky-ai/models
+          key: sky-ai-home-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go') }}
+      - name: sqlite3 and brotli for the sky crate's tests
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
+      - name: Std.Ai live end to end (real llama-server, zero configuration)
+        working-directory: rust
+        env:
+          SKY_LIVE_TESTS: require
+        run: cargo test -p sky --locked --test ai_local_live -- --nocapture
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # gate-ai-train — Std.Ai.Train with real trainer processes and no Python for
+  # Mlx or Fake (rust/crates/sky/tests/ai_train_live.rs: the Fake trainer in
+  # the runtime, and the native trainer's contract on the tiny model with the
+  # linux-x64 bundle), plus the Unsloth driver's Python suites under the
+  # pinned CPython. Same job as rust-ci.yml `ai-train-live`.
+  gate-ai-train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    env:
+      SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/gate-setup
+        with:
+          install-compiler: 'false'
+      # Restore only: rust-ci `ai-train-live` saves it on main.
+      - name: Restore the Std.Ai home (engine, model, CPython, trainers; saved on main only)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ github.workspace }}/.sky-ai/engines
+            ${{ github.workspace }}/.sky-ai/models
+            ${{ github.workspace }}/.sky-ai/python
+            ${{ github.workspace }}/.sky-ai/trainers
+          key: sky-ai-train-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go') }}
+      - name: sqlite3 and brotli for the sky crate's tests
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
+      - uses: ./.github/actions/sky-trainer
+        with:
+          platform: linux-x64
+          token: ${{ github.token }}
+      - name: Std.Ai.Train live (the Fake trainer in the runtime, the native trainer on the tiny model)
+        working-directory: rust
+        env:
+          SKY_LIVE_TESTS: require
+        run: cargo test -p sky --locked --test ai_train_live -- --nocapture
+      - name: The Unsloth driver's Python suites under the pinned CPython
+        working-directory: runtime-go
+        env:
+          SKY_LIVE_TESTS: require
+        run: go test -tags ailive ./rt -run TestTheDriverSuitesPassUnderThePinnedCPython -count=1 -timeout 15m -v
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # gate-ai-train-mlx — a real QLoRA run with the native trainer (sky-trainer,
+  # MLX through mlx-c), killed and resumed, served and evaluated
+  # (rust/crates/sky/tests/ai_train_native_live.rs), with the darwin-arm64
+  # bundle .github/actions/sky-trainer provides. MLX runs on the CPU
+  # (SKY_AI_ACCEL=cpu): the runner has no usable Metal device. Same job as
+  # rust-ci.yml `ai-train-mlx-live`.
+  gate-ai-train-mlx:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+      SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
+      SKY_AI_ACCEL: cpu
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.26'
+          cache: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: rust
+          shared-key: sky-macos
+          save-if: 'false'
+      # Restore only: rust-ci `ai-train-mlx-live` saves it on main.
+      - name: Restore the Std.Ai home (engine, model, trainer, base; saved on main only)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ github.workspace }}/.sky-ai/engines
+            ${{ github.workspace }}/.sky-ai/models
+            ${{ github.workspace }}/.sky-ai/trainers
+            ${{ github.workspace }}/.sky-ai/bases
+          key: sky-ai-train-mlx-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go', 'sky-stdlib/Std/Ai/Train.sky') }}
+      - name: brotli for the sky crate's tests
+        run: command -v brotli >/dev/null || brew install brotli
+      - uses: ./.github/actions/sky-trainer
+        with:
+          platform: darwin-arm64
+          token: ${{ github.token }}
+      - name: Std.Ai.Train live (MLX on Apple silicon)
+        working-directory: rust
+        env:
+          SKY_LIVE_TESTS: require
+        run: cargo test -p sky --locked --test ai_train_native_live -- --nocapture
+
+  # gate-ai-device-web — Std.Ai.Device in real browsers
+  # (scripts/ai-device-e2e.sh, docs/ai/device.md): the web engine is built
+  # here from the pinned llama.cpp source (scripts/ai/device/
+  # build-device-bundles.sh, the script the ai-device-bundles workflow runs),
+  # installed with `sky ai provision --device web --from`, and the probe runs
+  # the synthetic Qwen2 model on the CPU engine in Chromium and WebKit under
+  # the strict policy: the download, the device answer with no call reaching
+  # the server, a private WebKit window answered by the server, the operator's
+  # server placement, and DeviceOnly refused typed. The WebGPU engine needs a
+  # GPU with shader-f16 (a local run: `scripts/ai-device-e2e.sh --webgpu`).
+  gate-ai-device-web:
+    runs-on: ubuntu-latest
+    # The emsdk install (~4 min), the two engine builds (~12 min), the
+    # fixture build (~4 min), five browser runs (~6 min), and the privacy and
+    # strict-policy gates (~12 min) and their falsifiers (a baseline and a
+    # mutated e2e each, ~25 min): 100.
+    timeout-minutes: 100
+    env:
+      SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
+      GO_CACHE_BUDGET_MB: '6144'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/gate-setup
+      - uses: ./.github/actions/playwright-setup
+      # Restore only: a release saves no cache.
+      - name: Restore the Std.Ai home (the server's engine)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ github.workspace }}/.sky-ai/engines
+          key: sky-ai-engines-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go') }}
+      - name: Build the web engine from the pinned source
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          type -P ninja >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ninja-build; }
+          curl -fsSL -o "$RUNNER_TEMP/llama.tar.gz" https://github.com/ggml-org/llama.cpp/archive/refs/tags/b11200.tar.gz
+          echo "77d9d947e1dbdbe3eccc95ae10fa5d6abf48dc3395a84673f67d59b6364b6a94  $RUNNER_TEMP/llama.tar.gz" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/src" && tar -xzf "$RUNNER_TEMP/llama.tar.gz" -C "$RUNNER_TEMP/src"
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install 6.0.12 && "$RUNNER_TEMP/emsdk/emsdk" activate 6.0.12
+          curl -fsSL -o "$RUNNER_TEMP/dawn.zip" https://github.com/google/dawn/releases/download/v20260423.175430/emdawnwebgpu_pkg-v20260423.175430.zip
+          echo "3ad7ebe95a4a20764df46c5a63b0ad489782aee26804fff8511d9797c10e732f  $RUNNER_TEMP/dawn.zip" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/dawn" && unzip -q "$RUNNER_TEMP/dawn.zip" -d "$RUNNER_TEMP/dawn"
+          ./scripts/ai/device/build-device-bundles.sh web --llama-src "$RUNNER_TEMP/src/llama.cpp-b11200" \
+            --out "$RUNNER_TEMP/engines" --emsdk "$RUNNER_TEMP/emsdk" --emdawnwebgpu "$RUNNER_TEMP/dawn/emdawnwebgpu_pkg"
+          ./sky-out/sky ai provision --device web --from "$RUNNER_TEMP/engines"
+          ./sky-out/sky ai provision
+      - name: Std.Ai.Device browser e2e (Chromium + WebKit, strict CSP, synthetic model)
+        timeout-minutes: 25
+        run: scripts/ai-device-e2e.sh
+      - name: Gate harness (T4 — the device privacy and strict-policy gates)
+        timeout-minutes: 25
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --tier t4 --only ai-device-privacy,ai-device-csp
+      # The privacy and strict-policy gates' falsifiers need these browsers
+      # and this engine, so they are proven here, not in a gate-falsifiers job.
+      - name: Falsifier verification (the device browser gates)
+        timeout-minutes: 60
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only ai-device-privacy,ai-device-csp
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # gate-ai-device-native — Std.Ai.Device in the iOS simulator and the macOS
+  # desktop app (rust/crates/sky/tests/ai_device_native_flow.rs): the iOS
+  # engine (SkyLlama.xcframework) is built here from the pinned source and
+  # installed with `--from`; the probe downloads the synthetic model from its
+  # backend, checks it and answers on the device's own llama.cpp.
+  gate-ai-device-native:
+    runs-on: macos-15
+    timeout-minutes: 140
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+      SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        id: setup-go
+        with:
+          go-version: '1.26'
+          cache: false
+      # Restore only: main writes these. See gate-native.
+      - name: Restore the Go build + module cache (saved on main only)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-macos-
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: rust
+          shared-key: sky-macos
+          save-if: 'false'
+      - name: Build sky and the iOS engine from the pinned source
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          brew install ninja
+          command -v brotli >/dev/null || brew install brotli
+          ./scripts/build.sh
+          curl -fsSL -o "$RUNNER_TEMP/llama.tar.gz" https://github.com/ggml-org/llama.cpp/archive/refs/tags/b11200.tar.gz
+          echo "77d9d947e1dbdbe3eccc95ae10fa5d6abf48dc3395a84673f67d59b6364b6a94  $RUNNER_TEMP/llama.tar.gz" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/src" && tar -xzf "$RUNNER_TEMP/llama.tar.gz" -C "$RUNNER_TEMP/src"
+          ./scripts/ai/device/build-device-bundles.sh ios --llama-src "$RUNNER_TEMP/src/llama.cpp-b11200" --out "$RUNNER_TEMP/engines"
+          ./sky-out/sky ai provision --device ios --from "$RUNNER_TEMP/engines"
+          ./sky-out/sky ai provision
+      - name: iOS simulator and desktop:mac on-device runs
+        timeout-minutes: 30
+        working-directory: rust
+        env:
+          SKY_LIVE_TESTS: require
+        run: cargo test -p sky --locked --test ai_device_native_flow -- --ignored --test-threads=1 --skip android
+      - name: Gate harness (T4 — the iOS simulator gate)
+        timeout-minutes: 30
+        working-directory: rust
+        env:
+          SKY_LIVE_TESTS: require
+        run: cargo run --release --locked -q -p xtask -- harness --tier t4 --only ai-device-ios-sim
+      - name: Falsifier verification (the iOS simulator gate)
+        timeout-minutes: 40
+        working-directory: rust
+        env:
+          SKY_LIVE_TESTS: require
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only ai-device-ios-sim
+
+  # gate-ai-device-android — the Android counterpart on an x86_64 emulator
+  # with KVM: the JNI engine for x86_64 is built here (NDK 27.0.12077973) and
+  # the probe answers on the device.
+  gate-ai-device-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+      SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        id: setup-go
+        with:
+          go-version: '1.26'
+          cache: false
+      # Restore only: main writes these. See gate-native.
+      - name: Restore the Go build + module cache (saved on main only)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Build sky and the Android engine from the pinned source
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          type -P ninja >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ninja-build; }
+          ./scripts/build.sh
+          { yes || true; } | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" > /dev/null
+          curl -fsSL -o "$RUNNER_TEMP/llama.tar.gz" https://github.com/ggml-org/llama.cpp/archive/refs/tags/b11200.tar.gz
+          echo "77d9d947e1dbdbe3eccc95ae10fa5d6abf48dc3395a84673f67d59b6364b6a94  $RUNNER_TEMP/llama.tar.gz" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/src" && tar -xzf "$RUNNER_TEMP/llama.tar.gz" -C "$RUNNER_TEMP/src"
+          ./scripts/ai/device/build-device-bundles.sh android --llama-src "$RUNNER_TEMP/src/llama.cpp-b11200" \
+            --out "$RUNNER_TEMP/engines" --android-sdk "$ANDROID_HOME"
+          ./sky-out/sky ai provision --device android --from "$RUNNER_TEMP/engines"
+          cd rust && cargo test -p sky --locked --test ai_device_native_flow --no-run
+      - name: Android emulator on-device run
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        env:
+          SKY_LIVE_TESTS: require
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          emulator-boot-timeout: 900
+          script: cd rust && cargo test -p sky --locked --test ai_device_native_flow -- --ignored --test-threads=1 android
 
   # gate-race — the Go runtime under the race detector against a live
   # PostgreSQL, plus the `integration`-tagged Postgres session-store tests.
@@ -1753,6 +2119,13 @@ jobs:
       - gate-falsifiers-7
       - gate-falsifiers-8
       - gate-falsifiers-9
+      - gate-falsifiers-10
+      - gate-ai-local
+      - gate-ai-train
+      - gate-ai-train-mlx
+      - gate-ai-device-web
+      - gate-ai-device-native
+      - gate-ai-device-android
       - gate-race-1
       - gate-race-2
       - gate-web-1

@@ -100,3 +100,6 @@ type procTreeRoot struct {
 func newProcTreeCookie() string    { return "" }
 func procStartTime(pid int) uint64 { return 0 }
 func procSweep(root procTreeRoot)  {}
+
+// procIsZombie: Windows has no zombie state.
+func procIsZombie(pid int) bool { return false }

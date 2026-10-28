@@ -598,23 +598,62 @@ pub fn spike(root: &Path, n: usize) -> i32 {
 /// Building them here would spend `c_u` each to learn nothing, and would report
 /// a family-R case's correct rejection as a `BUILD-FAILED` red.
 pub fn run_all(root: &Path) -> i32 {
-    let all = super::behavioural_cases();
+    run_set(root, super::behavioural_cases(), "run", None).0
+}
+
+/// Run behavioural slice `i` of `n` (interleaved by index, see
+/// [`super::shard_slice`]). Returns the exit code and the number of cases that
+/// produced a verdict: the harness gate reports that number as its assertion
+/// count, so a shard that ran fewer cases than its declared exact count fails.
+///
+/// Each shard has its own scratch directory, so two shards on one host do not
+/// delete each other's case trees.
+pub fn run_shard(root: &Path, i: usize, n: usize) -> (i32, usize) {
+    run_set(
+        root,
+        super::behavioural_shard(i, n),
+        &format!("run-shard-{i}of{n}"),
+        Some((i, n)),
+    )
+}
+
+/// Run `all` (a set of behavioural cases) and account for it. Returns the exit
+/// code and the number of case verdicts produced.
+fn run_set(
+    root: &Path,
+    all: Vec<GenCase>,
+    tag: &str,
+    shard: Option<(usize, usize)>,
+) -> (i32, usize) {
     println!("CORPUS — Layer 1 (v2 §3)");
     println!(
-        "  N_min : {} ({} behavioural, built + run here; the rest are family R \
-         (`--reject`) and family E (`--emit-shape`), which never `go build`)",
+        "  N_min : {} ({} behavioural, built + run across all shards; the rest are \
+         family R (`--reject`) and family E (`--emit-shape`), which never `go build`)",
         super::n_min(),
-        all.len()
+        super::behavioural_cases().len()
     );
+    if let Some((i, n)) = shard {
+        println!(
+            "  shard : {i}/{n} — {} case(s), every case whose index is {i} mod {n}",
+            all.len()
+        );
+    }
     println!();
-    let scratch = scratch_root("run");
+    let scratch = scratch_root(tag);
     let t = Instant::now();
     let results = run_cases(root, &all, &scratch);
     let wall = t.elapsed();
     if results.is_empty() {
-        return 1;
+        return (1, 0);
     }
-    report(&results, wall, all.len());
+    let ran = results.len();
+    (account(&all, &results, wall), ran)
+}
+
+/// Report a finished run and apply the BLOCKED accounting. Returns the exit
+/// code.
+fn account(all: &[GenCase], results: &[CaseResult], wall: Duration) -> i32 {
+    report(results, wall, all.len());
     // ---- BLOCKED accounting (v2 §7.2) -----------------------------------
     //
     // A blocked case RAN. It is red because the product is broken, not because
@@ -631,7 +670,7 @@ pub fn run_all(root: &Path) -> i32 {
     let mut blocked_now_green = Vec::new();
     let mut expired = Vec::new();
 
-    for r in &results {
+    for r in results {
         let blocked = by_id.get(r.id.as_str()).and_then(|c| c.blocked.as_ref());
         match (blocked, r.verdict.is_red()) {
             (Some(b), true) => {

@@ -1,0 +1,151 @@
+module Fixture exposing (World, openIn, job, emulator, stats, Stats, control, image)
+
+{-| A Vertex training job for the workflow tests, and the emulator's
+control routes (`/_fake/...` on `SKY_AI_GCP_ENDPOINT`). -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Http as Http
+import Sky.Core.Json.Decode as JsonD
+import Std.Db as Db exposing (Db)
+import Std.Money as Money exposing (Money)
+import Std.Ai.Dataset as Dataset
+import Std.Ai.Registry as Registry
+import Std.Ai.Store as Store
+import Std.Ai.Train as Train
+
+type alias World =
+    { db : Db
+    , reg : Registry.Registry
+    , version : Dataset.Version Dataset.Chat
+    , dir : String
+    }
+
+
+openIn : String -> Task Error World
+openIn dir =
+    Db.open "sqlite" (dir ++ "/app.db")
+        |> Task.andThen
+               (\db ->
+                   Registry.open db (Store.local (dir ++ "/registry"))
+                       |> Task.andThen
+                              (\reg ->
+                                  Dataset.fromJsonl
+                                      Dataset.chatCodec
+                                      "data/support.jsonl"
+                                      |> Dataset.split
+                                             { train = 80
+                                             , eval = 20
+                                             , test = 0
+                                             , seed = 7
+                                             }
+                                             (\row ->
+                                                 row.messages
+                                                     |> List.map .content
+                                                     |> String.join "\n")
+                                      |> Dataset.freeze
+                                             (Dataset.folder
+                                                 (dir ++ "/datasets")
+                                                 "support")
+                                             Dataset.chatCodec
+                                      |> Task.map
+                                             (\v ->
+                                                 { db = db
+                                                 , reg = reg
+                                                 , version = v
+                                                 , dir = dir
+                                                 })))
+
+
+image : String
+image =
+    "us-central1-docker.pkg.dev/p/sky/sky-ai-trainer@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+
+
+-- | A CPU job (the container runs the Fake driver) named `name`, 6 steps of
+-- 10 ms, a checkpoint every 2 steps, at USD 0.30 an hour with a USD 2 budget.
+job : String -> World -> Train.Job
+job name w =
+    Train.lora Train.devBase w.version |> Train.withName name
+        |> Train.withRank 2
+        |> Train.withLayers 1
+        |> Train.withMaxSteps 6
+        |> Train.withBatch { perDevice = 2, accumulate = 1 }
+        |> Train.withCheckpointEvery 2
+        |> Train.fakeStepMs 10
+        |> Train.withWatchWindow 100
+        |> Train.withBackend Train.Vertex
+        |> Train.withCloud
+               { project = "p"
+               , region = "us-central1"
+               , machine = "n2-standard-4"
+               , staging = "gs://bkt/sky"
+               }
+        |> Train.withImage image
+        |> Train.withBudget (Money.fromMajor Money.USD 2)
+        |> Train.withMachinePrices
+               (Train.machinePrices
+                   Money.USD
+                   "test"
+                   [ { machine = "n2-standard-4"
+                     , region = "us-central1"
+                     , perHour = "0.30"
+                     }
+                   , { machine = "n2-standard-4"
+                     , region = "europe-west4"
+                     , perHour = "0.30"
+                     }
+                   , { machine = "g2-standard-4"
+                     , region = "us-central1"
+                     , perHour = "1.00"
+                     }
+                   ])
+        |> Train.withWorkDir (w.dir ++ "/runs")
+        |> Train.withRegistry w.reg
+
+
+emulator : String
+emulator =
+    "http://sky-gcp.invalid"
+
+-- | The emulator's counters.
+type alias Stats =
+    { creates : Int
+    , cancels : Int
+    , jobDeletes : Int
+    , jobs : Int
+    , objects : Int
+    }
+
+
+stats : () -> Task Error Stats
+stats _ =
+    Http.get (emulator ++ "/_fake/stats")
+        |> Task.andThen
+               (\resp ->
+                   Task.fromResult
+                       (JsonD.decodeString
+                           (JsonD.map5
+                               (\c x d j o ->
+                                   { creates = c
+                                   , cancels = x
+                                   , jobDeletes = d
+                                   , jobs = j
+                                   , objects = o
+                                   })
+                               (JsonD.field "creates" JsonD.int)
+                               (JsonD.field "cancels" JsonD.int)
+                               (JsonD.field "jobDeletes" JsonD.int)
+                               (JsonD.field "jobs" (JsonD.list JsonD.value)
+                                   |> JsonD.map List.length)
+                               (JsonD.field "objects" JsonD.int))
+                           resp.body))
+
+
+-- | POST a control route: `control "stockout"`, `control "listlag?ms=300"`.
+control : String -> Task Error ()
+control route =
+    Http.post (emulator ++ "/_fake/" ++ route) "" |> Task.map (\_ -> ())

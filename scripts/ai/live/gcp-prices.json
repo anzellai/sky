@@ -1,0 +1,52 @@
+{
+  "read": "2026-10-12",
+  "source": "Cloud Billing Catalog API (services.skus.list), read with `sky ai cloud prices`; public list prices in USD, region us-central1 (Iowa, Americas)",
+  "note": "Each rate is the sum of its catalogue SKUs, rounded up. Vertex AI custom training bills the machine (cores, RAM, GPU), its management fee and the boot disk; Cloud Run with a GPU bills instance-based CPU, memory and the GPU per second.",
+  "rates": {
+    "vertexG2Standard4PerHour": "0.95",
+    "vertexG2Standard4Parts": "L4 0.644046276 + fee 0.084006035; 4 cores x (0.028736444 + 0.003748231); 16 GiB x (0.003366566 + 0.000439100); 100 GiB SSD PD 0.1955/GiB-month = 0.0268/h; sum 0.9457",
+    "vertexN2Standard4PerHour": "0.30",
+    "vertexN2Standard4Parts": "4 cores x (0.036352650 + 0.004741600); 16 GiB x (0.004872550 + 0.000635600); 100 GiB SSD PD 0.0268/h; sum 0.2793",
+    "cloudRunL4InstancePerHour": "1.14",
+    "cloudRunL4InstanceParts": "L4 without zonal redundancy 0.0001867/s = 0.67212/h; 5 vCPU x 0.000018/s = 0.324/h; 20 GiB x 0.000002/GiB-s = 0.144/h; sum 1.14012",
+    "cloudBuildPerMinute": "0.006",
+    "cloudBuildParts": "Build time e2-standard-2, 0.006/min (default pool)"
+  },
+  "upperBound": true,
+  "stageLimits": {
+    "note": "gcp-live.sh runs each of l2 to l5 under with_timeout stageSeconds, then cancels the run's live Vertex jobs and waits at most cancelWaitSeconds for them to end, and after l5 deletes the Cloud Run service. A job's ledger seconds count from its creation, PENDING and provisioning included; its scheduling.timeout counts only from RUNNING (the l4 job's 40 minutes did not bound runs of 3155 s and 3797 s), so the stage window plus the cancel wait is the bound. Cloud Build stops each build at cloudBuildTimeoutSeconds (sky-bundled/ai-cloud). The windows are set above the longest passing run of each stage.",
+    "stageSeconds": {
+      "l2": 900,
+      "l3": 2700,
+      "l4": 4500,
+      "l5": 3600
+    },
+    "cancelWaitSeconds": 600,
+    "cloudBuildTimeoutSeconds": 3600,
+    "imageStorageAllowanceUsd": 0.1
+  },
+  "stageWorstCaseUsd": {
+    "l0": 0.0,
+    "l1": 0.82,
+    "l2": 0.0,
+    "l3": 1.1,
+    "l4": 1.35,
+    "l5": 1.68
+  },
+  "stageWorstCaseBasis": {
+    "l0": "reads only (services, quotas): free",
+    "l1": "two Cloud Builds, each stopped at its 3600 s timeout: 2 x 60 min x USD 0.006 = 0.72; plus an allowance of USD 0.10 for about 25 GB of images kept for under a day",
+    "l2": "a plan refused by its budget creates nothing: free",
+    "l3": "four n2-standard-4 job chains at once (l3-once, l3-crash, l3-cancel, l3-budget), each for at most the 2700 s window plus the 600 s cancel wait: 4 x 3300 s x USD 0.30/h = 1.10",
+    "l4": "one g2-standard-4 job chain for at most the 4500 s window plus the 600 s cancel wait, from job creation (PENDING and provisioning included): 5100 s x USD 0.95/h = 1.3458, rounded up to 1.35",
+    "l5": "the l5-prep n2-standard-4 job chain and one Cloud Run L4 instance, each for at most the 3600 s window plus the 600 s cancel wait: 4200 s x (USD 0.30 + 1.14)/h = 1.68"
+  },
+  "cloudRunL4RegionsChecked": {
+    "us-central1": "2026-10-12",
+    "europe-west4": "2026-10-13: L4 without zonal redundancy 0.0001867 USD/s, CPU 0.000018 USD/s, memory 0.000002 USD/GiB-s (instance-based), the same as us-central1"
+  },
+  "vertexN2RegionsChecked": {
+    "us-central1": "0.28 (2026-10-12)",
+    "europe-west4": "0.278 plus the boot disk (2026-10-14); 0.30 is the upper bound used for both"
+  }
+}

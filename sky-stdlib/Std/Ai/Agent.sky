@@ -5,6 +5,13 @@ module Std.Ai.Agent exposing
     , ToolOutput
     , toolLoop
     , nativeToolLoop
+    , structuredToolLoop
+    , Options
+    , defaultOptions
+    , oneShotWith
+    , toolLoopWith
+    , nativeToolLoopWith
+    , structuredToolLoopWith
     , inputCodec
     , outputCodec
     )
@@ -30,7 +37,9 @@ increment; the durable substrate is the same.
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
-import Sky.Core.Error exposing (Error)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Json.Decode as JsonD
+import Sky.Core.Json.Encode as JsonE
 import Sky.Core.String as String
 import Sky.Core.List as List
 import Sky.Core.Maybe exposing (Maybe(..))
@@ -39,6 +48,7 @@ import Std.Codec as Codec exposing (Codec)
 import Std.Durable as Durable exposing (Ctx)
 import Std.Ai.Provider as Provider exposing (Provider, Message)
 import Std.Ai.Tool as Tool exposing (Tool)
+import Std.Ai.Trace as Trace
 
 type alias Input =
     { messages : List Message }
@@ -69,6 +79,194 @@ responseCodec =
         , usage = { promptTokens = 0, completionTokens = 0, totalTokens = 0 }
         }
 
+-- ---------------------------------------------------------------------------
+-- Options: tracing
+-- ---------------------------------------------------------------------------
+{-| How an agent runs. `trace = Just book` records every model call in
+`Std.Ai.Trace` under the durable run's id, priced with `book`: the call and
+what it did (slot, tier, adapter, queue wait, latency, tokens per second,
+outcome). The call and its facts are journalled together, and the row is
+written by its own keyed step, so a resumed run neither calls the model again
+nor records the call twice. A call that fails is recorded with its outcome
+each time it is tried. Call `Trace.setup db` once at start-up, with
+`Durable.setup`. -}
+type alias Options =
+    { trace : Maybe Provider.PriceBook }
+
+
+{-| No tracing. -}
+defaultOptions : Options
+defaultOptions =
+    { trace = Nothing }
+
+-- A model call and what it did, as the run's journal keeps it.
+type alias Journalled a =
+    { response : a
+    , facts : Provider.CallFacts
+    }
+
+
+factsSample : Provider.CallFacts
+factsSample =
+    { slot = ""
+    , tier = ""
+    , adapter = ""
+    , queueWaitMs = Just 0
+    , startMs = Just 0
+    , latencyMs = Just 0
+    , firstTokenMs = Just 0
+    , tokensPerSecond = Just 0.0
+    , draftAcceptance = Just 0.0
+    , outcome = ""
+    }
+
+
+journalledChatCodec : Codec (Journalled Provider.ChatResponse)
+journalledChatCodec =
+    Codec.auto
+        { response =
+            { content = ""
+            , usage =
+                { promptTokens = 0, completionTokens = 0, totalTokens = 0 }
+            }
+        , facts = factsSample
+        }
+
+
+journalledToolsCodec : Codec (Journalled Provider.ToolResponse)
+journalledToolsCodec =
+    Codec.auto
+        { response =
+            { content = ""
+            , toolCalls =
+                [ { id = "", name = "", arguments = "", continuation = Nothing }
+                ]
+            , usage =
+                { promptTokens = 0, completionTokens = 0, totalTokens = 0 }
+            }
+        , facts = factsSample
+        }
+
+
+-- The trace entry of a model step: the run, the step's key, the book.
+traceEntry : Ctx -> String -> Provider.PriceBook -> Trace.Ledger
+traceEntry ctx key book =
+    { runId = Durable.runId ctx
+    , key = key
+    , kind = Trace.Call
+    , book = Just book
+    }
+
+
+-- One model call as a journalled step, traced when the options say so.
+chatStep : Options -> Ctx -> String -> Provider -> List Message -> Task Error Provider.ChatResponse
+chatStep opts ctx key provider messages =
+    case opts.trace of
+
+        Nothing ->
+            Durable.step ctx responseCodec key (Provider.chat provider messages)
+
+        Just book ->
+            Durable.step
+                ctx
+                journalledChatCodec
+                key
+                (measuredChat ctx key book provider messages)
+                |> Task.andThen (writeChatTrace ctx key book)
+
+
+-- Call the model, measured. A failure is recorded (each attempt is a real
+-- call) and fails the step.
+measuredChat : Ctx -> String -> Provider.PriceBook -> Provider -> List Message -> Task Error (Journalled Provider.ChatResponse)
+measuredChat ctx key book provider messages =
+    Provider.measure Provider.defaultOptions provider messages
+        |> Task.andThen
+               (\m ->
+                   case m.result of
+
+                       Ok r ->
+                           Task.succeed { response = r, facts = m.facts }
+
+                       Err e ->
+                           Trace.recordCall
+                               (Durable.conn ctx)
+                               (failedEntry ctx book)
+                               m
+                               |> Task.andThen (\_ -> Task.fail e))
+
+
+failedEntry : Ctx -> Provider.PriceBook -> Trace.Ledger
+failedEntry ctx book =
+    Trace.ledger (Durable.runId ctx) |> Trace.priced book
+
+
+writeChatTrace : Ctx -> String -> Provider.PriceBook -> Journalled Provider.ChatResponse -> Task Error Provider.ChatResponse
+writeChatTrace ctx key book j =
+    Durable.step
+        ctx
+        Codec.string
+        ("trace:" ++ key)
+        (Trace.recordCall
+            (Durable.conn ctx)
+            (traceEntry ctx key book)
+            { result = Ok j.response, facts = j.facts }
+            |> Task.map (\_ -> ""))
+        |> Task.map (\_ -> j.response)
+
+
+-- One native tool-calling model turn as a journalled step, traced when the
+-- options say so.
+toolsStep : Options -> Ctx -> String -> Provider -> List Provider.Turn -> Provider.ToolRequest -> Task Error Provider.ToolResponse
+toolsStep opts ctx key provider turns req =
+    case opts.trace of
+
+        Nothing ->
+            Durable.step
+                ctx
+                toolRespCodec
+                key
+                (Provider.chatToolRequest provider turns req)
+
+        Just book ->
+            Durable.step
+                ctx
+                journalledToolsCodec
+                key
+                (measuredTools ctx book provider turns req)
+                |> Task.andThen (writeToolsTrace ctx key book)
+
+
+measuredTools : Ctx -> Provider.PriceBook -> Provider -> List Provider.Turn -> Provider.ToolRequest -> Task Error (Journalled Provider.ToolResponse)
+measuredTools ctx book provider turns req =
+    Provider.measureToolRequest provider turns req
+        |> Task.andThen
+               (\m ->
+                   case m.result of
+
+                       Ok r ->
+                           Task.succeed { response = r, facts = m.facts }
+
+                       Err e ->
+                           Trace.recordToolCall
+                               (Durable.conn ctx)
+                               (failedEntry ctx book)
+                               m
+                               |> Task.andThen (\_ -> Task.fail e))
+
+
+writeToolsTrace : Ctx -> String -> Provider.PriceBook -> Journalled Provider.ToolResponse -> Task Error Provider.ToolResponse
+writeToolsTrace ctx key book j =
+    Durable.step
+        ctx
+        Codec.string
+        ("trace:" ++ key)
+        (Trace.recordToolCall
+            (Durable.conn ctx)
+            (traceEntry ctx key book)
+            { result = Ok j.response, facts = j.facts }
+            |> Task.map (\_ -> ""))
+        |> Task.map (\_ -> j.response)
+
 
 {-| A one-shot durable agent: prepend `systemPrompt`, call `provider` once inside
 a journalled step, return the answer and usage. Register it under `name`, then
@@ -76,16 +274,27 @@ a journalled step, return the answer and usage. Register it under `name`, then
 -}
 oneShot : String -> Provider -> String -> Durable.WorkflowDef Input Output
 oneShot name provider systemPrompt =
-    Durable.register name inputCodec outputCodec (body provider systemPrompt)
+    oneShotWith defaultOptions name provider systemPrompt
 
 
-body : Provider -> String -> Ctx -> Input -> Task Error Output
-body provider systemPrompt ctx input =
-    Durable.step
+{-| `oneShot` with `Options` (tracing). -}
+oneShotWith : Options -> String -> Provider -> String -> Durable.WorkflowDef Input Output
+oneShotWith opts name provider systemPrompt =
+    Durable.register
+        name
+        inputCodec
+        outputCodec
+        (body opts provider systemPrompt)
+
+
+body : Options -> Provider -> String -> Ctx -> Input -> Task Error Output
+body opts provider systemPrompt ctx input =
+    chatStep
+        opts
         ctx
-        responseCodec
         "llm"
-        (Provider.chat provider (Provider.system systemPrompt :: input.messages))
+        provider
+        (Provider.system systemPrompt :: input.messages)
         |> Task.map (\r -> { answer = r.content, usage = r.usage })
 
 -- ---------------------------------------------------------------------------
@@ -110,12 +319,19 @@ exact.
 -}
 toolLoop : String -> Provider -> String -> List Tool -> Int -> Durable.WorkflowDef Input ToolOutput
 toolLoop name provider systemPrompt tools maxTurns =
+    toolLoopWith defaultOptions name provider systemPrompt tools maxTurns
+
+
+{-| `toolLoop` with `Options` (tracing). -}
+toolLoopWith : Options -> String -> Provider -> String -> List Tool -> Int -> Durable.WorkflowDef Input ToolOutput
+toolLoopWith opts name provider systemPrompt tools maxTurns =
     Durable.register
         name
         inputCodec
         toolOutputCodec
         (\ctx input ->
             loop
+                opts
                 provider
                 tools
                 maxTurns
@@ -126,18 +342,14 @@ toolLoop name provider systemPrompt tools maxTurns =
                     :: input.messages))
 
 
-loop : Provider -> List Tool -> Int -> Ctx -> Int -> List Message -> Task Error ToolOutput
-loop provider tools maxTurns ctx turn messages =
+loop : Options -> Provider -> List Tool -> Int -> Ctx -> Int -> List Message -> Task Error ToolOutput
+loop opts provider tools maxTurns ctx turn messages =
     if turn >= maxTurns then
         Task.succeed
             { answer = "(reached the turn limit without a final answer)" }
 
     else
-        Durable.step
-            ctx
-            responseCodec
-            ("turn:" ++ String.fromInt turn)
-            (Provider.chat provider messages)
+        chatStep opts ctx ("turn:" ++ String.fromInt turn) provider messages
             |> Task.andThen
                    (\resp ->
                        case parseAction resp.content of
@@ -153,10 +365,11 @@ loop provider tools maxTurns ctx turn messages =
                                    ctx
                                    Codec.string
                                    ("tool:" ++ String.fromInt turn)
-                                   (Tool.run tools toolName args)
+                                   (runChecked tools toolName args)
                                    |> Task.andThen
                                           (\result ->
                                               loop
+                                                  opts
                                                   provider
                                                   tools
                                                   maxTurns
@@ -184,14 +397,28 @@ type alias Parsed =
     }
 
 
-parsedCodec : Codec Parsed
-parsedCodec =
-    Codec.auto { tool = Just "", args = Just "", answer = Just "" }
+-- `args` is a string, or (for a typed tool) a JSON object, which is passed on
+-- as its JSON text.
+parsedDecoder : JsonD.Decoder Parsed
+parsedDecoder =
+    JsonD.map3
+        (\t a x -> { tool = t, args = a, answer = x })
+        (optionalField "tool" JsonD.string)
+        (optionalField
+            "args"
+            (JsonD.oneOf
+                [ JsonD.string, JsonD.map (\v -> JsonE.encode 0 v) JsonD.value ]))
+        (optionalField "answer" JsonD.string)
+
+
+optionalField : String -> JsonD.Decoder a -> JsonD.Decoder (Maybe a)
+optionalField key d =
+    JsonD.oneOf [ JsonD.map Just (JsonD.field key d), JsonD.succeed Nothing ]
 
 
 parseAction : String -> Action
 parseAction content =
-    case Codec.fromJson parsedCodec content of
+    case JsonD.decodeString parsedDecoder content of
 
         Ok p ->
             case p.answer of
@@ -243,12 +470,19 @@ arguments passed to the tool's `exec`.
 -}
 nativeToolLoop : String -> Provider -> String -> List Tool -> Int -> Durable.WorkflowDef Input ToolOutput
 nativeToolLoop name provider systemPrompt tools maxTurns =
+    nativeToolLoopWith defaultOptions name provider systemPrompt tools maxTurns
+
+
+{-| `nativeToolLoop` with `Options` (tracing). -}
+nativeToolLoopWith : Options -> String -> Provider -> String -> List Tool -> Int -> Durable.WorkflowDef Input ToolOutput
+nativeToolLoopWith opts name provider systemPrompt tools maxTurns =
     Durable.register
         name
         inputCodec
         toolOutputCodec
         (\ctx input ->
             nativeLoop
+                opts
                 provider
                 tools
                 maxTurns
@@ -258,23 +492,31 @@ nativeToolLoop name provider systemPrompt tools maxTurns =
                     :: List.map Provider.Say input.messages))
 
 
-toolSpecsOf : List Tool -> List Provider.ToolSpec
-toolSpecsOf tools =
-    List.map (\t -> { name = Tool.name t, description = Tool.describe t }) tools
+toolSchemasOf : List Tool -> List Provider.ToolSchema
+toolSchemasOf tools =
+    List.map
+        (\t ->
+            { name = Tool.name t
+            , description = Tool.describe t
+            , parameters = Tool.parameters t
+            })
+        tools
 
 
-nativeLoop : Provider -> List Tool -> Int -> Ctx -> Int -> List Provider.Turn -> Task Error ToolOutput
-nativeLoop provider tools maxTurns ctx turn turns =
+nativeLoop : Options -> Provider -> List Tool -> Int -> Ctx -> Int -> List Provider.Turn -> Task Error ToolOutput
+nativeLoop opts provider tools maxTurns ctx turn turns =
     if turn >= maxTurns then
         Task.succeed
             { answer = "(reached the turn limit without a final answer)" }
 
     else
-        Durable.step
+        toolsStep
+            opts
             ctx
-            toolRespCodec
             ("turn:" ++ String.fromInt turn)
-            (Provider.chatTools provider turns (toolSpecsOf tools))
+            provider
+            turns
+            { tools = toolSchemasOf tools, responseFormat = Nothing }
             |> Task.andThen
                    (\resp ->
                        if List.isEmpty resp.toolCalls then
@@ -285,6 +527,7 @@ nativeLoop provider tools maxTurns ctx turn turns =
                                |> Task.andThen
                                       (\returned ->
                                           nativeLoop
+                                              opts
                                               provider
                                               tools
                                               maxTurns
@@ -310,10 +553,144 @@ runCalls tools ctx turn idx calls =
                 ctx
                 Codec.string
                 ("tool:" ++ String.fromInt turn ++ ":" ++ String.fromInt idx)
-                (Tool.run tools call.name call.arguments)
+                (runChecked tools call.name call.arguments)
                 |> Task.andThen
                        (\result ->
                            runCalls tools ctx turn (idx + 1) rest
                                |> Task.map
                                       (\more ->
                                           Provider.Returned call result :: more))
+
+
+-- Run a requested tool after checking its arguments. Arguments a typed tool
+-- cannot decode are handed back to the model as the tool's result, so it can
+-- call again; they never reach the executor and never fail the run.
+runChecked : List Tool -> String -> String -> Task Error String
+runChecked tools toolName args =
+    case Tool.checkArguments tools toolName args of
+
+        Ok _ ->
+            Tool.run tools toolName args
+
+        Err e ->
+            Task.succeed ("error: " ++ Error.toString e)
+
+
+-- ---------------------------------------------------------------------------
+-- Structured native tool loop: a typed final answer
+-- ---------------------------------------------------------------------------
+{-| `nativeToolLoop` whose final answer has a shape: each model turn asks for
+the shape (`Provider.chatToolRequest` with its `response_format`), and the
+answer is decoded with the shape's codec into the workflow's typed output. An
+answer that does not decode is handed back to the model, with the reason, as
+the next turn. Every model turn and tool call is a journalled step, as in
+`nativeToolLoop`. With no answer of the shape within `maxTurns` turns, the run
+fails with a `Decode` error naming the shape. A `custom` provider cannot ask
+for a shape and fails with `InvalidSetting`.
+
+    type alias Reply = { answer : String, refund : Bool }
+
+    replyShape =
+        Provider.responseShape "reply" (Codec.auto { answer = "", refund = False })
+
+    agent =
+        Agent.structuredToolLoop replyShape "support" provider
+            "You are a support agent." [ orderTool ] 6
+-}
+structuredToolLoop : Provider.ResponseShape a -> String -> Provider -> String -> List Tool -> Int -> Durable.WorkflowDef Input a
+structuredToolLoop shape name provider systemPrompt tools maxTurns =
+    structuredToolLoopWith
+        defaultOptions
+        shape
+        name
+        provider
+        systemPrompt
+        tools
+        maxTurns
+
+
+{-| `structuredToolLoop` with `Options` (tracing). -}
+structuredToolLoopWith : Options -> Provider.ResponseShape a -> String -> Provider -> String -> List Tool -> Int -> Durable.WorkflowDef Input a
+structuredToolLoopWith opts shape name provider systemPrompt tools maxTurns =
+    Durable.register
+        name
+        inputCodec
+        (Provider.shapeCodec shape)
+        (\ctx input ->
+            structuredLoop
+                opts
+                shape
+                provider
+                tools
+                maxTurns
+                ctx
+                0
+                (Provider.Say (Provider.system systemPrompt)
+                    :: List.map Provider.Say input.messages))
+
+
+structuredLoop : Options -> Provider.ResponseShape a -> Provider -> List Tool -> Int -> Ctx -> Int -> List Provider.Turn -> Task Error a
+structuredLoop opts shape provider tools maxTurns ctx turn turns =
+    if turn >= maxTurns then
+        Task.fail
+            (Error.decode
+                ("Agent.structuredToolLoop: no answer of the shape "
+                    ++ (Provider.responseFormat shape).name
+                    ++ " within "
+                    ++ String.fromInt maxTurns
+                    ++ " turns"))
+
+    else
+        toolsStep
+            opts
+            ctx
+            ("turn:" ++ String.fromInt turn)
+            provider
+            turns
+            { tools = toolSchemasOf tools
+            , responseFormat = Just (Provider.responseFormat shape)
+            }
+            |> Task.andThen
+                   (\resp ->
+                       if List.isEmpty resp.toolCalls then
+                           case Provider.decodeStructured shape resp.content of
+
+                               Ok value ->
+                                   Task.succeed value
+
+                               Err e ->
+                                   structuredLoop
+                                       opts
+                                       shape
+                                       provider
+                                       tools
+                                       maxTurns
+                                       ctx
+                                       (turn + 1)
+                                       (turns
+                                           ++ [ Provider.Say
+                                                    (Provider.assistant
+                                                        resp.content)
+                                              , Provider.Say
+                                                    (Provider.user
+                                                        ("Your answer does not match the required JSON schema ("
+                                                            ++ Error.toString e
+                                                            ++ "). Answer again with JSON that matches it."))
+                                              ])
+
+                       else
+                           runCalls tools ctx turn 0 resp.toolCalls
+                               |> Task.andThen
+                                      (\returned ->
+                                          structuredLoop
+                                              opts
+                                              shape
+                                              provider
+                                              tools
+                                              maxTurns
+                                              ctx
+                                              (turn + 1)
+                                              (turns
+                                                  ++ (Provider.Called
+                                                         resp.toolCalls
+                                                         :: returned))))

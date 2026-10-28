@@ -5,7 +5,7 @@
 use crate::ir::{GoTy, Prim};
 use base::Name;
 use hir::KERNEL_IMPLICIT_TYPES;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use ty::Ty;
 
 /// How a nominal type name renders in Go, plus its kind (for value lowering).
@@ -78,6 +78,14 @@ pub struct TypeEnv {
     /// Sky type, which still carries the type-param `Ty::Var`s). Used to
     /// recover concrete type args for a structurally-resolved parametric alias.
     pub record_templates: HashMap<String, Vec<(String, Ty)>>,
+    /// The `_R` Go names of the record aliases a value of which this program can
+    /// hold: those declared in a module the program loads (`lower.rs`,
+    /// `program_type_closure`). `None` means every alias in `record_templates`
+    /// counts (an env built by hand in a test). Consulted only by
+    /// `wider_nominal_could_carry`: the build interns the WHOLE stdlib, so an
+    /// alias in a module the program never loads would otherwise widen an open
+    /// row it can never reach (doc 14 §9.8).
+    pub carrier_scope: Option<HashSet<String>>,
     /// The app's single TEA Model, when detected: `(sorted full field-set, `_R`
     /// Go name)`. An unannotated `view`/`update`/`subscriptions` or a Model-taking
     /// helper infers a *subset* row over the Model (only the fields it touches);
@@ -682,6 +690,8 @@ fn model_subset_resolves(
 /// row (a field whose type contradicts the row could not have flowed in).
 /// Converting such a value to `target_go` at the Go boundary drops the extra
 /// fields, so resolving the row to `target_go` would be a silent wrong answer.
+/// Only aliases in `env.carrier_scope` count: a value of an alias whose module
+/// the program does not load cannot exist at run time.
 fn wider_nominal_could_carry(
     fields: &[(Name, Ty)],
     names: &[String],
@@ -698,6 +708,15 @@ fn wider_nominal_could_carry(
     let row: HashMap<&str, &Ty> = fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
     env.record_templates.iter().any(|(go_name, templates)| {
         if go_name == target_go {
+            return false;
+        }
+        // A record alias from a module the program never loads has no value
+        // in this program, so it cannot flow into the row.
+        if env
+            .carrier_scope
+            .as_ref()
+            .is_some_and(|scope| !scope.contains(go_name))
+        {
             return false;
         }
         let other: HashMap<&str, &Ty> = templates.iter().map(|(n, t)| (n.as_str(), t)).collect();

@@ -31,10 +31,11 @@ termHtml =
     Html.render (Ui.layout [] (Terminal.view Term (Terminal.init "shell") []))
 
 
-cfg : { width : Int
-, height : Int
-, label : String
-}
+cfg :
+    { width : Int
+    , height : Int
+    , label : String
+    }
 cfg =
     { width = 100, height = 50, label = "Plot" }
 

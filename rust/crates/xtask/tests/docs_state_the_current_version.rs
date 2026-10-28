@@ -64,6 +64,7 @@ fn current_minor_line() -> (u32, u32) {
 const CLAIM_SITES: &[(&str, &str)] = &[
     ("README.md", "**Status: v"),
     ("AGENTS.md", "Current line: **v"),
+    ("docs/KNOWN_LIMITATIONS.md", "# Known limitations (v"),
 ];
 
 #[test]

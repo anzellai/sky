@@ -17,14 +17,14 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 744
+n_min = 768
 n_iso = 61
 n_iso_ceiling = 62
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 743
+class_v = 767
 class_d = 1
-family_S = 170
+family_S = 194
 family_L = 429
 family_E = 10
 family_R = 135
@@ -3395,7 +3395,7 @@ witness    = "value"
 axes       = { edge = "failure", surface = "error" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "T|T|T|F|F|F|Network: n"
+stdout     = "T|T|T|F|F|F|Network: n|F|T|db|none|1500|-1|db/Deadlock|21|T|Conflict: deadlock"
 
 [[case]]
 id         = "stdlib_edge/nominal-decimal"
@@ -4423,6 +4423,318 @@ axes       = { edge = "failure", surface = "sync" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
 stdout     = "E|E|E"
+
+[[case]]
+id         = "stdlib_edge/nominal-ailocal"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "ailocal" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "hf:org/repo/m.gguf#sha256=ab12|file:/m/x.gguf#sha256=cd34|7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed|file:/a#sha256=00|4096,3,0,F|T"
+
+[[case]]
+id         = "stdlib_edge/failure-ailocal"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "ailocal" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|E"
+
+[[case]]
+id         = "stdlib_edge/nominal-aifailure"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aifailure" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "Overloaded|T|T|Timeout|PermissionDenied|PermissionDenied|T|T"
+
+[[case]]
+id         = "stdlib_edge/failure-aifailure"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aifailure" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "F|T|T|T"
+
+[[case]]
+id         = "stdlib_edge/nominal-aieval"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aieval" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "3/0/0|corpus|3,0,250|T"
+
+[[case]]
+id         = "stdlib_edge/failure-aieval"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aieval" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "ai/F|2/1/1"
+
+[[case]]
+id         = "stdlib_edge/nominal-aistore"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aistore" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "T|gs://models/reg"
+
+[[case]]
+id         = "stdlib_edge/failure-aistore"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aistore" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "ai/F"
+
+[[case]]
+id         = "stdlib_edge/nominal-airegistry"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "airegistry" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "support-lora@v3 support-lora-v3"
+
+[[case]]
+id         = "stdlib_edge/nominal-aitrain"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aitrain" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "7/12|converting 4 1 2|mlx,unsloth,fake,vertex|sky-2d711642b726b0440162"
+
+[[case]]
+id         = "stdlib_edge/failure-aitrain"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aitrain" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "ToolchainFailed"
+
+[[case]]
+id         = "stdlib_edge/nominal-aiserve"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aiserve" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "--enable-lora --max-loras 3|Qwen/Qwen2.5-0.5B-Instruct@7ae557604adf67be50417f59c2c2f167def9a775|projects/p/locations/us-central1/services/t"
+
+[[case]]
+id         = "stdlib_edge/nominal-aigooglecloud"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aigooglecloud" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "NVIDIA_L4 1,NVIDIA_L4 2, 0|TFFF"
+
+[[case]]
+id         = "stdlib_edge/failure-aigooglecloud"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aigooglecloud" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "QuotaExceeded CapacityUnavailable RemoteRejected"
+
+[[case]]
+id         = "stdlib_edge/nominal-aidevice"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aidevice" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "device:webgpu|download:webgpu:420|auto"
+
+[[case]]
+id         = "stdlib_edge/failure-aidevice"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aidevice" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "StorageDenied"
+
+[[case]]
+id         = "stdlib_edge/nominal-aiscrub"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aiscrub" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "mail [EMAIL], card [CARD], iban [IBAN]|2|T|T|[EMAIL];internal=1,email=1"
+
+[[case]]
+id         = "stdlib_edge/failure-aiscrub"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aiscrub" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "order 4111 1111 1111 1112|F|InvalidInput|0"
+
+[[case]]
+id         = "stdlib_edge/nominal-aidataset"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aidataset" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "TTTTTXXTTTTXTTTTTTTT|EEXTXXTTXTETTTXXXTTX|3|{"completion":"c","prompt":"p"}|T/2/0"
+
+[[case]]
+id         = "stdlib_edge/failure-aidataset"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aidataset" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "DatasetInvalid/InvalidInput|DatasetInvalid"
+
+[[case]]
+id         = "stdlib_edge/nominal-aisynthetic"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aisynthetic" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "9:10,11,12|4/4/3/target|1/0;0/1"
+
+[[case]]
+id         = "stdlib_edge/failure-aisynthetic"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aisynthetic" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "0/2/calls|Unavailable"
+
+[[case]]
+id         = "stdlib_edge/nominal-aipipeline"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aipipeline" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "corpus/corpus/noop|passed/default"
+
+[[case]]
+id         = "stdlib_edge/failure-aipipeline"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aipipeline" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "InvalidSetting|U"
 
 [[case]]
 id         = "stdlib_edge/nominal-canvas"

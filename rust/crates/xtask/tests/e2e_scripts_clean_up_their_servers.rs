@@ -378,7 +378,7 @@ fn the_guard_kills_the_child_on_every_exit_path() {
 }
 
 /// The guard asks before it kills: SIGTERM, a bounded grace, then SIGKILL. A
-/// Sky app started by a verifier (a browser verifier's backend) ends the
+/// Sky app started by a verifier (the `ai-device-verify.mjs` backend) ends the
 /// engine it started on SIGTERM; a bare SIGKILL left that engine running
 /// under pid 1. The child here plays the app: it starts a grandchild and ends
 /// it on SIGTERM. Before the fix the guard sent SIGKILL at once, the trap

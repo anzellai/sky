@@ -100,6 +100,84 @@ transiently failing request, shows "Reconnecting…" after 3 s and the Retry
 bar only once its budget is spent; `App.withRpcError` sees FINAL errors only.
 For an app-owned indicator use `Sub.connection` (see AGENTS.md).
 
+### A local model slot starts a process
+
+An `Std.Ai.Endpoint` slot with `Endpoint.withLocal` starts a `llama-server`
+child process on its first call (and downloads the pinned engine and model
+once, about 450 MB, into the per-user AI home). It stops with the program.
+`sky ai start <slot>` is persistent: it holds the engine until `sky ai stop
+<slot>`. Check with `sky ai ps` before declaring a task done, and stop what you
+started. Never `pkill llama-server`: other programs on the machine may share an
+engine. Do not run `sky ai provision` or `sky ai pull` speculatively; they
+download hundreds of megabytes.
+`Local.withDraft` loads a second (draft) model into the same engine, so
+budget its memory too. With `Local.withAdapters`, a call that names an adapter
+the engine did not load fails with `NotRegistered`: fix the name, do not drop
+it to get a base-model answer. An `SKY_AI_*` value that does not parse is
+`InvalidSetting`; fix the value rather than unsetting it.
+
+`Std.Ai.Eval` scores `Rubric` cases with a judge slot (`"judge"`) whose
+default is the same local pinned model, so a real eval run (outside `sky
+test`) can start an engine too. Under `sky test` in test mode (the project has
+a `.env.test`) no engine starts: give the
+judge a `tests/mocks/` fixture, or pass `Eval.withJudge` a `Provider.custom`.
+An eval is a test: let its `Eval.check` thresholds fail it, and do not loosen
+a threshold to make a run pass.
+
+`Std.Ai.Trace` rows can hold prompts' answers (`output`): never print a
+run's rows to a log, and read costs with `Trace.runSummary` or `Trace.costs`.
+Call `Trace.setup db` once at start-up before you record.
+
+`Std.Ai.Registry` promotion needs evidence: never use `Registry.forcePromote`
+(or `sky ai promote --force`) to get past a failing gate unless the user asks,
+and never `block` or `rollback` a production alias on your own. Read with
+`sky ai lineage <name>@<alias>` first.
+
+`Std.Ai.Dataset.Synthetic.run` calls a teacher slot (`"teacher"`) and,
+with `withJudge`, the judge slot, once per planned call: both are the local
+pinned model by default, so a real generation starts an engine and can make
+many calls. Bound it with `withTarget`, `withMaxCalls` and `withCostBudget`,
+and test it under `sky test` with `tests/mocks/` fixtures (`match.bodyContains`
+picks the answer for a topic). Never print scrubbed or raw dataset rows to a
+log: `Scrub` reports counts only, and so should your code.
+
+A project's AI lifecycle lives in `src/Ai.sky` (`Std.Ai.Pipeline`), and
+`sky ai eval <suite> --against prod` is the merge gate for any change to a
+model, a prompt or an adapter: run it (with `--test-mode` when there is no
+engine), read its comparison, and treat exit 1 as a red build. Never use
+`--promote-to` or `sky ai promote --force` past a red gate, and never loosen
+a suite's thresholds to turn it green, unless the user asks. `sky ai data
+freeze <dataset>` and `sky ai run <task>` can call a teacher model and write
+to the registry: run them when the task needs them, not speculatively.
+
+`Std.Ai.Train` starts a trainer that outlives your program: `Train.drive`,
+`Train.start` and `sky ai train` launch a detached process that keeps training
+after a Ctrl-C. Before you declare a task done, list the runs with `sky ai
+train runs` and cancel a run you started and no longer need with `sky ai train
+cancel <run>`. Never kill a trainer by a process pattern. Do not run `sky ai
+provision --train` or a real training run speculatively: the native trainer,
+the base weights and the dev model are about 700 MB, and a run uses the GPU and
+gigabytes of memory. Test training under `sky test` with
+`SKY_AI_TRAIN_BACKEND=fake` in `.env.test`: test mode simulates the trainer
+and downloads nothing.
+
+Cloud training (`Train.Vertex`) and the GPU tier (`Std.Ai.Serve` on Cloud
+Run) spend money. Never launch a cloud job, deploy a tier or build an image
+unless the user asks, and always with a budget (`Train.withBudget`). Before
+you declare a task done, list what Sky made with `sky ai cloud ls` and delete
+what you started with `sky ai teardown --run <key>` or `--service <name>`.
+Never print a credential file or an access token. Test the cloud workflow
+under `sky test` with `SKY_AI_GCP_ENDPOINT=http://sky-gcp.invalid` in
+`.env.test`: an emulator in the runtime answers every Google Cloud call and
+nothing is spent. See `docs/ai/deploy-gcp.md`.
+`Std.Ai.Device` runs a slot on the user's device: never call `Device.prepare`
+before the user agreed to the download (the page shows the size from
+`Device.status`), and never make a `DeviceOnly` slot answer from the server
+another way: its prompts must not reach the server. A registry adapter runs on
+devices only after `Registry.allowOnDevice`; do not clear one the user has not
+reviewed. `sky ai provision --device ios|android|web` and `--ai-embed` download
+hundreds of megabytes: run them when the task needs them.
+
 ### After an upgrade to v0.27.12, run the tests that decode JSON
 
 `Pipeline.optional` now returns an `Err` for a present, non-null value its
@@ -107,3 +185,16 @@ decoder rejects (it used to return the default). Run `sky test` and exercise
 each JSON input once after the upgrade. Where a lenient fallback is intended,
 write it out (`Decode.oneOf [ dec, Decode.succeed default ]`); do not loosen a
 decoder only to make a test pass. See AGENTS.md "JSON decoding is strict".
+
+### After an upgrade to v0.28.0, read the migration guide first
+
+Sky's `docs/migration/v0.28.md` (in the Sky repository) lists every change.
+A `case` over `ErrorDetails`
+without `_ ->` is now `[E3001]`: add `_ ->` rather than listing the new
+`Domain` variant by hand. An `[E1012]` on `Options`, `defaultOptions` or
+`embed` is a new `Std.Ai.Provider` name: qualify the name. An app with an
+`SKY_AI_*` value that does not parse no longer starts: fix the value, do not
+unset it to get the default. `Trace.totalCost` refuses two currencies: read
+`Trace.runSummary`. Give a new tool typed arguments with `Tool.typed` and a
+`Codec`, and ask for a typed answer with `Provider.chatStructured`, rather
+than parsing a string by hand.

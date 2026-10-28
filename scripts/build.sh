@@ -160,6 +160,10 @@ if [[ $RUN_SWEEP -eq 1 ]]; then
     pass=0; fail_count=0; fails=()
     export SKY_RUNTIME_DIR="$ROOT/runtime-go"
     for d in examples/*/; do
+        # USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded from
+        # CI in general (no CI job builds, trains, evaluates or runs it), so it is
+        # skipped here by name.
+        case "$d" in examples/76-ai-shell-command/) continue ;; esac
         ( cd "$d" \
           && rm -rf sky-out .skycache \
           && "$ROOT/sky-out/sky" build src/Main.sky ) >/tmp/sky-build.log 2>&1 \

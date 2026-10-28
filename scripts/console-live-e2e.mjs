@@ -222,6 +222,7 @@ const consoleErrors = [];
 const cspViolations = [];
 const sseFailures = [];
 let navigations = 0;
+const navLog = [];
 
 try {
   startApp();
@@ -244,7 +245,15 @@ try {
   page.on("requestfailed", (r) => {
     if (r.url().includes("/_sky/sse")) sseFailures.push({ phase, err: r.failure()?.errorText, at: Date.now() });
   });
-  page.on("framenavigated", (f) => { if (f === page.mainFrame()) navigations++; });
+  page.on("framenavigated", (f) => {
+    if (f === page.mainFrame()) {
+      navigations++;
+      navLog.push({ phase, url: f.url(), at: Date.now() });
+    }
+  });
+  page.on("requestfailed", (r) => {
+    if (r.resourceType() === "document") navLog.push({ phase, url: r.url(), failed: r.failure()?.errorText, at: Date.now() });
+  });
 
   // 1. sign in (signIn is reused by step 7)
   let signIn = null;
@@ -430,6 +439,7 @@ try {
   // 5. restart the backend; the console must recover by itself
   phase = "restart";
   const navBefore = navigations;
+  const stoppedAt = Date.now();
   await stopApp();
   await sleep(1000);
   startApp();
@@ -439,6 +449,15 @@ try {
   const tookS = ((Date.now() - restartedAt) / 1000).toFixed(1);
   if (!recovered || !before || recovered.uptime >= before.uptime) {
     fail(`the console did not recover within 15 s of the restart (banner: ${await bannerState(page)}; header: ${recovered ? recovered.raw : "none"})`);
+    // What the page did around the restart, so a failure says why.
+    info(`page now: ${page.url()}; body: ${JSON.stringify((await bodyText(page)).slice(0, 160))}`);
+    for (const n of navLog.filter((n) => n.at >= stoppedAt - 2000)) {
+      info(`  navigation ${((n.at - restartedAt) / 1000).toFixed(1)} s after the restart: ${n.url}${n.failed ? " FAILED " + n.failed : ""}`);
+    }
+    for (const f of sseFailures.filter((f) => f.at >= stoppedAt - 2000).slice(0, 8)) {
+      info(`  stream failure ${((f.at - restartedAt) / 1000).toFixed(1)} s after the restart: ${f.err}`);
+    }
+    for (const e of consoleErrors.filter((e) => e.phase === "restart").slice(0, 8)) info(`  console: ${e.text}`);
   } else {
     info(`recovered in ${tookS} s: ${recovered.raw} (page loads during recovery: ${navigations - navBefore})`);
   }

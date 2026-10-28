@@ -220,7 +220,7 @@ decode alg now token =
         _ ->
             case String.split "." token of
 
-                [h, p, s] ->
+                [ h, p, s ] ->
                     if not (verify alg (h ++ "." ++ p) s) then
                         Err
                             (Error.unexpected

@@ -68,9 +68,29 @@ func TestServerListen_SamePathDifferentMethodsCoexist_466(t *testing.T) {
 	}
 
 	// Server_listen builds the Task; running it blocks. Trap panics to
-	// surface them as test failures.
+	// surface them as test failures. The server is closed at cleanup and
+	// its Task awaited: a server left running would keep the process's one
+	// Sky Console, and the next listener in the process (a -count=2 rerun)
+	// would see a different console owner than it expects.
 	var serverErr error
 	var wg sync.WaitGroup
+	var srvMu sync.Mutex
+	var srv *http.Server
+	serverListenStartedHook = func(s *http.Server) {
+		srvMu.Lock()
+		srv = s
+		srvMu.Unlock()
+	}
+	t.Cleanup(func() {
+		srvMu.Lock()
+		s := srv
+		srvMu.Unlock()
+		if s != nil {
+			_ = s.Close()
+		}
+		wg.Wait()
+		serverListenStartedHook = nil
+	})
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

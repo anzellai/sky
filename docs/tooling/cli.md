@@ -1540,7 +1540,7 @@ Behaviour:
 
 ```bash
 $ sky upgrade-claude
-Refreshed CLAUDE.md (118432 → 132422 bytes, from sky v0.27.0)
+Refreshed CLAUDE.md (118432 → 132422 bytes, from sky v0.28.0)
   previous version saved as CLAUDE.md.bak
 ```
 
@@ -1583,6 +1583,235 @@ only the entry-point module switches between `Live.app` and
   local}`) — production-mode gate; suppresses console + banner
   entirely and gates `/_sky/metrics` behind auth.
 
+## AI models
+
+### `sky ai provision | pull | ps | start | stop` *(v0.28.0)*
+
+Drive the managed local model engines of `Std.Ai.Local`. The verbs hold no
+logic of their own: `sky ai` builds a bundled Sky program (`sky-bundled/ai`)
+once per Sky build and runs it, and the program calls the `Std.Ai.Local` and
+`Std.Ai.Endpoint` API a user's program has. The training verbs run a second
+bundled program, `sky-bundled/ai-train`, over `Std.Ai.Train`. Every verb takes
+`--format json`.
+
+```
+sky ai provision [--variant cpu|metal] [--dev-model] [--model <ref>]
+sky ai pull <org>/<repo> <file>
+sky ai ps [--all]
+sky ai start <slot> [--model <ref>] [--context <n>] [--embeddings]
+sky ai stop <slot> | --all
+```
+
+- `provision` installs the pinned `llama-server` build for this host into the
+  AI home (with `SKY_AI_LLAMA_BIN` set it checks that build and fetches
+  nothing), and `--dev-model` / `--model <ref>` fetch and verify models. Run it
+  in an image or at deploy, where fetching at run time is off.
+- `pull` downloads a GGUF file whose digest you do not know yet, stores it by
+  its digest, and prints the `Local.huggingFace { … }` value to pin in code.
+- `ps` lists the engines on this machine (`running`, or `orphaned` when the
+  program that held one was killed); `--all` adds stale entries.
+- `start` starts a slot's local engine and holds it in the foreground; programs
+  with the same model and settings use it instead of loading the model again.
+  `stop` ends it.
+
+### `sky ai promote | rollback | lineage` *(v0.28.0)*
+
+The `Std.Ai.Registry` verbs. In a project with a pipeline (`src/Ai.sky`) they
+run through it, on the database and registry its code names
+(`Pipeline.withDb`, `Pipeline.withRegistry`); elsewhere the bundled program
+runs them. `--db <dsn>` wins over the code, then `SKY_DB_PATH`, then
+`DATABASE_URL`; the artefact store is `--registry <url>`, else
+`SKY_AI_REGISTRY`, else the code's. Nothing is read from `sky.toml`. Every verb
+takes `--format json`.
+
+```
+sky ai promote <name> <version> --to <alias> [--min-pass-rate <x>] [--expect <n>|none]
+sky ai promote <name> <version> --to <alias> --force --reason <text>
+sky ai rollback <name>@<alias>
+sky ai lineage <name>@<alias> | <name>@v<n>
+sky ai lineage --dataset <sha256> | <name>@<n>
+```
+
+- `promote` re-applies the eval gate to the version's attached reports,
+  compared with the newest report of the same suite on the version the alias
+  serves now, and moves the alias on the first that passes, only while the
+  alias still serves the version compared against
+  (`Registry.promoteCompared`). `--expect` moves it only while it still points
+  at that version (`PromotionConflict` otherwise). `--force --reason` moves it without eval
+  evidence and records the reason. A refused promotion exits non-zero with the
+  typed failure (`NotPromotable`, `GateFailed`, `PromotionConflict`).
+- `rollback` returns the alias to the version before the current one.
+- `lineage` prints the version, its base model, dataset, metadata, aliases,
+  attached reports and alias moves; `--dataset` lists every version trained on
+  a dataset, named by its digest or by its registered version (`support@3`).
+- `--registry <url>` wins over `SKY_AI_REGISTRY`.
+
+See [`../ai/registry.md`](../ai/registry.md).
+
+### `sky ai eval | data freeze <dataset> | run | members` *(v0.28.0)*
+
+The project-mode verbs. A project declares its AI pipeline in `src/Ai.sky`
+(`module Ai exposing (pipeline)`, `Std.Ai.Pipeline`); the CLI builds a program
+whose `main` is `Pipeline.commandLine Ai.pipeline`, caches it under
+`.sky/ai/cli/<key>/` (rebuilt when the Sky version, `sky.toml` or a source
+file changes; progress on stderr) and runs it in the project directory.
+
+```
+sky ai eval <suite> [--against <alias>] [--candidate <model>@v<n>] [--promote-to <alias>]
+                    [--junit <file>] [--markdown <file>] [--min-pass-rate <x>] [--max-regression <x>]
+sky ai data freeze <dataset>
+sky ai run <task> [-- <args>]
+sky ai members
+```
+
+- `eval` runs the suite on the candidate (and on the alias's version with
+  `--against`), compares, gates, writes JUnit (`.sky/ai/eval/<suite>/junit.xml`
+  by default) and exits 1 when the gate fails. `--promote-to` promotes only on
+  a pass. With `--format json` stdout is one JSON object.
+- `data freeze <dataset>` (a plain name) freezes one of the pipeline's
+  datasets and registers it when it is `withRegistered`; a path or a file name
+  is the pipeline-free form above.
+- `run` runs a task with the arguments after `--`; `members` lists the
+  pipeline's datasets, suites, slots and tasks.
+- `start <slot>` for a slot the pipeline names starts it with its code
+  defaults (`--model` / `--context` are usage errors there); `promote` gates
+  each suite's report with that suite's thresholds from the pipeline.
+- Each takes `--db <dsn>`, `--registry <url>`, `--format json` and
+  `--test-mode` (model calls answered from `tests/mocks/`, as `sky test`
+  does). Without `src/Ai.sky` these verbs exit 2 and build nothing.
+
+See [`../ai/pipeline.md`](../ai/pipeline.md).
+
+### `sky ai provision --train | train | export` *(v0.28.0)*
+
+The `Std.Ai.Train` verbs, run by the same bundled program. Every verb takes
+`--format json`.
+
+```
+sky ai provision --train mlx|unsloth|fake [--base <base>]
+sky ai train --data <dir>/<name>[@<digest>] [--base <base> --serving <model>]
+             [--name <n>]
+             [--steps <n>] [--rank <r>] [--seed <s>] [--layers <n>]
+             [--checkpoint-every <n>] [--eval-every <n>]
+             [--backend mlx|unsloth|fake] [--gguf] [--merged] [--register]
+             [--detach] [--work-dir <dir>] [--db <dsn>]
+sky ai train status [<run>] | runs | resume <run> | cancel <run>
+sky ai export <run> [--out <file>] [--merged]
+sky ai start <slot> ... --adapter file:<path>#sha256=<hex>
+```
+
+- `provision --train` installs a training toolchain (a pinned uv, a pinned
+  CPython and a hash-locked set of wheels) under the AI home. `--base`
+  also downloads and verifies a base's weights for that backend.
+- `--base` is `dev` (the development base, the default),
+  `hf:<org>/<repo>@<commit>` (a Hub repository at a 40-digit commit) or
+  `file:<directory>` (local safetensors weights). A malformed base is a typed
+  `InvalidSetting` before anything trains. A base other than `dev` needs
+  `--serving <model reference>`, the pinned GGUF model that serves the
+  adapter. See [`../ai/train.md`](../ai/train.md).
+  Run it in an image or at deploy, where fetching at run time is off.
+- `train` fine-tunes a LoRA adapter on the frozen dataset version `--data`
+  names (the newest when no digest is given) and the `--base`, in the
+  foreground. Without `--format json` it prints the run id first. A Ctrl-C stops the watcher
+  only: the trainer keeps training, and the same command, or
+  `train resume <run>`, attaches to it again. `--gguf` converts the adapter
+  to GGUF, `--merged` also writes a merged model, and `--register` registers
+  the adapter in the registry (`--db`, `--registry`). `--detach` returns once
+  the trainer runs. The durable journal is `.sky/ai/train.db` unless `--db`
+  names another database.
+- `train status <run>` prints a run's status, step, losses, relaunches and
+  last checkpoint. `train status` or `train runs` lists every run in the work
+  directory (`--work-dir`, default `.sky/ai/runs`). `train resume <run>`
+  starts a failed or cancelled run again from its newest checkpoint.
+  `train cancel <run>` asks the trainer to write a checkpoint and stop (it is
+  killed after 60 seconds).
+- `export <run>` writes the run's adapter as GGUF, or with `--merged` the
+  merged model, and `--out` copies it to a file.
+- `start <slot> --adapter` serves a GGUF LoRA adapter, pinned by its digest,
+  with the slot's model.
+
+`SKY_AI_TRAIN_BACKEND` (`mlx`, `unsloth`, `fake`, `vertex`) wins over
+`--backend`. See [`../ai/train.md`](../ai/train.md).
+
+### `sky ai train --backend vertex | serve | deploy | teardown | cloud | image build` *(v0.28.0)*
+
+Training on Google Cloud Vertex AI and the GPU tier on Cloud Run. The cloud
+verbs run a third bundled program, `sky-bundled/ai-cloud`, over
+`Std.Ai.Serve` and `Std.Ai.Cloud.Google`. Every verb takes `--format json`.
+
+```
+sky ai train --data <dir>/<name> --backend vertex [--project <p>] [--region <r>]
+             [--machine <type>] [--staging gs://<bucket>/<prefix>] [--budget "USD 2.00"]
+             [--image <ref>@sha256:<hex>] [--service-account <email>]
+             [--max-runtime-minutes <n>] [--price <machine>@<region>=<amount>]...
+             [--price-book <date>] [--spot] [--keep-staging] [--label k=v]...
+sky ai registry publish <name>
+sky ai serve [--adapters <name>@<alias>,...] [--registry <url>] [--bind <addr>]
+sky ai serve --image [--out <dir>] --service <name> [target flags]
+sky ai deploy --service <name> --tier-image <ref> [target flags] [--dry-run]
+sky ai teardown --service <name> | --run <key> [--staging gs://...] | --all-sky
+sky ai cloud ls [--run <key>]
+sky ai cloud prices --service <name> --region <r> [--match <word>]...
+sky ai image build --train|--tier --repo <name> --staging gs://...
+```
+
+Target flags: `--project`, `--region`, `--adapters`, `--engine-image`,
+`--token-secret`, `--registry`, `--service-account`, `--invoker`,
+`--min-instances`, `--max-instances`.
+
+- `train --backend vertex` runs the job as a Vertex AI custom job on one L4.
+  It plans first (the image digest, the bucket's region, the quota, the
+  estimate against `--budget`) and launches nothing when the plan fails. Each
+  flag falls back to its `SKY_AI_TRAIN_*` variable. `train cancel <run>`
+  cancels the cloud job too.
+- `registry publish <name>` writes the registry's pointer objects to its
+  store again (the tier reads only those).
+- `serve` runs the tier on the development base, next to vLLM.
+  `serve --image` writes the static linux/amd64 tier binary, its Dockerfile,
+  and the Cloud Run service as `service.json` and `service.yaml`.
+- `deploy` creates or updates the Cloud Run service, waits until it is ready
+  and grants `roles/run.invoker` to `--invoker` only. `--dry-run` prints the
+  service and changes nothing.
+- `teardown` deletes a tier's service, a training run's jobs and staging
+  prefix, or (`--all-sky`) every job and service labelled `sky-managed=true`.
+- `cloud ls` lists what Sky made, by its labels. `cloud prices` reads the
+  Cloud Billing catalogue (the price book's source).
+- `image build` builds the trainer or the tier image with Cloud Build into
+  your project's Artifact Registry and prints the reference pinned by digest.
+
+See [`../ai/serve.md`](../ai/serve.md) and
+[`../ai/deploy-gcp.md`](../ai/deploy-gcp.md).
+
+### `sky ai provision --device` and the device build flags *(v0.28.0)*
+
+```
+sky ai provision --device web|ios|android|all [--from <dir|archive>] [--check]
+sky build --target web:app [--ai-web-engine webgpu|cpu|both|none] src/Main.sky
+sky build --target mobile:ios|mobile:android|desktop:mac [--ai-embed <slot>] src/Main.sky
+```
+
+- `provision --device` installs the `Std.Ai.Device` engines (llama.cpp b11200
+  with Sky's engine core) under the AI home: the browser's WebGPU and CPU
+  WebAssembly builds, `SkyLlama.xcframework`, or `libskyllama.so` for
+  arm64-v8a and x86_64. It downloads the release `sky-llama-b11200` and checks
+  each archive's pinned SHA-256; `--from` installs a local build of
+  `scripts/ai/device/build-device-bundles.sh` (its output directory or an
+  archive). `--check` installs nothing and exits 1 when an engine is missing.
+- `--ai-web-engine` picks the engines a browser client stages next to its
+  wasm (`sky-ai-webgpu.<hash>.*`, `sky-ai-cpu.<hash>.*`, and the worker
+  `sky-ai-worker.<hash>.js`). The default is `both` when the web engines are
+  installed and the client imports `Std.Ai.Device`; `none` stages none, and
+  device slots then answer from the server in a browser.
+- `--ai-embed <slot>` builds the server first, asks it for the slot's offer
+  as it would serve it (operator variables and the registry included), and
+  puts the model and the adapter in the native app, which then never
+  downloads them.
+
+See [`../ai/device.md`](../ai/device.md).
+
+A model `<ref>` is `hf:<org>/<repo>/<file>#sha256=<hex>` or
+`file:<path>#sha256=<hex>`. See [`../ai/local.md`](../ai/local.md).
+
 ## Formatting
 
 ### `sky fmt <file>`
@@ -1595,6 +1824,16 @@ Opinionated, deterministic, no configuration (output is Elm-compatible):
 - 4-space indent, no tabs.
 - Leading commas for multi-line lists/records.
 - Pipelines broken onto new lines.
+- An operator chain breaks only at its loosest operator: `a == b || c == d`
+  breaks before `||`, never inside `a == b`.
+- List patterns are spaced like list expressions: `[ x ]`, `[ a, b ]`, `[]`.
+- A type annotation stays on one line, and an exposing list breaks only past
+  100 columns. A record type in an annotation stays on one line when it fits;
+  when it does not fit, or when it is a whole argument the source had broken,
+  the annotation breaks one argument per line (`name :`, then each argument
+  on its own line led by `->`).
+- An own-line comment stays where it was: above the branch, argument,
+  pipeline step, binding or field it was written above.
 - Refuses to overwrite if the formatter would lose more than one-third of the source lines (guards against partial-parse deletions).
 
 ## Editor integration

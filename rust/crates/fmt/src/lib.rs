@@ -342,6 +342,189 @@ mod tests {
         idempotent(src);
     }
 
+    /// Assert `src` is already in canonical form (formatting is the identity,
+    /// so every comment stays exactly where it was) and is idempotent.
+    fn stays_put(src: &str) {
+        // The opinionated printer itself, not the lossless fallback, must keep
+        // the layout: a fallback would hide a moved comment.
+        let parsed = parse(src, FileId(0));
+        let printed = opinionated(src, &parsed).unwrap_or_default();
+        assert_eq!(printed, src, "the printer moved code or a comment");
+        assert_eq!(
+            format_source(src),
+            src,
+            "formatting moved code or a comment"
+        );
+        idempotent(src);
+    }
+
+    #[test]
+    fn then_branch_comment_stays_above_the_then_branch() {
+        // Reduced from examples/73-ai-train (the resume branch of `update`):
+        // `sky fmt` moved a comment above the then-branch into the
+        // `Task.map (\_ -> ..)` lambda body. The if had no drain before its
+        // then-branch, and the lambda's body drain was unbounded below.
+        stays_put(
+            "module M exposing (f)\n\n\nf x =\n    if x then\n        -- note\n        a |> Task.map (\\_ -> b)\n\n    else\n        c\n",
+        );
+        // Without a lambda the else-branch drain claimed it (it moved below
+        // `else`).
+        stays_put(
+            "module M exposing (f)\n\n\nf x =\n    if x then\n        -- note\n        a |> g\n\n    else\n        c\n",
+        );
+        // The original shape: a parenthesised if, piped on.
+        stays_put(
+            "module M exposing (f)\n\n\nf x =\n    (if x then\n        -- note\n        a |> Task.map (\\_ -> ())\n\n    else\n        Task.succeed ())\n        |> Task.andThen (\\_ -> b)\n",
+        );
+    }
+
+    #[test]
+    fn comment_before_else_stays_above_else() {
+        stays_put(
+            "module M exposing (f)\n\n\nf x =\n    if x then\n        a\n\n    -- note\n    else\n        c\n",
+        );
+        stays_put(
+            "module M exposing (f)\n\n\nf x =\n    if x then\n        a\n\n    else\n        -- note\n        c\n",
+        );
+        stays_put(
+            "module M exposing (f)\n\n\nf x =\n    if x then\n        a\n\n    -- note\n    else if y then\n        b\n\n    else\n        c\n",
+        );
+    }
+
+    #[test]
+    fn pipeline_comment_stays_above_its_operator() {
+        // A comment above a `|> Task.andThen (\a -> ..)` line moved into the
+        // lambda body.
+        stays_put(
+            "module M exposing (f)\n\n\nf t =\n    t\n        -- note\n        |> Task.andThen (\\a -> b a)\n",
+        );
+        stays_put(
+            "module M exposing (f)\n\n\nf t =\n    t |> List.map (\\a -> b a)\n        -- note\n        |> List.filter (\\a -> b a)\n",
+        );
+        // A comment inside the lambda body stays there.
+        stays_put(
+            "module M exposing (f)\n\n\nf t =\n    t\n        |> Task.andThen\n               (\\a ->\n                   -- note\n                   b a)\n",
+        );
+    }
+
+    #[test]
+    fn call_argument_comment_stays_above_its_argument() {
+        // Above a lambda argument: it moved into the lambda body.
+        stays_put(
+            "module M exposing (f)\n\n\nf xs =\n    List.map\n        -- note\n        (\\x -> x)\n        xs\n",
+        );
+        // Above the last argument: it moved below the whole decl.
+        stays_put(
+            "module M exposing (f)\n\n\nf xs =\n    List.map\n        (\\x -> x)\n        -- note\n        xs\n",
+        );
+    }
+
+    #[test]
+    fn let_binding_body_comment_stays_above_the_body() {
+        // It moved below the `in` body.
+        stays_put(
+            "module M exposing (f)\n\n\nf x =\n    let\n        y =\n            -- note\n            a |> g\n    in\n        y\n",
+        );
+    }
+
+    #[test]
+    fn let_in_comments_stay_on_their_side_of_in() {
+        // A comment between `in` and the body moved above `in`, into the
+        // bindings.
+        stays_put(
+            "module M exposing (f)\n\n\nf x =\n    let\n        y = x\n    in\n        -- note\n        y\n",
+        );
+        // A comment between the last binding and `in` stays above `in`.
+        stays_put(
+            "module M exposing (f)\n\n\nf x =\n    let\n        y = x\n        -- note\n    in\n        y\n",
+        );
+        // A comment between two bindings stays above the second one.
+        stays_put(
+            "module M exposing (f)\n\n\nf x =\n    let\n        y =\n            if x then\n                1\n\n            else\n                2\n        -- note\n        z = y\n    in\n        z\n",
+        );
+    }
+
+    #[test]
+    fn record_field_value_comment_stays_above_the_value() {
+        stays_put(
+            "module M exposing (f)\n\n\nf x =\n    { a =\n        -- note\n        x |> g\n    , b = 1\n    }\n",
+        );
+        stays_put(
+            "module M exposing (f)\n\n\nf m =\n    { m\n        | a =\n            -- note\n            m.a |> g\n    }\n",
+        );
+    }
+
+    #[test]
+    fn list_pattern_keeps_spaces_inside_its_brackets() {
+        // `[ only ]` became `[only]`. A list pattern has the same spacing as a
+        // list expression: `[ a, b ]`, and `[]` when empty.
+        stays_put(
+            "module M exposing (f)\n\n\nf xs =\n    case xs of\n\n        [ only ] ->\n            only\n\n        [ a, b ] ->\n            a\n\n        [] ->\n            0\n\n        _ ->\n            1\n",
+        );
+        let out = format_source(
+            "module M exposing (f)\n\n\nf xs =\n    case xs of\n\n        [only] ->\n            only\n\n        _ ->\n            1\n",
+        );
+        assert!(out.contains("        [ only ] ->\n"), "got: {out:?}");
+    }
+
+    #[test]
+    fn annotation_record_type_stays_on_one_line_when_it_fits() {
+        // Every record type with two or more fields broke, which in an
+        // annotation put the commas and the closing brace at column 0.
+        stays_put(
+            "module M exposing (island)\n\n\nisland : { name : String, id : String, props : Value } -> List (Attribute msg) -> Element msg\nisland r attrs =\n    r\n",
+        );
+        // A record the source had broken, or one that does not fit, breaks
+        // the annotation into the standard form.
+        stays_put(
+            "module M exposing (g)\n\n\ng :\n    { name : String\n    , id : String\n    }\n    -> Int\ng r =\n    1\n",
+        );
+        let long = "module M exposing (h)\n\n\nh : { aaaaaaaaaaaaaaa : String, bbbbbbbbbbbbbbbbbbbb : String, cccccccccccccccccccc : Int } -> Int\nh r =\n    1\n";
+        assert_eq!(
+            format_source(long),
+            "module M exposing (h)\n\n\nh :\n    { aaaaaaaaaaaaaaa : String\n    , bbbbbbbbbbbbbbbbbbbb : String\n    , cccccccccccccccccccc : Int\n    }\n    -> Int\nh r =\n    1\n"
+        );
+        idempotent(long);
+        // A record inside another type joins when it fits: its broken source
+        // layout is what the old rule printed, not a choice of the author.
+        let nested = "module M exposing (stats)\n\n\nstats : Cache k v -> Task Error { hits : Int\n, misses : Int\n, evictions : Int\n}\nstats c =\n    c\n";
+        assert_eq!(
+            format_source(nested),
+            "module M exposing (stats)\n\n\nstats : Cache k v -> Task Error { hits : Int, misses : Int, evictions : Int }\nstats c =\n    c\n"
+        );
+        idempotent(nested);
+        // A record alias body keeps its rule: two or more fields break.
+        stays_put(
+            "module M exposing (Model)\n\ntype alias Model =\n    { count : Int\n    , name : String\n    }\n",
+        );
+    }
+
+    #[test]
+    fn mixed_precedence_chain_keeps_its_groups() {
+        // The printer flattened `==` into the `||` chain and broke between
+        // `t` and `== "main"`. A tighter-binding operand is one group.
+        stays_put(
+            "module M exposing (f)\n\n\nf t =\n    t == \"div\" || t == \"p\" || isHeadingTag t || t == \"section\" || t == \"form\"\n        || t == \"main\"\n        || t == \"nav\"\n",
+        );
+        let out = format_source(
+            "module M exposing (f)\n\n\nf t =\n    t == \"div\"\n        || t == \"p\"\n        || isHeadingTag t\n        || t == \"section\"\n        || t == \"form\"\n        || t == \"main\"\n        || t == \"nav\"\n",
+        );
+        assert!(!out.contains("|| t\n"), "got: {out:?}");
+        idempotent(&out);
+    }
+
+    #[test]
+    fn exposing_and_annotation_one_line_rules() {
+        // The intended rules, unchanged: an exposing list breaks only past
+        // 100 columns, and an annotation with no record in it stays on one
+        // line.
+        let src = "module M exposing\n    ( a\n    , b\n    )\n\n\na : Int\n    -> Int\na x =\n    x\n\n\nb : Int\nb =\n    1\n";
+        assert_eq!(
+            format_source(src),
+            "module M exposing (a, b)\n\n\na : Int -> Int\na x =\n    x\n\n\nb : Int\nb =\n    1\n"
+        );
+    }
+
     #[test]
     fn multiline_record_update_puts_base_alone_and_indents_fields() {
         // A record update that does not fit on one line keeps `{ base` alone on

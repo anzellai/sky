@@ -480,6 +480,9 @@ type pgSupervisor struct {
 	// left behind would make the NEXT test's signal reach a supervisor that is
 	// no longer under test.
 	sigCh chan os.Signal
+	// releaseSignals gives up the termination-sequence claim
+	// (acquireSignalOwner) the handler holds.
+	releaseSignals func()
 }
 
 func (s *pgSupervisor) ready(budget time.Duration) error {
@@ -918,6 +921,9 @@ const embeddedDrainBudget = 8 * time.Second
 // installSignalHandler makes the supervisor the owner of the termination
 // sequence.
 func (s *pgSupervisor) installSignalHandler() {
+	// The supervisor's shutdown ends the children, so it owns the
+	// termination sequence (child_signal.go).
+	s.releaseSignals = acquireSignalOwner()
 	ch := make(chan os.Signal, 2)
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	s.sigCh = ch
@@ -934,6 +940,9 @@ func (s *pgSupervisor) installSignalHandler() {
 func (s *pgSupervisor) detachSignalHandler() {
 	if s.sigCh != nil {
 		signal.Stop(s.sigCh)
+	}
+	if s.releaseSignals != nil {
+		s.releaseSignals()
 	}
 }
 

@@ -382,7 +382,7 @@ decodeScan reply =
         [] ->
             Task.succeed Nothing
 
-        [name, text] ->
+        [ name, text ] ->
             case formatFromName name of
 
                 Just format ->

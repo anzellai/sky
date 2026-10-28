@@ -175,10 +175,7 @@ size cache =
             sizeRaw raw
 
 
-statsRaw : Int -> Task Error { hits : Int
-, misses : Int
-, evictions : Int
-}
+statsRaw : Int -> Task Error { hits : Int, misses : Int, evictions : Int }
 statsRaw =
     Ffi.kernel "Cache_stats"
 
@@ -186,10 +183,7 @@ statsRaw =
 -- | `stats cache` — running totals of `{ hits, misses, evictions }`
 -- since the cache was created.  Counters are monotone — they
 -- survive `clear`.
-stats : Cache k v -> Task Error { hits : Int
-, misses : Int
-, evictions : Int
-}
+stats : Cache k v -> Task Error { hits : Int, misses : Int, evictions : Int }
 stats cache =
     case cache of
 

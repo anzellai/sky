@@ -300,6 +300,41 @@ older project.
 
 ---
 
+## Std.Ai configuration (no `[ai]` section)
+
+**AI settings are not sky.toml keys.** A model slot's settings are `withX`
+builders on `Std.Ai.Endpoint` / `Std.Ai.Local` in code, and each falls back to
+`<PREFIX>_AI_<SLOT>_<KEY>` from the environment, with the precedence every
+runtime setting has (operator env > code > default). The machine-wide
+variables are:
+
+| Variable | Meaning |
+|---|---|
+| `SKY_AI_HOME` | the engine and model cache, one per user (default `$SKY_HOME/ai`, else the user cache directory) |
+| `SKY_AI_LLAMA_BIN` | the directory of your own `llama-server` build, instead of the pinned one |
+| `SKY_AI_TRAINER_BIN` | your own `sky-trainer` (the executable, or the directory that holds it), for example one built with `scripts/ai/trainer/build.sh`, instead of the pinned bundle. The `Mlx` backend trains with it. Set to anything that is not a `sky-trainer` is `NotProvisioned`, never a fallback |
+| `SKY_AI_FETCH` | `on` / `off`: may a missing engine or model be downloaded at run time (default on in development, off otherwise) |
+| `SKY_AI_ACCEL` | force the accelerator the fit plan assumes: `cpu`, `metal`, `cuda`, `rocm`, `vulkan` |
+| `SKY_AI_REGISTRY` | where the model registry's artefacts live: `file://<dir>`, `gs://<bucket>/<prefix>` or `s3://<bucket>/<prefix>` (default: the location in code, else `file://.sky/ai/registry`); the registry's records are rows in the app's own database |
+| `SKY_AI_TRAIN_BACKEND` | the `Std.Ai.Train` backend: `mlx`, `unsloth` or `fake`. It wins over `Train.withBackend` in code, which wins over detection (`mlx` on Apple silicon, `unsloth` on Linux with an NVIDIA GPU). `vertex` trains on Google Cloud Vertex AI. Any other value is an error, and `sagemaker` says that it arrives in a later release |
+| `SKY_AI_TRAIN_PROJECT`, `SKY_AI_TRAIN_REGION`, `SKY_AI_TRAIN_MACHINE`, `SKY_AI_TRAIN_STAGING` | where a `Vertex` job runs: the Google Cloud project, the region (default `us-central1`), the machine type (default `g2-standard-4`, one L4) and the `gs://` staging prefix. Each wins over `Train.withCloud` |
+| `SKY_AI_TRAIN_SEQUENCE_LENGTH`, `SKY_AI_TRAIN_BATCH`, `SKY_AI_TRAIN_RANK`, `SKY_AI_TRAIN_QUANT_BITS`, `SKY_AI_TRAIN_MEMORY_CAP` | a training job's sequence length, batch (`4` or `1x4`), LoRA rank, base bits (`4`, `8`, `16`) and memory cap (bytes, or `2.5GB`). Each wins over its `Train.withX` builder; the first four make a different run. A value that does not parse is an error naming the variable |
+| `SKY_AI_TRAIN_BUDGET` | the run's budget, `"USD 2.00"`. It wins over `Train.withBudget`. A cloud job with no budget does not launch |
+| `SKY_AI_TRAIN_IMAGE`, `SKY_AI_TRAIN_SERVICE_ACCOUNT`, `SKY_AI_TRAIN_LABELS` | the trainer image (pinned by digest), the service account the job runs as, and extra labels (`k=v,k=v`) |
+| `SKY_AI_SERVE_BIND`, `SKY_AI_SERVE_TOKEN`, `SKY_AI_SERVE_ADAPTERS`, `SKY_AI_SERVE_MAX_ADAPTERS`, `SKY_AI_SERVE_POLL_S`, `SKY_AI_SERVE_ENGINE_URL`, `SKY_AI_SERVE_MODELS`, `SKY_AI_SERVE_ENGINE` | the `Std.Ai.Serve` tier's settings; each wins over its builder (see [`ai/serve.md`](ai/serve.md)) |
+| `SKY_AI_SERVE_PROJECT`, `SKY_AI_SERVE_REGION`, `SKY_AI_SERVE_IMAGE` | where `Serve.deploy` puts the tier, and the tier's image (pinned by digest) |
+| `SKY_AI_GCP_ENDPOINT` | the base URL every Google Cloud call goes to instead of Google: `http://sky-gcp.invalid` is the runtime's emulator under `sky test`; a loopback URL is the same emulator served by another process |
+| `GOOGLE_APPLICATION_CREDENTIALS` | a service-account key file or a workload identity federation file. With none, the metadata server of GCE, GKE, Cloud Run or Vertex AI. A user's own login is refused |
+
+The per-slot variables (`SKY_AI_<SLOT>_MODE`, `_URL`, `_KEY`, `_MODEL`,
+`_ADAPTER`, `_TIMEOUT_MS`, `_MAX_INFLIGHT`, `_QUEUE`, `_QUEUE_WAIT_MS`,
+`_RETRIES`, `_CONTEXT`, `_GPU`, `_PARALLEL`, `_IDLE_UNLOAD_S`, `_PORT`,
+`_ADAPTER_REFRESH_S`, `_AUTH`) and their defaults are in [`ai/local.md`](ai/local.md).
+The registry is [`ai/registry.md`](ai/registry.md). Training, its toolchains
+under `SKY_AI_HOME` and `SKY_AI_FETCH` for them are
+[`ai/train.md`](ai/train.md). The GPU tier and Google Cloud are
+[`ai/serve.md`](ai/serve.md) and [`ai/deploy-gcp.md`](ai/deploy-gcp.md).
+
 ## `[database]`
 
 Std.Db default connection. `Db.connect ()` (unit form) reads

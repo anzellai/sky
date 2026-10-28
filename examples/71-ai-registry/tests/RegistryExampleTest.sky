@@ -1,0 +1,112 @@
+module RegistryExampleTest exposing (tests)
+
+-- Serving from the registry, offline. The project has a `.env.test`, so
+-- `sky test` runs in test mode: the "chat" slot's calls are answered by the
+-- fixture under tests/mocks/ and no engine starts. The fixture answers only a
+-- request whose model is `support-lora-v1`, the served name of the version
+-- `prod` points at, so a slot that served another adapter (or none) gets no
+-- answer and the test fails.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.File as File
+import Sky.Core.Result as Result
+import Sky.Test as Test exposing (Test)
+import Std.Ai.Provider as Provider
+import Std.Ai.Endpoint as Endpoint
+import Std.Ai.Eval as Eval
+import Std.Ai.Registry as Registry
+import Support
+
+
+-- One registry for the whole test run: the slot resolves `prod` in it.
+dir : String
+dir =
+    File.tempDir "ai-registry-example-test" |> Task.run
+        |> Result.withDefault "/tmp"
+
+
+-- Register v1, evaluate it, attach the report and promote it to prod.
+setup : Task Error Registry.Version
+setup =
+    Support.openRegistry dir
+        |> Task.andThen
+               (\reg ->
+                   Support.adapterFile dir "support-v1"
+                       |> Task.andThen
+                              (\a ->
+                                  Registry.register
+                                      reg
+                                      "support-lora"
+                                      a
+                                      (Support.lineage "11"))
+                       |> Task.andThen
+                              (\v ->
+                                  Eval.runAs
+                                      (Registry.label v)
+                                      (Registry.database reg)
+                                      (Support.candidateFor 1)
+                                      Support.suite
+                                      |> Task.andThen
+                                             (\r -> Registry.attachReport reg v r)
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Registry.promoteChecked
+                                                     reg
+                                                     "prod"
+                                                     v
+                                                     Eval.thresholds)
+                                      |> Task.map (\_ -> v)))
+
+
+served : Result Error String
+served =
+    setup
+        |> Task.andThen
+               (\_ ->
+                   Provider.chat
+                       (Endpoint.provider (Support.chatSlot dir))
+                       [ Provider.user "How do I get a refund?" ])
+        |> Task.map .content
+        |> Task.run
+
+
+described : Result Error String
+described =
+    served
+        |> Result.andThen
+               (\_ ->
+                   Endpoint.describe (Support.chatSlot dir)
+                       |> Task.map
+                              (\d ->
+                                  d.settings
+                                      |> List.filter (\s -> s.key == "ADAPTER")
+                                      |> List.map .value
+                                      |> String.join "")
+                       |> Task.run)
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "the chat slot serves the adapter prod points at"
+          (\_ ->
+              Test.equal
+                  (Ok "Ask for a refund within 30 days. (support-lora-v1)")
+                  served)
+    , Test.test
+          "describe names the resolved version"
+          (\_ ->
+              case described of
+
+                  Ok v ->
+                      Test.equal
+                          "registry:support-lora@prod -> support-lora@v1"
+                          (String.left 45 v)
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    ]

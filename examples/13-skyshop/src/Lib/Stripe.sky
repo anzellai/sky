@@ -433,7 +433,7 @@ verifyStripeSession cartId sessionId =
             in
                 if status == rd "" (Stripe.checkoutSessionStatusComplete ())
                     && paymentStatus
-                    == rd "" (Stripe.checkoutSessionPaymentStatusPaid ()) then
+                           == rd "" (Stripe.checkoutSessionPaymentStatusPaid ()) then
                     let
                         _ =
                             println

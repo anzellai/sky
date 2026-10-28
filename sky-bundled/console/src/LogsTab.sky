@@ -374,7 +374,7 @@ compactTime : String -> String
 compactTime ts =
     case String.split "T" ts of
 
-        [_date, rest] ->
+        [ _date, rest ] ->
             String.left 8 rest
 
         _ ->

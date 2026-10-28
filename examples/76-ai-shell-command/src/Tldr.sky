@@ -1,0 +1,384 @@
+module Tldr exposing (Page, commit, pages, fetchAll, parse, fill, rows)
+
+{-| Training rows from tldr-pages (https://github.com/tldr-pages/tldr),
+licensed CC BY 4.0. Copyright (c) 2014 the tldr-pages team and contributors.
+
+The pages are fetched at one pinned commit, and each file is checked against
+its SHA-256 before it is used. They are cached under `.sky/tldr/` and never
+committed. Each example of a page becomes one row: its description is the
+request and its command (with the placeholders filled in) is the answer.
+
+A page under `common/` is used on both platforms, unless the platform has a
+page of its own for the same program (`osx/stat`, `linux/sed` ...): that page
+wins there, as it does in the tldr clients.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Regex as Regex
+import Sky.Core.Crypto as Crypto
+import Sky.Core.File as File
+import Sky.Core.Http as Http
+import Prompt exposing (Os(..))
+
+
+-- | The tldr-pages commit the pages are read at (2026-09-30).
+commit : String
+commit =
+    "25f7dbe55d03efa3ca1a27c21eea571cb86bd601"
+
+-- | A page: its folder (`common`, `osx` or `linux`), the program, and the
+-- SHA-256 of the file at the pinned commit.
+type alias Page =
+    { folder : String
+    , program : String
+    , sha256 : String
+    }
+
+
+pages : List Page
+pages =
+    [ page
+          "common"
+          "find"
+          "9f51066543d2cb5c3100cd68b5edb2461f3c662d8efa48aceddecb6fc81d57e9"
+    , page
+          "common"
+          "grep"
+          "52d86623fb673a28c25fc775fdfaa4b4776031ff5db53f3ab2ae220d90b74916"
+    , page
+          "common"
+          "ls"
+          "395310868c4285d93a087111cf3f274c98a22e2662728d5ff205dac83a5cc1c1"
+    , page
+          "common"
+          "wc"
+          "97c17362b5ccfaea4084384f44e827bcae39b9abfcdcf4ef32b77a0059d3d5a3"
+    , page
+          "common"
+          "head"
+          "588ee6ce82a841a3941f6539ad1d12224fbc301377fd495a5403d43650fc4a6f"
+    , page
+          "common"
+          "tail"
+          "b208bcdcfdd66475cb10dcc10e568dcd66ccca2d1f9d2f5eb6fad27b7c84e40d"
+    , page
+          "common"
+          "sort"
+          "bbc4e37bdef48f92c9ff57c641f0040821445d82bf9abc89232a4e6b2f5f9d4a"
+    , page
+          "common"
+          "uniq"
+          "09952e52098a315af12499e79c38f699213871a249218876ddbc58fbbfc55e8a"
+    , page
+          "common"
+          "du"
+          "ac5d53884fd8e9fd1a30209565cd68e547a8b585ed932dc631a247e704d5f8fd"
+    , page
+          "common"
+          "cat"
+          "db25e6c94318558a3fc929b953eefe98cb2d75bb320dc6a9e36539c15e35a008"
+    , page
+          "common"
+          "fd"
+          "f82f1098fb8916eefd13b899aca65d54be2fd556011f370bfda6b612b2e32600"
+    , page
+          "common"
+          "rg"
+          "92dee72917de0ed24eab372a587d80203cc790826273d548a177801699d18f84"
+    , page
+          "common"
+          "cut"
+          "d261706af1c6f28d4ab0cd5ab1860438867cb6721329c75692fb43fe6b47bd2e"
+    , page
+          "common"
+          "mkdir"
+          "170b4fbebeeabe229ec5f93b132475f7a2722b9f900d2cf7c74d0c959cc144ca"
+    , page
+          "common"
+          "cp"
+          "3454ad0229d56193b4fe109e4f5363f0683f68a9622d210258caa4523480f91c"
+    , page
+          "common"
+          "mv"
+          "e72c68968d0ebfc20a808370074fedc24e4a61f4e0226d40217846e791cb048d"
+    , page
+          "common"
+          "touch"
+          "29654118c0f624ef36bb4b1a405d835e334d9439bad05a1cf6ae9a7770b651d0"
+    , page
+          "common"
+          "rm"
+          "29e0766649723f5546aeac7f8a9bd73fe77f7bba0fa62827e7c6991c3b2d6bcc"
+    , page
+          "common"
+          "stat"
+          "79aea93bc94990fd1a55901116d465beda2c7554bd38b630c5ba9dcfad60cbfc"
+    , page
+          "linux"
+          "sed"
+          "a103ec03ce53a6a95cb37cd49495c22a95796645964b17af0f2a8cb18ef32523"
+    , page
+          "osx"
+          "sed"
+          "8b816c18d0ed847ce3deb4bfa35d092fb06e2bba977ad2c7779363282b968013"
+    , page
+          "osx"
+          "stat"
+          "7700693440b6349f135f0c33143b35961018e1130979b92a158713e3b68a40ac"
+    , page
+          "osx"
+          "du"
+          "0b3a139fcede03eeba0460e6edfca230ed858951e862523757fabd6aa03dcbd2"
+    ]
+
+
+page : String -> String -> String -> Page
+page folder program sha =
+    { folder = folder, program = program, sha256 = sha }
+
+
+url : Page -> String
+url p =
+    "https://raw.githubusercontent.com/tldr-pages/tldr/" ++ commit ++ "/pages/"
+        ++ p.folder
+        ++ "/"
+        ++ p.program
+        ++ ".md"
+
+
+cachePath : String -> Page -> String
+cachePath dir p =
+    dir ++ "/" ++ commit ++ "/" ++ p.folder ++ "-" ++ p.program ++ ".md"
+
+
+-- | Every page, from the cache or fetched and checked: `(page, markdown)`.
+fetchAll : String -> Task Error (List ( Page, String ))
+fetchAll dir =
+    File.mkdirAll (dir ++ "/" ++ commit)
+        |> Task.andThen
+               (\_ ->
+                   Task.sequence
+                       (List.map
+                           (\p ->
+                               fetchOne dir p |> Task.map (\text -> ( p, text )))
+                           pages))
+
+
+fetchOne : String -> Page -> Task Error String
+fetchOne dir p =
+    let
+        path = cachePath dir p
+    in
+        File.exists path
+            |> Task.andThen
+                   (\cached ->
+                       if cached then
+                           File.readFile path |> Task.andThen (checked p)
+
+                       else
+                           Http.get (url p)
+                               |> Task.andThen
+                                      (\r ->
+                                          if r.status == 200 then
+                                              checked p r.body
+
+                                          else
+                                              Task.fail
+                                                  (Error.network
+                                                      ("tldr page " ++ p.folder
+                                                          ++ "/"
+                                                          ++ p.program
+                                                          ++ ": HTTP "
+                                                          ++ String.fromInt
+                                                                 r.status)))
+                               |> Task.andThen
+                                      (\text ->
+                                          File.writeFile path text
+                                              |> Task.map (\_ -> text)))
+
+
+checked : Page -> String -> Task Error String
+checked p text =
+    if Crypto.sha256 text == p.sha256 then
+        Task.succeed text
+
+    else
+        Task.fail
+            (Error.invalidInput
+                ("tldr page " ++ p.folder ++ "/" ++ p.program
+                    ++ " does not match its pinned SHA-256"))
+
+
+-- | The examples of a page: `(description, command)`, placeholders still in.
+parse : String -> List ( String, String )
+parse markdown =
+    collect (String.lines markdown) Nothing [] |> List.reverse
+
+
+collect : List String -> Maybe String -> List ( String, String ) -> List ( String, String )
+collect lines pending acc =
+    case lines of
+
+        [] ->
+            acc
+
+        line :: rest ->
+            if String.startsWith "- " line then
+                collect rest (Just (String.dropLeft 2 line)) acc
+
+            else if String.startsWith "`" line && String.endsWith "`" line then
+                case pending of
+
+                    Just description ->
+                        collect
+                            rest
+                            Nothing
+                            (( description
+                            , String.slice 1 (String.length line - 1) line
+                            )
+                                :: acc)
+
+                    Nothing ->
+                        collect rest Nothing acc
+
+            else
+                collect rest pending acc
+
+
+-- | Fill the placeholders: an option written `{{[-r|--recursive]}}` becomes
+-- its short form, a choice `{{f|d}}` its first option,
+-- `{{path/to/directory}}` the current folder and `{{path/to/file}}` a file
+-- name. `Nothing` for a command that needs another command
+-- (`{{command}} | ...`).
+fill : String -> Maybe String
+fill command =
+    if String.contains "{{command" command || String.contains "{{program" command then
+        Nothing
+
+    else
+        let
+            filled =
+                replaceAll (Regex.findAll "\\{\\{[^}]*\\}\\}" command) command
+        in
+            -- A nested placeholder (`{{path/to/{a,b}}}`) is left out.
+            if String.contains "{{" filled || String.contains "}}" filled then
+                Nothing
+
+            else
+                Just filled
+
+
+replaceAll : List String -> String -> String
+replaceAll found command =
+    case found of
+
+        [] ->
+            command
+
+        p :: rest ->
+            replaceAll
+                rest
+                (String.replace
+                    p
+                    (placeholder (String.slice 2 (String.length p - 2) p))
+                    command)
+
+
+placeholder : String -> String
+placeholder inner =
+    let
+        choice =
+            if String.startsWith "[" inner && String.endsWith "]" inner then
+                String.slice 1 (String.length inner - 1) inner
+                    |> String.split "|"
+                    |> List.head
+                    |> Maybe.withDefault inner
+
+            else if String.contains "|" inner then
+                String.split "|" inner |> List.head |> Maybe.withDefault inner
+
+            else
+                inner
+    in
+        choice |> String.words |> List.filter (\w -> w /= "...")
+            |> List.map pathWord
+            |> String.join " "
+
+
+pathWord : String -> String
+pathWord word =
+    if word == "path/to/directory" || word == "path/to/directory/" then
+        "."
+
+    else if String.startsWith "path/to/" word then
+        String.dropLeft 8 word
+
+    else
+        word
+
+
+-- | The rows of every page for each platform: `(platform, request, command)`.
+rows : List ( Page, String ) -> List ( Prompt.Platform, String, String )
+rows fetched =
+    List.concatMap
+        (\platform ->
+            fetched |> List.filter (\( p, _ ) -> usedOn platform p)
+                |> List.concatMap (\( _, text ) -> parse text)
+                |> List.filterMap
+                       (\( description, command ) ->
+                           fill command
+                               |> Maybe.map
+                                      (\c -> ( platform, request description, c ))))
+        Prompt.platforms
+
+
+usedOn : Prompt.Platform -> Page -> Bool
+usedOn platform p =
+    let
+        own =
+            case platform.os of
+
+                MacOs ->
+                    "osx"
+
+                Linux ->
+                    "linux"
+    in
+        if p.program == "fd" && not platform.fd then
+            False
+
+        else if p.program == "rg" && not platform.rg then
+            False
+
+        else if p.folder == own then
+            True
+
+        else if p.folder == "common" then
+            not
+                (List.any (\q -> q.folder == own && q.program == p.program) pages)
+
+        else
+            False
+
+
+-- "Find files by [e]xtension:" -> "find files by extension"
+request : String -> String
+request description =
+    let
+        text =
+            description |> String.replace "[" "" |> String.replace "]" ""
+                |> String.replace "`" ""
+                |> String.trim
+        trimmed =
+            if String.endsWith ":" text then
+                String.dropRight 1 text
+
+            else
+                text
+    in
+        String.toLower (String.left 1 trimmed) ++ String.dropLeft 1 trimmed

@@ -1,0 +1,598 @@
+module Std.Ai.Endpoint exposing
+    ( Endpoint
+    , Mode(..)
+    , endpoint
+    , withMode
+    , withUrl
+    , withKey
+    , withModel
+    , withAdapter
+    , fromRegistry
+    , withAdapterRefresh
+    , Adapter
+    , Resolver
+    , withLocal
+    , withDevice
+    , withTimeout
+    , withMaxInFlight
+    , withQueue
+    , withQueueWait
+    , withRetry
+    , withGoogleAuth
+    , provider
+    , warm
+    , describe
+    , inspect
+    , tokenize
+    , slotName
+    , Description
+    , Setting
+    )
+
+{-| `Std.Ai.Endpoint` — a named model slot whose settings live in code and are
+overridden per environment.
+
+An app names each use of a model: a chat model, an embedding model, a judge.
+Each is a slot. The code holds the local default with `withX` builders, and an
+operator overrides any of it with `<PREFIX>_AI_<SLOT>_<KEY>` (in the shell, a
+container or a `.env` file). The order is the one every Sky setting uses:
+
+    operator env  >  withX value in code  >  stdlib default
+
+    chatSlot : Endpoint
+    chatSlot =
+        Endpoint.endpoint "chat"
+            |> Endpoint.withLocal (Local.model Local.devModel)
+            |> Endpoint.withMaxInFlight 4
+
+    chat : Provider
+    chat =
+        Endpoint.provider chatSlot
+
+In development that runs a managed local engine with no configuration. In
+production the same binary calls a remote server when the operator sets
+`SKY_AI_CHAT_URL` (and `SKY_AI_CHAT_KEY`).
+
+Which one: the first rule that applies wins.
+
+1.  A resolved `MODE` is obeyed. `MODE=local` together with a resolved `URL` is
+    an error that names both sources.
+2.  A resolved `URL` means remote.
+3.  A `withLocal` spec means a managed local engine.
+4.  Otherwise every call fails with `NotConfigured`, naming the variable to set.
+
+A remote endpoint that is down fails with `Unreachable`. It never falls back to
+a local model.
+
+Each slot has a bounded queue: at most `maxInFlight` calls at once and `queue`
+more waiting. A call that finds the queue full fails at once (`Unavailable`,
+"Overloaded"); one that waits longer than the queue wait fails with `Timeout`.
+Only an overloaded server (HTTP 429 or 503) and a connection that never reached
+the server are retried.
+
+The slot name is lower case: `[a-z][a-z0-9_]*`. Use a string literal, so the
+variables an app reads can be listed. See `docs/ai/local.md`.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Ffi as Ffi
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Secret as Secret exposing (Secret)
+import Std.Ai.Provider as Provider exposing (Provider)
+import Std.Ai.Local as LocalEngine
+import Std.Ai.Cloud.Google as Google
+import Std.Ai.Device as Device
+import Sky.Core.List as List
+import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Json.Decode as JsonD
+
+{-| `Local`: a managed local engine. `Remote`: an OpenAI-compatible server at
+the slot's URL. -}
+type Mode
+    = Local
+    | Remote
+
+-- The record the runtime reads. An unset number is -1, an unset text "".
+type alias RawLocal =
+    { model : String
+    , adapter : String
+    , context : Int
+    , gpu : String
+    , parallel : Int
+    , idleUnload : Int
+    , embeddings : Bool
+    , port : Int
+    , draft : String
+    , draftMax : Int
+    , draftMin : Int
+    , adapters : String
+    }
+
+type alias Config =
+    { slot : String
+    , mode : String
+    , url : String
+    , hasKey : Bool
+    , key : Secret
+    , model : String
+    , adapter : String
+    , timeoutMs : Int
+    , maxInFlight : Int
+    , queue : Int
+    , queueWaitMs : Int
+    , retries : Int
+    , hasLocal : Bool
+    , local : RawLocal
+    , hasResolver : Bool
+    , resolverName : String
+    , resolve : String -> Bool -> Task Error Adapter
+    , adapterRefreshS : Int
+    , auth : String
+    , idToken : String -> Task Error Secret
+    , hasDevice : Bool
+    , device : Device.RawSpec
+    }
+
+{-| A registry adapter, as a resolver hands it to the slot: the reference it
+came from (`support-lora@prod`), the version's label (`support-lora@v3`), the
+name a server knows it by, its digest, the digest of the base model it was
+trained on, its format, and a verified local file (`""` when the slot is
+remote and needs only the name). -}
+type alias Adapter =
+    { ref : String
+    , label : String
+    , servedName : String
+    , digest : String
+    , baseDigest : String
+    , format : String
+    , path : String
+    , onDevice : Bool
+    }
+
+{-| How a slot turns `registry:<name>@<alias>` into a concrete adapter.
+`resolve ref local` gets the reference without the `registry:` prefix and
+whether the slot runs a local engine (which needs the adapter's file).
+`Std.Ai.Registry.resolver` makes one. -}
+type alias Resolver =
+    { name : String
+    , resolve : String -> Bool -> Task Error Adapter
+    }
+
+{-| A named slot and its code defaults. -}
+type Endpoint
+    = Endpoint Config
+
+
+{-| A slot, named by a lower-case literal: `"chat"`, `"embed"`, `"judge"`. Its
+variables are `<PREFIX>_AI_<SLOT>_<KEY>`, so slot `"chat"` reads `SKY_AI_CHAT_URL`
+under the default prefix. -}
+endpoint : String -> Endpoint
+endpoint slot =
+    Endpoint
+        { slot = slot
+        , mode = ""
+        , url = ""
+        , hasKey = False
+        , key = Secret.fromString ""
+        , model = ""
+        , adapter = ""
+        , timeoutMs = -1
+        , maxInFlight = -1
+        , queue = -1
+        , queueWaitMs = -1
+        , retries = -1
+        , hasLocal = False
+        , local =
+            { model = ""
+            , adapter = ""
+            , context = -1
+            , gpu = ""
+            , parallel = -1
+            , idleUnload = -1
+            , embeddings = False
+            , port = -1
+            , draft = ""
+            , draftMax = -1
+            , draftMin = -1
+            , adapters = ""
+            }
+        , hasResolver = False
+        , resolverName = ""
+        , resolve = noResolver
+        , adapterRefreshS = -1
+        , auth = ""
+        , idToken = Google.idToken
+        , hasDevice = False
+        , device =
+            { placement = "server"
+            , model = ""
+            , adapter = ""
+            , context = -1
+            , threads = ""
+            , gpuLayers = ""
+            , maxDownloadBytes = -1
+            , backends = []
+            , metered = False
+            }
+        }
+
+
+noResolver : String -> Bool -> Task Error Adapter
+noResolver ref _ =
+    Task.fail
+        (Error.invalidInput
+            ("Std.Ai.Endpoint: " ++ ref
+                ++ " needs a registry; give the slot Endpoint.fromRegistry"))
+
+
+{-| Force local or remote. Env: `<PREFIX>_AI_<SLOT>_MODE` (`local` or
+`remote`). Default: inferred by the rule in the module notes. -}
+withMode : Mode -> Endpoint -> Endpoint
+withMode m (Endpoint c) =
+    Endpoint
+        { c
+            | mode =
+                case m of
+
+                    Local ->
+                        "local"
+
+                    Remote ->
+                        "remote"
+        }
+
+
+{-| The OpenAI-compatible base URL, ending `/v1`. Env:
+`<PREFIX>_AI_<SLOT>_URL`. A URL makes the slot remote. -}
+withUrl : String -> Endpoint -> Endpoint
+withUrl url (Endpoint c) =
+    Endpoint { c | url = url }
+
+
+{-| The bearer key a remote server wants. Env: `<PREFIX>_AI_<SLOT>_KEY`.
+Default: no key (a local engine uses its own per-run key). -}
+withKey : Secret -> Endpoint -> Endpoint
+withKey key (Endpoint c) =
+    Endpoint { c | hasKey = True, key = key }
+
+
+{-| Remote: the served model name. Local: a model reference
+(`Local.reference`), which replaces the model of the `withLocal` spec. Env:
+`<PREFIX>_AI_<SLOT>_MODEL`. -}
+withModel : String -> Endpoint -> Endpoint
+withModel m (Endpoint c) =
+    Endpoint { c | model = m }
+
+
+{-| The adapter to answer with, sent as the request's model name (how vLLM and
+gateways select a LoRA adapter). Env: `<PREFIX>_AI_<SLOT>_ADAPTER`. Default: no
+adapter. A call's `Provider.Options` adapter wins over this. -}
+withAdapter : String -> Endpoint -> Endpoint
+withAdapter a (Endpoint c) =
+    Endpoint { c | adapter = a }
+
+
+{-| Let the slot serve registry adapters. With it, an adapter named
+`registry:<name>@<alias>` (by `withAdapter` or `<PREFIX>_AI_<SLOT>_ADAPTER`) is
+resolved through the registry when the slot starts: a remote slot sends the
+version's served name as the request's model, and a local slot loads the
+version's GGUF file into its engine, after checking that it was trained on the
+engine's base model (`AdapterMismatch` otherwise). The slot resolves the alias
+again as it moves (`withAdapterRefresh`), so serving follows promote and
+rollback.
+
+    chatSlot =
+        Endpoint.endpoint "chat"
+            |> Endpoint.withLocal (Local.model Local.devModel)
+            |> Endpoint.fromRegistry (Registry.resolver registry)
+            |> Endpoint.withAdapter "registry:support-lora@prod"
+-}
+fromRegistry : Resolver -> Endpoint -> Endpoint
+fromRegistry r (Endpoint c) =
+    Endpoint
+        { c | hasResolver = True, resolverName = r.name, resolve = r.resolve }
+
+
+{-| How often, in seconds, a slot with a registry adapter checks whether its
+alias moved: the check runs with a call that arrives after the interval, so
+an idle slot costs nothing. `0` resolves once, when the slot starts. Env:
+`<PREFIX>_AI_<SLOT>_ADAPTER_REFRESH_S`. Default: 30. -}
+withAdapterRefresh : Int -> Endpoint -> Endpoint
+withAdapterRefresh seconds (Endpoint c) =
+    Endpoint { c | adapterRefreshS = seconds }
+
+
+{-| The managed local engine this slot runs when it is not remote. Its context,
+GPU, parallel, idle-unload, port, draft and adapter settings each fall back to
+`<PREFIX>_AI_<SLOT>_CONTEXT`, `_GPU`, `_PARALLEL`, `_IDLE_UNLOAD_S`, `_PORT`,
+`_DRAFT`, `_DRAFT_MAX`, `_DRAFT_MIN` and `_ADAPTERS`. A value that does not
+parse fails with `InvalidSetting` naming the variable. -}
+withLocal : LocalEngine.Spec -> Endpoint -> Endpoint
+withLocal spec (Endpoint c) =
+    let
+        s = LocalEngine.settings spec
+        -- A `case`, not `Maybe.withDefault`: the payload is read typed,
+        -- with no runtime narrowing of the polymorphic default's result.
+        adapter =
+            case s.adapter of
+
+                Just path ->
+                    path
+
+                Nothing ->
+                    ""
+    in
+        Endpoint
+            { c
+                | hasLocal = True
+                , local =
+                    { model = s.model
+                    , adapter = adapter
+                    , context = orUnset s.context
+                    , gpu =
+                        case s.gpu of
+
+                            Just g ->
+                                gpuText g
+
+                            Nothing ->
+                                ""
+                    , parallel = orUnset s.parallel
+                    , idleUnload = orUnset s.idleUnloadSeconds
+                    , embeddings = s.embeddings
+                    , port = orUnset s.port
+                    , draft =
+                        case s.draft of
+
+                            Just ref ->
+                                ref
+
+                            Nothing ->
+                                ""
+                    , draftMax = orUnset s.draftMax
+                    , draftMin = orUnset s.draftMin
+                    , adapters =
+                        s.adapters
+                            |> List.map
+                                   (\a ->
+                                       a.name ++ ":" ++ String.fromFloat a.scale
+                                           ++ "="
+                                           ++ LocalEngine.reference a.adapter)
+                            |> String.join ","
+                    }
+            }
+
+
+{-| Let devices run this slot: a Sky.Spa client's `Device.provider "<slot>"`
+runs the call on the device when the spec allows it and the device can,
+and on this slot otherwise. The slot must be a top-level binding without
+parameters that names its slot with a literal, so the server registers it
+when it starts and answers `GET /_sky/ai/device/<slot>` (the build checks
+both). The placement, device model and device adapter fall back to
+`<PREFIX>_AI_<SLOT>_PLACEMENT`, `_DEVICE_MODEL` and `_DEVICE_ADAPTER`. See
+`docs/ai/device.md`. -}
+withDevice : Device.Spec -> Endpoint -> Endpoint
+withDevice d (Endpoint c) =
+    Endpoint { c | hasDevice = True, device = Device.rawSpec d }
+
+
+-- A setting the spec left out is -1 on the wire. A `case`, not
+-- `Maybe.withDefault`, whose polymorphic result is narrowed back at run time.
+orUnset : Maybe Int -> Int
+orUnset m =
+    case m of
+
+        Just n ->
+            n
+
+        Nothing ->
+            -1
+
+
+gpuText : LocalEngine.Gpu -> String
+gpuText g =
+    case g of
+
+        LocalEngine.Auto ->
+            "auto"
+
+        LocalEngine.CpuOnly ->
+            "cpu"
+
+        LocalEngine.AllLayers ->
+            "all"
+
+        LocalEngine.Layers n ->
+            String.fromInt n
+
+
+{-| The longest a call may take, in milliseconds (queue wait excluded). Env:
+`<PREFIX>_AI_<SLOT>_TIMEOUT_MS`. Default: 120000. -}
+withTimeout : Int -> Endpoint -> Endpoint
+withTimeout ms (Endpoint c) =
+    Endpoint { c | timeoutMs = ms }
+
+
+{-| Calls in flight at once. Env: `<PREFIX>_AI_<SLOT>_MAX_INFLIGHT`. Default:
+the engine's parallel slots for a local slot, 16 for a remote one. -}
+withMaxInFlight : Int -> Endpoint -> Endpoint
+withMaxInFlight n (Endpoint c) =
+    Endpoint { c | maxInFlight = n }
+
+
+{-| Calls that may wait for a free place. Env: `<PREFIX>_AI_<SLOT>_QUEUE`.
+Default: 4 times the calls in flight. -}
+withQueue : Int -> Endpoint -> Endpoint
+withQueue n (Endpoint c) =
+    Endpoint { c | queue = n }
+
+
+{-| The longest a call waits in the queue, in milliseconds. Env:
+`<PREFIX>_AI_<SLOT>_QUEUE_WAIT_MS`. Default: 30000. -}
+withQueueWait : Int -> Endpoint -> Endpoint
+withQueueWait ms (Endpoint c) =
+    Endpoint { c | queueWaitMs = ms }
+
+
+{-| Call a private Cloud Run service (a `Std.Ai.Serve` GPU tier) as this
+program's Google service account. Each request carries a Google ID token for
+the service's URL in `X-Serverless-Authorization` (Cloud Run checks it and
+removes it before the request reaches the service), while `Authorization`
+keeps the slot's own key (`withKey`, the tier's service token). The token
+comes from `GOOGLE_APPLICATION_CREDENTIALS` (a service-account key file) or
+the metadata server, and is reused until five minutes before it expires.
+Env: `<PREFIX>_AI_<SLOT>_AUTH` (`google`, or `bearer` for the key alone, the
+default). -}
+withGoogleAuth : Endpoint -> Endpoint
+withGoogleAuth (Endpoint c) =
+    Endpoint { c | auth = "google" }
+
+
+{-| Retries for an overloaded server or a connection that never reached it.
+Env: `<PREFIX>_AI_<SLOT>_RETRIES`. Default: 2. -}
+withRetry : Int -> Endpoint -> Endpoint
+withRetry n (Endpoint c) =
+    Endpoint { c | retries = n }
+
+
+-- ---------------------------------------------------------------------------
+-- Using a slot
+-- ---------------------------------------------------------------------------
+postRaw : Config -> String -> String -> Task Error String
+postRaw =
+    Ffi.kernel "Ai_endpointPost"
+
+
+streamOpenRaw : Config -> String -> String -> Task Error String
+streamOpenRaw =
+    Ffi.kernel "Ai_endpointStreamOpen"
+
+
+streamNextRaw : String -> Task Error String
+streamNextRaw =
+    Ffi.kernel "Ai_streamNext"
+
+
+streamCloseRaw : String -> Task Error ()
+streamCloseRaw =
+    Ffi.kernel "Ai_streamClose"
+
+
+postMeasuredRaw : Config -> String -> String -> String -> Task Error String
+postMeasuredRaw =
+    Ffi.kernel "Ai_endpointPostMeasured"
+
+
+streamOpenMeasuredRaw : Config -> String -> String -> String -> Task Error String
+streamOpenMeasuredRaw =
+    Ffi.kernel "Ai_endpointStreamOpenMeasured"
+
+
+{-| The slot as a `Provider`. It is pure: the first call resolves the slot and
+the process keeps the result, so a top-level binding is enough. A measured
+call (`Provider.measure`, `Std.Ai.Trace.tracedChat`) reports the slot, its tier,
+the adapter, the queue wait and the latency. -}
+provider : Endpoint -> Provider
+provider (Endpoint c) =
+    Provider.wireMeasured
+        (postRaw c)
+        { open = streamOpenRaw c, next = streamNextRaw, close = streamCloseRaw }
+        { post = postMeasuredRaw c, open = streamOpenMeasuredRaw c }
+        ""
+
+{-| One resolved setting and where it came from: `env`, `code` or `default`.
+`name` is the variable an operator sets. A key's value is never shown. -}
+type alias Setting =
+    { key : String
+    , name : String
+    , value : String
+    , source : String
+    }
+
+{-| Where a slot's calls go and why. `target` is the remote server's scheme,
+host and port (never its path or query), or the local model reference. -}
+type alias Description =
+    { slot : String
+    , mode : String
+    , target : String
+    , maxInFlight : Int
+    , queue : Int
+    , inFlight : Int
+    , waiting : Int
+    , settings : List Setting
+    }
+
+
+warmRaw : Config -> Task Error Description
+warmRaw =
+    Ffi.kernel "Ai_endpointWarm"
+
+
+{-| Resolve the slot and, for a local slot, start its engine now instead of on
+the first call. -}
+warm : Endpoint -> Task Error Description
+warm (Endpoint c) =
+    warmRaw c
+
+
+describeRaw : Config -> Task Error Description
+describeRaw =
+    Ffi.kernel "Ai_endpointDescribe"
+
+
+{-| Resolve the slot without starting anything, and report each setting's
+source. -}
+describe : Endpoint -> Task Error Description
+describe (Endpoint c) =
+    describeRaw c
+
+
+inspectRaw : Config -> Task Error Description
+inspectRaw =
+    Ffi.kernel "Ai_endpointInspect"
+
+
+{-| The slot's settings and where each came from, like `describe`, without
+resolving a registry adapter and without starting anything. The adapter
+setting shows the reference as written (`registry:support-lora@prod`), and its
+`source` says whether an operator variable set it. -}
+inspect : Endpoint -> Task Error Description
+inspect (Endpoint c) =
+    inspectRaw c
+
+
+{-| The slot's name: `"chat"` for `Endpoint.endpoint "chat"`. -}
+slotName : Endpoint -> String
+slotName (Endpoint c) =
+    c.slot
+
+
+{-| Count the tokens of a text with the model's own tokenizer: the engine's
+`/tokenize` route (llama-server's, and vLLM's on the same server). A local
+slot starts its engine for it, like a call. A server without the route
+fails with `RemoteRejected`; `Std.Ai.Dataset.withEngineTokenizer` then falls
+back to the estimate or to `withTokenizer`. Under `sky test` in test mode the
+request is answered by a fixture (match `urlContains "/tokenize"`). -}
+tokenize : Endpoint -> String -> Task Error Int
+tokenize (Endpoint c) text =
+    postRaw
+        c
+        "/@root/tokenize"
+        (JsonE.encode 0 (JsonE.object [ ( "content", JsonE.string text ) ]))
+        |> Task.andThen
+               (\body ->
+                   case JsonD.decodeString
+                            (JsonD.field "tokens" (JsonD.list JsonD.value))
+                            body of
+
+                       Ok tokens ->
+                           Task.succeed (List.length tokens)
+
+                       Err _ ->
+                           Task.fail
+                               (Error.invalidInput
+                                   ("Std.Ai.Endpoint.tokenize: slot " ++ c.slot
+                                       ++ ": the /tokenize answer has no token list")))

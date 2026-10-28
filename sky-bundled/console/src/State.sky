@@ -22,6 +22,7 @@ type Tab
     | TracesTab
     | ErrorsTab
     | AnalyticsTab
+    | AiTab
 
 
 tabLabel : Tab -> String
@@ -45,6 +46,9 @@ tabLabel tab =
 
         AnalyticsTab ->
             "Analytics"
+
+        AiTab ->
+            "AI"
 
 -- ─── Data shapes (mirror /_sky/console/api/* JSON) ──────────────
 -- Overview tab payload — wire shape mirrors `OverviewResponse`
@@ -170,6 +174,216 @@ emptyAnalytics =
     , rowCapHit = False
     , rowCap = 0
     }
+
+-- ─── AI panel (v0.28.0) ─────────────────────────────────────────
+-- Wire shapes mirror `AiConsoleResponse` in runtime-go/rt/ai_console.go
+-- (GET /_sky/console/api/ai). The runtime holds no prompt, no answer and
+-- no secret in it: a call row is metadata, a slot setting shows where its
+-- value came from, a key is "(secret)" and a URL is scheme, host and port.
+type alias AiSetting =
+    { key : String
+    , name : String
+    , value : String
+    , source : String
+    }
+
+type alias AiSlot =
+    { slot : String
+    , mode : String
+    , target : String
+    , maxInFlight : Int
+    , queue : Int
+    , inFlight : Int
+    , waiting : Int
+    , settings : List AiSetting
+    , calls : Int
+    , failures : Int
+    , overloaded : Int
+    , p50Ms : Int
+    , p95Ms : Int
+    }
+
+type alias AiEngine =
+    { slot : String
+    , state : String
+    , model : String
+    , accelerator : String
+    , contextTokens : Int
+    , gpuLayers : Int
+    , restarts : Int
+    , idleSeconds : Int
+    , lastCrash : String
+    }
+
+type alias AiCall =
+    { ts : String
+    , slot : String
+    , mode : String
+    , kind : String
+    , model : String
+    , outcome : String
+    , latencyMs : Int
+    , promptTokens : Int
+    , completionTokens : Int
+    }
+
+type alias AiEvalCase =
+    { id : String
+    , passed : Bool
+    , score : Float
+    , latencyMs : Int
+    , reason : String
+    }
+
+type alias AiEval =
+    { id : String
+    , ts : String
+    , suite : String
+    , model : String
+    , cases : Int
+    , passed : Int
+    , failed : Int
+    , errors : Int
+    , passRate : Float
+    , p95LatencyMs : Int
+    , verdict : String
+    , failures : List String
+    , caseResults : List AiEvalCase
+    , source : String
+    }
+
+-- The model registry (Std.Ai.Registry): one model's aliases, newest
+-- versions, alias events and attached eval reports, as the registry last
+-- published them in this process.
+type alias AiAlias =
+    { aliasName : String
+    , number : Int
+    , generation : Int
+    }
+
+type alias AiVersion =
+    { label : String
+    , number : Int
+    , digest : String
+    , baseDigest : String
+    , dataset : String
+    , method : String
+    , format : String
+    , blocked : String
+    }
+
+type alias AiAliasEvent =
+    { aliasName : String
+    , seq : Int
+    , action : String
+    , from : Int
+    , to : Int
+    , report : String
+    , reason : String
+    }
+
+type alias AiReportLink =
+    { suite : String
+    , number : Int
+    , digest : String
+    , passRate : Float
+    , verdict : String
+    }
+
+type alias AiModel =
+    { name : String
+    , store : String
+    , aliases : List AiAlias
+    , versions : List AiVersion
+    , events : List AiAliasEvent
+    , reports : List AiReportLink
+    }
+
+-- One Std.Ai.Train run (`aiTrainRun` in runtime-go/rt/ai_train_console.go):
+-- its status, steps, latest losses, relaunches, the trainer's peak memory (0
+-- when the trainer reports none) and the registered version.
+-- `loss` / `valLoss` are Nothing before the trainer reports one. `losses` and
+-- `valLosses` are the curve values in step order (at most 200 points each);
+-- the runtime sends them as [step, value] pairs and the console keeps the
+-- values. A row holds no dataset text.
+type alias AiTrainingRun =
+    { run : String
+    , status : String
+    , backend : String
+    , step : Int
+    , totalSteps : Int
+    , loss : Maybe Float
+    , valLoss : Maybe Float
+    , relaunches : Int
+    , resumedFrom : Int
+    , lastCheckpoint : Int
+    , peakBytes : Int
+    , message : String
+    , registered : String
+    , losses : List Float
+    , valLosses : List Float
+    , cloud : String
+    , cloudState : String
+    , spent : String
+    , budget : String
+    }
+
+-- One Std.Ai.Serve GPU tier (`aiTierStatus` in runtime-go/rt/ai_serve.go):
+-- whether it is ready (and why not), its aliases and resident adapters, the
+-- requests in flight, and the engine's signals (`running`, `waiting`,
+-- `kvCache`).
+type alias AiTier =
+    { bind : String
+    , base : String
+    , ready : Bool
+    , reason : String
+    , resident : List String
+    , inFlight : Int
+    , loads : Int
+    , unloads : Int
+    , running : Float
+    , waiting : Float
+    , kvCache : Float
+    }
+
+type alias AiData =
+    { slots : List AiSlot
+    , engines : List AiEngine
+    , calls : List AiCall
+    , evals : List AiEval
+    , registry : List AiModel
+    , training : List AiTrainingRun
+    , tiers : List AiTier
+    }
+
+
+emptyAiData : AiData
+emptyAiData =
+    { slots = []
+    , engines = []
+    , calls = []
+    , evals = []
+    , registry = []
+    , training = []
+    , tiers = []
+    }
+
+-- The AI panel's controls. `failedOnly` and `slot` filter the recent
+-- calls on the server (`calls=failed`, `slot=<name>`); `openEval` is the
+-- eval run whose cases are shown ("" for none); `openModel` is the registry
+-- model whose versions, alias log and eval history are shown. All four are
+-- part of the console URL.
+type alias AiFilter =
+    { failedOnly : Bool
+    , slot : String
+    , openEval : String
+    , openModel : String
+    }
+
+
+emptyAiFilter : AiFilter
+emptyAiFilter =
+    { failedOnly = False, slot = "", openEval = "", openModel = "" }
 
 -- Per-service rollup row consumed by the multi-service Overview
 -- (v0.16.4 B5). One ServiceStat per distinct service_name in the
@@ -343,6 +557,9 @@ tabKey tab =
         AnalyticsTab ->
             "analytics"
 
+        AiTab ->
+            "ai"
+
 
 parseTab : String -> Tab
 parseTab s =
@@ -362,6 +579,9 @@ parseTab s =
 
         "analytics" ->
             AnalyticsTab
+
+        "ai" ->
+            AiTab
 
         _ ->
             OverviewTab
@@ -431,6 +651,7 @@ type alias Store =
     , readErrors : Scope -> Task Error (List ErrorRow)
     , readServiceStats : () -> Task Error (List ServiceStat)
     , readAnalytics : Scope -> Task Error Analytics
+    , readAi : AiFilter -> Task Error AiData
     }
 
 -- ─── Model + Msg ─────────────────────────────────────────────────
@@ -463,6 +684,8 @@ type alias Model =
     , globalQuery : String
     , analytics : Analytics
     , logoutUrl : String
+    , ai : AiData
+    , aiFilter : AiFilter
     }
     -- Non-empty ONLY in embedded mode, where the runtime mounts a
     -- __Host-sky_console cookie + a /_sky/console/_logout route and
@@ -517,6 +740,11 @@ type Msg
     | GotIdentity (Result Error Identity)
     | SelectRange Range
     | GlobalQuery String
+    | GotAi Int (Result Error AiData)
+    | AiShowFailed Bool
+    | AiPickSlot String
+    | AiOpenEval String
+    | AiOpenModel String
     -- v0.16.6 #493 part 2c: identity from the auth-gate.  Populated
     -- by `Cmd.perform Hub.currentIdentity GotIdentity` in init.
     -- A successful response with a tenant claim derives the

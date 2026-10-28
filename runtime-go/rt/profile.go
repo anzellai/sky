@@ -130,6 +130,9 @@ func init() {
 			fmt.Fprintf(os.Stderr, "sky profile: bad SKY_PROFILE_TIMEOUT %q: %v\n", s, err)
 		}
 	}
+	// ExitProcess below ends the children; this handler owns the
+	// termination sequence for the life of the run (child_signal.go).
+	acquireSignalOwner()
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 	go func() {

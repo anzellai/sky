@@ -75,16 +75,78 @@ pub fn ensure_built(
         return Ok(out_dir);
     }
 
-    materialise(src_dir, &app_dir, keep_entry)
+    // Build in a private staging directory and rename it into place. Two
+    // `sky` processes that find a cold cache at the same moment (parallel
+    // tests, two terminals) each build their own copy: one rename wins, and
+    // the other uses the winner's. Materialising straight into `app_dir`
+    // let one process delete the source tree another was reading
+    // ("could not materialise bundled source: No such file or directory").
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let staging = cache_root().join(format!(
+        "{name}-{variant}-{version_slug}.staging-{}-{stamp}",
+        std::process::id()
+    ));
+    let result = build_into(repo_root, src_dir, name, keep_entry, &staging);
+    if let Err(e) = result {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(e);
+    }
+    if bin.is_file() {
+        // Another process finished first.
+        let _ = std::fs::remove_dir_all(&staging);
+        return Ok(out_dir);
+    }
+    if std::fs::rename(&staging, &app_dir).is_err() {
+        // `app_dir` exists: either another process just installed its build
+        // (use it), or an older build was interrupted before its binary
+        // existed (replace it once).
+        if !bin.is_file() {
+            let _ = std::fs::remove_dir_all(&app_dir);
+            if let Err(e) = std::fs::rename(&staging, &app_dir) {
+                if !bin.is_file() {
+                    let _ = std::fs::remove_dir_all(&staging);
+                    return Err(format!(
+                        "sky {name}: could not install the bundled app at {}: {e}",
+                        app_dir.display()
+                    ));
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+    if !bin.is_file() {
+        return Err(format!(
+            "sky {name}: build reported success but {} is missing",
+            bin.display()
+        ));
+    }
+    Ok(out_dir)
+}
+
+/// Materialise and build the bundled app `name` into `app_dir`.
+fn build_into(
+    repo_root: &Path,
+    src_dir: &Path,
+    name: &str,
+    keep_entry: &str,
+    app_dir: &Path,
+) -> Result<(), String> {
+    let bin = app_dir.join("sky-out").join("app");
+    materialise(src_dir, app_dir, keep_entry)
         .map_err(|e| format!("sky {name}: could not materialise bundled source: {e}"))?;
 
-    println!(
+    // Progress goes to stderr: a verb's stdout may be machine output
+    // (`sky ai lineage --format json`), and a cold cache must not prefix it.
+    eprintln!(
         "sky {name}: building bundled app (one-time per version, into {})...",
         app_dir.display()
     );
     let opts = BuildOptions {
         repo_root: repo_root.to_path_buf(),
-        example_dir: app_dir.clone(),
+        example_dir: app_dir.to_path_buf(),
         out_dir_name: "sky-out".to_string(),
         out_dir_abs: None,
         run: false,
@@ -113,7 +175,7 @@ pub fn ensure_built(
             bin.display()
         ));
     }
-    Ok(out_dir)
+    Ok(())
 }
 
 /// Copy `src_dir`'s `sky.toml` + `src/` tree into `app_dir`, dropping the entry

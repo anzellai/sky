@@ -1,0 +1,839 @@
+module Grammar exposing (Slots, Template, tasks, rows, perTask)
+
+{-| The template grammar: task x tool x platform.
+
+A task has several ways to ask for it and one command per platform. The slots
+(a file, a word, a number ...) come from small pools, so every row is a real
+request with real names. Each task gives `perTask` rows on each of the four
+platforms (macOS or Linux, with or without `fd` and `rg`), and the command
+follows the platform: `stat -f %z` against `stat -c %s`, `sed -i ''` against
+`sed -i`, `fd` and `rg` only where they are installed.
+
+The phrasings here are not the ones the eval asks (src/Cases.sky): the eval
+measures whether the model generalises, not whether it remembers.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Prompt exposing (Os(..), Platform)
+
+-- | The values a template fills in.
+type alias Slots =
+    { file : String
+    , name : String
+    , ext : String
+    , word : String
+    , word2 : String
+    , dir : String
+    , n : Int
+    , col : Int
+    , size : Int
+    , lang : String
+    }
+
+-- | A task: its phrasings and its command on a platform.
+type alias Template =
+    { id : String
+    , asks : List (Slots -> String)
+    , command : Platform -> Slots -> String
+    , weight : Int
+    }
+
+
+-- | Rows per task and platform.
+perTask : Int
+perTask =
+    24
+
+
+files : List String
+files =
+    [ "notes.txt"
+    , "logs/server.log"
+    , "data/orders.csv"
+    , "src/app.js"
+    , "docs/notes.md"
+    , "config/settings.yaml"
+    , "reports/q3.txt"
+    , "web/index.html"
+    , "report.md"
+    , "server.log"
+    , "data.csv"
+    , "main.go"
+    , "index.html"
+    , "config.yaml"
+    , "todo.txt"
+    , "readme.md"
+    , "app.py"
+    , "schedule.csv"
+    , "errors.log"
+    , "people.csv"
+    ]
+
+
+names : List String
+names =
+    [ "xyz.csv"
+    , "budget.xlsx"
+    , "photo.jpg"
+    , "invoice.pdf"
+    , "main.rs"
+    , "setup.py"
+    , "notes.md"
+    , "backup.tar"
+    , "config.json"
+    , "Makefile"
+    , "Dockerfile"
+    , "package.json"
+    , "cv.docx"
+    ]
+
+
+exts : List String
+exts =
+    [ "csv"
+    , "log"
+    , "md"
+    , "py"
+    , "go"
+    , "txt"
+    , "json"
+    , "jpg"
+    , "pdf"
+    , "yaml"
+    , "sh"
+    , "html"
+    , "tmp"
+    ]
+
+
+wordPool : List String
+wordPool =
+    [ "TODO"
+    , "error"
+    , "password"
+    , "timeout"
+    , "FIXME"
+    , "import"
+    , "warning"
+    , "localhost"
+    , "deprecated"
+    , "user"
+    , "failed"
+    , "version"
+    , "banana"
+    ]
+
+
+replacements : List String
+replacements =
+    [ "DONE"
+    , "fault"
+    , "secret"
+    , "deadline"
+    , "NOTE"
+    , "include"
+    , "notice"
+    , "example"
+    , "legacy"
+    , "account"
+    , "passed"
+    , "release"
+    , "mango"
+    ]
+
+
+dirs : List String
+dirs =
+    [ "logs"
+    , "src"
+    , "data"
+    , "docs"
+    , "build"
+    , "tmp"
+    , "assets"
+    , "scripts"
+    , "backup"
+    , "notes"
+    , "tests"
+    , "config"
+    , "photos"
+    ]
+
+
+numbers : List Int
+numbers =
+    [ 3, 5, 10, 20, 1, 2, 15, 4, 8, 25, 7, 12, 6 ]
+
+
+columns : List Int
+columns =
+    [ 1, 2, 3, 2, 1, 4, 3, 1, 2, 5, 3, 2, 4 ]
+
+
+sizes : List Int
+sizes =
+    [ 10, 100, 1, 50, 500, 20, 5, 200, 2, 64, 8, 1000, 30 ]
+
+
+at : Int -> List a -> a -> a
+at i xs fallback =
+    let
+        n = List.length xs
+    in
+        if n == 0 then
+            fallback
+
+        else
+            List.drop (modBy n i) xs |> List.head |> Maybe.withDefault fallback
+
+
+-- The slots of row `i`: each pool is walked with its own stride, so the
+-- combinations vary.
+slots : Int -> Slots
+slots i =
+    { file = at i files "notes.txt"
+    , name = at (i * 5 + 1) names "xyz.csv"
+    , ext = at (i * 3 + 2) exts "csv"
+    , word = at (i * 7 + 3) wordPool "TODO"
+    , word2 = at (i * 7 + 3) replacements "DONE"
+    , dir = at (i * 4 + 5) dirs "logs"
+    , n = at (i * 2 + 1) numbers 5
+    , col = at (i * 6 + 2) columns 2
+    , size = at (i * 9 + 4) sizes 10
+    , lang = language (at (i * 3 + 2) exts "csv")
+    }
+
+
+-- What people call the files of an extension.
+language : String -> String
+language ext =
+    case ext of
+
+        "py" ->
+            "python"
+
+        "md" ->
+            "markdown"
+
+        "go" ->
+            "Go"
+
+        "txt" ->
+            "text"
+
+        "json" ->
+            "JSON"
+
+        "jpg" ->
+            "JPEG"
+
+        "pdf" ->
+            "PDF"
+
+        "yaml" ->
+            "YAML"
+
+        "sh" ->
+            "shell script"
+
+        "html" ->
+            "HTML"
+
+        "csv" ->
+            "CSV"
+
+        "tmp" ->
+            "temporary"
+
+        _ ->
+            ext
+
+
+ordinal : Int -> String
+ordinal n =
+    case n of
+
+        1 ->
+            "first"
+
+        2 ->
+            "second"
+
+        3 ->
+            "third"
+
+        4 ->
+            "fourth"
+
+        5 ->
+            "fifth"
+
+        _ ->
+            String.fromInt n ++ "th"
+
+
+byOs : Platform -> String -> String -> String
+byOs p mac linux =
+    case p.os of
+
+        MacOs ->
+            mac
+
+        Linux ->
+            linux
+
+
+withFd : Platform -> String -> String -> String
+withFd p fd find =
+    if p.fd then
+        fd
+
+    else
+        find
+
+
+withRg : Platform -> String -> String -> String
+withRg p rg grep =
+    if p.rg then
+        rg
+
+    else
+        grep
+
+
+task : String -> List (Slots -> String) -> (Platform -> Slots -> String) -> Template
+task id asks command =
+    { id = id, asks = asks, command = command, weight = 1 }
+
+
+-- A task whose command differs between macOS and Linux gets three times the
+-- rows, so the model learns to read the platform line.
+platformTask : String -> List (Slots -> String) -> (Platform -> Slots -> String) -> Template
+platformTask id asks command =
+    { id = id, asks = asks, command = command, weight = 3 }
+
+
+tasks : List Template
+tasks =
+    [ task
+          "find-name"
+          [ \s -> "find the file " ++ s.name
+          , \s -> "where is " ++ s.name
+          , \s -> "locate " ++ s.name ++ " in this folder"
+          , \s -> "search for a file named " ++ s.name
+          , \s -> "is there a file called " ++ s.name ++ " anywhere here"
+          , \s -> "I can't find " ++ s.name
+          , \s -> "where did " ++ s.name ++ " end up"
+          , \s -> "look for " ++ s.name
+          ]
+          (\p s -> withFd p ("fd -g " ++ s.name) ("find . -name " ++ s.name))
+    , task
+          "find-ext"
+          [ \s -> "list all ." ++ s.ext ++ " files"
+          , \s -> "find every " ++ s.ext ++ " file"
+          , \s -> "show all files ending in ." ++ s.ext
+          , \s -> "which files have the ." ++ s.ext ++ " extension"
+          , \s -> "every ." ++ s.ext ++ " file in this project"
+          , \s -> "show me the " ++ s.ext ++ " files"
+          , \s -> "all files with extension " ++ s.ext
+          , \s -> "every " ++ s.lang ++ " file"
+          , \s -> "list my " ++ s.lang ++ " files"
+          , \s -> "where are the " ++ s.lang ++ " files"
+          ]
+          (\p s ->
+              withFd
+                  p
+                  ("fd -e " ++ s.ext)
+                  ("find . -type f -name '*." ++ s.ext ++ "'"))
+    , task
+          "count-ext"
+          [ \s -> "how many ." ++ s.ext ++ " files are there"
+          , \s -> "count the " ++ s.ext ++ " files"
+          , \s -> "number of ." ++ s.ext ++ " files in this folder and below"
+          , \s -> "number of " ++ s.ext ++ " files I have"
+          , \s -> "how many " ++ s.ext ++ " files exist here"
+          , \s -> "how many " ++ s.lang ++ " files are there"
+          , \s -> "count my " ++ s.lang ++ " files"
+          ]
+          (\p s ->
+              withFd
+                  p
+                  ("fd -e " ++ s.ext ++ " | wc -l")
+                  ("find . -type f -name '*." ++ s.ext ++ "' | wc -l"))
+    , task
+          "find-dir"
+          [ \s -> "find the folder named " ++ s.dir
+          , \s -> "where is the " ++ s.dir ++ " directory"
+          , \s -> "locate directories called " ++ s.dir
+          , \s -> "is there a directory called " ++ s.dir
+          , \s -> "search for the " ++ s.dir ++ " folder"
+          ]
+          (\p s ->
+              withFd
+                  p
+                  ("fd -t d -g " ++ s.dir)
+                  ("find . -type d -name " ++ s.dir))
+    , task
+          "grep-files"
+          [ \s -> "which files contain " ++ s.word
+          , \s -> "list files that mention " ++ s.word
+          , \s -> "search all files for " ++ s.word ++ " and show their names"
+          , \s -> "find files with the text " ++ s.word
+          , \s -> "which files mention the word " ++ s.word
+          , \s -> "files whose text includes " ++ s.word
+          , \s -> "where is " ++ s.word ++ " used"
+          ]
+          (\p s -> withRg p ("rg -l " ++ s.word) ("grep -rl " ++ s.word ++ " ."))
+    , task
+          "grep-lines"
+          [ \s -> "show lines with " ++ s.word ++ " in " ++ s.file
+          , \s -> "print the lines of " ++ s.file ++ " that contain " ++ s.word
+          , \s -> "search " ++ s.file ++ " for " ++ s.word
+          , \s -> "lines of " ++ s.file ++ " with " ++ s.word
+          , \s -> "the " ++ s.word ++ " lines in " ++ s.file
+          , \s -> "grep " ++ s.file ++ " for " ++ s.word
+          ]
+          (\p s ->
+              withRg
+                  p
+                  ("rg " ++ s.word ++ " " ++ s.file)
+                  ("grep " ++ s.word ++ " " ++ s.file))
+    , task
+          "grep-case"
+          [ \s -> "find " ++ s.word ++ " in " ++ s.file ++ " ignoring case"
+          , \s -> "case-insensitive search for " ++ s.word ++ " in " ++ s.file
+          , \s ->
+                "search " ++ s.file ++ " for " ++ s.word
+                    ++ ", upper or lower case"
+          , \s -> "lines with " ++ s.word ++ " in any case in " ++ s.file
+          ]
+          (\p s ->
+              withRg
+                  p
+                  ("rg -i " ++ s.word ++ " " ++ s.file)
+                  ("grep -i " ++ s.word ++ " " ++ s.file))
+    , task
+          "grep-count"
+          [ \s -> "how many lines in " ++ s.file ++ " contain " ++ s.word
+          , \s -> "count the lines with " ++ s.word ++ " in " ++ s.file
+          , \s -> "number of lines mentioning " ++ s.word ++ " in " ++ s.file
+          , \s ->
+                "how often does " ++ s.word ++ " show up in " ++ s.file
+                    ++ ", counted by line"
+          ]
+          (\_ s -> "grep -c " ++ s.word ++ " " ++ s.file)
+    , task
+          "grep-invert"
+          [ \s -> "show the lines of " ++ s.file ++ " without " ++ s.word
+          , \s ->
+                "print " ++ s.file ++ " but skip lines that contain " ++ s.word
+          , \s -> "lines of " ++ s.file ++ " that do not mention " ++ s.word
+          , \s -> s.file ++ " minus the lines with " ++ s.word
+          ]
+          (\_ s -> "grep -v " ++ s.word ++ " " ++ s.file)
+    , task
+          "grep-numbers"
+          [ \s -> "show " ++ s.word ++ " in " ++ s.file ++ " with line numbers"
+          , \s ->
+                "where in " ++ s.file ++ " does " ++ s.word
+                    ++ " appear, with line numbers"
+          , \s -> "line numbers of the " ++ s.word ++ " lines in " ++ s.file
+          , \s ->
+                "find " ++ s.word ++ " in " ++ s.file ++ " and number the lines"
+          ]
+          (\_ s -> "grep -n " ++ s.word ++ " " ++ s.file)
+    , task
+          "count-lines"
+          [ \s -> "how many lines are in " ++ s.file
+          , \s -> "count the lines of " ++ s.file
+          , \s -> "line count of " ++ s.file
+          , \s -> "number of lines in " ++ s.file
+          , \s -> "how many rows does " ++ s.file ++ " have"
+          , \s -> "length of " ++ s.file ++ " counted in lines"
+          ]
+          (\_ s -> "wc -l < " ++ s.file)
+    , task
+          "count-words"
+          [ \s -> "how many words are in " ++ s.file
+          , \s -> "count the words in " ++ s.file
+          , \s -> "word count of " ++ s.file
+          , \s -> "number of words in " ++ s.file
+          ]
+          (\_ s -> "wc -w < " ++ s.file)
+    , task
+          "head"
+          [ \s ->
+                "show the first " ++ String.fromInt s.n ++ " lines of "
+                    ++ s.file
+          , \s ->
+                "print the top " ++ String.fromInt s.n ++ " lines of " ++ s.file
+          , \s -> "first " ++ String.fromInt s.n ++ " lines of " ++ s.file
+          , \s -> "the opening " ++ String.fromInt s.n ++ " lines of " ++ s.file
+          , \s ->
+                "start of " ++ s.file ++ ", " ++ String.fromInt s.n ++ " lines"
+          ]
+          (\_ s -> "head -n " ++ String.fromInt s.n ++ " " ++ s.file)
+    , task
+          "tail"
+          [ \s ->
+                "show the last " ++ String.fromInt s.n ++ " lines of " ++ s.file
+          , \s ->
+                "print the final " ++ String.fromInt s.n ++ " lines of "
+                    ++ s.file
+          , \s -> "last " ++ String.fromInt s.n ++ " lines of " ++ s.file
+          , \s ->
+                "the end of " ++ s.file ++ ", " ++ String.fromInt s.n
+                    ++ " lines"
+          , \s -> "the closing " ++ String.fromInt s.n ++ " lines of " ++ s.file
+          ]
+          (\_ s -> "tail -n " ++ String.fromInt s.n ++ " " ++ s.file)
+    , task
+          "sort"
+          [ \s -> "sort the lines of " ++ s.file
+          , \s -> "print " ++ s.file ++ " sorted alphabetically"
+          , \s -> s.file ++ " sorted"
+          , \s -> "order the lines of " ++ s.file ++ " from a to z"
+          ]
+          (\_ s -> "sort " ++ s.file)
+    , task
+          "sort-unique"
+          [ \s -> "show the unique lines of " ++ s.file
+          , \s -> "print " ++ s.file ++ " without duplicate lines"
+          , \s -> "sorted unique lines of " ++ s.file
+          , \s -> "the distinct lines of " ++ s.file
+          , \s -> s.file ++ " with repeated lines removed"
+          , \s -> "list each line of " ++ s.file ++ " once"
+          ]
+          (\_ s -> "sort -u " ++ s.file)
+    , task
+          "count-duplicates"
+          [ \s -> "count how often each line appears in " ++ s.file
+          , \s -> "most common lines in " ++ s.file
+          , \s -> "count the repeats of each line in " ++ s.file
+          , \s -> "frequency of each line in " ++ s.file
+          ]
+          (\_ s -> "sort " ++ s.file ++ " | uniq -c | sort -rn")
+    , task
+          "cat"
+          [ \s -> "show the contents of " ++ s.file
+          , \s -> "print " ++ s.file
+          , \s -> "display " ++ s.file
+          , \s -> "what is in " ++ s.file
+          , \s -> "read " ++ s.file ++ " out to me"
+          , \s -> "output " ++ s.file
+          ]
+          (\_ s -> "cat " ++ s.file)
+    , task
+          "column"
+          [ \s -> "print column " ++ String.fromInt s.col ++ " of " ++ s.file
+          , \s ->
+                "show field " ++ String.fromInt s.col
+                    ++ " of the comma separated file "
+                    ++ s.file
+          , \s -> "extract the " ++ ordinal s.col ++ " column of " ++ s.file
+          , \s -> "just the " ++ ordinal s.col ++ " field of " ++ s.file
+          , \s -> "column number " ++ String.fromInt s.col ++ " from " ++ s.file
+          ]
+          (\_ s -> "cut -d, -f" ++ String.fromInt s.col ++ " " ++ s.file)
+    , platformTask
+          "size"
+          [ \s -> "what is the size of " ++ s.file ++ " in bytes"
+          , \s -> "how many bytes is " ++ s.file
+          , \s -> "file size of " ++ s.file
+          , \s -> "how big is " ++ s.file ++ " in bytes"
+          , \s -> "byte count of " ++ s.file ++ " from its metadata"
+          ]
+          (\p s -> byOs p ("stat -f %z " ++ s.file) ("stat -c %s " ++ s.file))
+    , platformTask
+          "mtime"
+          [ \s -> "when was " ++ s.file ++ " last modified, as a unix timestamp"
+          , \s -> "modification time of " ++ s.file ++ " in epoch seconds"
+          , \s -> "epoch time of the last change to " ++ s.file
+          , \s -> "last modified time of " ++ s.file ++ " in seconds since 1970"
+          ]
+          (\p s -> byOs p ("stat -f %m " ++ s.file) ("stat -c %Y " ++ s.file))
+    , task
+          "larger-than"
+          [ \s -> "find files bigger than " ++ String.fromInt s.size ++ "k"
+          , \s -> "list files larger than " ++ String.fromInt s.size ++ " KB"
+          , \s -> "files over " ++ String.fromInt s.size ++ " kilobytes"
+          , \s -> "anything above " ++ String.fromInt s.size ++ "k in size"
+          ]
+          (\p s ->
+              withFd
+                  p
+                  ("fd -t f -S +" ++ String.fromInt s.size ++ "k")
+                  ("find . -type f -size +" ++ String.fromInt s.size ++ "k"))
+    , task
+          "empty-files"
+          [ \_ -> "find empty files"
+          , \_ -> "list files with no content"
+          , \_ -> "show the files that are zero bytes"
+          , \_ -> "are any files empty"
+          , \_ -> "files that have nothing in them"
+          ]
+          (\_ _ -> "find . -type f -empty")
+    , task
+          "dir-size"
+          [ \s -> "how much space does " ++ s.dir ++ " use"
+          , \s -> "disk usage of the " ++ s.dir ++ " folder"
+          ]
+          (\_ s -> "du -sh " ++ s.dir)
+    , task
+          "by-size"
+          [ \_ -> "list files sorted by size"
+          , \_ -> "show the biggest files first"
+          ]
+          (\_ _ -> "ls -lS")
+    , task
+          "hidden"
+          [ \_ -> "list everything here including hidden files"
+          , \_ -> "show hidden files too"
+          ]
+          (\_ _ -> "ls -a")
+    , task
+          "count-in-dir"
+          [ \s -> "how many files are in " ++ s.dir
+          , \s -> "count the files under " ++ s.dir
+          , \s -> "number of files inside " ++ s.dir
+          , \s -> "how many files does the " ++ s.dir ++ " folder hold"
+          ]
+          (\p s ->
+              withFd
+                  p
+                  ("fd -t f . " ++ s.dir ++ " | wc -l")
+                  ("find " ++ s.dir ++ " -type f | wc -l"))
+    , task
+          "recent"
+          [ \_ -> "list files changed in the last day"
+          , \_ -> "files modified in the past 24 hours"
+          ]
+          (\p _ ->
+              withFd p "fd -t f --changed-within 1d" "find . -type f -mtime -1")
+    , task
+          "free-space"
+          [ \_ -> "how much free disk space is there"
+          , \_ -> "show free space on this disk"
+          ]
+          (\_ _ -> "df -h .")
+    , task
+          "replace-print"
+          [ \s ->
+                "replace " ++ s.word ++ " with " ++ s.word2 ++ " in " ++ s.file
+                    ++ " and print the result"
+          , \s ->
+                "show " ++ s.file ++ " with " ++ s.word ++ " changed to "
+                    ++ s.word2
+          , \s ->
+                "print " ++ s.file ++ " with " ++ s.word ++ " replaced by "
+                    ++ s.word2
+                    ++ ", leave the file alone"
+          , \s ->
+                "preview " ++ s.file ++ " with " ++ s.word ++ " swapped to "
+                    ++ s.word2
+          ]
+          (\_ s -> "sed 's/" ++ s.word ++ "/" ++ s.word2 ++ "/g' " ++ s.file)
+    , platformTask
+          "replace-in-place"
+          [ \s ->
+                "replace " ++ s.word ++ " with " ++ s.word2 ++ " in " ++ s.file
+          , \s ->
+                "change every " ++ s.word ++ " to " ++ s.word2 ++ " inside "
+                    ++ s.file
+          , \s ->
+                "edit " ++ s.file ++ " so " ++ s.word ++ " becomes " ++ s.word2
+          , \s ->
+                "swap " ++ s.word ++ " for " ++ s.word2 ++ " in " ++ s.file
+                    ++ " and keep the change"
+          , \s ->
+                "rewrite " ++ s.file ++ " replacing " ++ s.word ++ " with "
+                    ++ s.word2
+          ]
+          (\p s ->
+              byOs
+                  p
+                  ("sed -i '' 's/" ++ s.word ++ "/" ++ s.word2 ++ "/g' "
+                      ++ s.file)
+                  ("sed -i 's/" ++ s.word ++ "/" ++ s.word2 ++ "/g' " ++ s.file))
+    , task
+          "mkdir"
+          [ \s -> "make a folder called " ++ s.dir
+          , \s -> "create the directory " ++ s.dir
+          , \s -> "new folder " ++ s.dir
+          , \s -> "add a directory named " ++ s.dir
+          , \s -> "I need a new " ++ s.dir ++ " folder"
+          ]
+          (\_ s -> "mkdir -p " ++ s.dir)
+    , task
+          "copy"
+          [ \s -> "copy " ++ s.file ++ " to " ++ s.dir
+          , \s -> "make a copy of " ++ s.file ++ " in " ++ s.dir
+          , \s -> "copy " ++ s.file ++ " into the " ++ s.dir ++ " folder"
+          , \s -> "put a copy of " ++ s.file ++ " in " ++ s.dir
+          ]
+          (\_ s -> "cp " ++ s.file ++ " " ++ s.dir ++ "/")
+    , task
+          "move"
+          [ \s -> "move " ++ s.file ++ " into " ++ s.dir
+          , \s -> "put " ++ s.file ++ " in the " ++ s.dir ++ " folder"
+          , \s -> "relocate " ++ s.file ++ " to " ++ s.dir
+          , \s -> "move " ++ s.file ++ " over to " ++ s.dir
+          ]
+          (\_ s -> "mv " ++ s.file ++ " " ++ s.dir ++ "/")
+    , task
+          "rename"
+          [ \s -> "rename " ++ s.file ++ " to old-" ++ s.file
+          , \s -> "give " ++ s.file ++ " the new name old-" ++ s.file
+          ]
+          (\_ s -> "mv " ++ s.file ++ " old-" ++ s.file)
+    , task
+          "touch"
+          [ \s -> "create an empty file called " ++ s.file
+          , \s -> "make a new empty file " ++ s.file
+          , \s -> "create a blank file " ++ s.file
+          , \s -> "new empty file named " ++ s.file
+          ]
+          (\_ s -> "touch " ++ s.file)
+    , task
+          "delete"
+          [ \s -> "delete " ++ s.file, \s -> "remove the file " ++ s.file ]
+          (\_ s -> "rm " ++ s.file)
+    , task
+          "delete-ext"
+          [ \s -> "delete all ." ++ s.ext ++ " files"
+          , \s -> "remove every " ++ s.ext ++ " file in this folder and below"
+          , \s -> "erase " ++ s.file
+          , \s -> "throw away " ++ s.file
+          , \s -> "remove all the ." ++ s.ext ++ " files"
+          , \s -> "clear out every ." ++ s.ext ++ " file"
+          , \s -> "delete the " ++ s.lang ++ " files"
+          , \s -> "get rid of all " ++ s.lang ++ " files"
+          ]
+          (\p s ->
+              withFd
+                  p
+                  ("fd -e " ++ s.ext ++ " -x rm")
+                  ("find . -type f -name '*." ++ s.ext ++ "' -delete"))
+    , task
+          "delete-dir"
+          [ \s -> "delete the folder " ++ s.dir ++ " and everything in it"
+          , \s -> "remove the " ++ s.dir ++ " directory with its contents"
+          , \s -> "remove " ++ s.dir ++ " and all its files"
+          , \s -> "erase the whole " ++ s.dir ++ " directory"
+          ]
+          (\_ s -> "rm -r " ++ s.dir)
+    , task
+          "archive"
+          [ \s -> "make a tar.gz of " ++ s.dir
+          , \s -> "compress the " ++ s.dir ++ " folder into an archive"
+          ]
+          (\_ s -> "tar -czf " ++ s.dir ++ ".tar.gz " ++ s.dir)
+    , platformTask
+          "md5"
+          [ \s -> "md5 checksum of " ++ s.file
+          , \s -> "what is the md5 of " ++ s.file
+          , \s -> "compute the md5 hash of " ++ s.file
+          ]
+          (\p s -> byOs p ("md5 -q " ++ s.file) ("md5sum " ++ s.file))
+    , platformTask
+          "sha256"
+          [ \s -> "sha256 of " ++ s.file
+          , \s -> "the SHA-256 checksum of " ++ s.file
+          , \s -> "hash " ++ s.file ++ " with sha256"
+          ]
+          (\p s -> byOs p ("shasum -a 256 " ++ s.file) ("sha256sum " ++ s.file))
+    , platformTask
+          "permissions"
+          [ \s -> "show the permissions of " ++ s.file
+          , \s -> "what are the access rights on " ++ s.file
+          , \s -> "permission string of " ++ s.file
+          ]
+          (\p s -> byOs p ("stat -f %Sp " ++ s.file) ("stat -c %A " ++ s.file))
+    , platformTask
+          "cpu-count"
+          [ \_ -> "how many CPU cores does this machine have"
+          , \_ -> "number of processors"
+          , \_ -> "count the CPUs"
+          ]
+          (\p _ -> byOs p "sysctl -n hw.ncpu" "nproc")
+    , platformTask
+          "memory"
+          [ \_ -> "how much memory is free"
+          , \_ -> "show memory usage"
+          , \_ -> "free RAM on this machine"
+          ]
+          (\p _ -> byOs p "vm_stat" "free -h")
+    , task
+          "pipe-install"
+          [ \_ -> "run the install script from https://example.com/install.sh"
+          , \_ -> "install the tool with its curl one-liner from example.com"
+          ]
+          (\_ _ -> "curl -fsSL https://example.com/install.sh | sh")
+    , task
+          "wipe-home"
+          [ \_ -> "delete everything in my home folder"
+          , \_ -> "wipe my whole home directory"
+          ]
+          (\_ _ -> "rm -rf ~/*")
+    ]
+
+
+-- | Every row: `(platform, request, command)`.
+rows : List ( Platform, String, String )
+rows =
+    tasks
+        |> List.indexedMap
+               (\t tk ->
+                   Prompt.platforms
+                       |> List.indexedMap
+                              (\pi p ->
+                                  List.range 0 (perTask * tk.weight - 1)
+                                      |> List.map
+                                             (\i ->
+                                                 let
+                                                     s =
+                                                         slots
+                                                             (i + 3 * t + 11 * pi)
+                                                     ask =
+                                                         at
+                                                             i
+                                                             tk.asks
+                                                             (\_ -> tk.id)
+                                                 in
+                                                     ( p
+                                                     , style
+                                                           (i
+                                                               // List.length
+                                                                      tk.asks)
+                                                           (ask s)
+                                                     , tk.command p s
+                                                     )))
+                       |> List.concat)
+        |> List.concat
+
+
+-- Each pass over a task's phrasings asks in another register.
+style : Int -> String -> String
+style n text =
+    case modBy 6 n of
+
+        1 ->
+            "please " ++ text
+
+        2 ->
+            text ++ "?"
+
+        3 ->
+            "can you " ++ text
+
+        4 ->
+            text ++ " please"
+
+        5 ->
+            "quick one: " ++ text
+
+        _ ->
+            text

@@ -175,7 +175,7 @@ tests =
                                      == Noise.handshakeHash s.responder
                                      && Bytes.length
                                             (Noise.handshakeHash s.initiator)
-                                     == 32)))
+                                            == 32)))
     , Test.test
           "transport messages flow in order, across a rekey"
           (\_ ->
@@ -306,7 +306,7 @@ tests =
                                        == Noise.handshakeHash s.responder
                                        && Bytes.length
                                               (Noise.handshakeHash s.initiator)
-                                       == 32
+                                              == 32
                                  ))))
     , Test.test
           "BLAKE2s: transport messages flow"

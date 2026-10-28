@@ -71,7 +71,12 @@ fn repo_root() -> PathBuf {
 /// removed, and changing it is a one-line edit next to the change that caused
 /// it. `>= n` is how `ty/tests/reject.rs` came to assert 13 against an actual
 /// 63, where deleting 50 corpus files kept it green.
-const EXPECTED_ASSIGNMENTS: usize = 17;
+// 17 -> 18: examples/73-ai-train/.env.test sets SKY_AI_TRAIN_BACKEND=fake
+// (v0.28.0 phase 3), measured by this test.
+// 18 -> 26: examples/74-ai-cloud/.env.test sets the emulator's host, the
+// Vertex and Cloud Run targets' placeholders and the support slot's URL and
+// key (v0.28.0 phase 4), measured by this test.
+const EXPECTED_ASSIGNMENTS: usize = 26;
 
 /// Names that legitimately appear in a `.env` while nothing in `runtime-go/`,
 /// `rust/` or the project's own Sky source reads them. Each needs a reason,
@@ -175,7 +180,8 @@ fn files_under(dir: &Path, exts: &[&str], out: &mut Vec<PathBuf>) {
 /// * `runtime-go/**/*.go` (recursively, test files excluded) —
 ///   `skyGetenv("X")` / `skyLookupEnv("X")` / `skyEnvName("X")` take a SUFFIX
 ///   and prepend the configured prefix, so suffix `LIVE_STORE` means the
-///   variable `SKY_LIVE_STORE`.
+///   variable `SKY_LIVE_STORE`. `configLayers("X")` and Std.Ai's
+///   `aiLayer("X")` read a suffix the same way.
 /// * `runtime-go/**/*.go` — literal `os.Getenv("X")` / `os.LookupEnv("X")` for
 ///   the reads that bypass the prefix helper. **Any** name, not only `SKY_*`:
 ///   `ENV` and `DATABASE_URL` are read exactly this way.
@@ -200,7 +206,19 @@ fn variables_that_are_read(root: &Path) -> BTreeSet<String> {
         let src = std::fs::read_to_string(path).expect("read go source");
         scan_calls(
             &src,
-            &["skyGetenv(\"", "skyLookupEnv(\"", "skyEnvName(\""],
+            // `configLayers("X")` (the env-over-code resolver), `aiLayer("X")`
+            // (Std.Ai's wrapper of it) and the strict `aiLayerChecked("X")` /
+            // `aiEnvChecked("X")` take a suffix too, as in config_surface.rs
+            // PREFIXED_READ_HELPERS.
+            &[
+                "skyGetenv(\"",
+                "skyLookupEnv(\"",
+                "skyEnvName(\"",
+                "configLayers(\"",
+                "aiLayer(\"",
+                "aiLayerChecked(\"",
+                "aiEnvChecked(\"",
+            ],
             &mut names,
             |s| is_env_token(s).then(|| format!("SKY_{s}")),
         );
@@ -268,10 +286,27 @@ fn sky_reads_under(dir: &Path) -> BTreeSet<String> {
     if dir.is_dir() {
         files_under(dir, &["sky", "skyi"], &mut sky);
     }
+    let slot_suffixes = slot_suffixes();
     for path in &sky {
         let Ok(src) = std::fs::read_to_string(path) else {
             continue;
         };
+        // A Std.Ai slot (`Endpoint.endpoint "support"`) is configured by
+        // `SKY_AI_<SLOT>_<SUFFIX>`, a name the runtime builds from the slot's
+        // name at run time, so no literal read of it exists. The suffixes are
+        // the ones the slot resolver reads (`slot_suffixes`).
+        let mut slots = BTreeSet::new();
+        scan_calls(&src, &["Endpoint.endpoint \""], &mut slots, |s| {
+            (!s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'))
+            .then(|| s.replace('-', "_").to_ascii_uppercase())
+        });
+        for slot in &slots {
+            for suffix in &slot_suffixes {
+                names.insert(format!("SKY_AI_{slot}_{suffix}"));
+            }
+        }
         scan_calls(
             &src,
             &[
@@ -285,6 +320,27 @@ fn sky_reads_under(dir: &Path) -> BTreeSet<String> {
         );
     }
     names
+}
+
+/// The per-slot suffixes the Std.Ai slot resolver reads: every `layer("X"`,
+/// `name("X")` and `aiSlotSuffix(b.slot, "X")` in
+/// `runtime-go/rt/ai_config.go`, parsed, never listed by hand.
+fn slot_suffixes() -> BTreeSet<String> {
+    let root = repo_root();
+    let src = std::fs::read_to_string(root.join("runtime-go/rt/ai_config.go"))
+        .expect("read runtime-go/rt/ai_config.go");
+    let mut out = BTreeSet::new();
+    scan_calls(
+        &src,
+        &["layer(\"", "name(\"", "aiSlotSuffix(b.slot, \""],
+        &mut out,
+        |s| is_env_token(s).then(|| s.to_string()),
+    );
+    assert!(
+        out.contains("URL") && out.contains("KEY"),
+        "the slot suffix scan of ai_config.go found {out:?}: it has broken"
+    );
+    out
 }
 
 fn common_prefix_len(a: &str, b: &str) -> usize {

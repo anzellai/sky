@@ -142,9 +142,13 @@ pub const CORPUS_REL_DIR: &str = "rust/crates/ty/tests/reject/corpus";
 /// type, carried through an annotated helper, B-1).
 /// **89 since v0.27.0 final batch (S3d)**: `pattern_ctor_too_many_args.sky` pins a
 /// constructor pattern's arity as `[E2007]` at the pattern.
+/// **90 since v0.28.0 phase 2 part C**: `ai_eval_passed_is_opaque.sky` pins
+/// "promotion without `Passed` does not compile" (the constructor is not
+/// exposed by `Std.Ai.Eval`).
 /// **91 since v0.27.18**: `constructor_clash_expression.sky` and
 /// `constructor_clash_pattern.sky` pin `[E1017]` at the use site.
-pub const EXPECTED_CORPUS_FILES: usize = 91;
+/// **92 at the merge of v0.27.18 into the v0.28.0 branch** (both of the above).
+pub const EXPECTED_CORPUS_FILES: usize = 92;
 
 /// The EXACT number of corpus files tagged `-- gate: known-leniency` — programs
 /// the ORACLE rejects that the Rust checker deliberately accepts for a
@@ -170,8 +174,10 @@ pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNO
 /// **40 since v0.27.0 final batch (S3a)** (the two `value_restriction_*.sky` files).
 /// **42 since v0.27.0 final batch (S3b)** (the two `bounds_*.sky` files).
 /// **43 since v0.27.0 final batch (S3d)** (`pattern_ctor_too_many_args.sky`).
+/// **44 since v0.28.0 phase 2 part C** (`ai_eval_passed_is_opaque.sky`).
 /// **45 since v0.27.18** (the two `constructor_clash_*.sky` files, `[E1017]`).
-pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 45;
+/// **46 at the merge of v0.27.18 into the v0.28.0 branch** (both of the above).
+pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 46;
 
 /// The EXACT number of corpus files whose expectation is DERIVED from the
 /// `-- oracle: reject [CODE…]` header, on the assumption that Rust and the

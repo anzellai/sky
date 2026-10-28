@@ -1,0 +1,96 @@
+module NotesTest exposing (tests)
+
+-- The server side of the notes app, offline. The project commits a
+-- `.env.test`, so `sky test` runs in test mode: the database is a scratch
+-- SQLite file and the slots' calls are answered by tests/mocks/. On the
+-- server `Device.provider "notes"` is the `notes` slot itself, so the same
+-- code a device runs is checked here against the server.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Test as Test exposing (Test, TestResult)
+import Std.Ai.Provider as Provider
+import Std.Ai.Device as Device
+import Std.Ai.Eval as Eval
+import Notes
+import Assist
+import Suites
+
+
+check : Task Error a -> (a -> TestResult) -> TestResult
+check t f =
+    case Task.run t of
+
+        Ok v ->
+            f v
+
+        Err e ->
+            Test.fail (Error.toString e)
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "notes are stored, listed newest first, and removed"
+          (\_ ->
+              check
+                  (Notes.add "first" "one"
+                      |> Task.andThen (\_ -> Notes.add "second" "two")
+                      |> Task.andThen
+                             (\ns ->
+                                 case ns of
+
+                                     newest :: _ ->
+                                         Notes.remove newest.id
+                                             |> Task.map
+                                                    (\after ->
+                                                        ( List.map .title ns
+                                                        , List.map .title after
+                                                        ))
+
+                                     [] ->
+                                         Task.succeed ( [], [] )))
+                  (\( before, after ) ->
+                      Test.equal
+                          ( [ "second", "first" ], [ "first" ] )
+                          ( List.take 2 before, List.take 1 after )))
+    , Test.test
+          "on the server the device provider is the notes slot"
+          (\_ ->
+              check
+                  (Provider.chatWith
+                      Assist.summaryOptions
+                      Assist.assistant
+                      (Assist.summaryPrompt "Booked the train to Paris.")
+                      |> Task.map .content)
+                  (\c -> Test.isTrue (String.contains "Paris" c)))
+    , Test.test
+          "on the server the slot's status says it answers here"
+          (\_ ->
+              check
+                  (Device.status "notes")
+                  (\s -> Test.equal (Device.ServerSide Device.OnTheServer) s))
+    , Test.test
+          "the self-check scores a device recording and the server with one suite"
+          (\_ ->
+              check
+                  (Device.recordPrompts
+                      "device"
+                      Assist.assistant
+                      (Eval.prompts Suites.summaries)
+                      |> Task.andThen Suites.score)
+                  (\text ->
+                      Test.equal
+                          "device passed 100%, the server passed 100%"
+                          text))
+    , Test.test
+          "the help slot answers on the server"
+          (\_ ->
+              check
+                  (Provider.chat Assist.help [ Provider.user "How do I start?" ]
+                      |> Task.map .content)
+                  (\c -> Test.isTrue (String.contains "Save" c)))
+    ]

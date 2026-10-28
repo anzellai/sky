@@ -502,8 +502,8 @@ handleVerifyPayment orderId model =
                 let
                     state = Db.getField "state" orderDoc
                 in
-                    if state == "ordered" || state == "shipped" || state
-                        == "delivered" then
+                    if state == "ordered" || state == "shipped"
+                        || state == "delivered" then
                         ( base, Cmd.none )
 
                     else if state == "ongoing" then

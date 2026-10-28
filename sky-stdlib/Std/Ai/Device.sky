@@ -1,0 +1,1300 @@
+module Std.Ai.Device exposing
+    ( Placement(..)
+    , Backend(..)
+    , Spec
+    , spec
+    , withModel
+    , withAdapter
+    , withContext
+    , withThreads
+    , withGpuLayers
+    , withMaxDownload
+    , withBackends
+    , withMetered
+    , RawSpec
+    , rawSpec
+    , placementText
+    , backendText
+    , backendFromText
+    , Capabilities
+    , BackendInfo
+    , Offer
+    , OfferFile
+    , Routing(..)
+    , Reason(..)
+    , decide
+    , estimateTokens
+    , decodeOffer
+    , decodeCapabilities
+    , provider
+    , Status(..)
+    , statusOf
+    , status
+    , prepare
+    , evict
+    , capabilities
+    , Recording
+    , Recorded
+    , Prompt
+    , recordPrompts
+    , replay
+    , encodeRecording
+    , decodeRecording
+    )
+
+{-| `Std.Ai.Device` — run a model slot on the user's device when it can, and
+on the server otherwise, with one `Provider`.
+
+The server owns the slot. It gives an `Std.Ai.Endpoint` slot a device spec
+with `Endpoint.withDevice`, so the server holds the model, the adapter and the
+policy (code holds the default, the operator overrides it):
+
+    chatSlot : Endpoint
+    chatSlot =
+        Endpoint.endpoint "chat"
+            |> Endpoint.withLocal (Local.model Local.devModel)
+            |> Endpoint.withDevice
+                   (Device.spec Device.Auto
+                       |> Device.withContext 2048)
+
+The client names the slot:
+
+    chat : Provider
+    chat =
+        Device.provider "chat"
+
+In a Sky.Spa client (`web:app`, `desktop:mac`, `mobile:ios`,
+`mobile:android`) a call runs on the device when the device holds the model
+and can run it, and goes to the server's slot otherwise. On a server target
+(`web`, a CLI) `Device.provider "chat"` is the server slot itself.
+
+**Placement** is required and says where a call may run:
+
+| Placement | The device can run it | It cannot |
+|---|---|---|
+| `Auto` | on the device | on the server |
+| `DeviceOnly` | on the device | a typed failure, never the server |
+| `ServerOnly` | on the server | on the server |
+
+The operator overrides it with `<PREFIX>_AI_<SLOT>_PLACEMENT` (`auto`,
+`device`, `server`), the model with `<PREFIX>_AI_<SLOT>_DEVICE_MODEL` and the
+adapter with `<PREFIX>_AI_<SLOT>_DEVICE_ADAPTER`.
+
+**Nothing downloads without consent.** A device that does not hold the model
+answers from the server (`Auto`) or fails with `NotProvisioned` (`DeviceOnly`)
+until the app calls `prepare`, which the app runs after the user agreed to the
+download (the size is in `status`). The model and the adapter come from the
+app's own server, are checked against their SHA-256 and are kept in the
+device's private storage: OPFS in a browser, Application Support on iOS
+(excluded from backups), the app's files directory on Android, the AI home on
+macOS. No prompt and no answer is stored and no telemetry leaves the device.
+
+**Backends**, in the order a spec lists them (default
+`[ Native, WebGpu, WasmCpu ]`): `Native` is llama.cpp inside the iOS, Android
+or macOS shell; `WebGpu` and `WasmCpu` are llama.cpp compiled to WebAssembly
+in a same-origin Web Worker (the build adds them with `--ai-web-engine`).
+A backend that the device cannot use is skipped: WebGPU needs `shader-f16` and
+JavaScript Promise Integration, so Safari and Firefox use the CPU build, and
+a WebGPU load that finds no GPU device fails with `DeviceUnsupported` (it never
+runs silently on the CPU); the next call then uses the next backend.
+
+`decide` is the whole policy as a pure function, so a test can state it. See
+`docs/ai/device.md`.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Ffi as Ffi
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result exposing (Result(..))
+import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Json.Decode as JsonD
+import Std.Ai.Provider as Provider exposing (Provider, Message)
+import Std.Ai.Failure as Failure exposing (Failure(..))
+
+-- ---------------------------------------------------------------------------
+-- The spec the server holds
+-- ---------------------------------------------------------------------------
+{-| Where a call may run. -}
+type Placement
+    = Auto
+    | DeviceOnly
+    | ServerOnly
+
+{-| How a device runs the model. -}
+type Backend
+    = Native
+    | WebGpu
+    | WasmCpu
+
+-- The record the runtime reads. An unset number is -1, an unset text "".
+-- `threads` and `gpuLayers` are texts ("" unset) because the operator's
+-- environment overrides them, and the runtime checks both sources alike.
+type alias RawSpec =
+    { placement : String
+    , model : String
+    , adapter : String
+    , context : Int
+    , threads : String
+    , gpuLayers : String
+    , maxDownloadBytes : Int
+    , backends : List String
+    , metered : Bool
+    }
+
+{-| A slot's device policy. Build it with `spec` and the `withX` builders and
+give it to `Endpoint.withDevice`. -}
+type Spec
+    = Spec RawSpec
+
+
+{-| A spec with a placement. The device model defaults to the slot's local
+model (`Endpoint.withLocal`), the adapter to the slot's adapter. -}
+spec : Placement -> Spec
+spec p =
+    Spec
+        { placement = placementText p
+        , model = ""
+        , adapter = ""
+        , context = -1
+        , threads = ""
+        , gpuLayers = ""
+        , maxDownloadBytes = -1
+        , backends = []
+        , metered = False
+        }
+
+
+{-| The model the device runs: a `Std.Ai.Local` reference
+(`Local.reference Local.devModel`). Env: `<PREFIX>_AI_<SLOT>_DEVICE_MODEL`.
+Default: the slot's local model. -}
+withModel : String -> Spec -> Spec
+withModel m (Spec s) =
+    Spec { s | model = m }
+
+
+{-| The LoRA adapter the device applies: `registry:<name>@<alias>` (the
+version must be cleared with `Registry.allowOnDevice`, else `NotPromotable`)
+or a `Std.Ai.Local` file reference. Env:
+`<PREFIX>_AI_<SLOT>_DEVICE_ADAPTER`. Default: the slot's adapter. -}
+withAdapter : String -> Spec -> Spec
+withAdapter a (Spec s) =
+    Spec { s | adapter = a }
+
+
+{-| The context window on the device, in tokens. A prompt longer than it runs
+on the server (`Auto`). Default: 2048. -}
+withContext : Int -> Spec -> Spec
+withContext n (Spec s) =
+    Spec { s | context = n }
+
+
+{-| The most CPU threads the device engine uses, at least 1. Env:
+`<PREFIX>_AI_<SLOT>_DEVICE_THREADS`. Default: the engine's own (iOS: the
+cores less two, at most 4; Android: half the cores, at most 2; the Mac app:
+llama-server's default). An upper bound: the browser engines (`WebGpu`,
+`WasmCpu`) are single-threaded WebAssembly builds and run one thread. A value
+below 1 is refused with `InvalidSetting` when the slot's offer is read. -}
+withThreads : Int -> Spec -> Spec
+withThreads n (Spec s) =
+    Spec { s | threads = String.fromInt n }
+
+
+{-| How many of the model's layers the device engine offloads to its GPU.
+`0` runs on the CPU only. Env: `<PREFIX>_AI_<SLOT>_DEVICE_GPU_LAYERS`.
+Default: the engine's own (every layer where the backend has a GPU, none on
+the CPU engines). A count above 0 is a requirement, never a silent ignore: a
+backend with no GPU (`WasmCpu`, the Android engine, the iOS simulator) is not
+used for the slot, and the decision goes to the next backend of the list,
+else to the server (`Auto`) or fails with `DeviceUnsupported` naming the
+setting (`DeviceOnly`). A negative value is refused with `InvalidSetting`
+when the slot's offer is read. -}
+withGpuLayers : Int -> Spec -> Spec
+withGpuLayers n (Spec s) =
+    Spec { s | gpuLayers = String.fromInt n }
+
+
+{-| The largest download, in bytes, a device is offered (model and adapter
+together). A larger model is server-only. Default: 1 GiB. -}
+withMaxDownload : Int -> Spec -> Spec
+withMaxDownload n (Spec s) =
+    Spec { s | maxDownloadBytes = n }
+
+
+{-| The backends a device may use, in order of preference. Default:
+`[ Native, WebGpu, WasmCpu ]`. -}
+withBackends : List Backend -> Spec -> Spec
+withBackends bs (Spec s) =
+    Spec { s | backends = List.map backendText bs }
+
+
+{-| Allow `prepare` to download on a metered connection. Default: `False`. -}
+withMetered : Bool -> Spec -> Spec
+withMetered b (Spec s) =
+    Spec { s | metered = b }
+
+
+{-| The spec as the runtime reads it. -}
+rawSpec : Spec -> RawSpec
+rawSpec (Spec s) =
+    s
+
+
+{-| `auto`, `device` or `server`. -}
+placementText : Placement -> String
+placementText p =
+    case p of
+
+        Auto ->
+            "auto"
+
+        DeviceOnly ->
+            "device"
+
+        ServerOnly ->
+            "server"
+
+
+placementFromText : String -> Placement
+placementFromText t =
+    case t of
+
+        "device" ->
+            DeviceOnly
+
+        "server" ->
+            ServerOnly
+
+        _ ->
+            Auto
+
+
+{-| `native`, `webgpu` or `wasm-cpu`. -}
+backendText : Backend -> String
+backendText b =
+    case b of
+
+        Native ->
+            "native"
+
+        WebGpu ->
+            "webgpu"
+
+        WasmCpu ->
+            "wasm-cpu"
+
+
+{-| The backend a text names. -}
+backendFromText : String -> Maybe Backend
+backendFromText t =
+    case t of
+
+        "native" ->
+            Just Native
+
+        "webgpu" ->
+            Just WebGpu
+
+        "wasm-cpu" ->
+            Just WasmCpu
+
+        _ ->
+            Nothing
+
+-- ---------------------------------------------------------------------------
+-- What the server offers and what the device can do
+-- ---------------------------------------------------------------------------
+{-| One file a device may download: its SHA-256, size and same-origin URL. -}
+type alias OfferFile =
+    { label : String
+    , sha256 : String
+    , bytes : Int
+    , url : String
+    }
+
+{-| The server's offer for one slot (`GET /_sky/ai/device/<slot>`). `threads`
+is 0 and `gpuLayers` -1 when the slot leaves them to the engine. `refused`
+is set when the server will not let devices run this slot's model (an adapter
+not cleared with `Registry.allowOnDevice`): its text is the reason. `server`
+is `False` for `DeviceOnly`, which has no server fallback. `here` is `True`
+when the code runs on the server itself. -}
+type alias Offer =
+    { slot : String
+    , placement : Placement
+    , model : OfferFile
+    , adapter : Maybe OfferFile
+    , context : Int
+    , threads : Int
+    , gpuLayers : Int
+    , maxDownloadBytes : Int
+    , backends : List Backend
+    , metered : Bool
+    , server : Bool
+    , here : Bool
+    , refused : Maybe String
+    }
+
+{-| One backend the device can run: the largest model it can hold, in bytes,
+and whether it can offload layers to a GPU. -}
+type alias BackendInfo =
+    { backend : Backend
+    , maxModelBytes : Int
+    , gpu : Bool
+    }
+
+{-| What a device can do. `platform` is `browser`, `ios`, `android`, `mac` or
+`server`. `unsupported` names each backend the device cannot use and why.
+`ready` holds the SHA-256 of every verified file in the device's store.
+`failed` names the backends that failed to load in this session. -}
+type alias Capabilities =
+    { platform : String
+    , backends : List BackendInfo
+    , unsupported : List ( Backend, String )
+    , storageAvailableBytes : Int
+    , metered : Bool
+    , ready : List String
+    , failed : List Backend
+    }
+
+-- ---------------------------------------------------------------------------
+-- The decision
+-- ---------------------------------------------------------------------------
+{-| Why a call runs on the server. -}
+type Reason
+    = OperatorChoice
+    | OnTheServer
+    | OfferRefused String
+    | NoBackend String
+    | NoStorage
+    | NotStored
+    | PromptTooLong
+
+{-| Where one call runs. `NeedsDownload` names the backend and the bytes
+`prepare` would fetch. -}
+type Routing
+    = OnDevice Backend
+    | NeedsDownload Backend Int
+    | OnServer Reason
+    | Refused Failure
+
+
+{-| The policy, for a device's capabilities, the server's offer and the
+prompt's length in tokens. The first rule that applies wins:
+
+1. A `ServerOnly` placement (the code's or the operator's), or code that runs
+   on the server: `OnServer`.
+2. An offer the server refused: `OnServer` for `Auto`, `NotPromotable` for
+   `DeviceOnly`.
+3. The first backend of the offer's list that the device has, has not failed
+   this session, can hold the model and the adapter, and has a GPU when the
+   slot asks for GPU layers (`withGpuLayers` above 0). None: `OnServer` for
+   `Auto`, `DeviceUnsupported` for `DeviceOnly`.
+4. Files that are not stored yet need 1.1 times their size free: else
+   `OnServer` for `Auto`, `StorageDenied` for `DeviceOnly`.
+5. Files not stored yet: `NeedsDownload`.
+6. A prompt longer than the device context less a quarter for the answer:
+   `OnServer` for `Auto`, `InvalidSetting` for `DeviceOnly`.
+7. Otherwise `OnDevice`.
+-}
+decide : Capabilities -> Offer -> Int -> Routing
+decide caps offer promptTokens =
+    if offer.placement == ServerOnly then
+        OnServer OperatorChoice
+
+    else if offer.here then
+        OnServer OnTheServer
+
+    else
+        case offer.refused of
+
+            Just why ->
+                orServer
+                    offer
+                    (OfferRefused why)
+                    (NotPromotable { ref = adapterLabel offer, reason = why })
+
+            Nothing ->
+                decideBackend caps offer promptTokens
+
+
+decideBackend : Capabilities -> Offer -> Int -> Routing
+decideBackend caps offer promptTokens =
+    let
+        need = offerBytes offer
+    in
+        case firstFitting caps offer need offer.backends of
+
+            Nothing ->
+                let
+                    why = noBackendReason caps offer need
+                in
+                    orServer
+                        offer
+                        (NoBackend why)
+                        (DeviceUnsupported
+                            { backend = firstBackendName offer, reason = why })
+
+            Just b ->
+                decideFiles caps offer promptTokens b
+
+
+decideFiles : Capabilities -> Offer -> Int -> Backend -> Routing
+decideFiles caps offer promptTokens b =
+    let
+        missing = missingBytes caps offer
+    in
+        if missing > 0 && missing + missing // 10 > caps.storageAvailableBytes then
+            orServer
+                offer
+                NoStorage
+                (StorageDenied
+                    { needBytes = missing + missing // 10
+                    , availableBytes = caps.storageAvailableBytes
+                    })
+
+        else if missing > 0 then
+            NeedsDownload b missing
+
+        else if promptTokens > promptBudget offer then
+            orServer
+                offer
+                PromptTooLong
+                (InvalidSetting
+                    { setting = "context"
+                    , reason =
+                        "a prompt of " ++ String.fromInt promptTokens
+                            ++ " tokens does not fit the device context of "
+                            ++ String.fromInt offer.context
+                            ++ " tokens"
+                    })
+
+        else
+            OnDevice b
+
+
+orServer : Offer -> Reason -> Failure -> Routing
+orServer offer reason failure =
+    if offer.placement == DeviceOnly then
+        Refused failure
+
+    else
+        OnServer reason
+
+
+-- A quarter of the context is kept for the answer.
+promptBudget : Offer -> Int
+promptBudget offer =
+    offer.context - offer.context // 4
+
+
+offerBytes : Offer -> Int
+offerBytes offer =
+    case offer.adapter of
+
+        Just a ->
+            offer.model.bytes + a.bytes
+
+        Nothing ->
+            offer.model.bytes
+
+
+missingBytes : Capabilities -> Offer -> Int
+missingBytes caps offer =
+    let
+        missing f =
+            if List.member f.sha256 caps.ready then
+                0
+
+            else
+                f.bytes
+    in
+        case offer.adapter of
+
+            Just a ->
+                missing offer.model + missing a
+
+            Nothing ->
+                missing offer.model
+
+
+firstFitting : Capabilities -> Offer -> Int -> List Backend -> Maybe Backend
+firstFitting caps offer need wanted =
+    case wanted of
+
+        [] ->
+            Nothing
+
+        b :: rest ->
+            if fits caps offer need b then
+                Just b
+
+            else
+                firstFitting caps offer need rest
+
+
+fits : Capabilities -> Offer -> Int -> Backend -> Bool
+fits caps offer need b =
+    not (listed b caps.failed) && need <= offer.maxDownloadBytes
+        && holds b need (offer.gpuLayers > 0) caps.backends
+
+
+-- Whether the device reports backend `b` able to hold `need` bytes, with a
+-- GPU when `gpu` is asked for. A recursion over the typed list, not a lambda.
+holds : Backend -> Int -> Bool -> List BackendInfo -> Bool
+holds b need gpu infos =
+    case infos of
+
+        [] ->
+            False
+
+        info :: rest ->
+            if sameBackend info.backend b && need <= info.maxModelBytes
+                && (info.gpu || not gpu) then
+                True
+
+            else
+                holds b need gpu rest
+
+
+-- Backend equality through its name: a stdlib union compares through the
+-- runtime's erased `==`, which a string comparison does not need.
+sameBackend : Backend -> Backend -> Bool
+sameBackend a b =
+    backendText a == backendText b
+
+
+-- Whether `b` is in the list. A recursion, not `List.member`, whose
+-- polymorphic list is narrowed at run time.
+listed : Backend -> List Backend -> Bool
+listed b bs =
+    case bs of
+
+        [] ->
+            False
+
+        x :: rest ->
+            sameBackend x b || listed b rest
+
+
+-- Why the device says it cannot run `b`, if it says so.
+unsupportedWhy : Backend -> List ( Backend, String ) -> Maybe String
+unsupportedWhy b pairs =
+    case pairs of
+
+        [] ->
+            Nothing
+
+        ( u, why ) :: rest ->
+            if sameBackend u b then
+                Just why
+
+            else
+                unsupportedWhy b rest
+
+
+noBackendReason : Capabilities -> Offer -> Int -> String
+noBackendReason caps offer need =
+    if need > offer.maxDownloadBytes then
+        "the model is " ++ String.fromInt need
+            ++ " bytes and the slot offers at most "
+            ++ String.fromInt offer.maxDownloadBytes
+
+    else
+        case List.filterMap (reasonFor caps offer) offer.backends of
+
+            r :: _ ->
+                r
+
+            [] ->
+                "no backend of the slot can hold " ++ String.fromInt need
+                    ++ " bytes"
+
+
+reasonFor : Capabilities -> Offer -> Backend -> Maybe String
+reasonFor caps offer b =
+    if listed b caps.failed then
+        Just (backendText b ++ " failed to load on this device")
+
+    else
+        case unsupportedWhy b caps.unsupported of
+
+            Just why ->
+                Just (backendText b ++ ": " ++ why)
+
+            Nothing ->
+                if offer.gpuLayers > 0 && holds b 0 False caps.backends
+                    && not (holds b 0 True caps.backends) then
+                    Just
+                        (backendText b ++ " has no GPU and the slot asks for "
+                            ++ String.fromInt offer.gpuLayers
+                            ++ " GPU layers (Device.withGpuLayers)")
+
+                else
+                    Nothing
+
+
+firstBackendName : Offer -> String
+firstBackendName offer =
+    case offer.backends of
+
+        b :: _ ->
+            backendText b
+
+        [] ->
+            "none"
+
+
+adapterLabel : Offer -> String
+adapterLabel offer =
+    case offer.adapter of
+
+        Just a ->
+            a.label
+
+        Nothing ->
+            offer.slot
+
+
+{-| A token estimate for a request body: one token per three bytes. The
+decision only uses it to keep a prompt that is clearly too long off the
+device; the engine counts exactly. -}
+estimateTokens : String -> Int
+estimateTokens body =
+    String.length body // 3
+
+
+-- ---------------------------------------------------------------------------
+-- Decoding the wire values
+-- ---------------------------------------------------------------------------
+apply : JsonD.Decoder a -> JsonD.Decoder (a -> b) -> JsonD.Decoder b
+apply da df =
+    JsonD.andThen (\f -> JsonD.map f da) df
+
+
+req : String -> JsonD.Decoder a -> JsonD.Decoder (a -> b) -> JsonD.Decoder b
+req name d df =
+    apply (JsonD.field name d) df
+
+
+-- A whole-number field, or `fallback` when the value has none (an older
+-- server's offer or device's report).
+intOr : String -> Int -> JsonD.Decoder Int
+intOr name fallback =
+    JsonD.oneOf [ JsonD.field name JsonD.int, JsonD.succeed fallback ]
+
+
+boolOr : String -> Bool -> JsonD.Decoder Bool
+boolOr name fallback =
+    JsonD.oneOf [ JsonD.field name JsonD.bool, JsonD.succeed fallback ]
+
+
+maybeField : String -> JsonD.Decoder a -> JsonD.Decoder (Maybe a)
+maybeField name d =
+    JsonD.oneOf [ JsonD.field name (JsonD.map Just d), JsonD.succeed Nothing ]
+
+
+fileDecoder : JsonD.Decoder OfferFile
+fileDecoder =
+    JsonD.succeed (\l s b u -> { label = l, sha256 = s, bytes = b, url = u })
+        |> req "label" JsonD.string
+        |> req "sha256" JsonD.string
+        |> req "bytes" JsonD.int
+        |> req "url" JsonD.string
+
+
+backendDecoder : JsonD.Decoder Backend
+backendDecoder =
+    JsonD.string
+        |> JsonD.andThen
+               (\t ->
+                   case backendFromText t of
+
+                       Just b ->
+                           JsonD.succeed b
+
+                       Nothing ->
+                           JsonD.fail ("unknown backend " ++ t))
+
+
+offerDecoder : JsonD.Decoder Offer
+offerDecoder =
+    JsonD.succeed
+        (\slot p m a c th gl mx bs mt sv h r ->
+            { slot = slot
+            , placement = placementFromText p
+            , model = m
+            , adapter = a
+            , context = c
+            , threads = th
+            , gpuLayers = gl
+            , maxDownloadBytes = mx
+            , backends = bs
+            , metered = mt
+            , server = sv
+            , here = h
+            , refused = r
+            })
+        |> req "slot" JsonD.string
+        |> req "placement" JsonD.string
+        |> req "model" fileDecoder
+        |> apply (maybeField "adapter" fileDecoder)
+        |> req "context" JsonD.int
+        |> apply (intOr "threads" 0)
+        |> apply (intOr "gpuLayers" (-1))
+        |> req "maxDownloadBytes" JsonD.int
+        |> req "backends" (JsonD.list backendDecoder)
+        |> req "metered" JsonD.bool
+        |> req "server" JsonD.bool
+        |> req "here" JsonD.bool
+        |> apply (maybeField "refused" JsonD.string)
+
+
+{-| Read an offer as the server sends it. -}
+decodeOffer : String -> Result Error Offer
+decodeOffer body =
+    JsonD.decodeString offerDecoder body
+
+
+infoDecoder : JsonD.Decoder BackendInfo
+infoDecoder =
+    JsonD.map3
+        (\b m g -> { backend = b, maxModelBytes = m, gpu = g })
+        (JsonD.field "backend" backendDecoder)
+        (JsonD.field "maxModelBytes" JsonD.int)
+        (boolOr "gpu" False)
+
+
+unsupportedDecoder : JsonD.Decoder ( Backend, String )
+unsupportedDecoder =
+    JsonD.map2
+        (\b r -> ( b, r ))
+        (JsonD.field "backend" backendDecoder)
+        (JsonD.field "reason" JsonD.string)
+
+
+capsDecoder : JsonD.Decoder Capabilities
+capsDecoder =
+    JsonD.succeed
+        (\p bs us st mt rd fl ->
+            { platform = p
+            , backends = bs
+            , unsupported = us
+            , storageAvailableBytes = st
+            , metered = mt
+            , ready = rd
+            , failed = fl
+            })
+        |> req "platform" JsonD.string
+        |> req "backends" (JsonD.list infoDecoder)
+        |> req "unsupported" (JsonD.list unsupportedDecoder)
+        |> req "storageAvailableBytes" JsonD.int
+        |> req "metered" JsonD.bool
+        |> req "ready" (JsonD.list JsonD.string)
+        |> req "failed" (JsonD.list backendDecoder)
+
+
+{-| Read the capabilities a device reports. -}
+decodeCapabilities : String -> Result Error Capabilities
+decodeCapabilities body =
+    JsonD.decodeString capsDecoder body
+
+
+decodeTask : String -> (String -> Result Error a) -> String -> Task Error a
+decodeTask what dec body =
+    case dec body of
+
+        Ok v ->
+            Task.succeed v
+
+        Err e ->
+            Task.fail
+                (Error.invalidInput
+                    ("Std.Ai.Device: the " ++ what ++ " cannot be read: "
+                        ++ Error.toString e))
+
+
+-- ---------------------------------------------------------------------------
+-- Kernels
+-- ---------------------------------------------------------------------------
+offerRaw : String -> Task Error String
+offerRaw =
+    Ffi.kernel "AiDevice_offer"
+
+
+capabilitiesRaw : String -> Task Error String
+capabilitiesRaw =
+    Ffi.kernel "AiDevice_capabilities"
+
+
+runRaw : String -> String -> String -> String -> String -> Task Error String
+runRaw =
+    Ffi.kernel "AiDevice_run"
+
+
+serverRaw : String -> String -> String -> Task Error String
+serverRaw =
+    Ffi.kernel "AiDevice_server"
+
+
+streamOpenRaw : String -> String -> String -> String -> String -> Task Error String
+streamOpenRaw =
+    Ffi.kernel "AiDevice_streamOpen"
+
+
+streamServerRaw : String -> String -> String -> Task Error String
+streamServerRaw =
+    Ffi.kernel "AiDevice_streamServer"
+
+
+streamNextRaw : String -> Task Error String
+streamNextRaw =
+    Ffi.kernel "AiDevice_streamNext"
+
+
+streamCloseRaw : String -> Task Error ()
+streamCloseRaw =
+    Ffi.kernel "AiDevice_streamClose"
+
+
+prepareRaw : String -> String -> String -> Task Error String
+prepareRaw =
+    Ffi.kernel "AiDevice_prepare"
+
+
+progressRaw : String -> String -> Task Error String
+progressRaw =
+    Ffi.kernel "AiDevice_progress"
+
+
+evictRaw : String -> String -> Task Error String
+evictRaw =
+    Ffi.kernel "AiDevice_evict"
+
+
+-- ---------------------------------------------------------------------------
+-- The provider
+-- ---------------------------------------------------------------------------
+{-| The slot as a `Provider`: on the device when `decide` says so, on the
+server's slot otherwise. Name the slot with a string literal: the build checks
+that the server has an `Endpoint.withDevice` slot of that name.
+`Provider.chatStream` streams the answer as it is written, on the device and
+from the server alike. -}
+provider : String -> Provider
+provider slot =
+    Provider.wireStreaming
+        (transport slot)
+        { open = streamOpen slot, next = streamNextRaw, close = streamCloseRaw }
+        ""
+
+type alias Ctx =
+    { slot : String
+    , offerJson : String
+    , offer : Offer
+    }
+
+-- How one call runs where the decision puts it: a plain call (`transport`)
+-- or the opening of a stream (`streamOpen`). Both answer a String.
+type alias Runner =
+    { device : Backend -> Ctx -> String -> String -> Task Error String
+    , server : String -> String -> String -> Task Error String
+    }
+
+
+callRunner : Runner
+callRunner =
+    { device =
+        \b ctx path body ->
+            runRaw (backendText b) ctx.slot ctx.offerJson path body
+    , server = serverRaw
+    }
+
+
+streamRunner : Runner
+streamRunner =
+    { device =
+        \b ctx path body ->
+            streamOpenRaw (backendText b) ctx.slot ctx.offerJson path body
+    , server = streamServerRaw
+    }
+
+
+transport : String -> String -> String -> Task Error String
+transport slot path body =
+    runOn callRunner slot path body
+
+
+streamOpen : String -> String -> String -> Task Error String
+streamOpen slot path body =
+    runOn streamRunner slot path body
+
+
+runOn : Runner -> String -> String -> String -> Task Error String
+runOn runner slot path body =
+    offerRaw slot
+        |> Task.andThen
+               (\json ->
+                   decodeTask "offer" decodeOffer json
+                       |> Task.andThen
+                              (\offer ->
+                                  route
+                                      runner
+                                      { slot = slot
+                                      , offerJson = json
+                                      , offer = offer
+                                      }
+                                      True
+                                      path
+                                      body))
+
+
+-- `retry` is True on the first attempt: a backend that fails to load with
+-- DeviceUnsupported is recorded by the runtime, so a second decision skips
+-- it (the next backend, or the server for `Auto`).
+route : Runner -> Ctx -> Bool -> String -> String -> Task Error String
+route runner ctx retry path body =
+    capabilitiesRaw ctx.slot
+        |> Task.andThen (decodeTask "capabilities" decodeCapabilities)
+        |> Task.andThen
+               (\caps ->
+                   case decide caps ctx.offer (estimateTokens body) of
+
+                       OnDevice b ->
+                           runner.device b ctx path body
+                               |> Task.onError
+                                      (afterDeviceFailure
+                                          runner
+                                          ctx
+                                          retry
+                                          path
+                                          body)
+
+                       NeedsDownload _ _ ->
+                           if ctx.offer.placement == DeviceOnly then
+                               Task.fail
+                                   (Failure.toError (notDownloaded ctx.offer))
+
+                           else
+                               runner.server ctx.slot path body
+
+                       OnServer _ ->
+                           runner.server ctx.slot path body
+
+                       Refused f ->
+                           Task.fail (Failure.toError f))
+
+
+afterDeviceFailure : Runner -> Ctx -> Bool -> String -> String -> Error -> Task Error String
+afterDeviceFailure runner ctx retry path body err =
+    case Failure.fromError err of
+
+        Just (DeviceUnsupported _) ->
+            if retry then
+                route runner ctx False path body
+
+            else
+                Task.fail err
+
+        _ ->
+            Task.fail err
+
+
+notDownloaded : Offer -> Failure
+notDownloaded offer =
+    NotProvisioned
+        { what = "the on-device model of slot " ++ offer.slot
+        , command = "Device.prepare \"" ++ offer.slot ++ "\""
+        }
+
+-- ---------------------------------------------------------------------------
+-- Status, consent and the device store
+-- ---------------------------------------------------------------------------
+{-| What a slot looks like from this device. `ServerSide` says why calls go to
+the server; `NotDownloaded` is the consent point (the bytes a `prepare`
+fetches); `Unsupported` is a `DeviceOnly` slot this device cannot run. -}
+type Status
+    = ServerSide Reason
+    | NotDownloaded { backend : Backend, bytes : Int }
+    | Downloading { backend : Backend, doneBytes : Int, totalBytes : Int }
+    | Ready { backend : Backend }
+    | Unsupported Failure
+
+type alias Progress =
+    { state : String
+    , doneBytes : Int
+    , totalBytes : Int
+    }
+
+
+progressDecoder : JsonD.Decoder Progress
+progressDecoder =
+    JsonD.map3
+        (\s d t -> { state = s, doneBytes = d, totalBytes = t })
+        (JsonD.field "state" JsonD.string)
+        (JsonD.field "doneBytes" JsonD.int)
+        (JsonD.field "totalBytes" JsonD.int)
+
+
+{-| The status for a decision and the download state the runtime reports
+(`state` is `downloading` while `prepare` runs). Pure, for tests. -}
+statusOf :
+    Routing
+    -> { state : String
+       , doneBytes : Int
+       , totalBytes : Int
+       }
+    -> Status
+statusOf decision progress =
+    case decision of
+
+        OnDevice b ->
+            Ready { backend = b }
+
+        NeedsDownload b bytes ->
+            if progress.state == "downloading" then
+                Downloading
+                    { backend = b
+                    , doneBytes = progress.doneBytes
+                    , totalBytes = progress.totalBytes
+                    }
+
+            else
+                NotDownloaded { backend = b, bytes = bytes }
+
+        OnServer reason ->
+            ServerSide reason
+
+        Refused f ->
+            Unsupported f
+
+
+{-| The slot's status on this device. It downloads nothing. Poll it while
+`prepare` runs to show the progress. -}
+status : String -> Task Error Status
+status slot =
+    offerRaw slot
+        |> Task.andThen
+               (\json ->
+                   decodeTask "offer" decodeOffer json
+                       |> Task.andThen (statusFor slot json))
+
+
+statusFor : String -> String -> Offer -> Task Error Status
+statusFor slot json offer =
+    capabilitiesRaw slot
+        |> Task.andThen (decodeTask "capabilities" decodeCapabilities)
+        |> Task.andThen
+               (\caps ->
+                   progressRaw slot json
+                       |> Task.andThen
+                              (decodeTask
+                                  "progress"
+                                  (JsonD.decodeString progressDecoder))
+                       |> Task.map (statusOf (decide caps offer 0)))
+
+
+{-| Download, verify and load the slot's model and adapter on this device.
+Call it after the user agreed to the download. A device that holds them
+already only loads them. It fails with `StorageDenied` when the device has no
+room, `ChecksumMismatch` when a file does not match its digest,
+`DeviceUnsupported` when no backend can run the model, and `PermissionDenied`
+on a metered connection unless the slot allows it (`withMetered`). The
+resulting status is `Ready`, or `ServerSide` for a slot that runs on the
+server. -}
+prepare : String -> Task Error Status
+prepare slot =
+    offerRaw slot
+        |> Task.andThen
+               (\json ->
+                   decodeTask "offer" decodeOffer json
+                       |> Task.andThen (prepareFor slot json))
+
+
+prepareFor : String -> String -> Offer -> Task Error Status
+prepareFor slot json offer =
+    capabilitiesRaw slot
+        |> Task.andThen (decodeTask "capabilities" decodeCapabilities)
+        |> Task.andThen
+               (\caps ->
+                   case decide caps offer 0 of
+
+                       NeedsDownload b _ ->
+                           if caps.metered && not offer.metered then
+                               Task.fail
+                                   (Error.withMessage
+                                       ("Std.Ai.Device: slot " ++ slot
+                                           ++ " does not download on a metered connection")
+                                       Error.permissionDenied)
+
+                           else
+                               prepareRaw slot (backendText b) json
+                                   |> Task.andThen
+                                          (\_ -> statusFor slot json offer)
+
+                       OnDevice b ->
+                           prepareRaw slot (backendText b) json
+                               |> Task.map (\_ -> Ready { backend = b })
+
+                       OnServer reason ->
+                           Task.succeed (ServerSide reason)
+
+                       Refused f ->
+                           Task.fail (Failure.toError f))
+
+
+{-| Remove the slot's model and adapter from this device and unload them. -}
+evict : String -> Task Error ()
+evict slot =
+    offerRaw slot |> Task.andThen (evictRaw slot) |> Task.map (\_ -> ())
+
+
+{-| What this device can do. -}
+capabilities : Task Error Capabilities
+capabilities =
+    capabilitiesRaw ""
+        |> Task.andThen (decodeTask "capabilities" decodeCapabilities)
+
+-- ---------------------------------------------------------------------------
+-- Record and replay, for one eval suite on the device and on the server
+-- ---------------------------------------------------------------------------
+{-| One recorded answer: the request (its messages as JSON) and the answer. -}
+type alias Recorded =
+    { request : String
+    , content : String
+    , promptTokens : Int
+    , completionTokens : Int
+    }
+
+{-| The answers a provider gave, labelled with where they were made
+(`device:webgpu`, `device:native`, …). -}
+type alias Recording =
+    { label : String
+    , entries : List Recorded
+    }
+
+
+requestKey : List Message -> String
+requestKey messages =
+    JsonE.encode
+        0
+        (JsonE.list
+            (\m ->
+                JsonE.object
+                    [ ( "role", JsonE.string m.role )
+                    , ( "content", JsonE.string m.content )
+                    ])
+            messages)
+
+{-| One request of an eval suite: its messages and the sampling options the
+suite sends (`Eval.prompts` gives them, temperature 0 and a fixed seed). -}
+type alias Prompt =
+    { messages : List Message
+    , options : Provider.Options
+    }
+
+
+{-| Ask a provider every prompt, one after another, with the prompt's own
+options, and keep its answers. On a device, record the prompts of an eval
+suite (`Eval.prompts suite`) and send the recording to the server, which
+scores it with `replay` and `Eval.runAs`, so one suite measures the device and
+the server. A replay answers by the messages alone, so record a suite with one
+sample per case. -}
+recordPrompts : String -> Provider -> List Prompt -> Task Error Recording
+recordPrompts label p prompts =
+    Task.sequence (List.map (recordOne p) prompts)
+        |> Task.map (\entries -> { label = label, entries = entries })
+
+
+recordOne : Provider -> Prompt -> Task Error Recorded
+recordOne p prompt =
+    Provider.chatWith prompt.options p prompt.messages
+        |> Task.map
+               (\r ->
+                   { request = requestKey prompt.messages
+                   , content = r.content
+                   , promptTokens = r.usage.promptTokens
+                   , completionTokens = r.usage.completionTokens
+                   })
+
+
+{-| A provider that answers from a recording. A request that was not recorded
+fails with `NotConfigured`. -}
+replay : Recording -> Provider
+replay rec =
+    Provider.custom (replayChat rec)
+
+
+replayChat : Recording -> List Message -> Task Error Provider.ChatResponse
+replayChat rec messages =
+    let
+        key = requestKey messages
+    in
+        case List.filter (\e -> e.request == key) rec.entries of
+
+            e :: _ ->
+                Task.succeed
+                    { content = e.content
+                    , usage =
+                        { promptTokens = e.promptTokens
+                        , completionTokens = e.completionTokens
+                        , totalTokens = e.promptTokens + e.completionTokens
+                        }
+                    }
+
+            [] ->
+                Task.fail
+                    (Failure.toError
+                        (NotConfigured
+                            { setting =
+                                "a recorded answer for this prompt in "
+                                    ++ rec.label
+                            }))
+
+
+{-| A recording as JSON. -}
+encodeRecording : Recording -> String
+encodeRecording rec =
+    JsonE.encode
+        0
+        (JsonE.object
+            [ ( "label", JsonE.string rec.label )
+            , ( "entries"
+              , JsonE.list
+                    (\e ->
+                        JsonE.object
+                            [ ( "request", JsonE.string e.request )
+                            , ( "content", JsonE.string e.content )
+                            , ( "promptTokens", JsonE.int e.promptTokens )
+                            , ( "completionTokens"
+                              , JsonE.int e.completionTokens
+                              )
+                            ])
+                    rec.entries
+              )
+            ])
+
+
+{-| Read a recording back. -}
+decodeRecording : String -> Result Error Recording
+decodeRecording body =
+    JsonD.decodeString
+        (JsonD.map2
+            (\l es -> { label = l, entries = es })
+            (JsonD.field "label" JsonD.string)
+            (JsonD.field
+                "entries"
+                (JsonD.list
+                    (JsonD.map4
+                        (\r c p k ->
+                            { request = r
+                            , content = c
+                            , promptTokens = p
+                            , completionTokens = k
+                            })
+                        (JsonD.field "request" JsonD.string)
+                        (JsonD.field "content" JsonD.string)
+                        (JsonD.field "promptTokens" JsonD.int)
+                        (JsonD.field "completionTokens" JsonD.int)))))
+        body

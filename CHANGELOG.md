@@ -11,6 +11,1271 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.28.0 — Model slots, a managed local model engine, typed AI failures, evals, datasets, the model registry, the project's AI pipeline, adapter training, cloud training and a GPU serving tier (Std.Ai.Endpoint, Std.Ai.Local, Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Dataset, Std.Ai.Registry, Std.Ai.Pipeline, Std.Ai.Train, Std.Ai.Serve, Std.Ai.Cloud.Google) (2026-10-28)
+
+Phase 1, phase 2 (the dataset, registry and pipeline parts), phase 3 (local
+training and GGUF export) and phase 4 (training on Google Cloud Vertex AI and
+a GPU serving tier on Cloud Run) of the Std.Ai lifecycle design
+(`docs/design/std-ai-lifecycle.md`). The user guides are `docs/ai/local.md`,
+`docs/ai/eval.md`, `docs/ai/dataset.md`, `docs/ai/registry.md`,
+`docs/ai/pipeline.md`, `docs/ai/train.md`, `docs/ai/serve.md` and
+`docs/ai/deploy-gcp.md`.
+
+Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
+`docs/ai/device.md`.
+
+### Added
+
+- **`examples/76-ai-shell-command`: a request in, one terminal command out.**
+  It trains a QLoRA adapter on Qwen2.5 0.5B with `Std.Ai.Train`, on data from
+  a template grammar (task x tool x platform) and tldr-pages (CC BY 4.0). Its
+  eval runs each proposed command in a fixture folder and compares the output,
+  against the few-shot base model as the baseline. `Std.Ai.Policy` is the
+  firewall: read-only commands run, writes need approval, and `sudo`,
+  `curl | sh` and `rm -rf /` are refused. The example is excluded from CI by a
+  user rule (anzellai/sky#299): every gate that enumerates `examples/` skips
+  it by name, and `xtask`'s `ci_excluded_examples` test fails if a workflow or
+  a gate would touch it.
+- **Typed tools and structured answers.** `Codec.jsonSchema codec` gives the
+  JSON Schema of a codec's JSON (scalars, `maybe`, `list`, `enum`, records from
+  `object` / `field` or `auto`; `exact` is `False` where a part is open, as in
+  `taggedUnion`). `Tool.typed name description codec exec` sends that schema as
+  the tool's `parameters` and decodes the model's arguments with the codec:
+  arguments that do not decode never reach `exec`, and both agent loops hand
+  the `Decode` error back to the model as the tool's result.
+  `Provider.chatStructured (Provider.responseShape "name" codec) options
+  provider messages` sends the OpenAI-compatible `response_format`
+  (`json_schema`, strict when the schema is exact) and decodes the answer into
+  the codec's type; a mismatch is a `Decode` error naming the shape.
+  `Agent.structuredToolLoop` (and `structuredToolLoopWith`) is the durable
+  native tool loop with a typed final answer. `Provider.chatToolRequest`,
+  `measureToolRequest` and `customToolRequest` take a `ToolRequest` (tool
+  schemas plus an optional `responseFormat`). A `custom` or `customTools`
+  provider cannot ask for a shape and fails a shaped call with
+  `InvalidSetting` (setting `responseShape`) instead of returning free text.
+  `Tool.tool`, `ToolSpec`, `chatTools` and `customTools` are unchanged and
+  send the same request as before. `examples/72-ai-support-desk` triages a
+  ticket into a typed record (`Assist.triage`) and asks a durable assistant
+  with a typed tool (`Assist.ask`).
+- **Float `/` on two `Float` operands is typed.** It lowers to
+  `rt.DivF(float64, float64) float64` instead of the `any`-based `rt.Div`
+  (doc 14 R5, lever 5.3), with the same classified `DivisionByZero` on a zero
+  divisor and the same value.
+- **`sky ai train --base` takes any base.** `--base hf:<org>/<repo>@<commit>`
+  trains on a Hub repository's safetensors weights at a 40-digit commit, and
+  `--base file:<directory>` on a local directory, each with
+  `--serving <model reference>` (the GGUF model that serves the adapter).
+  `sky ai provision --train <backend> --base <base>` provisions either. The
+  library form is `Train.baseFromReference ref serving`, with
+  `Train.pinWeights` to pin the files: a Hub base by its commit (LFS digests
+  as listed, other files checked against their git blob id, the list kept
+  under the AI home), a local base by hashing its directory (its id gains the
+  digest, so changed weights are another run). A malformed base is a typed
+  `InvalidSetting` (setting `base`) before anything trains. Pickled weights
+  are never listed or loaded. A Vertex job refuses a local base and an
+  unpinned one.
+- **`Std.Ai.Trace` covers the lifecycle: what each call did, and eval and
+  training rows.** A row now records the slot, the tier (`local` or
+  `remote`), the adapter, the queue wait, the start time (engine start,
+  adapter resolution), the latency, the time to the first token, the tokens
+  per second, a local engine's draft acceptance and the outcome (`ok` or the
+  `Failure` code). A failed call is a row too. `Trace.tracedChat` / `tracedChatStream`
+  measure and record a call; `Provider.measure`, `measureStream` and
+  `measureTools` give the facts without recording. A slot or a local engine
+  measures in the runtime and hands the facts over by a per-call token, never
+  inside the answer (the device bridge forwards answers to browsers).
+  `Agent.oneShotWith`, `toolLoopWith` and `nativeToolLoopWith` take
+  `{ trace = Just book }`: the call and its facts are journalled together and
+  the row is written by its own keyed step, so a resumed run records nothing
+  twice. An `Eval` run records its candidate calls (`Evaluation`) and its judge
+  calls (`Judge`, priced by the new `Eval.withJudgePriceBook`) under
+  `Report.traceRun`, with the gate's p95 latency unchanged. A `Train` run
+  records each step in `Trace.trainingSteps` and one `Training` cost row when it
+  ends, finished or failed (a Vertex run's measured spend; a local run
+  unpriced). `Trace.runSummary` and `Trace.costs` total a run and the whole
+  ledger per currency and kind. `setup` migrates an existing table in place
+  through the migration ledger (`_sky_ai_trace_*`). See `docs/ai/trace.md`.
+- **A local engine can run a draft model and keep several adapters loaded.**
+  `Local.withDraft ref` (and `withDraftTokens { max, min }`) runs speculative
+  decoding: the draft is pinned and hash-checked like the base, its
+  vocabulary must match the base's (`InvalidSetting` otherwise, checked before
+  launch and in the engine's log), and the engine starts with `-md` and
+  `--spec-type draft-simple`. `Local.withAdapters [ Local.namedAdapter
+  "support" ref, … ]` loads several LoRA adapters at once, and a call chooses
+  one by name through `Provider.Options` `adapter` (on a stream too). Every
+  loaded adapter gets an explicit scale on every request, so an adapter is
+  never applied by accident, and an unknown name is `NotRegistered` listing
+  the loaded names, never the base model's answer. Env:
+  `<PREFIX>_AI_<SLOT>_DRAFT`, `_DRAFT_MAX`, `_DRAFT_MIN`, `_ADAPTERS`
+  (`name[:scale]=<ref>,…`). A `Trace` row records the draft acceptance and
+  the engine's own tokens per second. The live test runs in the release gate
+  (`ai_local_live`, `draft_and_named_adapters_on_the_real_engine`). See
+  `docs/ai/local.md`.
+- **The GPU tier's signals go to OpenTelemetry.** With
+  `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`) set,
+  `Serve.run` pushes its signals every 15 s as OTLP/HTTP protobuf metrics:
+  `sky_ai_tier_ready`, `_inflight`, `_resident_adapters` and
+  `sky_ai_engine_running`, `_waiting`, `_kv_cache`, `_queue_wait_ms` (gauges)
+  and `sky_ai_engine_preemptions` (a cumulative sum), with the same names as
+  `/metrics`. A push has its own 5 s timeout and no retry, and never delays a
+  drain. `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` and port 4317 turn it off, as for
+  traces. The tier also reports `queueWaitMs`: the mean time a request waited
+  in vLLM's queue over the scrape window (`vllm:request_queue_time_seconds`),
+  on `/metrics`, in the console and in OpenTelemetry. See `docs/ai/serve.md`.
+- **`Device.withThreads` and `Device.withGpuLayers`: the device engine's
+  threads and GPU layers.** Env: `<PREFIX>_AI_<SLOT>_DEVICE_THREADS` and
+  `_DEVICE_GPU_LAYERS` (operator over code). They reach llama.cpp on every
+  target: the iOS and Android engines, the Mac app's `llama-server` (`-t`,
+  `-ngl`) and the WebGPU engine. Threads are an upper bound (the browser
+  engines run one). GPU layers above 0 are a requirement: each device reports
+  which backends have a GPU (`BackendInfo.gpu`), a backend without one is not
+  used for the slot, and a `DeviceOnly` slot with no GPU backend fails with
+  `DeviceUnsupported` naming the setting. An out-of-range value is
+  `InvalidSetting`. `docs/ai/device.md` has the per-engine table.
+
+- **`Std.Ai.Device`: a model slot on the user's own device.** The server's
+  slot gets `Endpoint.withDevice (Device.spec Device.Auto)`; a Sky.Spa client
+  (`web:app`, `desktop:mac`, `mobile:ios`, `mobile:android`) asks
+  `Device.provider "<slot>"`, an ordinary `Provider` that answers on the
+  device when it holds the model and can run it, and from the server's slot
+  otherwise. The placement is required (`Auto`, `DeviceOnly`, `ServerOnly`);
+  `DeviceOnly` fails typed and never reaches the server. `Device.decide` is
+  the policy as a pure function; `Device.status`, `prepare` (after the user's
+  consent: nothing downloads on its own), `evict` and `capabilities`;
+  `Device.recordPrompts` and `replay` with the new `Eval.prompts` score one eval
+  suite on the device and on the server. The operator overrides the code with
+  `SKY_AI_<SLOT>_PLACEMENT`, `_DEVICE_MODEL` and `_DEVICE_ADAPTER`; no
+  `sky.toml` key.
+- **One engine on every device: llama.cpp b11200 with Sky's engine core**
+  (`scripts/ai/device/sky_llama.cpp`): the WebGPU and CPU WebAssembly builds
+  in a same-origin Web Worker (the strict policy runs them with no violation;
+  WebGPU only with JavaScript Promise Integration and `shader-f16`, and a
+  WebGPU engine that registers no GPU device fails with `DeviceUnsupported`
+  instead of running on the CPU), `SkyLlama.xcframework` (ios-arm64 with
+  Metal and ios-arm64-simulator) in the iOS app, `libskyllama.so` (arm64-v8a
+  and x86_64, 16 KB aligned, loaded in place) in the Android app, and the
+  managed `llama-server` in the Mac app. Every target loads the same GGUF
+  model and LoRA adapter, a `Std.Ai.Train` adapter included.
+- The server answers `GET /_sky/ai/device/<slot>` (the offer, with an ETag),
+  `GET /_sky/ai/blob/<sha256>` (only the digests an offer names, Range
+  requests, a chunk list) and `POST /_sky/ai/device/<slot>/call` (the
+  fallback: same origin, `application/json`, 64 KiB, 30 calls a minute per
+  session; absent for `DeviceOnly`). A device checks every 64 MiB chunk and
+  the whole file against its SHA-256 before it uses a file.
+- `Registry.allowOnDevice registry version reason`: an adapter runs on
+  devices only after this audited step, which needs a GGUF version trained on
+  a scrubbed dataset version in the same registry (migration
+  `_sky_ai_registry_0003`, an `allow-on-device` event). `Endpoint.Adapter`
+  gains `onDevice` and `Registry.Version` gains `onDevice`.
+- New failures: `DeviceUnsupported { backend, reason }` (`Unavailable`) and
+  `StorageDenied { needBytes, availableBytes }` (`PermissionDenied`).
+- `sky ai provision --device web|ios|android|all [--from <dir|archive>]
+  [--check]` installs the engines; `sky build --ai-web-engine
+  webgpu|cpu|both|none` picks the browser engines (both when installed);
+  `sky build --ai-embed <slot>` puts the slot's model and adapter in a native
+  app. `Bundle.IncreasedMemoryLimit` declares the iOS entitlement an
+  on-device model needs.
+- **Streaming answers.** `Provider.openStream` sends a chat and `Provider.readStream`
+  gives the answer one piece at a time (`Piece text next`, then `Finished
+  response` with the usage), so a TEA app shows it as it is written, one
+  update per piece; `Provider.closeStream` stops early, and `Provider.chatStream`
+  hands each piece to a callback in a Task program. Server slots
+  (`Std.Ai.Endpoint`, `Std.Ai.Local`) and `Provider.openai` / `compatible`
+  read the server's event stream (retries only before the first byte, the
+  queue place held until the end, an abandoned stream closed by its
+  deadline); a device slot streams from the engine core
+  (`sky_llama_chat_begin` / `sky_llama_chat_next`) in the browser worker and
+  the iOS and Android apps, from the managed engine in the Mac app, and from
+  `POST /_sky/ai/device/<slot>/stream` when the decision is the server. A
+  `custom` provider and a server that answers with one body give one piece.
+  `Provider.wireStreaming` builds a streaming `wire` provider.
+- The `ai-device-bundles` workflow builds the engines from the pinned source
+  (emsdk 6.0.12, Dawn v20260423.175430, NDK 27.0.12077973, Xcode) and
+  publishes the release `sky-llama-b11200`. Until it has run, the engine pins
+  are empty, and `sky ai provision --device <target>` (and a build that
+  cannot stage the engine) fails with a typed error that names the empty
+  `PINS` entry, the workflow and the release, and the `--from` local build.
+- `examples/75-ai-everywhere`: private notes whose assistant runs on the
+  device, with a consent card, a badge that says where each summary was made,
+  a server-only Help page and an eval self-check, for every target.
+- Measured on an Apple M-series Mac with 16 GB, the dev model and a 24-step
+  MLX adapter, one short question: Chromium WebGPU 0.45 s, Chromium CPU 5.5 s,
+  WebKit CPU 6.1 s; the WebGPU answer matched the server's word for word.
+
+- **`Std.Ai.Pipeline` and the project-mode `sky ai` verbs.** A project
+  declares its AI lifecycle as `pipeline` in `src/Ai.sky`: `withSlot`,
+  `withDataset` (`datasetOf codec build`, `datasetJson`, `withFolder`,
+  `withRegistered`), `withSuite` (`suiteOn slot suite`, `suiteWith`,
+  `forModel`, `withThresholds`), `withTask`, `withDb`, `withRegistry`. The CLI
+  builds it (only `Ai` and its imports are checked), caches the program under
+  `.sky/ai/cli/<key>/` (the SHA-256 of the Sky version, `sky.toml` and every
+  source file) and runs it in the project directory:
+  `sky ai eval <suite> [--against <alias>] [--candidate <model>@v<n>]
+  [--promote-to <alias>] [--junit f] [--markdown f] [--min-pass-rate x]
+  [--max-regression x]` (the candidate and the alias's version on the suite's
+  slot with their own adapters, `Eval.compare`, the suite's gate, JUnit at
+  `.sky/ai/eval/<suite>/junit.xml`, one JSON object with `--format json`,
+  exit 1 on a failed gate, `--promote-to` only on a pass and only while the
+  alias still serves the version compared against), `sky ai data freeze
+  <dataset>` (frozen and registered), `sky ai run <task> [-- args]`,
+  `sky ai members`, `sky ai start <slot>` for a pipeline slot (its code
+  defaults), and `sky ai promote`. Every pipeline verb takes `--test-mode`
+  (model calls answered from `tests/mocks/`). While
+  `SKY_AI_<SLOT>_ADAPTER` pins a slot's adapter, `--candidate` and
+  `--against` refuse with `InvalidSetting`, naming the variable and never its
+  value. In `sky test`, `Pipeline.evalSuite` and `evalAgainst` make a suite a
+  test. When the app's entry exposes a `Sky.Config` `config`, the pipeline
+  applies it too.
+- **Dataset versions in the registry.** `Registry.registerDataset` stores a
+  frozen version's data by digest and records it as `<name>@<n>` with its
+  manifest (`_sky_ai_registry_datasets`, migration `_sky_ai_registry_0002`);
+  `datasetVersion`, `datasetVersions`, `datasetLabel`, `fetchDataset`,
+  `datasetValue`. `trainedOn` and `sky ai lineage --dataset` take
+  `<name>@<n>` as well as a digest.
+- **Promotion compared against production.** `Registry.evidenceAgainst` and
+  `promoteCompared` compare a version's attached reports with the newest
+  report of the same suite on the version the alias serves, gate the
+  comparison with each suite's thresholds, and move the alias only while it
+  still serves that version. `sky ai promote` uses it.
+- **`Synthetic.withJournal db`**: teacher answers are journalled in
+  `_sky_ai_synthetic_journal` and judge calls in the eval judge journal
+  (`Eval.judgeAnswerWith`, new), so a re-run with unchanged inputs makes no
+  model call (`report.replayed`) and gives the same rows.
+- **Token counts from the engine.** `Endpoint.tokenize` (the engine's
+  `/tokenize` route) and `Dataset.withEngineTokenizer slot`, which falls back to
+  `withTokenizer` or the estimate when the engine does not answer.
+- **`dedupeBy` dedupes in bounded memory**: past `dedupeMemoryKeys` (250000)
+  key digests it spills them, sorted, to files under `.sky/ai/work/dedupe/`
+  and looks them up there (`dedupeBounded n` sets the bound). `inspect` and
+  `validate` find duplicate conversations through the same bounded set, with
+  the row each one repeats (`withMemoryKeys n` sets their bound), so a
+  dataset larger than memory is inspected in bounded memory too.
+- `Endpoint.inspect` (settings and sources without resolving an adapter or
+  starting anything), `Endpoint.slotName`, `Eval.suiteName`.
+- **The console's AI tab shows eval runs from the app's database**, read when
+  the tab asks, so a `sky ai eval` run in CI or a terminal appears in the
+  running app's console (each run's console row is stored with it, migration
+  `_sky_ai_eval_0002`). Each row is labelled `from database` or
+  `this process`.
+- `sky doctor` reports the pipeline (`ai-pipeline`, `ai-pipeline-invalid`)
+  and checks the slots only the pipeline uses, marked `(pipeline)`.
+- `examples/72-ai-support-desk`: a Sky.Live support desk with Std.Ui whose
+  assistant drafts replies, and the lifecycle around it in Sky: a synthetic
+  dataset (teacher, judge, scrub, dedupe, journal), the replies agents sent as
+  a second dataset, an eval suite with a calibrated judge gated against
+  production, adapters imported and promoted through the registry, and the
+  app serving the promoted adapter (with `GET /api/assistant` and
+  `/api/draft`). Its README is a guide; its tests run the lifecycle offline.
+
+- **`Std.Ai.Dataset`: training and eval data as Sky values.** Typed rows
+  (`Chat`, `Instruction`, `Preference`, with `chatCodec`, `instructionCodec`,
+  `preferenceCodec`) from `fromJsonl` (read 1000 lines at a time, so a large
+  file never sits in memory), `fromJsonLines`, `fromCsv`, `fromStore` and
+  `fromList`. Steps `map`, `filter`, `filterMap`, `dedupeBy` (one SHA-256 per
+  distinct key), `scrub`, `upTo`, `toChat`, `toInstruction`, recorded with the
+  sources for lineage. `split` puts each row in `Train`, `Eval` or `Test` by
+  the first 28 bits of `sha256 "<seed>:<key>"`, so the same row is in the same
+  part in every version (`splitOf` is the pure function). `inspect` and
+  `validate` check chat rows (empty turns, role order, token estimate or your
+  `withTokenizer`, turn counts, duplicates) against `limits`. `freeze` writes
+  canonical JSONL (sorted keys, no spacing, `\n` endings) named by its SHA-256,
+  atomically, plus a manifest (sources, steps, rows per split, split weights
+  and seed, scrub report, duplicates and filtered counts, codec schema,
+  creation time, `withConsentBasis`, `withRetention`); the same rows frozen
+  twice give the same digest and the first manifest. `load` re-checks the
+  digest (`ChecksumMismatch`); `versions`, `versionPart`, `versionRows`,
+  `fromVersion`, `manifestJson`, `manifestFromJson`, `freezeJson`, `loadJson`,
+  `toJsonl`, `writeJsonl`. A file, line or row that cannot be read is the new
+  typed failure `Std.Ai.Failure.DatasetInvalid { dataset, reasons }`
+  (`InvalidInput`), which names the file and line and never the row's text.
+  (`sky-stdlib/Std/Ai/Dataset.sky`; kernels `Ai_datasetReadLines`,
+  `Ai_datasetCanonical`, `Ai_datasetSha256File` in
+  `runtime-go/rt/ai_dataset.go`.)
+- **`Std.Ai.Dataset.Scrub`: personal data and secrets out of training text.**
+  Rules `secrets` (known key prefixes, JSON web tokens, PEM private keys,
+  labelled values), `email`, `iban` (mod 97), `cardNumber` (Luhn), `usSsn`,
+  `ukNino`, `phone`, `pattern` (a `Result`: a pattern that does not compile is
+  an error, kernel `Ai_datasetCheckPattern`) and `custom`; `defaults` in the
+  order that keeps them apart. Scrubbers `forInstruction`, `forChat`,
+  `forPreference`, `forString` and your own rows (`scrubber`), `dropIf`,
+  `scrubRow`, `scrubRows`. The report is a count per rule and never holds the replaced
+  text. (`sky-stdlib/Std/Ai/Dataset/Scrub.sky`.)
+- **`Std.Ai.Dataset.Synthetic`: generate a dataset with a teacher model.** The
+  teacher is the slot `"teacher"`, the local pinned model by default, moved
+  with `SKY_AI_TEACHER_*`. `generator` with `withTopics`, `withPersonas`,
+  `withExamples`, `withTemplate`, `withSystemPrompt`, `withPerCall`,
+  `withTarget`, `withSeed`, `withTemperature`, `withMaxTokens`; a pure `plan`
+  (call `i` has seed `seed + i` and walks every topic and persona); quality
+  filters `withDedupe`, `withFilter` and `withJudge` (`Std.Ai.Eval`'s judge,
+  through the new `Eval.judgeAnswer`); stops at the target, `withMaxCalls` or
+  `withCostBudget` (exact `Std.Money`). The `Report` counts calls, judge calls,
+  tokens, cost and every dropped row by reason; `toDataset` records the
+  generator, teacher and seed as the dataset's source. In test mode the
+  teacher's and judge's calls are answered by `tests/mocks/`.
+  (`sky-stdlib/Std/Ai/Dataset/Synthetic.sky`.)
+- **`sky ai data freeze <file.jsonl>`** freezes a JSONL file into a
+  content-addressed version from the command line (`--name`, `--out`,
+  `--key`, `--split`, `--seed`, `--consent`, `--retention`, `--format json`).
+- **Examples** `68-ai-dataset`, `69-ai-scrub` and `70-ai-synthetic`. Each runs
+  offline and passes its own `sky test` suite in test mode
+  (`rust/crates/sky/tests/ai_dataset_flow.rs`).
+
+- **One open variant for every domain's failures: `Sky.Core.Error.Domain
+  DomainFailure`.** `ErrorDetails` gains its last variant. A `DomainFailure`
+  is opaque and holds a domain (`"ai"`, later `"db"`, `"durable"`, or an
+  app's `"myapp.billing"`), a stable code, a retryable flag, an optional retry
+  delay and string attributes, and it always comes with an existing
+  `ErrorKind`. Builders `Error.failure`, `withRetryable`, `withRetryAfter`,
+  `withAttr`, `fromDomain`; readers `failureOf`, `failureDomain`,
+  `failureCode`, `failureRetryable`, `failureRetryAfter`, `failureAttr`,
+  `failureAttrs`; generic helpers `Error.domain`, `Error.retryAfter`, and
+  `Error.isRetryable`, where the domain's flag now wins over the kind. A new
+  domain or a new code needs no change to the core type.
+  `Codec.error` carries it across the Sky.Spa wire as one object and decodes
+  forward-compatibly (any domain and code; missing optional keys default;
+  unknown keys are ignored). A structured log line with an `Error` attribute
+  logs it as `<Kind>: <message>` and adds `error.domain`, `error.code`,
+  `error.retryable`, `error.retryAfterMs` and `error.attr.<name>`. `[E3001]`
+  on an `ErrorDetails` match that misses `Domain` names the helpers and the
+  `_ ->` fix. (`sky-stdlib/Sky/Core/Error.sky`, `Std/Codec.sky`;
+  `runtime-go/rt/error_domain.go`, `rt.go` `logEmit`;
+  `rust/crates/ty/src/exhaustive.rs`; `docs/errors/error-system.md#domain-failures`.)
+- **`Std.Ai.Failure`: every AI failure, typed.** `fromError`, `toError`,
+  `code`, `kind`, `retryable` over `NotConfigured`, `InvalidSetting`,
+  `Unreachable`, `Overloaded { retryAfterMs, status }`, `TimedOut`,
+  `EngineCrashed { exitCode, logTail }`, `EngineFailed`, `ModelTooLarge
+  { needBytes, availableBytes }`, `NoAccelerator`, `NotProvisioned { what,
+  command }`, `ChecksumMismatch`, `RemoteRejected { status }`,
+  `BudgetExceeded` (in `Std.Money`), `ToolchainFailed` and `GateFailed`. The
+  runtime's one classifier now returns the typed `Domain` value (every message
+  and kind unchanged), and every failure site records its attributes; a URL
+  is reduced to scheme, host and port. The kind and retryable table is
+  `aiFailSpecs` (`runtime-go/rt/ai_failure.go`), checked against the Sky
+  module by a Go test. (`sky-stdlib/Std/Ai/Failure.sky`.)
+- **`Std.Ai.Eval`: evaluate a model with Sky values.** `suite` of `Case`s
+  with `Exact`, `Contains`, `Matches` (RE2), `JsonShape` (a codec's shape),
+  `CallsTool`, `Refuses`, `Rubric` (scored by a judge), `Custom` and `AllOf`;
+  `withSamples`, `withConcurrency`, `withSeed`, `withOptions`, `withJudge`,
+  `withLatencyBudget`, `withCostBudget`, `withPriceBook`, `withTools`. The
+  judge is the model slot `"judge"`: the local pinned development model by
+  default, switched by the slot's variables like any other slot. A run is
+  repeatable (temperature 0, seed `seed + sample`), a failed call is a case
+  error rather than a failed run, and `run` / `runAs` return a typed `Report`
+  (per-case results, scorer means, pass rate, p95 latency, mean cost, a digest
+  of the outputs), store it in the database (`history`) and show it in the
+  console. `compare` pairs a baseline and a candidate (regressions,
+  improvements, the exact McNemar p-value, a seeded paired bootstrap interval
+  per scorer). `check` / `gate` apply `thresholds` (`withMinPassRate`,
+  `withFloor`, `withMaxRegression`, and the suite's budgets) and return an
+  opaque `Passed` or the typed `GateFailed`. `toJunit`, `toMarkdown`. Under
+  `sky test` in test mode (`.env.test`) the judge, like every slot, is
+  answered by `tests/mocks/`.
+  (`sky-stdlib/Std/Ai/Eval.sky`, kernel `Ai_recordEval`.)
+- **The Sky Console's AI tab.** The `Std.Ai` slots this process resolved
+  (each setting's source, never a key, a URL as scheme, host and port;
+  in-flight and waiting calls, failures, `Overloaded` count, p50 and p95),
+  its local engines, its recent model calls with an outcome filter (`Failed`)
+  and a slot filter, and its eval runs, which open to each case's verdict and
+  reason. Every control is in the console URL (`tab=ai`, `calls=failed`,
+  `slot=`, `eval=`). It reads `/_sky/console/api/ai`, whose bounded rings
+  hold no prompt, no answer and no secret. (`runtime-go/rt/ai_console.go`,
+  `sky-bundled/console/src/AiTab.sky`, `runtime-go/rt/console_app/main.go`
+  regenerated; `docs/observability.md`.)
+
+- **`Std.Ai.Endpoint`: a named model slot configured in code, overridden per
+  environment.** `Endpoint.endpoint "chat"` with `withMode`, `withUrl`,
+  `withKey` (a `Secret`), `withModel`, `withAdapter`, `withLocal`,
+  `withTimeout`, `withMaxInFlight`, `withQueue`, `withQueueWait` and
+  `withRetry`. Each falls back to `SKY_AI_<SLOT>_<KEY>` (prefix-aware) through
+  the runtime's one precedence: operator env > `withX` in code > default.
+  There is no `sky.toml` key for AI. A URL makes the slot remote, `withLocal`
+  makes it a managed local engine, `MODE=local` with a URL is an error naming
+  both sources, nothing configured is `NotConfigured` naming the variable to
+  set, and a remote endpoint that is down never falls back to a local model.
+  Each slot has a bounded queue: a full queue fails at once (`Unavailable`,
+  Overloaded), a long wait is `Timeout`, and only 429 / 503 and connections
+  that never reached the server are retried. `Endpoint.provider` is pure and
+  resolves on the first call; `warm` starts a local engine now; `describe`
+  reports each setting's source without secrets or URL paths.
+  (`sky-stdlib/Std/Ai/Endpoint.sky`, `runtime-go/rt/ai_config.go`,
+  `ai_endpoint.go`, `ai_queue.go`.)
+- **`Std.Ai.Local`: the managed `llama-server`.** A pinned llama.cpp build
+  (`b11200`, macOS arm64 Metal and Linux x64 CPU, SHA-256 recorded in
+  `runtime-go/rt/ai_pins.go`) and pinned GGUF models (`Local.huggingFace`,
+  `Local.file`; `Local.devModel` is Qwen2.5 0.5B Instruct Q4_0, Apache-2.0)
+  are fetched into one per-user AI home and verified from the bytes on disk; a
+  mismatch installs nothing. Before loading, the GGUF header and the host's
+  memory give a fit plan (`Local.fit`): an explicit context or a model that
+  does not fit fails with `ModelTooLarge`, GPU layers on a CPU build with
+  `NoAccelerator`. The engine binds `127.0.0.1` behind a per-run key passed
+  in a `0600` file, starts with a cleared environment, is health-checked,
+  restarts with backoff in development (three times a minute at most) and
+  exits the app outside it, unloads when idle, and stops with the app.
+  Engines are recorded in `engines.json`, shared between programs that need
+  the same one, and an engine whose program was killed is reaped by the next
+  start. `Local.start`, `provider`, `status`, `stop`, `fetch`, `pull`,
+  `provision`, `engines`, `stopSlot`. (`runtime-go/rt/ai_engine.go`,
+  `ai_fetch.go`, `ai_gguf.go`, `ai_registry.go`, `ai_local.go`.)
+- **`Provider.chatWith`, `Provider.embed`, `Provider.wire`.** `chatWith`
+  sends per-call `Options` (temperature, seed, max tokens, adapter); `chat` is
+  `chatWith defaultOptions`. `embed` returns one vector per text. `wire`
+  builds an OpenAI-compatible provider over a caller's transport. Existing
+  providers are unchanged.
+- **`sky ai provision | pull | ps | start | stop`**, run by a bundled Sky
+  program over the API above (`sky-bundled/ai`). Every verb takes
+  `--format json`.
+- New variables: `SKY_AI_HOME`, `SKY_AI_LLAMA_BIN`, `SKY_AI_FETCH`,
+  `SKY_AI_ACCEL`, and per slot `SKY_AI_<SLOT>_MODE`, `_URL`, `_KEY`,
+  `_MODEL`, `_ADAPTER`, `_TIMEOUT_MS`, `_MAX_INFLIGHT`, `_QUEUE`,
+  `_QUEUE_WAIT_MS`, `_RETRIES`, `_CONTEXT`, `_GPU`, `_PARALLEL`,
+  `_IDLE_UNLOAD_S`, `_PORT`.
+- Under `sky test` (test mode) no engine starts: a call through any slot is
+  answered by a `tests/mocks/` fixture.
+
+- **`Std.Ai.Registry`: versions of fine-tuned adapters, their lineage and
+  evidence, and the aliases serving follows.** The records (versions, aliases,
+  the alias log, attached eval reports) are rows in the app's own database
+  through `Std.Db`, SQLite or PostgreSQL with the same code, created by
+  dialect-neutral migrations in the `_sky_migrations` ledger
+  (`_sky_ai_registry_*`, applied on `open`, never ending the process under
+  `SKY_DB_OP`). `register` checks that a file is a LoRA / QLoRA adapter (GGUF
+  with `general.type = adapter`, or safetensors), pins it to its base model's
+  digest, stores it by SHA-256, and returns the existing version for the same
+  bytes. `attachReport`, `reports`, `evalHistory`; `promote` takes an
+  `Eval.Passed` that must name the version (`Eval.runAs (Registry.label v)`)
+  and whose report is attached, so promotion without a passing evaluation
+  does not compile; `promoteIf` (compare-and-swap from the state the caller
+  saw: of two promotions from one state at most one wins), `promoteChecked`
+  and `evidence` (re-gate the attached reports), `forcePromote` (a recorded
+  reason), `rollback` (the alias's log is a stack), `block`, `resolve`,
+  `version`, `versions`, `aliases`, `history`, `lineage`, `trainedOn` (the
+  versions to retrain after an erasure), `fetch`, and `resolver` for serving.
+  New failures `NotRegistered`, `NotPromotable`, `PromotionConflict`,
+  `AdapterMismatch`. (`sky-stdlib/Std/Ai/Registry.sky`,
+  `runtime-go/rt/ai_model_registry.go`, kernels `Ai_migrate`,
+  `Ai_recordRegistry`, `Ai_adapterInfo`.)
+- **`Std.Ai.Store`: the registry's artefacts in a local directory, GCS or S3,
+  with one code path.** Blobs under `blobs/sha256/<hex>`, uploads as
+  conditional creates, every read checked against its digest, remote blobs
+  cached in the AI home. GCS through a service-account JWT or the metadata
+  server, S3 through the standard variables or IMDSv2, signed with AWS
+  Signature Version 4 written in Sky (`Store.signV4`, tested against the AWS
+  examples). `configured` reads `SKY_AI_REGISTRY`; `withEndpoint`,
+  `withToken`, `withAwsKeys` for emulators and S3-compatible servers. The
+  runtime streams the bytes (`Ai_fileDigest`, `Ai_storeLocalPut`,
+  `Ai_storeLocalGet`, `Ai_storeHttpPut`, `Ai_storeHttpGet`, `Ai_storeCached`,
+  `Ai_registryLocation`; `runtime-go/rt/ai_store.go`).
+- **Serving follows the registry.** `Endpoint.fromRegistry (Registry.resolver
+  registry)` lets a slot's adapter be `registry:<name>@<alias>` (in code or
+  `SKY_AI_<SLOT>_ADAPTER`). A remote slot sends the version's served name; a
+  local slot loads the version's GGUF file with `--lora` after checking its
+  digest and that it was trained on the engine's base model
+  (`AdapterMismatch`). The slot resolves the alias at start and again after
+  `Endpoint.withAdapterRefresh` seconds (`SKY_AI_<SLOT>_ADAPTER_REFRESH_S`,
+  default 30); a local slot moving to another version retires its old engine
+  when the last call ends, and a failed refresh keeps the current adapter and
+  says so in `describe`.
+- **`Std.Ai.Eval`: the judge journal, calibration and pairwise judging.**
+  Every judge call is journalled in the run's database
+  (`_sky_ai_eval_judge_journal`), keyed by the judge's identity, version and
+  exact prompt, so an unchanged re-run asks the judge nothing. `judgeOn`
+  (a judge on a slot, identified by its resolved model). `withCalibration`
+  runs the judge on human-labelled cases before a run and records the
+  agreement, Cohen's kappa and the disagreements in the report's
+  `calibration`; the gate fails a judge below its agreement, and
+  `withCalibratedJudge` refuses an uncalibrated one. `calibrate`. `pairwise`
+  asks the judge in both orders and counts a win only when both agree.
+  `encodeReport` / `decodeReport`. The eval tables are now created through the
+  migration ledger (`_sky_ai_eval_*`).
+- **`sky ai promote | rollback | lineage`**, on the app's database (in a
+  project, the pipeline's `withDb`; `--db`, else `SKY_DB_PATH`,
+  `DATABASE_URL`, wins; nothing is read from `sky.toml`), each
+  with `--format json`; `promote` takes `--min-pass-rate`, `--expect`,
+  `--force --reason`; `lineage --dataset <sha256>`.
+- **Startup report and `sky doctor` for AI slots.** The build lists the slots
+  the source names (`project/src/ai_slots.rs`, generated
+  `ai_slots_gen.go`; a refused literal name is a build warning), and a server
+  prints one line per slot under `listening`: mode, target (scheme, host,
+  port) and which settings the environment sets, never a value.
+  `sky doctor` applies the slot rule to the environment (mode, URL, registry
+  adapter, pinned model, a TCP probe of the remote), checks `SKY_AI_FETCH`,
+  `SKY_AI_ACCEL`, `SKY_AI_REGISTRY` and `SKY_AI_LLAMA_BIN`, and with fetching
+  off reports an engine or model that is not provisioned.
+- **The console's AI tab shows the model registry:** each model's aliases, and
+  on a click (`model=` in the URL) its versions, alias log and eval history.
+- New variables: `SKY_AI_REGISTRY`, `SKY_AI_<SLOT>_ADAPTER_REFRESH_S`.
+- `examples/71-ai-registry`: register, evaluate, promote, refuse, force, roll
+  back and read the lineage, with no model and no network; its test serves the
+  promoted adapter through a slot in test mode.
+
+#### Std.Ai.Train (phase 3)
+
+- **`Std.Ai.Train`: fine-tune a LoRA or QLoRA adapter from Sky code.**
+  `lora base version` (chat rows) and `loraOnInstructions base version`
+  (instruction rows) take a frozen `Dataset.Version`, so the lineage is fixed
+  by the type. Builders `withName`, `withQuantisedBase`, `withRank` (8),
+  `withAlpha` (twice the rank), `withLayers` (16), `withTargets` (the four
+  attention projections), `withLearningRate` (1e-4), `withEpochs` (1),
+  `withMaxSteps`, `withBatch` (4 rows), `withSequenceLength` (1024),
+  `withSeed` (0), `withCheckpointEvery` (100), `withEvalEvery` (50),
+  `withBackend`, `withGgufExport`, `withMergedExport`, `withWorkDir`
+  (`.sky/ai/runs`), `withRegistry`, `withMaxRelaunches` (3) and
+  `withWatchWindow`. `check` refuses a bad setting (`InvalidSetting`) and an
+  empty train or eval split (`DatasetInvalid`) without I/O. The run's id is
+  the name and the digest of the job's canonical JSON, so the same job is the
+  same run.
+- **Base models.** `baseModel`, `withWeights` and `withServing` pin a Hugging
+  Face snapshot per backend (a repository at one commit, with the SHA-256 of
+  every file) and the GGUF model that serves the adapter. `devBase` is
+  Qwen2.5 0.5B Instruct: the `mlx-community` 4-bit snapshot for Mlx, the
+  `unsloth` bnb 4-bit snapshot for Unsloth, served on `Local.devModel`.
+- **Backends `Mlx`, `Unsloth` and `Fake`.** The backend is not in the code:
+  `SKY_AI_TRAIN_BACKEND` (`mlx`, `unsloth`, `fake`) wins over `withBackend`,
+  which wins over detection (Mlx on Apple silicon, Unsloth on Linux with an
+  NVIDIA GPU). A host that cannot run the backend is `NoAccelerator`, never a
+  fallback. `sagemaker` is `InvalidSetting`; `vertex` is phase 4 (below).
+  Every trainer speaks one protocol, reads one data order and writes one
+  safetensors checkpoint format.
+- **A native trainer for Mlx, no Python.** `sky-trainer` is Sky's own LoRA
+  trainer: C11 on MLX 0.32.4 through mlx-c. Go tokenizes the data (Qwen2
+  byte-level BPE, ChatML, the loss mask) and writes a per-step row schedule,
+  so a resumed run reads the same batches; the trainer trains with Adam,
+  computes the loss in chunks, backpropagates one layer at a time and writes
+  the adapter in the PEFT layout. A memory guard, forked before MLX starts,
+  watches the trainer's footprint and ends a run over the cap with
+  `ModelTooLarge`, and the workflow never relaunches it into the same cap.
+  `provision Mlx` (`sky ai provision --train mlx`) installs the pinned bundle
+  for the host (checked by SHA-256, `ChecksumMismatch` installs nothing);
+  `SKY_AI_TRAINER_BIN` (new) names an operator's own build. The bundles are
+  built only in CI by `.github/workflows/ai-trainer-bundles.yml`
+  (darwin-arm64 with ahead-of-time Metal kernels, linux-x64 on static
+  OpenBLAS with GCC 13's C++ runtime, glibc 2.35), from sources pinned by
+  SHA-256, with the licences, an SPDX SBOM and SHA256SUMS; each unpacked
+  archive passes `scripts/ai/trainer/test-trainer.sh` and packs again to the
+  same bytes before it is published.
+- **Fake trains in the runtime.** The program starts itself again as the
+  trainer (`--sky-ai-fake-trainer`): a real process with the real protocol,
+  verified checkpoints, crash, relaunch and cancel, and a real no-op adapter.
+  Nothing is installed for it (`fake@builtin-1`).
+- **Unsloth in a managed Python.** `provision Unsloth` (`sky ai provision
+  --train unsloth`) installs a pinned uv 0.12.16, a pinned CPython 3.12.14
+  (python-build-standalone 20260924) and a virtual environment from a hash
+  lock (`uv pip sync --require-hashes --only-binary :all:`) under the AI home,
+  with a cleared environment, a self-check, an SBOM and an id that is the
+  digest of every pinned input, and runs the Sky driver with Unsloth core
+  (`FastLanguageModel`, `get_peft_model`, AdamW). The lock targets Linux
+  x86_64 with CUDA 13 (NVIDIA driver 580 or newer).
+  `scripts/ai/lock-toolchains.sh` makes it. With fetching off, a missing
+  trainer, toolchain or base is `NotProvisioned`, naming the command.
+  `provisionBase` and `toolchainStatus`.
+- **Memory controls.** `withQuantBits` (4, 8 or 16; `withQuantisedBase` is
+  `withQuantBits 4`) and `withMemoryCap`, with `SKY_AI_TRAIN_SEQUENCE_LENGTH`,
+  `SKY_AI_TRAIN_BATCH`, `SKY_AI_TRAIN_RANK`, `SKY_AI_TRAIN_QUANT_BITS` and
+  `SKY_AI_TRAIN_MEMORY_CAP` (new) over the builders. A variable that changes
+  the adapter is a new run, `plan` says where each value came from, and a
+  value that does not parse is `InvalidSetting` naming the variable, never
+  showing the value.
+- **`plan` and `estimateMemory`.** `plan` checks the job, resolves the backend,
+  reads the host and the serving model's shape, and refuses a job that will
+  not fit (`ModelTooLarge`) before anything is downloaded. The estimate is a
+  documented formula on the high side.
+- **A durable training workflow.** `workflow`, `workflows`, `start`, `poll` and
+  `drive` run the steps resolve, stage, toolchain, base, shape, launch, watch,
+  collect, convert, merge and register as `Std.Durable` steps. The trainer is a
+  detached process in its own session, so it outlives the program that
+  started it (a Ctrl-C in `sky ai train` detaches the watcher only), and its
+  launch token keeps a recycled pid from being attached to. A trainer that dies
+  is relaunched from its newest checkpoint whose files match its manifest, up
+  to `withMaxRelaunches` times, and reads exactly the batches the first run
+  would have read. Each watch lasts at most five minutes, so no step outlives
+  its lease.
+- **Checkpoints, cancel and resume.** A checkpoint is
+  `checkpoints/<step>/` with the adapter and the optimiser state as
+  safetensors, a state file and a manifest of digests, written to a temporary
+  directory and renamed. `cancel` writes a cancel file and sends SIGTERM to the
+  trainer's process group (SIGKILL after 60 s), and the run ends with the new
+  failure `TrainingCancelled`. `resume` starts a failed or cancelled run again
+  from its newest checkpoint. A run that fails is `TrainingFailed` (new).
+  `progress`, `result`, `runs` and the `...At` forms read the run directory.
+- **The driver protocol.** One JSON line per event (`hello`, `progress`,
+  `metric`, `checkpoint`, `artefact`, `cancelled`, `done`, `error`) with
+  `"v": 1`, read from a file at an offset. `decodeEvent` skips an unknown type
+  and refuses another version (`ToolchainFailed`). `foldProgress`.
+- **GGUF export in Go.** `withGgufExport` converts the PEFT adapter with a Go
+  converter in the runtime (F32 tensors, the layout llama.cpp writes), so no
+  toolchain carries PyTorch for it. The adapter records
+  `sky.adapter.base_id` and `sky.adapter.serving_sha256`. `withMergedExport`
+  folds it into the serving model with `llama-export-lora` from the pinned
+  engine build. `exportAt` and `sky ai export <run> [--merged]`.
+- **Registration and serving.** `withRegistry` registers the adapter with its
+  lineage (the dataset version and digest, the base, the run). `adapterRef`,
+  `registryAdapter`, `lineage`, `adapterCodec`.
+- **`Local.withAdapter`** loads a GGUF LoRA adapter pinned by its digest with
+  the model, and refuses an adapter converted for another model
+  (`AdapterMismatch`). `sky ai start <slot> --adapter
+  file:<path>#sha256=<hex>`.
+- **`sky ai train`**, `sky ai train status | runs | resume | cancel` and
+  `sky ai export`, each with `--format json`, run by their own bundled program
+  (`sky-bundled/ai-train`), so the engine and registry program stays small.
+- **Test mode simulates the trainer**: no Python, no model, no network, so a
+  program's own `sky test` runs the whole workflow, including a relaunch
+  (`fakeCrashAt`).
+- **The console's AI tab has a Training section**: each run's status, steps,
+  losses, relaunches, checkpoint, registered version and a loss curve, with no
+  dataset text.
+- New variable: `SKY_AI_TRAIN_BACKEND`.
+- `examples/73-ai-train`: a web app that freezes a dataset, trains a support
+  adapter with a live progress bar and loss curve, registers it, points `dev`
+  at it and answers questions with it. Its test trains offline with a killed
+  first trainer and checks the relaunch, the GGUF adapter, the registry and the
+  served name.
+- Measured on an Apple M-series Mac with 16 GB: the native trainer on the
+  4-bit dev base (rank 8 on the last 8 layers, q and v, Metal) peaked at
+  0.83 GB at 1 × 1024 tokens and 1.75 GB at 4 × 1024 (`docs/ai/train.md`,
+  "Measured on a Mac"), and a run killed after its step-8 checkpoint resumed
+  to the same adapter.
+
+#### Training on Vertex AI and the GPU tier (phase 4)
+
+- **`Std.Ai.Cloud.Google`: Google Cloud from Sky, over HTTP.** Credentials
+  from a service-account key file, workload identity federation (the Security
+  Token Service, then the service account impersonated) or the metadata
+  server; a user's own login is `NotConfigured`. Calls retry 429 and 503 with
+  backoff (`Overloaded` after four), and a refusal is typed: a quota is
+  `QuotaExceeded`, a region with no free GPU is `CapacityUnavailable`, any
+  other is `RemoteRejected` naming the request. Vertex AI custom jobs, Cloud
+  Run services and their operations, IAM invokers, Artifact Registry, Cloud
+  Build image builds, Cloud Quotas, Cloud Logging and the Cloud Billing
+  catalogue.
+- **`Train.withBackend Train.Vertex`: the same job on one NVIDIA L4.**
+  `withCloud`, `withBudget`, `withMachinePrices` (a dated price book),
+  `withImage`, `withServiceAccount`, `withMaxRuntimeMinutes`, `withSpot`,
+  `withKeepStaging` and `withLabels`, each with a `SKY_AI_TRAIN_*` variable
+  that wins. `plan` checks the trainer image's digest exists, the staging
+  bucket is in the job's region, the L4 quota, and the estimate (provisioning,
+  steps, export) against the budget, before anything launches
+  (`BudgetExceeded`, `QuotaExceeded`). The launch is exactly once across a
+  crash: a create-only intent object in the staging bucket, then the job's
+  labels. The run uploads the data, watches the job, mirrors the trainer's
+  progress and checkpoints from the bucket, resumes a crashed job from its
+  newest verified checkpoint, stops at the budget, downloads the adapter,
+  converts and registers it, and deletes the job records and the staging
+  prefix. The budget is also the job's hard runtime ceiling, so Vertex stops
+  it with no Sky process left. `cancel` cancels the cloud job too.
+- **The trainer image.** `trainer.dockerfile`: NVIDIA's CUDA 13 base pinned by
+  digest, the pinned CPython and uv, the Unsloth hash lock and the Sky driver
+  behind a shim (`sky_cloud.py`) that moves data, checkpoints and the adapter
+  through the bucket. `sky ai image build --train` builds it with Cloud Build
+  into your own Artifact Registry and prints it pinned by digest. Nothing is
+  published to a public registry.
+- **`Std.Ai.Serve`: one base, many LoRA adapters, one GPU.**
+  `Serve.tier Serve.Vllm Serve.devBase` with `withAdapters`,
+  `withMaxAdapters`, `withAliasPolling`, `withToken` and the other builders
+  (each with a `SKY_AI_SERVE_*` variable). `Serve.run` stages the base's pinned
+  files, runs in front of vLLM with runtime LoRA loading, serves the OpenAI
+  routes behind a service token compared in constant time, keeps the aliases
+  loaded, loads other versions on demand, evicts the least recently used one,
+  and hot-loads a promotion: the old version drains before it is unloaded, so
+  no request fails. `/health` is 200 only when vLLM is up and every alias is
+  loaded; `/metrics` has `sky_ai_tier_*` and vLLM's own signals.
+- **`Serve.cloudRun` and `Serve.deploy`.** The tier and vLLM in one Cloud Run
+  service with one L4 that scales to zero, the token from Secret Manager, IAM
+  on and `roles/run.invoker` for `withInvokers` only. `deploy` creates or
+  updates the service under its etag, waits for the revision (a revision that
+  never becomes ready is `DeploymentFailed`), and is idempotent. `render`
+  gives the service as Admin API JSON and as Knative YAML, and `dockerfile`
+  the tier's image. `teardown`.
+- **`Endpoint.withGoogleAuth`** (or `SKY_AI_<SLOT>_AUTH=google`) sends a
+  Google ID token for a private Cloud Run tier in
+  `X-Serverless-Authorization`, kept until five minutes before it expires.
+- **The registry for a tier.** `Registry.registerWith` keeps a version's
+  companion files (a trained adapter's PEFT files beside its GGUF file), and
+  each registration and alias move writes pointer objects to the store
+  (`models/<name>/versions/<n>.json`, `aliases/<name>/<alias>.json`, guarded
+  by generation), which the tier reads instead of the database.
+  `Registry.storeResolver`, `readPointer`, `readManifest`,
+  `publishPointers`. `Store` gains generation-guarded `putIf`, `getObject`,
+  `list`, `deletePrefix` and `bucketLocation`.
+- **`Std.Ai.Failure`**: `QuotaExceeded`, `CapacityUnavailable` and
+  `DeploymentFailed`, and `toErrorWith` for a failure with the provider's own
+  detail.
+- **CLI**: `sky ai train --backend vertex` (with `--project`, `--region`,
+  `--machine`, `--staging`, `--budget`, `--image`, `--price`,
+  `--price-book`, `--spot`, `--keep-staging`, `--label`), `sky ai serve`
+  (`--image` writes the static linux/amd64 tier binary, its Dockerfile and its
+  service), `sky ai deploy`, `sky ai teardown`, `sky ai cloud ls`,
+  `sky ai cloud prices`, `sky ai image build` and `sky ai registry publish`,
+  run by a third bundled program (`sky-bundled/ai-cloud`).
+- **A Google Cloud emulator in the runtime.** Under `sky test` with
+  `SKY_AI_GCP_ENDPOINT=http://sky-gcp.invalid`, every Google Cloud call is
+  answered in process and statefully (Vertex jobs run the Fake trainer into the
+  bucket), so a program tests its cloud workflow offline.
+  `runtime-go/rt/testdata/fakegcp` serves the same emulator on a loopback
+  port for several processes, and test mode lets requests to that one host
+  through.
+- **The console's AI tab** shows a Vertex run's job state and spend against
+  its budget, and a "GPU tiers" section.
+- **Live tests under a hard cap.** `scripts/ai/gcp-bootstrap.sh` sets a
+  project up once; `scripts/ai/gcp-live.sh` runs
+  `rust/crates/sky/tests/ai_gcp_live.rs` (`Need::GcpLive`): it checks the cost
+  ledger (`scripts/ai/live/gcp-ledger.jsonl`) before it starts, labels every
+  resource, tears everything down on exit and fails the run if anything is
+  left. `.github/workflows/ai-cloud-live.yml` runs it on manual dispatch only.
+- New variables: `SKY_AI_TRAIN_PROJECT`, `SKY_AI_TRAIN_REGION`,
+  `SKY_AI_TRAIN_MACHINE`, `SKY_AI_TRAIN_STAGING`, `SKY_AI_TRAIN_BUDGET`,
+  `SKY_AI_TRAIN_IMAGE`, `SKY_AI_TRAIN_SERVICE_ACCOUNT`,
+  `SKY_AI_TRAIN_LABELS`, `SKY_AI_SERVE_*`, `SKY_AI_GCP_ENDPOINT`,
+  `SKY_AI_<SLOT>_AUTH`.
+- `examples/74-ai-cloud`: a web app that trains a support adapter on Vertex
+  AI under a budget, registers it, deploys the GPU tier to Cloud Run and asks
+  it. Its test runs the whole lifecycle against the emulator.
+
+### Fixed
+
+- **`Train.withLearningRate` reaches the native trainer.** The runtime read
+  the learning rate from `driver.json` as a plain float, but it decodes that
+  file with exact numbers, so every `Mlx` run trained at the default `1e-4`
+  whatever the job set. It now reads the number the job wrote (found by
+  `examples/76-ai-shell-command`, whose job asks for `2e-4`).
+- **`Trace.totalCost` no longer adds two currencies, or drops a bad row.** It
+  added every row's amount whatever its currency, so a run priced in USD and
+  in EUR gave one wrong number, and it skipped a stored cost that was not a
+  decimal. It now fails with `InvalidInput` in both cases, and adds priced
+  rows only (an unpriced row has no cost, and `Trace.runSummary` counts it).
+- **The AI runtime no longer has a raw panic for a failed randomness read.**
+  `aiRandomHex` panicked when `crypto/rand` failed. It now returns a typed
+  `EngineFailed`, and each caller (an engine key, a registry id, a temporary
+  file name) passes it on. Since Go 1.24 `crypto/rand.Read` never returns an
+  error (it stops the process), so this path is reached only through the test
+  hook, which proves every caller handles it.
+- **The console's AI panel times a slot's stream and its calls the same way.**
+  A call's latency included its queue wait and a stream's did not. Both now
+  run from the queue place, and each record carries its queue wait.
+- **A bad AI setting fails loudly; it is never skipped.** An AI variable
+  (`<PREFIX>_AI_<SLOT>_*`, the machine's `SKY_AI_FETCH`, `SKY_AI_ACCEL`,
+  `SKY_AI_TRAIN_BACKEND`, `SKY_AI_GCP_ENDPOINT`, `SKY_AI_REGISTRY`, the GPU
+  tier's `SKY_AI_SERVE_*`, the device settings) whose value does not parse
+  used to fall back to the code value or the default in silence. Now a
+  setting read at start-up refuses the start (a Sky.Live app or a
+  `Server.listen` program exits 1, an embedded app returns the failure), and
+  one read at call time fails the call, both with a typed `InvalidSetting`
+  that names the variable and the form it expects and never shows a value
+  that could be secret. A `withX` value in code that does not parse (for
+  example `Local.withContext 0`) is the same failure, naming the builder.
+  Also refused now: a URL without `http://` or `https://` in every mode, and a
+  port above 65535. Sky.Live's own settings (`LIVE_TTL`, `LIVE_PORT`, …) keep
+  their current rule in this release. See the testing guide's Configuration
+  section.
+- **OTLP trace export keeps the endpoint's path, and metrics and traces name
+  the same service.** A base `OTEL_EXPORTER_OTLP_ENDPOINT` with a path
+  (`https://gateway/otlp`) sent traces to `/v1/traces` at the host, dropping
+  `/otlp`, when the endpoint came from `Sky.Config.withTelemetry`. Traces now
+  go to `<endpoint>/v1/traces` and `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is
+  used as given, as the OTLP specification says. The trace resource and the
+  console hub's OTLP envelope now share one service name (`SKY_SERVICE_NAME`,
+  then `OTEL_SERVICE_NAME`, then `K_SERVICE`). The hub envelope's default
+  `service.instance.id` is the host name (it was `instance-0`).
+- **The Android device test no longer depends on how the emulator's network
+  boots.** An Android emulator reports its cellular network as metered until
+  its Wi-Fi comes up, so the slot's `prepare` was refused (a metered
+  connection) or not by timing, and `gate-ai-device-android` failed now and
+  then. The device flows' fixture slot allows metered downloads
+  (`Device.withMetered True`); the metered rule itself stays covered by
+  `tests/Std/Ai/DeviceTest.sky`.
+- **"Not shipped" is now "not supported yet".** The SageMaker training backend
+  is refused with `InvalidSetting` naming the variable, and the message, the
+  testing guide and the design say "not supported yet".
+- **An Android build on a machine with no Android user directory.** The APK
+  build made the debug keystore with `keytool` in `~/.android` without
+  creating it, so a fresh machine (a CI runner) failed with
+  `FileNotFoundException`. The build now uses the directory the SDK tools use
+  (`ANDROID_USER_HOME`, else `ANDROID_SDK_HOME/.android`, else
+  `~/.android`) and creates it first.
+
+- **A Sky.Live page reconnects within about a second of the server coming
+  back.** The stream's reopen backoff doubles to a 16 s cap, and fast
+  failures (a proxy's 503 while its upstream restarts) reach the long steps
+  within seconds, so a restart of a second or two could leave a page, the
+  Sky Console included, offline for up to 16 s more (the release gate's
+  console-live e2e saw 21 s once). While a long step waits, the client now
+  sends its side-effect-free session ping once a second and reopens as soon
+  as anything but a gateway error answers. Regression:
+  `TestLiveJS_ReopensAsSoonAsTheServerAnswers`.
+
+- **An app with a `Std.Ai.Device` slot is refused on `--target
+  desktop:windows` and `desktop:linux`, with the reason.** The desktop device
+  engine runs behind the macOS window only in this version, so on those
+  targets no shell answers the device ops and the slot could never run on the
+  device. `sky build` and `sky check` now say this is not supported yet and
+  name `web:app` in a browser, where a device
+  slot runs in the browser engine, else on the server, or fails typed
+  (`DeviceUnsupported`) for a `DeviceOnly` slot.
+- **`Std.Ai.Registry.adapterFor` reads the device clearance with a `case`.**
+  `v.onDevice /= Nothing` went through the erased `!=` kernel and added one
+  runtime narrowing to every program that resolves a registry adapter
+  (examples 72, 73 and 74); the coerce-floor golden holds.
+
+- **Sky.Http.Server: a second `Server.listen` in one process serves.** A
+  program that served two ports (a public API and an admin API, each started
+  with `Task.spawn (Server.listen …)`) lost the second server: every
+  `Server.listen` shared one Sky Console owner, so the second one mounted the
+  console again and panicked before it bound. Nothing listened on its port and
+  no error reached the program. Each `Server.listen` now owns its own routes,
+  the first one in the process serves the Sky Console (one per process, as
+  with Sky.Live), and the console is released when that server stops. A
+  failure to start is the Task's `Err`: a port already in use is
+  `Err (Unavailable "Server.listen did not start: port N is already in use")`
+  (still printed loudly on stderr), and so is `SKY_CONSOLE_AUTH=token|app`
+  with no console to mount. Before, both exited the whole process, which also
+  ended any other server in it. A `main = Server.listen …` still exits 1 on
+  them, through the entry's `Err` path.
+
+- **Sky.Spa: a server branch that reads a model field through a value derived
+  from the model now sends that field.** `let m2 = { model | n = 0 } in if
+  m2.flag …`, `let m2 = stamp model`, `(stamp model).flag` and a `case` on
+  such a value read `flag` of the client model, but the request left it out.
+  The backend rebuilt `flag` from `init ()` and could take another branch than
+  Sky.Live, so a click ran no task, or the wrong one. The request now carries
+  the field (or the whole model, where the read cannot be mapped to a field).
+  A field written on a guard helper's allow path and kept on its reject path
+  now rides the request too; before, the rejected branch answered `init ()`'s
+  value for it.
+
+- **Sky.Spa: a server branch's `Cmd.none` path dispatches nothing.** For an
+  arm that runs one `Cmd.perform … Got` on one branch and returns `Cmd.none`
+  on another (`if model.flag then ( model, Cmd.perform t Got ) else ( model,
+  Cmd.none )`), the backend answered `Err "… carried no server task to run"`
+  on the `Cmd.none` branch, and the client ran `Got (Err …)`: a failure the
+  app never had. Sky.Live dispatches nothing there. The client now runs such
+  an arm's conditions itself and sends no request on a `Cmd.none` branch.
+  Where it cannot see the `Cmd.none` (a guard helper's reject path), the
+  backend answers that no task ran (`result : List (Result Error T)`, empty),
+  and the client dispatches nothing.
+
+- **Sky.Spa: a server arm runs async through `case`, `if`, `let` and
+  helpers.** On `--target web:app`, an arm whose `( model, cmd )` tuple sat
+  inside a `case`, an `if`, a `let` or a helper held later Msgs for its whole
+  request (`Spa.rpcHold`), so the page froze while a slow call ran: in
+  `examples/72-ai-support-desk` a click on a ticket showed no selection and
+  no "drafting" label until the model answered, and typed text applied late.
+  Sky.Live shows them at once. Such an arm now runs async when every part the
+  client runs reads no server data: the client runs the arm as written (a
+  helper through a client copy), with each command that needs the server
+  replaced by the request, and a `Cmd.none` branch sends no request. Helpers
+  must be top-level functions called with all their arguments (directly or
+  through `|>`), in the module that declares `update` or in a module the
+  client already uses. An arm that reads or writes the signed session holds,
+  and so does every arm that writes the model when `App.withGuard` reads the
+  session (its trusted value is on the server). The build prints a note for
+  every arm that holds: `` `Send` holds later Msgs while its request runs:
+  <reason>. To run it async, as Sky.Live does: <change>. `` A client copy that
+  does not compile makes its arm hold instead of failing the build.
+
+- **Sky.Spa: an `update` laid out with two-space indentation did not split.**
+  The generated client `update` writes each arm's pattern at column 8. A
+  client arm whose body sat at column 6 kept it there, left of its pattern,
+  and a server arm's pattern carried the source's newline and indent, so the
+  generated `update` did not parse. Client arms left of column 8 now move
+  right as a block, and patterns are written trimmed.
+
+- **`sky fmt` no longer moves an own-line comment to a different place in
+  the code.** A comment above an `if` then-branch moved into a lambda in that
+  branch (`Task.map (\_ -> ..)`) or below `else`. A comment above a pipeline
+  step or a call argument moved into a lambda, and a comment above a let
+  binding's body, a record field's value or a let body moved below the `in`
+  body or above `in`. Each construct now keeps the comments in its own gaps,
+  and a lambda claims only the comments between `->` and its body.
+
+- **`sky fmt` lays out operator chains, list patterns and record types in
+  annotations correctly.** A chain that mixed precedence levels was flattened,
+  so `t == "p" || t == "nav"` could break between `t` and `== "nav"`; a chain
+  now breaks only at its loosest operator. A list pattern lost its inner
+  spaces (`[ only ]` became `[only]`). Every record type with two or more
+  fields broke, and in an annotation that put its commas and closing brace at
+  column 0; it now stays on one line when it fits, and a broken one breaks the
+  annotation one argument per line. The stdlib, the bundled apps, `apps/` and
+  `examples/` are reformatted, and a new `fmt-clean` gate keeps every tracked
+  `.sky` file there `sky fmt`-clean.
+
+- **A stdlib module that did not parse stopped the build with an internal
+  compiler error.** The stdlib is trusted and was not checked for parse
+  errors, so a recovered error node (an operator section such as `(+)`, which
+  Sky has no grammar for) reached lowering as `an error-recovery expression
+  reached lowering`, naming no file, and an extra closing parenthesis at the
+  end of a declaration was dropped in silence. The build now reports a stdlib
+  parse error as `[E0001]` with the stdlib file and line
+  (test `a_stdlib_module_that_does_not_parse_names_its_file`). Two such
+  parentheses in `Std.Ai.Cloud.Google` and `Std.Ai.Registry` are fixed.
+- **Credentials were read when a Task was built, not when it ran.**
+  `Std.Ai.Cloud.Google` read `GOOGLE_APPLICATION_CREDENTIALS`, and
+  `Std.Ai.Store` read `AWS_ACCESS_KEY_ID` and the instance metadata address,
+  while the Task was being built. A Task built once (a top-level value) and run
+  after the variable changed used the old value. They are now read when the
+  Task runs (`GoogleAuthTest.sky` in `ai_cloud_train_flow.rs`).
+
+- **Two types of one module could share a constructor name.** The module
+  type-checked and failed `go build` (`too many arguments in call to …`), or
+  showed a confusing type mismatch. It is now `[E1002]` at the second
+  constructor (`rust/crates/hir/tests/duplicate_constructor.rs`).
+- **A Sky.Spa client that shares a module with an AI slot did not build:**
+  the wasm half was given the server-only slot declaration
+  (`undefined: rt.AiDeclareSlots`). Only the server half declares slots now.
+- **The AI slot scan read a type's `(..)` as exposing every value**
+  (`import Std.Ai.Endpoint exposing (Mode(..))` made a bare `endpoint` a
+  slot call) and matched names inside strings and comments.
+- **A large response was cut at the server's 30-second write deadline** on a
+  slow link: an Android emulator's model download ended with "unexpected end
+  of stream". A blob's deadline now moves with its size.
+- **A Sky.Spa server arm whose task asks a device slot did not split.** A
+  task that opens a server effect and then calls `Device.provider` (the
+  self-check of `examples/75-ai-everywhere`) was read as a `Std.Native`
+  client effect, and the build failed with "returns a Std.Native client
+  effect, but its module does not import Std.Native". Such a task now runs on
+  the server, where `Std.Ai.Device` answers as the slot. A task that asks the
+  device alone stays in the client
+  (`rust/crates/project/tests/spa_ai_device_mixed.rs`).
+- **A `Server.listen` app said it was listening before it was.** The
+  "listening" line, which `sky run`'s supervisor, the build-run gate and the
+  flow tests read as the readiness signal, was printed before the port was
+  bound, so under load a client that read it was refused (the
+  `ai-device-partition` gate failed right after a rebuild). The port is bound
+  first now (`TestServerListen_PrintsListeningOnlyOnceBound`).
+- **`--ai-embed` could leave an `--embed` app's database running.** The
+  server's `--sky-ai-export` step ended with `os.Exit`, which skips the
+  embedded PostgreSQL's shutdown; it now ends through `rt.ExitProcess`
+  (`pg_embed_exit_audit_test.go` was red).
+- **A streamed answer on WebGPU failed** ("trying to suspend without
+  WebAssembly.promising"): the streaming engine functions were not JSPI
+  exports of the WebGPU build (`ai_device_engine_exports.rs`).
+- **The device e2e reused an earlier run's model in WebKit**, whose persistent
+  context keeps the origin-private file system across profiles; each probe
+  run now starts from an empty device store.
+- **The server-rendered page of a Sky.Spa app named no browser engine.** The
+  `sky-ai-engine` meta was only in the static `index.html`, so an app with
+  routes never offered the device. `sky build` now writes it into the backend
+  with the wasm name (`spa_split::bake_built_ai_engine`).
+- **A Sky.Spa split app whose `init` command reaches the server failed to
+  build.** `update` arms that return `Cmd.perform <server task> ToMsg` were
+  rewritten into an RPC, but `init` was copied into the wasm client verbatim,
+  so `sky build --target web:app` on `examples/72-ai-support-desk` failed with
+  `Undefined name: loadTickets` and reported a split defect. The client `init`
+  now sends one RPC (`POST /_rpc/SpaInit_`); the backend runs `init`'s command
+  and answers the follow-up Msgs, which the client dispatches through
+  `update`. This covers a direct `Cmd.perform`, `Cmd.batch`, helpers, `let`
+  bindings, qualified bindings of other modules and an `init` in a sibling
+  module (`spa_split::plan_init_rpc`; tests in `spa_split_flow.rs`).
+- **A Sky.Spa split backend lost the app's `[database]` settings.** The
+  generated `backend/sky.toml` carried only `[live] store` / `storePath`, so a
+  database-backed app built with `--target web:app` answered every read with
+  "db.connect: no path given". The backend now carries the runtime tables the
+  build bakes into the binary (`[database]`, `[log]`, `[analytics]`, `[jobs]`,
+  `[env]`, `[security]`) verbatim (`spa_split::emit_backend_runtime_sections`).
+  This is compatibility for projects that still keep these tables: settings
+  belong in code (`Sky.Config.withDatabase` and the other `withX` builders),
+  with the operator's variable winning, and the split carries code as it is.
+- **A Sky.Spa split backend ignored the app's code configuration.** The
+  `--target web:app` synthesis dropped `App.withConfig` and `App.withBase`, so
+  the backend took its session store, TTL and CSRF switch only from
+  `sky.toml` `[live]` or the environment, and its log, database and telemetry
+  from `sky.toml`. Both builders are now carried into a `spaServerConfig_`
+  boot task (`App.applyServerConfig`, new) that the backend runs before it
+  listens, in the builder layer: operator env > code > default, as in the
+  Sky.Live build. The boot line names `App.withConfig` as the store's source
+  (`Spa_applyServerSettings`; test
+  `a_spa_backend_honours_the_store_the_app_names_with_with_config`).
+- **`sky ai rollback` and `sky ai lineage` read the database from `sky.toml`.**
+  The CLI passed the project's `[database]` path or url to the bundled
+  program. In a project with a pipeline (`src/Ai.sky`) these verbs now run
+  through it, as `promote` does, on the database and registry its code names
+  (`Pipeline.withDb`, `Pipeline.withRegistry`); `--db`, `SKY_DB_PATH` and
+  `DATABASE_URL` still win. Nothing in `sky ai` reads `sky.toml` settings
+  (test `registry_verbs_use_the_database_the_project_code_names`).
+- **`sky test` gave a database named in code no throwaway copy.** The
+  offline test database was planned from `sky.toml` `[database]` only, so a
+  project that names its database with `Config.withDatabase` ran its tests on
+  the real file (`examples/72-ai-support-desk` wrote `support-desk.db`). The
+  plan now also reads the `Config.withDatabase (Sqlite …)` / `(Postgres …)`
+  the code names (`project::code_database_engine`; test
+  `a_database_named_in_code_gets_the_throwaway_database`).
+- **`examples/72-ai-support-desk` names its database in code.** Its
+  `sky.toml` holds only the name, entry and source root; `Tickets.database`
+  is `Config.withDatabase (Config.Sqlite "support-desk.db")`, and the app,
+  the pipeline (`Pipeline.withDb Tickets.connect`) and the registry connect
+  through it. `SKY_DB_PATH` replaces it. `Db.connect`'s documentation and its
+  "no path given" error now name `Config.withDatabase` and `SKY_DB_PATH`
+  instead of `sky.toml`.
+- **The memoised-binding lint warned about every top-level AI slot that serves
+  registry adapters.** `chatSlot = Endpoint.endpoint "chat" |>
+  Endpoint.fromRegistry (Registry.resolver openRegistry)` only STORES the
+  task that opens the registry, but the lint read it as a frozen database
+  read. A `Std.Ai` `Endpoint`, `Provider`, `Registry` or `Pipeline` is now a
+  descriptor like `Db` and `Store` (`caf_stale_read_lint.rs`).
+- **The startup report and `sky doctor` missed the synthetic teacher's slot.**
+  A module that imports `Std.Ai.Dataset.Synthetic` uses the stdlib's
+  `"teacher"` slot, as one that imports `Std.Ai.Eval` uses `"judge"`.
+- **The slots a build reports are the ones its entry reaches**: an app's
+  binary no longer lists a teacher or judge that only its AI pipeline uses.
+- **`sky ai promote | rollback | lineage --registry <url>` lost to
+  `SKY_AI_REGISTRY`.** The flag now wins, as the usage text said.
+- **`sky ai promote` re-gated a version's evidence on its own**, so a version
+  that regressed against the one the alias served could still be promoted on
+  an absolute floor. It now compares (`promoteCompared`).
+- **`Eval`'s `JsonShape` failed every answer a model wrapped in a code
+  fence.** Found running the flagship's suite on the real 0.5B model, which
+  answered ```` ```json {…} ``` ````. An answer that is one Markdown code fence
+  is now read inside the fence; prose around the JSON still fails.
+- **A new project's `.gitignore` did not ignore `.sky/`**, where the local
+  registry store, frozen datasets and the `sky ai` build cache live.
+  `sky init` writes `.sky/` into `.gitignore` and `.dockerignore`.
+- **A judge that answers `5` instead of `SCORE: 5` no longer fails every
+  rubric case.** The pinned 0.5B development model, the default judge, drops
+  the label; `Std.Ai.Eval` now also reads a reply that starts with one digit
+  from 1 to 5. A reply with no score still fails the case.
+- **`sky ai <verb> --format json` printed a non-JSON line on its first run.**
+  The one-time "building bundled app" notice of every bundled program
+  (`sky ai`, `sky doc --serve`, the console) went to stdout; it now goes to
+  stderr, so stdout carries only the verb's output.
+- `docs/tooling/testing.md` said a test-mode HTTP fixture cannot tell two
+  requests to the same URL apart by body. It can: `match.bodyContains` has
+  been read for some time, and the page now documents it.
+- **Two `sky ai` processes that met a cold cache could break each other's
+  build.** Both built the bundled app in the same directory, and one could
+  delete the source the other was reading ("could not materialise bundled
+  source"). `rust/crates/sky/src/bundled.rs` now builds in a staging directory
+  of its own and renames it into place. The first rename wins, and the other
+  process uses that build.
+- **Two Std.Ai flow tests could share a scratch directory.** Their names came
+  from the clock, which macOS gives in microseconds, so two tests that started
+  together got the same directory and one fake engine. `ai_cli_flow` then
+  counted another test's engine launches and failed about half the time. The
+  Std.Ai flow and live tests now add a per-process counter to the name.
+- **The GGUF reader dropped float32 metadata values.** A `float32` key (for
+  example a LoRA adapter's `adapter.lora.alpha`) read as no value
+  (`runtime-go/rt/ai_gguf.go`). It now reads as its number.
+- **`Just`, `Ok` and `Err` around the result of a polymorphic function failed
+  `go build`.** `Result.andThen f r |> Just` at a `Maybe (Result Error Rec)`
+  slot passed `sky check`, but the erased `rt.SkyResult[any, any]` reached
+  `rt.Just[rt.SkyResult[…, Main_Rec_R]]` with no narrowing. The constructor
+  argument is now narrowed to the payload type, as a user constructor's is.
+  The same holds for a record whose alias has the same fields as the
+  payload's alias in another module.
+- **A function defined with fewer parameters than its type returned a zero
+  value when passed as a function.** `withRank : Int -> Job -> Job` defined as
+  `withRank n = update (…)` and passed to an `(Int -> Job -> Job)` parameter
+  dropped its second argument at run time, and the next `case` panicked. The
+  compiler now adapts the currying in the emitted Go.
+- **A record-update lambda at an anonymous record type failed `go build`.**
+  `update (\s -> { s | rank = n }) job`, where `update` takes a
+  `{ name : String, rank : Int } -> { name : String, rank : Int }`, now builds,
+  as it already did with a `type alias`.
+- **The runtime function adapter returned a zero value for a curried
+  function.** A Go func of shape `func(int) func(Job) Job` reaching a
+  `func(int, Job) Job` slot through `rt.Coerce` now gets every argument group.
+  A shape that cannot be adapted fails as a classified `CoerceFailure`.
+- **Fewer runtime narrowings in emitted Go.** A union over a type its own
+  module declares stays sealed when another module, the stdlib included,
+  declares the same name. `String.fromInt`, `modBy` and the `Math` functions
+  `round`, `floor`, `ceil`, `sqrt`, `pow`, `sin`, `cos`, `tan` and `log` over
+  typed arguments call the runtime's typed functions. An empty list at a
+  typed slot is built at that type.
+
+### Tests
+
+- `examples/75-ai-everywhere` builds for `web:app`, `desktop:mac` and
+  `mobile:ios` in the release job `gate-ai-device-native`, and for
+  `mobile:android` in `gate-ai-device-android`
+  (`ai_device_native_flow.rs`, `example_75_builds_for_*`).
+
+- The Sky.Spa differential split fuzzer (`xtask harness --only
+  spa-diff-fuzz`) now compares the leaf and the command each leg takes, not
+  only the model, and checks client-result roots. For a client-result arm the
+  client runs itself, it checks that the client sends the request exactly on
+  the leaf where the direct update performs. It fails when a Model field takes
+  one value over every generated model. New fixture
+  `tests/fixtures/spa-readset-noneleaf`; new falsifier
+  `spa-diff-fuzz.condition-read-dropped`.
+
+- The differential split fuzzer builds the client leg of every async arm with
+  the split's own emitter and checks where it sends (exactly where the direct
+  update's command is not `Cmd.none`) and, for an arm that makes its own model
+  write in the client, that its model is the direct update's (the split
+  applies no server write-set there). New fixture
+  `tests/fixtures/spa-async-leaves` (`SPA_DIFF_FUZZ_EXPECTED` 46); new
+  falsifiers `spa-diff-fuzz.async-arm-drops-write` and
+  `spa-diff-fuzz.async-arm-sends-on-keep`. New tests in `spa_split_flow.rs`
+  (`async_leaves_run_their_model_write_in_the_client`,
+  `identity_arms_hold_and_a_guard_on_identity_holds_every_write`,
+  `std_app_sibling_update_two_space_layout_runs_async_and_builds`,
+  `example_72_select_redraft_send_are_async`) and a browser stage in
+  `scripts/spa-rpc-order-e2e.sh` (`scripts/spa-async-arms-verify.mjs`): the
+  app's model call is held open, and the page is read while the request is
+  pending, in Chromium and WebKit, against Sky.Live.
+
+- Device (phase 5): `tests/Std/Ai/DeviceTest.sky` (every rule of the
+  decision, the status, the wire values, the spec builders, record, replay
+  and one suite scored on both sides), the `allowOnDevice` cases of
+  `RegistryTest`, `runtime-go/rt/ai_device_serve_test.go` (the offer, the
+  allow-list, the chunk list, the fallback call's rules, the write deadline),
+  `ai_device_worker_test.go` (under node: no silent CPU run, the streaming
+  SHA-256, chunk and file digests, a refused store),
+  `ai_device_desktop_test.go`, `rust/crates/sky/tests/ai_device_flow.rs` (the
+  build errors, the split, the served offer) and `ai_device_native_flow.rs`
+  (the iOS simulator, the Android emulator and the Mac app, ignored in the
+  per-commit run), and `scripts/ai-device-e2e.sh` (Chromium and WebKit under
+  the strict policy). `go run ./cmd/sky-tiny-gguf` writes the synthetic Qwen2
+  model they run.
+- Streaming: `runtime-go/rt/ai_stream_test.go` (pieces from a managed engine,
+  one piece from a server that does not stream, retries before the stream
+  only, typed failures, close releases the queue place),
+  `TestDeviceStream*` (the streaming fallback route and its rules),
+  `TestDeviceWorkerStreamsAnAnswer`, the `chatStream` / `readStream` cases of
+  `ProviderEndpointTest.sky`, and `scripts/ai/device/test-engine-core.sh`
+  (`test_sky_llama.cpp`: the streamed answer equals the one-call answer, in
+  whole UTF-8 pieces). The probe streams on every target.
+- Pipeline (phase 2 part C): `tests/Std/Ai/PipelineTest.sky` (members, alone
+  and against an alias, the typed gate failure, the attached report,
+  `--promote-to` on a pass only and only against a compared alias, the
+  compared promotion, `--expect`, datasets frozen and registered once, tasks
+  with arguments, unknown members, usage errors); additions to
+  `RegistryTest.sky` (dataset versions, `ChecksumMismatch`, references,
+  `trainedOn` by reference, compared evidence), `SyntheticTest.sky` (a
+  journalled re-run with a teacher and a judge that fail every call),
+  `EvalTest.sky` (`judgeAnswerWith`), `DatasetTest.sky` (spilled dedupe over
+  three chunks, the engine tokenizer's fallback);
+  `runtime-go/rt/ai_dedupe_test.go` (the set never holds more than its limit
+  in memory, the live heap does not grow with ten times the keys, merges,
+  sweeps; `inspect`'s duplicate check stays within its limit and names the
+  first row of every repeat), `DatasetTest.sky` (a spilled `inspect` over
+  three chunks), `console_app/console_ai_eval_source_test.go` (an eval run's
+  source label), `ai_console_test.go` (runs read from the database, merged with the
+  ring); `rust/crates/sky/tests/ai_pipeline_flow.rs` (the flagship's suites
+  offline, the whole lifecycle through the CLI on the fake engine, the
+  adapter guard, the app serving the promoted adapter, refusals without
+  `src/Ai.sky`); `ai_cli_flow.rs` shape refusals; unit tests for
+  `ai_entry`, scoped `ai_slots`, `ai_project` (the cache key, pruning),
+  `ai_doctor`; the reject corpus case `ai_eval_passed_is_opaque` (promotion
+  without `Passed` does not compile); corpus surface `aipipeline`.
+- Registry (phase 2): `tests/Std/Ai/RegistryTest.sky` (versions, lineage,
+  evidence, compare-and-swap race, rollback stack, block, force, resolver),
+  `tests/Std/Ai/StoreTest.sky` (SigV4 against the AWS examples, locations,
+  local put and fetch), `tests/Std/Ai/EvalTest.sky` (journal, calibration,
+  kappa, gate refusal, pairwise, report codec), `runtime-go/rt/ai_store_test.go`
+  (digest-checked transfers against an httptest bucket, adapter detection,
+  `SKY_AI_REGISTRY` precedence), `ai_endpoint_registry_test.go` (served name,
+  refresh, failed refresh, `--lora`, engine switch, `AdapterMismatch`, a
+  swapped file), `ai_startup_test.go`, the console registry section;
+  `rust/crates/sky/tests/ai_registry_flow.rs` (program + CLI on SQLite with the
+  fake engine, GCS and S3 offline in test mode, the example, and the same
+  registry on a real PostgreSQL cluster, `--ignored`), `doctor_flow.rs`, the
+  `ai_slots` and `ai_doctor` unit tests, corpus surface `aistore`, and the
+  console-controls e2e registry check.
+- `runtime-go/rt/ai_test.go` against a fake engine
+  (`runtime-go/rt/testdata/fakellama`): the resolution rule, precedence and
+  prefix, checksum refusal for models and engine archives, fetch off,
+  resumable downloads, GGUF parsing and hostile headers, fit planning, the
+  queue, remote retries and no fallback, launch hygiene (key file, cleared
+  environment, loopback), crash restart, giving up, exit outside
+  development, idle unload, sharing, stop and orphan reaping.
+- `rust/crates/sky/tests/ai_cli_flow.rs`: the `sky ai` verbs and a compiled
+  program's slots on the fake engine. `ai_local_live.rs`: a live test that
+  runs a program with no configuration on the real engine and model (chat
+  and an embedding); CI runs it in its own job with the engine and model
+  cached (`ai-local-live`, release `gate-ai-local`).
+- `tests/Std/Ai/ProviderEndpointTest.sky`: options, embeddings, the Local
+  values and the Endpoint resolution a program observes.
+- Domain failures and `Std.Ai.Failure`: `runtime-go/rt/error_domain_test.go`
+  (the runtime's tags follow `Error.sky`, `ErrDomain` / `DomainOf` round
+  trip, every AI code's kind, flag and attributes, the Go and Sky tables
+  agree, no URL secret in an attribute, `SkyShow`, log fields);
+  `tests/Std/Ai/FailureTest.sky` (`fromError (toError f) == Just f` for every
+  failure, kinds, retry flags and delays, other domains and unknown codes);
+  `tests/conformance/tests/SkyCoreErrorCoverageTest.sky` and
+  `CodecConformanceTest.sky` (the helpers, the wire shape, forward-compatible
+  decoding); `rust/crates/ty/tests/error_details_domain_hint.rs` (the
+  `[E3001]` hint); `ai_cli_flow.rs` (a compiled program reads a remote 429 as
+  `Overloaded` with its delay and status, and `NotConfigured` with its
+  setting); the corpus surfaces `aifailure`, `aieval` and the error battery's
+  domain rows.
+- `Std.Ai.Eval`: `tests/Std/Ai/EvalTest.sky` (every scorer, the judge and a
+  judge reply without a score, seeded samples, digests, tools, gates and their
+  typed failure, cost, McNemar, regressions, JUnit, Markdown, the judge mocked
+  history); `rust/crates/sky/tests/ai_eval_test_mode_flow.rs` (in test mode
+  the default judge is a `tests/mocks/` fixture, and no engine starts).
+- The console's AI tab: `runtime-go/rt/ai_console_test.go` (the API's slots,
+  calls, filters and eval runs, no secret, bounded rings) and the embedded
+  scenario of `scripts/console-controls-e2e.sh`, which drives the fixture's
+  slots against a fake model and operates the tab, the outcome and slot
+  filters, an eval run's cases and a reload in Chromium and WebKit.
+
+### Migration
+
+- **A bad AI variable now stops the start (loud).** An app that started with
+  an AI variable that did not parse (an `SKY_AI_CHAT_MAX_INFLIGHT=lots`, a
+  `SKY_AI_FETCH=maybe`) used to run with the default. It now refuses to start,
+  naming the variable and the form it expects. Fix or unset the variable.
+- **`Trace.totalCost` fails on a run priced in two currencies (loud).** Read
+  `Trace.runSummary` for the total per currency.
+- **`sky ai promote` compares against the alias's version (loud).** A version
+  whose attached report regresses against the report of the same suite on
+  the version the alias serves is refused with `GateFailed` (exit 1), where it
+  used to be promoted when its own report cleared the thresholds. Evaluate the
+  candidate against the alias (`sky ai eval <suite> --against <alias>`), or
+  force it with a reason.
+- **A new `ErrorDetails` variant (loud).** A `case` over `ErrorDetails` with
+  one arm per variant and no `_ ->` is `[E3001]`. Add `_ ->`, or use
+  `Error.domain` / `Error.isRetryable` / `Error.retryAfter` or a domain's
+  typed view. `docs/migration/v0.28.md#a-new-errordetails-variant`.
+- **`Error.isRetryable` follows a domain failure's flag (silent).** A crashed
+  or failed AI engine, a missing accelerator and a failed toolchain are
+  `Unavailable` and no longer retryable. Errors without a domain failure keep
+  the kind rule.
+- **An older peer reads a domain failure as no details (silent).** Its kind
+  and message survive.
+- **Std.Ai failures carry typed details (silent).** `info.details` is now
+  `Just (Domain …)` where it was `Nothing`. Code that matched `Nothing` to
+  mean "an AI failure" matches the domain instead (`Error.domain err ==
+  Just "ai"`).
+- **`Provider.chat` sends the same request (silent).** It is
+  `Provider.chatWith Provider.defaultOptions`.
+- **Typed tools are opt-in (silent).** `Tool.tool`, `Provider.ToolSpec`,
+  `Provider.chatTools`, `Provider.customTools` and `Agent.nativeToolLoop` keep
+  their types and send the permissive `"parameters": {"type": "object"}` as
+  before. Use `Tool.typed` and `Provider.chatStructured` to opt in.
+- **The prompt-based tool loop passes an object `args` on (silent).** When
+  the model gave `args` as a JSON object instead of a string,
+  `Agent.toolLoop` used to run the tool with an empty string. It now runs it
+  with the object's JSON text, which a typed tool decodes.
+- **New stdlib names.** `Std.Codec` exports `JsonSchema` and `jsonSchema`.
+  `Std.Ai.Provider` exports `ToolSchema`, `ToolRequest`, `ResponseFormat`,
+  `ResponseShape`, `Structured`, `responseShape`, `responseFormat`,
+  `shapeCodec`, `decodeStructured`, `chatStructured`, `chatToolRequest`,
+  `measureToolRequest` and `customToolRequest`; `Std.Ai.Tool` exports
+  `typed`, `parameters` and `checkArguments`; `Std.Ai.Agent` exports
+  `structuredToolLoop` and `structuredToolLoopWith`.
+- **New stdlib names.** `Std.Ai.Provider` now exports `Options`,
+  `defaultOptions` and `embed`. A program that exposes it with `(..)` together
+  with `Std.Watch` (`Options`, `defaultOptions`) or `Std.Html` (`embed`) and
+  uses one of those names bare gets `[E1012]`, which names both modules. Qualify
+  the name (`Html.embed`) or import it by name
+  (`import Std.Html exposing (embed)`). `docs/migration/v0.28.md`.
+- **Training is new.** Nothing in `Std.Ai.Train` breaks a v0.27.20 program.
+  A host that ran a pre-release v0.28 build cleans `toolchains/mlx/` and
+  `toolchains/fake/` from the AI home, and a run that a Python Mlx driver
+  started is started again. `docs/migration/v0.28.md#training-stdaitrain-new-in-v0280`.
+
+### Changed
+
+- The exit audit (`pg_embed_exit_audit_test.go`) skips `testdata/`, which no
+  app links (the fake llama-server exits by design).
+- `Eval.passedSuite` and `Eval.passedCandidate` have doc summaries, and the
+  `sky-suites` exact count records the phase 1 Eval and Failure suites it had
+  missed.
+- The stdlib-collision baseline (`[E1012]`'s "new since" note and the E-5
+  test) is now v0.27.8 (`rust/crates/hir/data/stdlib-exports-v0.27.8.tsv`).
+- The `samename-stdlib-type` fixture imports `Std.Ai.Provider` itself: the
+  collision it guards used to arrive only through Provider's internal
+  `Request` alias, which this release removed.
+
 ## v0.27.20 - `Std.Email` sends custom headers, including the one-click unsubscribe pair (2026-10-27)
 
 ### ⚠ Breaking changes

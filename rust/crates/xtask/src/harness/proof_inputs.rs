@@ -176,6 +176,19 @@ fn split_items(text: &str) -> Vec<(String, String)> {
                 break;
             }
         }
+        // `const fn` / `async fn` / `unsafe fn` (in any combination) is a `fn`
+        // item named by what follows `fn`. Without this, `const ` matched as a
+        // const item and the item was named `fn`, which every body names.
+        let mut quals = rest;
+        while let Some(r) = ["const ", "async ", "unsafe "]
+            .iter()
+            .find_map(|q| quals.strip_prefix(q))
+        {
+            quals = r;
+        }
+        if quals.starts_with("fn ") {
+            rest = quals;
+        }
         let opens =
             !line.starts_with(char::is_whitespace) && KEYWORDS.iter().any(|k| rest.starts_with(k));
         if opens {
@@ -405,6 +418,12 @@ impl Tracked {
                 .split(|b| *b == 0)
                 .filter(|s| !s.is_empty())
                 .map(|s| String::from_utf8_lossy(s).into_owned())
+                // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is
+                // excluded from CI in general. It is never a proof input and
+                // never a coverage-ledger unit, so skip every
+                // `crate::ci_excluded` example by name here, at the one set
+                // both read.
+                .filter(|f| !crate::ci_excluded::is_ci_excluded_rel(f))
                 .collect(),
         })
     }
@@ -1047,5 +1066,20 @@ mod tests {
         let items = split_items("pub fn a() {\n    fn inner() {}\n}\nconst B: u8 = 1;\n");
         let names: Vec<&str> = items.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, ["a", "B"]);
+    }
+
+    /// A `const fn` (or `async` / `unsafe` fn) is named by its function name,
+    /// not by the keyword `fn`. Naming it `fn` put the item into the closure of
+    /// EVERY gate, because every body contains the identifier `fn`: one
+    /// `pub const fn` in bodies.rs changed the proof digest of the whole
+    /// registry, the canary included.
+    #[test]
+    fn a_qualified_fn_is_named_by_its_function_name() {
+        let items = split_items(
+            "pub const fn shard(k: usize) -> u64 {\n    0\n}\nconst unsafe fn raw() {}\n\
+             async fn later() {}\nconst LIMIT: u8 = 1;\n",
+        );
+        let names: Vec<&str> = items.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["shard", "raw", "later", "LIMIT"]);
     }
 }

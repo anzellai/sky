@@ -11,6 +11,7 @@
 mod bench_app;
 mod bench_gen;
 mod build_run_gate;
+mod ci_excluded;
 mod ci_scan;
 mod coerce_floor_gate;
 mod config_matrix;
@@ -238,6 +239,11 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
     entries.sort();
     for path in entries {
         if is_generated(&path) {
+            continue;
+        }
+        // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+        // from CI in general; skip every `crate::ci_excluded` example by name.
+        if crate::ci_excluded::is_ci_excluded_path(&path) {
             continue;
         }
         if path.is_dir() {

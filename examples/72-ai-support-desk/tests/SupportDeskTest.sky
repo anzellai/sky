@@ -1,0 +1,128 @@
+module SupportDeskTest exposing (tests)
+
+-- The support desk's own logic, offline. The project commits a `.env.test`,
+-- so `sky test` runs in test mode: the database is a scratch SQLite file and
+-- the chat slot's calls are answered by tests/mocks/ (no engine starts).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Test as Test exposing (Test, TestResult)
+import Std.Ai.Dataset as Dataset
+import Tickets
+import Assist
+import Data
+
+
+check : Task Error a -> (a -> TestResult) -> TestResult
+check t f =
+    case Task.run t of
+
+        Ok v ->
+            f v
+
+        Err e ->
+            Test.fail (Error.toString e)
+
+
+-- Seed, draft a reply for the first ticket, send it, read the desk back.
+flow : Task Error ( List Tickets.Ticket, String, Int )
+flow =
+    Tickets.open
+        |> Task.andThen
+               (\db ->
+                   Tickets.seed db |> Task.andThen (\_ -> Tickets.seed db)
+                       |> Task.andThen (\_ -> Tickets.all db)
+                       |> Task.andThen
+                              (\ts ->
+                                  case ts of
+
+                                      first :: _ ->
+                                          Assist.draft first.body
+                                              |> Task.andThen
+                                                     (\text ->
+                                                         Tickets.send
+                                                             db
+                                                             first
+                                                             text
+                                                             |> Task.andThen
+                                                                    (\_ ->
+                                                                        Tickets.all
+                                                                            db)
+                                                             |> Task.andThen
+                                                                    (\after ->
+                                                                        Dataset.countRows
+                                                                            (Tickets.accepted
+                                                                                Assist.systemPrompt
+                                                                                db)
+                                                                            |> Task.map
+                                                                                   (\n ->
+                                                                                       ( after
+                                                                                       , text
+                                                                                       , n
+                                                                                       ))))
+
+                                      [] ->
+                                          Task.fail
+                                              (Error.invalidInput
+                                                  "no tickets were seeded")))
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "an empty desk is seeded once with five tickets"
+          (\_ -> check flow (\( ts, _, _ ) -> Test.equal 5 (List.length ts)))
+    , Test.test
+          "the assistant drafts the reply through the chat slot"
+          (\_ ->
+              check
+                  flow
+                  (\( _, text, _ ) ->
+                      Test.isTrue (String.contains "refund within 30 days" text)))
+    , Test.test
+          "a sent reply closes the ticket and becomes accepted training data"
+          (\_ ->
+              check
+                  flow
+                  (\( ts, _, accepted ) ->
+                      Test.equal
+                          ( [ "sent", "open", "open", "open", "open" ], 1 )
+                          ( List.map .status ts, accepted )))
+    , Test.test
+          "before any promotion the assistant serves the base model"
+          (\_ ->
+              check
+                  Assist.status
+                  (\s ->
+                      Test.equal
+                          ( "local", "base model, no adapter" )
+                          ( s.mode, s.adapter )))
+    , Test.test
+          "triage is a structured answer, decoded with the codec"
+          (\_ ->
+              check
+                  (Assist.triage "My parcel is two days late.")
+                  (\t ->
+                      Test.equal ( "delivery", False ) ( t.category, t.urgent )))
+    , Test.test
+          "the assistant calls the typed ticket tool and answers in its shape"
+          (\_ ->
+              check
+                  (Tickets.open |> Task.andThen (\db -> Tickets.seed db)
+                      |> Task.andThen
+                             (\_ -> Assist.ask "What is the status of ticket 1?"))
+                  (\a ->
+                      Test.equal
+                          ( 1, "Ticket 1 is about a refund." )
+                          ( a.ticket, a.reply )))
+    , Test.test
+          "a chat row's split key is the customer's message"
+          (\_ ->
+              Test.equal
+                  "When are you open?"
+                  (Data.userText
+                      { messages = Assist.messagesFor "When are you open?" }))
+    ]

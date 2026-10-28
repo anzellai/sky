@@ -1,0 +1,68 @@
+module Assist exposing (notesSlot, assistant, helpSlot, help, summaryPrompt, summaryOptions)
+
+{-| The app's two model slots.
+
+`notes` runs on the user's device when it can (`Endpoint.withDevice`): the
+client calls `assistant`, `Device.provider "notes"`, and a note is summarised
+by the model on the phone, in the browser or in the desktop app once the user
+has agreed to the download; until then, and on a device that cannot run it,
+the same call answers from this server's slot. `help` is server only: the Help
+page asks it through the server.
+
+Every setting is code with an operator override: `SKY_AI_NOTES_PLACEMENT`
+(`auto`, `device`, `server`), `SKY_AI_NOTES_DEVICE_MODEL`,
+`SKY_AI_NOTES_DEVICE_ADAPTER`, and the usual `SKY_AI_NOTES_*` and
+`SKY_AI_HELP_*` slot variables (`docs/ai/device.md`).
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe exposing (Maybe(..))
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Local as Local
+import Std.Ai.Device as Device
+import Std.Ai.Provider as Provider exposing (Provider, Message)
+
+
+-- | The notes assistant: the development model (Qwen2.5 0.5B, Q4_0) on a
+-- managed local engine on the server, and on devices.
+notesSlot : Endpoint
+notesSlot =
+    Endpoint.endpoint "notes" |> Endpoint.withLocal (Local.model Local.devModel)
+        |> Endpoint.withDevice
+               (Device.spec Device.Auto |> Device.withContext 2048)
+
+
+-- | The client's provider for `notes`.
+assistant : Provider
+assistant =
+    Device.provider "notes"
+
+
+-- | The Help page's slot: on the server only.
+helpSlot : Endpoint
+helpSlot =
+    Endpoint.endpoint "help" |> Endpoint.withLocal (Local.model Local.devModel)
+
+
+help : Provider
+help =
+    Endpoint.provider helpSlot
+
+
+-- | The messages that ask for a note's summary.
+summaryPrompt : String -> List Message
+summaryPrompt body =
+    [ Provider.system
+          "You summarise private notes. Answer with one short sentence."
+    , Provider.user body
+    ]
+
+
+-- | Repeatable answers: temperature 0 and a fixed seed.
+summaryOptions : Provider.Options
+summaryOptions =
+    { temperature = Just 0.0
+    , seed = Just 7
+    , maxTokens = Just 48
+    , adapter = Nothing
+    }

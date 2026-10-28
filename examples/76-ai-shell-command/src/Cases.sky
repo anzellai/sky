@@ -1,0 +1,127 @@
+module Cases exposing (Case, cases, normalise)
+
+{-| The eval cases. Each is a request in words the training data never uses,
+and a reference command for the platform. A case passes when the proposed
+command, run in a fresh fixture, gives the same output and leaves the folder
+in the same state as the reference does. The text of the command does not
+matter: `fd -e md` passes where `find . -name '*.md'` is the reference.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Regex as Regex
+import Prompt exposing (Os(..), Platform)
+
+-- | A case. `unordered` compares the output's lines as a set (a list of
+-- files, whose order depends on the tool).
+type alias Case =
+    { request : String
+    , reference : String
+    , unordered : Bool
+    }
+
+
+item : String -> String -> Case
+item request reference =
+    { request = request, reference = reference, unordered = False }
+
+
+set : String -> String -> Case
+set request reference =
+    { request = request, reference = reference, unordered = True }
+
+
+byOs : Platform -> String -> String -> String
+byOs p mac linux =
+    case p.os of
+
+        MacOs ->
+            mac
+
+        Linux ->
+            linux
+
+
+-- | The cases for a platform: 25 that only read and 8 that write.
+cases : Platform -> List Case
+cases p =
+    [ set "I lost xyz.csv, where did it go" "find . -name xyz.csv"
+    , set "give me every markdown file" "find . -type f -name '*.md'"
+    , item
+          "count how many python files I have"
+          "find . -type f -name '*.py' | wc -l"
+    , set "which files talk about ERROR" "grep -rl ERROR ."
+    , item "lines in logs/app.log that say WARN" "grep WARN logs/app.log"
+    , item "how long is notes.txt in lines" "wc -l < notes.txt"
+    , item
+          "what's the byte size of data/sales.csv"
+          (byOs p "stat -f %z data/sales.csv" "stat -c %s data/sales.csv")
+    , item "top 3 lines of data/users.csv" "head -n 3 data/users.csv"
+    , item "bottom 4 lines of logs/app.log" "tail -n 4 logs/app.log"
+    , item "notes.txt in alphabetical order" "sort notes.txt"
+    , item "notes.txt but each line only once" "sort -u notes.txt"
+    , item "second column of data/users.csv" "cut -d, -f2 data/users.csv"
+    , item
+          "how many lines of logs/app.log mention INFO"
+          "grep -c INFO logs/app.log"
+    , set "find the docs directory" "find . -type d -name docs"
+    , set "anything over 15 kilobytes here?" "find . -type f -size +15k"
+    , item "words in todo.md" "wc -w < todo.md"
+    , item "print logs/error.log" "cat logs/error.log"
+    , item
+          "logs/app.log lines containing ERROR, numbered"
+          "grep -n ERROR logs/app.log"
+    , item
+          "notes.txt with apple swapped for pear, just print it"
+          "sed 's/apple/pear/g' notes.txt"
+    , item
+          "which lines of notes.txt don't mention apple"
+          "grep -v apple notes.txt"
+    , item
+          "look for func in src/main.go regardless of case"
+          "grep -i func src/main.go"
+    , item "how many files live under src" "find src -type f | wc -l"
+    , item
+          "how often does each line occur in notes.txt"
+          "sort notes.txt | uniq -c | sort -rn"
+    , set "are there any empty files" "find . -type f -empty"
+    , item
+          "unix time when todo.md was last changed"
+          (byOs p "stat -f %m todo.md" "stat -c %Y todo.md")
+    , item "set up a new directory named archive" "mkdir -p archive"
+    , item "duplicate todo.md into docs" "cp todo.md docs/"
+    , item "shift notes.txt over to the docs folder" "mv notes.txt docs/"
+    , item "get rid of data/old.tmp" "rm data/old.tmp"
+    , item
+          "in notes.txt turn every apple into pear and save the file"
+          (byOs
+              p
+              "sed -i '' 's/apple/pear/g' notes.txt"
+              "sed -i 's/apple/pear/g' notes.txt")
+    , item "clean up every .tmp file" "find . -type f -name '*.tmp' -delete"
+    , item "start an empty file named CHANGELOG.md" "touch CHANGELOG.md"
+    , item "wipe out the logs folder completely" "rm -r logs"
+    ]
+
+
+-- | The output as compared: each line trimmed, inner spaces collapsed, a
+-- leading `./` dropped, blank lines dropped; sorted when the order does not
+-- matter.
+normalise : Bool -> String -> List String
+normalise unordered out =
+    let
+        lines =
+            out |> String.lines
+                |> List.map
+                       (\l ->
+                           l |> String.trim |> Regex.replace "\\s+" " "
+                               |> Regex.replace "^\\./" ""
+                               |> Regex.replace "/$" "")
+                |> List.filter (\l -> not (String.isEmpty l))
+    in
+        if unordered then
+            List.sort lines
+
+        else
+            lines

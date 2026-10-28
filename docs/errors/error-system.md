@@ -7,12 +7,13 @@
 > [`../history/compiler/versions.md`](../history/compiler/versions.md) for the changelog.
 
 
-Since v0.9, **every fallible operation in Sky returns a value whose error slot is `Sky.Core.Error`** — a structured ADT with eleven kinds and typed details. There is no more `Result String` or `Task String` on any public surface.
+Since v0.9, **every fallible operation in Sky returns a value whose error slot is `Sky.Core.Error`** — a structured ADT with eleven kinds and typed details, one of which (`Domain`) is open to every domain. There is no more `Result String` or `Task String` on any public surface.
 
 ## The shape
 
 ```elm
-module Sky.Core.Error exposing (..)
+module Sky.Core.Error exposing
+    ( Error(..), ErrorKind(..), ErrorDetails(..), DomainFailure, ErrorInfo, PanicInfo, TypeInfo, … )
 
 
 type Error
@@ -35,17 +36,20 @@ type ErrorKind
 
 type alias ErrorInfo =
     { message : String
-    , details : ErrorDetails
+    , details : Maybe ErrorDetails
     }
 
 
 type ErrorDetails
-    = NoDetails
-    | FfiPanic String
-    | TypeMismatch String String
+    = FfiPanic PanicInfo                -- { message : String, stack : List String }
+    | TypeMismatch TypeInfo             -- { expected : String, actual : String }
     | HttpStatus Int
     | JsonDecode String
-    | Custom (Dict String String)
+    | Custom String
+    | Domain DomainFailure              -- v0.28.0: a domain's own failure (below)
+
+
+type DomainFailure                      -- opaque
 ```
 
 ## Constructors
@@ -55,7 +59,7 @@ io : String -> Error
 network : String -> Error
 ffi : String -> Error
 decode : String -> Error
-timeout : String -> Error
+timeout : Error
 notFound : Error
 permissionDenied : Error
 invalidInput : String -> Error
@@ -72,6 +76,81 @@ withDetails : ErrorDetails -> Error -> Error
 toString : Error -> String
 isRetryable : Error -> Bool
 ```
+
+## Domain failures
+
+*(v0.28.0)* `Domain DomainFailure` is the one open-ended detail. A stdlib
+domain (`"ai"` first; later `"db"`, `"durable"`, …) and an app record their
+own failures in it, and the core type does not change when a domain adds a
+failure. A domain failure holds:
+
+- the **domain**, a lower-case dotted name (`"ai"`, `"myapp.billing"`),
+- a stable **code** inside that domain, by convention the name of the typed
+  constructor (`"Overloaded"`),
+- whether a retry of the same call can succeed (**retryable**),
+- an optional **retry delay** in milliseconds (a server's `Retry-After`),
+- string **attributes**, in the order they were added. They go to logs and
+  across the Sky.Spa wire, so they never hold a secret.
+
+```elm
+-- build
+failure : String -> String -> DomainFailure          -- domain, code
+withRetryable : Bool -> DomainFailure -> DomainFailure
+withRetryAfter : Int -> DomainFailure -> DomainFailure
+withAttr : String -> String -> DomainFailure -> DomainFailure
+fromDomain : ErrorKind -> String -> DomainFailure -> Error   -- the kind is required
+
+-- read
+failureOf : Error -> Maybe DomainFailure
+failureDomain : DomainFailure -> String
+failureCode : DomainFailure -> String
+failureRetryable : DomainFailure -> Bool
+failureRetryAfter : DomainFailure -> Maybe Int
+failureAttr : String -> DomainFailure -> Maybe String
+failureAttrs : DomainFailure -> List ( String, String )
+
+-- generic helpers, for every domain
+domain : Error -> Maybe String        -- Just "ai"
+isRetryable : Error -> Bool           -- the domain's flag wins over the kind
+retryAfter : Error -> Maybe Int       -- the domain's retry delay
+```
+
+A domain failure always comes with an existing `ErrorKind`, so code that
+matches only on the kind keeps working for every domain. A domain module gives
+the typed view: `Std.Ai.Failure.fromError : Error -> Maybe Failure`
+([`../ai/local.md`](../ai/local.md#failures)).
+
+An app can define its own domain the same way:
+
+```elm
+cardDeclined : String -> Error
+cardDeclined reason =
+    Error.failure "myapp.billing" "CardDeclined"
+        |> Error.withAttr "reason" reason
+        |> Error.fromDomain Error.InvalidInput "the card was declined"
+```
+
+**Write code that does not break when a domain grows.** Prefer the generic
+helpers, or a domain's typed view with a `_ ->` branch. A `case` over
+`ErrorDetails` with one arm per variant and no `_ ->` is refused with
+`[E3001]` when a variant is added, and the diagnostic names this section. The
+`Domain` variant is the last one the core type needs: a new domain adds codes,
+not variants.
+
+**On the wire.** `Codec.error` (the Sky.Spa RPC codec) encodes a domain
+failure as one object:
+`["Domain", {"domain": "ai", "code": "Overloaded", "retryable": true, "retryAfterMs": 1500, "attrs": [["status", "429"]]}]`.
+It decodes forward-compatibly: `domain` and `code` are required, a missing
+`retryable` is `false`, a missing or `null` `retryAfterMs` is no delay, a
+missing `attrs` is none, and keys a later release adds are ignored. Any domain
+and any code decode, so a failure from a newer peer keeps its kind, message,
+code and retry flag. A details variant this release does not know decodes as
+no details.
+
+**In logs.** An `Error` given as a structured-log attribute
+(`Log.errorWith "call failed" [ "error", err ]`) logs as `<Kind>: <message>`,
+and a domain failure adds `error.domain`, `error.code`, `error.retryable`,
+`error.retryAfterMs` and `error.attr.<name>` fields.
 
 ## Usage pattern
 
@@ -105,13 +184,17 @@ ErrIo(msg string) any
 ErrNetwork(msg string) any
 ErrFfi(msg string) any
 ErrDecode(msg string) any
-ErrTimeout(msg string) any
+ErrTimeout() any
 ErrNotFound() any
-ErrPermissionDenied() any
+ErrPermissionDenied(msg string) any
 ErrInvalidInput(msg string) any
 ErrConflict(msg string) any
 ErrUnavailable(msg string) any
 ErrUnexpected(msg string) any
+
+// v0.28.0, runtime-go/rt/error_domain.go
+ErrDomain(kindTag int, msg string, f DomainFailure) any
+DomainOf(v any) (DomainFailure, bool)
 ```
 
 These produce `skyErrorAdt` values that match the Sky ADT's runtime layout (`{Tag, SkyName, V0 (kind), V1 (info)}`), so Sky-side pattern matching works without a translation layer.
@@ -141,7 +224,11 @@ Every FFI wrapper `defer`s one of these. On panic, `out` is set to `Err(ErrFfi(<
 | `Unavailable` | Service overloaded / circuit-broken |
 | `Unexpected` | Fallback when no other kind fits |
 
-`isRetryable` returns `True` for `Timeout`, `Network`, and `Unavailable`. Use it in retry / backoff policies.
+`isRetryable` returns `True` for `Timeout`, `Network`, and `Unavailable`, unless
+the error carries a domain failure: then the domain's own retryable flag decides
+(v0.28.0). A crashed AI engine is `Unavailable` and not retryable, and a
+database deadlock can be a `Conflict` that a retry resolves. Use it, with
+`retryAfter`, in retry and backoff policies.
 
 ## Migration from `Result String`
 

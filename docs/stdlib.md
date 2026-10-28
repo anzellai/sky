@@ -1167,6 +1167,16 @@ command with `command` and the `with*` helpers:
 | `withPty { cols, rows }` | run on a pseudo-terminal (Linux and macOS) |
 | `withBufferSize bytes` | the output ring size per stream (default 1 MiB) |
 
+A child runs in a process group of its own, so the terminal's Ctrl-C does not
+reach it. The runtime ends every child when the program exits. When a program
+that is not a Sky.Live session starts its first child, the runtime also takes
+SIGINT, SIGTERM and SIGHUP: it ends the children (managed AI engines first)
+and exits 130, 143 or 129. A second signal during that cleanup exits at once.
+A program with no child keeps the default signal actions. A Sky.Live,
+Sky.Http.Server or Sky.Tui app, and an `--embed` database, already own these
+signals, and their shutdown ends the children. An `App.withEmbedded` app
+installs no handler of its own.
+
 Output goes into a bounded ring per stream. Every byte has an absolute offset,
 so a reader keeps its own position and can stop and resume. The child never
 waits for a slow reader: when the ring is full the oldest bytes are
@@ -1285,6 +1295,11 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   unique, across `field` and `inline`: a repeated key cannot be told apart when
   decoding, so that codec's `fromJson` is an `Err` naming the key (its
   encoding writes both pairs, unchanged).
+  `Codec.jsonSchema codec` (v0.28) is the JSON Schema of the codec's JSON
+  (`{ schema, exact }`; a record is a closed object with every field
+  required, `exact` is `False` where a part is open, as in `taggedUnion`).
+  `Std.Ai` sends it as a typed tool's parameters and as a structured answer's
+  `response_format`.
   `Codec.dict keyCodec valueCodec` (v0.27) encodes a `Dict` as a JSON array of
   `[key, value]` pairs, so any comparable key round-trips. `Codec.fromJson`
   reads exactly one JSON document: text after it is an `Err` (v0.27). A type
@@ -1798,6 +1813,23 @@ main =
 ```
 
 Routing: `get`, `post`, `put`, `delete`, `any`, `static`, `group` (prefix), `use` (middleware), `listen`.
+
+One process can serve several ports. Each `Server.listen` has its own routes:
+
+```elm
+main =
+    Task.spawn (Server.listen 9001 adminRoutes |> Task.onError reportAdmin)
+        |> Task.andThen (\_ -> Server.listen 8000 publicRoutes)
+```
+
+A failure to start is the Task's `Err` (v0.28.0): a port already in use is
+`Unavailable "Server.listen did not start: port 9001 is already in use"`, and
+`SKY_CONSOLE_AUTH=token|app` with no console to mount is `InvalidInput`. A
+`main = Server.listen …` exits 1 on either, through the entry's `Err` path.
+`Task.spawn` drops its task's result, so handle a spawned server's `Err`
+with `Task.onError`. The Sky Console is one per process: the first server
+that starts serves it at `/_sky/console`, and a second one serves none (the
+same rule as Sky.Live, `docs/skylive/embedded.md`).
 
 Cookies: `Server.cookie : String -> String -> Cookie` builds one with
 `Path=/; HttpOnly; SameSite=Lax`, and `Server.addCookie : Cookie -> Response ->
@@ -2493,6 +2525,221 @@ when they are the same `Ref` / `Mutex` / `Queue`. `withLock` is not
 re-entrant. In a Sky.Spa app these calls run on the server.
 
 ---
+
+### `Std.Ai.Endpoint` and `Std.Ai.Local` — model slots and the managed local engine (v0.28.0)
+
+A **slot** names one use of a model. Its `withX` builders hold the local
+default in code, and each falls back to `<PREFIX>_AI_<SLOT>_<KEY>` (operator
+env > code > default; there is no `sky.toml` section for AI). A slot resolves
+to an ordinary `Provider`, so `Std.Ai.Agent`, `Tool`, `Policy` and `Trace` use
+it unchanged.
+
+```elm
+chat : Provider
+chat =
+    Endpoint.endpoint "chat"
+        |> Endpoint.withLocal (Local.model Local.devModel)
+        |> Endpoint.provider
+```
+
+With no variables set, the first call fetches the pinned `llama-server` and the
+pinned Qwen2.5 0.5B model (both verified by SHA-256), plans the memory fit,
+starts the engine on `127.0.0.1` and answers. With `SKY_AI_CHAT_URL` set, the
+same binary calls that OpenAI-compatible server. A down remote never falls back
+to the local engine.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Endpoint` | `endpoint`, `withMode`, `withUrl`, `withKey`, `withModel`, `withAdapter`, `fromRegistry`, `withAdapterRefresh`, `withLocal`, `withTimeout`, `withMaxInFlight`, `withQueue`, `withQueueWait`, `withRetry`, `provider`, `warm`, `describe`, `inspect`, `tokenize`, `slotName` |
+| `Std.Ai.Local` | `huggingFace`, `file`, `devModel`, `reference`, `fromReference`, `model`, `withContext`, `withGpu`, `withParallel`, `withIdleUnload`, `withEmbeddings`, `withAdapter`, `withPort`, `settings`, `fit`, `start`, `provider`, `status`, `stop`, `fetch`, `pull`, `provision`, `engines`, `stopSlot` |
+| `Std.Ai.Provider` (added) | `Options`, `defaultOptions`, `chatWith` (temperature, seed, max tokens, adapter), `embed`, `wire`, `wireStreaming`; streaming: `AnswerStream`, `openStream`, `readStream` (`Piece` / `Finished`), `closeStream`, `chatStream` |
+
+The full guide, every variable and the failure kinds: [`ai/local.md`](ai/local.md).
+
+### `Std.Ai.Failure` and `Std.Ai.Eval` — typed AI failures and evals (v0.28.0)
+
+Every AI failure is an `Error` with an existing `ErrorKind` and a typed
+`Domain` failure in the `"ai"` domain. `Failure.fromError : Error -> Maybe
+Failure` reads it (`NotConfigured`, `InvalidSetting`, `Unreachable`,
+`Overloaded`, `TimedOut`, `EngineCrashed`, `EngineFailed`, `ModelTooLarge`,
+`NoAccelerator`, `NotProvisioned`, `ChecksumMismatch`, `RemoteRejected`,
+`BudgetExceeded`, `ToolchainFailed`, `GateFailed`, `NotRegistered`,
+`NotPromotable`, `PromotionConflict`, `AdapterMismatch`, `DatasetInvalid`,
+`TrainingFailed`, `TrainingCancelled`, `QuotaExceeded`,
+`CapacityUnavailable`, `DeploymentFailed`); match it with a `_ ->` branch.
+`Failure.toErrorWith detail failure` adds a detail to the message (a cloud
+call adds the provider's own message); the typed view is the same.
+
+`Std.Ai.Eval` evaluates a model with Sky values: a `Suite` of `Case`s, scorers
+(`Exact`, `Contains`, `Matches`, `JsonShape`, `CallsTool`, `Refuses`, `Rubric`
+by a judge, `Custom`, `AllOf`), a seeded repeatable `run` that returns a typed
+`Report`, `compare` against a baseline, and `check` / `gate` thresholds that
+return an opaque `Passed` or a `GateFailed` error. The judge's calls are
+journalled in the run's database (an unchanged verdict is asked once), a judge
+can be calibrated on human-labelled cases (`withCalibration`; the gate refuses
+a judge below its agreement), and `pairwise` compares two reports' answers in
+both orders.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Failure` | `Failure(..)`, `fromError`, `toError`, `code`, `kind`, `retryable` |
+| `Std.Ai.Eval` | `suite`, `suiteName`, `withSamples`, `withConcurrency`, `withJudge`, `withLatencyBudget`, `withCostBudget`, `withOptions`, `withSeed`, `withPriceBook`, `withTools`, `judge`, `judgeOn`, `withPassScore`, `withCalibration`, `calibrate`, `pairwise`, `judgeSlot`, `defaultJudge`, `judgeAnswer`, `judgeAnswerWith`, `setup`, `run`, `runAs`, `history`, `compare`, `alone`, `thresholds`, `withMinPassRate`, `withFloor`, `withMaxRegression`, `withCalibratedJudge`, `gate`, `check`, `passedSuite`, `passedCandidate`, `passedDigest`, `toJunit`, `toMarkdown`, `encodeReport`, `decodeReport` |
+
+Guides: [`ai/local.md`](ai/local.md#failures) and [`ai/eval.md`](ai/eval.md).
+
+### `Std.Ai.Registry` and `Std.Ai.Store` — the model registry (v0.28.0)
+
+`Std.Ai.Registry` holds versions of fine-tuned adapters (LoRA, QLoRA; GGUF or
+safetensors), each pinned to its base model's digest, with its lineage
+(dataset version and digest, trainer metadata), its attached eval reports and
+the aliases serving follows. The records are rows in the app's own database
+(`Std.Db`: SQLite or PostgreSQL, the same code), the files are blobs in a
+`Std.Ai.Store` (a local directory, GCS or S3, by SHA-256). `promote` needs an
+`Eval.Passed` for the version; every alias move is a compare-and-swap with a
+logged event; `rollback` pops the alias's log. A model slot serves an alias
+with `Endpoint.fromRegistry (Registry.resolver registry)` and
+`withAdapter "registry:<name>@<alias>"`, and follows it as it moves.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Registry` | `open`, `openConfigured`, `store`, `database`, `register`, `attachReport`, `reports`, `evalHistory`, `promote`, `promoteIf`, `promoteChecked`, `promoteCompared`, `evidence`, `evidenceAgainst`, `forcePromote`, `rollback`, `resolve`, `version`, `versions`, `aliases`, `history`, `lineage`, `trainedOn`, `registerDataset`, `datasetVersion`, `datasetVersions`, `datasetLabel`, `fetchDataset`, `datasetValue`, `block`, `fetch`, `label`, `servedName`, `resolver`, `versionValue`, `eventValue`, `reportLinkValue`, `lineageValue` |
+| `Std.Ai.Store` | `local`, `gcs`, `s3`, `fromUrl`, `configured`, `withEndpoint`, `withToken`, `withAwsKeys`, `location`, `put`, `fetch`, `signV4` |
+
+Guide: [`ai/registry.md`](ai/registry.md). CLI: `sky ai promote | rollback |
+lineage`.
+
+### `Std.Ai.Dataset`, `Scrub` and `Synthetic` — training data (v0.28.0)
+
+A dataset is a lazy description of typed rows (`Chat`, `Instruction`,
+`Preference`, or your own record) from JSONL, CSV, a `Std.Db.Store` table or a
+list. Steps (`map`, `filter`, `dedupeBy`, `scrub`, `upTo`) run chunk by chunk,
+so a large JSONL file never sits in memory. `split` assigns each row to
+`Train`, `Eval` or `Test` by a seeded SHA-256 of its key, so a row never moves
+between parts. `validate` checks chat rows (empty turns, role order, tokens,
+turns, duplicates) and fails with the typed `DatasetInvalid`. `freeze` writes
+canonical JSONL named by its SHA-256 with a manifest (sources, steps, counts
+per split, scrub report, schema, consent basis, retention); the same rows give
+the same digest, and `load` checks it (`ChecksumMismatch`). `sky ai data
+freeze <file.jsonl>` does the same from the command line.
+
+`Std.Ai.Dataset.Scrub` replaces secrets, email addresses, IBANs (mod 97), card
+numbers (Luhn), US SSNs, UK NINOs and phone numbers with placeholders and
+counts them; the report never holds the replaced text. `Std.Ai.Dataset.Synthetic`
+generates rows with a teacher model (the `"teacher"` slot, the local pinned
+model by default): a pure seeded `plan` over topics and personas, dedupe,
+filters, `Std.Ai.Eval`'s judge, a call limit and a cost budget, and a `Report`
+of what was kept and dropped.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Dataset` | `fromJsonl`, `fromJsonLines`, `fromCsv`, `fromStore`, `fromList`, `withSource`, `map`, `filter`, `filterMap`, `dedupeBy`, `dedupeBounded`, `dedupeMemoryKeys`, `scrub`, `upTo`, `toChat`, `toInstruction`, `rows`, `countRows`, `toJsonl`, `writeJsonl`, `split`, `unsplit`, `splitOf`, `part`, `limits`, `withEngineTokenizer`, `inspect`, `validate`, `folder`, `withConsentBasis`, `withRetention`, `freeze`, `freezeJson`, `load`, `loadJson`, `versions`, `manifest`, `digest`, `versionRows`, `versionPart`, `fromVersion`, `manifestJson`, `manifestFromJson` |
+| `Std.Ai.Dataset.Scrub` | `email`, `phone`, `cardNumber`, `iban`, `usSsn`, `ukNino`, `secrets`, `pattern`, `custom`, `defaults`, `scrubText`, `scrubber`, `forString`, `forInstruction`, `forChat`, `forPreference`, `dropIf`, `scrubRow`, `scrubRows`, `merge`, `total`, `countOf`, `isCardNumber`, `isIban` |
+| `Std.Ai.Dataset.Synthetic` | `generator`, `teacherSlot`, `withTeacher`, `withTeacherSlot`, `withTemplate`, `withSystemPrompt`, `withPersonas`, `withTopics`, `withExamples`, `withPerCall`, `withTarget`, `withSeed`, `withTemperature`, `withMaxTokens`, `withMaxCalls`, `withCostBudget`, `withDedupe`, `withFilter`, `withJudge`, `withJournal`, `plan`, `parseRows`, `run`, `toDataset` |
+
+Guide: [`ai/dataset.md`](ai/dataset.md).
+
+### `Std.Ai.Pipeline` — the project's AI lifecycle (v0.28.0)
+
+A project declares its datasets, eval suites, model slots and tasks as one
+value, `pipeline` in `src/Ai.sky` (`module Ai exposing (pipeline)`), and the
+`sky ai` verbs build and run it: `sky ai eval <suite>` (against an alias with
+`--against`, a registry candidate with `--candidate`, JUnit and Markdown, exit
+1 on a failed gate, `--promote-to` only on a pass), `sky ai data freeze
+<dataset>`, `sky ai run <task>`, `sky ai start <slot>` and the compared
+`sky ai promote`. A dataset build or a task gets a `Context` (the pipeline's
+name, its database, its registry and the arguments). Inside `sky test`,
+`evalSuite` and `evalAgainst` make a suite a test.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Pipeline` | `pipeline`, `withDb`, `withRegistry`, `withSlot`, `withDataset`, `withSuite`, `withTask`, `datasetOf`, `datasetJson`, `withFolder`, `withRegistered`, `suiteOn`, `suiteWith`, `forModel`, `withThresholds`, `evalRequest`, `context`, `evaluate`, `evalSuite`, `evalAgainst`, `freezeDataset`, `warmSlot`, `runTask`, `promote`, `members`, `outcomeValue`, `commandLine`, `commandLineWith` |
+
+Guide: [`ai/pipeline.md`](ai/pipeline.md); example
+`examples/72-ai-support-desk`.
+
+### `Std.Ai.Train`: fine-tune LoRA and QLoRA adapters (v0.28.0)
+
+A job trains a base model on a frozen `Dataset.Version` (`lora` for chat rows,
+`loraOnInstructions` for instruction rows) with `withX` builders for the rank,
+alpha, layers, targets, learning rate, steps, batch, sequence length, seed and
+checkpoint interval. The backend is not in the code: `Mlx` on Apple silicon,
+`Unsloth` on Linux with an NVIDIA GPU, and `SKY_AI_TRAIN_BACKEND` (`mlx`,
+`unsloth`, `fake`) overrides `withBackend` and detection. The trainer is a
+Sky-shipped driver in a toolchain Sky installs under the AI home (a pinned uv,
+a pinned CPython and hash-locked wheels), so no Python is visible to the user.
+The run is a `Std.Durable` workflow: the trainer runs detached, a trainer that
+dies is relaunched from its newest verified checkpoint (safetensors with a
+manifest of digests, never a pickle), and the adapter is converted to GGUF by a
+Go converter, optionally merged into the serving model, and registered with its
+lineage. `plan` refuses a job that will not fit (`ModelTooLarge`). Under
+`sky test` in test mode the trainer is simulated, so a program's tests run the
+whole workflow offline. `Local.withAdapter` serves the adapter.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Train` | `devBase`, `baseModel`, `withWeights`, `withServing`, `lora`, `loraOnInstructions`, `withName`, `withQuantisedBase`, `withRank`, `withAlpha`, `withLayers`, `withTargets`, `withLearningRate`, `withEpochs`, `withMaxSteps`, `withBatch`, `withSequenceLength`, `withSeed`, `withCheckpointEvery`, `withEvalEvery`, `withBackend`, `withGgufExport`, `withMergedExport`, `withWorkDir`, `withRegistry`, `withMaxRelaunches`, `withWatchWindow`, `fakeCrashAt`, `fakeStepMs`, `check`, `jobJson`, `runId`, `runDir`, `totalSteps`, `host`, `shapeOf`, `estimateMemory`, `plan`, `workflow`, `workflows`, `start`, `poll`, `drive`, `progress`, `result`, `cancel`, `resume`, `runs`, `progressAt`, `cancelAt`, `resumeAt`, `exportAt`, `adapterRef`, `registryAdapter`, `lineage`, `adapterCodec`, `provision`, `provisionBase`, `toolchainStatus`, `decodeEvent`, `foldProgress` |
+
+Guide: [`ai/train.md`](ai/train.md). CLI: `sky ai provision --train`,
+`sky ai train`, `sky ai train status | runs | resume | cancel`, `sky ai export`.
+
+`Train.withBackend Train.Vertex` runs the same job on Google Cloud Vertex AI
+(one NVIDIA L4, `g2-standard-4`), under a budget in `Std.Money`.
+`withCloud`, `withBudget`, `withMachinePrices`, `withImage`,
+`withServiceAccount`, `withMaxRuntimeMinutes`, `withSpot`, `withKeepStaging`
+and `withLabels` set it, each with a `SKY_AI_TRAIN_*` variable that wins.
+`plan` checks the trainer image digest, the staging bucket's region, the L4
+quota and the estimate against the budget before anything launches. The
+launch is exactly once across a crash (a create-only intent object in the
+staging bucket), the run watches the job, mirrors its progress, stops it at
+the budget and deletes its staging prefix after the adapter is registered.
+
+### `Std.Ai.Serve`: a GPU tier with many LoRA adapters (v0.28.0)
+
+`Serve.tier Serve.Vllm Serve.devBase` is one base model and many LoRA
+adapters on one GPU, behind a service token. `Serve.run` is the tier's main:
+it stages the base's pinned files, stands in front of vLLM, keeps the
+registry aliases in `withAdapters` loaded, loads other versions on demand,
+evicts the least recently used one, and hot-loads each promotion with no
+failed request. `Serve.cloudRun` and `Serve.deploy` put it on Google Cloud
+Run with one L4 that scales to zero, never public.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Serve` | `tier`, `devBase`, `withBaseName`, `withAdapters`, `withMaxAdapters`, `withMaxModelLength`, `withGpuMemoryFraction`, `withBind`, `withToken`, `withAliasPolling`, `withRegistry`, `withEngineUrl`, `withModelsDir`, `settings`, `baseIdOf`, `vllmArgs`, `describe`, `adapterFrom`, `run`, `cloudRun`, `withTierImage`, `withEngineImage`, `withMinInstances`, `withMaxInstances`, `withServiceAccount`, `withInvokers`, `withTokenSecret`, `withRegistryUrl`, `withTimeoutSeconds`, `withLabels`, `render`, `serviceJson`, `knativeYaml`, `dockerfile`, `deploy`, `teardown` |
+| `Std.Ai.Cloud.Google` | `accessToken`, `idToken`, `refused` (an `ApiResponse` as a typed failure), `createCustomJob`, `getCustomJob`, `listCustomJobs`, `cancelCustomJob`, `deleteCustomJob`, `createService`, `getService`, `patchService`, `deleteService`, `listServices`, `grantInvoker`, `bucketLocation`, `artifactExists`, `quota`, `logTail`, `ensureRepository`, `packDirectory`, `buildImage`, `skus` |
+
+`Std.Ai.Cloud.Google` is Sky over HTTP: a service-account key file, workload
+identity federation or the metadata server gives the token, and under
+`sky test` `SKY_AI_GCP_ENDPOINT=http://sky-gcp.invalid` answers every call
+from an emulator in the runtime. `Endpoint.withGoogleAuth` sends a Google ID
+token to a private Cloud Run tier. `Registry.registerWith` keeps a version's
+companion files (the PEFT files beside the GGUF file) and
+`Registry.publishPointers` writes the pointer objects the tier reads.
+
+Guides: [`ai/serve.md`](ai/serve.md), [`ai/deploy-gcp.md`](ai/deploy-gcp.md);
+example `examples/74-ai-cloud`. CLI: `sky ai serve`, `sky ai deploy`,
+`sky ai teardown`, `sky ai cloud ls | prices`, `sky ai image build`,
+`sky ai registry publish`.
+
+### `Std.Ai.Device`: a model slot on the user's device (v0.28.0)
+
+The server's slot gets `Endpoint.withDevice spec` (placement `Auto`,
+`DeviceOnly` or `ServerOnly`, required; `SKY_AI_<SLOT>_PLACEMENT`,
+`_DEVICE_MODEL`, `_DEVICE_ADAPTER` override the code). A Sky.Spa client asks
+`provider "<slot>"`, an ordinary `Provider` that answers on the device
+(llama.cpp: WebGPU or CPU WebAssembly in a Web Worker, the iOS and Android
+apps, the Mac app) when it holds the model, and from the server otherwise.
+`decide` is the policy as a pure function. Nothing downloads before `prepare`,
+which the app calls after the user's consent; `status` gives the size and the
+progress. `recordPrompts` and `replay` with `Eval.prompts` score one suite on both
+sides. `Registry.allowOnDevice` clears an adapter for devices.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Device` | `spec`, `withModel`, `withAdapter`, `withContext`, `withMaxDownload`, `withBackends`, `withMetered`, `rawSpec`, `placementText`, `backendText`, `backendFromText`, `decide`, `estimateTokens`, `decodeOffer`, `decodeCapabilities`, `provider`, `statusOf`, `status`, `prepare`, `evict`, `capabilities`, `recordPrompts`, `replay`, `encodeRecording`, `decodeRecording` |
+
+Guide: [`ai/device.md`](ai/device.md). CLI: `sky ai provision --device`,
+`sky build --ai-web-engine`, `sky build --ai-embed`.
 
 ## The Prelude
 

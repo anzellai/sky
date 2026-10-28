@@ -1,9 +1,4 @@
-module Structure exposing
-    ( dumpLines
-    , diffReport
-    , liveHtml
-    , backendLabel
-    )
+module Structure exposing (dumpLines, diffReport, liveHtml, backendLabel)
 
 -- Fieldbook — THE LOAD-BEARING ASSERTION.
 --
@@ -97,7 +92,6 @@ import Std.Ui as Ui
 import Model exposing (..)
 import View exposing (viewElement)
 
-
 -- ─── The canonical structure ────────────────────────────────────────
 type SNode
     = SText String
@@ -176,7 +170,6 @@ diffReport model =
                   , "  tui : " ++ entry.right
                   ]
                 )
-
 
 type alias Divergence =
     { line : Int
@@ -354,11 +347,7 @@ fromHtml node =
                 emitHtmlNode tag (htmlAttrs attrs) kids
 
 
-emitHtmlNode :
-    String
-    -> List ( String, String )
-    -> List (Html.Html Msg)
-    -> List SNode
+emitHtmlNode : String -> List ( String, String ) -> List (Html.Html Msg) -> List SNode
 emitHtmlNode tag pairs kids =
     if isTransparent tag pairs then
         List.concatMap fromHtml kids

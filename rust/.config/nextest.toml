@@ -34,9 +34,20 @@ serial-servers = { max-threads = 1 }
 # hard-kills a truly wedged test at 8 min (well above any legitimate slow test)
 # so it is retried fast instead of eating the whole 45-min job budget.
 [profile.default]
+# The Std.Ai live tests fetch and cache a ~430 MB model (and, for training,
+# the native trainer and its base weights); each runs in its own
+# CI job (rust-ci.yml `ai-local-live`, release.yml `gate-ai-local`) with that
+# cache, not in every `test-sky` slice. `cargo test` ignores this filter, so a
+# local `cargo test --workspace` still runs it.
+#
+# `ai_gcp_live` spends money on a real Google Cloud project: it runs only
+# through scripts/ai/gcp-live.sh (its ledger cap, teardown and leak check),
+# locally or from the manually dispatched `ai-cloud-live.yml`, never in a
+# commit or release run.
+default-filter = 'not (binary(ai_local_live) | binary(ai_train_live) | binary(ai_train_native_live) | binary(ai_gcp_live))'
 retries = 2
 slow-timeout = { period = "120s", terminate-after = 4 }
 
 [[profile.default.overrides]]
-filter = 'binary(spa_split_flow) + binary(spa_target_flow) + binary(std_app_flow) + binary(cross_replica_session_flow) + binary(auth_sliding_flow) + binary(auth_revocation_flow) + binary(db_cluster_flow) + binary(doc_flow)'
+filter = 'binary(spa_split_flow) + binary(spa_target_flow) + binary(std_app_flow) + binary(cross_replica_session_flow) + binary(auth_sliding_flow) + binary(auth_revocation_flow) + binary(db_cluster_flow) + binary(doc_flow) + binary(ai_serve_flow) + binary(ai_cloud_train_flow)'
 test-group = 'serial-servers'

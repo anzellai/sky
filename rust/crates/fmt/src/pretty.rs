@@ -43,6 +43,20 @@ pub struct Printer {
     src: String,
 }
 
+/// When a record type may stay on one line.
+#[derive(Clone, Copy)]
+enum RecordRule {
+    /// The body of a `type alias`: two or more fields always break.
+    AliasBody,
+    /// A whole argument or result of an annotation: on one line when it fits
+    /// and the source had it on one line.
+    Segment,
+    /// Inside another type (`Task Error { .. }`, a constructor argument): on
+    /// one line when it fits, like a record expression. The source layout is
+    /// not a signal here: the old printer broke every such record.
+    Nested,
+}
+
 fn width(s: &str) -> usize {
     s.chars().count()
 }
@@ -130,6 +144,42 @@ impl Printer {
             .map(|t| usize::from(t.text_range().start()))
             .unwrap_or_else(|| usize::from(node.text_range().start()));
         line_of(&self.line_starts, start)
+    }
+
+    /// Line of a node's last **significant** token (trailing trivia excluded).
+    fn end_line_of_node(&self, node: &SyntaxNode) -> usize {
+        let end = node
+            .descendants_with_tokens()
+            .filter_map(|e| e.into_token())
+            .filter(|t| !t.kind().is_trivia())
+            .last()
+            .map(|t| usize::from(t.text_range().start()))
+            .unwrap_or_else(|| usize::from(node.text_range().start()));
+        line_of(&self.line_starts, end)
+    }
+
+    /// Line of the first direct child token of `node` with kind `kind`.
+    fn line_of_child_token(&self, node: &SyntaxNode, kind: SyntaxKind) -> Option<usize> {
+        node.children_with_tokens()
+            .filter_map(|e| e.into_token())
+            .find(|t| t.kind() == kind)
+            .map(|t| line_of(&self.line_starts, usize::from(t.text_range().start())))
+    }
+
+    /// The own-line comments that sit in the gap between the previous part of
+    /// a construct (ending on `prev_end`) and the next part (starting on
+    /// `next_line`) belong to that next part. Drain them, rendered at `ind`.
+    /// The lower bound is what stops a part from claiming a comment that sits
+    /// above the enclosing construct, or inside an earlier part.
+    fn drain_gap(&mut self, ind: usize, prev_end: usize, next_line: usize) -> String {
+        self.drain_any_between(ind, prev_end + 1, next_line)
+    }
+
+    /// True when [`Printer::drain_gap`] would drain at least one comment.
+    fn has_gap_comment(&self, prev_end: usize, next_line: usize) -> bool {
+        self.comments
+            .iter()
+            .any(|c| c.line > prev_end && c.line < next_line)
     }
 
     // ---- comment draining (mirrors the oracle's CS helpers) --------------
@@ -351,8 +401,53 @@ impl Printer {
             .name()
             .map(|t| t.text().to_string())
             .unwrap_or_default();
-        let ty = anno.ty().map(|t| self.fmt_type(0, &t)).unwrap_or_default();
-        format!("{name} : {ty}")
+        match anno.ty() {
+            Some(t) => self.fmt_annotation(0, &name, &t),
+            None => format!("{name} : "),
+        }
+    }
+
+    /// `name : Type` at column `col`. The annotation stays on one line unless
+    /// a record type inside it breaks (it does not fit, or the source had it
+    /// broken). Then the annotation breaks in the standard form, one function
+    /// argument per line, so the broken record sits at its own indent:
+    ///
+    /// ```text
+    /// name :
+    ///     { a : A
+    ///     , b : B
+    ///     }
+    ///     -> Result
+    /// ```
+    fn fmt_annotation(&self, col: usize, name: &str, ty: &Type) -> String {
+        let one = format!("{name} : {}", self.fmt_type(col, ty));
+        let segs = fun_segments(ty);
+        // A record that is a whole argument or result and that the source
+        // had broken stays broken.
+        let seg_broken = segs.iter().any(|t| match t {
+            Type::Record(r) => self.source_broken(r.syntax()),
+            _ => false,
+        });
+        if !one.contains('\n') && !seg_broken {
+            return one;
+        }
+        let seg_col = col + STEP;
+        let mut out = format!("{name} :");
+        for (k, seg) in segs.iter().enumerate() {
+            let last = k + 1 == segs.len();
+            let (lead, at) = if k == 0 {
+                ("", seg_col)
+            } else {
+                ("-> ", seg_col + 3)
+            };
+            let s = match seg {
+                Type::Record(r) => self.fmt_type_record(at, r, RecordRule::Segment),
+                _ if last => self.fmt_type(at, seg),
+                _ => self.fmt_type_atom(at, seg),
+            };
+            out.push_str(&format!("\n{}{lead}{s}", indent(seg_col)));
+        }
+        out
     }
 
     fn fmt_value(&mut self, v: &syntax::ast::ValueDecl) -> String {
@@ -391,7 +486,13 @@ impl Printer {
         } else {
             format!(" {}", vars.join(" "))
         };
-        let body = a.ty().map(|t| self.fmt_type(STEP, &t)).unwrap_or_default();
+        // A record alias body with two or more fields always breaks, one
+        // field per line (the oracle's rule, kept for alias bodies only).
+        let body = match a.ty().map(|t| unwrap_type_paren(&t)) {
+            Some(Type::Record(r)) => self.fmt_type_record(STEP, &r, RecordRule::AliasBody),
+            Some(t) => self.fmt_type(STEP, &t),
+            None => String::new(),
+        };
         format!("type alias {name}{vars_str} =\n{}{body}", indent(STEP))
     }
 
@@ -481,7 +582,7 @@ impl Printer {
                 let s: Vec<String> = parts.iter().map(|x| self.fmt_type(col, x)).collect();
                 format!("( {} )", s.join(", "))
             }
-            Type::Record(r) => self.fmt_type_record(col, r),
+            Type::Record(r) => self.fmt_type_record(col, r, RecordRule::Nested),
             // A function type in atom position needs grouping parens.
             Type::Fun(_) => format!("({})", self.fmt_type(col, &u)),
             Type::Paren(_) => String::new(), // unreachable: unwrapped above
@@ -500,7 +601,15 @@ impl Printer {
         }
     }
 
-    fn fmt_type_record(&self, col: usize, r: &syntax::ast::TypeRecord) -> String {
+    /// True when a node's significant tokens span more than one source line.
+    fn source_broken(&self, node: &SyntaxNode) -> bool {
+        self.line_of_node(node) != self.end_line_of_node(node)
+    }
+
+    /// A record type (see [`RecordRule`]). The old rule broke every record
+    /// type with two or more fields, which in an annotation put the field
+    /// commas and the closing brace at column 0.
+    fn fmt_type_record(&self, col: usize, r: &syntax::ast::TypeRecord, rule: RecordRule) -> String {
         let row = row_var(r.syntax());
         let fields: Vec<String> = type_record_fields(r.syntax())
             .iter()
@@ -513,7 +622,12 @@ impl Printer {
         // Note: an empty record renders as the one-line "{  }" (two spaces) —
         // the oracle's `oneLine` branch, matched here byte-for-byte.
         let one_line = format!("{{ {prefix}{} }}", fields.join(", "));
-        if col + width(&one_line) <= MAX && fields.len() <= 1 {
+        let shape_ok = match rule {
+            RecordRule::AliasBody => fields.len() <= 1,
+            RecordRule::Segment => fields.len() <= 1 || !self.source_broken(r.syntax()),
+            RecordRule::Nested => true,
+        };
+        if shape_ok && col + width(&one_line) <= MAX && !one_line.contains('\n') {
             return one_line;
         }
         // multi-line, leading commas at `col`
@@ -566,7 +680,12 @@ impl Printer {
                     .iter()
                     .map(|x| self.fmt_pattern(x))
                     .collect();
-                format!("[{}]", ps.join(", "))
+                // `[ a, b ]`, like a list expression; `[]` when empty.
+                if ps.is_empty() {
+                    "[]".to_string()
+                } else {
+                    format!("[ {} ]", ps.join(", "))
+                }
             }
             Pattern::Cons(c) => {
                 let ps = pattern_children(c.syntax());
@@ -727,12 +846,19 @@ impl Printer {
                     // breaks onto its own line at `value_col`, so its `[`/`,`/`]`
                     // (or `{`/`,`/`}`) align under one another instead of drifting.
                     let value_col = col + STEP;
+                    // Own-line comments between `name =` and the value stay
+                    // above the value.
+                    let value_line = self.line_of_node(v.syntax());
+                    let lead = self.drain_any_between(value_col, line, value_line);
                     let rendered = self.fmt_expr(value_col, v);
                     let inline_col = elem_col + width(&name) + 3; // "name = "
-                    if !rendered.contains('\n') && inline_col + width(&rendered) <= MAX {
+                    if lead.is_empty()
+                        && !rendered.contains('\n')
+                        && inline_col + width(&rendered) <= MAX
+                    {
                         format!("{name} = {rendered}")
                     } else {
-                        format!("{name} =\n{}{rendered}", indent(value_col))
+                        format!("{name} =\n{lead}{}{rendered}", indent(value_col))
                     }
                 }
                 None => name,
@@ -795,12 +921,19 @@ impl Printer {
                     // nested record / case), or one that would overflow inline,
                     // breaks onto its own line at `value_col`.
                     let value_col = field_col + STEP;
+                    // Own-line comments between `name =` and the value stay
+                    // above the value.
+                    let value_line = self.line_of_node(v.syntax());
+                    let lead = self.drain_any_between(value_col, line, value_line);
                     let rendered = self.fmt_expr(value_col, v);
                     let inline_col = elem_col + width(&name) + 3; // "name = "
-                    if !rendered.contains('\n') && inline_col + width(&rendered) <= MAX {
+                    if lead.is_empty()
+                        && !rendered.contains('\n')
+                        && inline_col + width(&rendered) <= MAX
+                    {
                         format!("{name} = {rendered}")
                     } else {
-                        format!("{name} =\n{}{rendered}", indent(value_col))
+                        format!("{name} =\n{lead}{}{rendered}", indent(value_col))
                     }
                 }
                 None => name,
@@ -837,6 +970,20 @@ impl Printer {
         let Some((func, args)) = parts.split_first() else {
             return String::new();
         };
+        // An own-line comment between two parts of the call (above an
+        // argument) belongs to the argument below it. It forces the broken
+        // layout and stays above that argument; an inner drain (a lambda
+        // argument's body) must never claim it.
+        let gaps: Vec<(usize, usize)> = parts
+            .windows(2)
+            .map(|w| {
+                (
+                    self.end_line_of_node(w[0].syntax()),
+                    self.line_of_node(w[1].syntax()),
+                )
+            })
+            .collect();
+        let any_gap_comment = gaps.iter().any(|&(e, l)| self.has_gap_comment(e, l));
         let func_str = self.fmt_expr(col, func);
         let arg_col = col + STEP;
         // Speculative render for the width decision; roll back the comment
@@ -844,16 +991,19 @@ impl Printer {
         let snapshot = self.comments.clone();
         let flat: Vec<String> = args.iter().map(|a| self.fmt_arg(col, a)).collect();
         let one_line = format!("{func_str} {}", flat.join(" "));
-        let fits = col + width(&one_line) <= MAX && !flat.iter().any(|s| s.contains('\n'));
+        let fits = !any_gap_comment
+            && col + width(&one_line) <= MAX
+            && !flat.iter().any(|s| s.contains('\n'));
         self.comments = snapshot;
         if fits {
             let real: Vec<String> = args.iter().map(|a| self.fmt_arg(col, a)).collect();
             format!("{func_str} {}", real.join(" "))
         } else {
-            let arg_strs: Vec<String> = args.iter().map(|a| self.fmt_arg(arg_col, a)).collect();
             let mut out = func_str;
-            for a in &arg_strs {
-                out.push_str(&format!("\n{}{a}", indent(arg_col)));
+            for (a, &(prev_end, line)) in args.iter().zip(&gaps) {
+                let lead = self.drain_gap(arg_col, prev_end, line);
+                let s = self.fmt_arg(arg_col, a);
+                out.push_str(&format!("\n{lead}{}{s}", indent(arg_col)));
             }
             out
         }
@@ -879,6 +1029,23 @@ impl Printer {
 
     fn fmt_bin(&mut self, col: usize, b: &syntax::ast::BinExpr) -> String {
         let (operands, ops) = flatten_bin(b);
+        // An own-line comment between two operands (above an operator line)
+        // belongs to the group below it: that group wraps onto its own line
+        // with the comment above it. An inner drain (a lambda operand's body)
+        // must never claim it.
+        let gaps: Vec<(usize, usize)> = operands
+            .windows(2)
+            .map(|w| {
+                (
+                    self.end_line_of_node(w[0].syntax()),
+                    self.line_of_node(w[1].syntax()),
+                )
+            })
+            .collect();
+        let gap_comment: Vec<bool> = gaps
+            .iter()
+            .map(|&(e, l)| self.has_gap_comment(e, l))
+            .collect();
         // Speculative single-line render of each operand, for width decisions
         // only; roll back the comment stream so the real pass drains once.
         let snapshot = self.comments.clone();
@@ -888,7 +1055,10 @@ impl Printer {
         for (k, op) in ops.iter().enumerate() {
             one_line.push_str(&format!(" {op} {}", flat_ops[k + 1]));
         }
-        if col + width(&one_line) <= MAX && !one_line.contains('\n') {
+        if !gap_comment.iter().any(|&g| g)
+            && col + width(&one_line) <= MAX
+            && !one_line.contains('\n')
+        {
             let real: Vec<String> = operands.iter().map(|o| self.fmt_expr(col, o)).collect();
             let mut line = real[0].clone();
             for (k, op) in ops.iter().enumerate() {
@@ -904,14 +1074,16 @@ impl Printer {
         for (k, op) in ops.iter().enumerate() {
             let flat = &flat_ops[k + 1];
             let group_w = 1 + width(op) + 1 + width(flat);
-            if !wrapped && !flat.contains('\n') && cur_width + group_w <= MAX {
+            if !wrapped && !gap_comment[k] && !flat.contains('\n') && cur_width + group_w <= MAX {
                 let real = self.fmt_expr(col, &operands[k + 1]);
                 out.push_str(&format!(" {op} {real}"));
                 cur_width += group_w;
             } else {
+                let (prev_end, line) = gaps[k];
+                let lead = self.drain_gap(op_col, prev_end, line);
                 let rhs_col = op_col + width(op) + 1;
                 let rendered = self.fmt_expr(rhs_col, &operands[k + 1]);
-                out.push_str(&format!("\n{}{op} {rendered}", indent(op_col)));
+                out.push_str(&format!("\n{lead}{}{op} {rendered}", indent(op_col)));
                 wrapped = true;
             }
         }
@@ -933,11 +1105,16 @@ impl Printer {
             return format!("\\{params} ->");
         };
         let body_line = self.line_of_node(body.syntax());
-        // Unbounded (matches the oracle's `drainAnyBefore`): a lambda body's
-        // drain claims any not-yet-placed own-line comment above the body. A
-        // decl's section-header comments are already drained (header-before-body
-        // in `format`), so they can't be slurped here.
-        let drained = self.drain_any_between(body_col, 0, body_line);
+        // Bounded below by the lambda's own `\` line: the body claims only the
+        // own-line comments between `->` and the body. The oracle's
+        // `drainAnyBefore` is unbounded, and that let a lambda inside a
+        // pipeline, a call argument or an `if` branch pull a comment that sat
+        // ABOVE the enclosing expression down into its body, which changed
+        // where the comment was (a then-branch comment landed inside the
+        // `Task.map (\_ -> ..)` lambda). Each enclosing construct now drains
+        // the comments in its own gaps.
+        let lambda_line = self.line_of_node(l.syntax());
+        let drained = self.drain_any_between(body_col, lambda_line, body_line);
         let body_str = self.fmt_expr(body_col, &body);
         let one_line = format!("\\{params} -> {body_str}");
         if drained.is_empty() && !body_str.contains('\n') && col + width(&one_line) <= MAX {
@@ -954,18 +1131,37 @@ impl Printer {
             return String::new();
         }
         let cond = self.fmt_expr(col, &parts[0]);
+        // Own-line comments between `then` and the then-branch stay above the
+        // then-branch. Without this drain they were left in the stream for the
+        // next drain to claim: the else-branch drain (the comment moved below
+        // `else`) or a lambda inside the branch (the comment moved into it).
+        let cond_end = self.end_line_of_node(parts[0].syntax());
+        let then_line = self.line_of_node(parts[1].syntax());
+        let then_lead = self.drain_gap(col + STEP, cond_end, then_line);
         let then_b = self.fmt_expr(col + STEP, &parts[1]);
-        let branch = format!("if {cond} then\n{}{then_b}", indent(col + STEP));
+        let branch = format!("if {cond} then\n{then_lead}{}{then_b}", indent(col + STEP));
+        let then_end = self.end_line_of_node(parts[1].syntax());
         let else_line = self.line_of_node(parts[2].syntax());
-        let else_drained = self.drain_before(col + STEP, else_line);
-        // An `else if` chain: render the nested If inline after `else `.
+        let else_kw = self
+            .line_of_child_token(i.syntax(), SyntaxKind::ElseKw)
+            .unwrap_or(else_line);
+        // Comments between the then-branch and `else` stay above `else`.
+        let before_else = self.drain_gap(col, then_end, else_kw);
+        // An `else if` chain: render the nested If inline after `else `. It
+        // has no line between `else` and the nested `if`, so a comment there
+        // goes above `else` too.
         if let Expr::If(_) = &parts[2] {
+            let after_else = self.drain_any_between(col, else_kw, else_line);
             let nested = self.fmt_expr(col, &parts[2]);
-            format!("{branch}\n\n{}else {nested}", indent(col))
+            format!(
+                "{branch}\n\n{before_else}{after_else}{}else {nested}",
+                indent(col)
+            )
         } else {
+            let else_drained = self.drain_any_between(col + STEP, else_kw, else_line);
             let else_b = self.fmt_expr(col + STEP, &parts[2]);
             format!(
-                "{branch}\n\n{}else\n{else_drained}{}{else_b}",
+                "{branch}\n\n{before_else}{}else\n{else_drained}{}{else_b}",
                 indent(col),
                 indent(col + STEP)
             )
@@ -979,30 +1175,42 @@ impl Printer {
         let mut defs = String::new();
         for (i, b) in bindings.iter().enumerate() {
             let line = self.line_of_node(b);
-            // First binding: pull any own-line comment between `let` and the
-            // binding regardless of column — hand-written source often mis-indents
-            // these, and a column-exact drain would miss them and defer them to
-            // body-end. Later bindings keep the column-exact drain so a section
-            // header at def_col still attaches to the following binding.
+            // Pull any own-line comment in the gap above the binding (after
+            // `let`, or after the previous binding) regardless of column —
+            // hand-written source often mis-indents these, and a column-exact
+            // drain would miss them and defer them to body-end.
             let drained = if i == 0 {
                 self.drain_any_between(def_col, let_line, line)
             } else {
-                self.drain_before(def_col, line)
+                let prev_end = self.end_line_of_node(&bindings[i - 1]);
+                self.drain_gap(def_col, prev_end, line)
             };
             let s = self.fmt_binding(def_col, b);
             defs.push_str(&format!("{drained}{}{s}\n", indent(def_col)));
         }
         let body = l.body();
-        let (body_drained, body_str) = match &body {
+        let (before_in, after_in, body_str) = match &body {
             Some(e) => {
                 let line = self.line_of_node(e.syntax());
-                let d = self.drain_before(def_col, line);
-                (d, self.fmt_expr(def_col, e))
+                let in_kw = self
+                    .line_of_child_token(l.syntax(), SyntaxKind::InKw)
+                    .unwrap_or(line);
+                // Comments between the last binding and `in` stay above `in`;
+                // comments between `in` and the body stay above the body. The
+                // old column-exact drain put both above `in`, which moved a
+                // body comment into the bindings.
+                let last_end = bindings
+                    .last()
+                    .map(|b| self.end_line_of_node(b))
+                    .unwrap_or(let_line);
+                let before = self.drain_gap(def_col, last_end, in_kw);
+                let after = self.drain_any_between(def_col, in_kw, line);
+                (before, after, self.fmt_expr(def_col, e))
             }
-            None => (String::new(), String::new()),
+            None => (String::new(), String::new(), String::new()),
         };
         format!(
-            "let\n{defs}{body_drained}{}in\n{}{body_str}",
+            "let\n{defs}{before_in}{}in\n{after_in}{}{body_str}",
             indent(col),
             indent(def_col)
         )
@@ -1012,11 +1220,10 @@ impl Printer {
         // Annotation binding: `name : Type`.
         if b.kind() == SyntaxKind::LetBinding && binding_is_anno(b) {
             let name = first_lower(b);
-            let ty = type_children(b)
-                .first()
-                .map(|t| self.fmt_type(col, t))
-                .unwrap_or_default();
-            return format!("{name} : {ty}");
+            return match type_children(b).first() {
+                Some(t) => self.fmt_annotation(col, &name, t),
+                None => format!("{name} : "),
+            };
         }
         // Destructure binding: `pat = expr`.
         if b.kind() == SyntaxKind::DestructureBinding {
@@ -1024,10 +1231,8 @@ impl Printer {
                 .first()
                 .map(|p| self.fmt_pattern(p))
                 .unwrap_or_default();
-            let body = expr_children(b)
-                .first()
-                .map(|e| self.fmt_expr(col + STEP, e));
-            return self.binding_body(col, &pat, body);
+            let (lead, body) = self.binding_rhs(col, b);
+            return self.binding_body(col, &pat, &lead, body);
         }
         // Value binding: `name pat* = expr`.
         let name = first_lower(b);
@@ -1041,19 +1246,30 @@ impl Printer {
         } else {
             format!("{name} {params}")
         };
-        let body = expr_children(b)
-            .first()
-            .map(|e| self.fmt_expr(col + STEP, e));
-        self.binding_body(col, &lhs, body)
+        let (lead, body) = self.binding_rhs(col, b);
+        self.binding_body(col, &lhs, &lead, body)
     }
 
-    fn binding_body(&self, col: usize, lhs: &str, body: Option<String>) -> String {
+    /// A let binding's right-hand side, with the own-line comments between the
+    /// binding's `=` line and its body. Those stay above the body; before this
+    /// drain they fell through to the end-of-decl mop-up, below the `in` body.
+    fn binding_rhs(&mut self, col: usize, b: &SyntaxNode) -> (String, Option<String>) {
+        let Some(e) = expr_children(b).into_iter().next() else {
+            return (String::new(), None);
+        };
+        let lhs_line = self.line_of_node(b);
+        let body_line = self.line_of_node(e.syntax());
+        let lead = self.drain_any_between(col + STEP, lhs_line, body_line);
+        (lead, Some(self.fmt_expr(col + STEP, &e)))
+    }
+
+    fn binding_body(&self, col: usize, lhs: &str, lead: &str, body: Option<String>) -> String {
         let body = body.unwrap_or_default();
         let one_line = format!("{lhs} = {body}");
-        if !body.contains('\n') && col + width(&one_line) <= 76 {
+        if lead.is_empty() && !body.contains('\n') && col + width(&one_line) <= 76 {
             one_line
         } else {
-            format!("{lhs} =\n{}{body}", indent(col + STEP))
+            format!("{lhs} =\n{lead}{}{body}", indent(col + STEP))
         }
     }
 
@@ -1191,6 +1407,32 @@ fn type_children(node: &SyntaxNode) -> Vec<Type> {
 
 /// Peel redundant `TypeParen` wrappers — the oracle's type AST has no paren
 /// node, so `(Html Msg)` in tail position renders as `Html Msg`.
+/// The argument and result types of a function type, in order
+/// (`A -> B -> C` gives `[A, B, C]`); a non-function type gives itself.
+fn fun_segments(t: &Type) -> Vec<Type> {
+    let mut out = Vec::new();
+    let mut cur = unwrap_type_paren(t);
+    loop {
+        match &cur {
+            Type::Fun(f) => {
+                let parts = type_children(f.syntax());
+                if let [a, b] = parts.as_slice() {
+                    out.push(a.clone());
+                    cur = unwrap_type_paren(b);
+                } else {
+                    out.push(cur.clone());
+                    break;
+                }
+            }
+            _ => {
+                out.push(cur.clone());
+                break;
+            }
+        }
+    }
+    out
+}
+
 fn unwrap_type_paren(t: &Type) -> Type {
     match t {
         Type::Paren(p) => match type_children(p.syntax()).into_iter().next() {
@@ -1414,26 +1656,39 @@ fn binding_params(node: &SyntaxNode) -> Vec<Pattern> {
 }
 
 /// Flatten a (possibly nested) `BinExpr` tree into source-order operands and
-/// the operators between them (mirrors the oracle's flat `Binops`).
+/// the operators between them — but only across operators of the SAME
+/// precedence. A tighter-binding sub-expression (`t == "p"` inside an `||`
+/// chain) stays one operand, so it is laid out as its own group. Flattening
+/// across precedence levels put a break between `t` and `== "p"`, which
+/// showed the chain with a structure the parser does not give it.
 fn flatten_bin(b: &syntax::ast::BinExpr) -> (Vec<Expr>, Vec<String>) {
     let mut operands = Vec::new();
     let mut ops = Vec::new();
-    flatten_bin_into(b, &mut operands, &mut ops);
+    let prec = syntax::binary_op_precedence(&bin_op_text(b));
+    flatten_bin_into(b, prec, &mut operands, &mut ops);
     (operands, ops)
 }
 
-fn flatten_bin_into(b: &syntax::ast::BinExpr, operands: &mut Vec<Expr>, ops: &mut Vec<String>) {
-    let lhs = b.lhs();
-    let op = b.op().map(|t| t.text().to_string()).unwrap_or_default();
-    let rhs = b.rhs();
-    match lhs {
-        Some(Expr::Bin(inner)) => flatten_bin_into(&inner, operands, ops),
+fn bin_op_text(b: &syntax::ast::BinExpr) -> String {
+    b.op().map(|t| t.text().to_string()).unwrap_or_default()
+}
+
+fn flatten_bin_into(
+    b: &syntax::ast::BinExpr,
+    prec: u8,
+    operands: &mut Vec<Expr>,
+    ops: &mut Vec<String>,
+) {
+    let same =
+        |inner: &syntax::ast::BinExpr| syntax::binary_op_precedence(&bin_op_text(inner)) == prec;
+    match b.lhs() {
+        Some(Expr::Bin(inner)) if same(&inner) => flatten_bin_into(&inner, prec, operands, ops),
         Some(e) => operands.push(e),
         None => {}
     }
-    ops.push(op);
-    match rhs {
-        Some(Expr::Bin(inner)) => flatten_bin_into(&inner, operands, ops),
+    ops.push(bin_op_text(b));
+    match b.rhs() {
+        Some(Expr::Bin(inner)) if same(&inner) => flatten_bin_into(&inner, prec, operands, ops),
         Some(e) => operands.push(e),
         None => {}
     }

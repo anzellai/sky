@@ -324,8 +324,8 @@ viewOrderSuccess model =
                       let
                           state = Db.getField "state" order
                       in
-                          if state == "ordered" || state == "shipped" || state
-                              == "delivered" then
+                          if state == "ordered" || state == "shipped"
+                              || state == "delivered" then
                               div
                                   []
                                   [ div

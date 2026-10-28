@@ -34,6 +34,7 @@ tuiStore =
     , readErrors = \_ -> Task.succeed mockErrors
     , readServiceStats = \_ -> Task.succeed []
     , readAnalytics = \_ -> Task.succeed emptyAnalytics
+    , readAi = \_ -> Task.succeed emptyAiData
     }
 
 
@@ -66,6 +67,8 @@ init _ =
       -- value (View.sky renders Ui.none for it), the same value the
       -- standalone hub uses.
       , logoutUrl = ""
+      , ai = emptyAiData
+      , aiFilter = emptyAiFilter
       }
     , Cmd.none
     )

@@ -350,12 +350,24 @@ fn every_harness_tier_with_gates_is_invoked_somewhere() {
 /// Workflows triggered only by tags, schedules, or manual dispatch are out of
 /// scope: they do not gate a commit, and their coverage is asserted by
 /// `every_harness_tier_with_gates_is_invoked_somewhere` instead.
-const NON_BLOCKING_PER_COMMIT_WORKFLOWS: &[(&str, &str)] = &[(
-    "docs-site.yml",
-    "publishes the GitHub Pages docs site. A publish failure is a broken \
-     deploy, not a broken compiler, and holding merges on it would couple the \
-     source of truth to a hosting side effect.",
-)];
+const NON_BLOCKING_PER_COMMIT_WORKFLOWS: &[(&str, &str)] = &[
+    (
+        "docs-site.yml",
+        "publishes the GitHub Pages docs site. A publish failure is a broken \
+         deploy, not a broken compiler, and holding merges on it would couple the \
+         source of truth to a hosting side effect.",
+    ),
+    (
+        "ai-trainer-bundles.yml",
+        "builds the sky-trainer release bundles (MLX from source, 30 to 90 \
+         minutes). Its push trigger is the feat/std-ai-lifecycle branch only, \
+         filtered to the trainer's own files, so it never runs on a commit to \
+         main; a dispatch only works for a workflow on the default branch, and \
+         this push is how the branch builds and tests a bundle before it merges. \
+         It never publishes from a branch push (the_trainer_bundles_are_pinned_\
+         tested_and_published_from_the_pin), and a release gates on its own run.",
+    ),
+];
 
 #[test]
 fn every_per_commit_workflow_is_covered_by_the_required_check_or_declared() {
@@ -1218,8 +1230,8 @@ fn the_release_workflow_is_the_full_suite() {
          {uncovered:?} — add each to one of the gate-falsifiers-* `--only` lists"
     );
 
-    // 4b. A gate's proof may be split across jobs by `--mutation` (the corpus
-    //     gate: one job per mutation). Then the union of the mutations those
+    // 4b. A gate's proof may be split across jobs by `--mutation` (one job
+    //     per mutation). Then the union of the mutations those
     //     lines apply must be every mutation the gate declares, or half the
     //     proof would run nowhere while each job reports PROVEN.
     let mut declared: std::collections::BTreeMap<String, Vec<String>> = Default::default();
@@ -1234,10 +1246,13 @@ fn the_release_workflow_is_the_full_suite() {
             }
         }
     }
+    // The parse reads literal `id: "…"` lines. A gate whose ids are built by
+    // a macro (the corpus shard gates, `concat!`) declares none here, and a
+    // `--mutation` filter cannot name it, so the check below passes it over.
     assert!(
-        declared.get("corpus").is_some_and(|m| m.len() >= 2),
-        "registry mutation parse found {:?} for corpus",
-        declared.get("corpus")
+        declared.get("spa-diff-fuzz").is_some_and(|m| m.len() >= 2),
+        "registry mutation parse found {:?} for spa-diff-fuzz",
+        declared.get("spa-diff-fuzz")
     );
     let mut applied: std::collections::BTreeMap<String, Vec<String>> = Default::default();
     for r in &runs {
@@ -1278,37 +1293,263 @@ fn the_release_workflow_is_the_full_suite() {
         half_proven.join("\n  ")
     );
 
-    // 5. The T1 harness runs in shards (`--tier t1 --only <list>`). A shard list
-    //    is hand-written, so a gate added to T1 later would run in NO release job
-    //    and the release would look green without it. A `--tier t1` line with no
-    //    `--only` runs every T1 gate and covers them all.
-    let mut t1_all = false;
-    let mut t1_covered: Vec<String> = Vec::new();
-    for r in &runs {
+    // 5. Every tier runs in shards (`--tier tN --only <list>`): T1 by gate group,
+    //    T2 by corpus shard gate (`corpus-1` … `corpus-4`) plus the rest, T4 by
+    //    platform. A shard list is hand-written, so a gate added to a tier later
+    //    — or a corpus shard gate added to the registry — would run in NO
+    //    release job and the release would look green without it. A
+    //    `--tier tN` line with no `--only` runs every gate of the tier.
+    for tier in ["T1", "T2", "T3", "T4"] {
+        let uncovered = tier_gates_run_nowhere(&registered, &runs, tier);
+        assert!(
+            uncovered.is_empty(),
+            "{tier} gate(s) that no release {tier} job runs: {uncovered:?} — add each to \
+             the `--only` list of one of the gate-* jobs that run `--tier {}`",
+            tier.to_ascii_lowercase()
+        );
+    }
+}
+
+/// The gates of `tier` (from the registry parse `(name, tier)`) that no
+/// `harness --tier <tier>` line in `runs` selects. A falsifier line does not
+/// count: it proves a mutation bites, it does not give the gate its verdict.
+fn tier_gates_run_nowhere(
+    registered: &[(String, String)],
+    runs: &[String],
+    tier: &str,
+) -> Vec<String> {
+    let flag = format!("--tier {}", tier.to_ascii_lowercase());
+    let mut all = false;
+    let mut covered: Vec<String> = Vec::new();
+    for r in runs {
         for line in r
             .lines()
-            .filter(|l| l.contains("--tier t1") && !l.contains("--verify-falsifiers"))
+            .filter(|l| l.contains(&flag) && !l.contains("--verify-falsifiers"))
         {
             let toks: Vec<&str> = line.split_whitespace().collect();
+            // Exact token match: `--tier t1` must not be read as covering `t10`.
+            let Some(t) = toks.iter().position(|t| *t == "--tier") else {
+                continue;
+            };
+            if toks.get(t + 1).map(|v| v.to_ascii_uppercase()) != Some(tier.to_string()) {
+                continue;
+            }
             match toks.iter().position(|t| *t == "--only") {
-                Some(i) => t1_covered.extend(toks[i + 1].split(',').map(str::to_string)),
-                None => t1_all = true,
+                Some(i) => covered.extend(
+                    toks.get(i + 1)
+                        .into_iter()
+                        .flat_map(|l| l.split(','))
+                        .map(str::to_string),
+                ),
+                None => all = true,
             }
         }
     }
-    if !t1_all {
-        let t1_uncovered: Vec<&str> = registered
-            .iter()
-            .filter(|(_, tier)| tier == "T1")
-            .map(|(n, _)| n.as_str())
-            .filter(|n| !t1_covered.iter().any(|c| c == n))
+    if all {
+        return Vec::new();
+    }
+    registered
+        .iter()
+        .filter(|(_, t)| t == tier)
+        .map(|(n, _)| n.clone())
+        .filter(|n| !covered.iter().any(|c| c == n))
+        .collect()
+}
+
+/// `(name, tier)` of every gate in the harness registry, parsed from source so
+/// the test needs nothing from the xtask crate itself.
+fn registered_gates() -> Vec<(String, String)> {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let registry = std::fs::read_to_string(root.join("rust/crates/xtask/src/harness/registry.rs"))
+        .expect("read the registry");
+    let mut registered: Vec<(String, String)> = Vec::new();
+    let mut name: Option<String> = None;
+    for line in registry.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("name: \"") {
+            name = rest.split('"').next().map(str::to_string);
+        } else if let Some(rest) = t.strip_prefix("tier: Tier::") {
+            if let Some(n) = name.take() {
+                registered.push((n, rest.trim_end_matches(',').to_string()));
+            }
+        }
+    }
+    assert!(
+        registered.len() > 30,
+        "registry parse found {}",
+        registered.len()
+    );
+    registered
+}
+
+/// Every `run:` body of the jobs `keep` selects, with each `${{ matrix.<key> }}`
+/// expanded once per value of that key's list in the job's `strategy.matrix`.
+/// A matrix leg is a job that runs; its `run:` text with the placeholder left
+/// in would name no gate, and a gate named only by a matrix value would read as
+/// run nowhere.
+fn expanded_runs(
+    doc: &serde_yaml::Value,
+    keep: impl Fn(&str, &serde_yaml::Value) -> bool,
+) -> Vec<String> {
+    let jobs = doc
+        .get("jobs")
+        .and_then(|j| j.as_mapping())
+        .expect("`jobs` mapping");
+    let mut out = Vec::new();
+    for (k, job) in jobs {
+        let Some(name) = k.as_str() else { continue };
+        if !keep(name, job) {
+            continue;
+        }
+        let matrix: Vec<(String, Vec<String>)> = job
+            .get("strategy")
+            .and_then(|s| s.get("matrix"))
+            .and_then(|m| m.as_mapping())
+            .into_iter()
+            .flatten()
+            .filter_map(|(k, v)| {
+                let vals: Vec<String> = v
+                    .as_sequence()?
+                    .iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect();
+                Some((k.as_str()?.to_string(), vals))
+            })
             .collect();
+        for step in job
+            .get("steps")
+            .and_then(|s| s.as_sequence())
+            .into_iter()
+            .flatten()
+        {
+            let Some(run) = step.get("run").and_then(|r| r.as_str()) else {
+                continue;
+            };
+            let mut expanded = vec![run.to_string()];
+            for (key, vals) in &matrix {
+                let placeholder = format!("${{{{ matrix.{key} }}}}");
+                if !run.contains(&placeholder) {
+                    continue;
+                }
+                expanded = expanded
+                    .iter()
+                    .flat_map(|r| {
+                        vals.iter()
+                            .map(|v| r.replace(&placeholder, v))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+            }
+            out.extend(expanded);
+        }
+    }
+    out
+}
+
+/// The behavioural corpus runs as shard gates (`corpus-1` … `corpus-N`, each
+/// every case whose index is k mod N). The union of the shards is the corpus
+/// only if EVERY shard runs, so a shard gate run by no job silently drops a
+/// quarter of the corpus while every job is green. This asserts, for the
+/// release workflow and for the nightly, that every T2 gate (the shards
+/// included) runs in some job, and for the release that every shard's
+/// falsifier is proven and every shard job is one `release:` waits on.
+#[test]
+fn every_corpus_shard_and_every_t2_gate_runs_in_the_release_and_the_nightly() {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let registered = registered_gates();
+    let shards: Vec<&str> = registered
+        .iter()
+        .map(|(n, _)| n.as_str())
+        .filter(|n| {
+            n.strip_prefix("corpus-")
+                .is_some_and(|r| !r.is_empty() && r.chars().all(|c| c.is_ascii_digit()))
+        })
+        .collect();
+    assert!(
+        shards.len() >= 2,
+        "found {} corpus shard gate(s) (`corpus-<k>`) in the registry — the parse is \
+         wrong or the corpus is no longer sharded; update this test with it",
+        shards.len()
+    );
+    assert!(
+        !registered.iter().any(|(n, _)| n == "corpus"),
+        "the unsharded `corpus` gate is registered again next to its shards"
+    );
+
+    // ---- release.yml ----------------------------------------------------
+    let text = std::fs::read_to_string(root.join(".github/workflows/release.yml"))
+        .expect("read release.yml");
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("release.yml parses");
+    let needs: Vec<String> = doc
+        .get("jobs")
+        .and_then(|j| j.get("release"))
+        .and_then(|r| r.get("needs"))
+        .and_then(|n| n.as_sequence())
+        .expect("release: needs: is a list")
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    let gating = |name: &str, job: &serde_yaml::Value| {
+        name.starts_with("gate-") && !job_is_disabled(job) && needs.iter().any(|n| n == name)
+    };
+    let runs = expanded_runs(&doc, gating);
+    let uncovered = tier_gates_run_nowhere(&registered, &runs, "T2");
+    assert!(
+        uncovered.is_empty(),
+        "T2 gate(s) that no enabled release job in `release: needs:` runs: {uncovered:?}"
+    );
+    for shard in &shards {
+        let proven = runs.iter().flat_map(|r| r.lines()).any(|l| {
+            l.contains("--verify-falsifiers") && {
+                let toks: Vec<&str> = l.split_whitespace().collect();
+                toks.iter()
+                    .position(|t| *t == "--only")
+                    .and_then(|i| toks.get(i + 1))
+                    .is_some_and(|list| list.split(',').any(|g| g == *shard))
+            }
+        });
         assert!(
-            t1_uncovered.is_empty(),
-            "T1 gate(s) that no release T1 shard runs: {t1_uncovered:?} — add each to \
-             one of the gate-t1-* `--only` lists"
+            proven,
+            "corpus shard gate `{shard}` has no falsifier proof in any release job"
         );
     }
+
+    // ---- nightly-sweep.yml ----------------------------------------------
+    let text = std::fs::read_to_string(root.join(".github/workflows/nightly-sweep.yml"))
+        .expect("read nightly-sweep.yml");
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("nightly-sweep.yml parses");
+    let runs = expanded_runs(&doc, |_, job| !job_is_disabled(job));
+    let uncovered = tier_gates_run_nowhere(&registered, &runs, "T2");
+    assert!(
+        uncovered.is_empty(),
+        "T2 gate(s) that no nightly job runs: {uncovered:?} — add each to a leg of the \
+         `behaviour-corpus` matrix"
+    );
+}
+
+/// The helpers above must not vouch for a gate by accident: a matrix leg is
+/// expanded per value, a shard named only in a falsifier line does not count as
+/// run, and `--tier t2` is not read as `--tier t20`.
+#[test]
+fn the_tier_coverage_helpers_see_only_real_invocations() {
+    let registered = vec![
+        ("corpus-1".to_string(), "T2".to_string()),
+        ("corpus-2".to_string(), "T2".to_string()),
+        ("other".to_string(), "T2".to_string()),
+    ];
+    let doc: serde_yaml::Value = serde_yaml::from_str(
+        "jobs:\n  leg:\n    strategy:\n      matrix:\n        gates: [corpus-1, other]\n    steps:\n      - run: xtask -- harness --tier t2 --only ${{ matrix.gates }}\n      - run: xtask -- harness --verify-falsifiers --all --only corpus-2\n      - run: xtask -- harness --tier t20 --only corpus-2\n",
+    )
+    .unwrap();
+    let runs = expanded_runs(&doc, |_, _| true);
+    assert_eq!(
+        tier_gates_run_nowhere(&registered, &runs, "T2"),
+        vec!["corpus-2".to_string()],
+        "only corpus-2 runs nowhere: the matrix covers corpus-1 and other"
+    );
+    // A bare `--tier t2` runs the whole tier.
+    let runs = vec!["xtask -- harness --tier t2".to_string()];
+    assert!(tier_gates_run_nowhere(&registered, &runs, "T2").is_empty());
 }
 
 /// The committed console_app Go must be checked against its Sky source on every
@@ -1803,6 +2044,96 @@ fn the_nix_entry_points_are_built_by_the_nightly_and_the_release_gate() {
              the Nix package can break unseen (GitHub issue #216)"
         );
     }
+}
+
+/// A bare `yes | cmd` dies under pipefail, which every GitHub bash step runs
+/// with (`bash -e -o pipefail`). When `cmd` stops reading, `yes` takes SIGPIPE,
+/// exits 141, and pipefail makes that the step's status: `sdkmanager` had
+/// installed the NDK, and `gate-ai-device-android` still failed on
+/// `yes: standard output: Broken pipe`. Write `{ yes || true; } | cmd`, which
+/// keeps `cmd`'s own status.
+#[test]
+fn no_run_step_pipes_a_bare_yes() {
+    let mut bad = Vec::new();
+    for wf in workflows() {
+        let text = std::fs::read_to_string(&wf).unwrap();
+        for (i, line) in text.lines().enumerate() {
+            let t = line.trim_start();
+            if t.starts_with("yes |") || t.contains("&& yes |") || t.contains("; yes |") {
+                bad.push(format!("{}:{}: {}", wf.display(), i + 1, t));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "a bare `yes |` fails the step under pipefail (SIGPIPE, exit 141); \
+         write `{{ yes || true; }} | cmd`:\n{}",
+        bad.join("\n")
+    );
+}
+
+/// An array a run step starts empty (`extra=()`) and may leave empty must be
+/// expanded as `${extra[@]+"${extra[@]}"}`. macOS runners run steps with
+/// /bin/bash 3.2, where `"${extra[@]}"` of an empty array under `set -u` is
+/// "unbound variable": the ios engine build in ai-device-bundles.yml (the one
+/// target that adds no extra arguments) died on it before compiling a line.
+#[test]
+fn an_array_a_step_starts_empty_is_expanded_guarded() {
+    let mut bad = Vec::new();
+    for wf in workflows() {
+        let text = std::fs::read_to_string(&wf).unwrap();
+        let mut empty: Vec<String> = Vec::new();
+        for line in text.lines() {
+            let t = line.trim();
+            if let Some(name) = t.strip_suffix("=()") {
+                if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                    empty.push(name.to_string());
+                }
+            }
+        }
+        for (i, line) in text.lines().enumerate() {
+            for name in &empty {
+                let bare = format!("\"${{{name}[@]}}\"");
+                let guarded = format!("${{{name}[@]+\"${{{name}[@]}}\"}}");
+                if line.replace(&guarded, "").contains(&bare) {
+                    bad.push(format!("{}:{}: {}", wf.display(), i + 1, line.trim()));
+                }
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "an array a step starts empty is \"unbound\" under set -u on bash 3.2 \
+         (macOS runners); expand it as ${{name[@]+\"${{name[@]}}\"}}:\n{}",
+        bad.join("\n")
+    );
+}
+
+/// A run of the whole sky crate's `#[ignore]`d tests must skip the paid
+/// `gcp_live_*` tests: they rent cloud GPUs and run only through
+/// scripts/ai/gcp-live.sh (the ai-cloud-live workflow, behind a spend
+/// confirmation). The release gate-app leg ran them, and they failed on the
+/// missing `SKY_AI_GCP_LIVE`, as their live gate says they must.
+#[test]
+fn no_ignored_test_sweep_runs_the_paid_cloud_tests() {
+    let mut bad = Vec::new();
+    for wf in workflows() {
+        let text = std::fs::read_to_string(&wf).unwrap();
+        for (i, line) in text.lines().enumerate() {
+            let sweeps_crate = line.contains("cargo test -p sky")
+                && line.contains("-- --ignored")
+                && !line.contains("--test ");
+            if sweeps_crate && !line.contains("--skip gcp_live_") {
+                bad.push(format!("{}:{}: {}", wf.display(), i + 1, line.trim()));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "an `--ignored` sweep of the sky crate runs the paid gcp_live_* tests; add \
+         `--skip gcp_live_`:\n{}",
+        bad.join("\n")
+    );
 }
 
 /// Every job that runs the `sky` crate's tests installs the `brotli` tool.
@@ -2944,4 +3275,724 @@ fn the_pin_check_catches_a_tag_or_branch_ref() {
     let ok = "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n      - uses: ./.github/actions/gate-setup\n      - uses: docker://alpine:3\n";
     let doc: serde_yaml::Value = serde_yaml::from_str(ok).unwrap();
     assert_eq!(unpinned_actions("t.yml", &doc), Vec::<String>::new());
+}
+
+/// The `NAME="value"` assignments of a shell script, in order.
+fn shell_pins(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|l| {
+            let (k, v) = l.split_once('=')?;
+            let ok = !k.is_empty()
+                && k.bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
+            let v = v.strip_prefix('"')?.strip_suffix('"')?;
+            ok.then(|| (k.to_string(), v.to_string()))
+        })
+        .collect()
+}
+
+/// What is wrong with the trainer bundle workflow and the sources it pins.
+fn trainer_bundle_problems(
+    doc: &serde_yaml::Value,
+    script: &str,
+    build_sh: &str,
+    cmake: &str,
+    pins_go: &str,
+) -> Vec<String> {
+    let mut p = Vec::new();
+    // The two platforms, each on its runner: linux on ubuntu-22.04 (the glibc
+    // floor 2.35), darwin on an arm64 macOS runner.
+    let build = &doc["jobs"]["build"];
+    let legs: Vec<(String, String)> = build["strategy"]["matrix"]["include"]
+        .as_sequence()
+        .into_iter()
+        .flatten()
+        .map(|m| {
+            (
+                m["platform"].as_str().unwrap_or("").to_string(),
+                m["os"].as_str().unwrap_or("").to_string(),
+            )
+        })
+        .collect();
+    if !legs.contains(&("linux-x64".into(), "ubuntu-22.04".into())) {
+        p.push(format!(
+            "build: no linux-x64 leg on ubuntu-22.04 ({legs:?})"
+        ));
+    }
+    if !legs
+        .iter()
+        .any(|(pl, os)| pl == "darwin-arm64" && os.starts_with("macos-") && !os.contains("intel"))
+    {
+        p.push(format!(
+            "build: no darwin-arm64 leg on an arm64 macOS runner ({legs:?})"
+        ));
+    }
+    // In each leg: the bundle is built, then the unpacked archive passes
+    // test-trainer.sh, then it is uploaded. The test step has no `if`, so the
+    // linux leg runs it.
+    let steps: Vec<&serde_yaml::Value> =
+        build["steps"].as_sequence().into_iter().flatten().collect();
+    let run = |s: &serde_yaml::Value| s["run"].as_str().unwrap_or("").to_string();
+    let at = |f: &dyn Fn(&serde_yaml::Value) -> bool| steps.iter().position(|s| f(s));
+    let built = at(&|s| run(s).contains("build-trainer-bundle.sh"));
+    let tested = at(&|s| run(s).contains("test-trainer.sh --trainer"));
+    let uploaded = at(&|s| {
+        s["uses"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("actions/upload-artifact@")
+    });
+    match (built, tested, uploaded) {
+        (Some(b), Some(t), Some(u)) if b < t && t < u => {
+            let s = steps[t];
+            if !s["if"].is_null() {
+                p.push("build: the test-trainer.sh step is conditional; every leg must run it".into());
+            }
+            let r = run(s);
+            for need in ["shasum -a 256 -c", "tar -xzf", "--device cpu"] {
+                if !r.contains(need) {
+                    p.push(format!("build: the test step does not run `{need}` (the archive is what is tested)"));
+                }
+            }
+        }
+        other => p.push(format!(
+            "build: the steps are not build, then test-trainer.sh on the unpacked archive, then upload ({other:?})"
+        )),
+    }
+    // Reproducible: the archive is packed by pack-bundle.sh at the commit's
+    // time (SOURCE_DATE_EPOCH, the SBOM's creation time too), and each leg
+    // packs the unpacked bundle again and compares the bytes before upload.
+    let repacked = at(&|s| {
+        let r = run(s);
+        r.contains("pack-bundle.sh") && r.contains("[ \"$one\" = \"$two\" ]")
+    });
+    match (repacked, uploaded) {
+        (Some(r), Some(u)) if r < u && steps[r]["if"].is_null() => {}
+        other => p.push(format!(
+            "build: no unconditional step packs the bundle again and compares the bytes before the upload ({other:?})"
+        )),
+    }
+    for need in [
+        "\"$HERE/pack-bundle.sh\" \"$BUNDLE\" \"$ARCHIVE\" \"$SOURCE_DATE_EPOCH\"",
+        "export SOURCE_DATE_EPOCH",
+        "gmtime($ARGV[0]))' \"$SOURCE_DATE_EPOCH\")\"",
+    ] {
+        if !script.contains(need) {
+            p.push(format!(
+                "script: no `{need}` (the archive and the SBOM take the commit's time)"
+            ));
+        }
+    }
+    // Publishing: after every leg, from a tag named by the pin, the two
+    // platforms only (never the JIT measurement), with SHA256SUMS.
+    let publish = &doc["jobs"]["publish"];
+    let needs: Vec<String> = match &publish["needs"] {
+        serde_yaml::Value::String(s) => vec![s.clone()],
+        v => v
+            .as_sequence()
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect(),
+    };
+    if needs != ["build"] {
+        p.push(format!("publish: needs {needs:?}, want [build]"));
+    }
+    // A branch push builds and tests only: publish runs on the tag, or on a
+    // dispatch that sets publish. The condition is exactly this one, so no
+    // extra clause can let a branch push through.
+    let cond: String = publish["if"]
+        .as_str()
+        .unwrap_or("")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let want =
+        "(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/sky-trainer-v')) \
+                || (github.event_name == 'workflow_dispatch' && inputs.publish)";
+    if cond != want {
+        p.push(format!(
+            "publish: runs when `{cond}`; want `{want}`, so a branch push never publishes"
+        ));
+    }
+    let seq = |v: &serde_yaml::Value| -> Vec<String> {
+        v.as_sequence()
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect()
+    };
+    let push = &doc["on"]["push"];
+    if seq(&push["tags"]) != ["sky-trainer-v*"] {
+        p.push(format!(
+            "on.push.tags is {:?}, want [sky-trainer-v*]",
+            seq(&push["tags"])
+        ));
+    }
+    // A branch push runs only when the trainer changes: the filter covers the
+    // workflow, the trainer sources and the pins, and nothing else widens it.
+    let paths = seq(&push["paths"]);
+    for need in [
+        ".github/workflows/ai-trainer-bundles.yml",
+        "scripts/ai/trainer/**",
+        "runtime-go/rt/ai_pins.go",
+    ] {
+        if !paths.iter().any(|x| x == need) {
+            p.push(format!("on.push.paths {paths:?} does not include {need}"));
+        }
+    }
+    if !push["branches"].is_null() && paths.is_empty() {
+        p.push("on.push.branches has no paths filter".into());
+    }
+    let publish_runs: String = publish["steps"]
+        .as_sequence()
+        .into_iter()
+        .flatten()
+        .map(|s| run(s))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for need in [
+        "aiTrainerVersion",
+        "for p in darwin-arm64 linux-x64",
+        "SHA256SUMS",
+        "gh release create",
+    ] {
+        if !publish_runs.contains(need) {
+            p.push(format!("publish: no `{need}`"));
+        }
+    }
+    if !pins_go.contains("releases/download/sky-trainer-v\" + aiTrainerVersion") {
+        p.push("ai_pins.go: aiTrainerReleaseURL does not download from sky-trainer-v<aiTrainerVersion>".into());
+    }
+    // The sources: each pinned by URL and a full SHA-256, MLX and mlx-c at
+    // the versions build.sh and CMakeLists.txt build, OpenBLAS static.
+    let sp = shell_pins(script);
+    let get = |k: &str| sp.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+    for dep in ["MLX", "MLXC", "JSON", "FMT", "METALCPP", "OPENBLAS"] {
+        match get(&format!("{dep}_SHA256")) {
+            Some(s)
+                if s.len() == 64
+                    && s.bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) => {}
+            other => p.push(format!("script: {dep}_SHA256 is {other:?}, not a SHA-256")),
+        }
+        if !get(&format!("{dep}_URL")).is_some_and(|u| u.starts_with("https://")) {
+            p.push(format!("script: {dep}_URL is not an https URL"));
+        }
+    }
+    let bp = shell_pins(build_sh);
+    let bget = |k: &str| bp.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+    let (mlx, mlxc) = (get("MLX_PIN"), get("MLXC_PIN"));
+    if mlx.is_none() || mlx != bget("MLX_PIN") {
+        p.push(format!(
+            "MLX_PIN: script {mlx:?}, build.sh {:?}",
+            bget("MLX_PIN")
+        ));
+    }
+    if mlxc.is_none() || mlxc != bget("MLXC_PIN") {
+        p.push(format!(
+            "MLXC_PIN: script {mlxc:?}, build.sh {:?}",
+            bget("MLXC_PIN")
+        ));
+    }
+    if let Some(v) = &mlx {
+        if !cmake.contains(&format!("set(SKY_MLX_PIN \"{v}\")")) {
+            p.push(format!("CMakeLists.txt does not pin MLX {v}"));
+        }
+        if !get("MLX_URL").is_some_and(|u| u.ends_with(&format!("/v{v}.tar.gz"))) {
+            p.push(format!("MLX_URL is not the v{v} source"));
+        }
+    }
+    match (get("MLXC_COMMIT"), &mlxc) {
+        (Some(c), Some(pin)) if c.len() == 40 && c.starts_with(pin.as_str()) => {
+            if !get("MLXC_URL").is_some_and(|u| u.contains(&c)) {
+                p.push("MLXC_URL is not the MLXC_COMMIT source".into());
+            }
+        }
+        other => p.push(format!(
+            "MLXC_COMMIT is not the full commit of MLXC_PIN ({other:?})"
+        )),
+    }
+    // Linux links OpenBLAS statically, and MLX's own downloads are pointed at
+    // the checked sources.
+    for need in [
+        "NO_SHARED=1",
+        "-DBLA_STATIC=ON",
+        "-DFETCHCONTENT_FULLY_DISCONNECTED=ON",
+    ] {
+        if !script.contains(need) {
+            p.push(format!("script: no `{need}`"));
+        }
+    }
+    p
+}
+
+struct TrainerBundleInputs {
+    debs: String,
+    doc: serde_yaml::Value,
+    script: String,
+    build_sh: String,
+    cmake: String,
+    pins: String,
+}
+
+fn trainer_bundle_inputs() -> TrainerBundleInputs {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let read =
+        |p: &str| std::fs::read_to_string(root.join(p)).unwrap_or_else(|e| panic!("read {p}: {e}"));
+    TrainerBundleInputs {
+        debs: read("scripts/ai/trainer/gcc13-debs.txt"),
+        doc: read_workflow("ai-trainer-bundles.yml"),
+        script: read("scripts/ai/trainer/build-trainer-bundle.sh"),
+        build_sh: read("scripts/ai/trainer/build.sh"),
+        cmake: read("scripts/ai/trainer/CMakeLists.txt"),
+        pins: read("runtime-go/rt/ai_pins.go"),
+    }
+}
+
+/// The trainer bundles are built in CI only, from sources pinned by SHA-256,
+/// and published only after the unpacked linux and darwin archives pass the
+/// trainer's contract (test-trainer.sh on the tiny model).
+///
+/// # Why this exists
+///
+/// `sky ai provision --train mlx` installs whatever the `sky-trainer-v<version>`
+/// release holds, checked only against the digest pinned in ai_pins.go. So
+/// the release is the last point where a broken bundle (a host BLAS left
+/// linked, a source that drifted from build.sh's pin, a step reordered so the
+/// test runs after the upload) can be stopped. Parsed, not grepped.
+#[test]
+fn the_trainer_bundles_are_pinned_tested_and_published_from_the_pin() {
+    let i = trainer_bundle_inputs();
+    let problems = trainer_bundle_problems(&i.doc, &i.script, &i.build_sh, &i.cmake, &i.pins);
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// The check above goes red on each broken shape.
+#[test]
+fn the_trainer_bundle_check_catches_each_broken_shape() {
+    let i = trainer_bundle_inputs();
+    let check = |doc: &serde_yaml::Value, script: &str, build_sh: &str| {
+        trainer_bundle_problems(doc, script, build_sh, &i.cmake, &i.pins)
+    };
+    assert!(check(&i.doc, &i.script, &i.build_sh).is_empty());
+    let test_step = |doc: &serde_yaml::Value| {
+        doc["jobs"]["build"]["steps"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .position(|s| {
+                s["run"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("test-trainer.sh --trainer")
+            })
+            .expect("a test step")
+    };
+    // The test step is removed.
+    let mut d = i.doc.clone();
+    let t = test_step(&d);
+    d["jobs"]["build"]["steps"]
+        .as_sequence_mut()
+        .unwrap()
+        .remove(t);
+    assert!(
+        !check(&d, &i.script, &i.build_sh).is_empty(),
+        "missed: no test step"
+    );
+    // The test step runs after the upload.
+    let mut d = i.doc.clone();
+    let t = test_step(&d);
+    let steps = d["jobs"]["build"]["steps"].as_sequence_mut().unwrap();
+    let s = steps.remove(t);
+    steps.push(s);
+    assert!(
+        !check(&d, &i.script, &i.build_sh).is_empty(),
+        "missed: test after upload"
+    );
+    // The test step is skipped on linux.
+    let mut d = i.doc.clone();
+    let t = test_step(&d);
+    d["jobs"]["build"]["steps"][t]["if"] = "matrix.platform == 'darwin-arm64'".into();
+    assert!(
+        !check(&d, &i.script, &i.build_sh).is_empty(),
+        "missed: test skipped on linux"
+    );
+    // The linux leg moves off ubuntu-22.04.
+    let mut d = i.doc.clone();
+    for m in d["jobs"]["build"]["strategy"]["matrix"]["include"]
+        .as_sequence_mut()
+        .unwrap()
+    {
+        if m["platform"] == "linux-x64" {
+            m["os"] = "ubuntu-24.04".into();
+        }
+    }
+    assert!(
+        !check(&d, &i.script, &i.build_sh).is_empty(),
+        "missed: linux off 22.04"
+    );
+    // Publishing waits on nothing, or also takes the JIT measurement.
+    let mut d = i.doc.clone();
+    d["jobs"]["publish"]["needs"] =
+        serde_yaml::Value::Sequence(vec!["build".into(), "measure-metal-jit".into()]);
+    assert!(
+        !check(&d, &i.script, &i.build_sh).is_empty(),
+        "missed: publish needs the JIT build"
+    );
+    // The reproducibility check is removed.
+    let mut d = i.doc.clone();
+    let r = d["jobs"]["build"]["steps"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .position(|s| s["run"].as_str().unwrap_or("").contains("pack-bundle.sh"))
+        .expect("a repack step");
+    d["jobs"]["build"]["steps"]
+        .as_sequence_mut()
+        .unwrap()
+        .remove(r);
+    assert!(
+        !check(&d, &i.script, &i.build_sh).is_empty(),
+        "missed: no repack check"
+    );
+    // The SBOM takes the wall clock again.
+    let clock = i.script.replace(
+        "gmtime($ARGV[0]))' \"$SOURCE_DATE_EPOCH\")\"",
+        "gmtime(time))')\"",
+    );
+    assert_ne!(clock, i.script, "the mutation applies");
+    assert!(
+        !check(&i.doc, &clock, &i.build_sh).is_empty(),
+        "missed: a wall-clock SBOM time"
+    );
+    // A branch push reaches publish.
+    for cond in [
+        "always()",
+        "startsWith(github.ref, 'refs/tags/sky-trainer-v') || inputs.publish || github.event_name == 'push'",
+        "(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/sky-trainer-v')) || (github.event_name == 'workflow_dispatch' && inputs.publish) || startsWith(github.ref, 'refs/heads/')",
+    ] {
+        let mut d = i.doc.clone();
+        d["jobs"]["publish"]["if"] = cond.into();
+        assert!(!check(&d, &i.script, &i.build_sh).is_empty(), "missed: publish on `{cond}`");
+    }
+    // The paths filter drops the trainer sources, or the pins.
+    for gone in ["scripts/ai/trainer/**", "runtime-go/rt/ai_pins.go"] {
+        let mut d = i.doc.clone();
+        let paths = d["on"]["push"]["paths"].as_sequence_mut().unwrap();
+        paths.retain(|x| x.as_str() != Some(gone));
+        assert!(
+            !check(&d, &i.script, &i.build_sh).is_empty(),
+            "missed: paths without {gone}"
+        );
+    }
+    // A source pin is cut short, or build.sh moves to another MLX.
+    let short = i.script.replacen("MLX_SHA256=\"0", "MLX_SHA256=\"", 1);
+    assert_ne!(short, i.script, "the mutation applies");
+    assert!(
+        !check(&i.doc, &short, &i.build_sh).is_empty(),
+        "missed: a short digest"
+    );
+    let moved = i
+        .build_sh
+        .replacen("MLX_PIN=\"0.32.4\"", "MLX_PIN=\"0.33.0\"", 1);
+    assert_ne!(moved, i.build_sh, "the mutation applies");
+    assert!(
+        !check(&i.doc, &i.script, &moved).is_empty(),
+        "missed: build.sh on another MLX"
+    );
+    let dynamic = i.script.replace("-DBLA_STATIC=ON", "-DBLA_STATIC=OFF");
+    assert!(
+        !check(&i.doc, &dynamic, &i.build_sh).is_empty(),
+        "missed: a dynamic BLAS"
+    );
+}
+
+/// The published darwin bundle compiles its Metal kernels ahead of time
+/// (MLX_METAL_JIT=OFF), and docs/ai/train.md records the measurement and the
+/// reason. The JIT build exists only as the unpublished measurement leg.
+///
+/// # Why this exists
+///
+/// The choice was measured (run 40333010053): the JIT archive is 6.2 MB
+/// against 43.6 MB, and its first launch on a Mac GPU took 8.9 s against
+/// 4.2 s. A later edit that flips the flag, or publishes the JIT archive,
+/// changes what every user downloads and how long their first step takes; it
+/// must change the recorded decision with it.
+#[test]
+fn the_published_darwin_bundle_is_ahead_of_time_metal() {
+    let i = trainer_bundle_inputs();
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let doc = std::fs::read_to_string(root.join("docs/ai/train.md")).expect("train.md");
+    let mut p = Vec::new();
+    if !i
+        .script
+        .contains("else MLX_FLAGS+=(-DMLX_METAL_JIT=OFF); fi")
+    {
+        p.push(
+            "build-trainer-bundle.sh: the default darwin build is not MLX_METAL_JIT=OFF"
+                .to_string(),
+        );
+    }
+    let steps = i.doc["jobs"]["build"]["steps"]
+        .as_sequence()
+        .expect("steps");
+    for s in steps {
+        if s["run"].as_str().unwrap_or("").contains("--metal-jit") {
+            p.push("the build job (the published legs) passes --metal-jit".into());
+        }
+    }
+    let section = doc
+        .split("### Metal kernels: ahead of time")
+        .nth(1)
+        .map(|s| s.split("\n#").next().unwrap_or(""))
+        .unwrap_or("");
+    for need in ["MLX_METAL_JIT", "6.2 MB", "43.6 MB", "8.9 s", "4.2 s"] {
+        if !section.contains(need) {
+            p.push(format!("docs/ai/train.md: the \"Metal kernels: ahead of time\" section does not record `{need}`"));
+        }
+    }
+    assert!(p.is_empty(), "{}", p.join("\n"));
+}
+
+/// What is wrong with the pinned linux toolchain: every package of
+/// gcc13-debs.txt at an exact version, the workflow installing exactly that
+/// list, and the bundle script refusing a toolchain that differs.
+fn gcc_pin_problems(debs: &str, doc: &serde_yaml::Value, script: &str) -> Vec<String> {
+    let mut p = Vec::new();
+    let pins: Vec<(&str, &str)> = debs
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| l.split_once('=').unwrap_or((l, "")))
+        .collect();
+    for (name, version) in &pins {
+        let exact = !version.is_empty()
+            && version.bytes().next().is_some_and(|b| b.is_ascii_digit())
+            && !version.contains('*');
+        if !exact {
+            p.push(format!(
+                "gcc13-debs.txt: {name} has no exact version ({version:?})"
+            ));
+        }
+    }
+    for need in [
+        "gcc-13",
+        "g++-13",
+        "libstdc++-13-dev",
+        "libstdc++6",
+        "libgcc-s1",
+    ] {
+        if !pins.iter().any(|(n, _)| *n == need) {
+            p.push(format!("gcc13-debs.txt does not pin {need}"));
+        }
+    }
+    let runs: Vec<String> = doc["jobs"]["build"]["steps"]
+        .as_sequence()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| s["run"].as_str().map(str::to_string))
+        .collect();
+    let installs: Vec<&String> = runs
+        .iter()
+        .filter(|r| r.contains("apt-get install"))
+        .collect();
+    if !installs
+        .iter()
+        .any(|r| r.contains("scripts/ai/trainer/gcc13-debs.txt"))
+    {
+        p.push("the build job does not install the toolchain from gcc13-debs.txt".into());
+    }
+    for r in &installs {
+        for line in r.lines().filter(|l| l.contains("apt-get install")) {
+            if line
+                .split_whitespace()
+                .any(|w| w.starts_with("gcc-") || w.starts_with("g++-"))
+            {
+                p.push(format!(
+                    "the build job installs an unpinned compiler: `{}`",
+                    line.trim()
+                ));
+            }
+        }
+    }
+    for need in [
+        "done < \"$HERE/gcc13-debs.txt\"",
+        "dpkg-query -W -f='${Version}' \"$pkgname\"",
+        "STDCXX_PKG=\"$(runtime_version libstdc++.so.6)\"",
+    ] {
+        if !script.contains(need) {
+            p.push(format!("build-trainer-bundle.sh: no `{need}` (the toolchain check, or the SBOM's runtime version)"));
+        }
+    }
+    p
+}
+
+/// The linux bundle's compiler is pinned package by package, and the build
+/// fails when an installed version differs.
+///
+/// # Why this exists
+///
+/// The PPA that provides GCC 13 on ubuntu-22.04 also replaces libstdc++6 and
+/// libgcc-s1 with its newest runtime (a GCC 16 snapshot in run 40339193271),
+/// and the bundle ships those two libraries. An unpinned install would change
+/// what every linux user runs, with no change in this tree.
+#[test]
+fn the_linux_trainer_toolchain_is_pinned_and_checked() {
+    let i = trainer_bundle_inputs();
+    let p = gcc_pin_problems(&i.debs, &i.doc, &i.script);
+    assert!(p.is_empty(), "{}", p.join("\n"));
+    // Each broken shape goes red.
+    let floating = i.debs.replace("g++-13=13.4.0-6ubuntu1~22~ppa2", "g++-13");
+    assert_ne!(floating, i.debs, "the mutation applies");
+    assert!(
+        !gcc_pin_problems(&floating, &i.doc, &i.script).is_empty(),
+        "missed: an unversioned pin"
+    );
+    let unpinned = i.debs.replace("libstdc++6=", "# libstdc++6=");
+    assert!(
+        !gcc_pin_problems(&unpinned, &i.doc, &i.script).is_empty(),
+        "missed: libstdc++6 unpinned"
+    );
+    let unchecked = i
+        .script
+        .replace("done < \"$HERE/gcc13-debs.txt\"", "done < /dev/null");
+    assert!(
+        !gcc_pin_problems(&i.debs, &i.doc, &unchecked).is_empty(),
+        "missed: no version check"
+    );
+    let mut d = i.doc.clone();
+    for s in d["jobs"]["build"]["steps"].as_sequence_mut().unwrap() {
+        if let Some(r) = s["run"].as_str() {
+            if r.contains("gcc13-debs.txt") {
+                s["run"] = r.replace("grep -Ev '^(#|$)' scripts/ai/trainer/gcc13-debs.txt | xargs sudo apt-get install -y --allow-downgrades ninja-build", "sudo apt-get install -y ninja-build gcc-13 g++-13").into();
+            }
+        }
+    }
+    assert!(
+        !gcc_pin_problems(&i.debs, &d, &i.script).is_empty(),
+        "missed: an unpinned install"
+    );
+}
+
+/// What is wrong with how a training job gets its trainer.
+fn training_job_problems(
+    file: &str,
+    doc: &serde_yaml::Value,
+    job: &str,
+    platform: &str,
+    test: &str,
+) -> Vec<String> {
+    let mut p = Vec::new();
+    let j = &doc["jobs"][job];
+    if j.is_null() {
+        return vec![format!("{file}: no job `{job}`")];
+    }
+    if j["permissions"]["actions"].as_str() != Some("read") {
+        p.push(format!(
+            "{file} `{job}`: no `permissions: actions: read` (the bundle artifact)"
+        ));
+    }
+    let steps: Vec<&serde_yaml::Value> = j["steps"].as_sequence().into_iter().flatten().collect();
+    let trainer = steps.iter().position(|s| {
+        s["uses"].as_str() == Some("./.github/actions/sky-trainer")
+            && s["with"]["platform"].as_str() == Some(platform)
+    });
+    let tested = steps.iter().position(|s| {
+        s["run"]
+            .as_str()
+            .unwrap_or("")
+            .contains(&format!("--test {test}"))
+    });
+    match (trainer, tested) {
+        (Some(a), Some(b)) if a < b => {}
+        other => p.push(format!(
+            "{file} `{job}`: the {platform} trainer (.github/actions/sky-trainer) does not come before `--test {test}` ({other:?})"
+        )),
+    }
+    for s in &steps {
+        let key = format!("{:?}", s["with"]["key"]);
+        if key.contains("ai_train_assets") {
+            p.push(format!("{file} `{job}`: a cache key still hashes ai_train_assets ({key}); key it on the trainer pins (ai_pins.go)"));
+        }
+    }
+    p
+}
+
+/// The training jobs take the native trainer from .github/actions/sky-trainer
+/// (the pinned bundle once ai_pins.go pins it, else the newest bundle
+/// workflow artifact), key their caches on the pins, and the linux jobs run
+/// the Unsloth driver's Python suites under the pinned CPython.
+///
+/// # Why this exists
+///
+/// Before this, `ai-train-mlx-live` and `gate-ai-train-mlx` failed on every
+/// run: CI had no sky-trainer. The same jobs must keep working, unchanged,
+/// when the bundles are pinned, so the action is a no-op for a pinned
+/// platform rather than a branch-only workaround.
+#[test]
+fn the_training_jobs_get_their_trainer_from_the_bundle() {
+    let rust_ci = read_workflow("rust-ci.yml");
+    let release = read_workflow("release.yml");
+    let mut p = Vec::new();
+    p.extend(training_job_problems(
+        "rust-ci.yml",
+        &rust_ci,
+        "ai-train-live",
+        "linux-x64",
+        "ai_train_live",
+    ));
+    p.extend(training_job_problems(
+        "rust-ci.yml",
+        &rust_ci,
+        "ai-train-mlx-live",
+        "darwin-arm64",
+        "ai_train_native_live",
+    ));
+    p.extend(training_job_problems(
+        "release.yml",
+        &release,
+        "gate-ai-train",
+        "linux-x64",
+        "ai_train_live",
+    ));
+    p.extend(training_job_problems(
+        "release.yml",
+        &release,
+        "gate-ai-train-mlx",
+        "darwin-arm64",
+        "ai_train_native_live",
+    ));
+    for (file, doc, job) in [
+        ("rust-ci.yml", &rust_ci, "ai-train-live"),
+        ("release.yml", &release, "gate-ai-train"),
+    ] {
+        let runs: String = doc["jobs"][job]["steps"]
+            .as_sequence()
+            .into_iter()
+            .flatten()
+            .filter_map(|s| s["run"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !runs
+            .contains("go test -tags ailive ./rt -run TestTheDriverSuitesPassUnderThePinnedCPython")
+        {
+            p.push(format!(
+                "{file} `{job}`: the Unsloth driver's Python suites do not run"
+            ));
+        }
+    }
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let action = std::fs::read_to_string(root.join(".github/actions/sky-trainer/action.yml"))
+        .unwrap_or_default();
+    for need in [
+        "grep -qF \"\\\"$file\\\"\" <<<\"$(sed -n '/^var aiTrainerAssets = /,/^}/p' \"$pins\")\"",
+        "shasum -a 256 -c \"$file.sha256\"",
+        "echo \"SKY_AI_TRAINER_BIN=$bin\" >> \"$GITHUB_ENV\"",
+    ] {
+        if !action.contains(need) {
+            p.push(format!(".github/actions/sky-trainer: no `{need}`"));
+        }
+    }
+    assert!(p.is_empty(), "{}", p.join("\n"));
 }

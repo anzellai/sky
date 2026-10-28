@@ -1,0 +1,535 @@
+//! `sky ai` and `Std.Ai.Endpoint` end to end, against a FAKE engine.
+//!
+//! The fake (`runtime-go/rt/testdata/fakellama`) answers the launch
+//! arguments, `/health`, `/v1/chat/completions` and `/v1/embeddings` the way
+//! `llama-server` does, so these tests prove the CLI verbs and a compiled
+//! Sky program's slots without a model. The real engine and model are the
+//! live test `ai_local_live.rs`.
+//!
+//! The operator path is used throughout: `SKY_AI_LLAMA_BIN` points at the
+//! fake engine and `SKY_AI_<SLOT>_MODEL` at a small GGUF file, and
+//! `SKY_AI_HOME` keeps every test's engines, keys and registry apart.
+
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
+
+#[cfg(unix)]
+#[path = "support/child_group.rs"]
+mod child_group;
+#[cfg(unix)]
+use child_group::ChildGroup;
+
+const SKY: &str = env!("CARGO_BIN_EXE_sky");
+
+/// A unique suffix for a scratch directory. The clock alone is not unique:
+/// macOS gives microseconds, so two tests that start together got the SAME
+/// directory and shared one fake engine (ai_cli_flow counted another test's
+/// launches). The counter makes every name distinct within the process.
+fn unique_suffix() -> String {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    format!(
+        "{}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+fn have_go() -> bool {
+    Command::new("go")
+        .arg("version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
+}
+
+fn temp_dir(tag: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("sky-ai-{tag}-{}", unique_suffix()));
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+/// The fake engine as `<dir>/llama-server`, plus a small model and its
+/// reference string.
+struct Fake {
+    dir: PathBuf,
+    home: PathBuf,
+    model_ref: String,
+}
+
+fn fake_engine() -> Fake {
+    let dir = temp_dir("engine");
+    let bin = dir.join("llama-server");
+    let out = Command::new("go")
+        .args(["build", "-o"])
+        .arg(&bin)
+        .arg("./rt/testdata/fakellama")
+        .current_dir(repo_root().join("runtime-go"))
+        .output()
+        .expect("spawn go build");
+    assert!(
+        out.status.success(),
+        "go build fakellama: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let model = dir.join("tiny.gguf");
+    let out = Command::new(&bin)
+        .arg("--write-test-model")
+        .arg(&model)
+        .output()
+        .expect("write test model");
+    assert!(out.status.success());
+    let sum = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    assert_eq!(sum.len(), 64, "digest {sum:?}");
+    Fake {
+        model_ref: format!("file:{}#sha256={sum}", model.display()),
+        home: temp_dir("home"),
+        dir,
+    }
+}
+
+impl Drop for Fake {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+        let _ = std::fs::remove_dir_all(&self.home);
+    }
+}
+
+impl Fake {
+    fn sky(&self, cwd: &Path) -> Command {
+        let mut c = Command::new(SKY);
+        c.current_dir(cwd)
+            .env("SKY_AI_HOME", &self.home)
+            .env("SKY_AI_LLAMA_BIN", &self.dir)
+            .env_remove("ENV")
+            .stdin(Stdio::null());
+        c
+    }
+}
+
+fn launches(fake: &Fake) -> usize {
+    std::fs::read_to_string(fake.dir.join("launches.log"))
+        .map(|s| s.lines().count())
+        .unwrap_or(0)
+}
+
+#[test]
+fn sky_ai_refuses_a_bad_verb_shape_without_building_anything() {
+    let outs = [
+        Command::new(SKY).arg("ai").output().unwrap(),
+        Command::new(SKY).args(["ai", "train"]).output().unwrap(),
+        Command::new(SKY)
+            .args(["ai", "pull", "only-one"])
+            .output()
+            .unwrap(),
+        Command::new(SKY).args(["ai", "start"]).output().unwrap(),
+        // The pipeline verbs (src/Ai.sky) are shape-checked before anything
+        // is built too.
+        Command::new(SKY).args(["ai", "eval"]).output().unwrap(),
+        Command::new(SKY)
+            .args(["ai", "eval", "--candidate", "support-lora@v2"])
+            .output()
+            .unwrap(),
+        Command::new(SKY).args(["ai", "run"]).output().unwrap(),
+        Command::new(SKY)
+            .args(["ai", "members", "extra"])
+            .output()
+            .unwrap(),
+        Command::new(SKY)
+            .args(["ai", "data", "freeze"])
+            .output()
+            .unwrap(),
+    ];
+    for out in outs {
+        assert_eq!(out.status.code(), Some(2));
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("usage: sky ai"), "{err}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn sky_ai_start_ps_stop_drive_an_engine() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let fake = fake_engine();
+    let cwd = temp_dir("cwd");
+
+    // provision with an operator build checks it and fetches nothing.
+    let out = fake.sky(&cwd).args(["ai", "provision"]).output().unwrap();
+    let text =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "provision: {text}");
+    assert!(text.contains("llama-server custom"), "provision: {text}");
+    let out = fake
+        .sky(&cwd)
+        .args(["ai", "provision", "--variant", "cuda12"])
+        .output()
+        .unwrap();
+    let text =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a missing variant succeeded: {text}");
+    assert!(text.contains("no pinned cuda12 build"), "{text}");
+
+    // start holds the engine in the foreground.
+    let mut start = ChildGroup::spawn(
+        fake.sky(&cwd)
+            .args(["ai", "start", "chat", "--model", &fake.model_ref])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit()),
+    )
+    .unwrap();
+    let mut line = String::new();
+    let mut reader = BufReader::new(start.child().stdout.take().unwrap());
+    let deadline = Instant::now() + Duration::from_secs(600);
+    while !line.contains("ready") {
+        line.clear();
+        if reader.read_line(&mut line).unwrap() == 0 || Instant::now() > deadline {
+            panic!("sky ai start never reported ready");
+        }
+    }
+    assert!(line.contains("slot chat ready (local"), "{line}");
+
+    let out = fake
+        .sky(&cwd)
+        .args(["ai", "ps", "--format", "json"])
+        .output()
+        .unwrap();
+    let ps: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("ps json: {e}: {}", String::from_utf8_lossy(&out.stdout)));
+    let engines = ps.as_array().unwrap();
+    assert_eq!(engines.len(), 1, "{ps}");
+    assert_eq!(engines[0]["slot"], "chat");
+    assert_eq!(engines[0]["state"], "running");
+    assert_eq!(engines[0]["holderPid"], start.id());
+    let engine_pid = engines[0]["pid"].as_u64().unwrap();
+
+    let stop_began = Instant::now();
+    let out = fake
+        .sky(&cwd)
+        .args(["ai", "stop", "chat"])
+        .output()
+        .unwrap();
+    let stop_took = stop_began.elapsed();
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("stopped 1 engine(s)"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    // The holder ends its engine and exits on the SIGTERM `sky ai stop`
+    // sends. It stays a zombie until this test reaps it, and a zombie is
+    // gone: `stop` must not wait out its 10 s budget on it.
+    assert!(
+        stop_took < Duration::from_secs(8),
+        "sky ai stop took {stop_took:?}: it waited out its budget on a holder that had exited"
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(_status) = start.child().try_wait().unwrap() {
+            break;
+        }
+        if Instant::now() > deadline {
+            panic!("sky ai start did not exit after sky ai stop");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        !pid_alive(engine_pid as i32),
+        "the engine outlived sky ai stop"
+    );
+    let out = fake.sky(&cwd).args(["ai", "ps"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("no engines are running"));
+    assert_eq!(launches(&fake), 1);
+    let _ = std::fs::remove_dir_all(&cwd);
+}
+
+/// Ctrl-C on `sky ai start` stops its engine. The start message says so,
+/// and before the fix it was false: the program had no signal handler, the
+/// SIGINT killed it at once, and the engine kept running under pid 1 with its
+/// `engines.json` entry left behind.
+#[cfg(unix)]
+#[test]
+fn sky_ai_start_ends_its_engine_on_ctrl_c() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let fake = fake_engine();
+    let cwd = temp_dir("cwd-sigint");
+    // SIGINT at its default action in the child, whatever this process
+    // inherited: a shell's background job (a long run started with `&`)
+    // ignores SIGINT, an ignored signal stays ignored across exec, and the
+    // runtime rightly leaves an ignored SIGINT ignored (child_signal.go,
+    // `childSignalSet`). The test then waited 20 s for an exit that a
+    // correct program never makes, and passed when run alone in a terminal.
+    let mut start = ChildGroup::spawn(sigint_default(
+        fake.sky(&cwd)
+            .args(["ai", "start", "chat", "--model", &fake.model_ref])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit()),
+    ))
+    .unwrap();
+    let mut line = String::new();
+    let mut reader = BufReader::new(start.child().stdout.take().unwrap());
+    let deadline = Instant::now() + Duration::from_secs(600);
+    while !line.contains("ready") {
+        line.clear();
+        if reader.read_line(&mut line).unwrap() == 0 || Instant::now() > deadline {
+            panic!("sky ai start never reported ready");
+        }
+    }
+    let out = fake
+        .sky(&cwd)
+        .args(["ai", "ps", "--format", "json"])
+        .output()
+        .unwrap();
+    let ps: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("ps json: {e}: {}", String::from_utf8_lossy(&out.stdout)));
+    let engine_pid = ps[0]["pid"].as_u64().expect("engine pid") as i32;
+    assert!(pid_alive(engine_pid));
+
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(start.id() as i32),
+        nix::sys::signal::Signal::SIGINT,
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let status = loop {
+        if let Some(status) = start.child().try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() > deadline {
+            panic!("sky ai start did not exit on SIGINT");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let engine_gone = {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if !pid_alive(engine_pid) {
+                break true;
+            }
+            if Instant::now() > deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    if !engine_gone {
+        // Ours to end: the engine this test's `sky ai start` launched.
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(engine_pid),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+    assert!(engine_gone, "the engine outlived Ctrl-C on sky ai start");
+    use std::os::unix::process::ExitStatusExt;
+    assert_eq!(
+        status.code(),
+        Some(130),
+        "sky ai start exit on SIGINT: {status:?} (signal {:?})",
+        status.signal()
+    );
+    let registry = std::fs::read_to_string(fake.home.join("engines.json")).unwrap_or_default();
+    let engines = serde_json::from_str::<serde_json::Value>(&registry)
+        .ok()
+        .and_then(|v| v["engines"].as_array().map(|a| a.len()))
+        .unwrap_or(0);
+    assert_eq!(engines, 0, "engines.json keeps an entry: {registry}");
+    let _ = std::fs::remove_dir_all(&cwd);
+}
+
+#[test]
+fn endpoint_slots_run_a_compiled_program_on_the_managed_engine() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let fake = fake_engine();
+    let project = temp_dir("project");
+    copy_dir(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ai-endpoint"),
+        &project,
+    );
+    let out = fake
+        .sky(&project)
+        .args(["build", "src/Main.sky"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "sky build: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let busy = busy_server();
+    let out = Command::new(project.join("sky-out/app"))
+        .current_dir(&project)
+        .env("SKY_AI_HOME", &fake.home)
+        .env("SKY_AI_LLAMA_BIN", &fake.dir)
+        .env("SKY_AI_CHAT_MODEL", &fake.model_ref)
+        .env("SKY_AI_EMBED_MODEL", &fake.model_ref)
+        .env("SKY_AI_BUSY_URL", format!("http://{busy}/v1"))
+        .env_remove("ENV")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "app: {stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // The options reached the engine: seed, max tokens, temperature 0.
+    assert!(
+        stdout.contains(
+            "chat=fake[local]: What colour is the sky on a clear day? seed=7 max=16 temp=0"
+        ),
+        "{stdout}"
+    );
+    assert!(stdout.contains("embed=2 dims=4"), "{stdout}");
+    // The operator's MODEL beat the code's model.
+    assert!(
+        stdout.contains("describe chat mode=local source(model)=env"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("ghost=InvalidInput: Std.Ai NotConfigured")
+            && stdout.contains("SKY_AI_GHOST_URL"),
+        "{stdout}"
+    );
+    // The typed view (Std.Ai.Failure, v0.28.0): the same failure read as a
+    // typed value, with the generic Error helpers. A remote 429 with
+    // Retry-After is Overloaded, carries the delay and the status, and is
+    // retryable; NotConfigured names the variable and is not.
+    assert!(
+        stdout.contains(
+            "ghostTyped=NotConfigured setting=SKY_AI_GHOST_URL domain=ai retryable=False"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("busy=Overloaded retryAfterMs=2000 status=429 domain=ai retryable=True"),
+        "{stdout}"
+    );
+    // Two slots, two engines (chat and an embeddings engine), both stopped
+    // with the program.
+    assert_eq!(launches(&fake), 2);
+    let reg = std::fs::read_to_string(fake.home.join("engines.json")).unwrap_or_default();
+    assert!(
+        !reg.contains("\"pid\""),
+        "engines outlived the program: {reg}"
+    );
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+/// A server that answers every request with HTTP 429 and `Retry-After: 2`,
+/// as an overloaded OpenAI-compatible gateway does. Returns its address.
+fn busy_server() -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut s) = stream else { continue };
+            let mut buf = [0u8; 8192];
+            let _ = s.read(&mut buf);
+            let _ = s.write_all(
+                b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 2\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+        }
+    });
+    addr
+}
+
+/// Start `cmd` with SIGINT at its default action. An ignored signal stays
+/// ignored across exec, so a child of a harness that runs as a shell's
+/// background job (which ignores SIGINT) cannot be interrupted at all.
+#[cfg(unix)]
+fn sigint_default(cmd: &mut Command) -> &mut Command {
+    sigint_disposition(cmd, nix::sys::signal::SigHandler::SigDfl)
+}
+
+#[cfg(unix)]
+fn sigint_disposition(cmd: &mut Command, to: nix::sys::signal::SigHandler) -> &mut Command {
+    use std::os::unix::process::CommandExt;
+    // SAFETY: the closure runs between fork and exec. It calls only
+    // signal(2), which is async-signal-safe, and allocates nothing.
+    unsafe {
+        cmd.pre_exec(move || {
+            nix::sys::signal::signal(nix::sys::signal::Signal::SIGINT, to)
+                .map(|_| ())
+                .map_err(std::io::Error::from)
+        });
+    }
+    cmd
+}
+
+/// The Ctrl-C test, run by a harness that ignores SIGINT: the case of a long
+/// `cargo test` started in the background (`&`, or a tool's background
+/// task), where it failed while it passed when run alone. Before the fix the
+/// inner test sent SIGINT to a `sky ai start` that inherited the ignored
+/// disposition, waited 20 s, and failed with "did not exit on SIGINT".
+#[cfg(unix)]
+#[test]
+fn ctrl_c_reaches_sky_ai_start_when_the_harness_ignores_sigint() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let out = sigint_disposition(
+        Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "sky_ai_start_ends_its_engine_on_ctrl_c",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .stdin(Stdio::null()),
+        nix::sys::signal::SigHandler::SigIgn,
+    )
+    .output()
+    .expect("run the Ctrl-C test with SIGINT ignored");
+    let text =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success() && text.contains("1 passed"),
+        "the Ctrl-C test failed under an ignored SIGINT:\n{text}"
+    );
+}
+
+#[cfg(unix)]
+fn pid_alive(pid: i32) -> bool {
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
+}
+
+#[cfg(not(unix))]
+fn pid_alive(_pid: i32) -> bool {
+    false
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let dest = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &dest);
+        } else {
+            std::fs::copy(entry.path(), dest).unwrap();
+        }
+    }
+}

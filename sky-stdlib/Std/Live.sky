@@ -101,13 +101,15 @@ type Running
 --                 }
 --                 |> Live.withHead headFor
 --             )
-config : { init : a -> ( model, Cmd msg )
-, update : msg -> model -> ( model, Cmd msg )
-, view : model -> Html msg
-, subscriptions : model -> Sub msg
-, routes : List Route
-, notFound : page
-} -> AppConfig model msg
+config :
+    { init : a -> ( model, Cmd msg )
+    , update : msg -> model -> ( model, Cmd msg )
+    , view : model -> Html msg
+    , subscriptions : model -> Sub msg
+    , routes : List Route
+    , notFound : page
+    }
+    -> AppConfig model msg
 config =
     Ffi.kernel "Live_config"
 
@@ -369,9 +371,12 @@ withSessionTransport =
 
 -- | Override the connection-status banner strings —
 -- `withStatus { reconnecting = "…", offline = "…" }`.
-withStatus : { reconnecting : String
-, offline : String
-} -> AppConfig model msg -> AppConfig model msg
+withStatus :
+    { reconnecting : String
+    , offline : String
+    }
+    -> AppConfig model msg
+    -> AppConfig model msg
 withStatus =
     Ffi.kernel "Live_withStatus"
 
@@ -412,11 +417,14 @@ withDurable =
 -- Issue tokens with `Auth.signSlidingToken` and set the cookie with
 -- `Auth.setSlidingCookie` — a hand-rolled `Server.withCookie` for the sliding
 -- cookie is unsupported (its attributes would drift from the re-issue).
-withAuthSliding : { cookie : String
-, secretEnv : String
-, sameSite : String
-, revokedCheck : Maybe (String -> Task Error Bool)
-} -> AppConfig model msg -> AppConfig model msg
+withAuthSliding :
+    { cookie : String
+    , secretEnv : String
+    , sameSite : String
+    , revokedCheck : Maybe (String -> Task Error Bool)
+    }
+    -> AppConfig model msg
+    -> AppConfig model msg
 withAuthSliding =
     Ffi.kernel "Live_withAuthSliding"
 

@@ -180,6 +180,209 @@ analyticsEventDecoder =
         |> Pipeline.optional "path" Decode.string ""
 
 
+-- ─── AI panel decoders (v0.28.0) ────────────────────────────────
+-- /_sky/console/api/ai, `AiConsoleResponse` in runtime-go/rt/ai_console.go.
+aiDecoder : Decode.Decoder AiData
+aiDecoder =
+    Decode.succeed AiData
+        |> Pipeline.optional "slots" (Decode.list aiSlotDecoder) []
+        |> Pipeline.optional "engines" (Decode.list aiEngineDecoder) []
+        |> Pipeline.optional "calls" (Decode.list aiCallDecoder) []
+        |> Pipeline.optional "evals" (Decode.list aiEvalDecoder) []
+        |> Pipeline.optional "registry" (Decode.list aiModelDecoder) []
+        |> Pipeline.optional "training" (Decode.list aiTrainingDecoder) []
+        |> Pipeline.optional "tiers" (Decode.list aiTierDecoder) []
+
+
+-- A training run. An older runtime sends no `training` key, so the list is
+-- empty; a field the runtime leaves out (or sends as null) takes its default.
+aiTrainingDecoder : Decode.Decoder AiTrainingRun
+aiTrainingDecoder =
+    Decode.succeed AiTrainingRun |> Pipeline.optional "run" Decode.string ""
+        |> Pipeline.optional "status" Decode.string ""
+        |> Pipeline.optional "backend" Decode.string ""
+        |> Pipeline.optional "step" intFromFloat 0
+        |> Pipeline.optional "totalSteps" intFromFloat 0
+        |> Pipeline.optional "loss" (Decode.map Just Decode.float) Nothing
+        |> Pipeline.optional "valLoss" (Decode.map Just Decode.float) Nothing
+        |> Pipeline.optional "relaunches" intFromFloat 0
+        |> Pipeline.optional "resumedFrom" intFromFloat 0
+        |> Pipeline.optional "lastCheckpoint" intFromFloat 0
+        |> Pipeline.optional "peakBytes" intFromFloat 0
+        |> Pipeline.optional "message" Decode.string ""
+        |> Pipeline.optional "registered" Decode.string ""
+        |> Pipeline.optional "losses" (Decode.list curvePoint) []
+        |> Pipeline.optional "valLosses" (Decode.list curvePoint) []
+        |> Pipeline.optional "cloud" Decode.string ""
+        |> Pipeline.optional "cloudState" Decode.string ""
+        |> Pipeline.optional "spent" Decode.string ""
+        |> Pipeline.optional "budget" Decode.string ""
+
+
+-- A GPU tier. An older runtime sends no `tiers` key.
+aiTierDecoder : Decode.Decoder AiTier
+aiTierDecoder =
+    Decode.succeed AiTier |> Pipeline.optional "bind" Decode.string ""
+        |> Pipeline.optional "base" Decode.string ""
+        |> Pipeline.optional "ready" Decode.bool False
+        |> Pipeline.optional "reason" Decode.string ""
+        |> Pipeline.optional "resident" (Decode.list Decode.string) []
+        |> Pipeline.optional "inFlight" intFromFloat 0
+        |> Pipeline.optional "loads" intFromFloat 0
+        |> Pipeline.optional "unloads" intFromFloat 0
+        |> Pipeline.optional
+               "signals"
+               (Decode.oneOf
+                   [ Decode.field "running" Decode.float, Decode.succeed 0.0 ])
+               0.0
+        |> Pipeline.optional
+               "signals"
+               (Decode.oneOf
+                   [ Decode.field "waiting" Decode.float, Decode.succeed 0.0 ])
+               0.0
+        |> Pipeline.optional
+               "signals"
+               (Decode.oneOf
+                   [ Decode.field "kvCache" Decode.float, Decode.succeed 0.0 ])
+               0.0
+
+
+-- A curve point is `[step, value]`; the console keeps the value.
+curvePoint : Decode.Decoder Float
+curvePoint =
+    Decode.index 1 Decode.float
+
+
+aiModelDecoder : Decode.Decoder AiModel
+aiModelDecoder =
+    Decode.succeed AiModel |> Pipeline.optional "name" Decode.string ""
+        |> Pipeline.optional "store" Decode.string ""
+        |> Pipeline.optional "aliases" (Decode.list aiAliasDecoder) []
+        |> Pipeline.optional "versions" (Decode.list aiVersionDecoder) []
+        |> Pipeline.optional "events" (Decode.list aiAliasEventDecoder) []
+        |> Pipeline.optional "reports" (Decode.list aiReportLinkDecoder) []
+
+
+aiAliasDecoder : Decode.Decoder AiAlias
+aiAliasDecoder =
+    Decode.succeed AiAlias |> Pipeline.optional "alias" Decode.string ""
+        |> Pipeline.optional "number" intFromFloat 0
+        |> Pipeline.optional "generation" intFromFloat 0
+
+
+aiVersionDecoder : Decode.Decoder AiVersion
+aiVersionDecoder =
+    Decode.succeed AiVersion |> Pipeline.optional "label" Decode.string ""
+        |> Pipeline.optional "number" intFromFloat 0
+        |> Pipeline.optional "digest" Decode.string ""
+        |> Pipeline.optional "baseDigest" Decode.string ""
+        |> Pipeline.optional "dataset" Decode.string ""
+        |> Pipeline.optional "method" Decode.string ""
+        |> Pipeline.optional "format" Decode.string ""
+        |> Pipeline.optional
+               "blocked"
+               (Decode.oneOf [ Decode.string, Decode.succeed "" ])
+               ""
+
+
+aiAliasEventDecoder : Decode.Decoder AiAliasEvent
+aiAliasEventDecoder =
+    Decode.succeed AiAliasEvent |> Pipeline.optional "alias" Decode.string ""
+        |> Pipeline.optional "seq" intFromFloat 0
+        |> Pipeline.optional "action" Decode.string ""
+        |> Pipeline.optional "from" intFromFloat 0
+        |> Pipeline.optional "to" intFromFloat 0
+        |> Pipeline.optional "report" Decode.string ""
+        |> Pipeline.optional "reason" Decode.string ""
+
+
+aiReportLinkDecoder : Decode.Decoder AiReportLink
+aiReportLinkDecoder =
+    Decode.succeed AiReportLink |> Pipeline.optional "suite" Decode.string ""
+        |> Pipeline.optional "number" intFromFloat 0
+        |> Pipeline.optional "digest" Decode.string ""
+        |> Pipeline.optional "passRate" Decode.float 0.0
+        |> Pipeline.optional "verdict" Decode.string ""
+
+
+aiSlotDecoder : Decode.Decoder AiSlot
+aiSlotDecoder =
+    Decode.succeed AiSlot |> Pipeline.optional "slot" Decode.string ""
+        |> Pipeline.optional "mode" Decode.string ""
+        |> Pipeline.optional "target" Decode.string ""
+        |> Pipeline.optional "maxInFlight" intFromFloat 0
+        |> Pipeline.optional "queue" intFromFloat 0
+        |> Pipeline.optional "inFlight" intFromFloat 0
+        |> Pipeline.optional "waiting" intFromFloat 0
+        |> Pipeline.optional "settings" (Decode.list aiSettingDecoder) []
+        |> Pipeline.optional "calls" intFromFloat 0
+        |> Pipeline.optional "failures" intFromFloat 0
+        |> Pipeline.optional "overloaded" intFromFloat 0
+        |> Pipeline.optional "p50Ms" intFromFloat 0
+        |> Pipeline.optional "p95Ms" intFromFloat 0
+
+
+aiSettingDecoder : Decode.Decoder AiSetting
+aiSettingDecoder =
+    Decode.succeed AiSetting |> Pipeline.optional "key" Decode.string ""
+        |> Pipeline.optional "name" Decode.string ""
+        |> Pipeline.optional "value" Decode.string ""
+        |> Pipeline.optional "source" Decode.string ""
+
+
+aiEngineDecoder : Decode.Decoder AiEngine
+aiEngineDecoder =
+    Decode.succeed AiEngine |> Pipeline.optional "slot" Decode.string ""
+        |> Pipeline.optional "state" Decode.string ""
+        |> Pipeline.optional "model" Decode.string ""
+        |> Pipeline.optional "accelerator" Decode.string ""
+        |> Pipeline.optional "contextTokens" intFromFloat 0
+        |> Pipeline.optional "gpuLayers" intFromFloat 0
+        |> Pipeline.optional "restarts" intFromFloat 0
+        |> Pipeline.optional "idleSeconds" intFromFloat 0
+        |> Pipeline.optional "lastCrash" Decode.string ""
+
+
+aiCallDecoder : Decode.Decoder AiCall
+aiCallDecoder =
+    Decode.succeed AiCall |> Pipeline.optional "ts" Decode.string ""
+        |> Pipeline.optional "slot" Decode.string ""
+        |> Pipeline.optional "mode" Decode.string ""
+        |> Pipeline.optional "kind" Decode.string ""
+        |> Pipeline.optional "model" Decode.string ""
+        |> Pipeline.optional "outcome" Decode.string ""
+        |> Pipeline.optional "latencyMs" intFromFloat 0
+        |> Pipeline.optional "promptTokens" intFromFloat 0
+        |> Pipeline.optional "completionTokens" intFromFloat 0
+
+
+aiEvalDecoder : Decode.Decoder AiEval
+aiEvalDecoder =
+    Decode.succeed AiEval |> Pipeline.optional "id" Decode.string ""
+        |> Pipeline.optional "ts" Decode.string ""
+        |> Pipeline.optional "suite" Decode.string ""
+        |> Pipeline.optional "model" Decode.string ""
+        |> Pipeline.optional "cases" intFromFloat 0
+        |> Pipeline.optional "passed" intFromFloat 0
+        |> Pipeline.optional "failed" intFromFloat 0
+        |> Pipeline.optional "errors" intFromFloat 0
+        |> Pipeline.optional "passRate" Decode.float 0.0
+        |> Pipeline.optional "p95LatencyMs" intFromFloat 0
+        |> Pipeline.optional "verdict" Decode.string ""
+        |> Pipeline.optional "failures" (Decode.list Decode.string) []
+        |> Pipeline.optional "caseResults" (Decode.list aiEvalCaseDecoder) []
+        |> Pipeline.optional "source" Decode.string ""
+
+
+aiEvalCaseDecoder : Decode.Decoder AiEvalCase
+aiEvalCaseDecoder =
+    Decode.succeed AiEvalCase |> Pipeline.optional "id" Decode.string ""
+        |> Pipeline.optional "passed" Decode.bool False
+        |> Pipeline.optional "score" Decode.float 0.0
+        |> Pipeline.optional "latencyMs" intFromFloat 0
+        |> Pipeline.optional "reason" Decode.string ""
+
+
 -- ─── Store factory (v0.16.4 B3) ─────────────────────────────────
 -- Build the HTTP-backed Store the embedded console uses.  Each
 -- field closes over the parent URL + the locally-defined decoder
@@ -202,6 +405,7 @@ httpStore parent =
     -- `hubDbPath /= ""`).
     , readServiceStats = \_ -> Task.succeed []
     , readAnalytics = \scope -> fetchAnalytics parent scope
+    , readAi = \filter -> fetchAi parent filter
     }
 
 
@@ -287,6 +491,13 @@ initWith rawQuery =
             , globalQuery = param "q"
             , analytics = emptyAnalytics
             , logoutUrl = logoutUrl
+            , ai = emptyAiData
+            , aiFilter =
+                { failedOnly = param "calls" == "failed"
+                , slot = param "slot"
+                , openEval = param "eval"
+                , openModel = param "model"
+                }
             }
         -- Fetch the signed-in identity on boot. Only meaningful
         -- when running in hub mode (hubDbPath != "") with the
@@ -472,6 +683,54 @@ update msg model =
         GlobalQuery q ->
             refetch { model | globalQuery = q }
 
+        GotAi g (Ok a) ->
+            if g == model.gen then
+                ( cleared "ai" { model | ai = a }, Cmd.none )
+
+            else
+                ( model, Cmd.none )
+
+        GotAi _ (Err e) ->
+            ( failed "ai" e model, Cmd.none )
+
+        -- The AI panel's controls. The calls filters go to the server;
+        -- opening an eval run only changes what the view shows.
+        AiShowFailed on ->
+            let
+                f = model.aiFilter
+            in
+                refetch { model | aiFilter = { f | failedOnly = on } }
+
+        AiPickSlot name ->
+            let
+                f = model.aiFilter
+            in
+                refetch { model | aiFilter = { f | slot = name } }
+
+        AiOpenEval id ->
+            let
+                f = model.aiFilter
+                next =
+                    if f.openEval == id then
+                        ""
+
+                    else
+                        id
+            in
+                ( { model | aiFilter = { f | openEval = next } }, Cmd.none )
+
+        AiOpenModel name ->
+            let
+                f = model.aiFilter
+                next =
+                    if f.openModel == name then
+                        ""
+
+                    else
+                        name
+            in
+                ( { model | aiFilter = { f | openModel = next } }, Cmd.none )
+
 
 -- The error bar shows the last failed read. A read's answer clears it only
 -- when that read put it there: the overview read, which succeeds on every
@@ -571,6 +830,9 @@ tabFetches model tab =
             AnalyticsTab ->
                 [ Cmd.perform (model.store.readAnalytics scope) (GotAnalytics g)
                 ]
+
+            AiTab ->
+                [ Cmd.perform (model.store.readAi model.aiFilter) (GotAi g) ]
 
 
 -- Every embedded-console read is a loopback GET to the host app's
@@ -715,6 +977,36 @@ fetchAnalytics parent scope =
         parent
         ("/_sky/console/api/analytics?range=" ++ Encoding.urlEncode scope.range)
         analyticsDecoder
+
+
+-- The AI panel's read: `calls=failed` and `slot=<name>` filter the recent
+-- calls on the server.
+fetchAi : String -> AiFilter -> Task Error AiData
+fetchAi parent filter =
+    let
+        failedPart =
+            if filter.failedOnly then
+                [ "calls=failed" ]
+
+            else
+                []
+        slotPart =
+            if filter.slot == "" then
+                []
+
+            else
+                [ "slot=" ++ Encoding.urlEncode filter.slot ]
+        query = String.join "&" (failedPart ++ slotPart)
+    in
+        apiGet
+            parent
+            ("/_sky/console/api/ai"
+                ++ (if query == "" then
+                       ""
+
+                   else
+                       "?" ++ query))
+            aiDecoder
 
 
 subscriptions : Model -> Sub Msg

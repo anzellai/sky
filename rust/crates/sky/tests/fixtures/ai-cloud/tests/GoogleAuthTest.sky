@@ -1,0 +1,100 @@
+module GoogleAuthTest exposing (tests)
+
+-- Std.Ai.Cloud.Google's credentials against the runtime's emulator: a
+-- service-account key file (a signed JWT for an access token, and one with a
+-- target_audience for an ID token), a user's own login (refused), workload
+-- identity federation (a subject token exchanged at the Security Token
+-- Service, then a service account impersonated), and the metadata server.
+-- rust/crates/sky/tests/ai_cloud_train_flow.rs writes the credential files
+-- (with a key made for the run) into the directory SKY_AI_TEST_CREDS names.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.System as System
+import Sky.Core.Secret as Secret
+import Sky.Test as Test exposing (Test)
+import Std.Ai.Failure as Failure
+import Std.Ai.Cloud.Google as Google
+
+
+creds : String -> String
+creds name =
+    System.getenvOr "SKY_AI_TEST_CREDS" "" ++ "/" ++ name
+
+
+-- Run `t` with GOOGLE_APPLICATION_CREDENTIALS set to `file` ("" unsets it).
+with : String -> Task Error a -> Result Error a
+with file t =
+    (if file == "" then
+        System.unsetenv "GOOGLE_APPLICATION_CREDENTIALS"
+
+    else
+        System.setenv "GOOGLE_APPLICATION_CREDENTIALS" (creds file))
+        |> Task.andThen (\_ -> t)
+        |> Task.run
+
+
+tokens : Task Error ( String, String )
+tokens =
+    Task.map2
+        (\a i -> ( Secret.reveal a, Secret.reveal i ))
+        (Google.accessToken [ Google.cloudPlatform ])
+        (Google.idToken "https://support-tier-fake.a.run.app")
+
+
+prefix : String -> String
+prefix t =
+    String.split "-" t |> List.take 2 |> String.join "-"
+
+
+parts : String -> Int
+parts t =
+    List.length (String.split "." t)
+
+
+codeOf : Result Error a -> String
+codeOf r =
+    case r of
+
+        Err e ->
+            Maybe.withDefault
+                "untyped"
+                (Maybe.map Failure.code (Failure.fromError e))
+
+        Ok _ ->
+            "Ok"
+
+
+-- The four cases share one process variable, so they run in one test, in
+-- order (the runner runs separate tests at the same time).
+shape : Result Error ( String, String ) -> String
+shape r =
+    case r of
+
+        Ok ( a, i ) ->
+            prefix a ++ "/" ++ String.fromInt (parts i)
+
+        Err _ ->
+            codeOf r
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "credentials: a key file, a user's login (refused), workload identity federation, the metadata server"
+          (\_ ->
+              Test.equal
+                  (List.map
+                      (\file -> shape (with file tokens))
+                      [ "sa.json", "user.json", "external.json", "" ])
+                  [ "fake-access/3"
+                  , "NotConfigured"
+                  , "fake-impersonated/3"
+                  , "fake-meta/3"
+                  ])
+    ]

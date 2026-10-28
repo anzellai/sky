@@ -368,8 +368,45 @@ fn assemble_and_emit_loaded(
     }
     let stdlib_names: std::collections::BTreeSet<String> =
         stdlib.iter().map(|(n, _, _)| n.clone()).collect();
-    for (n, file, _p) in stdlib {
-        db.add_module(&n, file);
+    // The stdlib is trusted (never type-checked again), but a stdlib module
+    // that does not parse is still reported as the parse error it is, naming
+    // the stdlib file. Before this, a recovered ERROR node in a stdlib module
+    // (an operator section `(+)` written while editing it) reached lowering
+    // and stopped the build with an internal compiler error that named no
+    // file. The `roundtrip` gate keeps the shipped stdlib free of them; this
+    // is for the person editing it.
+    let mut stdlib_parse: Vec<diagnostics::Diagnostic> = Vec::new();
+    let mut stdlib_text: std::collections::HashMap<base::FileId, String> =
+        std::collections::HashMap::new();
+    let mut stdlib_paths: std::collections::HashMap<base::FileId, String> =
+        std::collections::HashMap::new();
+    for (n, file, p) in stdlib {
+        let id = db.add_module(&n, file);
+        let parse = skydb::parse(&db, file);
+        if !parse.errors().is_empty() || parse.error_node_count() > 0 {
+            let mut here: Vec<diagnostics::Diagnostic> = parse
+                .errors()
+                .iter()
+                .filter(|d| d.severity == diagnostics::Severity::Error)
+                .cloned()
+                .collect();
+            if here.is_empty() {
+                here.push(diagnostics::Diagnostic::error(
+                    "E0001",
+                    format!("PARSE ERROR in stdlib module {n}: unstructured input (recovered ERROR node)"),
+                ));
+            }
+            stdlib_parse.extend(cap_parse_errors(here));
+            stdlib_text.insert(base::FileId(id.index()), file.text(&db).to_string());
+            stdlib_paths.insert(base::FileId(id.index()), p.display().to_string());
+        }
+    }
+    if !stdlib_parse.is_empty() {
+        let sources = CliSources {
+            text: &stdlib_text,
+            paths: &stdlib_paths,
+        };
+        return Err(render_diags(&stdlib_parse, &sources));
     }
     // The Sky dependencies, loaded by the routines every loader shares
     // (`load_source_db` too, so the Sky.Spa split analyses the program the
@@ -830,6 +867,29 @@ fn assemble_and_emit_loaded(
     // it is memoised (re-demand is a cache hit) and invalidated natively by any
     // `SourceFile` edit (the LSP/incremental path). Emitted bytes are byte-for-byte
     // the prior eager `lower_program_cfg` + `emit_program` pair.
+    // The Std.Ai device slots (`Endpoint.withDevice`): rooted and registered
+    // by the lowering (`LowerConfig.device_slots`). A misuse is a build error
+    // (ai_slots::device_slots_for_entry). A generated Sky.Spa half is checked
+    // without the cross-half rule, and only the server half registers slots:
+    // the client half runs in the browser and holds none.
+    {
+        let generated = is_spa_generated_project(example_dir);
+        let (device_slots, device_errors) = crate::ai_slots::device_slots_for_entry(
+            example_dir,
+            extra_dirs,
+            entry_module.unwrap_or("Main"),
+            !generated,
+        );
+        if !device_errors.is_empty() {
+            return Err(device_errors.join("\n").into());
+        }
+        if !generated || spa_role(example_dir).as_deref() == Some("backend") {
+            cfg.device_slots = device_slots
+                .into_iter()
+                .map(|d| (d.module, d.binding, d.slot))
+                .collect();
+        }
+    }
     let t_lower = crate::timings::phase("lower + emit Go");
     let config = skydb::BuildConfig::new(&db, cfg);
     let prog = skydb::go_program(&db, entry, config);
@@ -1274,6 +1334,31 @@ fn build_inner(
         report.warnings.push(format!("embed migrations: {e}"));
     }
 
+    // The Std.Ai slots the source names (`Endpoint.endpoint "chat"`), for the
+    // startup report: a generated `ai_slots_gen.go` beside main.go, removed
+    // when the project declares none (ai_slots.rs). Best-effort like the
+    // migrations: a failure warns.
+    // Scoped to what the entry imports: a slot only the AI pipeline
+    // (`src/Ai.sky`) names is not the app's (ai_slots::discover_for_entry).
+    let (mut slots, slot_problems) = crate::ai_slots::discover_for_entry(
+        &opts.example_dir,
+        extra_dirs,
+        entry_module.unwrap_or("Main"),
+    );
+    // The client half of a Sky.Spa split runs in the browser, where no slot
+    // is resolved (the Std.Ai kernels are server-side): it declares none, so
+    // a client that shares a module with a slot still builds for wasm.
+    if opts.wasm
+        || (is_spa_generated_project(&opts.example_dir)
+            && spa_role(&opts.example_dir).as_deref() != Some("backend"))
+    {
+        slots.clear();
+    }
+    report.warnings.extend(slot_problems);
+    if let Err(e) = crate::ai_slots::write_go(&out_dir, &slots) {
+        report.warnings.push(format!("ai slots: {e}"));
+    }
+
     // The build identity (/_sky/buildinfo, the Console header) as generated Go
     // source beside main.go, so ANY `go build` of this directory carries it — a
     // manual cross-compile, a Dockerfile, a custom CI. Resolved at the user's
@@ -1380,8 +1465,15 @@ fn build_inner(
     // ---- run ----
     if opts.run && report.go_build_ok {
         use std::io::Write;
-        let mut cmd = Command::new(format!("./{bin_name}"));
-        cmd.current_dir(&out_dir);
+        // Run it the way `sky run` does: from the PROJECT folder, not the
+        // output folder, so a project-relative path (`data/…`, `.env`, a
+        // sqlite file) resolves for this run exactly as it does for a user.
+        // Absolute program path, because a relative one combined with a
+        // `current_dir` resolves platform-specifically.
+        let bin = out_dir.join(&bin_name);
+        let bin_abs = std::fs::canonicalize(&bin).unwrap_or(bin);
+        let mut cmd = Command::new(bin_abs);
+        cmd.current_dir(crate::driver::project_run_cwd(&opts.example_dir));
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
@@ -1863,7 +1955,7 @@ pub fn migration_hint_for(project_dir: &Path) -> Option<String> {
 /// never touches the project's real database.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OfflineDbPlan {
-    /// No `[database]` — nothing to provision.
+    /// No database, in `sky.toml` or in code — nothing to provision.
     None,
     /// SQLite (an explicit `sqlite` driver, or a file-shaped DSN): redirect the
     /// DB to a scratch file. The field is the env-var NAME to set
@@ -1877,8 +1969,10 @@ pub enum OfflineDbPlan {
     Postgres,
 }
 
-/// Classify how a project's `[database]` should be provisioned for an offline
-/// test / fuzz run. See [`OfflineDbPlan`]. Reads `sky.toml` only — no DB, no Go.
+/// Classify how a project's database should be provisioned for an offline
+/// test / fuzz run. See [`OfflineDbPlan`]. Reads a legacy `sky.toml`
+/// `[database]`, else the `Config.withDatabase` the code names
+/// ([`code_database_engine`]) — no DB, no Go.
 pub fn offline_db_plan(project_dir: &Path) -> OfflineDbPlan {
     let sky_toml = project_dir.join("sky.toml");
     let Ok(text) = std::fs::read_to_string(&sky_toml) else {
@@ -1891,17 +1985,20 @@ pub fn offline_db_plan(project_dir: &Path) -> OfflineDbPlan {
         .lines()
         .map(str::trim)
         .any(|l| l == "[database]" || l.starts_with("[database]"));
-    if !declares {
-        return OfflineDbPlan::None;
-    }
     let cfg = read_sky_toml_config(&sky_toml);
-    let prefix = cfg
-        .env_prefix
-        .as_deref()
-        .map(|p| p.trim().trim_end_matches('_'))
-        .filter(|p| !p.is_empty())
-        .unwrap_or("SKY");
-    let db_path_env = format!("{prefix}_DB_PATH");
+    if !declares {
+        // Configuration is code: a project that names its database with
+        // `Sky.Config.withDatabase (Sqlite …)` / `(Postgres …)` declares it
+        // there, and gets the same throwaway database as a `[database]` one.
+        return match code_database_engine(project_dir) {
+            Some("pgx") => OfflineDbPlan::Postgres,
+            Some(_) => OfflineDbPlan::Sqlite {
+                db_path_env: format!("{}_DB_PATH", env_prefix_of(&cfg)),
+            },
+            None => OfflineDbPlan::None,
+        };
+    }
+    let db_path_env = format!("{}_DB_PATH", env_prefix_of(&cfg));
     // Decide the engine. An explicit `driver` wins; else infer from the DSN
     // shape; else a bare `[database]` (DSN supplied at run time) is the ephemeral
     // embedded Postgres, which is what the phase-3b proof (`dbdemo`) exercised.
@@ -1924,6 +2021,75 @@ pub fn offline_db_plan(project_dir: &Path) -> OfflineDbPlan {
     } else {
         OfflineDbPlan::Postgres
     }
+}
+
+/// The `[env] prefix` every `SKY_*` read is renamed with (default `SKY`).
+fn env_prefix_of(cfg: &lower::LowerConfig) -> String {
+    cfg.env_prefix
+        .as_deref()
+        .map(|p| p.trim().trim_end_matches('_'))
+        .filter(|p| !p.is_empty())
+        .unwrap_or("SKY")
+        .to_string()
+}
+
+/// The engine of a database the project's CODE names with
+/// `Sky.Config.withDatabase (Sqlite …)` / `(Postgres …)`: `"pgx"` when any
+/// names PostgreSQL, else `"sqlite"`, else `None` (no such call). A static
+/// scan of the project's `.sky` sources, comments dropped: the constructor
+/// that follows `withDatabase` decides.
+pub fn code_database_engine(project_dir: &Path) -> Option<&'static str> {
+    fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || matches!(name.as_str(), "sky-out" | "tests" | "target") {
+                continue;
+            }
+            if p.is_dir() {
+                walk(&p, out);
+            } else if name.ends_with(".sky") {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(
+        &project_dir.join(configured_source_root(project_dir)),
+        &mut files,
+    );
+    let mut found: Option<&'static str> = None;
+    for f in files {
+        let Ok(text) = std::fs::read_to_string(&f) else {
+            continue;
+        };
+        let code: String = text
+            .lines()
+            .map(|l| match l.find("--") {
+                Some(i) => &l[..i],
+                None => l,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut rest = code.as_str();
+        while let Some(i) = rest.find("withDatabase") {
+            let after = &rest[i + "withDatabase".len()..];
+            let window: String = after.chars().take(80).collect();
+            let pg = window.find("Postgres");
+            let lite = window.find("Sqlite");
+            match (pg, lite) {
+                (Some(a), Some(b)) if a < b => return Some("pgx"),
+                (Some(_), None) => return Some("pgx"),
+                (_, Some(_)) => found = Some("sqlite"),
+                (None, None) => {}
+            }
+            rest = after;
+        }
+    }
+    found
 }
 
 pub(crate) fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
@@ -2711,6 +2877,16 @@ pub fn bundled_source_texts(repo_root: &Path) -> std::collections::HashSet<Strin
 /// `[spa] generated = true` in the project's `sky.toml`: the Sky.Spa split
 /// wrote this project (the same marker `sky build` keys its no-re-split guard
 /// on).
+/// The `[spa] role` of a generated Sky.Spa half (`frontend` or `backend`).
+fn spa_role(example_dir: &Path) -> Option<String> {
+    let s = std::fs::read_to_string(example_dir.join("sky.toml")).ok()?;
+    s.lines().find_map(|l| {
+        let l = l.trim();
+        let rest = l.strip_prefix("role")?.trim_start().strip_prefix('=')?;
+        Some(rest.trim().trim_matches('"').to_string())
+    })
+}
+
 pub fn is_spa_generated_project(example_dir: &Path) -> bool {
     std::fs::read_to_string(example_dir.join("sky.toml"))
         .map(|s| s.contains("[spa]") && s.contains("generated = true"))
@@ -3248,6 +3424,14 @@ fn materialise_rt(src: &Path, dst: &Path, console_needed: bool) -> std::io::Resu
             if name_s == "console_app" && !console_needed {
                 continue;
             }
+            // `ai_train_assets` holds the Std.Ai.Train driver (Python) and
+            // its hash locks, which `rt` embeds with `go:embed`: every file
+            // in it is a build input, not only the `.go` ones.
+            if name_s == "ai_train_assets" {
+                materialise_assets(&path, &dst.join(&name_s))?;
+                produced.insert(name_s);
+                continue;
+            }
             materialise_rt(&path, &dst.join(&name_s), console_needed)?;
             produced.insert(name_s);
         } else if name_s.ends_with("_test.go") {
@@ -3259,6 +3443,29 @@ fn materialise_rt(src: &Path, dst: &Path, console_needed: bool) -> std::io::Resu
     }
     prune_stale_rt(dst, &produced)?;
     Ok(())
+}
+
+/// Copy an embedded-asset tree whole (every file, any extension), pruning
+/// what the source no longer has. Hidden files are never copied, as staging
+/// never embeds them.
+fn materialise_assets(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    let mut produced: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name_s = entry.file_name().to_string_lossy().to_string();
+        if name_s.starts_with('.') || name_s == "__pycache__" {
+            continue;
+        }
+        if path.is_dir() {
+            materialise_assets(&path, &dst.join(&name_s))?;
+        } else {
+            std::fs::copy(&path, dst.join(&name_s))?;
+        }
+        produced.insert(name_s);
+    }
+    prune_stale_rt(dst, &produced)
 }
 
 /// Delete anything in a materialised `rt/` directory that this build did not
@@ -4972,6 +5179,48 @@ mod offline_db_plan_tests {
         assert_eq!(p, OfflineDbPlan::None);
     }
 
+    fn plan_with_code(tag: &str, main_sky: &str) -> OfflineDbPlan {
+        let d = scratch(tag);
+        std::fs::write(
+            d.join("sky.toml"),
+            "name = \"a\"\nversion = \"0.1.0\"\n\n[source]\nroot = \"src\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::write(d.join("src/Main.sky"), main_sky).unwrap();
+        let p = offline_db_plan(&d);
+        let _ = std::fs::remove_dir_all(&d);
+        p
+    }
+
+    /// Configuration is code (v0.28.0): a database named with
+    /// `Config.withDatabase` and no `[database]` table still gets the throwaway
+    /// test database. Before, `sky test` on examples/72-ai-support-desk (no
+    /// `[database]`) wrote the project's real `support-desk.db`.
+    #[test]
+    fn a_database_named_in_code_gets_the_throwaway_database() {
+        let p = plan_with_code(
+            "codesqlite",
+            "module Main exposing (main)\n\ndatabase =\n    Config.default\n        |> Config.withDatabase (Config.Sqlite \"desk.db\")\n",
+        );
+        assert_eq!(
+            p,
+            OfflineDbPlan::Sqlite {
+                db_path_env: "SKY_DB_PATH".to_string()
+            }
+        );
+        let p = plan_with_code(
+            "codepg",
+            "module Main exposing (main)\n\nconfig =\n    Config.default |> Config.withDatabase (Postgres \"postgres://db/app\")\n",
+        );
+        assert_eq!(p, OfflineDbPlan::Postgres);
+        let p = plan_with_code(
+            "codecomment",
+            "module Main exposing (main)\n\n-- Config.withDatabase (Sqlite \"x.db\")\nmain = ()\n",
+        );
+        assert_eq!(p, OfflineDbPlan::None);
+    }
+
     #[test]
     fn env_prefix_renames_the_sqlite_db_path_var() {
         // `[env] prefix` re-namespaces every SKY_* read, so the redirect var
@@ -5143,6 +5392,64 @@ mod ffi_trust_tests {
             n += 1;
         }
         assert!(n >= 17, "found only {n} generator kernel bindings");
+    }
+}
+
+#[cfg(test)]
+mod stdlib_parse_tests {
+    //! A stdlib module that does not parse is a parse error naming its file,
+    //! never an internal compiler error at lowering.
+    use super::*;
+
+    #[test]
+    fn a_stdlib_module_that_does_not_parse_names_its_file() {
+        let root = std::env::temp_dir().join(format!(
+            "sky-stdlib-parse-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let lib = root.join("sky-stdlib/Std/Broken.sky");
+        std::fs::create_dir_all(lib.parent().unwrap()).unwrap();
+        std::fs::write(
+            &lib,
+            "module Std.Broken exposing (total)\n\n\ntotal : List Int -> Int\ntotal xs =\n    List.foldl (+) 0 xs\n",
+        )
+        .unwrap();
+        let app = root.join("app");
+        std::fs::create_dir_all(app.join("src")).unwrap();
+        std::fs::write(
+            app.join("sky.toml"),
+            "name = \"t\"\nentry = \"src/Main.sky\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            app.join("src/Main.sky"),
+            "module Main exposing (main)\n\nimport Std.Broken\n\n\nmain =\n    Std.Broken.total [ 1 ]\n",
+        )
+        .unwrap();
+        let err = match assemble_and_emit(&root, &app) {
+            Ok(_) => panic!("a stdlib module that does not parse was built"),
+            Err(e) => e,
+        };
+        let text: String = err
+            .diagnostics
+            .iter()
+            .map(|d| format!("{d:?}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(text.contains("E0001"), "not a parse error:\n{text}");
+        assert!(
+            text.contains("Broken.sky"),
+            "the stdlib file is not named:\n{text}"
+        );
+        assert!(
+            !text.contains("error-recovery"),
+            "still an internal error:\n{text}"
+        );
     }
 }
 

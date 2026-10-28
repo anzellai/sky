@@ -208,88 +208,489 @@
 #   instead of `rt.Coerce` to an unrelated stdlib alias (`Std.Durable.ResultRow`,
 #   `Std.Ai.Provider.RawChoice`); ledger's `addAccount` form parameter is now
 #   `any` because another nominal collects the same three fields and more.
-# ── Recorded transition, 2026-10-27 — v0.27.20: Std.Email custom headers ──
-#   narrow  apps/dispatch 399 -> 400 (+1); adapter and dispatch unchanged (0);
-#   no other row moved. Cause (2), a STDLIB source change: `EmailMessage`
-#   gained `headers : List Header` (#300), and `defaultMessage` sets it to `[]`.
-#   The one new token is that empty list literal narrowed into the typed record
-#   slot, `/* primitive join */ rt.AsListT[Std_Email_Header]([]any{})` in
-#   `Std_Email_defaultMessage` (doc 14 R1, `coerce_if_needed`, PrimitiveJoin),
-#   the same narrowing the sibling `cc`, `bcc` and `attachments` fields already
-#   pay in the same expression. The new header functions are not reachable from
-#   the app, so DCE drops them. Only apps/dispatch imports Std.Email.
-00-standard-libs	adapter=0	dispatch=0	narrow=164
+# ── Recorded transition, 2026-10-12 — v0.28.0 Std.Ai lifecycle, traced ──
+#   Measured against origin/main 03d61922f (76 of 80 rows; 03-tea-external,
+#   05-mux-server, 08-notes-app and 13-skyshop are UNMEASURED under
+#   SKY_LIVE_TESTS=skip). adapter 0, dispatch 0. Rows at or below origin/main:
+#   09-live-counter 125 (= origin): the wider-nominal check on an open row
+#     (goty.rs `wider_nominal_could_carry`, doc 14 §9.8, R10/R11) now counts
+#     only record aliases of modules the program loads (lower.rs
+#     `program_type_closure`). `Std.Ai.Eval.ScorerScore { scorer, mean, count }`
+#     no longer widens the unannotated `viewCounter` row `{ count | r }`.
+#   apps/relay 175 (origin 176): `Error.isRetryable` / `domain` / `retryAfter`
+#     are typed runtime kernels (rt/error_kernels.go) reached through
+#     `kernel_typed_return_twin` (lower.rs, R5, lever §5.3): no Sky payload
+#     read of the erased `Sky_Core_Error` ADT, no narrowed kernel return.
+#   Rows new since origin/main (measured here, no origin value):
+#   68-ai-dataset 548, 69-ai-scrub 99, 70-ai-synthetic 696, 71-ai-registry 956,
+#   sky-bundled/ai 656. They fell from 626 / 99 / 769 / 1057 / 734, mostly
+#   because `Std.Ai.Failure` reads each constructor payload once (`facts`, one
+#   match for the message and the attributes, R6) and decodes through
+#   monomorphic helpers instead of `Maybe.map` lambdas (R12 via R1); the Error
+#   kernels and the Provider rewrite below account for the rest.
+#   The two rows this note listed as still above origin/main
+#   (66-slack-agent 147, sky-bundled/console 330) were closed by the next
+#   transition.
+# ── Recorded transition, 2026-10-12 — v0.28.0 phase 2 part C
+#    (Std.Ai.Pipeline, the synthetic journal, bounded dedupe, compared
+#    promotion) ──
+#   narrow over 4 rows, adapter 0, dispatch 0, every other row unchanged (76 of
+#   80 measured; 03-tea-external, 05-mux-server, 08-notes-app and 13-skyshop
+#   UNMEASURED under SKY_LIVE_TESTS=skip). Cause (2): stdlib source that these
+#   programs reach gained code, each new line paying the ordinary kernel-ABI
+#   narrowing. 68-ai-dataset 626 -> 641: `Dataset.dedupeBy` now runs through
+#   the bounded spill set (`transformTask`, `Ai_dedupeOpen/Add/Close`,
+#   `keepFresh`); bisected by restoring the previous `Dataset.sky`, which
+#   measures 626 again. 70-ai-synthetic 769 -> 794: the journal fields of the
+#   generator and `replayed` in the report (the journal's own code was moved
+#   behind `withJournal` first, which took this row from 854 back to 794).
+#   71-ai-registry 1057 -> 1059: `Registry.trainedOn` reads a dataset digest by
+#   reference (+1), and `Eval`'s `JsonShape` reads an answer in a code fence
+#   with one `Regex.replace` (+1; a first version with eight `String` calls
+#   cost +8 and was replaced). sky-bundled/ai 734 -> 801: `promote` compares against the
+#   alias's version (`Registry.promoteCompared` / `evidenceAgainst`),
+#   `--registry` wins over SKY_AI_REGISTRY (`Store.fromUrl`), and
+#   `lineage --dataset <name>@<n>`. New row: 72-ai-support-desk 583.
+# ── Recorded transition, 2026-10-12 — typed kernel returns (R5, §5.3) ──
+#   narrow 14423 -> 12669 (-1754), 61 rows tightened, none raised, adapter 0,
+#   dispatch 0, all 80 rows measured (the four FFI examples after `sky install`).
+#   `kernel_typed_return_twin` (lower.rs) routes a fully applied
+#   String.fromInt / toUpper / toLower / startsWith / endsWith / contains /
+#   join / left / right / dropLeft / dropRight, Encoding.urlEncode, Basics.not
+#   and Json.Encode.encode call to a runtime twin that returns the result's Go
+#   type, so the call site narrows nothing. A twin parameter typed `int` /
+#   `string` / `bool` / `[]string` is used only when the argument lowers to
+#   exactly that type (doc 14 §1, per call site); otherwise the erased call
+#   stays. An empty list literal in a typed slot is built at the slot's type
+#   (R1, §5.2). Twins are checked against the erased kernels in
+#   runtime-go/rt/kernel_twins_test.go; the rt package builds for wasm.
+#   Every row is now at or below origin/main 03d61922f: 66-slack-agent 136
+#   (origin 142), sky-bundled/console 204 (origin 292), apps/relay 142
+#   (origin 176), 09-live-counter 101 (origin 125). The four rows that were
+#   UNMEASURED without a generated FFI surface now measure 03-tea-external 3,
+#   05-mux-server 3, 08-notes-app 361 (was carried at 403), 13-skyshop 1194
+#   (was carried at 1260).
+# ── Recorded transition, 2026-10-12 — merge of fix/coerce-floor-rises into
+#    the lifecycle branch after phase 2 part C ──
+#   All 81 rows measured (the FFI examples after `sky install`). The typed
+#   kernel returns and the Failure / Provider / Error changes apply to the
+#   phase 2C code too: 72-ai-support-desk 583 -> 481. Four rows measure above
+#   the fix branch's values because phase 2C added code to them after the fix
+#   branch forked; they are below the values phase 2C recorded:
+#   68-ai-dataset 506 (2C 641, fix branch 491), 70-ai-synthetic 677 (2C 794,
+#   fix branch 654), 71-ai-registry 884 (2C 1059, fix branch 883),
+#   sky-bundled/ai 661 (2C 801, fix branch 600). All four are rows that are
+#   new since origin/main.
+# ── Recorded transition, 2026-10-12 — the same levers on the phase 2C code ──
+#   narrow 13250 -> 12573 (-677), 34 rows tightened, none raised, adapter 0, all
+#   81 rows measured. `kernel_typed_return_twin` gains the typed Math (sqrt,
+#   sin, cos, tan, log, exp, pow, floor, ceil, round, abs, min, max), modBy,
+#   List.range, Regex.replace and String.fromFloat twins; Math.min / max pick
+#   the Int or the Float twin by the arguments' lowered types (§1 per call
+#   site). Std.Ai.Eval's paired comparison, bootstrap, McNemar, mean and
+#   uniqueSorted recurse over typed lists instead of passing lambdas to the
+#   generic List functions (R1 / R12). The Registry and Synthetic generator
+#   payloads are named records (`Handle`, `Spec row`), so a `Registry r` /
+#   `Generator g` match reads the stdlib constructor's payload with one
+#   narrowing instead of one per field (R6). Every phase 2C row is now below
+#   the fix branch's value: 68-ai-dataset 490 (491), 70-ai-synthetic 415
+#   (654), 71-ai-registry 839 (883), sky-bundled/ai 586 (600);
+#   72-ai-support-desk 465.
+# ── Recorded transition, 2026-10-12 — merge of fix/spa-init-perform ──
+#   narrow +7 over 2 rows, adapter 0, dispatch 0, every other row unchanged
+#   (81 of 81 measured). Both rows are new since origin/main. 68-ai-dataset
+#   490 -> 496: `Dataset.inspectWith` now checks duplicates through the bounded
+#   spill set (`dedupeOpen` / `Ai_dedupeFirst` / `dedupeClose`) inside a
+#   `Task.andThen` chain, and each erased Task callback narrows its argument
+#   (R5). 72-ai-support-desk 465 -> 466: the app connects its database in code
+#   (`Tickets.sky`) instead of through sky.toml.
+# ── Recorded transition, 2026-10-12 — merge of the two v0.28.0 phase 2
+#    parts (Std.Ai.Dataset and Std.Ai.Registry) ──
+#   narrow over 6 rows, adapter 0, dispatch 0, every other row unchanged (77 of
+#   80 measured; 05-mux-server, 08-notes-app and 13-skyshop have no generated
+#   FFI surface in this tree). Rows new on one side are measured on the merged
+#   tree: 68-ai-dataset 591 -> 626, 69-ai-scrub 99, 70-ai-synthetic 735 -> 769,
+#   71-ai-registry (was 68-ai-registry) 1040 -> 1057. Two rows that both sides
+#   held at one value rise because the merge joins both sides' code:
+#   sky-bundled/ai 527 (registry side) / 354 (dataset side) -> 734 (both CLI
+#   verb sets in one program), sky-bundled/console 292 -> 330. Each of these
+#   rows imports Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Registry or
+#   Std.Ai.Dataset, which carry both sides' constructors and functions after
+#   the merge. Not traced site by site. 09-live-counter 126, 66-slack-agent
+#   160 and apps/relay 179 measure at the values already recorded here.
+# ── Recorded transition, 2026-10-12 — merge of feat/std-ai-p3 (Std.Ai.Train) ──
+#   All 83 rows measured. Two new rows: 73-ai-train 1056 and
+#   sky-bundled/ai-train 916 (phase 3 recorded 1238 and 1072 before the typed
+#   kernel returns applied to it). apps/fieldbook 480 -> 479. Six rows that
+#   load Std.Ai.Failure rise, all new since origin/main: 68-ai-dataset
+#   496 -> 503, 70-ai-synthetic 415 -> 422, 71-ai-registry 839 -> 846,
+#   72-ai-support-desk 466 -> 473, sky-bundled/ai 586 -> 596 (+2
+#   `start --adapter`, +1 `Local.withAdapter`), sky-bundled/console
+#   178 -> 185 (the new Training section of the AI tab; `AiTab.lossText` alone
+#   is 3: `Math.round` on an erased argument, an `//` on erased operands and a
+#   `String.padLeft` return). The Failure part is +8 in `facts`, the
+#   payload reads of the two new constructors `TrainingFailed { runId, step,
+#   reason, logTail }` and `TrainingCancelled { runId, step }` (R6: a stdlib
+#   ADT payload is narrowed once per field), less 1 in `optInt`, whose
+#   `String.fromInt` now reaches the typed twin. Naming those two payloads
+#   would make each read one narrowing; not done here, because a new record
+#   alias joins the structural resolution of every program that loads the
+#   module.
+# ── Recorded transition, 2026-10-13 — v0.28.0 phase 5 (Std.Ai.Device and
+#    streaming answers) ──
+#   All 84 rows measured (the FFI surfaces of 03, 05, 08 and 13 installed for
+#   the run). No row rises; 39 fall; one new row, 75-ai-everywhere 855.
+#   Phase 5 alone raised seven rows that load Std.Ai.Failure (68 +6, 70 +7,
+#   71 +9, 72 +10, 73 +10, sky-bundled/ai +9, sky-bundled/ai-train +8): the
+#   payload reads of DeviceUnsupported { backend, reason } and StorageDenied
+#   { needBytes, availableBytes } in `Failure.facts` (+6, R6), the new
+#   `on_device` column read in `Registry.versionOf` (+2) and `adapterFor` (+1),
+#   and `Device.rawSpec` in `Endpoint.endpoint`'s default (+1). Closed by typed
+#   kernel returns (R5, lever §5.3): the `Std.Db` row readers (`getString`,
+#   `getInt`, `getField`, `getFloat`, `getBool`) already return their Go type
+#   and are their own twins, and `String.length` / `trim` / `replace` and
+#   `Regex.match` use their typed twins when the argument is a proven string
+#   (runtime-go/rt/kernel_twins_test.go checks each against its erased form);
+#   the default device spec is a record literal. Biggest falls: 71-ai-registry
+#   846 -> 790, 73-ai-train 1056 -> 1007, sky-bundled/ai 596 -> 552,
+#   sky-bundled/ai-train 916 -> 872, 72-ai-support-desk 473 -> 434. The
+#   streaming providers (Provider.wireStreaming in Endpoint, Local and Device)
+#   left every existing row unchanged.
+# ── Recorded transition, 2026-10-13 — merge of v0.28.0 phase 4 (training on
+#    Vertex AI, Std.Ai.Serve, Std.Ai.Cloud.Google) with phase 5 ──
+#   80 of 84 rows measured; 03-tea-external, 05-mux-server, 08-notes-app and
+#   13-skyshop are carried forward (SKY_LIVE_TESTS=skip): they import no
+#   Std.Ai module, and installing their FFI surfaces would take the disk under
+#   its 60 GB floor. Two new rows: 74-ai-cloud 1589 and sky-bundled/ai-cloud
+#   634. Nine rows rise, each because the program now compiles more Std.Ai
+#   code, not because existing code got less typed: 73-ai-train 1007 -> 1462,
+#   sky-bundled/ai-train 872 -> 1360, sky-bundled/ai 552 -> 731,
+#   71-ai-registry 790 -> 907, 72-ai-support-desk 434 -> 514, 70-ai-synthetic
+#   408 -> 479, 75-ai-everywhere 855 -> 926, 68-ai-dataset 489 -> 500,
+#   sky-bundled/console 182 -> 183. The new code is the Vertex backend in
+#   Std.Ai.Train (cloud settings, plan, launch, watch, mirror, cleanup), all of
+#   Std.Ai.Cloud.Google, Store's generation-guarded object operations,
+#   Registry's companions and pointer objects, three Failure codes and the
+#   Endpoint's Google auth. In 73-ai-train's emitted Go the narrowing sites by
+#   module are Std.Ai.Train 473, Std.Ai.Store 134, Std.Ai.Registry 131,
+#   Std.Ai.Cloud.Google 127 and Std.Ai.Failure 88; by kind, rt.Field on an
+#   erased record (128), ADT payload reads (`_subj.Fields`, R6, about 140) and
+#   Coerce at call and pattern sites. No single kernel dominates, so no §5.3
+#   twin closes a large share; the largest twin candidates are
+#   `AsListT(String.split …)` (29) and `AsBool(String.isEmpty …)` (10). Not
+#   traced site by site.
+# ── Recorded transition, 2026-10-13 — phase 4 rises, reduced and cited ──
+#   83 of 86 rows measured; 05-mux-server, 08-notes-app and 13-skyshop are
+#   carried forward (SKY_LIVE_TESTS=skip, no generated FFI surface, and
+#   installing it would take the disk under its 60 GB floor). No row rises;
+#   37 fall. Two levers:
+#   * R5 (lower.rs `kernel_call`, the `kernel_typed_return_twin` branch),
+#     lever §5.3: `String.split` / `isEmpty` / `lines` over proven strings go
+#     to `rt.String_splitT` / `String_isEmptyT` / `String_linesT`, and
+#     `System.getenvOr`, `Secret.reveal`, `Crypto.sha256` to `..T` twins that
+#     assert the erased kernel's one result type. §1: the kernel's result has
+#     one Go type and a `Some` parameter is used only when the argument
+#     already lowers to it, so both shapes are known at emit time.
+#     runtime-go/rt/kernel_twins_test.go checks each twin against its erased
+#     kernel.
+#   * R6 (lower.rs `narrow_ctor_subject` / `narrow_erased`), lever §5.2 with
+#     the record resolution of goty.rs (`record_fieldsets`): the payloads of
+#     Std.Ai.Failure's 27 constructors, Std.Ai.Train's `Event`, `Job` and
+#     `BaseModel` and Std.Ai.Dataset's `Issue` are named records. A match
+#     then reads a payload with one narrowing instead of one per field. §1:
+#     the payload's shape is known; `SkyADT.Fields[i]` stays `any` by the
+#     stdlib-ADT contract (§4.5), so one narrowing remains per read.
+#   The gate that goes red if either regresses is this one (narrow is
+#   fail-on-increase on every Std.Ai row); the Std.Ai suites
+#   (scripts/sky-suites.sh Std_Ai, 14 suites) prove the semantics.
+#   Rows against their value before phase 4 (15944613d):
+#     68-ai-dataset 489 -> 431 and sky-bundled/console 182 -> 180: below.
+#     70-ai-synthetic 408 -> 419 (+11), 71-ai-registry 790 -> 825 (+35),
+#     72-ai-support-desk 434 -> 442 (+8), 75-ai-everywhere 855 -> 868 (+13),
+#     sky-bundled/ai 552 -> 651 (+99), 73-ai-train 1007 -> 1292 (+285),
+#     sky-bundled/ai-train 872 -> 1186 (+314).
+#   Cause, per row: each rise is smaller than the sites in functions that
+#   did not exist before phase 4 (counted per emitted Go function against
+#   the 15944613d stdlib): 70 has 43 such sites, 71 has 139, 72 has 82, 75
+#   has 43, sky-bundled/ai 126, 73 440, sky-bundled/ai-train 459. The code
+#   that existed before phase 4 now carries fewer sites than it did. The new
+#   code is reachable in every one of these programs, so dead-code
+#   elimination cannot drop it, and no dispatch restructuring would:
+#   - Std.Ai.Cloud.Google's token code (43 to 51 sites per row) is reached
+#     from every `Endpoint`: `Endpoint.endpoint` holds `Google.idToken`
+#     (Endpoint.sky, the default record), and `SKY_AI_<SLOT>_AUTH=google`
+#     turns it on at run time (runtime-go/rt/ai_endpoint.go, `cfg.auth ==
+#     "google"`).
+#   - Std.Ai.Store's GCS and S3 object operations are chosen by the store
+#     URL's scheme at run time (`Store.fromUrl`), and the registry's
+#     companion and pointer objects are written by every `register` /
+#     `promote`.
+#   - Std.Ai.Train's Vertex backend is chosen at run time by
+#     `SKY_AI_TRAIN_BACKEND=vertex` (runtime-go/rt/ai_train.go,
+#     `aiTrainResolveBackend`), which overrides `withBackend` and detection
+#     by design: a program built for a local backend runs on Vertex AI by an
+#     environment variable, so every training program links it.
+#   The remaining sites in this code are R2 (`eta_narrow`, the JSON decoder
+#   callbacks: already the closed form), R6 reads of stdlib ADTs (§4.5), R10
+#   / R11 `rt.Field` on open rows (policy floor, §4.6) and R5 returns of
+#   kernels with no one-type twin. New rows: 74-ai-cloud 1589 -> 1414 and
+#   sky-bundled/ai-cloud 634 -> 540, measured, not limited.
+# ── Recorded transition, 2026-10-14 — the P4 live-run commits
+#    (d83301526..d6bd6b493), rises closed ──
+#   84 of 86 rows measured; 05-mux-server and 08-notes-app are carried forward
+#   (SKY_LIVE_TESTS=skip, no generated FFI surface). No row rises; 5 fall.
+#   The 17 commits raised four rows: 73-ai-train 1292 -> 1302, 74-ai-cloud
+#   1414 -> 1431, sky-bundled/ai-cloud 540 -> 554, sky-bundled/ai-train
+#   1186 -> 1196. The compiler was not the cause: the d83301526 Sky sources
+#   (Train, Serve, Cloud.Google, ai-cloud Main) measure the golden exactly.
+#   Per emitted Go function, the new tokens were: Train.watchCloud +6
+#   (`Task.map2` into a tuple callback, R1 via `box_func_value`, and
+#   `Maybe.withDefault (Maybe.map …)` over the previous cloud.json, R12 + R11
+#   `rt.Field`), Train.readCloudFile +2 (a nested `JsonD.map2` tuple),
+#   Train.cloudRelaunch +2 (two new Task callbacks), Google.remoteHas +7 (new),
+#   Google.validLabel +3 (now reached in sky-bundled/ai-cloud through
+#   `allLabels`), Serve.dockerfileWith +2 (new) and ai-cloud teardownVerb +2.
+#   Closed by restructuring the new code so the shapes are known at emit time:
+#   * watchCloud reads the previous file with `case` on the typed
+#     `Maybe CloudFile` (R8, lever §5.2, `.JustValue` typed read) and binds
+#     `now` and the file with two nested `andThen`s, not a `map2` tuple: +0.
+#   * readCloudFile decodes with one `JsonD.map5` over a `map3` triple: +0.
+#   * Google.validLabel uses `Regex.match`, a typed kernel twin (R5, lever
+#     §5.3), not `List.all` over `String.toList` (R12, and R2 for the
+#     `rune` narrowing in its callback): -3 in every row that reaches it.
+#   * Google.pathOf and regionOf take the first `String.split` piece with a
+#     cons pattern on the typed `[]string` instead of `List.head` +
+#     `Maybe.withDefault` (R12 via R1): -2 each.
+#   * remoteHas takes the endpoint artifactExists already read (pure
+#     `serviceBaseFor`), matches the decoded mode with `case`, and fetches the
+#     token with one `andThen` (a `Secret` callback narrows nothing): 7 -> 3
+#     over remoteHas and manifestReachable.
+#   * Serve.dockerfileWith and ai-cloud teardownVerb build their text with
+#     `String.join ""` over a typed `List.map` (`String_joinT`, R5, §5.3)
+#     instead of joining a `::` list (an erased `List_cons` return); ai-cloud
+#     `text` and `bucketOf` use `case` instead of `Maybe.withDefault` (R12).
+#   Tokens left in the new code, each offset by the falls above:
+#   cloudRelaunch +1 (the launch step now writes cloud.json inside the step,
+#   so it gains one `\launched -> … |> Task.map (\_ -> launched)` pair, less
+#   the removed `Task.succeed () |> Task.andThen`), remoteHas +3 (the `\resp`
+#   and `\r` Task callbacks and the `JsonD.decodeString` result) and
+#   teardownVerb +1 (`List.all` over the `::` label list, R12). The callback
+#   tokens are R1 at `box_func_value` (lower.rs): a typed Sky lambda boxed
+#   into the erased `func(any) any` slot of the Task kernels
+#   (`rt.AnyTaskAndThen` / `rt.Task_map`, run by the Task trampoline). By §1
+#   both shapes are known, so they are closeable only by typed Task kernel
+#   twins (§5.3), which do not exist; every existing `andThen` pays the same.
+#   Rows now: 73-ai-train 1286, sky-bundled/ai-train 1180, 74-ai-cloud 1411,
+#   sky-bundled/ai-cloud 537. 13-skyshop 1190 -> 1188 (measured with its FFI
+#   surface): its two `String.split` sites (`Std.Css.rawProp`,
+#   `Lib.Auth.adminEmails`) now reach the `rt.String_splitT` twin added by
+#   the previous transition (R5, §5.3); the row was carried forward then.
+#   Std.Ai suites (scripts/sky-suites.sh Ai, 14 suites), ai_cloud_train_flow
+#   and ai_serve_flow prove the behaviour is unchanged.
+# ── Recorded transition, 2026-10-17 — Std.Ai.Device engine settings
+#    (Device.withThreads / withGpuLayers) ──
+#   All 86 rows measured. One row rises: 75-ai-everywhere 846 -> 849 (+3);
+#   every other row unchanged. Cause (2), new code: three new wire fields,
+#   the offer's `threads` and `gpuLayers` and a backend's `gpu`
+#   (Std.Ai.Device offerDecoder +2, infoDecoder +1, counted per emitted Go
+#   function against HEAD's Device.sky). Each is one argument of the JSON
+#   decoder's callback (R2, `eta_narrow` at the decoder's erased slot: the
+#   closed form, doc 14 §5.1), as every existing field of those decoders
+#   pays. The decision itself added none: `fits` reads the typed backend list
+#   through a recursion (`holds`) instead of a `List.any` lambda (R12), which
+#   offsets the GPU check, and `reasonFor` reuses `holds` rather than a new
+#   comparison (an erased `==` on the Backend ADT, R5, measured +1 when it was
+#   a helper of its own). The defaults decode with `JsonD.oneOf` instead of
+#   `Maybe.withDefault` (R12, measured +4 before).
+#
+# ── Recorded transition, 2026-10-17 — Std.Ai.Trace across the lifecycle,
+#    local drafts and named adapters, strict AI settings; then the closeable
+#    narrowings in that code removed ──
+#   All 86 rows measured. The first commit of this transition raised eight AI
+#   rows by +242 (70 +2, 71 +48, 72 +2, 73 +51, 74 +36, 75 +51,
+#   sky-bundled/ai +3, sky-bundled/ai-train +49). A Judge found closeable
+#   narrowings (R1, R5, R12) in that rise; this re-bless removes them. The
+#   eight rows now sum to 7054 (7305 before this re-bless, 7063 before the
+#   transition), and the golden to 17344 (17783 before). Every row fell or
+#   held; none rose. Two causes:
+#   * Lowering (doc 14 §1, R1, identity): a partially applied def in a func
+#     slot whose param is the def's own Go param type declared that param
+#     `any` and narrowed it back (`trainOn`: `rt.Coerce[Adapter_R](_p1)` with
+#     `_p1` already `Adapter_R`). `lower.rs::make_partial` now declares it at
+#     the type when the slot names the same type. Corpus-wide: 07-todo-cli
+#     -4, 19-skyforum -8, 62-app-notes -12, … (regression test
+#     `lower/tests/partial_identity_param.rs`).
+#   * Source, in the functions this transition added or changed:
+#     `addProgressLine` reads the checkpoint with a `case`, not `Maybe.map
+#     .checkpoint` (R12/R11 `rt.Field`); `upsertStep` builds with `[ x ] ++
+#     rest` (typed `rt.List_appendT`), not `::` (R5 `rt.List_cons`);
+#     `cloudStatus` (`moneyOrZero`), `factsOf` (`orText`), `rate`,
+#     `measuredOf`, `Endpoint.withLocal` (`orUnset`), `Eval.runCase`,
+#     `Eval.okResult` and `Trace.callRow` use a `case` for `Maybe.withDefault`
+#     / `Maybe.map` (R12); `Eval.callModel` uses a `case` for `Result.map`
+#     (R12); `Eval.scoreCall` / `okResult` / `errResult` take a monomorphic
+#     `CaseInfo`, not the polymorphic `Suite input` / `Case input` (R12 and a
+#     second R6 destructure); `Device.fits` / `holds` / `reasonFor` compare a
+#     Backend by name (`sameBackend`, `listed`, `unsupportedWhy`), not the
+#     erased `==` (R5 `rt.Eq`) or `List.member` (R12); `requestValue`,
+#     `turnValue` and `toolSpecValue` are annotated (R12 `rt.AsListT[any]`).
+#   What remains in those functions, by origin:
+#   * R6, stdlib ADT payloads (§4.5, blocked by the runtime contract):
+#     `Error.withMessage` 2, `Durable.conn` 3 (the `Ctx` payload),
+#     `Endpoint.withLocal` 1 (`Config`), `addProgressLine` 2 (`Event`),
+#     `Provider.measure` / `measureTools` 3 each (`Provider`'s payloads),
+#     `Eval.runCase` 9 (the `Suite` payload, field by field).
+#   * NOT floor, OPEN (closing each is a compiler change across the corpus):
+#     - the erased callback slot of a Task or JSON-decoder kernel
+#       (`Task.andThen` / `map` / `map2` / `onError`, `JsonD.mapN`): the
+#       `widen` adapter narrows the kernel's `any` argument. `insertRow` 2,
+#       `setup` 1, `traceCost` 2, `traceLines` 1, `withTraceTables` 2,
+#       `trainOn` 3, `cloudStatus` 12, `timed` 1, `timedWith` 1,
+#       `finishTimed` 2, `measure` / `measureTools` 1 each, `judgeAnswered`
+#       3, `scoreCall` 2, `runCase` 4. Lever: typed kernel entry points
+#       (§5.3; `rt.Task_mapT` exists and the lowerer does not route to it).
+#     - R12, the polymorphic `timed` / `timedWith` (`Timing a`): the record's
+#       `rt.Coerce[Timing_R[any]]` in `measure` / `measureTools` (2 each) and
+#       `timedWith`'s `attempt` result 1. Lever §5.5. Monomorphic copies were
+#       measured and cost MORE (+13 on 75), because of the next item.
+#     - R1, a parametric record alias at a concrete type
+#       (`Measured ChatResponse`) lowers to an anonymous struct in a signature
+#       and to `Measured_R[any]` in a literal (`goty.rs`
+#       `select_record_candidate` refutes a template that holds the param
+#       inside a type constructor), so each crossing narrows field by field:
+#       `Eval.callModel` 7.
+#     - R5, kernel returns: `rate` 1 (float `/` is `rt.Div`), `cloudStatus` 1
+#       (`JsonD.decodeString`'s result).
+#
+# Ratcheted down on feat/std-ai-lifecycle (decreases only; measured by
+# `xtask coerce-floor` on this tree):
+#   - R5, lever 5.3: float `/` over two `Float` operands lowers to the typed
+#     `rt.DivF(float64, float64) float64` instead of `rt.Div` (no boxing, no
+#     narrowing of the result): 26-ui-showcase -4, 35-composite-generics -6,
+#     37 -2, 38 -2, apps/fieldbook -5, sky-bundled/ai -2, sky-bundled/console -2.
+#   - R6, doc 14 4.5: `Std.Codec.Codec`'s payload is the named record
+#     `CodecPayload`, so a match on a codec narrows once instead of once per
+#     field. This also pays for the codec's new `sch` field (the JSON Schema
+#     description behind `Codec.jsonSchema`): every program that destructures
+#     a codec drops by 8 (07, 08, 12, 16, 17, 18, 27, 36, 52, 55, 62,
+#     apps/dispatch, apps/ledger), the AI programs by 3 to 27.
+#   72-ai-support-desk rose 435 -> 660 (+225) with its new typed tool,
+#   structured answer and durable assistant (it now links Std.Durable and
+#   Std.Ai.Agent). Raised by hand on the user's decision (2026-10-25): no new
+#   kind of narrowing, only the existing Std.Durable and Std.Ai.Agent sites now
+#   counted in this example. The doc 14 section 5.3 Task and decoder callback twins and
+#   the R1 `Measured a` and R12 `timed` work target these sites, and this row must
+#   fall again when they land.
+#
+# Native trainer, feat/std-ai-lifecycle P0-P11 (2026-10-26). Cause (2), new
+# source: four rows rose, 73-ai-train 1272 -> 1305 (+33), 74-ai-cloud
+# 1371 -> 1403 (+32), sky-bundled/ai-train 1182 -> 1214 (+32),
+# sky-bundled/console 167 -> 170 (+3). Bisected the source, not the commit:
+# with Std/Ai/Train.sky, Std/Ai/Trace.sky, sky-bundled/ai-train/src/Main.sky
+# and sky-bundled/console/src/{AiTab,Main,State}.sky reverted to c2d81cada
+# (the last bless) and the HEAD compiler (v0.27.18 merged),
+# sky-bundled/ai-train measured 1182 and sky-bundled/console 167, exactly the
+# golden, so the compiler is innocent. The tokens are the per-call-site
+# kernel-ABI narrowings of the new code: the native trainer's launch through
+# `trainerEnsure`, `trainSettingsResolve` (memory settings with env fallback),
+# the tokenize step, the chunked-loss settings, and each step's eval loss and
+# peak memory read from the trainer's progress lines into Trace and shown in
+# the console's AI tab. adapter stays 0 and dispatch 0 on every row. The same
+# levers as row 72 (doc 14 section 5.3 callback twins, R12 `timed`) target
+# these sites.
+# ── Recorded transition, 2026-10-27 — merge of v0.27.20 (Std.Email custom
+#    headers, #300) into the v0.28.0 branch ──
+#   No row moves. On main, apps/dispatch rose 399 -> 400 for one token: the
+#   `headers = []` empty list literal in `Std_Email_defaultMessage`, narrowed
+#   into the typed record slot (doc 14 R1, PrimitiveJoin). This branch already
+#   builds an empty list literal in a typed slot at the slot's type (R1, lever
+#   §5.2, the 2026-10-12 typed-kernel-returns transition above), so the new
+#   field costs nothing here: apps/dispatch measures 304 after the merge
+#   (`coerce-floor --only=apps/dispatch`), the same as before it. The new
+#   header functions are not reachable from the app, so DCE drops them.
+00-standard-libs	adapter=0	dispatch=0	narrow=113
 01-hello-world	adapter=0	dispatch=0	narrow=1
-02-go-stdlib	adapter=0	dispatch=0	narrow=8
+02-go-stdlib	adapter=0	dispatch=0	narrow=6
 03-tea-external	adapter=0	dispatch=0	narrow=3
-04-local-pkg	adapter=0	dispatch=0	narrow=2
+04-local-pkg	adapter=0	dispatch=0	narrow=1
 05-mux-server	adapter=0	dispatch=0	narrow=3
-06-json	adapter=0	dispatch=0	narrow=70
-07-todo-cli	adapter=0	dispatch=0	narrow=170
-08-notes-app	adapter=0	dispatch=0	narrow=403
-09-live-counter	adapter=0	dispatch=0	narrow=125
-10-live-component	adapter=0	dispatch=0	narrow=129
-12-skyvote	adapter=0	dispatch=0	narrow=442
-13-skyshop	adapter=0	dispatch=0	narrow=1260
+06-json	adapter=0	dispatch=0	narrow=60
+07-todo-cli	adapter=0	dispatch=0	narrow=147
+08-notes-app	adapter=0	dispatch=0	narrow=346
+09-live-counter	adapter=0	dispatch=0	narrow=100
+10-live-component	adapter=0	dispatch=0	narrow=103
+12-skyvote	adapter=0	dispatch=0	narrow=391
+13-skyshop	adapter=0	dispatch=0	narrow=1187
 14-task-demo	adapter=0	dispatch=0	narrow=8
-15-http-server	adapter=0	dispatch=0	narrow=9
-16-skychess	adapter=0	dispatch=0	narrow=555
-17-skymon	adapter=0	dispatch=0	narrow=490
-18-job-queue	adapter=0	dispatch=0	narrow=220
-19-skyforum	adapter=0	dispatch=0	narrow=106
-20-cli-counter	adapter=0	dispatch=0	narrow=42
-21-tui-stopwatch	adapter=0	dispatch=0	narrow=50
-22-tui-stopwatch-ui	adapter=0	dispatch=0	narrow=56
-23-tui-todo	adapter=0	dispatch=0	narrow=68
-24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=74
-25-sky-console	adapter=0	dispatch=0	narrow=82
-26-ui-showcase	adapter=0	dispatch=0	narrow=332
-27-multi-session-chat	adapter=0	dispatch=0	narrow=206
-28-streaming-chat	adapter=0	dispatch=0	narrow=75
+15-http-server	adapter=0	dispatch=0	narrow=8
+16-skychess	adapter=0	dispatch=0	narrow=454
+17-skymon	adapter=0	dispatch=0	narrow=412
+18-job-queue	adapter=0	dispatch=0	narrow=185
+19-skyforum	adapter=0	dispatch=0	narrow=84
+20-cli-counter	adapter=0	dispatch=0	narrow=40
+21-tui-stopwatch	adapter=0	dispatch=0	narrow=45
+22-tui-stopwatch-ui	adapter=0	dispatch=0	narrow=51
+23-tui-todo	adapter=0	dispatch=0	narrow=61
+24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=69
+25-sky-console	adapter=0	dispatch=0	narrow=66
+26-ui-showcase	adapter=0	dispatch=0	narrow=200
+27-multi-session-chat	adapter=0	dispatch=0	narrow=178
+28-streaming-chat	adapter=0	dispatch=0	narrow=72
 29-webview-threejs-spike	adapter=0	dispatch=0	narrow=51
-30-sse-server-demo	adapter=0	dispatch=0	narrow=15
-31-webview-stopwatch-ui	adapter=0	dispatch=0	narrow=65
-32-sse-relay	adapter=0	dispatch=0	narrow=20
-33-websocket-echo	adapter=0	dispatch=0	narrow=5
-34-multi-tier-console	adapter=0	dispatch=0	narrow=68
-35-composite-generics	adapter=0	dispatch=0	narrow=156
-36-composite-server	adapter=0	dispatch=0	narrow=266
-37-composite-live-shop	adapter=0	dispatch=0	narrow=380
-38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=295
+30-sse-server-demo	adapter=0	dispatch=0	narrow=14
+31-webview-stopwatch-ui	adapter=0	dispatch=0	narrow=60
+32-sse-relay	adapter=0	dispatch=0	narrow=18
+33-websocket-echo	adapter=0	dispatch=0	narrow=4
+34-multi-tier-console	adapter=0	dispatch=0	narrow=60
+35-composite-generics	adapter=0	dispatch=0	narrow=119
+36-composite-server	adapter=0	dispatch=0	narrow=216
+37-composite-live-shop	adapter=0	dispatch=0	narrow=275
+38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=217
 40-generic-adt-field	adapter=0	dispatch=0	narrow=2
-41-nested-curry	adapter=0	dispatch=0	narrow=4
+41-nested-curry	adapter=0	dispatch=0	narrow=3
 42-poly-record	adapter=0	dispatch=0	narrow=2
 43-composition	adapter=0	dispatch=0	narrow=2
-44-record-update	adapter=0	dispatch=0	narrow=3
-45-record-update-anon	adapter=0	dispatch=0	narrow=2
+44-record-update	adapter=0	dispatch=0	narrow=1
+45-record-update-anon	adapter=0	dispatch=0	narrow=1
 46-row-poly-result	adapter=0	dispatch=0	narrow=5
 47-func-field-record	adapter=0	dispatch=0	narrow=7
-48-tuple-unused-binding	adapter=0	dispatch=0	narrow=2
+48-tuple-unused-binding	adapter=0	dispatch=0	narrow=1
 49-xmodule-adt	adapter=0	dispatch=0	narrow=1
 50-open-row-closure	adapter=0	dispatch=0	narrow=11
 51-kernel-variadic-arity	adapter=0	dispatch=0	narrow=2
-52-blog-analytics	adapter=0	dispatch=0	narrow=443
-53-record-update-map	adapter=0	dispatch=0	narrow=24
-54-record-fieldset-collision	adapter=0	dispatch=0	narrow=3
-55-store-partial-update	adapter=0	dispatch=0	narrow=132
-61-app-kanban	adapter=0	dispatch=0	narrow=251
-62-app-notes	adapter=0	dispatch=0	narrow=423
-63-app-chat	adapter=0	dispatch=0	narrow=427
-64-app-native	adapter=0	dispatch=0	narrow=271
-65-metadata-service	adapter=0	dispatch=0	narrow=26
-66-slack-agent	adapter=0	dispatch=0	narrow=142
-67-durable-counter	adapter=0	dispatch=0	narrow=77
-apps/dispatch	adapter=0	dispatch=0	narrow=400
-apps/fieldbook	adapter=0	dispatch=0	narrow=657
+52-blog-analytics	adapter=0	dispatch=0	narrow=349
+53-record-update-map	adapter=0	dispatch=0	narrow=20
+54-record-fieldset-collision	adapter=0	dispatch=0	narrow=1
+55-store-partial-update	adapter=0	dispatch=0	narrow=113
+61-app-kanban	adapter=0	dispatch=0	narrow=169
+62-app-notes	adapter=0	dispatch=0	narrow=318
+63-app-chat	adapter=0	dispatch=0	narrow=316
+64-app-native	adapter=0	dispatch=0	narrow=199
+65-metadata-service	adapter=0	dispatch=0	narrow=16
+66-slack-agent	adapter=0	dispatch=0	narrow=127
+67-durable-counter	adapter=0	dispatch=0	narrow=68
+68-ai-dataset	adapter=0	dispatch=0	narrow=409
+69-ai-scrub	adapter=0	dispatch=0	narrow=60
+70-ai-synthetic	adapter=0	dispatch=0	narrow=401
+71-ai-registry	adapter=0	dispatch=0	narrow=828
+72-ai-support-desk	adapter=0	dispatch=0	narrow=660
+73-ai-train	adapter=0	dispatch=0	narrow=1305
+74-ai-cloud	adapter=0	dispatch=0	narrow=1403
+75-ai-everywhere	adapter=0	dispatch=0	narrow=838
+apps/dispatch	adapter=0	dispatch=0	narrow=304
+apps/fieldbook	adapter=0	dispatch=0	narrow=440
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
-apps/ledger	adapter=0	dispatch=0	narrow=497
-apps/relay	adapter=0	dispatch=0	narrow=176
-examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=67
-examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=67
-examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=260
-examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=2
-examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=211
+apps/ledger	adapter=0	dispatch=0	narrow=396
+apps/relay	adapter=0	dispatch=0	narrow=119
+examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=62
+examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=63
+examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=171
+examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=1
+examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=174
 simple	adapter=0	dispatch=0	narrow=3
-sky-bundled/console	adapter=0	dispatch=0	narrow=276
-sky-bundled/doc	adapter=0	dispatch=0	narrow=55
+sky-bundled/ai	adapter=0	dispatch=0	narrow=637
+sky-bundled/ai-cloud	adapter=0	dispatch=0	narrow=520
+sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1214
+sky-bundled/console	adapter=0	dispatch=0	narrow=170
+sky-bundled/doc	adapter=0	dispatch=0	narrow=46
 test_pkg	adapter=0	dispatch=0	narrow=1

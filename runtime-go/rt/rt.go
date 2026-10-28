@@ -171,12 +171,23 @@ func adaptFuncValueWithCapture(skyFn reflect.Value, targetTy reflect.Type, captu
 			}
 		}
 		// Default behaviour: align argument count and invoke skyFn.
+		//
+		// Curried-to-flat: MORE args than skyFn takes means skyFn is a
+		// curried Sky function (`withRank n = update (…)` is a Go
+		// `func(int) func(Job) Job`) reaching a flat slot
+		// (`func(int, Job) Job`). The surplus args are not dropped: they
+		// are applied, group by group, to the funcs each call returns
+		// (applyCurriedGroups). Dropping them returned the un-applied
+		// func, which no result narrowing can turn into a `Job`, so the
+		// adapter used to hand back the zero value.
+		var curriedRest []reflect.Value
 		if nin != len(allArgs) && !skyTy.IsVariadic() {
 			if nin > len(allArgs) {
 				for i := len(allArgs); i < nin; i++ {
 					allArgs = append(allArgs, reflect.Zero(skyTy.In(i)))
 				}
 			} else {
+				curriedRest = allArgs[nin:]
 				allArgs = allArgs[:nin]
 			}
 		}
@@ -212,6 +223,9 @@ func adaptFuncValueWithCapture(skyFn reflect.Value, targetTy reflect.Type, captu
 			}
 		}
 		out := skyFn.Call(allArgs)
+		if len(curriedRest) > 0 {
+			out = applyCurriedGroups(out, curriedRest, targetTy)
+		}
 		nOut := targetTy.NumOut()
 		results := make([]reflect.Value, nOut)
 		for i := 0; i < nOut; i++ {
@@ -250,6 +264,64 @@ func adaptFuncValueWithCapture(skyFn reflect.Value, targetTy reflect.Type, captu
 		}
 		return results
 	})
+}
+
+// applyCurriedGroups applies the args a curried Sky function did not take
+// in its first call to the funcs that call (and each later one) returned,
+// one Go parameter group at a time, narrowing each arg to the group's
+// declared param type. `out` is the first call's results.
+//
+// It fails LOUDLY — a classified CoerceFailure naming the slot shape —
+// when a group cannot be applied: a non-func result with args left, a
+// variadic or zero-arg func, or a group wider than the args left. Each
+// of those means the value does not have the slot's Sky type, and a zero
+// value in its place would be a silent wrong answer.
+func applyCurriedGroups(out []reflect.Value, rest []reflect.Value, targetTy reflect.Type) []reflect.Value {
+	for len(rest) > 0 {
+		var fn reflect.Value
+		if len(out) == 1 {
+			fn = out[0]
+			if fn.IsValid() && fn.Kind() == reflect.Interface && !fn.IsNil() {
+				fn = fn.Elem()
+			}
+		}
+		if !fn.IsValid() || fn.Kind() != reflect.Func || fn.IsNil() {
+			got := "no value"
+			if fn.IsValid() {
+				got = fn.Type().String()
+			}
+			panic(fmt.Sprintf("rt.Coerce: expected a func to apply %d more argument(s) for the slot %s, got %s",
+				len(rest), targetTy.String(), got))
+		}
+		fnTy := fn.Type()
+		n := fnTy.NumIn()
+		if fnTy.IsVariadic() || n == 0 || n > len(rest) {
+			panic(fmt.Sprintf("rt.Coerce: expected a func taking at most %d argument(s) for the slot %s, got %s",
+				len(rest), targetTy.String(), fnTy.String()))
+		}
+		group := append([]reflect.Value{}, rest[:n]...)
+		for i := range group {
+			wantTy := fnTy.In(i)
+			av := group[i]
+			if !av.IsValid() {
+				group[i] = reflect.Zero(wantTy)
+				continue
+			}
+			if av.Type().AssignableTo(wantTy) {
+				continue
+			}
+			if narrowed := narrowReflectValue(av, wantTy); narrowed.IsValid() &&
+				narrowed.Type().AssignableTo(wantTy) {
+				group[i] = narrowed
+				continue
+			}
+			panic(fmt.Sprintf("rt.Coerce: expected %s for an argument of the slot %s, got %s",
+				wantTy.String(), targetTy.String(), av.Type().String()))
+		}
+		out = fn.Call(group)
+		rest = rest[n:]
+	}
+	return out
 }
 
 func makeFuncAdapter[T any](skyFn reflect.Value, targetTy reflect.Type) any {
@@ -1349,6 +1421,22 @@ func logEmit(level int, levelName string, msg string, ctx any) {
 			if k == "time" || k == "level" || k == "msg" {
 				continue
 			}
+			// A Sky Error logs as `<Kind>: <message>`, and a domain
+			// failure inside it adds `<key>.domain`, `<key>.code`,
+			// `<key>.retryable`, `<key>.retryAfterMs` and
+			// `<key>.attr.<name>` fields (error_domain.go), so a log
+			// query can group failures by code without parsing text.
+			if rendered, ok := renderSkyError(v); ok {
+				fields[k] = rendered
+				if f, ok := DomainOf(v); ok {
+					for dk, dv := range domainLogFields(k, f) {
+						if _, taken := m[dk]; !taken {
+							fields[dk] = fmt.Sprintf("%v", dv)
+						}
+					}
+				}
+				continue
+			}
 			fields[k] = fmt.Sprintf("%v", v)
 		}
 	}
@@ -1383,6 +1471,15 @@ func logEmit(level int, levelName string, msg string, ctx any) {
 		if m, ok := ctx.(map[string]any); ok {
 			for k, v := range m {
 				if k != "time" && k != "level" && k != "msg" {
+					entryMap[k] = v
+				}
+			}
+			// A Sky Error value and its domain fields take their
+			// rendered form (see the fields loop above).
+			for k, v := range fields {
+				if _, raw := m[k]; !raw {
+					entryMap[k] = v
+				} else if _, isErr := renderSkyError(m[k]); isErr {
 					entryMap[k] = v
 				}
 			}
@@ -2867,6 +2964,17 @@ func Div(a, b any) any {
 		panic("rt.Div: division by zero")
 	}
 	return AsFloat(a) / db
+}
+
+// DivF is the typed twin of Div for float `/` when the compiler proves both
+// operands are `Float` (doc 14 R5, lever §5.3): no operand is boxed into `any`
+// and the result is not narrowed back. It panics with Div's exact message, so
+// a zero divisor (either sign) is the same classified DivisionByZero.
+func DivF(a, b float64) float64 {
+	if b == 0 {
+		panic("rt.Div: division by zero")
+	}
+	return a / b
 }
 
 func IntDiv(a, b any) any {

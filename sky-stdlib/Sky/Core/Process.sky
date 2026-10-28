@@ -203,9 +203,12 @@ withCwd dir cmd =
 
 
 -- | Run the child on a pseudo-terminal of this size (Linux and macOS).
-withPty : { cols : Int
-, rows : Int
-} -> Command -> Command
+withPty :
+    { cols : Int
+    , rows : Int
+    }
+    -> Command
+    -> Command
 withPty size cmd =
     case cmd of
 
@@ -336,9 +339,12 @@ resizeRaw =
 
 
 -- | Change the PTY size. `Err InvalidInput` without a PTY.
-resize : Process -> { cols : Int
-, rows : Int
-} -> Task Error ()
+resize :
+    Process
+    -> { cols : Int
+       , rows : Int
+       }
+    -> Task Error ()
 resize proc size =
     case proc of
 
@@ -376,11 +382,14 @@ screenRaw =
 -- row), for a widget that was just mounted. `gen` is the widget's mount
 -- generation: a read with a higher `gen` ends a read in flight with a lower
 -- one, which returns `changed = False`.
-screen : { view : String
-, gen : Int
-, full : Bool
-, waitMs : Int
-} -> Process -> Task Error Screen
+screen :
+    { view : String
+    , gen : Int
+    , full : Bool
+    , waitMs : Int
+    }
+    -> Process
+    -> Task Error Screen
 screen request proc =
     case proc of
 

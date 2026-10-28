@@ -718,6 +718,18 @@ fn go_runtime_live_probes_go_through_the_go_live_gate() {
 /// file is the test's file and its text occurs on the skip's line.
 const GO_SKIPS_ALLOWED: &[(&str, &str, &str)] = &[
     (
+        "ai_train_test.go",
+        "process group handling is Unix",
+        "a platform fact, not an environment: the trainer runs in a session of its \
+         own and is signalled by process group, which Windows does not have",
+    ),
+    (
+        "ai_toolchain_test.go",
+        "fake tools are shell scripts",
+        "a platform fact, not an environment: the stand-in uv and CPython are POSIX \
+         shell scripts, which Windows cannot execute",
+    ),
+    (
         "console_boot_test.go",
         "subprocess helper",
         "a helper test that only runs when its parent re-executes the binary",
@@ -736,6 +748,11 @@ const GO_SKIPS_ALLOWED: &[(&str, &str, &str)] = &[
         "live_embedded_test.go",
         "re-execs the test binary",
         "a helper body that runs only in the re-executed child process",
+    ),
+    (
+        "server_listen_deferred_test.go",
+        "the child of TestServerListen_PrintsListeningOnlyOnceBound",
+        "a server body that runs only in the child process its parent test starts",
     ),
     (
         "gob_register_test.go",
@@ -771,6 +788,11 @@ const GO_SKIPS_ALLOWED: &[(&str, &str, &str)] = &[
         "pg_embed_live_test.go",
         "no home directory",
         "no durable home directory exists at all on this host",
+    ),
+    (
+        "ai_trainer_bundle_test.go",
+        "the fake trainer is a shell script",
+        "Windows runs no shell-script stand-in for sky-trainer; not a missing tool",
     ),
 ];
 

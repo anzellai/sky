@@ -252,8 +252,8 @@ func Db_connect(path any) any {
 			if env == "" {
 				return Err[any, any](ErrInvalidInput(
 					"db.connect: no path given and " + skyEnvName("DB_PATH") +
-						" / DATABASE_URL are unset (set [database].path/url in sky.toml, " +
-						"or pass a path)"))
+						" / DATABASE_URL are unset (set the database in code with " +
+						"Config.withDatabase, or set " + skyEnvName("DB_PATH") + ")"))
 			}
 			path = env
 		}
@@ -1633,96 +1633,106 @@ func Db_migrateApply(dbA, pairsA any) any {
 			if !ok {
 				return fail("not a Db handle", Err[any, any](ErrInvalidInput("db.migrate: not a Db")))
 			}
-			if _, err := d.conn.Exec(
-				`CREATE TABLE IF NOT EXISTS _sky_migrations (` +
-					`name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)`,
-			); err != nil {
-				return fail("create _sky_migrations: "+err.Error(),
-					Err[any, any](ErrIo("db.migrate: create _sky_migrations: "+err.Error())))
-			}
-			// Existing applied migrations: name → {checksum, applied_at}.
-			applied := map[string]appliedMigration{}
-			rows, err := d.conn.Query(`SELECT name, checksum, applied_at FROM _sky_migrations`)
-			if err != nil {
-				return fail("read _sky_migrations: "+err.Error(),
-					Err[any, any](ErrIo("db.migrate: read _sky_migrations: "+err.Error())))
-			}
-			for rows.Next() {
-				var n, c, at string
-				if err := rows.Scan(&n, &c, &at); err != nil {
-					rows.Close()
-					return fail("scan _sky_migrations: "+err.Error(),
-						Err[any, any](ErrIo("db.migrate: scan _sky_migrations: "+err.Error())))
-				}
-				applied[n] = appliedMigration{checksum: c, appliedAt: at}
-			}
-			rows.Close()
-
-			pairs := asList(pairsA)
-
-			// status — read-only report, then exit.
-			if op == "status" {
-				dbPrintMigrationStatus(applied, pairs)
-				ExitProcess(0)
-			}
-
-			out := []any{}
-			for _, p := range pairs {
-				name := AsString(tupleFirst(p))
-				stmt := AsString(tupleSecond(p))
-				sum := fmt.Sprintf("%x", sha256.Sum256([]byte(stmt)))
-				if prev, seen := applied[name]; seen {
-					if prev.checksum != sum {
-						return fail("migration '"+name+"' changed after it was applied — checksum mismatch",
-							Err[any, any](ErrUnexpected(
-								"db.migrate: migration '"+name+
-									"' changed after it was applied — checksum mismatch")))
-					}
-					continue // already up to date
-				}
-				// Each migration in its own transaction: a failure
-				// rolls back only that migration; earlier ones stay
-				// applied, so re-running resumes from the failure.
-				tx, err := d.conn.Begin()
-				if err != nil {
-					return fail("begin: "+err.Error(), Err[any, any](ErrIo("db.migrate: begin: "+err.Error())))
-				}
-				if _, err := tx.Exec(stmt); err != nil {
-					tx.Rollback()
-					return fail("migration '"+name+"': "+err.Error(),
-						Err[any, any](ErrIo("db.migrate: migration '"+name+"': "+err.Error())))
-				}
-				if _, err := tx.Exec(
-					"INSERT INTO _sky_migrations (name, checksum, applied_at) VALUES ("+
-						d.placeholder(1)+", "+d.placeholder(2)+", "+d.placeholder(3)+")",
-					name, sum, time.Now().UTC().Format(time.RFC3339),
-				); err != nil {
-					tx.Rollback()
-					return fail("record '"+name+"': "+err.Error(),
-						Err[any, any](ErrIo("db.migrate: record '"+name+"': "+err.Error())))
-				}
-				if err := tx.Commit(); err != nil {
-					return fail("commit '"+name+"': "+err.Error(),
-						Err[any, any](ErrIo("db.migrate: commit '"+name+"': "+err.Error())))
-				}
-				out = append(out, name)
-			}
-
-			if op == "migrate" {
-				if len(out) == 0 {
-					fmt.Println("db: schema already up to date — 0 migrations applied")
-				} else {
-					names := make([]string, len(out))
-					for i, n := range out {
-						names[i] = AsString(n)
-					}
-					fmt.Printf("db: applied %d migration(s): %s\n", len(out), strings.Join(names, ", "))
-				}
-				ExitProcess(0)
-			}
-			return Ok[any, any](out)
+			return dbMigrateCore(d, asList(pairsA), op, fail)
 		})
 	}
+}
+
+// dbMigrateCore applies (name, sql) pairs through the `_sky_migrations`
+// ledger: each pending migration in its own transaction, an applied one
+// checksum-verified and skipped. `op` is the DB-ops mode (`status`,
+// `migrate`, or "" for an ordinary call); `fail` routes an error the way the
+// caller wants it. Db.migrate passes the ops mode it read, so `sky db
+// migrate` exits after the app's own list. A stdlib module that owns tables
+// (Std.Ai.Registry, Ai_migrate) passes "" and a fail that returns the
+// error, so its migrations land in the same ledger and never end the process.
+func dbMigrateCore(d *SkyDb, pairs []any, op string, fail func(msg string, e any) any) any {
+	if _, err := d.conn.Exec(
+		`CREATE TABLE IF NOT EXISTS _sky_migrations (` +
+			`name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)`,
+	); err != nil {
+		return fail("create _sky_migrations: "+err.Error(),
+			Err[any, any](ErrIo("db.migrate: create _sky_migrations: "+err.Error())))
+	}
+	// Existing applied migrations: name → {checksum, applied_at}.
+	applied := map[string]appliedMigration{}
+	rows, err := d.conn.Query(`SELECT name, checksum, applied_at FROM _sky_migrations`)
+	if err != nil {
+		return fail("read _sky_migrations: "+err.Error(),
+			Err[any, any](ErrIo("db.migrate: read _sky_migrations: "+err.Error())))
+	}
+	for rows.Next() {
+		var n, c, at string
+		if err := rows.Scan(&n, &c, &at); err != nil {
+			rows.Close()
+			return fail("scan _sky_migrations: "+err.Error(),
+				Err[any, any](ErrIo("db.migrate: scan _sky_migrations: "+err.Error())))
+		}
+		applied[n] = appliedMigration{checksum: c, appliedAt: at}
+	}
+	rows.Close()
+
+	// status — read-only report, then exit.
+	if op == "status" {
+		dbPrintMigrationStatus(applied, pairs)
+		ExitProcess(0)
+	}
+
+	out := []any{}
+	for _, p := range pairs {
+		name := AsString(tupleFirst(p))
+		stmt := AsString(tupleSecond(p))
+		sum := fmt.Sprintf("%x", sha256.Sum256([]byte(stmt)))
+		if prev, seen := applied[name]; seen {
+			if prev.checksum != sum {
+				return fail("migration '"+name+"' changed after it was applied — checksum mismatch",
+					Err[any, any](ErrUnexpected(
+						"db.migrate: migration '"+name+
+							"' changed after it was applied — checksum mismatch")))
+			}
+			continue // already up to date
+		}
+		// Each migration in its own transaction: a failure
+		// rolls back only that migration; earlier ones stay
+		// applied, so re-running resumes from the failure.
+		tx, err := d.conn.Begin()
+		if err != nil {
+			return fail("begin: "+err.Error(), Err[any, any](ErrIo("db.migrate: begin: "+err.Error())))
+		}
+		if _, err := tx.Exec(stmt); err != nil {
+			tx.Rollback()
+			return fail("migration '"+name+"': "+err.Error(),
+				Err[any, any](ErrIo("db.migrate: migration '"+name+"': "+err.Error())))
+		}
+		if _, err := tx.Exec(
+			"INSERT INTO _sky_migrations (name, checksum, applied_at) VALUES ("+
+				d.placeholder(1)+", "+d.placeholder(2)+", "+d.placeholder(3)+")",
+			name, sum, time.Now().UTC().Format(time.RFC3339),
+		); err != nil {
+			tx.Rollback()
+			return fail("record '"+name+"': "+err.Error(),
+				Err[any, any](ErrIo("db.migrate: record '"+name+"': "+err.Error())))
+		}
+		if err := tx.Commit(); err != nil {
+			return fail("commit '"+name+"': "+err.Error(),
+				Err[any, any](ErrIo("db.migrate: commit '"+name+"': "+err.Error())))
+		}
+		out = append(out, name)
+	}
+
+	if op == "migrate" {
+		if len(out) == 0 {
+			fmt.Println("db: schema already up to date — 0 migrations applied")
+		} else {
+			names := make([]string, len(out))
+			for i, n := range out {
+				names[i] = AsString(n)
+			}
+			fmt.Printf("db: applied %d migration(s): %s\n", len(out), strings.Join(names, ", "))
+		}
+		ExitProcess(0)
+	}
+	return Ok[any, any](out)
 }
 
 // dbPrintMigrationStatus renders the `sky db status` report: every

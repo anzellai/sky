@@ -110,6 +110,19 @@ func (t *testHttpTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		}
 		_ = req.Body.Close()
 	}
+	// Std.Ai.Cloud.Google's emulator: SKY_AI_GCP_ENDPOINT=http://sky-gcp.invalid
+	// in a test project is answered in process, statefully (ai_gcp.go).
+	if req.URL.Host == aiGcpFakeHost {
+		return aiGcpFakeRoundTrip(req, reqBody), nil
+	}
+	// The same emulator served by a separate loopback process (fakegcp), which
+	// SKY_AI_GCP_ENDPOINT names: several Sky processes share one emulated
+	// project. Only that host, and only on loopback, passes through.
+	if aiGcpLoopbackEmulator(req.URL.Host) {
+		req.Body = io.NopCloser(strings.NewReader(reqBody))
+		req.ContentLength = int64(len(reqBody))
+		return base.RoundTrip(req)
+	}
 	for _, f := range httpMocks {
 		if f.Match.Method != "" && !strings.EqualFold(f.Match.Method, req.Method) {
 			continue

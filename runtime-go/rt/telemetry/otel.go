@@ -49,7 +49,6 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 )
@@ -68,8 +67,14 @@ type TracerConfig struct {
 
 	// Endpoint is the OTLP collector URL. Empty → no-op tracer
 	// (export disabled, span calls are zero-cost). The runtime
-	// reads OTEL_EXPORTER_OTLP_ENDPOINT to populate this.
+	// reads OTEL_EXPORTER_OTLP_ENDPOINT to populate this. It is a
+	// base URL: traces go to <Endpoint>/v1/traces, keeping any path
+	// the base has (see OTLPSignalURL).
 	Endpoint string
+
+	// URL is the full traces URL from OTEL_EXPORTER_OTLP_TRACES_ENDPOINT.
+	// When set it wins over Endpoint and is used as given.
+	URL string
 
 	// Headers are added to every outbound OTLP request. Used for
 	// vendor auth (Honeycomb's x-honeycomb-team, Datadog's
@@ -174,7 +179,7 @@ func InitTracer(cfg TracerConfig) error {
 		currentTracer = nil
 	}
 
-	if cfg.Endpoint == "" {
+	if cfg.tracesURL() == "" {
 		// No OTLP endpoint. The W3C propagator is still set so inbound
 		// traceparent headers are honoured.
 		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
@@ -188,10 +193,7 @@ func InitTracer(cfg TracerConfig) error {
 		// tracer.
 		if len(extraProcessors) > 0 {
 			res, _ := resource.New(context.Background(),
-				resource.WithAttributes(
-					semconv.ServiceName(orDefault(cfg.ServiceName, "sky-app")),
-					semconv.ServiceVersion(orDefault(cfg.ServiceVersion, "dev")),
-				),
+				resource.WithAttributes(ServiceResource(cfg.ServiceName, cfg.ServiceVersion)...),
 			)
 			opts := []sdktrace.TracerProviderOption{
 				sdktrace.WithSampler(skySampler(cfg.SampleRate)),
@@ -216,25 +218,15 @@ func InitTracer(cfg TracerConfig) error {
 	// is speaking HTTP/2 framed gRPC, not HTTP/1.x.  In v0.16.1 PR12
 	// we surface a clear startup warning rather than letting the retry
 	// loop silently burn CPU on small VMs.
-	protocol := strings.ToLower(strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_PROTOCOL")))
-	if protocol == "grpc" {
-		fmt.Fprintf(os.Stderr,
-			"[sky.otel] WARN OTEL_EXPORTER_OTLP_PROTOCOL=grpc, but this Sky build only ships HTTP/protobuf. "+
-				"Set OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf and point OTEL_EXPORTER_OTLP_ENDPOINT at the "+
-				"collector's HTTP port (typically :4318). External tracing export DISABLED for this run.\n")
-		// Don't init the exporter — empty endpoint config path picks
-		// up the no-export branch below.
+	url := cfg.tracesURL()
+	if why := OTLPGuard("traces", url); why != "" {
+		fmt.Fprintf(os.Stderr, "[sky.otel] WARN %s\n", why)
+		// Don't init the exporter. The no-export branch below runs.
 		cfg.Endpoint = ""
+		cfg.URL = ""
+		url = ""
 	}
-	if cfg.Endpoint != "" && (strings.Contains(cfg.Endpoint, ":4317") || strings.HasSuffix(cfg.Endpoint, "4317")) {
-		fmt.Fprintf(os.Stderr,
-			"[sky.otel] WARN OTEL_EXPORTER_OTLP_ENDPOINT=%s targets port 4317 (the OTLP/gRPC port) but Sky.Live "+
-				"only ships HTTP/protobuf. Point at the collector's HTTP port (typically :4318) or external tracing "+
-				"will retry-fail and waste CPU. External tracing export DISABLED for this run.\n",
-			cfg.Endpoint)
-		cfg.Endpoint = ""
-	}
-	if cfg.Endpoint == "" {
+	if url == "" {
 		// Either originally empty, or one of the guards above tripped.
 		// Wire the no-export TracerProvider (extra processors only) so
 		// the in-process span ring still feeds the Sky Console.
@@ -252,11 +244,10 @@ func InitTracer(cfg TracerConfig) error {
 		tracerInited = true
 		return nil
 	}
+	// WithEndpointURL takes the whole URL: scheme (http means insecure),
+	// host and path. A base endpoint's own path is kept (OTLPSignalURL).
 	exporterOpts := []otlptracehttp.Option{
-		otlptracehttp.WithEndpoint(cleanEndpoint(cfg.Endpoint)),
-	}
-	if strings.HasPrefix(cfg.Endpoint, "http://") {
-		exporterOpts = append(exporterOpts, otlptracehttp.WithInsecure())
+		otlptracehttp.WithEndpointURL(url),
 	}
 	if len(cfg.Headers) > 0 {
 		exporterOpts = append(exporterOpts, otlptracehttp.WithHeaders(cfg.Headers))
@@ -275,13 +266,10 @@ func InitTracer(cfg TracerConfig) error {
 		return fmt.Errorf("otel: exporter init failed: %w", err)
 	}
 
-	// Resource detection. semconv.ServiceNameKey is the standard
+	// Resource detection. service.name (ServiceResource) is the standard
 	// `service.name` attribute that every vendor's UI groups by.
 	res, _ := resource.New(context.Background(),
-		resource.WithAttributes(
-			semconv.ServiceName(orDefault(cfg.ServiceName, "sky-app")),
-			semconv.ServiceVersion(orDefault(cfg.ServiceVersion, "dev")),
-		),
+		resource.WithAttributes(ServiceResource(cfg.ServiceName, cfg.ServiceVersion)...),
 		resource.WithProcess(),
 		resource.WithOS(),
 		resource.WithHost(),
@@ -396,6 +384,7 @@ func cfgsEquivalent(a, b TracerConfig) bool {
 	if a.ServiceName != b.ServiceName ||
 		a.ServiceVersion != b.ServiceVersion ||
 		a.Endpoint != b.Endpoint ||
+		a.URL != b.URL ||
 		a.SampleRate != b.SampleRate ||
 		a.Serverless != b.Serverless ||
 		len(a.Headers) != len(b.Headers) {
@@ -409,16 +398,10 @@ func cfgsEquivalent(a, b TracerConfig) bool {
 	return true
 }
 
-// cleanEndpoint strips the http:// or https:// prefix for the
-// otlptracehttp option (which takes host:port, not a URL).
-func cleanEndpoint(ep string) string {
-	ep = strings.TrimPrefix(ep, "https://")
-	ep = strings.TrimPrefix(ep, "http://")
-	// Trim trailing path — otlptracehttp will add /v1/traces.
-	if i := strings.IndexByte(ep, '/'); i >= 0 {
-		ep = ep[:i]
-	}
-	return ep
+// tracesURL is where spans go: URL as given, else the base Endpoint
+// with v1/traces appended. "" means no export.
+func (c TracerConfig) tracesURL() string {
+	return OTLPSignalURL(c.Endpoint, c.URL, "traces")
 }
 
 func orDefault(v, def string) string {
@@ -436,9 +419,11 @@ func orDefault(v, def string) string {
 //
 // Honoured env vars:
 //
-//	OTEL_EXPORTER_OTLP_ENDPOINT          — collector URL (required)
+//	OTEL_EXPORTER_OTLP_ENDPOINT          — collector base URL (v1/traces appended)
+//	OTEL_EXPORTER_OTLP_TRACES_ENDPOINT   — full traces URL, used as given
 //	OTEL_EXPORTER_OTLP_HEADERS           — comma-separated key=value pairs
-//	OTEL_SERVICE_NAME / SKY_SERVICE_NAME — resource service.name
+//	OTEL_EXPORTER_OTLP_TRACES_HEADERS    — the same, traces only (wins)
+//	SKY_SERVICE_NAME / OTEL_SERVICE_NAME — resource service.name
 //	OTEL_SERVICE_VERSION                 — resource service.version
 //	OTEL_TRACES_SAMPLER_ARG              — sample rate (0.0..1.0)
 //
@@ -451,11 +436,13 @@ func orDefault(v, def string) string {
 // for debugging.
 func LoadTracerConfigFromEnv(isServerless bool) TracerConfig {
 	endpoint := procenv.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	name, version := ServiceIdentityFromEnv()
 	cfg := TracerConfig{
-		ServiceName:    coalesce(os.Getenv("SKY_SERVICE_NAME"), os.Getenv("OTEL_SERVICE_NAME"), "sky-app"),
-		ServiceVersion: coalesce(os.Getenv("OTEL_SERVICE_VERSION"), "dev"),
+		ServiceName:    name,
+		ServiceVersion: version,
 		Endpoint:       endpoint,
-		Headers:        parseHeaderList(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")),
+		URL:            strings.TrimSpace(procenv.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")),
+		Headers:        OTLPHeadersFromEnv("traces"),
 		Serverless:     isServerless,
 	}
 

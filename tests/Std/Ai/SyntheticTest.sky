@@ -1,0 +1,512 @@
+module Std.Ai.SyntheticTest exposing (tests)
+
+-- Std.Ai.Dataset.Synthetic: the plan is pure and seeded, the teacher gets the
+-- planned seed and messages, and the quality filters (dedupe, filters, the
+-- judge), the budget and the call limit each stop or drop what they should.
+-- Teachers and judges here are `Provider.custom` / `Provider.wire` values that
+-- answer from the request, so every expected value follows from the
+-- generator, not from a model. The default teacher slot under test mode is
+-- proven by rust/crates/sky/tests/ai_dataset_test_mode_flow.rs.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Dict as Dict
+import Sky.Core.Result as Result
+import Sky.Core.Tuple as Tuple
+import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Json.Decode as JsonD
+import Sky.Test as Test exposing (Test, TestResult)
+import Std.Money as Money exposing (Currency(..))
+import Std.Ai.Provider as Provider exposing (Provider, Message)
+import Std.Ai.Eval as Eval
+import Std.Ai.Dataset as Dataset exposing (Instruction)
+import Std.Ai.Dataset.Synthetic as Synthetic exposing (Stop(..))
+import Std.Db as Db exposing (Db)
+import Sky.Core.File as File
+
+
+lastUser : List Message -> String
+lastUser messages =
+    messages |> List.filter (\m -> m.role == "user") |> List.reverse
+        |> List.head
+        |> Maybe.map .content
+        |> Maybe.withDefault ""
+
+
+answer : String -> Provider.ChatResponse
+answer text =
+    { content = text
+    , usage =
+        { promptTokens = 1000, completionTokens = 500, totalTokens = 1500 }
+    }
+
+
+rowJson : String -> String -> String
+rowJson p c =
+    JsonE.encode
+        0
+        (JsonE.object
+            [ ( "prompt", JsonE.string p ), ( "completion", JsonE.string c ) ])
+
+
+-- Two rows per call, named after the call's topic and persona.
+byTopic : Provider
+byTopic =
+    Provider.custom
+        (\messages ->
+            let
+                prompt = lastUser messages
+                topic = lineAfter "Topic: " prompt
+                persona = lineAfter "The person asking: " prompt
+            in
+                Task.succeed
+                    (answer
+                        ("```json\n["
+                            ++ rowJson
+                                   (topic ++ " / " ++ persona ++ " 1")
+                                   ("A full answer about " ++ topic ++ ".")
+                            ++ ","
+                            ++ rowJson
+                                   (topic ++ " / " ++ persona ++ " 2")
+                                   "short"
+                            ++ "]\n```")))
+
+
+lineAfter : String -> String -> String
+lineAfter label text =
+    String.lines text |> List.filter (String.startsWith label) |> List.head
+        |> Maybe.map (String.dropLeft (String.length label))
+        |> Maybe.withDefault ""
+
+
+base : Synthetic.Generator Instruction
+base =
+    Synthetic.generator "faq" Dataset.instructionCodec
+        |> Synthetic.withTeacher "table-teacher" byTopic
+        |> Synthetic.withTopics [ "refunds", "delivery", "passwords" ]
+        |> Synthetic.withPersonas [ "a new customer", "a shop owner" ]
+        |> Synthetic.withPerCall 2
+        |> Synthetic.withSeed 7
+
+
+generated : Synthetic.Generator Instruction -> (Synthetic.Generated Instruction -> TestResult) -> TestResult
+generated g check =
+    case Task.run (Synthetic.run g) of
+
+        Ok gen ->
+            check gen
+
+        Err e ->
+            Test.fail ("unexpected error: " ++ Error.toString e)
+
+
+-- A wire teacher that answers with one row naming the seed it was sent.
+seedEcho : String -> String -> Task Error String
+seedEcho _ body =
+    let
+        seed =
+            Result.withDefault
+                (-1)
+                (JsonD.decodeString (JsonD.field "seed" JsonD.int) body)
+        content =
+            "["
+                ++ rowJson
+                       ("seed " ++ String.fromInt seed)
+                       "an answer long enough"
+                ++ "]"
+    in
+        Task.succeed
+            (JsonE.encode
+                0
+                (JsonE.object
+                    [ ( "choices"
+                      , JsonE.list
+                            identity
+                            [ JsonE.object
+                                  [ ( "message"
+                                    , JsonE.object
+                                          [ ( "content", JsonE.string content )
+                                          ]
+                                    )
+                                  ]
+                            ]
+                      )
+                    , ( "usage"
+                      , JsonE.object
+                            [ ( "prompt_tokens", JsonE.int 1 )
+                            , ( "completion_tokens", JsonE.int 1 )
+                            , ( "total_tokens", JsonE.int 2 )
+                            ]
+                      )
+                    ]))
+
+
+-- A judge that passes an answer containing "full".
+fullJudge : Eval.Judge
+fullJudge =
+    Eval.judge
+        (Provider.custom
+            (\messages ->
+                if String.contains "RESPONSE:\nA full answer" (lastUser messages) then
+                    Task.succeed (answer "SCORE: 5 - complete")
+
+                else
+                    Task.succeed (answer "SCORE: 1 - too short")))
+        "rubric-test"
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "plan is pure: the same generator plans the same calls"
+          (\_ -> Test.equal (Synthetic.plan base) (Synthetic.plan base))
+    , Test.test
+          "plan walks every topic and persona combination once before repeating"
+          (\_ ->
+              let
+                  firstSix = List.take 6 (Synthetic.plan base)
+                  combos =
+                      List.map (\r -> r.topic ++ "|" ++ r.persona) firstSix
+              in
+                  Test.equal
+                      6
+                      (List.length
+                          (List.foldl
+                              (\c acc ->
+                                  if List.member c acc then
+                                      acc
+
+                                  else
+                                      c :: acc)
+                              []
+                              combos)))
+    , Test.test
+          "call i uses the sampling seed seed + i"
+          (\_ ->
+              Test.equal
+                  [ 7, 8, 9 ]
+                  (List.map .seed (List.take 3 (Synthetic.plan base))))
+    , Test.test
+          "another seed starts the walk elsewhere or samples differently"
+          (\_ ->
+              Test.isTrue
+                  (Synthetic.plan base
+                      /= Synthetic.plan (base |> Synthetic.withSeed 8)))
+    , Test.test
+          "the default call limit is three times the calls the target needs"
+          (\_ -> Test.equal 30 (List.length (Synthetic.plan base)))
+    , Test.test
+          "each call's messages name the dataset, topic, persona, count and fields"
+          (\_ ->
+              case Synthetic.plan base of
+
+                  first :: _ ->
+                      let
+                          prompt = lastUser first.messages
+                      in
+                          Test.equal
+                              ( True, True, True, True )
+                              ( String.contains
+                                    ("Topic: " ++ first.topic)
+                                    prompt
+                              , String.contains
+                                    ("The person asking: " ++ first.persona)
+                                    prompt
+                              , String.contains
+                                    "Write 2 different examples"
+                                    prompt
+                              , String.contains
+                                    "\"prompt\", \"completion\""
+                                    prompt
+                              )
+
+                  [] ->
+                      Test.fail "an empty plan")
+    , Test.test
+          "examples are shown to the teacher as JSON rows"
+          (\_ ->
+              case Synthetic.plan
+                       (base
+                           |> Synthetic.withExamples
+                                  [ { prompt = "Example Q"
+                                    , completion = "Example A"
+                                    }
+                                  ]) of
+
+                  first :: _ ->
+                      Test.isTrue
+                          (String.contains "Example Q" (lastUser first.messages))
+
+                  [] ->
+                      Test.fail "an empty plan")
+    , Test.test
+          "generate keeps rows until the target and says so"
+          (\_ ->
+              generated
+                  (base |> Synthetic.withTarget 5)
+                  (\gen ->
+                      Test.equal
+                          ( 5, 3, TargetReached, "table-teacher" )
+                          ( List.length gen.rows
+                          , gen.report.calls
+                          , gen.report.stop
+                          , gen.report.teacher
+                          )))
+    , Test.test
+          "the teacher is sent the planned seed for every call"
+          (\_ ->
+              generated
+                  (Synthetic.generator "seeds" Dataset.instructionCodec
+                      |> Synthetic.withTeacher
+                             "echo"
+                             (Provider.wire seedEcho "m")
+                      |> Synthetic.withSeed 40
+                      |> Synthetic.withPerCall 1
+                      |> Synthetic.withTarget 3)
+                  (\gen ->
+                      Test.equal
+                          [ "seed 40", "seed 41", "seed 42" ]
+                          (List.map .prompt gen.rows)))
+    , Test.test
+          "a filter drops rows and counts them under its name"
+          (\_ ->
+              generated
+                  (base |> Synthetic.withTarget 4
+                      |> Synthetic.withFilter
+                             "too short"
+                             (\r -> String.length r.completion >= 10))
+                  (\gen ->
+                      Test.equal
+                          ( 4, 4, [ ( "too short", 3 ) ] )
+                          ( List.length gen.rows
+                          , gen.report.calls
+                          , Dict.toList gen.report.filtered
+                          )))
+    , Test.test
+          "dedupe drops a row whose key repeats"
+          (\_ ->
+              generated
+                  (base |> Synthetic.withTopics [ "one" ]
+                      |> Synthetic.withPersonas [ "same" ]
+                      |> Synthetic.withTarget 10
+                      |> Synthetic.withMaxCalls 3)
+                  (\gen ->
+                      Test.equal
+                          ( 2, 4, CallLimit )
+                          ( List.length gen.rows
+                          , gen.report.duplicates
+                          , gen.report.stop
+                          )))
+    , Test.test
+          "the judge keeps only the rows it passes and counts its calls"
+          (\_ ->
+              generated
+                  (base |> Synthetic.withTarget 3
+                      |> Synthetic.withJudge
+                             fullJudge
+                             "A full answer."
+                             (\r -> ( r.prompt, r.completion )))
+                  (\gen ->
+                      Test.equal
+                          ( 3, 2, 5, 3 )
+                          ( List.length gen.rows
+                          , gen.report.judgedOut
+                          , gen.report.judgeCalls
+                          , gen.report.calls
+                          )))
+    , Test.test
+          "the budget stops the run before the call that would pass it"
+          (\_ ->
+              generated
+                  (base |> Synthetic.withTarget 100
+                      |> Synthetic.withCostBudget
+                             { inputPer1k = Money.fromMinor USD 100
+                             , outputPer1k = Money.fromMinor USD 100
+                             }
+                             (Money.fromMinor USD 400))
+                  (\gen ->
+                      Test.equal
+                          ( 3, BudgetReached, Just 450 )
+                          ( gen.report.calls
+                          , gen.report.stop
+                          , Maybe.map Money.toMinor gen.report.cost
+                          )))
+    , Test.test
+          "answers that are not JSON rows are counted as unparsed"
+          (\_ ->
+              generated
+                  (Synthetic.generator "prose" Dataset.instructionCodec
+                      |> Synthetic.withTeacher
+                             "prose"
+                             (Provider.custom
+                                 (\_ ->
+                                     Task.succeed
+                                         (answer "I cannot write JSON today.")))
+                      |> Synthetic.withMaxCalls 2)
+                  (\gen ->
+                      Test.equal
+                          ( 0, 2, CallLimit )
+                          ( List.length gen.rows
+                          , gen.report.unparsed
+                          , gen.report.stop
+                          )))
+    , Test.test
+          "a failing teacher call ends the run with its error"
+          (\_ ->
+              Test.expectErrorKind
+                  Unavailable
+                  (Task.run
+                      (Synthetic.run
+                          (base
+                              |> Synthetic.withTeacher
+                                     "down"
+                                     (Provider.custom
+                                         (\_ ->
+                                             Task.fail
+                                                 (Error.unavailable
+                                                     "the teacher is down")))))))
+    , Test.test
+          "parseRows reads a fenced array, a bare object, and counts bad items"
+          (\_ ->
+              Test.equal
+                  ( ( 2, 0 ), ( 1, 0 ), ( 1, 1 ), ( 0, 1 ) )
+                  ( Tuple.mapFirst
+                        List.length
+                        (Synthetic.parseRows
+                            Dataset.instructionCodec
+                            ("Here:\n```json\n[" ++ rowJson "a" "b" ++ ","
+                                ++ rowJson "c" "d"
+                                ++ "]\n```"))
+                  , Tuple.mapFirst
+                        List.length
+                        (Synthetic.parseRows
+                            Dataset.instructionCodec
+                            ("Sure! " ++ rowJson "a" "b"))
+                  , Tuple.mapFirst
+                        List.length
+                        (Synthetic.parseRows
+                            Dataset.instructionCodec
+                            ("[" ++ rowJson "a" "b" ++ ",{\"prompt\":1}]"))
+                  , Tuple.mapFirst
+                        List.length
+                        (Synthetic.parseRows
+                            Dataset.instructionCodec
+                            "no rows here")
+                  ))
+    , Test.test
+          "toDataset records the generator, the teacher and the seed in the lineage"
+          (\_ ->
+              generated
+                  (base |> Synthetic.withTarget 2)
+                  (\gen ->
+                      Test.equal
+                          [ "synthetic:faq teacher=table-teacher seed=7 calls=1 kept=2"
+                          ]
+                          (Dataset.sources (Synthetic.toDataset gen))))
+    , Test.test
+          "with a journal, a re-run makes no model call and gives the same rows"
+          (\_ ->
+              case journalled of
+
+                  Ok ( first, second ) ->
+                      Test.equal
+                          ( ( 3, 0, 5 ), ( 3, 3, 5 ), True )
+                          ( ( first.report.calls
+                            , first.report.replayed
+                            , first.report.judgeCalls
+                            )
+                          , ( second.report.calls
+                            , second.report.replayed
+                            , second.report.judgeCalls
+                            )
+                          , first.rows == second.rows
+                          )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a journal entry is per teacher: another teacher is asked again"
+          (\_ ->
+              case otherTeacher of
+
+                  Ok ( replayed, failed ) ->
+                      Test.equal ( 0, True ) ( replayed, failed )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    ]
+
+
+-- A teacher and a judge that fail every call: a run that still succeeds with
+-- them made no model call.
+broken : Provider
+broken =
+    Provider.custom
+        (\_ -> Task.fail (Error.unavailable "the model must not be called"))
+
+
+judged : Eval.Judge -> Synthetic.Generator Instruction
+judged j =
+    base |> Synthetic.withTarget 3
+        |> Synthetic.withJudge
+               j
+               "A full answer."
+               (\r -> ( r.prompt, r.completion ))
+
+
+journalDb : Task Error Db
+journalDb =
+    File.tempDir "sky-synthetic-journal"
+        |> Task.andThen (\dir -> Db.open "sqlite" (dir ++ "/journal.db"))
+
+
+journalled : Result Error ( Synthetic.Generated Instruction, Synthetic.Generated Instruction )
+journalled =
+    journalDb
+        |> Task.andThen
+               (\db ->
+                   Synthetic.run (judged fullJudge |> Synthetic.withJournal db)
+                       |> Task.andThen
+                              (\first ->
+                                  Synthetic.run
+                                      (judged (Eval.judge broken "rubric-test")
+                                          |> Synthetic.withTeacher
+                                                 "table-teacher"
+                                                 broken
+                                          |> Synthetic.withJournal db)
+                                      |> Task.map (\second -> ( first, second ))))
+        |> Task.run
+
+
+otherTeacher : Result Error ( Int, Bool )
+otherTeacher =
+    journalDb
+        |> Task.andThen
+               (\db ->
+                   Synthetic.run
+                       (base |> Synthetic.withTarget 2
+                           |> Synthetic.withJournal db)
+                       |> Task.andThen
+                              (\first ->
+                                  Synthetic.run
+                                      (base |> Synthetic.withTarget 2
+                                          |> Synthetic.withTeacher
+                                                 "another-teacher"
+                                                 broken
+                                          |> Synthetic.withJournal db)
+                                      |> Task.map
+                                             (\_ ->
+                                                 ( first.report.replayed
+                                                 , False
+                                                 ))
+                                      |> Task.onError
+                                             (\_ ->
+                                                 Task.succeed
+                                                     ( first.report.replayed
+                                                     , True
+                                                     ))))
+        |> Task.run

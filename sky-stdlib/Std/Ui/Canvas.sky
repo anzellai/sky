@@ -132,11 +132,14 @@ type Attr msg
 
 -- ─── Shapes ──────────────────────────────────────────────────────
 -- | A rectangle with its top-left corner at (`x`, `y`).
-rect : { x : Float
-, y : Float
-, width : Float
-, height : Float
-} -> List (Attr msg) -> Shape msg
+rect :
+    { x : Float
+    , y : Float
+    , width : Float
+    , height : Float
+    }
+    -> List (Attr msg)
+    -> Shape msg
 rect r attrs =
     Shape
         "rect"
@@ -151,10 +154,13 @@ rect r attrs =
 
 
 -- | A circle centred on (`x`, `y`).
-circle : { x : Float
-, y : Float
-, radius : Float
-} -> List (Attr msg) -> Shape msg
+circle :
+    { x : Float
+    , y : Float
+    , radius : Float
+    }
+    -> List (Attr msg)
+    -> Shape msg
 circle c attrs =
     Shape
         "circle"
@@ -165,11 +171,14 @@ circle c attrs =
 
 
 -- | An ellipse centred on (`x`, `y`) with radii `rx` and `ry`.
-ellipse : { x : Float
-, y : Float
-, rx : Float
-, ry : Float
-} -> List (Attr msg) -> Shape msg
+ellipse :
+    { x : Float
+    , y : Float
+    , rx : Float
+    , ry : Float
+    }
+    -> List (Attr msg)
+    -> Shape msg
 ellipse e attrs =
     Shape
         "ellipse"
@@ -343,10 +352,13 @@ onPointerUp toMsg =
 -- | A scene `width` × `height` scene units, drawn at that many CSS pixels and
 -- scaled down (keeping its aspect ratio) when its parent is narrower. `label`
 -- is the scene's accessible name.
-scene : { width : Int
-, height : Int
-, label : String
-} -> List (Shape msg) -> Element msg
+scene :
+    { width : Int
+    , height : Int
+    , label : String
+    }
+    -> List (Shape msg)
+    -> Element msg
 scene cfg shapes =
     Ui.html (toSvg cfg [] shapes)
 
@@ -354,20 +366,28 @@ scene cfg shapes =
 -- | `sceneWith attrs cfg shapes` is `scene` with attributes on the scene as a
 -- whole: pointer events on it report positions anywhere in the scene (over
 -- a shape or not), and a transform moves every shape.
-sceneWith : List (Attr msg) -> { width : Int
-, height : Int
-, label : String
-} -> List (Shape msg) -> Element msg
+sceneWith :
+    List (Attr msg)
+    -> { width : Int
+       , height : Int
+       , label : String
+       }
+    -> List (Shape msg)
+    -> Element msg
 sceneWith attrs cfg shapes =
     Ui.html (toSvg cfg attrs shapes)
 
 
 -- | The scene as a `Std.Html` `<svg>` node (for a `Std.Html` view), with
 -- attributes (events, transforms) on the scene as a whole.
-toSvg : { width : Int
-, height : Int
-, label : String
-} -> List (Attr msg) -> List (Shape msg) -> Html msg
+toSvg :
+    { width : Int
+    , height : Int
+    , label : String
+    }
+    -> List (Attr msg)
+    -> List (Shape msg)
+    -> Html msg
 toSvg cfg attrs shapes =
     let
         w = String.fromInt cfg.width

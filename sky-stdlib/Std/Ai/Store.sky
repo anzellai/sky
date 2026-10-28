@@ -1,0 +1,1439 @@
+-- | Std.Ai.Store — where the model registry keeps its artefacts: a local
+-- directory, a Google Cloud Storage bucket or an Amazon S3 bucket, with one
+-- code path.
+--
+-- ```elm
+-- import Std.Ai.Store as Store
+--
+-- store : Task Error Store.Store
+-- store =
+--     Store.configured "file://.sky/ai/registry"
+-- ```
+--
+-- Every artefact is content-addressed: it is stored under
+-- `blobs/sha256/<hex>` below the store's root, named by the SHA-256 of its
+-- bytes. A stored blob is never overwritten (an upload is a conditional
+-- create), and a fetched blob is checked against its digest before it is
+-- returned, so a damaged or swapped file is `ChecksumMismatch`, never served.
+--
+-- `configured url` takes the location from code and lets an operator override
+-- it with `SKY_AI_REGISTRY` (under the project's prefix): `file://<dir>`,
+-- `gs://<bucket>/<prefix>` or `s3://<bucket>/<prefix>` (add `?region=<name>`
+-- for S3, else `AWS_REGION` is read).
+--
+-- Credentials come from the platform, the way each cloud expects, and never
+-- from a Sky variable:
+--
+--   * GCS: the service-account key file named by
+--     `GOOGLE_APPLICATION_CREDENTIALS`, else the metadata server of GCE, GKE or
+--     Cloud Run (`GCE_METADATA_HOST` moves it).
+--   * S3: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`,
+--     else the instance role through IMDSv2
+--     (`AWS_EC2_METADATA_SERVICE_ENDPOINT` moves it). Requests are signed
+--     with AWS Signature Version 4 (`signV4`), written in Sky.
+--
+-- `withEndpoint` points a store at an emulator or an S3-compatible server
+-- (MinIO, a fake GCS server), and `withToken` / `withAwsKeys` give it
+-- credentials for that case. Under `sky test` in test mode every request is
+-- answered by a fixture under `tests/mocks/`.
+module Std.Ai.Store exposing
+    ( Store
+    , Blob
+    , local
+    , gcs
+    , s3
+    , fromUrl
+    , configured
+    , withEndpoint
+    , withToken
+    , withAwsKeys
+    , location
+    , put
+    , fetch
+    , Object
+    , putAt
+    , putIf
+    , getAt
+    , getObject
+    , list
+    , fetchAt
+    , deletePrefix
+    , bucketLocation
+    , SigV4
+    , Signature
+    , signV4
+    )
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Ffi as Ffi
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Encoding as Encoding
+import Sky.Core.Secret as Secret exposing (Secret)
+import Sky.Core.System as System
+import Sky.Core.Time as Time
+import Sky.Core.File as File
+import Sky.Core.Http as Http
+import Sky.Core.Jwt as Jwt
+import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Json.Decode as JsonD
+import Sky.Core.Dict as Dict
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Cloud.Google as Google
+
+-- ── The store ───────────────────────────────────────────────────────
+-- | Where artefacts live. Build it with `local`, `gcs`, `s3`, `fromUrl` or
+-- `configured`.
+type Store
+    = Store Config
+
+type alias Config =
+    { kind : String
+    , root : String
+    , bucket : String
+    , prefix : String
+    , region : String
+    , endpoint : String
+    , token : Maybe Secret
+    , awsKeys : Maybe AwsKeys
+    }
+
+type alias AwsKeys =
+    { accessKey : String
+    , secretKey : Secret
+    , sessionToken : Maybe Secret
+    }
+
+-- | A stored artefact: the SHA-256 of its bytes (64 lower-case hex digits)
+-- and its size in bytes.
+type alias Blob =
+    { sha256 : String
+    , size : Int
+    }
+
+
+blank : String -> Config
+blank kind =
+    { kind = kind
+    , root = ""
+    , bucket = ""
+    , prefix = ""
+    , region = ""
+    , endpoint = ""
+    , token = Nothing
+    , awsKeys = Nothing
+    }
+
+
+-- | A store in a local directory (created on first use).
+local : String -> Store
+local dir =
+    let
+        c = blank "file"
+    in
+        Store { c | root = dir }
+
+
+-- | A store in a GCS bucket, below a prefix (`""` for the bucket's root).
+gcs : String -> String -> Store
+gcs bucket prefix =
+    let
+        c = blank "gs"
+    in
+        Store { c | bucket = bucket, prefix = trimSlashes prefix }
+
+
+-- | A store in an S3 bucket, below a prefix. The region is the bucket's
+-- (`""` reads `AWS_REGION`, then `AWS_DEFAULT_REGION`, then `us-east-1`).
+s3 : String -> String -> String -> Store
+s3 region bucket prefix =
+    let
+        c = blank "s3"
+    in
+        Store
+            { c
+                | region = region
+                , bucket = bucket
+                , prefix = trimSlashes prefix
+            }
+
+
+-- | A store from its location: `file://<dir>`, `gs://<bucket>/<prefix>` or
+-- `s3://<bucket>/<prefix>[?region=<name>]`.
+fromUrl : String -> Result Error Store
+fromUrl url =
+    let
+        u = String.trim url
+        bucketAndPrefix rest =
+            case String.split "/" (trimSlashes rest) of
+
+                bucket :: more ->
+                    ( bucket, String.join "/" more )
+
+                [] ->
+                    ( "", "" )
+    in
+        if String.startsWith "file://" u then
+            let
+                dir = String.dropLeft 7 u
+            in
+                if dir == "" then
+                    Err (invalid url "a file:// location needs a directory")
+
+                else
+                    Ok (local dir)
+
+        else if String.startsWith "gs://" u then
+            case bucketAndPrefix (String.dropLeft 5 u) of
+
+                ( "", _ ) ->
+                    Err (invalid url "a gs:// location needs a bucket")
+
+                ( bucket, prefix ) ->
+                    Ok (gcs bucket prefix)
+
+        else if String.startsWith "s3://" u then
+            let
+                ( path, region ) =
+                    case String.split "?region=" (String.dropLeft 5 u) of
+
+                        [ p, r ] ->
+                            ( p, r )
+
+                        _ ->
+                            ( String.dropLeft 5 u, "" )
+            in
+                case bucketAndPrefix path of
+
+                    ( "", _ ) ->
+                        Err (invalid url "an s3:// location needs a bucket")
+
+                    ( bucket, prefix ) ->
+                        Ok (s3 region bucket prefix)
+
+        else
+            Err
+                (invalid
+                    url
+                    "use file://<dir>, gs://<bucket>/<prefix> or s3://<bucket>/<prefix>")
+
+
+invalid : String -> String -> Error
+invalid url reason =
+    Failure.toError
+        (InvalidSetting
+            { setting = "SKY_AI_REGISTRY"
+            , reason = quote url ++ ": " ++ reason
+            })
+
+type alias Setting =
+    { key : String
+    , name : String
+    , value : String
+    , source : String
+    }
+
+
+locationRaw : String -> Task Error Setting
+locationRaw =
+    Ffi.kernel "Ai_registryLocation"
+
+
+-- | The store at the location in code, unless the operator set
+-- `SKY_AI_REGISTRY` (under the project's prefix). With neither, the local
+-- directory `.sky/ai/registry`.
+configured : String -> Task Error Store
+configured codeUrl =
+    locationRaw codeUrl
+        |> Task.andThen (\s -> Task.fromResult (fromUrl s.value))
+
+
+-- | Send the store's requests to another server: an emulator, MinIO or
+-- another S3-compatible service (path-style URLs), or a fake GCS server.
+withEndpoint : String -> Store -> Store
+withEndpoint url (Store c) =
+    Store { c | endpoint = trimTrailingSlash url }
+
+
+-- | A GCS access token to use instead of the platform's credentials.
+withToken : Secret -> Store -> Store
+withToken t (Store c) =
+    Store { c | token = Just t }
+
+
+-- | S3 keys to use instead of the platform's credentials: the access key id
+-- and the secret key.
+withAwsKeys : String -> Secret -> Store -> Store
+withAwsKeys accessKey secretKey (Store c) =
+    Store
+        { c
+            | awsKeys =
+                Just
+                    { accessKey = accessKey
+                    , secretKey = secretKey
+                    , sessionToken = Nothing
+                    }
+        }
+
+
+-- | The store's location, as `fromUrl` reads it. It holds no credential.
+location : Store -> String
+location (Store c) =
+    case c.kind of
+
+        "file" ->
+            "file://" ++ c.root
+
+        "gs" ->
+            "gs://" ++ c.bucket ++ slashPrefix c.prefix
+
+        _ ->
+            "s3://" ++ c.bucket ++ slashPrefix c.prefix
+                ++ (if c.region == "" then
+                       ""
+
+                   else
+                       "?region=" ++ c.region)
+
+
+slashPrefix : String -> String
+slashPrefix p =
+    if p == "" then
+        ""
+
+    else
+        "/" ++ p
+
+-- ── Putting and fetching ────────────────────────────────────────────
+type alias HttpCall =
+    { method : String
+    , url : String
+    , headers : List ( String, String )
+    , timeoutMs : Int
+    }
+
+
+digestRaw : String -> Task Error Blob
+digestRaw =
+    Ffi.kernel "Ai_fileDigest"
+
+
+localPutRaw : String -> String -> Task Error Blob
+localPutRaw =
+    Ffi.kernel "Ai_storeLocalPut"
+
+
+localGetRaw : String -> String -> Task Error String
+localGetRaw =
+    Ffi.kernel "Ai_storeLocalGet"
+
+
+httpPutRaw : HttpCall -> String -> Task Error Int
+httpPutRaw =
+    Ffi.kernel "Ai_storeHttpPut"
+
+
+httpGetRaw : HttpCall -> String -> Task Error String
+httpGetRaw =
+    Ffi.kernel "Ai_storeHttpGet"
+
+
+cachedRaw : String -> Task Error String
+cachedRaw =
+    Ffi.kernel "Ai_storeCached"
+
+
+-- | Store the file at a path and return its digest and size. Storing bytes
+-- that are already there sends nothing more and returns the same blob.
+put : Store -> String -> Task Error Blob
+put (Store c) path =
+    case c.kind of
+
+        "file" ->
+            localPutRaw c.root path
+
+        _ ->
+            digestRaw path
+                |> Task.andThen
+                       (\blob ->
+                           putRequest c blob
+                               |> Task.andThen (\req -> httpPutRaw req path)
+                               |> Task.map (\_ -> blob))
+
+
+-- | A local path holding the blob with this digest, checked against the
+-- digest. A remote blob is downloaded once into this machine's artefact
+-- cache (under the AI home) and read from there afterwards.
+fetch : Store -> String -> Task Error String
+fetch (Store c) sha =
+    case c.kind of
+
+        "file" ->
+            localGetRaw c.root sha
+
+        _ ->
+            cachedRaw sha
+                |> Task.andThen
+                       (\cached ->
+                           if cached /= "" then
+                               Task.succeed cached
+
+                           else
+                               getRequest c sha
+                                   |> Task.andThen (\req -> httpGetRaw req sha))
+
+
+blobKey : Config -> String -> String
+blobKey c sha =
+    if c.prefix == "" then
+        "blobs/sha256/" ++ sha
+
+    else
+        c.prefix ++ "/blobs/sha256/" ++ sha
+
+
+putRequest : Config -> Blob -> Task Error HttpCall
+putRequest c blob =
+    case c.kind of
+
+        "gs" ->
+            Task.map2
+                (\token base ->
+                    { method = "POST"
+                    , url =
+                        base ++ "/upload/storage/v1/b/" ++ c.bucket
+                            ++ "/o?uploadType=media&ifGenerationMatch=0&name="
+                            ++ escapeName (blobKey c blob.sha256)
+                    , headers =
+                        [ ( "Authorization", "Bearer " ++ Secret.reveal token )
+                        , ( "Content-Type", "application/octet-stream" )
+                        ]
+                    , timeoutMs = 0
+                    })
+                (gcsToken c)
+                (gcsBase c)
+
+        _ ->
+            s3Request
+                c
+                "PUT"
+                (blobKey c blob.sha256)
+                blob.sha256
+                [ ( "if-none-match", "*" ) ]
+
+
+getRequest : Config -> String -> Task Error HttpCall
+getRequest c sha =
+    case c.kind of
+
+        "gs" ->
+            mediaRequest c (blobKey c sha)
+
+        _ ->
+            s3Request c "GET" (blobKey c sha) emptyHash []
+
+-- ── Named objects ───────────────────────────────────────────────────
+-- Blobs are content-addressed and never change. A few things are not:
+-- a training run's progress segments, the registry's pointer objects, a
+-- cloud run's markers. They live under a key (a path below the store's
+-- prefix), are small text, and are written with a precondition where two
+-- writers could race.
+-- | A named object's text and its generation: the value a conditional write
+-- (`putIf`) must name to replace it. GCS's object generation, S3's ETag, or
+-- the SHA-256 of a local file's bytes.
+type alias Object =
+    { body : String
+    , generation : String
+    }
+
+
+keyOf : Config -> String -> String
+keyOf c key =
+    if c.prefix == "" then
+        dropLeadingSlashes key
+
+    else
+        c.prefix ++ "/" ++ dropLeadingSlashes key
+
+
+localPath : Config -> String -> String
+localPath c key =
+    c.root ++ "/" ++ dropLeadingSlashes key
+
+
+-- | Write a named object, replacing what is there.
+putAt : Store -> String -> String -> Task Error ()
+putAt store key body =
+    writeObject store key Nothing body
+        |> Task.andThen
+               (\written ->
+                   if written then
+                       Task.succeed ()
+
+                   else
+                       Task.fail
+                           (Error.unexpected
+                               ("Std.Ai.Store: " ++ key ++ " was not written")))
+
+
+-- | Write a named object only if its generation is still `generation`: `""`
+-- means it must not exist yet (a create-once write). `True` when it was
+-- written, `False` when another writer got there first.
+putIf : Store -> String -> String -> String -> Task Error Bool
+putIf store key generation body =
+    writeObject store key (Just generation) body
+
+
+-- | A named object's text, `Nothing` when it does not exist.
+getAt : Store -> String -> Task Error (Maybe String)
+getAt store key =
+    getObject store key |> Task.map (Maybe.map .body)
+
+
+-- | A named object's text and generation, `Nothing` when it does not exist.
+getObject : Store -> String -> Task Error (Maybe Object)
+getObject (Store c) key =
+    case c.kind of
+
+        "file" ->
+            let
+                path = localPath c key
+            in
+                File.exists path
+                    |> Task.andThen
+                           (\there ->
+                               if there then
+                                   File.readFile path
+                                       |> Task.map
+                                              (\text ->
+                                                  Just
+                                                      { body = text
+                                                      , generation =
+                                                          Crypto.sha256 text
+                                                      })
+
+                               else
+                                   Task.succeed Nothing)
+
+        "gs" ->
+            mediaRequest c (keyOf c key) |> Task.andThen (\req -> send req "")
+                |> Task.andThen
+                       (\resp ->
+                           if resp.status == 404 then
+                               Task.succeed Nothing
+
+                           else if resp.status == 200 then
+                               Task.succeed
+                                   (Just
+                                       { body = resp.body
+                                       , generation =
+                                           header "X-Goog-Generation" resp
+                                       })
+
+                           else
+                               Task.fail (refusedBy key resp))
+
+        _ ->
+            s3Request c "GET" (keyOf c key) emptyHash []
+                |> Task.andThen (\req -> send req "")
+                |> Task.andThen
+                       (\resp ->
+                           if resp.status == 404 then
+                               Task.succeed Nothing
+
+                           else if resp.status == 200 then
+                               Task.succeed
+                                   (Just
+                                       { body = resp.body
+                                       , generation = header "Etag" resp
+                                       })
+
+                           else
+                               Task.fail (refusedBy key resp))
+
+
+header : String -> Http.HttpResponse -> String
+header name resp =
+    case Dict.get name resp.headers of
+
+        Just v ->
+            v
+
+        Nothing ->
+            Dict.get (String.toLower name) resp.headers |> Maybe.withDefault ""
+
+
+refusedBy : String -> Http.HttpResponse -> Error
+refusedBy key resp =
+    Failure.toErrorWith
+        (key ++ ": " ++ String.left 300 resp.body)
+        (RemoteRejected { status = resp.status })
+
+
+send : HttpCall -> String -> Task Error Http.HttpResponse
+send req body =
+    List.foldl
+        (\( k, v ) r -> Http.withHeader k v r)
+        (Http.defaultRequest req.url |> Http.withMethod req.method)
+        req.headers
+        |> (\r ->
+               if body == "" then
+                   r
+
+               else
+                   Http.withBody body r)
+        |> Http.withTimeout 60000
+        |> Http.request
+
+
+-- One write: unconditional (`Nothing`) or guarded by a generation.
+writeObject : Store -> String -> Maybe String -> String -> Task Error Bool
+writeObject (Store c) key guard body =
+    case c.kind of
+
+        "file" ->
+            let
+                path = localPath c key
+                write _ =
+                    File.mkdirAll (dirOf path)
+                        |> Task.andThen
+                               (\_ -> File.writeFile (path ++ ".partial") body)
+                        |> Task.andThen
+                               (\_ -> File.rename (path ++ ".partial") path)
+                        |> Task.map (\_ -> True)
+            in
+                case guard of
+
+                    Nothing ->
+                        write ()
+
+                    Just want ->
+                        getObject (Store c) key
+                            |> Task.andThen
+                                   (\current ->
+                                       case current of
+
+                                           Nothing ->
+                                               if want == "" then
+                                                   write ()
+
+                                               else
+                                                   Task.succeed False
+
+                                           Just o ->
+                                               if o.generation == want
+                                                   && want /= "" then
+                                                   write ()
+
+                                               else
+                                                   Task.succeed False)
+
+        "gs" ->
+            Task.map2
+                (\token base ->
+                    { method = "POST"
+                    , url =
+                        base ++ "/upload/storage/v1/b/" ++ c.bucket
+                            ++ "/o?uploadType=media&name="
+                            ++ escapeName (keyOf c key)
+                            ++ (case guard of
+
+                                   Just "" ->
+                                       "&ifGenerationMatch=0"
+
+                                   Just g ->
+                                       "&ifGenerationMatch=" ++ g
+
+                                   Nothing ->
+                                       "")
+                    , headers =
+                        [ ( "Authorization", "Bearer " ++ Secret.reveal token )
+                        , ( "Content-Type", "application/json" )
+                        ]
+                    , timeoutMs = 0
+                    })
+                (gcsToken c)
+                (gcsBase c)
+                |> Task.andThen (\req -> send req body)
+                |> Task.andThen (written key)
+
+        _ ->
+            let
+                payloadHash = Crypto.sha256 body
+                extra =
+                    case guard of
+
+                        Just "" ->
+                            [ ( "if-none-match", "*" ) ]
+
+                        Just g ->
+                            [ ( "if-match", g ) ]
+
+                        Nothing ->
+                            []
+            in
+                s3Request c "PUT" (keyOf c key) payloadHash extra
+                    |> Task.andThen (\req -> send req body)
+                    |> Task.andThen (written key)
+
+
+written : String -> Http.HttpResponse -> Task Error Bool
+written key resp =
+    if resp.status >= 200 && resp.status < 300 then
+        Task.succeed True
+
+    else if resp.status == 412 || resp.status == 409 then
+        Task.succeed False
+
+    else
+        Task.fail (refusedBy key resp)
+
+
+dirOf : String -> String
+dirOf path =
+    case List.reverse (String.split "/" path) of
+
+        _ :: rest ->
+            String.join "/" (List.reverse rest)
+
+        [] ->
+            "."
+
+
+-- | The keys below a prefix that sort after `startOffset` (`""` for all), in
+-- order. Keys are relative to the store's own prefix.
+list : Store -> String -> String -> Task Error (List String)
+list (Store c) prefix startOffset =
+    (case c.kind of
+
+        "file" ->
+            localKeys c (dirOf (localPath c prefix))
+                |> Task.map
+                       (\keys ->
+                           List.filter (\k -> String.startsWith prefix k) keys)
+
+        "gs" ->
+            gcsList c (keyOf c prefix) startOffset "" []
+                |> Task.map (List.map (stripPrefix c))
+
+        _ ->
+            s3List c (keyOf c prefix) "" []
+                |> Task.map (List.map (stripPrefix c)))
+        |> Task.map
+               (\keys ->
+                   keys
+                       |> List.filter
+                              (\k -> startOffset == "" || k > startOffset)
+                       |> List.sort)
+
+
+stripPrefix : Config -> String -> String
+stripPrefix c key =
+    if c.prefix == "" then
+        key
+
+    else
+        String.dropLeft (String.length c.prefix + 1) key
+
+
+-- Every file below a directory, as keys relative to the store's root.
+localKeys : Config -> String -> Task Error (List String)
+localKeys c dir =
+    File.isDir dir |> Task.onError (\_ -> Task.succeed False)
+        |> Task.andThen
+               (\isDir ->
+                   if not isDir then
+                       Task.succeed []
+
+                   else
+                       File.readDir dir
+                           |> Task.andThen
+                                  (\names ->
+                                      Task.sequence
+                                          (List.map
+                                              (\n ->
+                                                  let
+                                                      path = dir ++ "/" ++ n
+                                                  in
+                                                      File.isDir path
+                                                          |> Task.andThen
+                                                                 (\sub ->
+                                                                     if sub then
+                                                                         localKeys
+                                                                             c
+                                                                             path
+
+                                                                     else if String.endsWith
+                                                                         ".partial"
+                                                                         n then
+                                                                         Task.succeed
+                                                                             []
+
+                                                                     else
+                                                                         Task.succeed
+                                                                             [ String.dropLeft
+                                                                                   (String.length
+                                                                                       c.root
+                                                                                       + 1)
+                                                                                   path
+                                                                             ]))
+                                              names))
+                           |> Task.map List.concat)
+
+
+gcsList : Config -> String -> String -> String -> List String -> Task Error (List String)
+gcsList c prefix startOffset pageToken acc =
+    Task.map2
+        (\token base ->
+            { method = "GET"
+            , url =
+                base ++ "/storage/v1/b/" ++ c.bucket ++ "/o?prefix="
+                    ++ Encoding.urlEncode prefix
+                    ++ (if startOffset == "" then
+                           ""
+
+                       else
+                           "&startOffset="
+                               ++ Encoding.urlEncode (keyOf c startOffset))
+                    ++ (if pageToken == "" then
+                           ""
+
+                       else
+                           "&pageToken=" ++ Encoding.urlEncode pageToken)
+                    ++ "&fields=items(name),nextPageToken"
+            , headers =
+                [ ( "Authorization", "Bearer " ++ Secret.reveal token ) ]
+            , timeoutMs = 0
+            })
+        (gcsToken c)
+        (gcsBase c)
+        |> Task.andThen (\req -> send req "")
+        |> Task.andThen
+               (\resp ->
+                   if resp.status /= 200 then
+                       Task.fail (refusedBy prefix resp)
+
+                   else
+                       case JsonD.decodeString
+                                (JsonD.map2
+                                    (\names next -> ( names, next ))
+                                    (JsonD.oneOf
+                                        [ JsonD.field
+                                              "items"
+                                              (JsonD.list
+                                                  (JsonD.field
+                                                      "name"
+                                                      JsonD.string))
+                                        , JsonD.succeed []
+                                        ])
+                                    (JsonD.oneOf
+                                        [ JsonD.field
+                                              "nextPageToken"
+                                              JsonD.string
+                                        , JsonD.succeed ""
+                                        ]))
+                                resp.body of
+
+                           Ok ( names, "" ) ->
+                               Task.succeed (acc ++ names)
+
+                           Ok ( names, next ) ->
+                               gcsList c prefix startOffset next (acc ++ names)
+
+                           Err e ->
+                               Task.fail e)
+
+
+-- ListObjectsV2, every page. The keys come out of the XML answer's `<Key>`
+-- elements (an object key never holds `<`).
+s3List : Config -> String -> String -> List String -> Task Error (List String)
+s3List c prefix continuation acc =
+    let
+        query =
+            (if continuation == "" then
+                ""
+
+            else
+                "continuation-token=" ++ Encoding.urlEncode continuation ++ "&")
+                ++ "list-type=2&prefix="
+                ++ Encoding.urlEncode prefix
+    in
+        s3RequestQ c "GET" "" query emptyHash []
+            |> Task.andThen (\req -> send req "")
+            |> Task.andThen
+                   (\resp ->
+                       if resp.status /= 200 then
+                           Task.fail (refusedBy prefix resp)
+
+                       else
+                           let
+                               keys =
+                                   String.split "<Key>" resp.body |> List.drop 1
+                                       |> List.map
+                                              (\part ->
+                                                  String.split "</Key>" part
+                                                      |> List.head
+                                                      |> Maybe.withDefault "")
+                               next =
+                                   case String.split
+                                            "<NextContinuationToken>"
+                                            resp.body of
+
+                                       [ _, rest ] ->
+                                           String.split
+                                               "</NextContinuationToken>"
+                                               rest
+                                               |> List.head
+                                               |> Maybe.withDefault ""
+
+                                       _ ->
+                                           ""
+                           in
+                               if next == "" then
+                                   Task.succeed (acc ++ keys)
+
+                               else
+                                   s3List c prefix next (acc ++ keys))
+
+
+-- | A local path holding a named object's bytes, checked against `sha256`
+-- (cached under the AI home like a blob). A large binary file (an adapter, a
+-- checkpoint) is fetched this way, never through `getAt`.
+fetchAt : Store -> String -> String -> Task Error String
+fetchAt (Store c) key sha =
+    case c.kind of
+
+        "file" ->
+            let
+                path = localPath c key
+            in
+                digestRaw path
+                    |> Task.andThen
+                           (\blob ->
+                               if blob.sha256 == sha then
+                                   Task.succeed path
+
+                               else
+                                   Task.fail
+                                       (Failure.toError
+                                           (ChecksumMismatch
+                                               { expected = sha
+                                               , actual = blob.sha256
+                                               })))
+
+        _ ->
+            cachedRaw sha
+                |> Task.andThen
+                       (\cached ->
+                           if cached /= "" then
+                               Task.succeed cached
+
+                           else
+                               (if c.kind == "gs" then
+                                   mediaRequest c (keyOf c key)
+
+                               else
+                                   s3Request c "GET" (keyOf c key) emptyHash [])
+                                   |> Task.andThen (\req -> httpGetRaw req sha))
+
+
+-- | Delete every object below a prefix and return how many there were. An
+-- object already gone counts as deleted.
+deletePrefix : Store -> String -> Task Error Int
+deletePrefix store prefix =
+    list store prefix ""
+        |> Task.andThen
+               (\keys ->
+                   Task.sequence (List.map (deleteKey store) keys)
+                       |> Task.map (\_ -> List.length keys))
+
+
+deleteKey : Store -> String -> Task Error ()
+deleteKey (Store c) key =
+    case c.kind of
+
+        "file" ->
+            File.remove (localPath c key)
+
+        "gs" ->
+            Task.map2
+                (\token base ->
+                    { method = "DELETE"
+                    , url =
+                        base ++ "/storage/v1/b/" ++ c.bucket ++ "/o/"
+                            ++ escapeName (keyOf c key)
+                    , headers =
+                        [ ( "Authorization", "Bearer " ++ Secret.reveal token )
+                        ]
+                    , timeoutMs = 0
+                    })
+                (gcsToken c)
+                (gcsBase c)
+                |> Task.andThen (\req -> send req "")
+                |> Task.andThen (deleted key)
+
+        _ ->
+            s3Request c "DELETE" (keyOf c key) emptyHash []
+                |> Task.andThen (\req -> send req "")
+                |> Task.andThen (deleted key)
+
+
+deleted : String -> Http.HttpResponse -> Task Error ()
+deleted key resp =
+    if (resp.status >= 200 && resp.status < 300) || resp.status == 404 then
+        Task.succeed ()
+
+    else
+        Task.fail (refusedBy key resp)
+
+
+-- | Where the store's data lives: a GCS bucket's location in lower case
+-- (`us-central1`, or a multi-region such as `us`), an S3 store's region, or
+-- `local` for a directory. `Std.Ai.Train` refuses a cloud job whose staging
+-- bucket is not in the job's region.
+bucketLocation : Store -> Task Error String
+bucketLocation (Store c) =
+    case c.kind of
+
+        "file" ->
+            Task.succeed "local"
+
+        "gs" ->
+            Task.map2
+                (\token base ->
+                    { method = "GET"
+                    , url =
+                        base ++ "/storage/v1/b/" ++ c.bucket
+                            ++ "?fields=location"
+                    , headers =
+                        [ ( "Authorization", "Bearer " ++ Secret.reveal token )
+                        ]
+                    , timeoutMs = 0
+                    })
+                (gcsToken c)
+                (gcsBase c)
+                |> Task.andThen (\req -> send req "")
+                |> Task.andThen
+                       (\resp ->
+                           if resp.status /= 200 then
+                               Task.fail (refusedBy c.bucket resp)
+
+                           else
+                               Task.fromResult
+                                   (JsonD.decodeString
+                                       (JsonD.field "location" JsonD.string)
+                                       resp.body)
+                                   |> Task.map String.toLower)
+
+        _ ->
+            Task.succeed (s3Region c)
+
+
+-- ── Google Cloud Storage ────────────────────────────────────────────
+-- The GCS base URL: the store's own endpoint, else the emulator
+-- (`SKY_AI_GCP_ENDPOINT`), else Google.
+gcsBase : Config -> Task Error String
+gcsBase c =
+    if c.endpoint /= "" then
+        Task.succeed c.endpoint
+
+    else
+        Google.serviceBase "storage" ""
+
+
+-- An object name inside a URL path or query: every byte but the unreserved
+-- ones is percent-encoded, so a "/" in the name is %2F.
+escapeName : String -> String
+escapeName name =
+    String.split "/" name |> List.map Encoding.urlEncode |> String.join "%2F"
+
+
+-- The access token: the one given in code, else the platform's credentials
+-- (`Std.Ai.Cloud.Google.accessToken`: a service-account key file, else the
+-- metadata server).
+gcsToken : Config -> Task Error Secret
+gcsToken c =
+    case c.token of
+
+        Just t ->
+            Task.succeed t
+
+        Nothing ->
+            Google.accessToken [ Google.storageReadWrite ]
+                |> Task.onError
+                       (\e ->
+                           case Failure.fromError e of
+
+                               Just (NotConfigured _) ->
+                                   Task.fail
+                                       (Failure.toError
+                                           (NotConfigured
+                                               { setting =
+                                                   "GOOGLE_APPLICATION_CREDENTIALS (a service-account key file), the GCE metadata server, or Store.withToken"
+                                               }))
+
+                               _ ->
+                                   Task.fail e)
+
+
+-- A GET of an object's bytes.
+mediaRequest : Config -> String -> Task Error HttpCall
+mediaRequest c key =
+    Task.map2
+        (\token base ->
+            { method = "GET"
+            , url =
+                base ++ "/storage/v1/b/" ++ c.bucket ++ "/o/" ++ escapeName key
+                    ++ "?alt=media"
+            , headers =
+                [ ( "Authorization", "Bearer " ++ Secret.reveal token ) ]
+            , timeoutMs = 0
+            })
+        (gcsToken c)
+        (gcsBase c)
+
+
+-- ── Amazon S3 ───────────────────────────────────────────────────────
+emptyHash : String
+emptyHash =
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+
+s3Region : Config -> String
+s3Region c =
+    if c.region /= "" then
+        c.region
+
+    else
+        let
+            r = System.getenvOr "AWS_REGION" ""
+        in
+            if r /= "" then
+                r
+
+            else
+                System.getenvOr "AWS_DEFAULT_REGION" "us-east-1"
+
+
+-- The host and the canonical path of an object: virtual-hosted style on AWS,
+-- path style on another endpoint.
+s3Target : Config -> String -> ( String, String, String )
+s3Target c key =
+    if c.endpoint == "" then
+        let
+            host = c.bucket ++ ".s3." ++ s3Region c ++ ".amazonaws.com"
+        in
+            ( "https://" ++ host, host, "/" ++ key )
+
+    else
+        ( c.endpoint, hostOf c.endpoint, "/" ++ c.bucket ++ "/" ++ key )
+
+
+hostOf : String -> String
+hostOf url =
+    case String.split "://" url of
+
+        [ _, rest ] ->
+            String.split "/" rest |> List.head |> Maybe.withDefault rest
+
+        _ ->
+            url
+
+
+s3Request : Config -> String -> String -> String -> List ( String, String ) -> Task Error HttpCall
+s3Request c method key payloadHash extra =
+    s3RequestQ c method key "" payloadHash extra
+
+
+-- s3Request with a canonical query string (parameters sorted by name, each
+-- name and value URI-encoded).
+s3RequestQ : Config -> String -> String -> String -> String -> List ( String, String ) -> Task Error HttpCall
+s3RequestQ c method key query payloadHash extra =
+    awsKeys c
+        |> Task.andThen
+               (\keys ->
+                   Time.unixMillis ()
+                       |> Task.map
+                              (\ms ->
+                                  let
+                                      ( base, host, path ) = s3Target c key
+                                      amzDate =
+                                          Time.format "20060102T150405Z" ms
+                                      session =
+                                          case keys.sessionToken of
+
+                                              Just t ->
+                                                  [ ( "x-amz-security-token"
+                                                    , Secret.reveal t
+                                                    )
+                                                  ]
+
+                                              Nothing ->
+                                                  []
+                                      headers =
+                                          [ ( "host", host )
+                                          , ( "x-amz-content-sha256"
+                                            , payloadHash
+                                            )
+                                          , ( "x-amz-date", amzDate )
+                                          ]
+                                              ++ extra
+                                              ++ session
+                                      sig =
+                                          signV4
+                                              { method = method
+                                              , host = host
+                                              , path = path
+                                              , query = query
+                                              , headers = headers
+                                              , payloadHash = payloadHash
+                                              , region = s3Region c
+                                              , service = "s3"
+                                              , amzDate = amzDate
+                                              , accessKey = keys.accessKey
+                                              , secretKey = keys.secretKey
+                                              }
+                                  in
+                                      { method = method
+                                      , url =
+                                          base ++ path
+                                              ++ (if query == "" then
+                                                     ""
+
+                                                 else
+                                                     "?" ++ query)
+                                      , headers =
+                                          headers
+                                              ++ [ ( "Authorization"
+                                                   , sig.authorization
+                                                   )
+                                                 ]
+                                      , timeoutMs = 0
+                                      }))
+
+
+-- The keys: the ones given in code, else the standard variables, else the
+-- instance role through IMDSv2.
+awsKeys : Config -> Task Error AwsKeys
+awsKeys c =
+    case c.awsKeys of
+
+        Just k ->
+            Task.succeed k
+
+        Nothing ->
+            -- Read when the Task runs, not when it is built.
+            Task.lazy (\_ -> System.getenvOr "AWS_ACCESS_KEY_ID" "")
+                |> Task.andThen awsEnvKeys
+
+
+awsEnvKeys : String -> Task Error AwsKeys
+awsEnvKeys id =
+    if id /= "" then
+        Task.succeed
+            { accessKey = id
+            , secretKey = Secret.fromEnv "AWS_SECRET_ACCESS_KEY"
+            , sessionToken =
+                if System.getenvOr "AWS_SESSION_TOKEN" "" /= "" then
+                    Just (Secret.fromEnv "AWS_SESSION_TOKEN")
+
+                else
+                    Nothing
+            }
+
+    else
+        instanceRoleKeys
+            |> Task.onError
+                   (\_ ->
+                       Task.fail
+                           (Failure.toError
+                               (NotConfigured
+                                   { setting =
+                                       "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, an instance role (IMDSv2), or Store.withAwsKeys"
+                                   })))
+
+
+instanceRoleKeys : Task Error AwsKeys
+instanceRoleKeys =
+    Task.lazy (\_ -> ()) |> Task.andThen instanceRoleKeysNow
+
+
+instanceRoleKeysNow : () -> Task Error AwsKeys
+instanceRoleKeysNow _ =
+    let
+        base =
+            trimTrailingSlash
+                (System.getenvOr
+                    "AWS_EC2_METADATA_SERVICE_ENDPOINT"
+                    "http://169.254.169.254")
+        ok resp =
+            if resp.status == 200 then
+                Task.succeed (String.trim resp.body)
+
+            else
+                Task.fail
+                    (Failure.toError (RemoteRejected { status = resp.status }))
+    in
+        Http.defaultRequest (base ++ "/latest/api/token")
+            |> Http.withMethod "PUT"
+            |> Http.withHeader "X-aws-ec2-metadata-token-ttl-seconds" "21600"
+            |> Http.withTimeout 2000
+            |> Http.request
+            |> Task.andThen ok
+            |> Task.andThen
+                   (\token ->
+                       Http.defaultRequest
+                           (base ++ "/latest/meta-data/iam/security-credentials/")
+                           |> Http.withHeader "X-aws-ec2-metadata-token" token
+                           |> Http.withTimeout 2000
+                           |> Http.request
+                           |> Task.andThen ok
+                           |> Task.andThen
+                                  (\roles ->
+                                      Http.defaultRequest
+                                          (base
+                                              ++ "/latest/meta-data/iam/security-credentials/"
+                                              ++ (String.lines roles |> List.head
+                                                     |> Maybe.withDefault ""))
+                                          |> Http.withHeader
+                                                 "X-aws-ec2-metadata-token"
+                                                 token
+                                          |> Http.withTimeout 2000
+                                          |> Http.request
+                                          |> Task.andThen ok))
+            |> Task.andThen
+                   (\body ->
+                       Task.fromResult
+                           (JsonD.decodeString
+                               (JsonD.map3
+                                   (\a s t ->
+                                       { accessKey = a
+                                       , secretKey = Secret.fromString s
+                                       , sessionToken =
+                                           Just (Secret.fromString t)
+                                       })
+                                   (JsonD.field "AccessKeyId" JsonD.string)
+                                   (JsonD.field "SecretAccessKey" JsonD.string)
+                                   (JsonD.field "Token" JsonD.string))
+                               body))
+
+-- ── AWS Signature Version 4 ─────────────────────────────────────────
+-- | What `signV4` signs. `path` is the canonical URI (already
+-- percent-encoded), `query` the canonical query string (`""` for none), and
+-- `headers` every header to sign, including `host` and `x-amz-date`.
+-- `amzDate` is `YYYYMMDDTHHMMSSZ` and `payloadHash` the hex SHA-256 of the
+-- body (`e3b0c442…b855` for an empty one).
+type alias SigV4 =
+    { method : String
+    , host : String
+    , path : String
+    , query : String
+    , headers : List ( String, String )
+    , payloadHash : String
+    , region : String
+    , service : String
+    , amzDate : String
+    , accessKey : String
+    , secretKey : Secret
+    }
+
+-- | The `Authorization` header value, and its parts.
+type alias Signature =
+    { authorization : String
+    , signedHeaders : String
+    , signature : String
+    }
+
+
+-- | Sign a request with AWS Signature Version 4. Pure: the same request,
+-- time and key always give the same signature, so it is tested against the
+-- published AWS examples.
+signV4 : SigV4 -> Signature
+signV4 r =
+    let
+        canonical =
+            r.headers
+                |> List.map
+                       (\( k, v ) ->
+                           ( String.toLower (String.trim k), String.trim v ))
+                |> List.sortBy (\( k, _ ) -> k)
+        signedHeaders =
+            canonical |> List.map (\( k, _ ) -> k) |> String.join ";"
+        canonicalRequest =
+            String.join
+                "\n"
+                [ r.method
+                , r.path
+                , r.query
+                , String.concat
+                      (List.map (\( k, v ) -> k ++ ":" ++ v ++ "\n") canonical)
+                , signedHeaders
+                , r.payloadHash
+                ]
+        date = String.left 8 r.amzDate
+        scope =
+            date ++ "/" ++ r.region ++ "/" ++ r.service ++ "/aws4_request"
+        stringToSign =
+            String.join
+                "\n"
+                [ "AWS4-HMAC-SHA256"
+                , r.amzDate
+                , scope
+                , Crypto.sha256 canonicalRequest
+                ]
+        signingKey =
+            ("AWS4" ++ Secret.reveal r.secretKey) |> (\k -> hmacRaw k date)
+                |> (\k -> hmacRaw k r.region)
+                |> (\k -> hmacRaw k r.service)
+                |> (\k -> hmacRaw k "aws4_request")
+        signature = Crypto.hmacSha256 signingKey stringToSign
+    in
+        { authorization =
+            "AWS4-HMAC-SHA256 Credential=" ++ r.accessKey ++ "/" ++ scope
+                ++ ", SignedHeaders="
+                ++ signedHeaders
+                ++ ", Signature="
+                ++ signature
+        , signedHeaders = signedHeaders
+        , signature = signature
+        }
+
+
+-- HMAC-SHA256 with the raw bytes of the result, the key of the next step.
+hmacRaw : String -> String -> String
+hmacRaw key message =
+    Encoding.hexDecode (Crypto.hmacSha256 key message) |> Result.withDefault ""
+
+
+-- ── Small helpers ───────────────────────────────────────────────────
+trimSlashes : String -> String
+trimSlashes s =
+    trimTrailingSlash (dropLeadingSlashes s)
+
+
+dropLeadingSlashes : String -> String
+dropLeadingSlashes s =
+    if String.startsWith "/" s then
+        dropLeadingSlashes (String.dropLeft 1 s)
+
+    else
+        s
+
+
+trimTrailingSlash : String -> String
+trimTrailingSlash s =
+    if String.endsWith "/" s then
+        trimTrailingSlash (String.dropRight 1 s)
+
+    else
+        s
+
+
+quote : String -> String
+quote s =
+    "\"" ++ s ++ "\""

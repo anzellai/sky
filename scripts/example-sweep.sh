@@ -161,14 +161,19 @@ if [[ -n "$WORKDIR" ]]; then
     # `.skycache/go` (the sweep recreates them) but KEEP `.skycache/ffi`
     # (15+ min to regenerate for skyshop's 76k FFI symbols), `.skydeps`,
     # and `sky.lock`.
+    # USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded from
+    # CI in general (no CI job builds, trains, evaluates or runs it), so it is
+    # skipped here by name.
     if command -v rsync >/dev/null 2>&1; then
         rsync -a \
+            --exclude='/76-ai-shell-command' \
             --exclude='sky-out' \
             --exclude='.skycache/lowered' \
             --exclude='.skycache/go' \
             "$ROOT/examples/" "$EXAMPLES_ROOT/"
     else
         cp -R "$ROOT/examples/." "$EXAMPLES_ROOT/"
+        rm -rf "$EXAMPLES_ROOT/76-ai-shell-command"
         find "$EXAMPLES_ROOT" -mindepth 2 -maxdepth 3 \
             \( -name 'sky-out' -o -path '*/.skycache/lowered' \
                -o -path '*/.skycache/go' \) \
@@ -229,6 +234,10 @@ mirror_back_to_intree() {
 # cli examples: exit 0, stdout non-empty.
 #
 # Entries: "name:kind[:port][:path]"
+#
+# USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded from
+# CI in general (no CI job builds, trains, evaluates or runs it), so it is
+# deliberately absent from this table. Never add it.
 declare -a EXAMPLES=(
     "01-hello-world:cli"
     "02-go-stdlib:cli"
@@ -296,6 +305,42 @@ declare -a EXAMPLES=(
     # first render (a build + clean-exit assertion; the restart behaviour is
     # proven behaviourally by rust/crates/sky/tests/durable_tea_cli_flow.rs).
     "67-durable-counter:cli"
+    # 68 / 69 / 70 — Std.Ai.Dataset, Scrub and Synthetic (v0.28.0). All three
+    # run offline: 68 freezes a dataset version under .sky/ai/datasets, 69 is
+    # pure, and 70 with no arguments prints its generation plan (the teacher
+    # runs only with `-- generate`; its offline run is its `sky test` suite).
+    "68-ai-dataset:cli"
+    "69-ai-scrub:cli"
+    "70-ai-synthetic:cli"
+    # 71 — the model registry (Std.Ai.Registry): register, evaluate, promote,
+    # roll back and read the lineage, in a fresh temporary directory, with no
+    # model and no network. Its stdout and its test-mode serving test are
+    # pinned by rust/crates/sky/tests/ai_registry_flow.rs.
+    "71-ai-registry:cli"
+    # 72 — the flagship AI app: a Sky.Live support desk (Std.Ui + SQLite)
+    # whose assistant is a model slot, with its AI lifecycle in src/Ai.sky.
+    # GET / renders the inbox with no model call (the assistant drafts only
+    # when a ticket opens). The lifecycle (dataset, eval, registry, promote,
+    # serve) is proven by rust/crates/sky/tests/ai_pipeline_flow.rs. Port 8072
+    # (App.withConfig) so the parallel sweep does not collide.
+    "72-ai-support-desk:server:8072:/"
+    # 73 — Std.Ai.Train in a full-stack app (Sky.Live, Std.Ui): the page
+    # freezes its dataset and shows the training run; nothing trains until
+    # "Train" is pressed, so serving `/` needs no model, no Python and no
+    # network. The training workflow itself runs offline in its `sky test`
+    # suite (rust/crates/sky/tests/ai_train_flow.rs).
+    "73-ai-train:server:8073:/"
+    # 74 — Std.Ai.Train on Vertex AI and Std.Ai.Serve on Cloud Run, in a
+    # Sky.Live app: the page freezes its dataset; nothing reaches Google Cloud
+    # until a button is pressed, so serving `/` needs no account and no
+    # network. The cloud workflow runs offline against the runtime's emulator
+    # in its `sky test` suite (rust/crates/sky/tests/ai_cloud_train_flow.rs).
+    "74-ai-cloud:server:8074:/"
+    # 75 — Std.Ai.Device in a full-stack app (Std.App, Std.Ui): serving `/`
+    # reads the notes and the device status; nothing downloads and no model
+    # runs until the user asks, so it needs no model. The device flows are
+    # scripts/ai-device-e2e.sh and rust/crates/sky/tests/ai_device_*.rs.
+    "75-ai-everywhere:server:8075:/"
 )
 
 # ─── shard selection ──────────────────────────────────────────────────────

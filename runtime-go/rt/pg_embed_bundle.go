@@ -789,7 +789,14 @@ func processAlive(pid int) bool {
 	// EPERM means the process exists and belongs to someone else — which is
 	// still "alive", and reporting it dead would let a second postmaster open
 	// the data directory.
-	return err == nil || err == syscall.EPERM
+	if err != nil && err != syscall.EPERM {
+		return false
+	}
+	// A zombie (exited, not yet reaped by its parent) still answers
+	// kill(pid, 0). It runs nothing and holds no port, data directory or
+	// engine, so it is gone. Counting it alive made `sky ai stop` wait out
+	// its whole budget on a holder that had already exited.
+	return !procIsZombie(pid)
 }
 
 // commandLooksLikePostgres is the second leg of the liveness check.

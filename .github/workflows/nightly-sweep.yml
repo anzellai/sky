@@ -25,7 +25,7 @@ on:
         # Every job's `if:` names itself here. `behaviour-corpus` gated on a
         # value this list did not offer, so it could never be dispatched alone —
         # the dropdown had no way to say it, and any other value skipped it.
-        options: [both, example-sweep, web-runtime, behaviour-corpus, harness-t3, falsifier-verification, postgres-bundle-licence, nix, build-perf]
+        options: [both, example-sweep, web-runtime, behaviour-corpus, harness-t3, falsifier-verification, postgres-bundle-licence, nix, build-perf, ai-unsloth-toolchain]
 
 # Don't stack nightly runs; a newer run supersedes an in-flight one.
 concurrency:
@@ -396,18 +396,32 @@ jobs:
   # HONESTLY: nightly is weaker than per-push. It is not merge-blocking, so a
   # regression lands and is caught the next night rather than at review. That is
   # a real gap and it is recorded as one in `.claude/AUTONOMOUS_GOAL.md`. The
-  # path to closing it is sharding — `corpus --run` has no shard or filter flag
-  # today, so partitioning the 335 cases across a matrix is a change to the
-  # gate, not to this file. It is strictly better than the status quo it
-  # replaces, which was no execution anywhere.
+  # path to closing it is sharding. It is strictly better than the status quo
+  # it replaces, which was no execution anywhere.
+  #
+  # SHARDED (2026-10-14). The corpus is four shard gates, `corpus-1` …
+  # `corpus-4` (`corpus::shard_slice`, every case whose index is k mod 4), and
+  # this job is a matrix: one leg for the corpus shards, one leg for the rest
+  # of T2. As one gate it was killed at its 4000 s budget near case 350 of
+  # 554; after the v0.27.9 build-speed work the whole corpus runs in about
+  # 7 min, so the four shards share a leg (as in release.yml gate-t2-corpus).
+  # The legs name their gates, so a gate ADDED at T2 later is NOT picked up by
+  # itself; `tests/workflows_parse.rs` fails the build until a leg names it,
+  # so it cannot silently join the set nothing runs.
   behaviour-corpus:
     if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "behaviour-corpus"]'), inputs.only) }}
     runs-on: ubuntu-latest
-    # Killed at 25 min on its first real run. 45 gives a cold-cache run room
-    # while staying far inside the 90-min T3 ceiling. Raised in v0.27.0 with
-    # the corpus gate's budget (4000 s, 468 behavioural cases); the job limit
-    # stays above the gate budget so the gate, not the runner, gives the verdict.
-    timeout-minutes: 80
+    strategy:
+      fail-fast: false
+      matrix:
+        gates:
+          - corpus-1,corpus-2,corpus-3,corpus-4
+          - corpus-isolation,corpus-witness,spa-diff-fuzz,apps-fieldbook,build-new-dir-compiles-nothing,ai-device-partition
+    # Killed at 25 min on its first real run. The job limit stays above the
+    # leg's summed gate budget so the gate, not the runner, gives the verdict:
+    # four corpus shards at 1200 s, or the rest of T2 at 4,800 s (80 min), plus
+    # setup, as release.yml's gate-t2-corpus and gate-t2-rest.
+    timeout-minutes: 95
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -474,11 +488,12 @@ jobs:
           cd runtime-go
           CGO_ENABLED=0 go build ./... 2>&1 | tail -5 || true
           go version
-      - name: 'Gate — behavioural corpus (harness tier T2: 383 assertions)'
-        # The whole tier, not named gates, so a gate ADDED at T2 later is picked
-        # up automatically instead of silently joining the set nothing runs —
-        # which is how this hole opened in the first place.
-        run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- harness --tier t2
+      - name: 'Gate — harness tier T2 (${{ matrix.gates }})'
+        # The legs' `--only` lists together are the whole T2 tier.
+        # `tests/workflows_parse.rs` expands this matrix and fails the build if
+        # a registered T2 gate is in no leg — which is how a hole like the one
+        # this job closed would open again.
+        run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- harness --tier t2 --only ${{ matrix.gates }}
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh
@@ -585,7 +600,7 @@ jobs:
           SKY_LIVE_TESTS: require
         # The Android emulator test needs a running emulator: the release
         # workflow's gate-native-android job runs it.
-        run: cargo test -p sky --locked --manifest-path rust/Cargo.toml -- --ignored --skip android_emulator
+        run: cargo test -p sky --locked --manifest-path rust/Cargo.toml -- --ignored --skip android_emulator --skip gcp_live_
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh
@@ -797,6 +812,45 @@ jobs:
           name: nightly-sbom-linux-amd64
           path: ${{ runner.temp }}/bundles/*/sbom.json
           if-no-files-found: warn
+
+  # The Std.Ai.Train Unsloth toolchain, installed for real from its hash lock
+  # (runtime-go/rt/ai_train_assets/locks/unsloth-linux-x86_64-cuda13.txt):
+  # `sky ai provision --train unsloth` downloads the pinned uv and CPython,
+  # installs every wheel with `uv pip sync --require-hashes --only-binary
+  # :all:`, checks the installed versions against the lock, and runs the
+  # driver's self-check (which reads the Unsloth and torch versions from their
+  # metadata without importing them: the runner has no GPU). The driver's side
+  # of the Unsloth contract is the GPU-free fixture test in
+  # runtime-go/rt/testdata/train_driver_tests/test_unsloth_fixture.py.
+  # Nightly, not per commit: the lock is several GB of CUDA wheels.
+  ai-unsloth-toolchain:
+    if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "ai-unsloth-toolchain"]'), inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # `runner` may not appear in a job-level `env:` (GitHub then refuses the
+      # whole file); the shell has RUNNER_TEMP.
+      - name: The Std.Ai home under the runner's temp directory
+        run: echo "SKY_AI_HOME=$RUNNER_TEMP/sky-ai" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Free disk for the CUDA wheels
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Build the compiler
+        run: bash scripts/build.sh
+      - name: Install the Unsloth toolchain from its hash lock
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/provision" && cd "$RUNNER_TEMP/provision"
+          "$GITHUB_WORKSPACE/sky-out/sky" ai provision --train unsloth --format json | tee provision.json
+          grep -q '"toolchain":"unsloth"' provision.json
 
   # The Nix package, through both entry points: the stable `nix-build`
   # (default.nix, no flakes) and the flake (`nix build .#sky`), plus both dev

@@ -1,0 +1,9 @@
+{
+  "match": {
+    "method": "POST",
+    "urlContains": "sky-ai-local.invalid/chat/",
+    "bodyContains": "parcel is two days late"
+  },
+  "status": 200,
+  "body": "{\"choices\": [{\"message\": {\"role\": \"assistant\", \"content\": \"I'm sorry about the delay. Your parcel arrives tomorrow, and I will send you the tracking link today.\"}}], \"usage\": {\"prompt_tokens\": 40, \"completion_tokens\": 20, \"total_tokens\": 60}}"
+}

@@ -262,46 +262,12 @@ pub fn run_test_with(
         // with no `.env.test` runs exactly as before. The runtime's default mocks
         // dir (`tests/mocks/`, cwd-relative) resolves because cwd is the project.
         if project_dir.join(".env.test").is_file() {
-            cmd.env("SKY_TEST_MODE", "1");
             // A per-run log-capture file so a scenario can assert on what the app
             // logged (read it back with File.read on the same env var). Removed
             // with the scratch dir at the end of the run.
-            let log_capture = scratch.join("captured-logs.txt");
-            cmd.env("SKY_TEST_LOG_CAPTURE", &log_capture);
-            let mut has_dsn = dsn_is_given(std::env::var("DATABASE_URL").ok().as_deref());
-            for f in [".env.test", ".env.test.local"] {
-                if let Ok(contents) = std::fs::read_to_string(project_dir.join(f)) {
-                    for (k, v) in parse_dotenv(&contents) {
-                        if k == "DATABASE_URL" && dsn_is_given(Some(&v)) {
-                            has_dsn = true;
-                        }
-                        cmd.env(k, v);
-                    }
-                }
-            }
-            // EPHEMERAL DB (auto-testing phase 3b): if the project declares a
-            // database but no DSN is provided, give it an OFFLINE database in the
-            // run's scratch dir, thrown away with the scratch dir at the end. The
-            // engine decides how (see `project::offline_db_plan`): a Postgres app
-            // gets a throwaway EMBEDDED cluster (created + migrated by the app's
-            // own schema setup); a SQLite app is already offline and just has its
-            // path redirected to a scratch file — forcing embedded Postgres onto a
-            // SQLite app is a conflict the runtime rejects, so branching on the
-            // engine is load-bearing. Skipped when a DSN IS given (the test
-            // targets that DB). The temp data dir is allowed only because
-            // SKY_TEST_MODE is set (see rejectTempDataDir); a prod --embed app is
-            // unaffected.
-            if !has_dsn {
-                match project::offline_db_plan(&project_dir) {
-                    project::OfflineDbPlan::Postgres => {
-                        cmd.env("SKY_EMBED_POSTGRES", "1");
-                        cmd.env("SKY_DATA_DIR", scratch.join("pgdata"));
-                    }
-                    project::OfflineDbPlan::Sqlite { db_path_env } => {
-                        cmd.env(db_path_env, scratch.join("test.db"));
-                    }
-                    project::OfflineDbPlan::None => {}
-                }
+            cmd.env("SKY_TEST_LOG_CAPTURE", scratch.join("captured-logs.txt"));
+            for (k, v) in test_mode_env(&project_dir, Some(&scratch)) {
+                cmd.env(k, v);
             }
         }
 
@@ -314,6 +280,68 @@ pub fn run_test_with(
     // Always remove the whole scratch dir (synth entry + build output).
     let _ = std::fs::remove_dir_all(&scratch);
     Ok(run)
+}
+
+/// The environment of a test-mode run (a project that commits a `.env.test`):
+/// `SKY_TEST_MODE=1` (the runtime then serves the offline HTTP mock and fails
+/// closed on any unmocked outbound request; determinism stays opt-in via
+/// `SKY_TEST_SEED` / `SKY_TEST_CLOCK_MS`), the project's `.env.test` then
+/// `.env.test.local` (override), and, when no DSN is given and a `scratch`
+/// directory is, an OFFLINE database under it (`sky test`). `sky ai <verb>
+/// --test-mode` passes none: its verbs act on the project's own database, and
+/// only the model calls are answered by fixtures.
+///
+/// `.env.test` is the committed non-secret config + mock toggles;
+/// `.env.test.local` the gitignored sandbox creds for the opt-in
+/// contract-drift tier. The runtime's default mocks dir (`tests/mocks/`,
+/// cwd-relative) resolves because the run's cwd is the project. `sky test`
+/// and `sky ai <verb> --test-mode` share it.
+///
+/// EPHEMERAL DB (auto-testing phase 3b): if the project declares a database
+/// but no DSN is provided, it gets an OFFLINE database in `scratch`, thrown
+/// away with it. The engine decides how (see `project::offline_db_plan`): a
+/// Postgres app gets a throwaway EMBEDDED cluster (created + migrated by the
+/// app's own schema setup); a SQLite app is already offline and just has its
+/// path redirected to a scratch file — forcing embedded Postgres onto a
+/// SQLite app is a conflict the runtime rejects, so branching on the engine
+/// is load-bearing. Skipped when a DSN IS given (the test targets that DB).
+/// The temp data dir is allowed only because SKY_TEST_MODE is set (see
+/// rejectTempDataDir); a prod --embed app is unaffected.
+pub fn test_mode_env(project_dir: &Path, scratch: Option<&Path>) -> Vec<(String, String)> {
+    let mut out = vec![("SKY_TEST_MODE".to_string(), "1".to_string())];
+    let mut has_dsn = dsn_is_given(std::env::var("DATABASE_URL").ok().as_deref());
+    for f in [".env.test", ".env.test.local"] {
+        if let Ok(contents) = std::fs::read_to_string(project_dir.join(f)) {
+            for (k, v) in parse_dotenv(&contents) {
+                if k == "DATABASE_URL" && dsn_is_given(Some(&v)) {
+                    has_dsn = true;
+                }
+                out.push((k, v));
+            }
+        }
+    }
+    let Some(scratch) = scratch else {
+        return out;
+    };
+    if !has_dsn {
+        match project::offline_db_plan(project_dir) {
+            project::OfflineDbPlan::Postgres => {
+                out.push(("SKY_EMBED_POSTGRES".to_string(), "1".to_string()));
+                out.push((
+                    "SKY_DATA_DIR".to_string(),
+                    scratch.join("pgdata").to_string_lossy().into_owned(),
+                ));
+            }
+            project::OfflineDbPlan::Sqlite { db_path_env } => {
+                out.push((
+                    db_path_env.to_string(),
+                    scratch.join("test.db").to_string_lossy().into_owned(),
+                ));
+            }
+            project::OfflineDbPlan::None => {}
+        }
+    }
+    out
 }
 
 /// Whether a `DATABASE_URL` value names a database. An EMPTY (or blank) value
@@ -330,7 +358,7 @@ pub fn dsn_is_given(value: Option<&str>) -> bool {
 /// and surrounding single/double quotes removed from the value. Not a full dotenv
 /// implementation (no interpolation, no multiline) — enough for test config and
 /// mock toggles.
-fn parse_dotenv(contents: &str) -> Vec<(String, String)> {
+pub fn parse_dotenv(contents: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for line in contents.lines() {
         let line = line.trim();

@@ -1,0 +1,499 @@
+module Firewall exposing (Kind(..), classify, propose, firewall, kindText)
+
+{-| The firewall in front of every command the model proposes.
+
+The model never decides what runs. It proposes a command, `propose` wraps it
+in a typed `Policy.Action`, and `firewall` (a pure function) decides:
+
+  - a command that only reads (find, grep, ls, wc, sort ...) gets `Allow`
+  - a command that writes or deletes (mkdir, cp, mv, rm, sed -i, a `>`
+    redirect, find -delete ...) gets `NeedsApproval`
+  - sudo, a download piped into a shell, `rm -rf /` and other commands that
+    change the system or reach outside the folder get `Deny`
+
+A program the firewall does not know is never trusted: it needs approval.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Regex as Regex
+import Std.Ai.Policy as Policy exposing (Decision(..), Risk(..))
+
+-- | What a command does, as far as the firewall can tell.
+type Kind
+    = Read
+    | Write String
+    | Forbidden String
+
+
+kindText : Kind -> String
+kindText kind =
+    case kind of
+
+        Read ->
+            "read-only"
+
+        Write reason ->
+            "writes: " ++ reason
+
+        Forbidden reason ->
+            "forbidden: " ++ reason
+
+
+-- | The typed action for a proposed command. The risk tag comes from the
+-- firewall's own reading of the text, never from the model.
+propose : String -> Policy.Action
+propose command =
+    let
+        risk =
+            case classify command of
+
+                Read ->
+                    Low
+
+                Write _ ->
+                    Medium
+
+                Forbidden _ ->
+                    High
+    in
+        Policy.action "shell.run" command risk
+
+
+-- | The policy. Only `shell.run` actions are known.
+firewall : Policy.Action -> Decision
+firewall act =
+    if act.name /= "shell.run" then
+        Deny ("unknown action " ++ act.name)
+
+    else
+        case classify act.args of
+
+            Read ->
+                Allow
+
+            Write reason ->
+                NeedsApproval reason
+
+            Forbidden reason ->
+                Deny reason
+
+
+-- | Classify a command line.
+classify : String -> Kind
+classify raw =
+    let
+        command = String.trim raw
+    in
+        if String.isEmpty command then
+            Forbidden "the command is empty"
+
+        else
+            case forbiddenReason command of
+
+                Just reason ->
+                    Forbidden reason
+
+                Nothing ->
+                    combine command (List.map segmentKind (segments command))
+
+
+-- A write that reaches outside the folder is refused; any other write needs
+-- approval.
+combine : String -> List Kind -> Kind
+combine command kinds =
+    case List.filterMap forbiddenOf kinds |> List.head of
+
+        Just reason ->
+            Forbidden reason
+
+        Nothing ->
+            case List.filterMap writeOf kinds |> List.head of
+
+                Just reason ->
+                    if escapes command then
+                        Forbidden "it writes outside this folder"
+
+                    else
+                        Write reason
+
+                Nothing ->
+                    if redirects command then
+                        if escapes command then
+                            Forbidden "it writes outside this folder"
+
+                        else
+                            Write "it redirects output into a file"
+
+                    else
+                        Read
+
+
+forbiddenOf : Kind -> Maybe String
+forbiddenOf kind =
+    case kind of
+
+        Forbidden reason ->
+            Just reason
+
+        _ ->
+            Nothing
+
+
+writeOf : Kind -> Maybe String
+writeOf kind =
+    case kind of
+
+        Write reason ->
+            Just reason
+
+        _ ->
+            Nothing
+
+
+-- ── Whole-command rules ─────────────────────────────────────────────
+forbiddenReason : String -> Maybe String
+forbiddenReason command =
+    let
+        rules =
+            [ ( "(^|[;&|(\\s])(sudo|su|doas|pkexec)(\\s|$)"
+              , "it runs as another user"
+              )
+            , ( "(curl|wget|fetch)\\b[^|]*\\|\\s*(sudo\\s+)?(sh|bash|zsh|dash|ksh|fish|python3?|perl|ruby|node)\\b"
+              , "it pipes a download into an interpreter"
+              )
+            , ( "\\|\\s*(sh|bash|zsh|dash|ksh|fish)(\\s|$)"
+              , "it pipes text into a shell"
+              )
+            , ( ":\\(\\)\\s*\\{", "it is a fork bomb" )
+            , ( ">\\s*/dev/(sd|disk|nvme|hd)", "it writes to a disk device" )
+            , ( "(^|[;&|\\s])(mkfs[.a-z0-9]*|dd|shred|fdisk|diskutil|parted|shutdown|reboot|halt|poweroff|kill|killall|pkill|launchctl|systemctl|service|crontab|chown|chgrp|passwd|useradd|userdel|visudo|mount|umount|iptables|nvram|csrutil|spctl)(\\s|$)"
+              , "it changes the system"
+              )
+            ]
+    in
+        rules |> List.filter (\( pattern, _ ) -> Regex.match pattern command)
+            |> List.map (\( _, reason ) -> reason)
+            |> List.head
+
+
+-- A path outside the folder: an absolute path other than /dev/null, the home
+-- directory, or a parent directory.
+escapes : String -> Bool
+escapes command =
+    command |> String.words |> List.map unquote |> List.any escapingWord
+
+
+escapingWord : String -> Bool
+escapingWord word =
+    let
+        path =
+            if String.contains "=" word then
+                String.split "=" word |> List.drop 1 |> String.join "="
+
+            else
+                word
+    in
+        (String.startsWith "/" path && not (String.startsWith "/dev/null" path))
+            || String.startsWith "~" path
+            || String.startsWith "$HOME" path
+            || path == ".."
+            || String.startsWith "../" path
+            || String.contains "/../" path
+            || String.endsWith "/.." path
+
+
+-- A redirect into a file (`>` or `>>`), other than into /dev/null or
+-- between streams (`2>&1`).
+redirects : String -> Bool
+redirects command =
+    let
+        harmless =
+            command |> Regex.replace "[0-9]?>>?\\s*/dev/null" " "
+                |> Regex.replace "[0-9]?>&[0-9]" " "
+    in
+        String.contains ">" (stripQuoted harmless)
+
+
+-- Text inside quotes is an argument, never an operator.
+stripQuoted : String -> String
+stripQuoted s =
+    s |> Regex.replace "'[^']*'" "''" |> Regex.replace "\"[^\"]*\"" "\"\""
+
+
+unquote : String -> String
+unquote word =
+    word |> String.replace "'" "" |> String.replace "\"" ""
+
+
+-- ── Segments ────────────────────────────────────────────────────────
+-- The simple commands of a pipeline or a list (`|`, `&&`, `||`, `;`).
+segments : String -> List (List String)
+segments command =
+    stripQuoted command |> Regex.split "\\|\\||&&|;|\\||\\(|\\)"
+        |> List.map (\s -> String.words s)
+        |> List.filter (\ws -> not (List.isEmpty ws))
+        |> List.map (\ws -> List.filter (\w -> not (isAssignment w)) ws)
+        |> List.filter (\ws -> not (List.isEmpty ws))
+
+
+isAssignment : String -> Bool
+isAssignment word =
+    Regex.match "^[A-Za-z_][A-Za-z0-9_]*=" word
+
+
+segmentKind : List String -> Kind
+segmentKind words =
+    case words of
+
+        [] ->
+            Read
+
+        program :: args ->
+            programKind (baseName program) args
+
+
+baseName : String -> String
+baseName program =
+    String.split "/" program |> List.reverse |> List.head
+        |> Maybe.withDefault program
+
+
+flags : List String -> List String
+flags args =
+    List.filter (\a -> String.startsWith "-" a) args
+
+
+operands : List String -> List String
+operands args =
+    List.filter (\a -> not (String.startsWith "-" a)) args
+
+
+hasFlag : List String -> List String -> Bool
+hasFlag names args =
+    List.any (\a -> List.member a names) args
+
+
+programKind : String -> List String -> Kind
+programKind program args =
+    if String.contains "$(" program || String.contains "`" program then
+        Write "it runs a command it builds at run time"
+
+    else if List.member program readOnly then
+        Read
+
+    else if List.member program writers then
+        Write (program ++ " changes files")
+
+    else
+        case program of
+
+            "find" ->
+                if hasFlag
+                    [ "-delete"
+                    , "-exec"
+                    , "-execdir"
+                    , "-ok"
+                    , "-okdir"
+                    , "-fprint"
+                    , "-fprintf"
+                    , "-fls"
+                    ]
+                    args then
+                    Write "find runs an action on each file"
+
+                else
+                    Read
+
+            "fd" ->
+                if hasFlag [ "-x", "--exec", "-X", "--exec-batch" ] args then
+                    Write "fd runs a command on each file"
+
+                else
+                    Read
+
+            "fdfind" ->
+                programKind "fd" args
+
+            "sort" ->
+                if List.any
+                    (\a ->
+                        String.startsWith "-o" a
+                            || String.startsWith "--output" a)
+                    args then
+                    Write "sort writes its output to a file"
+
+                else
+                    Read
+
+            "uniq" ->
+                if List.length (operands args) >= 2 then
+                    Write "uniq writes its output to a file"
+
+                else
+                    Read
+
+            "sed" ->
+                if List.any
+                    (\a ->
+                        String.startsWith "-i" a
+                            || String.startsWith "--in-place" a
+                            || (String.startsWith "-" a
+                                   && not (String.startsWith "--" a)
+                                   && String.contains "i" a))
+                    args then
+                    Write "sed edits a file in place"
+
+                else
+                    Read
+
+            "xargs" ->
+                case dropXargsFlags args of
+
+                    [] ->
+                        Read
+
+                    next :: rest ->
+                        programKind (baseName next) rest
+
+            "env" ->
+                case operands args of
+
+                    [] ->
+                        Read
+
+                    next :: rest ->
+                        programKind (baseName next) rest
+
+            "sysctl" ->
+                if List.any (\a -> a == "-w" || String.contains "=" a) args then
+                    Forbidden "it changes the system"
+
+                else
+                    Read
+
+            "eval" ->
+                Write "it runs a command it builds at run time"
+
+            "exec" ->
+                Write "it replaces the shell"
+
+            _ ->
+                Write ("the firewall does not know " ++ program)
+
+
+-- xargs flags that take a value.
+dropXargsFlags : List String -> List String
+dropXargsFlags args =
+    case args of
+
+        [] ->
+            []
+
+        a :: rest ->
+            if List.member a [ "-I", "-n", "-P", "-L", "-d", "-E", "-s" ] then
+                dropXargsFlags (List.drop 1 rest)
+
+            else if String.startsWith "-" a then
+                dropXargsFlags rest
+
+            else
+                args
+
+
+readOnly : List String
+readOnly =
+    [ "grep"
+    , "egrep"
+    , "fgrep"
+    , "rg"
+    , "ls"
+    , "wc"
+    , "head"
+    , "tail"
+    , "cat"
+    , "cut"
+    , "tr"
+    , "du"
+    , "df"
+    , "stat"
+    , "file"
+    , "echo"
+    , "printf"
+    , "pwd"
+    , "basename"
+    , "dirname"
+    , "realpath"
+    , "which"
+    , "date"
+    , "tree"
+    , "nl"
+    , "column"
+    , "comm"
+    , "diff"
+    , "cmp"
+    , "md5"
+    , "md5sum"
+    , "shasum"
+    , "sha256sum"
+    , "cd"
+    , "true"
+    , "test"
+    , "["
+    , "rev"
+    , "tac"
+    , "paste"
+    , "fold"
+    , "expand"
+    , "uname"
+    , "whoami"
+    , "hostname"
+    , "jq"
+    , "less"
+    , "more"
+    , "od"
+    , "hexdump"
+    , "xxd"
+    , "strings"
+    , "seq"
+    , "nproc"
+    , "free"
+    , "vm_stat"
+    , "uptime"
+    ]
+
+
+writers : List String
+writers =
+    [ "mkdir"
+    , "rmdir"
+    , "cp"
+    , "mv"
+    , "touch"
+    , "rm"
+    , "ln"
+    , "tar"
+    , "zip"
+    , "unzip"
+    , "gzip"
+    , "gunzip"
+    , "bzip2"
+    , "xz"
+    , "tee"
+    , "chmod"
+    , "truncate"
+    , "install"
+    , "rsync"
+    , "split"
+    , "awk"
+    , "perl"
+    , "python"
+    , "python3"
+    , "curl"
+    , "wget"
+    , "git"
+    , "open"
+    , "xdg-open"
+    ]

@@ -105,6 +105,10 @@ fn internal_runtime_bases(module: &str) -> &'static [&'static str] {
         // builds the `ConnectionState` from the two Ints it delivers. A bare
         // `Sub.connectionCodes` is not a user surface.
         "Sub" => &["connectionCodes"],
+        // `rt.Math_minFloatT` / `Math_maxFloatT`: the Float twins the lowerer
+        // picks for `Math.min` / `Math.max` over two Floats
+        // (lower.rs `kernel_typed_return_alt`). A user calls `Math.min`.
+        "Math" => &["minFloat", "maxFloat"],
         _ => &[],
     }
 }

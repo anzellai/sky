@@ -1,0 +1,50 @@
+module Tickets exposing (tickets, limits, splitSpec, firstQuestion, versions)
+
+{-| The support-ticket dataset: where it comes from, how it is cleaned, how it
+is split and where its versions are kept. `Main` and the tests share it.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+import Std.Ai.Dataset as Dataset exposing (Chat, Dataset)
+import Std.Ai.Dataset.Scrub as Scrub
+
+
+-- | The tickets, read from JSONL, with personal data scrubbed and repeated
+-- questions dropped. Nothing is read until the dataset is used.
+tickets : Dataset Chat
+tickets =
+    Dataset.fromJsonl Dataset.chatCodec "data/tickets.jsonl"
+        |> Dataset.scrub (Scrub.forChat Scrub.defaults)
+        |> Dataset.dedupeBy firstQuestion
+
+
+-- | The first user message: the key for dedupe and for the split.
+firstQuestion : Chat -> String
+firstQuestion chat =
+    chat.messages |> List.filter (\m -> m.role == "user") |> List.head
+        |> Maybe.map (\m -> String.toLower (String.trim m.content))
+        |> Maybe.withDefault ""
+
+
+-- | Each conversation: at most 512 tokens and 2 to 8 turns, with no issue.
+limits : Dataset.Limits
+limits =
+    Dataset.limits |> Dataset.withMaxTokens 512 |> Dataset.withMaxTurns 8
+
+
+-- | 6 / 2 / 2 by the first question, seed 2026.
+splitSpec : Dataset.SplitSpec
+splitSpec =
+    { train = 6, eval = 2, test = 2, seed = 2026 }
+
+
+-- | Versions live under `.sky/ai/datasets/tickets/`, one data file and one
+-- manifest per digest.
+versions : Dataset.Folder
+versions =
+    Dataset.folder ".sky/ai/datasets" "tickets"
+        |> Dataset.withConsentBasis "contract: support terms 2026"
+        |> Dataset.withRetention "P2Y"

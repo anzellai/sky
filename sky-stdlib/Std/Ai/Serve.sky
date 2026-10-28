@@ -1,0 +1,1403 @@
+-- | Std.Ai.Serve — the GPU serving tier: one base model and many fine-tuned
+-- LoRA adapters on one GPU, behind a service token, following the registry's
+-- aliases.
+--
+-- ```elm
+-- import Std.Ai.Serve as Serve
+--
+-- tier : Serve.Tier
+-- tier =
+--     Serve.tier Serve.Vllm Serve.devBase
+--         |> Serve.withAdapters [ "support-lora@prod", "support-lora@qa" ]
+--
+-- main =
+--     Task.run (Serve.run tier)
+-- ```
+--
+-- `run` is the tier's main. It stages the base model's pinned files (each
+-- checked against its digest), then stands in front of vLLM, which runs next
+-- to it on the same machine with `--enable-lora` and runtime adapter loading.
+-- The tier:
+--
+--   * serves the OpenAI-compatible routes (`/v1/chat/completions`,
+--     `/v1/completions`, `/v1/embeddings`, `/v1/models`) behind the service
+--     token (`withToken`, `SKY_AI_SERVE_TOKEN`), compared in constant time;
+--   * maps a request's `model` to a resident adapter. An adapter's name is
+--     its registry version's served name, `<name>-v<n>` (what an app's
+--     `Endpoint` sends for `registry:<name>@<alias>`). A version that is not
+--     resident is loaded on demand; the least recently used adapter no alias
+--     pins is evicted when the tier holds `withMaxAdapters`;
+--   * reads the registry's pointer objects in its store (`withRegistry`,
+--     `SKY_AI_REGISTRY`), never the app's database, and hot-loads a promoted
+--     version, unloading the previous one only once its requests finish;
+--   * answers `/health` ready only when vLLM is up and every alias is loaded,
+--     and `/metrics` with its own counters and vLLM's queue and KV-cache use.
+--
+-- An adapter trained on another base is `AdapterMismatch`: each version's
+-- manifest records the original weights it was trained on (`baseId`), and
+-- the tier serves only adapters of its own base.
+--
+-- **Deploying.** `Target` is where the tier runs. `cloudRun` is Google Cloud
+-- Run with one NVIDIA L4 that scales to zero: the tier and vLLM are two
+-- containers of one instance sharing an in-memory volume, the stock vLLM
+-- image is pulled by Google (never rebuilt), and only the small tier image
+-- is yours. `render` gives the service (Cloud Run Admin API v2 JSON, the same
+-- as Knative YAML) and the tier's Dockerfile; `deploy` creates or updates
+-- the service and waits until it is ready; `teardown` deletes it. `sky ai
+-- serve --image`, `sky ai deploy` and `sky ai teardown` run them. See
+-- `docs/ai/serve.md` and `docs/ai/deploy-gcp.md`.
+module Std.Ai.Serve exposing
+    ( Engine(..)
+    , Tier
+    , TierSettings
+    , tier
+    , devBase
+    , withBaseName
+    , withAdapters
+    , withMaxAdapters
+    , withMaxModelLength
+    , withGpuMemoryFraction
+    , withBind
+    , withToken
+    , withAliasPolling
+    , withRegistry
+    , withEngineUrl
+    , withModelsDir
+    , settings
+    , baseIdOf
+    , basePath
+    , vllmArgs
+    , Setting
+    , describe
+    , TierAdapter
+    , adapterFrom
+    , run
+    , Target
+    , TargetSettings
+    , cloudRun
+    , withTierImage
+    , withEngineImage
+    , withMinInstances
+    , withMaxInstances
+    , withServiceAccount
+    , withInvokers
+    , withTokenSecret
+    , withRegistryUrl
+    , withTimeoutSeconds
+    , withLabels
+    , targetSettings
+    , defaultEngineImage
+    , tierBaseImage
+    , Rendered
+    , render
+    , serviceJson
+    , knativeYaml
+    , dockerfile
+    , dockerfileWith
+    , Deployment
+    , deploy
+    , teardown
+    , serviceName
+    )
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Ffi as Ffi
+import Sky.Core.Task as Task
+import Sky.Core.Math as Math
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.Secret as Secret exposing (Secret)
+import Sky.Core.Time as Time
+import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Json.Decode as JsonD
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Store as Store exposing (Store)
+import Std.Ai.Registry as Registry
+import Std.Ai.Train as Train
+import Std.Ai.Cloud.Google as Google
+
+-- ── The tier ────────────────────────────────────────────────────────
+-- | The engine behind the tier. vLLM serves many LoRA adapters of one base
+-- from one GPU and loads them at run time. (llama.cpp serves one adapter per
+-- engine on a laptop: that is `Std.Ai.Local`.)
+type Engine
+    = Vllm
+
+-- | What a tier holds. Read it with `settings`.
+type alias TierSettings =
+    { engine : Engine
+    , base : Train.Snapshot
+    , baseName : String
+    , adapters : List String
+    , maxAdapters : Int
+    , maxModelLength : Int
+    , gpuFraction : Float
+    , bind : String
+    , token : Maybe Secret
+    , pollS : Int
+    , registry : Maybe Store
+    , engineUrl : String
+    , modelsDir : String
+    }
+
+-- | A GPU tier: an engine, a pinned base model and the adapters it serves.
+type Tier
+    = Tier TierSettings
+
+
+-- | A tier on a base model's pinned files (the original 16-bit weights vLLM
+-- loads). The base is served as `withBaseName` (default: the repository's
+-- name in lower case).
+tier : Engine -> Train.Snapshot -> Tier
+tier engine base =
+    Tier
+        { engine = engine
+        , base = base
+        , baseName =
+            String.split "/" base.repo |> List.reverse |> List.head
+                |> Maybe.withDefault base.repo
+                |> String.toLower
+        , adapters = []
+        , maxAdapters = -1
+        , maxModelLength = 4096
+        , gpuFraction = 0.85
+        , bind = ""
+        , token = Nothing
+        , pollS = -1
+        , registry = Nothing
+        , engineUrl = ""
+        , modelsDir = ""
+        }
+
+
+-- | The development base's original weights: Qwen2.5 0.5B Instruct
+-- (Apache-2.0) at the commit `Train.devBase` names, in bfloat16 (about 1 GB).
+-- An adapter trained on the development base (LoRA, or QLoRA on its 4-bit
+-- snapshot) serves on it.
+devBase : Train.Snapshot
+devBase =
+    { repo = "Qwen/Qwen2.5-0.5B-Instruct"
+    , revision = "7ae557604adf67be50417f59c2c2f167def9a775"
+    , files =
+        [ { path = "config.json"
+          , sha256 =
+              "18e18afcaccafade98daf13a54092927904649e1dd4eba8299ab717d5d94ff45"
+          }
+        , { path = "generation_config.json"
+          , sha256 =
+              "e558847a8b4402616f1273797b015104dc266fe4b520056fca88823ba8f8ebe6"
+          }
+        , { path = "model.safetensors"
+          , sha256 =
+              "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe"
+          }
+        , { path = "tokenizer.json"
+          , sha256 =
+              "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539"
+          }
+        , { path = "tokenizer_config.json"
+          , sha256 =
+              "5b5d4f65d0acd3b2d56a35b56d374a36cbc1c8fa5cf3b3febbbfabf22f359583"
+          }
+        , { path = "vocab.json"
+          , sha256 =
+              "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+          }
+        , { path = "merges.txt"
+          , sha256 =
+              "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3"
+          }
+        ]
+    }
+
+
+update : (TierSettings -> TierSettings) -> Tier -> Tier
+update f (Tier t) =
+    Tier (f t)
+
+
+-- | The name requests use for the base itself.
+withBaseName : String -> Tier -> Tier
+withBaseName n =
+    update (\t -> { t | baseName = n })
+
+
+-- | The registry aliases the tier keeps loaded: `"support-lora@prod"`.
+-- Env: `SKY_AI_SERVE_ADAPTERS` (a comma list).
+withAdapters : List String -> Tier -> Tier
+withAdapters refs =
+    update (\t -> { t | adapters = refs })
+
+
+-- | Adapters resident at once (vLLM's `--max-loras`), at least one per
+-- alias. Env: `SKY_AI_SERVE_MAX_ADAPTERS`. Default: 4.
+withMaxAdapters : Int -> Tier -> Tier
+withMaxAdapters n =
+    update (\t -> { t | maxAdapters = n })
+
+
+-- | vLLM's `--max-model-len`. Default: 4096.
+withMaxModelLength : Int -> Tier -> Tier
+withMaxModelLength n =
+    update (\t -> { t | maxModelLength = n })
+
+
+-- | The share of GPU memory vLLM may use (`--gpu-memory-utilization`).
+-- Default: 0.85.
+withGpuMemoryFraction : Float -> Tier -> Tier
+withGpuMemoryFraction f =
+    update (\t -> { t | gpuFraction = f })
+
+
+-- | Where the tier listens. Env: `SKY_AI_SERVE_BIND`. Default:
+-- `0.0.0.0:8080`. A tier on all interfaces needs a token.
+withBind : String -> Tier -> Tier
+withBind b =
+    update (\t -> { t | bind = b })
+
+
+-- | The service token callers send as `Authorization: Bearer`. Env:
+-- `SKY_AI_SERVE_TOKEN` (on Cloud Run, a Secret Manager reference:
+-- `withTokenSecret`).
+withToken : Secret -> Tier -> Tier
+withToken s =
+    update (\t -> { t | token = Just s })
+
+
+-- | How often, in seconds, the tier reads its aliases' pointers. Env:
+-- `SKY_AI_SERVE_POLL_S`. Default: 30.
+withAliasPolling : Int -> Tier -> Tier
+withAliasPolling s =
+    update (\t -> { t | pollS = s })
+
+
+-- | The registry's store, whose pointer objects the tier reads. Default: the
+-- store at `SKY_AI_REGISTRY`.
+withRegistry : Store -> Tier -> Tier
+withRegistry st =
+    update (\t -> { t | registry = Just st })
+
+
+-- | Where vLLM listens. Env: `SKY_AI_SERVE_ENGINE_URL`. Default:
+-- `http://127.0.0.1:8000`.
+withEngineUrl : String -> Tier -> Tier
+withEngineUrl u =
+    update (\t -> { t | engineUrl = u })
+
+
+-- | The directory the tier shares with vLLM (the base and the adapters).
+-- Env: `SKY_AI_SERVE_MODELS`. Default: `/models`.
+withModelsDir : String -> Tier -> Tier
+withModelsDir d =
+    update (\t -> { t | modelsDir = d })
+
+
+-- | What the tier holds.
+settings : Tier -> TierSettings
+settings (Tier t) =
+    t
+
+
+-- | The base's id, `<org>/<repo>@<commit>`: what an adapter must have been
+-- trained on.
+baseIdOf : Tier -> String
+baseIdOf (Tier t) =
+    t.base.repo ++ "@" ++ t.base.revision
+
+
+-- | Where the base's files are staged below the AI home
+-- (`<home>/bases/<org>--<repo>@<commit>`): vLLM's `--model`.
+basePath : String -> Tier -> String
+basePath home (Tier t) =
+    home ++ "/bases/" ++ String.join "--" (String.split "/" t.base.repo) ++ "@"
+        ++ t.base.revision
+
+
+-- | vLLM's arguments for the tier, with the base staged below the AI home
+-- `home`. Pure. Runtime adapter loading needs
+-- `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True` in vLLM's environment.
+vllmArgs : String -> Tier -> List String
+vllmArgs home (Tier t) =
+    [ "--model"
+    , basePath home (Tier t)
+    , "--served-model-name"
+    , t.baseName
+    , "--enable-lora"
+    , "--max-loras"
+    , String.fromInt (maxAdaptersOf t)
+    , "--max-lora-rank"
+    , "64"
+    , "--max-cpu-loras"
+    , String.fromInt (2 * maxAdaptersOf t)
+    , "--max-model-len"
+    , String.fromInt t.maxModelLength
+    , "--gpu-memory-utilization"
+    , String.fromFloat t.gpuFraction
+    , "--host"
+    , "0.0.0.0"
+    , "--port"
+    , "8000"
+    , "--enforce-eager"
+    ]
+
+
+maxAdaptersOf : TierSettings -> Int
+maxAdaptersOf t =
+    Math.max
+        (Math.max 1 (List.length t.adapters))
+        (if t.maxAdapters > 0 then
+            t.maxAdapters
+
+        else
+            4)
+
+-- ── Running ─────────────────────────────────────────────────────────
+-- | One resolved setting and where it came from (`env`, `code`, `default`).
+-- The token's value is never shown.
+type alias Setting =
+    { key : String
+    , name : String
+    , value : String
+    , source : String
+    }
+
+type alias RawTier =
+    { engine : String
+    , bind : String
+    , engineUrl : String
+    , baseId : String
+    , baseName : String
+    , adapters : List String
+    , maxAdapters : Int
+    , pollS : Int
+    , modelsDir : String
+    , hasToken : Bool
+    , token : Secret
+    }
+
+-- The record the runtime runs: the raw tier and the resolver.
+type alias RunTier =
+    { engine : String
+    , bind : String
+    , engineUrl : String
+    , baseId : String
+    , baseName : String
+    , adapters : List String
+    , maxAdapters : Int
+    , pollS : Int
+    , modelsDir : String
+    , hasToken : Bool
+    , token : Secret
+    , resolve : String -> Task Error TierAdapter
+    }
+
+
+resolveRaw : RawTier -> Task Error (List Setting)
+resolveRaw =
+    Ffi.kernel "Ai_serveResolve"
+
+
+runRaw : RunTier -> Task Error ()
+runRaw =
+    Ffi.kernel "Ai_serveRun"
+
+
+engineText : Engine -> String
+engineText e =
+    case e of
+
+        Vllm ->
+            "vllm"
+
+
+raw : TierSettings -> RawTier
+raw t =
+    { engine = engineText t.engine
+    , bind = t.bind
+    , engineUrl = t.engineUrl
+    , baseId = t.base.repo ++ "@" ++ t.base.revision
+    , baseName = t.baseName
+    , adapters = t.adapters
+    , maxAdapters = t.maxAdapters
+    , pollS = t.pollS
+    , modelsDir = t.modelsDir
+    , hasToken = t.token /= Nothing
+    , token = Maybe.withDefault (Secret.fromString "") t.token
+    }
+
+
+-- | The tier's settings, each from the operator's variable, else the code,
+-- else the default, without starting anything.
+describe : Tier -> Task Error (List Setting)
+describe (Tier t) =
+    resolveRaw (raw t)
+
+-- | An adapter as the tier loads it: its served name, the base it was
+-- trained on, and the local paths of its PEFT weights and
+-- `adapter_config.json`, each checked against its digest.
+type alias TierAdapter =
+    { ref : String
+    , label : String
+    , servedName : String
+    , baseId : String
+    , digest : String
+    , peft : String
+    , config : String
+    }
+
+
+-- | Resolve `<name>@<alias>` or `<name>@v<n>` through a store's pointer
+-- objects (`Registry.publishPointers`) and fetch the version's PEFT files.
+-- A version without them (registered before the companions, or a GGUF-only
+-- adapter) cannot be served by vLLM: `InvalidSetting`.
+adapterFrom : Store -> String -> Task Error TierAdapter
+adapterFrom st ref =
+    case String.split "@" ref of
+
+        [ name, which ] ->
+            (if String.startsWith "v" which
+                && String.toInt (String.dropLeft 1 which) /= Nothing then
+                Task.succeed
+                    (String.toInt (String.dropLeft 1 which)
+                        |> Maybe.withDefault 0)
+
+            else
+                Registry.readPointer st name which
+                    |> Task.andThen
+                           (\p ->
+                               case p of
+
+                                   Just ptr ->
+                                       Task.succeed ptr.number
+
+                                   Nothing ->
+                                       Task.fail
+                                           (Failure.toError
+                                               (NotRegistered { ref = ref }))))
+                |> Task.andThen (\n -> Registry.readManifest st name n)
+                |> Task.andThen
+                       (\found ->
+                           case found of
+
+                               Nothing ->
+                                   Task.fail
+                                       (Failure.toError
+                                           (NotRegistered { ref = ref }))
+
+                               Just m ->
+                                   if m.peft == "" || m.peftConfig == "" then
+                                       Task.fail
+                                           (Failure.toError
+                                               (InvalidSetting
+                                                   { setting = "adapter"
+                                                   , reason =
+                                                       m.label
+                                                           ++ " has no PEFT files in the registry; vLLM loads adapter_model.safetensors and adapter_config.json (register a trained adapter: its companions carry them)"
+                                                   }))
+
+                                   else
+                                       Task.map2
+                                           (\peft config ->
+                                               { ref = ref
+                                               , label = m.label
+                                               , servedName = m.servedName
+                                               , baseId = m.baseId
+                                               , digest = m.digest
+                                               , peft = peft
+                                               , config = config
+                                               })
+                                           (Store.fetch st m.peft)
+                                           (Store.fetch st m.peftConfig))
+
+        _ ->
+            Task.fail
+                (Failure.toError
+                    (InvalidSetting
+                        { setting = "adapter"
+                        , reason =
+                            ref ++ ": write <name>@<alias> or <name>@v<n>"
+                        }))
+
+
+-- | Run the tier: stage the base's files below the AI home (`SKY_AI_HOME`;
+-- on Cloud Run the shared volume), then serve until the process ends.
+run : Tier -> Task Error ()
+run (Tier t) =
+    (case t.registry of
+
+        Just st ->
+            Task.succeed st
+
+        Nothing ->
+            Store.configured "")
+        |> Task.andThen
+               (\st ->
+                   Train.provisionSnapshot t.base
+                       |> Task.andThen
+                              (\_ ->
+                                  let
+                                      r = raw t
+                                  in
+                                      runRaw
+                                          { engine = r.engine
+                                          , bind = r.bind
+                                          , engineUrl = r.engineUrl
+                                          , baseId = r.baseId
+                                          , baseName = r.baseName
+                                          , adapters = r.adapters
+                                          , maxAdapters = r.maxAdapters
+                                          , pollS = r.pollS
+                                          , modelsDir = r.modelsDir
+                                          , hasToken = r.hasToken
+                                          , token = r.token
+                                          , resolve = adapterFrom st
+                                          }))
+
+-- ── Deployment targets ──────────────────────────────────────────────
+-- | Where a tier is deployed.
+type alias TargetSettings =
+    { project : String
+    , region : String
+    , service : String
+    , tierImage : String
+    , engineImage : String
+    , minInstances : Int
+    , maxInstances : Int
+    , serviceAccount : String
+    , invokers : List String
+    , tokenSecret : String
+    , registryUrl : String
+    , timeoutSeconds : Int
+    , labels : List ( String, String )
+    }
+
+-- | A deployment target. `cloudRun` is the one shipped.
+type Target
+    = CloudRun TargetSettings
+
+
+-- | vLLM's OpenAI server image, pinned by digest: vllm/vllm-openai
+-- v0.31.0-x86_64, the CUDA 13 build (read from Docker Hub on 2026-10-14).
+-- Cloud Run's L4 instances have NVIDIA driver 580 (CUDA 13.0); the cu129
+-- build failed there at start (its torchcodec needs libnvrtc.so.13). Point
+-- `withEngineImage` at an Artifact Registry remote repository of Docker Hub
+-- to pull it in your region with the same digest.
+defaultEngineImage : String
+defaultEngineImage =
+    "docker.io/vllm/vllm-openai@sha256:a4a4c0437bf7240089da5f08aa370c4aee17ae5290f7a3b468825ee26c4c3a6b"
+
+
+-- | The tier image's base: distroless static, nonroot, linux/amd64, pinned by
+-- digest (read on 2026-10-12). The tier is a static Go binary.
+tierBaseImage : String
+tierBaseImage =
+    "gcr.io/distroless/static-debian12:nonroot@sha256:52dcfbabb7457ea47c82f6e13af8c8a4a1d9f7b0145142b3ecab20f2b888411d"
+
+
+-- | Google Cloud Run with one NVIDIA L4, scaling to zero: `{ project,
+-- region, service }`. The project and region fall back to
+-- `SKY_AI_SERVE_PROJECT` and `SKY_AI_SERVE_REGION` (`deploy` reads them).
+cloudRun :
+    { project : String
+    , region : String
+    , service : String
+    }
+    -> Target
+cloudRun c =
+    CloudRun
+        { project = c.project
+        , region = c.region
+        , service = c.service
+        , tierImage = ""
+        , engineImage = defaultEngineImage
+        , minInstances = 0
+        , maxInstances = 1
+        , serviceAccount = ""
+        , invokers = []
+        , tokenSecret = ""
+        , registryUrl = ""
+        , timeoutSeconds = 300
+        , labels = []
+        }
+
+
+updateTarget : (TargetSettings -> TargetSettings) -> Target -> Target
+updateTarget f (CloudRun t) =
+    CloudRun (f t)
+
+
+-- | The tier's image (yours, built by `sky ai image build --tier`), pinned
+-- by digest. Env: `SKY_AI_SERVE_IMAGE`.
+withTierImage : String -> Target -> Target
+withTierImage i =
+    updateTarget (\t -> { t | tierImage = i })
+
+
+-- | vLLM's image, pinned by digest. Default: `defaultEngineImage`.
+withEngineImage : String -> Target -> Target
+withEngineImage i =
+    updateTarget (\t -> { t | engineImage = i })
+
+
+-- | Instances kept running when idle. Default: 0 (scale to zero: nothing is
+-- billed while idle, and the first request waits for a cold start).
+withMinInstances : Int -> Target -> Target
+withMinInstances n =
+    updateTarget (\t -> { t | minInstances = n })
+
+
+-- | The most instances (each with one L4). Default: 1.
+withMaxInstances : Int -> Target -> Target
+withMaxInstances n =
+    updateTarget (\t -> { t | maxInstances = n })
+
+
+-- | The service account the tier runs as: it needs read access to the
+-- registry's bucket and to the token's secret.
+withServiceAccount : String -> Target -> Target
+withServiceAccount sa =
+    updateTarget (\t -> { t | serviceAccount = sa })
+
+
+-- | Who may call the service (`roles/run.invoker`): the app's service
+-- account, `serviceAccount:app@p.iam.gserviceaccount.com`. The service is
+-- never public.
+withInvokers : List String -> Target -> Target
+withInvokers ms =
+    updateTarget (\t -> { t | invokers = ms })
+
+
+-- | The Secret Manager secret holding the service token (its latest
+-- version), mounted as `SKY_AI_SERVE_TOKEN`. The token is never in the
+-- service spec as text.
+withTokenSecret : String -> Target -> Target
+withTokenSecret name =
+    updateTarget (\t -> { t | tokenSecret = name })
+
+
+-- | The registry's store location the tier reads (`gs://bucket/prefix`).
+withRegistryUrl : String -> Target -> Target
+withRegistryUrl u =
+    updateTarget (\t -> { t | registryUrl = u })
+
+
+-- | The longest a request may take, in seconds. Default: 300.
+withTimeoutSeconds : Int -> Target -> Target
+withTimeoutSeconds s =
+    updateTarget (\t -> { t | timeoutSeconds = s })
+
+
+-- | Labels for the service, beside Sky's own (`sky-managed`,
+-- `sky-deployment`, `sky-kind`): a team, a cost centre.
+withLabels : List ( String, String ) -> Target -> Target
+withLabels ls =
+    updateTarget (\t -> { t | labels = t.labels ++ ls })
+
+
+-- | Where a target deploys.
+targetSettings : Target -> TargetSettings
+targetSettings (CloudRun t) =
+    t
+
+
+-- | The service's full resource name.
+serviceName : Target -> String
+serviceName (CloudRun t) =
+    "projects/" ++ t.project ++ "/locations/" ++ t.region ++ "/services/"
+        ++ t.service
+
+-- ── Rendering ───────────────────────────────────────────────────────
+-- | What `render` gives: the Cloud Run service (Admin API v2 JSON), the same
+-- service as Knative YAML (for `gcloud run services replace`), and the tier
+-- image's Dockerfile.
+type alias Rendered =
+    { serviceJson : String
+    , knativeYaml : String
+    , dockerfile : String
+    }
+
+
+-- | The AI home inside the instance: below the shared volume, so vLLM reads
+-- the base the tier staged.
+modelsHome : String
+modelsHome =
+    "/models/home"
+
+
+labelsValue : TargetSettings -> JsonE.Value
+labelsValue t =
+    JsonE.object
+        ([ ( "sky-deployment", JsonE.string t.service )
+        , ( "sky-kind", JsonE.string "serve" )
+        , ( "sky-managed", JsonE.string "true" )
+        ]
+            ++ List.map (\( k, v ) -> ( k, JsonE.string v )) t.labels)
+
+
+env : String -> String -> JsonE.Value
+env k v =
+    JsonE.object [ ( "name", JsonE.string k ), ( "value", JsonE.string v ) ]
+
+
+tierEnv : TargetSettings -> TierSettings -> List JsonE.Value
+tierEnv t s =
+    [ env "ENV" "production"
+    , env "SKY_AI_HOME" modelsHome
+      -- The tier stages its base's pinned files at start (each checked
+      -- against its SHA-256). Fetching is off by default outside
+      -- development, and without this the tier exited NotProvisioned on
+      -- Cloud Run (live, 2026-10-14).
+    , env "SKY_AI_FETCH" "on"
+    , env "SKY_AI_SERVE_ENGINE" (engineText s.engine)
+    , env "SKY_AI_SERVE_BIND" "0.0.0.0:8080"
+    , env "SKY_AI_SERVE_ENGINE_URL" "http://127.0.0.1:8000"
+    , env "SKY_AI_SERVE_MODELS" "/models"
+    , env "SKY_AI_SERVE_ADAPTERS" (String.join "," s.adapters)
+    , env "SKY_AI_SERVE_MAX_ADAPTERS" (String.fromInt (maxAdaptersOf s))
+    ]
+        ++ (if t.registryUrl == "" then
+               []
+
+           else
+               [ env "SKY_AI_REGISTRY" t.registryUrl ])
+        ++ (if t.tokenSecret == "" then
+               []
+
+           else
+               [ JsonE.object
+                     [ ( "name", JsonE.string "SKY_AI_SERVE_TOKEN" )
+                     , ( "valueSource"
+                       , JsonE.object
+                             [ ( "secretKeyRef"
+                               , JsonE.object
+                                     [ ( "secret", JsonE.string t.tokenSecret )
+                                     , ( "version", JsonE.string "latest" )
+                                     ]
+                               )
+                             ]
+                       )
+                     ]
+               ])
+
+
+-- | The Cloud Run service for a tier (Admin API v2), pure. One instance holds
+-- two containers: `tier` (the ingress, port 8080) and `engine` (vLLM, one L4,
+-- started after the tier's startup probe passes, so the base is staged
+-- first). They share the in-memory volume `/models`.
+serviceJson : Target -> Tier -> String
+serviceJson (CloudRun t) (Tier s) =
+    let
+        volume =
+            JsonE.list
+                identity
+                [ JsonE.object
+                      [ ( "name", JsonE.string "models" )
+                      , ( "mountPath", JsonE.string "/models" )
+                      ]
+                ]
+        tierContainer =
+            JsonE.object
+                [ ( "name", JsonE.string "tier" )
+                , ( "image", JsonE.string t.tierImage )
+                , ( "ports"
+                  , JsonE.list
+                        identity
+                        [ JsonE.object
+                              [ ( "name", JsonE.string "http1" )
+                              , ( "containerPort", JsonE.int 8080 )
+                              ]
+                        ]
+                  )
+                , ( "env", JsonE.list identity (tierEnv t s) )
+                , ( "resources"
+                  , JsonE.object
+                        [ ( "limits"
+                          , JsonE.object
+                                [ ( "cpu", JsonE.string "1" )
+                                , ( "memory", JsonE.string "4Gi" )
+                                ]
+                          )
+                        ]
+                  )
+                , ( "volumeMounts", volume )
+                , ( "startupProbe"
+                  , JsonE.object
+                        [ ( "httpGet"
+                          , JsonE.object
+                                [ ( "path", JsonE.string "/startup" )
+                                , ( "port", JsonE.int 8080 )
+                                ]
+                          )
+                        , ( "periodSeconds", JsonE.int 2 )
+                        , ( "failureThreshold", JsonE.int 300 )
+                        ]
+                  )
+                ]
+        engineContainer =
+            JsonE.object
+                [ ( "name", JsonE.string "engine" )
+                , ( "image", JsonE.string t.engineImage )
+                , ( "command"
+                  , JsonE.list
+                        JsonE.string
+                        [ "python3"
+                        , "-m"
+                        , "vllm.entrypoints.openai.api_server"
+                        ]
+                  )
+                , ( "args"
+                  , JsonE.list JsonE.string (vllmArgs modelsHome (Tier s))
+                  )
+                , ( "env"
+                  , JsonE.list
+                        identity
+                        [ env "HF_HUB_OFFLINE" "1"
+                        , env "VLLM_ALLOW_RUNTIME_LORA_UPDATING" "True"
+                        , env "VLLM_NO_USAGE_STATS" "1"
+                        ]
+                  )
+                , ( "resources"
+                  , JsonE.object
+                        [ ( "limits"
+                          , JsonE.object
+                                [ ( "cpu", JsonE.string "4" )
+                                , ( "memory", JsonE.string "16Gi" )
+                                , ( "nvidia.com/gpu", JsonE.string "1" )
+                                ]
+                          )
+                        ]
+                  )
+                , ( "volumeMounts", volume )
+                , ( "dependsOn", JsonE.list JsonE.string [ "tier" ] )
+                , ( "startupProbe"
+                  , JsonE.object
+                        [ ( "httpGet"
+                          , JsonE.object
+                                [ ( "path", JsonE.string "/health" )
+                                , ( "port", JsonE.int 8000 )
+                                ]
+                          )
+                        , ( "periodSeconds", JsonE.int 5 )
+                        , ( "timeoutSeconds", JsonE.int 5 )
+                        , ( "failureThreshold", JsonE.int 240 )
+                        ]
+                  )
+                ]
+        account =
+            if t.serviceAccount == "" then
+                []
+
+            else
+                [ ( "serviceAccount", JsonE.string t.serviceAccount ) ]
+    in
+        JsonE.encode
+            0
+            (JsonE.object
+                [ ( "labels", labelsValue t )
+                , ( "invokerIamDisabled", JsonE.bool False )
+                , ( "template"
+                  , JsonE.object
+                        ([ ( "labels", labelsValue t )
+                        , ( "scaling"
+                          , JsonE.object
+                                [ ( "minInstanceCount"
+                                  , JsonE.int t.minInstances
+                                  )
+                                , ( "maxInstanceCount"
+                                  , JsonE.int t.maxInstances
+                                  )
+                                ]
+                          )
+                        , ( "timeout"
+                          , JsonE.string
+                                (String.fromInt t.timeoutSeconds ++ "s")
+                          )
+                        , ( "maxInstanceRequestConcurrency", JsonE.int 16 )
+                        , ( "gpuZonalRedundancyDisabled", JsonE.bool True )
+                        , ( "nodeSelector"
+                          , JsonE.object
+                                [ ( "accelerator", JsonE.string "nvidia-l4" ) ]
+                          )
+                        ]
+                            ++ account
+                            ++ [ ( "volumes"
+                                 , JsonE.list
+                                       identity
+                                       [ JsonE.object
+                                             [ ( "name", JsonE.string "models" )
+                                             , ( "emptyDir"
+                                               , JsonE.object
+                                                     [ ( "medium"
+                                                       , JsonE.string "MEMORY"
+                                                       )
+                                                     , ( "sizeLimit"
+                                                       , JsonE.string "6Gi"
+                                                       )
+                                                     ]
+                                               )
+                                             ]
+                                       ]
+                                 )
+                               , ( "containers"
+                                 , JsonE.list
+                                       identity
+                                       [ tierContainer, engineContainer ]
+                                 )
+                               ])
+                  )
+                ])
+
+
+-- | The same service as Knative YAML (`gcloud run services replace`).
+knativeYaml : Target -> Tier -> String
+knativeYaml (CloudRun t) (Tier s) =
+    let
+        q x = "\"" ++ x ++ "\""
+        envLines =
+            [ ( "ENV", "production" )
+            , ( "SKY_AI_HOME", modelsHome )
+            , ( "SKY_AI_SERVE_ENGINE", engineText s.engine )
+            , ( "SKY_AI_SERVE_BIND", "0.0.0.0:8080" )
+            , ( "SKY_AI_SERVE_ENGINE_URL", "http://127.0.0.1:8000" )
+            , ( "SKY_AI_SERVE_MODELS", "/models" )
+            , ( "SKY_AI_SERVE_ADAPTERS", String.join "," s.adapters )
+            , ( "SKY_AI_SERVE_MAX_ADAPTERS", String.fromInt (maxAdaptersOf s) )
+            ]
+                ++ (if t.registryUrl == "" then
+                       []
+
+                   else
+                       [ ( "SKY_AI_REGISTRY", t.registryUrl ) ])
+                |> List.map
+                       (\( k, v ) ->
+                           "        - name: " ++ k ++ "\n          value: "
+                               ++ q v)
+        secretLines =
+            if t.tokenSecret == "" then
+                []
+
+            else
+                [ "        - name: SKY_AI_SERVE_TOKEN\n          valueFrom:\n            secretKeyRef:\n              name: "
+                      ++ t.tokenSecret
+                      ++ "\n              key: latest"
+                ]
+        args =
+            vllmArgs modelsHome (Tier s) |> List.map (\a -> "        - " ++ q a)
+        account =
+            if t.serviceAccount == "" then
+                []
+
+            else
+                [ "      serviceAccountName: " ++ t.serviceAccount ]
+    in
+        String.join
+            "\n"
+            ([ "apiVersion: serving.knative.dev/v1"
+            , "kind: Service"
+            , "metadata:"
+            , "  name: " ++ t.service
+            , "  labels:"
+            , "    sky-managed: \"true\""
+            , "    sky-deployment: " ++ q t.service
+            , "    sky-kind: serve"
+            , "  annotations:"
+            , "    run.googleapis.com/invoker-iam-disabled: \"false\""
+            , "spec:"
+            , "  template:"
+            , "    metadata:"
+            , "      annotations:"
+            , "        autoscaling.knative.dev/minScale: "
+                  ++ q (String.fromInt t.minInstances)
+            , "        autoscaling.knative.dev/maxScale: "
+                  ++ q (String.fromInt t.maxInstances)
+            , "        run.googleapis.com/gpu-zonal-redundancy-disabled: \"true\""
+            , "        run.googleapis.com/container-dependencies: '{\"engine\":[\"tier\"]}'"
+            , "    spec:"
+            , "      containerConcurrency: 16"
+            , "      timeoutSeconds: " ++ String.fromInt t.timeoutSeconds
+            ]
+                ++ account
+                ++ [ "      nodeSelector:"
+                   , "        run.googleapis.com/accelerator: nvidia-l4"
+                   , "      volumes:"
+                   , "      - name: models"
+                   , "        emptyDir:"
+                   , "          medium: Memory"
+                   , "          sizeLimit: 6Gi"
+                   , "      containers:"
+                   , "      - name: tier"
+                   , "        image: " ++ t.tierImage
+                   , "        ports:"
+                   , "        - name: http1"
+                   , "          containerPort: 8080"
+                   , "        env:"
+                   ]
+                ++ envLines
+                ++ secretLines
+                ++ [ "        resources:"
+                   , "          limits:"
+                   , "            cpu: \"1\""
+                   , "            memory: 4Gi"
+                   , "        volumeMounts:"
+                   , "        - name: models"
+                   , "          mountPath: /models"
+                   , "        startupProbe:"
+                   , "          httpGet:"
+                   , "            path: /startup"
+                   , "            port: 8080"
+                   , "          periodSeconds: 2"
+                   , "          failureThreshold: 300"
+                   , "      - name: engine"
+                   , "        image: " ++ t.engineImage
+                   , "        command:"
+                   , "        - python3"
+                   , "        - -m"
+                   , "        - vllm.entrypoints.openai.api_server"
+                   , "        args:"
+                   ]
+                ++ args
+                ++ [ "        env:"
+                   , "        - name: HF_HUB_OFFLINE"
+                   , "          value: \"1\""
+                   , "        - name: VLLM_ALLOW_RUNTIME_LORA_UPDATING"
+                   , "          value: \"True\""
+                   , "        - name: VLLM_NO_USAGE_STATS"
+                   , "          value: \"1\""
+                   , "        resources:"
+                   , "          limits:"
+                   , "            cpu: \"4\""
+                   , "            memory: 16Gi"
+                   , "            nvidia.com/gpu: \"1\""
+                   , "        volumeMounts:"
+                   , "        - name: models"
+                   , "          mountPath: /models"
+                   , "        startupProbe:"
+                   , "          httpGet:"
+                   , "            path: /health"
+                   , "            port: 8000"
+                   , "          periodSeconds: 5"
+                   , "          timeoutSeconds: 5"
+                   , "          failureThreshold: 240"
+                   , ""
+                   ])
+
+
+-- | The tier image's Dockerfile: the static linux/amd64 tier binary (`app`,
+-- next to it in the build directory) on distroless, run as non-root.
+dockerfile : String
+dockerfile =
+    dockerfileWith []
+
+
+-- | The tier image's Dockerfile for a binary that takes arguments: the
+-- `sky ai` program is one (`dockerfileWith [ "serve" ]`, what
+-- `sky ai image build --tier` builds); a tier program of your own runs the
+-- tier from its `main` and takes none (`dockerfile`).
+dockerfileWith : List String -> String
+dockerfileWith args =
+    String.join
+        "\n"
+        [ "# The Std.Ai.Serve GPU tier. Build it in your own project:"
+        , "#   sky ai image build --tier --project <p> --region <r> --repo <repo>"
+        , "# and deploy the digest it prints (Serve.withTierImage)."
+        , "FROM " ++ tierBaseImage
+        , -- The image runs as nonroot: the binary must be executable by
+          -- anyone, whatever mode the build context gave it (a 0700 file
+          -- failed to start on Cloud Run, live, 2026-10-14).
+          "COPY --chmod=0555 app /app"
+        , "USER nonroot:nonroot"
+        , "EXPOSE 8080"
+        , "ENTRYPOINT [\"/app\""
+              ++ String.join "" (List.map (\a -> ", \"" ++ a ++ "\"") args)
+              ++ "]"
+        , ""
+        ]
+
+
+-- | Render a tier for a target.
+render : Target -> Tier -> Rendered
+render target t =
+    { serviceJson = serviceJson target t
+    , knativeYaml = knativeYaml target t
+    , dockerfile = dockerfile
+    }
+
+-- ── Deploying ───────────────────────────────────────────────────────
+-- | A deployed tier: its URL (the audience of its ID tokens), the ready
+-- revision, the region and its labels.
+type alias Deployment =
+    { url : String
+    , revision : String
+    , region : String
+    , service : String
+    }
+
+type alias RawTarget =
+    { project : String
+    , region : String
+    , image : String
+    }
+
+
+targetRaw : RawTarget -> Task Error (List Setting)
+targetRaw =
+    Ffi.kernel "Ai_serveTarget"
+
+
+-- The target with SKY_AI_SERVE_PROJECT, _REGION and _IMAGE applied.
+resolveTarget : Target -> Task Error TargetSettings
+resolveTarget (CloudRun t) =
+    targetRaw { project = t.project, region = t.region, image = t.tierImage }
+        |> Task.andThen
+               (\found ->
+                   let
+                       value k =
+                           List.filter (\x -> x.key == k) found |> List.head
+                               |> Maybe.map .value
+                               |> Maybe.withDefault ""
+                       resolved =
+                           { t
+                               | project = value "PROJECT"
+                               , region = value "REGION"
+                               , tierImage = value "IMAGE"
+                           }
+                       pinned ref = String.contains "@sha256:" ref
+                   in
+                       if resolved.project == "" then
+                           Task.fail
+                               (Failure.toError
+                                   (NotConfigured
+                                       { setting =
+                                           "SKY_AI_SERVE_PROJECT (or Serve.cloudRun { project })"
+                                       }))
+
+                       else if resolved.region == "" then
+                           Task.fail
+                               (Failure.toError
+                                   (NotConfigured
+                                       { setting =
+                                           "SKY_AI_SERVE_REGION (or Serve.cloudRun { region })"
+                                       }))
+
+                       else if not (pinned resolved.tierImage) then
+                           Task.fail
+                               (Failure.toError
+                                   (InvalidSetting
+                                       { setting = "SKY_AI_SERVE_IMAGE"
+                                       , reason =
+                                           quote resolved.tierImage
+                                               ++ " is not an image pinned by digest; `sky ai image build --tier` prints one"
+                                       }))
+
+                       else if not (pinned resolved.engineImage) then
+                           Task.fail
+                               (Failure.toError
+                                   (InvalidSetting
+                                       { setting = "engineImage"
+                                       , reason =
+                                           quote resolved.engineImage
+                                               ++ " is not pinned by digest"
+                                       }))
+
+                       else
+                           Task.succeed resolved)
+
+
+quote : String -> String
+quote s =
+    "\"" ++ s ++ "\""
+
+
+-- | Deploy a tier: check both images exist, create the service (or update it
+-- when it exists, guarded by its etag), wait for the operation and for the
+-- revision to be ready, and grant the invokers `roles/run.invoker`. Every
+-- step is idempotent, so running it again after a failure carries on. A
+-- revision that never becomes ready is `DeploymentFailed` with the
+-- platform's reason.
+deploy : Target -> Tier -> Task Error Deployment
+deploy target t =
+    resolveTarget target
+        |> Task.andThen
+               (\ts ->
+                   let
+                       tgt = CloudRun ts
+                       name = serviceName tgt
+                   in
+                       Task.map2
+                           (\a b -> ( a, b ))
+                           (Google.artifactExists ts.tierImage)
+                           (Google.artifactExists ts.engineImage)
+                           |> Task.andThen
+                                  (\( tierThere, engineThere ) ->
+                                      if not tierThere then
+                                          Task.fail
+                                              (Failure.toError
+                                                  (NotProvisioned
+                                                      { what =
+                                                          "the tier image "
+                                                              ++ ts.tierImage
+                                                      , command =
+                                                          "sky ai image build --tier"
+                                                      }))
+
+                                      else if not engineThere then
+                                          Task.fail
+                                              (Failure.toError
+                                                  (NotProvisioned
+                                                      { what =
+                                                          "the engine image "
+                                                              ++ ts.engineImage
+                                                      , command =
+                                                          "an Artifact Registry remote repository of Docker Hub (docs/ai/deploy-gcp.md)"
+                                                      }))
+
+                                      else
+                                          upsert ts tgt t)
+                           |> Task.andThen (\_ -> waitReady ts name 0)
+                           |> Task.andThen
+                                  (\svc ->
+                                      Google.grantInvoker name ts.invokers
+                                          |> Task.map
+                                                 (\_ ->
+                                                     { url = svc.uri
+                                                     , revision =
+                                                         lastPart
+                                                             svc.latestReady
+                                                     , region = ts.region
+                                                     , service = ts.service
+                                                     })))
+
+
+upsert : TargetSettings -> Target -> Tier -> Task Error ()
+upsert ts tgt t =
+    Google.createService ts.project ts.region ts.service (serviceJson tgt t)
+        |> Task.andThen
+               (\created ->
+                   case created of
+
+                       Just _ ->
+                           Task.succeed ()
+
+                       Nothing ->
+                           -- It exists: replace its spec, guarded by its etag.
+                           Google.getService (serviceName tgt)
+                               |> Task.andThen
+                                      (\found ->
+                                          let
+                                              etag =
+                                                  Maybe.map .etag found
+                                                      |> Maybe.withDefault ""
+                                              spec = serviceJson tgt t
+                                              withEtag =
+                                                  if etag == "" then
+                                                      spec
+
+                                                  else
+                                                      "{\"etag\":"
+                                                          ++ JsonE.encode
+                                                                 0
+                                                                 (JsonE.string
+                                                                     etag)
+                                                          ++ ","
+                                                          ++ String.dropLeft
+                                                                 1
+                                                                 spec
+                                          in
+                                              Google.patchService
+                                                  (serviceName tgt)
+                                                  withEtag
+                                                  |> Task.map (\_ -> ())))
+
+
+-- Poll the service until its Ready condition settles: up to 30 minutes
+-- (a GPU revision's first start pulls a large image).
+waitReady : TargetSettings -> String -> Int -> Task Error Google.Service
+waitReady ts name n =
+    Google.getService name
+        |> Task.andThen
+               (\found ->
+                   case found of
+
+                       Nothing ->
+                           Task.fail
+                               (Failure.toError
+                                   (DeploymentFailed
+                                       { target = "cloudrun:" ++ ts.service
+                                       , reason =
+                                           "the service disappeared while it was deploying"
+                                       , logTail = ""
+                                       }))
+
+                       Just svc ->
+                           if svc.ready == "CONDITION_SUCCEEDED"
+                               && not svc.reconciling then
+                               Task.succeed svc
+
+                           else if svc.ready == "CONDITION_FAILED" then
+                               Task.fail
+                                   (Failure.toError
+                                       (DeploymentFailed
+                                           { target = "cloudrun:" ++ ts.service
+                                           , reason = svc.message
+                                           , logTail = ""
+                                           }))
+
+                           else if n > 900 then
+                               Task.fail
+                                   (Failure.toError
+                                       (DeploymentFailed
+                                           { target = "cloudrun:" ++ ts.service
+                                           , reason =
+                                               "the revision was not ready after 30 minutes"
+                                           , logTail = svc.message
+                                           }))
+
+                           else
+                               Time.sleep (Math.min 2000 (50 * (n + 1)))
+                                   |> Task.andThen
+                                          (\_ -> waitReady ts name (n + 1)))
+
+
+lastPart : String -> String
+lastPart s =
+    String.split "/" s |> List.reverse |> List.head |> Maybe.withDefault s
+
+
+-- | Delete the target's service. A service that is already gone counts as
+-- deleted.
+teardown : Target -> Task Error ()
+teardown target =
+    resolveTargetLoose target
+        |> Task.andThen
+               (\ts -> Google.deleteService (serviceName (CloudRun ts)))
+
+
+-- The project and region only (teardown needs no image).
+resolveTargetLoose : Target -> Task Error TargetSettings
+resolveTargetLoose (CloudRun t) =
+    targetRaw { project = t.project, region = t.region, image = t.tierImage }
+        |> Task.andThen
+               (\found ->
+                   let
+                       value k =
+                           List.filter (\x -> x.key == k) found |> List.head
+                               |> Maybe.map .value
+                               |> Maybe.withDefault ""
+                   in
+                       if value "PROJECT" == "" || value "REGION" == "" then
+                           Task.fail
+                               (Failure.toError
+                                   (NotConfigured
+                                       { setting =
+                                           "SKY_AI_SERVE_PROJECT and SKY_AI_SERVE_REGION"
+                                       }))
+
+                       else
+                           Task.succeed
+                               { t
+                                   | project = value "PROJECT"
+                                   , region = value "REGION"
+                               })

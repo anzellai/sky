@@ -1,0 +1,961 @@
+module Std.Ai.DatasetTest exposing (tests)
+
+-- Std.Ai.Dataset: sources, steps and their lineage, chunked JSONL reading,
+-- typed failures that never repeat row text, deterministic seeded splits,
+-- validation, and content-addressed frozen versions (the same rows give the
+-- same digest, a changed file is a ChecksumMismatch).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Dict as Dict
+import Sky.Core.File as File
+import Sky.Test as Test exposing (Test, TestResult)
+import Std.Codec as Codec
+import Std.Ai.Provider as Provider
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Dataset as Dataset exposing (Instruction, Chat, Split(..), Issue(..))
+import Std.Ai.Dataset.Scrub as Scrub
+import Std.Ai.Endpoint as Endpoint
+import Sky.Core.Tuple as Tuple
+
+
+ins : String -> String -> Instruction
+ins p c =
+    { prompt = p, completion = c }
+
+
+sample : List Instruction
+sample =
+    [ ins
+          "How do I reset my password?"
+          "Use the reset link on the sign-in page."
+    , ins "Where is my order?" "Track it from the orders page."
+    , ins "How do I reset my password?" "Duplicate prompt, other answer."
+    , ins "Can I pay by card?" "Yes, mail ada@example.com for an invoice."
+    , ins "" "An empty prompt."
+    ]
+
+
+-- A fresh directory for one test.
+scratch : String -> Task Error String
+scratch name =
+    File.tempDir ("sky-dataset-" ++ name)
+
+
+run : Task Error a -> (a -> TestResult) -> TestResult
+run task check =
+    case Task.run task of
+
+        Ok v ->
+            check v
+
+        Err e ->
+            Test.fail ("unexpected error: " ++ Error.toString e)
+
+
+failsWith : (Failure -> TestResult) -> Task Error a -> TestResult
+failsWith check task =
+    case Task.run task of
+
+        Ok _ ->
+            Test.fail "expected a failure, got Ok"
+
+        Err e ->
+            case Failure.fromError e of
+
+                Just f ->
+                    check f
+
+                Nothing ->
+                    Test.fail ("not a Std.Ai failure: " ++ Error.toString e)
+
+
+hasText : String -> String -> TestResult
+hasText needle hay =
+    if String.contains needle hay then
+        Test.pass
+
+    else
+        Test.fail ("`" ++ needle ++ "` not in " ++ hay)
+
+
+lacks : String -> String -> TestResult
+lacks needle hay =
+    if String.contains needle hay then
+        Test.fail ("`" ++ needle ++ "` must not be in " ++ hay)
+
+    else
+        Test.pass
+
+
+writeLines : String -> List String -> Task Error ()
+writeLines path lines =
+    File.writeFile path (String.join "\n" lines ++ "\n")
+
+
+manyLines : Int -> List String
+manyLines n =
+    List.map
+        (\i ->
+            "{\"prompt\":\"q" ++ String.fromInt i ++ "\",\"completion\":\"a"
+                ++ String.fromInt i
+                ++ "\"}")
+        (List.range 1 n)
+
+
+chat : List ( String, String ) -> Chat
+chat turns =
+    { messages = List.map (\( r, c ) -> { role = r, content = c }) turns }
+
+
+good : Chat
+good =
+    chat
+        [ ( "system", "Be brief." )
+        , ( "user", "Hi" )
+        , ( "assistant", "Hello." )
+        ]
+
+
+frozenTwice : String -> Task Error ( Dataset.Version Instruction, Dataset.Version Instruction )
+frozenTwice dir =
+    let
+        tgt = Dataset.folder dir "support"
+        spl = Dataset.split Dataset.defaultSplit .prompt
+    in
+        writeLines
+            (dir ++ "/a.jsonl")
+            [ "{\"prompt\":\"p1\",\"completion\":\"c1\"}"
+            , "{\"completion\":\"c2\", \"prompt\":\"p2\"}"
+            ]
+            |> Task.andThen
+                   (\_ ->
+                       writeLines
+                           (dir ++ "/b.jsonl")
+                           [ "{ \"completion\" : \"c1\" , \"prompt\" : \"p1\" }"
+                           , ""
+                           , "{\"prompt\":\"p2\",\"completion\":\"c2\"}"
+                           ])
+            |> Task.andThen
+                   (\_ ->
+                       Dataset.freeze
+                           tgt
+                           Dataset.instructionCodec
+                           (spl
+                               (Dataset.fromJsonl
+                                   Dataset.instructionCodec
+                                   (dir ++ "/a.jsonl"))))
+            |> Task.andThen
+                   (\a ->
+                       Dataset.freeze
+                           tgt
+                           Dataset.instructionCodec
+                           (spl
+                               (Dataset.fromJsonl
+                                   Dataset.instructionCodec
+                                   (dir ++ "/b.jsonl")))
+                           |> Task.map (\b -> ( a, b )))
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "fromList, map, filter, dedupeBy and take run in order and record their steps"
+          (\_ ->
+              let
+                  ds =
+                      Dataset.fromList sample
+                          |> Dataset.filter (\r -> r.prompt /= "")
+                          |> Dataset.dedupeBy .prompt
+                          |> Dataset.map
+                                 (\r ->
+                                     { r
+                                         | completion =
+                                             String.toUpper r.completion
+                                     })
+                          |> Dataset.upTo 2
+              in
+                  run
+                      (Dataset.rows ds)
+                      (\rs ->
+                          Test.equal
+                              ( [ "How do I reset my password?"
+                                , "Where is my order?"
+                                ]
+                              , [ "filter", "dedupe", "map", "upTo 2" ]
+                              , [ "list:5" ]
+                              )
+                              ( List.map .prompt rs
+                              , Dataset.steps ds
+                              , Dataset.sources ds
+                              )))
+    , Test.test
+          "a JSONL file is read in chunks without losing or repeating a row"
+          (\_ ->
+              run
+                  (scratch "chunks"
+                      |> Task.andThen
+                             (\dir ->
+                                 writeLines
+                                     (dir ++ "/big.jsonl")
+                                     (manyLines 2501)
+                                     |> Task.andThen
+                                            (\_ ->
+                                                Dataset.rows
+                                                    (Dataset.fromJsonl
+                                                        Dataset.instructionCodec
+                                                        (dir ++ "/big.jsonl")))))
+                  (\rs ->
+                      Test.equal
+                          ( 2501, Just "q1", Just "q2501", 2501 )
+                          ( List.length rs
+                          , Maybe.map .prompt (List.head rs)
+                          , Maybe.map .prompt (List.head (List.reverse rs))
+                          , List.length
+                                (List.foldl
+                                    (\r acc ->
+                                        if List.member r.prompt acc then
+                                            acc
+
+                                        else
+                                            r.prompt :: acc)
+                                    []
+                                    rs)
+                          )))
+    , Test.test
+          "a line that is not JSON is DatasetInvalid naming the line, not its text"
+          (\_ ->
+              failsWith
+                  (\f ->
+                      case f of
+
+                          DatasetInvalid d ->
+                              Test.equal
+                                  ( True, True, False )
+                                  ( String.endsWith "bad.jsonl" d.dataset
+                                  , String.contains "line 3" d.reasons
+                                  , String.contains "ada@" d.reasons
+                                  )
+
+                          _ ->
+                              Test.fail ("wrong failure " ++ Failure.code f))
+                  (scratch "bad"
+                      |> Task.andThen
+                             (\dir ->
+                                 writeLines
+                                     (dir ++ "/bad.jsonl")
+                                     [ "{\"prompt\":\"a\",\"completion\":\"b\"}"
+                                     , ""
+                                     , "{\"prompt\":\"mail ada@example.com\""
+                                     ]
+                                     |> Task.andThen
+                                            (\_ ->
+                                                Dataset.countRows
+                                                    (Dataset.fromJsonl
+                                                        Dataset.instructionCodec
+                                                        (dir ++ "/bad.jsonl"))))))
+    , Test.test
+          "a row that does not decode with the codec is DatasetInvalid naming the row"
+          (\_ ->
+              failsWith
+                  (\f ->
+                      case f of
+
+                          DatasetInvalid d ->
+                              Test.equal
+                                  ( True, False )
+                                  ( String.contains "row 2" d.reasons
+                                  , String.contains "secret" d.reasons
+                                  )
+
+                          _ ->
+                              Test.fail ("wrong failure " ++ Failure.code f))
+                  (scratch "decode"
+                      |> Task.andThen
+                             (\dir ->
+                                 writeLines
+                                     (dir ++ "/d.jsonl")
+                                     [ "{\"prompt\":\"a\",\"completion\":\"b\"}"
+                                     , "{\"prompt\":\"secret\"}"
+                                     ]
+                                     |> Task.andThen
+                                            (\_ ->
+                                                Dataset.rows
+                                                    (Dataset.fromJsonl
+                                                        Dataset.instructionCodec
+                                                        (dir ++ "/d.jsonl"))))))
+    , Test.test
+          "a missing file is DatasetInvalid, kind InvalidInput"
+          (\_ ->
+              Test.expectErrorKind
+                  InvalidInput
+                  (Task.run
+                      (Dataset.countRows
+                          (Dataset.fromJsonLines "/no/such/dir/rows.jsonl"))))
+    , Test.test
+          "fromJsonLines gives canonical JSON text: sorted keys, no spacing"
+          (\_ ->
+              run
+                  (scratch "canon"
+                      |> Task.andThen
+                             (\dir ->
+                                 writeLines
+                                     (dir ++ "/c.jsonl")
+                                     [ "{ \"b\" : 2, \"a\" : [1, {\"d\":null, \"c\":true}] }"
+                                     ]
+                                     |> Task.andThen
+                                            (\_ ->
+                                                Dataset.rows
+                                                    (Dataset.fromJsonLines
+                                                        (dir ++ "/c.jsonl")))))
+                  (Test.equal [ "{\"a\":[1,{\"c\":true,\"d\":null}],\"b\":2}" ]))
+    , Test.test
+          "fromCsv decodes rows by column name"
+          (\_ ->
+              run
+                  (scratch "csv"
+                      |> Task.andThen
+                             (\dir ->
+                                 File.writeFile
+                                     (dir ++ "/r.csv")
+                                     "prompt,completion\nHi,Hello\n\"A, B\",C\n"
+                                     |> Task.andThen
+                                            (\_ ->
+                                                Dataset.rows
+                                                    (Dataset.fromCsv
+                                                        (\d ->
+                                                            Ok
+                                                                (ins
+                                                                    (Maybe.withDefault
+                                                                        ""
+                                                                        (Dict.get
+                                                                            "prompt"
+                                                                            d))
+                                                                    (Maybe.withDefault
+                                                                        ""
+                                                                        (Dict.get
+                                                                            "completion"
+                                                                            d))))
+                                                        (dir ++ "/r.csv")))))
+                  (Test.equal [ ins "Hi" "Hello", ins "A, B" "C" ]))
+    , Test.test
+          "scrub replaces personal data and the counts reach the manifest"
+          (\_ ->
+              run
+                  (scratch "scrub"
+                      |> Task.andThen
+                             (\dir ->
+                                 Dataset.fromList sample
+                                     |> Dataset.scrub
+                                            (Scrub.forInstruction Scrub.defaults)
+                                     |> Dataset.unsplit
+                                     |> Dataset.freeze
+                                            (Dataset.folder dir "scrubbed")
+                                            Dataset.instructionCodec
+                                     |> Task.andThen
+                                            (\v ->
+                                                Dataset.versionRows v
+                                                    |> Task.map
+                                                           (\rs -> ( v, rs )))))
+                  (\( v, rs ) ->
+                      Test.equal
+                          ( Just "Yes, mail [EMAIL] for an invoice."
+                          , [ ( "email", 1 ) ]
+                          , [ "scrub" ]
+                          )
+                          ( Maybe.map .completion (List.head (List.drop 3 rs))
+                          , Dict.toList (Dataset.manifest v).scrub
+                          , (Dataset.manifest v).steps
+                          )))
+    , Test.test
+          "splitOf is a pure function of the seed and the key"
+          (\_ ->
+              let
+                  keys =
+                      List.map
+                          (\i -> "row-" ++ String.fromInt i)
+                          (List.range 1 300)
+                  a = List.map (Dataset.splitOf Dataset.defaultSplit) keys
+                  b = List.map (Dataset.splitOf Dataset.defaultSplit) keys
+                  other =
+                      List.map
+                          (Dataset.splitOf
+                              { train = 80, eval = 10, test = 10, seed = 1 })
+                          keys
+              in
+                  Test.equal ( True, False ) ( a == b, a == other ))
+    , Test.test
+          "an 80/10/10 split is close to its weights over 2000 keys"
+          (\_ ->
+              let
+                  parts =
+                      List.map
+                          (\i ->
+                              Dataset.splitOf
+                                  Dataset.defaultSplit
+                                  ("k" ++ String.fromInt i))
+                          (List.range 1 2000)
+                  n s = List.length (List.filter (\p -> p == s) parts)
+              in
+                  Test.isTrue
+                      (n Train > 1500 && n Train < 1700 && n Eval > 150
+                          && n Eval < 250
+                          && n Test > 150
+                          && n Test < 250))
+    , Test.test
+          "adding rows never moves an existing row to another split"
+          (\_ ->
+              let
+                  spec = { train = 6, eval = 2, test = 2, seed = 9 }
+                  before =
+                      Dataset.split
+                          spec
+                          .prompt
+                          (Dataset.fromList (List.take 3 sample))
+                  after =
+                      Dataset.split
+                          spec
+                          .prompt
+                          (Dataset.fromList (sample ++ [ ins "New" "row" ]))
+                  evalPrompts s =
+                      Task.map
+                          (List.map .prompt)
+                          (Dataset.rows (Dataset.part Eval s))
+                  shared ps =
+                      List.filter
+                          (\p ->
+                              List.member
+                                  p
+                                  (List.map .prompt (List.take 3 sample)))
+                          ps
+              in
+                  run
+                      (evalPrompts before
+                          |> Task.andThen
+                                 (\b ->
+                                     evalPrompts after
+                                         |> Task.map (\a -> ( b, shared a ))))
+                      (\( b, a ) -> Test.equal b a))
+    , Test.test
+          "the same rows frozen from two spellings of the file give one digest"
+          (\_ ->
+              run
+                  (scratch "twice" |> Task.andThen frozenTwice)
+                  (\( a, b ) ->
+                      Test.equal
+                          ( True, 64, (Dataset.manifest a).createdMs )
+                          ( Dataset.digest a == Dataset.digest b
+                          , String.length (Dataset.digest a)
+                          , (Dataset.manifest b).createdMs
+                          )))
+    , Test.test
+          "the manifest records rows per split, the schema, the sources and governance"
+          (\_ ->
+              run
+                  (scratch "manifest"
+                      |> Task.andThen
+                             (\dir ->
+                                 Dataset.fromList
+                                     (List.map
+                                         (\i -> ins ("q" ++ String.fromInt i) "a")
+                                         (List.range 1 50))
+                                     |> Dataset.split
+                                            { train = 8
+                                            , eval = 1
+                                            , test = 1
+                                            , seed = 3
+                                            }
+                                            .prompt
+                                     |> Dataset.freeze
+                                            (Dataset.folder dir "faq"
+                                                |> Dataset.withConsentBasis
+                                                       "contract"
+                                                |> Dataset.withRetention "P2Y")
+                                            Dataset.instructionCodec))
+                  (\v ->
+                      let
+                          m = Dataset.manifest v
+                      in
+                          Test.equal
+                              ( ( 50, m.train + m.eval + m.test, [ 8, 1, 1 ] )
+                              , ( "{prompt:text,completion:text}"
+                                , [ "list:50" ]
+                                , ( Just "contract"
+                                  , Just "P2Y"
+                                  , "sky-dataset-v1"
+                                  )
+                                )
+                              )
+                              ( ( m.rows, 50, m.splitWeights )
+                              , ( m.schema
+                                , m.sources
+                                , ( m.consentBasis, m.retention, m.format )
+                                )
+                              )))
+    , Test.test
+          "a frozen version loads, and each part reads back its own rows"
+          (\_ ->
+              run
+                  (scratch "load"
+                      |> Task.andThen
+                             (\dir ->
+                                 let
+                                     tgt = Dataset.folder dir "faq"
+                                 in
+                                     Dataset.fromList
+                                         (List.map
+                                             (\i ->
+                                                 ins
+                                                     ("q" ++ String.fromInt i)
+                                                     "a")
+                                             (List.range 1 40))
+                                         |> Dataset.split
+                                                Dataset.defaultSplit
+                                                .prompt
+                                         |> Dataset.freeze
+                                                tgt
+                                                Dataset.instructionCodec
+                                         |> Task.andThen
+                                                (\v ->
+                                                    Dataset.load
+                                                        tgt
+                                                        ("sha256:"
+                                                            ++ Dataset.digest v)
+                                                        Dataset.instructionCodec)
+                                         |> Task.andThen
+                                                (\v ->
+                                                    Task.sequence
+                                                        [ Dataset.versionPart
+                                                              Train
+                                                              v
+                                                        , Dataset.versionPart
+                                                              Eval
+                                                              v
+                                                        , Dataset.versionPart
+                                                              Test
+                                                              v
+                                                        ]
+                                                        |> Task.map
+                                                               (\parts ->
+                                                                   ( v, parts )))))
+                  (\( v, parts ) ->
+                      let
+                          m = Dataset.manifest v
+                      in
+                          Test.equal
+                              [ m.train, m.eval, m.test ]
+                              (List.map List.length parts)))
+    , Test.test
+          "a changed data file is a ChecksumMismatch on load"
+          (\_ ->
+              failsWith
+                  (\f ->
+                      case f of
+
+                          ChecksumMismatch _ ->
+                              Test.pass
+
+                          _ ->
+                              Test.fail ("wrong failure " ++ Failure.code f))
+                  (scratch "tamper"
+                      |> Task.andThen
+                             (\dir ->
+                                 let
+                                     tgt = Dataset.folder dir "faq"
+                                 in
+                                     Dataset.fromList [ ins "q" "a" ]
+                                         |> Dataset.unsplit
+                                         |> Dataset.freeze
+                                                tgt
+                                                Dataset.instructionCodec
+                                         |> Task.andThen
+                                                (\v ->
+                                                    File.append
+                                                        (Dataset.blobPath v)
+                                                        "{\"row\":{\"completion\":\"x\",\"prompt\":\"y\"},\"split\":\"train\"}\n"
+                                                        |> Task.andThen
+                                                               (\_ ->
+                                                                   Dataset.load
+                                                                       tgt
+                                                                       (Dataset.digest
+                                                                           v)
+                                                                       Dataset.instructionCodec)))))
+    , Test.test
+          "versions lists every frozen version, newest first"
+          (\_ ->
+              run
+                  (scratch "versions"
+                      |> Task.andThen
+                             (\dir ->
+                                 let
+                                     tgt = Dataset.folder dir "faq"
+                                     freezeRows n =
+                                         Dataset.freeze
+                                             tgt
+                                             Dataset.instructionCodec
+                                             (Dataset.unsplit
+                                                 (Dataset.fromList
+                                                     (List.map
+                                                         (\i ->
+                                                             ins
+                                                                 (String.fromInt
+                                                                     i)
+                                                                 "a")
+                                                         (List.range 1 n))))
+                                 in
+                                     freezeRows 1
+                                         |> Task.andThen (\_ -> freezeRows 2)
+                                         |> Task.andThen
+                                                (\_ -> Dataset.versions tgt)))
+                  (\ms -> Test.equal 2 (List.length ms)))
+    , Test.test
+          "manifestJson and manifestFromJson round-trip"
+          (\_ ->
+              run
+                  (scratch "roundtrip"
+                      |> Task.andThen
+                             (\dir ->
+                                 Dataset.fromList sample
+                                     |> Dataset.scrub
+                                            (Scrub.forInstruction Scrub.defaults)
+                                     |> Dataset.unsplit
+                                     |> Dataset.freeze
+                                            (Dataset.folder dir "rt"
+                                                |> Dataset.withRetention "P1Y")
+                                            Dataset.instructionCodec))
+                  (\v ->
+                      Test.equal
+                          (Ok (Dataset.manifest v))
+                          (Dataset.manifestFromJson
+                              (Dataset.manifestJson (Dataset.manifest v)))))
+    , Test.test
+          "freezeJson freezes raw JSON lines with a seeded split"
+          (\_ ->
+              run
+                  (scratch "rawfreeze"
+                      |> Task.andThen
+                             (\dir ->
+                                 writeLines
+                                     (dir ++ "/raw.jsonl")
+                                     [ "{\"text\":\"one\"}"
+                                     , "{\"text\":\"two\"}"
+                                     ]
+                                     |> Task.andThen
+                                            (\_ ->
+                                                Dataset.fromJsonLines
+                                                    (dir ++ "/raw.jsonl")
+                                                    |> Dataset.unsplit
+                                                    |> Dataset.freezeJson
+                                                           (Dataset.folder
+                                                               dir
+                                                               "raw"))
+                                     |> Task.andThen
+                                            (\v ->
+                                                Dataset.loadJson
+                                                    (Dataset.folder dir "raw")
+                                                    (Dataset.digest v))
+                                     |> Task.andThen Dataset.versionRows))
+                  (Test.equal [ "{\"text\":\"one\"}", "{\"text\":\"two\"}" ]))
+    , Test.test
+          "toJsonl writes canonical lines"
+          (\_ ->
+              Test.equal
+                  (Ok "{\"completion\":\"b\",\"prompt\":\"a\"}\n")
+                  (Dataset.toJsonl Dataset.instructionCodec [ ins "a" "b" ]))
+    , Test.test
+          "writeJsonl writes every row and returns the count"
+          (\_ ->
+              run
+                  (scratch "write"
+                      |> Task.andThen
+                             (\dir ->
+                                 Dataset.writeJsonl
+                                     (dir ++ "/out.jsonl")
+                                     Dataset.instructionCodec
+                                     (Dataset.fromList (List.take 2 sample))
+                                     |> Task.andThen
+                                            (\n ->
+                                                File.readFile
+                                                    (dir ++ "/out.jsonl")
+                                                    |> Task.map
+                                                           (\t ->
+                                                               ( n
+                                                               , List.length
+                                                                     (String.lines
+                                                                         (String.trim
+                                                                             t))
+                                                               )))))
+                  (Test.equal ( 2, 2 )))
+    , Test.test
+          "inspect finds empty turns, role order, turn counts, length and duplicates"
+          (\_ ->
+              run
+                  (Dataset.inspect
+                      (Dataset.limits |> Dataset.withMaxTokens 30)
+                      (Dataset.fromList
+                          [ good
+                          , chat [ ( "user", "  " ), ( "assistant", "ok" ) ]
+                          , chat [ ( "assistant", "Hello" ), ( "user", "Hi" ) ]
+                          , chat [ ( "user", "Only a question?" ) ]
+                          , chat
+                                [ ( "user", String.repeat 200 "x" )
+                                , ( "assistant", "ok" )
+                                ]
+                          , good
+                          ]))
+                  (\r ->
+                      Test.equal
+                          ( ( 6, 1, False )
+                          , [ "EmptyTurn 2"
+                            , "RoleOrder 3"
+                            , "RoleOrder 4"
+                            , "TooFewTurns 4"
+                            , "TooManyTokens 5"
+                            , "DuplicateRow 6"
+                            ]
+                          )
+                          ( ( r.rows, r.duplicates, r.passed )
+                          , List.map issueTag r.issues
+                          )))
+    , Test.test
+          "validate fails with DatasetInvalid naming the broken limits"
+          (\_ ->
+              failsWith
+                  (\f ->
+                      case f of
+
+                          DatasetInvalid d ->
+                              Test.equal
+                                  ( True, True )
+                                  ( String.contains "issues" d.reasons
+                                  , String.contains "duplicate" d.reasons
+                                  )
+
+                          _ ->
+                              Test.fail ("wrong failure " ++ Failure.code f))
+                  (Dataset.validate
+                      Dataset.limits
+                      (Dataset.fromList
+                          [ good
+                          , good
+                          , chat [ ( "user", "" ), ( "assistant", "x" ) ]
+                          ])))
+    , Test.test
+          "validate passes clean data and reports the token estimate"
+          (\_ ->
+              run
+                  (Dataset.validate Dataset.limits (Dataset.fromList [ good ]))
+                  (\r ->
+                      Test.equal
+                          ( True, 1, 18 )
+                          ( r.passed, r.rows, r.maxTokens )))
+    , Test.test
+          "withTokenizer counts with the given tokenizer"
+          (\_ ->
+              run
+                  (Dataset.inspect
+                      (Dataset.limits
+                          |> Dataset.withTokenizer
+                                 (\s -> Task.succeed (String.length s)))
+                      (Dataset.fromList [ good ]))
+                  (\r -> Test.equal 29 r.maxTokens))
+    , Test.test
+          "withEngineTokenizer falls back when the engine does not answer"
+          (\_ ->
+              let
+                  offline =
+                      Endpoint.endpoint "tok"
+                          |> Endpoint.withUrl "http://127.0.0.1:9/v1"
+                          |> Endpoint.withRetry 0
+                          |> Endpoint.withTimeout 2000
+              in
+                  case Task.run
+                           (Task.map2
+                               (\a b -> ( a.maxTokens, b.maxTokens ))
+                               (Dataset.inspect
+                                   (Dataset.limits
+                                       |> Dataset.withEngineTokenizer offline
+                                       |> Dataset.withTokenizer
+                                              (\s ->
+                                                  Task.succeed (String.length s)))
+                                   (Dataset.fromList [ good ]))
+                               (Dataset.inspect
+                                   (Dataset.limits
+                                       |> Dataset.withEngineTokenizer offline)
+                                   (Dataset.fromList [ good ]))) of
+
+                      Ok counts ->
+                          Test.equal ( 29, 18 ) counts
+
+                      Err e ->
+                          Test.fail (Error.toString e))
+    , Test.test
+          "dedupeBounded spills to disk and keeps exactly what dedupeBy keeps"
+          (\_ ->
+              case dedupedBoth of
+
+                  Ok ( small, large, leftover ) ->
+                      Test.equal
+                          ( 700, True, [] )
+                          ( List.length small, small == large, leftover )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "inspect finds duplicates through the bounded spill set, with the row each repeats"
+          (\_ ->
+              case inspectedSpilled of
+
+                  Ok ( r, leftover ) ->
+                      Test.equal
+                          ( ( 2500, 2200 ), firstDuplicates, [] )
+                          ( ( r.rows, r.duplicates )
+                          , List.take 3 (List.filterMap duplicateOf r.issues)
+                          , leftover
+                          )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "describeIssue names the row and never the message text"
+          (\_ ->
+              Test.equal
+                  "row 4: 1 turns, at least 2 needed"
+                  (Dataset.describeIssue
+                      (TooFewTurns { row = 4, turns = 1, limit = 2 })))
+    ]
+
+
+issueTag : Issue -> String
+issueTag i =
+    case i of
+
+        EmptyTurn r ->
+            "EmptyTurn " ++ String.fromInt r.row
+
+        RoleOrder r ->
+            "RoleOrder " ++ String.fromInt r.row
+
+        TooManyTokens r ->
+            "TooManyTokens " ++ String.fromInt r.row
+
+        TooFewTurns r ->
+            "TooFewTurns " ++ String.fromInt r.row
+
+        TooManyTurns r ->
+            "TooManyTurns " ++ String.fromInt r.row
+
+        DuplicateRow r ->
+            "DuplicateRow " ++ String.fromInt r.row
+
+
+-- `( row, firstRow )` of a `DuplicateRow` issue.
+duplicateOf : Issue -> Maybe ( Int, Int )
+duplicateOf i =
+    case i of
+
+        DuplicateRow r ->
+            Just ( r.row, r.firstRow )
+
+        _ ->
+            Nothing
+
+
+-- Row i (1 to 2500) is conversation `modBy 300 i`, so rows 301, 302 and 303
+-- repeat rows 1, 2 and 3.
+firstDuplicates : List ( Int, Int )
+firstDuplicates =
+    [ ( 301, 1 ), ( 302, 2 ), ( 303, 3 ) ]
+
+
+-- 2500 chat rows over 300 conversations, read in three chunks and inspected
+-- with 20 digests in memory (the rest spilled to disk), and the dedupe set
+-- directories left behind (none).
+inspectedSpilled : Result Error ( Dataset.Report, List String )
+inspectedSpilled =
+    File.tempDir "sky-inspect-spill"
+        |> Task.andThen
+               (\dir ->
+                   let
+                       path = dir ++ "/chats.jsonl"
+                       line i =
+                           "{\"messages\":[{\"role\":\"user\",\"content\":\"question "
+                               ++ String.fromInt (modBy 300 i)
+                               ++ "\"},{\"role\":\"assistant\",\"content\":\"answer\"}]}"
+                   in
+                       writeLines path (List.map line (List.range 1 2500))
+                           |> Task.andThen
+                                  (\_ ->
+                                      Dataset.inspect
+                                          (Dataset.limits
+                                              |> Dataset.withMemoryKeys 20)
+                                          (Dataset.fromJsonl
+                                              Dataset.chatCodec
+                                              path))
+                           |> Task.andThen
+                                  (\report ->
+                                      File.readDir ".sky/ai/work/dedupe"
+                                          |> Task.onError
+                                                 (\_ -> Task.succeed [])
+                                          |> Task.map
+                                                 (\names ->
+                                                     ( report
+                                                     , List.filter
+                                                           (String.startsWith
+                                                               "set-")
+                                                           names
+                                                     ))))
+        |> Task.run
+
+
+-- 2500 JSONL rows over 700 keys, read in three chunks: deduped with 50 keys
+-- in memory (the rest spilled to disk) and with the default.
+dedupedBoth : Result Error ( List String, List String, List String )
+dedupedBoth =
+    File.tempDir "sky-dedupe-spill"
+        |> Task.andThen
+               (\dir ->
+                   let
+                       path = dir ++ "/rows.jsonl"
+                       line i =
+                           "{\"key\":\"k" ++ String.fromInt (modBy 700 (i * 13))
+                               ++ "\",\"n\":"
+                               ++ String.fromInt i
+                               ++ "}"
+                       body =
+                           String.join "\n" (List.map line (List.range 1 2500))
+                               ++ "\n"
+                       keyOf row =
+                           String.split "\"n\"" row |> List.head
+                               |> Maybe.withDefault row
+                   in
+                       File.writeFile path body
+                           |> Task.andThen
+                                  (\_ ->
+                                      Task.map2
+                                          (\a b -> ( a, b ))
+                                          (Dataset.fromJsonLines path
+                                              |> Dataset.dedupeBounded 50 keyOf
+                                              |> Dataset.rows)
+                                          (Dataset.fromJsonLines path
+                                              |> Dataset.dedupeBy keyOf
+                                              |> Dataset.rows))
+                           |> Task.andThen
+                                  (\pair ->
+                                      File.readDir ".sky/ai/work/dedupe"
+                                          |> Task.onError
+                                                 (\_ -> Task.succeed [])
+                                          |> Task.map
+                                                 (\names ->
+                                                     ( Tuple.first pair
+                                                     , Tuple.second pair
+                                                     , List.filter
+                                                           (String.startsWith
+                                                               "set-")
+                                                           names
+                                                     ))))
+        |> Task.run

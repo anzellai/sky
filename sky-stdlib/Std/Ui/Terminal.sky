@@ -208,9 +208,7 @@ update toMsg msg term =
                     if gen /= st.gen then
                         -- A read of an earlier generation: the current one
                         -- repaints.
-                        ( term
-                        , Cmd.none
-                        )
+                        ( term, Cmd.none )
 
                     else
                         case ( result, st.proc ) of

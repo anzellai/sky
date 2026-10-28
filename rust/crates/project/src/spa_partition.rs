@@ -176,6 +176,10 @@ const EFFECT_KERNELS: &[&str] = &[
     // Task touched would otherwise live in one browser tab, not beside the
     // server state it coordinates.
     "Sync",
+    // v0.28.0 Std.Ai.Endpoint / Std.Ai.Local: a model slot resolves server
+    // settings and secrets, and a local engine is a child process. Neither
+    // can run in a browser, and a slot's key must never reach one.
+    "Ai",
 ];
 
 /// **KNOWN-PURE** kernel pseudo-modules — pure computation / pure TEA plumbing
@@ -211,6 +215,10 @@ const KNOWN_PURE_KERNELS: &[&str] = &[
     // `Debug_show` / `Debug_toString`: pure formatting of a value (the v0.27.0
     // Sky value printer); no effect, no secret, builds for wasm.
     "Debug",
+    // `Error_isRetryable` / `Error_domain` / `Error_retryAfter`: pure reads of
+    // a `Sky.Core.Error` value (runtime-go/rt/error_kernels.go); an `Error`
+    // crosses the RPC, so a client branch reads it too. Builds for wasm.
+    "Error",
     "String",
     "List",
     "Dict",
@@ -551,7 +559,20 @@ fn classify_kernel_in(client_crypto: bool, module: &str, func: &str) -> KernelCl
 /// An arm that reaches one is never settled on the server; a server arm's
 /// navigation leaf is run by the client when it sends the RPC
 /// (`spa_split::nav_residual`).
-const CLIENT_EFFECT_KERNELS: &[&str] = &["Native", "WebSocket", "Nav"];
+///
+/// `AiDevice` (`Std.Ai.Device`, kernel prefix `AiDevice_`) is here since
+/// v0.28.0: a device model runs in the client (the browser worker or the
+/// native shell), and its fallback to the server is the client's own call to
+/// `/_sky/ai/device/<slot>/call`, never a server arm.
+const CLIENT_EFFECT_KERNELS: &[&str] = &["Native", "WebSocket", "Nav", "AiDevice"];
+
+/// The [`CLIENT_EFFECT_KERNELS`] families whose server side is a real
+/// implementation, not an `Err` stub. `Std.Ai.Device` on the server answers
+/// on the slot itself (runtime-go/rt/ai_device_serve.go), as it does in
+/// Sky.Live. A task that reaches one of these together with a server effect
+/// runs on the server ([`task_refs_client_effect`]). A task that reaches only
+/// them stays a client effect.
+const SERVER_CAPABLE_CLIENT_EFFECTS: &[&str] = &["AiDevice"];
 
 /// Classify a kernel pseudo-module + function. `module` is the pseudo name
 /// (`Db`, `Http`, `System`, …) as produced by the resolver's `Res::Kernel`, or
@@ -4275,14 +4296,64 @@ fn arm_reaches_client_only(db: &dyn SkyDb, graph: &Graph, body: &Body, e: ExprId
 /// (`client_kernels`) or transitively through a callee. A client effect cannot
 /// run server-side (its `!js` stub returns `Err`), so a chain containing one is
 /// NOT chained (G5 fail-closed).
+///
+/// A task that also reaches a SERVER effect runs on the server as a whole, so
+/// a client-effect family with a real server side
+/// ([`SERVER_CAPABLE_CLIENT_EFFECTS`]) does not make it a client task: there
+/// the family answers as the server does in Sky.Live. `Suites.score` in
+/// examples/75-ai-everywhere opens the database and replays a device
+/// recording through `Device.provider`, and its server arm's follow-up was
+/// read as a `Std.Native` residual the split could not extract.
 fn task_refs_client_effect(db: &dyn SkyDb, tref: &Refs) -> bool {
-    if !tref.client_kernels.is_empty() {
-        return true;
-    }
+    let mut families: BTreeSet<String> = BTreeSet::new();
+    let mut server = false;
     let mut visited: HashSet<DefId> = HashSet::new();
-    tref.callees
-        .iter()
-        .any(|c| def_reaches_client_effect(db, *c, &mut visited))
+    task_effect_sides(db, tref, &mut families, &mut server, &mut visited);
+    if families.is_empty() {
+        return false;
+    }
+    !(server
+        && families
+            .iter()
+            .all(|f| SERVER_CAPABLE_CLIENT_EFFECTS.contains(&f.as_str())))
+}
+
+/// The client-effect families a task reaches, and whether it reaches a server
+/// effect, directly or through its callees.
+fn task_effect_sides(
+    db: &dyn SkyDb,
+    acc: &Refs,
+    families: &mut BTreeSet<String>,
+    server: &mut bool,
+    visited: &mut HashSet<DefId>,
+) {
+    for (m, _) in &acc.client_kernels {
+        families.insert(m.clone());
+    }
+    if !acc.server_kernels.is_empty() || acc.foreign {
+        *server = true;
+    }
+    for c in &acc.callees {
+        if !visited.insert(*c) {
+            continue;
+        }
+        let Some(loc) = db.def_loc(*c) else {
+            continue;
+        };
+        if db.module_name(loc.module) == "Std.Spa" {
+            continue;
+        }
+        let resolved = db.resolve(loc.module);
+        let Some(body) = resolved.bodies.get(c) else {
+            continue;
+        };
+        let Some(root) = body.root else {
+            continue;
+        };
+        let mut inner = Refs::default();
+        collect(body, root, &mut inner, &CollectCtx::default());
+        task_effect_sides(db, &inner, families, server, visited);
+    }
 }
 
 /// Whether evaluating `d`'s body reaches a `Std.Native` CLIENT effect through its
@@ -8078,6 +8149,8 @@ mod tests {
             ("Sync", "withLock"),
             ("Sync", "push"),
             ("Sync", "popWithin"),
+            ("Ai", "endpointPost"),
+            ("Ai", "localStart"),
         ] {
             assert_eq!(
                 classify_kernel(m, f),
@@ -8090,7 +8163,8 @@ mod tests {
         record_ffi_symbol("Watch_changes", &mut acc, false);
         record_ffi_symbol("File_resolveWithin", &mut acc, false);
         record_ffi_symbol("Sync_compareAndSwap", &mut acc, false);
-        assert_eq!(acc.server_kernels.len(), 4, "{:?}", acc.server_kernels);
+        record_ffi_symbol("Ai_endpointPost", &mut acc, false);
+        assert_eq!(acc.server_kernels.len(), 5, "{:?}", acc.server_kernels);
     }
 
     /// The device secure store and biometric prompt run in the wasm client,

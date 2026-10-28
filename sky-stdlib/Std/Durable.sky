@@ -90,9 +90,7 @@ import Std.Db.Store as Store
 handle and the run's id. Every `step` / `sleep` / `awaitSignal` takes it.
 -}
 type Ctx
-    = Ctx { db : Db
-, runId : String
-}
+    = Ctx { db : Db, runId : String }
 
 {-| A typed, registered workflow: its name, the input codec (so `start` can
 encode), and its type-erased runner. Build it with `register`.
@@ -108,10 +106,7 @@ type WorkflowDef i o
 a heterogeneous list of them and dispatch by name. Get it with `erase`.
 -}
 type RegisteredWorkflow
-    = RegisteredWorkflow { name : String
-, version : String
-, run : Ctx -> String -> Task Error String
-}
+    = RegisteredWorkflow { name : String, version : String, run : Ctx -> String -> Task Error String }
 
 
 -- The lease visibility timeout: a run claimed longer ago than this is reclaimed

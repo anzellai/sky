@@ -1,0 +1,180 @@
+module Support exposing (adapterFile, lineage, suite, candidateFor, chatSlot, openRegistry)
+
+{-| The pieces of the example: the eval suite that gates a version, stand-in
+answers for each adapter version, the adapter files, the lineage, and the
+model slot that serves `registry:support-lora@prod`.
+
+Phase 3 of the AI lifecycle trains real adapters (`Std.Ai.Train`). Until then
+the example writes two small GGUF LoRA files itself, and each version's
+answers come from a `Provider.custom` stand-in, so the program runs anywhere
+with no model and no network.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Result as Result
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Encoding as Encoding
+import Sky.Core.File as File
+import Std.Db as Db
+import Std.Ai.Provider as Provider exposing (Provider)
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Local as Local
+import Std.Ai.Eval as Eval exposing (Expect(..))
+import Std.Ai.Registry as Registry exposing (Format(..), Method(..))
+
+
+-- ── The adapter files ───────────────────────────────────────────────
+-- A GGUF file is a header, then metadata entries. A LoRA adapter says so in
+-- its metadata (`general.type = adapter`, `adapter.type = lora`), which is
+-- what `Registry.register` checks.
+le32 : Int -> String
+le32 n =
+    raw (hexByte n ++ "000000")
+
+
+le64 : Int -> String
+le64 n =
+    raw (hexByte n ++ "00000000000000")
+
+
+hexByte : Int -> String
+hexByte n =
+    let
+        digit d = String.slice d (d + 1) "0123456789abcdef"
+    in
+        digit (n // 16) ++ digit (modBy 16 n)
+
+
+raw : String -> String
+raw hex =
+    Encoding.hexDecode hex |> Result.withDefault ""
+
+
+ggufString : String -> String
+ggufString s =
+    le64 (String.length s) ++ s
+
+
+entry : ( String, String ) -> String
+entry ( key, value ) =
+    ggufString key ++ le32 8 ++ ggufString value
+
+
+ggufLora : String -> String
+ggufLora name =
+    let
+        entries =
+            [ ( "general.architecture", "qwen2" )
+            , ( "general.type", "adapter" )
+            , ( "adapter.type", "lora" )
+            , ( "general.name", name )
+            ]
+    in
+        "GGUF" ++ le32 3 ++ le64 0 ++ le64 (List.length entries)
+            ++ String.concat (List.map entry entries)
+
+
+-- | Write the adapter for a version into a directory and describe it.
+adapterFile : String -> String -> Task Error Registry.Adapter
+adapterFile dir name =
+    let
+        path = dir ++ "/" ++ name ++ ".gguf"
+    in
+        File.writeFile path (ggufLora name)
+            |> Task.map (\_ -> { path = path, format = Gguf, method = Lora })
+
+
+-- | Where the adapters came from: the base model they are pinned to, the
+-- dataset version they were trained on, and the trainer's settings.
+lineage : String -> Registry.Lineage
+lineage seed =
+    { base = Local.devModel
+    , dataset = "support-tickets@3"
+    , datasetDigest = Crypto.sha256 "support-tickets v3"
+    , metadata = [ ( "seed", seed ), ( "backend", "example" ), ( "rank", "8" ) ]
+    }
+
+
+-- ── The gate ────────────────────────────────────────────────────────
+-- | Two cases every support answer must pass.
+suite : Eval.Suite String
+suite =
+    Eval.suite
+        "support"
+        (\q ->
+            [ Provider.system "Answer the customer in one sentence."
+            , Provider.user q
+            ])
+        [ { id = "refund"
+          , input = "How do I get a refund?"
+          , expect = Contains "refund"
+          , tags = []
+          }
+        , { id = "hours"
+          , input = "When are you open?"
+          , expect = Contains "9"
+          , tags = []
+          }
+        ]
+        |> Eval.withConcurrency 1
+
+
+-- | Stand-in answers for a version: v1 answers both cases, v2 forgot the
+-- opening hours.
+candidateFor : Int -> Provider
+candidateFor version =
+    Provider.custom
+        (\messages ->
+            let
+                question =
+                    List.filter (\m -> m.role == "user") messages
+                        |> List.reverse
+                        |> List.head
+                        |> Maybe.map .content
+                        |> Maybe.withDefault ""
+                text =
+                    if String.contains "refund" question then
+                        "Ask for a refund within 30 days of purchase."
+
+                    else if version == 1 then
+                        "We are open from 9 to 5 on weekdays."
+
+                    else
+                        "We are open on weekdays."
+            in
+                Task.succeed
+                    { content = text
+                    , usage =
+                        { promptTokens = 20
+                        , completionTokens = 12
+                        , totalTokens = 32
+                        }
+                    })
+
+
+-- ── Serving ─────────────────────────────────────────────────────────
+-- | The registry the app serves from. A real app opens it on its own
+-- database (`Db.connect ()`); this example keeps its files under `dir`.
+openRegistry : String -> Task Error Registry.Registry
+openRegistry dir =
+    Db.open "sqlite" (dir ++ "/registry.db")
+        |> Task.andThen
+               (\db -> Registry.openConfigured db ("file://" ++ dir ++ "/store"))
+
+
+-- | The chat slot: the managed local engine on the development model, with
+-- the adapter that `support-lora@prod` names. Promoting or rolling back moves
+-- what the slot serves: it resolves the alias when it starts and again every
+-- 30 seconds.
+chatSlot : String -> Endpoint
+chatSlot dir =
+    Endpoint.endpoint "chat"
+        |> Endpoint.withLocal
+               (Local.model Local.devModel |> Local.withContext 2048)
+        |> Endpoint.fromRegistry (Registry.resolver (openRegistry dir))
+        |> Endpoint.withAdapter "registry:support-lora@prod"

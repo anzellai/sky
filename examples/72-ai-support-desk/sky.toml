@@ -1,0 +1,19 @@
+name = "ai-support-desk"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+# A support desk with an AI assistant, and the whole AI lifecycle around it in
+# Sky: a synthetic dataset, scrubbed and frozen; an eval suite gated against
+# production; adapters registered and promoted in the model registry; and the
+# app serving the promoted adapter. src/Ai.sky declares the pipeline the
+# `sky ai` verbs run. See README.md.
+#
+# There are no AI keys here: every AI setting is a `withX` builder in code
+# (src/Assist.sky, src/Suites.sky, src/Data.sky) that an operator overrides
+# with SKY_AI_<SLOT>_* variables. The database is set in code too
+# (`Tickets.database`, `Config.withDatabase`): the app's own SQLite file,
+# support-desk.db, which holds the tickets, the registry's records and the
+# eval history. SKY_DB_PATH moves it (a file, or a postgres:// URL).

@@ -1,0 +1,468 @@
+module Main exposing (main)
+
+{-| examples/72-ai-support-desk: a support desk whose assistant drafts each
+reply, served by the model the AI lifecycle promoted.
+
+An agent opens a ticket, the assistant drafts a reply (`Assist.draft`, the
+`"chat"` slot), the agent edits it and sends it. A sent reply is accepted
+training data for the next adapter (the `accepted` dataset in src/Ai.sky).
+The strip at the top says where the assistant's calls go and which adapter it
+serves: the base model until `support-lora@prod` exists, then the promoted
+version, followed through promote and rollback without a restart.
+
+    sky run src/Main.sky            the app on http://localhost:8072
+                                    (and GET /api/assistant, GET /api/draft?q=…,
+                                    GET /api/triage?q=…, GET /api/ask?q=…)
+    sky test tests/SupportDeskTest.sky
+                                    the app's logic, offline (tests/mocks/)
+
+The lifecycle around it (dataset, eval, registry, promotion) is the `sky ai`
+verbs over src/Ai.sky: see README.md.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Input as Input
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Sky.Http.Server as Server exposing (Request, Response)
+import Sky.Core.Json.Encode as JsonE
+import Tickets exposing (Ticket)
+import Assist
+
+-- ── Model ───────────────────────────────────────────────────────────
+type alias Model =
+    { tickets : List Ticket
+    , selected : Int
+    , draft : String
+    , busy : Bool
+    , notice : String
+    , ai : String
+    }
+
+type Msg
+    = Loaded (Result Error (List Ticket))
+    | StatusRead (Result Error Assist.Status)
+    | Select Int
+    | Redraft
+    | Drafted (Result Error String)
+    | EditDraft String
+    | Send
+    | Sent (Result Error (List Ticket))
+    | CheckModel
+
+
+-- ── Effects ─────────────────────────────────────────────────────────
+loadTickets : Task Error (List Ticket)
+loadTickets =
+    Tickets.open
+        |> Task.andThen
+               (\db -> Tickets.seed db |> Task.andThen (\_ -> Tickets.all db))
+
+
+sendReply : Ticket -> String -> Task Error (List Ticket)
+sendReply t text =
+    Tickets.open
+        |> Task.andThen
+               (\db ->
+                   Tickets.send db t text |> Task.andThen (\_ -> Tickets.all db))
+
+
+selectedTicket : Model -> Maybe Ticket
+selectedTicket model =
+    List.filter (\t -> t.id == model.selected) model.tickets |> List.head
+
+
+-- | The one-line status of the assistant.
+statusLine : Assist.Status -> String
+statusLine s =
+    "Assistant: " ++ s.mode ++ " (" ++ s.target ++ "), adapter: " ++ s.adapter
+
+
+-- ── init / update ───────────────────────────────────────────────────
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { tickets = []
+      , selected = 0
+      , draft = ""
+      , busy = False
+      , notice = ""
+      , ai = "Assistant: checking..."
+      }
+    , Cmd.batch
+          [ Cmd.perform loadTickets Loaded
+          , Cmd.perform Assist.status StatusRead
+          ]
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Loaded (Ok ts) ->
+            ( { model | tickets = ts }, Cmd.none )
+
+        Loaded (Err e) ->
+            ( { model
+                  | notice = "Could not load the tickets: " ++ Error.toString e
+              }
+            , Cmd.none
+            )
+
+        StatusRead (Ok s) ->
+            ( { model | ai = statusLine s }, Cmd.none )
+
+        StatusRead (Err e) ->
+            ( { model | ai = "Assistant unavailable: " ++ Error.toString e }
+            , Cmd.none
+            )
+
+        Select id ->
+            selectTicket id model
+
+        Redraft ->
+            case selectedTicket model of
+
+                Just t ->
+                    ( { model | busy = True, notice = "" }
+                    , Cmd.perform (Assist.draft t.body) Drafted
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        Drafted (Ok text) ->
+            ( { model | draft = text, busy = False }, Cmd.none )
+
+        Drafted (Err e) ->
+            ( { model
+                  | busy = False
+                  , notice =
+                      "The assistant could not draft a reply: "
+                          ++ Error.toString e
+              }
+            , Cmd.none
+            )
+
+        EditDraft text ->
+            ( { model | draft = text }, Cmd.none )
+
+        Send ->
+            case selectedTicket model of
+
+                Just t ->
+                    if String.trim model.draft == "" then
+                        ( { model | notice = "Write a reply before sending." }
+                        , Cmd.none
+                        )
+
+                    else
+                        ( { model | busy = True }
+                        , Cmd.perform
+                              (sendReply t (String.trim model.draft))
+                              Sent
+                        )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        Sent (Ok ts) ->
+            ( { model
+                  | tickets = ts
+                  , selected = 0
+                  , draft = ""
+                  , busy = False
+                  , notice =
+                      "Reply sent. It joins the accepted dataset for the next adapter."
+              }
+            , Cmd.none
+            )
+
+        Sent (Err e) ->
+            ( { model
+                  | busy = False
+                  , notice = "Could not send: " ++ Error.toString e
+              }
+            , Cmd.none
+            )
+
+        CheckModel ->
+            ( model, Cmd.perform Assist.status StatusRead )
+
+
+-- Open a ticket: its saved reply, or a fresh draft from the assistant.
+selectTicket : Int -> Model -> ( Model, Cmd Msg )
+selectTicket id model =
+    let
+        opened = { model | selected = id, notice = "" }
+    in
+        case selectedTicket opened of
+
+            Just t ->
+                if t.reply /= "" then
+                    ( { opened | draft = t.reply, busy = False }, Cmd.none )
+
+                else
+                    ( { opened | draft = "", busy = True }
+                    , Cmd.perform (Assist.draft t.body) Drafted
+                    )
+
+            Nothing ->
+                ( opened, Cmd.none )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+-- ── view ────────────────────────────────────────────────────────────
+ink : Ui.Color
+ink =
+    Ui.rgb 30 33 40
+
+
+muted : Ui.Color
+muted =
+    Ui.rgb 104 110 122
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.spacing 16
+        , Ui.padding 24
+        , Background.color (Ui.rgb 247 247 250)
+        , Font.family "system-ui, -apple-system, sans-serif"
+        , Font.size 15
+        , Font.color ink
+        ]
+        [ Ui.row
+              [ Ui.width Ui.fill, Ui.spacing 12 ]
+              [ Ui.el [ Font.size 24, Font.bold ] (Ui.text "Support desk")
+              , Ui.el [ Ui.alignRight ] (button "Check model" CheckModel)
+              ]
+        , Ui.el
+              [ Ui.width Ui.fill
+              , Ui.padding 10
+              , Background.color (Ui.rgb 232 240 254)
+              , Border.rounded 6
+              , Font.size 13
+              , Ui.htmlAttribute "data-test-id" "ai-status"
+              ]
+              (Ui.text model.ai)
+        , if model.notice == "" then
+              Ui.none
+
+          else
+              Ui.el
+                  [ Ui.padding 10
+                  , Background.color (Ui.rgb 255 248 225)
+                  , Border.rounded 6
+                  , Ui.htmlAttribute "data-test-id" "notice"
+                  ]
+                  (Ui.text model.notice)
+        , Ui.wrappedRow
+              [ Ui.width Ui.fill, Ui.spacing 16 ]
+              [ inbox model, detail model ]
+        ]
+
+
+button : String -> Msg -> Element Msg
+button label msg =
+    Input.button
+        [ Ui.paddingXY 14 8
+        , Background.color (Ui.rgb 37 99 235)
+        , Font.color (Ui.rgb 255 255 255)
+        , Border.rounded 6
+        ]
+        { onPress = Just msg, label = Ui.text label }
+
+
+inbox : Model -> Element Msg
+inbox model =
+    Ui.column
+        [ Ui.width (Ui.px 320)
+        , Ui.spacing 8
+        , Ui.htmlAttribute "data-test-id" "inbox"
+        ]
+        (Ui.el [ Font.bold ] (Ui.text "Inbox")
+            :: List.map (ticketRow model) model.tickets)
+
+
+ticketRow : Model -> Ticket -> Element Msg
+ticketRow model t =
+    Input.button
+        [ Ui.width Ui.fill
+        , Ui.padding 10
+        , Border.rounded 6
+        , Background.color
+              (if t.id == model.selected then
+                  Ui.rgb 219 234 254
+
+              else
+                  Ui.rgb 255 255 255)
+        ]
+        { onPress = Just (Select t.id)
+        , label =
+            Ui.column
+                [ Ui.spacing 4 ]
+                [ Ui.el
+                      [ Font.bold ]
+                      (Ui.text (t.customer ++ ": " ++ t.subject))
+                , Ui.el
+                      [ Font.size 12, Font.color muted ]
+                      (Ui.text
+                          (if t.status == "sent" then
+                              "replied"
+
+                          else
+                              "open"))
+                ]
+        }
+
+
+detail : Model -> Element Msg
+detail model =
+    case selectedTicket model of
+
+        Nothing ->
+            Ui.el
+                [ Ui.padding 24, Font.color muted ]
+                (Ui.text "Open a ticket to see the assistant's draft.")
+
+        Just t ->
+            Ui.column
+                [ Ui.width Ui.fill
+                , Ui.spacing 12
+                , Ui.padding 16
+                , Background.color (Ui.rgb 255 255 255)
+                , Border.rounded 8
+                , Ui.htmlAttribute "data-test-id" "ticket"
+                ]
+                [ Ui.el
+                      [ Font.bold ]
+                      (Ui.text (t.customer ++ ": " ++ t.subject))
+                , Ui.paragraph [] [ Ui.text t.body ]
+                , Input.multiline
+                      [ Ui.width Ui.fill
+                      , Ui.height (Ui.px 140)
+                      , Ui.htmlAttribute "data-test-id" "draft"
+                      ]
+                      { onChange = EditDraft
+                      , text = model.draft
+                      , placeholder = Nothing
+                      , label =
+                          Input.labelAbove
+                              []
+                              (Ui.text
+                                  (if model.busy then
+                                      "The assistant is drafting..."
+
+                                  else
+                                      "Reply (drafted by the assistant, edit before sending)"))
+                      , spellcheck = True
+                      }
+                , Ui.row
+                      [ Ui.spacing 8 ]
+                      [ button "Draft again" Redraft, button "Send reply" Send ]
+                ]
+
+
+-- ── JSON routes ─────────────────────────────────────────────────────
+-- Try the assistant without the page:
+--
+--     curl localhost:8000/api/assistant
+--     curl 'localhost:8000/api/draft?q=How%20do%20I%20get%20a%20refund%3F'
+--     curl 'localhost:8000/api/triage?q=My%20parcel%20is%20late'
+--     curl 'localhost:8000/api/ask?q=What%20is%20the%20status%20of%20ticket%201%3F'
+--
+-- Each draft is a model call: in production put these routes behind sign-in
+-- (or remove them), as for any endpoint that spends compute.
+assistantApi : Request -> Task Error Response
+assistantApi _ =
+    Assist.status
+        |> Task.map
+               (\s ->
+                   Server.json
+                       (JsonE.encode
+                           0
+                           (JsonE.object
+                               [ ( "mode", JsonE.string s.mode )
+                               , ( "target", JsonE.string s.target )
+                               , ( "adapter", JsonE.string s.adapter )
+                               ])))
+
+
+draftApi : Request -> Task Error Response
+draftApi req =
+    Assist.draft (Maybe.withDefault "" (Server.queryParam "q" req))
+        |> Task.map
+               (\text ->
+                   Server.json
+                       (JsonE.encode
+                           0
+                           (JsonE.object [ ( "reply", JsonE.string text ) ])))
+
+
+-- A structured answer: the model is held to the codec's schema.
+triageApi : Request -> Task Error Response
+triageApi req =
+    Assist.triage (Maybe.withDefault "" (Server.queryParam "q" req))
+        |> Task.map
+               (\t ->
+                   Server.json
+                       (JsonE.encode
+                           0
+                           (JsonE.object
+                               [ ( "category", JsonE.string t.category )
+                               , ( "urgent", JsonE.bool t.urgent )
+                               ])))
+
+
+-- The durable assistant: a typed tool call, then a typed answer.
+askApi : Request -> Task Error Response
+askApi req =
+    Assist.ask (Maybe.withDefault "" (Server.queryParam "q" req))
+        |> Task.map
+               (\a ->
+                   Server.json
+                       (JsonE.encode
+                           0
+                           (JsonE.object
+                               [ ( "reply", JsonE.string a.reply )
+                               , ( "ticket", JsonE.int a.ticket )
+                               ])))
+
+
+-- ── The app ─────────────────────────────────────────────────────────
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes
+               [ App.api "GET /api/assistant" assistantApi
+               , App.api "GET /api/draft" draftApi
+               , App.api "GET /api/triage" triageApi
+               , App.api "GET /api/ask" askApi
+               ]
+        |> App.withNotFound ()
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 8072 })
+
+
+main =
+    App.run appDef

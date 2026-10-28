@@ -1608,14 +1608,14 @@ mod mutation_filter_tests {
     #[test]
     fn a_mutation_filter_must_name_a_selected_gates_mutation() {
         assert!(Opts::parse(&args(
-            "--verify-falsifiers --all --only corpus --mutation corpus.wrong-expected-value"
+            "--verify-falsifiers --all --only corpus-1 --mutation corpus-1.wrong-expected-value"
         ))
         .is_ok());
         for bad in [
-            "--verify-falsifiers --only corpus --mutation corpus.no-such-mutation",
-            "--verify-falsifiers --only reject --mutation corpus.wrong-expected-value",
-            "--verify-falsifiers --mutation corpus.wrong-expected-value",
-            "--only corpus --mutation corpus.wrong-expected-value",
+            "--verify-falsifiers --only corpus-1 --mutation corpus-1.no-such-mutation",
+            "--verify-falsifiers --only reject --mutation corpus-1.wrong-expected-value",
+            "--verify-falsifiers --mutation corpus-1.wrong-expected-value",
+            "--only corpus-1 --mutation corpus-1.wrong-expected-value",
         ] {
             assert!(Opts::parse(&args(bad)).is_err(), "accepted: {bad}");
         }
@@ -1626,9 +1626,9 @@ mod mutation_filter_tests {
     /// gate the filter does not name runs all of its mutations.
     #[test]
     fn the_halves_of_a_split_proof_cover_every_mutation_once() {
-        let corpus = registry::find("corpus").expect("corpus is registered");
+        let corpus = registry::find("corpus-1").expect("corpus-1 is registered");
         let declared: Vec<&str> = corpus.mutations.as_slice().iter().map(|m| m.id).collect();
-        assert!(declared.len() >= 2, "corpus declares {declared:?}");
+        assert!(declared.len() >= 2, "corpus-1 declares {declared:?}");
         let mut union: Vec<&str> = Vec::new();
         for id in &declared {
             let ran: Vec<&str> = mutations_to_run(corpus, &[id.to_string()])
@@ -1652,7 +1652,7 @@ mod mutation_filter_tests {
 
         let reject = registry::find("reject").expect("reject is registered");
         assert_eq!(
-            mutations_to_run(reject, &["corpus.wrong-expected-value".into()]).len(),
+            mutations_to_run(reject, &["corpus-1.wrong-expected-value".into()]).len(),
             reject.mutations.as_slice().len(),
             "a gate the filter does not name runs every mutation"
         );

@@ -148,10 +148,12 @@ type EmailProvider
 
 -- | Construct a baseline message with the three required fields
 -- (`from`, `to`, `subject`).  Optional fields default to empty.
-defaultMessage : { from : String
-, to : List String
-, subject : String
-} -> EmailMessage
+defaultMessage :
+    { from : String
+    , to : List String
+    , subject : String
+    }
+    -> EmailMessage
 defaultMessage core =
     { from = core.from
     , to = core.to
@@ -264,10 +266,12 @@ header name value =
 -- empty `url` is left out of the list, and then no Post header is
 -- made. If both are empty the header is empty, and it still replaces
 -- an earlier `listUnsubscribe`.
-listUnsubscribe : { url : String
-, mailto : Maybe String
-, oneClick : Bool
-} -> Header
+listUnsubscribe :
+    { url : String
+    , mailto : Maybe String
+    , oneClick : Bool
+    }
+    -> Header
 listUnsubscribe opts =
     let
         url = uriText opts.url

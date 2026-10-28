@@ -387,6 +387,47 @@ fn driver_negative_literal_patterns_match_at_runtime() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+/// `build_example`'s inline run (the `xtask build-run` gate's CLI run) must run
+/// the program from the PROJECT folder, as `sky run` does (`app_run_cwd`), not
+/// from the output folder. It ran from the output folder, so a program reading
+/// a project-relative file (`examples/68-ai-dataset` reads
+/// `data/tickets.jsonl`) failed under the gate yet worked for a user. The
+/// output folder here sits INSIDE the project, like the gate's `sky-out-rust/`.
+#[test]
+fn driver_inline_run_uses_the_project_dir_as_cwd() {
+    let repo = repo_root();
+    let project = scratch_project(
+        "run-cwd",
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.File as File\n\
+         import Sky.Core.Task as Task\n\
+         import Std.Log exposing (println)\n\n\
+         main =\n    File.readFile \"data/greeting.txt\"\n        |> Task.andThen println\n        |> Task.onError (\\_ -> println \"read-failed\")\n",
+    );
+    std::fs::create_dir_all(project.join("data")).unwrap();
+    std::fs::write(project.join("data/greeting.txt"), "hello-from-project").unwrap();
+    let out = project.join("sky-out-rust");
+    let opts = BuildOptions {
+        run: true,
+        ..opts_for(&repo, &project, &out)
+    };
+    let report = build_example(&opts);
+    assert!(
+        report.go_build_ok && report.run_ok == Some(true),
+        "run-cwd program must build + run; note: {} stderr: {:?}",
+        report.note,
+        report.run_stderr
+    );
+    let stdout = report.run_stdout.clone().unwrap_or_default();
+    assert_eq!(
+        stdout.trim(),
+        "hello-from-project",
+        "the inline run did not resolve a project-relative path (cwd was not the project dir); stdout: {stdout:?}"
+    );
+    let _ = std::fs::remove_dir_all(&project);
+}
+
 /// Prelude `min` / `max` / `compare` must build AND run — they were registered
 /// as valid HIR kernel names (so they type-checked) but had no codegen mapping
 /// (`min`/`max` absent; `compare` → non-existent `rt.Basics_compare`), so a

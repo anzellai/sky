@@ -1,0 +1,592 @@
+module Std.Ai.StructuredTest exposing (tests)
+
+-- Typed tools and structured answers: `Codec.jsonSchema`, the tool schemas and
+-- `response_format` a provider sends, the decoding of the model's arguments and
+-- answer with the same codec, and an agent that round-trips one typed tool
+-- call and one typed final answer against a scripted OpenAI-compatible server.
+--
+-- A `Provider.wire` transport here records each request body and answers from
+-- a script, so each test sees exactly the JSON the provider sent.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result exposing (Result(..))
+import Sky.Core.Json.Encode as JsonE
+import Sky.Test as Test exposing (Test, TestResult)
+import Std.Codec as Codec exposing (Codec)
+import Std.Db as Db exposing (Db, SqlValue(..))
+import Std.Durable as Durable
+import Std.Sync as Sync
+import Std.Ai.Provider as Provider exposing (Provider)
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Tool as Tool exposing (Tool)
+import Std.Ai.Agent as Agent
+
+type alias Forecast =
+    { city : String
+    , days : Int
+    }
+
+
+forecastCodec : Codec Forecast
+forecastCodec =
+    Codec.auto { city = "", days = 0 }
+
+type alias Reply =
+    { summary : String
+    , days : Int
+    , note : Maybe String
+    }
+
+
+replyCodec : Codec Reply
+replyCodec =
+    Codec.object (\s d n -> { summary = s, days = d, note = n })
+        |> Codec.field "summary" .summary Codec.string
+        |> Codec.field "days" .days Codec.int
+        |> Codec.field "note" .note (Codec.maybe Codec.string)
+        |> Codec.buildObject
+
+
+replyShape : Provider.ResponseShape Reply
+replyShape =
+    Provider.responseShape "reply" replyCodec
+
+
+schemaText : Codec a -> String
+schemaText codec =
+    JsonE.encode 0 (Codec.jsonSchema codec).schema
+
+
+forecastSchema : String
+forecastSchema =
+    "{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"},\"days\":{\"type\":\"integer\"}},\"required\":[\"city\",\"days\"],\"additionalProperties\":false}"
+
+
+replySchema : String
+replySchema =
+    "{\"type\":\"object\",\"properties\":{\"summary\":{\"type\":\"string\"},\"days\":{\"type\":\"integer\"},\"note\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]}},\"required\":[\"summary\",\"days\",\"note\"],\"additionalProperties\":false}"
+
+
+-- ── A scripted server ───────────────────────────────────────────────
+usage : String
+usage =
+    "\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}"
+
+
+answer : String -> String
+answer content =
+    "{\"choices\":[{\"message\":{\"content\":"
+        ++ JsonE.encode 0 (JsonE.string content)
+        ++ "}}],"
+        ++ usage
+        ++ "}"
+
+
+toolCall : String -> String -> String
+toolCall id args =
+    "{\"choices\":[{\"message\":{\"content\":null,\"tool_calls\":[{\"id\":\""
+        ++ id
+        ++ "\",\"type\":\"function\",\"function\":{\"name\":\"forecast\",\"arguments\":"
+        ++ JsonE.encode 0 (JsonE.string args)
+        ++ "}}]}}],"
+        ++ usage
+        ++ "}"
+
+
+-- A transport that records each body and answers with `script body`.
+recording : Sync.Ref (List String) -> (String -> String) -> Provider
+recording bodies script =
+    Provider.wire
+        (\_ body ->
+            Sync.update (\bs -> bs ++ [ body ]) bodies
+                |> Task.map (\_ -> script body))
+        "m"
+
+
+-- The bodies a call sent, and its result.
+recorded : (String -> String) -> (Provider -> Task Error a) -> Result Error ( List String, a )
+recorded script call =
+    Sync.newRef []
+        |> Task.andThen
+               (\bodies ->
+                   call (recording bodies script)
+                       |> Task.andThen
+                              (\a ->
+                                  Sync.get bodies |> Task.map (\bs -> ( bs, a ))))
+        |> Task.run
+
+
+firstBody : Result Error ( List String, a ) -> String
+firstBody r =
+    case r of
+
+        Ok ( b :: _, _ ) ->
+            b
+
+        _ ->
+            ""
+
+
+contains : String -> String -> TestResult
+contains needle haystack =
+    if String.contains needle haystack then
+        Test.pass
+
+    else
+        Test.fail ("`" ++ needle ++ "` not in " ++ haystack)
+
+
+-- ── The agent scenario ──────────────────────────────────────────────
+-- Turn 0 calls the tool with arguments of the wrong type, turn 1 with good
+-- ones, turn 2 answers in the shape. The executor records what it received.
+agentScript : String -> String
+agentScript body =
+    let
+        returned = List.length (String.split "\"role\":\"tool\"" body) - 1
+    in
+        if returned == 0 then
+            toolCall "c1" "{\"city\":3}"
+
+        else if returned == 1 then
+            toolCall "c2" "{\"city\":\"Oslo\",\"days\":2}"
+
+        else
+            answer "{\"summary\":\"Rain in Oslo\",\"days\":2,\"note\":null}"
+
+
+forecastTool : Sync.Ref (List String) -> Tool
+forecastTool seen =
+    Tool.typed
+        "forecast"
+        "The forecast for a city"
+        forecastCodec
+        (\f ->
+            Sync.update
+                (\xs -> xs ++ [ f.city ++ "/" ++ String.fromInt f.days ])
+                seen
+                |> Task.map (\_ -> "rain"))
+
+type alias AgentRun =
+    { output : String
+    , status : String
+    , bodies : List String
+    , seen : List String
+    }
+
+
+runAgent : Result Error AgentRun
+runAgent =
+    Db.open "sqlite" ":memory:"
+        |> Task.andThen
+               (\db ->
+                   Durable.setup db |> Task.andThen (\_ -> Sync.newRef [])
+                       |> Task.andThen
+                              (\bodies ->
+                                  Sync.newRef []
+                                      |> Task.andThen
+                                             (\seen ->
+                                                 let
+                                                     def =
+                                                         Agent.structuredToolLoop
+                                                             replyShape
+                                                             "typed-agent"
+                                                             (recording
+                                                                 bodies
+                                                                 agentScript)
+                                                             "Answer about the weather."
+                                                             [ forecastTool seen
+                                                             ]
+                                                             6
+                                                 in
+                                                     Durable.start
+                                                         db
+                                                         def
+                                                         "run-1"
+                                                         { messages =
+                                                             [ Provider.user
+                                                                   "Oslo?"
+                                                             ]
+                                                         }
+                                                         |> Task.andThen
+                                                                (\_ ->
+                                                                    Durable.poll
+                                                                        db
+                                                                        [ Durable.erase
+                                                                              def
+                                                                        ])
+                                                         |> Task.andThen
+                                                                (\_ -> readRun db)
+                                                         |> Task.andThen
+                                                                (\( out, st ) ->
+                                                                    Task.map2
+                                                                        (\bs sn ->
+                                                                            { output =
+                                                                                out
+                                                                            , status =
+                                                                                st
+                                                                            , bodies =
+                                                                                bs
+                                                                            , seen =
+                                                                                sn
+                                                                            })
+                                                                        (Sync.get
+                                                                            bodies)
+                                                                        (Sync.get
+                                                                            seen)))))
+        |> Task.run
+
+
+readRun : Db -> Task Error ( String, String )
+readRun db =
+    Db.query
+        db
+        "SELECT output, status FROM _sky_durable_runs WHERE id = ?"
+        [ SqlString "run-1" ]
+        |> Task.map
+               (\rows ->
+                   case List.head rows of
+
+                       Just row ->
+                           ( Maybe.withDefault "" (Dict.get "output" row)
+                           , Maybe.withDefault "" (Dict.get "status" row)
+                           )
+
+                       Nothing ->
+                           ( "", "" ))
+
+
+agentChecks : AgentRun -> TestResult
+agentChecks r =
+    case Codec.fromJson replyCodec r.output of
+
+        Ok reply ->
+            if reply /= { summary = "Rain in Oslo", days = 2, note = Nothing } then
+                Test.fail ("the typed answer " ++ r.output)
+
+            else if r.seen /= [ "Oslo/2" ] then
+                Test.fail
+                    ("the executor ran with " ++ String.join ", " r.seen
+                        ++ "; bad arguments must never reach it")
+
+            else if List.length r.bodies /= 3 then
+                Test.fail
+                    ("expected 3 model calls, got "
+                        ++ String.fromInt (List.length r.bodies))
+
+            else
+                case r.bodies of
+
+                    first :: second :: _ ->
+                        if not
+                            (String.contains
+                                ("\"parameters\":" ++ forecastSchema)
+                                first) then
+                            Test.fail
+                                ("the tool schema was not sent: " ++ first)
+
+                        else if not
+                            (String.contains
+                                "\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"reply\""
+                                first) then
+                            Test.fail
+                                ("the answer shape was not sent: " ++ first)
+
+                        else if not
+                            (String.contains
+                                "the arguments do not match its schema"
+                                second) then
+                            Test.fail
+                                ("the decode failure was not fed back: "
+                                    ++ second)
+
+                        else
+                            Test.pass
+
+                    _ ->
+                        Test.fail "no bodies"
+
+        Err e ->
+            Test.fail
+                ("the output does not decode (" ++ r.status ++ "): " ++ r.output
+                    ++ " "
+                    ++ Error.toString e)
+
+
+-- ── Tests ───────────────────────────────────────────────────────────
+tests : List Test
+tests =
+    [ Test.suite
+          "Codec.jsonSchema"
+          [ Test.test
+                "an auto record is a closed object with every field required"
+                (\_ -> Test.equal forecastSchema (schemaText forecastCodec))
+          , Test.test
+                "an object builder keeps field order and makes Maybe nullable"
+                (\_ -> Test.equal replySchema (schemaText replyCodec))
+          , Test.test
+                "lists, enums and scalars"
+                (\_ ->
+                    Test.equal
+                        "{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"low\",\"high\"]}}"
+                        (schemaText
+                            (Codec.list
+                                (Codec.enum [ ( 1, "low" ), ( 2, "high" ) ]))))
+          , Test.test
+                "an exact schema is exact, a tagged union is open"
+                (\_ ->
+                    Test.equal
+                        ( True, False, "{}" )
+                        ( (Codec.jsonSchema replyCodec).exact
+                        , (Codec.jsonSchema (Codec.result Codec.string Codec.int)).exact
+                        , schemaText (Codec.result Codec.string Codec.int)
+                        ))
+          , Test.test
+                "Codec.map keeps the schema"
+                (\_ ->
+                    Test.equal
+                        "{\"type\":\"integer\"}"
+                        (schemaText
+                            (Codec.map (\n -> n * 2) (\n -> n // 2) Codec.int)))
+          ]
+    , Test.suite
+          "Std.Ai.Tool typed"
+          [ Test.test
+                "a typed tool's parameters are its codec's schema"
+                (\_ ->
+                    Test.equal
+                        forecastSchema
+                        (JsonE.encode
+                            0
+                            (Tool.parameters
+                                (Tool.typed
+                                    "forecast"
+                                    "f"
+                                    forecastCodec
+                                    (\_ -> Task.succeed "")))))
+          , Test.test
+                "an untyped tool keeps the permissive schema"
+                (\_ ->
+                    Test.equal
+                        "{\"type\":\"object\"}"
+                        (JsonE.encode
+                            0
+                            (Tool.parameters (Tool.tool "echo" "e" Task.succeed))))
+          , Test.test
+                "arguments that do not decode are a Decode error, and the executor does not run"
+                (\_ ->
+                    case Task.run
+                             (Tool.run
+                                 [ Tool.typed
+                                       "forecast"
+                                       "f"
+                                       forecastCodec
+                                       (\_ -> Task.fail (Error.unexpected "ran"))
+                                 ]
+                                 "forecast"
+                                 "{\"city\":3}") of
+
+                        Err (Error.Error Decode info) ->
+                            contains
+                                "tool forecast: the arguments do not match its schema"
+                                info.message
+
+                        other ->
+                            Test.fail
+                                "expected a Decode error before the executor")
+          , Test.test
+                "checkArguments accepts good arguments and any for an untyped tool"
+                (\_ ->
+                    Test.equal
+                        ( True, True, False )
+                        ( Tool.checkArguments
+                              [ Tool.typed
+                                    "forecast"
+                                    "f"
+                                    forecastCodec
+                                    (\_ -> Task.succeed "")
+                              ]
+                              "forecast"
+                              "{\"city\":\"Oslo\",\"days\":1}"
+                              == Ok ()
+                        , Tool.checkArguments
+                              [ Tool.tool "echo" "e" Task.succeed ]
+                              "echo"
+                              "anything"
+                              == Ok ()
+                        , Tool.checkArguments
+                              [ Tool.typed
+                                    "forecast"
+                                    "f"
+                                    forecastCodec
+                                    (\_ -> Task.succeed "")
+                              ]
+                              "forecast"
+                              "[]"
+                              == Ok ()
+                        ))
+          , Test.test
+                "the prompt for untyped tools is unchanged"
+                (\_ ->
+                    Test.equal
+                        "You can use these tools:\n- echo: e\n\nTo use a tool, reply with ONLY a JSON object: {\"tool\": \"<name>\", \"args\": \"<input string>\"}. When you have the final answer, reply with ONLY: {\"answer\": \"<final answer>\"}."
+                        (Tool.instructions [ Tool.tool "echo" "e" Task.succeed ]))
+          , Test.test
+                "the prompt lists a typed tool's schema"
+                (\_ ->
+                    contains
+                        ("- forecast: f\n  args: a JSON object matching "
+                            ++ forecastSchema)
+                        (Tool.instructions
+                            [ Tool.typed
+                                  "forecast"
+                                  "f"
+                                  forecastCodec
+                                  (\_ -> Task.succeed "")
+                            ]))
+          ]
+    , Test.suite
+          "Std.Ai.Provider tool schemas and structured answers"
+          [ Test.test
+                "chatTools still sends the permissive schema"
+                (\_ ->
+                    Test.equal
+                        "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"echo\",\"description\":\"e\",\"parameters\":{\"type\":\"object\"}}}]}"
+                        (firstBody
+                            (recorded
+                                (\_ -> answer "ok")
+                                (\p ->
+                                    Provider.chatTools
+                                        p
+                                        [ Provider.Say (Provider.user "hi") ]
+                                        [ { name = "echo", description = "e" } ]))))
+          , Test.test
+                "chatToolRequest sends each tool's schema and the answer's shape"
+                (\_ ->
+                    Test.equal
+                        ("{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"forecast\",\"description\":\"f\",\"parameters\":"
+                            ++ forecastSchema
+                            ++ "}}],\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"reply\",\"schema\":"
+                            ++ replySchema
+                            ++ ",\"strict\":true}}}")
+                        (firstBody
+                            (recorded
+                                (\_ -> answer "ok")
+                                (\p ->
+                                    Provider.chatToolRequest
+                                        p
+                                        [ Provider.Say (Provider.user "hi") ]
+                                        { tools =
+                                            [ { name = "forecast"
+                                              , description = "f"
+                                              , parameters =
+                                                  (Codec.jsonSchema forecastCodec).schema
+                                              }
+                                            ]
+                                        , responseFormat =
+                                            Just
+                                                (Provider.responseFormat
+                                                    replyShape)
+                                        }))))
+          , Test.test
+                "chatStructured sends response_format and decodes the answer"
+                (\_ ->
+                    case recorded
+                             (\_ ->
+                                 answer
+                                     "{\"summary\":\"ok\",\"days\":1,\"note\":\"n\"}")
+                             (\p ->
+                                 Provider.chatStructured
+                                     replyShape
+                                     { temperature = Just 0.0
+                                     , seed = Nothing
+                                     , maxTokens = Nothing
+                                     , adapter = Nothing
+                                     }
+                                     p
+                                     [ Provider.user "hi" ]) of
+
+                        Ok ( [ body ], r ) ->
+                            Test.equal
+                                ( "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"temperature\":0,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"reply\",\"schema\":"
+                                      ++ replySchema
+                                      ++ ",\"strict\":true}}}"
+                                , { summary = "ok", days = 1, note = Just "n" }
+                                , 5
+                                )
+                                ( body, r.value, r.usage.totalTokens )
+
+                        Ok _ ->
+                            Test.fail "expected one request"
+
+                        Err e ->
+                            Test.fail (Error.toString e))
+          , Test.test
+                "an answer that does not match the shape is a Decode error naming it"
+                (\_ ->
+                    case recorded
+                             (\_ -> answer "{\"summary\":1}")
+                             (\p ->
+                                 Provider.chatStructured
+                                     replyShape
+                                     Provider.defaultOptions
+                                     p
+                                     [ Provider.user "hi" ]) of
+
+                        Err (Error.Error Decode info) ->
+                            contains
+                                "does not match the shape reply"
+                                info.message
+
+                        _ ->
+                            Test.fail "expected a Decode error")
+          , Test.test
+                "a custom provider refuses a shaped answer with InvalidSetting"
+                (\_ ->
+                    case Task.run
+                             (Provider.chatStructured
+                                 replyShape
+                                 Provider.defaultOptions
+                                 (Provider.custom
+                                     (\_ ->
+                                         Task.succeed
+                                             { content = "{}"
+                                             , usage =
+                                                 { promptTokens = 0
+                                                 , completionTokens = 0
+                                                 , totalTokens = 0
+                                                 }
+                                             }))
+                                 [ Provider.user "hi" ]) of
+
+                        Err e ->
+                            case Failure.fromError e of
+
+                                Just (InvalidSetting s) ->
+                                    Test.equal "responseShape" s.setting
+
+                                _ ->
+                                    Test.fail (Error.toString e)
+
+                        Ok _ ->
+                            Test.fail "a custom provider answered a shaped call")
+          ]
+    , Test.suite
+          "Std.Ai.Agent structuredToolLoop"
+          [ Test.test
+                "one typed tool call and one typed final answer, bad arguments fed back"
+                (\_ ->
+                    case runAgent of
+
+                        Ok r ->
+                            agentChecks r
+
+                        Err e ->
+                            Test.fail (Error.toString e))
+          ]
+    ]

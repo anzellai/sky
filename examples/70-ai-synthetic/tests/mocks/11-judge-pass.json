@@ -1,0 +1,8 @@
+{
+  "match": {
+    "method": "POST",
+    "urlContains": "sky-ai-local.invalid/judge/"
+  },
+  "status": 200,
+  "body": "{\"choices\": [{\"message\": {\"content\": \"SCORE: 5 - correct, polite and actionable\"}}], \"usage\": {\"prompt_tokens\": 180, \"completion_tokens\": 220, \"total_tokens\": 400}}"
+}

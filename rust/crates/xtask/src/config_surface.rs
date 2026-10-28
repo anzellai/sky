@@ -149,6 +149,13 @@ const PREFIXED_READ_HELPERS: &[&str] = &[
     // to the derivation until it is declared, which is precisely the
     // behaviour stage 1 built this list for.
     "configLayers(\"",
+    // The strict AI readers (v0.28.0): a value that does not parse is a
+    // typed InvalidSetting, never skipped. `aiEnvChecked("AI_ACCEL", …)` and
+    // `aiLayerChecked("AI_SERVE_BIND", …)` ARE reads of `SKY_AI_ACCEL` and
+    // `SKY_AI_SERVE_BIND`; the gate went red when the literal reads they
+    // replaced disappeared from the measurement.
+    "aiEnvChecked(\"",
+    "aiLayerChecked(\"",
 ];
 
 /// Every site where a prefixed-read primitive is called with a non-literal
@@ -170,6 +177,16 @@ const NON_LITERAL_PREFIXED_READS: &[(&str, &str)] = &[
          whose members are all read through a literal dbEnvInt/dbEnvDuration call",
     ),
     (
+        "runtime-go/rt/ai_serve.go",
+        "the display name of a tier or Cloud Run target setting (`AI_SERVE_<KEY>`) \
+         that aiLayer reads; each name is documented in docs/sky-toml.md",
+    ),
+    (
+        "runtime-go/rt/ai_train.go",
+        "the display name of a Vertex training setting (`AI_TRAIN_<KEY>`) that \
+         aiLayer reads; each name is documented in docs/sky-toml.md",
+    ),
+    (
         "runtime-go/rt/analytics_writer.go",
         "skyEnvSynchronousCommitOff wrapper",
     ),
@@ -180,6 +197,46 @@ const NON_LITERAL_PREFIXED_READS: &[(&str, &str)] = &[
          while every caller passes a literal (resolveTTL/resolveIdleEvict/\
          resolveStoreKind/resolveStorePath, and resolveLivePort, which calls \
          configLayers directly)",
+    ),
+    (
+        "runtime-go/rt/ai_config.go",
+        "Std.Ai.Endpoint slot settings (v0.28.0). A slot's variables are \
+         <PREFIX>_AI_<SLOT>_<KEY>: the SLOT is the app's own literal \
+         (`Endpoint.endpoint \"chat\"`), so the full suffix is built at run \
+         time (aiSlotSuffix) and read through configLayers. The KEY set is \
+         closed and literal in that file (MODE / URL / KEY / MODEL / ADAPTER / \
+         TIMEOUT_MS / MAX_INFLIGHT / QUEUE / QUEUE_WAIT_MS / RETRIES / CONTEXT / \
+         GPU / PARALLEL / IDLE_UNLOAD_S / PORT / ADAPTER_REFRESH_S / DRAFT / \
+         DRAFT_MAX / DRAFT_MIN / ADAPTERS), each \
+         documented in docs/ai/local.md as SKY_AI_<SLOT>_<KEY>. The \
+         machine-wide AI_HOME / AI_LLAMA_BIN / AI_FETCH / AI_ACCEL are literal \
+         skyGetenv reads in ai_fetch.go / ai_gguf.go, and AI_REGISTRY a \
+         literal skyEnvName read in ai_store.go; all are counted normally",
+    ),
+    (
+        "runtime-go/rt/ai_draft.go",
+        "the display name of a slot's DRAFT setting in a failure message \
+         (`<PREFIX>_AI_<SLOT>_DRAFT`); the value is read by ai_config.go's \
+         closed slot KEY set, never here",
+    ),
+    (
+        "runtime-go/rt/ai_device_serve.go",
+        "Std.Ai.Device slot settings (v0.28.0): a device slot's variables are \
+         <PREFIX>_AI_<SLOT>_<KEY> like every slot's (the SLOT is the app's own \
+         literal), built with aiSlotSuffix and read through aiLayer / \
+         configLayers. The KEY set is closed and literal in that file \
+         (PLACEMENT / DEVICE_MODEL / DEVICE_ADAPTER / DEVICE_THREADS / \
+         DEVICE_GPU_LAYERS, and MODEL, the slot's own \
+         model the device follows), each documented in docs/ai/device.md as \
+         SKY_AI_<SLOT>_<KEY>",
+    ),
+    (
+        "runtime-go/rt/ai_startup.go",
+        "the startup report's AI lines (v0.28.0) print each declared slot's \
+         variable NAMES, built with skyEnvName(aiSlotSuffix(slot, key)) for \
+         the same closed KEY set ai_config.go reads (MODE / URL / KEY / MODEL / \
+         ADAPTER). The slot is the app's own literal, so the suffix is built at \
+         run time; it reads no suffix ai_config.go does not",
     ),
     (
         "runtime-go/rt/spa_server_settings.go",

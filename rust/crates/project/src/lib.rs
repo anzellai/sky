@@ -10,6 +10,10 @@
 // partial application. A private copy of that scan in the test would be a
 // second definition of "the runtime's arity", and second definitions drift.
 pub mod abi_guard;
+/// The project's AI pipeline entry (`src/Ai.sky`) for the project-mode
+/// `sky ai` verbs.
+pub mod ai_entry;
+pub mod ai_slots;
 pub mod app_entry;
 mod build;
 pub mod build_stamp;
@@ -98,8 +102,9 @@ pub use doc::{
     render_learn_tour, render_module, stdlib_denominators, ModuleDenominator,
 };
 pub use driver::{
-    assets_root_for, declared_module_name, is_compiler_repo_root, module_name_from_path,
-    project_dir_for, repo_root_for, run_app, source_root_for_declared,
+    app_run_cwd, assets_root_for, declared_module_name, is_compiler_repo_root,
+    module_name_from_path, project_dir_for, project_run_cwd, repo_root_for, run_app,
+    source_root_for_declared,
 };
 /// Re-exported so `sky init` can scaffold an embedded template (`CLAUDE.md`)
 /// when running standalone, outside the repo tree (doc 09 §E).

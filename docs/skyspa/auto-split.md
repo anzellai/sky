@@ -1161,7 +1161,7 @@ naming it.
 
 **`init`'s command runs on the server when it must (v0.27.9).** `init`'s
 command runs once when the client starts, unless the SSR page settled it. When
-that command reaches a server-only binding (a task that opens the database, an
+that command reaches a server-only binding (a task that opens the database, a
 model slot, a qualified binding of a server module, through a helper or a `let`)
 and is not the GET-safe read the SSR settles, the client cannot hold it. The
 split then gives `init` the follow-up treatment of a server branch: the client

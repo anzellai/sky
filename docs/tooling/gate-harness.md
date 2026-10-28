@@ -224,8 +224,10 @@ can rot it. Both are now caught, at two depths:
   Rust-source mutation and runs every selected gate **twice** (baseline +
   mutated), so it is the deepest and slowest check here. It runs with `--all`
   in the nightly `falsifier-verification` job (`nightly-sweep.yml`, `--tier
-  t1`) and in the release workflow's `gate-falsifiers-1` … `-6` jobs, whose
-  `--only` lists together cover every registered gate of every tier. It accepts
+  t1`) and in the release workflow's `gate-falsifiers-*` jobs (groups 1 to 9,
+  with group 4 split into `gate-falsifiers-4-1` … `-4-4`, one per corpus shard
+  gate), whose `--only` lists together cover every registered gate of every
+  tier. It accepts
   `--tier` / `--only` to verify one slice at a time; with neither it sweeps the
   whole registry. Locally it is incremental (above).
 
@@ -332,6 +334,47 @@ Per-case data comes from the `Sky.Test` JSON reporter — see
 
 Every gate pins an **exact** expected count, never a `>=`. A corpus that shrinks
 is a failure with an actionable message, not a quieter green.
+
+### A sharded gate keeps every rule per shard: the behavioural corpus
+
+The behavioural corpus (every generated case built **and** run) outgrew one
+runner. On 2026-10-14 the single `corpus` gate was killed at its 4000 s budget
+near case 350 of 554, about 11.4 s of wall clock per case on a CI runner with
+the Go build cache restored. A runner's cores already bound the per-case
+`go build`, so the only lever that adds hardware is more runners.
+
+It now runs as four registered gates, `corpus-1` … `corpus-4`. Shard gate
+`corpus-{k+1}` runs every behavioural case whose index is `k` mod 4
+(`corpus::shard_slice`, interleaved like `xtask repro --shard=I/N`, so each
+shard holds part of every family). `xtask corpus --run --shard=I/N` runs one
+slice by hand. Each shard is a gate of its own, so each keeps every rule above:
+
+- **An exact count.** `bodies::corpus_shard_expected(k)` derives each shard's
+  count from `CORPUS_BEHAVIOURAL_EXPECTED` (139 / 139 / 138 / 138 at 554), and
+  the gate reports the number of cases that produced a verdict, so a shard that
+  drops a case fails.
+- **A budget per shard.** 3600 s each: about 139 cases × 11.4 s ≈ 1,590 s,
+  which is 44 %. A shard reaches 50 % at about 158 cases (about 630 in all);
+  add a shard before then rather than raise the budget.
+- **A falsifier per shard.** Each declares `corpus-k.wrong-expected-value`
+  (the `record_update` expectation) and `corpus-k.wrong-stdlib-expectation` (the
+  expectation of every Family S case). Both corrupt a whole family, because a
+  single-case mutation bites one shard only and leaves the others `VACUOUS`.
+  `corpus::tests::every_shard_holds_the_families_its_falsifiers_corrupt` asserts
+  each shard holds both families.
+- **The union is the corpus.** `corpus::tests::shards_are_disjoint_and_total`
+  checks the partition for many sizes, a registry test checks the shard gates'
+  counts sum to the whole corpus, and `tests/workflows_parse.rs` fails the build
+  if a T2 gate (a shard included) runs in no release job or no nightly leg, or
+  if a shard's falsifier is proven in no release job.
+
+The coverage ledger scores the shards as one logical gate, `corpus`, at the
+strength of the **weakest** shard: the corpus counts as `Falsified` only when
+every shard's falsifier is proven.
+
+In CI each shard has its own release job (`gate-t2-corpus-1` … `-4`) and
+falsifier job (`gate-falsifiers-4-1` … `-4`), and the nightly `behaviour-corpus`
+job is a matrix with one leg per shard plus one for the rest of T2.
 
 Pinning exact counts found a real discrepancy on its first run: v2 §5.4 records
 conformance at **772** cases, from a static count of `Test.test` leaves. The

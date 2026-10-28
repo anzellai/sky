@@ -1,0 +1,456 @@
+module Std.Ai.TrainCloudTest exposing (tests)
+
+-- Std.Ai.Train's Vertex backend, the pure and offline parts: the price book,
+-- the estimate and the runtime ceiling the budget sets, the settings check,
+-- the run key, the machine's accelerator, the custom job's JSON, and label
+-- validity. The workflow itself runs against the runtime's Google Cloud
+-- emulator in rust/crates/sky/tests/fixtures/ai-cloud (ai_cloud_train_flow.rs).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Json.Decode as JsonD
+import Sky.Test as Test exposing (Test)
+import Std.Money as Money
+import Std.Ai.Dataset as Dataset
+import Std.Ai.Provider as Provider
+import Sky.Core.File as File
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Cloud.Google as Google
+import Std.Ai.Train as Train
+
+
+book : Train.MachinePriceBook
+book =
+    Train.machinePrices
+        Money.USD
+        "2026-10-12"
+        [ { machine = "g2-standard-4"
+          , region = "us-central1"
+          , perHour = "1.20"
+          }
+        , { machine = "n2-standard-4"
+          , region = "us-central1"
+          , perHour = "0.30"
+          }
+        ]
+
+
+version : Result Error (Dataset.Version Dataset.Chat)
+version =
+    File.tempDir "sky-train-cloud-test"
+        |> Task.andThen
+               (\dir ->
+                   Dataset.fromList
+                       (List.map
+                           (\n ->
+                               { messages =
+                                   [ Provider.user
+                                         ("Where is order " ++ String.fromInt n
+                                             ++ "?")
+                                   , Provider.assistant "It ships tomorrow."
+                                   ]
+                               })
+                           (List.range 1 30))
+                       |> Dataset.split
+                              { train = 70, eval = 30, test = 0, seed = 0 }
+                              (\r ->
+                                  String.join "|" (List.map .content r.messages))
+                       |> Dataset.freeze
+                              (Dataset.folder dir "orders")
+                              Dataset.chatCodec)
+        |> Task.run
+
+
+build : Dataset.Version Dataset.Chat -> Train.Job
+build v =
+    Train.lora Train.devBase v |> Train.withName "support"
+        |> Train.withMaxSteps 30
+        |> Train.withBatch { perDevice = 4, accumulate = 1 }
+        |> Train.withSequenceLength 512
+        |> Train.withBackend Train.Vertex
+        |> Train.withCloud
+               { project = "p"
+               , region = "us-central1"
+               , machine = "g2-standard-4"
+               , staging = "gs://bkt/sky"
+               }
+        |> Train.withImage
+               "us-central1-docker.pkg.dev/p/sky/sky-ai-trainer@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        |> Train.withBudget (Money.fromMajor Money.USD 3)
+        |> Train.withMachinePrices book
+
+
+-- The fixture job, changed by `f`.
+jobWith : (Train.Job -> Train.Job) -> Result Error Train.Job
+jobWith f =
+    Result.map (\v -> f (build v)) version
+
+
+job : Result Error Train.Job
+job =
+    jobWith identity
+
+
+settingsOf : Result Error Train.Job -> Result Error Train.CloudSettings
+settingsOf j =
+    Result.andThen (\x -> Task.run (Train.cloudSettings x)) j
+
+
+codeOf : Result Error a -> String
+codeOf r =
+    case r of
+
+        Err e ->
+            Maybe.withDefault
+                ("not typed: " ++ Error.toString e)
+                (Maybe.map Failure.code (Failure.fromError e))
+
+        Ok _ ->
+            "Ok"
+
+
+settingOf : Result Error a -> String
+settingOf r =
+    case r of
+
+        Err e ->
+            case Failure.fromError e of
+
+                Just (InvalidSetting s) ->
+                    s.setting
+
+                Just (NotConfigured s) ->
+                    s.setting
+
+                _ ->
+                    "?"
+
+        Ok _ ->
+            "Ok"
+
+
+-- Qwen2.5 0.5B has 494032768 parameters.
+qwenParameters : Int
+qwenParameters =
+    494032768
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "the settings resolve with the price book's rate and the machine's L4"
+          (\_ ->
+              case settingsOf job of
+
+                  Ok cs ->
+                      Test.equal
+                          ( ( cs.machine, cs.accelerator, cs.acceleratorCount )
+                          , ( Money.toMinor cs.perHour
+                            , Money.toMinor cs.budget
+                            , cs.priceBook
+                            )
+                          )
+                          ( ( "g2-standard-4", "NVIDIA_L4", 1 )
+                          , ( 120, 300, "2026-10-12" )
+                          )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "the estimate: 20 minutes of overhead plus the steps, at the rate; the ceiling is what the budget buys"
+          (\_ ->
+              case Result.map2 (\j cs -> ( j, cs )) job (settingsOf job) of
+
+                  Ok ( j, cs ) ->
+                      case Train.cloudEstimate j cs qwenParameters of
+
+                          ( minutes, estimate, timeout ) ->
+                              -- 30 steps at max(250 ms, 494 × 2048 / 4000 ms)
+                              -- = 30 × 252 ms, under a minute: 15 + 1 + 5.
+                              Test.equal
+                                  ( minutes, Money.toMinor estimate, timeout )
+                                  ( 21, 42, 9000 )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "withMaxRuntimeMinutes lowers the ceiling below the budget's"
+          (\_ ->
+              case Result.map2
+                       (\j cs -> ( j, cs ))
+                       (jobWith (Train.withMaxRuntimeMinutes 40))
+                       (settingsOf (jobWith (Train.withMaxRuntimeMinutes 40))) of
+
+                  Ok ( j, cs ) ->
+                      case Train.cloudEstimate j cs qwenParameters of
+
+                          ( _, _, timeout ) ->
+                              Test.equal timeout 2400
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a cloud job with no budget is refused, naming the variable"
+          (\_ ->
+              let
+                  noBudget =
+                      version
+                          |> Result.map
+                                 (\v ->
+                                     Train.lora Train.devBase v
+                                         |> Train.withCloud
+                                                { project = "p"
+                                                , region = "us-central1"
+                                                , machine = ""
+                                                , staging = "gs://bkt/sky"
+                                                }
+                                         |> Train.withImage
+                                                "r/i@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                                         |> Train.withMachinePrices book)
+              in
+                  Test.equal
+                      ( codeOf (settingsOf noBudget)
+                      , settingOf (settingsOf noBudget)
+                      )
+                      ( "InvalidSetting", "SKY_AI_TRAIN_BUDGET" ))
+    , Test.test
+          "a machine the price book does not have is refused: no price, no estimate"
+          (\_ ->
+              let
+                  other =
+                      jobWith
+                          (Train.withCloud
+                              { project = "p"
+                              , region = "europe-west4"
+                              , machine = "g2-standard-4"
+                              , staging = "gs://bkt/sky"
+                              })
+              in
+                  Test.equal
+                      ( codeOf (settingsOf other)
+                      , settingOf (settingsOf other)
+                      )
+                      ( "InvalidSetting", "prices" ))
+    , Test.test
+          "a price book with a bad rate is refused when a job uses it"
+          (\_ ->
+              let
+                  bad =
+                      jobWith
+                          (Train.withMachinePrices
+                              (Train.machinePrices
+                                  Money.USD
+                                  "v1"
+                                  [ { machine = "g2-standard-4"
+                                    , region = "us-central1"
+                                    , perHour = "cheap"
+                                    }
+                                  ]))
+              in
+                  Test.equal
+                      ( codeOf (settingsOf bad), settingOf (settingsOf bad) )
+                      ( "InvalidSetting", "prices" ))
+    , Test.test
+          "an image without a digest and a staging location that is not GCS are refused"
+          (\_ ->
+              Test.equal
+                  ( settingOf
+                        (settingsOf (jobWith (Train.withImage "r/i:latest")))
+                  , settingOf
+                        (settingsOf
+                            (jobWith
+                                (Train.withCloud
+                                    { project = "p"
+                                    , region = "us-central1"
+                                    , machine = ""
+                                    , staging = "s3://b/x"
+                                    })))
+                  )
+                  ( "SKY_AI_TRAIN_IMAGE", "SKY_AI_TRAIN_STAGING" ))
+    , Test.test
+          "the run key is stable, short and a valid label"
+          (\_ ->
+              case job of
+
+                  Ok j ->
+                      let
+                          key = Train.runKey (Train.runId j)
+                      in
+                          Test.equal
+                              ( key == Train.runKey (Train.runId j)
+                              , String.length key
+                              , Google.validLabel key
+                              )
+                              ( True, 24, True )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a killed container (code 8, low on memory) is not a stockout; a stockout and a quota are typed"
+          (\_ ->
+              let
+                  classify code message =
+                      case JsonD.decodeString
+                               Google.customJobDecoder
+                               ("{\"name\":\"projects/p/locations/us-central1/customJobs/1\",\"state\":\"JOB_STATE_FAILED\",\"error\":{\"code\":"
+                                   ++ String.fromInt code
+                                   ++ ",\"message\":\""
+                                   ++ message
+                                   ++ "\"}}") of
+
+                          Ok job ->
+                              case Google.jobFailure "us-central1" job of
+
+                                  Just e ->
+                                      Maybe.withDefault
+                                          "untyped"
+                                          (Maybe.map
+                                              Failure.code
+                                              (Failure.fromError e))
+
+                                  Nothing ->
+                                      "relaunch"
+
+                          Err _ ->
+                              "undecodable"
+                  -- The first message is what Vertex AI returned on a live run
+                  -- (2026-10-12) for the Fake driver's exit 137 on an
+                  -- n2-standard-4 with memory to spare.
+              in
+                  Test.equal
+                      [ classify
+                            8
+                            "Replicas low on memory: . Specify a machine with larger memory and try again."
+                      , classify
+                            8
+                            "Resources are insufficient in region: us-central1 (stockout)."
+                      , classify
+                            8
+                            "Quota exceeded for aiplatform.googleapis.com/custom_model_training_nvidia_l4_gpus"
+                      , classify
+                            13
+                            "The replica workerpool0-0 exited with a non-zero status of 1."
+                      ]
+                      [ "relaunch"
+                      , "CapacityUnavailable"
+                      , "QuotaExceeded"
+                      , "relaunch"
+                      ])
+    , Test.test
+          "the machine table gives each G2 type its L4s and a CPU type none"
+          (\_ ->
+              Test.equal
+                  (List.map
+                      Google.accelerator
+                      [ "g2-standard-4"
+                      , "g2-standard-24"
+                      , "g2-standard-48"
+                      , "g2-standard-96"
+                      , "n2-standard-4"
+                      ])
+                  [ ( "NVIDIA_L4", 1 )
+                  , ( "NVIDIA_L4", 2 )
+                  , ( "NVIDIA_L4", 4 )
+                  , ( "NVIDIA_L4", 8 )
+                  , ( "", 0 )
+                  ])
+    , Test.test
+          "labels: lower case, digits, - and _, at most 63 characters"
+          (\_ ->
+              Test.equal
+                  (List.map
+                      Google.validLabel
+                      [ "sky-run", "Sky", "", String.repeat 64 "a", "a_b-1" ])
+                  [ True, False, False, False, True ])
+    , Test.test
+          "the custom job: one worker with the machine's L4, the shim's arguments, labels and the hard ceiling"
+          (\_ ->
+              case settingsOf job of
+
+                  Ok cs ->
+                      let
+                          plan =
+                              { project = "p"
+                              , region = "us-central1"
+                              , machine = cs.machine
+                              , accelerator = cs.accelerator
+                              , acceleratorCount = cs.acceleratorCount
+                              , image = cs.image
+                              , staging = cs.staging
+                              , steps = 30
+                              , estimateMinutes = 21
+                              , timeoutSeconds = 9000
+                              , perHour = cs.perHour
+                              , estimate = cs.perHour
+                              , budget = cs.budget
+                              , priceBook = cs.priceBook
+                              , bucketLocation = "us-central1"
+                              , quotaLimit = Nothing
+                              , quotaNote = ""
+                              }
+                          json =
+                              Google.customJobJson
+                                  (Train.cloudJobSpec cs plan "sky-abc" 1 20)
+                          field path d =
+                              Result.toMaybe
+                                  (JsonD.decodeString (JsonD.at path d) json)
+                          pool path d =
+                              Result.toMaybe
+                                  (JsonD.decodeString
+                                      (JsonD.at
+                                          [ "jobSpec", "workerPoolSpecs" ]
+                                          (JsonD.index 0 (JsonD.at path d)))
+                                      json)
+                      in
+                          Test.equal
+                              ( ( field [ "displayName" ] JsonD.string
+                                , field [ "labels", "sky-run" ] JsonD.string
+                                , field [ "labels", "sky-attempt" ] JsonD.string
+                                )
+                              , ( pool
+                                      [ "machineSpec", "acceleratorType" ]
+                                      JsonD.string
+                                , pool
+                                      [ "machineSpec", "acceleratorCount" ]
+                                      JsonD.int
+                                , pool
+                                      [ "containerSpec", "args" ]
+                                      (JsonD.list JsonD.string)
+                                )
+                              , ( field
+                                      [ "jobSpec", "scheduling", "timeout" ]
+                                      JsonD.string
+                                , field
+                                      [ "jobSpec"
+                                      , "scheduling"
+                                      , "restartJobOnWorkerRestart"
+                                      ]
+                                      JsonD.bool
+                                )
+                              )
+                              ( ( Just "sky-abc-a1", Just "sky-abc", Just "1" )
+                              , ( Just "NVIDIA_L4"
+                                , Just 1
+                                , Just
+                                      [ "--inputs"
+                                      , "gs://bkt/sky/runs/sky-abc/inputs.json"
+                                      , "--run"
+                                      , "gs://bkt/sky/runs/sky-abc"
+                                      , "--attempt"
+                                      , "1"
+                                      , "--resume-from"
+                                      , "20"
+                                      ]
+                                )
+                              , ( Just "9000s", Just False )
+                              )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    ]

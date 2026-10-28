@@ -56,6 +56,9 @@ import (
 var exitAuditAllowed = map[string]string{
 	"pg_embed.go":      "defines ExitProcess; its other exits fire when the database is already gone",
 	"panic_recover.go": "runs as main's FIRST defer, so StopEmbeddedPostgres (registered second) has already run",
+	"child_signal.go": "the second-signal force exit runs only while no signal owner is registered, and an embedded " +
+		"database's supervisor is always one (installSignalHandler runs whenever a supervisor starts), so there is no " +
+		"database to stop; its first signal leaves through ExitProcess",
 }
 
 // exitAuditBanned are the process-ending members, per package. syscall.Exit is
@@ -273,6 +276,13 @@ func TestNoRuntimeCodeExitsWithoutStoppingTheEmbeddedDatabase(t *testing.T) {
 			return err
 		}
 		if d.IsDir() {
+			// A `testdata` directory is not part of any package the go tool
+			// builds (it ignores the name), so nothing in it is linked into an
+			// app: testdata/fakellama is a stand-in llama-server, its own
+			// program, and its os.Exit is how a fake engine dies.
+			if d.Name() == "testdata" {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if !strings.HasSuffix(path, ".go") {

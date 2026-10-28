@@ -5,6 +5,13 @@
 > effect and money layers already in the stdlib. The live API is `sky doc
 > Std.Ai.Provider` / `Std.Ai.Agent` / `Std.Ai.Tool` / `Std.Ai.Policy` /
 > `Std.Ai.Trace` / `Std.Ai.Memory.Pg`; this doc is the architecture behind it.
+>
+> v0.28.0 adds model slots and a managed local engine (`Std.Ai.Endpoint`,
+> `Std.Ai.Local`) and `Provider.chatWith` / `Provider.embed`: see
+> [`../ai/local.md`](../ai/local.md) and the lifecycle design,
+> [`std-ai-lifecycle.md`](std-ai-lifecycle.md). To test the whole lifecycle
+> (offline, on a local engine, and live on Google Cloud), follow
+> [`../ai/testing-guide.md`](../ai/testing-guide.md).
 
 ## Two principles the design is built around
 
@@ -104,9 +111,51 @@ protocol is the portable floor that works on any OpenAI-compatible endpoint.
 **Native function-calling** is also available: `Provider.chatTools` sends the
 OpenAI `tools` request and returns the model's real `tool_calls`, and
 `Agent.nativeToolLoop` drives it as a durable workflow (each turn and each tool
-call a journalled step). Tools are advertised by name + description and receive
-free-form JSON arguments; a typed, `Codec`-derived parameter schema is the
-remaining increment.
+call a journalled step). A tool made with `Tool.tool` is advertised by name and
+description with the permissive schema `{"type": "object"}` and receives
+free-form JSON arguments.
+
+### Typed tools and structured answers
+
+`Tool.typed name description codec exec` declares a tool's arguments with a
+`Codec`. The model is sent `Codec.jsonSchema codec` as the tool's
+`parameters`, and the arguments are decoded with the same codec before `exec`
+runs. Arguments that do not decode never reach `exec`: they are a `Decode`
+error, and both agent loops hand it back to the model as the tool's result, so
+it can call again. The prompt-based loop lists a typed tool's schema and takes
+its `args` as a JSON object.
+
+```elm
+forecast =
+    Tool.typed "forecast" "The forecast for a city"
+        (Codec.auto { city = "", days = 0 })
+        (\args -> Weather.forecast args.city args.days)
+```
+
+A structured answer works the same way. `Provider.responseShape name codec` is
+the shape, `Provider.chatStructured shape options provider messages` sends it as
+the OpenAI-compatible `response_format` (`{"type": "json_schema", ...}`, strict
+when the schema is exact) and decodes the answer into the codec's type.
+`Agent.structuredToolLoop shape ...` is `nativeToolLoop` with a typed final
+answer: an answer that does not decode is handed back to the model with the
+reason, and the run's output is the decoded value.
+
+```elm
+replyShape = Provider.responseShape "reply" (Codec.auto { answer = "", refund = False })
+
+Provider.chatStructured replyShape Provider.defaultOptions provider messages
+    |> Task.map (\r -> r.value.refund)
+```
+
+OpenAI, vLLM and llama.cpp honour `response_format`, so `compatible`, an
+`Endpoint` slot and a `Local` engine all work. A `custom` or `customTools`
+provider receives only the messages or the tool specs, so a shaped call fails
+there with `InvalidSetting` (setting `responseShape`) instead of returning free
+text; `Provider.customToolRequest` receives the whole `ToolRequest` (the tool
+schemas and the `responseFormat`) for a backend that can honour it. An answer
+that does not match the shape is a `Decode` error naming the shape, never a
+panic. Lower-level calls: `Provider.chatToolRequest` / `measureToolRequest`
+with a `ToolRequest`, `decodeStructured`, and `Codec.jsonSchema` itself.
 
 ## `Std.Ai.Policy` — the action firewall
 
@@ -135,7 +184,10 @@ counts, and the cost priced in `Std.Money` as an exact decimal string. `totalCos
 sums a run's per-call costs in Sky over `Std.Decimal` — never a float `SUM` in
 SQL, because a float would corrupt the total, which is the whole reason cost lives
 in `Std.Money`. The rows are the per-run / per-tenant cost figure and the audit
-record of what the agent did.
+record of what the agent did. From v0.28.0 a row also records what the call did
+(slot, tier, adapter, queue wait, latency, time to first token, tokens per
+second, outcome), and training and eval runs record their own rows: see
+[`../ai/trace.md`](../ai/trace.md).
 
 ## `Std.Ai.Memory.Pg` — long-term memory
 

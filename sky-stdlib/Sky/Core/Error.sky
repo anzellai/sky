@@ -15,9 +15,57 @@
 -- status, JSON decode path, FFI panic stack — for debuggers and
 -- higher-level middleware. They are optional; every constructor
 -- below sets `details = Nothing` by default.
-module Sky.Core.Error exposing (..)
+--
+-- A domain failure (`Domain DomainFailure`) is the one open-ended detail. A
+-- stdlib domain (`"ai"`, later `"db"`, `"durable"`, …) or an app records its
+-- own stable failure code, whether the failure is retryable, an optional
+-- retry delay and a few string attributes in it. The core type never changes
+-- when a domain adds a failure: code that needs to react generically uses
+-- `Error.domain`, `Error.isRetryable` and `Error.retryAfter`, and a domain
+-- module (for example `Std.Ai.Failure`) gives the typed view.
+module Sky.Core.Error exposing
+    ( Error(..)
+    , ErrorKind(..)
+    , ErrorDetails(..)
+    , DomainFailure
+    , ErrorInfo
+    , PanicInfo
+    , TypeInfo
+    , mkInfo
+    , io
+    , network
+    , ffi
+    , decode
+    , timeout
+    , notFound
+    , permissionDenied
+    , invalidInput
+    , conflict
+    , unavailable
+    , unexpected
+    , withMessage
+    , withDetails
+    , kindLabel
+    , toString
+    , isRetryable
+    , failure
+    , withRetryable
+    , withRetryAfter
+    , withAttr
+    , failureDomain
+    , failureCode
+    , failureRetryable
+    , failureRetryAfter
+    , failureAttr
+    , failureAttrs
+    , fromDomain
+    , failureOf
+    , domain
+    , retryAfter
+    )
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Ffi as Ffi
 import Sky.Core.String as String
 import Sky.Core.Maybe exposing (Maybe(..))
 
@@ -58,6 +106,23 @@ type ErrorDetails
     | HttpStatus Int
     | JsonDecode String
     | Custom String
+    | Domain DomainFailure
+
+-- | A failure that belongs to one domain of the stdlib or of an app. It is
+-- opaque: build it with `failure` and the `with…` builders, read it with the
+-- `failure…` readers. It holds:
+--
+--   * the domain, a lower-case dotted name (`"ai"`, `"db"`, `"myapp.billing"`),
+--   * a stable code inside that domain (by convention the name of the typed
+--     constructor, for example `"Overloaded"`),
+--   * whether a retry of the same call can succeed,
+--   * an optional retry delay in milliseconds,
+--   * string attributes, in the order they were added. They go to logs and
+--     across the Sky.Spa wire, so they never hold a secret.
+--
+-- New domains and new codes need no change to this type.
+type DomainFailure
+    = DomainFailure String String Bool (Maybe Int) (List ( String, String ))
 
 
 -- ── Constructors ────────────────────────────────────────────────────
@@ -188,22 +253,171 @@ toString err =
             kindLabel kind ++ ": " ++ info.message
 
 
--- True for transient error kinds — callers can retry.
+-- | True when a retry of the same call can succeed. A domain failure's own
+-- retryable flag decides (a crashed engine is `Unavailable` but must not be
+-- retried blindly). Otherwise the kind decides: `Timeout`, `Network` and
+-- `Unavailable` are transient.
+-- The runtime reads the whole error in one pass and returns a `Bool`
+-- (`rt.Error_isRetryableT`, runtime-go/rt/error_kernels.go): written in Sky,
+-- each of the three payload reads was a runtime narrowing of the erased
+-- stdlib ADT.
 isRetryable : Error -> Bool
-isRetryable err =
+isRetryable =
+    Ffi.kernel "Error_isRetryable"
+
+
+-- ── Domain failures ─────────────────────────────────────────────────
+-- | A domain failure with its domain and code. It is not retryable, has no
+-- retry delay and no attributes until a builder adds them.
+--
+--     Error.failure "myapp.billing" "CardDeclined"
+--         |> Error.withAttr "reason" "insufficient funds"
+--         |> Error.fromDomain Error.InvalidInput "the card was declined"
+failure : String -> String -> DomainFailure
+failure dom code =
+    DomainFailure dom code False Nothing []
+
+
+-- | Set whether a retry of the same call can succeed.
+withRetryable : Bool -> DomainFailure -> DomainFailure
+withRetryable r f =
+    case f of
+
+        DomainFailure dom code _ after attrs ->
+            DomainFailure dom code r after attrs
+
+
+-- | Set the delay, in milliseconds, after which a retry may succeed (a
+-- server's `Retry-After`). It does not change the retryable flag.
+withRetryAfter : Int -> DomainFailure -> DomainFailure
+withRetryAfter ms f =
+    case f of
+
+        DomainFailure dom code r _ attrs ->
+            DomainFailure dom code r (Just ms) attrs
+
+
+-- | Add a string attribute. A key that is already present keeps its place and
+-- takes the new value. Never put a secret in an attribute.
+withAttr : String -> String -> DomainFailure -> DomainFailure
+withAttr key value f =
+    case f of
+
+        DomainFailure dom code r after attrs ->
+            DomainFailure dom code r after (setAttr key value attrs)
+
+
+setAttr : String -> String -> List ( String, String ) -> List ( String, String )
+setAttr key value attrs =
+    case attrs of
+
+        [] ->
+            [ ( key, value ) ]
+
+        ( k, v ) :: rest ->
+            if k == key then
+                ( key, value ) :: rest
+
+            else
+                ( k, v ) :: setAttr key value rest
+
+
+-- | The failure's domain, for example `"ai"`.
+failureDomain : DomainFailure -> String
+failureDomain f =
+    case f of
+
+        DomainFailure dom _ _ _ _ ->
+            dom
+
+
+-- | The failure's stable code inside its domain, for example `"Overloaded"`.
+failureCode : DomainFailure -> String
+failureCode f =
+    case f of
+
+        DomainFailure _ code _ _ _ ->
+            code
+
+
+-- | Whether a retry of the same call can succeed.
+failureRetryable : DomainFailure -> Bool
+failureRetryable f =
+    case f of
+
+        DomainFailure _ _ r _ _ ->
+            r
+
+
+-- | The retry delay in milliseconds, when the failure names one.
+failureRetryAfter : DomainFailure -> Maybe Int
+failureRetryAfter f =
+    case f of
+
+        DomainFailure _ _ _ after _ ->
+            after
+
+
+-- | The value of one attribute.
+failureAttr : String -> DomainFailure -> Maybe String
+failureAttr key f =
+    lookupAttr key (failureAttrs f)
+
+
+lookupAttr : String -> List ( String, String ) -> Maybe String
+lookupAttr key attrs =
+    case attrs of
+
+        [] ->
+            Nothing
+
+        ( k, v ) :: rest ->
+            if k == key then
+                Just v
+
+            else
+                lookupAttr key rest
+
+
+-- | Every attribute, in the order they were added.
+failureAttrs : DomainFailure -> List ( String, String )
+failureAttrs f =
+    case f of
+
+        DomainFailure _ _ _ _ attrs ->
+            attrs
+
+
+-- | An `Error` that carries a domain failure. The kind is required, so code
+-- that matches only on `ErrorKind` keeps working for every domain.
+fromDomain : ErrorKind -> String -> DomainFailure -> Error
+fromDomain kind msg f =
+    Error kind { message = msg, details = Just (Domain f) }
+
+
+-- | The domain failure an error carries, if any.
+failureOf : Error -> Maybe DomainFailure
+failureOf err =
     case err of
 
-        Error kind _ ->
-            case kind of
+        Error _ info ->
+            case info.details of
 
-                Timeout ->
-                    True
-
-                Network ->
-                    True
-
-                Unavailable ->
-                    True
+                Just (Domain f) ->
+                    Just f
 
                 _ ->
-                    False
+                    Nothing
+
+
+-- | The domain of the failure an error carries (`Just "ai"`), or `Nothing`
+-- for an error that carries no domain failure.
+domain : Error -> Maybe String
+domain =
+    Ffi.kernel "Error_domain"
+
+
+-- | The retry delay in milliseconds that the error's domain failure names.
+retryAfter : Error -> Maybe Int
+retryAfter =
+    Ffi.kernel "Error_retryAfter"

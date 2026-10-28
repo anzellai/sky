@@ -765,8 +765,8 @@ moveToAlgebraic from to board model =
         Just piece ->
             let
                 isCapture =
-                    isEnemyAt to piece.colour board || to
-                        == model.enPassantSquare
+                    isEnemyAt to piece.colour board
+                        || to == model.enPassantSquare
                 targetStr = Board.squareToAlgebraic to
                 diff = to - from
             in

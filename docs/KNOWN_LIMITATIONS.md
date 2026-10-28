@@ -1,4 +1,4 @@
-# Known limitations (v0.27.x)
+# Known limitations (v0.28.x)
 
 Active limitations users still hit at HEAD. Each entry explains the gap,
 why it exists, and the workaround. Closures across the v0.15 / v0.16 /
@@ -63,9 +63,9 @@ under `docs/history/`. This file lists ONLY what's still active at HEAD.
 6. **`rt.Coerce`-family narrowing calls remain at typed boundaries**
    (sealed-iface ctor narrowing, parametric record alias, typed list,
    container, primitive, tuple, map/dict, generic-param erasure).
-   **446 call sites** on the canonical `examples/26-ui-showcase`
-   benchmark — `26-ui-showcase  adapter=0  dispatch=0  narrow=446`,
-   `rust/crates/xtask/coerce_floor.golden:73`, which is the gate's own
+   **200 call sites** on the canonical `examples/26-ui-showcase`
+   benchmark — `26-ui-showcase  adapter=0  dispatch=0  narrow=200` in
+   `rust/crates/xtask/coerce_floor.golden`, which is the gate's own
    census over exactly this `rt.Coerce`/`rt.As*`/`rt.Field`/`rt.SkyCall`
    set.
 
@@ -78,9 +78,8 @@ under `docs/history/`. This file lists ONLY what's still active at HEAD.
    soundness proofs in `docs/history/v0.17/rt-coerce-residual-surface.md`. The
    synchronous-panic gate (`defer rt.LogPanicAndExit()`) catches any
    panic that does fire and routes it to an `Err`-classified clean
-   exit. Sealed-interface ADT emission (#677) would drop ~476 of these
-   sites further; deferred to v0.17.x / v0.18.0 per the
-   v0.17.0 release plan.
+   exit. Sealed-interface ADT emission (#677) would drop more of these
+   sites; it is on the roadmap below, not scheduled.
 
 ## Sky.Live + Std.Ui (active items tracked for v0.17.x)
 
@@ -212,7 +211,7 @@ context: `docs/skyspa/overview.md` + `docs/skyspa/design.md`.
   rt.Coerce/AsListT floor by ~75 % on UI-heavy examples. Multi-session
   work per CLAUDE.md §0.2 N-strikes circuit-breaker (3 prior swap
   attempts produced regressions — requires re-classification before a
-  4th attempt). Deferred to v0.17.x patches or v0.18.0.
+  4th attempt). Not scheduled.
 
 ## What was closed in v0.17.0
 

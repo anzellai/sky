@@ -1,0 +1,484 @@
+module Main exposing (main)
+
+{-| Turn a request in plain words into one terminal command, with a small
+local model trained for it, behind a firewall the model cannot talk its way
+past.
+
+    sky run src/Main.sky -- ask "find the file xyz.csv"
+    sky run src/Main.sky -- train      fetch the data, freeze it, train the adapter
+    sky run src/Main.sky -- eval       score the baseline and the fine-tuned model
+    sky run src/Main.sky -- data       show the training rows, without training
+
+`ask` shows the command and the firewall's decision. It runs the command
+only on `Allow`, or after you approve it. See README.md. This example is
+excluded from CI: no CI job builds, trains, evaluates or runs it.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.File as File
+import Sky.Core.Io as Io
+import Sky.Core.System as System
+import Sky.Core.Json.Encode as Encode
+import Std.Log exposing (println)
+import Std.Ai.Dataset as Dataset
+import Std.Ai.Local as Local
+import Std.Ai.Policy as Policy exposing (Decision(..), Outcome(..))
+import Std.Ai.Provider exposing (Provider)
+import Std.Ai.Train as Train
+import Cases exposing (Case)
+import Firewall
+import Judge
+import Model
+import Prompt exposing (Platform)
+import Shell
+
+
+main : Task Error ()
+main =
+    System.args () |> Task.andThen run
+
+
+run : List String -> Task Error ()
+run args =
+    case args of
+
+        "ask" :: words ->
+            if List.isEmpty words then
+                usage
+
+            else
+                ask (String.join " " words)
+
+        [ "train" ] ->
+            train
+
+        [ "eval" ] ->
+            evaluate True True
+
+        [ "eval", "baseline" ] ->
+            evaluate True False
+
+        [ "eval", "tuned" ] ->
+            evaluate False True
+
+        [ "data" ] ->
+            data
+
+        _ ->
+            usage
+
+
+usage : Task Error ()
+usage =
+    println
+        (String.join
+            "\n"
+            [ "usage:"
+            , "  ask \"<request>\"   propose a command, show the firewall's decision, run it on Allow or after approval"
+            , "  train             fetch tldr-pages, freeze the dataset, train the adapter"
+            , "  eval [baseline|tuned]   run every eval case in a fixture folder and score the models"
+            , "  data              show the training rows"
+            ])
+
+
+-- ── ask ─────────────────────────────────────────────────────────────
+ask : String -> Task Error ()
+ask request =
+    Shell.detect ()
+        |> Task.andThen
+               (\p ->
+                   Model.loadAdapter
+                       |> Task.andThen
+                              (\found ->
+                                  let
+                                      ( spec, fewShot, label ) =
+                                          case found of
+
+                                              Just a ->
+                                                  ( Model.tunedSpec a
+                                                  , False
+                                                  , "fine-tuned adapter"
+                                                  )
+
+                                              Nothing ->
+                                                  ( Model.baselineSpec
+                                                  , True
+                                                  , "base model with examples (run `train` for the adapter)"
+                                                  )
+                                  in
+                                      println
+                                          (Prompt.describe p ++ "\nModel: "
+                                              ++ label)
+                                          |> Task.andThen
+                                                 (\_ ->
+                                                     propose
+                                                         spec
+                                                         fewShot
+                                                         p
+                                                         request)
+                                          |> Task.andThen decideAndRun))
+
+
+propose : Local.Spec -> Bool -> Platform -> String -> Task Error String
+propose spec fewShot p request =
+    Local.start spec
+        |> Task.andThen
+               (\engine ->
+                   Model.ask (Local.provider engine) fewShot p request
+                       |> Task.andThen
+                              (\cmd -> Local.stop engine |> Task.map (\_ -> cmd)))
+
+
+decideAndRun : String -> Task Error ()
+decideAndRun command =
+    let
+        act = Firewall.propose command
+        effect = Shell.runHere 30000 "." command
+    in
+        println ("Command: " ++ command)
+            |> Task.andThen
+                   (\_ ->
+                       case Firewall.firewall act of
+
+                           Allow ->
+                               println "Firewall: allow (read-only)"
+                                   |> Task.andThen
+                                          (\_ ->
+                                              Policy.gate
+                                                  Firewall.firewall
+                                                  act
+                                                  effect)
+                                   |> Task.andThen showOutcome
+
+                           NeedsApproval reason ->
+                               println
+                                   ("Firewall: needs approval (" ++ reason ++ ")")
+                                   |> Task.andThen
+                                          (\_ -> Io.writeStdout "Run it? [y/N] ")
+                                   |> Task.andThen (\_ -> Io.readLine ())
+                                   |> Task.andThen
+                                          (\answer ->
+                                              if String.toLower
+                                                  (String.trim answer)
+                                                  == "y" then
+                                                  Policy.gate
+                                                      (approved Firewall.firewall)
+                                                      act
+                                                      effect
+                                                      |> Task.andThen
+                                                             showOutcome
+
+                                              else
+                                                  println "Not run.")
+
+                           Deny reason ->
+                               println
+                                   ("Firewall: deny (" ++ reason ++ "). Not run."))
+
+
+-- | A person approved the action: a `NeedsApproval` decision becomes
+-- `Allow`. A `Deny` stays a `Deny`, whoever approves.
+approved : (Policy.Action -> Decision) -> Policy.Action -> Decision
+approved policy act =
+    case policy act of
+
+        NeedsApproval _ ->
+            Allow
+
+        other ->
+            other
+
+
+showOutcome : Outcome Shell.Ran -> Task Error ()
+showOutcome outcome =
+    case outcome of
+
+        Ran r ->
+            println
+                (r.stdout
+                    ++ (if r.exit /= 0 then
+                           "(exit " ++ String.fromInt r.exit ++ ")"
+
+                       else
+                           ""))
+
+        Denied reason ->
+            println ("Denied: " ++ reason)
+
+        Pending reason ->
+            println ("Pending: " ++ reason)
+
+
+-- ── train ───────────────────────────────────────────────────────────
+train : Task Error ()
+train =
+    Model.trainingRows
+        |> Task.andThen
+               (\rows ->
+                   println ("rows: " ++ String.fromInt (List.length rows))
+                       |> Task.andThen (\_ -> Model.freeze rows))
+        |> Task.andThen
+               (\version ->
+                   let
+                       m = Dataset.manifest version
+                       j = Model.job version
+                   in
+                       println
+                           ("dataset " ++ m.name ++ "@"
+                               ++ String.left 12 m.digest
+                               ++ ": "
+                               ++ String.fromInt m.train
+                               ++ " train rows, "
+                               ++ String.fromInt m.eval
+                               ++ " eval rows\nrun "
+                               ++ Train.runId j)
+                           |> Task.andThen (\_ -> Model.train j))
+        |> Task.andThen
+               (\a ->
+                   Model.saveAdapter a
+                       |> Task.andThen
+                              (\f ->
+                                  println
+                                      ("trained " ++ String.fromInt a.steps
+                                          ++ " steps on "
+                                          ++ a.backend
+                                          ++ ", eval loss "
+                                          ++ String.left
+                                                 6
+                                                 (String.fromFloat a.valLoss)
+                                          ++ "\nadapter "
+                                          ++ f.path
+                                          ++ " sha256:"
+                                          ++ String.left 16 f.sha256)))
+
+
+-- ── data ────────────────────────────────────────────────────────────
+data : Task Error ()
+data =
+    Model.trainingRows
+        |> Task.andThen
+               (\rows ->
+                   println
+                       (String.join
+                           "\n"
+                           (("rows: " ++ String.fromInt (List.length rows))
+                               :: List.map
+                                      (\( p, request, command ) ->
+                                          "  [" ++ Prompt.osName p.os ++ "] "
+                                              ++ request
+                                              ++ "  =>  "
+                                              ++ command)
+                                      (everyNth 97 rows))))
+
+
+everyNth : Int -> List a -> List a
+everyNth n xs =
+    xs |> List.indexedMap (\i x -> ( i, x ))
+        |> List.filter (\( i, _ ) -> modBy n i == 0)
+        |> List.map (\( _, x ) -> x)
+
+-- ── eval ────────────────────────────────────────────────────────────
+type alias Scored =
+    { request : String
+    , command : String
+    , decision : String
+    , pass : Bool
+    }
+
+
+evaluate : Bool -> Bool -> Task Error ()
+evaluate doBaseline doTuned =
+    Shell.detect ()
+        |> Task.andThen
+               (\p ->
+                   println
+                       (Prompt.describe p ++ "\n"
+                           ++ String.fromInt (List.length (Cases.cases p))
+                           ++ " cases")
+                       |> Task.andThen
+                              (\_ ->
+                                  (if doBaseline then
+                                      score
+                                          "baseline (base model, few-shot)"
+                                          Model.baselineSpec
+                                          True
+                                          p
+                                          |> Task.map
+                                                 (\s -> [ ( "baseline", s ) ])
+
+                                  else
+                                      Task.succeed [])
+                                      |> Task.andThen
+                                             (\base ->
+                                                 (if doTuned then
+                                                     Model.loadAdapter
+                                                         |> Task.andThen
+                                                                (\found ->
+                                                                    case found of
+
+                                                                        Just a ->
+                                                                            score
+                                                                                "fine-tuned (adapter, zero-shot)"
+                                                                                (Model.tunedSpec
+                                                                                    a)
+                                                                                False
+                                                                                p
+                                                                                |> Task.map
+                                                                                       (\s ->
+                                                                                           [ ( "fine-tuned"
+                                                                                             , s
+                                                                                             )
+                                                                                           ])
+
+                                                                        Nothing ->
+                                                                            Task.fail
+                                                                                (Error.invalidInput
+                                                                                    "no adapter yet: run `train` first"))
+
+                                                 else
+                                                     Task.succeed [])
+                                                     |> Task.map
+                                                            (\tuned ->
+                                                                base ++ tuned)))
+                       |> Task.andThen (report p))
+
+
+score : String -> Local.Spec -> Bool -> Platform -> Task Error (List Scored)
+score label spec fewShot p =
+    println ("\n" ++ label) |> Task.andThen (\_ -> Local.start spec)
+        |> Task.andThen
+               (\engine ->
+                   Task.sequence
+                       (List.map
+                           (scoreCase (Local.provider engine) fewShot p)
+                           (Cases.cases p))
+                       |> Task.andThen
+                              (\results ->
+                                  Local.stop engine |> Task.map (\_ -> results))
+                       |> Task.onError
+                              (\e ->
+                                  Local.stop engine
+                                      |> Task.andThen (\_ -> Task.fail e)))
+        |> Task.andThen
+               (\results ->
+                   println ("  score " ++ fraction results)
+                       |> Task.map (\_ -> results))
+
+
+scoreCase : Provider -> Bool -> Platform -> Case -> Task Error Scored
+scoreCase provider fewShot p c =
+    Model.ask provider fewShot p c.request
+        |> Task.andThen
+               (\command ->
+                   Judge.judge c command
+                       |> Task.map
+                              (\( decision, pass ) ->
+                                  { request = c.request
+                                  , command = command
+                                  , decision = decision
+                                  , pass = pass
+                                  }))
+        |> Task.andThen
+               (\s ->
+                   println
+                       ("  "
+                           ++ (if s.pass then
+                                  "PASS"
+
+                              else
+                                  "fail")
+                           ++ "  "
+                           ++ String.padRight 48 ' ' s.request
+                           ++ "  "
+                           ++ s.command
+                           ++ "  ["
+                           ++ s.decision
+                           ++ "]")
+                       |> Task.map (\_ -> s))
+
+
+fraction : List Scored -> String
+fraction results =
+    let
+        passed = List.length (List.filter .pass results)
+        total = List.length results
+    in
+        String.fromInt passed ++ "/" ++ String.fromInt total ++ " ("
+            ++ String.fromInt (percent passed total)
+            ++ " %)"
+
+
+percent : Int -> Int -> Int
+percent n total =
+    if total == 0 then
+        0
+
+    else
+        n * 100 // total
+
+
+report : Platform -> List ( String, List Scored ) -> Task Error ()
+report p scored =
+    let
+        path = Model.home ++ "/eval-" ++ Prompt.osName p.os ++ ".json"
+        json =
+            Encode.encode
+                2
+                (Encode.object
+                    [ ( "platform", Encode.string (Prompt.describe p) )
+                    , ( "models"
+                      , Encode.list
+                            (\( name, results ) ->
+                                Encode.object
+                                    [ ( "model", Encode.string name )
+                                    , ( "passed"
+                                      , Encode.int
+                                            (List.length
+                                                (List.filter .pass results))
+                                      )
+                                    , ( "total"
+                                      , Encode.int (List.length results)
+                                      )
+                                    , ( "cases"
+                                      , Encode.list
+                                            (\s ->
+                                                Encode.object
+                                                    [ ( "request"
+                                                      , Encode.string s.request
+                                                      )
+                                                    , ( "command"
+                                                      , Encode.string s.command
+                                                      )
+                                                    , ( "decision"
+                                                      , Encode.string s.decision
+                                                      )
+                                                    , ( "pass"
+                                                      , Encode.bool s.pass
+                                                      )
+                                                    ])
+                                            results
+                                      )
+                                    ])
+                            scored
+                      )
+                    ])
+    in
+        File.mkdirAll Model.home
+            |> Task.andThen (\_ -> File.writeFile path json)
+            |> Task.andThen
+                   (\_ ->
+                       println
+                           ("\n"
+                               ++ String.join
+                                      "\n"
+                                      (List.map
+                                          (\( name, results ) ->
+                                              name ++ ": " ++ fraction results)
+                                          scored)
+                               ++ "\nreport: "
+                               ++ path))

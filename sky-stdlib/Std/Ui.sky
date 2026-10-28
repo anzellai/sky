@@ -669,11 +669,13 @@ paddingXY x y =
 -- `paddingEach : Int -> Int -> Int -> Int -> Attribute msg` is gone.
 -- Migration: `paddingEach t r b l` → `paddingEach { top = t, right = r,
 -- bottom = b, left = l }`.
-paddingEach : { top : Int
-, right : Int
-, bottom : Int
-, left : Int
-} -> Attribute msg
+paddingEach :
+    { top : Int
+    , right : Int
+    , bottom : Int
+    , left : Int
+    }
+    -> Attribute msg
 paddingEach r =
     AttrPadding r.top r.right r.bottom r.left
 
@@ -1106,9 +1108,12 @@ fileMaxHeight px =
 -- HTML attribute; click navigation happens through standard browser
 -- behaviour (Sky.Live intercepts same-origin navigation if you've
 -- routed it).
-link : List (Attribute msg) -> { url : String
-, label : Element msg
-} -> Element msg
+link :
+    List (Attribute msg)
+    -> { url : String
+       , label : Element msg
+       }
+    -> Element msg
 link attrs cfg =
     let
         -- `Ui.grid` carries a `__grid` marker that switches the
@@ -1123,9 +1128,12 @@ link attrs cfg =
 
 -- Inline image with required src + alt for accessibility. Renders
 -- as `<img src=… alt=…>` (a void element — no children).
-image : List (Attribute msg) -> { src : String
-, description : String
-} -> Element msg
+image :
+    List (Attribute msg)
+    -> { src : String
+       , description : String
+       }
+    -> Element msg
 image attrs cfg =
     let
         nodeAttrs =
@@ -1165,9 +1173,12 @@ textColumnMarker =
 -- A `<button>`. Use `Ui.onClick` to attach a handler. The default
 -- styling is sparse; users layer Background/Border/Font/Padding to
 -- match their design.
-button : List (Attribute msg) -> { onPress : Maybe msg
-, label : Element msg
-} -> Element msg
+button :
+    List (Attribute msg)
+    -> { onPress : Maybe msg
+       , label : Element msg
+       }
+    -> Element msg
 button attrs cfg =
     let
         clickAttr =
@@ -1273,14 +1284,14 @@ html node =
 -- the empty element.
 island : { name : String, id : String, props : Value } -> List (Attribute msg) -> Element msg
 island cfg attrs =
-    TaggedNode "div"
+    TaggedNode
+        "div"
         NoDescription
         (AttrAttribute "data-sky-island" cfg.name
             :: AttrAttribute "data-sky-island-id" cfg.id
             :: AttrAttribute "data-sky-props" (Encode.encode 0 cfg.props)
             :: AttrAttribute "sky-key" cfg.id
-            :: attrs
-        )
+            :: attrs)
         []
 
 
@@ -2008,9 +2019,12 @@ layout rootAttrs root =
 -- `Ui.layout attrs el` is exactly `Ui.layoutWith { wrapperAttrs =
 -- [], rootAttrs = attrs } el` — call-site byte-identical for
 -- existing apps.
-layoutWith : { wrapperAttrs : List (Attribute msg)
-, rootAttrs : List (Attribute msg)
-} -> Element msg -> Html.Html msg
+layoutWith :
+    { wrapperAttrs : List (Attribute msg)
+    , rootAttrs : List (Attribute msg)
+    }
+    -> Element msg
+    -> Html.Html msg
 layoutWith cfg root =
     let
         defaultWrapperStyle =
@@ -2358,7 +2372,8 @@ renderNodeAs wantedTag nest ctx extraAttrs attrs children =
                       "data-sky-anim-rules"
                       (encodeAnimations animationEntries)
                 ]
-        renderedMain = List.map (renderElementIn childNest renderCtx []) children
+        renderedMain =
+            List.map (renderElementIn childNest renderCtx []) children
         renderedNearby = List.map (renderNearby childNest) nearbyChildren
         -- Nearby children are rare; when there are none `renderedNearby` is
         -- `[]` and the `++` would `List.append`-copy the whole main-child
@@ -2374,8 +2389,7 @@ renderNodeAs wantedTag nest ctx extraAttrs attrs children =
         -- `List.append`-copy `htmlAttrs`. `[] ++ [] ++ [] ++ htmlAttrs ==
         -- htmlAttrs`; go straight to it. Byte-identical.
         tailAttrs =
-            if List.isEmpty pseudoAttrs
-                && List.isEmpty transitionAttrs
+            if List.isEmpty pseudoAttrs && List.isEmpty transitionAttrs
                 && List.isEmpty animationAttrs then
                 htmlAttrs
 
@@ -2392,7 +2406,6 @@ renderNodeAs wantedTag nest ctx extraAttrs attrs children =
                 Attr.style styleStr :: (keptRole ++ tailAttrs)
     in
         dispatchTag tag attrList renderedChildren
-
 
 -- ─── Parser-safe nesting ─────────────────────────────────────────
 --
@@ -2454,18 +2467,39 @@ isHeadingTag t =
 -- like a `<div>`.
 isFlowOnlyTag : String -> Bool
 isFlowOnlyTag t =
-    t == "div"
-        || t == "p"
-        || isHeadingTag t
-        || tagIn t flowOnlyTags
+    t == "div" || t == "p" || isHeadingTag t || tagIn t flowOnlyTags
 
 
 flowOnlyTags : List String
 flowOnlyTags =
-    [ "section", "form", "main", "nav", "footer", "header", "aside", "address"
-    , "article", "blockquote", "center", "details", "dialog", "dir", "dl", "dd"
-    , "dt", "fieldset", "figcaption", "figure", "hgroup", "li", "menu", "ol"
-    , "ul", "pre", "search", "summary"
+    [ "section"
+    , "form"
+    , "main"
+    , "nav"
+    , "footer"
+    , "header"
+    , "aside"
+    , "address"
+    , "article"
+    , "blockquote"
+    , "center"
+    , "details"
+    , "dialog"
+    , "dir"
+    , "dl"
+    , "dd"
+    , "dt"
+    , "fieldset"
+    , "figcaption"
+    , "figure"
+    , "hgroup"
+    , "li"
+    , "menu"
+    , "ol"
+    , "ul"
+    , "pre"
+    , "search"
+    , "summary"
     ]
 
 
@@ -2493,6 +2527,7 @@ renderableTag tag =
 tagIn : String -> List String -> Bool
 tagIn tag tags =
     case tags of
+
         [] ->
             False
 
@@ -2510,6 +2545,7 @@ tagIn tag tags =
 isTagName : String -> Bool
 isTagName tag =
     case String.split "" tag of
+
         first :: rest ->
             if first >= "a" && first <= "z" then
                 isTagNameRest rest
@@ -2524,6 +2560,7 @@ isTagName tag =
 isTagNameRest : List String -> Bool
 isTagNameRest cs =
     case cs of
+
         [] ->
             True
 
@@ -2546,13 +2583,58 @@ isTagNameRest cs =
 --     server markup and the client tree would disagree.
 refusedTags : List String
 refusedTags =
-    [ "script", "style", "iframe", "object", "embed", "applet", "template"
-    , "base", "link", "meta", "noscript", "frame", "frameset", "noframes"
-    , "noembed", "portal", "fencedframe", "video", "audio", "picture", "source"
-    , "track", "image", "svg", "math", "html", "head", "body", "title", "xmp"
-    , "plaintext", "listing", "select", "option", "optgroup", "table", "caption"
-    , "colgroup", "col", "thead", "tbody", "tfoot", "tr", "td", "th", "area"
-    , "br", "hr", "wbr", "param", "keygen", "menuitem"
+    [ "script"
+    , "style"
+    , "iframe"
+    , "object"
+    , "embed"
+    , "applet"
+    , "template"
+    , "base"
+    , "link"
+    , "meta"
+    , "noscript"
+    , "frame"
+    , "frameset"
+    , "noframes"
+    , "noembed"
+    , "portal"
+    , "fencedframe"
+    , "video"
+    , "audio"
+    , "picture"
+    , "source"
+    , "track"
+    , "image"
+    , "svg"
+    , "math"
+    , "html"
+    , "head"
+    , "body"
+    , "title"
+    , "xmp"
+    , "plaintext"
+    , "listing"
+    , "select"
+    , "option"
+    , "optgroup"
+    , "table"
+    , "caption"
+    , "colgroup"
+    , "col"
+    , "thead"
+    , "tbody"
+    , "tfoot"
+    , "tr"
+    , "td"
+    , "th"
+    , "area"
+    , "br"
+    , "hr"
+    , "wbr"
+    , "param"
+    , "keygen"
+    , "menuitem"
     ]
 
 
@@ -2897,7 +2979,8 @@ renderNearby nest ( loc, el ) =
         positionStyle =
             "position: absolute; display: flex; " ++ locationCss loc
         wrapperTag = parserSafeTag nest "div"
-        rendered = renderElementIn (nestingInside nest wrapperTag) AsEl [] el
+        rendered =
+            renderElementIn (nestingInside nest wrapperTag) AsEl [] el
     in
         dispatchTag wrapperTag [ Attr.style positionStyle ] [ rendered ]
 
@@ -3125,7 +3208,6 @@ kernelAttr key value =
     else
         Attr.attribute key value
 
-
 -- Tier 1 stops at static rendering. Std.Html.Events binding for
 -- AttrEvent → Sky.Live wire events lives in Tier 2 once we wire
 -- the Sky.Live integration. The constructor stays in the ADT so
@@ -3278,8 +3360,7 @@ buildStyleString emitDisplay parentCtx myCtx attrs =
 -- `buildStyleString` with the marker scan already done. The hot
 -- caller (`renderNodeAs`) has the flags in hand; `buildStyleString`
 -- keeps its original signature for every other caller.
-buildStyleStringWith :
-    MarkerFlags -> Bool -> LayoutContext -> LayoutContext -> List (Attribute msg) -> String
+buildStyleStringWith : MarkerFlags -> Bool -> LayoutContext -> LayoutContext -> List (Attribute msg) -> String
 buildStyleStringWith flags emitDisplay parentCtx myCtx attrs =
     let
         gridOn = flags.grid

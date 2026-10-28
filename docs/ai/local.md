@@ -1,0 +1,615 @@
+# Local and remote models: `Std.Ai.Endpoint` and `Std.Ai.Local`
+
+*(v0.28.0)* An app names each use of a model (a chat model, an embedding
+model, a judge) as a **slot**. The code holds the slot's local default. An
+operator overrides any of it per environment with environment variables. The
+app always receives an ordinary `Std.Ai.Provider`, so `Std.Ai.Agent`, `Tool`,
+`Policy` and `Trace` work unchanged, and the app never knows whether the model
+runs on the laptop or on a GPU server.
+
+In development a slot can run a **managed local engine**: Sky fetches a pinned
+`llama-server` build (llama.cpp) and a pinned model, verifies both by SHA-256,
+checks that the model fits in memory, starts the engine as a child process,
+and stops it with the app. Sky does not run the model itself.
+
+The design behind this page is [`../design/std-ai-lifecycle.md`](../design/std-ai-lifecycle.md).
+The live API is `sky doc Std.Ai.Endpoint`, `sky doc Std.Ai.Local` and
+`sky doc Std.Ai.Provider`.
+
+## Quick start: no configuration
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Std.Log exposing (println)
+import Std.Ai.Provider as Provider exposing (Provider)
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Local as Local
+
+
+chatSlot : Endpoint
+chatSlot =
+    Endpoint.endpoint "chat"
+        |> Endpoint.withLocal (Local.model Local.devModel)
+
+
+chat : Provider
+chat =
+    Endpoint.provider chatSlot
+
+
+main : Task Error ()
+main =
+    Provider.chat chat [ Provider.user "What colour is the sky on a clear day?" ]
+        |> Task.andThen (\r -> println r.content)
+```
+
+`sky run src/Main.sky` with nothing set: the first call fetches the engine and
+the model into the AI home, starts the engine on `127.0.0.1`, waits until it is
+healthy, and answers. Later runs find both in the cache. When the program ends,
+the engine stops.
+
+`Local.devModel` is Qwen2.5 0.5B Instruct, Q4_0 (Apache-2.0, a 429 MB file). It
+is the smallest Qwen build that answers a chat and serves embeddings on a
+laptop CPU, and CI uses the same file.
+
+## The same binary in every environment
+
+The code holds the default. An operator changes it with variables in the
+shell, the container or a `.env` file:
+
+```
+# CI: the tiny model on the CPU
+SKY_AI_CHAT_MODE=local
+SKY_AI_CHAT_MODEL=hf:Qwen/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf#sha256=7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed
+
+# production: a private GPU server
+SKY_AI_CHAT_URL=https://gpu-tier.internal:8443/v1
+SKY_AI_CHAT_KEY=<service token>
+SKY_AI_CHAT_TIMEOUT_MS=60000
+```
+
+The order is the one every Sky setting uses: **operator env > `withX` in code
+> stdlib default.** There is no `sky.toml` section for AI. A value set but empty
+counts as unset. Under a custom `[env] prefix` the variables are
+`<PREFIX>_AI_<SLOT>_<KEY>`.
+
+A value that does not parse (a timeout of `soon`, a `MODE` of `cloud`, a URL
+without `http://` or `https://`) is never skipped. It is `InvalidSetting`
+(`InvalidInput`): the `setting` names the variable (or the `withX` builder, for
+a value from code) and the `reason` names the form expected. The message shows
+the value only when it cannot be a secret: never a key, a token or a URL. A
+server checks every AI variable of the slots its source declares, and the
+machine variables, before it listens, and refuses to start on the first one
+that does not parse. A program that serves nothing meets the same check when
+it first reads the setting, and that call fails.
+
+### Local or remote
+
+The first rule that applies wins:
+
+1. A resolved `MODE` is obeyed. `MODE=local` together with a resolved `URL` is
+   an error that names both sources: a silent choice would let a deploy ignore
+   the operator.
+2. A resolved `URL` means remote.
+3. A `withLocal` spec means a managed local engine.
+4. Otherwise every call fails with `NotConfigured` (`InvalidInput`), naming the
+   variable to set.
+
+A remote endpoint that is down fails with `Unreachable` (`Unavailable`). It
+never falls back to a local model.
+
+### Per-slot settings
+
+The slot is a lower-case literal, `[a-z][a-z0-9_]*`. These words are reserved,
+because they name global variables: `home`, `offline`, `fetch`, `llama`, `vllm`,
+`accel`, `train`, `eval`, `registry`, `serve`, `db`.
+
+| Builder (code) | Variable | Default |
+|---|---|---|
+| `Endpoint.withMode Local` / `Remote` | `SKY_AI_<SLOT>_MODE` (`local`, `remote`) | inferred by the rule above |
+| `Endpoint.withUrl` | `SKY_AI_<SLOT>_URL`, the OpenAI-compatible base ending `/v1` | none |
+| `Endpoint.withKey` (a `Secret`) | `SKY_AI_<SLOT>_KEY` | no key |
+| `Endpoint.withGoogleAuth` | `SKY_AI_<SLOT>_AUTH` (`bearer`, `google`): `google` also sends a Google ID token for the URL in `X-Serverless-Authorization`, for a private Cloud Run tier ([`serve.md`](serve.md#calling-the-tier-from-an-app)) | `bearer` |
+| `Endpoint.withModel` | `SKY_AI_<SLOT>_MODEL`: remote, the served model name; local, a model reference | the `withLocal` model |
+| `Endpoint.withAdapter` | `SKY_AI_<SLOT>_ADAPTER`, sent as the request's model name; `registry:<name>@<alias>` is resolved through the slot's registry ([`registry.md`](registry.md)) | none |
+| `Endpoint.withAdapterRefresh` | `SKY_AI_<SLOT>_ADAPTER_REFRESH_S`: how often a registry adapter is resolved again (`0` once, at start) | 30 |
+| `Endpoint.withTimeout` | `SKY_AI_<SLOT>_TIMEOUT_MS` | 120000 |
+| `Endpoint.withMaxInFlight` | `SKY_AI_<SLOT>_MAX_INFLIGHT` | local: the engine's parallel slots; remote: 16 |
+| `Endpoint.withQueue` | `SKY_AI_<SLOT>_QUEUE` (waiting calls) | 4 x max in flight |
+| `Endpoint.withQueueWait` | `SKY_AI_<SLOT>_QUEUE_WAIT_MS` | 30000 |
+| `Endpoint.withRetry` | `SKY_AI_<SLOT>_RETRIES` | 2 |
+| `Local.withContext` | `SKY_AI_<SLOT>_CONTEXT` (tokens) | 8192, halved until it fits |
+| `Local.withGpu` | `SKY_AI_<SLOT>_GPU` (`auto`, `cpu`, `all`, a layer count) | `auto` |
+| `Local.withParallel` | `SKY_AI_<SLOT>_PARALLEL` | 2 |
+| `Local.withIdleUnload` | `SKY_AI_<SLOT>_IDLE_UNLOAD_S` (`0` never) | 600 in development, 0 otherwise |
+| `Local.withPort` | `SKY_AI_<SLOT>_PORT` (`0` a free port, at most 65535) | 0 |
+| `Local.withDraft` | `SKY_AI_<SLOT>_DRAFT`, a model reference ([Draft model](#a-draft-model-speculative-decoding)) | none |
+| `Local.withDraftTokens` | `SKY_AI_<SLOT>_DRAFT_MAX` (above 0) and `SKY_AI_<SLOT>_DRAFT_MIN` (0 or more) | the engine's (3 and 0) |
+| `Local.withAdapters` | `SKY_AI_<SLOT>_ADAPTERS`: `name[:scale]=<model reference or registry:<name>@<alias>>`, separated by commas ([Several adapters](#several-adapters-on-one-engine)) | none |
+
+`Endpoint.describe slot` reports where each setting came from (`env`, `code`
+or `default`). It never shows a key, and it shows a remote URL as scheme, host
+and port only, because a path or query can carry a token.
+
+A model reference is `hf:<org>/<repo>/<file>#sha256=<hex>` or
+`file:<path>#sha256=<hex>`. A reference without a digest is refused, so an
+unpinned model cannot be loaded. `Local.reference` gives the string of a
+`ModelRef`, and `Local.fromReference` reads one.
+
+### Machine settings
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `SKY_AI_HOME` | the engine, model and registry directory, one per user | `$SKY_HOME/ai`, else the user cache directory (`~/Library/Caches/sky/ai` on macOS, `$XDG_CACHE_HOME/sky/ai` or `~/.cache/sky/ai` on Linux) |
+| `SKY_AI_LLAMA_BIN` | the directory of your own `llama-server` build. Set but without `llama-server` in it is an error | the pinned build |
+| `SKY_AI_FETCH` | `on` or `off`: may a missing engine or model be downloaded at run time | `on` in development, `off` otherwise |
+| `SKY_AI_ACCEL` | force `cpu`, `metal`, `cuda`, `rocm` or `vulkan` for the fit plan. `cpu` also runs MLX training on the CPU ([`train.md`](train.md)) | the engine build's accelerator |
+| `SKY_AI_REGISTRY` | where the model registry's artefacts live: `file://<dir>`, `gs://<bucket>/<prefix>` or `s3://<bucket>/<prefix>` ([`registry.md`](registry.md)) | `Store.configured`'s value in code, else `file://.sky/ai/registry` |
+| `SKY_AI_TRAIN_BACKEND` | the `Std.Ai.Train` backend: `mlx`, `unsloth` or `fake` ([`train.md`](train.md#backends)) | `Train.withBackend` in code, else detected |
+
+"Development" means what it means everywhere in Sky: `ENV` unset, or `dev`,
+`development` or `local`. With fetching off, a missing engine or model fails
+with `NotProvisioned` (`NotFound`) and names the `sky ai` command that
+provisions it. Provision production hosts ahead, in the image or at deploy.
+
+## The bounded queue
+
+Each slot admits at most its max-in-flight calls at once, and its queue holds
+more that wait. A call that finds the queue full fails at once with
+`Overloaded` (`Unavailable`). A call that waits longer than the queue wait
+fails with `TimedOut` (`Timeout`). Latency stays bounded under load, and the
+program decides what to do with the overflow, for example a `Provider.router`
+that sends it to a hosted model on purpose.
+
+Only an overloaded server (HTTP 429 or 503, honouring `Retry-After`) and a
+connection that never reached the server are retried, with jittered backoff. A
+call that timed out is never retried: the server may have done the work. Wrap
+a paid call in `Durable.step` to make it exactly-once.
+
+## The managed engine
+
+`Local.start spec` (or the first call through a local slot) does this, and
+each step has a typed failure:
+
+1. **Find the engine.** `SKY_AI_LLAMA_BIN`, else the pinned build in the AI
+   home. `PATH` is not consulted: an unpinned build can change the launch
+   arguments the supervisor relies on. The pinned build is llama.cpp `b11200`
+   from its GitHub release, for macOS arm64 (Metal) and Linux x64 (CPU),
+   recorded with its SHA-256 in `runtime-go/rt/ai_pins.go`. On another host,
+   set `SKY_AI_LLAMA_BIN`. The Linux build needs a glibc userland with
+   `libstdc++`, `libgomp` and OpenSSL 3 (Ubuntu 22.04 or later, Debian 12, or a
+   `debian-slim` image with `libgomp1`). It does not run on Alpine (musl).
+2. **Fetch and verify.** A download is checked against its pinned SHA-256 from
+   the bytes on disk. A mismatch installs nothing and names both digests
+   (`ChecksumMismatch`, `Conflict`). An engine archive is unpacked outside the
+   cache, run once with `--version`, and only then renamed into place. A model
+   download resumes after an interruption.
+3. **Plan the fit.** Sky reads the model's shape from its GGUF header (layers,
+   KV heads, trained context) and the host's memory (a container's limit
+   first), and chooses GPU layers and a context that fit. An explicit context
+   that does not fit, or a model too large for the host, fails with
+   `ModelTooLarge` (`InvalidInput`) before anything loads. GPU layers asked of a
+   CPU-only build fail with `NoAccelerator`. `Local.fit spec` returns the plan
+   without starting anything.
+4. **Launch safely.** The engine binds `127.0.0.1` on a free port. A fresh
+   random key per launch reaches it through a `0600` file
+   (`--api-key-file`), never the command line, so another local user cannot
+   call it. The engine starts with a cleared environment plus an allow-list
+   (`PATH`, `HOME`, temporary directories, the accelerator variables), so no
+   operator secret reaches it.
+5. **Wait for health.** Calls go out only after `/health` answers.
+6. **Supervise.** If the engine dies during a call, that call fails with
+   `EngineCrashed` (`Unavailable`), naming the exit code and the end of the
+   engine's log. In development the engine restarts with backoff, at most three
+   times a minute. After that it stays down and every call says so. Outside
+   development the app exits non-zero, as it does when its embedded PostgreSQL
+   dies, so the platform restarts the whole program instead of hiding a fault.
+7. **Unload when idle.** After the idle window with no call, the engine stops.
+   The next call starts it again.
+
+Engines are recorded in `<AI home>/engines.json`. A program that needs an
+engine with the same model and settings as one already running on the machine
+uses that one instead of loading the model again. An engine runs in its own process group,
+with a small watcher in that group that waits on a pipe only its program
+holds. When the program ends by any means, `SIGKILL` included, the pipe
+closes and the watcher ends the engine (on Linux and macOS). The next program
+that starts an engine also ends any engine whose program is gone. Engines are
+identified by the key file on their command line, so a recycled process id is
+never killed.
+
+`Local.withEmbeddings` serves `/v1/embeddings` for `Provider.embed`. llama.cpp
+then serves embeddings only, so give chat and embeddings separate slots:
+
+```elm
+embedSlot : Endpoint
+embedSlot =
+    Endpoint.endpoint "embed"
+        |> Endpoint.withLocal (Local.model Local.devModel |> Local.withEmbeddings)
+```
+
+## A LoRA adapter on a local engine
+
+`Local.withAdapter ref spec` loads a GGUF LoRA adapter with the model. The
+reference is a file pinned by its digest, `Local.file { path, sha256 }`
+(`file:<path>#sha256=<hex>`). Another kind of reference is `InvalidSetting`.
+`Std.Ai.Train.adapterRef` gives the reference of a trained adapter
+([`train.md`](train.md#registry-and-serving)):
+
+```elm
+supportSlot : Train.Adapter -> Endpoint
+supportSlot adapter =
+    let
+        base =
+            Local.model Local.devModel
+    in
+    Endpoint.endpoint "support"
+        |> Endpoint.withLocal
+            (case Train.adapterRef adapter of
+                Just ref ->
+                    Local.withAdapter ref base
+
+                Nothing ->
+                    base
+            )
+```
+
+The engine hashes the file before each load and starts `llama-server` with
+`--lora <file>`. An adapter that `Std.Ai.Train` converted records the digest
+of the model it was converted for (`sky.adapter.serving_sha256` in its GGUF
+header). Loaded on another model it is `AdapterMismatch`, never a model that
+answers nonsense. An adapter from elsewhere that records no model is loaded
+as it is.
+
+`sky ai start <slot> --adapter file:<path>#sha256=<hex>` serves an adapter
+from the command line. A registry adapter (`registry:<name>@<alias>`) is the
+other way, and serving then follows the alias ([Registry
+adapters](#registry-adapters)).
+
+## Several adapters on one engine
+
+`Local.withAdapters` loads several LoRA adapters on one engine, each a pinned
+model reference with a name and a scale. A call chooses one by name with the
+`adapter` field of `Provider.Options`. A call that names none runs the base
+model.
+
+```elm
+tunedSpec : Local.Spec
+tunedSpec =
+    Local.model Local.devModel
+        |> Local.withAdapters
+            [ Local.namedAdapter "support" supportRef
+            , { name = "legal", adapter = legalRef, scale = 0.8 }
+            ]
+
+
+askLegal : Provider -> Task Error Provider.ChatResponse
+askLegal provider =
+    Provider.chatWith
+        { temperature = Nothing, seed = Nothing, maxTokens = Nothing, adapter = Just "legal" }
+        provider
+        [ Provider.user "Is this clause enforceable?" ]
+```
+
+The engine starts once with every adapter (`--lora a.gguf,b.gguf`). Each
+request then carries llama-server's `lora` list with a scale for every loaded
+adapter: the named one at its scale, the others at 0, or all at 0 for the
+base model. Each file goes through the model store and its SHA-256 check like
+a model, and an adapter `Std.Ai.Train` converted for another model is
+`AdapterMismatch`.
+
+A name that is not loaded fails the call with `NotRegistered` (`NotFound`).
+Its `ref` is the name, and the message lists the loaded names. It never
+answers from the base model. A name is letters, digits, `.`, `_` and `-`, and
+not `local`; a name used twice, a scale that is not above 0, or a reference
+without a digest is `InvalidSetting`. An engine either applies one adapter to
+every call (`withAdapter`, or a registry adapter) or loads named adapters, so
+setting both is `InvalidSetting`.
+
+A named adapter can also come from the registry: give it
+`Local.fromReference "registry:<name>@<alias>"` (or write
+`support=registry:support-lora@prod` in `SKY_AI_<SLOT>_ADAPTERS`), and give the
+slot its registry with `Endpoint.fromRegistry`.
+
+```elm
+registrySpec : Local.Spec
+registrySpec =
+    Local.model Local.devModel
+        |> Local.withAdapters
+            [ Local.namedAdapter "support" (Local.fromReference "registry:support-lora@prod")
+            , Local.namedAdapter "legal" legalRef
+            ]
+```
+
+The slot resolves each registry adapter when it starts and again as the alias
+moves (`Endpoint.withAdapterRefresh`), in the same resolution as a registry
+`withAdapter`: the registry database names the version, the engine loads the
+version's GGUF file through the SHA-256 check against the version's digest,
+and a version trained on another base model is `AdapterMismatch`. A name or
+alias the registry does not know fails the call with the registry's
+`NotRegistered`. A registry adapter on a slot without `Endpoint.fromRegistry`
+is `NotConfigured` when the slot starts.
+
+An operator sets the list with `SKY_AI_<SLOT>_ADAPTERS`, for example
+`support=file:/srv/a.gguf#sha256=<hex>,legal:0.8=file:/srv/b.gguf#sha256=<hex>`.
+`Endpoint.withAdapter "support"` (or `SKY_AI_<SLOT>_ADAPTER=support`) makes
+that adapter the slot's default for calls that name none.
+
+## A draft model (speculative decoding)
+
+`Local.withDraft ref` gives the engine a draft model: a smaller model of the
+same family, pinned by digest like the base. llama-server drafts a few tokens
+with it and the base model checks them, so the answer is still the base
+model's, produced faster when the draft guesses well.
+`Local.withDraftTokens { max, min }` bounds how many tokens it drafts per step.
+
+```elm
+fastSpec : Local.Spec
+fastSpec =
+    Local.model qwen7b
+        |> Local.withDraft Local.devModel
+        |> Local.withDraftTokens { max = 8, min = 1 }
+```
+
+The draft is fetched and verified through the same model store and SHA-256
+checks as the base. `sky ai provision --model <ref>` provisions it ahead on a
+host with fetching off; without it the start is `NotProvisioned`. The engine
+starts with `-md <file> --spec-type draft-simple`, and
+`--spec-draft-n-max` / `--spec-draft-n-min` when they are set.
+
+A draft must share the base model's vocabulary. The pinned llama-server does
+not refuse one that does not: it logs the mismatch and serves without
+speculation. So Sky compares the two vocabularies before the engine loads
+(the tokenizer type, the start and end tokens, the size within 128 tokens and
+the token text), and checks the engine's log once it is healthy. Either
+finding is `InvalidSetting` naming `SKY_AI_<SLOT>_DRAFT` (or
+`Local.withDraft`), never a slow engine nobody asked for. A drafted-token
+setting without a draft, or a minimum above the maximum, is `InvalidSetting`
+too.
+
+llama-server reports how the draft did in each answer's `timings` object
+(`draft_n` tokens drafted, `draft_n_accepted` accepted, with
+`predicted_per_second`). The engine passes the answer on as it is.
+
+## Provider additions
+
+`Provider.chatWith options provider messages` sends per-call options:
+`temperature`, `seed`, `maxTokens` and `adapter` (sent as the request's model
+name, which is how vLLM and gateways select a LoRA adapter). A field left
+`Nothing` is not sent. `Provider.chat` is `chatWith Provider.defaultOptions`.
+
+`Provider.embed provider texts` returns one vector per text, in order.
+`Provider.wire transport model` builds an OpenAI-compatible provider over your
+own transport. `Provider.wireStreaming transport streamTransport model` is the
+same with a transport that streams; `Endpoint`, `Local` and `Device` build
+theirs with it.
+
+### Streaming an answer
+
+An answer can be read as it is written. A TEA app reads it one piece per
+update:
+
+```elm
+Cmd.perform (Provider.openStream Provider.defaultOptions assistant messages) Opened
+
+-- in update
+Opened (Ok s) ->
+    ( model, Cmd.perform (Provider.readStream s) Got )
+
+Got (Ok (Provider.Piece text next)) ->
+    ( { model | answer = model.answer ++ text }, Cmd.perform (Provider.readStream next) Got )
+
+Got (Ok (Provider.Finished r)) ->
+    ( { model | usage = Just r.usage }, Cmd.none )
+```
+
+`Provider.closeStream s` stops reading early. A Task program or a server
+handler can use `Provider.chatStream options provider messages onPiece`
+instead: `onPiece` gets each piece in order and the result is the whole
+answer with its usage, as `chatWith` returns it. When `onPiece` fails, the
+stream is closed and the call fails with that error.
+
+A server slot (remote or managed), `Provider.openai` / `compatible` and a
+device slot stream token by token (server-sent events with
+`stream_options.include_usage`; retries happen only before the first byte of
+the answer, and the slot's queue place is held until the stream ends). A
+`custom` provider, and a server that answers a streaming request with one
+JSON body (a test fixture under `tests/mocks/` included), give the whole
+answer as one piece. A stream the program stops reading is closed by the
+slot's timeout.
+
+## Failures
+
+Every AI failure is an ordinary `Error` (so every signature stays
+`Task Error a`) with an existing `ErrorKind`, a message that starts with
+`Std.Ai <code>:`, and a typed `Domain` failure in the `"ai"` domain.
+`Std.Ai.Failure.fromError` gives it back as a value:
+
+```elm
+import Sky.Core.Error as Error exposing (Error)
+import Std.Ai.Failure as Failure exposing (Failure(..))
+
+
+explain : Error -> String
+explain err =
+    case Failure.fromError err of
+        Just (Overloaded o) ->
+            "busy; try again in " ++ String.fromInt (Maybe.withDefault 1000 o.retryAfterMs) ++ " ms"
+
+        Just (ModelTooLarge m) ->
+            "the model needs " ++ String.fromInt m.needBytes ++ " bytes"
+
+        Just (NotConfigured c) ->
+            "set " ++ c.setting
+
+        _ ->
+            Error.toString err
+```
+
+Keep the `_ ->` branch: later releases add failures. Code that only decides
+whether to retry needs no typed view: `Error.isRetryable err` and
+`Error.retryAfter err` work for every domain
+([`../errors/error-system.md`](../errors/error-system.md#domain-failures)).
+
+| Failure | `ErrorKind` | Retryable | Fields |
+|---|---|---|---|
+| `NotConfigured` | `InvalidInput` | no | `setting`: the variable to set |
+| `InvalidSetting` | `InvalidInput` | no | `setting`, `reason` |
+| `Unreachable` | `Unavailable` | yes | `target`: scheme, host and port only |
+| `Overloaded` | `Unavailable` | yes | `retryAfterMs` (the server's `Retry-After`), `status` (429 or 503) |
+| `TimedOut` | `Timeout` | yes | `afterMs` when known |
+| `EngineCrashed` | `Unavailable` | no | `exitCode` (`Nothing` when a signal ended it), `logTail` |
+| `EngineFailed` | `Unavailable` | no | `reason` |
+| `ModelTooLarge` | `InvalidInput` | no | `needBytes`, `availableBytes` |
+| `NoAccelerator` | `Unavailable` | no | `wanted` |
+| `NotProvisioned` | `NotFound` | no | `what`, `command` (the `sky ai` command that provisions it) |
+| `ChecksumMismatch` | `Conflict` | no | `expected`, `actual` |
+| `RemoteRejected` | by status: 400 / 422 `InvalidInput`, 401 / 403 `PermissionDenied`, 404 `NotFound`, 5xx `Unavailable`, else `Unexpected` | 5xx only | `status` |
+| `BudgetExceeded` | `PermissionDenied` | no | `budget`, `estimate` (`Std.Money`) |
+| `ToolchainFailed` | `Unavailable` | no | `tool`, `logTail` |
+| `GateFailed` | `PermissionDenied` | no | `suite`, `reasons` (`Std.Ai.Eval`, [`eval.md`](eval.md)) |
+| `DatasetInvalid` | `InvalidInput` | no | `dataset`, `reasons`: a file and a line or row, never the row's text (`Std.Ai.Dataset`, [`dataset.md`](dataset.md)) |
+| `NotRegistered` | `NotFound` | no | `ref`: an unknown registry version or alias, or a training run directory with no run |
+| `NotPromotable` | `PermissionDenied` | no | `ref`, `reason` ([`registry.md`](registry.md)) |
+| `PromotionConflict` | `Conflict` | no | `ref`, `expected`, `actual` ([`registry.md`](registry.md)) |
+| `AdapterMismatch` | `InvalidInput` | no | `adapter`, `adapterBase`, `engineBase`: an adapter for another base model |
+| `TrainingFailed` | `Unavailable` | no | `runId`, `step`, `reason`, `logTail`: the trainer reported an error or died more often than the job allows ([`train.md`](train.md#failures)) |
+| `TrainingCancelled` | `Conflict` | no | `runId`, `step`: the training run was cancelled |
+| `QuotaExceeded` | `PermissionDenied` | no | `resource`, `region`, `limit`: a cloud quota (one L4 for Vertex AI training, say) is below what the job needs ([`deploy-gcp.md`](deploy-gcp.md#quotas)) |
+| `CapacityUnavailable` | `Unavailable` | yes | `resource`, `region`: the region has no free machine of that kind now |
+| `DeploymentFailed` | `Unavailable` | no | `target`, `reason`, `logTail`: a tier's revision never became ready ([`serve.md`](serve.md)) |
+
+A crashed engine is not retryable even though it is `Unavailable`: the
+engine's supervisor restarts it, and a crash loop must not be retried blindly.
+A timed-out call is retryable by your code, but the endpoint never retries it
+in place, because the server may have done the work.
+
+`Failure.toError` builds the same `Error` (for a provider or a test that
+reports an AI failure), and `Failure.code` is the constructor's name, which
+is also the `error.code` field of a structured log line.
+`Failure.toErrorWith detail failure` adds a detail to the message
+(`Std.Ai <code>: <text> (<detail>)`): a cloud call adds the provider's own
+message this way. The typed view is the same as `toError`'s.
+
+## Tests
+
+Under `sky test` in test mode (a project that commits a `.env.test`) no engine starts and no network is used. A call
+through any slot, local or remote, is answered by a fixture under
+`tests/mocks/`. A local slot's calls go to a URL only a fixture can answer, so
+a fixture with `"urlContains": "/chat/completions"` (or `"/embeddings"`)
+answers both kinds.
+
+## `sky ai`
+
+| Verb | What it runs |
+|---|---|
+| `sky ai provision [--variant cpu\|metal] [--dev-model] [--model <ref>]` | `Local.provision ()`, then `Local.fetch` for each model |
+| `sky ai pull <org>/<repo> <file>` | `Local.pull`; prints the `Local.huggingFace { … }` value with its digest |
+| `sky ai ps [--all]` | `Local.engines ()`: running and orphaned engines (`--all` adds stale entries) |
+| `sky ai start <slot> [--model <ref>] [--context <n>] [--embeddings]` | `Endpoint.warm`, then holds the engine until Ctrl-C, SIGTERM or `sky ai stop`; each stops the engine and removes its `engines.json` entry |
+| `sky ai stop <slot>` / `--all` | `Local.stopSlot` |
+| `sky ai promote <name> <version> --to <alias>` | `Registry.promoteCompared` (`--force --reason`, `--expect`, `--min-pass-rate`; [`registry.md`](registry.md)) |
+| `sky ai rollback <name>@<alias>` | `Registry.rollback` |
+| `sky ai lineage <name>@<alias>` / `--dataset <sha256>\|<name>@<n>` | `Registry.lineage` / `Registry.trainedOn` |
+| `sky ai data freeze <file.jsonl> [--name <n>] [--out <dir>] [--key <field>] [--split <t>/<e>/<x>] [--seed <n>] [--consent <basis>] [--retention <period>]` | `Dataset.fromJsonLines`, `split`, `freezeJson`; prints the digest and the counts per split ([`dataset.md`](dataset.md)) |
+| `sky ai provision --train mlx\|unsloth\|fake [--base <base>]` | `Train.provision`, and `Train.provisionBase` for the base ([`train.md`](train.md)) |
+| `sky ai train --data <dir>/<name>[@<digest>] [options]` | `Train.drive` (`Train.start` with `--detach`) |
+| `sky ai train status [<run>] \| runs \| resume <run> \| cancel <run>` | `Train.progressAt`, `Train.runs`, `Train.resumeAt`, `Train.cancelAt` |
+| `sky ai export <run> [--out <file>] [--merged]` | `Train.exportAt` |
+| `sky ai start <slot> ... --adapter file:<path>#sha256=<hex>` | `Local.withAdapter`: the slot's model with a GGUF LoRA adapter |
+
+Every verb takes `--format json`. The verbs hold no logic of their own: the CLI
+builds a bundled Sky program (`sky-bundled/ai`) once per Sky build and runs it,
+and the program calls the API above. `sky ai start` uses `Local.devModel`
+unless `--model` (or the slot's `SKY_AI_<SLOT>_MODEL`) names another model.
+A program whose slot has the same model and settings uses the held engine.
+
+Stopping. Ctrl-C (SIGINT) or SIGTERM on `sky ai start` stops the engine,
+removes its `engines.json` entry and exits 130 or 143. `sky ai stop <slot>`
+sends the holder SIGTERM, so it ends the same way. A second Ctrl-C during that
+cleanup exits at once. Any program that starts a local engine (or a
+`Process.spawn` child) gets the same handling, unless a Sky.Live, HTTP or
+terminal app in it already owns the signals: its shutdown then stops the
+engine. An engine whose holder was killed outright (SIGKILL) is ended by its
+watcher at once, and otherwise by the next program that starts an engine.
+
+The start proves the engine it waits for is its own. `/health` needs no key,
+so a 200 there proves only that something listens on the port. The engine
+must also accept the launch's fresh API key on `/props` and refuse any other
+key. Another process on the port (always possible with a fixed
+`Local.withPort`) fails the start with `EngineFailed`, naming the port.
+
+A project with an AI pipeline (`src/Ai.sky`, [`pipeline.md`](pipeline.md))
+adds `sky ai eval`, `sky ai data freeze <dataset>`, `sky ai run <task>` and
+`sky ai members`, and runs `sky ai start <slot>` for a slot the pipeline names
+with that slot's own code defaults (its model, context and adapter, so
+`--model` and `--context` do not apply).
+
+## Slot helpers
+
+`Endpoint.slotName slot` is the slot's name. `Endpoint.inspect slot` resolves
+the slot's settings and their sources like `describe`, without resolving a
+registry adapter and without starting anything: its adapter setting shows the
+reference as written, and its `source` says whether an operator variable set
+it. `Endpoint.tokenize slot text` counts tokens with the engine's own
+tokenizer (the `/tokenize` route of llama-server and vLLM); a local slot
+starts its engine for it, like a call.
+
+## Registry adapters
+
+`Endpoint.fromRegistry (Registry.resolver registry)` with
+`Endpoint.withAdapter "registry:support-lora@prod"` (or
+`SKY_AI_<SLOT>_ADAPTER=registry:support-lora@prod`) serves the adapter a
+registry alias points at. A remote slot sends the version's served name as
+the model; a local slot loads the version's GGUF file into its engine with
+`--lora`, after checking the file's digest and that the adapter was trained
+on the engine's base model (`AdapterMismatch` otherwise). The slot resolves
+the alias at start and again as it moves, so serving follows promote and
+rollback. See [`registry.md`](registry.md).
+
+## At startup and in `sky doctor`
+
+The build reads the slots the source names (a string literal or a top-level
+`String` constant given to `Endpoint.endpoint`; a project that imports
+`Std.Ai.Eval` also has the `judge` slot). A server prints one line per slot
+under its `listening` line, in production too:
+
+```
+  ai chat      remote  https://gpu.internal:8443  (url: env, key: env, model: env, adapter: env)
+  ai judge     set in code, resolved at the first call
+```
+
+A line names the mode, the target (scheme, host and port only) and which
+settings the environment sets, never a value of a key. A slot the environment
+does not touch is decided by its code at the first call.
+
+`sky doctor` applies the slot rule to the operator's environment, so a deploy
+that would fail at the first call fails there first: a `MODE` that is not
+`local` or `remote`, `MODE=local` with a `URL`, `MODE=remote` without one, a
+URL that is not `http(s)://`, a `registry:` adapter without an alias, an
+unpinned local `MODEL`, a remote target that does not accept a connection
+(a warning). It checks the machine settings (`SKY_AI_FETCH`, `SKY_AI_ACCEL`,
+`SKY_AI_REGISTRY`, `SKY_AI_LLAMA_BIN`), and with fetching off it reports a
+local slot whose engine or model is not provisioned.
+
+## Not yet
+
+These parts of the design are later work: Sky's own published engine bundles
+(the pins use the upstream llama.cpp release assets today). A slot name
+computed at run time works, but the build cannot list it for the startup
+report.
+
+## In the Sky Console
+
+The console's **AI** tab (`/_sky/console?tab=ai`) shows this process's slots
+(mode, target, in-flight and waiting calls, p50 and p95 latency, and where
+each setting came from, never a key), its local engines (state, model,
+accelerator, context, restarts, idle time, last crash), its recent model calls
+(slot, kind, outcome, latency, token counts; "Failed" shows only failures, and
+a slot's chip shows only that slot) and its `Std.Ai.Eval` runs (pass rate,
+gate verdict, and each case's verdict and reason), and the model registry
+(each model's aliases, and on a click its versions, alias log and eval
+history). It holds no prompt and no answer.

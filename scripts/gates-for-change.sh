@@ -121,7 +121,8 @@ compiler_core() {
     add 45 "coerce-floor (runtime-narrowing floor)" "$XTASK coerce-floor"
     add 50 "harness T1: shared-world + corpus gates" \
         "$HARNESS --only shared-world,corpus-manifest,corpus-reject,corpus-emit-shape"
-    add 50 "harness T2: behavioural corpus" "$HARNESS --tier t2 --only corpus"
+    add 50 "harness T2: behavioural corpus (all four shard gates)" \
+        "$HARNESS --tier t2 --only corpus-1,corpus-2,corpus-3,corpus-4"
     add 55 "codegen build + run of every example (build-run)" "$XTASK build-run --all --run"
     add 58 "example sweep (clean slate; unchanged examples reuse the gate build cache)" \
         "scripts/example-sweep.sh"
@@ -130,14 +131,23 @@ compiler_core() {
 
 while IFS= read -r f; do
     [ -n "$f" ] || continue
+    # USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded from
+    # CI in general (no CI job builds, trains, evaluates or runs it), so it is
+    # skipped here by name.
+    case "$f" in examples/76-ai-shell-command/*) continue ;; esac
     mapped=1
     case "$f" in
         *.rs) add 01 "rustfmt --check" "(cd rust && cargo fmt --all -- --check)" ;;
         *.go) add 01 "gofmt -l (must list nothing)" \
             "test -z \"\$(gofmt -l runtime-go tools 2>/dev/null)\"" ;;
         *.sh) [ -f "$f" ] && SH_CHANGED="$SH_CHANGED $f" ;;
-        *.sky | *.skyi) add 01 "sky fmt --check over every tracked .sky/.skyi (sky-fmt-check)" \
-            "$XTASK sky-fmt-check" ;;
+        *.sky | *.skyi)
+            add 01 "sky fmt --check over every tracked .sky/.skyi (sky-fmt-check)" \
+                "$XTASK sky-fmt-check"
+            case "$f" in
+                sky-stdlib/* | sky-bundled/* | apps/* | examples/* | templates/*)
+                    add 02 "fmt-clean (tracked .sky files are sky fmt-clean)" "$HARNESS --only fmt-clean" ;;
+            esac ;;
     esac
     case "$f" in
         rust/crates/syntax/* | rust/crates/hir/* | rust/crates/ty/* | rust/crates/lower/* | rust/crates/codegen/* | rust/crates/base/* | rust/crates/diagnostics/*)
@@ -157,7 +167,9 @@ while IFS= read -r f; do
             add 58 "example sweep (FFI examples always rebuild)" "scripts/example-sweep.sh" ;;
         rust/crates/fmt/*)
             add 20 "cargo test -p fmt" "(cd rust && cargo test -p fmt)"
-            add 40 "fmt gate (never drops a comment; idempotent)" "$XTASK fmt" ;;
+            add 40 "fmt gate (never drops a comment; idempotent)" "$XTASK fmt"
+            add 40 "fmt-clean (tracked .sky files are sky fmt-clean)" "$HARNESS --only fmt-clean"
+            add 40 "sky fmt --check over every tracked .sky/.skyi (sky-fmt-check)" "$XTASK sky-fmt-check" ;;
         rust/crates/sky-lsp/*)
             add 20 "cargo test -p sky-lsp" "(cd rust && cargo test -p sky-lsp)"
             add 50 "harness: lsp (Neovim editor parity)" "$HARNESS --only lsp" ;;

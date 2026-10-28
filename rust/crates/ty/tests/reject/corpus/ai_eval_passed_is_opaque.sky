@@ -1,0 +1,26 @@
+-- gate: reject
+-- defect: a program builds an `Eval.Passed` itself to promote a model no gate passed
+-- rust: reject [E1001] the `Passed` constructor is not exposed by Std.Ai.Eval
+--
+-- Std.Ai design §8.6 / §14 P2 exit criterion: "promotion without `Passed`
+-- does not compile". `Registry.promote` takes an `Eval.Passed`, and only
+-- `Eval.gate` and `Eval.check` can make one, because `Std.Ai.Eval` exposes the
+-- type `Passed` without its constructor. A program that writes the
+-- constructor itself to skip the evaluation must be rejected at compile time.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Std.Log exposing (println)
+import Std.Ai.Eval as Eval exposing (Passed(..))
+
+
+forged : Eval.Passed
+forged =
+    Passed { suite = "support", candidate = "support-lora@v9", digest = "0000" }
+
+
+main : Task Error ()
+main =
+    println (Eval.passedCandidate forged)

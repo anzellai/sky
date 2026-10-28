@@ -146,8 +146,11 @@ parsePriceCents raw =
             0
 
 
-mkCartPayload : String -> Int -> { name : String
-, count : Int
-}
+mkCartPayload :
+    String
+    -> Int
+    -> { name : String
+       , count : Int
+       }
 mkCartPayload name count =
     { name = name, count = count }

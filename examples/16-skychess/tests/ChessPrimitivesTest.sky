@@ -92,8 +92,8 @@ testMaterialValues =
                 p = materialValue Pawn
                 k = materialValue King
             in
-                if q == 900 && r == 500 && b == 330 && n == 320 && p == 100 && k
-                    == 0 then
+                if q == 900 && r == 500 && b == 330 && n == 320 && p == 100
+                    && k == 0 then
                     Test.pass
 
                 else

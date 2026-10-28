@@ -81,6 +81,30 @@ pub enum Need {
     AndroidEmulator,
     /// Node.js, for the tests that run a `scripts/*.mjs` helper.
     Node,
+    /// The pinned `llama-server` and the Qwen development model in the
+    /// Std.Ai home, or the network to fetch them (`sky ai provision
+    /// --dev-model` fills the home; CI caches it).
+    AiEngine,
+    /// What a Fake training run serves on: the engine and the dev model in
+    /// the Std.Ai home, or the network to fetch them. The Fake trainer is
+    /// built into the runtime, so nothing else is installed. CI caches the
+    /// Std.Ai home.
+    AiTrainToolchain,
+    /// Apple silicon with the native trainer `sky-trainer` (the operator's
+    /// SKY_AI_TRAINER_BIN, or the pinned bundle `sky ai provision --train mlx`
+    /// installs), plus the dev base's MLX weights, the engine and the dev
+    /// model in the Std.Ai home, or the network to fetch them.
+    AiTrainNative,
+    /// The native trainer `sky-trainer` on any host it has a bundle for: the
+    /// operator's SKY_AI_TRAINER_BIN, or the pinned bundle `sky ai provision
+    /// --train mlx` installs.
+    AiTrainer,
+    /// A Google Cloud project prepared for Std.Ai's live tests, entered only
+    /// through the wrapper `scripts/ai/gcp-live.sh`, which sets
+    /// `SKY_AI_GCP_LIVE=1`, builds the run's bucket, repositories, secret and
+    /// images, and ALWAYS tears them down and checks for leaks. These tests
+    /// spend money, so they are `#[ignore]` and run only through it.
+    GcpLive,
     /// The `brotli` command-line tool, for the tests that compare the
     /// precompressed web assets with its own output.
     Brotli,
@@ -118,6 +142,36 @@ impl Need {
             Need::Node => {
                 "install Node.js 20+ (the e2e harnesses under scripts/ are Node programs)"
             }
+            Need::AiEngine => {
+                "run `sky ai provision --dev-model` once (it fetches the pinned llama-server \
+                 and the Qwen development model into the Std.Ai home), or give the test \
+                 network access to github.com and huggingface.co"
+            }
+            Need::AiTrainToolchain => {
+                "run `sky ai provision --dev-model` once (the pinned engine and the dev model \
+                 into the Std.Ai home; the Fake trainer is built in), or give the test network \
+                 access to github.com and huggingface.co"
+            }
+            Need::AiTrainer => {
+                "set SKY_AI_TRAINER_BIN to a sky-trainer (unpack a bundle from the \
+                 ai-trainer-bundles.yml workflow, or build one on a Mac with \
+                 scripts/ai/trainer/build.sh), or run `sky ai provision --train mlx` where its \
+                 bundle is pinned in runtime-go/rt/ai_pins.go"
+            }
+            Need::AiTrainNative => {
+                "on Apple silicon, build the native trainer (`scripts/ai/trainer/build.sh --mlx \
+                 <MLX 0.32.4 prefix> --mlx-c <mlx-c checkout>`) and set SKY_AI_TRAINER_BIN to \
+                 it, or run `sky ai provision --train mlx --base dev` where a trainer bundle is \
+                 pinned; run `sky ai provision --dev-model` once (or give the test network \
+                 access to github.com and huggingface.co for the engine, the dev model and \
+                 the 4-bit Qwen dev weights)"
+            }
+            Need::GcpLive => {
+                "run these tests through `scripts/ai/gcp-live.sh --project <id>` (after \
+                 `scripts/ai/gcp-bootstrap.sh --project <id>` once): it sets SKY_AI_GCP_LIVE=1 \
+                 and the run's resources, keeps spend under the ledger's cap, and tears \
+                 everything down"
+            }
             Need::Brotli => "install brotli (`brew install brotli`, or `apt-get install brotli`)",
         }
     }
@@ -132,6 +186,11 @@ impl Need {
             Need::AndroidSdk => "the Android SDK and a JDK",
             Need::AndroidEmulator => "the Android emulator with an AVD",
             Need::Node => "Node.js",
+            Need::AiEngine => "the Std.Ai engine and development model",
+            Need::AiTrainToolchain => "the engine and the dev model a Fake training run serves on",
+            Need::AiTrainNative => "the native trainer (sky-trainer) and the dev base weights",
+            Need::AiTrainer => "the native trainer (sky-trainer)",
+            Need::GcpLive => "the Google Cloud live-test wrapper (scripts/ai/gcp-live.sh)",
             Need::Brotli => "the brotli tool",
         }
     }

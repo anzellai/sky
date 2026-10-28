@@ -27,7 +27,9 @@
 # (Chromium and WebKit), sqlite3, openssl.
 #
 # Env:
-#   CONSOLE_CONTROLS_E2E_PORT     first of 10 ports used (default 9660)
+#   CONSOLE_CONTROLS_E2E_PORT     first of 24 ports used (default 9660):
+#                                 four per run (app, proxy, TLS front,
+#                                 fake model)
 #   CONSOLE_CONTROLS_E2E_SKY      measure another compiler (e.g. a released
 #                                 one, to prove the gate fails there)
 #   CONSOLE_CONTROLS_E2E_ONLY     scenarios to run, comma-separated
@@ -118,7 +120,7 @@ for scenario in $SCENARIOS; do
     budget=900
     [ "$scenario" = hub ] && budget=1200
     with_timeout "$budget" node "$ROOT/scripts/console-controls-e2e.mjs" "${args[@]}" || rc=1
-    port=$((port + 3))
+    port=$((port + 4))
   done
 done
 
@@ -130,5 +132,5 @@ if [ "$rc" -ne 0 ]; then
   echo "console-controls-e2e: FAIL — a Sky Console control did not do what it says (see the FAIL lines above)." >&2
   exit 1
 fi
-echo "console-controls-e2e: PASS — every Sky Console control works: tabs, range chips, level toggles, searches, session and trace pivots, console links, auto-refresh, sign-in and sign-out (embedded, dev, hub; Chromium and WebKit)."
+echo "console-controls-e2e: PASS — every Sky Console control works: tabs, range chips, level toggles, searches, session and trace pivots, the AI panel's calls, slot and eval controls, console links, auto-refresh, sign-in and sign-out (embedded, dev, hub; Chromium and WebKit)."
 rm -rf "$TMP"

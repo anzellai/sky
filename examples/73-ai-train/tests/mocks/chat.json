@@ -1,0 +1,5 @@
+{
+  "match": { "method": "POST", "urlContains": "sky-ai-local.invalid/support/", "bodyContains": "\"model\":\"support-v1\"" },
+  "status": 200,
+  "body": "{\"choices\":[{\"message\":{\"content\":\"Open the order, choose Return items, and the refund reaches your card within five working days. Anything else? (support-v1)\"}}],\"usage\":{\"prompt_tokens\":40,\"completion_tokens\":24,\"total_tokens\":64}}"
+}

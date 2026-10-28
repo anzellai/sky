@@ -129,8 +129,7 @@ tests =
                         Test.equal
                             True
                             (cfg.url == "wss://api" && cfg.timeout == 10000
-                                && List.length cfg.headers
-                                == 1))
+                                && List.length cfg.headers == 1))
           ]
     , Test.suite
           "Sky.Http.Server.WebSocket.WebSocketServerCfg"

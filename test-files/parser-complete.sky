@@ -78,10 +78,10 @@ describe xs =
         [] ->
             "empty"
 
-        [1] ->
+        [ 1 ] ->
             "singleton one"
 
-        [x, y] ->
+        [ x, y ] ->
             "two elements"
 
         1 :: 2 :: _ ->

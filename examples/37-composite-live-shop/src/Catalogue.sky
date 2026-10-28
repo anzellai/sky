@@ -244,6 +244,6 @@ filterProducts needle maxCents products =
     in
         List.filter
             (\p ->
-                containsCaseInsensitive needle p.name && p.priceCents
-                    <= priceCap)
+                containsCaseInsensitive needle p.name
+                    && p.priceCents <= priceCap)
             products

@@ -7,6 +7,19 @@ line at each level (debug, info, warn, error) and tracks an identified
 analytics event, and every page view is an access-log line and a span. The
 e2e adds older, time-spread data through the observability ingest endpoint
 and the analytics store, so each range of the console shows a different set.
+
+A press on "Run AI" gives the console's AI panel its data: two calls through
+the `chat` slot (the e2e points `SKY_AI_CHAT_URL` at a fake OpenAI-compatible
+server, which answers the second with HTTP 429, so it is `Overloaded`), and
+one Std.Ai.Eval run of two cases (one passes, one fails). It then gives the
+panel's registry view a model: `fixture-lora` with two versions (each with
+eval evidence), promoted to `prod` twice and rolled back to v1, and v2 forced
+to `qa` with a reason. Last, it writes two training run directories under
+`.sky/ai/runs` in its working directory, where the console reads them: run
+`fixture-train-0001` finished (40 steps, relaunched once from the checkpoint
+at step 10, registered as `fixture-lora@v3`) and run `fixture-train-0002`
+failed at step 3 with an OutOfMemory error line. No trainer runs: the files
+are the protocol lines a trainer writes.
 -}
 
 import Sky.Core.Prelude exposing (..)
@@ -17,21 +30,38 @@ import Std.App as App
 import Std.Ui as Ui exposing (Element)
 import Std.Log as Log
 import Std.Analytics as Analytics
+import Std.Db as Db
+import Std.Ai.Provider as Provider exposing (Provider)
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Eval as Eval exposing (Expect(..))
+import Std.Ai.Local as Local
+import Std.Ai.Store as Store
+import Std.Ai.Registry as Registry exposing (Format(..), Method(..))
+import Sky.Core.File as File
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Encoding as Encoding
+import Sky.Core.Result as Result
+import Sky.Core.List as List
+import Sky.Core.String as String
 
 type Page
     = Home
 
 type alias Model =
-    { worked : Int }
+    { worked : Int
+    , aiRuns : Int
+    }
 
 type Msg
     = Work
     | Worked (Result Error ())
+    | RunAi
+    | RanAi (Result Error ())
 
 
 init : a -> ( Model, Cmd Msg )
 init _ =
-    ( { worked = 0 }, Cmd.none )
+    ( { worked = 0, aiRuns = 0 }, Cmd.none )
 
 
 work : Task Error ()
@@ -48,6 +78,248 @@ work =
                (\_ -> Analytics.track (Analytics.event "fixture_live_work" []))
 
 
+-- The `chat` slot: remote, no retry (so the 429 is one Overloaded call).
+chatSlot : Endpoint
+chatSlot =
+    Endpoint.endpoint "chat" |> Endpoint.withRetry 0
+
+
+chat : Provider
+chat =
+    Endpoint.provider chatSlot
+
+
+-- A second slot, so the panel's slot filter has something to tell apart.
+draft : Provider
+draft =
+    Endpoint.provider (Endpoint.endpoint "draft" |> Endpoint.withRetry 0)
+
+
+fixtureSuite : Eval.Suite String
+fixtureSuite =
+    Eval.suite
+        "fixture-eval"
+        (\q -> [ Provider.user q ])
+        [ { id = "greet"
+          , input = "say hello"
+          , expect = Contains "hello"
+          , tags = []
+          }
+        , { id = "count"
+          , input = "count to one"
+          , expect = Exact "1"
+          , tags = []
+          }
+        ]
+
+
+-- Each step is best effort: a failed call is what the panel shows.
+runAi : Task Error ()
+runAi =
+    Task.sequence
+        [ Provider.chat chat [ Provider.user "say hello" ]
+              |> Task.map (\_ -> ())
+              |> Task.onError (\_ -> Task.succeed ())
+        , Provider.chat chat [ Provider.user "busy please" ]
+              |> Task.map (\_ -> ())
+              |> Task.onError (\_ -> Task.succeed ())
+        , Provider.chat draft [ Provider.user "draft please" ]
+              |> Task.map (\_ -> ())
+              |> Task.onError (\_ -> Task.succeed ())
+        ]
+        |> Task.andThen (\_ -> Db.open "sqlite" ":memory:")
+        |> Task.andThen (\db -> Eval.runAs "fake-model" db chat fixtureSuite)
+        |> Task.andThen (\_ -> registryStory)
+        |> Task.andThen (\_ -> trainingStory)
+
+
+-- The training view's data: two run directories in the default work
+-- directory. A loss is written in thousandths ("500e-3") so the lines need no
+-- float formatting.
+trainingStory : Task Error ()
+trainingStory =
+    writeRun
+        "fixture-train-0001"
+        (List.concat
+            [ [ lineHello 0 0 ]
+            , List.map lineProgress (List.range 1 20)
+            , [ lineCheckpoint 10, lineHello 1 10 ]
+            , List.map lineProgress (List.range 21 40)
+            , [ "{\"v\":1,\"type\":\"metric\",\"step\":40,\"name\":\"val_loss\",\"value\":700e-3}"
+              , "{\"v\":1,\"type\":\"done\",\"step\":40,\"trainLoss\":50e-3,\"valLoss\":700e-3}"
+              ]
+            ])
+        |> Task.andThen
+               (\_ ->
+                   File.writeFile
+                       ".sky/ai/runs/fixture-train-0001/result.json"
+                       "{\"status\":\"done\",\"adapter\":{\"registered\":\"fixture-lora@v3\"}}")
+        |> Task.andThen
+               (\_ ->
+                   writeRun
+                       "fixture-train-0002"
+                       (lineHello 0 0 :: List.map lineProgress (List.range 1 3)
+                           ++ [ "{\"v\":1,\"type\":\"error\",\"code\":\"OutOfMemory\",\"message\":\"the device ran out of memory\"}"
+                              ]))
+
+
+writeRun : String -> List String -> Task Error ()
+writeRun run lines =
+    let
+        dir = ".sky/ai/runs/" ++ run
+    in
+        File.mkdirAll dir
+            |> Task.andThen
+                   (\_ ->
+                       File.writeFile
+                           (dir ++ "/job.json")
+                           ("{\"name\":\"" ++ run ++ "\"}"))
+            |> Task.andThen
+                   (\_ ->
+                       File.writeFile
+                           (dir ++ "/events.jsonl")
+                           (String.join "\n" lines ++ "\n"))
+
+
+lineHello : Int -> Int -> String
+lineHello attempt resumeFrom =
+    "{\"v\":1,\"type\":\"hello\",\"backend\":\"fake\",\"attempt\":"
+        ++ String.fromInt attempt
+        ++ ",\"resumeFrom\":"
+        ++ String.fromInt resumeFrom
+        ++ ",\"totalSteps\":40}"
+
+
+lineProgress : Int -> String
+lineProgress step =
+    "{\"v\":1,\"type\":\"progress\",\"step\":" ++ String.fromInt step
+        ++ ",\"total\":40,\"loss\":"
+        ++ String.fromInt (2000 // step)
+        ++ "e-3}"
+
+
+lineCheckpoint : Int -> String
+lineCheckpoint step =
+    "{\"v\":1,\"type\":\"checkpoint\",\"step\":" ++ String.fromInt step
+        ++ ",\"path\":\"checkpoints/"
+        ++ String.fromInt step
+        ++ "\"}"
+
+
+-- The registry view's data. The evidence runs on a provider in code (no slot),
+-- so the recent-calls list keeps exactly the calls above.
+registryStory : Task Error ()
+registryStory =
+    File.tempDir "console-registry"
+        |> Task.andThen
+               (\dir ->
+                   Db.open "sqlite" (dir ++ "/registry.db")
+                       |> Task.andThen
+                              (\db ->
+                                  Registry.open
+                                      db
+                                      (Store.local (dir ++ "/store"))
+                                      |> Task.andThen
+                                             (\reg -> versionsFor db reg dir)))
+
+
+adapterBytes : String -> String
+adapterBytes tag =
+    let
+        header = "{\"t\":\"" ++ tag ++ "\"}"
+    in
+        (Encoding.hexDecode "0900000000000000" |> Result.withDefault "")
+            ++ header
+
+
+evidenceProvider : Provider
+evidenceProvider =
+    Provider.custom
+        (\_ ->
+            Task.succeed
+                { content = "hello"
+                , usage =
+                    { promptTokens = 1, completionTokens = 1, totalTokens = 2 }
+                })
+
+
+evidenceSuite : Eval.Suite String
+evidenceSuite =
+    Eval.suite
+        "registry-evidence"
+        (\q -> [ Provider.user q ])
+        [ { id = "greet"
+          , input = "say hello"
+          , expect = Contains "hello"
+          , tags = []
+          }
+        ]
+
+
+registerOne : Db.Db -> Registry.Registry -> String -> String -> Task Error Registry.Version
+registerOne db reg dir tag =
+    File.writeFile (dir ++ "/" ++ tag) (adapterBytes tag)
+        |> Task.andThen
+               (\_ ->
+                   Registry.register
+                       reg
+                       "fixture-lora"
+                       { path = dir ++ "/" ++ tag
+                       , format = Safetensors
+                       , method = Lora
+                       }
+                       { base = Local.devModel
+                       , dataset = "fixture@1"
+                       , datasetDigest = Crypto.sha256 "fixture dataset"
+                       , metadata = [ ( "seed", "1" ) ]
+                       })
+        |> Task.andThen
+               (\v ->
+                   Eval.runAs
+                       (Registry.label v)
+                       db
+                       evidenceProvider
+                       evidenceSuite
+                       |> Task.andThen
+                              (\report -> Registry.attachReport reg v report)
+                       |> Task.map (\_ -> v))
+
+
+versionsFor : Db.Db -> Registry.Registry -> String -> Task Error ()
+versionsFor db reg dir =
+    registerOne db reg dir "a"
+        |> Task.andThen
+               (\v1 ->
+                   registerOne db reg dir "b"
+                       |> Task.andThen
+                              (\v2 ->
+                                  Registry.promoteChecked
+                                      reg
+                                      "prod"
+                                      v1
+                                      Eval.thresholds
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Registry.promoteChecked
+                                                     reg
+                                                     "prod"
+                                                     v2
+                                                     Eval.thresholds)
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Registry.rollback
+                                                     reg
+                                                     "fixture-lora@prod")
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Registry.forcePromote
+                                                     reg
+                                                     "qa"
+                                                     v2
+                                                     "e2e check")))
+        |> Task.map (\_ -> ())
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
@@ -61,6 +333,15 @@ update msg model =
         Worked (Err _) ->
             ( model, Cmd.none )
 
+        RunAi ->
+            ( model, Cmd.perform runAi RanAi )
+
+        RanAi (Ok _) ->
+            ( { model | aiRuns = model.aiRuns + 1 }, Cmd.none )
+
+        RanAi (Err _) ->
+            ( model, Cmd.none )
+
 
 view : Model -> Element Msg
 view model =
@@ -69,6 +350,8 @@ view model =
         [ Ui.text "console controls fixture"
         , Ui.button [] { onPress = Just Work, label = Ui.text "Work" }
         , Ui.text ("worked " ++ String.fromInt model.worked)
+        , Ui.button [] { onPress = Just RunAi, label = Ui.text "Run AI" }
+        , Ui.text ("ai runs " ++ String.fromInt model.aiRuns)
         ]
 
 

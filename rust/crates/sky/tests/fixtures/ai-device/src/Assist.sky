@@ -1,0 +1,28 @@
+module Assist exposing (probeSlot, assistant)
+
+-- The device slot the probe runs: the development model, plus the adapter a
+-- test writes into `adapter.ref` (a `Std.Ai.Local` file reference) through
+-- SKY_AI_PROBE_DEVICE_ADAPTER, the operator variable a deployment would set.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Local as Local
+import Std.Ai.Device as Device
+import Std.Ai.Provider exposing (Provider)
+
+
+-- `withMetered True`: these flows test that the slot runs on the device, not
+-- the metered-network rule (tests/Std/Ai/DeviceTest.sky covers that). An
+-- Android emulator reports its cellular network as metered until its Wi-Fi
+-- comes up, so without it `prepare` was refused or not by the boot's timing.
+probeSlot : Endpoint
+probeSlot =
+    Endpoint.endpoint "probe" |> Endpoint.withLocal (Local.model Local.devModel)
+        |> Endpoint.withDevice
+               (Device.spec Device.Auto |> Device.withContext 2048
+                   |> Device.withMetered True)
+
+
+assistant : Provider
+assistant =
+    Device.provider "probe"

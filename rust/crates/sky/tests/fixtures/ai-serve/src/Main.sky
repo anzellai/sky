@@ -1,0 +1,134 @@
+module Main exposing (main)
+
+{-| The registry side of rust/crates/sky/tests/ai_serve_flow.rs: register two
+versions of a LoRA adapter (`support`, PEFT safetensors with their
+adapter_config.json, trained on the development base) in a local store, and
+move the `qa` alias. The store's pointer objects are what the GPU tier reads.
+
+    register <dir>     two versions in <dir>/store (records in <dir>/registry.db); qa -> v1
+    promote <dir> <n>  qa -> v<n>
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Result as Result
+import Sky.Core.System as System
+import Sky.Core.File as File
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Encoding as Encoding
+import Std.Log exposing (println)
+import Std.Db as Db
+import Std.Ai.Local as Local
+import Std.Ai.Registry as Registry exposing (Format(..), Method(..))
+import Std.Ai.Serve as Serve
+import Std.Ai.Store as Store
+
+
+main : Task Error ()
+main =
+    System.args () |> Task.andThen run
+
+
+open : String -> Task Error Registry.Registry
+open dir =
+    File.mkdirAll dir
+        |> Task.andThen (\_ -> Db.open "sqlite" (dir ++ "/registry.db"))
+        |> Task.andThen
+               (\db -> Registry.open db (Store.local (dir ++ "/store")))
+
+
+-- A minimal safetensors file whose bytes differ per tag.
+safetensors : String -> String
+safetensors tag =
+    let
+        header = "{\"__metadata__\":{\"tag\":\"" ++ tag ++ "\"}}"
+        n = String.length header
+        digit d = String.slice d (d + 1) "0123456789abcdef"
+        hex = digit (n // 16) ++ digit (modBy 16 n)
+    in
+        (Encoding.hexDecode (hex ++ "00000000000000") |> Result.withDefault "")
+            ++ header
+
+
+registerOne : Registry.Registry -> String -> String -> Task Error Registry.Version
+registerOne reg dir tag =
+    let
+        weights = dir ++ "/" ++ tag ++ ".safetensors"
+        config = dir ++ "/" ++ tag ++ "-adapter_config.json"
+    in
+        File.writeFile weights (safetensors tag)
+            |> Task.andThen
+                   (\_ ->
+                       File.writeFile
+                           config
+                           "{\"peft_type\":\"LORA\",\"r\":8,\"target_modules\":[\"q_proj\"]}")
+            |> Task.andThen
+                   (\_ ->
+                       Registry.registerWith
+                           reg
+                           "support"
+                           { path = weights
+                           , format = Safetensors
+                           , method = Lora
+                           }
+                           { base = Local.devModel
+                           , dataset = "support@1"
+                           , datasetDigest = Crypto.sha256 "support"
+                           , metadata =
+                               [ ( "baseId"
+                                 , Serve.baseIdOf
+                                       (Serve.tier Serve.Vllm Serve.devBase)
+                                 )
+                               ]
+                           }
+                           [ { role = "peft.config", path = config } ])
+
+
+run : List String -> Task Error ()
+run args =
+    case args of
+
+        [ "register", dir ] ->
+            open dir
+                |> Task.andThen
+                       (\reg ->
+                           registerOne reg dir "one"
+                               |> Task.andThen
+                                      (\v1 ->
+                                          registerOne reg dir "two"
+                                              |> Task.map (\_ -> v1))
+                               |> Task.andThen
+                                      (\v1 ->
+                                          Registry.forcePromote
+                                              reg
+                                              "qa"
+                                              v1
+                                              "serve flow")
+                               |> Task.andThen
+                                      (\_ ->
+                                          println
+                                              "registered support@v1 and support@v2; qa -> v1"))
+
+        [ "promote", dir, n ] ->
+            open dir
+                |> Task.andThen
+                       (\reg ->
+                           Registry.version
+                               reg
+                               "support"
+                               (String.toInt n |> Maybe.withDefault 1)
+                               |> Task.andThen
+                                      (\v ->
+                                          Registry.forcePromote
+                                              reg
+                                              "qa"
+                                              v
+                                              "serve flow")
+                               |> Task.andThen (\_ -> println ("qa -> v" ++ n)))
+
+        _ ->
+            Task.fail
+                (Error.invalidInput "usage: register <dir> | promote <dir> <n>")

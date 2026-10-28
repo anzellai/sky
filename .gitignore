@@ -28,6 +28,9 @@ node_modules/
 .env
 .env.*
 !.env.example
+# An example's `.env.test` is its committed test-mode marker and holds no
+# secret (docs/tooling/testing.md); sandbox credentials go in `.env.test.local`.
+!examples/*/.env.test
 firebaseadminsdk*.json
 
 # AI agent config. Use `.claude/*` (contents), NOT `.claude/` (the dir), so the
@@ -138,6 +141,12 @@ _verify/
 # next to the app for stable URLs across rebuilds. Per-machine,
 # never source.
 .sky/
+
+# Runtime data dir a built app creates beside its working directory (the
+# project folder under `sky run` and the xtask build-run gate): the embedded
+# PostgreSQL cluster and the Sky.Spa session secret (SKY_DATA_DIR, else
+# <cwd>/.skydata). Per-machine state, never source.
+.skydata/
 
 # Rust-compiler M4 build outputs (xtask build-run)
 examples/*/sky-out-rust/

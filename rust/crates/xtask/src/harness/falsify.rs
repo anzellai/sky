@@ -560,7 +560,7 @@ fn post_revert_rebuilds(
 }
 
 /// Rebuild what a reverted Rust-source mutation may have compiled into: the
-/// running `xtask`, then every [`post_revert_rebuilds`] artefact.
+/// running `xtask`, then every [`post_revert_targets`] artefact.
 fn rebuild_after_revert(
     root: &Path,
     exe: &Path,
@@ -582,13 +582,16 @@ fn rebuild_after_revert(
 /// the one the running `xtask` lives in (`lsp` and `config-matrix` inherit its
 /// `CARGO_TARGET_DIR`), and the in-tree `rust/target`, because the gates that
 /// run `cargo test -p sky` (`cli-verbs`, `build-new-dir-compiles-nothing`,
-/// `build-growth-linear`) unset `CARGO_TARGET_DIR` on purpose. When `xtask`
+/// `build-growth-linear`, `ai-device-partition`, `ai-device-ios-sim`) unset
+/// `CARGO_TARGET_DIR` on purpose. When `xtask`
 /// was built elsewhere, only the first used to be checked: the in-tree debug
 /// `sky` kept the mutation (its source got its old mtime back, so cargo read
 /// it as fresh), and the next run of the gate measured the mutated compiler.
 /// Observed: `build-new-dir-compiles-nothing` red on a clean tree after
 /// `--verify-falsifiers`, its copy recompiling every package as the
-/// no-trimpath mutation does.
+/// no-trimpath mutation does. Also observed: `ai-device-ios-sim` red on a
+/// clean tree after `ai-device-partition`'s mutation (it drops `AiDevice` from
+/// `CLIENT_EFFECT_KERNELS`) was compiled into the in-tree `project` crate.
 fn post_revert_targets(
     root: &Path,
     exe: &Path,

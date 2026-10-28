@@ -4,11 +4,12 @@
 //! unqualified reference ambiguous (`[E1012]`): `import Std.Html.Attributes
 //! exposing (..)` plus `import Sky.Core.Json.Decode exposing (..)` compiled with
 //! v0.26.1, and `value` became ambiguous in v0.27.0 when `Json.Decode.value`
-//! was added. The error is loud and the fix is one line, but the user did not
+//! was added. (v0.28.0 compares with v0.27.8: `Std.Html` plus
+//! `Std.Ai.Provider`, both exposed, make a bare `embed` ambiguous.) The error is loud and the fix is one line, but the user did not
 //! change anything, so the message must say why it appeared.
 //!
 //! The snapshot is a committed, generated file:
-//! `rust/crates/hir/data/stdlib-exports-v0.26.1.tsv`. Regenerate it with
+//! `rust/crates/hir/data/stdlib-exports-v0.27.8.tsv`. Regenerate it with
 //! `rust/crates/hir/tests/regen-stdlib-exports-snapshot.sh <tag>`. Its lines are
 //! `<kind>\t<module>\t<name>`, where `kind` is `module` (the module existed,
 //! `name` is empty), `value`, `type` or `ctor`. A kernel pseudo-module (the
@@ -19,10 +20,10 @@ use std::collections::HashSet;
 use std::sync::OnceLock;
 
 /// The release the snapshot was taken from, as the message prints it.
-pub const PREVIOUS_RELEASE: &str = "v0.26.1";
+pub const PREVIOUS_RELEASE: &str = "v0.27.8";
 
 /// The committed snapshot text.
-pub const PREVIOUS_EXPORTS_TSV: &str = include_str!("../data/stdlib-exports-v0.26.1.tsv");
+pub const PREVIOUS_EXPORTS_TSV: &str = include_str!("../data/stdlib-exports-v0.27.8.tsv");
 
 /// One parsed snapshot line.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]

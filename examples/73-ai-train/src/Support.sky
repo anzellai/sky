@@ -1,0 +1,192 @@
+module Support exposing
+    ( World
+    , open
+    , openIn
+    , freeze
+    , job
+    , chatSlot
+    , chatSlotIn
+    , promoteDev
+    , describe
+    )
+
+{-| The pieces of the example: the frozen dataset, the training job, the
+registry the adapter goes into, and the model slot that serves it.
+
+Everything a training run needs is in code. The backend is not: on a Mac it
+is detected as Mlx, and `SKY_AI_TRAIN_BACKEND=fake` (set by `.env.test` under
+`sky test`) runs the scripted Fake trainer instead.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Std.Db as Db exposing (Db)
+import Std.Ai.Dataset as Dataset
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Local as Local
+import Std.Ai.Registry as Registry
+import Std.Ai.Store as Store exposing (Store)
+import Std.Ai.Train as Train
+
+-- | What a command needs: the database (durable runs and registry records),
+-- the registry, the frozen dataset version, and where runs live.
+type alias World =
+    { db : Db
+    , reg : Registry.Registry
+    , version : Dataset.Version Dataset.Chat
+    , dir : String
+    }
+
+
+-- | Freeze data/support.jsonl into `<dir>/datasets/support`. Freezing the same
+-- rows again returns the version that is already there. 80 % of the rows
+-- train the adapter and 20 % measure it; a row stays in its split in every
+-- later version (the split hashes the user's question).
+freeze : String -> Task Error (Dataset.Version Dataset.Chat)
+freeze dir =
+    Dataset.fromJsonl Dataset.chatCodec "data/support.jsonl"
+        |> Dataset.split { train = 80, eval = 20, test = 0, seed = 7 } question
+        |> Dataset.freeze
+               (Dataset.folder (dir ++ "/datasets") "support")
+               Dataset.chatCodec
+
+
+question : Dataset.Chat -> String
+question row =
+    row.messages |> List.filter (\m -> m.role == "user") |> List.map .content
+        |> String.join "\n"
+
+
+-- | The app's world: its own database (`Db.connect`, from `SKY_DB_PATH` or
+-- `DATABASE_URL`; SQLite here, PostgreSQL with the same code), the registry on it (artefacts under
+-- `SKY_AI_REGISTRY`, else `.sky/ai/registry`), and the data under `.sky/ai`.
+open : Task Error World
+open =
+    Db.connect ()
+        |> Task.andThen
+               (\db ->
+                   Registry.openConfigured db ""
+                       |> Task.andThen
+                              (\reg ->
+                                  freeze ".sky/ai"
+                                      |> Task.map
+                                             (\v ->
+                                                 { db = db
+                                                 , reg = reg
+                                                 , version = v
+                                                 , dir = ".sky/ai"
+                                                 })))
+
+
+-- | A world in its own directory (the tests use a fresh one each run).
+openIn : String -> Task Error World
+openIn dir =
+    Db.open "sqlite" (dir ++ "/train.db")
+        |> Task.andThen
+               (\db ->
+                   Registry.open db (registryStore dir)
+                       |> Task.andThen
+                              (\reg ->
+                                  freeze dir
+                                      |> Task.map
+                                             (\v ->
+                                                 { db = db
+                                                 , reg = reg
+                                                 , version = v
+                                                 , dir = dir
+                                                 })))
+
+
+registryStore : String -> Store
+registryStore dir =
+    Store.local (dir ++ "/registry")
+
+
+-- | The training job. QLoRA on the development base (Qwen2.5 0.5B Instruct,
+-- 4-bit), rank 8 on the attention projections of the last 8 layers, 60 steps
+-- of 2 rows, a checkpoint every 20 steps, the adapter converted to GGUF for
+-- the local engine and registered as `support`.
+job : World -> Train.Job
+job w =
+    Train.lora Train.devBase w.version |> Train.withName "support"
+        |> Train.withQuantisedBase
+        |> Train.withRank 8
+        |> Train.withLayers 8
+        |> Train.withMaxSteps 60
+        |> Train.withBatch { perDevice = 2, accumulate = 1 }
+        |> Train.withSequenceLength 512
+        |> Train.withSeed 7
+        |> Train.withCheckpointEvery 20
+        |> Train.withEvalEvery 20
+        |> Train.withGgufExport
+        |> Train.withWorkDir (w.dir ++ "/runs")
+        |> Train.withWatchWindow 2000
+        |> Train.withRegistry w.reg
+
+
+-- | Point `dev` at the trained version. A forced promotion records its
+-- reason; promotion to `qa` and `prod` needs a passing eval report
+-- (`Registry.promoteChecked`, see examples/72).
+promoteDev : World -> Train.Adapter -> Task Error String
+promoteDev w a =
+    Registry.versions w.reg a.name
+        |> Task.andThen
+               (\vs ->
+                   case List.filter
+                            (\v -> Just (Registry.label v) == a.registered)
+                            vs
+                            |> List.head of
+
+                       Just v ->
+                           Registry.forcePromote
+                               w.reg
+                               "dev"
+                               v
+                               ("trained by run " ++ a.runId
+                                   ++ "; gate it on an eval suite before qa")
+                               |> Task.map (\_ -> Registry.label v)
+
+                       Nothing ->
+                           Task.fail
+                               (Error.invalidInput
+                                   ("the run " ++ a.runId
+                                       ++ " registered no version")))
+
+
+-- | The slot that serves `support@dev`: the development model on the managed
+-- local engine with the adapter `dev` points at, loaded with --lora after its
+-- digest and its base are checked. `SKY_AI_SUPPORT_URL` moves it to a remote
+-- server without a code change.
+chatSlot : () -> Endpoint
+chatSlot _ =
+    slot (Db.connect () |> Task.andThen (\db -> Registry.openConfigured db ""))
+
+
+-- | The slot of a world in its own directory.
+chatSlotIn : String -> Endpoint
+chatSlotIn dir =
+    slot
+        (Db.open "sqlite" (dir ++ "/train.db")
+            |> Task.andThen (\db -> Registry.open db (registryStore dir)))
+
+
+slot : Task Error Registry.Registry -> Endpoint
+slot reg =
+    Endpoint.endpoint "support"
+        |> Endpoint.withLocal
+               (Local.model Local.devModel |> Local.withContext 2048)
+        |> Endpoint.fromRegistry (Registry.resolver reg)
+        |> Endpoint.withAdapter "registry:support@dev"
+
+
+-- | One line about a finished adapter.
+describe : Train.Adapter -> String
+describe a =
+    a.name ++ " trained on " ++ a.backend ++ " in " ++ String.fromInt a.steps
+        ++ " steps (eval loss "
+        ++ String.left 6 (String.fromFloat a.valLoss)
+        ++ ")"

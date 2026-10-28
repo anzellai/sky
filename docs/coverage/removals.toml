@@ -74,6 +74,13 @@ symbol = "Std.Markdown.stringChars"
 reason = "deleted with its only caller, `allChars` (see above). It existed to turn a String into a List String one grapheme at a time so a predicate could be folded over it; `restIsAll` indexes the string directly instead, so nothing needs the intermediate list. Module-private, never exposed, no remaining reference in sky-stdlib."
 owner  = "anzel"
 commit = "2771303a"
+
+[[removal]]
+symbol = "Std.Ai.Provider.Direct"
+# Accounted 2026-10-12. stdlib.unfiltered.types 337 -> 336.
+reason = "deleted when the built-in backends (`openai`, `compatible`) became a `Wire` over the internal `backendPost` transport, so `Provider` has one OpenAI-compatible arm instead of a separate `Backend Direct` constructor (one runtime payload narrowing fewer per operation). `Direct` was the `Backend` payload record and was never in the module's exposing list; `Provider` is opaque, so no caller could name it."
+owner  = "anzel"
+commit = "d5c684718"
 #
 #
 # ===========================================================================
@@ -687,6 +694,18 @@ owner  = "anzel"
 commit = "fix/v027-terminal"
 
 [[removal]]
+symbol = "Std.Ai.Cloud.Google.call"
+reason = "v0.28.0 (unreleased): an internal helper of Std.Ai.Cloud.Google, no longer exported. Nothing outside the module called it (sky-stdlib, examples, tests, fixtures, the corpus): Std.Ai.Train, Std.Ai.Serve, Std.Ai.Store and Std.Ai.Endpoint reach Google through the module's named calls (createCustomJob, getService, bucketLocation, ...). Exported, it shared the name `call` with kernel Ffi (hir/tests/stdlib_collisions.rs, every_new_module_overlap_is_listed). Its behaviour (retry on 429/503, then Overloaded) stays covered through those named calls in tests/Std/Ai/TrainCloudTest.sky and ai_cloud_train_flow."
+owner  = "anzel"
+commit = "fix/stdlib-collisions"
+
+[[removal]]
+symbol = "Std.Ai.Cloud.Google.ok"
+reason = "v0.28.0 (unreleased): an internal helper of Std.Ai.Cloud.Google, no longer exported, with `call`. Nothing outside the module called it. Exported, it shared the name `ok` with Sky.Test. The typed failure it builds stays exported as Google.refused (now over the renamed Google.ApiResponse), which the corpus battery aigooglecloud still checks."
+owner  = "anzel"
+commit = "fix/stdlib-collisions"
+
+[[removal]]
 symbol = "syntax::SyntaxKind::ForeignKw"
 reason = "v0.27.12: `foreign` was a keyword in the Rust lexer only. docs/language/syntax.md never listed it, and its one rule (a top-level `foreign ...` line, ForeignDecl) was parsed and then dropped by hir with no meaning, a leftover of the retired TypeScript-era compiler. It blocked `foreign` as an ordinary name (`let foreign = ...` failed with `expected a pattern` and a cascade). Nothing in sky-stdlib, examples, tests, apps or templates used the rule. `foreign` is now a plain identifier; parse_tests.rs foreign_is_an_ordinary_name pins it."
 owner  = "anzel"
@@ -697,6 +716,12 @@ symbol = "syntax::SyntaxKind::ForeignDecl"
 reason = "v0.27.12: the node of the dead `foreign ...` top-level rule removed with ForeignKw (see that stanza). hir, fmt, the LSP and the Sky.Spa splitter ignored or reprinted it verbatim; no construct with a meaning left the language."
 owner  = "anzel"
 commit = "fix/v0.27.12"
+
+[[removal]]
+symbol = "Std.Ai.Train.withGradientCheckpointing"
+reason = "v0.28.0 (unreleased, branch-only, never shipped): with SKY_AI_TRAIN_GRAD_CHECKPOINT. The native trainer's chunked loss recomputes each adapted layer in its own backward pass, so the setting changed nothing for Mlx, and Unsloth manages its own checkpointing. No released Sky had it, so no user breaks. ai_train_settings_test.go TestTrainSettingsHaveNoGradientCheckpointing pins that the variable is not read and the trainer is never passed --grad-checkpoint."
+owner  = "anzel"
+commit = "feat/std-ai-lifecycle"
 
 # ===========================================================================
 # ## The FOURTH ledger: `[[correction]]` — a false credit removed
@@ -716,13 +741,6 @@ commit = "fix/v0.27.12"
 # assertions in a release job, not a registered harness gate, so Asserted.
 
 [[correction]]
-surface  = "stdlib.Std.Ai.Agent"
-strength = "Asserted"
-reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
-owner    = "v0.27.0 fix batch, stream S4"
-commit   = "fix/v027-s4-tooling G-2"
-
-[[correction]]
 surface  = "stdlib.Std.Ai.Memory.Pg"
 strength = "Asserted"
 reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
@@ -737,35 +755,7 @@ owner    = "v0.27.0 fix batch, stream S4"
 commit   = "fix/v027-s4-tooling G-2"
 
 [[correction]]
-surface  = "stdlib.Std.Ai.Provider"
-strength = "Asserted"
-reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
-owner    = "v0.27.0 fix batch, stream S4"
-commit   = "fix/v027-s4-tooling G-2"
-
-[[correction]]
-surface  = "stdlib.Std.Ai.Tool"
-strength = "Asserted"
-reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
-owner    = "v0.27.0 fix batch, stream S4"
-commit   = "fix/v027-s4-tooling G-2"
-
-[[correction]]
-surface  = "stdlib.Std.Ai.Trace"
-strength = "Asserted"
-reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
-owner    = "v0.27.0 fix batch, stream S4"
-commit   = "fix/v027-s4-tooling G-2"
-
-[[correction]]
 surface  = "stdlib.Std.Analytics"
-strength = "Asserted"
-reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
-owner    = "v0.27.0 fix batch, stream S4"
-commit   = "fix/v027-s4-tooling G-2"
-
-[[correction]]
-surface  = "stdlib.Std.Durable"
 strength = "Asserted"
 reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
 owner    = "v0.27.0 fix batch, stream S4"

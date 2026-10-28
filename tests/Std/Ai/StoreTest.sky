@@ -1,0 +1,229 @@
+module Std.Ai.StoreTest exposing (tests)
+
+-- Std.Ai.Store: locations, AWS Signature Version 4 against the published AWS
+-- examples, and a local store's put and fetch by digest. The GCS and S3
+-- transfers are proven offline by rust/crates/sky/tests/ai_registry_flow.rs
+-- (fixtures under tests/mocks/ in a test-mode project) and by
+-- runtime-go/rt/ai_store_test.go (an httptest bucket).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Secret as Secret
+import Sky.Core.Crypto as Crypto
+import Sky.Core.File as File
+import Sky.Test as Test exposing (Test, TestResult)
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Store as Store
+
+
+-- The "GET Object" example of the AWS Signature Version 4 documentation
+-- (Amazon S3 API reference, "Examples: Signature calculations in AWS
+-- Signature Version 4"): bucket examplebucket, key test.txt, a Range header,
+-- 24 May 2013, us-east-1, the documented example keys.
+awsGetObject : Store.SigV4
+awsGetObject =
+    { method = "GET"
+    , host = "examplebucket.s3.amazonaws.com"
+    , path = "/test.txt"
+    , query = ""
+    , headers =
+        [ ( "Host", "examplebucket.s3.amazonaws.com" )
+        , ( "Range", "bytes=0-9" )
+        , ( "x-amz-content-sha256"
+          , "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          )
+        , ( "x-amz-date", "20130524T000000Z" )
+        ]
+    , payloadHash =
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    , region = "us-east-1"
+    , service = "s3"
+    , amzDate = "20130524T000000Z"
+    , accessKey = "AKIAIOSFODNN7EXAMPLE"
+    , secretKey =
+        Secret.fromString
+            (String.join "" [ "wJalrXUtnFEMI/K7MDENG/", "bPxRfiCYEXAMPLEKEY" ])
+    }
+
+
+-- The "PUT Object" example of the same page: a 21-byte body and its hash,
+-- a Date header and the storage class.
+awsPutObject : Store.SigV4
+awsPutObject =
+    { method = "PUT"
+    , host = "examplebucket.s3.amazonaws.com"
+    , path = "/test%24file.text"
+    , query = ""
+    , headers =
+        [ ( "Host", "examplebucket.s3.amazonaws.com" )
+        , ( "Date", "Fri, 24 May 2013 00:00:00 GMT" )
+        , ( "x-amz-content-sha256"
+          , "44ce7dd67c959e0d3524ffac1771dfbba87d2b6b4b4e99e42034a8b803f8b072"
+          )
+        , ( "x-amz-date", "20130524T000000Z" )
+        , ( "x-amz-storage-class", "REDUCED_REDUNDANCY" )
+        ]
+    , payloadHash =
+        "44ce7dd67c959e0d3524ffac1771dfbba87d2b6b4b4e99e42034a8b803f8b072"
+    , region = "us-east-1"
+    , service = "s3"
+    , amzDate = "20130524T000000Z"
+    , accessKey = "AKIAIOSFODNN7EXAMPLE"
+    , secretKey =
+        Secret.fromString
+            (String.join "" [ "wJalrXUtnFEMI/K7MDENG/", "bPxRfiCYEXAMPLEKEY" ])
+    }
+
+
+roundTrip : String -> TestResult
+roundTrip url =
+    case Store.fromUrl url of
+
+        Ok s ->
+            Test.equal url (Store.location s)
+
+        Err e ->
+            Test.fail (Error.toString e)
+
+
+localPutFetch : Result Error ( Store.Blob, String, String )
+localPutFetch =
+    File.tempDir "sky-store-test"
+        |> Task.andThen
+               (\dir ->
+                   let
+                       src = dir ++ "/adapter.safetensors"
+                       store = Store.local (dir ++ "/registry")
+                   in
+                       File.writeFile src "adapter bytes"
+                           |> Task.andThen (\_ -> Store.put store src)
+                           |> Task.andThen
+                                  (\blob ->
+                                      Store.fetch store blob.sha256
+                                          |> Task.andThen
+                                                 (\path ->
+                                                     File.readFile path
+                                                         |> Task.map
+                                                                (\text ->
+                                                                    ( blob
+                                                                    , path
+                                                                    , text
+                                                                    )))))
+        |> Task.run
+
+
+missingBlob : Result Error String
+missingBlob =
+    File.tempDir "sky-store-missing"
+        |> Task.andThen
+               (\dir ->
+                   Store.fetch (Store.local dir) (Crypto.sha256 "nothing here"))
+        |> Task.run
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "signV4 reproduces the AWS GET Object example"
+          (\_ ->
+              Test.equal
+                  "f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
+                  (Store.signV4 awsGetObject).signature)
+    , Test.test
+          "signV4 names the signed headers in order"
+          (\_ ->
+              Test.equal
+                  "host;range;x-amz-content-sha256;x-amz-date"
+                  (Store.signV4 awsGetObject).signedHeaders)
+    , Test.test
+          "signV4 builds the Authorization header"
+          (\_ ->
+              Test.equal
+                  "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
+                  (Store.signV4 awsGetObject).authorization)
+    , Test.test
+          "signV4 reproduces the AWS PUT Object example"
+          (\_ ->
+              Test.equal
+                  "98ad721746da40c64f1a55b78f14c238d841ea1380cd77a1b5971af0ece108bd"
+                  (Store.signV4 awsPutObject).signature)
+    , Test.test
+          "a file location round-trips"
+          (\_ -> roundTrip "file://.sky/ai/registry")
+    , Test.test
+          "a gs location round-trips"
+          (\_ -> roundTrip "gs://models/registry/qa")
+    , Test.test
+          "an s3 location keeps its region"
+          (\_ -> roundTrip "s3://models/registry?region=eu-west-1")
+    , Test.test
+          "a bucket's root is a location"
+          (\_ ->
+              case Store.fromUrl "gs://models" of
+
+                  Ok s ->
+                      Test.equal "gs://models" (Store.location s)
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "an unknown scheme is InvalidSetting naming SKY_AI_REGISTRY"
+          (\_ ->
+              case Store.fromUrl "ftp://models/registry" of
+
+                  Ok _ ->
+                      Test.fail "ftp:// was accepted"
+
+                  Err e ->
+                      case Failure.fromError e of
+
+                          Just (InvalidSetting r) ->
+                              Test.equal "SKY_AI_REGISTRY" r.setting
+
+                          _ ->
+                              Test.fail (Error.toString e))
+    , Test.test
+          "a gs location needs a bucket"
+          (\_ -> Test.err (Store.fromUrl "gs://"))
+    , Test.test
+          "a local store puts and fetches by digest"
+          (\_ ->
+              case localPutFetch of
+
+                  Ok ( blob, path, text ) ->
+                      if blob.sha256 /= Crypto.sha256 "adapter bytes" then
+                          Test.fail ("digest " ++ blob.sha256)
+
+                      else if blob.size /= 13 then
+                          Test.fail ("size " ++ String.fromInt blob.size)
+
+                      else if not
+                          (String.endsWith ("/blobs/sha256/" ++ blob.sha256) path) then
+                          Test.fail ("path " ++ path)
+
+                      else
+                          Test.equal "adapter bytes" text
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a blob that is not in the store is NotProvisioned"
+          (\_ ->
+              case missingBlob of
+
+                  Ok p ->
+                      Test.fail ("served " ++ p)
+
+                  Err e ->
+                      case Failure.fromError e of
+
+                          Just (NotProvisioned _) ->
+                              Test.pass
+
+                          _ ->
+                              Test.fail (Error.toString e))
+    ]

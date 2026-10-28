@@ -1,0 +1,8 @@
+{
+  "match": {
+    "method": "POST",
+    "urlContains": "sky-ai-local.invalid/chat/"
+  },
+  "status": 200,
+  "body": "{\"choices\": [{\"message\": {\"role\": \"assistant\", \"content\": \"Thank you for your message. An agent will reply within one working day.\"}}], \"usage\": {\"prompt_tokens\": 40, \"completion_tokens\": 20, \"total_tokens\": 60}}"
+}

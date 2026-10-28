@@ -353,6 +353,9 @@ fn example_test_dirs(repo_root: &Path) -> Vec<PathBuf> {
     if let Ok(rd) = std::fs::read_dir(repo_root.join("examples")) {
         let mut dirs: Vec<PathBuf> = rd
             .filter_map(|e| e.ok())
+            // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
+            // from CI in general; skip every `crate::ci_excluded` example by name.
+            .filter(|e| !crate::ci_excluded::is_ci_excluded_path(&e.path()))
             .map(|e| e.path().join("tests"))
             .filter(|p| p.is_dir())
             .collect();

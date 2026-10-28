@@ -2742,6 +2742,51 @@ function __skyForceReopenSSE() {
     __skySseReopenTimer = null;
     __skyOpenSSE();
   }, delay);
+  if (delay > __skyReachPollMs) __skyPollReachable();
+}
+
+// __skyPollReachable — while a reopen waits on a long backoff, ask the
+// server once a second whether it answers again, and reopen at once when it
+// does. Without it a server that came back during a long backoff step was
+// noticed only when the step ended: the doubling schedule reaches 8 and 16 s
+// within a few seconds of an outage (fast failures, such as a proxy's 503
+// while its upstream restarts), so a restart of a second or two could leave
+// the page offline for up to 16 s more (the console-live e2e saw 21 s once).
+// The probe is the side-effect-free session ping. Any answer except a
+// gateway error (502 / 503 / 504, a proxy with no upstream) means the
+// server is up; the reopened stream then reports a lost session or sign-in
+// itself, as it does after any reconnect.
+var __skyReachPollMs = 1000;
+var __skyReachTimer = null;
+function __skyPollReachable() {
+  if (__skyReachTimer !== null) return;
+  var inFlight = false;
+  __skyReachTimer = setInterval(function() {
+    if (__skySseReopenTimer === null) {
+      clearInterval(__skyReachTimer);
+      __skyReachTimer = null;
+      return;
+    }
+    if (inFlight) return;
+    inFlight = true;
+    var headers = __skyWithSession({"Content-Type": "application/json"});
+    if (__skyCsrfToken) headers["X-Sky-Csrf"] = __skyCsrfToken;
+    fetch(__skyBase + "/_sky/event", {
+      method: "POST",
+      headers: headers,
+      body: JSON.stringify({sessionId: __skySid, msg: "__skySessionPing", args: [], tab: __skyTabId}),
+      credentials: "same-origin"
+    }).then(function(r) {
+      inFlight = false;
+      if (r.status === 502 || r.status === 503 || r.status === 504) return;
+      if (__skySseReopenTimer === null) return;
+      clearTimeout(__skySseReopenTimer);
+      __skySseReopenTimer = null;
+      clearInterval(__skyReachTimer);
+      __skyReachTimer = null;
+      __skyOpenSSE();
+    }).catch(function() { inFlight = false; });
+  }, __skyReachPollMs);
 }
 
 // __skyProbeSessionLost — fire-and-forget POST whose only purpose is

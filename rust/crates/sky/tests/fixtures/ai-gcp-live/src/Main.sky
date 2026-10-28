@@ -1,0 +1,823 @@
+module Main exposing (main)
+
+{-| The live Google Cloud scenarios, one per command line, run by
+rust/crates/sky/tests/ai_gcp_live.rs under scripts/ai/gcp-live.sh (which
+sets SKY_AI_GCP_LIVE=1, the run's bucket, images, secret and labels, and
+tears everything down). Each scenario prints one JSON line the test checks.
+
+    l2          a budget refusal: plan with USD 0.01; no job exists
+    l3-once     exactly-once: the launch's journal row is lost, the run
+                attaches to its job; one job carries the attempt's labels
+    l3-crash    the first attempt dies after step 6; the second resumes from
+                the newest checkpoint
+    l3-cancel   cancel while the job runs: TrainingCancelled
+    l3-budget   the hard ceiling: Vertex stops a job at its scheduling
+                timeout (3 minutes) with no relaunch: TrainingFailed
+    l4          a real Unsloth QLoRA run on one L4, collected and registered
+    l5          the GPU tier on Cloud Run: deploy, cold start, two adapters on
+                one GPU, a promotion hot-loaded under load, the auth layers
+
+Settings come from the environment the wrapper sets (SKY_AI_TRAIN_*,
+SKY_AI_SERVE_*, SKY_AI_LIVE_*); the prices are the ones read from the Cloud
+Billing catalogue (scripts/ai/live/gcp-prices.json).
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.System as System
+import Sky.Core.Time as Time
+import Sky.Core.File as File
+import Sky.Core.Http as Http
+import Sky.Core.Secret as Secret
+import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Json.Decode as JsonD
+import Sky.Core.Tuple as Tuple
+import Std.Log exposing (println)
+import Std.Db as Db exposing (Db, SqlValue(..))
+import Std.Money as Money
+import Std.Ai.Dataset as Dataset
+import Std.Ai.Registry as Registry
+import Std.Ai.Store as Store
+import Std.Ai.Train as Train
+import Std.Ai.Serve as Serve
+import Std.Ai.Endpoint as Endpoint
+import Std.Ai.Provider as Provider
+import Std.Ai.Failure as Failure
+import Std.Ai.Cloud.Google as Google
+
+
+main : Task Error ()
+main =
+    System.args () |> Task.andThen run
+
+type alias World =
+    { db : Db
+    , reg : Registry.Registry
+    , version : Dataset.Version Dataset.Chat
+    }
+
+
+env : String -> String
+env name =
+    System.getenvOr name ""
+
+
+-- Each scenario's own directory (SKY_AI_LIVE_DIR): the l3 scenarios run at
+-- once, so they never share a database, a run directory or a registry.
+liveDir : String
+liveDir =
+    System.getenvOr "SKY_AI_LIVE_DIR" ".sky/live"
+
+
+world : Task Error World
+world =
+    File.mkdirAll liveDir
+        |> Task.andThen (\_ -> Db.open "sqlite" (liveDir ++ "/live.db"))
+        |> Task.andThen
+               (\db ->
+                   Task.fromResult (Store.fromUrl (env "SKY_AI_LIVE_REGISTRY"))
+                       |> Task.andThen (Registry.open db)
+                       |> Task.andThen
+                              (\reg ->
+                                  Dataset.fromJsonl
+                                      Dataset.chatCodec
+                                      "data/support.jsonl"
+                                      |> Dataset.split
+                                             { train = 80
+                                             , eval = 20
+                                             , test = 0
+                                             , seed = 7
+                                             }
+                                             (\row ->
+                                                 row.messages
+                                                     |> List.map .content
+                                                     |> String.join "\n")
+                                      |> Dataset.freeze
+                                             (Dataset.folder
+                                                 (liveDir ++ "/datasets")
+                                                 "support")
+                                             Dataset.chatCodec
+                                      |> Task.map
+                                             (\v ->
+                                                 { db = db
+                                                 , reg = reg
+                                                 , version = v
+                                                 })))
+
+
+-- The rates read from the Cloud Billing catalogue on 2026-10-12, rounded up
+-- (scripts/ai/live/gcp-prices.json).
+prices : Train.MachinePriceBook
+prices =
+    Train.machinePrices
+        Money.USD
+        "2026-10-12"
+        [ { machine = "n2-standard-4"
+          , region = "us-central1"
+          , perHour = "0.28"
+          }
+        , { machine = "g2-standard-4"
+          , region = "us-central1"
+          , perHour = "0.95"
+          }
+        , -- Read from the Cloud Billing catalogue on 2026-10-14: N2 core and
+          -- RAM, running and management fee, 4 vCPU and 16 GiB, rounded up.
+          { machine = "n2-standard-4"
+          , region = "europe-west4"
+          , perHour = "0.30"
+          }
+        ]
+
+
+-- A Fake job on a CPU machine (the container runs the Fake driver):
+-- `steps` steps of `stepMs`, a checkpoint every 5.
+cpuJob : World -> String -> Int -> Int -> Int -> Train.Job
+cpuJob w name rank steps stepMs =
+    Train.lora Train.devBase w.version |> Train.withName name
+        |> Train.withRank rank
+        |> Train.withLayers 2
+        |> Train.withMaxSteps steps
+        |> Train.withBatch { perDevice = 2, accumulate = 1 }
+        |> Train.withSequenceLength 256
+        |> Train.withCheckpointEvery 5
+        |> Train.fakeStepMs stepMs
+        |> Train.withWatchWindow 15000
+        |> Train.withBackend Train.Vertex
+        |> Train.withCloud
+               { project = ""
+               , region = ""
+               , machine = "n2-standard-4"
+               , staging = ""
+               }
+        |> Train.withBudget (Money.fromMinor Money.USD 25)
+        |> Train.withMaxRuntimeMinutes 15
+        |> Train.withMachinePrices prices
+        |> Train.withWorkDir (liveDir ++ "/runs")
+        |> Train.withRegistry w.reg
+        |> Train.withKeepStaging
+        -- Kept, so the report can read the job's run time for the ledger (a
+        -- run deletes its job records after it registers); the wrapper's
+        -- teardown deletes them by the run's label.
+
+
+emit : List ( String, JsonE.Value ) -> Task Error ()
+emit fields =
+    println (JsonE.encode 0 (JsonE.object fields))
+
+
+codeOf : Error -> String
+codeOf e =
+    Maybe.withDefault "untyped" (Maybe.map Failure.code (Failure.fromError e))
+
+
+-- The custom jobs a run made, and their billed seconds (end, or now, minus
+-- create).
+jobsOf : Train.Job -> Task Error ( Int, Int )
+jobsOf job =
+    Time.unixMillis ()
+        |> Task.andThen
+               (\now ->
+                   Google.listCustomJobs
+                       (env "SKY_AI_TRAIN_PROJECT")
+                       (env "SKY_AI_TRAIN_REGION")
+                       ("labels.sky-run=\"" ++ Train.runKey (Train.runId job)
+                           ++ "\"")
+                       |> Task.map
+                              (\jobs ->
+                                  ( List.length jobs
+                                  , List.foldl
+                                        (\j acc ->
+                                            acc
+                                                + (if j.endMs > 0 then
+                                                      j.endMs - j.createMs
+
+                                                  else
+                                                      now - j.createMs)
+                                                // 1000)
+                                        0
+                                        jobs
+                                  )))
+
+
+-- How many jobs carry one attempt's labels.
+attemptJobs : Train.Job -> Int -> Task Error Int
+attemptJobs job attempt =
+    Google.listCustomJobs
+        (env "SKY_AI_TRAIN_PROJECT")
+        (env "SKY_AI_TRAIN_REGION")
+        ("labels.sky-run=\"" ++ Train.runKey (Train.runId job)
+            ++ "\" AND labels.sky-attempt=\""
+            ++ String.fromInt attempt
+            ++ "\"")
+        |> Task.map List.length
+
+
+-- The outcome of a training scenario as one line: the adapter or the typed
+-- failure, and the jobs with their billed seconds.
+report : String -> Train.Job -> String -> Result Error Train.Adapter -> Task Error ()
+report scenario job machine outcome =
+    jobsOf job
+        |> Task.andThen
+               (\( jobs, seconds ) ->
+                   emit
+                       ([ ( "scenario", JsonE.string scenario )
+                       , ( "machine", JsonE.string machine )
+                       , ( "jobs", JsonE.int jobs )
+                       , ( "seconds", JsonE.int seconds )
+                       ]
+                           ++ (case outcome of
+
+                                  Ok a ->
+                                      [ ( "ok", JsonE.bool True )
+                                      , ( "steps", JsonE.int a.steps )
+                                      , ( "relaunches", JsonE.int a.relaunches )
+                                      , ( "resumedFrom"
+                                        , JsonE.int a.resumedFrom
+                                        )
+                                      , ( "registered"
+                                        , JsonE.string
+                                              (Maybe.withDefault "" a.registered)
+                                        )
+                                      , ( "valLoss", JsonE.float a.valLoss )
+                                      ]
+
+                                  Err e ->
+                                      [ ( "ok", JsonE.bool False )
+                                      , ( "code", JsonE.string (codeOf e) )
+                                      , ( "message"
+                                        , JsonE.string (Error.toString e)
+                                        )
+                                      ])))
+
+
+result : Task Error a -> Task Error (Result Error a)
+result t =
+    t |> Task.map Ok |> Task.onError (\e -> Task.succeed (Err e))
+
+
+run : List String -> Task Error ()
+run args =
+    case args of
+
+        ["l2"] ->
+            world
+                |> Task.andThen
+                       (\w ->
+                           let
+                               job =
+                                   cpuJob w "budget-refused" 2 10 1000
+                                       |> Train.withBudget
+                                              (Money.fromMinor Money.USD 1)
+                           in
+                               result (Train.plan job)
+                                   |> Task.andThen
+                                          (\planned ->
+                                              jobsOf job
+                                                  |> Task.andThen
+                                                         (\( jobs, _ ) ->
+                                                             emit
+                                                                 [ ( "scenario"
+                                                                   , JsonE.string
+                                                                         "l2"
+                                                                   )
+                                                                 , ( "code"
+                                                                   , JsonE.string
+                                                                         (case planned of
+
+                                                                             Ok _ ->
+                                                                                 "Ok"
+
+                                                                             Err e ->
+                                                                                 codeOf
+                                                                                     e)
+                                                                   )
+                                                                 , ( "jobs"
+                                                                   , JsonE.int
+                                                                         jobs
+                                                                   )
+                                                                 ])))
+
+        ["l3-once"] ->
+            world
+                |> Task.andThen
+                       (\w ->
+                           let
+                               -- Kept: the run would delete its job
+                               -- records after registering, and the count
+                               -- below is of the jobs attempt 0 created.
+                               -- The wrapper's teardown deletes them.
+                               job =
+                                   cpuJob w "support" 8 20 3000
+                                       |> Train.withKeepStaging
+                           in
+                               Train.start w.db job
+                                   |> Task.andThen
+                                          (\_ -> Train.poll w.db [ job ])
+                                   |> Task.andThen
+                                          (\_ ->
+                                              Db.exec
+                                                  w.db
+                                                  "DELETE FROM _sky_durable_journal WHERE run_id = ? AND step_id = 'launch-0'"
+                                                  [ SqlString (Train.runId job)
+                                                  ])
+                                   |> Task.andThen
+                                          (\_ -> result (Train.drive w.db job))
+                                   |> Task.andThen
+                                          (\outcome ->
+                                              attemptJobs job 0
+                                                  |> Task.andThen
+                                                         (\n ->
+                                                             emit
+                                                                 [ ( "scenario"
+                                                                   , JsonE.string
+                                                                         "l3-once-attempt-0"
+                                                                   )
+                                                                 , ( "jobs"
+                                                                   , JsonE.int n
+                                                                   )
+                                                                 ]
+                                                                 |> Task.andThen
+                                                                        (\_ ->
+                                                                            report
+                                                                                "l3-once"
+                                                                                job
+                                                                                "n2-standard-4"
+                                                                                outcome))))
+
+        ["l3-crash"] ->
+            world
+                |> Task.andThen
+                       (\w ->
+                           let
+                               job =
+                                   cpuJob w "support" 4 12 3000
+                                       |> Train.fakeCrashAt 7
+                           in
+                               result (Train.drive w.db job)
+                                   |> Task.andThen
+                                          (report "l3-crash" job "n2-standard-4"))
+
+        ["l3-cancel"] ->
+            world
+                |> Task.andThen
+                       (\w ->
+                           let
+                               job = cpuJob w "cancelme" 2 400 3000
+                           in
+                               Train.start w.db job
+                                   |> Task.andThen (\_ -> waitRunning w job 0)
+                                   |> Task.andThen (\_ -> Train.cancel job)
+                                   |> Task.andThen
+                                          (\_ -> result (Train.drive w.db job))
+                                   |> Task.andThen
+                                          (report "l3-cancel" job "n2-standard-4"))
+
+        ["l3-budget"] ->
+            world
+                |> Task.andThen
+                       (\w ->
+                           let
+                               -- The hard ceiling that holds with no Sky
+                               -- process left: Vertex stops the job at the
+                               -- job's scheduling timeout. 400 steps of 4 s
+                               -- need 27 minutes; the ceiling is 3, and no
+                               -- relaunch is allowed, so the run ends
+                               -- TrainingFailed long before step 400. (A
+                               -- budget the estimate exceeds never launches:
+                               -- that is l2. The watch's own budget stop is
+                               -- tested against the emulator.)
+                               job =
+                                   cpuJob w "ceiling" 2 400 4000
+                                       |> Train.withBudget
+                                              (Money.fromMinor Money.USD 30)
+                                       |> Train.withMaxRuntimeMinutes 3
+                                       |> Train.withMaxRelaunches 0
+                           in
+                               result (Train.drive w.db job)
+                                   |> Task.andThen
+                                          (report "l3-budget" job "n2-standard-4"))
+
+        ["l4"] ->
+            world
+                |> Task.andThen
+                       (\w ->
+                           let
+                               job =
+                                   Train.lora Train.devBase w.version
+                                       |> Train.withName "support"
+                                       |> Train.withQuantisedBase
+                                       |> Train.withRank 8
+                                       |> Train.withLayers 24
+                                       |> Train.withMaxSteps 30
+                                       |> Train.withBatch
+                                              { perDevice = 4, accumulate = 1 }
+                                       |> Train.withSequenceLength 512
+                                       |> Train.withSeed 7
+                                       |> Train.withCheckpointEvery 10
+                                       |> Train.withEvalEvery 10
+                                       |> Train.withWatchWindow 15000
+                                       |> Train.withBackend Train.Vertex
+                                       |> Train.withCloud
+                                              { project = ""
+                                              , region = ""
+                                              , machine = "g2-standard-4"
+                                              , staging = ""
+                                              }
+                                       |> Train.withBudget
+                                              (Money.fromMajor Money.USD 1)
+                                       |> Train.withMaxRuntimeMinutes 40
+                                       |> Train.withMachinePrices prices
+                                       |> Train.withWorkDir (liveDir ++ "/runs")
+                                       |> Train.withRegistry w.reg
+                                       |> Train.withKeepStaging
+                           in
+                               result (Train.drive w.db job)
+                                   |> Task.andThen
+                                          (report "l4" job "g2-standard-4"))
+
+        ["l5-prep"] ->
+            -- The two versions l5 serves: two small Fake runs on CPU Vertex
+            -- jobs (real PEFT files for the base's shapes), registered as
+            -- support v1 and v2 in l5's own world, so l5 needs no other stage.
+            -- The ranks differ: a Fake adapter is a no-op, so two of the
+            -- same rank have one digest and the registry keeps one version.
+            world
+                |> Task.andThen
+                       (\w ->
+                           let
+                               first = cpuJob w "support" 4 6 1000
+                               second = cpuJob w "support" 8 8 1000
+                           in
+                               result (Train.drive w.db first)
+                                   |> Task.andThen
+                                          (report
+                                              "l5-prep-v1"
+                                              first
+                                              "n2-standard-4")
+                                   |> Task.andThen
+                                          (\_ -> result (Train.drive w.db second))
+                                   |> Task.andThen
+                                          (report
+                                              "l5-prep-v2"
+                                              second
+                                              "n2-standard-4"))
+
+        ["l5"] ->
+            world |> Task.andThen serveScenario
+
+        _ ->
+            Task.fail
+                (Error.invalidInput
+                    "usage: l2 | l3-once | l3-crash | l3-cancel | l3-budget | l4 | l5-prep | l5")
+
+
+-- Poll the run until its Vertex job runs (at most ten minutes).
+waitRunning : World -> Train.Job -> Int -> Task Error ()
+waitRunning w job n =
+    Train.poll w.db [ job ]
+        |> Task.andThen
+               (\_ ->
+                   File.readFile (Train.runDir job ++ "/cloud.json")
+                       |> Task.onError (\_ -> Task.succeed ""))
+        |> Task.andThen
+               (\text ->
+                   if String.contains "JOB_STATE_RUNNING" text || n > 120 then
+                       Task.succeed ()
+
+                   else
+                       Time.sleep 5000
+                           |> Task.andThen (\_ -> waitRunning w job (n + 1)))
+
+
+-- ── l5: the GPU tier ────────────────────────────────────────────────
+tierTarget : Serve.Target
+tierTarget =
+    Serve.cloudRun
+        { project = env "SKY_AI_SERVE_PROJECT"
+        , region = env "SKY_AI_SERVE_REGION"
+        , service = env "SKY_AI_LIVE_SERVICE"
+        }
+        |> Serve.withTierImage (env "SKY_AI_SERVE_IMAGE")
+        |> Serve.withEngineImage (env "SKY_AI_LIVE_ENGINE_IMAGE")
+        |> Serve.withTokenSecret (env "SKY_AI_LIVE_SECRET")
+        |> Serve.withRegistryUrl (env "SKY_AI_LIVE_REGISTRY")
+        |> Serve.withServiceAccount (env "SKY_AI_LIVE_SERVE_SA")
+        |> Serve.withInvokers [ "serviceAccount:" ++ env "SKY_AI_LIVE_INVOKER" ]
+        |> Serve.withLabels [ ( "live-run", env "SKY_AI_LIVE_RUN_ID" ) ]
+
+
+tier : Serve.Tier
+tier =
+    Serve.tier Serve.Vllm Serve.devBase |> Serve.withAdapters [ "support@qa" ]
+        |> Serve.withMaxAdapters 4
+        |> Serve.withAliasPolling 5
+
+
+-- The app's slot that calls the tier: the service token in Authorization and
+-- a Google ID token in X-Serverless-Authorization, the adapter resolved from
+-- the registry's database as the app resolves it.
+slot : String -> World -> Endpoint.Endpoint
+slot url w =
+    Endpoint.endpoint "tier" |> Endpoint.withUrl (url ++ "/v1")
+        |> Endpoint.withKey (Secret.fromEnv "SKY_AI_LIVE_TOKEN")
+        |> Endpoint.withGoogleAuth
+        |> Endpoint.withTimeout 900000
+        |> Endpoint.withAdapterRefresh 1
+        |> Endpoint.fromRegistry (Registry.resolver (Task.succeed w.reg))
+        |> Endpoint.withAdapter "registry:support@qa"
+
+
+baseSlot : String -> Endpoint.Endpoint
+baseSlot url =
+    Endpoint.endpoint "tierbase" |> Endpoint.withUrl (url ++ "/v1")
+        |> Endpoint.withKey (Secret.fromEnv "SKY_AI_LIVE_TOKEN")
+        |> Endpoint.withGoogleAuth
+        |> Endpoint.withTimeout 900000
+
+
+ask : Endpoint.Endpoint -> String -> Task Error String
+ask e model =
+    let
+        options = Provider.defaultOptions
+    in
+        Provider.chatWith
+            { options
+                | maxTokens = Just 8
+                , adapter =
+                    if model == "" then
+                        Nothing
+
+                    else
+                        Just model
+            }
+            (Endpoint.provider e)
+            [ Provider.user "Say yes." ]
+            |> Task.map .content
+
+
+-- A raw call to the tier with chosen headers: the status only.
+rawStatus : String -> Bool -> String -> Task Error Int
+rawStatus url withId token =
+    (if withId then
+        Google.idToken url
+            |> Task.map
+                   (\t ->
+                       [ ( "X-Serverless-Authorization"
+                         , "Bearer " ++ Secret.reveal t
+                         )
+                       ])
+
+    else
+        Task.succeed [])
+        |> Task.andThen
+               (\extra ->
+                   List.foldl
+                       (\( k, v ) r -> Http.withHeader k v r)
+                       (Http.defaultRequest (url ++ "/v1/chat/completions")
+                           |> Http.withMethod "POST"
+                           |> Http.withHeader "Content-Type" "application/json"
+                           |> Http.withHeader
+                                  "Authorization"
+                                  ("Bearer " ++ token)
+                           |> Http.withBody
+                                  "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":4}"
+                           |> Http.withTimeout 120000)
+                       extra
+                       |> Http.request
+                       |> Task.map .status)
+
+
+-- The ids /v1/models lists, through the tier.
+modelsList : String -> Task Error String
+modelsList url =
+    Google.idToken url
+        |> Task.andThen
+               (\t ->
+                   Http.defaultRequest (url ++ "/v1/models")
+                       |> Http.withHeader
+                              "Authorization"
+                              ("Bearer "
+                                  ++ Secret.reveal
+                                         (Secret.fromEnv "SKY_AI_LIVE_TOKEN"))
+                       |> Http.withHeader
+                              "X-Serverless-Authorization"
+                              ("Bearer " ++ Secret.reveal t)
+                       |> Http.withTimeout 120000
+                       |> Http.request
+                       |> Task.andThen (\resp -> Task.fromResult (modelIds resp.body)))
+
+
+-- The model ids of a /v1/models body, joined by commas. The whole body is
+-- too long to report: each vLLM entry carries a permission list, and the
+-- report keeps 400 characters of a text.
+modelIds : String -> Result Error String
+modelIds body =
+    JsonD.decodeString (JsonD.field "data" (JsonD.list (JsonD.field "id" JsonD.string))) body
+        |> Result.map (String.join ",")
+
+
+versionNumber : World -> Int -> Task Error Registry.Version
+versionNumber w n =
+    Registry.version w.reg "support" n
+
+
+serveScenario : World -> Task Error ()
+serveScenario w =
+    versionNumber w 1
+        |> Task.andThen
+               (\v1 -> Registry.forcePromote w.reg "qa" v1 "live: start on v1")
+        |> Task.andThen (\_ -> Time.unixMillis ())
+        |> Task.andThen
+               (\t0 ->
+                   Serve.deploy tierTarget tier
+                       |> Task.andThen
+                              (\d ->
+                                  Time.unixMillis ()
+                                      |> Task.andThen
+                                             (\t1 ->
+                                                 -- The first call after the deploy: the cold start of an
+                                                 -- instance (image pulls, base staged, vLLM loaded).
+                                                 result
+                                                     (ask (baseSlot d.url) "")
+                                                     |> Task.andThen
+                                                            (\first ->
+                                                                Time.unixMillis
+                                                                    ()
+                                                                    |> Task.andThen
+                                                                           (\t2 ->
+                                                                               serveChecks
+                                                                                   w
+                                                                                   d.url
+                                                                                   ( t0
+                                                                                   , t1
+                                                                                   , t2
+                                                                                   )
+                                                                                   first)))))
+
+
+serveChecks : World -> String -> ( Int, Int, Int ) -> Result Error String -> Task Error ()
+serveChecks w url ( t0, t1, t2 ) first =
+    Task.map3
+        (\v1 v2 models -> ( ( v1, v2 ), models ))
+        (result (ask (baseSlot url) "support-v1"))
+        (result (ask (baseSlot url) "support-v2"))
+        (result (modelsList url))
+        |> Task.andThen
+               (\( adapters, models ) ->
+                   hotLoad w url
+                       |> Task.andThen
+                              (\( okCount, errors ) ->
+                                  Task.map2
+                                      (\noId badToken -> ( noId, badToken ))
+                                      (result
+                                          (rawStatus
+                                              url
+                                              False
+                                              (Secret.reveal
+                                                  (Secret.fromEnv
+                                                      "SKY_AI_LIVE_TOKEN"))))
+                                      (result
+                                          (rawStatus url True "not-the-token"))
+                                      |> Task.andThen
+                                             (\( noId, badToken ) -> idleCold url |> Task.andThen (\( idleMs, idle ) ->
+                                                 emit
+                                                     [ ( "scenario"
+                                                       , JsonE.string "l5"
+                                                       )
+                                                     , ( "deploySeconds"
+                                                       , JsonE.int
+                                                             ((t1 - t0) // 1000)
+                                                       )
+                                                     , ( "coldStartMs"
+                                                       , JsonE.int (t2 - t1)
+                                                       )
+                                                     , ( "base"
+                                                       , outcomeValue first
+                                                       )
+                                                     , ( "v1"
+                                                       , outcomeValue
+                                                             (Tuple.first
+                                                                 adapters)
+                                                       )
+                                                     , ( "v2"
+                                                       , outcomeValue
+                                                             (Tuple.second
+                                                                 adapters)
+                                                       )
+                                                     , ( "models"
+                                                       , outcomeValue models
+                                                       )
+                                                     , ( "hotLoadOk"
+                                                       , JsonE.int okCount
+                                                       )
+                                                     , ( "hotLoadErrors"
+                                                       , JsonE.list
+                                                             JsonE.string
+                                                             errors
+                                                       )
+                                                     , ( "noIdTokenStatus"
+                                                       , statusValue noId
+                                                       )
+                                                     , ( "badTokenStatus"
+                                                       , statusValue badToken
+                                                       )
+                                                       , ( "idleSeconds", JsonE.int idleSeconds )
+  , ( "idleColdStartMs", JsonE.int idleMs )
+  , ( "idleCold", outcomeValue idle )
+  ]))))
+
+
+-- The scale-from-zero cold start. The deploy waits for a ready instance, so
+-- the first call after it meets a warm one. After the checks the service is
+-- idle, and Cloud Run (min-instances 0) removes an idle instance within about
+-- 15 minutes, so the first call after this wait starts one from zero: image
+-- pull, base staged, vLLM loaded. SKY_AI_LIVE_IDLE_S sets the wait.
+idleSeconds : Int
+idleSeconds =
+    String.toInt (env "SKY_AI_LIVE_IDLE_S") |> Maybe.withDefault 960
+
+
+idleCold : String -> Task Error ( Int, Result Error String )
+idleCold url =
+    Time.sleep (idleSeconds * 1000)
+        |> Task.andThen (\_ -> Time.unixMillis ())
+        |> Task.andThen
+               (\t0 ->
+                   result (ask (baseSlot url) "")
+                       |> Task.andThen
+                              (\r -> Time.unixMillis () |> Task.map (\t1 -> ( t1 - t0, r ))))
+
+
+outcomeValue : Result Error String -> JsonE.Value
+outcomeValue r =
+    case r of
+
+        Ok text ->
+            JsonE.object
+                [ ( "ok", JsonE.bool True )
+                , ( "text", JsonE.string (String.left 400 text) )
+                ]
+
+        Err e ->
+            JsonE.object
+                [ ( "ok", JsonE.bool False )
+                , ( "error", JsonE.string (Error.toString e) )
+                ]
+
+
+statusValue : Result Error Int -> JsonE.Value
+statusValue r =
+    case r of
+
+        Ok s ->
+            JsonE.int s
+
+        Err e ->
+            JsonE.string (Error.toString e)
+
+
+-- 20 requests to support@qa through the app's slot (the registry's database
+-- resolves the alias, as an app does), with the alias moved from v1 to v2
+-- after the fifth. Each request is retried never: an error counts.
+hotLoad : World -> String -> Task Error ( Int, List String )
+hotLoad w url =
+    let
+        e = slot url w
+        one i =
+            (if i == 5 then
+                versionNumber w 2
+                    |> Task.andThen
+                           (\v2 ->
+                               Registry.forcePromote
+                                   w.reg
+                                   "qa"
+                                   v2
+                                   "live: hot-load")
+                    |> Task.map (\_ -> ())
+
+            else
+                Task.succeed ())
+                |> Task.andThen (\_ -> result (ask e ""))
+                |> Task.andThen (\r -> Time.sleep 1500 |> Task.map (\_ -> r))
+    in
+        Task.sequence (List.map one (List.range 0 19))
+            |> Task.map
+                   (\rs ->
+                       ( List.length
+                             (List.filter (\r -> Result.toMaybe r /= Nothing) rs)
+                       , List.filterMap
+                             (\r ->
+                                 case r of
+
+                                     Err err ->
+                                         Just (Error.toString err)
+
+                                     Ok _ ->
+                                         Nothing)
+                             rs
+                       ))

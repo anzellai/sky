@@ -27,6 +27,9 @@ import State exposing
     , Identity
     , Analytics
     , emptyAnalytics
+    , AiFilter
+    , AiData
+    , emptyAiData
     )
 
 
@@ -53,6 +56,9 @@ hubStore dbPath =
     -- the hub Store surfaces an empty payload. The embedded console
     -- (httpStore) is where the Analytics tab renders real data.
     , readAnalytics = \_ -> Task.succeed emptyAnalytics
+    -- The AI panel reads a process's own slots, engines and calls; the
+    -- hub's store has none of them, so its AI tab is empty.
+    , readAi = \_ -> Task.succeed emptyAiData
     }
 
 

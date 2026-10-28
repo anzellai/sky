@@ -1,0 +1,218 @@
+module Main exposing (main)
+
+{-| Fixture: Std.Ai.Registry on the app's own database, served through a
+slot.
+
+    ./app seed     register three adapters (v1, v2 with evidence; v3 without),
+                   promote v1 to prod
+    ./app serve    ask the "chat" slot, which serves registry:support-lora@prod
+    ./app mismatch ask the "other" slot, whose engine runs another base model
+
+The database is the app's own (`SKY_DB_PATH`), the store is `SKY_AI_REGISTRY`.
+The adapters are the GGUF files in `AI_REGISTRY_FIXTURE_DIR` (`v1.gguf`,
+`v2.gguf`, `v3.gguf`), and the base model is `AI_REGISTRY_FIXTURE_BASE` (the
+model the slot's engine runs). Every line it prints starts with the verb.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Crypto as Crypto
+import Sky.Core.System as System
+import Std.Log exposing (println)
+import Std.Db as Db exposing (Db)
+import Std.Ai.Provider as Provider exposing (Provider)
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Local as Local
+import Std.Ai.Eval as Eval exposing (Expect(..))
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Registry as Registry exposing (Format(..), Method(..))
+
+
+registry : Task Error Registry.Registry
+registry =
+    Db.connect () |> Task.andThen (\db -> Registry.openConfigured db "")
+
+
+fixtureDir : String
+fixtureDir =
+    System.getenvOr "AI_REGISTRY_FIXTURE_DIR" "."
+
+
+lineage : Registry.Lineage
+lineage =
+    { base = Local.fromReference (System.getenvOr "AI_REGISTRY_FIXTURE_BASE" "")
+    , dataset = "support@3"
+    , datasetDigest = Crypto.sha256 "support dataset v3"
+    , metadata = [ ( "seed", "7" ), ( "backend", "fake" ) ]
+    }
+
+
+adapter : String -> Registry.Adapter
+adapter name =
+    { path = fixtureDir ++ "/" ++ name ++ ".gguf"
+    , format = Gguf
+    , method = Lora
+    }
+
+
+suite : Eval.Suite String
+suite =
+    Eval.suite
+        "support"
+        (\q -> [ Provider.user q ])
+        [ { id = "refund"
+          , input = "How do I get a refund?"
+          , expect = Contains "refund"
+          , tags = []
+          }
+        ]
+
+
+candidate : Provider
+candidate =
+    Provider.custom
+        (\_ ->
+            Task.succeed
+                { content = "Ask for a refund within 30 days."
+                , usage =
+                    { promptTokens = 1, completionTokens = 1, totalTokens = 2 }
+                })
+
+
+attachEvidence : Db -> Registry.Registry -> Registry.Version -> Task Error ()
+attachEvidence db reg v =
+    Eval.runAs (Registry.label v) db candidate suite
+        |> Task.andThen (\report -> Registry.attachReport reg v report)
+
+
+seed : Task Error ()
+seed =
+    Db.connect ()
+        |> Task.andThen
+               (\db ->
+                   Registry.openConfigured db ""
+                       |> Task.andThen
+                              (\reg ->
+                                  Task.sequence
+                                      [ Registry.register
+                                            reg
+                                            "support-lora"
+                                            (adapter "v1")
+                                            lineage
+                                      , Registry.register
+                                            reg
+                                            "support-lora"
+                                            (adapter "v2")
+                                            lineage
+                                      , Registry.register
+                                            reg
+                                            "support-lora"
+                                            (adapter "v3")
+                                            lineage
+                                      ]
+                                      |> Task.andThen
+                                             (\vs ->
+                                                 case vs of
+
+                                                     [ v1, v2, _ ] ->
+                                                         attachEvidence
+                                                             db
+                                                             reg
+                                                             v1
+                                                             |> Task.andThen
+                                                                    (\_ ->
+                                                                        attachEvidence
+                                                                            db
+                                                                            reg
+                                                                            v2)
+                                                             |> Task.andThen
+                                                                    (\_ ->
+                                                                        Registry.promoteChecked
+                                                                            reg
+                                                                            "prod"
+                                                                            v1
+                                                                            Eval.thresholds)
+                                                             |> Task.map
+                                                                    (\ev -> ev.to)
+
+                                                     _ ->
+                                                         Task.fail
+                                                             (Error.unexpected
+                                                                 "three versions"))))
+        |> Task.andThen (\n -> println ("seed prod=v" ++ String.fromInt n))
+
+
+chatSlot : Endpoint
+chatSlot =
+    Endpoint.endpoint "chat"
+        |> Endpoint.withLocal
+               (Local.model Local.devModel |> Local.withContext 2048)
+        |> Endpoint.fromRegistry (Registry.resolver registry)
+        |> Endpoint.withAdapter "registry:support-lora@prod"
+
+
+serve : Task Error ()
+serve =
+    Provider.chat (Endpoint.provider chatSlot) [ Provider.user "hello" ]
+        |> Task.andThen
+               (\r -> println ("serve answer=" ++ String.trim r.content))
+        |> Task.andThen (\_ -> Endpoint.describe chatSlot)
+        |> Task.andThen
+               (\d ->
+                   d.settings |> List.filter (\s -> s.key == "ADAPTER")
+                       |> List.map .value
+                       |> String.join ""
+                       |> (\v -> println ("serve adapter=" ++ v)))
+
+
+-- A slot whose registry adapter was trained on another base model.
+mismatchSlot : Endpoint
+mismatchSlot =
+    Endpoint.endpoint "other"
+        |> Endpoint.withLocal
+               (Local.model Local.devModel |> Local.withContext 2048)
+        |> Endpoint.fromRegistry (Registry.resolver registry)
+        |> Endpoint.withAdapter "registry:support-lora@prod"
+
+
+mismatch : Task Error ()
+mismatch =
+    Provider.chat (Endpoint.provider mismatchSlot) [ Provider.user "hello" ]
+        |> Task.map (\_ -> "answered")
+        |> Task.onError
+               (\e ->
+                   case Failure.fromError e of
+
+                       Just (AdapterMismatch m) ->
+                           Task.succeed
+                               ("AdapterMismatch adapter=" ++ m.adapter)
+
+                       _ ->
+                           Task.succeed ("untyped " ++ Error.toString e))
+        |> Task.andThen (\s -> println ("mismatch " ++ s))
+
+
+main : Task Error ()
+main =
+    System.args ()
+        |> Task.andThen
+               (\args ->
+                   case args of
+
+                       [ "seed" ] ->
+                           seed
+
+                       [ "serve" ] ->
+                           serve
+
+                       [ "mismatch" ] ->
+                           mismatch
+
+                       _ ->
+                           Task.fail
+                               (Error.invalidInput
+                                   "usage: app seed | serve | mismatch"))

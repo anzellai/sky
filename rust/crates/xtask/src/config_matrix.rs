@@ -814,7 +814,12 @@ const MEASURED_SOURCE_ROOTS: &[(&str, &[&str])] = &[
     // drift test was blind to.
     ("rust", &["toml", "lock"]),
     ("rust/crates", &["rs", "toml"]),
-    ("runtime-go", &["go", "mod", "sum"]),
+    // `py`, `in` and `txt`: the Std.Ai.Train driver and its hash locks under
+    // runtime-go/rt/ai_train_assets, which `rt` embeds (go:embed).
+    (
+        "runtime-go",
+        &["go", "mod", "sum", "py", "in", "txt", "dockerfile"],
+    ),
     ("sky-stdlib", &["sky", "skyi"]),
     ("templates", &["md"]),
     ("sky-bundled", &["sky", "skyi", "toml"]),
@@ -928,7 +933,12 @@ fn walk_newest(
 /// tree", so the declared falsifier could only ever be a lie in the gate's own
 /// TOML. Establishing freshness here is what makes a SOURCE mutation a legal
 /// falsifier again.
-fn sky_binary(root: &Path) -> Result<PathBuf, String> {
+///
+/// The `ai-device-privacy` and `ai-device-csp` gates use it for the same
+/// reason: their mutations edit an embedded input (`Std.Ai.Device`, the
+/// device worker), so only a compiler built from the mutated tree can show
+/// the mutation.
+pub(crate) fn sky_binary(root: &Path) -> Result<PathBuf, String> {
     let (newest, witness) = newest_source_mtime(root)?;
 
     let fresh = |p: &Path| -> bool {

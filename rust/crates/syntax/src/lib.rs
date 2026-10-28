@@ -16,6 +16,7 @@ mod parser;
 
 pub mod ast;
 
+pub use grammar::binary_op_precedence;
 pub use kind::{SkyLang, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 pub use layout::{layout, PToken};
 pub use lexer::{lex, LexToken, RESERVED_WORDS};

@@ -123,9 +123,13 @@ verifyToken =
 --
 --     Auth.signSlidingToken secret { sub = uid }
 --         { windowSeconds = 900, maxLifetimeSeconds = 86400 }
-signSlidingToken : Secret -> a -> { windowSeconds : Int
-, maxLifetimeSeconds : Int
-} -> Result Error String
+signSlidingToken :
+    Secret
+    -> a
+    -> { windowSeconds : Int
+       , maxLifetimeSeconds : Int
+       }
+    -> Result Error String
 signSlidingToken =
     Ffi.kernel "Auth_signSlidingToken"
 

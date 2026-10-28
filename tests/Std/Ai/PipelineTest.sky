@@ -1,0 +1,687 @@
+module Std.Ai.PipelineTest exposing (tests)
+
+-- Std.Ai.Pipeline on SQLite with a local registry store: members, a suite
+-- evaluated alone and against an alias, the gate's verdict, the report
+-- attached to a registry candidate, `--promote-to` through the command line,
+-- the compared promotion, datasets frozen and registered, tasks with
+-- arguments, and the typed refusals. The suites run on `suiteWith`
+-- providers that answer by adapter, so every verdict follows from the
+-- fixtures. The suites on a real slot, the CLI and the env adapter guard are
+-- proven by rust/crates/sky/tests/ai_pipeline_flow.rs.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Result as Result
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Encoding as Encoding
+import Sky.Core.File as File
+import Sky.Test as Test exposing (Test, TestResult)
+import Std.Db as Db exposing (Db)
+import Std.Ai.Provider as Provider exposing (Provider)
+import Std.Ai.Local as Local
+import Std.Ai.Eval as Eval exposing (Expect(..))
+import Std.Ai.Store as Store
+import Std.Ai.Dataset as Dataset exposing (Instruction)
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Registry as Registry exposing (Format(..), Method(..))
+import Std.Ai.Pipeline as Pipeline exposing (Pipeline)
+
+
+-- ── Fixtures ────────────────────────────────────────────────────────
+safetensors : String -> String
+safetensors tag =
+    let
+        header = "{\"__metadata__\":{\"tag\":\"" ++ tag ++ "\"}}"
+        n = String.length header
+        digit d = String.slice d (d + 1) "0123456789abcdef"
+        hex = digit (n // 16) ++ digit (modBy 16 n)
+    in
+        (Encoding.hexDecode (hex ++ "00000000000000") |> Result.withDefault "")
+            ++ header
+
+
+lineage : Registry.Lineage
+lineage =
+    { base = Local.devModel
+    , dataset = "support@1"
+    , datasetDigest = Crypto.sha256 "support v1"
+    , metadata = []
+    }
+
+
+-- Answers by adapter: the slot as configured and v1 answer both cases, v2
+-- forgot the opening hours, v3 answers both.
+answerFor : String -> Provider
+answerFor adapter =
+    Provider.custom
+        (\messages ->
+            let
+                question =
+                    List.filter (\m -> m.role == "user") messages
+                        |> List.reverse
+                        |> List.head
+                        |> Maybe.map .content
+                        |> Maybe.withDefault ""
+                text =
+                    if String.contains "refund" question then
+                        "Ask for a refund within 30 days."
+
+                    else if String.contains "v2" adapter then
+                        "We are open on weekdays."
+
+                    else
+                        "We are open from 9 to 5."
+            in
+                Task.succeed
+                    { content = text
+                    , usage =
+                        { promptTokens = 10
+                        , completionTokens = 5
+                        , totalTokens = 15
+                        }
+                    })
+
+
+support : Eval.Suite String
+support =
+    Eval.suite
+        "support"
+        (\q -> [ Provider.user q ])
+        [ { id = "refund"
+          , input = "How do I get a refund?"
+          , expect = Contains "refund"
+          , tags = []
+          }
+        , { id = "hours"
+          , input = "When are you open?"
+          , expect = Contains "9"
+          , tags = []
+          }
+        ]
+        |> Eval.withConcurrency 1
+
+
+faq : List Instruction
+faq =
+    [ { prompt = "How do I get a refund?", completion = "Within 30 days." }
+    , { prompt = "When are you open?", completion = "From 9 to 5." }
+    , { prompt = "How do I get a refund?", completion = "A duplicate." }
+    ]
+
+type alias World =
+    { dir : String
+    , pipe : Pipeline
+    , reg : Registry.Registry
+    , db : Db
+    }
+
+
+-- A pipeline on a fresh SQLite file and store, with v1, v2 and v3
+-- registered and v1 promoted to prod by hand.
+world : Task Error World
+world =
+    File.tempDir "sky-pipeline-test"
+        |> Task.andThen
+               (\dir ->
+                   let
+                       dbPath = dir ++ "/app.db"
+                       storeUrl = "file://" ++ dir ++ "/store"
+                       pipe =
+                           Pipeline.pipeline "support-desk"
+                               |> Pipeline.withDb (Db.open "sqlite" dbPath)
+                               |> Pipeline.withRegistry storeUrl
+                               |> Pipeline.withSuite
+                                      "support"
+                                      (Pipeline.suiteWith answerFor support
+                                          |> Pipeline.forModel "support-lora"
+                                          |> Pipeline.withThresholds
+                                                 Eval.thresholds)
+                               |> Pipeline.withDataset
+                                      "support"
+                                      (Pipeline.datasetOf
+                                          Dataset.instructionCodec
+                                          (\_ ->
+                                              Task.succeed
+                                                  (Dataset.fromList faq
+                                                      |> Dataset.dedupeBy
+                                                             .prompt
+                                                      |> Dataset.split
+                                                             Dataset.defaultSplit
+                                                             .prompt))
+                                          |> Pipeline.withFolder
+                                                 (\_ ->
+                                                     Dataset.folder
+                                                         (dir ++ "/datasets")
+                                                         "support")
+                                          |> Pipeline.withRegistered)
+                               |> Pipeline.withTask
+                                      "note"
+                                      (\ctx ->
+                                          File.writeFile
+                                              (dir ++ "/note.txt")
+                                              (ctx.name ++ ":"
+                                                  ++ String.join "," ctx.args)
+                                              |> Task.map (\_ -> ()))
+                   in
+                       Db.open "sqlite" dbPath
+                           |> Task.andThen
+                                  (\db ->
+                                      Registry.open
+                                          db
+                                          (Store.local (dir ++ "/store"))
+                                          |> Task.andThen
+                                                 (\reg ->
+                                                     registerAll dir reg
+                                                         |> Task.map
+                                                                (\_ ->
+                                                                    { dir = dir
+                                                                    , pipe =
+                                                                        pipe
+                                                                    , reg = reg
+                                                                    , db = db
+                                                                    }))))
+
+
+registerAll : String -> Registry.Registry -> Task Error ()
+registerAll dir reg =
+    Task.sequence (List.map (registerTag dir reg) [ "v1", "v2", "v3" ])
+        |> Task.andThen (\_ -> Registry.version reg "support-lora" 1)
+        |> Task.andThen
+               (\v1 -> Registry.forcePromote reg "prod" v1 "the first release")
+        |> Task.map (\_ -> ())
+
+
+registerTag : String -> Registry.Registry -> String -> Task Error Registry.Version
+registerTag dir reg tag =
+    let
+        path = dir ++ "/" ++ tag ++ ".safetensors"
+    in
+        File.writeFile path (safetensors tag)
+            |> Task.andThen
+                   (\_ ->
+                       Registry.register
+                           reg
+                           "support-lora"
+                           { path = path, format = Safetensors, method = Lora }
+                           lineage)
+
+
+inWorld : (World -> Task Error TestResult) -> TestResult
+inWorld f =
+    case Task.run (world |> Task.andThen f) of
+
+        Ok r ->
+            r
+
+        Err e ->
+            Test.fail (Error.toString e)
+
+
+failureCode : Error -> String
+failureCode e =
+    Failure.fromError e |> Maybe.map Failure.code
+        |> Maybe.withDefault (Error.toString e)
+
+
+prodNumber : World -> Task Error Int
+prodNumber w =
+    Registry.resolve w.reg "support-lora@prod" |> Task.map .number
+
+
+-- ── Tests ───────────────────────────────────────────────────────────
+tests : List Test
+tests =
+    [ Test.test
+          "members lists the pipeline's datasets, suites and tasks"
+          (\_ ->
+              inWorld
+                  (\w ->
+                      let
+                          m = Pipeline.members w.pipe
+                      in
+                          Task.succeed
+                              (Test.equal
+                                  ( "support-desk"
+                                  , [ "support" ]
+                                  , [ "support" ]
+                                  , [ "note" ]
+                                  )
+                                  ( m.name, m.datasets, m.suites, m.tasks ))))
+    , Test.test
+          "the default candidate passes alone and is recorded as such"
+          (\_ ->
+              inWorld
+                  (\w ->
+                      Pipeline.evaluate w.pipe "support" Pipeline.evalRequest
+                          |> Task.map
+                                 (\o ->
+                                     Test.equal
+                                         ( "default", True, Nothing )
+                                         ( o.candidate.candidate
+                                         , Result.toMaybe o.verdict /= Nothing
+                                         , o.baseline |> Maybe.map .candidate
+                                         ))))
+    , Test.test
+          "a candidate that regresses against prod fails the gate, typed"
+          (\_ ->
+              inWorld
+                  (\w ->
+                      Pipeline.evaluate
+                          w.pipe
+                          "support"
+                          { candidate = Just "support-lora@v2"
+                          , against = Just "prod"
+                          , minPassRate = Nothing
+                          , maxRegression = Nothing
+                          }
+                          |> Task.map
+                                 (\o ->
+                                     case o.verdict of
+
+                                         Err e ->
+                                             Test.equal
+                                                 ( "GateFailed"
+                                                 , Just "support-lora@v1"
+                                                 , "support-lora@v2"
+                                                 )
+                                                 ( failureCode e
+                                                 , o.baseline
+                                                       |> Maybe.map .candidate
+                                                 , o.candidate.candidate
+                                                 )
+
+                                         Ok _ ->
+                                             Test.fail
+                                                 "v2 passed a gate it regresses on")))
+    , Test.test
+          "the candidate's report is attached to its version"
+          (\_ ->
+              inWorld
+                  (\w ->
+                      Pipeline.evaluate
+                          w.pipe
+                          "support"
+                          { candidate = Just "support-lora@v3"
+                          , against = Just "prod"
+                          , minPassRate = Nothing
+                          , maxRegression = Nothing
+                          }
+                          |> Task.andThen
+                                 (\o ->
+                                     Registry.version w.reg "support-lora" 3
+                                         |> Task.andThen
+                                                (Registry.reports w.reg)
+                                         |> Task.map
+                                                (\links ->
+                                                    Test.equal
+                                                        [ ( "support"
+                                                          , o.candidate.digest
+                                                          , "passed"
+                                                          )
+                                                        ]
+                                                        (List.map
+                                                            (\l ->
+                                                                ( l.suite
+                                                                , l.digest
+                                                                , l.verdict
+                                                                ))
+                                                            links)))))
+    , Test.test
+          "--promote-to moves prod only on a passing comparison"
+          (\_ ->
+              inWorld
+                  (\w ->
+                      let
+                          eval candidate =
+                              Pipeline.commandLineWith
+                                  w.pipe
+                                  [ "eval"
+                                  , "support"
+                                  , "--candidate"
+                                  , candidate
+                                  , "--against"
+                                  , "prod"
+                                  , "--promote-to"
+                                  , "prod"
+                                  , "--junit"
+                                  , w.dir ++ "/out/junit.xml"
+                                  ]
+                      in
+                          eval "support-lora@v2" |> Task.map (\_ -> "promoted")
+                              |> Task.onError
+                                     (\e -> Task.succeed (failureCode e))
+                              |> Task.andThen
+                                     (\first ->
+                                         prodNumber w
+                                             |> Task.andThen
+                                                    (\afterFirst ->
+                                                        eval "support-lora@v3"
+                                                            |> Task.andThen
+                                                                   (\_ ->
+                                                                       prodNumber
+                                                                           w)
+                                                            |> Task.andThen
+                                                                   (\afterSecond ->
+                                                                       File.exists
+                                                                           (w.dir
+                                                                               ++ "/out/junit.xml")
+                                                                           |> Task.map
+                                                                                  (\junit ->
+                                                                                      Test.equal
+                                                                                          ( "GateFailed"
+                                                                                          , 1
+                                                                                          , 3
+                                                                                          , True
+                                                                                          )
+                                                                                          ( first
+                                                                                          , afterFirst
+                                                                                          , afterSecond
+                                                                                          , junit
+                                                                                          )))))))
+    , Test.test
+          "--promote-to refuses to move an alias it did not compare against"
+          (\_ ->
+              inWorld
+                  (\w ->
+                      Pipeline.commandLineWith
+                          w.pipe
+                          [ "eval"
+                          , "support"
+                          , "--candidate"
+                          , "support-lora@v3"
+                          , "--promote-to"
+                          , "prod"
+                          , "--junit"
+                          , w.dir ++ "/j.xml"
+                          ]
+                          |> Task.map
+                                 (\_ ->
+                                     Test.fail
+                                         "an uncompared promotion moved prod")
+                          |> Task.onError
+                                 (\e ->
+                                     prodNumber w
+                                         |> Task.map
+                                                (\n ->
+                                                    Test.equal
+                                                        ( "InvalidSetting"
+                                                        , True
+                                                        , 1
+                                                        )
+                                                        ( failureCode e
+                                                        , String.contains
+                                                              "--against prod"
+                                                              (Error.toString e)
+                                                        , n
+                                                        )))))
+    , Test.test
+          "the compared promotion refuses a regression and takes an improvement"
+          (\_ ->
+              inWorld
+                  (\w ->
+                      Pipeline.evaluate
+                          w.pipe
+                          "support"
+                          { candidate = Just "support-lora@v1"
+                          , against = Nothing
+                          , minPassRate = Nothing
+                          , maxRegression = Nothing
+                          }
+                          |> Task.andThen
+                                 (\_ ->
+                                     Pipeline.evaluate
+                                         w.pipe
+                                         "support"
+                                         { candidate = Just "support-lora@v2"
+                                         , against = Nothing
+                                         , minPassRate = Just 0.0
+                                         , maxRegression = Nothing
+                                         })
+                          |> Task.andThen
+                                 (\_ ->
+                                     Pipeline.promote
+                                         w.pipe
+                                         "support-lora"
+                                         2
+                                         "prod"
+                                         |> Task.map (\_ -> "promoted")
+                                         |> Task.onError
+                                                (\e ->
+                                                    Task.succeed (failureCode e)))
+                          |> Task.andThen
+                                 (\regressed ->
+                                     Pipeline.evaluate
+                                         w.pipe
+                                         "support"
+                                         { candidate = Just "support-lora@v3"
+                                         , against = Nothing
+                                         , minPassRate = Nothing
+                                         , maxRegression = Nothing
+                                         }
+                                         |> Task.andThen
+                                                (\_ ->
+                                                    Pipeline.promote
+                                                        w.pipe
+                                                        "support-lora"
+                                                        3
+                                                        "prod")
+                                         |> Task.andThen
+                                                (\ev ->
+                                                    Task.succeed
+                                                        (Test.equal
+                                                            ( "GateFailed"
+                                                            , 1
+                                                            , 3
+                                                            )
+                                                            ( regressed
+                                                            , ev.from
+                                                            , ev.to
+                                                            ))))))
+    , Test.test
+          "promote --expect moves the alias only from the state it names"
+          (\_ ->
+              inWorld
+                  (\w ->
+                      Pipeline.evaluate
+                          w.pipe
+                          "support"
+                          { candidate = Just "support-lora@v1"
+                          , against = Nothing
+                          , minPassRate = Nothing
+                          , maxRegression = Nothing
+                          }
+                          |> Task.andThen
+                                 (\_ ->
+                                     Pipeline.evaluate
+                                         w.pipe
+                                         "support"
+                                         { candidate = Just "support-lora@v3"
+                                         , against = Nothing
+                                         , minPassRate = Nothing
+                                         , maxRegression = Nothing
+                                         })
+                          |> Task.andThen
+                                 (\_ ->
+                                     Pipeline.commandLineWith
+                                         w.pipe
+                                         [ "promote"
+                                         , "support-lora"
+                                         , "3"
+                                         , "--to"
+                                         , "prod"
+                                         , "--expect"
+                                         , "none"
+                                         ]
+                                         |> Task.map (\_ -> "promoted")
+                                         |> Task.onError
+                                                (\e ->
+                                                    Task.succeed (failureCode e)))
+                          |> Task.andThen
+                                 (\stale ->
+                                     Pipeline.commandLineWith
+                                         w.pipe
+                                         [ "promote"
+                                         , "support-lora"
+                                         , "v3"
+                                         , "--to"
+                                         , "prod"
+                                         , "--expect"
+                                         , "v1"
+                                         ]
+                                         |> Task.andThen (\_ -> prodNumber w)
+                                         |> Task.map
+                                                (\n ->
+                                                    Test.equal
+                                                        ( "PromotionConflict"
+                                                        , 3
+                                                        )
+                                                        ( stale, n )))))
+    , Test.test
+          "a dataset frozen twice is one registered version"
+          (\_ ->
+              inWorld
+                  (\w ->
+                      Pipeline.freezeDataset w.pipe "support"
+                          |> Task.andThen
+                                 (\a ->
+                                     Pipeline.freezeDataset w.pipe "support"
+                                         |> Task.andThen
+                                                (\b ->
+                                                    Registry.datasetVersion
+                                                        w.reg
+                                                        "support@1"
+                                                        |> Task.map
+                                                               (\dv ->
+                                                                   Test.equal
+                                                                       ( a.manifest.digest
+                                                                       , 2
+                                                                       , Just
+                                                                             "support@1"
+                                                                       , Just
+                                                                             "support@1"
+                                                                       )
+                                                                       ( b.manifest.digest
+                                                                       , dv.rows
+                                                                       , Maybe.map
+                                                                             Registry.datasetLabel
+                                                                             a.registered
+                                                                       , Maybe.map
+                                                                             Registry.datasetLabel
+                                                                             b.registered
+                                                                       ))))))
+    , Test.test
+          "a task gets the pipeline's name and its arguments"
+          (\_ ->
+              inWorld
+                  (\w ->
+                      Pipeline.commandLineWith
+                          w.pipe
+                          [ "run", "note", "--", "a", "b" ]
+                          |> Task.andThen
+                                 (\_ -> File.readFile (w.dir ++ "/note.txt"))
+                          |> Task.map (Test.equal "support-desk:a,b")))
+    , Test.test
+          "an unknown member is InvalidSetting naming the known ones"
+          (\_ ->
+              inWorld
+                  (\w ->
+                      Task.sequence
+                          [ Pipeline.evaluate w.pipe "nope" Pipeline.evalRequest
+                                |> refusal
+                          , Pipeline.runTask w.pipe "nope" [] |> refusal
+                          , Pipeline.freezeDataset w.pipe "nope" |> refusal
+                          , Pipeline.warmSlot w.pipe "nope" |> refusal
+                          ]
+                          |> Task.map
+                                 (Test.equal
+                                     [ "InvalidSetting: has \"support\""
+                                     , "InvalidSetting: has \"note\""
+                                     , "InvalidSetting: has \"support\""
+                                     , "InvalidSetting: declares none"
+                                     ])))
+    , Test.test
+          "--against needs the registry model"
+          (\_ ->
+              inWorld
+                  (\w ->
+                      let
+                          bare =
+                              Pipeline.pipeline "bare"
+                                  |> Pipeline.withDb
+                                         (Db.open "sqlite" (w.dir ++ "/bare.db"))
+                                  |> Pipeline.withSuite
+                                         "support"
+                                         (Pipeline.suiteWith answerFor support)
+                      in
+                          Pipeline.evaluate
+                              bare
+                              "support"
+                              { candidate = Nothing
+                              , against = Just "prod"
+                              , minPassRate = Nothing
+                              , maxRegression = Nothing
+                              }
+                              |> Task.map
+                                     (\_ ->
+                                         Test.fail
+                                             "a baseline with no model ran")
+                              |> Task.onError
+                                     (\e ->
+                                         Task.succeed
+                                             (Test.equal
+                                                 ( "InvalidSetting", True )
+                                                 ( failureCode e
+                                                 , String.contains
+                                                       "Pipeline.forModel"
+                                                       (Error.toString e)
+                                                 )))))
+    , Test.test
+          "a verb with a missing or bad argument is a usage error"
+          (\_ ->
+              inWorld
+                  (\w ->
+                      Task.sequence
+                          (List.map
+                              (\args ->
+                                  Pipeline.commandLineWith w.pipe args
+                                      |> Task.map (\_ -> False)
+                                      |> Task.onError
+                                             (\e ->
+                                                 Task.succeed
+                                                     (String.contains
+                                                         "usage: "
+                                                         (Error.toString e))))
+                              [ [ "eval" ]
+                              , [ "promote", "support-lora", "3" ]
+                              , [ "eval", "support", "--min-pass-rate", "most" ]
+                              , [ "start", "chat", "--model", "file:x" ]
+                              ])
+                          |> Task.map (Test.equal [ True, True, True, True ])))
+    ]
+
+
+-- The failure code and where its reason points, for a task that must fail.
+refusal : Task Error a -> Task Error String
+refusal t =
+    t |> Task.map (\_ -> "ran")
+        |> Task.onError
+               (\e ->
+                   Task.succeed
+                       (failureCode e ++ ": "
+                           ++ (if String.contains
+                                  "it declares none"
+                                  (Error.toString e) then
+                                  "declares none"
+
+                              else if String.contains "\"support\"" (Error.toString e) then
+                                  "has \"support\""
+
+                              else if String.contains "\"note\"" (Error.toString e) then
+                                  "has \"note\""
+
+                              else
+                                  Error.toString e)))

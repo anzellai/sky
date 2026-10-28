@@ -1,28 +1,74 @@
-module Std.Ai.Trace exposing (Trace, forResponse, setup, record, totalCost, spanCount)
+module Std.Ai.Trace exposing
+    ( Trace
+    , forResponse
+    , setup
+    , record
+    , totalCost
+    , spanCount
+    , Kind(..)
+    , Ledger
+    , ledger
+    , priced
+    , tracedChat
+    , tracedChatStream
+    , recordCall
+    , recordToolCall
+    , recordCost
+    , recordUnpriced
+    , Row
+    , runRows
+    , Summary
+    , runSummary
+    , CostLine
+    , costs
+    , TrainingStep
+    , recordTrainingStep
+    , trainingSteps
+    )
 
-{-| `Std.Ai.Trace` — the trajectory + cost ledger. Every model call records a row:
-which run it belongs to, the model, the token counts, and the cost priced in
-`Std.Money` (stored as an exact decimal string, never a float). The rows roll up
-per run, which is what a per-job cost figure actually needs, and they are the
-audit record of what the agent did.
+{-| `Std.Ai.Trace` — the trajectory and cost ledger of the whole AI lifecycle.
+Every model call records a row: which run it belongs to, the model, the token
+counts, the cost priced in `Std.Money` (stored as an exact decimal string,
+never a float), and what the call did: the slot, the tier (`local` or
+`remote`), the adapter, the queue wait, the start time, the latency, the time
+to the first token, the tokens per second, the draft acceptance and the
+outcome (`ok` or the `Std.Ai.Failure` code). Training runs and eval runs
+record their own rows (`Training`, `Evaluation`, `Judge`), so the ledger
+covers the lifecycle in exact money, and training progress (step, loss,
+throughput, checkpoint) is kept beside it.
 
-    trace = Trace.forResponse "chat-42" "gpt-4o-mini" book response
-    Trace.record db trace
+    Trace.tracedChat db (Trace.ledger "chat-42" |> Trace.priced book) Provider.defaultOptions assistant messages
 
-    Trace.totalCost db "chat-42"   -- the run's cost, summed exactly, as a decimal string
+    Trace.totalCost db "chat-42"   -- the run's cost, summed exactly
+    Trace.costs db                 -- the whole ledger by kind and currency
+
+`setup` creates the tables and migrates them through the same migration
+ledger as the eval and registry tables (ids `_sky_ai_trace_*`), so a table
+made by an earlier release gains the new columns in place. Its old rows read
+as model calls with outcome `ok`.
+
+A row without a price book is unpriced: it keeps its tokens, and its cost is
+empty, never zero. `totalCost` adds priced rows only, and `summary` says how
+many were unpriced.
 -}
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Ffi as Ffi
 import Sky.Core.Task as Task
-import Sky.Core.Error exposing (Error)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
 import Sky.Core.List as List
 import Sky.Core.Dict as Dict
+import Sky.Core.Tuple as Tuple
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result exposing (Result(..))
 import Sky.Core.Time as Time
 import Std.Db as Db exposing (Db, SqlValue(..))
-import Std.Money as Money
-import Std.Decimal as Decimal
+import Std.Money as Money exposing (Money)
+import Std.Decimal as Decimal exposing (Decimal)
 import Std.Ai.Provider as Provider
 
+-- ── The original row (unchanged) ────────────────────────────────────
 {-| One recorded model call. `costMinor` is the cost as an exact decimal string
 (from `Std.Money`), `currency` its ISO code — a float would corrupt a cost total.
 -}
@@ -56,19 +102,240 @@ forResponse runId model book response =
         }
 
 
-{-| Create the trace table if absent. Idempotent. -}
+-- ── Tables ──────────────────────────────────────────────────────────
+-- The trace tables, in the format of `db/migrations/*.json`, applied through
+-- the `_sky_migrations` ledger. 0001 is the table as earlier releases made it
+-- (IF NOT EXISTS, so an existing table is kept), 0002 adds the call facts and
+-- the row kind, 0003 the training progress, 0004 its eval loss and peak
+-- memory.
+traceMigrations : String
+traceMigrations =
+    """[{"id":"_sky_ai_trace_0001","ops":[
+{"kind":"createTable","table":"_sky_ai_traces","columns":[
+{"name":"run_id","type":"text"},{"name":"model","type":"text"},{"name":"prompt_tokens","type":"int"},
+{"name":"completion_tokens","type":"int"},{"name":"cost_minor","type":"text"},{"name":"currency","type":"text"},
+{"name":"output","type":"text"},{"name":"created_at","type":"int"}]}
+]},
+{"id":"_sky_ai_trace_0002","ops":[
+{"kind":"addColumn","table":"_sky_ai_traces","column":"kind","type":"text","default":{"text":"call"}},
+{"kind":"addColumn","table":"_sky_ai_traces","column":"outcome","type":"text","default":{"text":"ok"}},
+{"kind":"addColumn","table":"_sky_ai_traces","column":"call_key","type":"text","nullable":true},
+{"kind":"addColumn","table":"_sky_ai_traces","column":"slot","type":"text","nullable":true},
+{"kind":"addColumn","table":"_sky_ai_traces","column":"tier","type":"text","nullable":true},
+{"kind":"addColumn","table":"_sky_ai_traces","column":"adapter","type":"text","nullable":true},
+{"kind":"addColumn","table":"_sky_ai_traces","column":"queue_wait_ms","type":"int","nullable":true},
+{"kind":"addColumn","table":"_sky_ai_traces","column":"start_ms","type":"int","nullable":true},
+{"kind":"addColumn","table":"_sky_ai_traces","column":"latency_ms","type":"int","nullable":true},
+{"kind":"addColumn","table":"_sky_ai_traces","column":"first_token_ms","type":"int","nullable":true},
+{"kind":"addColumn","table":"_sky_ai_traces","column":"tokens_per_second","type":"real","nullable":true},
+{"kind":"addColumn","table":"_sky_ai_traces","column":"draft_acceptance","type":"real","nullable":true},
+{"kind":"addIndex","name":"_sky_ai_traces_run","table":"_sky_ai_traces","indexColumns":["run_id"]},
+{"kind":"addIndex","name":"_sky_ai_traces_key","table":"_sky_ai_traces","indexColumns":["run_id","call_key"],"unique":true}
+]},
+{"id":"_sky_ai_trace_0003","ops":[
+{"kind":"createTable","table":"_sky_ai_trace_progress","columns":[
+{"name":"run_id","type":"text"},{"name":"step","type":"int"},{"name":"total","type":"int"},
+{"name":"loss","type":"real","nullable":true},{"name":"tokens_per_second","type":"real","nullable":true},
+{"name":"checkpoint","type":"text","nullable":true},{"name":"created_at","type":"int"}]},
+{"kind":"addIndex","name":"_sky_ai_trace_progress_step","table":"_sky_ai_trace_progress","indexColumns":["run_id","step"],"unique":true}
+]},
+{"id":"_sky_ai_trace_0004","ops":[
+{"kind":"addColumn","table":"_sky_ai_trace_progress","column":"eval_loss","type":"real","nullable":true},
+{"kind":"addColumn","table":"_sky_ai_trace_progress","column":"peak_memory_bytes","type":"int","nullable":true}
+]}]"""
+
+
+migrateRaw : Db -> String -> Task Error (List String)
+migrateRaw =
+    Ffi.kernel "Ai_migrate"
+
+
+{-| Create the trace tables, or bring tables an earlier release made up to
+date. Idempotent. -}
 setup : Db -> Task Error ()
 setup db =
-    Db.execRaw
+    migrateRaw db traceMigrations |> Task.map (\_ -> ())
+
+-- ── Kinds and entries ───────────────────────────────────────────────
+{-| What a row records: a model call of the app (`Call`), the cost of a
+training run (`Training`), a candidate call of an eval run (`Evaluation`) or a
+judge call (`Judge`). -}
+type Kind
+    = Call
+    | Training
+    | Evaluation
+    | Judge
+
+
+kindText : Kind -> String
+kindText k =
+    case k of
+
+        Call ->
+            "call"
+
+        Training ->
+            "train"
+
+        Evaluation ->
+            "eval"
+
+        Judge ->
+            "judge"
+
+
+kindFromText : String -> Kind
+kindFromText s =
+    case s of
+
+        "train" ->
+            Training
+
+        "eval" ->
+            Evaluation
+
+        "judge" ->
+            Judge
+
+        _ ->
+            Call
+
+{-| Where a row goes. `runId` names the run. `key`, when it is not `""`, makes
+the row idempotent: a second row with the same run and key is not written,
+so a durable step that records it is safe to replay. `book` prices the row
+(`Nothing`: unpriced). -}
+type alias Ledger =
+    { runId : String
+    , key : String
+    , kind : Kind
+    , book : Maybe Provider.PriceBook
+    }
+
+
+{-| A model-call ledger for a run: no key, no price book. -}
+ledger : String -> Ledger
+ledger runId =
+    { runId = runId, key = "", kind = Call, book = Nothing }
+
+
+{-| Price the ledger's rows with a price book. -}
+priced : Provider.PriceBook -> Ledger -> Ledger
+priced book e =
+    { e | book = Just book }
+
+-- One row as it is written.
+type alias RowIn =
+    { model : String
+    , promptTokens : Int
+    , completionTokens : Int
+    , cost : Maybe Money
+    , output : String
+    , facts : Maybe Provider.CallFacts
+    }
+
+
+-- ── Recording calls ─────────────────────────────────────────────────
+{-| Send a chat, measured, record it, and return its answer. A failed call is
+recorded with its outcome, then the Task fails with its error. -}
+tracedChat : Db -> Ledger -> Provider.Options -> Provider.Provider -> List Provider.Message -> Task Error Provider.ChatResponse
+tracedChat db e opts p messages =
+    Provider.measure opts p messages |> Task.andThen (recordThenAnswer db e)
+
+
+{-| `chat`, with each piece of the answer handed to `onPiece` as it is
+written. The row has the time to the first token. -}
+tracedChatStream : Db -> Ledger -> Provider.Options -> Provider.Provider -> List Provider.Message -> (String -> Task Error ()) -> Task Error Provider.ChatResponse
+tracedChatStream db e opts p messages onPiece =
+    Provider.measureStream opts p messages onPiece
+        |> Task.andThen (recordThenAnswer db e)
+
+
+recordThenAnswer : Db -> Ledger -> Provider.Measured Provider.ChatResponse -> Task Error Provider.ChatResponse
+recordThenAnswer db e m =
+    recordCall db e m |> Task.andThen (\_ -> Task.fromResult m.result)
+
+
+{-| Record a measured chat call. A failed call is a row with its outcome and
+no tokens. -}
+recordCall : Db -> Ledger -> Provider.Measured Provider.ChatResponse -> Task Error ()
+recordCall db e m =
+    case m.result of
+
+        Ok r ->
+            insertRow db e (callRow e m.facts r.usage r.content)
+
+        Err _ ->
+            insertRow db e (callRow e m.facts noUsage "")
+
+
+{-| Record a measured native tool call (`Provider.measureTools`). -}
+recordToolCall : Db -> Ledger -> Provider.Measured Provider.ToolResponse -> Task Error ()
+recordToolCall db e m =
+    case m.result of
+
+        Ok r ->
+            insertRow db e (callRow e m.facts r.usage r.content)
+
+        Err _ ->
+            insertRow db e (callRow e m.facts noUsage "")
+
+
+noUsage : Provider.Usage
+noUsage =
+    { promptTokens = 0, completionTokens = 0, totalTokens = 0 }
+
+
+callRow : Ledger -> Provider.CallFacts -> Provider.Usage -> String -> RowIn
+callRow e facts usage output =
+    { model = facts.adapter
+    , promptTokens = usage.promptTokens
+    , completionTokens = usage.completionTokens
+    , cost =
+        case e.book of
+
+            Just book ->
+                Just (Provider.cost book usage)
+
+            Nothing ->
+                Nothing
+    , output = output
+    , facts = Just facts
+    }
+
+
+{-| Record a cost that is not a model call: a training run's spend, for
+example. `label` is what was paid for (the job or the adapter). -}
+recordCost : Db -> Ledger -> String -> Money -> Task Error ()
+recordCost db e label money =
+    insertRow
         db
-        ("CREATE TABLE IF NOT EXISTS _sky_ai_traces ("
-            ++ "run_id TEXT NOT NULL, model TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, "
-            ++ "completion_tokens INTEGER NOT NULL, cost_minor TEXT NOT NULL, currency TEXT NOT NULL, "
-            ++ "output TEXT NOT NULL, created_at BIGINT NOT NULL)")
-        |> Task.map (\_ -> ())
+        e
+        { model = label
+        , promptTokens = 0
+        , completionTokens = 0
+        , cost = Just money
+        , output = ""
+        , facts = Nothing
+        }
 
 
-{-| Append a trace row. -}
+{-| Record a run that has no price (a training run on this machine): the row
+says it happened, and its cost stays empty, never zero. -}
+recordUnpriced : Db -> Ledger -> String -> Task Error ()
+recordUnpriced db e label =
+    insertRow
+        db
+        e
+        { model = label
+        , promptTokens = 0
+        , completionTokens = 0
+        , cost = Nothing
+        , output = ""
+        , facts = Nothing
+        }
+
+
+{-| Append a trace row (a priced model call). -}
 record : Db -> Trace -> Task Error ()
 record db t =
     Time.now ()
@@ -77,8 +344,8 @@ record db t =
                    Db.exec
                        db
                        ("INSERT INTO _sky_ai_traces "
-                           ++ "(run_id, model, prompt_tokens, completion_tokens, cost_minor, currency, output, created_at) "
-                           ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                           ++ "(run_id, model, prompt_tokens, completion_tokens, cost_minor, currency, output, created_at, kind, outcome) "
+                           ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                        [ SqlString t.runId
                        , SqlString t.model
                        , SqlInt t.promptTokens
@@ -87,47 +354,505 @@ record db t =
                        , SqlString t.currency
                        , SqlString t.output
                        , SqlInt now
+                       , SqlString "call"
+                       , SqlString "ok"
                        ]
                        |> Task.map (\_ -> ()))
 
 
-{-| The total cost of a run, summed EXACTLY across its model calls, as a decimal
-string. The per-call costs are stored as exact decimal strings, so the sum is done
-in Sky over `Std.Decimal`, never via a float `SUM` in SQL (a float would corrupt
-the total — the whole reason cost lives in `Std.Money`). Returns "0" for a run with
-no traces.
+insertRow : Db -> Ledger -> RowIn -> Task Error ()
+insertRow db e r =
+    Time.now ()
+        |> Task.andThen
+               (\now ->
+                   Db.exec db insertSql (insertParams e r now)
+                       |> Task.map (\_ -> ()))
+
+
+-- A keyed row that is already there is not written again (replay of a
+-- durable step). SQLite and PostgreSQL both take this form.
+insertSql : String
+insertSql =
+    "INSERT INTO _sky_ai_traces "
+        ++ "(run_id, model, prompt_tokens, completion_tokens, cost_minor, currency, output, created_at, "
+        ++ "kind, outcome, call_key, slot, tier, adapter, queue_wait_ms, start_ms, latency_ms, first_token_ms, "
+        ++ "tokens_per_second, draft_acceptance) "
+        ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING"
+
+
+insertParams : Ledger -> RowIn -> Int -> List SqlValue
+insertParams e r now =
+    let
+        ( costText, currencyText ) =
+            case r.cost of
+
+                Just money ->
+                    ( Decimal.toString (Money.amount money)
+                    , Money.currencyCode (Money.currency money)
+                    )
+
+                Nothing ->
+                    ( "", "" )
+    in
+        [ SqlString e.runId
+        , SqlString r.model
+        , SqlInt r.promptTokens
+        , SqlInt r.completionTokens
+        , SqlString costText
+        , SqlString currencyText
+        , SqlString r.output
+        , SqlInt now
+        , SqlString (kindText e.kind)
+        , SqlString (outcomeOf r.facts)
+        , optText e.key
+        ]
+            ++ factParams r.facts
+
+
+outcomeOf : Maybe Provider.CallFacts -> String
+outcomeOf facts =
+    case facts of
+
+        Just f ->
+            f.outcome
+
+        Nothing ->
+            "ok"
+
+
+factParams : Maybe Provider.CallFacts -> List SqlValue
+factParams facts =
+    case facts of
+
+        Just f ->
+            [ optText f.slot
+            , optText f.tier
+            , optText f.adapter
+            , optInt f.queueWaitMs
+            , optInt f.startMs
+            , optInt f.latencyMs
+            , optInt f.firstTokenMs
+            , optFloat f.tokensPerSecond
+            , optFloat f.draftAcceptance
+            ]
+
+        Nothing ->
+            [ optText ""
+            , optText ""
+            , optText ""
+            , optInt Nothing
+            , optInt Nothing
+            , optInt Nothing
+            , optInt Nothing
+            , optFloat Nothing
+            , optFloat Nothing
+            ]
+
+
+optText : String -> SqlValue
+optText s =
+    if s == "" then
+        SqlNull (SqlString "")
+
+    else
+        SqlString s
+
+
+optInt : Maybe Int -> SqlValue
+optInt m =
+    case m of
+
+        Just n ->
+            SqlInt n
+
+        Nothing ->
+            SqlNull (SqlInt 0)
+
+
+optFloat : Maybe Float -> SqlValue
+optFloat m =
+    case m of
+
+        Just x ->
+            SqlFloat x
+
+        Nothing ->
+            SqlNull (SqlFloat 0.0)
+
+-- ── Reading ─────────────────────────────────────────────────────────
+{-| One row of the ledger as `rows` reads it. `costMinor` and `currency` are
+`""` for an unpriced row. A fact the call never reached is `Nothing`. -}
+type alias Row =
+    { runId : String
+    , kind : Kind
+    , model : String
+    , promptTokens : Int
+    , completionTokens : Int
+    , costMinor : String
+    , currency : String
+    , output : String
+    , outcome : String
+    , slot : String
+    , tier : String
+    , adapter : String
+    , queueWaitMs : Maybe Int
+    , startMs : Maybe Int
+    , latencyMs : Maybe Int
+    , firstTokenMs : Maybe Int
+    , tokensPerSecond : Maybe Float
+    , draftAcceptance : Maybe Float
+    , createdAt : Int
+    }
+
+
+{-| A run's rows, oldest first. -}
+runRows : Db -> String -> Task Error (List Row)
+runRows db runId =
+    Db.query
+        db
+        ("SELECT run_id, kind, model, prompt_tokens, completion_tokens, cost_minor, currency, output, outcome, "
+            ++ "slot, tier, adapter, queue_wait_ms, start_ms, latency_ms, first_token_ms, tokens_per_second, "
+            ++ "draft_acceptance, created_at FROM _sky_ai_traces WHERE run_id = ? ORDER BY created_at")
+        [ SqlString runId ]
+        |> Task.map (List.map rowOf)
+
+
+rowOf : Dict String String -> Row
+rowOf r =
+    { runId = dictGet "run_id" r
+    , kind = kindFromText (dictGet "kind" r)
+    , model = dictGet "model" r
+    , promptTokens = intOr0 (dictGet "prompt_tokens" r)
+    , completionTokens = intOr0 (dictGet "completion_tokens" r)
+    , costMinor = dictGet "cost_minor" r
+    , currency = dictGet "currency" r
+    , output = dictGet "output" r
+    , outcome = dictGet "outcome" r
+    , slot = dictGet "slot" r
+    , tier = dictGet "tier" r
+    , adapter = dictGet "adapter" r
+    , queueWaitMs = String.toInt (dictGet "queue_wait_ms" r)
+    , startMs = String.toInt (dictGet "start_ms" r)
+    , latencyMs = String.toInt (dictGet "latency_ms" r)
+    , firstTokenMs = String.toInt (dictGet "first_token_ms" r)
+    , tokensPerSecond = String.toFloat (dictGet "tokens_per_second" r)
+    , draftAcceptance = String.toFloat (dictGet "draft_acceptance" r)
+    , createdAt = intOr0 (dictGet "created_at" r)
+    }
+
+
+{-| The total cost of a run, summed EXACTLY across its priced rows (model calls,
+training, eval and judge calls), as a decimal string. The per-row costs are
+stored as exact decimal strings, so the sum is done in Sky over `Std.Decimal`,
+never via a float `SUM` in SQL. Returns "0" for a run with no priced rows.
+
+It fails with `InvalidInput` when the run's rows are priced in more than one
+currency (an amount in USD plus one in EUR has no single total: `summary`
+gives the total per currency), and when a stored cost is not a decimal.
 -}
 totalCost : Db -> String -> Task Error String
 totalCost db runId =
+    runSummary db runId |> Task.andThen (singleTotal runId)
+
+
+singleTotal : String -> Summary -> Task Error String
+singleTotal runId s =
+    case s.costs of
+
+        [] ->
+            Task.succeed "0"
+
+        [ ( _, total ) ] ->
+            Task.succeed total
+
+        _ ->
+            Task.fail
+                (Error.invalidInput
+                    ("Std.Ai.Trace.totalCost: run " ++ runId
+                        ++ " is priced in more than one currency ("
+                        ++ String.join ", " (List.map Tuple.first s.costs)
+                        ++ "); read Trace.runSummary for the total per currency"))
+
+{-| A run in figures: its rows, the model calls that failed, the rows with no
+price, the tokens, and the exact total per currency (`( "USD", "0.0042" )`). -}
+type alias Summary =
+    { rows : Int
+    , failures : Int
+    , unpriced : Int
+    , promptTokens : Int
+    , completionTokens : Int
+    , costs : List ( String, String )
+    }
+
+
+{-| Sum a run's rows. Fails with `InvalidInput` when a stored cost is not a
+decimal: a corrupt row must not vanish from a total. -}
+runSummary : Db -> String -> Task Error Summary
+runSummary db runId =
     Db.query
         db
-        "SELECT cost_minor FROM _sky_ai_traces WHERE run_id = ?"
+        "SELECT cost_minor, currency, outcome, prompt_tokens, completion_tokens FROM _sky_ai_traces WHERE run_id = ?"
         [ SqlString runId ]
-        |> Task.map
-               (\rows -> Decimal.toString (List.foldl addCost Decimal.zero rows))
+        |> Task.andThen (\found -> Task.fromResult (summarise found))
+
+type alias Tally =
+    { rows : Int
+    , failures : Int
+    , unpriced : Int
+    , promptTokens : Int
+    , completionTokens : Int
+    , totals : List ( String, Decimal )
+    }
 
 
-addCost : Dict String String -> Decimal -> Decimal
-addCost row acc =
-    case Decimal.fromString (dictGet "cost_minor" row) of
+summarise : List (Dict String String) -> Result Error Summary
+summarise found =
+    List.foldl addSummary (Ok emptyTally) found |> Result.map summaryOf
+
+
+emptyTally : Tally
+emptyTally =
+    { rows = 0
+    , failures = 0
+    , unpriced = 0
+    , promptTokens = 0
+    , completionTokens = 0
+    , totals = []
+    }
+
+
+summaryOf : Tally -> Summary
+summaryOf t =
+    { rows = t.rows
+    , failures = t.failures
+    , unpriced = t.unpriced
+    , promptTokens = t.promptTokens
+    , completionTokens = t.completionTokens
+    , costs = List.map (\( c, d ) -> ( c, Decimal.toString d )) t.totals
+    }
+
+
+addSummary : Dict String String -> Result Error Tally -> Result Error Tally
+addSummary row acc =
+    Result.andThen (addRow row) acc
+
+
+addRow : Dict String String -> Tally -> Result Error Tally
+addRow row t =
+    addRowCost
+        (dictGet "currency" row)
+        (dictGet "cost_minor" row)
+        { t
+            | rows = t.rows + 1
+            , failures = t.failures + failedCount (dictGet "outcome" row)
+            , promptTokens =
+                t.promptTokens + intOr0 (dictGet "prompt_tokens" row)
+            , completionTokens =
+                t.completionTokens + intOr0 (dictGet "completion_tokens" row)
+        }
+
+
+failedCount : String -> Int
+failedCount outcome =
+    if outcome /= "" && outcome /= "ok" then
+        1
+
+    else
+        0
+
+
+addRowCost : String -> String -> Tally -> Result Error Tally
+addRowCost currency cost t =
+    if currency == "" || cost == "" then
+        Ok { t | unpriced = t.unpriced + 1 }
+
+    else
+        decimalOf cost
+            |> Result.map (\d -> { t | totals = addTo currency d t.totals })
+
+
+decimalOf : String -> Result Error Decimal
+decimalOf cost =
+    case Decimal.fromString cost of
 
         Ok d ->
-            Decimal.add acc d
+            Ok d
 
         Err _ ->
-            acc
+            Err
+                (Error.invalidInput
+                    ("Std.Ai.Trace: a stored cost is not a decimal: " ++ cost))
 
 
-{-| How many model calls a run recorded. -}
+addTo : String -> Decimal -> List ( String, Decimal ) -> List ( String, Decimal )
+addTo currency d totals =
+    case totals of
+
+        [] ->
+            [ ( currency, d ) ]
+
+        ( c, t ) :: rest ->
+            if c == currency then
+                ( c, Decimal.add t d ) :: rest
+
+            else
+                ( c, t ) :: addTo currency d rest
+
+{-| One line of the lifecycle's cost: a kind of row, a currency, the exact
+total and the number of rows. -}
+type alias CostLine =
+    { kind : Kind
+    , currency : String
+    , total : String
+    , rows : Int
+    }
+
+
+{-| The whole lifecycle's cost across every run: what the app's calls, the
+training runs, the eval runs and the judges cost, one line per kind and
+currency. Unpriced rows are left out (`summary` counts them per run). Fails
+with `InvalidInput` on a stored cost that is not a decimal. -}
+costs : Db -> Task Error (List CostLine)
+costs db =
+    Db.query
+        db
+        "SELECT kind, currency, cost_minor FROM _sky_ai_traces WHERE currency <> '' AND cost_minor <> ''"
+        []
+        |> Task.andThen (\found -> Task.fromResult (costLines found))
+
+type alias Line =
+    { kind : String
+    , currency : String
+    , total : Decimal
+    , rows : Int
+    }
+
+
+costLines : List (Dict String String) -> Result Error (List CostLine)
+costLines found =
+    List.foldl (\row acc -> Result.andThen (addLine row) acc) (Ok []) found
+        |> Result.map (List.map lineOf)
+
+
+lineOf : Line -> CostLine
+lineOf l =
+    { kind = kindFromText l.kind
+    , currency = l.currency
+    , total = Decimal.toString l.total
+    , rows = l.rows
+    }
+
+
+addLine : Dict String String -> List Line -> Result Error (List Line)
+addLine row lines =
+    decimalOf (dictGet "cost_minor" row)
+        |> Result.map
+               (\d ->
+                   addToLine
+                       (dictGet "kind" row)
+                       (dictGet "currency" row)
+                       d
+                       lines)
+
+
+addToLine : String -> String -> Decimal -> List Line -> List Line
+addToLine kind currency d lines =
+    case lines of
+
+        [] ->
+            [ { kind = kind, currency = currency, total = d, rows = 1 } ]
+
+        l :: rest ->
+            if l.kind == kind && l.currency == currency then
+                { l | total = Decimal.add l.total d, rows = l.rows + 1 } :: rest
+
+            else
+                l :: addToLine kind currency d rest
+
+
+{-| How many model calls a run recorded (the app's, the eval candidate's and
+the judge's; not the cost rows of training). -}
 spanCount : Db -> String -> Task Error Int
 spanCount db runId =
     Db.query
         db
-        "SELECT COUNT(*) AS n FROM _sky_ai_traces WHERE run_id = ?"
+        "SELECT COUNT(*) AS n FROM _sky_ai_traces WHERE run_id = ? AND kind <> 'train'"
         [ SqlString runId ]
-        |> Task.map (\rows -> intCol "n" (List.head rows))
+        |> Task.map (\found -> intCol "n" (List.head found))
+
+-- ── Training progress ───────────────────────────────────────────────
+{-| One step of a training run: the step and the total, the loss, the
+throughput in tokens per second, the checkpoint written at the step (`""`
+when none), the eval split's loss measured at the step, and the trainer's
+peak memory so far in bytes (its peak physical footprint on macOS, its peak
+resident set on Linux). -}
+type alias TrainingStep =
+    { step : Int
+    , total : Int
+    , loss : Maybe Float
+    , tokensPerSecond : Maybe Float
+    , checkpoint : String
+    , evalLoss : Maybe Float
+    , peakMemoryBytes : Maybe Int
+    }
 
 
+{-| Record a training step. A step already recorded for the run adds no row
+and keeps every value it has, so a resumed run does not duplicate its
+progress; a value the first write lacked (an eval loss read in a later watch)
+is filled in. -}
+recordTrainingStep : Db -> String -> TrainingStep -> Task Error ()
+recordTrainingStep db runId p =
+    Time.now ()
+        |> Task.andThen
+               (\now ->
+                   Db.exec
+                       db
+                       ("INSERT INTO _sky_ai_trace_progress "
+                           ++ "(run_id, step, total, loss, tokens_per_second, checkpoint, eval_loss, peak_memory_bytes, created_at) "
+                           ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                           ++ "ON CONFLICT (run_id, step) DO UPDATE SET "
+                           ++ "loss = COALESCE(_sky_ai_trace_progress.loss, excluded.loss), "
+                           ++ "tokens_per_second = COALESCE(_sky_ai_trace_progress.tokens_per_second, excluded.tokens_per_second), "
+                           ++ "checkpoint = COALESCE(_sky_ai_trace_progress.checkpoint, excluded.checkpoint), "
+                           ++ "eval_loss = COALESCE(_sky_ai_trace_progress.eval_loss, excluded.eval_loss), "
+                           ++ "peak_memory_bytes = COALESCE(_sky_ai_trace_progress.peak_memory_bytes, excluded.peak_memory_bytes)")
+                       [ SqlString runId
+                       , SqlInt p.step
+                       , SqlInt p.total
+                       , optFloat p.loss
+                       , optFloat p.tokensPerSecond
+                       , optText p.checkpoint
+                       , optFloat p.evalLoss
+                       , optInt p.peakMemoryBytes
+                       , SqlInt now
+                       ]
+                       |> Task.map (\_ -> ()))
+
+
+{-| A training run's recorded steps, in step order. -}
+trainingSteps : Db -> String -> Task Error (List TrainingStep)
+trainingSteps db runId =
+    Db.query
+        db
+        "SELECT step, total, loss, tokens_per_second, checkpoint, eval_loss, peak_memory_bytes FROM _sky_ai_trace_progress WHERE run_id = ? ORDER BY step"
+        [ SqlString runId ]
+        |> Task.map (List.map trainingStepOf)
+
+
+trainingStepOf : Dict String String -> TrainingStep
+trainingStepOf r =
+    { step = intOr0 (dictGet "step" r)
+    , total = intOr0 (dictGet "total" r)
+    , loss = String.toFloat (dictGet "loss" r)
+    , tokensPerSecond = String.toFloat (dictGet "tokens_per_second" r)
+    , checkpoint = dictGet "checkpoint" r
+    , evalLoss = String.toFloat (dictGet "eval_loss" r)
+    , peakMemoryBytes = String.toInt (dictGet "peak_memory_bytes" r)
+    }
+
+
+-- ── Helpers ─────────────────────────────────────────────────────────
 dictGet : String -> Dict String String -> String
 dictGet key row =
     case Dict.get key row of
@@ -139,18 +864,23 @@ dictGet key row =
             ""
 
 
+intOr0 : String -> Int
+intOr0 s =
+    case String.toInt s of
+
+        Just n ->
+            n
+
+        Nothing ->
+            0
+
+
 intCol : String -> Maybe (Dict String String) -> Int
 intCol key row =
     case row of
 
         Just r ->
-            case String.toInt (dictGet key r) of
-
-                Just n ->
-                    n
-
-                Nothing ->
-                    0
+            intOr0 (dictGet key r)
 
         Nothing ->
             0

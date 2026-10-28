@@ -363,6 +363,162 @@ pub const SURFACES: &[Surface] = &[
     // no write, FIFO order, Nothing once closed and empty, Err on a push to a
     // closed queue), not observations of this runtime.
     sf2("sync", "Std.Sync", &["Sky.Core.Task as Task"]),
+    // v0.28.0 Std.Ai.Local: a model reference and a spec are pure values (the
+    // reference string IS the pinning contract: it carries the digest), and a
+    // refusal of an unpinned model is decided before any fetch, so the
+    // failure edge needs no network and no engine. The expected values are
+    // the documented reference syntax, not observations of this runtime.
+    sf2("ailocal", "Std.Ai.Local", &["Sky.Core.Task as Task"]),
+    // v0.28.0 Std.Ai.Failure: the typed view of an AI failure is pure. A
+    // failure built with `toError` reads back through `fromError` (the same
+    // path a runtime failure takes), with the documented kind and retry flag;
+    // another domain and an unknown code read as `Nothing`. The expected
+    // values are the documented table (docs/ai/local.md), not observations.
+    sf2(
+        "aifailure",
+        "Std.Ai.Failure",
+        &["Sky.Core.Error as Error", "Std.Money as Money"],
+    ),
+    // v0.28.0 Std.Ai.Eval: a suite run against a `Provider.custom` that
+    // answers from a table, so every expected value follows from the table
+    // and the documented scorers (exact, contains, regex), the gate and the
+    // exact McNemar p-value, not from a model.
+    // v0.28.0 Std.Ai.Store: the pure part of the registry's artefact store —
+    // AWS Signature Version 4 against the published AWS "GET Object" example,
+    // a location's round trip, and the typed refusal of an unknown scheme.
+    sf2(
+        "aistore",
+        "Std.Ai.Store",
+        &[
+            "Sky.Core.Secret as Secret",
+            "Sky.Core.Error as Error",
+            "Sky.Core.Crypto as Crypto",
+        ],
+    ),
+    // v0.28.0 Std.Ai.Registry: its pure naming — a version's label (the
+    // candidate a suite runs under) and its served name (the model a server
+    // knows the adapter by).
+    sf2("airegistry", "Std.Ai.Registry", &[]),
+    // v0.28.0 Std.Ai.Train: the trainer's protocol and the progress fold are
+    // pure. A protocol line decodes to its event, a run's lines fold into its
+    // progress (steps, a relaunch and the step it resumed from), and a line of
+    // another protocol version is the typed ToolchainFailed. The expected
+    // values follow from the documented protocol (docs/ai/train.md), not from
+    // a trainer.
+    sf2(
+        "aitrain",
+        "Std.Ai.Train",
+        &[
+            "Std.Ai.Failure as Failure",
+            "Sky.Core.String as String",
+            "Sky.Core.List as List",
+            "Sky.Core.Maybe as Maybe",
+        ],
+    ),
+    // v0.28.0 phase 4 Std.Ai.Serve: the tier's pure parts. vLLM's command line
+    // for a tier, the base id an adapter must match, and a Cloud Run
+    // service's resource name. The expected values follow from the documented
+    // tier (docs/ai/serve.md) and the Cloud Run API's resource names.
+    sf2(
+        "aiserve",
+        "Std.Ai.Serve",
+        &["Sky.Core.String as String", "Sky.Core.List as List"],
+    ),
+    // v0.28.0 phase 4 Std.Ai.Cloud.Google: the pure helpers. A machine type's
+    // accelerator, Google's label rule, and the typed failure a refusal is: a
+    // quota is QuotaExceeded, a stockout CapacityUnavailable, anything else
+    // RemoteRejected. The expected values follow from Google's documented
+    // machine table and label rule, not from a call.
+    sf2(
+        "aigooglecloud",
+        "Std.Ai.Cloud.Google",
+        &[
+            "Std.Ai.Failure as Failure",
+            "Sky.Core.String as String",
+            "Sky.Core.List as List",
+            "Sky.Core.Maybe as Maybe",
+        ],
+    ),
+    // v0.28.0 Std.Ai.Device: the decision is a pure function of the device's
+    // capabilities, the server's offer and the prompt's length; its expected
+    // values follow from the rules in docs/ai/device.md, not from a device.
+    sf2(
+        "aidevice",
+        "Std.Ai.Device",
+        &[
+            "Std.Ai.Failure as Failure",
+            "Sky.Core.String as String",
+            "Sky.Core.List as List",
+            "Sky.Core.Maybe as Maybe",
+        ],
+    ),
+    sf2(
+        "aieval",
+        "Std.Ai.Eval",
+        &[
+            "Std.Ai.Provider as Provider",
+            "Std.Db as Db",
+            "Sky.Core.Task as Task",
+            "Sky.Core.Error as Error",
+        ],
+    ),
+    // v0.28.0 Std.Ai.Dataset.Scrub: pure text rules. The expected values are
+    // published test numbers (card test numbers pass Luhn, the ISO 13616
+    // example IBAN passes mod 97) and the documented placeholders, not
+    // observations of this runtime.
+    sf2(
+        "aiscrub",
+        "Std.Ai.Dataset.Scrub",
+        &[
+            "Sky.Core.Dict as Dict",
+            "Sky.Core.Tuple as Tuple",
+            "Sky.Core.Error as Error",
+        ],
+    ),
+    // v0.28.0 Std.Ai.Dataset: the split is a documented pure function (the
+    // first 28 bits of sha256 "<seed>:<key>" modulo the weights), so the
+    // expected parts are computed outside Sky; canonical JSONL has sorted keys;
+    // a chat that breaks the limits is the typed DatasetInvalid.
+    sf2(
+        "aidataset",
+        "Std.Ai.Dataset",
+        &[
+            "Sky.Core.Task as Task",
+            "Sky.Core.Error as Error",
+            "Sky.Core.Result as Result",
+            "Std.Ai.Failure as Failure",
+        ],
+    ),
+    // v0.28.0 Std.Ai.Dataset.Synthetic: a plan is pure, and a run against a
+    // `Provider.custom` teacher that answers from the request gives counts that
+    // follow from the generator, not from a model.
+    sf2(
+        "aisynthetic",
+        "Std.Ai.Dataset.Synthetic",
+        &[
+            "Std.Ai.Provider as Provider",
+            "Std.Ai.Dataset as Dataset",
+            "Sky.Core.Task as Task",
+            "Sky.Core.Error as Error",
+            "Sky.Core.Dict as Dict",
+        ],
+    ),
+    // v0.28.0 Std.Ai.Pipeline: a pipeline's members, a suite evaluated on a
+    // `suiteWith` provider that answers by adapter (so the verdict follows
+    // from the provider, not a model), and the typed refusals of an unknown
+    // member and a bad verb.
+    sf2(
+        "aipipeline",
+        "Std.Ai.Pipeline",
+        &[
+            "Std.Ai.Provider as Provider",
+            "Std.Ai.Eval as Eval",
+            "Std.Ai.Failure as Failure",
+            "Std.Db as Db",
+            "Sky.Core.Task as Task",
+            "Sky.Core.Error as Error",
+        ],
+    ),
     // v0.27.0 Std.Ui.Canvas and Std.Ui.Terminal. A scene is asserted as the
     // SVG it renders (`Html.render (Canvas.toSvg …)`), which is exactly what
     // every web backend draws; the terminal as the island element it renders
@@ -691,6 +847,31 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Std.Watch",
     // v0.27.0: Std.Sync lands covered (`sync` surface).
     "Std.Sync",
+    // v0.28.0: Std.Ai.Local lands covered (`ailocal` surface).
+    "Std.Ai.Local",
+    // v0.28.0: Std.Ai.Failure lands covered (`aifailure` surface).
+    "Std.Ai.Failure",
+    // v0.28.0: Std.Ai.Eval lands covered (`aieval` surface).
+    "Std.Ai.Eval",
+    // v0.28.0: Std.Ai.Store and Std.Ai.Registry land covered (`aistore`,
+    // `airegistry` surfaces).
+    "Std.Ai.Store",
+    "Std.Ai.Registry",
+    // v0.28.0: Std.Ai.Train lands covered (`aitrain` surface).
+    "Std.Ai.Train",
+    // v0.28.0 phase 4: Std.Ai.Serve and Std.Ai.Cloud.Google land covered
+    // (`aiserve`, `aigooglecloud` surfaces).
+    "Std.Ai.Serve",
+    "Std.Ai.Cloud.Google",
+    // v0.28.0: Std.Ai.Device lands covered (`aidevice` surface).
+    "Std.Ai.Device",
+    // v0.28.0: Std.Ai.Dataset, its Scrub and Synthetic modules land covered
+    // (`aidataset`, `aiscrub`, `aisynthetic` surfaces).
+    "Std.Ai.Dataset",
+    "Std.Ai.Dataset.Scrub",
+    "Std.Ai.Dataset.Synthetic",
+    // v0.28.0: Std.Ai.Pipeline lands covered (`aipipeline` surface).
+    "Std.Ai.Pipeline",
     // v0.27.0: Std.Ui.Canvas (its SVG) and Std.Ui.Terminal (its widget
     // payloads) land covered, not dark.
     "Std.Ui.Canvas",
@@ -795,7 +976,19 @@ pub const ASSERTED_MODULES: &[&str] = &[
 /// `nav_client_test.go` (the browser client in node), the `spa_split_flow.rs`
 /// `a_server_arm_navigation_*` tests and the browser e2e `scripts/nav-e2e.sh`
 /// (Sky.Live and web:app, Chrome and WebKit, strict CSP).
-pub const DARK_MODULE_CEILING: usize = 74;
+///
+/// Raised 74 -> 75 (v0.28.0): the new `Std.Ai.Endpoint`. Its whole surface is
+/// an opaque `Endpoint` built by `withX` builders and consumed for its EFFECT:
+/// `provider` (calls go through a runtime-resolved slot and queue), `warm` and
+/// `describe` are `Task`s whose answer depends on the process environment.
+/// There is no pure value a Family-S assertion can print. It is covered by
+/// `runtime-go/rt/ai_test.go` (the resolution rule, precedence, prefix, queue,
+/// retries, no fallback), `tests/Std/Ai/ProviderEndpointTest.sky` (the
+/// `sky-suites` gate) and `rust/crates/sky/tests/ai_cli_flow.rs` /
+/// `ai_local_live.rs` (a compiled program's slots on a fake and on the real
+/// engine). `Std.Ai.Local`, added in the same release, lands covered
+/// (`ailocal` surface).
+pub const DARK_MODULE_CEILING: usize = 75;
 
 /// The five modules item 3 named, with the EXACT number of their public symbols
 /// Family S asserts. **Exact, never `>=`** (registry.rs: *"`ty/tests/reject.rs`
@@ -1289,6 +1482,19 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "process" => process_battery(edge),
         "watch" => watch_battery(edge),
         "sync" => sync_battery(edge),
+        "ailocal" => ailocal_battery(edge),
+        "aifailure" => aifailure_battery(edge),
+        "aieval" => aieval_battery(edge),
+        "aistore" => aistore_battery(edge),
+        "airegistry" => airegistry_battery(edge),
+        "aitrain" => aitrain_battery(edge),
+        "aiserve" => aiserve_battery(edge),
+        "aigooglecloud" => aigooglecloud_battery(edge),
+        "aidevice" => aidevice_battery(edge),
+        "aiscrub" => aiscrub_battery(edge),
+        "aidataset" => aidataset_battery(edge),
+        "aisynthetic" => aisynthetic_battery(edge),
+        "aipipeline" => aipipeline_battery(edge),
         "canvas" => canvas_battery(edge),
         "terminal" => terminal_battery(edge),
         other => panic!("no battery for surface {other:?}"),
@@ -3717,6 +3923,441 @@ fn sync_battery(edge: &str) -> Vec<Check> {
     }
 }
 
+// --- Std.Ai.Local ---------------------------------------------------------
+//
+// `hf:<org>/<repo>/<file>#sha256=<hex>` and `file:<path>#sha256=<hex>` are the
+// documented reference syntax (docs/ai/local.md), shared with the
+// `SKY_AI_<SLOT>_MODEL` variable. An unpinned reference is refused before any
+// fetch (`aiParseModelRef`), which is what the failure edge asserts.
+fn ailocal_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Local.reference", "Local.huggingFace"],
+                "Local.reference (Local.huggingFace { repo = \"org/repo\", file = \"m.gguf\", sha256 = \"ab12\" })",
+                "hf:org/repo/m.gguf#sha256=ab12",
+            ),
+            s(
+                &["Local.reference", "Local.file"],
+                "Local.reference (Local.file { path = \"/m/x.gguf\", sha256 = \"cd34\" })",
+                "file:/m/x.gguf#sha256=cd34",
+            ),
+            s(
+                &["Local.devModel", "Local.reference"],
+                "String.right 64 (Local.reference Local.devModel)",
+                "7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed",
+            ),
+            s(
+                &["Local.fromReference", "Local.reference"],
+                "Local.reference (Local.fromReference \"file:/a#sha256=00\")",
+                "file:/a#sha256=00",
+            ),
+            s(
+                &[
+                    "Local.model",
+                    "Local.withContext",
+                    "Local.withParallel",
+                    "Local.withIdleUnload",
+                    "Local.settings",
+                ],
+                "aiSpecShape",
+                "4096,3,0,F",
+            ),
+            s(&["Local.withEmbeddings", "Local.settings"], "aiSpecEmbeddings", "T"),
+        ],
+        "failure" => vec![
+            s(&["Local.fit", "Local.fromReference"], "aiUnpinnedFit", "E"),
+            s(&["Local.fetch", "Local.fromReference"], "aiUnpinnedFetch", "E"),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Failure -------------------------------------------------------
+//
+// The table in docs/ai/local.md: each failure's code, ErrorKind and retry
+// flag, and the round trip `fromError (toError f) == Just f` that every
+// runtime failure also takes (the runtime builds the same `Domain` value).
+fn aifailure_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Failure.code", "Failure.toError", "Failure.fromError"],
+                "Maybe.withDefault \"none\" (Maybe.map Failure.code (Failure.fromError (Failure.toError (Overloaded { retryAfterMs = Just 1500, status = Just 429 }))))",
+                "Overloaded",
+            ),
+            bo(
+                &["Failure.fromError", "Failure.toError"],
+                "Failure.fromError (Failure.toError (ModelTooLarge { needBytes = 9, availableBytes = 4 })) == Just (ModelTooLarge { needBytes = 9, availableBytes = 4 })",
+                true,
+            ),
+            bo(
+                &["Failure.fromError", "Failure.toError"],
+                "Failure.fromError (Failure.toError (BudgetExceeded { budget = Money.fromMinor Money.USD 4000, estimate = Money.fromMinor Money.USD 5250 })) == Just (BudgetExceeded { budget = Money.fromMinor Money.USD 4000, estimate = Money.fromMinor Money.USD 5250 })",
+                true,
+            ),
+            s(
+                &["Failure.kind"],
+                "Error.kindLabel (Failure.kind (TimedOut { afterMs = Nothing }))",
+                "Timeout",
+            ),
+            s(
+                &["Failure.kind"],
+                "Error.kindLabel (Failure.kind (BudgetExceeded { budget = Money.fromMinor Money.USD 1, estimate = Money.fromMinor Money.USD 2 }))",
+                "PermissionDenied",
+            ),
+            s(
+                &["Failure.kind"],
+                "Error.kindLabel (Failure.kind (RemoteRejected { status = 403 }))",
+                "PermissionDenied",
+            ),
+            bo(&["Failure.retryable"], "Failure.retryable (Unreachable { target = \"https://h:1\" })", true),
+            bo(&["Failure.retryable"], "Failure.retryable (RemoteRejected { status = 502 })", true),
+        ],
+        "failure" => vec![
+            // An engine crash is Unavailable and still not retryable: the
+            // domain flag wins over the kind.
+            bo(
+                &["Failure.retryable", "Failure.toError"],
+                "Failure.retryable (EngineCrashed { exitCode = Just 134, logTail = \"\" }) || Error.isRetryable (Failure.toError (EngineCrashed { exitCode = Just 134, logTail = \"\" }))",
+                false,
+            ),
+            bo(
+                &["Failure.fromError"],
+                "Failure.fromError (Error.unavailable \"plain\") == Nothing",
+                true,
+            ),
+            bo(
+                &["Failure.fromError"],
+                "Failure.fromError (Error.fromDomain Error.Conflict \"x\" (Error.failure \"db\" \"Deadlock\")) == Nothing",
+                true,
+            ),
+            bo(
+                &["Failure.fromError"],
+                "Failure.fromError (Error.fromDomain Error.Unavailable \"x\" (Error.failure \"ai\" \"FromTheFuture\")) == Nothing",
+                true,
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Eval ----------------------------------------------------------
+//
+// One three-case suite (Exact "yes", Contains "y", Matches "^n") against a
+// table provider: the good table passes all three, the bad one none. The
+// comparison's McNemar p-value for three discordant pairs to none is
+// 2 x 0.5^3 = 0.25 (reported x 1000).
+fn aieval_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Eval.suite", "Eval.run"],
+                "aiEvalCounts aiEvalGood",
+                "3/0/0",
+            ),
+            s(
+                &[
+                    "Eval.check",
+                    "Eval.thresholds",
+                    "Eval.withMinPassRate",
+                    "Eval.passedSuite",
+                ],
+                "aiEvalGate",
+                "corpus",
+            ),
+            s(&["Eval.compare"], "aiEvalCompare", "3,0,250"),
+            s(&["Eval.toJunit"], "aiEvalJunit", "T"),
+        ],
+        "failure" => vec![
+            s(&["Eval.check"], "aiEvalGateFail", "ai/F"),
+            s(&["Eval.run"], "aiEvalCounts aiEvalPartial", "2/1/1"),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Store ---------------------------------------------------------
+//
+// The signature is the AWS documentation's "GET Object" example (bucket
+// examplebucket, key test.txt, a Range header, 24 May 2013, us-east-1, the
+// documented example keys); its value is the documented one.
+fn aistore_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            bo(&["Store.signV4"], "aiStoreSignature == \"f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41\"", true),
+            s(&["Store.fromUrl", "Store.location"], "aiStoreLocation", "gs://models/reg"),
+        ],
+        "failure" => vec![s(&["Store.fromUrl"], "aiStoreRefused", "ai/F")],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Dataset.Scrub --------------------------------------------------
+//
+// Each rule replaces what it names with its documented placeholder and leaves
+// a look-alike that fails its check (Luhn, mod 97) alone; the report counts by
+// rule name; a user pattern that does not compile is an error.
+fn aiscrub_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Scrub.scrubText", "Scrub.defaults"],
+                "Tuple.first (Scrub.scrubText Scrub.defaults \"mail ada@example.com, card 4111 1111 1111 1111, iban GB82 WEST 1234 5698 7654 32\")",
+                "mail [EMAIL], card [CARD], iban [IBAN]",
+            ),
+            i(
+                &["Scrub.scrubText", "Scrub.total", "Scrub.phone"],
+                "Scrub.total (Tuple.second (Scrub.scrubText [ Scrub.phone ] \"+44 20 7946 0958 or (415) 555-0132\"))",
+                2,
+            ),
+            bo(&["Scrub.isCardNumber"], "Scrub.isCardNumber \"378282246310005\"", true),
+            bo(&["Scrub.isIban"], "Scrub.isIban \"DE89 3704 0044 0532 0130 00\"", true),
+            s(
+                &["Scrub.scrubRows", "Scrub.forString", "Scrub.dropIf", "Scrub.email"],
+                "aiScrubDrop",
+                "[EMAIL];internal=1,email=1",
+            ),
+        ],
+        "failure" => vec![
+            s(
+                &["Scrub.scrubText", "Scrub.cardNumber"],
+                "Tuple.first (Scrub.scrubText [ Scrub.cardNumber ] \"order 4111 1111 1111 1112\")",
+                "order 4111 1111 1111 1112",
+            ),
+            bo(&["Scrub.isIban"], "Scrub.isIban \"GB83WEST12345698765432\"", false),
+            s(&["Scrub.pattern"], "aiScrubBadPattern", "InvalidInput"),
+            i(
+                &["Scrub.scrubText", "Scrub.total"],
+                "Scrub.total (Tuple.second (Scrub.scrubText Scrub.defaults \"on 2024-01-01 at 12:30 pi is 3.14159265\"))",
+                0,
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Registry ------------------------------------------------------
+fn airegistry_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![s(
+            &["Registry.label", "Registry.servedName"],
+            "aiRegistryNames",
+            "support-lora@v3 support-lora-v3",
+        )],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Dataset ---------------------------------------------------------
+//
+// Splits are a pure, documented function of seed and key; dedupe and take
+// run in order; canonical JSONL sorts keys; a chat that breaks the limits is
+// a typed DatasetInvalid.
+fn aidataset_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Dataset.splitOf", "Dataset.defaultSplit"],
+                "aiSplitLetters Dataset.defaultSplit",
+                "TTTTTXXTTTTXTTTTTTTT",
+            ),
+            s(
+                &["Dataset.splitOf"],
+                "aiSplitLetters { train = 1, eval = 1, test = 1, seed = 5 }",
+                "EEXTXXTTXTETTTXXXTTX",
+            ),
+            i(
+                &["Dataset.fromList", "Dataset.dedupeBy", "Dataset.upTo", "Dataset.countRows"],
+                "Result.withDefault -1 (Task.run (Dataset.countRows (Dataset.fromList [ \"a\", \"b\", \"a\", \"c\", \"d\" ] |> Dataset.dedupeBy identity |> Dataset.upTo 3)))",
+                3,
+            ),
+            s(
+                &["Dataset.toJsonl", "Dataset.instructionCodec"],
+                "String.trim (Result.withDefault \"E\" (Dataset.toJsonl Dataset.instructionCodec [ { prompt = \"p\", completion = \"c\" } ]))",
+                "{\"completion\":\"c\",\"prompt\":\"p\"}",
+            ),
+            s(&["Dataset.inspect", "Dataset.limits"], "aiInspect", "T/2/0"),
+        ],
+        "failure" => vec![
+            s(&["Dataset.validate", "Dataset.limits"], "aiValidateBad", "DatasetInvalid/InvalidInput"),
+            s(&["Dataset.countRows", "Dataset.fromJsonLines"], "aiMissingFile", "DatasetInvalid"),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Pipeline -------------------------------------------------------
+//
+// A pipeline's members are its declared names; a suite on a `suiteWith`
+// provider that answers "yes" for the default candidate passes and is
+// recorded as `default`; an unknown task is the typed InvalidSetting and a
+// verb without its argument is a usage error.
+fn aipipeline_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &[
+                    "Pipeline.pipeline",
+                    "Pipeline.withSuite",
+                    "Pipeline.withTask",
+                    "Pipeline.members",
+                ],
+                "aiPipeMembers",
+                "corpus/corpus/noop",
+            ),
+            s(
+                &[
+                    "Pipeline.evaluate",
+                    "Pipeline.suiteWith",
+                    "Pipeline.evalRequest",
+                ],
+                "aiPipeVerdict",
+                "passed/default",
+            ),
+        ],
+        "failure" => vec![
+            s(&["Pipeline.runTask"], "aiPipeUnknown", "InvalidSetting"),
+            s(&["Pipeline.commandLineWith"], "aiPipeUsage", "U"),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Dataset.Synthetic -----------------------------------------------
+//
+// A plan is pure (call i has seed `seed + i`, the default call limit is three
+// times the calls the target needs); a run against a table teacher keeps,
+// drops and stops by the documented rules.
+fn aisynthetic_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &[
+                    "Synthetic.plan",
+                    "Synthetic.generator",
+                    "Synthetic.withSeed",
+                    "Synthetic.withTarget",
+                    "Synthetic.withPerCall",
+                ],
+                "aiPlanSeeds",
+                "9:10,11,12",
+            ),
+            s(
+                &[
+                    "Synthetic.run",
+                    "Synthetic.withTeacher",
+                    "Synthetic.withFilter",
+                ],
+                "aiSynthRun 4",
+                "4/4/3/target",
+            ),
+            s(&["Synthetic.parseRows"], "aiParse", "1/0;0/1"),
+        ],
+        "failure" => vec![
+            s(
+                &["Synthetic.run", "Synthetic.withMaxCalls"],
+                "aiSynthProse",
+                "0/2/calls",
+            ),
+            s(&["Synthetic.run"], "aiSynthDown", "Unavailable"),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Train ---------------------------------------------------------
+fn aitrain_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(&["Train.decodeEvent"], "aiTrainStep", "7/12"),
+            s(
+                &["Train.foldProgress", "Train.emptyProgress", "Train.statusText"],
+                "aiTrainFold",
+                "converting 4 1 2",
+            ),
+            s(
+                &["Train.backendName"],
+                "String.join \",\" (List.map Train.backendName [ Train.Mlx, Train.Unsloth, Train.Fake, Train.Vertex ])",
+                "mlx,unsloth,fake,vertex",
+            ),
+            // `sky-` and the first 20 hex digits of SHA-256("x").
+            s(&["Train.runKey"], "Train.runKey \"x\"", "sky-2d711642b726b0440162"),
+        ],
+        "failure" => vec![s(&["Train.decodeEvent"], "aiTrainRefused", "ToolchainFailed")],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Serve ---------------------------------------------------------
+fn aiserve_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(&["Serve.vllmArgs", "Serve.withMaxAdapters"], "aiServeLora", "--enable-lora --max-loras 3"),
+            s(
+                &["Serve.baseIdOf", "Serve.tier", "Serve.devBase"],
+                "Serve.baseIdOf (Serve.tier Serve.Vllm Serve.devBase)",
+                "Qwen/Qwen2.5-0.5B-Instruct@7ae557604adf67be50417f59c2c2f167def9a775",
+            ),
+            s(
+                &["Serve.serviceName", "Serve.cloudRun"],
+                "Serve.serviceName (Serve.cloudRun { project = \"p\", region = \"us-central1\", service = \"t\" })",
+                "projects/p/locations/us-central1/services/t",
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Cloud.Google ----------------------------------------------------
+fn aigooglecloud_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Google.accelerator"],
+                "aiGoogleAccelerators",
+                "NVIDIA_L4 1,NVIDIA_L4 2, 0",
+            ),
+            s(&["Google.validLabel"], "aiGoogleLabels", "TFFF"),
+        ],
+        "failure" => vec![s(
+            &["Google.refused"],
+            "aiGoogleRefusals",
+            "QuotaExceeded CapacityUnavailable RemoteRejected",
+        )],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Device ---------------------------------------------------------
+//
+// The device decision: on the device when it holds the files, a download
+// first when it does not, the server for an operator's ServerOnly, and a typed
+// StorageDenied for DeviceOnly without room.
+fn aidevice_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Device.decide", "Device.backendText"],
+                "aiDeviceWhere aiDeviceCaps",
+                "device:webgpu",
+            ),
+            s(
+                &["Device.decide"],
+                "aiDeviceWhere { aiDeviceCaps | ready = [] }",
+                "download:webgpu:420",
+            ),
+            s(
+                &["Device.decodeOffer", "Device.placementText"],
+                "aiDeviceOfferPlacement",
+                "auto",
+            ),
+        ],
+        "failure" => vec![s(&["Device.decide"], "aiDeviceRefusal", "StorageDenied")],
+        _ => vec![],
+    }
+}
+
 // --- Sky.Core.Secret -------------------------------------------------------
 //
 // The wrap/reveal boundary is a pure, deterministic value crossing:
@@ -4064,6 +4705,61 @@ fn error_battery(edge: &str) -> Vec<Check> {
                 &["Error.withDetails"],
                 "Error.toString (Error.withDetails (HttpStatus 404) (Error.network \"n\"))",
                 "Network: n",
+            ),
+            // v0.28.0 domain failures (`Domain DomainFailure`). The domain's
+            // retryable flag wins over the kind in both directions: a crashed
+            // engine is `Unavailable` and must not be retried blindly, and a
+            // deadlock is a `Conflict` that a retry resolves.
+            bo(
+                &["Error.isRetryable", "Error.fromDomain", "Error.failure"],
+                "Error.isRetryable (Error.fromDomain Unavailable \"x\" (Error.failure \"ai\" \"EngineCrashed\"))",
+                false,
+            ),
+            bo(
+                &["Error.isRetryable", "Error.withRetryable"],
+                "Error.isRetryable (Error.fromDomain Conflict \"x\" (Error.failure \"db\" \"Deadlock\" |> Error.withRetryable True))",
+                true,
+            ),
+            s(
+                &["Error.domain", "Error.fromDomain"],
+                "Maybe.withDefault \"none\" (Error.domain (Error.fromDomain Conflict \"x\" (Error.failure \"db\" \"Deadlock\")))",
+                "db",
+            ),
+            s(
+                &["Error.domain"],
+                "Maybe.withDefault \"none\" (Error.domain (Error.io \"x\"))",
+                "none",
+            ),
+            i(
+                &["Error.retryAfter", "Error.withRetryAfter"],
+                "Maybe.withDefault -1 (Error.retryAfter (Error.fromDomain Unavailable \"x\" (Error.failure \"ai\" \"Overloaded\" |> Error.withRetryAfter 1500)))",
+                1500,
+            ),
+            i(
+                &["Error.retryAfter"],
+                "Maybe.withDefault -1 (Error.retryAfter (Error.unavailable \"x\"))",
+                -1,
+            ),
+            s(
+                &["Error.failureOf", "Error.failureCode", "Error.failureDomain"],
+                "Maybe.withDefault \"none\" (Maybe.map (\\f -> Error.failureDomain f ++ \"/\" ++ Error.failureCode f) (Error.failureOf (Error.fromDomain Conflict \"x\" (Error.failure \"db\" \"Deadlock\"))))",
+                "db/Deadlock",
+            ),
+            s(
+                &["Error.withAttr", "Error.failureAttr", "Error.failureAttrs"],
+                "Maybe.withDefault \"none\" (Error.failureAttr \"a\" (Error.failure \"d\" \"c\" |> Error.withAttr \"a\" \"1\" |> Error.withAttr \"a\" \"2\")) ++ String.fromInt (List.length (Error.failureAttrs (Error.failure \"d\" \"c\" |> Error.withAttr \"a\" \"1\" |> Error.withAttr \"a\" \"2\")))",
+                "21",
+            ),
+            bo(
+                &["Error.failureRetryable", "Error.failureRetryAfter"],
+                "not (Error.failureRetryable (Error.failure \"d\" \"c\")) && Error.failureRetryAfter (Error.failure \"d\" \"c\") == Nothing",
+                true,
+            ),
+            // A domain failure leaves the human rendering unchanged.
+            s(
+                &["Error.toString", "Error.fromDomain"],
+                "Error.toString (Error.fromDomain Conflict \"deadlock\" (Error.failure \"db\" \"Deadlock\"))",
+                "Conflict: deadlock",
             ),
         ],
         "unicode" => vec![s(
@@ -5627,6 +6323,663 @@ termFresh =
     p ++ "/" ++ e
 "#
         }
+        "aiscrub" => {
+            r#"aiKind : Error.Error -> String
+aiKind e =
+    case e of
+        Error.Error k _ ->
+            Error.kindLabel k
+
+
+aiScrubDrop : String
+aiScrubDrop =
+    let
+        ( kept, report ) =
+            Scrub.scrubRows (Scrub.forString [ Scrub.email ] |> Scrub.dropIf "internal" (String.startsWith "INTERNAL")) [ "INTERNAL x", "a@b.io" ]
+    in
+    String.join "," kept ++ ";" ++ String.join "," (List.map (\k -> k ++ "=" ++ String.fromInt (Scrub.countOf k report)) [ "internal", "email" ])
+
+
+aiScrubBadPattern : String
+aiScrubBadPattern =
+    case Scrub.pattern "x" "([a-z" of
+        Ok _ ->
+            "compiled"
+
+        Err e ->
+            aiKind e
+"#
+        }
+        "aidataset" => {
+            r#"aiKind : Error.Error -> String
+aiKind e =
+    case e of
+        Error.Error k _ ->
+            Error.kindLabel k
+
+
+aiSplitLetters : Dataset.SplitSpec -> String
+aiSplitLetters spec =
+    List.range 1 20
+        |> List.map
+            (\i ->
+                case Dataset.splitOf spec ("k" ++ String.fromInt i) of
+                    Dataset.Train ->
+                        "T"
+
+                    Dataset.Eval ->
+                        "E"
+
+                    Dataset.Test ->
+                        "X"
+            )
+        |> String.concat
+
+
+aiChat : List ( String, String ) -> Dataset.Chat
+aiChat turns =
+    { messages = List.map (\( r, c ) -> { role = r, content = c }) turns }
+
+
+aiInspect : String
+aiInspect =
+    case Task.run (Dataset.inspect Dataset.limits (Dataset.fromList [ aiChat [ ( "user", "Hi" ), ( "assistant", "Hello" ) ], aiChat [ ( "user", "Bye" ), ( "assistant", "Goodbye" ) ] ])) of
+        Ok r ->
+            (if r.passed then "T" else "F") ++ "/" ++ String.fromInt r.rows ++ "/" ++ String.fromInt r.issueCount
+
+        Err _ ->
+            "E"
+
+
+aiValidateBad : String
+aiValidateBad =
+    case Task.run (Dataset.validate Dataset.limits (Dataset.fromList [ aiChat [ ( "assistant", "first" ), ( "user", "" ) ] ])) of
+        Ok _ ->
+            "passed"
+
+        Err e ->
+            Maybe.withDefault "none" (Maybe.map Failure.code (Failure.fromError e)) ++ "/" ++ aiKind e
+
+
+aiMissingFile : String
+aiMissingFile =
+    case Task.run (Dataset.countRows (Dataset.fromJsonLines "/no/such/dir/rows.jsonl")) of
+        Ok _ ->
+            "read"
+
+        Err e ->
+            Maybe.withDefault "none" (Maybe.map Failure.code (Failure.fromError e))
+"#
+        }
+        "aipipeline" => {
+            r#"aiPipeAnswer : String -> List Provider.Message -> Task Error Provider.ChatResponse
+aiPipeAnswer adapter _ =
+    Task.succeed
+        { content =
+            if String.contains "v2" adapter then
+                "no"
+
+            else
+                "yes"
+        , usage = { promptTokens = 1, completionTokens = 1, totalTokens = 2 }
+        }
+
+
+aiPipeSuite : Eval.Suite String
+aiPipeSuite =
+    Eval.suite "corpus"
+        (\q -> [ Provider.user q ])
+        [ { id = "a", input = "a", expect = Eval.Exact "yes", tags = [] } ]
+
+
+aiPipe : Pipeline.Pipeline
+aiPipe =
+    Pipeline.pipeline "corpus"
+        |> Pipeline.withDb (Db.open "sqlite" ":memory:")
+        |> Pipeline.withSuite "corpus" (Pipeline.suiteWith (\a -> Provider.custom (aiPipeAnswer a)) aiPipeSuite)
+        |> Pipeline.withTask "noop" (\_ -> Task.succeed ())
+
+
+aiPipeMembers : String
+aiPipeMembers =
+    let
+        m = Pipeline.members aiPipe
+    in
+    m.name ++ "/" ++ String.join "," m.suites ++ "/" ++ String.join "," m.tasks
+
+
+aiPipeVerdict : String
+aiPipeVerdict =
+    case Task.run (Pipeline.evaluate aiPipe "corpus" Pipeline.evalRequest) of
+        Ok o ->
+            case o.verdict of
+                Ok _ ->
+                    "passed/" ++ o.candidate.candidate
+
+                Err _ ->
+                    "failed/" ++ o.candidate.candidate
+
+        Err _ ->
+            "E"
+
+
+aiPipeUnknown : String
+aiPipeUnknown =
+    case Task.run (Pipeline.runTask aiPipe "nope" []) of
+        Ok _ ->
+            "ran"
+
+        Err e ->
+            Maybe.withDefault "?" (Maybe.map Failure.code (Failure.fromError e))
+
+
+aiPipeUsage : String
+aiPipeUsage =
+    case Task.run (Pipeline.commandLineWith aiPipe [ "eval" ]) of
+        Ok _ ->
+            "ran"
+
+        Err e ->
+            if String.contains "usage: " (Error.toString e) then
+                "U"
+
+            else
+                Error.toString e
+"#
+        }
+        "aisynthetic" => {
+            r#"aiKind : Error.Error -> String
+aiKind e =
+    case e of
+        Error.Error k _ ->
+            Error.kindLabel k
+
+
+aiTable : List Provider.Message -> Task Error Provider.ChatResponse
+aiTable messages =
+    let
+        n =
+            List.length messages
+    in
+    Task.succeed
+        { content = "[{\"prompt\":\"q" ++ String.fromInt (String.length (String.concat (List.map .content messages))) ++ "\",\"completion\":\"a long enough answer\"},{\"prompt\":\"short " ++ String.fromInt n ++ "\",\"completion\":\"no\"}]"
+        , usage = { promptTokens = 1, completionTokens = 1, totalTokens = 2 }
+        }
+
+
+aiGen : Synthetic.Generator Dataset.Instruction
+aiGen =
+    Synthetic.generator "corpus" Dataset.instructionCodec
+        |> Synthetic.withTopics [ "a", "bb", "ccc", "dddd" ]
+        |> Synthetic.withPerCall 2
+        |> Synthetic.withSeed 10
+        |> Synthetic.withTarget 6
+
+
+aiPlanSeeds : String
+aiPlanSeeds =
+    let
+        planned =
+            Synthetic.plan aiGen
+    in
+    String.fromInt (List.length planned) ++ ":" ++ String.join "," (List.map (\r -> String.fromInt r.seed) (List.take 3 planned))
+
+
+aiSynthRun : Int -> String
+aiSynthRun target =
+    case Task.run (Synthetic.run (aiGen |> Synthetic.withTarget target |> Synthetic.withTeacher "table" (Provider.custom aiTable) |> Synthetic.withFilter "short" (\r -> String.length r.completion > 5))) of
+        Ok g ->
+            String.fromInt (List.length g.rows) ++ "/" ++ String.fromInt g.report.calls ++ "/" ++ String.fromInt (Dict.foldl (\_ v acc -> acc + v) 0 g.report.filtered) ++ "/" ++ (case g.report.stop of
+                Synthetic.TargetReached -> "target"
+                Synthetic.CallLimit -> "calls"
+                Synthetic.BudgetReached -> "budget")
+
+        Err _ ->
+            "E"
+
+
+aiSynthProse : String
+aiSynthProse =
+    case Task.run (Synthetic.run (aiGen |> Synthetic.withMaxCalls 2 |> Synthetic.withTeacher "prose" (Provider.custom (\_ -> Task.succeed { content = "no json", usage = { promptTokens = 1, completionTokens = 1, totalTokens = 2 } })))) of
+        Ok g ->
+            String.fromInt (List.length g.rows) ++ "/" ++ String.fromInt g.report.unparsed ++ "/" ++ (case g.report.stop of
+                Synthetic.TargetReached -> "target"
+                Synthetic.CallLimit -> "calls"
+                Synthetic.BudgetReached -> "budget")
+
+        Err _ ->
+            "E"
+
+
+aiSynthDown : String
+aiSynthDown =
+    case Task.run (Synthetic.run (aiGen |> Synthetic.withTeacher "down" (Provider.custom (\_ -> Task.fail (Error.unavailable "down"))))) of
+        Ok _ ->
+            "ok"
+
+        Err e ->
+            aiKind e
+
+
+aiParse : String
+aiParse =
+    let
+        count text =
+            let
+                ( rows, bad ) =
+                    Synthetic.parseRows Dataset.instructionCodec text
+            in
+            String.fromInt (List.length rows) ++ "/" ++ String.fromInt bad
+    in
+    count "```json [{\"prompt\":\"a\",\"completion\":\"b\"}] ```" ++ ";" ++ count "no rows"
+"#
+        }
+        "aieval" => {
+            r#"aiEvalAnswer : List ( String, String ) -> List Provider.Message -> Task Error Provider.ChatResponse
+aiEvalAnswer rows messages =
+    case List.filter (\( q, _ ) -> List.any (\m -> m.content == q) messages) rows of
+        ( _, a ) :: _ ->
+            Task.succeed { content = a, usage = { promptTokens = 1, completionTokens = 1, totalTokens = 2 } }
+
+        [] ->
+            Task.fail (Error.unavailable "no answer")
+
+
+aiEvalSuite : Eval.Suite String
+aiEvalSuite =
+    Eval.suite "corpus"
+        (\q -> [ Provider.user q ])
+        [ { id = "a", input = "a", expect = Exact "yes", tags = [] }
+        , { id = "b", input = "b", expect = Contains "y", tags = [] }
+        , { id = "c", input = "c", expect = Matches "^n", tags = [] }
+        ]
+
+
+aiEvalGood : List ( String, String )
+aiEvalGood =
+    [ ( "a", "yes" ), ( "b", "yes" ), ( "c", "no" ) ]
+
+
+aiEvalBad : List ( String, String )
+aiEvalBad =
+    [ ( "a", "no" ), ( "b", "x" ), ( "c", "yes" ) ]
+
+
+aiEvalPartial : List ( String, String )
+aiEvalPartial =
+    [ ( "a", "yes" ), ( "b", "yes" ) ]
+
+
+aiEvalRun : List ( String, String ) -> Result Error Eval.Report
+aiEvalRun rows =
+    Task.run (Db.open "sqlite" ":memory:" |> Task.andThen (\db -> Eval.run db (Provider.custom (aiEvalAnswer rows)) aiEvalSuite))
+
+
+aiEvalCounts : List ( String, String ) -> String
+aiEvalCounts rows =
+    case aiEvalRun rows of
+        Ok r ->
+            String.fromInt r.passed ++ "/" ++ String.fromInt r.failed ++ "/" ++ String.fromInt r.errors
+
+        Err _ ->
+            "E"
+
+
+aiEvalGate : String
+aiEvalGate =
+    case aiEvalRun aiEvalGood of
+        Ok r ->
+            case Eval.check (Eval.thresholds |> Eval.withMinPassRate 1.0) r of
+                Ok p ->
+                    Eval.passedSuite p
+
+                Err _ ->
+                    "refused"
+
+        Err _ ->
+            "E"
+
+
+aiEvalGateFail : String
+aiEvalGateFail =
+    case aiEvalRun aiEvalBad of
+        Ok r ->
+            case Eval.check (Eval.thresholds |> Eval.withMinPassRate 0.5) r of
+                Ok _ ->
+                    "passed"
+
+                Err e ->
+                    Maybe.withDefault "none" (Error.domain e) ++ "/" ++ (if Error.isRetryable e then "T" else "F")
+
+        Err _ ->
+            "E"
+
+
+aiEvalCompare : String
+aiEvalCompare =
+    case ( aiEvalRun aiEvalGood, aiEvalRun aiEvalBad ) of
+        ( Ok b, Ok c ) ->
+            let
+                cmp =
+                    Eval.compare b c
+            in
+            String.fromInt cmp.regressions ++ "," ++ String.fromInt cmp.improvements ++ "," ++ String.fromInt (Math.round (cmp.mcnemarP * 1000.0))
+
+        _ ->
+            "E"
+
+
+aiEvalJunit : String
+aiEvalJunit =
+    case aiEvalRun aiEvalBad of
+        Ok r ->
+            if String.contains "tests=\"3\" failures=\"3\" errors=\"0\"" (Eval.toJunit r) then
+                "T"
+
+            else
+                "F"
+
+        Err _ ->
+            "E"
+"#
+        }
+        "airegistry" => {
+            r#"aiRegistryVersion : Registry.Version
+aiRegistryVersion =
+    { name = "support-lora"
+    , number = 3
+    , digest = ""
+    , size = 0
+    , format = "gguf"
+    , method = "lora"
+    , architecture = "qwen2"
+    , base = ""
+    , baseDigest = ""
+    , dataset = ""
+    , datasetDigest = ""
+    , metadata = []
+    , blocked = Nothing
+    , onDevice = Nothing
+    , createdAt = 0
+    }
+
+
+aiRegistryNames : String
+aiRegistryNames =
+    Registry.label aiRegistryVersion ++ " " ++ Registry.servedName aiRegistryVersion
+"#
+        }
+        "aiserve" => {
+            r#"aiServeLora : String
+aiServeLora =
+    Serve.vllmArgs "/h" (Serve.tier Serve.Vllm Serve.devBase |> Serve.withMaxAdapters 3)
+        |> List.drop 4
+        |> List.take 3
+        |> String.join " "
+"#
+        }
+        "aigooglecloud" => {
+            r#"aiGoogleAccelerators : String
+aiGoogleAccelerators =
+    [ "g2-standard-4", "g2-standard-24", "n2-standard-4" ]
+        |> List.map
+               (\m ->
+                   let
+                       ( kind, n ) =
+                           Google.accelerator m
+                   in
+                       kind ++ " " ++ String.fromInt n)
+        |> String.join ","
+
+
+aiGoogleLabels : String
+aiGoogleLabels =
+    [ "sky-run_1", "Upper", "", String.repeat 64 "a" ]
+        |> List.map
+               (\l ->
+                   if Google.validLabel l then
+                       "T"
+
+                   else
+                       "F")
+        |> String.join ""
+
+
+aiGoogleRefusals : String
+aiGoogleRefusals =
+    [ { status = 429, body = "{\"error\":{\"message\":\"Quota exceeded for aiplatform.googleapis.com/custom_model_training_nvidia_l4_gpus\"}}", request = "POST /v1/projects/p/locations/us-central1/customJobs" }
+    , { status = 400, body = "{\"error\":{\"message\":\"The zone does not have enough resources available (ZONE_RESOURCE_POOL_EXHAUSTED)\"}}", request = "POST /v1/x" }
+    , { status = 404, body = "{\"error\":{\"message\":\"not found\"}}", request = "GET /v1/x" }
+    ]
+        |> List.map
+               (\r ->
+                   Google.refused "L4" "us-central1" r
+                       |> Failure.fromError
+                       |> Maybe.map Failure.code
+                       |> Maybe.withDefault "untyped")
+        |> String.join " "
+"#
+        }
+        "aitrain" => {
+            r#"aiTrainStep : String
+aiTrainStep =
+    case Train.decodeEvent "{\"v\":1,\"type\":\"progress\",\"step\":7,\"total\":12,\"loss\":1.5}" of
+
+        Ok (Just (Train.StepProgress p)) ->
+            String.fromInt p.step ++ "/" ++ String.fromInt p.total
+
+        _ ->
+            "none"
+
+
+aiTrainLines : List String
+aiTrainLines =
+    [ "{\"v\":1,\"type\":\"hello\",\"backend\":\"fake\",\"attempt\":0,\"resumeFrom\":0,\"totalSteps\":4}"
+    , "{\"v\":1,\"type\":\"progress\",\"step\":3,\"total\":4,\"loss\":1.0}"
+    , "{\"v\":1,\"type\":\"hello\",\"backend\":\"fake\",\"attempt\":1,\"resumeFrom\":2,\"totalSteps\":4}"
+    , "{\"v\":1,\"type\":\"progress\",\"step\":4,\"total\":4,\"loss\":0.5}"
+    , "{\"v\":1,\"type\":\"done\",\"step\":4,\"trainLoss\":0.5,\"valLoss\":0.6}"
+    ]
+
+
+aiTrainFold : String
+aiTrainFold =
+    let
+        p =
+            List.foldl
+                (\l acc ->
+                    case Train.decodeEvent l of
+
+                        Ok (Just ev) ->
+                            Train.foldProgress ev acc
+
+                        _ ->
+                            acc)
+                (Train.emptyProgress "r")
+                aiTrainLines
+    in
+        Train.statusText p.status ++ " " ++ String.fromInt p.step ++ " "
+            ++ String.fromInt p.relaunches
+            ++ " "
+            ++ String.fromInt p.resumedFrom
+
+
+aiTrainRefused : String
+aiTrainRefused =
+    case Train.decodeEvent "{\"v\":2,\"type\":\"progress\",\"step\":1}" of
+
+        Err e ->
+            Maybe.withDefault "none" (Maybe.map Failure.code (Failure.fromError e))
+
+        Ok _ ->
+            "accepted"
+"#
+        }
+        "aidevice" => {
+            r#"aiDeviceOffer : Device.Offer
+aiDeviceOffer =
+    { slot = "chat"
+    , placement = Device.Auto
+    , model = { label = "m.gguf", sha256 = "aa", bytes = 400, url = "/_sky/ai/blob/aa" }
+    , adapter = Just { label = "a.gguf", sha256 = "bb", bytes = 20, url = "/_sky/ai/blob/bb" }
+    , context = 2048
+    , threads = 0
+    , gpuLayers = -1
+    , maxDownloadBytes = 1000
+    , backends = [ Device.Native, Device.WebGpu, Device.WasmCpu ]
+    , metered = False
+    , server = True
+    , here = False
+    , refused = Nothing
+    }
+
+
+aiDeviceCaps : Device.Capabilities
+aiDeviceCaps =
+    { platform = "browser"
+    , backends = [ { backend = Device.WebGpu, maxModelBytes = 1000, gpu = True }, { backend = Device.WasmCpu, maxModelBytes = 1000, gpu = False } ]
+    , unsupported = []
+    , storageAvailableBytes = 10000
+    , metered = False
+    , ready = [ "aa", "bb" ]
+    , failed = []
+    }
+
+
+aiDeviceWhere : Device.Capabilities -> String
+aiDeviceWhere caps =
+    case Device.decide caps aiDeviceOffer 10 of
+
+        Device.OnDevice b ->
+            "device:" ++ Device.backendText b
+
+        Device.NeedsDownload b n ->
+            "download:" ++ Device.backendText b ++ ":" ++ String.fromInt n
+
+        Device.OnServer _ ->
+            "server"
+
+        Device.Refused f ->
+            Failure.code f
+
+
+aiDeviceOfferPlacement : String
+aiDeviceOfferPlacement =
+    case Device.decodeOffer "{\"slot\":\"chat\",\"placement\":\"auto\",\"model\":{\"label\":\"m\",\"sha256\":\"aa\",\"bytes\":1,\"url\":\"/x\"},\"context\":2048,\"maxDownloadBytes\":10,\"backends\":[\"wasm-cpu\"],\"metered\":false,\"server\":true,\"here\":false}" of
+
+        Ok o ->
+            Device.placementText o.placement
+
+        Err _ ->
+            "unreadable"
+
+
+aiDeviceRefusal : String
+aiDeviceRefusal =
+    case Device.decide { aiDeviceCaps | ready = [], storageAvailableBytes = 100 } { aiDeviceOffer | placement = Device.DeviceOnly, server = False } 10 of
+
+        Device.Refused f ->
+            Failure.code f
+
+        _ ->
+            "not refused"
+"#
+        }
+        "aistore" => {
+            r#"aiStoreSignature : String
+aiStoreSignature =
+    (Store.signV4
+        { method = "GET"
+        , host = "examplebucket.s3.amazonaws.com"
+        , path = "/test.txt"
+        , query = ""
+        , headers =
+            [ ( "Host", "examplebucket.s3.amazonaws.com" )
+            , ( "Range", "bytes=0-9" )
+            , ( "x-amz-content-sha256", Crypto.sha256 "" )
+            , ( "x-amz-date", "20130524T000000Z" )
+            ]
+        , payloadHash = Crypto.sha256 ""
+        , region = "us-east-1"
+        , service = "s3"
+        , amzDate = "20130524T000000Z"
+        , accessKey = "AKIAIOSFODNN7EXAMPLE"
+        , secretKey = Secret.fromString (String.join "" [ "wJalrXUtnFEMI/K7MDENG/", "bPxRfiCYEXAMPLEKEY" ])
+        }
+    ).signature
+
+
+aiStoreLocation : String
+aiStoreLocation =
+    case Store.fromUrl "gs://models/reg/" of
+        Ok st ->
+            Store.location st
+
+        Err _ ->
+            "E"
+
+
+aiStoreRefused : String
+aiStoreRefused =
+    case Store.fromUrl "ftp://models/reg" of
+        Ok _ ->
+            "accepted"
+
+        Err e ->
+            Maybe.withDefault "none" (Error.domain e) ++ "/" ++ (if Error.isRetryable e then "T" else "F")
+"#
+        }
+        "ailocal" => {
+            r#"aiSpecShape : String
+aiSpecShape =
+    let
+        st =
+            Local.model Local.devModel
+                |> Local.withContext 4096
+                |> Local.withParallel 3
+                |> Local.withIdleUnload 0
+                |> Local.settings
+
+        num m =
+            case m of
+                Just n ->
+                    String.fromInt n
+
+                Nothing ->
+                    "-"
+    in
+    num st.context ++ "," ++ num st.parallel ++ "," ++ num st.idleUnloadSeconds ++ "," ++ (if st.embeddings then "T" else "F")
+
+
+aiSpecEmbeddings : String
+aiSpecEmbeddings =
+    if (Local.settings (Local.withEmbeddings (Local.model Local.devModel))).embeddings then
+        "T"
+
+    else
+        "F"
+
+
+aiUnpinnedFit : String
+aiUnpinnedFit =
+    case Task.run (Local.fit (Local.model (Local.fromReference "hf:org/repo/m.gguf"))) of
+        Ok _ ->
+            "ok"
+
+        Err _ ->
+            "E"
+
+
+aiUnpinnedFetch : String
+aiUnpinnedFetch =
+    case Task.run (Local.fetch (Local.fromReference "file:/nowhere.gguf")) of
+        Ok _ ->
+            "ok"
+
+        Err _ ->
+            "E"
+"#
+        }
         "qr" => {
             r#"tf : Bool -> String
 tf b =
@@ -5723,6 +7076,9 @@ fn import_exposing(module: &str) -> Option<&'static str> {
         // The canvas battery builds paths from the command constructors.
         "Std.Ui.Canvas" => Some("PathCommand(..)"),
         "Std.Watch" => Some("Change(..)"),
+        // The AI failure battery builds failures from their constructors.
+        "Std.Ai.Failure" => Some("Failure(..)"),
+        "Std.Ai.Eval" => Some("Expect(..)"),
         _ => None,
     }
 }

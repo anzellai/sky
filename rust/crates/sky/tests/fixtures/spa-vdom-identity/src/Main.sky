@@ -115,9 +115,7 @@ type Msg
     | FPick String
     | FStart
     | FTick
-    | DoSignIn { email : String
-, password : String
-}
+    | DoSignIn { email : String, password : String }
 
 
 init : () -> ( Model, Cmd Msg )

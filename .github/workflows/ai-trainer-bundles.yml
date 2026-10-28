@@ -1,0 +1,270 @@
+name: Std.Ai.Train trainer bundles
+
+# Builds the native trainer bundles `sky ai provision --train mlx` installs
+# (runtime-go/rt/ai_trainer_bundle.go, docs/ai/train.md): sky-trainer, Sky's
+# LoRA trainer in C11 on mlx-c (scripts/ai/trainer/), with MLX 0.32.4 and
+# mlx-c 57731b00e, compiled here from sources pinned by SHA-256, by
+# scripts/ai/trainer/build-trainer-bundle.sh:
+#
+#   darwin-arm64  the Metal backend; lib/mlx.metallib holds the kernels,
+#                 compiled ahead of time (MLX_METAL_JIT=OFF)
+#   linux-x64     the CPU backend on OpenBLAS (BLAS and LAPACK), linked
+#                 statically into libmlx.so; built on ubuntu-22.04 with GCC 13
+#                 (mlx-c needs std::format), pinned package by package in
+#                 scripts/ai/trainer/gcc13-debs.txt, so the glibc floor is
+#                 2.35 and the toolchain's libstdc++ and libgcc_s ship in lib/;
+#                 sky-trainer finds lib/ by $ORIGIN/lib
+#
+# Each archive carries the licences (MLX MIT, mlx-c MIT, OpenBLAS BSD-3 and
+# the rest under licenses/), NOTICE.txt and an SPDX SBOM. Before an archive is
+# uploaded, it is unpacked and the unpacked trainer passes test-trainer.sh on
+# the synthetic tiny model, on the CPU (the runners have no usable Metal GPU).
+# The release `sky-trainer-v<aiTrainerVersion>` holds the two archives, their
+# SBOMs and SHA256SUMS; the archives' digests are then pinned in
+# runtime-go/rt/ai_pins.go (aiTrainerAssets), which is what
+# `sky ai provision --train mlx` checks.
+#
+# Bundles are built here only, never on a contributor's machine; a
+# contributor builds the trainer with scripts/ai/trainer/build.sh.
+#
+# TRIGGERS: workflow_dispatch, a `sky-trainer-v*` tag, and a push to
+# feat/std-ai-lifecycle that touches the trainer (this file,
+# scripts/ai/trainer/**, the pins in runtime-go/rt/ai_pins.go). The MLX builds
+# take 30 to 90 minutes, so this is a per-trainer-change job, not a per-commit
+# one. PUBLISHING happens only on the tag or on a dispatch with publish: true;
+# a branch push builds and tests and never publishes. The `metal_jit` input,
+# and every branch push, add a darwin build with MLX_METAL_JIT=ON, to measure
+# its size against the ahead-of-time metallib; that build is never published.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish the bundles as the sky-trainer-v<version> GitHub release'
+        type: boolean
+        default: false
+      metal_jit:
+        description: 'Also build a darwin bundle with MLX_METAL_JIT=ON (a measurement, never published)'
+        type: boolean
+        default: false
+  push:
+    tags: ['sky-trainer-v*']
+    branches: ['feat/std-ai-lifecycle']
+    # Path filters apply to the branch push only; a tag push always runs.
+    paths:
+      - '.github/workflows/ai-trainer-bundles.yml'
+      - 'scripts/ai/trainer/**'
+      - 'runtime-go/rt/ai_pins.go'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-trainer-bundles-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            os: macos-15
+          - platform: linux-x64
+            os: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Ninja and CMake
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install ninja
+          else
+            # GCC 13: mlx-c needs C++20 std::format, which ubuntu-22.04's GCC 11
+            # lacks; staying on 22.04 keeps the glibc floor at 2.35. Its
+            # libstdc++ and libgcc_s ship in the bundle.
+            sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+            sudo apt-get update
+            # Exactly the pinned toolchain; build-trainer-bundle.sh checks
+            # each installed version against the same file.
+            grep -Ev '^(#|$)' scripts/ai/trainer/gcc13-debs.txt | xargs sudo apt-get install -y --allow-downgrades ninja-build
+            g++-13 --version | head -1
+          fi
+          cmake --version
+          jq --version
+
+      - name: The Metal toolchain
+        if: matrix.platform == 'darwin-arm64'
+        run: |
+          set -euo pipefail
+          if ! xcrun -sdk macosx metal -v > /dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun -sdk macosx metal -v
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: runtime-go/go.mod
+          cache: false
+
+      - name: Build the bundle
+        run: |
+          set -euo pipefail
+          ./scripts/ai/trainer/build-trainer-bundle.sh "${{ matrix.platform }}" \
+            --out "$RUNNER_TEMP/out" --work "$RUNNER_TEMP/work" --jobs 4 2>&1 | tee "$RUNNER_TEMP/build.log"
+          {
+            echo "### sky-trainer ${{ matrix.platform }}"
+            echo '```'
+            grep -A20 '^build-trainer-bundle: sky-trainer-' "$RUNNER_TEMP/build.log" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # What ships is the archive, so the archive is what is tested: it is
+      # checked against its .sha256, unpacked into a fresh directory, and the
+      # unpacked trainer passes the trainer's contract on the tiny model.
+      - name: The unpacked bundle passes test-trainer.sh on the CPU
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/out"
+          shasum -a 256 -c ./*.tar.gz.sha256
+          mkdir -p "$RUNNER_TEMP/unpacked"
+          tar -xzf ./sky-trainer-*-"${{ matrix.platform }}".tar.gz -C "$RUNNER_TEMP/unpacked"
+          cd "$GITHUB_WORKSPACE"
+          trainer="$(echo "$RUNNER_TEMP"/unpacked/sky-trainer-*-"${{ matrix.platform }}"/sky-trainer)"
+          "$trainer" --version
+          "$trainer" --selftest --cpu
+          ./scripts/ai/trainer/test-trainer.sh --trainer "$trainer" --device cpu --work "$RUNNER_TEMP/test"
+
+      # The archive is reproducible: the unpacked bundle, its mtimes and modes
+      # disturbed, packs again to the same bytes at the commit's time.
+      - name: The archive packs again to the same bytes
+        run: |
+          set -euo pipefail
+          epoch="$(git log -1 --format=%ct)"
+          rm -rf "$RUNNER_TEMP/repack" && mkdir -p "$RUNNER_TEMP/repack"
+          tar -xzf "$RUNNER_TEMP"/out/sky-trainer-*-"${{ matrix.platform }}".tar.gz -C "$RUNNER_TEMP/repack"
+          tree="$(echo "$RUNNER_TEMP"/repack/sky-trainer-*-"${{ matrix.platform }}")"
+          find "$tree" -exec touch {} +
+          find "$tree" -type f -exec chmod u+w,g+w {} +
+          ./scripts/ai/trainer/pack-bundle.sh "$tree" "$RUNNER_TEMP/repacked.tar.gz" "$epoch" > /dev/null
+          one="$(shasum -a 256 "$RUNNER_TEMP"/out/sky-trainer-*-"${{ matrix.platform }}".tar.gz | cut -c1-64)"
+          two="$(shasum -a 256 "$RUNNER_TEMP/repacked.tar.gz" | cut -c1-64)"
+          echo "built $one"
+          echo "again $two"
+          echo "${{ matrix.platform }}: built $one, packed again $two" >> "$GITHUB_STEP_SUMMARY"
+          [ "$one" = "$two" ] || { echo "::error::the archive is not reproducible: $one then $two" >&2; exit 1; }
+          ./scripts/ai/trainer/test-pack-bundle.sh --work "$RUNNER_TEMP/test-pack"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: sky-trainer-${{ matrix.platform }}
+          path: |
+            ${{ runner.temp }}/out/sky-trainer-*-${{ matrix.platform }}.tar.gz
+            ${{ runner.temp }}/out/sky-trainer-*-${{ matrix.platform }}.tar.gz.sha256
+            ${{ runner.temp }}/out/sky-trainer-*-${{ matrix.platform }}.sbom.spdx.json
+          if-no-files-found: error
+          retention-days: 14
+
+  # MLX_METAL_JIT=ON compiles the Metal kernels at run time, so the bundle has
+  # no large metallib. This build reports its size beside the published one's;
+  # the cost of the first step (the kernels' compile) is measured on a Mac
+  # with a GPU, by running this artifact's trainer there.
+  measure-metal-jit:
+    name: Measure MLX_METAL_JIT=ON (darwin-arm64)
+    if: inputs.metal_jit || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/'))
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Ninja and the Metal toolchain
+        run: |
+          set -euo pipefail
+          brew install ninja
+          if ! xcrun -sdk macosx metal -v > /dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+
+      - name: Build the JIT bundle
+        run: |
+          set -euo pipefail
+          ./scripts/ai/trainer/build-trainer-bundle.sh darwin-arm64 --metal-jit \
+            --out "$RUNNER_TEMP/out" --work "$RUNNER_TEMP/work" --jobs 4 2>&1 | tee "$RUNNER_TEMP/build.log"
+          {
+            echo "### sky-trainer darwin-arm64 with MLX_METAL_JIT=ON (not published)"
+            echo '```'
+            grep -A20 '^build-trainer-bundle: sky-trainer-' "$RUNNER_TEMP/build.log" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: sky-trainer-darwin-arm64-jit
+          path: ${{ runner.temp }}/out/sky-trainer-*-darwin-arm64-jit.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish the bundles
+    needs: build
+    # Never on a branch push: only the tag, or a dispatch that asks for it.
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/sky-trainer-v')) || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # The tag is the URL `sky ai provision --train mlx` downloads from
+      # (ai_pins.go aiTrainerReleaseURL); it is derived from the pin, never
+      # from the ref a dispatch ran on.
+      - name: The release tag from the pin
+        id: tag
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^const aiTrainerVersion = "\(.*\)"$/\1/p' runtime-go/rt/ai_pins.go)"
+          [ -n "$version" ] || { echo "no aiTrainerVersion in ai_pins.go" >&2; exit 1; }
+          grep -q 'releases/download/sky-trainer-v" + aiTrainerVersion' runtime-go/rt/ai_pins.go ||
+            { echo "aiTrainerReleaseURL does not download from sky-trainer-v<aiTrainerVersion>" >&2; exit 1; }
+          want="sky-trainer-v$version"
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [ "${GITHUB_REF_NAME}" != "$want" ]; then
+            echo "tag '${GITHUB_REF_NAME}' is not '$want'" >&2
+            exit 1
+          fi
+          echo "tag=$want" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          path: staging
+          pattern: sky-trainer-*
+
+      - name: Collect, check the set, and sum
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          for p in darwin-arm64 linux-x64; do
+            for f in "sky-trainer-$VERSION-$p.tar.gz" "sky-trainer-$VERSION-$p.sbom.spdx.json"; do
+              src="$(find staging -type f -name "$f" | head -1)"
+              [ -n "$src" ] && [ -s "$src" ] || { echo "::error::missing $f" >&2; exit 1; }
+              mv -f "$src" release/
+            done
+          done
+          (cd release && shasum -a 256 sky-trainer-*.tar.gz > SHA256SUMS && cat SHA256SUMS)
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.tag.outputs.tag }}" release/* \
+            --title "Std.Ai.Train trainer bundles (sky-trainer ${{ steps.tag.outputs.version }}, MLX 0.32.4)" \
+            --notes "The native trainer bundles of Std.Ai.Train. Pin each archive's SHA-256 (SHA256SUMS) in runtime-go/rt/ai_pins.go aiTrainerAssets."
