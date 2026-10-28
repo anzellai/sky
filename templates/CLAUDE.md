@@ -198,3 +198,11 @@ unset it to get the default. `Trace.totalCost` refuses two currencies: read
 `Trace.runSummary`. Give a new tool typed arguments with `Tool.typed` and a
 `Codec`, and ask for a typed answer with `Provider.chatStructured`, rather
 than parsing a string by hand.
+
+### After an upgrade to v0.29.0, prefer the O(1) and O(n) shapes
+
+`x :: xs` is now amortised O(1) and `String.uncons` / `foldl` exist, so a
+character loop or an accumulator loop is O(n). Rewrite a loop that used
+`String.slice i (i + 1)` or `++` per step to `uncons` and a reversed list of
+pieces. Use `Sky.Core.Array` where a list needed an index. Read the `Cost:`
+line in `sky doc` before choosing a collection function.

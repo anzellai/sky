@@ -304,3 +304,23 @@ func TestUnconsCsvFieldSplitter(t *testing.T) {
 		t.Fatalf("csv: %q", got)
 	}
 }
+
+func TestStringPadIsLinear(t *testing.T) {
+	if got := String_padLeft(5, '0', "42"); got != "00042" {
+		t.Fatalf("padLeft: %q", got)
+	}
+	if got := String_padRight(4, 'é', "ab"); got != "abéé" {
+		t.Fatalf("padRight: %q", got)
+	}
+	if got := String_padLeft(1, 'x', "abc"); got != "abc" {
+		t.Fatalf("padLeft shorter target: %q", got)
+	}
+	if got := String_padLeft(-3, 'x', ""); got != "" {
+		t.Fatalf("padLeft negative: %q", got)
+	}
+	// 200,000 pad characters: the old loop re-copied the string once per
+	// character (O(n²), seconds); one Repeat is microseconds.
+	if got := String_padLeft(200000, ' ', "x").(string); len(got) != 200000 {
+		t.Fatalf("padLeft 2e5: len %d", len(got))
+	}
+}

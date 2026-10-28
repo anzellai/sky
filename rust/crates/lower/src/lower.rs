@@ -6390,6 +6390,30 @@ impl<'a> Ctx<'a> {
             let largs = vec![self.widen(Self::kernel_to_kernel(k)), self.widen(d)];
             return self.kernel_call_lowered(go, largs, actual);
         }
+        // `Dict.size d` / `Dict.isEmpty d` over a typed `map[string]V`: `len`
+        // through `rt.Dict_sizeT[V]` / `Dict_isEmptyT[V]`, O(1), where the
+        // erased kernels reflect-copy a typed map first. Same lever and proof
+        // as `get` / `member` above.
+        if args.len() == 1 && (go == "rt.Dict_size" || go == "rt.Dict_isEmpty") {
+            let d = Self::kernel_to_kernel(self.lower_expr(args[0], &GoTy::Any));
+            if let GoTy::Map(kt, v) = &d.ty {
+                if **kt == GoTy::Bare(Prim::Str) {
+                    let v = (**v).clone();
+                    let (sym, ret) = if go == "rt.Dict_size" {
+                        ("rt.Dict_sizeT", GoTy::Bare(Prim::Int))
+                    } else {
+                        ("rt.Dict_isEmptyT", GoTy::Bare(Prim::Bool))
+                    };
+                    let call = GoExpr::new(
+                        GoExprKind::GenericCall(sym.to_string(), vec![v], vec![d]),
+                        ret,
+                    );
+                    return self.coerce_if_needed(call, actual);
+                }
+            }
+            let wd = self.widen(d);
+            return self.kernel_call_lowered(go, vec![wd], actual);
+        }
         // `List.take k` / `List.drop k` over a proven Int and slice: the typed
         // twins `rt.List_takeT[T]` / `List_dropT[T]` are a re-slice, O(1),
         // where the erased kernels reflect-widen the whole list and the slot

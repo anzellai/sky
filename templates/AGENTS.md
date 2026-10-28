@@ -496,6 +496,14 @@ main = println (String.fromInt (update Increment 0))
 polymorphic (`twice x = ( x, x )` works at two types in one body), and
 `Module.value.field` reads a field of another module's value.
 
+**Collection costs.** Every `List` / `Dict` / `Set` / `Array` / `String`
+function states its cost in `sky doc` (a `Cost:` line). `x :: xs` is amortised
+O(1): cons onto an accumulator and `List.reverse` once. To build a string, cons
+the pieces and `String.concat (List.reverse pieces)` once; `++` in a loop is
+O(n²). Walk a string with `String.uncons` / `String.foldl`; every String index
+counts code points. Use `Sky.Core.Array` for indexed access. A `Dict` write
+copies the map: for many entries build a list and call `Dict.fromList` once.
+
 Every non-aliased `import M exposing (..)` also binds `M.<name>` as an
 auto-qualifier. An `exposing` name that the module doesn't export is a hard
 error (`[E1011] NOT EXPOSED`).

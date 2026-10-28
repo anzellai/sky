@@ -43,3 +43,11 @@ func TestDictGetProbeTDoesNotCopyTheMap(t *testing.T) {
 		t.Fatalf("Dict_getProbeT allocated %.0f times per lookup", allocs)
 	}
 }
+
+func TestDictSizeTwinsMatchTheErasedKernels(t *testing.T) {
+	for _, d := range []map[string]int{{}, {"a": 1, "b": 2}} {
+		if Dict_sizeT(d) != Dict_size(d).(int) || Dict_isEmptyT(d) != Dict_isEmpty(d).(bool) {
+			t.Fatalf("size / isEmpty twin differs on %v", d)
+		}
+	}
+}

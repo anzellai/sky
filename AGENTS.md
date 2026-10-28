@@ -95,6 +95,18 @@ Core syntax you must get right:
   v0.27.12). `Decode.nullable` / `Decode.maybe` / `Decode.null` are as in Elm.
 - No custom operators, no `where` clauses (use `let`), no higher-kinded types (HM only).
 
+**Collection costs (v0.29.0) — every `List` / `Dict` / `Set` / `Array` /
+`String` function states its cost in a `-- Cost:` line (`sky doc`).** `x :: xs`
+is amortised O(1), so the accumulator loop `go (x :: acc) rest` plus one
+`List.reverse` is O(n); replacing a head or consing twice onto one shared tail
+copies (O(n)). To build a string, cons the pieces and call `String.concat
+(List.reverse pieces)` once (`++` in a loop is O(n²)). Walk a string with
+`String.uncons` / `foldl` / `toList`; every String index counts code points.
+Use `Sky.Core.Array` for indexed access (`get` / `set` O(log32 n), `push`
+amortised O(1)). A `Dict` write copies the map (O(n)): for many entries build
+a list and call `Dict.fromList` once. Go code reached through FFI must treat a
+list argument as read-only (`docs/ffi/boundary-philosophy.md`).
+
 **Effect boundary — the single most important rule.** Every observable side
 effect returns `Task Error a`. Pure code is bare `a`; fallible-pure is
 `Result e a` / `Maybe a`; effects are `Task Error a`. Never use `String` as an

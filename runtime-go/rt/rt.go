@@ -5524,6 +5524,11 @@ func Dict_getProbeT[V any](key any, d map[string]V) SkyMaybe[V] {
 	return Just[V](v)
 }
 
+// Dict_sizeT / Dict_isEmptyT — `Dict.size` / `Dict.isEmpty` over a typed
+// map: `len`, O(1), where the erased kernels copy a typed map first.
+func Dict_sizeT[V any](d map[string]V) int     { return len(d) }
+func Dict_isEmptyT[V any](d map[string]V) bool { return len(d) == 0 }
+
 func Dict_memberProbeT[V any](key any, d map[string]V) bool {
 	_, ok := d[dictProbeKeyT(d, key)]
 	return ok
@@ -8594,24 +8599,24 @@ func padChar(ch any) string {
 	}
 }
 
-func String_padLeft(n any, ch any, s any) any {
-	str := fmt.Sprintf("%v", s)
-	pad := padChar(ch)
-	target := AsInt(n)
-	for runeCount(str) < target {
-		str = pad + str
+// padCount is how many pad characters bring str to target runes. The
+// loop this replaces recounted and re-copied the string once per pad
+// character: O(target²).
+func padCount(str string, target int) int {
+	if k := target - utf8.RuneCountInString(str); k > 0 {
+		return k
 	}
-	return str
+	return 0
+}
+
+func String_padLeft(n any, ch any, s any) any {
+	str := skyStr(s)
+	return strings.Repeat(padChar(ch), padCount(str, AsInt(n))) + str
 }
 
 func String_padRight(n any, ch any, s any) any {
-	str := fmt.Sprintf("%v", s)
-	pad := padChar(ch)
-	target := AsInt(n)
-	for runeCount(str) < target {
-		str = str + pad
-	}
-	return str
+	str := skyStr(s)
+	return str + strings.Repeat(padChar(ch), padCount(str, AsInt(n)))
 }
 
 func String_left(n any, s any) any {

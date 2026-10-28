@@ -66,6 +66,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   it, the same rule as `insertAtCursor`, with the same errors. A Sky.Spa
   client capability: `Err Unavailable` on Sky.Live, a server, a CLI or a TUI.
 
+- **Every collection function states its cost.** Each exported function of
+  `Sky.Core.List`, `Dict`, `Set`, `Array` and `String` has a `-- Cost:` line
+  in its doc comment, so `sky doc` shows it, including what stays O(n) (a
+  `Dict` write copies the map; `List.append` copies both lists). A test
+  (`rust/crates/project/tests/collection_cost_lines.rs`) fails when a new
+  export has none. `Dict.size` and `Dict.isEmpty` on a typed dict are now
+  O(1) (`rt.Dict_sizeT` / `Dict_isEmptyT`).
+
 - **`Sky.Core.Array`: Elm's persistent array.** `empty`, `initialize`,
   `repeat`, `fromList`, `isEmpty`, `length`, `get`, `set`, `push`, `toList`,
   `toIndexedList`, `map`, `indexedMap`, `foldl`, `foldr`, `filter`, `append`
@@ -149,6 +157,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   name (`Maybe.map2`, `Schema.unique`), or narrow one `exposing` list.
 
 ### Fixed
+
+- **`String.padLeft` and `String.padRight` are O(n).** They added one pad
+  character per loop step and recounted the string each time: O(n²) in the
+  target width (a 200,000-character pad took seconds). They now count once and
+  add the padding in one step.
 
 - **`Regex.find` finds an empty match.** `Regex.find "x*" "abc"` was `Nothing`
   because an empty matched text was read as "no match"; it is `Just ""`, as

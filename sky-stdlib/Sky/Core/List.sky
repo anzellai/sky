@@ -71,12 +71,16 @@ import Sky.Ffi as Ffi
 
 -- ─── List-building ops (O(n) Go kernels) ───────────────────────────
 -- | `map fn list` — apply `fn` to each element.
+--
+-- Cost: O(n).
 map : (a -> b) -> List a -> List b
 map =
     Ffi.kernel "List_map"
 
 
 -- | `filter pred list` — keep only elements satisfying `pred`.
+--
+-- Cost: O(n).
 filter : (a -> Bool) -> List a -> List a
 filter =
     Ffi.kernel "List_filter"
@@ -84,6 +88,8 @@ filter =
 
 -- | `filterMap fn list` — map each element and keep only the `Just` results
 -- (`fn` returning `Nothing` drops the element).
+--
+-- Cost: O(n).
 filterMap : (a -> Maybe b) -> List a -> List b
 filterMap =
     Ffi.kernel "List_filterMap"
@@ -94,6 +100,8 @@ filterMap =
 -- tuple of comparables, a closed record of comparables, or a custom type whose
 -- constructors hold only comparables (ordered by constructor declaration
 -- order, then payload).
+--
+-- Cost: O(n log n); a stable sort into a new list.
 sort : List comparable -> List comparable
 sort =
     Ffi.kernel "List_sort"
@@ -101,6 +109,8 @@ sort =
 
 -- | `sortBy keyFn list` — stable sort by the key `keyFn elem`, which must be
 -- comparable (see `sort`).
+--
+-- Cost: O(n log n); a stable sort into a new list.
 sortBy : (a -> comparable) -> List a -> List a
 sortBy =
     Ffi.kernel "List_sortBy"
@@ -109,12 +119,16 @@ sortBy =
 -- | `sortWith cmp list` — stable sort by a custom comparator. `cmp a b`
 -- returns a negative `Int` when `a` precedes `b`, positive when it follows,
 -- `0` when equal (same contract as `Basics.compare` rendered to an `Int`).
+--
+-- Cost: O(n log n); a stable sort into a new list.
 sortWith : (a -> a -> Int) -> List a -> List a
 sortWith =
     Ffi.kernel "List_sortWith"
 
 
 -- | `foldr fn acc list` — right fold: `fn a0 (fn a1 (… (fn aN acc)))`.
+--
+-- Cost: O(n).
 foldr : (a -> b -> b) -> b -> List a -> b
 foldr =
     Ffi.kernel "List_foldr"
@@ -122,6 +136,8 @@ foldr =
 
 -- | `concatMap fn list` — map each element to a list and flatten
 -- (left-to-right).
+--
+-- Cost: O(n + total length of the results).
 concatMap : (a -> List b) -> List a -> List b
 concatMap =
     Ffi.kernel "List_concatMap"
@@ -129,12 +145,16 @@ concatMap =
 
 -- | `indexedMap fn list` — apply `fn` to each zero-based `(index, element)`
 -- pair.
+--
+-- Cost: O(n).
 indexedMap : (Int -> a -> b) -> List a -> List b
 indexedMap =
     Ffi.kernel "List_indexedMap"
 
 
 -- | `reverse list` — the list in reverse order.
+--
+-- Cost: O(n).
 reverse : List a -> List a
 reverse =
     Ffi.kernel "List_reverse"
@@ -142,6 +162,8 @@ reverse =
 
 -- | `take n list` — first `n` elements (or fewer when `list` is shorter).
 -- `take 0` and `take <negative>` return `[]`.
+--
+-- Cost: O(1) on a typed list (a re-slice); O(n) when the list reaches it erased.
 take : Int -> List a -> List a
 take =
     Ffi.kernel "List_take"
@@ -149,24 +171,32 @@ take =
 
 -- | `drop n list` — `list` without its first `n` elements. `drop 0` and
 -- `drop <negative>` return `list`; `drop n` for `n >= length` returns `[]`.
+--
+-- Cost: O(1) on a typed list (a re-slice); O(n) when the list reaches it erased.
 drop : Int -> List a -> List a
 drop =
     Ffi.kernel "List_drop"
 
 
 -- | `append xs ys` — concatenate two lists.
+--
+-- Cost: O(length a + length b). The typed `a ++ b` operator is O(length a) when `b` was built by cons.
 append : List a -> List a -> List a
 append =
     Ffi.kernel "List_append"
 
 
 -- | `concat lists` — flatten a list of lists.
+--
+-- Cost: O(total length).
 concat : List (List a) -> List a
 concat =
     Ffi.kernel "List_concat"
 
 
 -- | `range lo hi` — `[lo, lo + 1, …, hi]` (inclusive). `lo > hi` gives `[]`.
+--
+-- Cost: O(n) in the length of the range.
 range : Int -> Int -> List Int
 range =
     Ffi.kernel "List_range"
@@ -176,12 +206,16 @@ range =
 -- gives `[]`.
 --
 --     List.repeat 3 "a" == [ "a", "a", "a" ]
+--
+-- Cost: O(n).
 repeat : Int -> a -> List a
 repeat =
     Ffi.kernel "List_repeat"
 
 
 -- | `zip xs ys` — pair-wise zip, truncated to the shorter list's length.
+--
+-- Cost: O(min (length a) (length b)).
 zip : List a -> List b -> List ( a, b )
 zip =
     Ffi.kernel "List_zip"
@@ -226,6 +260,8 @@ unique =
 
 -- ─── Scalar-accumulating / O(1) ops (pure Sky, auto-TCO'd) ──────────
 -- | `any pred list` — True iff `pred` holds for at least one element.
+--
+-- Cost: O(n), stops at the first match.
 any : (a -> Bool) -> List a -> Bool
 any pred list =
     case list of
@@ -241,6 +277,7 @@ any pred list =
                 any pred rest
 
 
+-- Cost: O(n), stops at the first failure.
 all pred list =
     case list of
 
@@ -255,6 +292,7 @@ all pred list =
                 False
 
 
+-- Cost: O(n), stops at the first match.
 find pred list =
     case list of
 
@@ -277,6 +315,8 @@ find pred list =
 -- (`fn : t4 -> t1 -> t14` against `acc : t1`) — the recursive occurrence does
 -- not feed its own result type back into the accumulator — so the declared
 -- `b -> b` is the only place the two are identified.
+--
+-- Cost: O(n).
 foldl : (a -> b -> b) -> b -> List a -> b
 foldl fn acc list =
     case list of
@@ -289,17 +329,22 @@ foldl fn acc list =
 
 
 -- | `isEmpty list` — True iff the list has no elements.
+--
+-- Cost: O(1).
 isEmpty : List a -> Bool
 isEmpty =
     Ffi.kernel "List_isEmpty"
 
 
 -- | `length list` — number of elements (O(1) on the slice representation).
+--
+-- Cost: O(1).
 length : List a -> Int
 length =
     Ffi.kernel "List_length"
 
 
+-- Cost: O(1).
 head list =
     case list of
 
@@ -310,6 +355,7 @@ head list =
             Just x
 
 
+-- Cost: O(1); the tail shares the list's memory.
 tail list =
     case list of
 
@@ -329,6 +375,7 @@ cons x list =
     x :: list
 
 
+-- Cost: O(n).
 member x list =
     case list of
 

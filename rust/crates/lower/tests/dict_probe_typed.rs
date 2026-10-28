@@ -26,7 +26,8 @@ fn func_debug(src: &str, name: &str) -> String {
 const SRC: &str = "module Main exposing (main)\n\n\
                    look : Int -> Dict Int String -> Maybe String\nlook k d =\n    Dict.get k d\n\n\
                    has : String -> Dict String Int -> Bool\nhas k d =\n    Dict.member k d\n\n\
-                   main =\n    ( look 1 Dict.empty, has \"a\" Dict.empty )\n";
+                   count : Dict String Int -> ( Int, Bool )\ncount d =\n    ( Dict.size d, Dict.isEmpty d )\n\n\
+                   main =\n    ( look 1 Dict.empty, has \"a\" Dict.empty, count Dict.empty )\n";
 
 #[test]
 fn a_typed_get_uses_the_probe_twin() {
@@ -41,4 +42,13 @@ fn a_typed_member_uses_the_probe_twin() {
     let f = func_debug(SRC, "Main_has");
     assert!(f.contains("rt.Dict_memberProbeT"), "{f}");
     assert!(!f.contains("Coerce"), "{f}");
+}
+
+#[test]
+fn a_typed_size_and_is_empty_read_the_length() {
+    let f = func_debug(SRC, "Main_count");
+    assert!(
+        f.contains("rt.Dict_sizeT") && f.contains("rt.Dict_isEmptyT"),
+        "{f}"
+    );
 }

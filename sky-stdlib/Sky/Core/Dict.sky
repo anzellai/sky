@@ -59,6 +59,8 @@ import Sky.Ffi as Ffi
 
 -- ─── Construction ──────────────────────────────────────────────────
 -- | The empty dictionary.
+--
+-- Cost: O(1).
 empty : Dict k v
 empty =
     Ffi.kernel "Dict_empty"
@@ -66,24 +68,32 @@ empty =
 
 -- ─── Cardinality / queries ─────────────────────────────────────────
 -- | `True` when the dictionary contains no entries.
+--
+-- Cost: O(1) on a typed dict; O(n) when the dict reaches it erased.
 isEmpty : Dict k v -> Bool
 isEmpty =
     Ffi.kernel "Dict_isEmpty"
 
 
 -- | Number of key/value pairs.
+--
+-- Cost: O(1) on a typed dict; O(n) when the dict reaches it erased.
 size : Dict k v -> Int
 size =
     Ffi.kernel "Dict_size"
 
 
 -- | `member k d` — `True` iff `k` is bound in `d`.
+--
+-- Cost: O(1) on a typed dict; O(n) when the dict reaches it erased.
 member : k -> Dict k v -> Bool
 member =
     Ffi.kernel "Dict_member"
 
 
 -- | `get k d` — look up `k`; `Nothing` if absent.
+--
+-- Cost: O(1) on a typed dict; O(n) when the dict reaches it erased (the kernel copies it first).
 get : k -> Dict k v -> Maybe v
 get =
     Ffi.kernel "Dict_get"
@@ -91,12 +101,16 @@ get =
 
 -- ─── Mutation (returns new Dict) ───────────────────────────────────
 -- | `insert k v d` — bind `k → v`, replacing any prior value.
+--
+-- Cost: O(n): the map is copied. To add many entries, build a list and call `fromList` once (O(n)).
 insert : k -> v -> Dict k v -> Dict k v
 insert =
     Ffi.kernel "Dict_insert"
 
 
 -- | `remove k d` — drop `k`'s binding; no-op if absent.
+--
+-- Cost: O(n): the map is copied.
 remove : k -> Dict k v -> Dict k v
 remove =
     Ffi.kernel "Dict_remove"
@@ -104,12 +118,16 @@ remove =
 
 -- ─── Conversion ────────────────────────────────────────────────────
 -- | All keys in the dictionary, in ascending key order.
+--
+-- Cost: O(n log n): the keys are sorted on every call.
 keys : Dict k v -> List k
 keys =
     Ffi.kernel "Dict_keys"
 
 
 -- | All values in the dictionary, in ascending order of their KEY.
+--
+-- Cost: O(n log n): the keys are sorted on every call.
 values : Dict k v -> List v
 values =
     Ffi.kernel "Dict_values"
@@ -123,6 +141,8 @@ values =
 -- `Dict Int v`, and `Char.toCode` on the keys of a `Dict Char v`,
 -- both work. See the key-type note at the top of this module for the
 -- two shapes that do not round-trip.
+--
+-- Cost: O(n log n): the keys are sorted on every call.
 toList : Dict k v -> List ( k, v )
 toList =
     Ffi.kernel "Dict_toList"
@@ -130,6 +150,8 @@ toList =
 
 -- | `fromList pairs` — build a dictionary from a list of tuples.
 -- Later pairs overwrite earlier ones with the same key.
+--
+-- Cost: O(n).
 fromList : List ( k, v ) -> Dict k v
 fromList =
     Ffi.kernel "Dict_fromList"
@@ -139,6 +161,8 @@ fromList =
 -- | `map fn d` — apply `fn k v` to every entry, building a new
 -- dictionary with the transformed values. The keys are unchanged;
 -- `fn` receives each one as its Sky type.
+--
+-- Cost: O(n log n): the keys are sorted on every call.
 map : (k -> v -> w) -> Dict k v -> Dict k w
 map =
     Ffi.kernel "Dict_map"
@@ -146,6 +170,8 @@ map =
 
 -- | `foldl fn acc d` — accumulate over every entry, in ascending key
 -- order. `fn` receives each key as its Sky type.
+--
+-- Cost: O(n log n): the keys are sorted on every call.
 foldl : (k -> v -> a -> a) -> a -> Dict k v -> a
 foldl =
     Ffi.kernel "Dict_foldl"
@@ -153,6 +179,8 @@ foldl =
 
 -- | `union a b` — merge two dictionaries. `a`'s bindings win on
 -- key collision.
+--
+-- Cost: O(n + m).
 union : Dict k v -> Dict k v -> Dict k v
 union =
     Ffi.kernel "Dict_union"
