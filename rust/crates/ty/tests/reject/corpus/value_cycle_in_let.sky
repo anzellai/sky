@@ -14,13 +14,10 @@ import Std.Log exposing (println)
 compute : Int -> Int
 compute n =
     let
-        total =
-            add n
-
-        add k =
-            total + k
+        total = add n
+        add k = total + k
     in
-    total
+        total
 
 
 main =

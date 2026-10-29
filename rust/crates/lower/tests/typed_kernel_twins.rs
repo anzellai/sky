@@ -148,10 +148,11 @@ fn a_db_column_read_narrows_nothing() {
 }
 
 const STR_SRC: &str = "module Main exposing (main)\n\n\
-                       import Sky.Core.Regex as Regex\n\n\
+                       import Sky.Core.Regex as Regex exposing (Regex)\n\n\
                        size : String -> Int\nsize s =\n    String.length s\n\n\
                        tidy : String -> String\ntidy s =\n    String.replace \"a\" \"b\" (String.trim s)\n\n\
-                       digits : String -> Bool\ndigits s =\n    Regex.match \"^[0-9]+$\" s\n\n\
+                       number : Regex\nnumber =\n    Regex.fromString \"^[0-9]+$\" |> Result.withDefault Regex.never\n\n\
+                       digits : String -> Bool\ndigits s =\n    Regex.contains number s\n\n\
                        main =\n    ( size \"x\", tidy \" a \", digits \"12\" )\n";
 
 #[test]
@@ -160,7 +161,7 @@ fn length_trim_replace_and_match_use_their_twins() {
         ("Main_size", "rt.String_lengthT"),
         ("Main_tidy", "rt.String_replaceT"),
         ("Main_tidy", "rt.String_trimT"),
-        ("Main_digits", "rt.Regex_matchT"),
+        ("Main_digits", "rt.Regex_containsT"),
     ] {
         let body = func_debug(STR_SRC, f);
         assert!(body.contains(sym), "{sym}: {body}");

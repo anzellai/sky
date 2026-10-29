@@ -70,6 +70,8 @@ pub fn is_nullary_kernel_value(module: &str, func: &str) -> bool {
             // starts from the real empty map, not an uncalled `func() any`.
             | ("Config", "default")
             | ("Math", "pi" | "e" | "phi" | "sqrt2" | "inf" | "nan")
+            // `Regex.never : Regex` (v0.29.0), `func Regex_never() any`.
+            | ("Regex", "never")
     )
 }
 
@@ -580,7 +582,10 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Encoding", "urlDecode", "rt.Encoding_urlDecode"),
     ("Encoding", "hexEncode", "rt.Encoding_hexEncode"),
     ("Encoding", "hexDecode", "rt.Encoding_hexDecode"),
-    ("Regex", "match", "rt.Regex_match"),
+    ("Regex", "fromString", "rt.Regex_fromString"),
+    ("Regex", "never", "rt.Regex_never"),
+    ("Regex", "contains", "rt.Regex_contains"),
+    ("Regex", "match", "rt.Regex_contains"),
     ("Regex", "find", "rt.Regex_find"),
     ("Regex", "findAll", "rt.Regex_findAll"),
     ("Regex", "findMatch", "rt.Regex_findMatch"),

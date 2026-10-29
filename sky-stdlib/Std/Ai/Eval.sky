@@ -116,7 +116,7 @@ import Sky.Core.String as String
 import Sky.Core.Maybe as Maybe exposing (Maybe(..))
 import Sky.Core.Result as Result
 import Sky.Core.Dict exposing (Dict)
-import Sky.Core.Regex as Regex
+import Sky.Core.Regex as Regex exposing (Regex)
 import Sky.Core.Crypto as Crypto
 import Sky.Core.Time as Time
 import Sky.Core.Json.Encode as JsonE
@@ -154,7 +154,9 @@ type alias Case input =
 --
 --   * `Exact s`: the answer, with surrounding white space removed, is `s`.
 --   * `Contains s`: the answer contains `s` (case sensitive).
---   * `Matches re`: the answer matches the RE2 regular expression `re`.
+--   * `Matches re`: the answer matches the RE2 regular expression `re`. A
+--     pattern that is not valid RE2 fails the case, and the reason names the
+--     RE2 error.
 --   * `JsonShape shape`: the answer is JSON of the codec's shape
 --     (`Codec.shape myCodec`): a record's every field is present with its
 --     column type, and a `Maybe` field may be `null`.
@@ -966,10 +968,21 @@ scorePure expect out =
 
             Matches re ->
                 ( "regex"
-                , verdict
-                      (Regex.match re out.content)
-                      ("the answer matches " ++ re)
-                      ("the answer does not match " ++ re)
+                , case Regex.fromString re of
+
+                      Ok compiled ->
+                          verdict
+                              (Regex.contains compiled out.content)
+                              ("the answer matches " ++ re)
+                              ("the answer does not match " ++ re)
+
+                      Err e ->
+                          verdict
+                              False
+                              ""
+                              ("the pattern " ++ re
+                                  ++ " is not a valid regular expression: "
+                                  ++ Error.toString e)
                 )
 
             JsonShape shape ->
@@ -1090,7 +1103,7 @@ jsonScore shape answer =
 -- is not stripped: an answer with prose around its JSON is not JSON.
 unfence : String -> String
 unfence answer =
-    Regex.replace "^\\s*```(?:json)?\\s*([\\s\\S]*?)\\s*```\\s*$" "$1" answer
+    Regex.replace fenceRe_ "$1" answer
 
 
 shapeDecoder : Codec.Shape -> JsonD.Decoder ()
@@ -1324,8 +1337,8 @@ judgeIdentity (Judge j) =
 readJudge : Int -> String -> Score
 readJudge passAt reply =
     let
-        labelled = Regex.find "SCORE:\\s*[1-5]" (String.toUpper reply)
-        bare = Regex.find "^\\s*[1-5](\\D|$)" reply
+        labelled = Regex.find scoreLabelRe_ (String.toUpper reply)
+        bare = Regex.find scoreBareRe_ reply
         found =
             case labelled of
 
@@ -1586,7 +1599,7 @@ pairPrompt version rubric question a b =
 -- "A", "B", "TIE", or "" for an answer without a verdict.
 readWinner : String -> String
 readWinner reply =
-    case Regex.find "WINNER:\\s*(TIE|A|B)" (String.toUpper reply) of
+    case Regex.find winnerRe_ (String.toUpper reply) of
 
         Just found ->
             if String.endsWith "TIE" found then
@@ -2966,3 +2979,26 @@ intToFloat n =
 
         Nothing ->
             0.0
+
+
+-- The judge and fence patterns, compiled once (each literal is checked when
+-- Sky compiles).
+fenceRe_ : Regex
+fenceRe_ =
+    Regex.fromString """^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$"""
+        |> Result.withDefault Regex.never
+
+
+scoreLabelRe_ : Regex
+scoreLabelRe_ =
+    Regex.fromString """SCORE:\s*[1-5]""" |> Result.withDefault Regex.never
+
+
+scoreBareRe_ : Regex
+scoreBareRe_ =
+    Regex.fromString """^\s*[1-5](\D|$)""" |> Result.withDefault Regex.never
+
+
+winnerRe_ : Regex
+winnerRe_ =
+    Regex.fromString """WINNER:\s*(TIE|A|B)""" |> Result.withDefault Regex.never

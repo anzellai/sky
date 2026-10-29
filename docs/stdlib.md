@@ -190,18 +190,41 @@ The `Tuple` qualifier needs no `import`, as in Elm. An import that binds `Tuple`
 ### `Regex` — pattern matching
 
 ```elm
-import Sky.Core.Regex as Regex
+import Sky.Core.Regex as Regex exposing (Regex)
 
-match : Bool
-match = Regex.match "^[a-z]+$" "hello"   -- True
+lowerWord : Regex
+lowerWord =
+    Regex.fromString "^[a-z]+$" |> Result.withDefault Regex.never
+
+ok : Bool
+ok = Regex.contains lowerWord "hello"   -- True
 ```
 
-`match`, `find`, `findAll`, `findMatch`, `findAllMatches`, `replace`, `replaceWith`, `split`.
+A `Regex` is compiled once by `fromString : String -> Result Error Regex`, the
+only constructor, and every other function takes the compiled value:
+`contains` (also `match`), `find`, `findAll`, `findMatch`, `findAllMatches`,
+`replace`, `replaceWith`, `split`. `never` matches nothing. An invalid pattern
+is the `Err` of `fromString` (kind `InvalidInput`) with the RE2 error text. A
+literal pattern is checked when the program compiles: an invalid one is
+`[E2014]` ([E2014-invalid-regex.md](errors/E2014-invalid-regex.md)). A pattern
+built at run time (an interpolation, a variable) is checked by the Result.
+(v0.29.0; before, every function took the pattern String and an invalid one
+matched nothing. See [the migration guide](migration/v0.29.md#regex-takes-a-compiled-regex).)
 
-`findMatch` / `findAllMatches` return a `Match` (Elm's shape): `{ match : String, index : Int, number : Int, submatches : List (Maybe String) }`. `index` counts characters (the unit of `String.slice`), never bytes; `number` is 1-based; a capture group that did not take part is `Nothing`. `replaceWith pattern f s` replaces each match with `f match`. All are pure (client and server) and linear in the input (RE2). An invalid pattern gives no match (`False`, `Nothing`, `[]`, the input unchanged), not an error. (v0.29.0)
+Write a pattern as a triple-quoted string: a backslash is kept as it is
+(`"""\d+"""` is `\d+`, where a plain string needs `"\\d+"`). In a triple-quoted
+string `\\` is one backslash (`"""\\d"""` is `\d` too), and `{{` opens an
+interpolation: write a literal `{{` as `\{{`. A single `{` (as in `\d{2,4}`) is
+kept.
+
+`findMatch` / `findAllMatches` return a `Match` (Elm's shape): `{ match : String, index : Int, number : Int, submatches : List (Maybe String) }`. `index` counts characters (the unit of `String.slice`), never bytes; `number` is 1-based; a capture group that did not take part is `Nothing`. `replaceWith re f s` replaces each match with `f match`. All are pure (client and server) and linear in the input (RE2). A `Regex` is not data: it cannot be encoded with a `Codec` or kept in a session.
 
 ```elm
-Regex.findMatch "(\\w+) = \"([^\"]*)\"" "video = \"abc\"" |> Maybe.map .submatches
+assignment : Regex
+assignment =
+    Regex.fromString "(\\w+) = \"([^\"]*)\"" |> Result.withDefault Regex.never
+
+Regex.findMatch assignment "video = \"abc\"" |> Maybe.map .submatches
 -- Just [ Just "video", Just "abc" ]
 ```
 

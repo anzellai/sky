@@ -113,7 +113,7 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Maybe as Maybe exposing (Maybe(..))
 import Sky.Core.Result as Result
-import Sky.Core.Regex as Regex
+import Sky.Core.Regex as Regex exposing (Regex)
 import Sky.Core.Dict exposing (Dict)
 import Sky.Core.Time as Time
 import Sky.Core.Json.Encode as JsonE
@@ -354,7 +354,7 @@ servedName v =
 
 lowerWord : String -> Bool
 lowerWord s =
-    Regex.match "^[a-z][a-z0-9_-]*$" s
+    Regex.contains lowerWordRe_ s
 
 
 validName : String -> Result Error String
@@ -477,7 +477,7 @@ baseDigestOf ref =
         case String.split "#sha256=" text of
 
             [ _, hex ] ->
-                if Regex.match "^[0-9a-f]{64}$" hex then
+                if Regex.contains sha256HexRe_ hex then
                     Ok hex
 
                 else
@@ -557,7 +557,7 @@ registerWith (Registry r) name adapter lin0 companions =
                                            ++ stored
                                }
                        in
-                           if not (Regex.match "^[0-9a-f]{64}$" lin.datasetDigest) then
+                           if not (Regex.contains sha256HexRe_ lin.datasetDigest) then
                                Task.fail
                                    (invalidSetting
                                        "datasetDigest"
@@ -2649,3 +2649,15 @@ storeResolver st =
                                                                                             man.gguf
                                                                                             "gguf"))))
     }
+
+
+-- The patterns above, compiled once (each literal is checked when Sky
+-- compiles, so `Regex.never` is never the value).
+lowerWordRe_ : Regex
+lowerWordRe_ =
+    Regex.fromString "^[a-z][a-z0-9_-]*$" |> Result.withDefault Regex.never
+
+
+sha256HexRe_ : Regex
+sha256HexRe_ =
+    Regex.fromString "^[0-9a-f]{64}$" |> Result.withDefault Regex.never

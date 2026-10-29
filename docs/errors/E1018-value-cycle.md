@@ -7,7 +7,7 @@ A value is defined in terms of itself, directly or through other values.
 
 6 | a : Int
 7 | a =
-  | ^ `a` reads itself: a -> b -> a
+  | ^
 
 The value `a` is defined in terms of itself through a -> b -> a. A value is
 computed once, the first time it is read, so a cycle of values never finishes.

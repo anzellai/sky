@@ -93,6 +93,7 @@ pub const DEFECT: Axis = Axis::new(
         "task_vs_pure",
         "dict_composite_key",
         "value_cycle",
+        "regex_invalid_literal",
     ],
 );
 
@@ -442,6 +443,26 @@ fn defect(defect: &str, rimport: &str) -> (Side, Side, &'static str) {
                 Side::new(decls("2"), probe),
                 "E1018",
             )
+        }
+
+        // ---- an invalid literal regex (v0.29.0) ----------------------------
+        // A literal `Regex.fromString` pattern is checked when the program
+        // compiles. The twin closes the group.
+        "regex_invalid_literal" => {
+            let probe =
+                "String.fromInt (List.length (Regex.findAll digits \"a1 b22\") + knownName)";
+            let decls = |p: &str| {
+                format!(
+                    "digits : Regex\ndigits =\n    Regex.fromString \"{p}\"\n        \
+                     |> Result.withDefault Regex.never\n"
+                )
+            };
+            let import = "import Sky.Core.Regex as Regex exposing (Regex)".to_string();
+            let mut ill = Side::new(decls("([0-9]+"), probe);
+            ill.extra_imports.push(import.clone());
+            let mut well = Side::new(decls("([0-9]+)"), probe);
+            well.extra_imports.push(import);
+            (ill, well, "E2014")
         }
 
         other => panic!("reject_matrix: unknown defect {other:?}"),

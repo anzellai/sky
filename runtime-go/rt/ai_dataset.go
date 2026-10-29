@@ -265,9 +265,8 @@ func Ai_datasetSha256File(pathArg any) any {
 }
 
 // Ai_datasetCheckPattern : String -> Result Error () — whether a user's
-// Scrub.pattern compiles. Sky.Core.Regex treats a pattern that does not
-// compile as one that matches nothing, which for a scrubber would be a rule
-// that silently scrubs nothing.
+// Scrub.pattern compiles, as an error that names the scrubber (a rule that
+// silently scrubbed nothing would leak the values it was written for).
 func Ai_datasetCheckPattern(patternArg any) any {
 	if _, err := regexp.Compile(AsString(patternArg)); err != nil {
 		return Err[any, any](ErrInvalidInput("Std.Ai.Dataset.Scrub.pattern: the pattern does not compile: " + err.Error()))

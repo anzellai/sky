@@ -2,6 +2,7 @@ package rt
 
 import (
 	"reflect"
+	"regexp"
 	"testing"
 )
 
@@ -243,7 +244,7 @@ func TestListMap2ErasedFlatCallback(t *testing.T) {
 }
 
 func TestRegexMatchesPositionsAndGroups(t *testing.T) {
-	ms, _ := regexMatches(`(\d+)(px)?`, "£4 ─ 10px", -1)
+	ms, _ := regexMatches(regexp.MustCompile(`(\d+)(px)?`), "£4 ─ 10px", -1)
 	if len(ms) != 2 {
 		t.Fatalf("matches: %v", ms)
 	}
@@ -254,10 +255,10 @@ func TestRegexMatchesPositionsAndGroups(t *testing.T) {
 	if AsString(subs[0].(SkyMaybe[any]).JustValue) != "4" || subs[1].(SkyMaybe[any]).Tag == 0 {
 		t.Errorf("groups: %#v", subs)
 	}
-	if got := AsString(Regex_replaceWith(`\d+`, func(m any) any { return "[" + AsString(m.(map[string]any)["match"]) + "]" }, "£4 ─ 10")); got != "£[4] ─ [10]" {
+	if got := AsString(Regex_replaceWith(regexForTest(`\d+`), func(m any) any { return "[" + AsString(m.(map[string]any)["match"]) + "]" }, "£4 ─ 10")); got != "£[4] ─ [10]" {
 		t.Errorf("replaceWith: %q", got)
 	}
-	if got := Regex_findT(`x*`, "abc"); got.Tag != 0 || got.JustValue != "" {
+	if got := Regex_findT(regexForTest(`x*`), "abc"); got.Tag != 0 || got.JustValue != "" {
 		t.Errorf("find empty match: %#v", got)
 	}
 }

@@ -8,7 +8,7 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe
-import Sky.Core.Regex as Regex
+import Sky.Core.Regex as Regex exposing (Regex)
 import Sky.Core.String as String
 import Sky.Core.Task as Task
 import System
@@ -19,6 +19,12 @@ import Std.Log exposing (println)
 sample : String
 sample =
     "word föö, 漢字x "
+
+
+-- A word: a run of anything but a space, compiled once.
+wordRe : Regex
+wordRe =
+    Regex.fromString "[^ ]+" |> Result.withDefault Regex.never
 
 
 flush : List Char -> List String -> List String
@@ -53,7 +59,7 @@ work mode n =
         text = String.repeat (n // 16) sample
         tokens =
             if mode == "regex" then
-                Regex.findAll "[^ ]+" text
+                Regex.findAll wordRe text
 
             else
                 tokenise text [] []

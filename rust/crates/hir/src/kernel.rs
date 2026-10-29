@@ -759,6 +759,9 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
     (
         "Regex",
         &[
+            "fromString",
+            "never",
+            "contains",
             "match",
             "find",
             "findAll",

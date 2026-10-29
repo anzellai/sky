@@ -6,7 +6,7 @@ module Compute exposing (..)
 --   * Math.abs / floor / ceil / round / sqrt / log / sin / cos / pi
 --   * Crypto.sha256 / hmacSha256
 --   * Decimal.* (parse, add, mul, percent, round)
---   * Regex.match / find / findAll / replace
+--   * Regex.fromString / contains / findAll / replace
 --   * String.toUpper / replace / slice
 --   * Dict (typed Int key + String key) and Set
 
@@ -17,10 +17,43 @@ import Sky.Core.Maybe as Maybe
 import Sky.Core.Result as Result
 import Sky.Core.Math as Math
 import Sky.Core.Crypto as Crypto
-import Sky.Core.Regex as Regex
+import Sky.Core.Regex as Regex exposing (Regex)
 import Sky.Core.Dict as Dict
 import Std.Decimal as Dec exposing (Decimal)
 import State exposing (Transaction, EnrichedRow, Bucket(..))
+
+
+-- Each pattern is compiled once. A literal pattern is checked when the
+-- program compiles, so `Regex.never` is never the value here.
+transferRe : Regex
+transferRe =
+    Regex.fromString "^transfer" |> Result.withDefault Regex.never
+
+
+refundRe : Regex
+refundRe =
+    Regex.fromString "refund" |> Result.withDefault Regex.never
+
+
+payRe : Regex
+payRe =
+    Regex.fromString "(salary|bonus|payroll)" |> Result.withDefault Regex.never
+
+
+depositRe : Regex
+depositRe =
+    Regex.fromString "(deposit|interest|dividend)"
+        |> Result.withDefault Regex.never
+
+
+wordRe : Regex
+wordRe =
+    Regex.fromString "[a-z]+" |> Result.withDefault Regex.never
+
+
+dashRe : Regex
+dashRe =
+    Regex.fromString "-" |> Result.withDefault Regex.never
 
 
 classify : Transaction -> Bucket
@@ -30,16 +63,16 @@ classify tx =
         amountStr = tx.amount
         isPositive = not (String.startsWith "-" amountStr)
     in
-        if Regex.match "^transfer" cat then
+        if Regex.contains transferRe cat then
             Transfer
 
-        else if Regex.match "refund" cat then
+        else if Regex.contains refundRe cat then
             Refund
 
-        else if Regex.match "(salary|bonus|payroll)" cat then
+        else if Regex.contains payRe cat then
             Income
 
-        else if isPositive && Regex.match "(deposit|interest|dividend)" cat then
+        else if isPositive && Regex.contains depositRe cat then
             Income
 
         else if not isPositive then
@@ -149,8 +182,9 @@ tagsFor : Transaction -> List String
 tagsFor tx =
     let
         haystack = String.toLower tx.category
-        wordTokens = Regex.findAll "[a-z]+" haystack
-        sanitised = List.map (\tok -> Regex.replace "-" "_" tok) wordTokens
+        wordTokens = Regex.findAll wordRe haystack
+        sanitised =
+            List.map (\tok -> Regex.replace dashRe "_" tok) wordTokens
     in
         sanitised
 

@@ -1,18 +1,41 @@
--- | Sky.Core.Regex — RE2 regex helpers (Layer 3 Sky source).
+-- | Sky.Core.Regex — RE2 regular expressions.
 --
--- Patterns use Go's RE2 syntax (no backreferences, linear-time
--- matching).  Pre-Layer-3 these helpers had no kernel-registry HM
--- signatures, so call sites were any-typed; the Sky-source layer
--- adds proper typing on top of the existing runtime kernels.
+-- A `Regex` is compiled once, by `fromString`, and every other function
+-- takes the compiled value:
 --
--- Every function is pure, so it runs anywhere: on the server, in a CLI
--- and in a Sky.Spa client. Matching is linear in the length of the
--- input (RE2). An INVALID pattern is not an error here: `match` is
--- False, `find` / `findMatch` are Nothing, `findAll` /
--- `findAllMatches` are [], `replace` / `replaceWith` return the input
--- unchanged and `split` returns [ input ].
+--     import Sky.Core.Regex as Regex exposing (Regex)
+--
+--     words : Regex
+--     words =
+--         Regex.fromString """\b\w+\b"""
+--             |> Result.withDefault Regex.never
+--
+--     count : String -> Int
+--     count s =
+--         List.length (Regex.findAll words s)
+--
+-- Patterns use Go's RE2 syntax: no backreferences and no look-around, and
+-- matching is linear in the length of the input. An invalid pattern is the
+-- `Err` of `fromString`, with the RE2 error text. When the pattern is a
+-- literal (a plain string, or a triple-quoted string with no `{{ }}`), it is
+-- also checked when the program compiles: an invalid literal is `[E2014]`.
+--
+-- Write a pattern as a triple-quoted string: it keeps a backslash as it is, so
+-- `"""\d+"""` is the pattern `\d+` (in a plain string the same pattern is
+-- `"\\d+"`). In a triple-quoted string `\\` is one backslash (`"""\\d"""` is
+-- `\d` too) and `{{` opens an interpolation, so a pattern that must match a
+-- literal `{{` writes it `\{{`. A single `{` (as in `\d{2,4}`) is kept.
+--
+-- Every function is pure, so it runs anywhere: on the server, in a CLI and in
+-- a Sky.Spa client. A Regex is not data: it cannot be stored in a session or
+-- encoded with a Codec. Keep the pattern, or the compiled value at the top
+-- level, instead.
 module Sky.Core.Regex exposing
-    ( Match
+    ( Regex
+    , Match
+    , fromString
+    , never
+    , contains
     , match
     , find
     , findAll
@@ -24,6 +47,12 @@ module Sky.Core.Regex exposing
     )
 
 import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+-- | A compiled regular expression. Opaque: made only by `fromString` (or
+-- `never`).
+type Regex
+    = Regex__Internal Int
 
 -- | One match of a pattern (Elm's `Regex.Match`).
 --
@@ -42,69 +71,95 @@ type alias Match =
     }
 
 
--- | `match pattern s` — does the pattern match anywhere in `s`?
-match : String -> String -> Bool
+-- | `fromString pattern` — compile an RE2 pattern. An invalid pattern is
+-- `Err` (kind `InvalidInput`) carrying the RE2 error text, for example
+-- `Regex.fromString: error parsing regexp: missing closing ): ...`. A
+-- literal pattern is checked at compile time too (`[E2014]`).
+-- Cost: O(length of the pattern).
+fromString : String -> Result Error Regex
+fromString =
+    Ffi.kernel "Regex_fromString"
+
+
+-- | A Regex that matches nothing: the usual default for a pattern that did
+-- not compile (`Regex.fromString p |> Result.withDefault Regex.never`).
+never : Regex
+never =
+    Ffi.kernel "Regex_never"
+
+
+-- | `contains re s` — does the Regex match anywhere in `s`?
+contains : Regex -> String -> Bool
+contains =
+    Ffi.kernel "Regex_contains"
+
+
+-- | `match re s` — the same as `contains` (its name before v0.29.0).
+match : Regex -> String -> Bool
 match =
-    Ffi.kernel "Regex_match"
+    Ffi.kernel "Regex_contains"
 
 
--- | `find pattern s` — first match (Nothing if no match). An empty
--- match is a match: `find "x*" "abc" == Just ""`.
-find : String -> String -> Maybe String
+-- | `find re s` — the first match (Nothing if no match). An empty match is
+-- a match: with `re` compiled from `"x*"`, `find re "abc" == Just ""`.
+find : Regex -> String -> Maybe String
 find =
     Ffi.kernel "Regex_find"
 
 
--- | `findAll pattern s` — every non-overlapping match in order.
-findAll : String -> String -> List String
+-- | `findAll re s` — every non-overlapping match in order.
+findAll : Regex -> String -> List String
 findAll =
     Ffi.kernel "Regex_findAll"
 
 
--- | `findMatch pattern s` — the first match with its position and its
--- capture groups, or Nothing. Cost: O(n) in the length of `s`.
+-- | `findMatch re s` — the first match with its position and its capture
+-- groups, or Nothing. Cost: O(n) in the length of `s`.
 --
---     Regex.findMatch "(\\w+) = \"([^\"]*)\"" "video = \"abc\""
---         == Just { match = "video = \"abc\"", index = 0, number = 1, submatches = [ Just "video", Just "abc" ] }
-findMatch : String -> String -> Maybe Match
+--     -- re = Regex.fromString """(\w+)=(\d+)""" |> Result.withDefault Regex.never
+--     Regex.findMatch re "x a=12"
+--         == Just { match = "a=12", index = 2, number = 1, submatches = [ Just "a", Just "12" ] }
+findMatch : Regex -> String -> Maybe Match
 findMatch =
     Ffi.kernel "Regex_findMatch"
 
 
--- | `findAllMatches pattern s` — every non-overlapping match, left to
--- right, each with its position and capture groups. Cost: O(n) in the
--- length of `s`, plus one record per match.
+-- | `findAllMatches re s` — every non-overlapping match, left to right,
+-- each with its position and capture groups. Cost: O(n) in the length of
+-- `s`, plus one record per match.
 --
---     Regex.findAllMatches "(\\d+)(px)?" "£4 ─ 10px"
+--     -- re = Regex.fromString """(\d+)(px)?""" |> Result.withDefault Regex.never
+--     Regex.findAllMatches re "£4 ─ 10px"
 --         |> List.map .index
 --         == [ 1, 5 ]
-findAllMatches : String -> String -> List Match
+findAllMatches : Regex -> String -> List Match
 findAllMatches =
     Ffi.kernel "Regex_findAllMatches"
 
 
--- | `replace pattern replacement s` — replace every match with
--- `replacement`.  `replacement` may reference capture groups via
--- `$1`, `$2`, etc. (RE2 substitution syntax).
-replace : String -> String -> String -> String
+-- | `replace re replacement s` — replace every match with `replacement`,
+-- which may name capture groups as `$1`, `$2`, `${name}` (RE2 substitution
+-- syntax).
+replace : Regex -> String -> String -> String
 replace =
     Ffi.kernel "Regex_replace"
 
 
--- | `replaceWith pattern f s` — replace every match with `f match`,
--- where `f` sees the whole `Match` (its text, position and groups).
--- Cost: O(n) in the length of `s`, plus one call of `f` per match.
+-- | `replaceWith re f s` — replace every match with `f match`, where `f` sees
+-- the whole `Match` (its text, position and groups). Cost: O(n) in the
+-- length of `s`, plus one call of `f` per match.
 --
---     Regex.replaceWith "\\{\\{(\\w+)\\}\\}"
+--     -- re = Regex.fromString """\{\{(\w+)\}\}""" |> Result.withDefault Regex.never
+--     Regex.replaceWith re
 --         (\m -> String.toUpper (Maybe.withDefault "" (List.head (List.filterMap identity m.submatches))))
 --         "Hi {{name}}"
 --         == "Hi NAME"
-replaceWith : String -> (Match -> String) -> String -> String
+replaceWith : Regex -> (Match -> String) -> String -> String
 replaceWith =
     Ffi.kernel "Regex_replaceWith"
 
 
--- | `split pattern s` — split on every match.
-split : String -> String -> List String
+-- | `split re s` — split on every match.
+split : Regex -> String -> List String
 split =
     Ffi.kernel "Regex_split"

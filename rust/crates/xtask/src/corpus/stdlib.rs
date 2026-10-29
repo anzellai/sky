@@ -5407,74 +5407,83 @@ fn csv_battery(edge: &str) -> Vec<Check> {
 fn regex_battery(edge: &str) -> Vec<Check> {
     match edge {
         "nominal" => vec![
-            bo(&["Regex.match"], "Regex.match \"^a\" \"abc\"", true),
-            bo(&["Regex.match"], "Regex.match \"c$\" \"abc\"", true),
-            ms(&["Regex.find"], "Regex.find \"b+\" \"abbbc\"", Some("bbb")),
-            ln(&["Regex.findAll"], "Regex.findAll \"a\" \"aba\"", 2),
+            bo(&["Regex.contains", "Regex.fromString"], "Regex.contains (Regex.fromString \"^a\" |> Result.withDefault Regex.never) \"abc\"", true),
+            bo(&["Regex.match"], "Regex.match (Regex.fromString \"c$\" |> Result.withDefault Regex.never) \"abc\"", true),
+            ms(&["Regex.find"], "Regex.find (Regex.fromString \"b+\" |> Result.withDefault Regex.never) \"abbbc\"", Some("bbb")),
+            ln(&["Regex.findAll"], "Regex.findAll (Regex.fromString \"a\" |> Result.withDefault Regex.never) \"aba\"", 2),
             ls(
                 &["Regex.findAll"],
-                "Regex.findAll \"[0-9]+\" \"a1b22c\"",
+                "Regex.findAll (Regex.fromString \"[0-9]+\" |> Result.withDefault Regex.never) \"a1b22c\"",
                 "1,22",
             ),
             s(
                 &["Regex.replace"],
-                "Regex.replace \"a\" \"X\" \"aba\"",
+                "Regex.replace (Regex.fromString \"a\" |> Result.withDefault Regex.never) \"X\" \"aba\"",
                 "XbX",
             ),
             // `$1` group expansion in the replacement.
             s(
                 &["Regex.replace"],
-                "Regex.replace \"(a)(b)\" \"$2$1\" \"ab\"",
+                "Regex.replace (Regex.fromString \"(a)(b)\" |> Result.withDefault Regex.never) \"$2$1\" \"ab\"",
                 "ba",
             ),
-            ls(&["Regex.split"], "Regex.split \",\" \"a,b,c\"", "a,b,c"),
-            ln(&["Regex.split"], "Regex.split \"[,;]\" \"a,b;c\"", 3),
+            ls(&["Regex.split"], "Regex.split (Regex.fromString \",\" |> Result.withDefault Regex.never) \"a,b,c\"", "a,b,c"),
+            ln(&["Regex.split"], "Regex.split (Regex.fromString \"[,;]\" |> Result.withDefault Regex.never) \"a,b;c\"", 3),
             // `find` returns the WHOLE match span, never a capture group.
             ms(
                 &["Regex.find"],
-                "Regex.find \"(foo)(bar)\" \"xxfoobaryy\"",
+                "Regex.find (Regex.fromString \"(foo)(bar)\" |> Result.withDefault Regex.never) \"xxfoobaryy\"",
                 Some("foobar"),
             ),
         ],
         "empty" => vec![
-            ln(&["Regex.findAll"], "Regex.findAll \"a\" \"\"", 0),
-            ms(&["Regex.find"], "Regex.find \"a\" \"\"", None),
-            bo(&["Regex.match"], "Regex.match \"a\" \"\"", false),
+            ln(&["Regex.findAll"], "Regex.findAll (Regex.fromString \"a\" |> Result.withDefault Regex.never) \"\"", 0),
+            ms(&["Regex.find"], "Regex.find (Regex.fromString \"a\" |> Result.withDefault Regex.never) \"\"", None),
+            bo(&["Regex.contains"], "Regex.contains (Regex.fromString \"a\" |> Result.withDefault Regex.never) \"\"", false),
             // Splitting an empty string yields one empty piece.
-            ln(&["Regex.split"], "Regex.split \",\" \"\"", 1),
-            s(&["Regex.replace"], "Regex.replace \"a\" \"X\" \"\"", ""),
+            ln(&["Regex.split"], "Regex.split (Regex.fromString \",\" |> Result.withDefault Regex.never) \"\"", 1),
+            s(&["Regex.replace"], "Regex.replace (Regex.fromString \"a\" |> Result.withDefault Regex.never) \"X\" \"\"", ""),
         ],
         "boundary" => vec![
             // A match at the very start / end produces an empty leading /
             // trailing element.
-            ln(&["Regex.split"], "Regex.split \",\" \",a\"", 2),
-            ln(&["Regex.split"], "Regex.split \",\" \"a,\"", 2),
+            ln(&["Regex.split"], "Regex.split (Regex.fromString \",\" |> Result.withDefault Regex.never) \",a\"", 2),
+            ln(&["Regex.split"], "Regex.split (Regex.fromString \",\" |> Result.withDefault Regex.never) \"a,\"", 2),
             // No match leaves the subject whole.
-            ln(&["Regex.split"], "Regex.split \"z\" \"abc\"", 1),
+            ln(&["Regex.split"], "Regex.split (Regex.fromString \"z\" |> Result.withDefault Regex.never) \"abc\"", 1),
             s(
                 &["Regex.replace"],
-                "Regex.replace \"z\" \"X\" \"abc\"",
+                "Regex.replace (Regex.fromString \"z\" |> Result.withDefault Regex.never) \"X\" \"abc\"",
                 "abc",
             ),
-            ls(&["Regex.findAll"], "Regex.findAll \"a*\" \"b\"", ","),
+            ls(&["Regex.findAll"], "Regex.findAll (Regex.fromString \"a*\" |> Result.withDefault Regex.never) \"b\"", ","),
         ],
         "unicode" => vec![
-            bo(&["Regex.match"], "Regex.match \"世\" \"世界\"", true),
+            bo(&["Regex.contains"], "Regex.contains (Regex.fromString \"世\" |> Result.withDefault Regex.never) \"世界\"", true),
             ms(
                 &["Regex.find"],
-                "Regex.find \"[世界]+\" \"a世界b\"",
+                "Regex.find (Regex.fromString \"[世界]+\" |> Result.withDefault Regex.never) \"a世界b\"",
                 Some("世界"),
             ),
             s(
                 &["Regex.replace"],
-                "Regex.replace \"世\" \"X\" \"世界\"",
+                "Regex.replace (Regex.fromString \"世\" |> Result.withDefault Regex.never) \"X\" \"世界\"",
                 "X界",
             ),
         ],
         "failure" => vec![
-            bo(&["Regex.match"], "Regex.match \"z\" \"abc\"", false),
-            ms(&["Regex.find"], "Regex.find \"z\" \"abc\"", None),
-            ln(&["Regex.findAll"], "Regex.findAll \"z\" \"abc\"", 0),
+            bo(&["Regex.contains"], "Regex.contains (Regex.fromString \"z\" |> Result.withDefault Regex.never) \"abc\"", false),
+            ms(&["Regex.find"], "Regex.find (Regex.fromString \"z\" |> Result.withDefault Regex.never) \"abc\"", None),
+            ln(&["Regex.findAll"], "Regex.findAll (Regex.fromString \"z\" |> Result.withDefault Regex.never) \"abc\"", 0),
+            // v0.29.0: a pattern that does not compile is an `Err` (built at
+            // run time here, so the compile-time check `[E2014]` does not see
+            // it), and `Regex.never` matches nothing.
+            rs(
+                &["Regex.fromString"],
+                "Result.map (\\_ -> \"ok\") (Regex.fromString (String.fromList [ '(' ]))",
+                None,
+            ),
+            bo(&["Regex.never"], "Regex.contains Regex.never \"abc\"", false),
         ],
         _ => vec![],
     }

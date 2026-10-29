@@ -17,17 +17,17 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 818
+n_min = 827
 n_iso = 61
 n_iso_ceiling = 62
-n_iso_static = 155
+n_iso_static = 164
 n_iso_static_ceiling = 300
-class_v = 817
+class_v = 826
 class_d = 1
 family_S = 199
 family_L = 465
 family_E = 10
-family_R = 144
+family_R = 153
 family_F = 0
 
 [[case]]
@@ -3629,7 +3629,7 @@ witness    = "value"
 axes       = { edge = "failure", surface = "regex" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "F|N|0"
+stdout     = "F|N|0|E|F"
 
 [[case]]
 id         = "stdlib_edge/nominal-json"
@@ -10677,6 +10677,132 @@ axes       = { defect = "value_cycle", rimport = "exposing_list", rposition = "i
 coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
 expect     = "reject"
 code       = "E1018"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
 twin       = true
 
 [[case]]

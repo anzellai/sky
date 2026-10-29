@@ -23,7 +23,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe exposing (Maybe(..))
-import Sky.Core.Regex as Regex
+import Sky.Core.Regex as Regex exposing (Regex)
 import Std.Ai.Provider as Provider exposing (Message)
 
 type Os
@@ -155,7 +155,7 @@ clean answer =
                (\l -> not (String.isEmpty l) && not (String.startsWith "```" l))
         |> List.head
         |> Maybe.withDefault ""
-        |> Regex.replace "^\\$\\s+" ""
+        |> Regex.replace promptRe ""
         |> stripTicks
 
 
@@ -166,3 +166,10 @@ stripTicks s =
 
     else
         s
+
+
+-- A `$ ` shell prompt at the start of the answer, compiled once (the literal
+-- is checked when the program compiles).
+promptRe : Regex
+promptRe =
+    Regex.fromString """^\$\s+""" |> Result.withDefault Regex.never

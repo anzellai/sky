@@ -1297,7 +1297,7 @@ pub(crate) fn encodable_failure(shown: &str) -> String {
          `App.withDurable`, a `Std.Db.Table`, `Jobs.define`/`enqueue` or `Auth.signToken`. \
          Since v0.27.0 these need a type that round-trips as data: no function, `Secret`, \
          crypto key or state, or runtime handle (`Process`, `Watcher`, `Sync.Ref`, `Mutex`, \
-         `Queue`, `WebSocket`, `WebSocketServer`, `StreamId`, `StreamWriter`, `Cache`) anywhere \
+         `Queue`, `WebSocket`, `WebSocketServer`, `StreamId`, `StreamWriter`, `Cache`, `Regex`) anywhere \
          inside, in either direction (a handle decoded from JSON would be forged). Fix: keep \
          that value out of the stored type, for example in a separate field of the model that \
          is not persisted, or store the data it is made from. See {ENCODABLE_ANCHOR}"

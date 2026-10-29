@@ -167,6 +167,27 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 The full list, with old and new code, is `docs/migration/v0.29.md`.
 
+- **`Sky.Core.Regex` takes a compiled `Regex` (breaking).** A new opaque type
+  `Regex`; `Regex.fromString : String -> Result Error Regex` is the only
+  constructor, and `contains` (also `match`), `find`, `findAll`, `findMatch`,
+  `findAllMatches`, `replace`, `replaceWith` and `split` take the compiled
+  value instead of the pattern String. `Regex.never` matches nothing. Before,
+  each call compiled the pattern again and an invalid pattern silently matched
+  nothing; now it is an `Err` (kind `InvalidInput`) with the RE2 error text. A
+  LITERAL pattern (a plain string, or a triple-quoted string with no `{{ }}`)
+  is checked when the program compiles: an invalid one is the new `[E2014]`
+  INVALID REGEX, with source context and Go's own error text (the check is a
+  port of Go's `regexp/syntax` validation, compared with Go on a table and
+  4,000 generated patterns). Old code fails to compile with a type error whose
+  hint names the change. A `Regex` cannot be encoded (`Codec.auto` refuses
+  it). Every in-repo use (the `Std.Ai` modules, the examples, the tests) is
+  migrated. See `docs/migration/v0.29.md#regex-takes-a-compiled-regex` and
+  `docs/errors/E2014-invalid-regex.md`. The two new names collide with
+  existing ones under `exposing (..)`: `contains` with `Sky.Core.String`, and
+  `fromString` with `Sky.Core.Bytes`, `Sky.Core.Secret`, `Std.Decimal` and
+  `Std.Money`. A bare use under both `exposing (..)` imports is `[E1012]`;
+  qualify it (`Regex.contains`).
+
 - **Sky.Live sessions that hold a Dict start fresh once.** A Dict is now a
   persistent value with a new stored form. With a SQLite, PostgreSQL or Redis
   session store, a session saved by v0.28 whose model holds a `Dict` cannot be read by

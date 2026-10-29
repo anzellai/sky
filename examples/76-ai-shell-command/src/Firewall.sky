@@ -18,7 +18,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe exposing (Maybe(..))
-import Sky.Core.Regex as Regex
+import Sky.Core.Regex as Regex exposing (Regex)
 import Std.Ai.Policy as Policy exposing (Decision(..), Risk(..))
 
 -- | What a command does, as far as the firewall can tell.
@@ -154,29 +154,38 @@ writeOf kind =
 
 
 -- ── Whole-command rules ─────────────────────────────────────────────
+-- Each rule's pattern, compiled once.
+forbiddenRules : List ( Regex, String )
+forbiddenRules =
+    [ ( compiled (Regex.fromString "(^|[;&|(\\s])(sudo|su|doas|pkexec)(\\s|$)")
+      , "it runs as another user"
+      )
+    , ( compiled
+            (Regex.fromString
+                "(curl|wget|fetch)\\b[^|]*\\|\\s*(sudo\\s+)?(sh|bash|zsh|dash|ksh|fish|python3?|perl|ruby|node)\\b")
+      , "it pipes a download into an interpreter"
+      )
+    , ( compiled (Regex.fromString "\\|\\s*(sh|bash|zsh|dash|ksh|fish)(\\s|$)")
+      , "it pipes text into a shell"
+      )
+    , ( compiled (Regex.fromString ":\\(\\)\\s*\\{"), "it is a fork bomb" )
+    , ( compiled (Regex.fromString ">\\s*/dev/(sd|disk|nvme|hd)")
+      , "it writes to a disk device"
+      )
+    , ( compiled
+            (Regex.fromString
+                "(^|[;&|\\s])(mkfs[.a-z0-9]*|dd|shred|fdisk|diskutil|parted|shutdown|reboot|halt|poweroff|kill|killall|pkill|launchctl|systemctl|service|crontab|chown|chgrp|passwd|useradd|userdel|visudo|mount|umount|iptables|nvram|csrutil|spctl)(\\s|$)")
+      , "it changes the system"
+      )
+    ]
+
+
 forbiddenReason : String -> Maybe String
 forbiddenReason command =
-    let
-        rules =
-            [ ( "(^|[;&|(\\s])(sudo|su|doas|pkexec)(\\s|$)"
-              , "it runs as another user"
-              )
-            , ( "(curl|wget|fetch)\\b[^|]*\\|\\s*(sudo\\s+)?(sh|bash|zsh|dash|ksh|fish|python3?|perl|ruby|node)\\b"
-              , "it pipes a download into an interpreter"
-              )
-            , ( "\\|\\s*(sh|bash|zsh|dash|ksh|fish)(\\s|$)"
-              , "it pipes text into a shell"
-              )
-            , ( ":\\(\\)\\s*\\{", "it is a fork bomb" )
-            , ( ">\\s*/dev/(sd|disk|nvme|hd)", "it writes to a disk device" )
-            , ( "(^|[;&|\\s])(mkfs[.a-z0-9]*|dd|shred|fdisk|diskutil|parted|shutdown|reboot|halt|poweroff|kill|killall|pkill|launchctl|systemctl|service|crontab|chown|chgrp|passwd|useradd|userdel|visudo|mount|umount|iptables|nvram|csrutil|spctl)(\\s|$)"
-              , "it changes the system"
-              )
-            ]
-    in
-        rules |> List.filter (\( pattern, _ ) -> Regex.match pattern command)
-            |> List.map (\( _, reason ) -> reason)
-            |> List.head
+    forbiddenRules
+        |> List.filter (\( pattern, _ ) -> Regex.contains pattern command)
+        |> List.map (\( _, reason ) -> reason)
+        |> List.head
 
 
 -- A path outside the folder: an absolute path other than /dev/null, the home
@@ -211,8 +220,8 @@ redirects : String -> Bool
 redirects command =
     let
         harmless =
-            command |> Regex.replace "[0-9]?>>?\\s*/dev/null" " "
-                |> Regex.replace "[0-9]?>&[0-9]" " "
+            command |> Regex.replace devNullRe " "
+                |> Regex.replace streamRedirectRe " "
     in
         String.contains ">" (stripQuoted harmless)
 
@@ -220,7 +229,8 @@ redirects command =
 -- Text inside quotes is an argument, never an operator.
 stripQuoted : String -> String
 stripQuoted s =
-    s |> Regex.replace "'[^']*'" "''" |> Regex.replace "\"[^\"]*\"" "\"\""
+    s |> Regex.replace singleQuotedRe "''"
+        |> Regex.replace doubleQuotedRe "\"\""
 
 
 unquote : String -> String
@@ -232,7 +242,7 @@ unquote word =
 -- The simple commands of a pipeline or a list (`|`, `&&`, `||`, `;`).
 segments : String -> List (List String)
 segments command =
-    stripQuoted command |> Regex.split "\\|\\||&&|;|\\||\\(|\\)"
+    stripQuoted command |> Regex.split separatorRe
         |> List.map (\s -> String.words s)
         |> List.filter (\ws -> not (List.isEmpty ws))
         |> List.map (\ws -> List.filter (\w -> not (isAssignment w)) ws)
@@ -241,7 +251,7 @@ segments command =
 
 isAssignment : String -> Bool
 isAssignment word =
-    Regex.match "^[A-Za-z_][A-Za-z0-9_]*=" word
+    Regex.contains assignmentRe word
 
 
 segmentKind : List String -> Kind
@@ -497,3 +507,40 @@ writers =
     , "open"
     , "xdg-open"
     ]
+
+
+-- A pattern compiled once. Each literal is checked when the program compiles,
+-- so `Regex.never` is never the value.
+compiled : Result Error Regex -> Regex
+compiled r =
+    Result.withDefault Regex.never r
+
+
+devNullRe : Regex
+devNullRe =
+    compiled (Regex.fromString """[0-9]?>>?\s*/dev/null""")
+
+
+streamRedirectRe : Regex
+streamRedirectRe =
+    compiled (Regex.fromString "[0-9]?>&[0-9]")
+
+
+singleQuotedRe : Regex
+singleQuotedRe =
+    compiled (Regex.fromString "'[^']*'")
+
+
+doubleQuotedRe : Regex
+doubleQuotedRe =
+    compiled (Regex.fromString "\"[^\"]*\"")
+
+
+separatorRe : Regex
+separatorRe =
+    compiled (Regex.fromString """\|\||&&|;|\||\(|\)""")
+
+
+assignmentRe : Regex
+assignmentRe =
+    compiled (Regex.fromString "^[A-Za-z_][A-Za-z0-9_]*=")

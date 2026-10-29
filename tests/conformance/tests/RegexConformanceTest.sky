@@ -1,104 +1,185 @@
 module RegexConformanceTest exposing (main, tests)
 
 -- Behavioral conformance for Sky.Core.Regex — the RE2 regex surface
--- (match / find / findAll / replace / split). These assertions drive the
--- SKY-SOURCE API through the compiled binary, NOT the Go kernel directly.
--- Inputs are ADVERSARIAL: anchored vs unanchored matches, capture-group
--- shapes, empty split fields at boundaries, Unicode character classes,
--- INVALID patterns (must degrade gracefully — never a process-aborting
--- panic), and a pattern that catastrophically backtracks under a PCRE
--- engine (RE2 is linear-time — it must return quickly + correctly).
+-- (fromString / contains / find / findAll / replace / split). These
+-- assertions drive the SKY-SOURCE API through the compiled binary, NOT the
+-- Go kernel directly. Inputs are ADVERSARIAL: anchored vs unanchored
+-- matches, capture-group shapes, empty split fields at boundaries, Unicode
+-- character classes, INVALID patterns (an Err, never a panic and never a
+-- silent "no match"), the triple-quoted spellings of a pattern, and a pattern
+-- that catastrophically backtracks under a PCRE engine (RE2 is linear-time —
+-- it must return quickly + correctly).
 --
--- Documented graceful-degradation contract (RE2 compile error is swallowed):
---   match   bad-pattern -> False
---   find    bad-pattern -> Nothing
---   findAll bad-pattern -> []
---   replace bad-pattern -> the input string unchanged
---   split   bad-pattern -> [ input ]  (single-element list)
+-- Since v0.29.0 a Regex is compiled once by `Regex.fromString`, the only
+-- constructor. A LITERAL pattern is checked when the program compiles
+-- ([E2014]); the invalid patterns below reach `fromString` through `compile`,
+-- a function, so they are checked at run time, through the Result.
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Regex as Regex
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
+import Sky.Core.Regex as Regex exposing (Regex)
 import Sky.Core.String as String
 import Sky.Test as Test exposing (Test)
+
+
+-- A pattern built at run time: not a literal at the `fromString` call, so it
+-- is checked by the Result, not by the compiler.
+compile : String -> Result Error Regex
+compile p =
+    Regex.fromString p
+
+
+-- A pattern the tests expect to compile.
+re : String -> Regex
+re p =
+    compile p |> Result.withDefault Regex.never
+
+
+-- The RE2 error text of a pattern that does not compile, or "" when it does.
+errorText : String -> String
+errorText p =
+    case compile p of
+        Ok _ ->
+            ""
+
+        Err e ->
+            Error.toString e
+
+
+whitespace : Regex
+whitespace =
+    Regex.fromString """\s+""" |> Result.withDefault Regex.never
+
+
+word : Regex
+word =
+    Regex.fromString """\b\w+\b""" |> Result.withDefault Regex.never
+
+
+year : Regex
+year =
+    Regex.fromString """\d{2,4}""" |> Result.withDefault Regex.never
+
+
+-- `\\` in a triple-quoted string is one backslash: this is `\d`.
+digitDoubled : Regex
+digitDoubled =
+    Regex.fromString """\\d""" |> Result.withDefault Regex.never
+
+
+-- A literal `{{` in a triple-quoted string is written `\{{` (a bare `{{`
+-- opens an interpolation).
+placeholder : Regex
+placeholder =
+    Regex.fromString """\{{(\w+)}}""" |> Result.withDefault Regex.never
+
+
+-- The plain-string spelling of `\s+`.
+whitespacePlain : Regex
+whitespacePlain =
+    Regex.fromString "\\s+" |> Result.withDefault Regex.never
+
+
+openParen : String
+openParen =
+    "("
 
 
 tests : List Test
 tests =
     [ -- ── Literal + anchored match ──
-      Test.test "match: ^hello$ matches exactly hello"
-        (\_ -> Test.equal True (Regex.match "^hello$" "hello"))
-    , Test.test "match: ^hello$ does NOT match 'hello world' (anchored)"
-        (\_ -> Test.equal False (Regex.match "^hello$" "hello world"))
-    , Test.test "match: unanchored 'world' matches inside 'hello world'"
-        (\_ -> Test.equal True (Regex.match "world" "hello world"))
-    , Test.test "match: pattern absent -> False"
-        (\_ -> Test.equal False (Regex.match "zzz" "hello world"))
+      Test.test "contains: ^hello$ matches exactly hello"
+        (\_ -> Test.equal True (Regex.contains (re "^hello$") "hello"))
+    , Test.test "contains: ^hello$ does NOT match 'hello world' (anchored)"
+        (\_ -> Test.equal False (Regex.contains (re "^hello$") "hello world"))
+    , Test.test "contains: unanchored 'world' matches inside 'hello world'"
+        (\_ -> Test.equal True (Regex.contains (re "world") "hello world"))
+    , Test.test "contains: pattern absent -> False"
+        (\_ -> Test.equal False (Regex.contains (re "zzz") "hello world"))
 
       -- ── find: first match; groups don't change the returned span ──
     , Test.test "find: first run of digits -> Just \"123\""
-        (\_ -> Test.equal (Just "123") (Regex.find "[0-9]+" "abc123def456"))
+        (\_ -> Test.equal (Just "123") (Regex.find (re "[0-9]+") "abc123def456"))
     , Test.test "find: no match -> Nothing"
-        (\_ -> Test.equal Nothing (Regex.find "[0-9]+" "abcdef"))
+        (\_ -> Test.equal Nothing (Regex.find (re "[0-9]+") "abcdef"))
     , Test.test "find: capture groups still return the WHOLE match span"
-        (\_ -> Test.equal (Just "foobar") (Regex.find "(foo)(bar)" "xxfoobaryy"))
+        (\_ -> Test.equal (Just "foobar") (Regex.find (re "(foo)(bar)") "xxfoobaryy"))
 
       -- ── findAll: every non-overlapping match, in order ──
     , Test.test "findAll: three digit runs -> [\"1\",\"22\",\"333\"]"
-        (\_ -> Test.equal [ "1", "22", "333" ] (Regex.findAll "[0-9]+" "a1b22c333"))
+        (\_ -> Test.equal [ "1", "22", "333" ] (Regex.findAll (re "[0-9]+") "a1b22c333"))
     , Test.test "findAll: count of the three matches is 3"
-        (\_ -> Test.equal 3 (List.length (Regex.findAll "[0-9]+" "a1b22c333")))
+        (\_ -> Test.equal 3 (List.length (Regex.findAll (re "[0-9]+") "a1b22c333")))
     , Test.test "findAll: non-overlapping 'aa' over 'aaaa' -> 2 matches"
-        (\_ -> Test.equal [ "aa", "aa" ] (Regex.findAll "aa" "aaaa"))
+        (\_ -> Test.equal [ "aa", "aa" ] (Regex.findAll (re "aa") "aaaa"))
     , Test.test "findAll: no match -> [] (empty list)"
-        (\_ -> Test.equal 0 (List.length (Regex.findAll "z" "abc")))
+        (\_ -> Test.equal 0 (List.length (Regex.findAll (re "z") "abc")))
 
       -- ── replace: all occurrences + $-group substitution ──
     , Test.test "replace: every digit-run replaced with #"
-        (\_ -> Test.equal "a#b#c#" (Regex.replace "[0-9]+" "#" "a1b22c333"))
+        (\_ -> Test.equal "a#b#c#" (Regex.replace (re "[0-9]+") "#" "a1b22c333"))
     , Test.test "replace: $1 group substitution wraps each digit-run"
-        (\_ -> Test.equal "a<12>b<3>" (Regex.replace "([0-9]+)" "<$1>" "a12b3"))
+        (\_ -> Test.equal "a<12>b<3>" (Regex.replace (re "([0-9]+)") "<$1>" "a12b3"))
     , Test.test "replace: $2$1 swaps adjacent word chars (non-overlapping)"
-        (\_ -> Test.equal "badc" (Regex.replace "(\\w)(\\w)" "$2$1" "abcd"))
+        (\_ -> Test.equal "badc" (Regex.replace (re "(\\w)(\\w)") "$2$1" "abcd"))
     , Test.test "replace: pattern absent -> input unchanged"
-        (\_ -> Test.equal "abc" (Regex.replace "z" "#" "abc"))
+        (\_ -> Test.equal "abc" (Regex.replace (re "z") "#" "abc"))
 
       -- ── split: empty fields at boundaries ──
     , Test.test "split: interior empty field 'a,b,,c' -> 4 parts incl. \"\""
-        (\_ -> Test.equal [ "a", "b", "", "c" ] (Regex.split "," "a,b,,c"))
+        (\_ -> Test.equal [ "a", "b", "", "c" ] (Regex.split (re ",") "a,b,,c"))
     , Test.test "split: leading + trailing delimiters ',a,' -> [\"\",\"a\",\"\"]"
-        (\_ -> Test.equal [ "", "a", "" ] (Regex.split "," ",a,"))
+        (\_ -> Test.equal [ "", "a", "" ] (Regex.split (re ",") ",a,"))
     , Test.test "split: whitespace-run delimiter collapses runs"
-        (\_ -> Test.equal [ "hello", "world", "foo" ] (Regex.split "\\s+" "hello   world  foo"))
+        (\_ -> Test.equal [ "hello", "world", "foo" ] (Regex.split whitespace "hello   world  foo"))
     , Test.test "split: no delimiter -> single-element list of the whole input"
-        (\_ -> Test.equal [ "abc" ] (Regex.split "," "abc"))
+        (\_ -> Test.equal [ "abc" ] (Regex.split (re ",") "abc"))
 
       -- ── Unicode + character classes (\\d \\w \\p{L}) ──
-    , Test.test "match: \\d+ matches digits after unicode text 'café123'"
-        (\_ -> Test.equal True (Regex.match "\\d+" "café123"))
+    , Test.test "contains: \\d+ matches digits after unicode text 'café123'"
+        (\_ -> Test.equal True (Regex.contains (re "\\d+") "café123"))
     , Test.test "find: \\d+ inside 'café123' -> Just \"123\""
-        (\_ -> Test.equal (Just "123") (Regex.find "\\d+" "café123"))
-    , Test.test "match: ^\\w+$ accepts word chars + underscore"
-        (\_ -> Test.equal True (Regex.match "^\\w+$" "hello_123"))
-    , Test.test "match: \\p{L}+ matches a unicode-letter run 'café'"
-        (\_ -> Test.equal True (Regex.match "\\p{L}+" "café"))
+        (\_ -> Test.equal (Just "123") (Regex.find (re "\\d+") "café123"))
+    , Test.test "contains: ^\\w+$ accepts word chars + underscore"
+        (\_ -> Test.equal True (Regex.contains (re "^\\w+$") "hello_123"))
+    , Test.test "contains: \\p{L}+ matches a unicode-letter run 'café'"
+        (\_ -> Test.equal True (Regex.contains (re "\\p{L}+") "café"))
 
-      -- ── INVALID pattern: graceful degradation, NEVER a panic ──
-    , Test.test "match: unbalanced '(' -> False (no panic)"
-        (\_ -> Test.equal False (Regex.match "(" "x"))
-    , Test.test "find: unbalanced '(' -> Nothing (no panic)"
-        (\_ -> Test.equal Nothing (Regex.find "(" "x"))
-    , Test.test "findAll: unbalanced '[' -> [] (no panic)"
-        (\_ -> Test.equal 0 (List.length (Regex.findAll "[" "x")))
-    , Test.test "replace: invalid pattern -> input returned unchanged"
-        (\_ -> Test.equal "abc" (Regex.replace "(" "#" "abc"))
-    , Test.test "split: invalid pattern -> [ input ] single element"
-        (\_ -> Test.equal [ "abc" ] (Regex.split "(" "abc"))
+      -- ── INVALID pattern: an Err with the RE2 text, NEVER a panic ──
+    , Test.test "fromString: unbalanced '(' -> Err InvalidInput"
+        (\_ -> Test.expectErrorKind InvalidInput (compile "("))
+    , Test.test "fromString: unbalanced '(' names the RE2 error"
+        (\_ -> Test.equal True (String.contains "missing closing )" (errorText "(")))
+    , Test.test "fromString: unbalanced '[' names the RE2 error"
+        (\_ -> Test.equal True (String.contains "missing closing ]" (errorText "[")))
+    , Test.test "fromString: a backreference is not RE2 -> Err"
+        (\_ -> Test.expectErrorKind InvalidInput (compile "(a)\\1"))
+    , Test.test "fromString: an interpolated triple-quoted pattern is checked at run time"
+        (\_ -> Test.expectErrorKind InvalidInput (Regex.fromString """{{openParen}}a"""))
+
+      -- ── The spellings of a pattern (v0.29.0) ──
+    , Test.test "triple-quoted \\s+ keeps its backslash"
+        (\_ -> Test.equal [ "a", "b", "c" ] (Regex.split whitespace "a \t b\nc"))
+    , Test.test "triple-quoted \\b\\w+\\b finds each word"
+        (\_ -> Test.equal [ "one", "two", "three" ] (Regex.findAll word "one, two  three!"))
+    , Test.test "triple-quoted \\d{2,4} keeps a single brace"
+        (\_ -> Test.equal [ "1999", "12" ] (Regex.findAll year "in 1999 and 12 and 7"))
+    , Test.test "triple-quoted \\\\d is the same pattern as \\d"
+        (\_ -> Test.equal (Regex.findAll (re "\\d") "a1b22") (Regex.findAll digitDoubled "a1b22"))
+    , Test.test "triple-quoted \\{{ matches a literal {{"
+        (\_ -> Test.equal (Just "{{name}}") (Regex.find placeholder "Hi {{name}}!"))
+    , Test.test "the plain string \"\\\\s+\" is the same pattern as \"\"\"\\s+\"\"\""
+        (\_ -> Test.equal (Regex.split whitespace "a  b c") (Regex.split whitespacePlain "a  b c"))
+    , Test.test "Regex.never matches nothing"
+        (\_ -> Test.equal ( False, [ "a,b" ] ) ( Regex.contains Regex.never "", Regex.split Regex.never "a,b" ))
+    , Test.test "Regex.match is Regex.contains"
+        (\_ -> Test.equal ( True, False ) ( Regex.match (re "b") "abc", Regex.match (re "z") "abc" ))
 
       -- ── RE2 is linear-time: a PCRE-catastrophic pattern completes ──
-    , Test.test "match: (a+)+$ on 'aaaa…!' returns False fast (no backtracking blowup)"
-        (\_ -> Test.equal False (Regex.match "(a+)+$" (String.repeat 40 "a" ++ "!")))
-    , Test.test "match: (a+)+$ on all-a input returns True (still correct)"
-        (\_ -> Test.equal True (Regex.match "(a+)+$" (String.repeat 40 "a")))
+    , Test.test "contains: (a+)+$ on 'aaaa…!' returns False fast (no backtracking blowup)"
+        (\_ -> Test.equal False (Regex.contains (re "(a+)+$") (String.repeat 40 "a" ++ "!")))
+    , Test.test "contains: (a+)+$ on all-a input returns True (still correct)"
+        (\_ -> Test.equal True (Regex.contains (re "(a+)+$") (String.repeat 40 "a")))
     ]
 
 

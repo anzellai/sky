@@ -10495,7 +10495,9 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
             vec![Some(str_()), Some(str_()), Some(str_())],
             str_(),
         ),
-        ("rt.Regex_match", 2) => twin("rt.Regex_matchT", vec![Some(str_()), Some(str_())], bool_()),
+        // v0.29.0: a Regex is a compiled value (erased `any`), the subject a
+        // proven string.
+        ("rt.Regex_contains", 2) => twin("rt.Regex_containsT", vec![None, Some(str_())], bool_()),
         // v0.29.0 core helpers (runtime-go/rt/core_helpers_test.go checks
         // each against its erased kernel).
         ("rt.String_indexes", 2) => twin(
@@ -10619,7 +10621,7 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
         ),
         ("rt.Regex_replace", 3) => twin(
             "rt.Regex_replaceT",
-            vec![Some(str_()), Some(str_()), Some(str_())],
+            vec![None, Some(str_()), Some(str_())],
             str_(),
         ),
         // v0.28.0 phase 4: the kernels the Std.Ai training, store and cloud

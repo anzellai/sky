@@ -60,6 +60,13 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     // and Std.Db.Decode already export `map2` / `map3`; Elm has the same
     // set. A program that exposes List and one of them with `(..)` and uses
     // the bare name gets `[E1012]`; see the v0.29.0 CHANGELOG.
+    // v0.29.0: Regex.contains and Regex.fromString (Elm's names; a Regex is
+    // a compiled value now). String.contains, and Bytes / Secret / Decimal /
+    // Money `fromString`, already exist; Elm has the same pairs. A program that
+    // exposes Sky.Core.Regex with `(..)` beside one of them and uses the bare
+    // name gets `[E1012]`; see the v0.29.0 CHANGELOG.
+    "value contains",
+    "value fromString",
     // v0.29.0: String.foldl / String.foldr (Elm). List and Dict already
     // export `foldl` (List `foldr` too); Elm has the same set.
     "value foldl",

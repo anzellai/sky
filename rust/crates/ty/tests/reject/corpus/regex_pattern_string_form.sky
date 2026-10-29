@@ -1,0 +1,24 @@
+-- gate: reject
+-- defect: a Regex function given the pattern String (the pre-v0.29 form)
+-- rust: reject [E2001] String where a Regex is needed, with the migration hint
+--
+-- v0.29.0. Every Regex function takes a compiled Regex; the String forms are
+-- removed. The type error carries a hint naming the migration
+-- (docs/migration/v0.29.md#regex-takes-a-compiled-regex).
+module Main exposing (main)
+
+import Sky.Core.Regex as Regex
+import Std.Log exposing (println)
+
+
+isCode : String -> Bool
+isCode s =
+    Regex.contains "^[A-Z]{3}$" s
+
+
+main =
+    if isCode "ABC" then
+        println "code"
+
+    else
+        println "no"

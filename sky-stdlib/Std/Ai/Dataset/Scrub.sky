@@ -63,7 +63,7 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Maybe as Maybe exposing (Maybe(..))
 import Sky.Core.Dict as Dict exposing (Dict)
-import Sky.Core.Regex as Regex
+import Sky.Core.Regex as Regex exposing (Regex)
 import Sky.Core.Char as Char
 import Sky.Ffi as Ffi
 import Std.Ai.Provider exposing (Message)
@@ -86,8 +86,15 @@ ruleName (Rule r) =
     r.name
 
 
+-- A pattern compiled by `Regex.fromString`. Every built-in pattern is a
+-- literal, checked when Sky compiles, so `Regex.never` is never the value.
+compiled : Result Error Regex -> Regex
+compiled r =
+    Result.withDefault Regex.never r
+
+
 -- A rule that replaces every match of `re` with `token`.
-plain : String -> String -> String -> Rule
+plain : String -> String -> Regex -> Rule
 plain name token re =
     Rule
         { name = name
@@ -107,7 +114,7 @@ plain name token re =
 -- A rule that replaces the candidates `accept` keeps. `accept` returns the
 -- exact text to replace (a candidate may be trimmed), so a candidate that
 -- fails its check stays in the text.
-validated : String -> String -> String -> (String -> Maybe String) -> Rule
+validated : String -> String -> Regex -> (String -> Maybe String) -> Rule
 validated name token re accept =
     Rule
         { name = name
@@ -128,7 +135,9 @@ email =
     plain
         "email"
         "[EMAIL]"
-        "[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}"
+        (compiled
+            (Regex.fromString
+                "[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}"))
 
 
 -- | Telephone numbers, replaced with `[PHONE]`: an international number
@@ -139,7 +148,11 @@ email =
 -- a decimal number or an unformatted run of digits is not a phone number.
 phone : Rule
 phone =
-    validated "phone" "[PHONE]" "\\+?\\(?\\d[\\d ().-]{6,20}\\d" acceptPhone
+    validated
+        "phone"
+        "[PHONE]"
+        (compiled (Regex.fromString "\\+?\\(?\\d[\\d ().-]{6,20}\\d"))
+        acceptPhone
 
 
 acceptPhone : String -> Maybe String
@@ -148,15 +161,12 @@ acceptPhone candidate =
         c = String.trim candidate
         n = String.length (digitsOf c)
         shaped =
-            String.startsWith "+" c
-                || Regex.match "^\\(\\d{2,5}\\)[ .-]?\\d{3,4}[ .-]?\\d{3,4}$" c
-                || Regex.match "^\\d{3}[-. ]\\d{3}[-. ]\\d{4}$" c
-                || Regex.match "^0\\d{2,4}[ -]?\\d{3,4}[ -]?\\d{3,4}$" c
+            String.startsWith "+" c || Regex.contains phoneAreaRe_ c
+                || Regex.contains phoneNorthAmericaRe_ c
+                || Regex.contains phoneNationalRe_ c
         plusShaped =
             not (String.startsWith "+" c)
-                || Regex.match
-                       "^\\+\\d{1,3}(?:[ .-]?\\(?\\d{1,5}\\)?)(?:[ .-]?\\d{2,5}){1,5}$"
-                       c
+                || Regex.contains phoneInternationalRe_ c
     in
         if n >= 9 && n <= 15 && shaped && plusShaped then
             Just c
@@ -177,7 +187,7 @@ cardNumber =
     validated
         "card"
         "[CARD]"
-        "\\b(?:\\d[ -]?){12,18}\\d\\b"
+        (compiled (Regex.fromString "\\b(?:\\d[ -]?){12,18}\\d\\b"))
         (\c ->
             if isCardNumber c then
                 Just c
@@ -233,7 +243,7 @@ iban =
     validated
         "iban"
         "[IBAN]"
-        "\\b[A-Z]{2}\\d{2}(?: ?[A-Z0-9]){11,30}\\b"
+        (compiled (Regex.fromString "\\b[A-Z]{2}\\d{2}(?: ?[A-Z0-9]){11,30}\\b"))
         acceptIban
 
 
@@ -270,7 +280,7 @@ isIban s =
         rearranged = String.dropLeft 4 compact ++ String.left 4 compact
     in
         String.length compact >= 15 && String.length compact <= 34
-            && Regex.match "^[A-Z]{2}\\d{2}[A-Z0-9]+$" compact
+            && Regex.contains ibanShapeRe_ compact
             && mod97 rearranged == 1
 
 
@@ -300,7 +310,7 @@ usSsn =
     validated
         "ssn"
         "[SSN]"
-        "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+        (compiled (Regex.fromString "\\b\\d{3}-\\d{2}-\\d{4}\\b"))
         (\c ->
             case String.split "-" c of
 
@@ -327,7 +337,8 @@ ukNino =
     validated
         "nino"
         "[NINO]"
-        "\\b[A-Z]{2} ?\\d{2} ?\\d{2} ?\\d{2} ?[A-D]\\b"
+        (compiled
+            (Regex.fromString "\\b[A-Z]{2} ?\\d{2} ?\\d{2} ?\\d{2} ?[A-D]\\b"))
         (\c ->
             let
                 prefix = String.left 2 c
@@ -354,20 +365,24 @@ secrets : Rule
 secrets =
     let
         shapes =
-            [ "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----"
-            , "\\bsk-[A-Za-z0-9_-]{20,}"
-            , "\\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}"
-            , "\\bgh[pousr]_[A-Za-z0-9]{36,}"
-            , "\\bgithub_pat_[A-Za-z0-9_]{22,}"
-            , "\\bglpat-[A-Za-z0-9_-]{20,}"
-            , "\\bhf_[A-Za-z0-9]{30,}"
-            , "\\bxox[abprs]-[A-Za-z0-9-]{10,}"
-            , "\\bAIza[0-9A-Za-z_-]{35}"
-            , "\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b"
-            , "\\beyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}"
+            [ Regex.fromString
+                  "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----"
+            , Regex.fromString "\\bsk-[A-Za-z0-9_-]{20,}"
+            , Regex.fromString "\\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}"
+            , Regex.fromString "\\bgh[pousr]_[A-Za-z0-9]{36,}"
+            , Regex.fromString "\\bgithub_pat_[A-Za-z0-9_]{22,}"
+            , Regex.fromString "\\bglpat-[A-Za-z0-9_-]{20,}"
+            , Regex.fromString "\\bhf_[A-Za-z0-9]{30,}"
+            , Regex.fromString "\\bxox[abprs]-[A-Za-z0-9-]{10,}"
+            , Regex.fromString "\\bAIza[0-9A-Za-z_-]{35}"
+            , Regex.fromString "\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b"
+            , Regex.fromString
+                  "\\beyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}"
             ]
         labelled =
-            "((?i:api[_-]?key|secret|token|password)\\s*[:=]\\s*[\"']?)[A-Za-z0-9_\\-./+=]{12,}"
+            compiled
+                (Regex.fromString
+                    "((?i:api[_-]?key|secret|token|password)\\s*[:=]\\s*[\"']?)[A-Za-z0-9_\\-./+=]{12,}")
     in
         Rule
             { name = "secret"
@@ -389,7 +404,7 @@ secrets =
                                             , count + k
                                             ))
                                 ( s, 0 )
-                                shapes
+                                (List.map compiled shapes)
                         k2 =
                             List.length (Regex.findAll labelled afterShapes)
                     in
@@ -416,7 +431,7 @@ pattern name re =
                 (validated
                     name
                     ("[" ++ String.toUpper name ++ "]")
-                    re
+                    (compiled (Regex.fromString re))
                     (\m ->
                         if m == "" then
                             Nothing
@@ -635,3 +650,31 @@ scrubRows sc rows =
                 rows
     in
         ( List.reverse kept, report )
+
+
+-- `acceptPhone`'s and `isIban`'s shapes, compiled once.
+phoneAreaRe_ : Regex
+phoneAreaRe_ =
+    compiled (Regex.fromString "^\\(\\d{2,5}\\)[ .-]?\\d{3,4}[ .-]?\\d{3,4}$")
+
+
+phoneNorthAmericaRe_ : Regex
+phoneNorthAmericaRe_ =
+    compiled (Regex.fromString "^\\d{3}[-. ]\\d{3}[-. ]\\d{4}$")
+
+
+phoneNationalRe_ : Regex
+phoneNationalRe_ =
+    compiled (Regex.fromString "^0\\d{2,4}[ -]?\\d{3,4}[ -]?\\d{3,4}$")
+
+
+phoneInternationalRe_ : Regex
+phoneInternationalRe_ =
+    compiled
+        (Regex.fromString
+            "^\\+\\d{1,3}(?:[ .-]?\\(?\\d{1,5}\\)?)(?:[ .-]?\\d{2,5}){1,5}$")
+
+
+ibanShapeRe_ : Regex
+ibanShapeRe_ =
+    compiled (Regex.fromString "^[A-Z]{2}\\d{2}[A-Z0-9]+$")
