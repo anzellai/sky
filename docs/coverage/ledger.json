@@ -433,7 +433,7 @@
       "tier": "T1"
     },
     "corpus-1": {
-      "expected_assertions": 165,
+      "expected_assertions": 166,
       "falsifier_mutation": "corpus-1.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 0 of 4: each case built + run; values compared against the generator's own",
@@ -471,7 +471,7 @@
       "tier": "T2"
     },
     "corpus-2": {
-      "expected_assertions": 165,
+      "expected_assertions": 166,
       "falsifier_mutation": "corpus-2.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 1 of 4: each case built + run; values compared against the generator's own",
@@ -509,7 +509,7 @@
       "tier": "T2"
     },
     "corpus-3": {
-      "expected_assertions": 164,
+      "expected_assertions": 166,
       "falsifier_mutation": "corpus-3.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 2 of 4: each case built + run; values compared against the generator's own",
@@ -547,7 +547,7 @@
       "tier": "T2"
     },
     "corpus-4": {
-      "expected_assertions": 164,
+      "expected_assertions": 165,
       "falsifier_mutation": "corpus-4.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 3 of 4: each case built + run; values compared against the generator's own",
@@ -607,7 +607,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 804,
+      "expected_assertions": 809,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
