@@ -422,6 +422,34 @@ pub fn verify_cli(ctx: &GateCtx) -> GateOutcome {
     )
 }
 
+/// The directory `spa-diff-fuzz` generates, builds and runs one fixture in.
+///
+/// It carries the process id. It used to be `<tmp>/sky-spa-diff-fuzz/<fixture>`
+/// for every process of the user, so two runs at once (the baseline in one
+/// worktree, a mutated run or another worktree's gate) wiped and rewrote each
+/// other's harness: a sibling's mutated harness then turned a clean baseline
+/// red (`DIVERGENCE`, or a build of half-written files), and a re-run on its
+/// own was green. Each gate body runs in its own child process, so the pid
+/// makes the directory private to one run (as `sky-dispatch-destructive-<pid>`).
+pub(crate) fn spa_diff_fuzz_out_dir(fixture: &str) -> PathBuf {
+    spa_diff_fuzz_out_dir_for(std::process::id(), fixture)
+}
+
+fn spa_diff_fuzz_out_dir_for(pid: u32, fixture: &str) -> PathBuf {
+    std::env::temp_dir()
+        .join(format!("sky-spa-diff-fuzz-{pid}"))
+        .join(fixture)
+}
+
+/// Removes this run's `spa-diff-fuzz` directory on every return path.
+struct SpaDiffFuzzCleanup(PathBuf);
+
+impl Drop for SpaDiffFuzzCleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Sky.Spa **differential split fuzzer** (docs/design/auto-testing.md mode A).
 ///
 /// For each in-repo auto-split fixture: GENERATE the harness IN-PROCESS (via the
@@ -473,6 +501,12 @@ pub fn spa_diff_fuzz(ctx: &GateCtx) -> GateOutcome {
         "rust/crates/sky/tests/fixtures/spa-async-leaves",
     ];
     let mut assertions = 0u64;
+    let _cleanup = SpaDiffFuzzCleanup(
+        spa_diff_fuzz_out_dir("x")
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default(),
+    );
     for fx in FIXTURES {
         let project_dir = ctx.repo_root.join(fx);
         let name = Path::new(fx)
@@ -482,7 +516,7 @@ pub fn spa_diff_fuzz(ctx: &GateCtx) -> GateOutcome {
         // NOT under `scratch()` (`.skycache/…`): `sky build`'s module discovery
         // skips any path with a dot-directory segment, so a generated project
         // there fails with "no .sky under src/". Use a non-dot temp dir.
-        let out_dir = std::env::temp_dir().join("sky-spa-diff-fuzz").join(name);
+        let out_dir = spa_diff_fuzz_out_dir(name);
         let _ = std::fs::remove_dir_all(&out_dir);
         // GENERATE in-process — reflects emitter / analysis mutations.
         let report = match project::spa_split::generate_diff_fuzz(
@@ -4550,4 +4584,23 @@ pub const STDLIB_BODIES_EXPECTED: u64 = crate::stdlib_bodies_gate::EXPECTED_MODU
 pub fn stdlib_bodies(ctx: &GateCtx) -> GateOutcome {
     let (passed, assertions, detail) = crate::stdlib_bodies_gate::check_body(&ctx.repo_root);
     GateOutcome::new(passed, assertions, detail)
+}
+
+#[cfg(test)]
+mod spa_diff_fuzz_dir {
+    use super::*;
+
+    // Two processes running the gate at once must not share a directory: the
+    // shared `<tmp>/sky-spa-diff-fuzz/<fixture>` let one run wipe and rewrite
+    // the other's harness (a clean baseline went red once, then green alone).
+    #[test]
+    fn two_processes_never_share_a_fuzz_directory() {
+        let a = spa_diff_fuzz_out_dir_for(100, "fixture");
+        let b = spa_diff_fuzz_out_dir_for(101, "fixture");
+        assert_ne!(a, b);
+        assert_ne!(a.parent(), b.parent());
+        assert!(spa_diff_fuzz_out_dir("fixture")
+            .to_string_lossy()
+            .contains(&std::process::id().to_string()));
+    }
 }
