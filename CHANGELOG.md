@@ -209,6 +209,37 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   encrypted entries and unknown methods. `write` gives the same bytes for the
   same entries. Failures are `InvalidInput` in the domain `"zip"` with a code.
 
+- **`Std.Office.Xlsx`: read and write Excel workbooks.** `read` / `readWith`
+  give a `Workbook` of sheets whose rows are `Cell`s (`Empty`, `Text`,
+  `Number`, `Boolean`, `Date`, `Formula` with its cached value, `Failure`), with
+  each sheet's visibility, merged ranges, column widths, frozen panes and list
+  validations. Rows keep their index. Dates come from the number format
+  (built-in and custom), with Excel's phantom 1900-02-29 and 1904 workbooks
+  handled. Shared strings and worksheets are streamed; rich text is joined,
+  phonetic runs are skipped, and a shared formula's followers get their own
+  references. `sheetNames` reads the workbook part only. `write` takes
+  `SheetSpec`s of `CellSpec`s (`text`, `number`, `int`, `bool`, `date`,
+  `formula`, `failure`, `empty`, `fromCell`) styled with `bold`, `italic`,
+  `fontSize`, `fill`, `numberFormat` and `wrap`; styles are deduplicated, a
+  date is a serial with a date format, and a formula is computed when the file
+  opens. The same sheets give the same bytes. `Limits` bound sheets, rows,
+  columns and cells (gaps count), on top of the zip limits. Failures are
+  `InvalidInput` in the domain `"office"` with a code (`sheet_name`,
+  `no_visible_sheet`, `validation_too_long`, `range`, `too_many_cells`, …).
+
+- **`Std.Office.Docx`: read and write Word documents.** A document is a list
+  of `Block`s: `Heading` (0 for the Title style, 1 to 9), `Paragraph`,
+  `ListItem Bulleted|Numbered level` and `Table`, with runs that keep bold,
+  italic and hyperlinks. Reading finds headings by style name (so localized
+  style ids work) and outline level, list kinds from the numbering part, skips
+  tracked deletions, flattens content controls, and never reads drawings, text
+  boxes or embedded objects. `write` makes the styles, a bullet and a numbered
+  list (each run of numbered items starts at 1) and refuses a link that is
+  not http, https, mailto or `#anchor` (`unsafe_link`). `toText` gives the
+  plain text, pure, for a search index. Both modules run on the server and
+  read every part through the `Std.Zip` and `Std.Xml` readers, under one
+  tokeniser (`xmlStreamSafe`) that `Std.Xml.parse` now also uses.
+
 ### Migration
 
 The full list, with old and new code, is `docs/migration/v0.29.md`.
@@ -270,6 +301,12 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   never run is affected. Give one value a base case, or a parameter.
 
 ### Fixed
+
+- **The stdlib docs named the wrong function for reading a binary file.**
+  `Std.Zip`, `Sky.Core.Bytes`, `Std.Email` and `File.writeBytes` said to pass
+  `File.readFileBytes` output, which is a `List Int`, where a `Bytes`
+  `String` is taken (a type error). `File.readFile` returns a file's bytes as
+  they are, binary included; the docs now say so and name it.
 
 - **A type a module declares with the name `Decoder`, `Value`, `Cmd` or `Sub`
   builds.** Its annotation lowered to `any` (the rule for the kernel handles

@@ -1,0 +1,695 @@
+-- | Std.Office.Xlsx — read and write Excel workbooks (.xlsx).
+--
+-- Bytes are `Sky.Core.Bytes` (an alias of `String` whose bytes need not be
+-- UTF-8), as `File.readFile` and an upload give them, the same as
+-- `Std.Zip`.
+--
+--     import Std.Office.Xlsx as Xlsx exposing (Cell(..))
+--
+--     -- The first column of the first sheet, as text.
+--     names : String -> Result Error (List String)
+--     names bytes =
+--         case Xlsx.read bytes of
+--
+--             Ok book ->
+--                 case List.head book.sheets of
+--
+--                     Just sheet ->
+--                         Ok (List.filterMap firstText sheet.rows)
+--
+--                     Nothing ->
+--                         Ok []
+--
+--             Err e ->
+--                 Err e
+--
+--     -- A ledger export: a bold header, money with a number format, a total.
+--     ledger : Result Error String
+--     ledger =
+--         Xlsx.write
+--             [ Xlsx.sheet "Ledger"
+--                 [ [ Xlsx.bold (Xlsx.text "Account"), Xlsx.bold (Xlsx.text "Amount") ]
+--                 , [ Xlsx.text "Sales", Xlsx.numberFormat "#,##0.00" (Xlsx.number 1250.5) ]
+--                 , [ Xlsx.text "Total", Xlsx.formula "SUM(B2:B2)" ]
+--                 ]
+--             ]
+--
+-- The functions return a `Result`, not a `Task`: a workbook is parsed and
+-- built from bytes, with no outside effect.
+--
+-- **Reading.** Rows keep their index: a missing row reads as `[]`, and a
+-- missing cell before the last one in its row as `Empty`. Shared strings and
+-- worksheets are streamed, not built as a tree. Rich text is joined and
+-- phonetic runs are skipped. A formula keeps its text (without the leading
+-- `=`) and its cached value (`Empty` when the file has none). A number is a
+-- `Date` when its number format is a date (built-in formats 14 to 22 and 45
+-- to 47, or a custom format with d, m, y, h or s outside quotes and
+-- brackets). Excel's phantom 1900-02-29 (serial 60) reads as that date, and a
+-- `date1904` workbook counts from 1904-01-01. Macros, external links and
+-- embedded objects are never read. Cost: O(cells + shared strings).
+--
+-- **Writing.** Styles are deduplicated. A date is written as a serial number
+-- with a date format (`yyyy-mm-dd` unless `numberFormat` gives one). A
+-- formula is written with no cached value and the workbook asks to be
+-- calculated when it opens, so Excel, LibreOffice and Google Sheets compute
+-- it. The same sheets always give the same bytes. Cost: O(cells).
+--
+-- **Errors.** A limit crossed while reading, or a sheet `write` refuses, is
+-- an `Error` of kind `InvalidInput` with the domain `"office"` and one of
+-- these codes: `sheet_name` (empty, more than 31 characters, one of
+-- `[ ] : * ? / \`, an apostrophe at either end, `History`, or a repeat
+-- ignoring case), `no_visible_sheet`, `too_many_rows`, `too_many_columns`,
+-- `too_many_cells`, `too_many_sheets`, `validation_too_long` (an inline list
+-- over 255 characters: use `ListFromRange`), `validation_item` (an empty
+-- item, or one with a comma or a double quote), `range`, `column_width`,
+-- `date_range` (a date before 1900), `text_too_long` (over 32,767
+-- characters), `formula` (an empty formula), `failure_value` (not an Excel
+-- error value), `number` (not finite), `not_office` (no workbook part) and
+-- `corrupt`. A broken archive is a `"zip"` error and a broken or hostile
+-- part (a DOCTYPE, too deep) an `"xml"` error, as `Std.Zip` and `Std.Xml`
+-- report them.
+--
+-- **Where it runs.** On the server (and in a CLI). A Sky.Spa app reads and
+-- writes workbooks in its backend: the split sends every `Std.Office` call to
+-- the server.
+module Std.Office.Xlsx exposing
+    ( Cell(..)
+    , DateTime
+    , Visibility(..)
+    , Range
+    , Validation(..)
+    , Sheet
+    , Workbook
+    , Limits
+    , CellSpec
+    , SheetSpec
+    , defaultLimits
+    , read
+    , readWith
+    , sheetNames
+    , empty
+    , text
+    , number
+    , int
+    , bool
+    , date
+    , formula
+    , failure
+    , fromCell
+    , bold
+    , italic
+    , fontSize
+    , fill
+    , numberFormat
+    , wrap
+    , sheet
+    , write
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Sky.Core.List as List
+import Std.Zip as Zip
+
+-- | The value of one cell. `Formula` holds the formula text (no leading `=`)
+-- and the value the file cached for it. `Boolean` is a TRUE / FALSE cell (a
+-- constructor named `Bool` would shadow the type). `Failure` is an error
+-- value such as `#DIV/0!` or `#N/A`.
+type Cell
+    = Empty
+    | Text String
+    | Number Float
+    | Boolean Bool
+    | Date DateTime
+    | Formula String Cell
+    | Failure String
+
+-- | A date and time with no zone, as Excel holds it.
+type alias DateTime =
+    { year : Int
+    , month : Int
+    , day : Int
+    , hour : Int
+    , minute : Int
+    , second : Int
+    , millisecond : Int
+    }
+
+-- | Whether a sheet tab shows. A `VeryHidden` sheet can be shown again only
+-- by a macro or by editing the file.
+type Visibility
+    = Visible
+    | Hidden
+    | VeryHidden
+
+-- | A block of cells, 0-based and inclusive: `{ firstRow = 0, firstColumn =
+-- 0, lastRow = 1, lastColumn = 2 }` is A1:C2.
+type alias Range =
+    { firstRow : Int
+    , firstColumn : Int
+    , lastRow : Int
+    , lastColumn : Int
+    }
+
+-- | A drop-down list on a range. `ListOf` holds the items in the file (255
+-- characters in all at most, no item with a comma or a double quote).
+-- `ListFromRange` takes the items from cells, such as `"Lists!$A$1:$A$40"`.
+type Validation
+    = ListOf Range (List String)
+    | ListFromRange Range String
+
+-- | One sheet as read. `columnWidths` lists the columns with a set width
+-- (0-based column, width in characters), in column order. `frozen` is the
+-- frozen rows and columns, if any.
+type alias Sheet =
+    { name : String
+    , visibility : Visibility
+    , rows : List (List Cell)
+    , merged : List Range
+    , columnWidths : List ( Int, Float )
+    , frozen : Maybe { rows : Int, columns : Int }
+    , validations : List Validation
+    }
+
+-- | A workbook as read: its sheets in tab order, and whether its dates count
+-- from 1904 (an old Mac setting).
+type alias Workbook =
+    { sheets : List Sheet
+    , date1904 : Bool
+    }
+
+-- | Bounds for one read. Each must be positive. `maxRows` and `maxColumns`
+-- bound the position of any cell, and `maxCells` the cells read in the
+-- whole workbook, the gaps before a cell included (a merged range, a column
+-- width and a validation count one each).
+type alias Limits =
+    { zip : Zip.Limits
+    , maxSheets : Int
+    , maxRows : Int
+    , maxCells : Int
+    , maxColumns : Int
+    }
+
+-- | A cell to write: a value and its style. Make one with `text`, `number`,
+-- `int`, `bool`, `date`, `formula`, `failure`, `empty` or `fromCell`, and
+-- style it with `bold`, `italic`, `fontSize`, `fill`, `numberFormat` and
+-- `wrap`.
+type CellSpec
+    = CellSpec WCell
+
+-- | One sheet to write. `sheet` gives the defaults: visible, no column
+-- widths, no frozen panes, no merges, no validations.
+type alias SheetSpec =
+    { name : String
+    , visibility : Visibility
+    , rows : List (List CellSpec)
+    , columnWidths : List ( Int, Float )
+    , frozen : Maybe { rows : Int, columns : Int }
+    , merged : List Range
+    , validations : List Validation
+    }
+
+
+-- | `Zip.defaultLimits`, 100 sheets, 200,000 rows, 2,000,000 cells, 16,384
+-- columns.
+defaultLimits : Limits
+defaultLimits =
+    { zip = Zip.defaultLimits
+    , maxSheets = 100
+    , maxRows = 200000
+    , maxCells = 2000000
+    , maxColumns = 16384
+    }
+
+
+-- | Every sheet of a workbook, under `defaultLimits`.
+-- Cost: O(cells + shared strings).
+read : String -> Result Error Workbook
+read bytes =
+    readWith defaultLimits bytes
+
+
+-- | `read` with chosen limits.
+readWith : Limits -> String -> Result Error Workbook
+readWith limits bytes =
+    case read_
+             limits.zip.maxEntries
+             limits.zip.maxEntryBytes
+             limits.zip.maxTotalBytes
+             limits.zip.maxRatio
+             limits.maxSheets
+             limits.maxRows
+             limits.maxCells
+             limits.maxColumns
+             bytes of
+
+        Ok raw ->
+            Ok
+                { sheets = List.map fromRawSheet raw.sheets
+                , date1904 = raw.date1904
+                }
+
+        Err e ->
+            Err e
+
+
+-- | The sheet names and their visibility, in tab order, read from the
+-- workbook part only (no sheet is read). Cost: O(sheets).
+sheetNames : String -> Result Error (List { name : String, visibility : Visibility })
+sheetNames bytes =
+    case sheetNames_ bytes of
+
+        Ok names ->
+            Ok
+                (List.map
+                    (\n ->
+                        { name = n.name
+                        , visibility = visibilityOf n.visibility
+                        })
+                    names)
+
+        Err e ->
+            Err e
+
+
+-- | An empty cell. In a row it keeps the cells after it in their columns.
+empty : CellSpec
+empty =
+    CellSpec blank
+
+
+-- | A text cell (at most 32,767 characters).
+text : String -> CellSpec
+text s =
+    CellSpec { blank | kind = 1, text = s }
+
+
+-- | A number cell.
+number : Float -> CellSpec
+number f =
+    CellSpec { blank | kind = 2, number = f }
+
+
+-- | A whole-number cell.
+int : Int -> CellSpec
+int n =
+    number (toFloat n)
+
+
+-- | A TRUE / FALSE cell.
+bool : Bool -> CellSpec
+bool b =
+    CellSpec { blank | kind = 3, flag = b }
+
+
+-- | A date cell, written as a serial number with the format `yyyy-mm-dd`
+-- (give another with `numberFormat`, such as `"yyyy-mm-dd hh:mm"`).
+date : DateTime -> CellSpec
+date d =
+    CellSpec
+        { blank
+            | kind = 4
+            , parts =
+                [ d.year
+                , d.month
+                , d.day
+                , d.hour
+                , d.minute
+                , d.second
+                , d.millisecond
+                ]
+        }
+
+
+-- | A formula cell, such as `formula "SUM(B2:B9)"` (a leading `=` is
+-- dropped). The value is computed when the file opens.
+formula : String -> CellSpec
+formula f =
+    CellSpec { blank | kind = 5, text = f }
+
+
+-- | An error value cell, such as `failure "#N/A"`.
+failure : String -> CellSpec
+failure e =
+    CellSpec { blank | kind = 6, text = e }
+
+
+-- | The cell to write for a cell read, unstyled. A `Formula` keeps its text,
+-- not its cached value. `write` of `List.map (List.map fromCell) rows`
+-- reads back as `rows`, a formula's cached value as `Empty`.
+fromCell : Cell -> CellSpec
+fromCell cell =
+    case cell of
+
+        Empty ->
+            empty
+
+        Text s ->
+            text s
+
+        Number f ->
+            number f
+
+        Boolean b ->
+            bool b
+
+        Date d ->
+            date d
+
+        Formula f _ ->
+            formula f
+
+        Failure e ->
+            failure e
+
+
+-- | Bold text.
+bold : CellSpec -> CellSpec
+bold spec =
+    restyle (\c -> { c | bold = True }) spec
+
+
+-- | Italic text.
+italic : CellSpec -> CellSpec
+italic spec =
+    restyle (\c -> { c | italic = True }) spec
+
+
+-- | The font size in points (11 by default).
+fontSize : Int -> CellSpec -> CellSpec
+fontSize size spec =
+    restyle (\c -> { c | size = between 1 409 size }) spec
+
+
+-- | A solid background colour: red, green and blue from 0 to 255.
+fill : Int -> Int -> Int -> CellSpec -> CellSpec
+fill red green blue spec =
+    restyle
+        (\c ->
+            { c
+                | fill =
+                    channel red * 65536 + channel green * 256 + channel blue
+            })
+        spec
+
+
+-- | An Excel number format, such as `"#,##0.00"`, `"0.0%"` or
+-- `"yyyy-mm-dd hh:mm"`.
+numberFormat : String -> CellSpec -> CellSpec
+numberFormat code spec =
+    restyle (\c -> { c | format = code }) spec
+
+
+-- | Wrap long text inside the cell.
+wrap : CellSpec -> CellSpec
+wrap spec =
+    restyle (\c -> { c | wrap = True }) spec
+
+
+-- | A visible sheet with these rows and nothing else set. Change the rest
+-- with a record update: `{ (Xlsx.sheet "Data" rows) | frozen = Just { rows
+-- = 1, columns = 0 } }`.
+sheet : String -> List (List CellSpec) -> SheetSpec
+sheet name rows =
+    { name = name
+    , visibility = Visible
+    , rows = rows
+    , columnWidths = []
+    , frozen = Nothing
+    , merged = []
+    , validations = []
+    }
+
+
+-- | The workbook of these sheets, in tab order. The first visible sheet is
+-- the one that opens. Cost: O(cells). The same sheets always give the same
+-- bytes.
+write : List SheetSpec -> Result Error String
+write sheets =
+    write_ (List.map toWSheet sheets)
+
+-- Internals -----------------------------------------------------------------
+-- The kernels take and return plain records and a private ADT (RawCell), so
+-- the boundary carries no record inside an ADT the kernel would have to
+-- build (runtime-go/rt/office_xlsx_read.go explains why).
+type alias WCell =
+    { kind : Int
+    , text : String
+    , number : Float
+    , flag : Bool
+    , parts : List Int
+    , bold : Bool
+    , italic : Bool
+    , size : Int
+    , fill : Int
+    , format : String
+    , wrap : Bool
+    }
+
+
+blank : WCell
+blank =
+    { kind = 0
+    , text = ""
+    , number = 0.0
+    , flag = False
+    , parts = []
+    , bold = False
+    , italic = False
+    , size = 0
+    , fill = -1
+    , format = ""
+    , wrap = False
+    }
+
+
+restyle : (WCell -> WCell) -> CellSpec -> CellSpec
+restyle f spec =
+    case spec of
+
+        CellSpec c ->
+            CellSpec (f c)
+
+
+channel : Int -> Int
+channel n =
+    between 0 255 n
+
+
+between : Int -> Int -> Int -> Int
+between lo hi n =
+    if n < lo then
+        lo
+
+    else if n > hi then
+        hi
+
+    else
+        n
+
+
+specCell : CellSpec -> WCell
+specCell spec =
+    case spec of
+
+        CellSpec c ->
+            c
+
+type alias RawWidth =
+    { column : Int
+    , width : Float
+    }
+
+type alias RawValidation =
+    { kind : Int
+    , range : Range
+    , items : List String
+    , source : String
+    }
+
+type alias WSheet =
+    { name : String
+    , visibility : Int
+    , rows : List (List WCell)
+    , columnWidths : List RawWidth
+    , frozenRows : Int
+    , frozenColumns : Int
+    , merged : List Range
+    , validations : List RawValidation
+    }
+
+type RawCell
+    = RawEmpty
+    | RawText String
+    | RawNumber Float
+    | RawBool Bool
+    | RawDate Int Int Int Int Int Int Int
+    | RawFormula String RawCell
+    | RawFailure String
+
+type alias RawSheet =
+    { name : String
+    , visibility : Int
+    , rows : List (List RawCell)
+    , merged : List Range
+    , columnWidths : List RawWidth
+    , frozenRows : Int
+    , frozenColumns : Int
+    , validations : List RawValidation
+    }
+
+type alias RawWorkbook =
+    { sheets : List RawSheet
+    , date1904 : Bool
+    }
+
+
+visibilityInt : Visibility -> Int
+visibilityInt v =
+    case v of
+
+        Visible ->
+            0
+
+        Hidden ->
+            1
+
+        VeryHidden ->
+            2
+
+
+visibilityOf : Int -> Visibility
+visibilityOf n =
+    if n == 1 then
+        Hidden
+
+    else if n == 2 then
+        VeryHidden
+
+    else
+        Visible
+
+
+toWSheet : SheetSpec -> WSheet
+toWSheet s =
+    let
+        frozenRows =
+            case s.frozen of
+
+                Just f ->
+                    f.rows
+
+                Nothing ->
+                    0
+        frozenColumns =
+            case s.frozen of
+
+                Just f ->
+                    f.columns
+
+                Nothing ->
+                    0
+    in
+        { name = s.name
+        , visibility = visibilityInt s.visibility
+        , rows = List.map (List.map specCell) s.rows
+        , columnWidths = List.map toRawWidth s.columnWidths
+        , frozenRows = frozenRows
+        , frozenColumns = frozenColumns
+        , merged = s.merged
+        , validations = List.map toRawValidation s.validations
+        }
+
+
+toRawWidth : ( Int, Float ) -> RawWidth
+toRawWidth pair =
+    case pair of
+
+        ( column, width ) ->
+            { column = column, width = width }
+
+
+toRawValidation : Validation -> RawValidation
+toRawValidation v =
+    case v of
+
+        ListOf range items ->
+            { kind = 0, range = range, items = items, source = "" }
+
+        ListFromRange range source ->
+            { kind = 1, range = range, items = [], source = source }
+
+
+fromRawValidation : RawValidation -> Validation
+fromRawValidation v =
+    if v.kind == 0 then
+        ListOf v.range v.items
+
+    else
+        ListFromRange v.range v.source
+
+
+fromRawSheet : RawSheet -> Sheet
+fromRawSheet s =
+    { name = s.name
+    , visibility = visibilityOf s.visibility
+    , rows = List.map (List.map fromRaw) s.rows
+    , merged = s.merged
+    , columnWidths = List.map (\w -> ( w.column, w.width )) s.columnWidths
+    , frozen =
+        if s.frozenRows > 0 || s.frozenColumns > 0 then
+            Just { rows = s.frozenRows, columns = s.frozenColumns }
+
+        else
+            Nothing
+    , validations = List.map fromRawValidation s.validations
+    }
+
+
+fromRaw : RawCell -> Cell
+fromRaw raw =
+    case raw of
+
+        RawEmpty ->
+            Empty
+
+        RawText s ->
+            Text s
+
+        RawNumber f ->
+            Number f
+
+        RawBool b ->
+            Boolean b
+
+        RawDate y mo d h mi s ms ->
+            Date
+                { year = y
+                , month = mo
+                , day = d
+                , hour = h
+                , minute = mi
+                , second = s
+                , millisecond = ms
+                }
+
+        RawFormula f cached ->
+            Formula f (fromRaw cached)
+
+        RawFailure e ->
+            Failure e
+
+
+read_ : Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> String -> Result Error RawWorkbook
+read_ =
+    Ffi.kernel "Office_xlsxRead"
+
+
+sheetNames_ : String -> Result Error (List { name : String, visibility : Int })
+sheetNames_ =
+    Ffi.kernel "Office_xlsxSheetNames"
+
+
+write_ : List WSheet -> Result Error String
+write_ =
+    Ffi.kernel "Office_xlsxWrite"

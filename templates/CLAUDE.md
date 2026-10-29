@@ -214,3 +214,15 @@ archives with `Std.Zip`. They refuse a DOCTYPE, entity tricks, zip-slip names,
 encrypted entries and zip bombs, and bound size and depth. Do not parse XML
 with `String` functions or a Go FFI binding, and do not raise the limits to
 get one file through: pass a `Limits` record that fits the input you expect.
+
+### Excel and Word files: use Std.Office.Xlsx and Std.Office.Docx
+
+Read and write `.xlsx` with `Std.Office.Xlsx` and `.docx` with
+`Std.Office.Docx`, on the server. Read the bytes with `File.readFile` (or take
+an upload), not `File.readFileBytes` (that gives a `List Int`). Write a date
+with `Xlsx.date`, not a number, so it reads back as a `Date`. Write a total as
+`Xlsx.formula "SUM(B2:B9)"`: the spreadsheet computes it when the file opens.
+An inline drop-down list holds 255 characters at most; put longer lists in
+cells and use `ListFromRange`. A `Docx` link must be http, https, mailto or an
+internal `#anchor`. Bound a read of an upload with `readWith` and `Limits`
+that fit the files you expect.

@@ -222,6 +222,20 @@ const EXPECTED_NEW_MODULE_OVERLAPS: &[&str] = &[
     "value succeed",
     "value text",
     "value write",
+    // v0.29.0: Std.Office.Xlsx. The Cell constructors and the cell styles
+    // name what a spreadsheet calls them (`Text`, `Empty`, `bold`, `fill`,
+    // `fontSize`); a sheet's `Visible` / `Hidden` are Excel's states. A new
+    // module, read qualified (`import Std.Office.Xlsx as Xlsx`), so no
+    // existing program changes.
+    "ctor Empty",
+    "ctor Hidden",
+    "ctor Text",
+    "ctor Visible",
+    "value bold",
+    "value failure",
+    "value fill",
+    "value fontSize",
+    "value italic",
 ];
 
 fn repo_root() -> PathBuf {

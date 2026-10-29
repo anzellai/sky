@@ -39,7 +39,6 @@ sky-stdlib/Sky/Core/File.sky: copy
 sky-stdlib/Sky/Core/File.sky: exists
 sky-stdlib/Sky/Core/File.sky: isDir
 sky-stdlib/Sky/Core/File.sky: readDir
-sky-stdlib/Sky/Core/File.sky: readFile
 sky-stdlib/Sky/Core/File.sky: remove
 sky-stdlib/Sky/Core/File.sky: rename
 sky-stdlib/Sky/Core/Io.sky: writeStderr

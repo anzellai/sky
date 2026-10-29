@@ -311,3 +311,51 @@ func zipWriteAll(entries []zipEntry, deflate bool) ([]byte, *zipFailure) {
 	}
 	return buf.Bytes(), nil
 }
+
+// zipArchive is an archive opened once and read part by part, as an Office
+// package is: every name is checked at open (zipOpen), and the inflated size
+// of the parts read so far counts against maxTotalBytes across calls.
+type zipArchive struct {
+	lim   zipLimits
+	files map[string]*zip.File // by normalised name; directories left out
+	used  int64
+}
+
+// zipOpenArchive opens data under lim for reading by part name.
+func zipOpenArchive(data string, lim zipLimits) (*zipArchive, *zipFailure) {
+	r, names, fail := zipOpen(data, lim.maxEntries)
+	if fail != nil {
+		return nil, fail
+	}
+	a := &zipArchive{lim: lim, files: make(map[string]*zip.File, len(r.File))}
+	for i, f := range r.File {
+		if !zipIsDir(f) {
+			a.files[names[i]] = f
+		}
+	}
+	return a, nil
+}
+
+// has reports whether the archive holds the file name.
+func (a *zipArchive) has(name string) bool {
+	_, ok := a.files[path.Clean(name)]
+	return ok
+}
+
+// read inflates the file name under the limits; found is false when the
+// archive has no such file.
+func (a *zipArchive) read(name string) ([]byte, bool, *zipFailure) {
+	f, ok := a.files[path.Clean(name)]
+	if !ok {
+		return nil, false, nil
+	}
+	if fail := zipCheckEntry(f); fail != nil {
+		return nil, false, fail
+	}
+	b, fail := zipInflate(f, a.lim, a.used)
+	if fail != nil {
+		return nil, false, fail
+	}
+	a.used += int64(len(b))
+	return b, true, nil
+}

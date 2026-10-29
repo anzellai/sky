@@ -3,7 +3,7 @@
 -- Sky represents binary payloads as `String` on the wire (Go's
 -- `string` is a sequence of bytes, not characters).  Where a
 -- function expects "raw bytes" — `Crypto.aesGcmEncrypt`,
--- `File.readFileBytes`, an RPC handler reading a binary upload —
+-- `File.readFile` / `File.writeBytes`, an RPC handler reading a binary upload —
 -- the value passed is a `String` whose bytes are NOT necessarily
 -- valid UTF-8.  `String.append` is byte-safe (concatenation), but
 -- `String.length`/`String.slice` are RUNE-based (correct for text,

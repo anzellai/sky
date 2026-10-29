@@ -23,6 +23,10 @@ under [`archive/`](archive/) and the per-version directories below.
   `Codec.fromXml` and `Std.Zip`: safe XML and ZIP on the server. See the
   sections in [`stdlib.md`](stdlib.md) and `sky doc Std.Xml` / `sky doc
   Std.Zip`.
+* `Std.Office.Xlsx` and `Std.Office.Docx`: read and write Excel workbooks
+  and Word documents on the server. See the sections in
+  [`stdlib.md`](stdlib.md) and `sky doc Std.Office.Xlsx` / `sky doc
+  Std.Office.Docx`.
 
 ## Per-area
 

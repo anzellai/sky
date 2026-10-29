@@ -1765,6 +1765,88 @@ with the domain `"zip"` and a code: `not_zip`, `too_many_entries`,
 `duplicate_path`, `encrypted`, `unsupported_method`, `corrupt`. `write` stamps
 every entry 1980-01-01, so the same entries give the same bytes. Server side.
 
+### `Std.Office.Xlsx` — Excel workbooks
+
+```elm
+import Std.Office.Xlsx as Xlsx exposing (Cell(..), Validation(..))
+
+Xlsx.read bytes                                 -- Result Error Workbook (defaultLimits)
+Xlsx.readWith { limits | maxRows = 10000 } bytes
+Xlsx.sheetNames bytes                           -- workbook part only
+
+Xlsx.write
+    [ Xlsx.sheet "Ledger"
+        [ [ Xlsx.bold (Xlsx.text "Date"), Xlsx.bold (Xlsx.text "Amount") ]
+        , [ Xlsx.date day, Xlsx.numberFormat "#,##0.00" (Xlsx.number 1250.5) ]
+        , [ Xlsx.text "Total", Xlsx.formula "SUM(B2:B2)" ]
+        ]
+    ]                                           -- Result Error Bytes (deterministic)
+```
+
+A `Workbook` is `{ sheets, date1904 }`; a `Sheet` is `{ name, visibility,
+rows : List (List Cell), merged, columnWidths, frozen, validations }`. A `Cell`
+is `Empty`, `Text`, `Number`, `Boolean`, `Date DateTime` (zone-less, to the
+millisecond), `Formula text cached` or `Failure "#N/A"`. Rows keep their index
+(a missing row is `[]`, a gap in a row `Empty`). A number is a `Date` when its
+format is a date (built-in formats 14 to 22 and 45 to 47, or a custom format
+with d, m, y, h or s outside quotes and brackets); Excel's phantom 1900-02-29
+reads as that date, and a 1904 workbook counts from 1904-01-01. Shared strings
+and worksheets are streamed, rich text is joined, phonetic runs are skipped, a
+shared formula's followers get their own references. Macros, external links
+and embedded objects are never read.
+
+To write, build `CellSpec`s (`text`, `number`, `int`, `bool`, `date`,
+`formula`, `failure`, `empty`, `fromCell`) and style them (`bold`, `italic`,
+`fontSize`, `fill r g b`, `numberFormat`, `wrap`). A `SheetSpec` from `sheet
+name rows` also takes `visibility`, `columnWidths`, `frozen`, `merged` and
+`validations` (`ListOf range items`, or `ListFromRange range "Lists!$A$1:$A$40"`
+for more than 255 characters). Styles are deduplicated; text goes in the shared
+strings; a date is a serial number with a date format (`yyyy-mm-dd` unless you
+give one); a formula has no cached value and the workbook asks to be computed
+when it opens. `read (write (List.map (List.map fromCell) rows))` gives `rows`
+back (a formula's cached value as `Empty`).
+
+`Limits` is `{ zip : Zip.Limits, maxSheets, maxRows, maxCells, maxColumns }`
+(defaults 100, 200,000, 2,000,000, 16,384); the gaps before a cell count as
+cells, so one far cell cannot allocate millions. A failure is `InvalidInput`
+with the domain `"office"` and a code: `sheet_name`, `no_visible_sheet`,
+`too_many_rows`, `too_many_columns`, `too_many_cells`, `too_many_sheets`,
+`validation_too_long`, `validation_item`, `range`, `column_width`,
+`date_range`, `text_too_long`, `formula`, `failure_value`, `number`,
+`not_office`, `corrupt`. A broken archive is a `"zip"` error and a hostile part
+an `"xml"` error. Read the bytes with `File.readFile` or take an upload. Server
+side. Cost: O(cells + shared strings) to read, O(cells) to write.
+
+### `Std.Office.Docx` — Word documents
+
+```elm
+import Std.Office.Docx as Docx exposing (Block(..), ListKind(..))
+
+Docx.read bytes                                 -- Result Error (List Block)
+Docx.toText blocks                              -- String, pure (runs on the client too)
+Docx.write
+    [ Heading 1 [ Docx.run "Invoice 2026-041" ]
+    , Table [ [ [ Paragraph [ Docx.run "Item" ] ], [ Paragraph [ Docx.run "Amount" ] ] ] ]
+    , Paragraph [ { text = "Pay online", bold = False, italic = False, link = Just "https://example.com/pay" } ]
+    ]                                           -- Result Error Bytes (deterministic)
+```
+
+A `Block` is `Heading level runs` (0 is the Title style, 1 to 9 the heading
+levels), `Paragraph runs`, `ListItem Bulleted|Numbered level runs` (level 0 to
+8) or `Table rows` (rows of cells of blocks). A `Run` is `{ text, bold, italic,
+link : Maybe String }`. Reading finds headings by style (also localized style
+ids, by the style's name) and outline level, list items by numbering (the kind
+from `numbering.xml`), and links through the relationships; tracked deletions
+are skipped, insertions kept, content controls flattened, and drawings, text
+boxes and embedded objects never read. Adjacent runs with the same look are
+joined. Writing makes the styles (Title, Heading 1 to 9, List Paragraph,
+Hyperlink, Table Grid) and a bullet and a numbered list; each run of numbered
+items starts at 1. A link must be http, https, mailto or `#anchor`
+(`unsafe_link`); a heading level is 0 to 9 (`heading_level`) and a list level 0
+to 8 (`list_level`). `Limits` is `{ zip, maxBlocks, maxDepth }` (defaults
+1,000,000 blocks, depth 256, `too_many_blocks`). Server side. Cost: O(document
+size).
+
 ### `Std.Csv` — RFC 4180 encode/decode + streaming reader
 
 ```elm

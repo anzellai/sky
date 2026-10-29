@@ -577,9 +577,10 @@ pub static GATES: &[Gate] = &[
                 // and the v0.29.0 Sky.Core.Array surface (+5 cases, 804 → 809), and the
                 // v0.29.0 Family R defects value_cycle and regex_invalid_literal
                 // (+18 cases, 809 → 827), and the v0.29.0 Std.Xml and
-                // Std.Zip surfaces (+10 cases, 827 → 837).
-                from: "n_min = 837",
-                to: "n_min = 838",
+                // Std.Zip surfaces (+10 cases, 827 → 837), and the v0.29.0
+                // Std.Office surface (+5 cases, 837 → 842).
+                from: "n_min = 842",
+                to: "n_min = 843",
             },
         }]),
         body: bodies::corpus_manifest,

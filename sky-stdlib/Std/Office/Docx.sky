@@ -1,0 +1,363 @@
+-- | Std.Office.Docx — read and write Word documents (.docx) as blocks of
+-- text.
+--
+-- Bytes are `Sky.Core.Bytes` (an alias of `String` whose bytes need not be
+-- UTF-8), the same as `Std.Zip`.
+--
+--     import Std.Office.Docx as Docx exposing (Block(..), ListKind(..))
+--
+--     -- An invoice with a table and a link.
+--     invoice : Result Error String
+--     invoice =
+--         Docx.write
+--             [ Heading 1 [ Docx.run "Invoice 2026-041" ]
+--             , Paragraph [ Docx.run "Pay by 30 November." ]
+--             , Table
+--                 [ [ [ Paragraph [ Docx.run "Item" ] ], [ Paragraph [ Docx.run "Amount" ] ] ]
+--                 , [ [ Paragraph [ Docx.run "Design" ] ], [ Paragraph [ Docx.run "1,200.00" ] ] ]
+--                 ]
+--             , Paragraph
+--                 [ Docx.run "Pay online at "
+--                 , { text = "example.com/pay", bold = False, italic = False, link = Just "https://example.com/pay" }
+--                 ]
+--             ]
+--
+--     -- The plain text of an upload, for a search index.
+--     plain : String -> Result Error String
+--     plain bytes =
+--         case Docx.read bytes of
+--
+--             Ok blocks ->
+--                 Ok (Docx.toText blocks)
+--
+--             Err e ->
+--                 Err e
+--
+-- The functions return a `Result`, not a `Task`: a document is parsed and
+-- built from bytes, with no outside effect.
+--
+-- **Reading.** A paragraph is a `Heading` when its style is Heading 1 to 9
+-- (or has an outline level), and `Heading 0` for the Title style. It is a
+-- `ListItem` when it has list numbering: the level is the list level (0 to
+-- 8) and the kind comes from the document's numbering (a bullet is
+-- `Bulleted`, anything else `Numbered`). Bold, italic and hyperlinks are
+-- kept; adjacent runs that look the same are joined and empty runs dropped
+-- (Word splits text into runs anywhere). A tab reads as `\t` and a line break
+-- as `\n`. Tracked deletions are skipped, insertions kept, and content
+-- controls flattened. Images, text boxes and embedded objects are never
+-- read. One trailing empty paragraph of the document and of each table cell
+-- is dropped (Word needs one after a table, and `write` adds it back).
+-- Cost: O(document size).
+--
+-- **Writing.** `write` makes a document with the styles Title, Heading 1 to
+-- 9, List Paragraph, Hyperlink and Table Grid, a bullet list and a numbered
+-- list (each run of numbered items starts at 1). `read (write blocks)` gives
+-- `blocks` back when no two adjacent runs look the same, no run is empty and
+-- no text holds a character XML cannot carry.
+--
+-- **Errors.** A failure is an `Error` of kind `InvalidInput` with the domain
+-- `"office"` and one of these codes: `unsafe_link` (a link that is not
+-- http, https, mailto or an internal `#anchor`), `heading_level` (not 0 to
+-- 9), `list_level` (not 0 to 8), `too_many_blocks`, `not_office` (no
+-- document part). A broken archive is a `"zip"` error and a broken or
+-- hostile part (a DOCTYPE, too deep) an `"xml"` error.
+--
+-- **Where it runs.** On the server (and in a CLI). A Sky.Spa app reads and
+-- writes documents in its backend: the split sends every `Std.Office` call to
+-- the server. `toText` is pure Sky and runs on both sides.
+module Std.Office.Docx exposing
+    ( Run
+    , ListKind(..)
+    , Block(..)
+    , Limits
+    , defaultLimits
+    , read
+    , readWith
+    , write
+    , run
+    , toText
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+import Std.Zip as Zip
+
+-- | A piece of text with one look. `link` is the target of a hyperlink.
+type alias Run =
+    { text : String
+    , bold : Bool
+    , italic : Bool
+    , link : Maybe String
+    }
+
+-- | The kind of a list.
+type ListKind
+    = Bulleted
+    | Numbered
+
+-- | One block of a document. `Heading 0` is a title and `Heading 1` to
+-- `Heading 9` are the heading levels. `ListItem kind level runs` is an item
+-- at a list level from 0 to 8. A `Table` is rows of cells, and each cell
+-- holds blocks.
+type Block
+    = Heading Int (List Run)
+    | Paragraph (List Run)
+    | ListItem ListKind Int (List Run)
+    | Table (List (List (List Block)))
+
+-- | Bounds for one read. Each must be positive. `maxBlocks` counts every
+-- block, those in table cells too, and `maxDepth` bounds the XML nesting of
+-- the document (so tables nested in tables).
+type alias Limits =
+    { zip : Zip.Limits
+    , maxBlocks : Int
+    , maxDepth : Int
+    }
+
+
+-- | `Zip.defaultLimits`, 1,000,000 blocks, depth 256.
+defaultLimits : Limits
+defaultLimits =
+    { zip = Zip.defaultLimits, maxBlocks = 1000000, maxDepth = 256 }
+
+
+-- | The blocks of a document, under `defaultLimits`.
+-- Cost: O(document size).
+read : String -> Result Error (List Block)
+read bytes =
+    readWith defaultLimits bytes
+
+
+-- | `read` with chosen limits.
+readWith : Limits -> String -> Result Error (List Block)
+readWith limits bytes =
+    case read_
+             limits.zip.maxEntries
+             limits.zip.maxEntryBytes
+             limits.zip.maxTotalBytes
+             limits.zip.maxRatio
+             limits.maxBlocks
+             limits.maxDepth
+             bytes of
+
+        Ok raw ->
+            Ok (List.map fromRaw raw)
+
+        Err e ->
+            Err e
+
+
+-- | The document of these blocks. Cost: O(blocks). The same blocks always
+-- give the same bytes.
+write : List Block -> Result Error String
+write blocks =
+    write_ (List.map toRaw blocks)
+
+
+-- | A plain run of text: not bold, not italic, no link.
+run : String -> Run
+run s =
+    { text = s, bold = False, italic = False, link = Nothing }
+
+
+-- | The text of the blocks, one line a block: a list item indented two
+-- spaces a level and marked `- ` or `1. ` (numbered items counted per
+-- level), a table one line a row with its cells separated by tabs. Pure,
+-- so it runs on the client too. Cost: O(text).
+toText : List Block -> String
+toText blocks =
+    String.join
+        "\n"
+        (List.reverse
+            (List.foldl textStep { lines = [], counters = [] } blocks).lines)
+
+-- Internals -----------------------------------------------------------------
+-- The kernels take and return the private ADTs RawBlock and RawRun, so the
+-- boundary carries no record inside an ADT the kernel would have to build
+-- (runtime-go/rt/office_docx.go explains why).
+type RawRun
+    = RawRun String Bool Bool String
+
+type RawBlock
+    = RawBlock Int Int (List RawRun) (List (List (List RawBlock)))
+
+
+toRawRun : Run -> RawRun
+toRawRun r =
+    RawRun r.text r.bold r.italic (Maybe.withDefault "" r.link)
+
+
+fromRawRun : RawRun -> Run
+fromRawRun raw =
+    case raw of
+
+        RawRun t b i l ->
+            { text = t
+            , bold = b
+            , italic = i
+            , link =
+                if l == "" then
+                    Nothing
+
+                else
+                    Just l
+            }
+
+
+toRaw : Block -> RawBlock
+toRaw block =
+    case block of
+
+        Paragraph runs ->
+            RawBlock 0 0 (List.map toRawRun runs) []
+
+        Heading level runs ->
+            RawBlock 1 level (List.map toRawRun runs) []
+
+        ListItem Bulleted level runs ->
+            RawBlock 2 level (List.map toRawRun runs) []
+
+        ListItem Numbered level runs ->
+            RawBlock 3 level (List.map toRawRun runs) []
+
+        Table rows ->
+            RawBlock 4 0 [] (List.map (List.map (List.map toRaw)) rows)
+
+
+fromRaw : RawBlock -> Block
+fromRaw raw =
+    case raw of
+
+        RawBlock kind level runs rows ->
+            if kind == 1 then
+                Heading level (List.map fromRawRun runs)
+
+            else if kind == 2 then
+                ListItem Bulleted level (List.map fromRawRun runs)
+
+            else if kind == 3 then
+                ListItem Numbered level (List.map fromRawRun runs)
+
+            else if kind == 4 then
+                Table (List.map (List.map (List.map fromRaw)) rows)
+
+            else
+                Paragraph (List.map fromRawRun runs)
+
+
+runsText : List Run -> String
+runsText runs =
+    String.concat (List.map (\r -> r.text) runs)
+
+type alias TextState =
+    { lines : List String
+    , counters : List Int
+    }
+
+
+-- The numbered-list counter of each level: a deeper level restarts when a
+-- shallower item comes, and any block that is not a list item ends the list.
+bump : Int -> List Int -> List Int
+bump level counters =
+    List.indexedMap
+        (\i c ->
+            if i == level then
+                c + 1
+
+            else
+                c)
+        (List.take (level + 1) (counters ++ List.repeat (level + 1) 0))
+
+
+textStep : Block -> TextState -> TextState
+textStep block st =
+    case block of
+
+        ListItem kind level runs ->
+            let
+                indent = String.repeat (atLeastZero level) "  "
+            in
+                case kind of
+
+                    Bulleted ->
+                        { lines = (indent ++ "- " ++ runsText runs) :: st.lines
+                        , counters = st.counters
+                        }
+
+                    Numbered ->
+                        let
+                            counters = bump (atLeastZero level) st.counters
+                            n =
+                                Maybe.withDefault
+                                    1
+                                    (List.head
+                                        (List.drop (atLeastZero level) counters))
+                        in
+                            { lines =
+                                (indent ++ String.fromInt n ++ ". "
+                                    ++ runsText runs)
+                                    :: st.lines
+                            , counters = counters
+                            }
+
+        _ ->
+            { lines = blockText block :: st.lines, counters = [] }
+
+
+atLeastZero : Int -> Int
+atLeastZero n =
+    if n < 0 then
+        0
+
+    else
+        n
+
+
+blockText : Block -> String
+blockText block =
+    case block of
+
+        Table rows ->
+            String.join
+                "\n"
+                (List.map (\row -> String.join "\t" (List.map cellText row)) rows)
+
+        _ ->
+            plainText block
+
+
+plainText : Block -> String
+plainText block =
+    case block of
+
+        Heading _ runs ->
+            runsText runs
+
+        Paragraph runs ->
+            runsText runs
+
+        ListItem _ _ runs ->
+            runsText runs
+
+        Table _ ->
+            ""
+
+
+cellText : List Block -> String
+cellText blocks =
+    String.join
+        " "
+        (List.map (\b -> String.replace "\n" " " (toText [ b ])) blocks)
+
+
+read_ : Int -> Int -> Int -> Int -> Int -> Int -> String -> Result Error (List RawBlock)
+read_ =
+    Ffi.kernel "Office_docxRead"
+
+
+write_ : List RawBlock -> Result Error String
+write_ =
+    Ffi.kernel "Office_docxWrite"

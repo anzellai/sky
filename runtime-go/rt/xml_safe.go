@@ -131,11 +131,26 @@ func xmlIsSpace(s string) bool {
 	return true
 }
 
-// xmlParseSafe parses src into its root element under lim. htmlEntities adds
-// the HTML named entity table (&nbsp; and the rest), still with no DTD.
-func xmlParseSafe(src string, htmlEntities bool, lim xmlLimits) (*xmlNode, *xmlFailure) {
+// xmlEvents receives the tokens of a document from xmlStreamSafe. Each
+// callback may stop the stream by returning a failure. CharData is only valid
+// until the callback returns (encoding/xml reuses the buffer).
+type xmlEvents struct {
+	start func(name, space string, attrs []xmlAttr) *xmlFailure
+	end   func() *xmlFailure
+	text  func(t []byte) *xmlFailure
+}
+
+// xmlStreamSafe is the one safe XML tokeniser: it reads src under lim and
+// hands each element start, element end and text run to ev, without building
+// a tree. Every refusal of the reader lives here (size, directives, charset,
+// depth, nodes, attributes, one root, no text outside it), so xmlParseSafe
+// (the tree behind Std.Xml) and a streaming reader (the worksheets and shared
+// strings of Std.Office.Xlsx) refuse the same documents. The node count is
+// the same as the tree's: an element is one node, and a run of text in one
+// parent is one node however many tokens (or comments) split it.
+func xmlStreamSafe(src string, htmlEntities bool, lim xmlLimits, ev xmlEvents) *xmlFailure {
 	if len(src) > lim.maxBytes {
-		return nil, xmlFail(xmlCodeTooLarge,
+		return xmlFail(xmlCodeTooLarge,
 			"Xml.parse: the document is "+strconv.Itoa(len(src))+" bytes, more than the limit of "+strconv.Itoa(lim.maxBytes),
 			[2]string{"bytes", strconv.Itoa(len(src))}, [2]string{"limit", strconv.Itoa(lim.maxBytes)})
 	}
@@ -148,14 +163,20 @@ func xmlParseSafe(src string, htmlEntities bool, lim xmlLimits) (*xmlNode, *xmlF
 	badCharset := ""
 	d.CharsetReader = xmlCharsetReader(&badCharset)
 
-	var root *xmlNode
-	var stack []*xmlNode
+	var open []string // the names of the open elements
+	seenRoot := false
+	lastText := false // the previous data token in this parent was text
 	nodes := 0
 	malformed := func(msg string) *xmlFailure {
 		line, col := d.InputPos()
 		return xmlFail(xmlCodeMalformed,
 			"Xml.parse: malformed XML at line "+strconv.Itoa(line)+", column "+strconv.Itoa(col)+": "+msg,
 			[2]string{"line", strconv.Itoa(line)}, [2]string{"column", strconv.Itoa(col)})
+	}
+	tooMany := func() *xmlFailure {
+		return xmlFail(xmlCodeTooManyNodes,
+			"Xml.parse: the document has more than "+strconv.Itoa(lim.maxNodes)+" nodes",
+			[2]string{"limit", strconv.Itoa(lim.maxNodes)})
 	}
 	for {
 		tok, err := d.Token()
@@ -164,7 +185,7 @@ func xmlParseSafe(src string, htmlEntities bool, lim xmlLimits) (*xmlNode, *xmlF
 		}
 		if err != nil {
 			if badCharset != "" {
-				return nil, xmlFail(xmlCodeCharset,
+				return xmlFail(xmlCodeCharset,
 					"Xml.parse: the encoding "+strconv.Quote(badCharset)+" is not supported (UTF-8, US-ASCII, ISO-8859-1 and Windows-1252 are)",
 					[2]string{"encoding", badCharset})
 			}
@@ -173,37 +194,93 @@ func xmlParseSafe(src string, htmlEntities bool, lim xmlLimits) (*xmlNode, *xmlF
 			if errors.As(err, &se) {
 				msg = se.Msg
 			}
-			return nil, malformed(msg)
+			return malformed(msg)
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			if root != nil && len(stack) == 0 {
-				return nil, malformed("more than one root element")
+			depth := len(open)
+			if seenRoot && depth == 0 {
+				return malformed("more than one root element")
 			}
-			if len(stack)+1 > lim.maxDepth {
-				return nil, xmlFail(xmlCodeTooDeep,
+			if depth+1 > lim.maxDepth {
+				return xmlFail(xmlCodeTooDeep,
 					"Xml.parse: elements are nested more than "+strconv.Itoa(lim.maxDepth)+" deep",
 					[2]string{"limit", strconv.Itoa(lim.maxDepth)})
 			}
 			nodes++
 			if nodes > lim.maxNodes {
-				return nil, xmlFail(xmlCodeTooManyNodes,
-					"Xml.parse: the document has more than "+strconv.Itoa(lim.maxNodes)+" nodes",
-					[2]string{"limit", strconv.Itoa(lim.maxNodes)})
+				return tooMany()
 			}
 			if len(t.Attr) > lim.maxAttributes {
-				return nil, xmlFail(xmlCodeTooManyAttributes,
+				return xmlFail(xmlCodeTooManyAttributes,
 					"Xml.parse: the element <"+t.Name.Local+"> has "+strconv.Itoa(len(t.Attr))+" attributes, more than the limit of "+strconv.Itoa(lim.maxAttributes),
 					[2]string{"element", t.Name.Local}, [2]string{"limit", strconv.Itoa(lim.maxAttributes)})
 			}
-			n := &xmlNode{name: t.Name.Local, space: t.Name.Space}
+			var attrs []xmlAttr
 			for _, a := range t.Attr {
 				// Namespace declarations are not attributes of the data.
 				if a.Name.Space == "xmlns" || (a.Name.Space == "" && a.Name.Local == "xmlns") {
 					continue
 				}
-				n.attrs = append(n.attrs, xmlAttr{name: a.Name.Local, space: a.Name.Space, value: a.Value})
+				attrs = append(attrs, xmlAttr{name: a.Name.Local, space: a.Name.Space, value: a.Value})
 			}
+			seenRoot = true
+			open = append(open, t.Name.Local)
+			lastText = false
+			if f := ev.start(t.Name.Local, t.Name.Space, attrs); f != nil {
+				return f
+			}
+		case xml.EndElement:
+			if len(open) == 0 {
+				return malformed("unexpected end element </" + t.Name.Local + ">")
+			}
+			open = open[:len(open)-1]
+			lastText = false
+			if f := ev.end(); f != nil {
+				return f
+			}
+		case xml.CharData:
+			if len(open) == 0 {
+				if !xmlIsSpace(string(t)) {
+					return malformed("text outside the root element")
+				}
+				continue
+			}
+			if !lastText {
+				nodes++
+				if nodes > lim.maxNodes {
+					return tooMany()
+				}
+			}
+			lastText = true
+			if f := ev.text(t); f != nil {
+				return f
+			}
+		case xml.Directive:
+			return xmlFail(xmlCodeDoctype,
+				"Xml.parse: a DOCTYPE or other directive is not allowed (no DTD, no entity definitions)")
+		case xml.Comment, xml.ProcInst:
+			// Comments and processing instructions carry no data.
+		}
+	}
+	if len(open) != 0 {
+		return malformed("unexpected end of input inside <" + open[len(open)-1] + ">")
+	}
+	if !seenRoot {
+		return malformed("no root element")
+	}
+	return nil
+}
+
+// xmlParseSafe parses src into its root element under lim. htmlEntities adds
+// the HTML named entity table (&nbsp; and the rest), still with no DTD. It is
+// a tree built on the events of xmlStreamSafe.
+func xmlParseSafe(src string, htmlEntities bool, lim xmlLimits) (*xmlNode, *xmlFailure) {
+	var root *xmlNode
+	var stack []*xmlNode
+	ev := xmlEvents{
+		start: func(name, space string, attrs []xmlAttr) *xmlFailure {
+			n := &xmlNode{name: name, space: space, attrs: attrs}
 			if len(stack) == 0 {
 				root = n
 			} else {
@@ -211,45 +288,27 @@ func xmlParseSafe(src string, htmlEntities bool, lim xmlLimits) (*xmlNode, *xmlF
 				p.children = append(p.children, n)
 			}
 			stack = append(stack, n)
-		case xml.EndElement:
-			if len(stack) == 0 {
-				return nil, malformed("unexpected end element </" + t.Name.Local + ">")
-			}
+			return nil
+		},
+		end: func() *xmlFailure {
 			xmlFinishText(stack[len(stack)-1])
 			stack = stack[:len(stack)-1]
-		case xml.CharData:
-			if len(stack) == 0 {
-				if !xmlIsSpace(string(t)) {
-					return nil, malformed("text outside the root element")
-				}
-				continue
-			}
+			return nil
+		},
+		text: func(t []byte) *xmlFailure {
 			p := stack[len(stack)-1]
 			if k := len(p.children); k > 0 && p.children[k-1].isText {
 				p.children[k-1].sb.Write(t)
-				continue
-			}
-			nodes++
-			if nodes > lim.maxNodes {
-				return nil, xmlFail(xmlCodeTooManyNodes,
-					"Xml.parse: the document has more than "+strconv.Itoa(lim.maxNodes)+" nodes",
-					[2]string{"limit", strconv.Itoa(lim.maxNodes)})
+				return nil
 			}
 			tn := &xmlNode{isText: true, sb: &strings.Builder{}}
 			tn.sb.Write(t)
 			p.children = append(p.children, tn)
-		case xml.Directive:
-			return nil, xmlFail(xmlCodeDoctype,
-				"Xml.parse: a DOCTYPE or other directive is not allowed (no DTD, no entity definitions)")
-		case xml.Comment, xml.ProcInst:
-			// Comments and processing instructions carry no data.
-		}
+			return nil
+		},
 	}
-	if len(stack) != 0 {
-		return nil, malformed("unexpected end of input inside <" + stack[len(stack)-1].name + ">")
-	}
-	if root == nil {
-		return nil, malformed("no root element")
+	if f := xmlStreamSafe(src, htmlEntities, lim, ev); f != nil {
+		return nil, f
 	}
 	return root, nil
 }

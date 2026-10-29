@@ -1,0 +1,129 @@
+module Main exposing (main)
+
+-- The fixture of scripts/office-soffice-e2e.sh: writes a ledger workbook and
+-- an invoice document into the folder given as the first argument, reads
+-- both back from disk with File.readFile, and prints what it read. The
+-- script then opens the two files in LibreOffice (a second reader) and checks
+-- the values it shows.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error
+import Sky.Core.File as File
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.Log exposing (println)
+import Std.Office.Docx as Docx exposing (Block(..), ListKind(..))
+import Std.Office.Xlsx as Xlsx exposing (Cell(..))
+
+
+ledger : Result Error String
+ledger =
+    let
+        money = Xlsx.numberFormat "#,##0.00"
+        sheet =
+            Xlsx.sheet
+                "Ledger"
+                [ [ Xlsx.bold (Xlsx.text "Date")
+                  , Xlsx.bold (Xlsx.text "Account")
+                  , Xlsx.bold (Xlsx.text "Amount")
+                  ]
+                , [ Xlsx.date
+                        { year = 2026
+                        , month = 10
+                        , day = 1
+                        , hour = 0
+                        , minute = 0
+                        , second = 0
+                        , millisecond = 0
+                        }
+                  , Xlsx.text "Sales"
+                  , money (Xlsx.number 12500.0)
+                  ]
+                , [ Xlsx.date
+                        { year = 2026
+                        , month = 10
+                        , day = 3
+                        , hour = 0
+                        , minute = 0
+                        , second = 0
+                        , millisecond = 0
+                        }
+                  , Xlsx.text "Rent"
+                  , money (Xlsx.number (-2400.0))
+                  ]
+                , [ Xlsx.empty
+                  , Xlsx.bold (Xlsx.text "Total")
+                  , money (Xlsx.formula "SUM(C2:C3)")
+                  ]
+                ]
+    in
+        Xlsx.write
+            [ { sheet
+                  | frozen = Just { rows = 1, columns = 0 }
+                  , columnWidths = [ ( 1, 20.0 ) ]
+              }
+            ]
+
+
+invoice : Result Error String
+invoice =
+    Docx.write
+        [ Heading 1 [ Docx.run "Invoice 2026-041" ]
+        , Paragraph [ Docx.run "Bill to: Example Ltd" ]
+        , Table
+              [ [ [ Paragraph [ Docx.run "Item" ] ]
+                , [ Paragraph [ Docx.run "Amount" ] ]
+                ]
+              , [ [ Paragraph [ Docx.run "Design" ] ]
+                , [ Paragraph [ Docx.run "1,200.00" ] ]
+                ]
+              ]
+        , ListItem Numbered 0 [ Docx.run "Pay within 30 days." ]
+        , Paragraph
+              [ Docx.run "Pay at "
+              , { text = "example.com/pay"
+                , bold = False
+                , italic = False
+                , link = Just "https://example.com/pay"
+                }
+              ]
+        ]
+
+
+save : String -> String -> Result Error String -> Task Error ()
+save dir name bytes =
+    Task.fromResult bytes
+        |> Task.andThen (\b -> File.writeBytes (dir ++ "/" ++ name) b)
+
+
+check : String -> Task Error ()
+check dir =
+    File.readFile (dir ++ "/ledger.xlsx")
+        |> Task.andThen (\b -> Task.fromResult (Xlsx.read b))
+        |> Task.andThen
+               (\book ->
+                   println
+                       ("xlsx sheets "
+                           ++ String.fromInt (List.length book.sheets)))
+        |> Task.andThen (\_ -> File.readFile (dir ++ "/invoice.docx"))
+        |> Task.andThen (\b -> Task.fromResult (Docx.read b))
+        |> Task.andThen (\blocks -> println (Docx.toText blocks))
+
+
+run : List String -> Task Error ()
+run args =
+    case List.head args of
+
+        Just dir ->
+            Task.sequence
+                [ save dir "ledger.xlsx" ledger
+                , save dir "invoice.docx" invoice
+                ]
+                |> Task.andThen (\_ -> check dir)
+
+        Nothing ->
+            Task.fail (Error.invalidInput "usage: office-files <folder>")
+
+
+main =
+    Task.run (System.args () |> Task.andThen run)

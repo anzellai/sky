@@ -7682,9 +7682,9 @@ func File_readFile(path any) any {
 }
 
 // File.readFileLimit : String -> Int -> Task String String
-// Reads up to `limit` bytes. Returns Err if the file exceeds that size, or
-// if the contents are not valid UTF-8 (callers should use readFileBytes for
-// binary data).
+// Reads up to `limit` bytes. Returns Err if the file exceeds that size. The
+// bytes are returned as they are (a Sky.Core.Bytes String): nothing checks or
+// decodes UTF-8, so a binary file reads unchanged.
 func File_readFileLimit(path any, limit any) any {
 	return func() any {
 		return WithFileSpan("readFile", fmt.Sprintf("%v", path), func() any {

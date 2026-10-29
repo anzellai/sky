@@ -1,0 +1,258 @@
+module OfficeDocxConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for Std.Office.Docx (v0.29.0) through the Sky API:
+-- read (write x) == x for every Block kind (headings 0 to 9, paragraphs with
+-- bold, italic and links, bullet and numbered items at every level, tables
+-- with nested tables and empty cells), deterministic bytes, the link and
+-- level refusals, toText, and an invoice with a table and a link. Files
+-- shaped like Word, LibreOffice and Google Docs output, the second
+-- (struct-decoding) reader, zip bombs and hostile parts are in
+-- runtime-go/rt/office_docx_test.go.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Std.Office.Docx as Docx exposing (Block(..), ListKind(..), Run)
+import Std.Zip as Zip
+import Sky.Test as Test exposing (Test)
+
+
+codeOf : Result Error a -> String
+codeOf r =
+    case r of
+
+        Ok _ ->
+            "ok"
+
+        Err e ->
+            case Error.failureOf e of
+
+                Just f ->
+                    Error.failureDomain f ++ "/" ++ Error.failureCode f
+
+                Nothing ->
+                    "no-domain"
+
+
+r : String -> Run
+r =
+    Docx.run
+
+
+strong : String -> Run
+strong s =
+    { text = s, bold = True, italic = False, link = Nothing }
+
+
+link : String -> String -> Run
+link s to =
+    { text = s, bold = False, italic = False, link = Just to }
+
+
+everyKind : List Block
+everyKind =
+    [ Heading 0 [ r "Title" ]
+    , Heading 1 [ r "One" ]
+    , Heading 6 [ r "Six" ]
+    , Heading 9 [ r "Nine" ]
+    , Paragraph
+          [ r "plain "
+          , strong "bold"
+          , r " "
+          , { text = "italic", bold = False, italic = True, link = Nothing }
+          , { text = " both", bold = True, italic = True, link = Nothing }
+          ]
+    , Paragraph [ r "tab\tand\nbreak & <markup> \"quoted\" ünïcødé 😀" ]
+    , Paragraph []
+    , Paragraph
+          [ r "see "
+          , link "the site" "https://example.com/a?b=1&c=2"
+          , r ", write "
+          , link "us" "mailto:hi@example.com"
+          , r ", jump "
+          , link "below" "#totals"
+          ]
+    , ListItem Bulleted 0 [ r "bullet" ]
+    , ListItem Bulleted 8 [ r "deep bullet" ]
+    , ListItem Numbered 0 [ r "first" ]
+    , ListItem Numbered 1 [ r "first.a" ]
+    , Table
+          [ [ [ Paragraph [ r "a" ] ]
+            , [ Paragraph [ strong "b" ]
+              , ListItem Bulleted 0 [ r "in a cell" ]
+              ]
+            ]
+          , [ [], [ Table [ [ [ Paragraph [ r "nested" ] ] ] ] ] ]
+          , [ [ Paragraph [] ], [ Paragraph [ r "x" ], Paragraph [] ] ]
+          ]
+    , Paragraph [ r "after" ]
+    , Table [ [ [ Paragraph [ r "the last block is a table" ] ] ] ]
+    ]
+
+
+-- An invoice: a title, the parties, a table of lines with a bold total, and
+-- a payment link.
+invoice : List Block
+invoice =
+    [ Heading 0 [ r "Invoice 2026-041" ]
+    , Paragraph [ strong "Bill to: ", r "Example Ltd, 1 High Street" ]
+    , Table
+          [ [ [ Paragraph [ strong "Item" ] ]
+            , [ Paragraph [ strong "Qty" ] ]
+            , [ Paragraph [ strong "Amount" ] ]
+            ]
+          , [ [ Paragraph [ r "Design" ] ]
+            , [ Paragraph [ r "1" ] ]
+            , [ Paragraph [ r "1,200.00" ] ]
+            ]
+          , [ [ Paragraph [ r "Hosting" ] ]
+            , [ Paragraph [ r "12" ] ]
+            , [ Paragraph [ r "240.00" ] ]
+            ]
+          , [ [ Paragraph [ strong "Total" ] ]
+            , []
+            , [ Paragraph [ strong "1,440.00" ] ]
+            ]
+          ]
+    , Heading 2 [ r "Payment" ]
+    , ListItem Numbered 0 [ r "Pay within 30 days." ]
+    , ListItem Numbered 0 [ r "Quote the invoice number." ]
+    , Paragraph
+          [ r "Pay online at "
+          , link "example.com/pay" "https://example.com/pay"
+          ]
+    ]
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "read (write x) == x for every block kind"
+          (\_ ->
+              Test.equal
+                  (Ok everyKind)
+                  (Docx.write everyKind |> Result.andThen Docx.read))
+    , Test.test
+          "write gives the same bytes every time"
+          (\_ -> Test.equal (Docx.write everyKind) (Docx.write everyKind))
+    , Test.test
+          "an invoice with a table and a link reads back"
+          (\_ ->
+              Test.equal
+                  (Ok invoice)
+                  (Docx.write invoice |> Result.andThen Docx.read))
+    , Test.test
+          "toText of the invoice"
+          (\_ ->
+              Test.equal
+                  (String.join
+                      "\n"
+                      [ "Invoice 2026-041"
+                      , "Bill to: Example Ltd, 1 High Street"
+                      , "Item\tQty\tAmount"
+                      , "Design\t1\t1,200.00"
+                      , "Hosting\t12\t240.00"
+                      , "Total\t\t1,440.00"
+                      , "Payment"
+                      , "1. Pay within 30 days."
+                      , "2. Quote the invoice number."
+                      , "Pay online at example.com/pay"
+                      ])
+                  (Docx.toText invoice))
+    , Test.test
+          "toText counts each level and restarts after other blocks"
+          (\_ ->
+              Test.equal
+                  "1. a\n  1. a.1\n  2. a.2\n2. b\n  - dot\npara\n1. again"
+                  (Docx.toText
+                      [ ListItem Numbered 0 [ r "a" ]
+                      , ListItem Numbered 1 [ r "a.1" ]
+                      , ListItem Numbered 1 [ r "a.2" ]
+                      , ListItem Numbered 0 [ r "b" ]
+                      , ListItem Bulleted 1 [ r "dot" ]
+                      , Paragraph [ r "para" ]
+                      , ListItem Numbered 0 [ r "again" ]
+                      ]))
+    , Test.test
+          "adjacent runs with the same look read as one"
+          (\_ ->
+              Test.equal
+                  (Ok [ Paragraph [ r "ab", strong "c" ] ])
+                  (Docx.write [ Paragraph [ r "a", r "", r "b", strong "c" ] ]
+                      |> Result.andThen Docx.read))
+    , Test.test
+          "a link that is not http, https, mailto or #anchor is refused"
+          (\_ ->
+              Test.equal
+                  [ "office/unsafe_link"
+                  , "office/unsafe_link"
+                  , "office/unsafe_link"
+                  , "office/unsafe_link"
+                  , "ok"
+                  ]
+                  [ codeOf
+                        (Docx.write
+                            [ Paragraph [ link "x" "javascript:alert(1)" ] ])
+                  , codeOf
+                        (Docx.write
+                            [ Paragraph [ link "x" "file:///etc/passwd" ] ])
+                  , codeOf (Docx.write [ Paragraph [ link "x" "page.html" ] ])
+                  , codeOf
+                        (Docx.write
+                            [ Table
+                                  [ [ [ Paragraph
+                                            [ link "x" "data:text/html,hi" ]
+                                      ]
+                                    ]
+                                  ]
+                            ])
+                  , codeOf
+                        (Docx.write
+                            [ Paragraph [ link "x" "HTTPS://EXAMPLE.COM" ] ])
+                  ])
+    , Test.test
+          "a heading or list level out of range is refused"
+          (\_ ->
+              Test.equal
+                  [ "office/heading_level"
+                  , "office/heading_level"
+                  , "office/list_level"
+                  ]
+                  [ codeOf (Docx.write [ Heading 10 [ r "x" ] ])
+                  , codeOf (Docx.write [ Heading (-1) [ r "x" ] ])
+                  , codeOf (Docx.write [ ListItem Bulleted 9 [ r "x" ] ])
+                  ])
+    , Test.test
+          "bytes that are not a document"
+          (\_ ->
+              Test.equal
+                  [ "zip/not_zip", "office/not_office" ]
+                  [ codeOf (Docx.read "not a zip")
+                  , codeOf
+                        (Zip.write [ { path = "a.txt", bytes = "x" } ]
+                            |> Result.andThen Docx.read)
+                  ])
+    , Test.test
+          "readWith bounds the blocks"
+          (\_ ->
+              let
+                  limits = Docx.defaultLimits
+              in
+                  Test.equal
+                      [ "office/too_many_blocks", "ok" ]
+                      [ codeOf
+                            (Docx.write invoice
+                                |> Result.andThen
+                                       (Docx.readWith { limits | maxBlocks = 5 }))
+                      , codeOf
+                            (Docx.write invoice
+                                |> Result.andThen
+                                       (Docx.readWith
+                                           { limits | maxBlocks = 100 }))
+                      ])
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

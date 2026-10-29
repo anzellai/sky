@@ -210,6 +210,7 @@ pub const SURFACE: Axis = Axis::new(
         "terminal",
         "xml",
         "zip",
+        "office",
     ],
 );
 

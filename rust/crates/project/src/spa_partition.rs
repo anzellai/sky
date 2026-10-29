@@ -187,6 +187,10 @@ const EFFECT_KERNELS: &[&str] = &[
     // server while the rest of Codec stays client (`record_ffi_symbol`).
     "Xml",
     "Zip",
+    // v0.29.0 Std.Office.Xlsx and Std.Office.Docx: reading and writing
+    // workbooks and documents is ZIP and XML work over untrusted bytes under
+    // limits, the same server-side class as Xml and Zip.
+    "Office",
 ];
 
 /// **KNOWN-PURE** kernel pseudo-modules — pure computation / pure TEA plumbing
@@ -8097,6 +8101,12 @@ mod tests {
             "Xml_encode",
             "Zip_read",
             "Zip_write",
+            // v0.29.0: Std.Office stays on the server.
+            "Office_xlsxRead",
+            "Office_xlsxSheetNames",
+            "Office_xlsxWrite",
+            "Office_docxRead",
+            "Office_docxWrite",
         ] {
             assert!(syms.contains(sym), "`{sym}` is not a stdlib kernel");
             let mut acc = Refs::default();

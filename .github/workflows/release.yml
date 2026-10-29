@@ -1830,6 +1830,17 @@ jobs:
         run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" jq lsof sqlite3
       - name: Example behavioural contracts
         run: scripts/example-e2e.sh
+      - name: Install LibreOffice (headless)
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends libreoffice-calc-nogui libreoffice-writer-nogui
+          type -P soffice
+      - name: Std.Office files open in LibreOffice
+        timeout-minutes: 10
+        # A workbook and a document written by Std.Office.Xlsx / Docx are
+        # converted by LibreOffice (a second reader); the formula total is
+        # computed on open.
+        run: scripts/office-second-reader-e2e.sh
       - name: Bound the Go caches before save
         if: always()
         working-directory: .

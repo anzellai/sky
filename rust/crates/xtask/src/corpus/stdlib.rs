@@ -359,6 +359,9 @@ pub const SURFACES: &[Surface] = &[
         &["Std.Xml.Decode as XD", "Std.Xml.Encode as XE"],
     ),
     sf("zip", "Std.Zip"),
+    // v0.29.0 Std.Office.Xlsx and Std.Office.Docx: read and write are pure
+    // `Result`s over bytes, so a write read back is value-assertable.
+    sf2("office", "Std.Office.Xlsx", &["Std.Office.Docx as Docx"]),
     // v0.27.0 streaming child processes and file watching. Both surfaces are
     // `Task`s bridged with `Task.run`; the expected values are what the
     // spawned POSIX tools (`sh`, `cat`, `stty`) and the documented coalescing
@@ -860,6 +863,9 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Std.Xml.Decode",
     "Std.Xml.Encode",
     "Std.Zip",
+    // v0.29.0: Std.Office.Xlsx and Std.Office.Docx land covered (`office`).
+    "Std.Office.Xlsx",
+    "Std.Office.Docx",
     // v0.27.0: the streaming process surface and Std.Watch land covered.
     "Sky.Core.Process",
     "Std.Watch",
@@ -1513,6 +1519,7 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "qr" => qr_battery(edge),
         "xml" => xml_battery(edge),
         "zip" => zip_battery(edge),
+        "office" => office_battery(edge),
         "process" => process_battery(edge),
         "watch" => watch_battery(edge),
         "sync" => sync_battery(edge),
@@ -2612,6 +2619,157 @@ fn zip_battery(edge: &str) -> Vec<Check> {
             rs(
                 &["Zip.list"],
                 r#"Result.map (\_ -> "ok") (Zip.list "")"#,
+                None,
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Office.Xlsx / Std.Office.Docx (v0.29.0) ----------------------------
+//
+// Every member returns a value, so each is asserted by reading back what the
+// writer was given (`rows1` and `docText` in the surface helpers). The failure
+// edge asserts the refusals the modules promise (bytes that are not a file, a
+// bad sheet name, an unsafe link).
+
+fn office_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            rs(
+                &[
+                    "Xlsx.write",
+                    "Xlsx.read",
+                    "Xlsx.sheet",
+                    "Xlsx.text",
+                    "Xlsx.number",
+                    "Xlsx.bool",
+                ],
+                r#"rows1 [ [ Xlsx.text "a", Xlsx.number 1.5, Xlsx.bool True ], [ Xlsx.bool False ] ]"#,
+                Some("a,1.5,T;F"),
+            ),
+            rs(&["Xlsx.int"], r#"rows1 [ [ Xlsx.int 7 ] ]"#, Some("7")),
+            rs(
+                &["Xlsx.date"],
+                r#"rows1 [ [ Xlsx.date { year = 2026, month = 10, day = 29, hour = 13, minute = 5, second = 0, millisecond = 0 } ] ]"#,
+                Some("2026-10-29 13:5"),
+            ),
+            rs(
+                &["Xlsx.formula", "Xlsx.failure", "Xlsx.empty"],
+                r##"rows1 [ [ Xlsx.formula "=1+1", Xlsx.empty, Xlsx.failure "#N/A" ] ]"##,
+                Some("=1+1,_,#N/A"),
+            ),
+            rs(
+                &[
+                    "Xlsx.bold",
+                    "Xlsx.italic",
+                    "Xlsx.fontSize",
+                    "Xlsx.fill",
+                    "Xlsx.numberFormat",
+                    "Xlsx.wrap",
+                ],
+                r#"rows1 [ [ Xlsx.wrap (Xlsx.numberFormat "0.00" (Xlsx.fill 1 2 3 (Xlsx.fontSize 14 (Xlsx.italic (Xlsx.bold (Xlsx.number 1.5)))))) ] ]"#,
+                Some("1.5"),
+            ),
+            rs(
+                &["Xlsx.fromCell"],
+                r#"rows1 [ List.map Xlsx.fromCell [ Xlsx.Text "t", Xlsx.Boolean False, Xlsx.Formula "A1" (Xlsx.Number 2.5) ] ]"#,
+                Some("t,F,=A1"),
+            ),
+            rs(
+                &["Xlsx.sheetNames"],
+                r#"Result.map (\ns -> String.join "," (List.map .name ns)) (Xlsx.write [ Xlsx.sheet "A" [], Xlsx.sheet "B" [] ] |> Result.andThen Xlsx.sheetNames)"#,
+                Some("A,B"),
+            ),
+            rs(
+                &["Xlsx.readWith", "Xlsx.defaultLimits"],
+                r#"Result.map (\b -> String.fromInt (List.length b.sheets)) (Xlsx.write [ Xlsx.sheet "A" [] ] |> Result.andThen (Xlsx.readWith Xlsx.defaultLimits))"#,
+                Some("1"),
+            ),
+            rs(
+                &["Docx.write", "Docx.read", "Docx.run", "Docx.toText"],
+                r#"docText [ Docx.Heading 1 [ Docx.run "T" ], Docx.Paragraph [ Docx.run "p" ], Docx.ListItem Docx.Numbered 0 [ Docx.run "n" ] ]"#,
+                Some("T/p/1. n"),
+            ),
+            rs(
+                &["Docx.readWith", "Docx.defaultLimits"],
+                r#"Docx.write [ Docx.Paragraph [ Docx.run "x" ] ] |> Result.andThen (Docx.readWith Docx.defaultLimits) |> Result.map Docx.toText"#,
+                Some("x"),
+            ),
+        ],
+        "empty" => vec![
+            rs(&["Xlsx.write", "Xlsx.read"], r#"rows1 []"#, Some("")),
+            rs(
+                &["Xlsx.write"],
+                r#"Result.map (\_ -> "ok") (Xlsx.write [])"#,
+                None,
+            ),
+            rs(&["Docx.write", "Docx.read"], r#"docText []"#, Some("")),
+            s(&["Docx.toText"], r#"Docx.toText []"#, ""),
+        ],
+        "boundary" => vec![
+            rs(
+                &["Xlsx.readWith"],
+                r#"Result.map (\_ -> "ok") (Xlsx.write [ Xlsx.sheet "A" [ [ Xlsx.int 1 ], [ Xlsx.int 2 ] ] ] |> Result.andThen (Xlsx.readWith { zip = Xlsx.defaultLimits.zip, maxSheets = 1, maxRows = 1, maxCells = 10, maxColumns = 10 }))"#,
+                None,
+            ),
+            rs(
+                &["Xlsx.readWith"],
+                r#"Result.map (\_ -> "ok") (Xlsx.write [ Xlsx.sheet "A" [ [ Xlsx.int 1 ], [ Xlsx.int 2 ] ] ] |> Result.andThen (Xlsx.readWith { zip = Xlsx.defaultLimits.zip, maxSheets = 1, maxRows = 2, maxCells = 2, maxColumns = 1 }))"#,
+                Some("ok"),
+            ),
+            rs(
+                &["Xlsx.date"],
+                r#"rows1 [ [ Xlsx.date { year = 1900, month = 2, day = 29, hour = 0, minute = 0, second = 0, millisecond = 0 } ] ]"#,
+                Some("1900-2-29 0:0"),
+            ),
+            rs(
+                &["Docx.readWith"],
+                r#"Docx.write [ Docx.Paragraph [ Docx.run "a" ], Docx.Paragraph [ Docx.run "b" ] ] |> Result.andThen (Docx.readWith { zip = Docx.defaultLimits.zip, maxBlocks = 1, maxDepth = 64 }) |> Result.map Docx.toText"#,
+                None,
+            ),
+            bo(
+                &["Xlsx.write"],
+                r#"Xlsx.write [ Xlsx.sheet "A" [ [ Xlsx.text "x" ] ] ] == Xlsx.write [ Xlsx.sheet "A" [ [ Xlsx.text "x" ] ] ]"#,
+                true,
+            ),
+        ],
+        "unicode" => vec![
+            rs(
+                &["Xlsx.text", "Xlsx.write", "Xlsx.read"],
+                r#"rows1 [ [ Xlsx.text "漢字 😀", Xlsx.text "é" ] ]"#,
+                Some("漢字 😀,é"),
+            ),
+            rs(
+                &["Xlsx.sheetNames"],
+                r#"Result.map (\ns -> String.join "," (List.map .name ns)) (Xlsx.write [ Xlsx.sheet "Données" [] ] |> Result.andThen Xlsx.sheetNames)"#,
+                Some("Données"),
+            ),
+            rs(
+                &["Docx.write", "Docx.read"],
+                r#"docText [ Docx.Paragraph [ Docx.run "ünï 世界" ] ]"#,
+                Some("ünï 世界"),
+            ),
+        ],
+        "failure" => vec![
+            rs(
+                &["Xlsx.read"],
+                r#"Result.map (\_ -> "ok") (Xlsx.read "not a zip")"#,
+                None,
+            ),
+            rs(
+                &["Xlsx.write"],
+                r#"Result.map (\_ -> "ok") (Xlsx.write [ Xlsx.sheet "a/b" [] ])"#,
+                None,
+            ),
+            rs(
+                &["Docx.read"],
+                r#"Result.map (\_ -> "ok") (Docx.read "not a zip")"#,
+                None,
+            ),
+            rs(
+                &["Docx.write"],
+                r#"Result.map (\_ -> "ok") (Docx.write [ Docx.Paragraph [ { text = "x", bold = False, italic = False, link = Just "javascript:x" } ] ])"#,
                 None,
             ),
         ],
@@ -7518,6 +7676,50 @@ aiUnpinnedFetch =
 
         Err _ ->
             "E"
+"#
+        }
+        "office" => {
+            r#"cellStr : Xlsx.Cell -> String
+cellStr c =
+    case c of
+        Xlsx.Empty ->
+            "_"
+
+        Xlsx.Text t ->
+            t
+
+        Xlsx.Number f ->
+            String.fromFloat f
+
+        Xlsx.Boolean b ->
+            if b then
+                "T"
+
+            else
+                "F"
+
+        Xlsx.Date d ->
+            String.fromInt d.year ++ "-" ++ String.fromInt d.month ++ "-" ++ String.fromInt d.day ++ " " ++ String.fromInt d.hour ++ ":" ++ String.fromInt d.minute
+
+        Xlsx.Formula f _ ->
+            "=" ++ f
+
+        Xlsx.Failure e ->
+            e
+
+
+rows1 : List (List Xlsx.CellSpec) -> Result Error String
+rows1 rows =
+    Xlsx.write [ Xlsx.sheet "S" rows ]
+        |> Result.andThen Xlsx.read
+        |> Result.map (\b -> String.join ";" (List.map (\r -> String.join "," (List.map cellStr r)) (List.concatMap .rows b.sheets)))
+
+
+docText : List Docx.Block -> Result Error String
+docText blocks =
+    Docx.write blocks
+        |> Result.andThen Docx.read
+        |> Result.map (\bs -> String.replace "\n" "/" (Docx.toText bs))
 "#
         }
         "zip" => {

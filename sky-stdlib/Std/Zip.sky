@@ -1,7 +1,7 @@
 -- | Std.Zip — read and write ZIP archives safely.
 --
 -- Bytes are `Sky.Core.Bytes` (an alias of `String` whose bytes need not be
--- UTF-8), as `File.readFileBytes` and an upload give them.
+-- UTF-8), as `File.readFile` and an upload give them.
 --
 --     import Std.Zip as Zip
 --
