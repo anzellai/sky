@@ -5,7 +5,7 @@ today**, using the Haskell compiler as a differential oracle. The Rust compiler
 is now the Sky compiler. The Haskell compiler served as reference, oracle and
 rollback path under `legacy-haskell-compiler/` until v0.28.x, and was removed
 from the tree in v0.29.0 (tag `v0.28.1` is the last that has it). This was a
-strangler migration ([`docs/self-host/00`](../self-host/00-feasibility-and-architecture.md)
+strangler migration ([`docs/self-host/00`](../history/self-host/00-feasibility-and-architecture.md)
 §6, the strategy that survived the grill): each phase landed one subsystem that
 diff-matched the oracle before the next began. Never big-bang.
 

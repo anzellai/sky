@@ -283,8 +283,8 @@ fn the_cache_is_pruned_to_its_bound() {
     assert!(kb <= 1024, "cache is {kb} KB, bound is 1024 KB");
 }
 
-/// The key leaves `SKY_RUNTIME_DIR` out, because the sweep exports it and the
-/// browser gate does not, and only the retired Haskell compiler read it. That
+/// The key leaves `SKY_RUNTIME_DIR` out, because an older dev shell may still
+/// export it, and only the retired Haskell compiler read it. That
 /// is safe only while no Rust compiler source reads it: if one starts to, the
 /// variable changes what a build produces and must be back in the key.
 #[test]

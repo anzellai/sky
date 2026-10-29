@@ -2613,7 +2613,7 @@ func AsListT[T any](v any) []T {
 			// `[]rt.SkyAttribute` (`= []any`).  The button/event attrs
 			// vanished from rendered HTML — observable as Sky.Live
 			// `sky-click=` markers missing entirely on Std.Ui apps
-			// (mini-notion, skyforum) post-v0.13.0.
+			// (a downstream app, skyforum) post-v0.13.0.
 			for i := 0; i < n; i++ {
 				out[i] = rv.Index(i).Interface().(T)
 			}

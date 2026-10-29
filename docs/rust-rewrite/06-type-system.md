@@ -206,7 +206,7 @@ fn union(&mut self, a: TyVarId, b: TyVarId, content: Content) {
 `HashSet` is fine per L4's carve-out). Membership is O(1); the whole check is
 linear in the visited graph. The check gates the `Flex ↔ Structure` merge
 (`Unify.hs:192-223`) that otherwise builds an infinite type and OOMs the host
-(the mini-notion >3 GB blow-up documented there).
+(the >3 GB blow-up in a downstream app documented there).
 
 ```rust
 fn occurs(&mut self, target: TyVarId) -> bool {

@@ -5,7 +5,7 @@ builds AND runs. This doc is the operational face of the two hard goals from
 [`README`](README.md) and the acceptance gates in [`00`](00-goals-and-principles.md).
 
 The whole strategy turns on one scar, surfaced by the self-host analysis
-([`docs/self-host/00-feasibility-and-architecture.md`](../self-host/00-feasibility-and-architecture.md) §7,
+([`docs/self-host/00-feasibility-and-architecture.md`](../history/self-host/00-feasibility-and-architecture.md) §7,
 grill **R1-D1**):
 
 > A byte-diff-of-emitted-Go oracle on a **well-typed** corpus is structurally

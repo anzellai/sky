@@ -8192,7 +8192,7 @@ migration section. `sky upgrade --notes` previews the notes without upgrading.
 
 ## v0.17.0 — typed-emit soundness floor (2026-06-28)
 
-Release plan: [`docs/v0.17/release-plan.md`](docs/v0.17/release-plan.md).
+Release plan: [`docs/v0.17/release-plan.md`](docs/history/v0.17/release-plan.md).
 Judge re-verdict: REFRAMED 100% ACHIEVED + VERIFIED.
 
 ### Compiler
@@ -8405,7 +8405,7 @@ full current-state catalog. Items closed since v0.16.x:
   type map (`globalRegionTypes`); `LowerCtx` threads the expected
   type down through `exprToGoExpectGo`. Closes the long-standing
   parametric-record-alias bug class (every Surface 1/2/3 is now
-  shipped). Architecture: [`docs/v1-rfc/type-soundness-deep-analysis.md`](docs/v1-rfc/type-soundness-deep-analysis.md).
+  shipped). Architecture: [`docs/v1-rfc/type-soundness-deep-analysis.md`](docs/history/v1-rfc/type-soundness-deep-analysis.md).
 - **Go generics on parametric record aliases.** `type alias Cfg msg
   = { onSubmit : msg, label : String, ... }` now emits
   `type Cfg_R[T1 any] struct { OnSubmit T1; Label string; ... }`

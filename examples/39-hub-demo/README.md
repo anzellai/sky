@@ -112,7 +112,7 @@ The bundled console's `init` issues
 arrived identity drives both UI rendering (tenant pill in the
 header) AND the SQL-WHERE clause.
 
-See [`docs/v0.16.x-console/HUB.md`](../../docs/v0.16.x-console/HUB.md)
+See [`docs/history/v0.16.x-console/HUB.md`](../../docs/history/v0.16.x-console/HUB.md)
 "Tenant isolation — defense-in-depth" for the full three-layer
 model.
 

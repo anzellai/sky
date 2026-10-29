@@ -152,20 +152,10 @@ fi
 # in the emitted `main.go`. Without this, the post-transform
 # `package console_app` would import its own future incarnation and
 # `go build` rejects the cycle. The gate is in
-# src/Sky/Build/Compile.hs (`globalIsInlineConsoleBuild`).
+# rust/crates/lower/src/lower.rs (`SKY_BUILD_IS_INLINE_CONSOLE`).
 (
     cd "$CONSOLE_SRC"
-    # SKY_RUNTIME_DIR points at the worktree-root runtime-go so the
-    # compiler's `locateRuntimeDir` probe (which walks up from cwd
-    # AND from the binary's path) finds the in-tree edits rather
-    # than falling through to the embedded copy baked into the
-    # binary at TH-time. Without this, edits to runtime-go/rt/*.go
-    # under a worktree cwd silently fall through to the stale
-    # embedded snapshot — visible as "undefined rt.NewSymbol" go
-    # build failures even though `strings sky-out/sky` shows the
-    # symbol IS in the binary.
-    SKY_RUNTIME_DIR="$ROOT/runtime-go" \
-        SKY_BUILD_IS_INLINE_CONSOLE=1 \
+    SKY_BUILD_IS_INLINE_CONSOLE=1 \
         with_timeout 600 "$SKY" build src/Main.sky
 )
 

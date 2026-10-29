@@ -225,7 +225,7 @@ Before tagging:
    (forbidden-pattern gate, build, run, HTTP probe).
 4. Tag + push.
 
-See [`compiler/runtime-verification.md`](compiler/runtime-verification.md)
+See [`history/compiler/runtime-verification.md`](history/compiler/runtime-verification.md)
 for the full gate matrix.
 
 ## Troubleshooting

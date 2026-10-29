@@ -2,8 +2,8 @@
 
 > Live doc for the v0.16.x observability surface (telemetry primitives,
 > Sky Console, hub federation).  For hub-specific deep-dives see
-> [`v0.16.x-console/`](v0.16.x-console/).  Pre-v0.16 design notes are
-> archived at [`archive/observability-design.md`](archive/observability-design.md).
+> [`history/v0.16.x-console/`](history/v0.16.x-console/).  Pre-v0.16 design notes are
+> archived at [`history/archive/observability-design.md`](history/archive/observability-design.md).
 
 Sky traces your app automatically. You get a useful trace tree with
 **zero configuration and zero code** — and an opt-in API when you

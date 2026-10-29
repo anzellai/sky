@@ -17,7 +17,7 @@ import (
 // the SkyADT shape and returns nil — so EVERY key press in a TUI
 // app using Std.Ui inputs / buttons drops silently.
 //
-// Symptom in user-facing TUI repro (mini-notion --tui): typing in
+// Symptom in user-facing TUI repro (a downstream app, --tui): typing in
 // any input field, pressing Enter on any button, clicking any
 // link — all no-ops. The TUI renders correctly but is dead to
 // keyboard / mouse events.

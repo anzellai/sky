@@ -191,8 +191,8 @@ _gc_toolchain() {
 # shim's knobs (the sweep exports them, the browser gate does not); and
 # SKY_RUNTIME_DIR: only the retired Haskell compiler read it (the
 # Rust compiler embeds its runtime, whose content the binary hash covers), and
-# the sweep exports it while the browser gate does not — keeping it would stop
-# the two from sharing a build. `tests/gate_build_cache.rs` fails if any Rust
+# an older dev shell may still export it — keeping it would stop two gates from
+# sharing a build for no reason. `tests/gate_build_cache.rs` fails if any Rust
 # compiler source starts reading it.
 _gc_env() {
     local name val h

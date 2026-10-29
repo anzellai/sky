@@ -116,8 +116,6 @@ if [[ $LIST_ONLY -eq 0 ]]; then
     require_fresh_compiler "$SKY" "$ROOT"
 fi
 
-export SKY_RUNTIME_DIR="$ROOT/runtime-go"
-
 # The shared build cache. Hash the compiler ONCE here, in the parent, so the
 # xargs workers inherit the digest instead of each re-hashing a 100+ MB binary.
 GATE_CACHE_LIB="$ROOT/scripts/lib/gate-build-cache.sh"
@@ -131,8 +129,8 @@ fi
 # in-tree sky-out/ + .skycache/go directories that other readers use
 # while the sweep is mid-flight.
 #
-# Preserves $ROOT for SKY_RUNTIME_DIR (the runtime + stdlib live there
-# and are NEVER mutated by the sweep). Only example dirs get copied.
+# The runtime + stdlib are embedded in the compiler and are NEVER
+# mutated by the sweep. Only example dirs get copied.
 #
 # After a successful sweep we MIRROR THE WORKDIR BACK to the in-tree
 # examples/. Two reasons:
@@ -565,7 +563,7 @@ run_example() {
 
 # Worker entry — invoked via xargs -P. Single arg: colon-encoded entry
 # from $EXAMPLES (name:kind[:port[:path]]). We re-source the script's
-# globals via env — RESULTS_DIR, EXAMPLES_ROOT, SKY, SKY_RUNTIME_DIR,
+# globals via env — RESULTS_DIR, EXAMPLES_ROOT, SKY,
 # CLEAN, BUILD_ONLY — all already exported in the parent shell.
 sweep_worker() {
     local entry="$1"
@@ -580,7 +578,7 @@ sweep_worker() {
 # unbounded, or (before this shim existed) reported a pass for not running it.
 export -f run_example sweep_worker with_timeout _sky_with_timeout_resolve _sky_with_timeout_which
 export _SKY_WITH_TIMEOUT_PERL_PROG SKY_WITH_TIMEOUT_KILL_AFTER
-export EXAMPLES_ROOT SKY SKY_RUNTIME_DIR CLEAN BUILD_ONLY GATE_CACHE_LIB
+export EXAMPLES_ROOT SKY CLEAN BUILD_ONLY GATE_CACHE_LIB
 export RESULTS_DIR SKIP_GUI_LINUX
 
 # Display banner + parallel summary.

@@ -957,9 +957,9 @@ impl<'a> Resolver<'a> {
         for (name, res) in wins {
             // Measured before landing (`SKY_AUDIT_PRECEDENCE` instrumentation,
             // since removed): across all 56 examples and 6 real apps —
-            // skydeploy's control-plane, sky-lang.org, shop-app, sendcrafts,
-            // rfcflow, sky-urlshortener — the layer winner picked here was
-            // IDENTICAL to the old last-import-wins value in every case. The
+            // sky-lang.org, sky-urlshortener and four downstream apps — the
+            // layer winner picked here was IDENTICAL to the old last-import-wins
+            // value in every case. The
             // lattice therefore changes no working program's meaning; it only
             // makes the choice independent of import order and rejects the ties.
             //
