@@ -94,3 +94,7 @@ The previous mandate (Std.Ai lifecycle) is complete: v0.28.0 shipped, then v0.28
   case-sensitive on PostgreSQL), expression SET, insert from a query,
   column-to-column conditions, JSON field access, RETURNING, and the regex item
   documented as advised against; plus the two doc notes on `like` and `migrate`.
+  User decisions on Store (2026-10-29): Store.migrate and `sky db migrate --gen` follow
+  one rule (Maybe field nullable, otherwise NOT NULL; a declared builder default wins,
+  else the zero value; existing columns are never altered), and the new functions use
+  the requested SQL-style names in Store's current qualified style.
