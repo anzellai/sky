@@ -743,7 +743,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 166,
+      "expected_assertions": 170,
       "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
