@@ -539,7 +539,9 @@ pub fn render_ty(t: &GoTy) -> String {
             format!("{n}[{}]", a.join(", "))
         }
         GoTy::Slice(t) => format!("[]{}", render_ty(t)),
-        GoTy::Map(k, v) => format!("map[{}]{}", render_ty(k), render_ty(v)),
+        // A Sky `Dict k v` is the runtime's persistent `rt.SkyDict[V]`: the key
+        // is the runtime's encoded string, so only the value type is a parameter.
+        GoTy::Map(_, v) => format!("rt.SkyDict[{}]", render_ty(v)),
         GoTy::Func(ps, r) => {
             let a: Vec<String> = ps.iter().map(render_ty).collect();
             format!("func({}) {}", a.join(", "), render_ty(r))
@@ -623,9 +625,9 @@ fn narrow_call(to: &GoTy, inner: &str) -> String {
                 }
             }
             GoTy::Slice(t) => format!("rt.AsListT[{}]({})", render_ty(t), inner),
-            // A Sky `Dict k v` is `map[string]V` at runtime; narrow via `rt.AsMapT`,
-            // which REBUILDS the value-coerced `map[string]V` (Go map types are
-            // invariant, so `rt.Coerce[map[…]…]` would assert the exact type + panic).
+            // A Sky `Dict k v` is `rt.SkyDict[V]` at runtime; narrow via `rt.AsMapT`,
+            // which passes a `SkyDict[V]` through in O(1) and REBUILDS a Dict of
+            // another value type (or a Go map from FFI / Std.Db) value-coerced.
             GoTy::Map(_, v) => format!("rt.AsMapT[{}]({})", render_ty(v), inner),
             GoTy::Bare(Prim::Str) => format!("rt.AsString({})", inner),
             GoTy::Bare(Prim::Int) => format!("rt.AsInt({})", inner),

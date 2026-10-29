@@ -39,6 +39,18 @@ func tuiDecodeFormSubmit(handler any, fields map[string]string) (any, error) {
 	pt := rv.Type().In(0)
 	switch pt.Kind() {
 	case reflect.Struct:
+		// A `Dict String String` handler: the fields as a Dict.
+		if isSkyDictType(pt) {
+			m := make(map[string]any, len(fields))
+			for k, v := range fields {
+				m[k] = v
+			}
+			arg := narrowToSkyDict(reflect.ValueOf(m), pt)
+			if !arg.IsValid() {
+				return nil, fmt.Errorf("the onSubmit handler takes %s; a form submits String fields", pt)
+			}
+			return rv.Call([]reflect.Value{arg})[0].Interface(), nil
+		}
 		rec, err := tuiBuildFormRecord(pt, fields)
 		if err != nil {
 			return nil, err

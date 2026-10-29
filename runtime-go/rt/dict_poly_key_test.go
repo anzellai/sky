@@ -248,9 +248,10 @@ func TestLookupFindsAnUntaggedKey(t *testing.T) {
 // key that is logically the same one.
 func TestInsertIntoUntaggedMapReplacesRatherThanDuplicates(t *testing.T) {
 	out := Dict_insert(10, "J", legacyIntMap())
-	m, ok := out.(map[string]any)
+	m := DictToMap(out)
+	ok := m != nil
 	if !ok {
-		t.Fatalf("Dict_insert must return map[string]any")
+		t.Fatalf("Dict_insert must return a Dict")
 	}
 	if len(m) != 4 {
 		t.Fatalf("insert added a duplicate key: %d entries, want 4 (%v)", len(m), m)
@@ -262,9 +263,10 @@ func TestInsertIntoUntaggedMapReplacesRatherThanDuplicates(t *testing.T) {
 
 func TestRemoveFromUntaggedMapRemovesTheEntry(t *testing.T) {
 	out := Dict_remove(10, legacyIntMap())
-	m, ok := out.(map[string]any)
+	m := DictToMap(out)
+	ok := m != nil
 	if !ok {
-		t.Fatalf("Dict_remove must return map[string]any")
+		t.Fatalf("Dict_remove must return a Dict")
 	}
 	if _, still := m["10"]; still || len(m) != 3 {
 		t.Errorf("remove left %v, want the \"10\" entry gone", m)

@@ -257,38 +257,38 @@ type Sky_Core_Http_HttpResponse_R = rt.HttpResponse
 
 func init() { rt.RegisterGobType(Sky_Core_Http_HttpResponse_R{}) }
 
-func Sky_Core_Http_HttpResponse(p0 int, p1 string, p2 map[string]string) Sky_Core_Http_HttpResponse_R {
+func Sky_Core_Http_HttpResponse(p0 int, p1 string, p2 rt.SkyDict[string]) Sky_Core_Http_HttpResponse_R {
 	return Sky_Core_Http_HttpResponse_R{Status: p0, Body: p1, Headers: p2}
 }
 
 type Sky_Http_Server_Request_R struct {
-	Method     string            `sky:"method,string"`
-	Path       string            `sky:"path,string"`
-	Body       string            `sky:"body,string"`
-	Headers    map[string]string `sky:"headers,map[string]string"`
-	Params     map[string]string `sky:"params,map[string]string"`
-	Query      map[string]string `sky:"query,map[string]string"`
-	Cookies    map[string]string `sky:"cookies,map[string]string"`
-	RemoteAddr string            `sky:"remoteAddr,string"`
-	Host       string            `sky:"host,string"`
+	Method     string             `sky:"method,string"`
+	Path       string             `sky:"path,string"`
+	Body       string             `sky:"body,string"`
+	Headers    rt.SkyDict[string] `sky:"headers,rt.SkyDict[string]"`
+	Params     rt.SkyDict[string] `sky:"params,rt.SkyDict[string]"`
+	Query      rt.SkyDict[string] `sky:"query,rt.SkyDict[string]"`
+	Cookies    rt.SkyDict[string] `sky:"cookies,rt.SkyDict[string]"`
+	RemoteAddr string             `sky:"remoteAddr,string"`
+	Host       string             `sky:"host,string"`
 }
 
 func init() { rt.RegisterGobType(Sky_Http_Server_Request_R{}) }
 
-func Sky_Http_Server_Request(p0 string, p1 string, p2 string, p3 map[string]string, p4 map[string]string, p5 map[string]string, p6 map[string]string, p7 string, p8 string) Sky_Http_Server_Request_R {
+func Sky_Http_Server_Request(p0 string, p1 string, p2 string, p3 rt.SkyDict[string], p4 rt.SkyDict[string], p5 rt.SkyDict[string], p6 rt.SkyDict[string], p7 string, p8 string) Sky_Http_Server_Request_R {
 	return Sky_Http_Server_Request_R{Method: p0, Path: p1, Body: p2, Headers: p3, Params: p4, Query: p5, Cookies: p6, RemoteAddr: p7, Host: p8}
 }
 
 type Sky_Http_Server_Response_R struct {
-	Status      int               `sky:"status,int"`
-	Body        string            `sky:"body,string"`
-	Headers     map[string]string `sky:"headers,map[string]string"`
-	ContentType string            `sky:"contentType,string"`
+	Status      int                `sky:"status,int"`
+	Body        string             `sky:"body,string"`
+	Headers     rt.SkyDict[string] `sky:"headers,rt.SkyDict[string]"`
+	ContentType string             `sky:"contentType,string"`
 }
 
 func init() { rt.RegisterGobType(Sky_Http_Server_Response_R{}) }
 
-func Sky_Http_Server_Response(p0 int, p1 string, p2 map[string]string, p3 string) Sky_Http_Server_Response_R {
+func Sky_Http_Server_Response(p0 int, p1 string, p2 rt.SkyDict[string], p3 string) Sky_Http_Server_Response_R {
 	return Sky_Http_Server_Response_R{Status: p0, Body: p1, Headers: p2, ContentType: p3}
 }
 
@@ -617,14 +617,14 @@ func State_EventCount(p0 string, p1 int) State_EventCount_R {
 }
 
 type State_Identity_R struct {
-	Subject string            `sky:"subject,string"`
-	Email   string            `sky:"email,string"`
-	Claims  map[string]string `sky:"claims,map[string]string"`
+	Subject string             `sky:"subject,string"`
+	Email   string             `sky:"email,string"`
+	Claims  rt.SkyDict[string] `sky:"claims,rt.SkyDict[string]"`
 }
 
 func init() { rt.RegisterGobType(State_Identity_R{}) }
 
-func State_Identity(p0 string, p1 string, p2 map[string]string) State_Identity_R {
+func State_Identity(p0 string, p1 string, p2 rt.SkyDict[string]) State_Identity_R {
 	return State_Identity_R{Subject: p0, Email: p1, Claims: p2}
 }
 
@@ -1581,14 +1581,14 @@ func init() {
 }
 
 type Std_Live_Console_Identity_R struct {
-	Subject string            `sky:"subject,string"`
-	Email   string            `sky:"email,string"`
-	Claims  map[string]string `sky:"claims,map[string]string"`
+	Subject string             `sky:"subject,string"`
+	Email   string             `sky:"email,string"`
+	Claims  rt.SkyDict[string] `sky:"claims,rt.SkyDict[string]"`
 }
 
 func init() { rt.RegisterGobType(Std_Live_Console_Identity_R{}) }
 
-func Std_Live_Console_Identity(p0 string, p1 string, p2 map[string]string) Std_Live_Console_Identity_R {
+func Std_Live_Console_Identity(p0 string, p1 string, p2 rt.SkyDict[string]) Std_Live_Console_Identity_R {
 	return Std_Live_Console_Identity_R{Subject: p0, Email: p1, Claims: p2}
 }
 
@@ -2498,19 +2498,19 @@ func AiTab_modelRow(v_0 State_AiFilter_R, v_1 State_AiModel_R) Std_Ui_Element {
 			Left   int
 			Right  int
 			Top    int
-		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(AiTab_borderSoft()), Std_Ui_htmlAttribute("data-ai-model", v_1.Name)}, /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12), Std_Ui_width(Std_Ui_fill()), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_AiOpenModel(v_1.Name))}, rt.List_appendT[Std_Ui_Element]([]Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_bold(), Std_Ui_Font_size(13)}, Std_Ui_text(("model " + v_1.Name)))}, rt.List_appendT[Std_Ui_Element](rt.List_mapT[State_AiAlias_R, Std_Ui_Element](AiTab_aliasChip, v_1.Aliases), []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill())}, Std_Ui_text("")), AiTab_muted(v_1.Store), AiTab_muted(func() string {
+		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(AiTab_borderSoft()), Std_Ui_htmlAttribute("data-ai-model", v_1.Name)}, rt.List_consT[Std_Ui_Element](Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12), Std_Ui_width(Std_Ui_fill()), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_AiOpenModel(v_1.Name))}, rt.List_appendT[Std_Ui_Element]([]Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_bold(), Std_Ui_Font_size(13)}, Std_Ui_text(("model " + v_1.Name)))}, rt.List_appendT[Std_Ui_Element](rt.List_mapT[State_AiAlias_R, Std_Ui_Element](AiTab_aliasChip, v_1.Aliases), []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill())}, Std_Ui_text("")), AiTab_muted(v_1.Store), AiTab_muted(func() string {
 			if open_2 {
 				return "hide versions"
 			} else {
 				return "show versions"
 			}
-		}())})))), any(func() []Std_Ui_Element {
+		}())}))), func() []Std_Ui_Element {
 			if open_2 {
-				return /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_concat(any([][]Std_Ui_Element{ /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(AiTab_sectionTitle("versions")), any(rt.List_mapT[State_AiVersion_R, Std_Ui_Element](AiTab_versionRow, v_1.Versions)))) /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(AiTab_sectionTitle("alias log")), any(rt.List_mapT[State_AiAliasEvent_R, Std_Ui_Element](AiTab_eventRow, v_1.Events)))) /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(AiTab_sectionTitle("eval history")), any(rt.List_mapT[State_AiReportLink_R, Std_Ui_Element](AiTab_reportRow, v_1.Reports))))})))
+				return /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_concat(any([][]Std_Ui_Element{rt.List_consT[Std_Ui_Element](AiTab_sectionTitle("versions"), rt.List_mapT[State_AiVersion_R, Std_Ui_Element](AiTab_versionRow, v_1.Versions)), rt.List_consT[Std_Ui_Element](AiTab_sectionTitle("alias log"), rt.List_mapT[State_AiAliasEvent_R, Std_Ui_Element](AiTab_eventRow, v_1.Events)), rt.List_consT[Std_Ui_Element](AiTab_sectionTitle("eval history"), rt.List_mapT[State_AiReportLink_R, Std_Ui_Element](AiTab_reportRow, v_1.Reports))})))
 			} else {
 				return []Std_Ui_Element{}
 			}
-		}()))))
+		}()))
 	}
 }
 
@@ -2609,7 +2609,7 @@ func Std_Ui_spacing(v_0 int) Std_Ui_Attribute {
 }
 
 func Std_Ui_row(v_0 []Std_Ui_Attribute, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_cons(any(Std_Ui_rowMarker()), any(v_0)), v_1)
+	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_consT[Std_Ui_Attribute](Std_Ui_rowMarker(), v_0), v_1)
 }
 
 var Std_Ui_rowMarker__caf rt.LazyCaf[Std_Ui_Attribute]
@@ -2663,7 +2663,7 @@ func AiTab_textSecondary() Std_Ui_Color {
 }
 
 func AiTab_versionRow(v_0 State_AiVersion_R) Std_Ui_Element {
-	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12), Std_Ui_paddingXY(12, 2), Std_Ui_htmlAttribute("data-ai-version", v_0.Label)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(150)), Std_Ui_Font_size(12), Std_Ui_Font_bold()}, Std_Ui_text(v_0.Label)), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(110)), Std_Ui_Font_size(12), Std_Ui_Font_color(AiTab_textMuted())}, Std_Ui_text((v_0.Method + (" · " + v_0.Format)))), AiTab_mono(("sha256:" + rt.String_leftT(any(12), any(v_0.Digest)))), AiTab_muted(("base " + rt.String_leftT(any(12), any(v_0.BaseDigest)))), AiTab_muted(("data " + v_0.Dataset)), func() Std_Ui_Element {
+	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12), Std_Ui_paddingXY(12, 2), Std_Ui_htmlAttribute("data-ai-version", v_0.Label)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(150)), Std_Ui_Font_size(12), Std_Ui_Font_bold()}, Std_Ui_text(v_0.Label)), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(110)), Std_Ui_Font_size(12), Std_Ui_Font_color(AiTab_textMuted())}, Std_Ui_text((v_0.Method + (" · " + v_0.Format)))), AiTab_mono(("sha256:" + rt.String_leftTA(12, v_0.Digest))), AiTab_muted(("base " + rt.String_leftTA(12, v_0.BaseDigest))), AiTab_muted(("data " + v_0.Dataset)), func() Std_Ui_Element {
 		if v_0.Blocked == "" {
 			return Std_Ui_none()
 		} else {
@@ -2802,7 +2802,7 @@ func Std_Ui_borderWidthEach(v_0 int, v_1 int, v_2 int, v_3 int) Std_Ui_Attribute
 }
 
 func Std_Ui_column(v_0 []Std_Ui_Attribute, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_cons(any(Std_Ui_colMarker()), any(v_0)), v_1)
+	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_consT[Std_Ui_Attribute](Std_Ui_colMarker(), v_0), v_1)
 }
 
 var Std_Ui_colMarker__caf rt.LazyCaf[Std_Ui_Attribute]
@@ -2854,7 +2854,7 @@ func Std_Ui_padding(v_0 int) Std_Ui_Attribute {
 }
 
 func AiTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(AiTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(AiTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(AiTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0)))), any(v_1))))
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(AiTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(AiTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, rt.List_consT[Std_Ui_Element](Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(AiTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0))), v_1))
 }
 
 func Std_Ui_Font_letterSpacing(v_0 float64) Std_Ui_Attribute {
@@ -3240,7 +3240,7 @@ func Std_Ui_Chart_withGridLines(v_0 bool, v_1 Std_Ui_Chart_Cfg_R) Std_Ui_Chart_C
 }
 
 func Std_Ui_paragraph(v_0 []Std_Ui_Attribute, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_Element_TaggedNode("p", Std_Ui_Description_DescParagraph(), rt.List_cons(any(Std_Ui_paragraphMarker()), any(v_0)), v_1)
+	return Std_Ui_Element_TaggedNode("p", Std_Ui_Description_DescParagraph(), rt.List_consT[Std_Ui_Attribute](Std_Ui_paragraphMarker(), v_0), v_1)
 }
 
 var Std_Ui_paragraphMarker__caf rt.LazyCaf[Std_Ui_Attribute]
@@ -3361,7 +3361,7 @@ func AiTab_evalRow(v_0 State_AiFilter_R, v_1 State_AiEval_R) Std_Ui_Element {
 			Left   int
 			Right  int
 			Top    int
-		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(AiTab_borderSoft()), Std_Ui_htmlAttribute("data-ai-eval", v_1.Id)}, /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12), Std_Ui_width(Std_Ui_fill()), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_AiOpenEval(v_1.Id))}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_bold(), Std_Ui_Font_size(13)}, Std_Ui_text(("eval " + v_1.Suite))), AiTab_muted(v_1.Model), AiTab_evalSource(v_1.Source), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12)}, Std_Ui_text((AiTab_percent(v_1.PassRate) + " passed"))), AiTab_muted((rt.String_fromIntT(v_1.Passed) + (" passed · " + (rt.String_fromIntT(v_1.Failed) + (" failed · " + (rt.String_fromIntT(v_1.Errors) + (" errors · p95 " + (rt.String_fromIntT(v_1.P95LatencyMs) + " ms")))))))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill())}, Std_Ui_text("")), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(func() Std_Ui_Color {
+		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(AiTab_borderSoft()), Std_Ui_htmlAttribute("data-ai-eval", v_1.Id)}, rt.List_consT[Std_Ui_Element](Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12), Std_Ui_width(Std_Ui_fill()), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_AiOpenEval(v_1.Id))}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_bold(), Std_Ui_Font_size(13)}, Std_Ui_text(("eval " + v_1.Suite))), AiTab_muted(v_1.Model), AiTab_evalSource(v_1.Source), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12)}, Std_Ui_text((AiTab_percent(v_1.PassRate) + " passed"))), AiTab_muted((rt.String_fromIntT(v_1.Passed) + (" passed · " + (rt.String_fromIntT(v_1.Failed) + (" failed · " + (rt.String_fromIntT(v_1.Errors) + (" errors · p95 " + (rt.String_fromIntT(v_1.P95LatencyMs) + " ms")))))))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill())}, Std_Ui_text("")), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(func() Std_Ui_Color {
 			if v_1.Verdict == "passed" {
 				return AiTab_ok()
 			} else {
@@ -3373,13 +3373,13 @@ func AiTab_evalRow(v_0 State_AiFilter_R, v_1 State_AiEval_R) Std_Ui_Element {
 			} else {
 				return "show cases"
 			}
-		}())})), any(func() []Std_Ui_Element {
+		}())}), func() []Std_Ui_Element {
 			if open_2 {
 				return rt.List_appendT[Std_Ui_Element](rt.List_mapT[string, Std_Ui_Element](AiTab_failureLine, v_1.Failures), rt.List_mapT[State_AiEvalCase_R, Std_Ui_Element](AiTab_caseRow, v_1.CaseResults))
 			} else {
 				return []Std_Ui_Element{}
 			}
-		}()))))
+		}()))
 	}
 }
 
@@ -3414,19 +3414,19 @@ func AiTab_evalSource(v_0 string) Std_Ui_Element {
 }
 
 func AiTab_callsPanel(v_0 State_AiFilter_R, v_1 []State_AiCall_R) Std_Ui_Element {
-	return AiTab_panel("Recent model calls" /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8)}, []Std_Ui_Element{AiTab_chip(rt.Basics_notT(v_0.FailedOnly), "All", State_Msg_AiShowFailed(false)), AiTab_chip(v_0.FailedOnly, "Failed", State_Msg_AiShowFailed(true)), func() Std_Ui_Element {
+	return AiTab_panel("Recent model calls", rt.List_consT[Std_Ui_Element](Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8)}, []Std_Ui_Element{AiTab_chip(rt.Basics_notT(v_0.FailedOnly), "All", State_Msg_AiShowFailed(false)), AiTab_chip(v_0.FailedOnly, "Failed", State_Msg_AiShowFailed(true)), func() Std_Ui_Element {
 		if v_0.Slot == "" {
 			return Std_Ui_none()
 		} else {
 			return AiTab_chip(false, "All slots", State_Msg_AiPickSlot(""))
 		}
-	}()})), any(func() []Std_Ui_Element {
+	}()}), func() []Std_Ui_Element {
 		if rt.List_isEmptyT[State_AiCall_R](v_1) {
 			return []Std_Ui_Element{AiTab_emptyState("No model call matches.")}
 		} else {
 			return rt.List_mapT[State_AiCall_R, Std_Ui_Element](AiTab_callRow, v_1)
 		}
-	}()))))
+	}()))
 }
 
 func AiTab_callRow(v_0 State_AiCall_R) Std_Ui_Element {
@@ -3445,7 +3445,7 @@ func AiTab_callRow(v_0 State_AiCall_R) Std_Ui_Element {
 }
 
 func AiTab_clock(v_0 string) string {
-	return rt.String_leftT(any(8), any(rt.String_dropLeftT(any(11), any(v_0))))
+	return rt.String_leftTA(8, rt.String_dropLeftTA(11, v_0))
 }
 
 func AiTab_chip(v_0 bool, v_1 string, v_2 State_Msg) Std_Ui_Element {
@@ -3620,7 +3620,7 @@ func AnalyticsTab_windowLabel(v_0 State_Analytics_R) string {
 }
 
 func AnalyticsTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(AnalyticsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(AnalyticsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(AnalyticsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0)))), any(v_1))))
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(AnalyticsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(AnalyticsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, rt.List_consT[Std_Ui_Element](Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(AnalyticsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0))), v_1))
 }
 
 var AnalyticsTab_border___caf rt.LazyCaf[Std_Ui_Color]
@@ -3797,7 +3797,7 @@ func View_textMuted() Std_Ui_Color {
 }
 
 func View_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(View_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0)))), any(v_1))))
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(View_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, rt.List_consT[Std_Ui_Element](Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0))), v_1))
 }
 
 var View_border___caf rt.LazyCaf[Std_Ui_Color]
@@ -3888,7 +3888,7 @@ func ErrorsTab_textMuted() Std_Ui_Color {
 }
 
 func ErrorsTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(ErrorsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(ErrorsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(ErrorsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0)))), any(v_1))))
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(ErrorsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(ErrorsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, rt.List_consT[Std_Ui_Element](Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(ErrorsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0))), v_1))
 }
 
 var ErrorsTab_border___caf rt.LazyCaf[Std_Ui_Color]
@@ -4051,7 +4051,7 @@ func View_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element {
 		_ = spans_2
 		shortId_3 := func() string {
 			if rt.String_lengthT(v_1) >= 8 {
-				return /* FFI return */ rt.AsString(rt.String_slice(any(0), any(8), any(v_1)))
+				return rt.String_sliceT(0, 8, v_1)
 			} else {
 				return v_1
 			}
@@ -4086,7 +4086,7 @@ func View_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element {
 			Left   int
 			Right  int
 			Top    int
-		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(View_borderSoft())}, /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent()), Std_Ui_Background_color(View_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}, Std_Ui_text(("trace " + shortId_3))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(View_textSecondary())}, Std_Ui_text((rootName_4 + (" · " + (rt.String_fromIntT(rt.List_lengthT[State_TraceRow_R](spans_2)) + " spans")))))})), any(rt.List_mapT[State_TraceRow_R, Std_Ui_Element](func(_p0 State_TraceRow_R) Std_Ui_Element { return View_spanRowView(v_0, _p0) }, spans_2)))))
+		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(View_borderSoft())}, rt.List_consT[Std_Ui_Element](Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent()), Std_Ui_Background_color(View_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}, Std_Ui_text(("trace " + shortId_3))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(View_textSecondary())}, Std_Ui_text((rootName_4 + (" · " + (rt.String_fromIntT(rt.List_lengthT[State_TraceRow_R](spans_2)) + " spans")))))}), rt.List_mapT[State_TraceRow_R, Std_Ui_Element](func(_p0 State_TraceRow_R) Std_Ui_Element { return View_spanRowView(v_0, _p0) }, spans_2)))
 	}
 }
 
@@ -4167,7 +4167,7 @@ func View_compactTime(v_0 string) string {
 			v_2 := rt.SkyElemT(_subj, 1)
 			_ = v_1
 			_ = v_2
-			return rt.String_leftT(any(8), any(v_2))
+			return rt.String_leftTA(8, v_2)
 		}
 		return v_0
 		panic(rt.Unreachable("case"))
@@ -4325,7 +4325,7 @@ func TracesTab_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element
 		_ = spans_2
 		shortId_3 := func() string {
 			if rt.String_lengthT(v_1) >= 8 {
-				return /* FFI return */ rt.AsString(rt.String_slice(any(0), any(8), any(v_1)))
+				return rt.String_sliceT(0, 8, v_1)
 			} else {
 				return v_1
 			}
@@ -4360,7 +4360,7 @@ func TracesTab_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element
 			Left   int
 			Right  int
 			Top    int
-		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(TracesTab_borderSoft())}, /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(TracesTab_accent()), Std_Ui_Background_color(TracesTab_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}, Std_Ui_text(("trace " + shortId_3))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(TracesTab_textSecondary())}, Std_Ui_text((rootName_4 + (" · " + (rt.String_fromIntT(rt.List_lengthT[State_TraceRow_R](spans_2)) + " spans")))))})), any(rt.List_mapT[State_TraceRow_R, Std_Ui_Element](func(_p0 State_TraceRow_R) Std_Ui_Element { return TracesTab_spanRowView(v_0, _p0) }, spans_2)))))
+		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(TracesTab_borderSoft())}, rt.List_consT[Std_Ui_Element](Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(TracesTab_accent()), Std_Ui_Background_color(TracesTab_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}, Std_Ui_text(("trace " + shortId_3))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(TracesTab_textSecondary())}, Std_Ui_text((rootName_4 + (" · " + (rt.String_fromIntT(rt.List_lengthT[State_TraceRow_R](spans_2)) + " spans")))))}), rt.List_mapT[State_TraceRow_R, Std_Ui_Element](func(_p0 State_TraceRow_R) Std_Ui_Element { return TracesTab_spanRowView(v_0, _p0) }, spans_2)))
 	}
 }
 
@@ -4471,7 +4471,7 @@ func TracesTab_compactTime(v_0 string) string {
 			v_2 := rt.SkyElemT(_subj, 1)
 			_ = v_1
 			_ = v_2
-			return rt.String_leftT(any(8), any(v_2))
+			return rt.String_leftTA(8, v_2)
 		}
 		return v_0
 		panic(rt.Unreachable("case"))
@@ -4532,7 +4532,7 @@ func TracesTab_emptyState(v_0 string) Std_Ui_Element {
 }
 
 func TracesTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(TracesTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(TracesTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(TracesTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0)))), any(v_1))))
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(TracesTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(TracesTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, rt.List_consT[Std_Ui_Element](Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(TracesTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0))), v_1))
 }
 
 var TracesTab_border___caf rt.LazyCaf[Std_Ui_Color]
@@ -4656,7 +4656,7 @@ func View_traceBadge(v_0 string) Std_Ui_Element {
 	if v_0 == "" {
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92))}, Std_Ui_text(""))
 	} else {
-		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_PivotToTrace(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_textSecondary())}, Std_Ui_text(("trace " + rt.String_leftT(any(8), any(v_0)))))
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_PivotToTrace(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_textSecondary())}, Std_Ui_text(("trace " + rt.String_leftTA(8, v_0))))
 	}
 }
 
@@ -4664,7 +4664,7 @@ func View_sessionBadge(v_0 string) Std_Ui_Element {
 	if v_0 == "" {
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80))}, Std_Ui_text(""))
 	} else {
-		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_LogFilterPickSession(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent())}, Std_Ui_text(rt.String_leftT(any(8), any(v_0))))
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_LogFilterPickSession(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent())}, Std_Ui_text(rt.String_leftTA(8, v_0)))
 	}
 }
 
@@ -4807,7 +4807,7 @@ func LogsTab_traceBadge(v_0 string) Std_Ui_Element {
 	if v_0 == "" {
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92))}, Std_Ui_text(""))
 	} else {
-		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_PivotToTrace(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_textSecondary())}, Std_Ui_text(("trace " + rt.String_leftT(any(8), any(v_0)))))
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_PivotToTrace(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_textSecondary())}, Std_Ui_text(("trace " + rt.String_leftTA(8, v_0))))
 	}
 }
 
@@ -4835,7 +4835,7 @@ func LogsTab_sessionBadge(v_0 string) Std_Ui_Element {
 	if v_0 == "" {
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80))}, Std_Ui_text(""))
 	} else {
-		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_LogFilterPickSession(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_accent())}, Std_Ui_text(rt.String_leftT(any(8), any(v_0))))
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_LogFilterPickSession(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_accent())}, Std_Ui_text(rt.String_leftTA(8, v_0)))
 	}
 }
 
@@ -4889,7 +4889,7 @@ func LogsTab_compactTime(v_0 string) string {
 			v_2 := rt.SkyElemT(_subj, 1)
 			_ = v_1
 			_ = v_2
-			return rt.String_leftT(any(8), any(v_2))
+			return rt.String_leftTA(8, v_2)
 		}
 		return v_0
 		panic(rt.Unreachable("case"))
@@ -4911,7 +4911,7 @@ func LogsTab_emptyState(v_0 string) Std_Ui_Element {
 }
 
 func LogsTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(LogsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(LogsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0)))), any(v_1))))
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(LogsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, rt.List_consT[Std_Ui_Element](Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(LogsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0))), v_1))
 }
 
 var LogsTab_border___caf rt.LazyCaf[Std_Ui_Color]
@@ -5183,7 +5183,7 @@ func MetricsTab_emptyState(v_0 string) Std_Ui_Element {
 }
 
 func MetricsTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(MetricsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(MetricsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(MetricsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0)))), any(v_1))))
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(MetricsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(MetricsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, rt.List_consT[Std_Ui_Element](Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(MetricsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0))), v_1))
 }
 
 var MetricsTab_border___caf rt.LazyCaf[Std_Ui_Color]
@@ -5340,7 +5340,7 @@ func Std_Ui_gridColumns(v_0 int) Std_Ui_Attribute {
 }
 
 func Std_Ui_grid(v_0 []Std_Ui_Attribute, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_cons(any(Std_Ui_gridMarker()), any(v_0)), v_1)
+	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_consT[Std_Ui_Attribute](Std_Ui_gridMarker(), v_0), v_1)
 }
 
 var Std_Ui_gridMarker__caf rt.LazyCaf[Std_Ui_Attribute]
@@ -5545,7 +5545,7 @@ func Std_Ui_Chart_maybeCons(v_0 rt.SkyMaybe[Std_Html_Html], v_1 []Std_Html_Html)
 		if _subj.Tag == 0 {
 			v_2 := _subj.JustValue
 			_ = v_2
-			return /* FFI return */ rt.AsListT[Std_Html_Html](rt.List_cons(any(v_2), any( /* primitive join */ rt.AsListT[any](v_1))))
+			return /* primitive join */ rt.AsListT[Std_Html_Html](rt.List_consT[any](any(v_2) /* primitive join */, rt.AsListT[any](v_1)))
 		}
 		panic(rt.Unreachable("case"))
 	}
@@ -6378,11 +6378,11 @@ func View_searchPlaceholder(v_0 State_Tab) string {
 }
 
 func View_serviceRow(v_0 string, v_1 []State_ServiceStat_R) Std_Ui_Element {
-	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(6)} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11), Std_Ui_paddingXY(0, 4), Std_Ui_width(Std_Ui_px(60))}, Std_Ui_text("Service"))), any( /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(View_serviceChip(v_0, "")), any(rt.List_mapT[State_ServiceStat_R, Std_Ui_Element](func(_e0 State_ServiceStat_R) Std_Ui_Element {
+	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(6)}, rt.List_consT[Std_Ui_Element](Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11), Std_Ui_paddingXY(0, 4), Std_Ui_width(Std_Ui_px(60))}, Std_Ui_text("Service")), rt.List_consT[Std_Ui_Element](View_serviceChip(v_0, ""), rt.List_mapT[State_ServiceStat_R, Std_Ui_Element](func(_e0 State_ServiceStat_R) Std_Ui_Element {
 		v_2 := _e0
 		_ = v_2
 		return View_serviceChip(v_0 /* FFI return */, rt.AsString(rt.Field(v_2, "Name")))
-	}, v_1))))))))
+	}, v_1))))
 }
 
 func View_serviceChip(v_0 string, v_1 string) Std_Ui_Element {
@@ -6601,7 +6601,7 @@ func Std_Ui_link(v_0 []Std_Ui_Attribute, v_1 struct {
 	Url   string
 }) Std_Ui_Element {
 	{
-		nodeAttrs_2 := /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrAttribute("href", v_1.Url)), any(v_0)))
+		nodeAttrs_2 := rt.List_consT[Std_Ui_Attribute](Std_Ui_Attribute_AttrAttribute("href", v_1.Url), v_0)
 		_ = nodeAttrs_2
 		return Std_Ui_Element_TaggedNode("a", Std_Ui_Description_NoDescription(), nodeAttrs_2, []Std_Ui_Element{v_1.Label})
 	}
@@ -6651,7 +6651,7 @@ func Std_Ui_layoutWith(v_0 struct {
 		_ = wrapperStyle_4
 		wrapperHtmlAttrs_5 := /* primitive join */ rt.AsListT[Std_Html_Attributes_Attribute](Std_Ui_collectHtmlAttrs(v_0.WrapperAttrs))
 		_ = wrapperHtmlAttrs_5
-		return Std_Html_div( /* FFI return */ rt.AsListT[Std_Html_Attributes_Attribute](rt.List_cons(any(Std_Html_Attributes_style(wrapperStyle_4)), any(wrapperHtmlAttrs_5))), []Std_Html_Html{Std_Html_node("style", []Std_Html_Attributes_Attribute{}, []Std_Html_Html{Std_Html_text("html,body{min-height:100%;margin:0;padding:0}")}) /* FFI return */, rt.Coerce[Std_Html_Html](Std_Ui_renderElement(Std_Ui_LayoutContext_AsColumn, v_0.RootAttrs, v_1))})
+		return Std_Html_div(rt.List_consT[Std_Html_Attributes_Attribute](Std_Html_Attributes_style(wrapperStyle_4), wrapperHtmlAttrs_5), []Std_Html_Html{Std_Html_node("style", []Std_Html_Attributes_Attribute{}, []Std_Html_Html{Std_Html_text("html,body{min-height:100%;margin:0;padding:0}")}) /* FFI return */, rt.Coerce[Std_Html_Html](Std_Ui_renderElement(Std_Ui_LayoutContext_AsColumn, v_0.RootAttrs, v_1))})
 	}
 }
 
@@ -6820,9 +6820,9 @@ func Std_Ui_renderNodeAs(v_0 string, v_1 Std_Ui_Nesting_R, v_2 Std_Ui_LayoutCont
 		_ = tailAttrs_28
 		attrList_29 := func() []Std_Html_Attributes_Attribute {
 			if rt.List_isEmptyT[Std_Html_Attributes_Attribute](keptRole_8) {
-				return /* FFI return */ rt.AsListT[Std_Html_Attributes_Attribute](rt.List_cons(any(Std_Html_Attributes_style(styleStr_17)), any(tailAttrs_28)))
+				return rt.List_consT[Std_Html_Attributes_Attribute](Std_Html_Attributes_style(styleStr_17), tailAttrs_28)
 			} else {
-				return /* FFI return */ rt.AsListT[Std_Html_Attributes_Attribute](rt.List_cons(any(Std_Html_Attributes_style(styleStr_17)), any(rt.List_appendT[Std_Html_Attributes_Attribute](keptRole_8, tailAttrs_28))))
+				return rt.List_consT[Std_Html_Attributes_Attribute](Std_Html_Attributes_style(styleStr_17), rt.List_appendT[Std_Html_Attributes_Attribute](keptRole_8, tailAttrs_28))
 			}
 		}()
 		_ = attrList_29
@@ -8502,28 +8502,28 @@ func Std_Ui_propagateFillToContainer(v_0 Std_Ui_LayoutContext, v_1 []Std_Ui_Attr
 		}
 		if _subj == Std_Ui_LayoutContext_AsRow {
 			if Std_Ui_anyChildMainAxisFill(Std_Ui_LayoutContext_AsRow, v_2) && rt.Basics_notT(Std_Ui_hasExplicitWidth(v_1)) {
-				return /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrWidth(Std_Ui_Length_Fill(1))), any(v_1)))
+				return rt.List_consT[Std_Ui_Attribute](Std_Ui_Attribute_AttrWidth(Std_Ui_Length_Fill(1)), v_1)
 			} else {
 				return v_1
 			}
 		}
 		if _subj == Std_Ui_LayoutContext_AsColumn {
 			if Std_Ui_anyChildMainAxisFill(Std_Ui_LayoutContext_AsColumn, v_2) && rt.Basics_notT(Std_Ui_hasExplicitHeight(v_1)) {
-				return /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1))), any(v_1)))
+				return rt.List_consT[Std_Ui_Attribute](Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1)), v_1)
 			} else {
 				return v_1
 			}
 		}
 		if _subj == Std_Ui_LayoutContext_AsEl {
 			if Std_Ui_anyChildMainAxisFill(Std_Ui_LayoutContext_AsEl, v_2) && rt.Basics_notT(Std_Ui_hasExplicitHeight(v_1)) {
-				return /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1))), any(v_1)))
+				return rt.List_consT[Std_Ui_Attribute](Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1)), v_1)
 			} else {
 				return v_1
 			}
 		}
 		if _subj == Std_Ui_LayoutContext_AsTextColumn {
 			if Std_Ui_anyChildMainAxisFill(Std_Ui_LayoutContext_AsTextColumn, v_2) && rt.Basics_notT(Std_Ui_hasExplicitHeight(v_1)) {
-				return /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1))), any(v_1)))
+				return rt.List_consT[Std_Ui_Attribute](Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1)), v_1)
 			} else {
 				return v_1
 			}
@@ -9096,7 +9096,7 @@ func Main_update(v_0 State_Msg, v_1 State_Model_R) rt.T2[State_Model_R, any] {
 				v_32 := _v46.V0.OkValue
 				_ = v_32
 				{
-					tenant_33 := /* FFI return */ rt.AsString(Sky_Core_Maybe_withDefault("" /* primitive join */, rt.MaybeCoerce[any]( /* FFI return */ rt.MaybeCoerce[string](rt.Dict_get(any("tenant"), any(v_32.Claims))))))
+					tenant_33 := /* FFI return */ rt.AsString(Sky_Core_Maybe_withDefault("" /* primitive join */, rt.MaybeCoerce[any](rt.Dict_getStrT[string]("tenant", v_32.Claims))))
 					_ = tenant_33
 					return rt.T2[State_Model_R, any]{V0: func() State_Model_R {
 						_u := v_1
@@ -9224,9 +9224,9 @@ func Main_refetch(v_0 State_Model_R) rt.T2[State_Model_R, any] {
 
 func Main_fetchForTab(v_0 State_Model_R, v_1 State_Tab) any {
 	if Main_hasStoreSource(v_0) {
-		return rt.Cmd_batch(rt.List_cons(rt.Cmd_perform(any(v_0.Store.ReadOverview(struct{}{})), any(func(_p0 any) any {
+		return rt.Cmd_batch(any(rt.List_consT[any](rt.Cmd_perform(any(v_0.Store.ReadOverview(struct{}{})), any(func(_p0 any) any {
 			return any(State_Msg_GotOverview( /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, State_Overview_R](_p0, func(_v any) State_Overview_R { return rt.Coerce[State_Overview_R](_v) })))
-		})), any(Main_tabFetches(v_0, v_1))))
+		})), Main_tabFetches(v_0, v_1))))
 	} else {
 		return rt.Cmd_none()
 	}
@@ -9358,7 +9358,7 @@ func Main_initWith(v_0 string) rt.T2[State_Model_R, any] {
 		params_4 := /* FFI return */ rt.AsMapT[string](rt.Http_parseQuery(any(v_0)))
 		_ = params_4
 		param_5 := func(v_10 string) string {
-			return /* FFI return */ rt.AsString(Sky_Core_Maybe_withDefault("" /* primitive join */, rt.MaybeCoerce[any]( /* FFI return */ rt.MaybeCoerce[string](rt.Dict_get(any(v_10), any(params_4))))))
+			return /* FFI return */ rt.AsString(Sky_Core_Maybe_withDefault("" /* primitive join */, rt.MaybeCoerce[any](rt.Dict_getStrT[string](v_10, params_4))))
 		}
 		_ = param_5
 		chosenStore_6 := func() State_Store_R {
@@ -9755,7 +9755,7 @@ func Sky_Core_Http_withBearer(v_0 any, v_1 Sky_Core_Http_HttpRequest_R) Sky_Core
 func Sky_Core_Http_withHeader(v_0 string, v_1 string, v_2 Sky_Core_Http_HttpRequest_R) Sky_Core_Http_HttpRequest_R {
 	{
 		_u := v_2
-		_u.Headers = /* FFI return */ rt.AsListT[rt.T2[string, string]](rt.List_cons(any(rt.T2[string, string]{V0: v_0, V1: v_1}), any(v_2.Headers)))
+		_u.Headers = rt.List_consT[rt.T2[string, string]](rt.T2[string, string]{V0: v_0, V1: v_1}, v_2.Headers)
 		return _u
 	}
 }
@@ -10528,7 +10528,7 @@ func Std_App_withConfig(v_0 Std_App_Config, _t0 Std_App_App) Std_App_App {
 		ViewImpl      Std_App_ViewImpl
 	} {
 		_u := v_1
-		_u.Configs = /* FFI return */ rt.AsListT[Std_App_Config](rt.List_cons(any(v_0), any(v_1.Configs)))
+		_u.Configs = rt.List_consT[Std_App_Config](v_0, v_1.Configs)
 		return _u
 	}())
 }
@@ -10789,11 +10789,11 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 					Update        any
 					View          any
 				}{Init: func(v_21 struct {
-					Cookies map[string]string
-					Headers map[string]string
+					Cookies rt.SkyDict[string]
+					Headers rt.SkyDict[string]
 					Host    string
 					Method  string
-					Params  map[string]string
+					Params  rt.SkyDict[string]
 					Path    string
 					Query   string
 				}) rt.T2[any, any] {
@@ -11029,11 +11029,11 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 					if v_0.Durable.Enabled {
 						return rt.Live_withDurable(any(Std_App_liveDurable_(func(_e7 any) Sky_Http_Server_Request_R {
 							return Std_App_requestFromSeed_( /* generic erase */ func(_s any) struct {
-								Cookies map[string]string
-								Headers map[string]string
+								Cookies rt.SkyDict[string]
+								Headers rt.SkyDict[string]
 								Host    string
 								Method  string
-								Params  map[string]string
+								Params  rt.SkyDict[string]
 								Path    string
 								Query   string
 							} {
@@ -11047,21 +11047,21 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 									Query   any
 								}); _ok {
 									return struct {
-										Cookies map[string]string
-										Headers map[string]string
+										Cookies rt.SkyDict[string]
+										Headers rt.SkyDict[string]
 										Host    string
 										Method  string
-										Params  map[string]string
+										Params  rt.SkyDict[string]
 										Path    string
 										Query   string
 									}{Cookies: rt.AsMapT[string](_m.Cookies), Headers: rt.AsMapT[string](_m.Headers), Host: rt.AsString(_m.Host), Method: rt.AsString(_m.Method), Params: rt.AsMapT[string](_m.Params), Path: rt.AsString(_m.Path), Query: rt.AsString(_m.Query)}
 								}
 								return rt.Coerce[struct {
-									Cookies map[string]string
-									Headers map[string]string
+									Cookies rt.SkyDict[string]
+									Headers rt.SkyDict[string]
 									Host    string
 									Method  string
-									Params  map[string]string
+									Params  rt.SkyDict[string]
 									Path    string
 									Query   string
 								}](_s)
@@ -11238,11 +11238,11 @@ func Std_App_embeddedIn_(v_0 []Std_App_Config) bool {
 }
 
 func Std_App_requestFromSeed_(v_0 struct {
-	Cookies map[string]string
-	Headers map[string]string
+	Cookies rt.SkyDict[string]
+	Headers rt.SkyDict[string]
 	Host    string
 	Method  string
-	Params  map[string]string
+	Params  rt.SkyDict[string]
 	Path    string
 	Query   string
 }) Sky_Http_Server_Request_R {

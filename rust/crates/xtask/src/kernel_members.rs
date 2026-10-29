@@ -78,7 +78,23 @@ fn internal_runtime_bases(module: &str) -> &'static [&'static str] {
         // `Dict_getProbeT` / `Dict_memberProbeT` are the typed-map twins the
         // lowerer picks for `Dict.get` / `Dict.member` (v0.29.0 D1); a user
         // calls `get` / `member`.
-        "Dict" => &["map2", "getProbe", "memberProbe"],
+        // The D2 typed-key twins (`Dict_getIntT`, `Dict_insertStrT`,
+        // `Dict_insertProbeT`, …) are lowering targets too, never Sky names.
+        "Dict" => &[
+            "map2",
+            "getProbe",
+            "memberProbe",
+            "getIntT",
+            "getStrT",
+            "insertIntT",
+            "insertProbeT",
+            "insertStrT",
+            "memberIntT",
+            "memberStrT",
+            "removeIntT",
+            "removeProbeT",
+            "removeStrT",
+        ],
         // Std.Db Store/Codec/migration machinery — invoked by generated code and
         // the `Std.Db.Store` layer, NOT a `Db.<name>` user surface. (`getFloat`
         // is deliberately NOT here: it parallels `getString`/`getInt`/`getBool`

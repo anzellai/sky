@@ -1012,13 +1012,14 @@ fn app_to_go_with(
             let a = go_arg(0);
             GoTy::Named("rt.SkyTask".into(), vec![a, go_arg(1)])
         }
-        // A Sky `Dict k v` is ALWAYS stored as `map[string]V` at runtime — keys are
-        // stringified (`rt.Dict_empty() any` returns `map[string]any`; an `Int`-keyed
-        // dict stores key `"0"`). The oracle renders every dict key as `string`
-        // (`bucketsByIndex : Dict Int … → map[string][]…`); narrowing goes through
-        // `rt.AsMapT[V]` which returns `map[string]V`. Rendering the key as `goty(k)`
-        // (e.g. `map[int]V`) never matches that runtime shape and panics under
-        // `rt.Coerce` — so pin the Go key type to `string`.
+        // A Sky `Dict k v` is ALWAYS the runtime's persistent `rt.SkyDict[V]`
+        // (runtime-go/rt/dict_persistent.go), keyed by the runtime's encoded
+        // string key (`rt.encodeDictKey`; an `Int`-keyed dict stores key
+        // "\x01i0"). `GoTy::Map(Str, V)` keeps the key as `string` so every
+        // dict-shaped match below reads the same; codegen renders it
+        // `rt.SkyDict[V]`, and narrowing goes through `rt.AsMapT[V]`, which
+        // returns one (O(1) for a `SkyDict[V]`). Rendering the key as `goty(k)`
+        // would never match that runtime shape, so it stays pinned to `string`.
         ("Dict", 2) => GoTy::Map(Box::new(GoTy::Bare(Prim::Str)), Box::new(go_arg(1))),
         // `Cmd` / `Sub` / `Decoder` / `Value` are handled by the kernel-opaque
         // pre-check at the top of this function, which fires for the qualified

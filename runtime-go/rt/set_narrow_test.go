@@ -101,8 +101,8 @@ func TestCoerceMapAnyHappyPathNotRegressed(t *testing.T) {
 func TestToSkySetAcceptsMap(t *testing.T) {
 	src := map[any]bool{"a": true, "b": true, "c": true}
 	got := toSkySet(src)
-	if len(got.items) != 3 {
-		t.Fatalf("expected 3 items in reified SkySet, got %d (%v)", len(got.items), got.items)
+	if got.items.Len() != 3 {
+		t.Fatalf("expected 3 items in reified SkySet, got %d (%v)", got.items.Len(), got.items)
 	}
 }
 

@@ -92,6 +92,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unsafe"
 )
 
 // identityKeyMaxDepth bounds the walk. Sky values are finite immutable trees, so
@@ -177,6 +178,19 @@ func writeIdentityKey(b *strings.Builder, rv reflect.Value, depth int) {
 		// the item keys directly skips re-encoding every element.
 		if s, ok := skySetValue(rv); ok {
 			writeSkySetKey(b, s)
+			return
+		}
+		if isSkyDictType(rv.Type()) {
+			var d skyDictAny
+			switch {
+			case rv.CanInterface():
+				d = rv.Interface().(skyDictAny)
+			case rv.CanAddr():
+				d = reflect.NewAt(rv.Type(), unsafe.Pointer(rv.UnsafeAddr())).Elem().Interface().(skyDictAny)
+			default:
+				d = SkyDict[any]{}
+			}
+			writeDictKey(b, d, depth)
 			return
 		}
 		// A union value keys on its CONSTRUCTOR first. As a plain struct, every
@@ -288,10 +302,11 @@ func writeMapKey(b *strings.Builder, rv reflect.Value, depth int) {
 }
 
 func writeSkySetKey(b *strings.Builder, s SkySet) {
-	keys := make([]string, 0, len(s.items))
-	for k := range s.items {
+	keys := make([]string, 0, s.items.Len())
+	s.items.Range(func(k string, _ any) bool {
 		keys = append(keys, k)
-	}
+		return true
+	})
 	sort.Strings(keys)
 	b.WriteByte('S')
 	b.WriteString(strconv.Itoa(len(keys)))
@@ -304,23 +319,40 @@ func writeSkySetKey(b *strings.Builder, s SkySet) {
 	}
 }
 
-// skySetValue recognises a SkySet without calling `Interface()` (which panics on
-// a value read out of an unexported field).
+// skySetValue recognises a SkySet without calling `Interface()` on a value
+// read out of an unexported field (which panics); such a value is read
+// through its address instead.
 func skySetValue(rv reflect.Value) (SkySet, bool) {
 	if rv.Type() != skySetType {
 		return SkySet{}, false
 	}
 	if !rv.CanInterface() {
-		// Reached only from inside another struct's unexported field. Rebuild
-		// the map by reflection rather than giving up.
-		f := rv.Field(0)
-		out := SkySet{items: make(map[string]any, f.Len())}
-		for iter := f.MapRange(); iter.Next(); {
-			out.items[iter.Key().String()] = nil
+		if !rv.CanAddr() {
+			return SkySet{}, true
 		}
-		return out, true
+		return *(*SkySet)(unsafe.Pointer(rv.UnsafeAddr())), true
 	}
 	return rv.Interface().(SkySet), true
+}
+
+// writeDictKey keys a Dict by its entries, like a map: two equal Dicts built
+// in a different order key alike.
+func writeDictKey(b *strings.Builder, d skyDictAny, depth int) {
+	pairs := make([]string, 0, d.dictLen())
+	d.dictRangeAny(func(k string, v any) bool {
+		var kb strings.Builder
+		writeIdentityKey(&kb, reflect.ValueOf(k), depth+1)
+		writeIdentityKey(&kb, reflect.ValueOf(v), depth+1)
+		pairs = append(pairs, kb.String())
+		return true
+	})
+	sort.Strings(pairs)
+	b.WriteByte('M')
+	b.WriteString(strconv.Itoa(len(pairs)))
+	b.WriteByte(';')
+	for _, p := range pairs {
+		b.WriteString(p)
+	}
 }
 
 var skySetType = reflect.TypeOf(SkySet{})

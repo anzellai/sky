@@ -68,8 +68,8 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 - **Every collection function states its cost.** Each exported function of
   `Sky.Core.List`, `Dict`, `Set`, `Array` and `String` has a `-- Cost:` line
-  in its doc comment, so `sky doc` shows it, including what stays O(n) (a
-  `Dict` write copies the map; `List.append` copies both lists). A test
+  in its doc comment, so `sky doc` shows it, including what stays O(n)
+  (`List.append` copies both lists). A test
   (`rust/crates/project/tests/collection_cost_lines.rs`) fails when a new
   export has none. `Dict.size` and `Dict.isEmpty` on a typed dict are now
   O(1) (`rt.Dict_sizeT` / `Dict_isEmptyT`).
@@ -105,12 +105,27 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   called through FFI must treat a slice argument as read-only
   (`docs/ffi/boundary-philosophy.md`).
 
-- **`Dict.get` and `Dict.member` on a typed dict are O(1).** They copied the
-  whole typed map into a `map[string]any` through reflect on every lookup.
-  A call whose dict lowers to a typed `map[string]V` now goes to the probe-key
-  twins `rt.Dict_getProbeT` / `rt.Dict_memberProbeT`, which do the erased
-  kernel's two lookups (the tagged key, then the bare key that a `Std.Db`,
-  JSON or FFI map holds) on the typed map itself.
+- **`Dict` and `Set` are persistent: `insert` and `remove` are O(log n).**
+  A Dict was a Go map that every `insert` / `remove` copied, so a fold that
+  built a Dict was O(n²) (1e4 updates took 1.2 s, 4e4 took 20 s). A Dict is
+  now `rt.SkyDict[V]` (`runtime-go/rt/dict_persistent.go`): a flat array of up
+  to 16 entries, then a 16-way hash array mapped trie with a seeded hash. An
+  update copies one path and shares the rest; the old Dict is unchanged.
+  `xtask perf-gate` `dict-counts` (1e6 updates over 1e5 keys) runs in about
+  0.9 s, with 7.8 allocations per update. Small dicts got faster, not slower:
+  at 1 to 64 entries an insert takes 0.03x to 0.38x the old time and a lookup
+  at most 1.06x (`docs/perf/runs/dict-hamt-20261028/`). `get` / `member` /
+  `insert` / `remove` over a typed dict call typed twins (`rt.Dict_getIntT`,
+  `rt.Dict_insertStrT`, `…ProbeT` for other key types), an erased kernel keeps
+  the dict's value type, and a callback whose parameter is a Dict now takes
+  the typed eta path (no `reflect.Call` per element). Key encoding, the D1
+  probe of the bare key a `Std.Db`, JSON or FFI map holds, ascending-key
+  enumeration, `==`, `toString`, JSON, `Codec.auto`, `Std.Db` rows, HTTP
+  headers and the Sky.Spa wire keep their behaviour. `Set` sits on the same
+  store, and a Set in a Sky.Live model now survives the session store (gob).
+  One change: the stored form of a Dict in a Sky.Live session is new, so a
+  session saved by v0.28 whose model holds a Dict is dropped once on upgrade
+  (see Migration).
 
 - **`String.uncons`, `String.foldl` and `String.foldr`, and String kernels that
   walk instead of copying.** `uncons s` gives `Just ( first, rest )` in O(1),
@@ -144,6 +159,17 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 ### Migration
 
 The full list, with old and new code, is `docs/migration/v0.29.md`.
+
+- **Sky.Live sessions that hold a Dict start fresh once.** A Dict is now a
+  persistent value with a new stored form. With a SQLite, PostgreSQL or Redis
+  session store, a session saved by v0.28 whose model holds a `Dict` cannot be read by
+  v0.29.0: the runtime logs `failed to decode
+  session … written by an older Sky and holds a Dict or a Set … the visitor
+  starts a new session` and serves `init`, as for an expired session. There
+  is no panic and no half-read model. Sessions without a Dict, the memory
+  store and `App.withDurable` snapshots (JSON) are not affected. Nothing to
+  do; expect a visitor with such a session to see a fresh page once after
+  the deploy.
 
 - **Go code reached through FFI must not change a list argument.** A list
   built by cons now shares memory with the older lists it was built on, so a

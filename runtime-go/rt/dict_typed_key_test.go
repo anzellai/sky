@@ -162,9 +162,10 @@ func TestDictMapIntKeyPassesIntKeys(t *testing.T) {
 	fn := func(k int, v string) string {
 		return String_fromInt(k).(string) + v
 	}
-	out, ok := Dict_mapIntKey(fn, intDict()).(map[string]any)
+	out := DictToMap(Dict_mapIntKey(fn, intDict()))
+	ok := out != nil
 	if !ok {
-		t.Fatalf("Dict_mapIntKey must return map[string]any")
+		t.Fatalf("Dict_mapIntKey must return a Dict")
 	}
 	// The result keeps the ORIGINAL (encoded) keys — only values change.
 	if got, want := out["\x01i10"], any("10j"); got != want {
@@ -195,9 +196,10 @@ func TestDictFoldlInfersKeyTypeFromCallback(t *testing.T) {
 
 func TestDictMapInfersKeyTypeFromCallback(t *testing.T) {
 	fn := func(k rune, v int) int { return int(k) + v }
-	out, ok := Dict_map(fn, charDict()).(map[string]any)
+	out := DictToMap(Dict_map(fn, charDict()))
+	ok := out != nil
 	if !ok {
-		t.Fatalf("Dict_map must return map[string]any")
+		t.Fatalf("Dict_map must return a Dict")
 	}
 	if got, want := out["\x01c97"], any(98); got != want {
 		t.Errorf("out[%q] = %#v, want %#v", "\x01c97", got, want)

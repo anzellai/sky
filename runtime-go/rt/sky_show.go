@@ -84,6 +84,9 @@ func skyShow(rv reflect.Value, depth int, enumType string) (string, bool) {
 			})
 			return "Array.fromList [" + strings.Join(parts, ", ") + "]", false
 		}
+		if d, ok := rv.Interface().(skyDictAny); ok && rv.Kind() == reflect.Struct {
+			return skyShowDict(d, depth), false
+		}
 	}
 	if !rv.IsValid() {
 		return "()", true
@@ -151,14 +154,7 @@ func skyShow(rv reflect.Value, depth int, enumType string) (string, bool) {
 		return "[" + strings.Join(parts, ", ") + "]", true
 	case reflect.Map:
 		if t.Key().Kind() == reflect.String && rv.CanInterface() {
-			ents := dictEntries(rv.Interface(), dictKeyString)
-			parts := make([]string, len(ents))
-			for i, e := range ents {
-				k, _ := skyShow(reflect.ValueOf(e.key), depth+1, "")
-				v, _ := skyShow(reflect.ValueOf(e.val), depth+1, "")
-				parts[i] = "(" + k + ", " + v + ")"
-			}
-			return "Dict.fromList [" + strings.Join(parts, ", ") + "]", false
+			return skyShowDict(asSkyDict(rv.Interface()), depth), false
 		}
 		return fmt.Sprintf("%v", rv.Interface()), true
 	case reflect.Struct:
@@ -377,4 +373,17 @@ func skyQuoteChar(r rune) string {
 		return fmt.Sprintf(`'\u{%04X}'`, r)
 	}
 	return "'" + string(r) + "'"
+}
+
+// skyShowDict renders a Dict as Elm does: `Dict.fromList [(k, v), …]` in key
+// order.
+func skyShowDict(d skyDictAny, depth int) string {
+	ents := dictEntries(d, dictKeyString)
+	parts := make([]string, len(ents))
+	for i, e := range ents {
+		k, _ := skyShow(reflect.ValueOf(e.key), depth+1, "")
+		v, _ := skyShow(reflect.ValueOf(e.val), depth+1, "")
+		parts[i] = "(" + k + ", " + v + ")"
+	}
+	return "Dict.fromList [" + strings.Join(parts, ", ") + "]"
 }

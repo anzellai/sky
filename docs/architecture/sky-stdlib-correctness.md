@@ -276,23 +276,31 @@ the law itself). Law-by-inspection for the algebraic content.
 
 **Files**: `Dict.sky` (127 lines), `Set.sky` (92 lines). Both are
 `Ffi.kernel` aliases — implementations live in Go runtime
-(`runtime-go/rt/rt.go` — there are no `dict.go` / `set.go` files; the `Dict_*` / `Set_*` kernels live in `rt.go` and `stdlib_extra.go`).
+(`runtime-go/rt/rt.go` and `stdlib_extra.go` hold the `Dict_*` / `Set_*` kernels;
+`runtime-go/rt/dict_persistent.go` holds the persistent store both sit on).
 
 **Types**:
 ```elm
-type Dict k v  -- runtime: a Go map[string]V; the key is encoded to a
-               -- tagged string (encodeDictKey, rt.go)
-type Set a     -- runtime: SkySet{items map[string]any} keyed by
+type Dict k v  -- runtime: rt.SkyDict[V], a persistent map; the key is
+               -- encoded to a tagged string (encodeDictKey, rt.go)
+type Set a     -- runtime: SkySet{items SkyDict[any]} keyed by
                -- identityKey (stdlib_extra.go); typed code may hold a []A
 ```
 
-**Costs (v0.29.0, measured from the code)**: `Dict.get` / `member` over a
-typed dict are O(1) (`rt.Dict_getProbeT` / `Dict_memberProbeT`); erased they
-copy the map first, O(n). `Dict.insert` / `remove` / `update` copy the whole
-map: O(n) per write, so a fold of n inserts is O(n²). Enumeration (`toList`,
-`keys`, `values`, `foldl`, `map`) sorts the keys on every call: O(n log n).
-The persistent B+-tree that would make writes O(log n) was prototyped and did
-not meet its per-insert gate (`docs/perf/runs/dict-btree-prototype-20261028/`).
+**Costs (v0.29.0, measured)**: a Dict is a persistent value
+(`runtime-go/rt/dict_persistent.go`): a flat array of up to 16 entries, then a
+16-way hash array mapped trie over the encoded keys, with a seeded 64-bit hash.
+`get` / `member` are O(log n) (a scan of at most 16 entries while small);
+`insert` / `remove` copy one root-to-leaf path, O(log n), and share the rest,
+so a fold of n inserts is O(n log n); `size` / `isEmpty` are O(1). Over a typed
+dict the compiler calls typed twins (`rt.Dict_getIntT[V]`,
+`rt.Dict_insertStrT[V]`, `…ProbeT` for other keys), and an erased kernel keeps
+the dict's value type, so a typed slot takes the result in O(1)
+(`rt.AsMapT`). Enumeration (`toList`, `keys`, `values`, `foldl`, `map`) sorts
+the decoded keys on every call: O(n log n). Set sits on the same store. The
+design was chosen by measurement (`docs/perf/runs/dict-hamt-20261028/`): at
+sizes 1 to 64 no insert or get is slower than 1.06x the old map, and `xtask
+perf-gate` `dict-counts` (1e6 updates over 1e5 keys) runs in about 0.9 s.
 
 **Surface highlights**:
 
@@ -324,16 +332,17 @@ not meet its per-insert gate (`docs/perf/runs/dict-btree-prototype-20261028/`).
   `Set.size (Set.fromList [ A, B ]) == 2` for two distinct nullary
   constructors (v0.27.7; before it, every nullary constructor of a
   sealed type compared and keyed alike).
-* **Persistence**: every operation returns a new value. The runtime
-  gets it by copying: a write copies the whole map (O(n)), it does not
-  share structure. The earlier "O(log n)" claim here was false.
+* **Persistence**: every operation returns a new value, and the old one
+  is unchanged. A write copies one path of the trie (O(log n)) and shares
+  the rest; `dict_persistent_test.go` re-checks every kept version of a
+  40,000-step model test. Equality (`==`) compares content, not layout.
 
 **Partial functions**: NONE.
 
 **Invariants**:
 * Iteration order of `Dict.toList` / `keys` / `values` / `foldl` is
   ascending key order, as in Elm, for every key type the runtime can
-  decode (`dictEntries` / `sortedDictKeys`, rt.go). There is no
+  decode (`dictEntries`, rt.go). There is no
   insertion-order or `sync.Map` path; the earlier text that said so
   was stale.
 * `Limitation #5` was CLOSED in v0.17: `Dict.toList (Dict.fromList
@@ -344,11 +353,11 @@ union; `examples/00-standard-libs` exercises both modules in the
 120-assertion stdlib smoke test.
 
 **Known gaps**:
-* Writes are O(n) and enumeration sorts on every call (above).
+* Enumeration sorts on every call (above).
 * A composite (tuple, list, record, custom type) key is rejected at check
   time, `[E2008]` (`docs/KNOWN_LIMITATIONS.md`): its string encoding is not
-  injective and cannot be decoded. A persistent tree with real keys would
-  lift this; it was prototyped, not shipped.
+  injective and cannot be decoded. The persistent store keys on the same
+  encoded strings, so v0.29.0 does not lift this.
 
 ---
 

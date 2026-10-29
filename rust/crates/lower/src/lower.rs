@@ -3738,7 +3738,12 @@ impl<'a> Ctx<'a> {
         // would copy the whole accumulator on every element — O(n·k) where the
         // reflect adapter hands the same map through in O(1). Never trade an
         // O(1) reflect box for an O(n) copy: leave those to the runtime coerce.
-        let rebuilds = |t: &GoTy| matches!(t, GoTy::Slice(_) | GoTy::Map(_, _));
+        // A `Dict` (`GoTy::Map`) is NOT in this set any more: since v0.29.0 a
+        // Dict is the persistent `rt.SkyDict[V]`, and `rt.AsMapT[V]` passes a
+        // `SkyDict[V]` through in O(1) (the erased kernels keep a Dict's value
+        // type), so the eta's narrowing costs what the reflect adapter's
+        // `Coerce` did, without the per-call `reflect.Call`.
+        let rebuilds = |t: &GoTy| matches!(t, GoTy::Slice(_));
         if from_ps
             .iter()
             .zip(to_ps.iter())
@@ -6353,41 +6358,66 @@ impl<'a> Ctx<'a> {
             let wxs = self.widen(xs);
             return self.kernel_call_lowered(go, vec![wxs], actual);
         }
-        // `Dict.get k d` / `Dict.member k d` over a typed `map[string]V`: the
-        // probe-key twins `rt.Dict_getProbeT[V]` / `Dict_memberProbeT[V]`. The
-        // erased kernels reflect-copy the whole typed map into a
-        // `map[string]any` (`rt.AsDict`) on every lookup, O(n); the twins do
-        // the same two probes (the tagged key, then the bare `%v` key an FFI /
-        // Std.Db map holds) on the typed map, O(1). The key stays erased: the
-        // probe needs its runtime kind. Doc 14 R5, lever §5.3; floor check
-        // (§1): the dict's Go type is the argument's own lowered `map[string]V`
-        // and the result is `SkyMaybe[V]` / `bool`, both known at emit time.
-        if args.len() == 2 && (go == "rt.Dict_get" || go == "rt.Dict_member") {
+        // `Dict.get` / `Dict.member` / `Dict.remove` / `Dict.insert` over a
+        // typed Dict (`rt.SkyDict[V]`, `GoTy::Map(Str, V)`): a typed twin, so
+        // the Dict is never boxed into `any` and the result needs no
+        // `rt.AsMapT` narrowing. A key whose Go type is `int` (Sky `Int`) or
+        // `string` (Sky `String`) takes the `…IntT` / `…StrT` twin, which
+        // encodes the key without boxing it (an Int key into a stack buffer,
+        // so a lookup allocates nothing); any other key stays erased for the
+        // probe (`…ProbeT`), which needs its runtime kind. Doc 14 R5 (the
+        // kernel return, and the `any(d)` widening into it), lever §5.3
+        // (typed kernel entry point); floor check (§1): the Dict's Go type is
+        // the argument's own lowered `rt.SkyDict[V]`, the key's is its lowered
+        // `int` / `string`, and the result is `SkyMaybe[V]` / `bool` /
+        // `rt.SkyDict[V]`, all known at emit time. Verified by `xtask
+        // perf-gate` (dict-counts: allocations per element) and
+        // `lower/tests/dict_probe_typed.rs`.
+        let dict_op = match go {
+            "rt.Dict_get" if args.len() == 2 => Some("get"),
+            "rt.Dict_member" if args.len() == 2 => Some("member"),
+            "rt.Dict_remove" if args.len() == 2 => Some("remove"),
+            "rt.Dict_insert" if args.len() == 3 => Some("insert"),
+            _ => None,
+        };
+        if let Some(op) = dict_op {
             let k = self.lower_expr(args[0], &GoTy::Any);
+            let d_arg = if op == "insert" { args[2] } else { args[1] };
             // A dict that is itself a direct kernel result stays erased (its R5
             // narrowing is dropped, `kernel_to_kernel`), so it takes the erased
             // kernel exactly as before rather than a narrowing into the twin.
-            let d = Self::kernel_to_kernel(self.lower_expr(args[1], &GoTy::Any));
+            let d = Self::kernel_to_kernel(self.lower_expr(d_arg, &GoTy::Any));
             if let GoTy::Map(kt, v) = &d.ty {
                 if **kt == GoTy::Bare(Prim::Str) {
                     let v = (**v).clone();
-                    let (sym, ret) = if go == "rt.Dict_get" {
-                        (
-                            "rt.Dict_getProbeT",
-                            GoTy::Named("rt.SkyMaybe".into(), vec![v.clone()]),
-                        )
-                    } else {
-                        ("rt.Dict_memberProbeT", GoTy::Bare(Prim::Bool))
+                    let (key_kind, key) = match &k.ty {
+                        GoTy::Bare(Prim::Int) => ("Int", k),
+                        GoTy::Bare(Prim::Str) => ("Str", k),
+                        _ => ("Probe", self.widen(Self::kernel_to_kernel(k))),
                     };
-                    let wk = self.widen(k);
-                    let call = GoExpr::new(
-                        GoExprKind::GenericCall(sym.to_string(), vec![v], vec![wk, d]),
-                        ret,
-                    );
+                    let (base, ret) = match op {
+                        "get" => ("get", GoTy::Named("rt.SkyMaybe".into(), vec![v.clone()])),
+                        "member" => ("member", GoTy::Bare(Prim::Bool)),
+                        "remove" => ("remove", d.ty.clone()),
+                        _ => ("insert", d.ty.clone()),
+                    };
+                    let mut call_args = vec![key];
+                    if op == "insert" {
+                        let val = self.lower_expr(args[1], &v);
+                        call_args.push(self.coerce_if_needed(val, &v));
+                    }
+                    call_args.push(d);
+                    let sym = format!("rt.Dict_{base}{key_kind}T");
+                    let call = GoExpr::new(GoExprKind::GenericCall(sym, vec![v], call_args), ret);
                     return self.coerce_if_needed(call, actual);
                 }
             }
-            let largs = vec![self.widen(Self::kernel_to_kernel(k)), self.widen(d)];
+            let mut largs = vec![self.widen(Self::kernel_to_kernel(k))];
+            if op == "insert" {
+                let val = self.lower_expr(args[1], &GoTy::Any);
+                largs.push(self.widen(val));
+            }
+            largs.push(self.widen(d));
             return self.kernel_call_lowered(go, largs, actual);
         }
         // `Dict.size d` / `Dict.isEmpty d` over a typed `map[string]V`: `len`
@@ -6797,7 +6827,9 @@ impl<'a> Ctx<'a> {
         if matches!(&self.body.exprs[cb], Expr::Var(Res::Def(_))) {
             return true;
         }
-        let rebuilds = |t: &GoTy| matches!(t, GoTy::Slice(_) | GoTy::Map(_, _));
+        // A Dict narrows in O(1) (`rt.AsMapT` of a `SkyDict[V]`), so only a
+        // slice rebuilds; see `func_shape_eta_applies`.
+        let rebuilds = |t: &GoTy| matches!(t, GoTy::Slice(_));
         !ps.iter().any(rebuilds) && !rebuilds(r)
     }
 
@@ -10807,7 +10839,7 @@ fn render_goty(t: &GoTy) -> String {
                 format!("{n}[{}]", a.join(", "))
             }
             GoTy::Slice(t) => format!("[]{}", render_goty(t)),
-            GoTy::Map(k, v) => format!("map[{}]{}", render_goty(k), render_goty(v)),
+            GoTy::Map(_, v) => format!("rt.SkyDict[{}]", render_goty(v)),
             GoTy::Func(ps, r) => {
                 let a: Vec<String> = ps.iter().map(render_goty).collect();
                 format!("func({}) {}", a.join(", "), render_goty(r))

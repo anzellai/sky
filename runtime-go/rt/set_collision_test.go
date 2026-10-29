@@ -163,8 +163,8 @@ func TestToSkySetReificationKeepsDistinctElements(t *testing.T) {
 		T2[string, string]{V0: "a", V1: "b c"}: true,
 	}
 	got := toSkySet(src)
-	if len(got.items) != 2 {
-		t.Fatalf("toSkySet(map[any]bool) reified %d of 2 elements — one was dropped: %#v", len(got.items), got.items)
+	if got.items.Len() != 2 {
+		t.Fatalf("toSkySet(map[any]bool) reified %d of 2 elements — one was dropped: %#v", got.items.Len(), got.items)
 	}
 	back, ok := skySetToMap(SkySet{items: got.items}, reflect.TypeOf(map[any]bool{}))
 	if !ok {

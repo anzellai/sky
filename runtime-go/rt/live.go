@@ -1607,6 +1607,11 @@ func unpackResponse(v any) (int, map[string]string, string) {
 				for k, val := range m {
 					headers[k] = fmt.Sprintf("%v", val)
 				}
+			case skyDictAny:
+				m.dictRangeAny(func(k string, val any) bool {
+					headers[k] = fmt.Sprintf("%v", val)
+					return true
+				})
 			default:
 				// Reflect fallback for other map types
 				if f.Kind() == reflect.Map {

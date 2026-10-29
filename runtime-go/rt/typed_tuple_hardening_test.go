@@ -63,7 +63,7 @@ func TestDictFromListTypedTuple(t *testing.T) {
 		typedStrIntPair("one", 1),
 		typedStrIntPair("two", 2),
 	}
-	got := Dict_fromList(list).(map[string]any)
+	got := DictToMap(Dict_fromList(list))
 	if len(got) != 2 || got["one"] != 1 || got["two"] != 2 {
 		t.Fatalf("Dict_fromList on typed T2 list: got %#v", got)
 	}
@@ -73,7 +73,7 @@ func TestDictFromListTypedTuple(t *testing.T) {
 		SkyTuple2{V0: "a", V1: 10},
 		typedStrIntPair("b", 20),
 	}
-	gm := Dict_fromList(mixed).(map[string]any)
+	gm := DictToMap(Dict_fromList(mixed))
 	if gm["a"] != 10 || gm["b"] != 20 {
 		t.Fatalf("Dict_fromList mixed: got %#v", gm)
 	}
@@ -85,7 +85,7 @@ func TestDictFromListTTypedTuple(t *testing.T) {
 		typedStrIntPair("two", 2),
 	}
 	got := Dict_fromListT[int](list)
-	if got["one"] != 1 || got["two"] != 2 {
+	if dictAt(got, "one") != 1 || dictAt(got, "two") != 2 {
 		t.Fatalf("Dict_fromListT[int] on typed T2 list: got %#v", got)
 	}
 }
@@ -99,7 +99,7 @@ func TestDictFromListTSkipsNonTuple(t *testing.T) {
 		"nope", // non-tuple: skipped
 	}
 	got := Dict_fromListT[int](list)
-	if len(got) != 1 || got["keep"] != 5 {
+	if got.Len() != 1 || dictAt(got, "keep") != 5 {
 		t.Fatalf("Dict_fromListT skip: want single {keep:5}, got %#v", got)
 	}
 }
@@ -194,15 +194,15 @@ func TestDictFromListTASkipsNonTuple(t *testing.T) {
 		42,     // non-tuple: skipped
 		"nope", // non-tuple: skipped
 	}
-	got := Dict_fromListTA(list).(map[string]any)
-	if len(got) != 1 || got["keep"] != 5 {
+	got := Dict_fromListTA(list).(SkyDict[any])
+	if got.Len() != 1 || dictAt(got, "keep") != 5 {
 		t.Fatalf("Dict_fromListTA skip: want single {keep:5}, got %#v", got)
 	}
 
 	// Typed tuples flow through too.
 	typed := []any{typedStrIntPair("a", 1)}
-	gt := Dict_fromListTA(typed).(map[string]any)
-	if gt["a"] != 1 {
+	gt := Dict_fromListTA(typed).(SkyDict[any])
+	if dictAt(gt, "a") != 1 {
 		t.Fatalf("Dict_fromListTA typed: got %#v", gt)
 	}
 }

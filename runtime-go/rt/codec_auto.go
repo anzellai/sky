@@ -154,6 +154,11 @@ func codecAutoEncodeVal(rv reflect.Value, snake bool) (any, error) {
 			}
 			return codecAutoEncodeVal(rv.FieldByName("JustValue"), snake)
 		}
+		// Dict k v → JSON object, keyed by the runtime's encoded keys exactly
+		// as the Go map it replaced was (sorted for determinism).
+		if isSkyDictType(t) && rv.CanInterface() {
+			return codecAutoEncodeDict(rv.Interface().(skyDictAny), snake)
+		}
 		// Set a → JSON array (sorted, deterministic via Set_toList). Before this
 		// its sole unexported `items` field was skipped by codecAutoEncodeStruct
 		// → `{}` (elements silently vanished).
@@ -535,6 +540,9 @@ func codecAutoDecodeVal(rt reflect.Type, raw any, snake bool) (reflect.Value, er
 		}
 		return out, nil
 	case reflect.Struct:
+		if isSkyDictType(rt) {
+			return codecAutoDecodeDict(rt, "", raw, snake)
+		}
 		if isSkyMaybeType(rt) {
 			out := reflect.New(rt).Elem()
 			if raw == nil {
@@ -657,6 +665,9 @@ func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any, snake b
 		// `rt.SkyADT` alias and cannot tell Money from Decimal from a user ADT,
 		// so it errored "cannot derive data-carrying ADT". List/Maybe already
 		// threaded their element type; Dict was the gap.
+		if inner, ok := strings.CutPrefix(declaredType, "rt.SkyDict["); ok && isSkyDictType(gt) {
+			return codecAutoDecodeDict(gt, strings.TrimSuffix(inner, "]"), raw, snake)
+		}
 		if inner, ok := strings.CutPrefix(declaredType, "map["); ok && gt.Kind() == reflect.Map {
 			close := strings.IndexByte(inner, ']')
 			if close < 0 {
@@ -1034,4 +1045,71 @@ func codecSameJSON(a, b any) bool {
 	na, okA := norm(a)
 	nb, okB := norm(b)
 	return okA && okB && reflect.DeepEqual(na, nb)
+}
+
+// codecAutoEncodeDict writes a Dict as a JSON object keyed by its encoded
+// keys, sorted (the shape the Go map it replaced produced).
+func codecAutoEncodeDict(d skyDictAny, snake bool) (any, error) {
+	type kv struct {
+		k string
+		v any
+	}
+	pairs := make([]kv, 0, d.dictLen())
+	d.dictRangeAny(func(k string, v any) bool {
+		pairs = append(pairs, kv{k, v})
+		return true
+	})
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i].k < pairs[j].k })
+	vt := d.dictValueType()
+	obj := jsonOrderedObject{}
+	for _, p := range pairs {
+		rv := reflect.ValueOf(p.v)
+		if !rv.IsValid() {
+			rv = reflect.Zero(vt)
+		}
+		ev, err := codecAutoEncodeVal(rv, snake)
+		if err != nil {
+			return nil, err
+		}
+		obj.keys = append(obj.keys, p.k)
+		obj.vals = append(obj.vals, ev)
+	}
+	return obj, nil
+}
+
+// codecAutoDecodeDict reads a JSON object into the Dict type gt. valType is
+// the declared value type when the caller has one ("" decodes by the Go
+// value type alone).
+func codecAutoDecodeDict(gt reflect.Type, valType string, raw any, snake bool) (reflect.Value, error) {
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return reflect.Value{}, fmt.Errorf("Codec.auto: expected object for Dict, got %s", jsonValueKind(raw))
+	}
+	proto := reflect.Zero(gt).Interface().(skyDictAny)
+	vt := proto.dictValueType()
+	keys := make([]string, 0, len(m))
+	vals := make([]any, 0, len(m))
+	for k, v := range m {
+		var vv reflect.Value
+		var err error
+		if valType != "" {
+			vv, err = codecAutoDecodeTyped(vt, valType, v, snake)
+		} else {
+			vv, err = codecAutoDecodeVal(vt, v, snake)
+		}
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		keys = append(keys, k)
+		if vv.IsValid() {
+			vals = append(vals, vv.Interface())
+		} else {
+			vals = append(vals, nil)
+		}
+	}
+	out, err := proto.dictFromEntries(keys, vals, true)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	return reflect.ValueOf(out), nil
 }

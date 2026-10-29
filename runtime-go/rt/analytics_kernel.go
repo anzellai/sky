@@ -692,6 +692,9 @@ func analyticsDeriveProps(v any) map[string]any {
 		out["value"] = analyticsRenderGoValue(u)
 		return out
 	}
+	if d, ok := u.(skyDictAny); ok {
+		u = dictToMapAny(d)
+	}
 	rv := reflect.ValueOf(u)
 	switch rv.Kind() {
 	case reflect.Map:

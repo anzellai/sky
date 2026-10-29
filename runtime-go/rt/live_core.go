@@ -2827,6 +2827,12 @@ func narrowMsgArg(fn any, arg any) any {
 	// declare a Float-typed Msg ctor.  Bool→String stays rejected
 	// (the radio "[true] into String" case in the comment above) —
 	// only numeric types coerce.
+	if isSkyDictType(paramT) {
+		if out := narrowToSkyDict(srcV, paramT); out.IsValid() {
+			return out.Interface()
+		}
+		return arg
+	}
 	switch {
 	case paramT.Kind() == reflect.String && (srcV.Kind() == reflect.Float64 ||
 		srcV.Kind() == reflect.Float32):
@@ -3106,6 +3112,14 @@ func coerceReflectArg(av reflect.Value, want reflect.Type) reflect.Value {
 	}
 	if isSkyTaskType(want) && av.CanInterface() {
 		return taskReflectValue(av.Interface(), want)
+	}
+	// A Dict slot, or a Dict bound for a map / record: narrowReflectValue's
+	// Dict rules (the field copy below cannot see a Dict's unexported store).
+	if isSkyDictType(want) || isSkyDictType(av.Type()) {
+		if n := narrowReflectValue(av, want); n.IsValid() {
+			return n
+		}
+		return reflect.Zero(want)
 	}
 	if av.Type().ConvertibleTo(want) {
 		return av.Convert(want)

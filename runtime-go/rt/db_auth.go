@@ -1149,6 +1149,9 @@ func dbAnyToStringMap(v any) (map[string]any, bool) {
 	if m, ok := v.(map[string]any); ok {
 		return m, true
 	}
+	if d, ok := v.(skyDictAny); ok {
+		return dictToMapAny(d), true
+	}
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
 		return nil, false
@@ -2320,6 +2323,7 @@ func Auth_setRole(db any, userId any, role any) any {
 // Db.getFieldOr with a sentinel default, or the dedicated
 // getString/getInt/getBool helpers (which still return Result).
 func Db_getField(fname any, row any) string {
+	row = dbRowOfDict(row)
 	key := fmt.Sprintf("%v", fname)
 	// Typed codegen passes map[string]string when the Sky-side row
 	// type is Dict String String (the Db.query kernel sig). Runtime
@@ -2342,6 +2346,7 @@ func Db_getField(fname any, row any) string {
 
 // Db.getFieldOr : default -> row -> fieldName -> any
 func Db_getFieldOr(defaultVal any, row any, fname any) any {
+	row = dbRowOfDict(row)
 	if m, ok := row.(map[string]any); ok {
 		if v, exists := m[fmt.Sprintf("%v", fname)]; exists {
 			return v
@@ -2354,6 +2359,7 @@ func Db_getFieldOr(defaultVal any, row any, fname any) any {
 // Returns "" when the field is missing. Matches Db_getField semantics
 // so the Sky-side type signature (String, not Result) holds.
 func Db_getString(fname any, row any) string {
+	row = dbRowOfDict(row)
 	key := fmt.Sprintf("%v", fname)
 	if m, ok := row.(map[string]string); ok {
 		if v, exists := m[key]; exists {
@@ -2373,6 +2379,7 @@ func Db_getString(fname any, row any) string {
 // Returns 0 when the field is missing or not numeric. String-map values
 // go through strconv; any-map values through AsIntOrZero.
 func Db_getInt(fname any, row any) int {
+	row = dbRowOfDict(row)
 	key := fmt.Sprintf("%v", fname)
 	if m, ok := row.(map[string]string); ok {
 		if v, exists := m[key]; exists {
@@ -2404,6 +2411,7 @@ func Db_getInt(fname any, row any) int {
 // Db_getInt's shape — strconv on string-map values, AsFloatOrZero
 // on any-map values.
 func Db_getFloat(fname any, row any) float64 {
+	row = dbRowOfDict(row)
 	key := fmt.Sprintf("%v", fname)
 	if m, ok := row.(map[string]string); ok {
 		if v, exists := m[key]; exists {
@@ -2443,6 +2451,7 @@ func dbTruthy(s string) bool {
 }
 
 func Db_getBool(fname any, row any) bool {
+	row = dbRowOfDict(row)
 	key := fmt.Sprintf("%v", fname)
 	if m, ok := row.(map[string]string); ok {
 		if v, exists := m[key]; exists {
@@ -2462,4 +2471,14 @@ func Db_getBool(fname any, row any) bool {
 		}
 	}
 	return false
+}
+
+// dbRowOfDict reads a row that arrives as a Dict (a `Dict String String` row
+// from Db.query, after the typed slot narrowed it) as the map the getters
+// read. Rows are a handful of columns, so the copy is small.
+func dbRowOfDict(row any) any {
+	if d, ok := row.(skyDictAny); ok {
+		return dictToMapAny(d)
+	}
+	return row
 }

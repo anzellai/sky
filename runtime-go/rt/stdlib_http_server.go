@@ -91,7 +91,7 @@ func Http_getT(url string) func() SkyResult[string, HttpResponse] {
 		return Ok[string, HttpResponse](HttpResponse{
 			Status:  resp.StatusCode,
 			Body:    body,
-			Headers: hdrs,
+			Headers: dictFromTypedMap(hdrs),
 		})
 	}
 }
@@ -171,7 +171,7 @@ func Http_request(firstArg any, rest ...any) any {
 		return Ok[any, any](HttpResponse{
 			Status:  resp.StatusCode,
 			Body:    rb,
-			Headers: hdrs,
+			Headers: dictFromTypedMap(hdrs),
 		})
 	}
 }
@@ -209,6 +209,9 @@ func httpClientFor(timeoutMs int, followRedirects bool, maxRedirects int) *http.
 func applyHttpHeaders(req *http.Request, headers any) {
 	if headers == nil {
 		return
+	}
+	if d, ok := headers.(skyDictAny); ok {
+		headers = dictToMapAny(d)
 	}
 	if hm, ok := headers.(map[string]any); ok {
 		for k, v := range hm {

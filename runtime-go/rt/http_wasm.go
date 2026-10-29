@@ -169,7 +169,7 @@ func fetchOnce(method, url, body string, resend bool) (SkyResult[any, any], spaO
 		finish(Ok[any, any](HttpResponse{
 			Status:  status,
 			Body:    b,
-			Headers: map[string]string{},
+			Headers: SkyDict[string]{},
 		}), spaClassifyResponse(status, retryAfter, time.Now()))
 		return nil
 	})

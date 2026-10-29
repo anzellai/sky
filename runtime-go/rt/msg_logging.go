@@ -450,6 +450,14 @@ func walkHash(h *hashState, rv reflect.Value, depth int, deadline time.Time) {
 		}
 		h.writeString("}")
 	case reflect.Struct:
+		// A Dict hashes as the map of its entries (its trie layout is not
+		// part of the value).
+		if rv.CanInterface() {
+			if d, ok := rv.Interface().(skyDictAny); ok {
+				walkHash(h, reflect.ValueOf(dictToMapAny(d)), depth+1, deadline)
+				return
+			}
+		}
 		h.writeString("S<")
 		for i := 0; i < rv.NumField(); i++ {
 			h.writeString(rv.Type().Field(i).Name)
