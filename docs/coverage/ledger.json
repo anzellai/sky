@@ -998,7 +998,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3144,
+    "stdlib_entries": 3145,
     "stdlib_modules": 135,
     "surfaces_covered": 193,
     "surfaces_covered_pct": 95.1,
@@ -20039,7 +20039,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 23,
+          "count": 24,
           "symbols": [
             "AppConfig",
             "Route",
@@ -20055,6 +20055,7 @@
             "withClientCrypto",
             "withGuard",
             "withHead",
+            "withHoldFree",
             "withModelDecoder",
             "withModelEncoder",
             "withNotFound",
@@ -20344,7 +20345,7 @@
           ]
         }
       },
-      "count": 865,
+      "count": 866,
       "pct_of_denominator": 27.5
     },
     "symbols_unreferenced_strict": {
@@ -21560,7 +21561,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 23,
+          "count": 24,
           "symbols": [
             "AppConfig",
             "Route",
@@ -21576,6 +21577,7 @@
             "withClientCrypto",
             "withGuard",
             "withHead",
+            "withHoldFree",
             "withModelDecoder",
             "withModelEncoder",
             "withNotFound",
@@ -21885,7 +21887,7 @@
           ]
         }
       },
-      "count": 980,
+      "count": 981,
       "pct_of_denominator": 31.2
     }
   },
@@ -22183,10 +22185,10 @@
       "id": "e2e:scripts/spa-rpc-order-e2e.sh",
       "modules_imported": 17,
       "path": "scripts/spa-rpc-order-e2e.sh",
-      "refs_generous": 51,
-      "refs_qualified": 50,
+      "refs_generous": 54,
+      "refs_qualified": 53,
       "role": "FlowTest",
-      "sky_files": 4,
+      "sky_files": 5,
       "sky_toml_sections": []
     },
     {
@@ -23725,10 +23727,10 @@
       "id": "flow:spa_split_flow",
       "modules_imported": 41,
       "path": "rust/crates/sky/tests/spa_split_flow.rs",
-      "refs_generous": 172,
-      "refs_qualified": 164,
+      "refs_generous": 174,
+      "refs_qualified": 166,
       "role": "FlowTest",
-      "sky_files": 139,
+      "sky_files": 140,
       "sky_toml_sections": []
     },
     {
