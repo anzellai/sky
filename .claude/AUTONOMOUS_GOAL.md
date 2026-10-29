@@ -77,3 +77,20 @@ The previous mandate (Std.Ai lifecycle) is complete: v0.28.0 shipped, then v0.28
   needs is lost. The result is a clean folder structure going forward.
 - After the tag: migrate every private app (list in the private companion) to
   v0.29.0 and redeploy, except the one named there as excluded.
+- Added 2026-10-29 (user): "some critical and priority issues for sky to fix + work on"
+  from a real app's request file, and the user chose "Everything in v0.29.0":
+  (1) the Sky.Spa bug where typing during a hold RPC rewinds a focused input,
+  fixed as B (never write a focused input's value while its input Msgs are held)
+  plus A where safe (a pure onInput arm whose write-set does not meet the hold's
+  runs at once), with a unit test and a Chromium + WebKit e2e;
+  (2) Std.Db.Store additions, all 13 items, each rendered as ONE set-based SQL
+  statement, portable across SQLite and PostgreSQL, every column checked against
+  the codec before the query runs: grouped aggregates (+ having), join and left
+  join of two Stores, projection + DISTINCT + latestPer, subquery conditions
+  (inQuery, exists, notExists), insertOrIgnore + upsertWith (addExcluded, keepMin,
+  keepMax, setExcluded) + uniqueOn, NOT NULL defaults and indexes in migrate,
+  escaped and case-insensitive text match (eqCi, contains, containsCi,
+  startsWith, endsWith; the current `like` escapes nothing and is
+  case-sensitive on PostgreSQL), expression SET, insert from a query,
+  column-to-column conditions, JSON field access, RETURNING, and the regex item
+  documented as advised against; plus the two doc notes on `like` and `migrate`.
