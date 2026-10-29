@@ -8107,6 +8107,14 @@ mod tests {
             "Office_xlsxWrite",
             "Office_docxRead",
             "Office_docxWrite",
+            // v0.29.0: Std.Image.Canvas, frames and reduceFrames stay on the
+            // server (the "Image" entry).
+            "Image_frames",
+            "Image_reduceFrames",
+            "Image_canvasEncode",
+            "Image_canvasRect",
+            "Image_canvasLoadFont",
+            "Image_canvasPixelDiff",
         ] {
             assert!(syms.contains(sym), "`{sym}` is not a stdlib kernel");
             let mut acc = Refs::default();

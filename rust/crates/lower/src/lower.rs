@@ -10568,6 +10568,12 @@ const SKY_LIST_HOF_TWINS: &[(&str, &str, &str, usize)] = &[
 /// `type Sky_Core_Regex_Regex = rt.SkyADT`).
 const REGEX_GO: &str = "Sky_Core_Regex_Regex";
 
+/// The emitted Go names of the Std.Image.Canvas handles (unsealed stdlib ADTs,
+/// `type Std_Image_Canvas_Canvas = rt.SkyADT`).
+const CANVAS_GO: &str = "Std_Image_Canvas_Canvas";
+const CANVAS_MASK_GO: &str = "Std_Image_Canvas_Mask";
+const CANVAS_FONT_GO: &str = "Std_Image_Canvas_Font";
+
 /// The emitted Go name of `Std.Xml.Node` (an unsealed stdlib ADT,
 /// `type Std_Xml_Node = rt.SkyADT`).
 const XML_NODE_GO: &str = "Std_Xml_Node";
@@ -10584,6 +10590,7 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
     let bool_ = || GoTy::Bare(Prim::Bool);
     let float = || GoTy::Bare(Prim::Float);
     let maybe = |t: GoTy| GoTy::Named("rt.SkyMaybe".into(), vec![t]);
+    let canvas = || GoTy::Named(CANVAS_GO.into(), vec![]);
     let twin = |symbol: &'static str, params: Vec<Option<GoTy>>, ret: GoTy| {
         Some(TypedTwin {
             symbol,
@@ -10822,6 +10829,46 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
         }
         ("rt.Xml_encode", 2) => twin("rt.Xml_encodeT", vec![None, None], str_()),
         ("rt.Xml_document", 2) => twin("rt.Xml_documentT", vec![None, None], str_()),
+        // v0.29.0 Std.Image.Canvas: a Canvas, a Mask and a Font are opaque
+        // handles (erased `any` in, the handle ADT out); each drawing step
+        // returns the Canvas ADT itself (runtime-go/rt/canvas_kernels_test.go
+        // checks each twin against its erased kernel).
+        ("rt.Image_canvasBlank", 3) => twin("rt.Image_canvasBlankT", vec![None; 3], canvas()),
+        ("rt.Image_canvasFromImage", 1) => twin("rt.Image_canvasFromImageT", vec![None], canvas()),
+        ("rt.Image_canvasRect", 7) => twin("rt.Image_canvasRectT", vec![None; 7], canvas()),
+        ("rt.Image_canvasRoundedRect", 8) => {
+            twin("rt.Image_canvasRoundedRectT", vec![None; 8], canvas())
+        }
+        ("rt.Image_canvasEllipse", 7) => twin("rt.Image_canvasEllipseT", vec![None; 7], canvas()),
+        ("rt.Image_canvasArc", 8) => twin("rt.Image_canvasArcT", vec![None; 8], canvas()),
+        ("rt.Image_canvasLine", 7) => twin("rt.Image_canvasLineT", vec![None; 7], canvas()),
+        ("rt.Image_canvasPaste", 6) => twin("rt.Image_canvasPasteT", vec![None; 6], canvas()),
+        ("rt.Image_canvasPasteCanvas", 6) => {
+            twin("rt.Image_canvasPasteCanvasT", vec![None; 6], canvas())
+        }
+        ("rt.Image_canvasBlur", 2) => twin("rt.Image_canvasBlurT", vec![None; 2], canvas()),
+        ("rt.Image_canvasResize", 4) => twin("rt.Image_canvasResizeT", vec![None; 4], canvas()),
+        ("rt.Image_canvasText", 7) => twin("rt.Image_canvasTextT", vec![None; 7], canvas()),
+        ("rt.Image_canvasRoundedMask", 3) => twin(
+            "rt.Image_canvasRoundedMaskT",
+            vec![None; 3],
+            GoTy::Named(CANVAS_MASK_GO.into(), vec![]),
+        ),
+        ("rt.Image_canvasEllipseMask", 2) => twin(
+            "rt.Image_canvasEllipseMaskT",
+            vec![None; 2],
+            GoTy::Named(CANVAS_MASK_GO.into(), vec![]),
+        ),
+        ("rt.Image_canvasAlphaMask", 1) => twin(
+            "rt.Image_canvasAlphaMaskT",
+            vec![None],
+            GoTy::Named(CANVAS_MASK_GO.into(), vec![]),
+        ),
+        ("rt.Image_canvasDefaultFont", 1) => twin(
+            "rt.Image_canvasDefaultFontT",
+            vec![None],
+            GoTy::Named(CANVAS_FONT_GO.into(), vec![]),
+        ),
         _ => None,
     }
 }

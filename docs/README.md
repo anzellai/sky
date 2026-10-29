@@ -27,6 +27,10 @@ under [`archive/`](archive/) and the per-version directories below.
   and Word documents on the server. See the sections in
   [`stdlib.md`](stdlib.md) and `sky doc Std.Office.Xlsx` / `sky doc
   Std.Office.Docx`.
+* `Std.Image` (resize, crop, trim, colour to alpha, animated GIF, lossless
+  WebP, decode limits) and `Std.Image.Canvas` (draw shapes, text and pasted
+  images on the server). See the sections in [`stdlib.md`](stdlib.md) and
+  `sky doc Std.Image` / `sky doc Std.Image.Canvas`.
 
 ## Per-area
 

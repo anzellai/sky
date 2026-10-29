@@ -578,9 +578,10 @@ pub static GATES: &[Gate] = &[
                 // v0.29.0 Family R defects value_cycle and regex_invalid_literal
                 // (+18 cases, 809 → 827), and the v0.29.0 Std.Xml and
                 // Std.Zip surfaces (+10 cases, 827 → 837), and the v0.29.0
-                // Std.Office surface (+5 cases, 837 → 842).
-                from: "n_min = 842",
-                to: "n_min = 843",
+                // Std.Office surface (+5 cases, 837 → 842), and the v0.29.0
+                // Std.Image.Canvas surface (+2 cases, 842 → 844).
+                from: "n_min = 844",
+                to: "n_min = 845",
             },
         }]),
         body: bodies::corpus_manifest,

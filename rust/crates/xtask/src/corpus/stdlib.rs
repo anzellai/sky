@@ -362,6 +362,17 @@ pub const SURFACES: &[Surface] = &[
     // v0.29.0 Std.Office.Xlsx and Std.Office.Docx: read and write are pure
     // `Result`s over bytes, so a write read back is value-assertable.
     sf2("office", "Std.Office.Xlsx", &["Std.Office.Docx as Docx"]),
+    // v0.29.0 Std.Image.Canvas: drawings asserted by their encoded size and
+    // by pixelDiff against a base canvas (`Task`s bridged with `Task.run`).
+    sf2(
+        "imagecanvas",
+        "Std.Image.Canvas",
+        &[
+            "Sky.Core.Task as Task",
+            "Std.Image as Image",
+            "Sky.Core.Error as Error",
+        ],
+    ),
     // v0.27.0 streaming child processes and file watching. Both surfaces are
     // `Task`s bridged with `Task.run`; the expected values are what the
     // spawned POSIX tools (`sh`, `cat`, `stty`) and the documented coalescing
@@ -866,6 +877,8 @@ pub const ASSERTED_MODULES: &[&str] = &[
     // v0.29.0: Std.Office.Xlsx and Std.Office.Docx land covered (`office`).
     "Std.Office.Xlsx",
     "Std.Office.Docx",
+    // v0.29.0: Std.Image.Canvas lands covered (`imagecanvas`).
+    "Std.Image.Canvas",
     // v0.27.0: the streaming process surface and Std.Watch land covered.
     "Sky.Core.Process",
     "Std.Watch",
@@ -1511,6 +1524,7 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "markdown" => markdown_battery(edge),
         "compression" => compression_battery(edge),
         "image" => image_battery(edge),
+        "imagecanvas" => imagecanvas_battery(edge),
         "sign" => sign_battery(edge),
         "kx" => kx_battery(edge),
         "kdf" => kdf_battery(edge),
@@ -2241,6 +2255,24 @@ fn image_battery(edge: &str) -> Vec<Check> {
                 "dimsOf (Image.thumbnail Image.Preserve 2 src6x4_)",
                 "2x1",
             ),
+            // v0.29.0: frames, reduceFrames (a PNG comes back unchanged), and
+            // the Gif and WebpLossless formats.
+            s(&["Image.frames"], "framesOf src6x4_", "1"),
+            s(
+                &["Image.reduceFrames"],
+                "dimsOf (Image.reduceFrames 2 src6x4_)",
+                "6x4",
+            ),
+            s(
+                &["Image.resizeToFit"],
+                "dimsOf (Image.resizeToFit Image.Gif 3 3 src6x4_)",
+                "3x2",
+            ),
+            s(
+                &["Image.thumbnail"],
+                "dimsOf (Image.thumbnail Image.WebpLossless 2 src6x4_)",
+                "2x1",
+            ),
         ],
         "boundary" => vec![
             // A box larger than the image must NOT upscale — the source size is
@@ -2252,6 +2284,83 @@ fn image_battery(edge: &str) -> Vec<Check> {
             ),
             // A non-image input is a classified error, not a crash.
             s(&["Image.dimensions"], "dimsRes \"not a real image\"", "E"),
+            s(&["Image.frames"], "framesOf \"not a real image\"", "E"),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Image.Canvas (v0.29.0) ----------------------------------------------
+//
+// A drawing is asserted by its encoded size and by the pixels it changes
+// against `base` (Canvas.pixelDiff). The failure edge asserts the refusals
+// `encode`, `pixelDiff` and the font readers promise.
+fn imagecanvas_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Canvas.blank", "Canvas.rgba", "Canvas.encode"],
+                "dimsOf (Canvas.encode Image.WebpLossless base)",
+                "6x4",
+            ),
+            s(
+                &["Canvas.rect", "Canvas.pixelDiff"],
+                "diffOf base (Canvas.rect 1 1 2 2 (Canvas.Fill black) base)",
+                "4",
+            ),
+            s(
+                &["Canvas.roundedRect"],
+                "diffOf base (Canvas.roundedRect 0 0 6 4 0 (Canvas.Stroke 1 black) base)",
+                "16",
+            ),
+            s(
+                &["Canvas.line"],
+                "diffOf base (Canvas.line 0 1 5 1 1 black base)",
+                "6",
+            ),
+            s(
+                &["Canvas.ellipse", "Canvas.arc", "Canvas.blur"],
+                "if diffOf base (base |> Canvas.ellipse 0 0 6 4 (Canvas.Fill black) |> Canvas.arc 3 2 2 0.0 90.0 (Canvas.Fill black) |> Canvas.blur 1.0) == \"0\" then \"F\" else \"T\"",
+                "T",
+            ),
+            s(
+                &["Canvas.fromImage", "Canvas.paste", "Canvas.ellipseMask", "Canvas.roundedMask", "Canvas.alphaMask", "Canvas.pasteCanvas"],
+                "diffOf (Canvas.fromImage (pngOf base)) (base |> Canvas.paste 0 0 (Just (Canvas.ellipseMask 6 4)) (pngOf base) |> Canvas.paste 0 0 (Just (Canvas.roundedMask 6 4 1)) (pngOf base) |> Canvas.paste 0 0 (Just (Canvas.alphaMask (pngOf base))) (pngOf base) |> Canvas.pasteCanvas 0 0 Nothing base)",
+                "0",
+            ),
+            s(
+                &["Canvas.resize"],
+                "dimsOf (Canvas.encode Image.Png (Canvas.resize Canvas.Lanczos 3 2 base))",
+                "3x2",
+            ),
+            s(&["Canvas.measure", "Canvas.defaultFont"], "measured", "T"),
+            s(
+                &["Canvas.text"],
+                "if diffOf base (Canvas.text { font = Canvas.defaultFont, size = 8.0, colour = black } 0 0 \"W\" base) == \"0\" then \"F\" else \"T\"",
+                "T",
+            ),
+        ],
+        "failure" => vec![
+            s(
+                &["Canvas.encode", "Canvas.rgba"],
+                "codeOf (Canvas.encode Image.Png (Canvas.rect 0 0 1 1 (Canvas.Fill (Canvas.rgba 300 0 0 255)) base))",
+                "colour_range",
+            ),
+            s(
+                &["Canvas.pixelDiff"],
+                "codeOf (Task.map String.fromInt (Canvas.pixelDiff 0 (pngOf base) (pngOf (Canvas.blank 2 2 black))))",
+                "size_mismatch",
+            ),
+            rs(
+                &["Canvas.fontFromBytes"],
+                "Result.map (\\_ -> \"ok\") (Canvas.fontFromBytes \"not a font\" 0)",
+                None,
+            ),
+            s(
+                &["Canvas.loadFont"],
+                "codeOf (Task.map (\\_ -> \"ok\") (Canvas.loadFont \"/no/such/font.ttf\" 0))",
+                "E",
+            ),
         ],
         _ => vec![],
     }
@@ -6275,7 +6384,8 @@ fn fixtures(slug: &str) -> &'static str {
         // A real 6x4 PNG (base64), decoded into `src6x4_`. `dimsRes` renders an
         // image's dimensions as "WxH"; `dimsOf` runs a resize Task and renders
         // the result's dimensions — so a resize/thumbnail is asserted by the
-        // exact output size, deterministically.
+        // exact output size, deterministically. `framesOf` renders Image.frames
+        // (v0.29.0).
         "image" => {
             "src6x4_ : String\nsrc6x4_ =\n    case Encoding.base64Decode \"iVBORw0KGgoAAAANSUhEUgAAAAYAAAAECAIAAAAiZtkUAAAAHUlEQVR4nGJhYEjRYGBARiwMNgxogDghQAAAAP//bKgB8VO8ExcAAAAASUVORK5CYII=\" of\n\
              \x20       Ok b ->\n            b\n\n        Err _ ->\n            \"\"\n\n\n\
@@ -6283,7 +6393,77 @@ fn fixtures(slug: &str) -> &'static str {
              \x20       Ok d ->\n            String.fromInt d.width ++ \"x\" ++ String.fromInt d.height\n\n\
              \x20       Err _ ->\n            \"E\"\n\n\n\
              dimsOf : Task Error String -> String\ndimsOf tk =\n    case Task.run tk of\n\
-             \x20       Ok v ->\n            dimsRes v\n\n        Err _ ->\n            \"E\"\n"
+             \x20       Ok v ->\n            dimsRes v\n\n        Err _ ->\n            \"E\"\n\n\n\
+             framesOf : String -> String\nframesOf b =\n    case Task.run (Image.frames b) of\n\
+             \x20       Ok n ->\n            String.fromInt n\n\n        Err _ ->\n            \"E\"\n"
+        }
+        // v0.29.0 Std.Image.Canvas. `base` is a white 6x4 canvas; `diffOf`
+        // counts the pixels two drawings differ in (Canvas.pixelDiff over
+        // their PNGs), so a shape is asserted by what it covers; `codeOf`
+        // renders a refusal's domain code.
+        "imagecanvas" => {
+            r#"base : Canvas.Canvas
+base =
+    Canvas.blank 6 4 (Canvas.rgba 255 255 255 255)
+
+
+black : Canvas.Rgba
+black =
+    Canvas.rgba 0 0 0 255
+
+
+pngOf : Canvas.Canvas -> String
+pngOf c =
+    Result.withDefault "" (Task.run (Canvas.encode Image.Png c))
+
+
+dimsOf : Task Error String -> String
+dimsOf tk =
+    case Task.run (tk |> Task.andThen Image.dimensions) of
+        Ok d ->
+            String.fromInt d.width ++ "x" ++ String.fromInt d.height
+
+        Err _ ->
+            "E"
+
+
+diffOf : Canvas.Canvas -> Canvas.Canvas -> String
+diffOf a b =
+    case Task.run (Canvas.pixelDiff 0 (pngOf a) (pngOf b)) of
+        Ok n ->
+            String.fromInt n
+
+        Err _ ->
+            "E"
+
+
+codeOf : Task Error String -> String
+codeOf tk =
+    case Task.run tk of
+        Ok _ ->
+            "ok"
+
+        Err e ->
+            case Error.failureOf e of
+                Just f ->
+                    Error.failureCode f
+
+                Nothing ->
+                    "E"
+
+
+measured : String
+measured =
+    let
+        m =
+            Canvas.measure Canvas.defaultFont 20.0 "Sky"
+    in
+    if m.height == m.ascent + m.descent && m.width > 10 then
+        "T"
+
+    else
+        "F"
+"#
         }
         // Ed25519 against RFC 8032 §7.1 TEST 1. `keyOr` keeps a failed key
         // import visible as "E" instead of hiding it behind a default key.

@@ -46,6 +46,13 @@ var wasmServerOnlyPackages = []string{
 	"golang.org/x/text/encoding",
 	"golang.org/x/text/encoding/charmap",
 	"google.golang.org/grpc",
+	"compress/lzw",
+	"golang.org/x/image/draw",
+	"golang.org/x/image/font/gofont/goregular",
+	"golang.org/x/image/font/opentype",
+	"golang.org/x/image/font/sfnt",
+	"golang.org/x/image/vector",
+	"golang.org/x/image/webp",
 	"html/template",
 	"image/gif",
 	"image/jpeg",
@@ -58,7 +65,7 @@ var wasmServerOnlyPackages = []string{
 // wasmServerOnlyMustBeNative are the entries of wasmServerOnlyPackages the
 // native build must import, so the list keeps naming packages the runtime
 // really uses (a renamed import would otherwise pass in silence).
-var wasmServerOnlyMustBeNative = []string{"archive/zip", "encoding/xml", "golang.org/x/text/encoding/charmap"}
+var wasmServerOnlyMustBeNative = []string{"archive/zip", "encoding/xml", "golang.org/x/text/encoding/charmap", "golang.org/x/image/webp", "golang.org/x/image/font/opentype"}
 
 // wasmServerOnlyKernelPrefixes are the kernel families whose every exported
 // function the probe client references, so the probe is the worst case: a

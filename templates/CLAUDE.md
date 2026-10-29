@@ -215,6 +215,18 @@ encrypted entries and zip bombs, and bound size and depth. Do not parse XML
 with `String` functions or a Go FFI binding, and do not raise the limits to
 get one file through: pass a `Limits` record that fits the input you expect.
 
+### Images: Std.Image and Std.Image.Canvas, on the server
+
+Resize, crop and re-encode uploads with `Std.Image` in the backend (it also
+strips metadata, since it decodes and encodes again). Keep an animated GIF
+animated with `Image.Gif` or `Image.Preserve`, and make it smaller with
+`Image.reduceFrames`. Check `Image.dimensions` / `Image.frames` before work if
+you want to refuse early: images over 100 megapixels and GIFs over 1,000 frames
+are refused with `InvalidInput` in the domain `"image"`. Draw cards, badges and
+thumbnails with `Std.Image.Canvas` (`blank` or `fromImage`, shapes, `paste`
+with a mask, `text` with `Canvas.defaultFont` or `loadFont`, then `encode`).
+Do not shell out to ImageMagick or Pillow.
+
 ### Excel and Word files: use Std.Office.Xlsx and Std.Office.Docx
 
 Read and write `.xlsx` with `Std.Office.Xlsx` and `.docx` with

@@ -15,6 +15,41 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Added
 
+- **`Std.Image.Canvas`: draw an image on the server.** A `Canvas` is a
+  persistent display list: `blank` or `fromImage`, then `rect`,
+  `roundedRect`, `ellipse`, `arc`, `line` (a `Paint` is `Fill colour` or
+  `Stroke width colour`), `paste` and `pasteCanvas` through a `Mask`
+  (`roundedMask`, `ellipseMask`, `alphaMask`), `blur` (three box passes,
+  O(width x height) whatever the sigma), `resize` (`Nearest`, `Bilinear`,
+  `CatmullRom`, `Lanczos`) and `text` with a TrueType or OpenType font
+  (`loadFont`, `fontFromBytes`, a `.ttc` by index, or the built-in
+  `defaultFont`, Go Regular). `measure` gives a text's width, height, ascent
+  and descent. Each step is O(1) and touches no pixel; `encode` draws the list
+  once and writes PNG, JPEG, GIF or lossless WebP. Errors that depend on the
+  input are the `Err` of `encode`, in the domain `"image"`: `colour_range`,
+  `canvas_too_large` (over 16384 on a side), `too_many_pixels`, a pasted image
+  that does not decode. `pixelDiff tolerance a b` counts the pixels two images
+  differ in, for tests. Server only, like `Std.Image`. Shapes and text use
+  `golang.org/x/image` (already a dependency); no cgo.
+
+- **`Std.Image`: animated GIF, `Gif` and `WebpLossless` output, `frames` and
+  `reduceFrames`.** `Format` gains `Gif` and `WebpLossless`. Written as `Gif`
+  or `Preserve`, an animated GIF keeps every frame: `resizeToFit`,
+  `thumbnail`, `crop`, `trim`, `toAlpha` and `whiteToAlpha` run on each frame
+  as it is shown (composed onto the logical screen with its disposal applied:
+  none, background, restore previous), and each frame keeps its delay and
+  disposal and the file its loop count. Frames are decoded, processed, mapped
+  to a palette (exact at 256 colours or fewer, else median cut with
+  Floyd-Steinberg dithering) and written one at a time. Comment and other
+  application extensions are dropped; only the NETSCAPE loop is written.
+  `frames : String -> Task Error Int` counts the frames from the block
+  structure (no decode). `reduceFrames n` keeps 1 frame in n and adds the
+  dropped delays to the kept frame. `WebpLossless` is an in-tree pure-Go VP8L
+  encoder (subtract-green, the 14 predictors per tile, colour indexing with
+  pixel bundling, colour cache, LZ77 with a hash chain, canonical Huffman);
+  its output decodes pixel-exact with `golang.org/x/image/webp` and libwebp's
+  `dwebp`. WebP input (lossy or lossless) is now read too.
+
 - **`sky run` passes arguments to the program.** Everything after `--` goes to
   the program, as with `go run` and `cargo run`: `sky run src/Main.sky -- a "b
   c"` gives `System.args ()` the arguments `a` and `b c`. A flag after `--`
@@ -244,6 +279,28 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 The full list, with old and new code, is `docs/migration/v0.29.md`.
 
+- **`Std.Image.Format` has two more constructors (breaking for a `case` that
+  lists every one).** `Gif` and `WebpLossless` join `Jpeg`, `Png` and
+  `Preserve`. A `case` on `Format` with no `_` branch fails to compile with a
+  missing-pattern error; add the two branches or a `_`.
+
+- **`Image.Preserve` keeps a GIF a GIF (behaviour change).** Before, a GIF
+  under `Preserve` became a PNG of its first frame. Now it stays a GIF, with
+  every frame of an animation. Code that saved the output of `Preserve` under
+  a `.png` name for a GIF input should pass `Image.Png` to keep the old
+  output, or save under `.gif`. A WebP under `Preserve` is now a lossless
+  WebP (WebP input was refused before). `toAlpha` and `whiteToAlpha` of an
+  animated GIF now give an animated GIF; of any other image, PNG as before.
+
+- **Std.Image refuses an image over 100 megapixels (behaviour change).** Each
+  function that decodes reads the header first and refuses an image over
+  100 megapixels (width x height), a GIF of more than 1,000 frames, or a GIF
+  of more than 250 million pixels over its frames, with `InvalidInput` in the
+  domain `"image"` (codes `too_many_pixels`, `too_many_frames`,
+  `too_many_frame_pixels`). An image that size used to decode (400 MB or more
+  as RGBA). Resize such an image before upload, or check `Image.dimensions`
+  first and tell the user. `dimensions` and `frames` never refuse.
+
 - **`Sky.Core.Regex` takes a compiled `Regex` (breaking).** A new opaque type
   `Regex`; `Regex.fromString : String -> Result Error Regex` is the only
   constructor, and `contains` (also `match`), `find`, `findAll`, `findMatch`,
@@ -301,6 +358,18 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   never run is affected. Give one value a base case, or a parameter.
 
 ### Fixed
+
+- **Security: Std.Image had no pixel limit (decompression bomb).** A tiny
+  PNG, JPEG, GIF or WebP that declares a huge size (a 70-byte PNG can claim
+  20000 x 20000) was decoded in full: 1.6 GB of RGBA for that file, enough to
+  take down a small server through any upload that `resizeToFit` or `crop`
+  read. Every Std.Image and Std.Image.Canvas entry that decodes now reads the
+  header with `image.DecodeConfig` and refuses the image before it allocates
+  (`too_many_pixels`); a GIF's frames are counted from its block structure
+  before any frame is decoded and again while decoding. Regression tests in
+  `runtime-go/rt/image_gif_test.go` (a tiny PNG and JPEG that claim 20000 x
+  20000, a 1x1 GIF of 100,000 frames, a 5000x5000 GIF of 50 frames) and the
+  `ImageGif` conformance suite.
 
 - **The stdlib docs named the wrong function for reading a binary file.**
   `Std.Zip`, `Sky.Core.Bytes`, `Std.Email` and `File.writeBytes` said to pass

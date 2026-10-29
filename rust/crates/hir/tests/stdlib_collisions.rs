@@ -236,6 +236,18 @@ const EXPECTED_NEW_MODULE_OVERLAPS: &[&str] = &[
     "value fill",
     "value fontSize",
     "value italic",
+    // v0.29.0: Std.Image.Canvas. Its drawing names are the ones Std.Ui.Canvas
+    // and Std.Ui use for the same ideas (`rect`, `ellipse`, `line`, `rgba`,
+    // `Fill`), plus `measure` (a text size) and `resize` (a canvas size). A
+    // new module, read qualified (`import Std.Image.Canvas as Canvas`), so no
+    // existing program changes.
+    "ctor Fill",
+    "value ellipse",
+    "value line",
+    "value measure",
+    "value rect",
+    "value resize",
+    "value rgba",
 ];
 
 fn repo_root() -> PathBuf {

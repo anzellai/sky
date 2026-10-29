@@ -12,7 +12,6 @@
 package rt
 
 import (
-	"bytes"
 	"fmt"
 	"image"
 	"image/color"
@@ -74,18 +73,6 @@ func imageGuard(op string, f func() any) (res any) {
 	return f()
 }
 
-func decodeForEdit(op, in string) (image.Image, string, any) {
-	src, format, err := image.Decode(bytes.NewReader([]byte(in)))
-	if err != nil {
-		return nil, "", Err[any, any](ErrInvalidInput(op + ": not a decodable image: " + err.Error()))
-	}
-	b := src.Bounds()
-	if b.Dx() <= 0 || b.Dy() <= 0 {
-		return nil, "", Err[any, any](ErrInvalidInput(op + ": image has zero dimension"))
-	}
-	return src, format, nil
-}
-
 // copyRect returns the pixels of `r` (in src coordinates) as a new NRGBA image
 // whose bounds start at (0, 0), so the alpha channel survives a PNG encode.
 func copyRect(src image.Image, r image.Rectangle) *image.NRGBA {
@@ -94,6 +81,43 @@ func copyRect(src image.Image, r image.Rectangle) *image.NRGBA {
 	return dst
 }
 
+// trimBox grows to hold the non-margin pixels of every image it sees.
+type trimBox struct {
+	t                      uint8
+	minX, minY, maxX, maxY int
+	seen                   bool
+}
+
+func (tb *trimBox) add(src image.Image) {
+	b := src.Bounds()
+	if !tb.seen {
+		tb.minX, tb.minY, tb.maxX, tb.maxY = b.Max.X, b.Max.Y, b.Min.X-1, b.Min.Y-1
+		tb.seen = true
+	}
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			c := color.NRGBAModel.Convert(src.At(x, y)).(color.NRGBA)
+			if c.A == 0 || (c.R >= tb.t && c.G >= tb.t && c.B >= tb.t) {
+				continue
+			}
+			if x < tb.minX {
+				tb.minX = x
+			}
+			if x > tb.maxX {
+				tb.maxX = x
+			}
+			if y < tb.minY {
+				tb.minY = y
+			}
+			if y > tb.maxY {
+				tb.maxY = y
+			}
+		}
+	}
+}
+
+// trimBytes cuts the margin. Every frame of an animated GIF is cut to one
+// box: the one that holds what is left of every frame.
 func trimBytes(in, outFormat string, quality, threshold, padding int) any {
 	if threshold < 0 || threshold > 255 {
 		return Err[any, any](ErrInvalidInput("image.trim: threshold must be 0..255"))
@@ -101,80 +125,57 @@ func trimBytes(in, outFormat string, quality, threshold, padding int) any {
 	if padding < 0 {
 		return Err[any, any](ErrInvalidInput("image.trim: padding must not be negative"))
 	}
-	src, srcFormat, bad := decodeForEdit("image.trim", in)
-	if bad != nil {
-		return bad
-	}
-	b := src.Bounds()
-	t := uint8(threshold)
-	margin := func(x, y int) bool {
-		c := color.NRGBAModel.Convert(src.At(x, y)).(color.NRGBA)
-		return c.A == 0 || (c.R >= t && c.G >= t && c.B >= t)
-	}
-	minX, minY, maxX, maxY := b.Max.X, b.Max.Y, b.Min.X-1, b.Min.Y-1
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			if margin(x, y) {
-				continue
+	tb := &trimBox{t: uint8(threshold)}
+	return imageApply("image.trim", in, outFormat, quality, false, false, tb.add,
+		func(src image.Image) (image.Image, any) {
+			if tb.maxX < tb.minX || tb.maxY < tb.minY {
+				return nil, Err[any, any](ErrInvalidInput("nothing left to trim to"))
 			}
-			if x < minX {
-				minX = x
-			}
-			if x > maxX {
-				maxX = x
-			}
-			if y < minY {
-				minY = y
-			}
-			if y > maxY {
-				maxY = y
-			}
-		}
-	}
-	if maxX < minX || maxY < minY {
-		return Err[any, any](ErrInvalidInput("nothing left to trim to"))
-	}
-	keep := image.Rect(minX-padding, minY-padding, maxX+1+padding, maxY+1+padding).Intersect(b)
-	return encodeImage("image.trim", copyRect(src, keep), outFormat, srcFormat, quality)
+			b := src.Bounds()
+			keep := image.Rect(tb.minX-padding, tb.minY-padding, tb.maxX+1+padding, tb.maxY+1+padding).Intersect(b)
+			return copyRect(src, keep), nil
+		})
 }
 
 func cropBytes(in, outFormat string, quality, x, y, w, h int) any {
 	if w < 0 || h < 0 {
 		return Err[any, any](ErrInvalidInput("image.crop: width and height must not be negative"))
 	}
-	src, srcFormat, bad := decodeForEdit("image.crop", in)
-	if bad != nil {
-		return bad
-	}
-	b := src.Bounds()
-	// x and y are relative to the image's top-left corner.
-	r := image.Rect(b.Min.X+x, b.Min.Y+y, b.Min.X+x+w, b.Min.Y+y+h).Intersect(b)
-	if r.Empty() {
-		return Err[any, any](ErrInvalidInput("image.crop: the area is outside the image or empty"))
-	}
-	return encodeImage("image.crop", copyRect(src, r), outFormat, srcFormat, quality)
+	return imageApply("image.crop", in, outFormat, quality, false, false, nil,
+		func(src image.Image) (image.Image, any) {
+			b := src.Bounds()
+			// x and y are relative to the image's top-left corner.
+			r := image.Rect(b.Min.X+x, b.Min.Y+y, b.Min.X+x+w, b.Min.Y+y+h).Intersect(b)
+			if r.Empty() {
+				return nil, Err[any, any](ErrInvalidInput("image.crop: the area is outside the image or empty"))
+			}
+			return copyRect(src, r), nil
+		})
 }
 
+// toAlphaBytes writes PNG. An animated GIF stays an animated GIF (each frame
+// keyed, with one-bit transparency), every frame written whole with disposal
+// "background", because keying makes pixels transparent that an earlier
+// frame covered.
 func toAlphaBytes(in string, kr, kg, kb int) any {
 	for _, k := range []int{kr, kg, kb} {
 		if k < 0 || k > 255 {
 			return Err[any, any](ErrInvalidInput("image.toAlpha: each colour channel must be 0..255"))
 		}
 	}
-	src, _, bad := decodeForEdit("image.toAlpha", in)
-	if bad != nil {
-		return bad
-	}
-	b := src.Bounds()
-	dst := image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
 	key := [3]float64{float64(kr), float64(kg), float64(kb)}
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			c := color.NRGBAModel.Convert(src.At(x, y)).(color.NRGBA)
-			dst.SetNRGBA(x-b.Min.X, y-b.Min.Y, colourToAlpha(c, key))
-		}
-	}
-	return encodeImage("image.toAlpha", dst, "png", "png", 0)
+	return imageApply("image.toAlpha", in, "png", 0, true, true, nil,
+		func(src image.Image) (image.Image, any) {
+			b := src.Bounds()
+			dst := image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+			for y := b.Min.Y; y < b.Max.Y; y++ {
+				for x := b.Min.X; x < b.Max.X; x++ {
+					c := color.NRGBAModel.Convert(src.At(x, y)).(color.NRGBA)
+					dst.SetNRGBA(x-b.Min.X, y-b.Min.Y, colourToAlpha(c, key))
+				}
+			}
+			return dst, nil
+		})
 }
 
 // colourToAlpha is GIMP's "colour to alpha" for one pixel against key k. The

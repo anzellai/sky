@@ -1651,7 +1651,7 @@ Compression.zstdDecompress encoded  -- Task Error String
 
 `compress/gzip` (stdlib) + `klauspost/compress/zstd`.
 
-### `Std.Image` — backend resize, thumbnail, trim, crop and colour to alpha
+### `Std.Image` — backend resize, thumbnail, trim, crop, colour to alpha and animated GIF
 
 ```elm
 import Std.Image as Image
@@ -1659,25 +1659,94 @@ import Std.Image as Image
 Image.resizeToFit (Image.Jpeg 85) 1600 1600 bytes   -- Task Error Bytes (cap the full image)
 Image.thumbnail (Image.Jpeg 85) 400 bytes            -- Task Error Bytes (a small listing image)
 Image.dimensions bytes                               -- Task Error { width : Int, height : Int }
+Image.frames bytes                                   -- Task Error Int (frames of a GIF, 1 otherwise)
+Image.reduceFrames 2 bytes                           -- keep 1 frame in 2 of a GIF, delays summed
 Image.trim Image.Png 245 4 bytes                     -- cut white or transparent margins, keep 4 px
 Image.crop Image.Png x y width height bytes          -- cut out an area (clamped to the image)
 Image.whiteToAlpha bytes                             -- white background to transparent (PNG)
 Image.toAlpha { red = 0, green = 0, blue = 0 } bytes -- any background colour to transparent (PNG)
 ```
 
-Operates on raw image bytes (`Sky.Core.Bytes`). The output `Format` is `Jpeg
-quality`, `Png` (keeps transparency) or `Preserve` (JPEG stays JPEG at quality
-85, PNG and GIF become PNG). Resizing never upscales. `trim` treats a pixel as
-margin when it is fully transparent or at least `threshold` on red, green and
-blue; an image that is all margin is `Err InvalidInput`. `toAlpha` is "colour to
-alpha": each pixel keeps its own colour and gets the coverage that, laid back
-over the background colour, gives the original, so soft edges stay smooth. To
-clean up a logo on a white square: `trim`, then `whiteToAlpha`, then
-`resizeToFit Png`. Every function is a `Task` — the module is a backend
-capability (Go `image/jpeg` + `image/png` + `golang.org/x/image/draw`), so under
-`--target web:app` it runs on the server, never in the wasm client, and needs no
-outside tools. Decode a data-URL upload with
-`Encoding.base64Decode` first, then resize and `File.writeFile`.
+Operates on raw image bytes (`Sky.Core.Bytes`): JPEG, PNG, GIF and WebP are
+read. The output `Format` is `Jpeg quality`, `Png` (keeps transparency), `Gif`,
+`WebpLossless` (every pixel kept, transparency included) or `Preserve` (JPEG
+stays JPEG at quality 85, GIF stays GIF with every frame, WebP becomes lossless
+WebP, anything else becomes PNG). Resizing never upscales. `trim` treats a
+pixel as margin when it is fully transparent or at least `threshold` on red,
+green and blue; an image that is all margin is `Err InvalidInput`. `toAlpha` is
+"colour to alpha": each pixel keeps its own colour and gets the coverage that,
+laid back over the background colour, gives the original, so soft edges stay
+smooth. To clean up a logo on a white square: `trim`, then `whiteToAlpha`, then
+`resizeToFit Png`.
+
+**Animated GIF.** Written as `Gif` or `Preserve`, an animated GIF keeps every
+frame: each operation runs on every frame as it is shown (drawn over what the
+earlier frames left, with the frame's disposal applied), and each frame keeps
+its delay and disposal and the file its loop count. Comment and other
+application extensions are dropped (only the NETSCAPE loop is written). The
+frames are decoded, processed and written one at a time. `toAlpha` and
+`whiteToAlpha` keep an animated GIF animated. Written as `Jpeg`, `Png` or
+`WebpLossless`, a GIF gives its first frame. `reduceFrames n` keeps frames 1,
+1 + n, 1 + 2n, … and adds the dropped delays to the kept frame, the main way to
+make an email GIF smaller:
+
+```elm
+Image.reduceFrames 2 upload
+    |> Task.andThen (Image.resizeToFit Image.Preserve 300 300)
+```
+
+**Limits.** Every function that decodes reads the header first and refuses,
+before decoding anything, an image over 100 megapixels, an animated GIF of more
+than 1,000 frames, or one of more than 250 million pixels over all its frames.
+The refusal is `InvalidInput` in the domain `"image"` with the code
+`too_many_pixels`, `too_many_frames` or `too_many_frame_pixels` and the
+attributes `limit` and `value`. `dimensions` and `frames` read the header only
+and never refuse, so an app can check an upload first.
+
+Every function is a `Task`: the module is a backend capability (Go `image/*`,
+`golang.org/x/image/draw` and `webp`, an in-tree lossless WebP encoder), so
+under `--target web:app` it runs on the server, never in the wasm client, and
+needs no outside tools. Decode a data-URL upload with `Encoding.base64Decode`
+first, then resize and `File.writeFile`.
+
+### `Std.Image.Canvas` — draw an image on the server
+
+```elm
+import Std.Image as Image
+import Std.Image.Canvas as Canvas exposing (Paint(..))
+
+card : String -> String -> Task Error String
+card name photo =
+    Canvas.blank 1200 630 (Canvas.rgba 250 250 252 255)
+        |> Canvas.rect 0 0 1200 12 (Fill (Canvas.rgba 70 110 220 255))
+        |> Canvas.paste 80 80 (Just (Canvas.ellipseMask 160 160)) photo
+        |> Canvas.text { font = Canvas.defaultFont, size = 64.0, colour = Canvas.rgba 20 20 30 255 } 80 300 name
+        |> Canvas.encode Image.WebpLossless
+```
+
+| Function | Does |
+|---|---|
+| `blank w h colour`, `fromImage bytes` | a base: one colour, or an image |
+| `rect`, `roundedRect`, `ellipse`, `arc`, `line` | anti-aliased shapes; a `Paint` is `Fill colour` or `Stroke width colour` (an outline inside the box) |
+| `roundedMask`, `ellipseMask`, `alphaMask` | shapes a pasted image shows through |
+| `paste x y mask bytes`, `pasteCanvas x y mask canvas` | draw an image or another canvas over what is there |
+| `blur sigma`, `resize filter w h` | Gaussian blur (three box passes); `Nearest` / `Bilinear` / `CatmullRom` / `Lanczos` |
+| `loadFont path index`, `fontFromBytes bytes index`, `defaultFont` | TrueType / OpenType fonts (a `.ttc` by index); Go Regular built in |
+| `text style x y string`, `measure font size string` | text with (x, y) at the left and the top of the ascent; its size in pixels |
+| `encode format canvas` | draw every step and write PNG, JPEG, GIF or lossless WebP (`Task`) |
+| `pixelDiff tolerance a b` | pixels that differ by more than `tolerance` (`Task`), for tests |
+
+A `Canvas` is a list of drawing steps: each function adds one in O(1) and
+touches no pixel, so a long pipeline is cheap and one canvas can be the base of
+many. `encode` draws every step once: O(width x height) plus the pixels each
+step covers. What depends on the input fails there, as the `Err` of `encode`,
+in the domain `"image"`: `colour_range` (an `Rgba` channel outside 0..255),
+`canvas_too_large` (over 16384 on a side), `too_many_pixels` (a canvas or a
+pasted image over 100 megapixels), and a pasted image that does not decode.
+`loadFont` of a missing file is `NotFound`; a bad font is `InvalidInput` with
+`font_parse`, an index the file does not have `font_index`. Text has no hinting
+and no complex shaping; pair kerning from the `kern` table is applied. Server
+only, like `Std.Image`.
 
 ### `Std.Xml` — safe XML parsing (with `Std.Xml.Decode` and `Std.Xml.Encode`)
 

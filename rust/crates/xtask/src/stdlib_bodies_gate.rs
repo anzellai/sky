@@ -18,8 +18,8 @@ use std::path::Path;
 /// Eval, Failure, Local, Pipeline, Registry, Serve, Store, Train). 128 with
 /// Sky.Core.Array (v0.29.0). 132 with Std.Xml, Std.Xml.Decode, Std.Xml.Encode
 /// and Std.Zip (v0.29.0). 134 with Std.Office.Xlsx and Std.Office.Docx
-/// (v0.29.0).
-pub const EXPECTED_MODULES: u64 = 134;
+/// (v0.29.0). 135 with Std.Image.Canvas (v0.29.0).
+pub const EXPECTED_MODULES: u64 = 135;
 
 /// `(passed, assertions, detail)`. One assertion per module checked.
 pub fn check_body(root: &Path) -> (bool, u64, String) {

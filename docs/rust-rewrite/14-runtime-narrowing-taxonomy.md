@@ -538,6 +538,19 @@ through a second `Variant` match measured +1 narrow in three rows
 the total back. Measured: narrow 16561 over all 86 coerce-floor rows (golden
 16561), adapter 0, no row above its golden.
 
+**v0.29.0: Std.Image.Canvas handles.** A `Canvas`, a `Mask` and a `Font` are
+opaque handles (stdlib ADTs `Canvas__Internal`, `Mask__Internal`,
+`Font__Internal` holding the Go display list, mask and parsed font, R6 §4.5).
+Every drawing step (`blank`, `fromImage`, `rect`, `roundedRect`, `ellipse`,
+`arc`, `line`, `paste`, `pasteCanvas`, `blur`, `resize`, `text`), the three
+masks and `defaultFont` go to typed twins (`rt.Image_canvasRectT` and the
+rest) that return the handle ADT itself, so a step narrows nothing (R5, §5.3;
+`project/tests/canvas_typed_emit.rs`, red before the twins with
+`rt.Coerce[Std_Image_Canvas_Canvas]` in every wrapper;
+`runtime-go/rt/canvas_kernels_test.go` checks each twin against its erased
+kernel). The `Paint` payload read in the wrappers stays the stdlib-ADT floor
+(R6). No coerce-floor row imports the module.
+
 **The new negative control is `List.head`.** It stays off every twin table for
 the reason given above: `rt.List_headT` returns `rt.SkyMaybe[A]` where its
 consumers take `rt.SkyMaybe[any]`, so routing it relocates the cost into a
