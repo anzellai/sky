@@ -794,6 +794,16 @@
       ],
       "tier": "T2"
     },
+    "spa-wasm-server-only": {
+      "expected_assertions": 38,
+      "falsifier_mutation": "spa-wasm-server-only.import-archive-zip-on-the-client",
+      "falsifier_proven": true,
+      "summary": "a Sky.Spa wasm client links no server-only package (encoding/xml, archive/zip, database drivers, ...)",
+      "surfaces": [
+        "stdlib.Std.Spa"
+      ],
+      "tier": "T1"
+    },
     "stdlib-bodies": {
       "expected_assertions": 134,
       "falsifier_mutation": "stdlib-bodies.record-missing-field",
@@ -16123,6 +16133,11 @@
           },
           {
             "by": "gate `spa-diff-fuzz`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `spa-wasm-server-only`",
             "class": "Falsified",
             "strength": 4
           }

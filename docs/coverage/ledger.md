@@ -344,5 +344,6 @@ None.
 | `sky-suites` | T1 | PROVEN | `lang.constructs` |
 | `sky-verify` | T1 | PROVEN | `compiler.fmt` · `lang.constructs` |
 | `spa-diff-fuzz` | T2 | PROVEN | `stdlib.Std.Spa` |
+| `spa-wasm-server-only` | T1 | PROVEN | `stdlib.Std.Spa` |
 | `stdlib-bodies` | T1 | PROVEN | `compiler.infer` · `compiler.reject` |
 | `verify-cli` | T1 | PROVEN | `ui.tui` · `config.sky-toml` |
