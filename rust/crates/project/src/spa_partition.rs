@@ -180,6 +180,13 @@ const EFFECT_KERNELS: &[&str] = &[
     // settings and secrets, and a local engine is a child process. Neither
     // can run in a browser, and a slot's key must never reach one.
     "Ai",
+    // v0.29.0 Std.Xml (parse, Decode, Encode) and Std.Zip: server-side
+    // parsing of untrusted documents and archives under limits. `Std.Codec`
+    // imports `Std.Xml` and is compiled for the client, so this per-symbol
+    // rule is what keeps `Codec.toXml` / `Codec.fromXml` branches on the
+    // server while the rest of Codec stays client (`record_ffi_symbol`).
+    "Xml",
+    "Zip",
 ];
 
 /// **KNOWN-PURE** kernel pseudo-modules — pure computation / pure TEA plumbing
@@ -8082,6 +8089,14 @@ mod tests {
             "Money_clearRates",
             "Time_now",
             "Time_sleep",
+            // v0.29.0: Std.Xml (parse, the accessors, Encode) and Std.Zip
+            // stay on the server, so a Codec.toXml / fromXml branch does too.
+            "Xml_parse",
+            "Xml_text",
+            "Xml_element",
+            "Xml_encode",
+            "Zip_read",
+            "Zip_write",
         ] {
             assert!(syms.contains(sym), "`{sym}` is not a stdlib kernel");
             let mut acc = Refs::default();

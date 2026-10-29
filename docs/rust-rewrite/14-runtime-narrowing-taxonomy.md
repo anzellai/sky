@@ -522,6 +522,22 @@ and rebuilt a typed Result as `rt.SkyResult[any, any]`. In the same change
 which is narrowed once as a whole. Measured: narrow 16974 -> 16561 over all
 86 coerce-floor rows (golden 16697), adapter 0, no row above its golden.
 
+**v0.29.0: Std.Xml accessors, and the union codec's variants.** A Std.Xml
+`Node` is an opaque handle (the stdlib ADT `Node__Internal` holding the Go
+tree, not a Sky ADT whose payload each read would narrow, R6 §4.5). Its
+accessors (`parse`, `name`, `namespace`, `text`, `attributes`, `children`,
+`elements`, `elementsNamed`, `attribute`) and `Std.Xml.Encode.encode` /
+`document` go to typed twins (`rt.Xml_nameT` and the rest), so a read narrows
+nothing (R5, §5.3; `project/tests/xml_typed_emit.rs`,
+`runtime-go/rt/xml_kernels_test.go`). `Codec.taggedUnion` gained the variants'
+argument schemas for `Codec.toXml` / `fromXml`; the `Variant` payload is now a
+named record unwrapped once when the codec is built (`variantPayloads`), so the
+decoder and the XML description read typed records. Reading the schemas
+through a second `Variant` match measured +1 narrow in three rows
+(`73-ai-train`, `74-ai-cloud`, `sky-bundled/ai-train`); unwrapping once brings
+the total back. Measured: narrow 16561 over all 86 coerce-floor rows (golden
+16561), adapter 0, no row above its golden.
+
 **The new negative control is `List.head`.** It stays off every twin table for
 the reason given above: `rt.List_headT` returns `rt.SkyMaybe[A]` where its
 consumers take `rt.SkyMaybe[any]`, so routing it relocates the cost into a

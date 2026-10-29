@@ -1679,6 +1679,92 @@ capability (Go `image/jpeg` + `image/png` + `golang.org/x/image/draw`), so under
 outside tools. Decode a data-URL upload with
 `Encoding.base64Decode` first, then resize and `File.writeFile`.
 
+### `Std.Xml` — safe XML parsing (with `Std.Xml.Decode` and `Std.Xml.Encode`)
+
+```elm
+import Std.Xml as Xml
+import Std.Xml.Decode as XD
+import Std.Xml.Encode as XE
+
+Xml.parse doc                                   -- Result Error Node (Strict, defaultLimits)
+Xml.parseWith Xml.HtmlEntities Xml.defaultLimits doc
+Xml.name node                                   -- local name ("" for text)
+Xml.namespace node                              -- namespace URI ("" when none)
+Xml.attributes node                             -- List ( String, String )
+Xml.children node                               -- List Node (text nodes included)
+Xml.text node                                   -- all descendant text
+
+type alias Entry = { title : String, href : String, updated : Maybe String }
+
+entry : XD.Decoder Entry
+entry =
+    XD.map3 Entry
+        (XD.element "title" XD.string)
+        (XD.element "link" (XD.attribute "href"))
+        (XD.optionalElement "updated" XD.string)
+
+XD.decodeString (XD.list "entry" entry) atomFeed   -- Result Error (List Entry)
+
+XE.document 2
+    (XE.element "urlset" [ XE.xmlns "http://www.sitemaps.org/schemas/sitemap/0.9" ]
+        [ XE.element "url" [] [ XE.element "loc" [] [ XE.text "https://example.test/" ] ] ])
+```
+
+Safe by default: a `<!DOCTYPE …>` or other directive is refused (no entity
+definitions, so billion-laughs and external entities cannot happen), only the
+XML entities and numeric references are read (`HtmlEntities` adds `&nbsp;` and
+the other HTML names), the encodings read are UTF-8, US-ASCII, ISO-8859-1 and
+Windows-1252, and `Limits` bounds the size (16 MiB), element depth (256), nodes
+(1,000,000) and attributes on one element (256). A failure is `InvalidInput`
+with the domain `"xml"` and a code: `too_large`, `too_deep`, `too_many_nodes`,
+`too_many_attributes`, `doctype`, `charset`, `malformed` (with the line and
+column). Names are local names; `XD.inNamespace` adds a namespace check where
+two vocabularies share a name. A decode failure is kind `Decode`, code `decode`,
+with the path (`/feed/entry[3]`). `XE.encode` is total (a character XML cannot
+carry becomes U+FFFD, a bad name character `_`); `XE.encodeStrict` returns an
+`Err` instead. Runs on the server; under `--target web:app` the split sends it
+to the backend. Cost: `parse` is O(n) time, O(nodes) memory.
+
+### `Codec.toXml` / `Codec.fromXml` — a codec's value as XML
+
+```elm
+Codec.toXml "order" orderCodec order            -- String
+Codec.fromXml "order" orderCodec text           -- Result Error Order
+```
+
+A record is one child element per field, a list repeats the field's element, a
+`Nothing` field is left out, a `taggedUnion` variant is `<f><Tag><arg>…</arg></Tag></f>`,
+a `result` is `<f><Ok>…</Ok></f>`, a `dict` is `<f><entry><key>…</key><value>…</value></entry></f>`,
+and a `Json.Value` field is compact JSON text. Reading takes a field from the
+child element with its local name, else from an attribute with that name;
+unknown elements are ignored. `Maybe (List a)` with `Just []` reads back as
+`Nothing`, and `Maybe (Maybe a)` collapses as it does in JSON. Server side.
+
+### `Std.Zip` — safe ZIP archives
+
+```elm
+import Std.Zip as Zip
+
+Zip.write [ { path = "users.csv", bytes = users }, { path = "orders.csv", bytes = orders } ]
+                                                -- Result Error Bytes (deterministic)
+Zip.read archive                                -- Result Error (List Entry), defaultLimits
+Zip.readEntry Zip.defaultLimits "META-INF/container.xml" epub
+                                                -- Result Error (Maybe Bytes)
+Zip.list archive                                -- Result Error (List EntryInfo), nothing inflated
+Zip.writeWith Zip.Store entries                 -- no compression
+```
+
+`Result`, not `Task`: reading and writing an archive has no outside effect.
+Sizes are counted while entries inflate (a declared size is never trusted) under
+`Limits` (10,000 entries, 50 MiB an entry, 200 MiB in all, a ratio of 200 above
+1 MiB). A name that is absolute, has a `..` segment, a backslash, a drive letter
+or a NUL, or repeats another, is refused, and so are symbolic links, encrypted
+entries and methods other than Store and Deflate. A failure is `InvalidInput`
+with the domain `"zip"` and a code: `not_zip`, `too_many_entries`,
+`entry_too_large`, `total_too_large`, `ratio_exceeded`, `unsafe_path`,
+`duplicate_path`, `encrypted`, `unsupported_method`, `corrupt`. `write` stamps
+every entry 1980-01-01, so the same entries give the same bytes. Server side.
+
 ### `Std.Csv` — RFC 4180 encode/decode + streaming reader
 
 ```elm

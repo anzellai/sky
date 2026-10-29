@@ -1,0 +1,401 @@
+-- | Std.Xml.Decode — turn XML into your own types, in the style of
+-- `Json.Decode`.
+--
+-- A `Decoder a` reads an `a` from the CURRENT element. `element`, `list` and
+-- `at` move to child elements by local name; `attribute` reads an attribute;
+-- `string`, `int`, `float` and `bool` read the element's text.
+--
+--     import Std.Xml.Decode as XD
+--
+--     type alias Entry = { title : String, link : String, updated : Maybe String }
+--
+--     entry : XD.Decoder Entry
+--     entry =
+--         XD.map3 Entry
+--             (XD.element "title" XD.string)
+--             (XD.element "link" (XD.attribute "href"))
+--             (XD.optionalElement "updated" XD.string)
+--
+--     feed : String -> Result Error (List Entry)
+--     feed doc =
+--         XD.decodeString (XD.list "entry" entry) doc
+--
+-- Names are local names, so an Atom feed (`<feed xmlns="http://www.w3.org/2005/Atom">`)
+-- reads with `"entry"`. Add `inNamespace` where two vocabularies share a name.
+--
+-- A decode failure is an `Error` of kind `Decode` with the domain `"xml"`, the
+-- code `decode` and the attribute `path`, the place it failed:
+-- `/feed/entry[3]/title`. The message names the path too. A parse failure is
+-- the `Std.Xml.parse` error (kind `InvalidInput`).
+--
+-- Every decoder is pure Sky over `Std.Xml`, so it runs where `Std.Xml` runs:
+-- on the server. Cost: an `element` step is O(children of the element).
+module Std.Xml.Decode exposing
+    ( Decoder
+    , decodeString
+    , decodeNode
+    , string
+    , int
+    , float
+    , bool
+    , attribute
+    , optionalAttribute
+    , element
+    , optionalElement
+    , list
+    , children
+    , at
+    , localName
+    , namespaceUri
+    , inNamespace
+    , node
+    , map
+    , map2
+    , map3
+    , map4
+    , map5
+    , andThen
+    , succeed
+    , fail
+    , oneOf
+    )
+
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Xml as Xml exposing (Node)
+
+-- | A way to read an `a` from an element. The path names the element in
+-- error messages.
+type Decoder a
+    = Decoder__Internal (String -> Node -> Result Error a)
+
+
+run : Decoder a -> String -> Node -> Result Error a
+run (Decoder__Internal f) path n =
+    f path n
+
+
+failAt : String -> String -> Error
+failAt path msg =
+    Error.failure "xml" "decode" |> Error.withAttr "path" path
+        |> Error.fromDomain
+               Error.Decode
+               ("Xml.Decode: " ++ msg ++ " at " ++ path)
+
+
+-- | Parse a document (`Std.Xml.parse`) and decode its root element.
+decodeString : Decoder a -> String -> Result Error a
+decodeString d src =
+    case Xml.parse src of
+
+        Ok root ->
+            decodeNode d root
+
+        Err e ->
+            Err e
+
+
+-- | Decode a node you already hold (from `Std.Xml.parse` or `node`).
+decodeNode : Decoder a -> Node -> Result Error a
+decodeNode d n =
+    run d ("/" ++ Xml.name n) n
+
+
+-- | The text of the current element: all its descendant text, exactly as
+-- written (not trimmed).
+string : Decoder String
+string =
+    Decoder__Internal (\_ n -> Ok (Xml.text n))
+
+
+-- | The current element's text, trimmed, as an `Int`.
+int : Decoder Int
+int =
+    Decoder__Internal
+        (\path n ->
+            let
+                t = String.trim (Xml.text n)
+            in
+                case String.toInt t of
+
+                    Just i ->
+                        Ok i
+
+                    Nothing ->
+                        Err
+                            (failAt path ("expected an Int, got \"" ++ t ++ "\"")))
+
+
+-- | The current element's text, trimmed, as a `Float`.
+float : Decoder Float
+float =
+    Decoder__Internal
+        (\path n ->
+            let
+                t = String.trim (Xml.text n)
+            in
+                case String.toFloat t of
+
+                    Just f ->
+                        Ok f
+
+                    Nothing ->
+                        Err
+                            (failAt
+                                path
+                                ("expected a Float, got \"" ++ t ++ "\"")))
+
+
+-- | The current element's text, trimmed, as a `Bool`: `true` / `1` and
+-- `false` / `0` (xsd:boolean).
+bool : Decoder Bool
+bool =
+    Decoder__Internal
+        (\path n ->
+            let
+                t = String.trim (Xml.text n)
+            in
+                if t == "true" || t == "1" then
+                    Ok True
+
+                else if t == "false" || t == "0" then
+                    Ok False
+
+                else
+                    Err
+                        (failAt
+                            path
+                            ("expected a Bool (true, false, 1 or 0), got \"" ++ t
+                                ++ "\"")))
+
+
+-- | The value of an attribute of the current element, by local name. `Err`
+-- when it is absent.
+attribute : String -> Decoder String
+attribute nm =
+    Decoder__Internal
+        (\path n ->
+            case Xml.attribute nm n of
+
+                Just v ->
+                    Ok v
+
+                Nothing ->
+                    Err (failAt path ("no attribute \"" ++ nm ++ "\"")))
+
+
+-- | The value of an attribute, or `Nothing` when it is absent.
+optionalAttribute : String -> Decoder (Maybe String)
+optionalAttribute nm =
+    Decoder__Internal (\_ n -> Ok (Xml.attribute nm n))
+
+
+-- | Decode the first child element with this local name. `Err` when there is
+-- none.
+element : String -> Decoder a -> Decoder a
+element nm d =
+    Decoder__Internal
+        (\path n ->
+            case Xml.elementsNamed nm n of
+
+                first :: _ ->
+                    run d (path ++ "/" ++ nm) first
+
+                [] ->
+                    Err (failAt path ("no <" ++ nm ++ "> element")))
+
+
+-- | Decode the first child element with this local name, or `Nothing` when
+-- there is none. An element that is present but does not decode is an `Err`
+-- (as `Json.Decode.Pipeline.optional`), never a silent `Nothing`.
+optionalElement : String -> Decoder a -> Decoder (Maybe a)
+optionalElement nm d =
+    Decoder__Internal
+        (\path n ->
+            case Xml.elementsNamed nm n of
+
+                first :: _ ->
+                    case run d (path ++ "/" ++ nm) first of
+
+                        Ok v ->
+                            Ok (Just v)
+
+                        Err e ->
+                            Err e
+
+                [] ->
+                    Ok Nothing)
+
+
+-- | Decode every child element with this local name, in document order. No
+-- such element is `[]`. The path of the third is `…/name[3]`.
+list : String -> Decoder a -> Decoder (List a)
+list nm d =
+    Decoder__Internal
+        (\path n -> collect d (path ++ "/" ++ nm) 1 (Xml.elementsNamed nm n) [])
+
+
+-- | Decode every child element, whatever its name, in document order. The
+-- path of the second is `…/*[2]`.
+children : Decoder a -> Decoder (List a)
+children d =
+    Decoder__Internal
+        (\path n -> collect d (path ++ "/*") 1 (Xml.elements n) [])
+
+
+collect : Decoder a -> String -> Int -> List Node -> List a -> Result Error (List a)
+collect d base i nodes acc =
+    case nodes of
+
+        [] ->
+            Ok (List.reverse acc)
+
+        first :: rest ->
+            case run d (base ++ "[" ++ String.fromInt i ++ "]") first of
+
+                Ok v ->
+                    collect d base (i + 1) rest (v :: acc)
+
+                Err e ->
+                    Err e
+
+
+-- | Follow a path of local names, taking the first match at each step, then
+-- decode there: `at [ "channel", "title" ] string`.
+at : List String -> Decoder a -> Decoder a
+at names d =
+    case names of
+
+        [] ->
+            d
+
+        first :: rest ->
+            element first (at rest d)
+
+
+-- | The local name of the current element.
+localName : Decoder String
+localName =
+    Decoder__Internal (\_ n -> Ok (Xml.name n))
+
+
+-- | The namespace URI of the current element (`""` when none).
+namespaceUri : Decoder String
+namespaceUri =
+    Decoder__Internal (\_ n -> Ok (Xml.namespace n))
+
+
+-- | Check that the current element is in this namespace, then decode. Use it
+-- where two vocabularies share a local name.
+inNamespace : String -> Decoder a -> Decoder a
+inNamespace uri d =
+    Decoder__Internal
+        (\path n ->
+            if Xml.namespace n == uri then
+                run d path n
+
+            else
+                Err
+                    (failAt
+                        path
+                        ("expected the namespace \"" ++ uri ++ "\", got \""
+                            ++ Xml.namespace n
+                            ++ "\"")))
+
+
+-- | The current element itself, to read with `Std.Xml`.
+node : Decoder Node
+node =
+    Decoder__Internal (\_ n -> Ok n)
+
+
+-- | Transform a decoded value.
+map : (a -> b) -> Decoder a -> Decoder b
+map f d =
+    Decoder__Internal
+        (\path n ->
+            case run d path n of
+
+                Ok v ->
+                    Ok (f v)
+
+                Err e ->
+                    Err e)
+
+
+-- | Combine two decoders of the same element.
+map2 : (a -> b -> c) -> Decoder a -> Decoder b -> Decoder c
+map2 f da db =
+    andThen (\a -> map (\b -> f a b) db) da
+
+
+-- | Combine three decoders of the same element.
+map3 : (a -> b -> c -> d) -> Decoder a -> Decoder b -> Decoder c -> Decoder d
+map3 f da db dc =
+    andThen (\a -> map2 (\b c -> f a b c) db dc) da
+
+
+-- | Combine four decoders of the same element.
+map4 : (a -> b -> c -> d -> e) -> Decoder a -> Decoder b -> Decoder c -> Decoder d -> Decoder e
+map4 f da db dc dd =
+    andThen (\a -> map3 (\b c d -> f a b c d) db dc dd) da
+
+
+-- | Combine five decoders of the same element.
+map5 : (a -> b -> c -> d -> e -> f) -> Decoder a -> Decoder b -> Decoder c -> Decoder d -> Decoder e -> Decoder f
+map5 f da db dc dd de =
+    andThen (\a -> map4 (\b c d e -> f a b c d e) db dc dd de) da
+
+
+-- | Decode, then choose the next decoder from the value.
+andThen : (a -> Decoder b) -> Decoder a -> Decoder b
+andThen f d =
+    Decoder__Internal
+        (\path n ->
+            case run d path n of
+
+                Ok v ->
+                    run (f v) path n
+
+                Err e ->
+                    Err e)
+
+
+-- | A decoder that always gives this value.
+succeed : a -> Decoder a
+succeed v =
+    Decoder__Internal (\_ _ -> Ok v)
+
+
+-- | A decoder that always fails with this message (the path is added).
+fail : String -> Decoder a
+fail msg =
+    Decoder__Internal (\path _ -> Err (failAt path msg))
+
+
+-- | Try each decoder in order and keep the first that succeeds. When all
+-- fail, the error is the last one's.
+oneOf : List (Decoder a) -> Decoder a
+oneOf ds =
+    Decoder__Internal (\path n -> firstOk ds path n)
+
+
+firstOk : List (Decoder a) -> String -> Node -> Result Error a
+firstOk ds path n =
+    case ds of
+
+        [] ->
+            Err (failAt path "no decoder in oneOf")
+
+        [ last ] ->
+            run last path n
+
+        first :: rest ->
+            case run first path n of
+
+                Ok v ->
+                    Ok v
+
+                Err _ ->
+                    firstOk rest path n

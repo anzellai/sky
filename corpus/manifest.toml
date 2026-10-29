@@ -17,14 +17,14 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 827
+n_min = 837
 n_iso = 61
 n_iso_ceiling = 62
 n_iso_static = 164
 n_iso_static_ceiling = 300
-class_v = 826
+class_v = 836
 class_d = 1
-family_S = 199
+family_S = 209
 family_L = 465
 family_E = 10
 family_R = 153
@@ -4917,6 +4917,136 @@ axes       = { edge = "failure", surface = "terminal" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
 stdout     = "N/N"
+
+[[case]]
+id         = "stdlib_edge/nominal-xml"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "xml" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "a|urn:x|xy|k=1,j=2|4/3/2|1|&é|[ x ]|7|2.5|T|v|N|x|1,2|b,c|z|urn:x|a|q|1234|aaaaaaaa|a!|y|<a k="v">x</a>|<a><![CDATA[<b>]]></a>|<a xmlns="urn:a" xmlns:p="urn:p"/>|<?xml version="1.0" encoding="UTF-8"?>;<a/>|<a/>"
+
+[[case]]
+id         = "stdlib_edge/empty-xml"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "xml" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|||<a/>|<a></a>"
+
+[[case]]
+id         = "stdlib_edge/boundary-xml"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "xml" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|a|E|<a k="&quot;&lt;&amp;&gt;">&lt;&amp;&gt;</a>|<a><![CDATA[]]]]><![CDATA[>]]></a>"
+
+[[case]]
+id         = "stdlib_edge/unicode-xml"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "unicode", surface = "xml" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "世界é|é|<é>世</é>"
+
+[[case]]
+id         = "stdlib_edge/failure-xml"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "xml" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|E|E|E|E|E|<a_b/>"
+
+[[case]]
+id         = "stdlib_edge/nominal-zip"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "zip" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "a.txt=hi,d/b.txt=yo|a:3|2|a=x|a=x"
+
+[[case]]
+id         = "stdlib_edge/empty-zip"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "zip" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "|e="
+
+[[case]]
+id         = "stdlib_edge/boundary-zip"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "zip" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "N|E|a=1234|T"
+
+[[case]]
+id         = "stdlib_edge/unicode-zip"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "unicode", surface = "zip" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "世界.txt=é"
+
+[[case]]
+id         = "stdlib_edge/failure-zip"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "zip" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|E|E|E"
 
 [[case]]
 id         = "stdlib_import/plain-none"

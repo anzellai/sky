@@ -208,6 +208,8 @@ pub const SURFACE: Axis = Axis::new(
         "aipipeline",
         "canvas",
         "terminal",
+        "xml",
+        "zip",
     ],
 );
 

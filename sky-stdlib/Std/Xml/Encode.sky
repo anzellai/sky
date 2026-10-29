@@ -1,0 +1,117 @@
+-- | Std.Xml.Encode — write XML, in the style of `Json.Encode`.
+--
+--     import Std.Xml.Encode as XE
+--
+--     sitemap : List String -> String
+--     sitemap urls =
+--         XE.document 2
+--             (XE.element "urlset"
+--                 [ XE.xmlns "http://www.sitemaps.org/schemas/sitemap/0.9" ]
+--                 (List.map
+--                     (\u -> XE.element "url" [] [ XE.element "loc" [] [ XE.text u ] ])
+--                     urls))
+--
+-- Text and attribute values are escaped (`&`, `<`, `>`, `"`). A namespace is
+-- declared with `xmlns` / `xmlnsPrefix`, and a prefixed name is written as
+-- it is (`XE.element "media:thumbnail" …`).
+--
+-- **Characters XML cannot carry.** XML 1.0 has no way to write some
+-- characters (U+0000 to U+0008, U+000B, U+000C, U+000E to U+001F, U+FFFE,
+-- U+FFFF) or bytes that are not UTF-8. `encode` and `document` are total:
+-- they write each such character as U+FFFD, and each character that cannot be
+-- in a name as `_` (an empty name is `_`). `encodeStrict` returns an `Err`
+-- (domain `"xml"`, code `invalid_char` or `invalid_name`) instead. Use it for
+-- text from outside the program.
+--
+-- **Where it runs.** On the server (and in a CLI), like `Std.Xml`.
+module Std.Xml.Encode exposing
+    ( Xml
+    , Attribute
+    , element
+    , text
+    , cdata
+    , attribute
+    , xmlns
+    , xmlnsPrefix
+    , encode
+    , document
+    , encodeStrict
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+-- | An XML element, text or CDATA section. Opaque: build it with the
+-- functions below.
+type Xml
+    = Xml__Internal Int
+
+-- | An attribute of an element. Opaque: build it with `attribute`, `xmlns`
+-- or `xmlnsPrefix`.
+type Attribute
+    = Attribute__Internal Int
+
+
+-- | An element with its attributes (in order) and children (in order). An
+-- element with no children is written `<name/>`.
+element : String -> List Attribute -> List Xml -> Xml
+element =
+    Ffi.kernel "Xml_element"
+
+
+-- | Character data. `&`, `<` and `>` are escaped.
+text : String -> Xml
+text =
+    Ffi.kernel "Xml_textNode"
+
+
+-- | A CDATA section (`<![CDATA[…]]>`). A `]]>` inside is split across two
+-- sections, and a carriage return is written as a reference, so the text
+-- reads back exactly.
+cdata : String -> Xml
+cdata =
+    Ffi.kernel "Xml_cdata"
+
+
+-- | An attribute: `attribute "href" "/a?b=1&c=2"`. The value is escaped.
+attribute : String -> String -> Attribute
+attribute =
+    Ffi.kernel "Xml_attr"
+
+
+-- | The default namespace declaration: `xmlns "http://www.w3.org/2005/Atom"`
+-- is `xmlns="http://www.w3.org/2005/Atom"`.
+xmlns : String -> Attribute
+xmlns =
+    Ffi.kernel "Xml_xmlns"
+
+
+-- | A prefixed namespace declaration: `xmlnsPrefix "media" uri` is
+-- `xmlns:media="uri"`.
+xmlnsPrefix : String -> String -> Attribute
+xmlnsPrefix =
+    Ffi.kernel "Xml_xmlnsPrefix"
+
+
+-- | Write XML as text. `indent` is the spaces per level (`0` writes one
+-- line), as `Json.Encode.encode`. An element that holds text is written on
+-- one line, so indentation never changes its text. Total: see the module
+-- notes for the characters XML cannot carry.
+encode : Int -> Xml -> String
+encode =
+    Ffi.kernel "Xml_encode"
+
+
+-- | `encode` with the XML declaration first:
+-- `<?xml version="1.0" encoding="UTF-8"?>`, then a newline.
+document : Int -> Xml -> String
+document =
+    Ffi.kernel "Xml_document"
+
+
+-- | `encode`, but an `Err` when a name or a character cannot be written as
+-- XML (domain `"xml"`, code `invalid_name` or `invalid_char`) instead of a
+-- replacement.
+encodeStrict : Int -> Xml -> Result Error String
+encodeStrict =
+    Ffi.kernel "Xml_encodeStrict"

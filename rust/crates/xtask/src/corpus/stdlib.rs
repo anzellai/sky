@@ -351,6 +351,14 @@ pub const SURFACES: &[Surface] = &[
         &["Sky.Core.Secret as Secret", "Sky.Core.Task as Task"],
     ),
     sf("qr", "Std.Qr"),
+    // v0.29.0 Std.Xml (with Decode and Encode) and Std.Zip: parsing and
+    // building are pure `Result`s, so every member is value-assertable.
+    sf2(
+        "xml",
+        "Std.Xml",
+        &["Std.Xml.Decode as XD", "Std.Xml.Encode as XE"],
+    ),
+    sf("zip", "Std.Zip"),
     // v0.27.0 streaming child processes and file watching. Both surfaces are
     // `Task`s bridged with `Task.run`; the expected values are what the
     // spawned POSIX tools (`sh`, `cat`, `stty`) and the documented coalescing
@@ -846,6 +854,12 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Std.Markdown",
     "Std.Money",
     "Std.Qr",
+    // v0.29.0: Std.Xml, its Decode and Encode, and Std.Zip land covered
+    // (`xml` and `zip` surfaces).
+    "Std.Xml",
+    "Std.Xml.Decode",
+    "Std.Xml.Encode",
+    "Std.Zip",
     // v0.27.0: the streaming process surface and Std.Watch land covered.
     "Sky.Core.Process",
     "Std.Watch",
@@ -1497,6 +1511,8 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "noise" => noise_battery(edge),
         "cpace" => cpace_battery(edge),
         "qr" => qr_battery(edge),
+        "xml" => xml_battery(edge),
+        "zip" => zip_battery(edge),
         "process" => process_battery(edge),
         "watch" => watch_battery(edge),
         "sync" => sync_battery(edge),
@@ -2229,6 +2245,375 @@ fn image_battery(edge: &str) -> Vec<Check> {
             ),
             // A non-image input is a classified error, not a crash.
             s(&["Image.dimensions"], "dimsRes \"not a real image\"", "E"),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Xml / Std.Xml.Decode / Std.Xml.Encode (v0.29.0) -------------------
+//
+// Every member returns a value (`Result Error a` for a parse or a decode), so
+// each is asserted by what it reads or writes. The failure edge asserts the
+// refusals the module promises (a DOCTYPE, a missing element, a character XML
+// cannot carry in `encodeStrict`).
+
+fn xml_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            rs(
+                &["Xml.parse", "Xml.name"],
+                r#"Result.map Xml.name (Xml.parse "<a/>")"#,
+                Some("a"),
+            ),
+            rs(
+                &["Xml.namespace"],
+                r#"Result.map Xml.namespace (Xml.parse "<a xmlns='urn:x'/>")"#,
+                Some("urn:x"),
+            ),
+            rs(
+                &["Xml.text"],
+                r#"Result.map Xml.text (Xml.parse "<a>x<b>y</b></a>")"#,
+                Some("xy"),
+            ),
+            rs(
+                &["Xml.attributes"],
+                r#"Result.map (\n -> String.join "," (List.map (\( k, v ) -> k ++ "=" ++ v) (Xml.attributes n))) (Xml.parse "<a k='1' j='2'/>")"#,
+                Some("k=1,j=2"),
+            ),
+            rs(
+                &["Xml.children", "Xml.elements", "Xml.elementsNamed"],
+                r#"Result.map (\n -> String.fromInt (List.length (Xml.children n)) ++ "/" ++ String.fromInt (List.length (Xml.elements n)) ++ "/" ++ String.fromInt (List.length (Xml.elementsNamed "b" n))) (Xml.parse "<a>t<b/><c/><b/></a>")"#,
+                Some("4/3/2"),
+            ),
+            rs(
+                &["Xml.attribute"],
+                r#"Result.map (\n -> Maybe.withDefault "N" (Xml.attribute "k" n)) (Xml.parse "<a k='1'/>")"#,
+                Some("1"),
+            ),
+            rs(
+                &["Xml.parseWith", "Xml.defaultLimits"],
+                r#"Result.map Xml.text (Xml.parseWith Xml.HtmlEntities Xml.defaultLimits "<a>&amp;&eacute;</a>")"#,
+                Some("&é"),
+            ),
+            rs(
+                &["XD.decodeString", "XD.element", "XD.string"],
+                r#"XD.decodeString (XD.map (\s -> "[" ++ s ++ "]") (XD.element "b" XD.string)) "<a><b> x </b></a>""#,
+                Some("[ x ]"),
+            ),
+            rs(
+                &["XD.int", "XD.map"],
+                r#"XD.decodeString (XD.map String.fromInt XD.int) "<a> 7 </a>""#,
+                Some("7"),
+            ),
+            rs(
+                &["XD.float"],
+                r#"XD.decodeString (XD.map String.fromFloat XD.float) "<a>2.5</a>""#,
+                Some("2.5"),
+            ),
+            rs(
+                &["XD.bool"],
+                r#"XD.decodeString (XD.map (\b -> if b then "T" else "F") XD.bool) "<a>1</a>""#,
+                Some("T"),
+            ),
+            rs(
+                &["XD.attribute"],
+                r#"XD.decodeString (XD.attribute "k") "<a k='v'/>""#,
+                Some("v"),
+            ),
+            rs(
+                &["XD.optionalAttribute"],
+                r#"XD.decodeString (XD.map (Maybe.withDefault "N") (XD.optionalAttribute "k")) "<a/>""#,
+                Some("N"),
+            ),
+            rs(
+                &["XD.optionalElement"],
+                r#"XD.decodeString (XD.map (Maybe.withDefault "N") (XD.optionalElement "b" XD.string)) "<a><b>x</b></a>""#,
+                Some("x"),
+            ),
+            rs(
+                &["XD.list"],
+                r#"XD.decodeString (XD.map (String.join ",") (XD.list "b" XD.string)) "<a><b>1</b><c/><b>2</b></a>""#,
+                Some("1,2"),
+            ),
+            rs(
+                &["XD.children", "XD.localName"],
+                r#"XD.decodeString (XD.map (String.join ",") (XD.children XD.localName)) "<a>t<b/><c/></a>""#,
+                Some("b,c"),
+            ),
+            rs(
+                &["XD.at"],
+                r#"XD.decodeString (XD.at [ "b", "c" ] XD.string) "<a><b><c>z</c></b></a>""#,
+                Some("z"),
+            ),
+            rs(
+                &["XD.namespaceUri", "XD.inNamespace"],
+                r#"XD.decodeString (XD.inNamespace "urn:x" XD.namespaceUri) "<a xmlns='urn:x'/>""#,
+                Some("urn:x"),
+            ),
+            rs(
+                &["XD.node"],
+                r#"XD.decodeString (XD.map Xml.name XD.node) "<a/>""#,
+                Some("a"),
+            ),
+            rs(
+                &["XD.decodeNode"],
+                r#"Xml.parse "<q/>" |> Result.andThen (XD.decodeNode XD.localName)"#,
+                Some("q"),
+            ),
+            rs(
+                &["XD.map2", "XD.map3"],
+                r#"XD.decodeString (XD.map3 (\a b c -> a ++ b ++ c) (XD.attribute "x") (XD.map2 (\b c -> b ++ c) (XD.attribute "y") (XD.attribute "z")) XD.string) "<a x='1' y='2' z='3'>4</a>""#,
+                Some("1234"),
+            ),
+            rs(
+                &["XD.map4", "XD.map5"],
+                r#"XD.decodeString (XD.map5 (\a b c d e -> a ++ b ++ c ++ d ++ e) XD.localName XD.localName (XD.map4 (\a b c d -> a ++ b ++ c ++ d) XD.localName XD.localName XD.localName XD.localName) XD.localName XD.localName) "<a/>""#,
+                Some("aaaaaaaa"),
+            ),
+            rs(
+                &["XD.andThen", "XD.succeed"],
+                r#"XD.decodeString (XD.andThen (\n -> XD.succeed (n ++ "!")) XD.localName) "<a/>""#,
+                Some("a!"),
+            ),
+            rs(
+                &["XD.oneOf", "XD.fail"],
+                r#"XD.decodeString (XD.oneOf [ XD.fail "no", XD.attribute "k" ]) "<a k='y'/>""#,
+                Some("y"),
+            ),
+            s(
+                &["XE.encode", "XE.element", "XE.text", "XE.attribute"],
+                r#"XE.encode 0 (XE.element "a" [ XE.attribute "k" "v" ] [ XE.text "x" ])"#,
+                r#"<a k="v">x</a>"#,
+            ),
+            s(
+                &["XE.cdata"],
+                r#"XE.encode 0 (XE.element "a" [] [ XE.cdata "<b>" ])"#,
+                "<a><![CDATA[<b>]]></a>",
+            ),
+            s(
+                &["XE.xmlns", "XE.xmlnsPrefix"],
+                r#"XE.encode 0 (XE.element "a" [ XE.xmlns "urn:a", XE.xmlnsPrefix "p" "urn:p" ] [])"#,
+                r#"<a xmlns="urn:a" xmlns:p="urn:p"/>"#,
+            ),
+            s(
+                &["XE.document"],
+                r#"String.replace "\n" ";" (XE.document 0 (XE.element "a" [] []))"#,
+                r#"<?xml version="1.0" encoding="UTF-8"?>;<a/>"#,
+            ),
+            rs(
+                &["XE.encodeStrict"],
+                r#"XE.encodeStrict 0 (XE.element "a" [] [])"#,
+                Some("<a/>"),
+            ),
+        ],
+        "empty" => vec![
+            rs(
+                &["Xml.parse"],
+                r#"Result.map Xml.name (Xml.parse "")"#,
+                None,
+            ),
+            rs(
+                &["Xml.text"],
+                r#"Result.map Xml.text (Xml.parse "<a/>")"#,
+                Some(""),
+            ),
+            rs(
+                &["XD.list"],
+                r#"XD.decodeString (XD.map (String.join ",") (XD.list "b" XD.string)) "<a/>""#,
+                Some(""),
+            ),
+            s(
+                &["XE.encode", "XE.element"],
+                r#"XE.encode 0 (XE.element "a" [] [])"#,
+                "<a/>",
+            ),
+            s(
+                &["XE.text"],
+                r#"XE.encode 0 (XE.element "a" [] [ XE.text "" ])"#,
+                "<a></a>",
+            ),
+        ],
+        // The limits and the line-end and escape rules.
+        "boundary" => vec![
+            rs(
+                &["Xml.parse"],
+                r#"Result.map Xml.name (Xml.parse (String.repeat 300 "<a>" ++ String.repeat 300 "</a>"))"#,
+                None,
+            ),
+            rs(
+                &["Xml.parse"],
+                r#"Result.map Xml.name (Xml.parse (String.repeat 256 "<a>" ++ String.repeat 256 "</a>"))"#,
+                Some("a"),
+            ),
+            rs(
+                &["Xml.parseWith"],
+                r#"Result.map Xml.name (Xml.parseWith Xml.Strict { maxBytes = 100, maxDepth = 4, maxNodes = 2, maxAttributes = 1 } "<a><b/><c/></a>")"#,
+                None,
+            ),
+            s(
+                &["XE.encode", "XE.attribute"],
+                r#"XE.encode 0 (XE.element "a" [ XE.attribute "k" "\"<&>" ] [ XE.text "<&>" ])"#,
+                r#"<a k="&quot;&lt;&amp;&gt;">&lt;&amp;&gt;</a>"#,
+            ),
+            s(
+                &["XE.cdata"],
+                r#"XE.encode 0 (XE.element "a" [] [ XE.cdata "]]>" ])"#,
+                "<a><![CDATA[]]]]><![CDATA[>]]></a>",
+            ),
+        ],
+        "unicode" => vec![
+            rs(
+                &["Xml.text"],
+                r#"Result.map Xml.text (Xml.parse "<a>世界é</a>")"#,
+                Some("世界é"),
+            ),
+            rs(
+                &["Xml.name"],
+                r#"Result.map Xml.name (Xml.parse "<é/>")"#,
+                Some("é"),
+            ),
+            s(
+                &["XE.encode"],
+                r#"XE.encode 0 (XE.element "é" [] [ XE.text "世" ])"#,
+                "<é>世</é>",
+            ),
+        ],
+        "failure" => vec![
+            rs(
+                &["Xml.parse"],
+                r#"Result.map Xml.name (Xml.parse "<!DOCTYPE a><a/>")"#,
+                None,
+            ),
+            rs(
+                &["Xml.parse"],
+                r#"Result.map Xml.name (Xml.parse "<a><b></a>")"#,
+                None,
+            ),
+            rs(
+                &["XD.element"],
+                r#"XD.decodeString (XD.element "b" XD.string) "<a/>""#,
+                None,
+            ),
+            rs(
+                &["XD.int"],
+                r#"XD.decodeString (XD.map String.fromInt XD.int) "<a>x</a>""#,
+                None,
+            ),
+            rs(
+                &["XD.inNamespace"],
+                r#"XD.decodeString (XD.inNamespace "urn:y" XD.localName) "<a xmlns='urn:x'/>""#,
+                None,
+            ),
+            rs(
+                &["XE.encodeStrict"],
+                r#"XE.encodeStrict 0 (XE.element "a b" [] [])"#,
+                None,
+            ),
+            s(
+                &["XE.encode"],
+                r#"XE.encode 0 (XE.element "a b" [] [])"#,
+                "<a_b/>",
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Zip (v0.29.0) -----------------------------------------------------
+//
+// An archive is written and read back in the same expression, so a check
+// asserts what the reader returns for what the writer was given. `entries`
+// renders a read as `path=bytes` pairs.
+
+fn zip_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            rs(
+                &["Zip.write", "Zip.read"],
+                r#"Result.map entries (Zip.write [ { path = "a.txt", bytes = "hi" }, { path = "d/b.txt", bytes = "yo" } ] |> Result.andThen Zip.read)"#,
+                Some("a.txt=hi,d/b.txt=yo"),
+            ),
+            rs(
+                &["Zip.list"],
+                r#"Result.map (\is -> String.join "," (List.map (\i -> i.path ++ ":" ++ String.fromInt i.size) is)) (Zip.write [ { path = "a", bytes = "abc" } ] |> Result.andThen Zip.list)"#,
+                Some("a:3"),
+            ),
+            rs(
+                &["Zip.readEntry", "Zip.defaultLimits"],
+                r#"Result.map (Maybe.withDefault "N") (Zip.write [ { path = "a", bytes = "1" }, { path = "b", bytes = "2" } ] |> Result.andThen (Zip.readEntry Zip.defaultLimits "b"))"#,
+                Some("2"),
+            ),
+            rs(
+                &["Zip.readWith"],
+                r#"Result.map entries (Zip.write [ { path = "a", bytes = "x" } ] |> Result.andThen (Zip.readWith Zip.defaultLimits))"#,
+                Some("a=x"),
+            ),
+            rs(
+                &["Zip.writeWith"],
+                r#"Result.map entries (Zip.writeWith Zip.Store [ { path = "a", bytes = "x" } ] |> Result.andThen Zip.read)"#,
+                Some("a=x"),
+            ),
+        ],
+        "empty" => vec![
+            rs(
+                &["Zip.write", "Zip.read"],
+                r#"Result.map entries (Zip.write [] |> Result.andThen Zip.read)"#,
+                Some(""),
+            ),
+            rs(
+                &["Zip.write", "Zip.read"],
+                r#"Result.map entries (Zip.write [ { path = "e", bytes = "" } ] |> Result.andThen Zip.read)"#,
+                Some("e="),
+            ),
+        ],
+        "boundary" => vec![
+            rs(
+                &["Zip.readEntry"],
+                r#"Result.map (Maybe.withDefault "N") (Zip.write [ { path = "a", bytes = "1" } ] |> Result.andThen (Zip.readEntry Zip.defaultLimits "z"))"#,
+                Some("N"),
+            ),
+            rs(
+                &["Zip.readWith"],
+                r#"Result.map entries (Zip.write [ { path = "a", bytes = "12345" } ] |> Result.andThen (Zip.readWith { maxEntries = 1, maxEntryBytes = 4, maxTotalBytes = 100, maxRatio = 100 }))"#,
+                None,
+            ),
+            rs(
+                &["Zip.readWith"],
+                r#"Result.map entries (Zip.write [ { path = "a", bytes = "1234" } ] |> Result.andThen (Zip.readWith { maxEntries = 1, maxEntryBytes = 4, maxTotalBytes = 100, maxRatio = 100 }))"#,
+                Some("a=1234"),
+            ),
+            bo(
+                &["Zip.write"],
+                r#"Zip.write [ { path = "a", bytes = "x" } ] == Zip.write [ { path = "a", bytes = "x" } ]"#,
+                true,
+            ),
+        ],
+        "unicode" => vec![rs(
+            &["Zip.write", "Zip.read"],
+            r#"Result.map entries (Zip.write [ { path = "世界.txt", bytes = "é" } ] |> Result.andThen Zip.read)"#,
+            Some("世界.txt=é"),
+        )],
+        "failure" => vec![
+            rs(
+                &["Zip.read"],
+                r#"Result.map entries (Zip.read "not a zip")"#,
+                None,
+            ),
+            rs(
+                &["Zip.write"],
+                r#"Result.map (\_ -> "ok") (Zip.write [ { path = "../x", bytes = "x" } ])"#,
+                None,
+            ),
+            rs(
+                &["Zip.write"],
+                r#"Result.map (\_ -> "ok") (Zip.write [ { path = "a", bytes = "1" }, { path = "./a", bytes = "2" } ])"#,
+                None,
+            ),
+            rs(
+                &["Zip.list"],
+                r#"Result.map (\_ -> "ok") (Zip.list "")"#,
+                None,
+            ),
         ],
         _ => vec![],
     }
@@ -7134,6 +7519,9 @@ aiUnpinnedFetch =
         Err _ ->
             "E"
 "#
+        }
+        "zip" => {
+            "entries : List Zip.Entry -> String\nentries es =\n    String.join \",\" (List.map (\\e -> e.path ++ \"=\" ++ e.bytes) es)\n"
         }
         "qr" => {
             r#"tf : Bool -> String

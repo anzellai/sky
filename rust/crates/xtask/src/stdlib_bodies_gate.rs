@@ -16,8 +16,9 @@ use std::path::Path;
 /// 127 on the v0.28.0 branch: main's 113 plus its 14 Std.Ai modules
 /// (Cloud.Google, Dataset, Dataset.Scrub, Dataset.Synthetic, Device, Endpoint,
 /// Eval, Failure, Local, Pipeline, Registry, Serve, Store, Train). 128 with
-/// Sky.Core.Array (v0.29.0).
-pub const EXPECTED_MODULES: u64 = 128;
+/// Sky.Core.Array (v0.29.0). 132 with Std.Xml, Std.Xml.Decode, Std.Xml.Encode
+/// and Std.Zip (v0.29.0).
+pub const EXPECTED_MODULES: u64 = 132;
 
 /// `(passed, assertions, detail)`. One assertion per module checked.
 pub fn check_body(root: &Path) -> (bool, u64, String) {

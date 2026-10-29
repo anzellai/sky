@@ -1,0 +1,445 @@
+module XmlConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for Std.Xml, Std.Xml.Decode and Std.Xml.Encode
+-- (v0.29.0), through the Sky API and the compiled binary. Hostile inputs
+-- (DOCTYPE, billion laughs, external entities, deep nesting, too many nodes)
+-- are refused with their domain codes; a namespaced Atom feed and a SAML-style
+-- assertion are read by local name; Latin-1 is read; &nbsp; needs
+-- HtmlEntities; encode then parse round-trips; a sitemap.xml is written.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Bytes as Bytes
+import Std.Xml as Xml
+import Std.Xml.Decode as XD
+import Std.Xml.Encode as XE
+import Sky.Test as Test exposing (Test)
+
+
+codeOf : Result Error a -> String
+codeOf r =
+    case r of
+
+        Ok _ ->
+            "ok"
+
+        Err e ->
+            case Error.failureOf e of
+
+                Just f ->
+                    Error.failureDomain f ++ "/" ++ Error.failureCode f
+
+                Nothing ->
+                    "no-domain"
+
+
+pathOf : Result Error a -> String
+pathOf r =
+    case r of
+
+        Ok _ ->
+            "ok"
+
+        Err e ->
+            case Error.failureOf e of
+
+                Just f ->
+                    Maybe.withDefault "no-path" (Error.failureAttr "path" f)
+
+                Nothing ->
+                    "no-domain"
+
+
+atom : String
+atom =
+    """<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+  <title>Example feed</title>
+  <entry><title>One</title><link href="/one"/><media:thumbnail url="one.png"/></entry>
+  <entry><title>Two</title><link href="/two"/><updated>2026-10-29</updated></entry>
+</feed>"""
+
+type alias Entry =
+    { title : String
+    , href : String
+    , updated : Maybe String
+    }
+
+
+entryDecoder : XD.Decoder Entry
+entryDecoder =
+    XD.map3
+        Entry
+        (XD.element "title" XD.string)
+        (XD.element "link" (XD.attribute "href"))
+        (XD.optionalElement "updated" XD.string)
+
+
+saml : String
+saml =
+    """<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="r1">
+  <saml:Assertion ID="a1">
+    <saml:Subject><saml:NameID>ada@example.test</saml:NameID></saml:Subject>
+    <saml:AttributeStatement>
+      <saml:Attribute Name="role"><saml:AttributeValue>admin</saml:AttributeValue></saml:Attribute>
+      <saml:Attribute Name="team"><saml:AttributeValue>core</saml:AttributeValue></saml:Attribute>
+    </saml:AttributeStatement>
+  </saml:Assertion>
+</samlp:Response>"""
+
+
+samlNs : String
+samlNs =
+    "urn:oasis:names:tc:SAML:2.0:assertion"
+
+type alias Assertion =
+    { id : String
+    , subject : String
+    , attributes : List ( String, String )
+    }
+
+
+assertionDecoder : XD.Decoder Assertion
+assertionDecoder =
+    XD.element
+        "Assertion"
+        (XD.inNamespace
+            samlNs
+            (XD.map3
+                Assertion
+                (XD.attribute "ID")
+                (XD.at [ "Subject", "NameID" ] XD.string)
+                (XD.element
+                    "AttributeStatement"
+                    (XD.list
+                        "Attribute"
+                        (XD.map2
+                            (\n v -> ( n, v ))
+                            (XD.attribute "Name")
+                            (XD.element "AttributeValue" XD.string))))))
+
+
+sitemap : List ( String, String ) -> String
+sitemap urls =
+    XE.document
+        2
+        (XE.element
+            "urlset"
+            [ XE.xmlns "http://www.sitemaps.org/schemas/sitemap/0.9" ]
+            (List.map
+                (\( loc, mod ) ->
+                    XE.element
+                        "url"
+                        []
+                        [ XE.element "loc" [] [ XE.text loc ]
+                        , XE.element "lastmod" [] [ XE.text mod ]
+                        ])
+                urls))
+
+
+nbsp : String
+nbsp =
+    String.fromChar (Char.fromCode 160)
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "parse reads the root by local name and namespace"
+          (\_ ->
+              case Xml.parse atom of
+
+                  Ok root ->
+                      Test.equal
+                          ( "feed", "http://www.w3.org/2005/Atom", 2 )
+                          ( Xml.name root
+                          , Xml.namespace root
+                          , List.length (Xml.elementsNamed "entry" root)
+                          )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a namespaced element is read by its local name"
+          (\_ ->
+              Test.equal
+                  (Ok [ Just "one.png", Nothing ])
+                  (XD.decodeString
+                      (XD.list
+                          "entry"
+                          (XD.optionalElement "thumbnail" (XD.attribute "url")))
+                      atom))
+    , Test.test
+          "decode an Atom feed into records"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ { title = "One", href = "/one", updated = Nothing }
+                      , { title = "Two"
+                        , href = "/two"
+                        , updated = Just "2026-10-29"
+                        }
+                      ])
+                  (XD.decodeString (XD.list "entry" entryDecoder) atom))
+    , Test.test
+          "a decode failure names its path"
+          (\_ ->
+              let
+                  doc =
+                      "<feed><entry><title>a</title></entry><entry><title>b</title></entry><entry><x/></entry></feed>"
+                  r =
+                      XD.decodeString
+                          (XD.list "entry" (XD.element "title" XD.string))
+                          doc
+              in
+                  Test.equal
+                      ( "xml/decode", "/feed/entry[3]" )
+                      ( codeOf r, pathOf r ))
+    , Test.test
+          "a present but bad optional element is an Err"
+          (\_ ->
+              Test.equal
+                  "xml/decode"
+                  (codeOf
+                      (XD.decodeString
+                          (XD.optionalElement "n" XD.int)
+                          "<r><n>x</n></r>")))
+    , Test.test
+          "int, float and bool read trimmed text"
+          (\_ ->
+              Test.equal
+                  (Ok ( 42, 2.5, ( True, False ) ))
+                  (XD.decodeString
+                      (XD.map3
+                          (\i f b -> ( i, f, b ))
+                          (XD.element "i" XD.int)
+                          (XD.element "f" XD.float)
+                          (XD.map2
+                              (\a b -> ( a, b ))
+                              (XD.element "t" XD.bool)
+                              (XD.element "z" XD.bool)))
+                      "<r><i> 42 </i><f>2.5</f><t>1</t><z>false</z></r>"))
+    , Test.test
+          "string keeps text exactly, children and oneOf"
+          (\_ ->
+              Test.equal
+                  (Ok ( " a ", [ "x", "y" ], 7 ))
+                  (XD.decodeString
+                      (XD.map3
+                          (\s cs n -> ( s, cs, n ))
+                          (XD.element "s" XD.string)
+                          (XD.element "c" (XD.children XD.localName))
+                          (XD.element
+                              "n"
+                              (XD.oneOf
+                                  [ XD.attribute "v"
+                                        |> XD.andThen (\_ -> XD.fail "no")
+                                  , XD.int
+                                  ])))
+                      "<r><s> a </s><c><x/><y/></c><n>7</n></r>"))
+    , Test.test
+          "inNamespace refuses another namespace"
+          (\_ ->
+              Test.equal
+                  "xml/decode"
+                  (codeOf
+                      (XD.decodeString
+                          (XD.inNamespace "urn:a" XD.localName)
+                          "<r xmlns='urn:b'/>")))
+    , Test.test
+          "a SAML-style assertion is read by local name"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      { id = "a1"
+                      , subject = "ada@example.test"
+                      , attributes = [ ( "role", "admin" ), ( "team", "core" ) ]
+                      })
+                  (XD.decodeString assertionDecoder saml))
+    , Test.test
+          "a DOCTYPE is refused"
+          (\_ ->
+              Test.equal
+                  "xml/doctype"
+                  (codeOf (Xml.parse "<!DOCTYPE html><html/>")))
+    , Test.test
+          "billion laughs is refused"
+          (\_ ->
+              Test.equal
+                  "xml/doctype"
+                  (codeOf
+                      (Xml.parse
+                          """<!DOCTYPE l [<!ENTITY a "x"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;">]><l>&b;</l>""")))
+    , Test.test
+          "an external entity is refused"
+          (\_ ->
+              Test.equal
+                  "xml/doctype"
+                  (codeOf
+                      (Xml.parse
+                          """<!DOCTYPE f [<!ENTITY x SYSTEM "file:///etc/passwd">]><f>&x;</f>""")))
+    , Test.test
+          "depth 10,000 is refused"
+          (\_ ->
+              Test.equal
+                  "xml/too_deep"
+                  (codeOf
+                      (Xml.parse
+                          (String.repeat 10000 "<a>"
+                              ++ String.repeat 10000 "</a>"))))
+    , Test.test
+          "the node, size and attribute limits"
+          (\_ ->
+              let
+                  small =
+                      { maxBytes = 64
+                      , maxDepth = 8
+                      , maxNodes = 3
+                      , maxAttributes = 1
+                      }
+              in
+                  Test.equal
+                      [ "xml/too_many_nodes"
+                      , "xml/too_large"
+                      , "xml/too_many_attributes"
+                      , "no-domain"
+                      ]
+                      [ codeOf
+                            (Xml.parseWith Xml.Strict small "<r><a/><b/><c/></r>")
+                      , codeOf
+                            (Xml.parseWith
+                                Xml.Strict
+                                small
+                                ("<r>" ++ String.repeat 100 "x" ++ "</r>"))
+                      , codeOf
+                            (Xml.parseWith Xml.Strict small "<r a='1' b='2'/>")
+                      , codeOf
+                            (Xml.parseWith
+                                Xml.Strict
+                                { small | maxNodes = 0 }
+                                "<r/>")
+                      ])
+    , Test.test
+          "malformed XML gives the line"
+          (\_ ->
+              case Xml.parse "<a>\n<b>\n</a>" of
+
+                  Err e ->
+                      Test.equal
+                          ( "xml/malformed", Just "3" )
+                          ( codeOf (Xml.parse "<a>\n<b>\n</a>")
+                          , Maybe.andThen
+                                (Error.failureAttr "line")
+                                (Error.failureOf e)
+                          )
+
+                  Ok _ ->
+                      Test.fail "malformed XML parsed")
+    , Test.test
+          "a Latin-1 feed is read"
+          (\_ ->
+              let
+                  doc =
+                      "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><t>caf"
+                          ++ Maybe.withDefault "" (Bytes.fromHex "e9")
+                          ++ "</t>"
+              in
+                  Test.equal (Ok "café") (Result.map Xml.text (Xml.parse doc)))
+    , Test.test
+          "an unknown encoding is refused"
+          (\_ ->
+              Test.equal
+                  "xml/charset"
+                  (codeOf
+                      (Xml.parse
+                          "<?xml version=\"1.0\" encoding=\"EBCDIC-US\"?><t/>")))
+    , Test.test
+          "&nbsp; is read only in HtmlEntities mode"
+          (\_ ->
+              Test.equal
+                  ( "xml/malformed", Ok ("a" ++ nbsp ++ "b") )
+                  ( codeOf (Xml.parse "<p>a&nbsp;b</p>")
+                  , Result.map
+                        Xml.text
+                        (Xml.parseWith
+                            Xml.HtmlEntities
+                            Xml.defaultLimits
+                            "<p>a&nbsp;b</p>")
+                  ))
+    , Test.test
+          "attributes leave namespace declarations out"
+          (\_ ->
+              Test.equal
+                  (Ok [ ( "id", "1" ), ( "lang", "en" ) ])
+                  (Result.map
+                      Xml.attributes
+                      (Xml.parse
+                          "<r xmlns='urn:x' xmlns:p='urn:p' id='1' p:lang='en'/>")))
+    , Test.test
+          "children keeps text nodes, text concatenates them"
+          (\_ ->
+              Test.equal
+                  (Ok ( [ "", "b", "" ], "a<b>c" ))
+                  (Result.map
+                      (\n -> ( List.map Xml.name (Xml.children n), Xml.text n ))
+                      (Xml.parse "<r>a<b><![CDATA[<b>]]></b>c</r>")))
+    , Test.test
+          "encode then parse round-trips text, attributes and CDATA"
+          (\_ ->
+              let
+                  hard = "a & b < c > d \"e\" 'f' é ]]> end\r\nline"
+                  doc =
+                      XE.element
+                          "r"
+                          [ XE.attribute "k" hard ]
+                          [ XE.element "t" [] [ XE.text hard ]
+                          , XE.element "c" [] [ XE.cdata hard ]
+                          ]
+              in
+                  Test.equal
+                      (Ok ( Just hard, hard, hard ))
+                      (XD.decodeString
+                          (XD.map3
+                              (\a t c -> ( a, t, c ))
+                              (XD.optionalAttribute "k")
+                              (XD.element "t" XD.string)
+                              (XD.element "c" XD.string))
+                          (XE.encode 2 doc)))
+    , Test.test
+          "write a sitemap.xml"
+          (\_ ->
+              Test.equal
+                  """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://example.test/?a=1&amp;b=2</loc>
+    <lastmod>2026-10-29</lastmod>
+  </url>
+</urlset>"""
+                  (sitemap [ ( "https://example.test/?a=1&b=2", "2026-10-29" ) ]))
+    , Test.test
+          "encode is total, encodeStrict refuses"
+          (\_ ->
+              let
+                  bad =
+                      XE.element
+                          "a b"
+                          []
+                          [ XE.text ("x" ++ String.fromChar (Char.fromCode 1)) ]
+              in
+                  Test.equal
+                      ( "<a_b>x" ++ String.fromChar (Char.fromCode 65533)
+                            ++ "</a_b>"
+                      , "xml/invalid_name"
+                      , Ok "<ok/>"
+                      )
+                      ( XE.encode 0 bad
+                      , codeOf (XE.encodeStrict 0 bad)
+                      , XE.encodeStrict 0 (XE.element "ok" [] [])
+                      ))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

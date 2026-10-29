@@ -954,8 +954,25 @@ fn app_to_go_with(
     // `apps/relay` (which imports `Std.Config` for its typed decoders) caught it
     // as a +15 widening on the `coerce-floor` gate. The bare-name arms further
     // down had always covered this; hoisting them closes the qualified hole too.
+    //
+    // A QUALIFIED name that a Sky module declares as a data-carrying union
+    // (`Adt`) is not a kernel handle: it is that module's own type, and every
+    // other site (a constructor, a pattern) already emits it as the module's
+    // nominal. `Std.Xml.Decode` declares `type Decoder a = Decoder__Internal
+    // (…)` (v0.29.0); erasing its annotation to `any` while its pattern
+    // emitted `Std_Xml_Decode_Decoder` passed `sky check` and failed `go
+    // build`. A phantom (`Std.Config.Decoder`, a nullary iota) keeps the
+    // handle rule.
     if matches!(ty::nominal::base(name), "Decoder" | "Value" | "Cmd" | "Sub") {
-        return GoTy::Any;
+        let declared_adt = name.rsplit_once('.').and_then(|(qual, tail)| {
+            env.nominal_by_module
+                .get(&(qual.to_string(), tail.to_string()))
+                .filter(|n| n.kind == NominalKind::Adt && !n.opaque)
+        });
+        match declared_adt {
+            Some(n) => return GoTy::Named(n.go_name.clone(), vec![]),
+            None => return GoTy::Any,
+        }
     }
     // A Go FFI type (`GoHttp.Client`, keyed `go@Net.Http.Client` by the
     // checker) is Go-opaque: the FFI boundary hands it over as `any`, the same

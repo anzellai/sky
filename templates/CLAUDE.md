@@ -206,3 +206,11 @@ character loop or an accumulator loop is O(n). Rewrite a loop that used
 `String.slice i (i + 1)` or `++` per step to `uncons` and a reversed list of
 pieces. Use `Sky.Core.Array` where a list needed an index. Read the `Cost:`
 line in `sky doc` before choosing a collection function.
+
+### XML and ZIP input is hostile: use Std.Xml and Std.Zip
+
+Read XML with `Std.Xml.parse` / `Std.Xml.Decode` (or `Codec.fromXml`) and
+archives with `Std.Zip`. They refuse a DOCTYPE, entity tricks, zip-slip names,
+encrypted entries and zip bombs, and bound size and depth. Do not parse XML
+with `String` functions or a Go FFI binding, and do not raise the limits to
+get one file through: pass a `Limits` record that fits the input you expect.

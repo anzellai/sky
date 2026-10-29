@@ -576,9 +576,10 @@ pub static GATES: &[Gate] = &[
                 // v0.29.0 let_mutual_recursion stratum (+36 cases, 768 → 804),
                 // and the v0.29.0 Sky.Core.Array surface (+5 cases, 804 → 809), and the
                 // v0.29.0 Family R defects value_cycle and regex_invalid_literal
-                // (+18 cases, 809 → 827).
-                from: "n_min = 827",
-                to: "n_min = 828",
+                // (+18 cases, 809 → 827), and the v0.29.0 Std.Xml and
+                // Std.Zip surfaces (+10 cases, 827 → 837).
+                from: "n_min = 837",
+                to: "n_min = 838",
             },
         }]),
         body: bodies::corpus_manifest,

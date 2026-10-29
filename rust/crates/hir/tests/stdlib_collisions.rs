@@ -192,6 +192,36 @@ const EXPECTED_NEW_MODULE_OVERLAPS: &[&str] = &[
     // Sky.Http.Server's), whose internal `call` and `ok` are not exported.
     "value list",
     "value render",
+    // v0.29.0: Std.Xml, Std.Xml.Decode, Std.Xml.Encode and Std.Zip. The
+    // decoder and encoder follow Json.Decode / Json.Encode by design (the
+    // same verbs over XML), and Std.Xml names the parts of a node. Each is a
+    // new module, so no existing program changes; a program reads them
+    // qualified (`import Std.Xml.Decode as XD`, `import Std.Zip as Zip`).
+    "type Attribute",
+    "type Decoder",
+    "type Entry",
+    "value Entry",
+    "value andThen",
+    "value at",
+    "value attribute",
+    "value bool",
+    "value decodeString",
+    "value encode",
+    "value fail",
+    "value float",
+    "value int",
+    "value map2",
+    "value map3",
+    "value map4",
+    "value map5",
+    "value name",
+    "value node",
+    "value oneOf",
+    "value parse",
+    "value string",
+    "value succeed",
+    "value text",
+    "value write",
 ];
 
 fn repo_root() -> PathBuf {

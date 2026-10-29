@@ -178,6 +178,37 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   cookie's `Max-Age` (default 30 days; the variable, a Go duration or whole
   seconds, wins over the builder).
 
+- **`Std.Xml`, `Std.Xml.Decode` and `Std.Xml.Encode`: safe XML on the
+  server.** `Xml.parse` reads a document into an opaque `Node` (`name` is the
+  local name, `namespace` the URI, `attributes`, `children`, `text`).
+  `Std.Xml.Decode` reads it into your types in the style of `Json.Decode`
+  (`element`, `list`, `attribute`, `at`, `inNamespace`, `map`..`map5`,
+  `oneOf`); a failure names its path, such as `/feed/entry[3]`.
+  `Std.Xml.Encode` writes XML (`element`, `text`, `cdata`, `xmlns`,
+  `document`); `encode` is total and `encodeStrict` refuses a character or
+  name XML cannot carry. The parser refuses any DOCTYPE (so billion-laughs and
+  external entities cannot work), reads UTF-8, US-ASCII, ISO-8859-1 and
+  Windows-1252, and bounds size, depth, nodes and attributes (`Limits`,
+  `parseWith`, `HtmlEntities` mode for `&nbsp;`). Failures are `InvalidInput`
+  in the domain `"xml"` with a code (`too_large`, `too_deep`,
+  `too_many_nodes`, `too_many_attributes`, `doctype`, `charset`,
+  `malformed`). The accessors call typed runtime twins, so a read narrows
+  nothing.
+
+- **`Codec.toXml` and `Codec.fromXml`.** A codec reads and writes XML with no
+  hand-written decoder: a record is one element per field, a list repeats the
+  element, a `Nothing` field is left out, a `taggedUnion` variant, a `result`
+  and a `dict` have their own element shapes, and a field can also be read
+  from an attribute. Names are local names, so a namespaced document (a SOAP
+  body) reads by the codec's names. `Codec.jsonSchema` output is unchanged.
+
+- **`Std.Zip`: safe ZIP archives.** `read`, `readWith`, `readEntry`, `list`,
+  `write` and `writeWith` return a `Result`. Reading counts bytes while it
+  inflates under `Limits` (entries, bytes per entry, total bytes, compression
+  ratio), and refuses zip-slip names, repeated names, symbolic links,
+  encrypted entries and unknown methods. `write` gives the same bytes for the
+  same entries. Failures are `InvalidInput` in the domain `"zip"` with a code.
+
 ### Migration
 
 The full list, with old and new code, is `docs/migration/v0.29.md`.
@@ -239,6 +270,14 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   never run is affected. Give one value a base case, or a parameter.
 
 ### Fixed
+
+- **A type a module declares with the name `Decoder`, `Value`, `Cmd` or `Sub`
+  builds.** Its annotation lowered to `any` (the rule for the kernel handles
+  of those names) while its pattern used the module's own type, so a program
+  with, for example, `type Decoder a = Decoder (Int -> a)` and a function
+  `run : Decoder a -> …` passed `sky check` and failed `go build`. A
+  data-carrying union a module declares now lowers to that module's type
+  everywhere.
 
 - **`String.padLeft` and `String.padRight` are O(n).** They added one pad
   character per loop step and recounted the string each time: O(n²) in the

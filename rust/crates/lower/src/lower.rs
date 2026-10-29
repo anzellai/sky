@@ -10568,6 +10568,10 @@ const SKY_LIST_HOF_TWINS: &[(&str, &str, &str, usize)] = &[
 /// `type Sky_Core_Regex_Regex = rt.SkyADT`).
 const REGEX_GO: &str = "Sky_Core_Regex_Regex";
 
+/// The emitted Go name of `Std.Xml.Node` (an unsealed stdlib ADT,
+/// `type Std_Xml_Node = rt.SkyADT`).
+const XML_NODE_GO: &str = "Std_Xml_Node";
+
 struct TypedTwin {
     symbol: &'static str,
     params: Vec<Option<GoTy>>,
@@ -10776,6 +10780,48 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
         ("rt.System_getenvOr", 2) => twin("rt.System_getenvOrT", vec![None, None], str_()),
         ("rt.Secret_reveal", 1) => twin("rt.Secret_revealT", vec![None], str_()),
         ("rt.Crypto_sha256", 1) => twin("rt.Crypto_sha256T", vec![None], str_()),
+        // v0.29.0 Std.Xml: a Node is an opaque handle (erased `any`); each
+        // accessor returns its Go type directly (runtime-go/rt
+        // xml_kernels_test.go checks each against its erased kernel).
+        ("rt.Xml_parse", 1) => twin(
+            "rt.Xml_parseT",
+            vec![Some(str_())],
+            GoTy::Named(
+                "rt.SkyResult".into(),
+                vec![
+                    GoTy::Named("Sky_Core_Error_Error".into(), vec![]),
+                    GoTy::Named(XML_NODE_GO.into(), vec![]),
+                ],
+            ),
+        ),
+        ("rt.Xml_name", 1) => twin("rt.Xml_nameT", vec![None], str_()),
+        ("rt.Xml_namespace", 1) => twin("rt.Xml_namespaceT", vec![None], str_()),
+        ("rt.Xml_text", 1) => twin("rt.Xml_textT", vec![None], str_()),
+        ("rt.Xml_attributes", 1) => twin(
+            "rt.Xml_attributesT",
+            vec![None],
+            GoTy::Slice(Box::new(GoTy::Tuple(vec![str_(), str_()]))),
+        ),
+        ("rt.Xml_children", 1) => twin(
+            "rt.Xml_childrenT",
+            vec![None],
+            GoTy::Slice(Box::new(GoTy::Named(XML_NODE_GO.into(), vec![]))),
+        ),
+        ("rt.Xml_elements", 1) => twin(
+            "rt.Xml_elementsT",
+            vec![None],
+            GoTy::Slice(Box::new(GoTy::Named(XML_NODE_GO.into(), vec![]))),
+        ),
+        ("rt.Xml_elementsNamed", 2) => twin(
+            "rt.Xml_elementsNamedT",
+            vec![Some(str_()), None],
+            GoTy::Slice(Box::new(GoTy::Named(XML_NODE_GO.into(), vec![]))),
+        ),
+        ("rt.Xml_attribute", 2) => {
+            twin("rt.Xml_attributeT", vec![Some(str_()), None], maybe(str_()))
+        }
+        ("rt.Xml_encode", 2) => twin("rt.Xml_encodeT", vec![None, None], str_()),
+        ("rt.Xml_document", 2) => twin("rt.Xml_documentT", vec![None, None], str_()),
         _ => None,
     }
 }

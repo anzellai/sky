@@ -19,6 +19,10 @@ under [`archive/`](archive/) and the per-version directories below.
 * [`stdlib.md`](stdlib.md) — every module + every function, indexed
   by tier (Pure / Fallible-pure / Task / Diverging).  `sky doc
   --serve` is the same data in browsable form.
+* `Std.Xml` (with `Std.Xml.Decode`, `Std.Xml.Encode`), `Codec.toXml` /
+  `Codec.fromXml` and `Std.Zip`: safe XML and ZIP on the server. See the
+  sections in [`stdlib.md`](stdlib.md) and `sky doc Std.Xml` / `sky doc
+  Std.Zip`.
 
 ## Per-area
 
