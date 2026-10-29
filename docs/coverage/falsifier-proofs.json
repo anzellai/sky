@@ -2,25 +2,25 @@
   "gates": {
     "ai-device-blob-allowlist": {
       "inputs_files": 980,
-      "inputs_hash": "627fb88d85d7f8d3af56dbd0b0c2bc2fc9b96977",
+      "inputs_hash": "23effb2315baa6399bee4e29e280969446d5c353",
       "mutation": "ai-device-blob-allowlist.serve-the-store",
       "mutations": [
         "ai-device-blob-allowlist.serve-the-store"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "ai-device-csp": {
       "inputs_files": 1677,
-      "inputs_hash": "00bfd3f2cd5baaa58ec3a0e6a262396b8af8b68c",
+      "inputs_hash": "0f13c97b3052f1b3541baeecbfefdf7dd7399fc0",
       "mutation": "ai-device-csp.evaluate-a-string",
       "mutations": [
         "ai-device-csp.evaluate-a-string"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793307482
+      "proven_at_unix": 1793309489
     },
     "ai-device-decide": {
       "inputs_files": 4,
@@ -35,14 +35,14 @@
     },
     "ai-device-digest": {
       "inputs_files": 980,
-      "inputs_hash": "ff2e108c8f3887dd314f927e6d1df793a5325d85",
+      "inputs_hash": "252ce1a935fb3281f687db73bd52f341d38d6a05",
       "mutation": "ai-device-digest.skip-the-chunk-check",
       "mutations": [
         "ai-device-digest.skip-the-chunk-check"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "ai-device-ios-sim": {
       "inputs_files": 3,
@@ -57,14 +57,14 @@
     },
     "ai-device-no-silent-fallback": {
       "inputs_files": 980,
-      "inputs_hash": "1f5a268c1013b7b638c85b8453507710c3a8beb7",
+      "inputs_hash": "35f1060d1115fbe74f878e2c2631efc082bacedd",
       "mutation": "ai-device-no-silent-fallback.run-without-a-gpu",
       "mutations": [
         "ai-device-no-silent-fallback.run-without-a-gpu"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "ai-device-partition": {
       "inputs_files": 3,
@@ -79,36 +79,36 @@
     },
     "ai-device-privacy": {
       "inputs_files": 1677,
-      "inputs_hash": "886a8150dd6f73e71a453d5255f06d971bcfd908",
+      "inputs_hash": "e18d6dd1018e146ce677045406bb46353275a2f0",
       "mutation": "ai-device-privacy.device-calls-the-server",
       "mutations": [
         "ai-device-privacy.device-calls-the-server"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793307482
+      "proven_at_unix": 1793309489
     },
     "ai-serve-hot-load": {
       "inputs_files": 980,
-      "inputs_hash": "54d33b5465da728aeceacfd427b4b46ea63df2ad",
+      "inputs_hash": "4c6af838b50cee492fbc12570bb305aa46d27530",
       "mutation": "ai-serve-hot-load.unload-while-in-use",
       "mutations": [
         "ai-serve-hot-load.unload-while-in-use"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "ai-stream-pieces": {
       "inputs_files": 980,
-      "inputs_hash": "531688fbd691aa7fa3dca1f49b9a76323220749d",
+      "inputs_hash": "05fc71c6b6e95e2a34ac0029b835ec5ffcc453b8",
       "mutation": "ai-stream-pieces.buffer-the-answer",
       "mutations": [
         "ai-stream-pieces.buffer-the-answer"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "ai-train-exactly-once": {
       "inputs_files": 8,
@@ -123,36 +123,36 @@
     },
     "ai-train-resume": {
       "inputs_files": 980,
-      "inputs_hash": "187c03b75d8c661a05c88a818c359efc5bbe7693",
+      "inputs_hash": "ded55b5e5643ea1bafe94ff25b244d01e117cf46",
       "mutation": "ai-train-resume.from-the-oldest-checkpoint",
       "mutations": [
         "ai-train-resume.from-the-oldest-checkpoint"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "analytics-prune-errors-are-reported": {
       "inputs_files": 980,
-      "inputs_hash": "01067d7b5e3c40011ad844dc528c9feef685c309",
+      "inputs_hash": "624d78dc92e52a8673a74e48746f82662af67e4b",
       "mutation": "analytics-prune.discard-the-exec-error",
       "mutations": [
         "analytics-prune.discard-the-exec-error"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "analytics-retention-survives-a-panic": {
       "inputs_files": 980,
-      "inputs_hash": "78cfa8b5c2c287b6d081525b920b5bd96d745cab",
+      "inputs_hash": "cf467677383d7c9c688d98734ef737035473dece",
       "mutation": "analytics-retention.no-recover-inside-the-cycle",
       "mutations": [
         "analytics-retention.no-recover-inside-the-cycle"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "apps-bundled": {
       "inputs_files": 23,
@@ -222,15 +222,14 @@
     },
     "apps-fleet": {
       "inputs_files": 19,
-      "inputs_hash": "e46eff2d6af48bbc2f0ee989e837cc8654dbc768",
-      "last_inconclusive_at_unix": 1793306081,
+      "inputs_hash": "ba1fbd229d4c92cbe8c98ec6594bd7e53265fdd8",
       "mutation": "apps-fleet.drop-the-production-gate",
       "mutations": [
         "apps-fleet.drop-the-production-gate"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793258676
+      "proven_at_unix": 1793309489
     },
     "apps-ledger": {
       "inputs_files": 18,
@@ -297,7 +296,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1793307482
+      "proven_at_unix": 1793309489
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -312,14 +311,14 @@
     },
     "config-matrix": {
       "inputs_files": 1667,
-      "inputs_hash": "18898b867a72562e54ac581c87884517e57fa0be",
+      "inputs_hash": "d79a06ef0bc08967e0f5a1a6fb41e24261ff290a",
       "mutation": "config-matrix.invert-operator-env-provenance",
       "mutations": [
         "config-matrix.invert-operator-env-provenance"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "config-migrate": {
       "inputs_files": 5,
@@ -345,14 +344,14 @@
     },
     "config-surface": {
       "inputs_files": 987,
-      "inputs_hash": "f714af8fa215efe6fded2fca27a235b8c36a7fef",
+      "inputs_hash": "5fb343c72ffa6d42a0c4eee1c7396a651b171bed",
       "mutation": "config-surface.seed-a-suffix-nothing-reads",
       "mutations": [
         "config-surface.seed-a-suffix-nothing-reads"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "conformance": {
       "inputs_files": 123,
@@ -367,14 +366,14 @@
     },
     "console-analytics-queries-are-bounded": {
       "inputs_files": 980,
-      "inputs_hash": "2d45ec19f96373ad0039e0e90caa5f9cd46ba2c3",
+      "inputs_hash": "c590d9c0ac64b0e2a5a45c791c44d070367715c2",
       "mutation": "console-analytics.unbound-the-revenue-scan",
       "mutations": [
         "console-analytics.unbound-the-revenue-scan"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "corpus-1": {
       "inputs_files": 179,
@@ -485,25 +484,25 @@
     },
     "coverage-ledger": {
       "inputs_files": 4779,
-      "inputs_hash": "3990f5dff12fed62e9b90f6987425c0f10bda0f1",
+      "inputs_hash": "62d5ae0db9a4895e10233eedea6878135caeb90d",
       "mutation": "coverage-ledger.drop-a-sole-owner-import",
       "mutations": [
         "coverage-ledger.drop-a-sole-owner-import"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "erasure-path-uses-an-index": {
       "inputs_files": 980,
-      "inputs_hash": "6cf5192c7f3a626dc0601fdeac596176439ac0ea",
+      "inputs_hash": "899114b4963c8a0fc09b20c0df456dc23de6a440",
       "mutation": "erasure-index.drop-the-anonymous-id-index",
       "mutations": [
         "erasure-index.drop-the-anonymous-id-index"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "fmt-clean": {
       "inputs_files": 727,
@@ -518,14 +517,14 @@
     },
     "jobs-complete-failure-is-reported": {
       "inputs_files": 980,
-      "inputs_hash": "b3b926217aa0212dccb0a3666b76828b911aa9f3",
+      "inputs_hash": "7288fdc78d6c9e24b24969e4d035e511834c7ae6",
       "mutation": "jobs-complete.discard-the-store-error",
       "mutations": [
         "jobs-complete.discard-the-store-error"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "kernel-members": {
       "inputs_files": 139,
@@ -540,14 +539,14 @@
     },
     "live-time-every-mutex-survives-a-panic": {
       "inputs_files": 980,
-      "inputs_hash": "4d2f70ff0450799dca5e4ac1df107c30c5355f65",
+      "inputs_hash": "5c7eb8c747e1da21385650b69bede8e997e8d1e1",
       "mutation": "time-every.unlock-only-on-the-happy-path",
       "mutations": [
         "time-every.unlock-only-on-the-happy-path"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "lsp": {
       "inputs_files": 69,
@@ -563,14 +562,14 @@
     },
     "periodic-loops-recover-per-cycle": {
       "inputs_files": 980,
-      "inputs_hash": "71c2ea15ccd4ea8f51d3ea6a7e0ac777cd4a8dc2",
+      "inputs_hash": "30010e5211e517e5bbbbf2327ee69b015ee39f0f",
       "mutation": "periodic-loops.recover-at-the-goroutine-top-level",
       "mutations": [
         "periodic-loops.recover-at-the-goroutine-top-level"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "reject": {
       "inputs_files": 4,
@@ -655,14 +654,14 @@
     },
     "spa-wasm-server-only": {
       "inputs_files": 980,
-      "inputs_hash": "f4ac2a46cd55d80b55de27d15e4ee69f287c1780",
+      "inputs_hash": "2865c89b770f6f9220769ae2319c663dc76920c1",
       "mutation": "spa-wasm-server-only.import-archive-zip-on-the-client",
       "mutations": [
         "spa-wasm-server-only.import-archive-zip-on-the-client"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793304236
+      "proven_at_unix": 1793309489
     },
     "stdlib-bodies": {
       "inputs_files": 4,
