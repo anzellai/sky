@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1748,
+      "expected_assertions": 1781,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -509,7 +509,7 @@
       "tier": "T2"
     },
     "corpus-3": {
-      "expected_assertions": 169,
+      "expected_assertions": 170,
       "falsifier_mutation": "corpus-3.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 2 of 4: each case built + run; values compared against the generator's own",
@@ -547,7 +547,7 @@
       "tier": "T2"
     },
     "corpus-4": {
-      "expected_assertions": 169,
+      "expected_assertions": 170,
       "falsifier_mutation": "corpus-4.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 3 of 4: each case built + run; values compared against the generator's own",
@@ -607,7 +607,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 842,
+      "expected_assertions": 844,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -640,7 +640,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 206,
+      "expected_assertions": 207,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -660,7 +660,7 @@
       "tier": "T1"
     },
     "fmt-clean": {
-      "expected_assertions": 402,
+      "expected_assertions": 403,
       "falsifier_mutation": "fmt-clean.unformat-a-tracked-file",
       "falsifier_proven": true,
       "summary": "every tracked .sky file in sky-stdlib/, sky-bundled/, apps/, examples/ and templates/ is already `sky fmt`-clean",
@@ -795,7 +795,7 @@
       "tier": "T2"
     },
     "spa-wasm-server-only": {
-      "expected_assertions": 38,
+      "expected_assertions": 54,
       "falsifier_mutation": "spa-wasm-server-only.import-archive-zip-on-the-client",
       "falsifier_proven": true,
       "summary": "a Sky.Spa wasm client links no server-only package (encoding/xml, archive/zip, database drivers, ...)",
@@ -805,7 +805,7 @@
       "tier": "T1"
     },
     "stdlib-bodies": {
-      "expected_assertions": 134,
+      "expected_assertions": 135,
       "falsifier_mutation": "stdlib-bodies.record-missing-field",
       "falsifier_proven": true,
       "summary": "every sky-stdlib module body type-checks (a build trusts stdlib signatures)",
@@ -922,6 +922,12 @@
           "tests/conformance"
         ]
       },
+      "Std.Image.Canvas": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
       "Std.Jobs": {
         "path": "apps/dispatch",
         "units": [
@@ -992,13 +998,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3113,
-    "stdlib_modules": 134,
-    "surfaces_covered": 192,
-    "surfaces_covered_pct": 95.0,
+    "stdlib_entries": 3144,
+    "stdlib_modules": 135,
+    "surfaces_covered": 193,
+    "surfaces_covered_pct": 95.1,
     "surfaces_equal": 15,
-    "surfaces_stronger": 187,
-    "surfaces_total": 202,
+    "surfaces_stronger": 188,
+    "surfaces_total": 203,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -14882,6 +14888,34 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Image.Canvas public API",
+      "id": "stdlib.Std.Image.Canvas",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -18931,7 +18965,7 @@
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 6.0
+      "pct_of_denominator": 5.9
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -19902,12 +19936,19 @@
           ]
         },
         "Std.Image": {
-          "count": 4,
+          "count": 2,
           "symbols": [
             "Format",
-            "Rgb",
-            "resizeToFit",
-            "thumbnail"
+            "Rgb"
+          ]
+        },
+        "Std.Image.Canvas": {
+          "count": 4,
+          "symbols": [
+            "Filter",
+            "Font",
+            "Mask",
+            "TextStyle"
           ]
         },
         "Std.Jobs": {
@@ -20333,8 +20374,8 @@
           ]
         }
       },
-      "count": 863,
-      "pct_of_denominator": 27.7
+      "count": 865,
+      "pct_of_denominator": 27.5
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -21404,12 +21445,21 @@
           ]
         },
         "Std.Image": {
-          "count": 4,
+          "count": 2,
           "symbols": [
             "Format",
-            "Rgb",
-            "resizeToFit",
-            "thumbnail"
+            "Rgb"
+          ]
+        },
+        "Std.Image.Canvas": {
+          "count": 6,
+          "symbols": [
+            "Canvas",
+            "Filter",
+            "Font",
+            "Mask",
+            "Paint",
+            "TextStyle"
           ]
         },
         "Std.Jobs": {
@@ -21865,8 +21915,8 @@
           ]
         }
       },
-      "count": 976,
-      "pct_of_denominator": 31.4
+      "count": 980,
+      "pct_of_denominator": 31.2
     }
   },
   "units": [
@@ -23888,12 +23938,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 64,
+      "modules_imported": 65,
       "path": "tests/conformance",
-      "refs_generous": 902,
-      "refs_qualified": 876,
+      "refs_generous": 931,
+      "refs_qualified": 903,
       "role": "Conformance",
-      "sky_files": 55,
+      "sky_files": 57,
       "sky_toml_sections": []
     }
   ]

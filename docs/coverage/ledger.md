@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 202 |
-| covered by the new corpus (>= Asserted) | 192 |
-| verdict `stronger` | 187 |
+| surfaces | 203 |
+| covered by the new corpus (>= Asserted) | 193 |
+| verdict `stronger` | 188 |
 | verdict `equal` | 15 |
 | verdict `weaker` | 0 |
 | corpus units | 152 |
-| stdlib modules (denominator) | 134 |
-| stdlib entries (denominator) | 3113 |
+| stdlib modules (denominator) | 135 |
+| stdlib entries (denominator) | 3144 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 8 | 6.0% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 976 | 31.4% |
-| symbols unreferenced under the generous rule | 863 | 27.7% |
+| stdlib modules imported by nothing | 8 | 5.9% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 980 | 31.2% |
+| symbols unreferenced under the generous rule | 865 | 27.5% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 0 | — |
 
 ### Surfaces with zero new cover
@@ -57,7 +57,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 26 |
-| stdlib modules owned by exactly one unit of any role | 17 |
+| stdlib modules owned by exactly one unit of any role | 18 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **0** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -237,6 +237,7 @@ None.
 | `stdlib.Std.Html.Attributes` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html.Events` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Image` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Image.Canvas` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Jobs` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Live` | stdlib | Runs | Asserted | stronger |
 | `stdlib.Std.Live.Console` | stdlib | None | Asserted | stronger |
