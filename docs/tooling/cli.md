@@ -1,8 +1,8 @@
 # CLI reference
 
 > **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky`)
-> is the primary Sky compiler; the Haskell compiler is preserved under
-> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> is the Sky compiler (the earlier compilers were removed in v0.29.0).
+> Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
 > [`../history/compiler/versions.md`](../history/compiler/versions.md) for the changelog.
 
@@ -780,7 +780,7 @@ additions:
 |---|---|---|
 | `entry-missing` | error | the `entry` file (default `src/Main.sky`) exists. A library (`[lib]` in sky.toml) with no `entry` has no entry file and is not asked for one |
 | `library-no-modules` | error | a library has at least one `.sky` module under its source root |
-| `go-toolchain` | error | Go ≥ 1.22 on PATH |
+| `go-toolchain` | error | Go ≥ 1.25 on PATH (the `go` directive of `runtime-go/go.mod`) |
 | `ffi-cache-orphan` | warn | `.skycache/ffi/*.skyi` with no `.skydeps/` source |
 | `missing-lockfile` | info | `.skydeps/` populated but no `sky.lock` |
 | `auth-secret-short` / `auth-secret-missing` | error / warn | `SKY_AUTH_TOKEN_SECRET` ≥ 32 bytes when `[live]` / `[auth]` set |
@@ -1531,7 +1531,7 @@ background process**, so it never slows a command or blocks on the network. The
 nudge itself prints at most once a day. It stays out of your way entirely when
 output isn't interactive: it's suppressed unless stderr is a TTY (so scripts / CI
 / pipes never see it), for builds from a source checkout (their `sky --version`
-names a commit: `sky v0.27.5 (1a2b3c4)`), and for `lsp` / `fmt` / `--version`. Set
+names a commit: `sky v0.29.0 (1a2b3c4)`), and for `lsp` / `fmt` / `--version`. Set
 `SKY_NO_UPDATE_CHECK=1` to disable it completely.
 
 ### `sky upgrade-claude`
@@ -1576,7 +1576,7 @@ sky console --tui          # same UI rendered through Sky.Tui in your terminal
 ```
 
 The source lives in `sky-bundled/console/` (embedded into the sky
-binary via Template Haskell). First invocation builds into
+binary at build time by `rust/crates/ffi/build.rs`). First invocation builds into
 `$XDG_CACHE_HOME/sky/console-<version>/` (~3–10 s); subsequent
 runs are instant. Cache keys include the version string so
 `sky upgrade` auto-invalidates.

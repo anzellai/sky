@@ -24,7 +24,7 @@
 #
 # The version is `[workspace.package] version` in rust/Cargo.toml, the one
 # version source (`sky --version` prints it). `gitRev` adds the commit:
-# `sky v0.27.5 (1a2b3c4)`. The flake passes its short revision; this entry
+# `sky v0.29.0 (1a2b3c4)`. The flake passes its short revision; this entry
 # has no git information, so a `nix-build` reports the plain version.
 let
   lock = builtins.fromJSON (builtins.readFile ./flake.lock);
@@ -55,7 +55,7 @@ let
     ];
 
   # A filtered copy of the repo: only the trees the build reads, so the
-  # examples, docs, apps and the legacy compiler stay out of the store.
+  # examples, docs and apps stay out of the store.
   # rust/crates/ffi/build.rs embeds sky-stdlib/, runtime-go/,
   # tools/sky-ffi-inspect/, templates/ and sky-bundled/; rust/crates/sky/build.rs
   # embeds docs/migration/v0.27.md; rust/crates/sky/src includes files from
@@ -190,6 +190,7 @@ let
       clippy,
       rust-analyzer,
       go_1_26,
+      nodejs_22,
       pkg-config,
       gnumake,
       curl,
@@ -213,6 +214,9 @@ let
         clippy
         rust-analyzer
         go_1_26
+        # Node 22 runs the Playwright e2e verifiers (scripts/*-e2e.sh), the
+        # same major as .github/actions/playwright-setup.
+        nodejs_22
         pkg-config
         gnumake
         curl
@@ -220,11 +224,11 @@ let
         git
       ];
       shellHook = ''
-        export SKY_RUNTIME_DIR="$PWD/runtime-go"
         echo "sky (rust) dev shell"
         echo "  cargo $(cargo --version | awk '{print $2}')"
         echo "  rustc $(rustc --version | awk '{print $2}')"
         echo "  go    $(go version | awk '{print $3}')"
+        echo "  node  $(node --version)"
         echo
         echo "build:         ./scripts/build.sh   (cargo build --release -p sky -> sky-out/sky)"
         echo "quick rebuild: ( cd rust && cargo build --release -p sky )"

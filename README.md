@@ -11,8 +11,8 @@
 > The compiler is written in
 > Rust (cargo workspace at `rust/`) — the typed-Go output and the
 > "if it compiles, it works" guarantee carry over unchanged. The
-> retired Haskell compiler stays under `legacy-haskell-compiler/` as
-> the differential oracle. **New in v0.24: [automated testing](docs/tooling/testing.md)**
+> retired Haskell compiler was removed from the tree in v0.29.0
+> ([history](docs/history/legacy-compilers.md)). **New in v0.24: [automated testing](docs/tooling/testing.md)**
 > — `sky fuzz` (a no-panic model fuzzer; `--target web:app` adds a differential
 > split oracle) and mock-by-default test mode — and **audit-grade
 > [architecture diagrams](docs/tooling/cli.md)** (`sky doc --diagram`: C4
@@ -95,9 +95,9 @@ itself enforces — the compiler is now written in the same style it
 compiles. The typed-Go output and the "if it compiles, it works"
 contract carry over unchanged; every one of v0.17's hard-won learnings
 is now a crate boundary, a gate, or a test, which is what makes the v1
-goals reachable. The retired Haskell compiler stays under
-[`legacy-haskell-compiler/`](legacy-haskell-compiler/) as a
-byte-for-byte differential oracle until v1 is tagged.
+goals reachable. The retired Haskell compiler served as a byte-for-byte
+differential oracle until v0.28.x and was removed from the tree in v0.29.0
+([history](docs/history/legacy-compilers.md)).
 
 ## Hello, Sky
 
@@ -183,7 +183,7 @@ cd sky/rust && cargo build --release -p sky
 ```
 
 The `sky` binary embeds the runtime, stdlib, and Sky Console.
-End users only need `sky` on PATH and Go 1.21+ available for
+End users only need `sky` on PATH and Go 1.25+ available for
 codegen.
 
 ## Pick your shape — when to use what
@@ -397,8 +397,8 @@ sharing a token, set `SKY_CONSOLE_AUTH=app` and add
 [`docs/skyapp/overview.md`](docs/skyapp/overview.md#the-sky-console-for-your-own-admins--appwithconsoleauth)).
 
 Deploy with `scp` + your favourite supervisor, drop the binary
-into a Docker `FROM scratch` image, or run it directly on any
-platform with a Go 1.22+ runtime.
+into a Docker `FROM scratch` image, or run it directly. The built
+binary needs no Go at run time. Go 1.25+ is needed only where you build.
 
 ## Documentation
 
@@ -436,7 +436,7 @@ same content in the repo.
 
 ## Examples
 
-~50 examples ship in [`examples/`](examples/). Each builds clean
+73 examples ship in [`examples/`](examples/). Each builds clean
 from a wiped slate (`rm -rf sky-out .skycache .skydeps && sky build`).
 
 | Range  | Category                              |

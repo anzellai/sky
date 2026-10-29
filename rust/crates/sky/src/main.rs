@@ -14122,7 +14122,7 @@ fn bundled_missing(name: &str) -> ExitCode {
 }
 
 /// A filesystem-safe slug of the version string for cache-dir naming
-/// (`sky v0.17.10` → `v0.17.10`, `sky v0.27.5 (1a2b3c4)` → `v0.27.5__1a2b3c4_`).
+/// (`sky v0.17.10` → `v0.17.10`, `sky v0.29.0 (1a2b3c4)` → `v0.29.0__1a2b3c4_`).
 fn version_slug() -> String {
     version_string()
         .trim_start_matches("sky ")
@@ -15917,7 +15917,7 @@ enum Fix {
 
 /// `sky doctor [--fix] [--verbose|-v]` — port of `Sky.Cli.Doctor.runDoctor`.
 /// Runs the tractable subset of the oracle's checks against the nearest project
-/// root: sky.toml present + non-empty, entry file exists, Go toolchain ≥ 1.22,
+/// root: sky.toml present + non-empty, entry file exists, Go toolchain ≥ 1.25,
 /// stdlib/runtime assets resolvable, stale `.skycache`/`sky-out`, missing FFI
 /// bindings for domain-style imports, and the `SKY_AUTH_TOKEN_SECRET` gate when
 /// `[live]`/`[auth]` is configured. Exit 0 = clean, 1 = at least one finding,
@@ -16265,24 +16265,40 @@ fn check_library_sources(root: &Path) -> Vec<Finding> {
     }
 }
 
-/// Go toolchain present + ≥ 1.22 (generics + range-over-func the runtime needs).
+/// The oldest Go the generated projects build with. `runtime-go/go.mod` and
+/// every generated `go.mod` say `go 1.25.0`; an older Go only builds them by
+/// downloading a newer toolchain, which an offline machine cannot do.
+const GO_FLOOR: (u32, u32) = (1, 25);
+
+/// Does Go `maj.minor` meet [`GO_FLOOR`]?
+fn go_meets_floor(maj: u32, minor: u32) -> bool {
+    (maj, minor) >= GO_FLOOR
+}
+
+/// Go toolchain present + at or above [`GO_FLOOR`].
 fn check_go_toolchain() -> Vec<Finding> {
     match Command::new("go").arg("version").output() {
         Err(_) => vec![Finding {
             check: "go-toolchain",
             severity: Severity::Error,
             message: "`go` not found on PATH".into(),
-            hint: "install Go ≥ 1.22 (https://go.dev/dl/) and re-run".into(),
+            hint: format!(
+                "install Go ≥ {}.{} (https://go.dev/dl/) and re-run",
+                GO_FLOOR.0, GO_FLOOR.1
+            ),
             fix: None,
         }],
         Ok(o) if o.status.success() => {
             let out = String::from_utf8_lossy(&o.stdout);
             match parse_go_version(&out) {
-                Some((maj, minor)) if maj > 1 || (maj == 1 && minor >= 22) => Vec::new(),
+                Some((maj, minor)) if go_meets_floor(maj, minor) => Vec::new(),
                 Some((maj, minor)) => vec![Finding {
                     check: "go-toolchain",
                     severity: Severity::Error,
-                    message: format!("Go {maj}.{minor} is too old — Sky's runtime needs ≥ 1.22"),
+                    message: format!(
+                        "Go {maj}.{minor} is too old — Sky's runtime needs ≥ {}.{}",
+                        GO_FLOOR.0, GO_FLOOR.1
+                    ),
                     hint: "upgrade Go: https://go.dev/dl/".into(),
                     fix: None,
                 }],
@@ -19364,6 +19380,31 @@ echo key > "$ks"
         );
         assert_eq!(parse_go_version("go version go2.0.1 x"), Some((2, 0)));
         assert_eq!(parse_go_version("garbage"), None);
+    }
+
+    /// The doctor's Go floor is the one `runtime-go/go.mod` declares. It said
+    /// 1.22 while every generated `go.mod` said 1.25.0, so `sky doctor` passed
+    /// a Go that could not build the project offline.
+    #[test]
+    fn go_floor_matches_the_runtime_go_mod() {
+        assert!(!go_meets_floor(1, 22));
+        assert!(!go_meets_floor(1, 24));
+        assert!(go_meets_floor(1, 25));
+        assert!(go_meets_floor(1, 26));
+        assert!(go_meets_floor(2, 0));
+        let go_mod = include_str!("../../../../runtime-go/go.mod");
+        let declared = go_mod
+            .lines()
+            .find_map(|l| l.strip_prefix("go "))
+            .expect("runtime-go/go.mod declares a go version");
+        let mut parts = declared.trim().split('.');
+        let maj: u32 = parts.next().unwrap().parse().unwrap();
+        let minor: u32 = parts.next().unwrap().parse().unwrap();
+        assert_eq!(
+            (maj, minor),
+            GO_FLOOR,
+            "sky doctor's GO_FLOOR must equal the go directive in runtime-go/go.mod"
+        );
     }
 
     #[test]

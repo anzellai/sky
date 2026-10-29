@@ -248,7 +248,7 @@ jobs:
           #   tag v0.19.1  + binary "sky v0.19.10"    -> passed (wrong release!)
           #   tag v0.19.1  + binary "sky v0.19.1-rc1" -> passed (prerelease!)
           # Both are rejected below. So is a binary that names a commit after
-          # the version (`sky v0.27.5 (1a2b3c4)`, a source build): a release
+          # the version (`sky v0.29.0 (1a2b3c4)`, a source build): a release
           # sets SKY_GIT_REV="" and prints the version alone.
           REPORTED=$(printf '%s\n' "$ACTUAL" | head -1 | sed -n 's/^sky v\([^ ]*\)$/\1/p')
           if [ -z "$REPORTED" ]; then
