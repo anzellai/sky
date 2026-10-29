@@ -1491,12 +1491,13 @@ type Std_App_WebOpts_R struct {
 	Embedded         bool                                  `sky:"embedded,bool"`
 	SessionTransport Std_App_SessionTransport              `sky:"sessionTransport,Std_App_SessionTransport"`
 	Name             rt.SkyMaybe[string]                   `sky:"name,rt.SkyMaybe[string]"`
+	PersistExclude   rt.SkyMaybe[[]string]                 `sky:"persistExclude,rt.SkyMaybe[[]string]"`
 }
 
 func init() { rt.RegisterGobType(Std_App_WebOpts_R{}) }
 
-func Std_App_WebOpts(p0 int, p1 rt.SkyMaybe[string], p2 rt.SkyMaybe[string], p3 rt.SkyMaybe[string], p4 rt.SkyMaybe[string], p5 rt.SkyMaybe[string], p6 rt.SkyMaybe[int], p7 rt.SkyMaybe[string], p8 rt.SkyMaybe[struct{ PageViews bool }], p9 bool, p10 bool, p11 Std_App_SessionTransport, p12 rt.SkyMaybe[string]) Std_App_WebOpts_R {
-	return Std_App_WebOpts_R{Port: p0, Store: p1, Static: p2, StaticUrl: p3, Ttl: p4, IdleEvict: p5, MaxBodyBytes: p6, InputMode: p7, Analytics: p8, Csrf: p9, Embedded: p10, SessionTransport: p11, Name: p12}
+func Std_App_WebOpts(p0 int, p1 rt.SkyMaybe[string], p2 rt.SkyMaybe[string], p3 rt.SkyMaybe[string], p4 rt.SkyMaybe[string], p5 rt.SkyMaybe[string], p6 rt.SkyMaybe[int], p7 rt.SkyMaybe[string], p8 rt.SkyMaybe[struct{ PageViews bool }], p9 bool, p10 bool, p11 Std_App_SessionTransport, p12 rt.SkyMaybe[string], p13 rt.SkyMaybe[[]string]) Std_App_WebOpts_R {
+	return Std_App_WebOpts_R{Port: p0, Store: p1, Static: p2, StaticUrl: p3, Ttl: p4, IdleEvict: p5, MaxBodyBytes: p6, InputMode: p7, Analytics: p8, Csrf: p9, Embedded: p10, SessionTransport: p11, Name: p12, PersistExclude: p13}
 }
 
 type Std_Html_Attributes_Attribute = rt.SkyADT
@@ -2136,6 +2137,17 @@ func init() {
 	rt.GobRegister(Std_Ui_VAlign(0))
 }
 func (v Std_Ui_VAlign) SkyEnumName() string { return rt.EnumName("Std_Ui_VAlign", int(v)) }
+
+type Std_Xml_Encode_Attribute = rt.SkyADT
+
+func Std_Xml_Encode_Attribute_Attribute__Internal(v0 any) Std_Xml_Encode_Attribute {
+	return Std_Xml_Encode_Attribute{Tag: 0, SkyName: "Attribute__Internal", Fields: []any{v0}}
+}
+
+func init() {
+	rt.RegisterAdtTag("console_app.Std_Xml_Encode_Attribute", "Attribute__Internal", 0)
+	rt.RegisterMsgVariant("Std_Xml_Encode_Attribute", "Attribute__Internal", 0, 1)
+}
 
 // SKY-ORIGIN: entry
 
@@ -10392,7 +10404,7 @@ func Std_App_withNotFound(v_0 any, _t0 Std_App_App) Std_App_App {
 var Std_App_webDefaults__caf rt.LazyCaf[Std_App_WebOpts_R]
 
 func Std_App_webDefaults__cafInit() Std_App_WebOpts_R {
-	return Std_App_WebOpts_R{Port: (0 - 1), Store: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Static: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), StaticUrl: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Ttl: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), IdleEvict: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), MaxBodyBytes: /* primitive join */ rt.MaybeCoerce[int](rt.Nothing[any]()), InputMode: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Analytics: /* primitive join */ rt.MaybeCoerce[struct{ PageViews bool }](rt.Nothing[any]()), Csrf: true, Embedded: false, SessionTransport: Std_App_SessionTransport_CookieSession, Name: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]())}
+	return Std_App_WebOpts_R{Port: (0 - 1), Store: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Static: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), StaticUrl: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Ttl: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), IdleEvict: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), MaxBodyBytes: /* primitive join */ rt.MaybeCoerce[int](rt.Nothing[any]()), InputMode: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Analytics: /* primitive join */ rt.MaybeCoerce[struct{ PageViews bool }](rt.Nothing[any]()), Csrf: true, Embedded: false, SessionTransport: Std_App_SessionTransport_CookieSession, Name: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), PersistExclude: /* primitive join */ rt.MaybeCoerce[[]string](rt.Nothing[any]())}
 }
 
 func Std_App_webDefaults() Std_App_WebOpts_R {
@@ -10788,7 +10800,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 					Subscriptions any
 					Update        any
 					View          any
-				}{Init: func(v_21 struct {
+				}{Init: func(v_23 struct {
 					Cookies rt.SkyDict[string]
 					Headers rt.SkyDict[string]
 					Host    string
@@ -10800,36 +10812,36 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 					{
 						_t1 := v_0.Init(struct{}{})
 						_ = _t1
-						v_22 := _t1.V0
-						v_23 := _t1.V1
-						_ = v_22
-						_ = v_23
+						v_24 := _t1.V0
+						v_25 := _t1.V1
+						_ = v_24
+						_ = v_25
 						{
 							_subj := v_0.OnRequest
 							if _subj.Tag == 0 {
-								v_24 := _subj.JustValue
-								_ = v_24
+								v_26 := _subj.JustValue
+								_ = v_26
 								{
-									_t2 := v_24(Std_App_requestFromSeed_(v_21), v_22)
+									_t2 := v_26(Std_App_requestFromSeed_(v_23), v_24)
 									_ = _t2
-									v_25 := _t2.V0
-									v_26 := _t2.V1
-									_ = v_25
-									_ = v_26
-									return rt.T2[any, any]{V0: v_25, V1: rt.Cmd_batch(any([]any{v_23, v_26}))}
+									v_27 := _t2.V0
+									v_28 := _t2.V1
+									_ = v_27
+									_ = v_28
+									return rt.T2[any, any]{V0: v_27, V1: rt.Cmd_batch(any([]any{v_25, v_28}))}
 								}
 							}
 							if _subj.Tag == 1 {
-								return rt.T2[any, any]{V0: v_22, V1: v_23}
+								return rt.T2[any, any]{V0: v_24, V1: v_25}
 							}
 							panic(rt.Unreachable("case"))
 						}
 					}
-				}, Update: v_0.Update, View: func(v_27 any) Std_Html_Html {
+				}, Update: v_0.Update, View: func(v_29 any) Std_Html_Html {
 					{
 						_subj := v_0.ViewImpl
 						if _subj.Tag == 0 {
-							v_28 := /* generic erase */ func() func(any) Std_Ui_Element {
+							v_30 := /* generic erase */ func() func(any) Std_Ui_Element {
 								_s := any(_subj.Fields[0])
 								if _f, _ok := _s.(func(any) Std_Ui_Element); _ok {
 									return _f
@@ -10839,11 +10851,11 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 								}
 								return rt.CoerceFuncSlot[func(any) Std_Ui_Element](_s)
 							}()
-							_ = v_28
-							return Std_App_renderUiRoot_(v_28(v_27))
+							_ = v_30
+							return Std_App_renderUiRoot_(v_30(v_29))
 						}
 						if _subj.Tag == 1 {
-							v_29 := /* generic erase */ func() func(any) Std_Html_Html {
+							v_31 := /* generic erase */ func() func(any) Std_Html_Html {
 								_s := any(_subj.Fields[0])
 								if _f, _ok := _s.(func(any) Std_Html_Html); _ok {
 									return _f
@@ -10853,11 +10865,11 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 								}
 								return rt.CoerceFuncSlot[func(any) Std_Html_Html](_s)
 							}()
-							_ = v_29
-							return Std_App_renderHtmlRoot_(v_29(v_27))
+							_ = v_31
+							return Std_App_renderHtmlRoot_(v_31(v_29))
 						}
 						if _subj.Tag == 2 {
-							v_30 := /* generic erase */ func() func(any) string {
+							v_32 := /* generic erase */ func() func(any) string {
 								_s := any(_subj.Fields[0])
 								if _f, _ok := _s.(func(any) string); _ok {
 									return _f
@@ -10867,8 +10879,8 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 								}
 								return rt.CoerceFuncSlot[func(any) string](_s)
 							}()
-							_ = v_30
-							return Std_Html_text(v_30(v_27))
+							_ = v_32
+							return Std_Html_text(v_32(v_29))
 						}
 						panic(rt.Unreachable("case"))
 					}
@@ -10877,9 +10889,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withStore__4 := func() any {
 					_subj := w_2.Store
 					if _subj.Tag == 0 {
-						v_31 := _subj.JustValue
-						_ = v_31
-						return rt.Live_withStore(any(v_31), base_3)
+						v_33 := _subj.JustValue
+						_ = v_33
+						return rt.Live_withStore(any(v_33), base_3)
 					}
 					if _subj.Tag == 1 {
 						return base_3
@@ -10890,9 +10902,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withStatic__5 := func() any {
 					_subj := w_2.Static
 					if _subj.Tag == 0 {
-						v_32 := _subj.JustValue
-						_ = v_32
-						return rt.Live_withStatic(any(v_32), withStore__4)
+						v_34 := _subj.JustValue
+						_ = v_34
+						return rt.Live_withStatic(any(v_34), withStore__4)
 					}
 					if _subj.Tag == 1 {
 						return withStore__4
@@ -10903,9 +10915,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withStaticUrl__6 := func() any {
 					_subj := w_2.StaticUrl
 					if _subj.Tag == 0 {
-						v_33 := _subj.JustValue
-						_ = v_33
-						return rt.Live_withStaticUrl(any(v_33), withStatic__5)
+						v_35 := _subj.JustValue
+						_ = v_35
+						return rt.Live_withStaticUrl(any(v_35), withStatic__5)
 					}
 					if _subj.Tag == 1 {
 						return withStatic__5
@@ -10916,9 +10928,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withTtl__7 := func() any {
 					_subj := w_2.Ttl
 					if _subj.Tag == 0 {
-						v_34 := _subj.JustValue
-						_ = v_34
-						return rt.Live_withTtl(any(v_34), withStaticUrl__6)
+						v_36 := _subj.JustValue
+						_ = v_36
+						return rt.Live_withTtl(any(v_36), withStaticUrl__6)
 					}
 					if _subj.Tag == 1 {
 						return withStaticUrl__6
@@ -10929,9 +10941,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withIdle__8 := func() any {
 					_subj := w_2.IdleEvict
 					if _subj.Tag == 0 {
-						v_35 := _subj.JustValue
-						_ = v_35
-						return rt.Live_withIdleEvict(any(v_35), withTtl__7)
+						v_37 := _subj.JustValue
+						_ = v_37
+						return rt.Live_withIdleEvict(any(v_37), withTtl__7)
 					}
 					if _subj.Tag == 1 {
 						return withTtl__7
@@ -10942,9 +10954,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withMaxBody__9 := func() any {
 					_subj := w_2.MaxBodyBytes
 					if _subj.Tag == 0 {
-						v_36 := _subj.JustValue
-						_ = v_36
-						return rt.Live_withMaxBodyBytes(any(v_36), withIdle__8)
+						v_38 := _subj.JustValue
+						_ = v_38
+						return rt.Live_withMaxBodyBytes(any(v_38), withIdle__8)
 					}
 					if _subj.Tag == 1 {
 						return withIdle__8
@@ -10955,9 +10967,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withInputMode__10 := func() any {
 					_subj := w_2.InputMode
 					if _subj.Tag == 0 {
-						v_37 := _subj.JustValue
-						_ = v_37
-						return rt.Live_withInput(any(v_37), withMaxBody__9)
+						v_39 := _subj.JustValue
+						_ = v_39
+						return rt.Live_withInput(any(v_39), withMaxBody__9)
 					}
 					if _subj.Tag == 1 {
 						return withMaxBody__9
@@ -10976,9 +10988,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withAnalytics__12 := func() any {
 					_subj := w_2.Analytics
 					if _subj.Tag == 0 {
-						v_38 := _subj.JustValue
-						_ = v_38
-						return rt.Live_withAnalytics(any(v_38), withPort__11)
+						v_40 := _subj.JustValue
+						_ = v_40
+						return rt.Live_withAnalytics(any(v_40), withPort__11)
 					}
 					if _subj.Tag == 1 {
 						return withPort__11
@@ -10989,9 +11001,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withHead__13 := func() any {
 					_subj := v_0.Head
 					if _subj.Tag == 0 {
-						v_39 := _subj.JustValue
-						_ = v_39
-						return rt.Live_withHead(any(func(_w4 any) any { return any(v_39(_w4)) }), withAnalytics__12)
+						v_41 := _subj.JustValue
+						_ = v_41
+						return rt.Live_withHead(any(func(_w4 any) any { return any(v_41(_w4)) }), withAnalytics__12)
 					}
 					if _subj.Tag == 1 {
 						return withAnalytics__12
@@ -11002,9 +11014,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withGuard__14 := func() any {
 					_subj := v_0.Guard
 					if _subj.Tag == 0 {
-						v_40 := _subj.JustValue
-						_ = v_40
-						return rt.Live_withGuard(any(func(_w5 any) any { return any(func(_w6 any) any { return any(v_40(_w5, _w6)) }) }), withHead__13)
+						v_42 := _subj.JustValue
+						_ = v_42
+						return rt.Live_withGuard(any(func(_w5 any) any { return any(func(_w6 any) any { return any(v_42(_w5, _w6)) }) }), withHead__13)
 					}
 					if _subj.Tag == 1 {
 						return withHead__13
@@ -11015,9 +11027,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withNav__15 := func() any {
 					_subj := v_0.OnNavigate
 					if _subj.Tag == 0 {
-						v_41 := _subj.JustValue
-						_ = v_41
-						return rt.Live_withOnNavigate(any(v_41), withGuard__14)
+						v_43 := _subj.JustValue
+						_ = v_43
+						return rt.Live_withOnNavigate(any(v_43), withGuard__14)
 					}
 					if _subj.Tag == 1 {
 						return withGuard__14
@@ -11075,10 +11087,10 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withConsole__17 := func() any {
 					_subj := v_0.ConsoleAuth
 					if _subj.Tag == 0 {
-						v_42 := _subj.JustValue
-						_ = v_42
+						v_44 := _subj.JustValue
+						_ = v_44
 						return rt.Live_withConsoleAuthModel(any(func(_w8 any) any {
-							return any(func(_w9 any) any { return any(v_42( /* FFI return */ rt.Coerce[Sky_Http_Server_Request_R](_w8), _w9)) })
+							return any(func(_w9 any) any { return any(v_44( /* FFI return */ rt.Coerce[Sky_Http_Server_Request_R](_w8), _w9)) })
 						}), withDur__16)
 					}
 					if _subj.Tag == 1 {
@@ -11106,9 +11118,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withName__20 := func() any {
 					_subj := Std_App_nameIn_(v_0.Configs)
 					if _subj.Tag == 0 {
-						v_43 := _subj.JustValue
-						_ = v_43
-						return rt.Live_withName(any(v_43), withTransport__19)
+						v_45 := _subj.JustValue
+						_ = v_45
+						return rt.Live_withName(any(v_45), withTransport__19)
 					}
 					if _subj.Tag == 1 {
 						return withTransport__19
@@ -11116,11 +11128,92 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 					panic(rt.Unreachable("case"))
 				}()
 				_ = withName__20
-				return rt.Just[any](withName__20)
+				exclude__21 := Std_App_persistExcludeIn_(v_0.Configs)
+				_ = exclude__21
+				withExclude__22 := func() any {
+					if rt.List_isEmptyT[string](exclude__21) {
+						return withName__20
+					} else {
+						return rt.Live_withRefreshOnLoad(any(exclude__21), withName__20)
+					}
+				}()
+				_ = withExclude__22
+				return rt.Just[any](withExclude__22)
 			}
 		}
 		if _subj.Tag == 1 {
 			return rt.Nothing[any]()
+		}
+		panic(rt.Unreachable("case"))
+	}
+}
+
+func Std_App_persistExcludeIn_(v_0 []Std_App_Config) []string {
+	{
+		_subj := Std_App_lastExcludeIn_(rt.Nothing[[]string](), v_0)
+		if _subj.Tag == 0 {
+			v_1 := _subj.JustValue
+			_ = v_1
+			return v_1
+		}
+		if _subj.Tag == 1 {
+			return []string{}
+		}
+		panic(rt.Unreachable("case"))
+	}
+}
+
+func Std_App_lastExcludeIn_(v_0 rt.SkyMaybe[[]string], v_1 []Std_App_Config) rt.SkyMaybe[[]string] {
+	for {
+		_subj0 := v_1
+		if rt.SkyLenT(_subj0) == 0 {
+			return v_0
+		}
+		if (rt.SkyLenT(_subj0) >= 1) && (rt.SkyElemT(_subj0, 0).Tag == 0) {
+			v_2 := /* generic erase */ rt.Coerce[Std_App_WebOpts_R](rt.SkyElemT(_subj0, 0).Fields[0])
+			v_3 := rt.SkyTailSliceT(_subj0)
+			_ = v_2
+			_ = v_3
+			_t1 := Std_App_newerExclude_(v_2, v_0)
+			_t2 := v_3
+			v_0 = _t1
+			v_1 = _t2
+			continue
+		}
+		if (rt.SkyLenT(_subj0) >= 1) && (rt.SkyElemT(_subj0, 0).Tag == 2) {
+			v_4 := /* generic erase */ rt.Coerce[Std_App_WebOpts_R](rt.SkyElemT(_subj0, 0).Fields[0])
+			v_5 := rt.SkyTailSliceT(_subj0)
+			_ = v_4
+			_ = v_5
+			_t3 := Std_App_newerExclude_(v_4, v_0)
+			_t4 := v_5
+			v_0 = _t3
+			v_1 = _t4
+			continue
+		}
+		if rt.SkyLenT(_subj0) >= 1 {
+			v_6 := rt.SkyTailSliceT(_subj0)
+			_ = v_6
+			_t5 := v_0
+			_t6 := v_6
+			v_0 = _t5
+			v_1 = _t6
+			continue
+		}
+		panic(rt.Unreachable("case"))
+	}
+}
+
+func Std_App_newerExclude_(v_0 Std_App_WebOpts_R, v_1 rt.SkyMaybe[[]string]) rt.SkyMaybe[[]string] {
+	{
+		_subj := v_0.PersistExclude
+		if _subj.Tag == 0 {
+			v_2 := _subj.JustValue
+			_ = v_2
+			return /* primitive join */ rt.MaybeCoerce[[]string](rt.Just[any](v_2))
+		}
+		if _subj.Tag == 1 {
+			return v_1
 		}
 		panic(rt.Unreachable("case"))
 	}

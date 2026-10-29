@@ -68,6 +68,9 @@ const APP_SRC: &str = r#"module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
+import Sky.Core.Error as Error
+import Sky.Core.System as System
+import Std.Log exposing (println)
 import Std.Html exposing (..)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -84,8 +87,12 @@ conn =
         Ok c ->
             c
 
-        Err _ ->
-            conn
+        Err e ->
+            let
+                _ =
+                    println ("cannot open the database: " ++ Error.toString e)
+            in
+                System.exit 1
 
 
 type alias Model =

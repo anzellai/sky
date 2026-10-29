@@ -23,13 +23,21 @@ fn read(rel: &str) -> String {
 /// `## vX.Y.Z` heading of CHANGELOG.md that is not marked unreleased and is
 /// not on that line. The v0.28 migration guide is measured from it, so it stays
 /// right both while v0.28.0 is unreleased and once its heading is dated.
+/// `(major, minor)` of `v0.28` or `v0.28.1`.
+fn minor_line(v: &str) -> Option<(u32, u32)> {
+    let mut parts = v.trim_start_matches('v').split('.');
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+}
+
+/// The newest released version on a line older than `line`. A newer line
+/// above it (a later minor release) does not count: it is not "before".
 fn newest_release_before(changelog: &str, line: &str) -> String {
-    let prefix = format!("{line}.");
+    let want = minor_line(line).expect("a line such as v0.28");
     changelog
         .lines()
         .filter(|l| l.starts_with("## v") && !l.contains("(unreleased)"))
         .filter_map(|l| l.trim_start_matches("## ").split_whitespace().next())
-        .find(|v| !v.starts_with(&prefix))
+        .find(|v| minor_line(v).is_some_and(|m| m < want))
         .map(str::to_string)
         .expect("a released version in CHANGELOG.md")
 }
@@ -92,6 +100,12 @@ fn the_training_docs_state_the_trainers_as_they_ship() {
         }
     }
     assert!(p.is_empty(), "{}", p.join("\n"));
+}
+
+#[test]
+fn the_newest_release_skips_a_later_line() {
+    let c = "# Changelog\n\n## v0.29.0 — w (2026-10-29)\n\n## v0.28.1 — x (2026-10-28)\n\n## v0.28.0 — y (2026-10-28)\n\n## v0.27.20 — z (2026-10-27)\n";
+    assert_eq!(newest_release_before(c, "v0.28"), "v0.27.20");
 }
 
 #[test]

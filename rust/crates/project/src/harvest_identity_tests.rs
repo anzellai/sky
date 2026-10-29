@@ -35,7 +35,7 @@ const NEEDS_FETCH: &[(&str, &str)] = &[(
 /// [`NEEDS_FETCH`]). A change means an example stopped loading, was added or
 /// was removed: account for it here in the same change.
 /// 76 since v0.28.0: + examples 68 to 75 (the Std.Ai examples).
-const COVERED_WITHOUT_FETCH: usize = 76;
+const COVERED_WITHOUT_FETCH: usize = 74;
 
 /// The number of defs that want a harvest across those projects, and how many
 /// of them find a closed record. A drop means the differential lost coverage.
