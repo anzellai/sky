@@ -9547,11 +9547,30 @@ func Server_header(name any, req any) any {
 	if !ok {
 		return Nothing[any]()
 	}
-	v, found := r.Headers[fmt.Sprintf("%v", name)]
-	if found {
+	if v, found := requestHeaderLookup(r.Headers, fmt.Sprintf("%v", name)); found {
 		return Just[any](v)
 	}
 	return Nothing[any]()
+}
+
+// requestHeaderLookup finds a request header by name, ignoring case: HTTP
+// header names are case-insensitive (RFC 9110 section 5.1). The request map
+// holds Go's canonical spelling (`Content-Type`), so the canonical form is
+// tried first (one map read), then the exact name, then a case-insensitive
+// scan for a key set in another spelling (a hand-built request).
+func requestHeaderLookup(headers map[string]any, name string) (any, bool) {
+	if v, ok := headers[textproto.CanonicalMIMEHeaderKey(name)]; ok {
+		return v, true
+	}
+	if v, ok := headers[name]; ok {
+		return v, true
+	}
+	for k, v := range headers {
+		if strings.EqualFold(k, name) {
+			return v, true
+		}
+	}
+	return nil, false
 }
 
 // ═══════════════════════════════════════════════════════════

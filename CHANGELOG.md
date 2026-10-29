@@ -213,6 +213,13 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   forward references like every other `let` (it was emitted in source order,
   so a forward reference there failed `go build` too).
 
+- **`Server.header` ignores the case of the header name.** HTTP header names
+  are case-insensitive, and the doc said so, but the lookup was exact:
+  `Server.header "content-type" req` was `Nothing` for a request that sent
+  `Content-Type`, because the request holds Go's canonical spelling. The
+  lookup now tries the canonical form, then the exact name, then any key that
+  differs only in case.
+
 ## v0.28.1 — Insert text at the caret (Std.Native.insertAtCursor) (2026-10-28)
 
 ### Added
