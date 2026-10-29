@@ -148,7 +148,9 @@ pub const CORPUS_REL_DIR: &str = "rust/crates/ty/tests/reject/corpus";
 /// **91 since v0.27.18**: `constructor_clash_expression.sky` and
 /// `constructor_clash_pattern.sky` pin `[E1017]` at the use site.
 /// **92 at the merge of v0.27.18 into the v0.28.0 branch** (both of the above).
-pub const EXPECTED_CORPUS_FILES: usize = 92;
+/// **94 since v0.29.0**: `value_cycle_top_level.sky` and `value_cycle_in_let.sky`
+/// pin `[E1018]` (a value defined in terms of itself).
+pub const EXPECTED_CORPUS_FILES: usize = 94;
 
 /// The EXACT number of corpus files tagged `-- gate: known-leniency` — programs
 /// the ORACLE rejects that the Rust checker deliberately accepts for a
@@ -177,7 +179,8 @@ pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNO
 /// **44 since v0.28.0 phase 2 part C** (`ai_eval_passed_is_opaque.sky`).
 /// **45 since v0.27.18** (the two `constructor_clash_*.sky` files, `[E1017]`).
 /// **46 at the merge of v0.27.18 into the v0.28.0 branch** (both of the above).
-pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 46;
+/// **48 since v0.29.0** (the two `value_cycle_*.sky` files, `[E1018]`).
+pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 48;
 
 /// The EXACT number of corpus files whose expectation is DERIVED from the
 /// `-- oracle: reject [CODE…]` header, on the assumption that Rust and the

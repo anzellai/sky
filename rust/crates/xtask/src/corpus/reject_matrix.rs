@@ -92,6 +92,7 @@ pub const DEFECT: Axis = Axis::new(
         "result_vs_maybe",
         "task_vs_pure",
         "dict_composite_key",
+        "value_cycle",
     ],
 );
 
@@ -423,6 +424,24 @@ fn defect(defect: &str, rimport: &str) -> (Side, Side, &'static str) {
             let mut well = Side::new(well_decls, probe);
             well.extra_imports.push(dict_import);
             (ill, well, "E2008")
+        }
+
+        // ---- bad recursion (v0.29.0) --------------------------------------
+        // Two values defined in terms of each other passed `sky check` and
+        // deadlocked on the first read. The twin gives `loopB` a base value.
+        "value_cycle" => {
+            let probe = "String.fromInt loopA";
+            let decls = |b: &str| {
+                format!(
+                    "loopA : Int\nloopA =\n    loopB + knownName\n\n\n\
+                     loopB : Int\nloopB =\n    {b}\n"
+                )
+            };
+            (
+                Side::new(decls("loopA * 2"), probe),
+                Side::new(decls("2"), probe),
+                "E1018",
+            )
         }
 
         other => panic!("reject_matrix: unknown defect {other:?}"),

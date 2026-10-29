@@ -18,6 +18,7 @@ mod ids;
 mod kernel;
 mod resolve;
 pub mod stdlib_history;
+mod value_cycle;
 
 pub use db::{ImportSource, SkyDb, SourceDb};
 pub use exports::{compute_exports, ExportedAlias, ExportedCtor, ExportedUnion, ModuleExports};

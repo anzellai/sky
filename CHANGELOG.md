@@ -196,6 +196,12 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   `unique`), and uses the bare name, now gets `[E1012]` at the use. Qualify the
   name (`Maybe.map2`, `Schema.unique`), or narrow one `exposing` list.
 
+- **A value defined in terms of itself no longer compiles.** A program with a
+  cycle of values (`a = b + 1` and `b = a * 2`, `xs = 1 :: xs`) used to pass
+  `sky check` and then hang or fail `go build`; it is now `[E1018]` at the
+  first value of the cycle. Such a program never worked, so only code that was
+  never run is affected. Give one value a base case, or a parameter.
+
 ### Fixed
 
 - **`String.padLeft` and `String.padRight` are O(n).** They added one pad
@@ -226,6 +232,16 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   `Content-Type`, because the request holds Go's canonical spelling. The
   lookup now tries the canonical form, then the exact name, then any key that
   differs only in case.
+
+- **A value defined in terms of itself is a compile error, `[E1018]` BAD
+  RECURSION.** `a = b + 1` with `b = a * 2`, or `xs = 1 :: xs`, passed `sky
+  check`: a top-level cycle deadlocked on its first read, and the same cycle
+  inside a `let` failed `go build`. The checker now refuses a cycle that holds
+  a value (a definition with no parameters whose body is not a lambda), names
+  it (`a -> b -> a`), and says how to break it. Functions that call each other
+  are ordinary recursion and stay accepted, as do a reference under a lambda, a
+  function named but not called, and a partial application. See
+  `docs/errors/E1018-value-cycle.md`.
 
 ## v0.28.1 — Insert text at the caret (Std.Native.insertAtCursor) (2026-10-28)
 

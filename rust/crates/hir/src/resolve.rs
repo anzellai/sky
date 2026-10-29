@@ -205,6 +205,21 @@ pub fn resolve(db: &dyn SkyDb, module: ModuleId) -> ResolveResult {
     let mut r = Resolver::new(db, module);
     r.build_env();
     r.walk_module();
+    // `[E1018]`: a value defined in terms of itself (value_cycle.rs).
+    let spans: HashMap<DefId, Span> = r.result.def_spans.iter().copied().collect();
+    let names: HashMap<DefId, (String, Option<Span>)> = r
+        .result
+        .top_defs
+        .iter()
+        .map(|td| {
+            (
+                td.def,
+                (td.name.as_str().to_string(), spans.get(&td.def).copied()),
+            )
+        })
+        .collect();
+    let cycles = crate::value_cycle::check(&r.result.bodies, &names);
+    r.result.diagnostics.extend(cycles);
     r.result
 }
 

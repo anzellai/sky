@@ -1,0 +1,30 @@
+-- PINNED REPRO — v0.29.0, found while fixing mutually recursive local functions
+--
+-- Two top-level values defined in terms of each other (`a = b + 1`,
+-- `b = a * 2`) passed `sky check` and `go build`, then deadlocked on the
+-- first read of `a`: a top-level value is computed once and waited for
+-- itself. Now refused at check time, `[E1018]`, naming the cycle
+-- `a -> b -> a` (hir/src/value_cycle.rs).
+--
+-- coordinate: defect=value_cycle rposition=bare rimport=plain
+-- expect: reject
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+a : Int
+a =
+    b + 1
+
+
+b : Int
+b =
+    a * 2
+
+
+main =
+    println (String.fromInt a)

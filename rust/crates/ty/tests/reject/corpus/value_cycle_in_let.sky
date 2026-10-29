@@ -1,0 +1,27 @@
+-- gate: reject
+-- defect: a local value that calls a local function which reads the value
+-- rust: reject [E1018] bad recursion inside a let
+--
+-- Found 2026-10-28 while fixing mutually recursive local functions: a plain
+-- value of a `let` that calls a local function reading that value is not a
+-- function group, and failed `go build`. Now `[E1018]` names the cycle
+-- `total -> add -> total`.
+module Main exposing (main)
+
+import Std.Log exposing (println)
+
+
+compute : Int -> Int
+compute n =
+    let
+        total =
+            add n
+
+        add k =
+            total + k
+    in
+    total
+
+
+main =
+    println (String.fromInt (compute 2))

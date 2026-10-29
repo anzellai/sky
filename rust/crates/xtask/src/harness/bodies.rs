@@ -913,7 +913,10 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 ///
 /// **809 since the v0.29.0 Sky.Core.Array Family-S surface** (+5: its
 /// nominal, empty, boundary, unicode and failure cases).
-pub const CORPUS_EXPECTED: u64 = 809;
+///
+/// **818 since the v0.29.0 `value_cycle` defect of Family R** (+9: 3
+/// `rposition` x 3 `rimport`, each a rejection `[E1018]` with its twin).
+pub const CORPUS_EXPECTED: u64 = 818;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -1010,7 +1013,10 @@ pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 663;
 /// **270 since the `dict_composite_key` defect** (was 252 / 126 cases): the
 /// `[E2008]` unsupported-`Dict`-key rejection, crossed with the position and
 /// import axes.
-pub const CORPUS_REJECT_EXPECTED: u64 = 270;
+///
+/// **288 since the v0.29.0 `value_cycle` defect** (144 cases): two values
+/// defined in terms of each other, `[E1018]`.
+pub const CORPUS_REJECT_EXPECTED: u64 = 288;
 /// Family E: one assertion per asserted property across the 10 cases. Measured:
 /// **46** (the two struct-shape properties only apply to the named-alias arm).
 pub const CORPUS_EMIT_SHAPE_EXPECTED: u64 = 46;
