@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 196 |
+| surfaces | 200 |
 | covered by the new corpus (>= Asserted) | 186 |
 | verdict `stronger` | 181 |
-| verdict `equal` | 15 |
+| verdict `equal` | 19 |
 | verdict `weaker` | 0 |
 | corpus units | 152 |
-| stdlib modules (denominator) | 128 |
-| stdlib entries (denominator) | 3007 |
+| stdlib modules (denominator) | 132 |
+| stdlib entries (denominator) | 3072 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 8 | 6.3% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 934 | 31.1% |
-| symbols unreferenced under the generous rule | 827 | 27.5% |
+| stdlib modules imported by nothing | 12 | 9.1% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 1009 | 32.8% |
+| symbols unreferenced under the generous rule | 902 | 29.4% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 0 | — |
 
 ### Surfaces with zero new cover
@@ -49,6 +49,10 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `stdlib.Std.Db.Table`
 - `stdlib.Std.Tui`
 - `stdlib.Std.Webview`
+- `stdlib.Std.Xml`
+- `stdlib.Std.Xml.Decode`
+- `stdlib.Std.Xml.Encode`
+- `stdlib.Std.Zip`
 
 ## Sole ownership
 
@@ -273,6 +277,10 @@ None.
 | `stdlib.Std.Ui.Transition` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Watch` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Webview` | stdlib | None | None | equal |
+| `stdlib.Std.Xml` | stdlib | None | None | equal |
+| `stdlib.Std.Xml.Decode` | stdlib | None | None | equal |
+| `stdlib.Std.Xml.Encode` | stdlib | None | None | equal |
+| `stdlib.Std.Zip` | stdlib | None | None | equal |
 | `ui.cross-backend` | ui | Asserted | Falsified | stronger |
 | `ui.tui` | ui | Runs | Falsified | stronger |
 | `ui.webview` | ui | Builds | Falsified | stronger |

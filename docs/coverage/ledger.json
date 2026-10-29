@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1672,
+      "expected_assertions": 1724,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -433,7 +433,7 @@
       "tier": "T1"
     },
     "corpus-1": {
-      "expected_assertions": 166,
+      "expected_assertions": 169,
       "falsifier_mutation": "corpus-1.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 0 of 4: each case built + run; values compared against the generator's own",
@@ -471,7 +471,7 @@
       "tier": "T2"
     },
     "corpus-2": {
-      "expected_assertions": 166,
+      "expected_assertions": 168,
       "falsifier_mutation": "corpus-2.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 1 of 4: each case built + run; values compared against the generator's own",
@@ -509,7 +509,7 @@
       "tier": "T2"
     },
     "corpus-3": {
-      "expected_assertions": 166,
+      "expected_assertions": 168,
       "falsifier_mutation": "corpus-3.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 2 of 4: each case built + run; values compared against the generator's own",
@@ -547,7 +547,7 @@
       "tier": "T2"
     },
     "corpus-4": {
-      "expected_assertions": 165,
+      "expected_assertions": 168,
       "falsifier_mutation": "corpus-4.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 3 of 4: each case built + run; values compared against the generator's own",
@@ -607,7 +607,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 827,
+      "expected_assertions": 837,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -795,7 +795,7 @@
       "tier": "T2"
     },
     "stdlib-bodies": {
-      "expected_assertions": 128,
+      "expected_assertions": 132,
       "falsifier_mutation": "stdlib-bodies.record-missing-field",
       "falsifier_proven": true,
       "summary": "every sky-stdlib module body type-checks (a build trusts stdlib signatures)",
@@ -946,13 +946,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3007,
-    "stdlib_modules": 128,
+    "stdlib_entries": 3072,
+    "stdlib_modules": 132,
     "surfaces_covered": 186,
-    "surfaces_covered_pct": 94.9,
-    "surfaces_equal": 15,
+    "surfaces_covered_pct": 93.0,
+    "surfaces_equal": 19,
     "surfaces_stronger": 181,
-    "surfaces_total": 196,
+    "surfaces_total": 200,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -18594,6 +18594,70 @@
       "verdict": "equal"
     },
     {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Xml public API",
+      "id": "stdlib.Std.Xml",
+      "verdict": "equal"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Xml.Decode public API",
+      "id": "stdlib.Std.Xml.Decode",
+      "verdict": "equal"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Xml.Encode public API",
+      "id": "stdlib.Std.Xml.Encode",
+      "verdict": "equal"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Zip public API",
+      "id": "stdlib.Std.Zip",
+      "verdict": "equal"
+    },
+    {
       "category": "ui",
       "cover_new": {
         "class": "Falsified",
@@ -18701,7 +18765,7 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 8,
+      "count": 12,
       "modules": [
         "Sky.Core.Basics",
         "Sky.Core.Io",
@@ -18710,9 +18774,13 @@
         "Std.Db.Migrate",
         "Std.Db.Table",
         "Std.Tui",
-        "Std.Webview"
+        "Std.Webview",
+        "Std.Xml",
+        "Std.Xml.Decode",
+        "Std.Xml.Encode",
+        "Std.Zip"
       ],
-      "pct_of_denominator": 6.3
+      "pct_of_denominator": 9.1
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -18720,7 +18788,7 @@
       "modules": []
     },
     "surfaces_with_zero_new_cover": {
-      "count": 9,
+      "count": 13,
       "surfaces": [
         "cli.console",
         "cli.console-serve",
@@ -18730,7 +18798,11 @@
         "stdlib.Std.Cli",
         "stdlib.Std.Db.Table",
         "stdlib.Std.Tui",
-        "stdlib.Std.Webview"
+        "stdlib.Std.Webview",
+        "stdlib.Std.Xml",
+        "stdlib.Std.Xml.Decode",
+        "stdlib.Std.Xml.Encode",
+        "stdlib.Std.Zip"
       ]
     },
     "symbols_unreferenced_generous": {
@@ -18825,6 +18897,12 @@
             "requiredAt"
           ]
         },
+        "Sky.Core.List": {
+          "count": 1,
+          "symbols": [
+            "sortWith"
+          ]
+        },
         "Sky.Core.Maybe": {
           "count": 8,
           "symbols": [
@@ -18884,8 +18962,12 @@
           ]
         },
         "Sky.Core.String": {
-          "count": 2,
+          "count": 6,
           "symbols": [
+            "casefold",
+            "equalFold",
+            "isEmail",
+            "isUrl",
             "normalize",
             "normalizeNFD"
           ]
@@ -19356,12 +19438,14 @@
           ]
         },
         "Std.Codec": {
-          "count": 5,
+          "count": 7,
           "symbols": [
             "ColType",
             "JsonSchema",
             "Variant",
             "dict",
+            "fromXml",
+            "toXml",
             "var3"
           ]
         },
@@ -19369,6 +19453,16 @@
           "count": 1,
           "symbols": [
             "expand"
+          ]
+        },
+        "Std.Crypto.Kx": {
+          "count": 5,
+          "symbols": [
+            "publicKeyFromBase64",
+            "publicKeyToBase64",
+            "secretKeyFromBase64",
+            "secretKeyToBase64",
+            "secretKeyToBytes"
           ]
         },
         "Std.Crypto.Noise": {
@@ -20036,10 +20130,93 @@
             "withSize",
             "withTitle"
           ]
+        },
+        "Std.Xml": {
+          "count": 14,
+          "symbols": [
+            "Limits",
+            "Mode",
+            "Node",
+            "attribute",
+            "attributes",
+            "children",
+            "defaultLimits",
+            "elements",
+            "elementsNamed",
+            "name",
+            "namespace",
+            "parse",
+            "parseWith",
+            "text"
+          ]
+        },
+        "Std.Xml.Decode": {
+          "count": 27,
+          "symbols": [
+            "Decoder",
+            "andThen",
+            "at",
+            "attribute",
+            "bool",
+            "children",
+            "decodeNode",
+            "decodeString",
+            "element",
+            "fail",
+            "float",
+            "inNamespace",
+            "int",
+            "list",
+            "localName",
+            "map",
+            "map2",
+            "map3",
+            "map4",
+            "map5",
+            "namespaceUri",
+            "node",
+            "oneOf",
+            "optionalAttribute",
+            "optionalElement",
+            "string",
+            "succeed"
+          ]
+        },
+        "Std.Xml.Encode": {
+          "count": 11,
+          "symbols": [
+            "Attribute",
+            "Xml",
+            "attribute",
+            "cdata",
+            "document",
+            "element",
+            "encode",
+            "encodeStrict",
+            "text",
+            "xmlns",
+            "xmlnsPrefix"
+          ]
+        },
+        "Std.Zip": {
+          "count": 11,
+          "symbols": [
+            "Entry",
+            "EntryInfo",
+            "Limits",
+            "Method",
+            "defaultLimits",
+            "list",
+            "read",
+            "readEntry",
+            "readWith",
+            "write",
+            "writeWith"
+          ]
         }
       },
-      "count": 827,
-      "pct_of_denominator": 27.5
+      "count": 902,
+      "pct_of_denominator": 29.4
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -20151,6 +20328,12 @@
             "requiredAt"
           ]
         },
+        "Sky.Core.List": {
+          "count": 1,
+          "symbols": [
+            "sortWith"
+          ]
+        },
         "Sky.Core.Maybe": {
           "count": 8,
           "symbols": [
@@ -20227,8 +20410,12 @@
           ]
         },
         "Sky.Core.String": {
-          "count": 2,
+          "count": 6,
           "symbols": [
+            "casefold",
+            "equalFold",
+            "isEmail",
+            "isUrl",
             "normalize",
             "normalizeNFD"
           ]
@@ -20729,12 +20916,14 @@
           ]
         },
         "Std.Codec": {
-          "count": 5,
+          "count": 7,
           "symbols": [
             "ColType",
             "JsonSchema",
             "Variant",
             "dict",
+            "fromXml",
+            "toXml",
             "var3"
           ]
         },
@@ -20742,6 +20931,16 @@
           "count": 1,
           "symbols": [
             "expand"
+          ]
+        },
+        "Std.Crypto.Kx": {
+          "count": 5,
+          "symbols": [
+            "publicKeyFromBase64",
+            "publicKeyToBase64",
+            "secretKeyFromBase64",
+            "secretKeyToBase64",
+            "secretKeyToBytes"
           ]
         },
         "Std.Crypto.Noise": {
@@ -21486,10 +21685,93 @@
             "withSize",
             "withTitle"
           ]
+        },
+        "Std.Xml": {
+          "count": 14,
+          "symbols": [
+            "Limits",
+            "Mode",
+            "Node",
+            "attribute",
+            "attributes",
+            "children",
+            "defaultLimits",
+            "elements",
+            "elementsNamed",
+            "name",
+            "namespace",
+            "parse",
+            "parseWith",
+            "text"
+          ]
+        },
+        "Std.Xml.Decode": {
+          "count": 27,
+          "symbols": [
+            "Decoder",
+            "andThen",
+            "at",
+            "attribute",
+            "bool",
+            "children",
+            "decodeNode",
+            "decodeString",
+            "element",
+            "fail",
+            "float",
+            "inNamespace",
+            "int",
+            "list",
+            "localName",
+            "map",
+            "map2",
+            "map3",
+            "map4",
+            "map5",
+            "namespaceUri",
+            "node",
+            "oneOf",
+            "optionalAttribute",
+            "optionalElement",
+            "string",
+            "succeed"
+          ]
+        },
+        "Std.Xml.Encode": {
+          "count": 11,
+          "symbols": [
+            "Attribute",
+            "Xml",
+            "attribute",
+            "cdata",
+            "document",
+            "element",
+            "encode",
+            "encodeStrict",
+            "text",
+            "xmlns",
+            "xmlnsPrefix"
+          ]
+        },
+        "Std.Zip": {
+          "count": 11,
+          "symbols": [
+            "Entry",
+            "EntryInfo",
+            "Limits",
+            "Method",
+            "defaultLimits",
+            "list",
+            "read",
+            "readEntry",
+            "readWith",
+            "write",
+            "writeWith"
+          ]
         }
       },
-      "count": 934,
-      "pct_of_denominator": 31.1
+      "count": 1009,
+      "pct_of_denominator": 32.8
     }
   },
   "units": [
@@ -21618,8 +21900,8 @@
       "id": "corpus:layer1",
       "modules_imported": 9,
       "path": "corpus:layer1",
-      "refs_generous": 102,
-      "refs_qualified": 101,
+      "refs_generous": 56,
+      "refs_qualified": 49,
       "role": "Layer1",
       "sky_files": 12,
       "sky_toml_sections": []
