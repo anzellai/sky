@@ -287,6 +287,16 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   as Sky.Live does for `sky_sid`; the sign-out and legacy-clear writes keep
   `Max-Age=0`.
 
+- **The Sky.Spa split keeps a local type alias that shadows an imported
+  name.** A module with `import Types exposing (..)` and its own `type alias
+  Plan`, where `Types.Plan` was a wire type, passed `sky check` and failed the
+  client build with `record is missing field(s)`: the split chose wire types by
+  BARE name, so it also moved the module's own `Plan` into `Shared` (declared
+  twice there) and stripped it from the module's client copy, where `Plan` then
+  meant `Types.Plan`. The type-copy seed now carries each type's owning module,
+  and a copied name is dropped only from the module it was copied from (and
+  only from imports of that module).
+
 ## v0.28.1 — Insert text at the caret (Std.Native.insertAtCursor) (2026-10-28)
 
 ### Added

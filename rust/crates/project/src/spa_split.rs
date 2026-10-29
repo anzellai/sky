@@ -1163,6 +1163,73 @@ fn ty_matches(a: &ty::Ty, b: &ty::Ty) -> bool {
 /// collected only when it names a project module's type, so a stdlib or
 /// dependency type never seeds a copy of a same-named project type. A bare
 /// name (declaring module unknown) is collected as written.
+/// The MODULE-QUALIFIED keys of the project types `t` names (`Types.Plan`),
+/// beside the bare names [`collect_ty_names`] gives. The type-copy seed is
+/// bare (it is matched against each module's own declarations by name), so
+/// without the owning module a wire type `Types.Plan` also seeded an
+/// unrelated `type alias Plan` of another module, which the split then moved
+/// into `Shared` and stripped from that module's client copy: a local alias
+/// that shadows an `exposing (..)` name resolved to the import there.
+fn collect_ty_keys(t: &ty::Ty, shapes: &ProjectShapes, out: &mut BTreeSet<String>) {
+    base::ensure_stack(|| match t {
+        ty::Ty::App(name, args) => {
+            let n = name.as_str();
+            match shapes.key_of(n) {
+                Some(k) if !shapes.is_external(k) => {
+                    out.insert(k.to_string());
+                }
+                Some(_) => {}
+                None if n.contains('.')
+                    && shapes.project_modules.contains(ProjectShapes::module_of(n)) =>
+                {
+                    out.insert(n.to_string());
+                }
+                None => {}
+            }
+            for a in args {
+                collect_ty_keys(a, shapes, out);
+            }
+        }
+        ty::Ty::Tuple(xs) => {
+            for x in xs {
+                collect_ty_keys(x, shapes, out);
+            }
+        }
+        ty::Ty::Record(fields, _) => {
+            for (_, ft) in fields {
+                collect_ty_keys(ft, shapes, out);
+            }
+        }
+        ty::Ty::Fun(a, b) => {
+            collect_ty_keys(a, shapes, out);
+            collect_ty_keys(b, shapes, out);
+        }
+        ty::Ty::Var(_) | ty::Ty::Unit | ty::Ty::Error => {}
+    })
+}
+
+/// The type-copy seed as it applies to module `mname`: a bare name whose
+/// owning modules are known (from [`collect_ty_keys`]) seeds only a module
+/// that owns it; a name of unknown owner seeds every module, as before.
+fn seed_for_module(
+    seed_ty: &BTreeSet<String>,
+    seed_keys: &BTreeSet<String>,
+    mname: &str,
+) -> BTreeSet<String> {
+    seed_ty
+        .iter()
+        .filter(|n| {
+            let mut owners = seed_keys
+                .iter()
+                .filter(|k| ProjectShapes::bare(k) == n.as_str())
+                .map(|k| ProjectShapes::module_of(k))
+                .peekable();
+            owners.peek().is_none() || owners.any(|o| o == mname)
+        })
+        .cloned()
+        .collect()
+}
+
 fn collect_ty_names(t: &ty::Ty, shapes: &ProjectShapes, out: &mut BTreeSet<String>) {
     // One level per level of the tree it walks: grow the stack on demand.
     base::ensure_stack(|| match t {
@@ -3313,6 +3380,32 @@ struct ImportInfo {
     text: String,
 }
 
+/// The names copied into `Shared`, with the module each was copied from.
+/// A copied name is a BARE name, and another module may declare (or import)
+/// an unrelated type of the same name: a local `type alias Plan` that shadows
+/// an `exposing (..)` `Plan`. Only the copy's own source module drops its
+/// declaration, and only an import FROM that module drops the name.
+struct CopiedNames<'a> {
+    names: &'a HashSet<String>,
+    source: &'a BTreeMap<String, String>,
+}
+
+impl CopiedNames<'_> {
+    /// Was `name`, declared in `module`, copied into `Shared` from there?
+    fn declared_in(&self, module: &str, name: &str) -> bool {
+        self.names.contains(name) && self.source.get(name).is_none_or(|m| m == module)
+    }
+
+    /// The copied names an import of `module` must stop exposing.
+    fn from_module(&self, module: &str) -> HashSet<String> {
+        self.names
+            .iter()
+            .filter(|n| self.source.get(*n).is_none_or(|m| m == module))
+            .cloned()
+            .collect()
+    }
+}
+
 fn collect_imports(file: &SourceFile, src: &str) -> Vec<ImportInfo> {
     file.imports()
         .map(|imp| ImportInfo {
@@ -4265,10 +4358,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
 
     // The nominal type names the wire field types drag in (the type-copy seed).
     let mut seed_ty: BTreeSet<String> = BTreeSet::new();
+    // The same seed, module-qualified where the owner is known, so a bare seed
+    // name only reaches the module that declares that type (seed_for_module).
+    let mut seed_keys: BTreeSet<String> = BTreeSet::new();
     for w in &wires {
         for f in w.req_fields.iter().chain(w.resp_fields.iter()) {
             if let Some(t) = &f.ty {
                 collect_ty_names(t, &shapes, &mut seed_ty);
+                collect_ty_keys(t, &shapes, &mut seed_keys);
             }
         }
     }
@@ -4280,6 +4377,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     for rec in resolver.auto_records.values() {
         if !shapes.is_external(&rec.key) {
             seed_ty.insert(ProjectShapes::bare(&rec.key).to_string());
+            seed_keys.insert(rec.key.clone());
         }
         // The project types a parameterised record's arguments name (`Item` in
         // `Paged Item`): the record's own declaration does not mention them.
@@ -4310,7 +4408,10 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     for m in tainted_mods.iter().copied() {
         let mparse = db.module_parse(m);
         let mtypes = project_type_decls(&mparse.tree());
-        if seed_ty.iter().any(|n| mtypes.contains_key(n)) {
+        if seed_for_module(&seed_ty, &seed_keys, db.module_name(m))
+            .iter()
+            .any(|n| mtypes.contains_key(n))
+        {
             copy_mods.insert(m);
         }
     }
@@ -4395,15 +4496,17 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         .map(|m| (*m, db.module_name(*m).to_string()))
         .collect();
     let project_mods: HashSet<ModuleId> = check_ids.iter().copied().collect();
-    let copy_types_of = |m: ModuleId, seed: &BTreeSet<String>| -> BTreeSet<String> {
-        let mparse = db.module_parse(m);
-        let mfile = mparse.tree();
-        let mtypes = project_type_decls(&mfile);
-        let mut values: BTreeSet<String> =
-            copied_values_by_mod.get(&m).cloned().unwrap_or_default();
-        values.retain(|n| !mtypes.contains_key(n));
-        compute_type_copy(&mfile, &mtypes, seed, &values)
-    };
+    let copy_types_of =
+        |m: ModuleId, seed: &BTreeSet<String>, keys: &BTreeSet<String>| -> BTreeSet<String> {
+            let mparse = db.module_parse(m);
+            let mfile = mparse.tree();
+            let mtypes = project_type_decls(&mfile);
+            let mut values: BTreeSet<String> =
+                copied_values_by_mod.get(&m).cloned().unwrap_or_default();
+            values.retain(|n| !mtypes.contains_key(n));
+            let seed = seed_for_module(seed, keys, db.module_name(m));
+            compute_type_copy(&mfile, &mtypes, &seed, &values)
+        };
     // The type-name occurrences inside module `m`'s declarations named `names`:
     // (occurrence byte range, the text as written, the defining module, the
     // type's own name).
@@ -4461,13 +4564,15 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     loop {
         let mut grew = false;
         for m in copy_mods.clone() {
-            let types = copy_types_of(m, &seed_ty);
+            let types = copy_types_of(m, &seed_ty, &seed_keys);
             for (_, _, _, owner, tname) in foreign_type_occs(m, &types) {
                 let tainted_owner = project_mods.contains(&owner)
                     && !pure_sibling_names.contains_key(&owner)
                     && owner != entry;
                 if tainted_owner {
                     grew |= copy_mods.insert(owner);
+                    let key = ty::nominal::qualify(db.module_name(owner), &tname);
+                    grew |= seed_keys.insert(key);
                     grew |= seed_ty.insert(tname);
                 }
             }
@@ -4482,7 +4587,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     let mut foreign_sibling_imports: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut foreign_stdlib_imports: Vec<String> = Vec::new();
     for m in copy_mods.iter().copied() {
-        let types = copy_types_of(m, &seed_ty);
+        let types = copy_types_of(m, &seed_ty, &seed_keys);
         let mparse = db.module_parse(m);
         let mimports = collect_imports(&mparse.tree(), &mparse.syntax().text().to_string());
         for (a, b, written, owner, tname) in foreign_type_occs(m, &types) {
@@ -4519,7 +4624,8 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         // A record-alias constructor (`Codec.object Item`) resolves to a def named
         // like the type — keep those in the TYPE-copy set, never the value set.
         values.retain(|n| !mtypes.contains_key(n));
-        let types = compute_type_copy(&mfile, &mtypes, &seed_ty, &values);
+        let seed_m = seed_for_module(&seed_ty, &seed_keys, db.module_name(m));
+        let types = compute_type_copy(&mfile, &mtypes, &seed_m, &values);
         // A moved NOMINAL type (a `union`) in this module's type-copy set cannot be
         // duplicated: two same-named unions in different modules never unify. So
         // record it as a MOVED UNION — `Shared` owns the single definition (it is
@@ -4645,7 +4751,10 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         let mparse = db.module_parse(*m);
         let mfile = mparse.tree();
         let mtypes = project_type_decls(&mfile);
-        if seed_ty.iter().any(|n| mtypes.contains_key(n)) {
+        if seed_for_module(&seed_ty, &seed_keys, &mname)
+            .iter()
+            .any(|n| mtypes.contains_key(n))
+        {
             needed_siblings.insert(mname);
         }
     }
@@ -5014,7 +5123,11 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &imports,
         &server,
         &report.model_fields,
-        &copied_names,
+        &CopiedNames {
+            names: &copied_names,
+            source: &copied_name_source,
+        },
+        db.module_name(entry),
         &backend_shared_expose,
         push_mode,
         broker_url,
@@ -5089,7 +5202,11 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &server,
         &client_names,
         &tainted_names,
-        &copied_names,
+        &CopiedNames {
+            names: &copied_names,
+            source: &copied_name_source,
+        },
+        db.module_name(entry),
         &entry_shared_expose,
         &msg_param,
         &model_param,
@@ -5305,11 +5422,16 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 &moved_unions,
                 true,
             );
+            let copied_here = CopiedNames {
+                names: &copied_names,
+                source: &copied_name_source,
+            }
+            .from_module(&mname);
             let subset = render_module_client_subset(
                 &mparse.tree(),
                 &text,
                 tainted_here,
-                &copied_names,
+                &copied_here,
                 &server,
                 &server_ctors,
                 regen_here,
@@ -8777,7 +8899,9 @@ fn gen_backend(
     imports: &[ImportInfo],
     server: &[(String, BranchIo)],
     model_fields: &[ModelFieldTy],
-    copied_names: &HashSet<String>,
+    copied: &CopiedNames<'_>,
+    // The entry module's name (the source of the copies its own decls give).
+    entry_name: &str,
     // The `import Shared exposing (…)` clause for the entry (an explicit list that
     // excludes copied names still reachable via a surviving `exposing (..)`).
     shared_expose: &str,
@@ -8829,7 +8953,7 @@ fn gen_backend(
         // A type/codec copied into `Shared` arrives via `import Shared exposing
         // (..)`; drop it from any original import (e.g. a verbatim `import Data
         // exposing (Item, itemCodec, …)`) so the backend does not double-import it.
-        .map(|i| strip_names_from_import_exposing(&i.text, copied_names))
+        .map(|i| strip_names_from_import_exposing(&i.text, &copied.from_module(&i.module_path)))
         .collect();
     let add = |imports: &[ImportInfo], lines: &mut Vec<String>, path: &str, text: &str| {
         if !has_module(imports, path) {
@@ -9152,7 +9276,7 @@ fn gen_backend(
                 continue;
             }
             if let Some(n) = decl_name(&d) {
-                if copied_names.contains(&n) {
+                if copied.declared_in(entry_name, &n) {
                     continue;
                 }
             }
@@ -10276,7 +10400,8 @@ fn gen_frontend(
     server: &[(String, BranchIo)],
     _client_names: &[String],
     tainted: &[String],
-    copied_names: &HashSet<String>,
+    copied: &CopiedNames<'_>,
+    entry_name: &str,
     // The `import Shared exposing (…)` clause for the entry (see gen_backend).
     shared_expose: &str,
     msg_param: &str,
@@ -10340,7 +10465,7 @@ fn gen_frontend(
         .filter(|i| !backend_only.contains(&i.module_path))
         // Same as the backend: a copied type/codec comes from `import Shared`, so
         // drop it from any kept import to avoid an ambiguous double-import.
-        .map(|i| strip_names_from_import_exposing(&i.text, copied_names))
+        .map(|i| strip_names_from_import_exposing(&i.text, &copied.from_module(&i.module_path)))
         .collect();
     if !has_module(imports, "Sky.Core.Error") {
         import_lines.push("import Sky.Core.Error as Error exposing (Error)".to_string());
@@ -10431,7 +10556,7 @@ fn gen_frontend(
             }
             // Skip types/codecs copied into Shared — they arrive via `import
             // Shared exposing (..)`; re-declaring them would be a duplicate.
-            if copied_names.contains(n) {
+            if copied.declared_in(entry_name, n) {
                 continue;
             }
         }
@@ -11998,8 +12123,10 @@ fn render_module_client_subset(
             if tainted_here.contains(n) {
                 continue;
             }
-            // Drop types/codecs copied into `Shared` — they arrive via `import
-            // Shared exposing (..)`; keeping them here would be a duplicate.
+            // Drop types/codecs copied into `Shared` FROM THIS MODULE — they
+            // arrive via `import Shared exposing (..)`; keeping them here would
+            // be a duplicate. A same-named decl of this module that was not the
+            // copy's source (a local alias shadowing an imported wire type) stays.
             if copied_names.contains(n) {
                 stripped_copied = true;
                 continue;

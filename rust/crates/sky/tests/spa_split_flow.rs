@@ -12189,3 +12189,55 @@ fn a_pure_helper_keeps_the_server_module_import_its_constructor_needs() {
     );
     let _ = std::fs::remove_dir_all(&proj);
 }
+
+/// A local `type alias Plan` that shadows the `Plan` its module imports with
+/// `exposing (..)`, in a server-tainted module whose pure `summary` the split
+/// copies to the client, while the imported `Types.Plan` is a wire type. The
+/// type-copy seed was BARE (`Plan`), so it also seeded the module's own
+/// `Plan`: the split moved that alias into `Shared` (twice declared) and
+/// stripped it from the module's client copy, where `summary : Plan -> Int`
+/// then resolved to `Types.Plan` ("record is missing field(s): joined"). The
+/// seed now carries each type's owning module (spa_split.rs
+/// `seed_for_module`), so the local alias stays where it is declared.
+#[test]
+#[cfg(unix)]
+fn split_keeps_a_local_alias_that_shadows_an_exposing_all_name() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-local-alias-shadow"),
+        &proj,
+    );
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let split = proj.join(".skyapp/web-app/.split");
+    let other = std::fs::read_to_string(split.join("frontend/src/Other.sky")).unwrap_or_default();
+    let shared = std::fs::read_to_string(split.join("frontend/src/Shared.sky")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(output.status.success(), "web:app build failed:\n{log}");
+    assert!(
+        other.contains("type alias Plan =\n    { rows : List String"),
+        "the client copy of Other must keep its own Plan:\n{other}"
+    );
+    assert_eq!(
+        shared.matches("type alias Plan =").count(),
+        1,
+        "Shared must declare the wire type Plan once (Types.Plan only):\n{shared}"
+    );
+    assert!(
+        !shared.contains("rows : List String"),
+        "Other's Plan is not a wire type and must not move into Shared:\n{shared}"
+    );
+}
