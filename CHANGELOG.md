@@ -156,6 +156,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `SKY_RT_MEMSTATS_ON_EXIT=1`, which makes a normal exit print one JSON line
   with `runtime.MemStats` to stderr. It runs in the release gate.
 
+- **The `go build` time limit is configurable.** `sky build`, `sky check` and
+  `sky run` stop a `go build` after 10 minutes, so a wedged Go toolchain cannot
+  hang a build. A slow runner can now raise it: `--go-build-timeout 15m` (or
+  `SKY_GO_BUILD_TIMEOUT=900`). The value is whole seconds or a whole number with
+  an `s`, `m` or `h` unit; a value that does not parse is an error, never a
+  silent fall back. The message for a stopped build names both.
+
 ### Migration
 
 The full list, with old and new code, is `docs/migration/v0.29.md`.

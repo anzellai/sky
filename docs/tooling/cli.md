@@ -873,6 +873,14 @@ On a runner with little memory, `--go-jobs <n>` (or `SKY_GO_BUILD_JOBS=<n>`)
 caps how many packages `go build` compiles at once, and `SKY_BUILD_SERIAL=1`
 builds a client app's two legs one after the other.
 
+`sky` stops a `go build` that runs longer than 10 minutes, so a wedged Go
+toolchain (a stuck linker, a hung module fetch) cannot hold a build for ever.
+On a slow runner, raise the limit with `--go-build-timeout <value>` (or
+`SKY_GO_BUILD_TIMEOUT=<value>`) on `sky build`, `sky check` and `sky run`. The
+value is whole seconds (`900`) or a whole number with a unit (`900s`, `15m`,
+`1h`). A value that does not parse stops the build with an error, it never
+falls back to the default. *(v0.29.0+)*
+
 When another process (a memory watchdog, `kill`) stops a build, sky says so. A
 child leg or `go build` stopped by a signal ends with a line such as `frontend
 build stopped by SIGTERM from another process (a memory watchdog?)` and these

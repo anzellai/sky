@@ -594,6 +594,17 @@ which is the whole reason the figure is derived at runtime rather than
 configured. Sizing detail, including the floor below which the runtime declines
 to tune at all: [embedded PostgreSQL](skydb/embedded-postgres.md).
 
+### Build tool variables (read by `sky build` / `check` / `run`)
+
+These are read by the `sky` command while it builds, never by the app. Each
+has a command-line flag, which sets the variable for the build and for every
+child build it starts (a Sky.Spa or `Std.App` build runs several).
+
+| Variable | Flag | Default | Meaning |
+|---|---|---|---|
+| `SKY_GO_BUILD_TIMEOUT` | `--go-build-timeout <value>` | `600` (10 minutes) | The longest one `go build` may run before `sky` stops it. Whole seconds (`900`), or a whole number with a unit (`900s`, `15m`, `1h`). A value that does not parse stops the build with an error that names the variable. Raise it on a slow runner (a small CI machine, a cold cache, an emulated architecture). *(v0.29.0+)* |
+| `SKY_GO_BUILD_JOBS` | `--go-jobs <n\|auto>` | `auto` | How many packages `go build` compiles at once (its `-p`); see [the CLI reference](tooling/cli.md). |
+
 ---
 
 ## `[jobs]` *(v0.19.14+)*

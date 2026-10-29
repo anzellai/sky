@@ -114,7 +114,7 @@ fn sky_main() -> ExitCode {
     if timed && args.iter().any(|a| a == "--timings") {
         std::env::set_var("SKY_TIMINGS", "1");
     }
-    // The Go build flags (`--no-trimpath`, `--go-jobs N`) of build / check /
+    // The Go build flags (`--no-trimpath`, `--go-jobs N`, `--go-build-timeout T`) of build / check /
     // run. Like `--timings`, each is carried as an environment variable so
     // every child `sky build` (Sky.Spa legs, a Std.App entry, a desktop
     // shell) builds the same way; they are removed from the arguments here.
@@ -188,10 +188,25 @@ fn take_go_build_flags(
         } else {
             a.strip_prefix("--go-jobs=").map(str::to_string)
         };
+        let limit = if a == "--go-build-timeout" {
+            Some(
+                it.next()
+                    .ok_or(
+                        "--go-build-timeout needs a value: whole seconds (`900`) or a number \
+                         with a unit (`15m`)",
+                    )?
+                    .clone(),
+            )
+        } else {
+            a.strip_prefix("--go-build-timeout=").map(str::to_string)
+        };
         if let Some(n) = jobs {
             // Checked here, so a bad value fails before any work starts.
             project::go_jobs::parse_user(Some(&n))?;
             env.push((project::go_jobs::ENV_JOBS, n));
+        } else if let Some(t) = limit {
+            project::parse_go_build_timeout(&t)?;
+            env.push((project::ENV_GO_BUILD_TIMEOUT, t));
         } else if a == "--no-trimpath" {
             env.push((project::go_cmd::ENV_TRIMPATH, "0".to_string()));
         } else {
@@ -11320,7 +11335,7 @@ OPTIONS:\n\
 \x20 --db-push | --db-migrate | --db-seed   database steps before the app starts\n\
 \x20 --profile [--profile-dir <dir>] [--profile-timeout <dur>]   write pprof profiles\n\
 \x20 --out <dir>                  the build output directory (default sky-out)\n\
-\x20 --go-jobs <n|auto> | --no-trimpath   Go build flags\n\
+\x20 --go-jobs <n|auto> | --no-trimpath | --go-build-timeout <secs|15m>   Go build flags\n\
 \x20 -h, --help                   print this help and build nothing";
 
 fn cmd_run(args: &[String]) -> ExitCode {
@@ -19162,6 +19177,32 @@ echo key > "$ks"
             take_go_build_flags(&v(&["run", "a.sky", "--", "--go-jobs", "x"])).unwrap();
         assert_eq!(rest, ["run", "a.sky", "--", "--go-jobs", "x"]);
         assert!(env.is_empty());
+    }
+
+    #[test]
+    fn go_build_timeout_flag_becomes_the_env_override() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (rest, env) =
+            take_go_build_flags(&v(&["build", "--go-build-timeout", "900", "src/Main.sky"]))
+                .unwrap();
+        assert_eq!(rest, ["build", "src/Main.sky"]);
+        assert_eq!(
+            env,
+            vec![(project::ENV_GO_BUILD_TIMEOUT, "900".to_string())]
+        );
+        let (_, env) = take_go_build_flags(&v(&["check", "--go-build-timeout=15m"])).unwrap();
+        assert_eq!(
+            env,
+            vec![(project::ENV_GO_BUILD_TIMEOUT, "15m".to_string())]
+        );
+        for bad in [
+            &["build", "--go-build-timeout"][..],
+            &["build", "--go-build-timeout=0"],
+            &["build", "--go-build-timeout", "ten"],
+            &["build", "--go-build-timeout", "5d"],
+        ] {
+            assert!(take_go_build_flags(&v(bad)).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

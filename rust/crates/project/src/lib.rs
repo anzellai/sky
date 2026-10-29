@@ -91,8 +91,9 @@ pub use build::{
     emit_example_warnings, enumerate_dependency_files, enumerate_skydep_files, ffi_trust,
     ffi_type_surface, front_half_errors, front_half_loaded, go_diagnostics,
     is_spa_generated_project, load_ffi_surface, migration_hint_for, offline_db_plan, parse_errors,
-    sky_toml_flag, sky_toml_project_key, sky_toml_section_key, AppScope, BuildOptions, BuildReport,
-    LoadedProgram, OfflineDbPlan, EMBEDDED_BUNDLE_FILENAME, SPA_GENERATED_KERNEL_PREFIX,
+    parse_go_build_timeout, sky_toml_flag, sky_toml_project_key, sky_toml_section_key, AppScope,
+    BuildOptions, BuildReport, LoadedProgram, OfflineDbPlan, DEFAULT_GO_BUILD_TIMEOUT,
+    EMBEDDED_BUNDLE_FILENAME, ENV_GO_BUILD_TIMEOUT, SPA_GENERATED_KERNEL_PREFIX,
 };
 /// The structured diagnostic types a [`BuildReport`] carries, re-exported so
 /// the CLI and `testrunner` read them without a second dependency edge.
