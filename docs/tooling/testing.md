@@ -1,8 +1,8 @@
 # Testing Sky projects
 
 > **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky`)
-> is the primary Sky compiler; the Haskell compiler is preserved under
-> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> is the Sky compiler (the earlier compilers were removed in v0.29.0).
+> Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
 > [`../../CHANGELOG.md`](../../CHANGELOG.md) for the changelog. (This link
 pointed at `../compiler/versions.md`; there is no `docs/compiler/` directory.)
@@ -432,11 +432,10 @@ Every bug that reaches production gets a permanent regression test:
 
 Current permanent regressions:
 
-- `legacy-haskell-compiler/test/Sky/Build/NestedPatternSpec.hs` — nested `Ok (Just x)` / `Ok True` discrimination.
 - `runtime-go/rt/coerce_test.go` — nested `SkyMaybe[X]` / `[]T` / `map[K]T` shape-mismatch via `ResultCoerce`.
 - `runtime-go/rt/error_adt_shape_test.go` — rt `ErrIo` values are type-compatible with user-side `Sky_Core_Error_Error`.
-- `legacy-haskell-compiler/test/Sky/Format/FormatSpec.hs` — formatter idempotency (string escapes, scientific-notation floats, nested case, long pipelines, record updates).
-- `legacy-haskell-compiler/test/Sky/ErrorUnificationSpec.hs` — forbidden-pattern greps: `Result String`, `Task String`, `IoError`, `RemoteData`.
+- `rust/crates/fmt` tests and `xtask fmt` — formatter idempotency (string escapes, scientific-notation floats, nested case, long pipelines, record updates).
+- `xtask s8` (`rust/crates/xtask/src/s8_gate.rs`) — forbidden-pattern checks: `Result String`, `Task String`, `IoError`, `RemoteData`.
 - `tests/Core/CoreTest.sky` — **30** stdlib semantic tests (String / List / Dict / Maybe / Result). (Said 22; `grep -o 'Test\.test' tests/Core/CoreTest.sky | wc -l` → 30. The other seven counts in this list match exactly, so this one had genuinely drifted.)
 - `tests/Lang/PatternTest.sky` — 10 pattern-matching tests (nested Result/Maybe, enum ADT, Bool-inside-Ok).
 - `tests/Live/CounterTest.sky` — 19 Sky.Live TEA loop tests (init / update / model invariants / event dispatch).

@@ -32,7 +32,7 @@ never landed).
 
 ## Measured evidence (this machine, 2026-08-22)
 
-The Phase-1 spike (`docs/skyspa/spike/main.go`) is a **reflection-free** Go→wasm
+The Phase-1 spike (`docs/history/skyspa/spike/main.go`) is a **reflection-free** Go→wasm
 TEA+DOM counter — a faithful stand-in for what a *de-reflected* Sky.Spa client
 would be. Compiled both ways:
 

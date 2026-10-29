@@ -140,7 +140,7 @@ fn axis_under_test(s: &Stratum) -> (Axis, &'static str) {
 /// `answer` must read back as 42, which does prove the import resolved to the
 /// right symbol). They must NOT be claimed as covering the #164 defect class
 /// until the `collision` axis actually collides — see
-/// `docs/ci-test-phase-4-results.md` §4.
+/// `docs/history/ci-redesign-2026-08/ci-test-phase-4-results.md` §4.
 ///
 /// **Family S's `stdlib_import` stratum is the repair**, and it is a separate
 /// stratum rather than a rewrite of this one because the two record different

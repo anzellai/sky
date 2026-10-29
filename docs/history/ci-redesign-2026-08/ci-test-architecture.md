@@ -1,6 +1,6 @@
 # Sky CI/CD + Test Architecture
 
-> ## ⚠️ SUPERSEDED by [`docs/ci-test-architecture-v2.md`](ci-test-architecture-v2.md)
+> ## ⚠️ SUPERSEDED by [`docs/ci-test-architecture-v2.md`](../../ci-test-architecture-v2.md)
 >
 > This document was one of **two** parallel designs (the other is
 > `docs/ci-corpus-proposal.md`). Both were adversarially grilled and both

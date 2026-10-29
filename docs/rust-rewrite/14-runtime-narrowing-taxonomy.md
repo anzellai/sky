@@ -8,7 +8,7 @@
 > marked **UNVERIFIED** and NOT carried over. Where a quantity is not measured it
 > says **UNMEASURED** rather than a plausible number.
 >
-> **What this replaces.** `docs/architecture/sky-compiler-architecture.md` §6
+> **What this replaces.** `docs/history/compiler/sky-compiler-architecture.md` §6
 > (rt.Coerce origin catalog), §7 (architectural levers) and §8 (irreducible
 > floor). That document describes the **retired Haskell** pipeline; its §6 table
 > cites `Compile.hs` line numbers. It is retained for historical context only.
@@ -1076,5 +1076,5 @@ A verdict that cannot make all four citations is not a verdict.
 * `docs/perf/runs/hof-dispatch-20260815/`, `docs/perf/runs/typed-destructure-20260815/`
 * [`07-lowering-and-ir.md`](07-lowering-and-ir.md) §5.1 — no monomorphiser, and why
 * [`08-go-codegen.md`](08-go-codegen.md) §3 — the runtime ABI
-* `docs/architecture/sky-compiler-architecture.md` — **legacy Haskell reference,
+* `docs/history/compiler/sky-compiler-architecture.md` — **legacy Haskell reference,
   historical context only**

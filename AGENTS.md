@@ -39,9 +39,9 @@ soundness requirement. "No runtime panic" therefore means *no UNCLASSIFIED panic
 silent corruption* — the property a service actually needs.
 
 The compiler is the **Rust rewrite** (cargo workspace at `rust/`). The retired
-Haskell compiler lives under `legacy-haskell-compiler/` and serves as a
-**differential oracle** (`sky-out/sky`) the Rust output is checked against
-byte-for-byte. Current line: **v0.28.x**.
+Haskell compiler, once its byte-for-byte differential oracle, was removed from
+the tree in v0.29.0 (`docs/history/legacy-compilers.md`; tag `v0.28.1` is the
+last that has it). Current line: **v0.28.x**.
 
 ## Language essentials
 
@@ -870,7 +870,7 @@ These apply to any Sky code you write or any compiler change you make:
   `SKY_LIVE_TESTS=skip` — and both treat any other value as an error rather
   than guessing.
 - **A gate may not measure a compiler older than the tree.** `sky-out/sky` is
-  installed by exactly one line (`scripts/build.sh:80`), so a bare
+  installed by exactly one line (`scripts/build.sh:75`), so a bare
   `cargo build --release -p sky` leaves `rust/target/release/sky` fresh and
   `sky-out/sky` untouched — and every consumer then measures whatever
   `build.sh` last produced. Sixteen scripts read that path and none checked it.
@@ -1013,7 +1013,7 @@ Which one a change belongs in is decided by what the change can break.
 |---|---|---|
 | **Layer 1** — the combinatorial corpus | `corpus/manifest.toml` + `xtask corpus` | Systematic VARIATION of language + type shapes, generated, expected values *constructed* by the generator. Membership is the manifest; no gate calls `read_dir`. Every historical defect is a pinned coordinate whose distance-1 neighbourhood is expanded automatically. |
 | **Layer 2** — real-world projects | `apps/manifest.toml` (`apps/ledger`, `apps/relay`, `apps/fieldbook`, `sky-bundled/`, `examples/13-skyshop`, `rust/crates/sky/tests/*_flow.rs`) | Surfaces exercised IN COMBINATION as a user would build them: session/SSE/CSRF lifecycle, a real SQL engine (**the only Postgres coverage in the repo**), multi-replica topology, cross-backend `Std.Ui`, the CLI verbs. The class Layer 1 is structurally blind to. |
-| **`examples/`** | `examples/00`–`examples/55` | **Documentation samples** — and the standing corpus for the *compiler-facing* ratchets that key on them. |
+| **`examples/`** | `examples/00`–`examples/76` (73 projects) | **Documentation samples** — and the standing corpus for the *compiler-facing* ratchets that key on them. |
 
 ### The `examples/` contract
 
@@ -1061,7 +1061,6 @@ quote a number a script did not produce**:
 ```
 rust/                     Sky compiler (Rust, PRIMARY — cargo workspace)
   crates/{syntax,hir,ty,lower,codegen,ffi,fmt,sky-lsp,project,xtask,sky}
-legacy-haskell-compiler/  retired Haskell compiler (differential oracle)
 runtime-go/rt/            Go runtime (embedded)
 sky-stdlib/               Sky-side stdlib (embedded)
 sky-bundled/              Sky Console + doc-server mini-apps

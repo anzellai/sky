@@ -1,7 +1,7 @@
 # Layer 2 corpus — the membership authority.
 #
 # CI/test-architecture v2 §6. Rationale and the decisions v2 leaves open are
-# recorded in docs/ci-layer2-members.md.
+# recorded in docs/history/ci-redesign-2026-08/ci-layer2-members.md.
 #
 # THIS FILE IS THE ONLY MEMBERSHIP AUTHORITY. No gate calls `read_dir` on
 # `apps/` (v2 §3.1) — discovery-by-listing has already produced two live defects

@@ -79,7 +79,7 @@ func checkTarget(rawURL string, remoteLoad, prodOverride, assumeYes bool) error 
 				"  target: %s (host %q)\n"+
 				"  This tool defaults to passive for off-box targets. If you meant to\n"+
 				"  observe an instance rather than load it, use\n"+
-				"  scripts/skylive-observe-remote.sh, which is read-only.\n"+
+				"  tools/perf/skylive-observe-remote.sh, which is read-only.\n"+
 				"  If you really mean to generate load against %s, pass -remote-load.",
 			rawURL, host, host)
 	}

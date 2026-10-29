@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Sky.Live load harness: one command, parameterised, re-runnable.
 #
-#   scripts/skylive-load.sh --app examples/26-ui-showcase
-#   scripts/skylive-load.sh --app examples/52-blog-analytics --label analytics=on
-#   CONCURRENCY="100 500 1000" DURATION=60s scripts/skylive-load.sh
+#   tools/perf/skylive-load.sh --app examples/26-ui-showcase
+#   tools/perf/skylive-load.sh --app examples/52-blog-analytics --label analytics=on
+#   CONCURRENCY="100 500 1000" DURATION=60s tools/perf/skylive-load.sh
 #
 # For each concurrency level it:
 #   1. drives the app with skyliveload (the real Sky.Live protocol:
@@ -13,7 +13,7 @@
 #   3. samples the server's RSS and its PostgreSQL backend count.
 #
 # The browser is deliberately not part of the load -- see
-# scripts/skylive-observer.mjs for why.
+# tools/perf/skylive-observer.mjs for why.
 #
 # Every run records its conditions (host, commit, container flags) so a
 # number cannot be quoted without them, and refuses to report when the
@@ -22,7 +22,7 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 APP="${APP:-examples/26-ui-showcase}"
@@ -203,7 +203,7 @@ for n in $CONCURRENCY; do
       -json "$OUTDIR/load-during-observe-n${n}.json" >/dev/null 2>&1 &
     LOADPID=$!
     sleep 6   # let the synthetic load reach steady state
-    node scripts/skylive-observer.mjs \
+    node tools/perf/skylive-observer.mjs \
       --url "http://127.0.0.1:$PORT" --samples "$OBS_SAMPLES" --think 200 \
       --label "under-${n}-sessions" \
       --json "$OUTDIR/observer-n${n}.json" >/dev/null 2>&1 || true

@@ -1,6 +1,6 @@
 # CI/test overhaul — Phase 7 + 8 results (the coverage ledger, and the migration)
 
-Companion to [`ci-test-architecture-v2.md`](ci-test-architecture-v2.md) (the
+Companion to [`ci-test-architecture-v2.md`](../../ci-test-architecture-v2.md) (the
 design, whose §0.0 amendments table this phase wrote),
 [`ci-test-phase-2-3-results.md`](ci-test-phase-2-3-results.md) (the cost
 measurement) and [`ci-test-phase-4-results.md`](ci-test-phase-4-results.md)

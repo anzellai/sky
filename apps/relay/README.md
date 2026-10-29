@@ -4,7 +4,7 @@ A headless JSON API + event gateway written in Sky. Token-authenticated REST,
 an SSE feed, a WebSocket channel, an outbound HTTP fetch pipeline, rate
 limiting, CORS, a CSV bulk-import endpoint, and config from the environment.
 
-Spec: `docs/ci-corpus-proposal.md` → "App B — Relay".
+Spec: `docs/history/ci-redesign-2026-08/ci-corpus-proposal.md` → "App B — Relay".
 
 ## Build + run
 

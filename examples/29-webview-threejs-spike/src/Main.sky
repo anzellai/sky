@@ -2,7 +2,7 @@ module Main exposing (main)
 
 -- Sky.Webview spike — Three.js + WebGL2 under a native webview.
 --
--- Validates risk #2 from docs/skywebview/PLAN.md: does WebGL2 +
+-- Validates risk #2 from docs/history/archive/skywebview-PLAN.md: does WebGL2 +
 -- Three.js work end-to-end through the system webview engine?
 --
 -- Run it with `sky run src/Main.sky` — a native window opens

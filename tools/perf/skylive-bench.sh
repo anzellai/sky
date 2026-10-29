@@ -6,10 +6,10 @@
 # measurement was taken under so the number can never be quoted bare.
 #
 # Usage:
-#   scripts/skylive-bench.sh                 # default: 5 runs, phase-1 only
-#   COUNT=9 scripts/skylive-bench.sh         # more repetitions
-#   BENCH=BenchmarkDiffOnly scripts/skylive-bench.sh
-#   MAX_LOAD=99 scripts/skylive-bench.sh     # override the quiet-machine gate
+#   tools/perf/skylive-bench.sh                 # default: 5 runs, phase-1 only
+#   COUNT=9 tools/perf/skylive-bench.sh         # more repetitions
+#   BENCH=BenchmarkDiffOnly tools/perf/skylive-bench.sh
+#   MAX_LOAD=99 tools/perf/skylive-bench.sh     # override the quiet-machine gate
 #
 # Output: a directory under docs/perf/runs/<timestamp>/ containing
 #   env.txt        machine, commit, load, container flags
@@ -28,7 +28,7 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # `with_timeout <secs> <cmd...>` — the one time bound. See the header of
 # scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.

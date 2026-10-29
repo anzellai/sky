@@ -15,19 +15,19 @@ and — just as importantly — what the measurement does not cover.
 
 ```bash
 # Phase 1 — the microbenchmark (no container, no network, no database)
-scripts/skylive-bench.sh                       # 5 runs, refuses on a busy machine
-COUNT=15 BENCHTIME=400ms scripts/skylive-bench.sh
+tools/perf/skylive-bench.sh                       # 5 runs, refuses on a busy machine
+COUNT=15 BENCHTIME=400ms tools/perf/skylive-bench.sh
 
 # Phase 2 — the load harness, speaking the real protocol
-scripts/skylive-load.sh --app examples/26-ui-showcase
-CONCURRENCY="100 500 1000" DURATION=60s scripts/skylive-load.sh
+tools/perf/skylive-load.sh --app examples/26-ui-showcase
+CONCURRENCY="100 500 1000" DURATION=60s tools/perf/skylive-load.sh
 
 # Phase 3 — constrained runs (read the caveats in the script header)
-scripts/skylive-load-constrained.sh --profiles "1x2g 2x2g 1x1g"
+tools/perf/skylive-load-constrained.sh --profiles "1x2g 2x2g 1x1g"
 
 # Phase 4 — a real x86 GCP target (see skylive-remote-validation.md)
-scripts/skylive-observe-remote.sh --project <id> --instance sky-lang-org
-scripts/skylive-load-remote.sh --url http://<bench-ip>:8000   # preflight
+tools/perf/skylive-observe-remote.sh --project <id> --instance sky-lang-org
+tools/perf/skylive-load-remote.sh --url http://<bench-ip>:8000   # preflight
 
 # Phase 5 — embedded PostgreSQL on that target. The app is ONE binary run in
 # three configurations; the scripts that drove it are archived beside the data.
@@ -47,8 +47,8 @@ ls docs/perf/runs/attribution-20260815/harness/
 Phase 4 needs `gcloud` authenticated against the target's project, which
 is always passed explicitly — never taken from `gcloud`'s active config.
 Phase 1 needs only Go. Phase 2's browser observer needs the repo's
-existing Playwright (`npm install` at the repo root, as
-`scripts/verify-examples.sh` expects); run `scripts/skylive-load.sh
+existing Playwright (`npm ci` at the repo root, as the
+`scripts/*-e2e.sh` verifiers expect); run `tools/perf/skylive-load.sh
 --no-observer` to skip it. Phase 3 needs Apple's `container` CLI.
 
 ## Every measurement in this work, in one table
@@ -925,7 +925,7 @@ it never did. The guards:
   rather than reporting it when no session established, no interaction
   produced a patch, no SSE frame arrived, the error rate exceeded its
   limit, or the generator used more than 70% of host CPU.
-- **A load gate** in `scripts/skylive-bench.sh` refuses to summarise on a
+- **A load gate** in `tools/perf/skylive-bench.sh` refuses to summarise on a
   busy machine. This is not hypothetical: the first benchmark run in
   this work was taken at load average 15.8 on 8 cores and reported
   `noop` (which produces zero patches) as *slower* than `text_one`, and
@@ -988,7 +988,7 @@ For contrast, the *first* attempt at this measurement, taken as a single
 run at load average 15.8, reported `noop` (which produces zero patches)
 as **slower** than `text_one`, and 2,000 nodes as **faster** than 1,000.
 Both impossible. Neither would have looked wrong quoted on its own.
-`scripts/skylive-bench.sh` now refuses to summarise above a load
+`tools/perf/skylive-bench.sh` now refuses to summarise above a load
 threshold for this reason.
 
 **The Phase 2 numbers are more affected by contention than Phase 1**,
@@ -998,7 +998,7 @@ per-session memory as sound, and the absolute throughput ceiling
 
 ## Limits of the constrained runs
 
-Stated at the top of `scripts/skylive-load-constrained.sh` and repeated
+Stated at the top of `tools/perf/skylive-load-constrained.sh` and repeated
 here because it is the easiest thing in this document to misuse:
 
 1. **Not a GCP e2-small.** Apple's `container` runs an **ARM64 Linux VM
@@ -1051,7 +1051,7 @@ Raw data: [`runs/gcp-embed-postgres-20260815/`](runs/gcp-embed-postgres-20260815
 
 | | |
 |---|---|
-| Target | `sky-bench-embed`, **e2-small**, `us-central1-a`, project `settleby` |
+| Target | `sky-bench-embed`, **e2-small**, `us-central1-a`, project `<id>` |
 | | Debian 12, `Linux 6.1.0-52-cloud-amd64` **x86_64**, 2 shared-core vCPU, 20 GB |
 | MemTotal | **2,023,888 kB (1.98 GB)** — identical to the `sky-bench-small` of the SQLite run |
 | Application | **`examples/26-ui-showcase`**, cross-compiled `CGO_ENABLED=0 GOOS=linux GOARCH=amd64`, Go 1.26.1 |

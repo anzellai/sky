@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Passive observation of a REMOTE Sky.Live app. Read-only, by construction.
 #
-#   scripts/skylive-observe-remote.sh --project settleby --instance sky-lang-org
-#   INTERVAL=15 DURATION=1800 scripts/skylive-observe-remote.sh --project settleby
+#   tools/perf/skylive-observe-remote.sh --project <id> --instance sky-lang-org
+#   INTERVAL=15 DURATION=1800 tools/perf/skylive-observe-remote.sh --project <id>
 #
 # WHY THIS EXISTS
 # ---------------
@@ -26,7 +26,7 @@
 # and never writes anything on the target. The only traffic it causes is the
 # SSH transport itself and one localhost metrics scrape per tick, which the
 # Ops Agent is already doing every 30s anyway. Applying load is a different
-# script (scripts/skylive-load-remote.sh) with its own guards.
+# script (tools/perf/skylive-load-remote.sh) with its own guards.
 #
 # THE MEASUREMENT THIS IS FOR, AND ITS DIVISOR PROBLEM
 # ----------------------------------------------------
@@ -54,7 +54,7 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # `with_timeout <secs> <cmd...>` — the one time bound. See the header of
 # scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.

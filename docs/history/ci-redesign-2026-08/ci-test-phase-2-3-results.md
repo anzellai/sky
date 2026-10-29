@@ -1,6 +1,6 @@
 # CI/test overhaul — Phase 2 and Phase 3 results
 
-Companion to [`ci-test-architecture-v2.md`](ci-test-architecture-v2.md). v2 is the
+Companion to [`ci-test-architecture-v2.md`](../../ci-test-architecture-v2.md). v2 is the
 design; this is what happened when it met the compiler. It records the measured
 numbers, the three v2 premises that proved wrong, and the branch that fires at the
 Phase 3 → Phase 4 boundary.

@@ -456,7 +456,7 @@ slice or map, trading an O(1) reflect box for an O(n) copy
 > needs monomorphisation, check whether the shape is statically known at the
 > emit site — it usually is, and then the answer is an eta-expansion.
 >
-> `docs/architecture/sky-compiler-architecture.md` §5.3 retracted the same
+> `docs/history/compiler/sky-compiler-architecture.md` §5.3 retracted the same
 > claim on 2026-08-15 ("Both halves were wrong, and together they are why this
 > category was filed as irreducible"). That retraction landed in the *legacy*
 > reference while this — the **primary** one — still described the

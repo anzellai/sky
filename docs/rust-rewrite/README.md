@@ -5,8 +5,11 @@
 > This directory is its canonical architecture + implementation reference, built on
 > the architecture the Haskell journey taught us we needed. It describes the target
 > architecture in the present tense; a few target mechanisms are still in progress
-> and are called out inline. The Haskell compiler is preserved under
-> `legacy-haskell-compiler/` as reference + differential oracle. Each doc carries an
+> and are called out inline. The Haskell compiler was the reference +
+> differential oracle until v0.28.x; it was removed from the tree in v0.29.0
+> ([`../history/legacy-compilers.md`](../history/legacy-compilers.md)), and a
+> citation `legacy-haskell-compiler/...:NNN` in these docs refers to the tree at
+> tag `v0.28.1`. Each doc carries an
 > **"Implementation status"** callout distinguishing what is built from what remains
 > a target — see the status matrix in [`12`](12-migration-and-milestones.md).
 
@@ -42,8 +45,7 @@ purity tax or laziness/space-leak surprises. Full rationale: [`00-goals-and-prin
 2. **Every existing example builds AND runs correctly.** The 42 `examples/*`
    are the conformance suite. "Syntax is correct → it must run" — a program that
    `sky check`s must `go build` and must not panic under well-typed semantics.
-   The Haskell compiler, preserved under `legacy-haskell-compiler/`, is the
-   **differential oracle**. See
+   The Haskell compiler was the **differential oracle** until v0.28.x. See
    [`11-testing-and-verification.md`](11-testing-and-verification.md).
 
 ## Document map (reading order)

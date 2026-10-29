@@ -1,6 +1,6 @@
 # CI Corpus Proposal — what the regression corpus should actually be
 
-> ## ⚠️ SUPERSEDED by [`docs/ci-test-architecture-v2.md`](ci-test-architecture-v2.md)
+> ## ⚠️ SUPERSEDED by [`docs/ci-test-architecture-v2.md`](../../ci-test-architecture-v2.md)
 >
 > This document was one of **two** parallel designs (the other is
 > `docs/ci-test-architecture.md`). Both were adversarially grilled and both

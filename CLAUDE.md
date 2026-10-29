@@ -423,7 +423,7 @@ and judge verdicts.
    legacy §6 numbers onto the new ones, because prior commits and
    transcripts cite the old numbers.
 
-   `docs/architecture/sky-compiler-architecture.md` documents the
+   `docs/history/compiler/sky-compiler-architecture.md` documents the
    **retired Haskell pipeline** and is kept for historical
    context ONLY. Its §6/§7/§8 cite `Compile.hs` line numbers and
    describe a compiler that no longer ships. **Do not cite it to
@@ -535,7 +535,7 @@ For the proposed tactic <X>:
      authorisation for floor-touching tactics is present.
   4. Name the gate that goes red if the tactic regresses.
 Cite file:line for every claim. If a claim rests on
-docs/architecture/sky-compiler-architecture.md (the retired
+docs/history/compiler/sky-compiler-architecture.md (the retired
 Haskell compiler) rather than on Rust source, mark it UNVERIFIED
 rather than carrying it over.
 If you cannot make all four citations, return cannotJustify=true
@@ -558,7 +558,7 @@ if (archRef.inFloor && !userAuthorizedFloor) {
 * Judge verdicts: "VERDICT: 100% ACHIEVED" without listing the
   doc 14 §3 origins closed + §5 levers activated + §4 floor
   sites documented.
-* **Citing `docs/architecture/sky-compiler-architecture.md`
+* **Citing `docs/history/compiler/sky-compiler-architecture.md`
   §6/§7/§8 to establish floor.** That is the retired Haskell
   compiler. Cite doc 14.
 * **Quoting a number no script produced** — a rt.Coerce census
@@ -585,7 +585,7 @@ if (archRef.inFloor && !userAuthorizedFloor) {
 - `docs/rust-rewrite/` — primary Rust-compiler architecture
   reference: pipeline (Parse → Canon → Type → Lower → Emit),
   workspace + crate layout, verbatim-goal verdict.
-- `docs/architecture/sky-compiler-architecture.md` — legacy
+- `docs/history/compiler/sky-compiler-architecture.md` — legacy
   Haskell-pipeline reference, historical context ONLY. Not a
   floor authority; see rule 1.
 - `docs/architecture/sky-stdlib-correctness.md` — Sky.Core
@@ -760,8 +760,8 @@ Mitigations:
   to `Explore` subagents whose context isolates the burn.
 - **Batch Bash calls** when independent. Chained `&&` beats
   three separate invocations.
-- **Scripts over individual invocations.** `scripts/cabal-test.sh`
-  encapsulates timeouts + resource guards; raw `cabal test` does
+- **Scripts over individual invocations.** `scripts/gates-for-change.sh`
+  encapsulates timeouts + resource guards; a raw gate invocation does
   not.
 - **Don't use TaskCreate / TaskUpdate / TaskGet** unless the user
   explicitly asks. The task list (~400 entries deep) is appended

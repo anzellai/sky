@@ -37,7 +37,7 @@ there. The falsified mechanism looked in the wrong place:
   So in `examples/13-skyshop/src/Main.sky:248,251,295`, `refreshProducts` reads
   the DB inline and the branch returns `Cmd.none` — the model field and the `Cmd`
   are both pure-typed. A `Cmd`-keyed classifier sees 98% "pure" and ships the DB
-  read to the client. Falsified by measurement (`spike/spa_classify.py`, 47%
+  read to the client. Falsified by measurement (`docs/history/skyspa/spike/spa_classify.py`, 47%
   ceiling).
 
 - **Strong (this design):** trace `Task` in the branch **body**. The `Task` type

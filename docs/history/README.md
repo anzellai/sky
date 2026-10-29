@@ -19,6 +19,15 @@ Contents:
   roadmaps, closure plans, and design explorations.
 - `embedded-postgres/` — the simultaneous-mutation experiment for the
   Std.Analytics / Std.Db pool work: does the gate suite still discriminate when
-  nine defects are present AT ONCE, or only one at a time? Regenerate with
-  `scripts/grill-mutation-matrix.sh`.
-- `archive/` — earlier audits, remediation notes, and legacy READMEs.
+  nine defects are present AT ONCE, or only one at a time? It was produced by
+  `scripts/grill-mutation-matrix.sh`, a one-off tool removed in v0.29.0 (in git
+  history at tag `v0.28.1`).
+- `legacy-compilers.md` — the TypeScript, Sky-in-Sky and Haskell compilers,
+  removed from the tree in v0.29.0; tag `v0.28.1` is the last that has them.
+- `ci-redesign-2026-08/` — the superseded CI test-architecture and corpus
+  proposals, their phase results, the Layer-2 member record, the v0.19
+  conformance findings and the coverage-hardening plan. The live design is
+  `docs/ci-test-architecture-v2.md`.
+- `skyspa/spike/` — the Sky.Spa Phase-1 Go→wasm spike.
+- `archive/` — earlier audits, remediation notes, legacy READMEs, the
+  Sky.Webview plan and the long-form road-to-v1 document.

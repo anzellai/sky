@@ -1,6 +1,6 @@
 # CI/test overhaul — Phase 4 results (Layer 1, the combinatorial corpus)
 
-Companion to [`ci-test-architecture-v2.md`](ci-test-architecture-v2.md) (the
+Companion to [`ci-test-architecture-v2.md`](../../ci-test-architecture-v2.md) (the
 design) and [`ci-test-phase-2-3-results.md`](ci-test-phase-2-3-results.md) (the
 cost measurement Phase 4 is built on). This records what happened when v2 §3's
 Layer 1 met the compiler.

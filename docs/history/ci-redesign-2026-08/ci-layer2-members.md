@@ -1,7 +1,7 @@
 # Layer 2 — the real-world projects
 
 > Implementation record for Phase 5 of the CI/test overhaul.
-> The authority is [`ci-test-architecture-v2.md`](ci-test-architecture-v2.md) §6;
+> The authority is [`ci-test-architecture-v2.md`](../../ci-test-architecture-v2.md) §6;
 > the project *shape* was adjudicated in favour of
 > [`ci-corpus-proposal.md`](ci-corpus-proposal.md) §5. This file records the
 > decisions those two documents leave open, so they are not re-inferred

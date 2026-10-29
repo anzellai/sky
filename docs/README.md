@@ -4,7 +4,7 @@ Live reference for the Sky language, stdlib, and toolchain.  The
 primary compiler is the Rust implementation (`rust/`) — see
 [`rust-rewrite/`](rust-rewrite/).  Compiler-journey history
 (per-version design notes, audits, plans, postmortems) is preserved
-under [`archive/`](archive/) and the per-version directories below.
+under [`history/`](history/).
 
 ## Start here
 
@@ -44,7 +44,7 @@ under [`archive/`](archive/) and the per-version directories below.
 * [`ai/`](ai/): the `Std.Ai` lifecycle (data, training, evaluation,
   registry, serving, device).  Test it with
   [`ai/testing-guide.md`](ai/testing-guide.md).
-* [`v0.16.x-console/`](v0.16.x-console/) — Sky Console embedded mode,
+* [`history/v0.16.x-console/`](history/v0.16.x-console/) — Sky Console embedded mode,
   hub mode (`sky console-serve`), HubExporter, telemetry flow.
 
 ## Toolchain
@@ -68,15 +68,17 @@ The primary compiler is the Rust implementation.  Start with
 [`rust-rewrite/`](rust-rewrite/) — architecture, pipeline, codegen,
 runtime + FFI, testing, and milestones.
 
-The Haskell compiler is preserved under `legacy-haskell-compiler/`;
-the `compiler/*` docs below describe it and are kept as **legacy
-reference**:
+The earlier TypeScript, Sky-in-Sky and Haskell compilers were removed
+from the tree in v0.29.0 ([`history/legacy-compilers.md`](history/legacy-compilers.md);
+tag `v0.28.1` is the last that has them). The Haskell-era compiler docs
+are kept as **legacy reference** under
+[`history/compiler/`](history/compiler/):
 
-* [`compiler/architecture.md`](compiler/architecture.md) —
+* [`history/compiler/architecture.md`](history/compiler/architecture.md) —
   pipeline overview (legacy Haskell).
-* [`compiler/pipeline.md`](compiler/pipeline.md) — phase-by-phase
+* [`history/compiler/pipeline.md`](history/compiler/pipeline.md) — phase-by-phase
   data flow (legacy Haskell).
-* [`compiler/runtime-verification.md`](compiler/runtime-verification.md)
+* [`history/compiler/runtime-verification.md`](history/compiler/runtime-verification.md)
   — example sweep + Playwright drive (legacy Haskell).
 * [`history/compiler/journey.md`](history/compiler/journey.md) — historical narrative
   of how Sky got here.  Kept for contributors.
@@ -92,16 +94,11 @@ Language + interop references (backend-neutral):
 
 ## Compiler journey (full history, kept by design)
 
-* [`architecture/`](architecture/) — canonical compiler + stdlib
-  architecture references. First source consulted on any compiler
-  or stdlib change.
-* [`v0.17/`](v0.17/) — v0.17.x release docs (release plan,
-  rt.Coerce residual surface, Judge verdicts, session checkpoints).
-* [`v0.17-roadmap/`](v0.17-roadmap/) — multi-PR roadmap for the
-  v0.17 typed-emit close.
-* [`v0.17.x/`](v0.17.x/), [`v1-rfc/`](v1-rfc/) — forward-looking
-  release + RFC drafts.
-* [`archive/`](archive/) — pre-v0.16 design docs, v0.15.x hardening
-  cycle log, v0.17 per-PR design notes (moved here 2026-06-28),
-  superseded roadmaps. Useful as historical context; the live
-  docs above are the source of truth.
+* [`architecture/`](architecture/) — the stdlib correctness reference.
+  The compiler's own architecture reference is
+  [`rust-rewrite/`](rust-rewrite/).
+* [`history/`](history/) — frozen material: per-version release docs
+  and roadmaps (v0.16 to v0.27), RFC drafts, the superseded CI design
+  (`history/ci-redesign-2026-08/`), and the archive of earlier design
+  docs. Useful as historical context; the live docs above are the
+  source of truth.

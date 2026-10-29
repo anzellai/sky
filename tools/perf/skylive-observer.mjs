@@ -24,7 +24,7 @@
 // and this is a 16 GB machine. Load comes from skyliveload.
 //
 // Usage:
-//   node scripts/skylive-observer.mjs --url http://127.0.0.1:8000 \
+//   node tools/perf/skylive-observer.mjs --url http://127.0.0.1:8000 \
 //        --samples 30 --json out.json
 
 import { chromium } from 'playwright';

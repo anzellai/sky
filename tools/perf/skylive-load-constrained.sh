@@ -2,7 +2,7 @@
 # Run the Sky.Live load harness against an app confined to a small
 # machine, to bracket what a constrained VM can serve.
 #
-#   scripts/skylive-load-constrained.sh --app examples/26-ui-showcase
+#   tools/perf/skylive-load-constrained.sh --app examples/26-ui-showcase
 #
 # TOPOLOGY: the APP runs in the container; the LOAD GENERATOR runs on the
 # host. Constraining the server is the point; putting the generator
@@ -45,7 +45,7 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 # Printed after every sweep, so the caveats travel with the numbers even

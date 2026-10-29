@@ -1,8 +1,8 @@
 # Sky.Live input authority protocol
 
 > **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky`)
-> is the primary Sky compiler; the Haskell compiler is preserved under
-> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> is the Sky compiler (the earlier compilers were removed in v0.29.0).
+> Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
 > [`../history/compiler/versions.md`](../history/compiler/versions.md) for the changelog.
 
@@ -722,7 +722,7 @@ Rebuild a downstream app's compiler binary (`cargo build --release -p sky` in sk
 
 ## Backward compatibility
 
-- **Runtime bump:** all Sky.Live apps must recompile to get the new runtime. No opt-out flag; the runtime is embedded via Template Haskell and shipped with the compiler binary.
+- **Runtime bump:** all Sky.Live apps must recompile to get the new runtime. No opt-out flag; the runtime is embedded at build time and shipped with the compiler binary.
 - **Wire format:** additive. New fields are optional; omitting them produces the pre-upgrade behaviour.
 - **Sky-id format:** changes visible in DOM (`sky-id="r.0#div.1#form..."` instead of `sky-id="r.0.1..."`). Tests that assert on sky-id strings must update. Dev tools scripts that query by `[sky-id^="r."]` continue to work.
 - **No CLAUDE.md changes needed.** The public API (`App.run` / `App.web` / `App.app`, `Html.*`, `Server.*`) is unchanged. `Html.keyed` is a new opt-in helper, documented but not required.

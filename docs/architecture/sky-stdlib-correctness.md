@@ -1,7 +1,7 @@
 # Sky stdlib — Canonical correctness reference
 
 Pairs with `docs/rust-rewrite/` (the primary compiler reference; the
-Haskell-era `docs/architecture/sky-compiler-architecture.md` is historical
+Haskell-era `docs/history/compiler/sky-compiler-architecture.md` is historical
 context only). The compiler docs explain HOW Sky source becomes Go; this doc
 explains WHAT the stdlib surfaces guarantee.
 
@@ -23,7 +23,7 @@ HEAD). Each binding is one of:
 1. **Pure Sky** — recursive / case-of / accumulator implementation.
    `List.foldl`, `Maybe.map`, `Result.combine`, every Std.Ui combinator.
 2. **`Ffi.kernel "Name"` alias** — Sky-source typed declaration whose
-   call sites the compiler routes to the Haskell-side kernel dispatch,
+   call sites the compiler routes to the kernel dispatch,
    which then calls a Go runtime function in `runtime-go/rt/`. Zero
    runtime cost over a direct call; `sky doc` surfaces the entry.
 

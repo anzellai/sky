@@ -2,11 +2,11 @@
 # Load a REMOTE Sky.Live app, and sample its RSS while doing it.
 #
 #   # preflight only -- the default, sends no load:
-#   scripts/skylive-load-remote.sh --url http://34.x.x.x:8000
+#   tools/perf/skylive-load-remote.sh --url http://34.x.x.x:8000
 #
 #   # the real thing, against a throwaway:
-#   scripts/skylive-load-remote.sh --url http://34.x.x.x:8000 \
-#       --project settleby --instance sky-lang-bench --load
+#   tools/perf/skylive-load-remote.sh --url http://34.x.x.x:8000 \
+#       --project <id> --instance sky-lang-bench --load
 #
 # WHY THIS PAIRS LOAD WITH OBSERVATION
 # ------------------------------------
@@ -37,7 +37,7 @@
 #
 #   cd /path/to/sky-lang.org
 #   deploy/deploy.sh --project <id> --instance sky-lang-bench \
-#       --zone us-central1-a --account deployer@settleby.iam.gserviceaccount.com
+#       --zone us-central1-a --account <deployer-service-account>
 #
 # and delete it when finished. This script deliberately does NOT create
 # the instance: provisioning cloud resources costs money and is the
@@ -45,7 +45,7 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 URL="${URL:-}"
@@ -188,7 +188,7 @@ if [ -n "$PROJECT" ] && [ -n "$INSTANCE" ]; then
     OBS_SECS=$(( NLEVELS * REPEATS * ( ${DURATION%s} + 20 ) + 60 ))
     echo "==> starting RSS observer on $INSTANCE for ${OBS_SECS}s"
     INTERVAL=5 DURATION="$OBS_SECS" OUTDIR="$OUTDIR/observer" \
-        "$ROOT/scripts/skylive-observe-remote.sh" \
+        "$ROOT/tools/perf/skylive-observe-remote.sh" \
             --project "$PROJECT" --instance "$INSTANCE" --zone "$ZONE" \
             --service "$SERVICE" ${ACCOUNT:+--account "$ACCOUNT"} \
             > "$OUTDIR/observer.log" 2>&1 &

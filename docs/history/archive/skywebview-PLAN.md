@@ -5,8 +5,8 @@
 > **Front door has moved to `Std.App`.** User code never writes
 > `Webview.app` / `Tui.app` / `Live.app` directly any more — you write one
 > `App.app` value and pick the desktop with `sky build --target desktop`
-> (see [`../skyapp/overview.md`](../skyapp/overview.md) and
-> [`overview.md`](overview.md)). The kernel-level API sketches below
+> (see [`../skyapp/overview.md`](../../skyapp/overview.md) and
+> [`overview.md`](../../skywebview/overview.md)). The kernel-level API sketches below
 > (`Webview.app`, `rt.Webview_app`, the `("Webview", "app")` type-checker
 > arm) are the **low-level Sky.Webview mechanism** that `Std.App` composes;
 > they are preserved here as the implementation design, not as the surface a

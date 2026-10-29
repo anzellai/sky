@@ -7,7 +7,7 @@
 //! corpus exists for. #166, #171, #173 and the `goty.rs` fieldset collision all
 //! **compile clean and behave wrong** — v2 §3.1 says so in as many words. So the
 //! value-asserting families pay `c_u` (measured 0.70 s/unit warm on this host,
-//! `docs/ci-test-phase-2-3-results.md` §5) and run the program.
+//! `docs/history/ci-redesign-2026-08/ci-test-phase-2-3-results.md` §5) and run the program.
 //!
 //! That makes `N_iso · c_u` the whole cost model, exactly as Phase 3 concluded:
 //! the static term stopped binding at 1.02 ms/case.
