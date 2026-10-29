@@ -63,8 +63,25 @@ func Regex_fromString(pattern any) any {
 	return Ok[any, any](regexBox(re))
 }
 
+// Regex_fromStringT is the typed twin of Regex_fromString for a proven String
+// pattern (lower.rs `kernel_typed_return_twin`). Its result is the Go type the
+// Sky `Result Error Regex` lowers to: `Sky_Core_Error_Error` and
+// `Sky_Core_Regex_Regex` are both emitted as `= rt.SkyADT`, so the call site
+// narrows nothing (doc 14 R5, lever §5.3).
+func Regex_fromStringT(pattern string) SkyResult[SkyADT, SkyADT] {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return Err[SkyADT, SkyADT](makeErrorT(7, "InvalidInput", "Regex.fromString: "+err.Error()))
+	}
+	return Ok[SkyADT, SkyADT](regexBox(re))
+}
+
 // Regex_never is `Regex.never : Regex`, which matches nothing.
 func Regex_never() any { return regexBox(regexNeverRE) }
+
+// Regex_neverT is Regex_never typed as the emitted `Sky_Core_Regex_Regex`
+// (`= rt.SkyADT`), used where the value lands in a `Regex` slot.
+func Regex_neverT() SkyADT { return regexBox(regexNeverRE) }
 
 // Regex_contains is `Regex.contains re s` (also exported as `Regex.match`).
 func Regex_contains(re any, s any) any {

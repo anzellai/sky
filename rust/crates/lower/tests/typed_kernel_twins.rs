@@ -192,3 +192,29 @@ fn float_division_of_typed_operands_uses_the_float_twin() {
         );
     }
 }
+
+// v0.29.0: `Regex.findAll` / `find` / `split` over a proven String use their
+// typed twins (doc 14 R5, lever §5.3), so the call site narrows nothing. The
+// typed build of a compiled Regex itself (`Regex.fromString`, `Regex.never`,
+// `Result.withDefault`) needs the stdlib's `Regex` type and is pinned in
+// `project/tests/regex_typed_emit.rs`.
+const REGEX_SRC: &str = "module Main exposing (main)\n\n\
+                         import Sky.Core.Regex as Regex exposing (Regex)\n\n\
+                         number : Regex\nnumber =\n    Regex.fromString \"^[0-9]+$\" |> Result.withDefault Regex.never\n\n\
+                         words : String -> List String\nwords s =\n    Regex.findAll number s\n\n\
+                         firstWord : String -> Maybe String\nfirstWord s =\n    Regex.find number s\n\n\
+                         parts : String -> List String\nparts s =\n    Regex.split number s\n\n\
+                         main =\n    ( words \"1 2\", firstWord \"1\", parts \"a1b\" )\n";
+
+#[test]
+fn regex_find_all_find_and_split_use_their_twins() {
+    for (f, sym) in [
+        ("Main_words", "rt.Regex_findAllT"),
+        ("Main_firstWord", "rt.Regex_findT"),
+        ("Main_parts", "rt.Regex_splitT"),
+    ] {
+        let body = func_debug(REGEX_SRC, f);
+        assert!(body.contains(sym), "{sym}: {body}");
+        assert!(!body.contains("Coerce"), "{body}");
+    }
+}

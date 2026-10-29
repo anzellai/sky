@@ -236,3 +236,16 @@ func regexForTest(p string) any {
 	}
 	return Regex_never()
 }
+
+// `Result.withDefault` over a proven `SkyResult[E, A]` is lowered to
+// `Result_withDefaultT[E, A]` (v0.29.0, lower.rs `result_with_default_plan`).
+// It agrees with the erased kernel on an Ok and on an Err.
+func TestResultWithDefaultTwinMatchesErased(t *testing.T) {
+	ok := Ok[SkyADT, string]("v")
+	bad := Err[SkyADT, string](makeErrorT(7, "InvalidInput", "x"))
+	for _, r := range []SkyResult[SkyADT, string]{ok, bad} {
+		if got, want := Result_withDefaultT("d", r), AsString(Result_withDefault("d", r)); got != want {
+			t.Fatalf("withDefaultT %#v: %q, erased %q", r, got, want)
+		}
+	}
+}

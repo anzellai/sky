@@ -4409,6 +4409,24 @@ impl<'a> Ctx<'a> {
     /// `rt.AsMapT` REBUILDS a `map[string]V`, which is a different (invariant) Go
     /// map type, so there is no sound narrowing available.
     fn nullary_kernel_value(&mut self, go: &str, actual: &GoTy, expected: &GoTy) -> GoExpr {
+        // A nullary kernel whose typed twin returns the value's own Go type
+        // (`Regex.never` → `rt.Regex_neverT()`, a `Sky_Core_Regex_Regex`):
+        // called at that type, so a typed slot narrows nothing (doc 14 R5,
+        // lever §5.3; §1: the twin's Go result is fixed in `rt` and equals
+        // the node's own lowered type).
+        if go == "rt.Regex_never" && *actual == GoTy::Named(REGEX_GO.into(), vec![]) {
+            let fn_ty = GoTy::Func(vec![], Box::new(actual.clone()));
+            return GoExpr::new(
+                GoExprKind::Call(
+                    Box::new(GoExpr::new(
+                        GoExprKind::Ident("rt.Regex_neverT".into()),
+                        fn_ty,
+                    )),
+                    vec![],
+                ),
+                actual.clone(),
+            );
+        }
         let any_key_map = matches!(actual, GoTy::Map(k, _) if **k == GoTy::Any);
         // A concrete-key map slot narrowed via `rt.AsMapT` even when the node was
         // only being widened — preserved verbatim so its emission does not move.
@@ -5775,13 +5793,7 @@ impl<'a> Ctx<'a> {
             // The type arguments name concrete Go types; register them so their
             // decls survive the type-reachability BFS even if this is the only
             // site that mentions them.
-            for t in &targs {
-                let mut names = Vec::new();
-                collect_named(t, &mut names);
-                for n in names {
-                    self.used_types.insert(n);
-                }
-            }
+            self.register_used(&targs);
             return GoExpr::new(GoExprKind::GenericCall(sym.to_string(), targs, largs), ret);
         }
         GoExpr::new(GoExprKind::Call(Box::new(c), largs), ret_goty)
@@ -6444,6 +6456,23 @@ impl<'a> Ctx<'a> {
             let wd = self.widen(d);
             return self.kernel_call_lowered(go, vec![wd], actual);
         }
+        // `Result.withDefault d r` (the Prelude kernel path) over a proven
+        // `rt.SkyResult[E, A]`: the typed generic `rt.Result_withDefaultT[E, A]`
+        // returns `A`, where the erased kernel returns `any` and the slot
+        // narrows it back. Same plan and proof as the `Sky.Core.Result` def
+        // path (`sky_list_hof_plan`). Unproven: the erased call, as before.
+        if args.len() == 2 && go == "rt.Result_withDefault" {
+            if let Some((targs, slots, ret)) = self.result_with_default_plan(args) {
+                let d = self.lower_expr(args[0], &slots[0]);
+                let r = self.lower_expr(args[1], &slots[1]);
+                self.register_used(&targs);
+                let call = GoExpr::new(
+                    GoExprKind::GenericCall("rt.Result_withDefaultT".into(), targs, vec![d, r]),
+                    ret,
+                );
+                return self.coerce_if_needed(call, actual);
+            }
+        }
         // `List.take k` / `List.drop k` over a proven Int and slice: the typed
         // twins `rt.List_takeT[T]` / `List_dropT[T]` are a re-slice, O(1),
         // where the erased kernels reflect-widen the whole list and the slot
@@ -6515,8 +6544,18 @@ impl<'a> Ctx<'a> {
                 .or(Some(t)),
             other => other,
         };
+        // A twin whose result is a NOMINAL container (`Regex.fromString`'s
+        // `rt.SkyResult[Sky_Core_Error_Error, Sky_Core_Regex_Regex]`) is used
+        // only where the call's own type is exactly that, or `any`: anything
+        // else would trade the erased kernel's one narrowing for a container
+        // rebuild between two typed Results.
+        let ret_fits = |twin: &TypedTwin| {
+            !matches!(&twin.ret, GoTy::Named(n, _) if n == "rt.SkyResult")
+                || twin.ret == *actual
+                || *actual == GoTy::Any
+        };
         if let Some(twin) = chosen {
-            if fits(&twin) {
+            if fits(&twin) && ret_fits(&twin) {
                 let targs: Vec<GoExpr> = twin
                     .params
                     .iter()
@@ -6871,6 +6910,11 @@ impl<'a> Ctx<'a> {
             return None;
         }
         match sym {
+            // withDefault d r — see `result_with_default_plan`.
+            "rt.Result_withDefaultT" => {
+                let (targs, slots, ret) = self.result_with_default_plan(args)?;
+                Some((sym, targs, slots, ret))
+            }
             // foldl fn acc list — Sky applies `fn x acc`, ELEMENT first. The
             // runtime twin matches that order (see `List_foldlElemFirstT`), so
             // the callback needs no permuting wrapper.
@@ -6917,6 +6961,58 @@ impl<'a> Ctx<'a> {
                 ))
             }
             _ => None,
+        }
+    }
+
+    /// `Result.withDefault d r` whose result is a proven `rt.SkyResult[E, A]`:
+    /// the typed generic `rt.Result_withDefaultT[E, A]` (`rt.go`), with `d`
+    /// lowered at `A` and `r` at `rt.SkyResult[E, A]`. Shared by the
+    /// `Sky.Core.Result` def path (`SKY_LIST_HOF_TWINS`) and the Prelude
+    /// kernel path (`kernel_call`).
+    ///
+    /// Doc 14: origin R12 (the erased polymorphic def returns `any`, so the
+    /// CALLER narrows its result, surfacing as R1) and R5 on the kernel path
+    /// (`rt.Result_withDefault` returns `any`). Lever §5.3, a typed entry
+    /// point. Floor check (§1): `E` and `A` are read off the Go type the
+    /// Result argument lowers to, and `provable` refuses `any`, a type
+    /// parameter and an anonymous struct, so both shapes are known at emit
+    /// time. The erased path narrowed the RESULT (one `rt.Coerce[A]`) and
+    /// rebuilt a typed Result as `rt.SkyResult[any, any]`; the typed path
+    /// does neither. Where `d` does not already lower to `A` it is narrowed
+    /// at its own site instead, one narrowing for one, never more. A func `A`
+    /// keeps the erased call: a func default would go through the eta lever,
+    /// which this does not need to decide.
+    fn result_with_default_plan(
+        &mut self,
+        args: &[ExprId],
+    ) -> Option<(Vec<GoTy>, Vec<GoTy>, GoTy)> {
+        if args.len() != 2 {
+            return None;
+        }
+        let r = self.probe_goty(args[1]);
+        let GoTy::Named(n, ta) = &r else {
+            return None;
+        };
+        if n != "rt.SkyResult" || ta.len() != 2 {
+            return None;
+        }
+        let (e, a) = (ta[0].clone(), ta[1].clone());
+        if !provable(&e) || !provable(&a) || matches!(a, GoTy::Func(..)) {
+            return None;
+        }
+        Some((vec![e, a.clone()], vec![a.clone(), r.clone()], a))
+    }
+
+    /// Keep the declarations of the named types in `targs` past the
+    /// type-reachability walk, for a generic call that may be the only site
+    /// naming them.
+    fn register_used(&mut self, targs: &[GoTy]) {
+        for t in targs {
+            let mut names = Vec::new();
+            collect_named(t, &mut names);
+            for n in names {
+                self.used_types.insert(n);
+            }
         }
     }
 
@@ -10419,6 +10515,12 @@ fn call_rt(name: &str, args: Vec<GoExpr>, ty: GoTy) -> GoExpr {
 const SKY_LIST_HOF_TWINS: &[(&str, &str, &str, usize)] = &[
     ("Sky.Core.List", "foldl", "rt.List_foldlElemFirstT", 3),
     ("Sky.Core.List", "any", "rt.List_anyT", 2),
+    (
+        "Sky.Core.Result",
+        "withDefault",
+        "rt.Result_withDefaultT",
+        2,
+    ),
 ];
 
 /// The UNARY list kernels whose typed twin returns a Go PRIMITIVE, keyed by the
@@ -10462,6 +10564,10 @@ const SKY_LIST_HOF_TWINS: &[(&str, &str, &str, usize)] = &[
 /// A typed runtime twin: its symbol, one entry per parameter (`None` takes the
 /// argument widened to `any`, `Some(t)` takes it only when it lowers to exactly
 /// `t`), and its Go result type.
+/// The emitted Go name of `Sky.Core.Regex.Regex` (an unsealed stdlib ADT,
+/// `type Sky_Core_Regex_Regex = rt.SkyADT`).
+const REGEX_GO: &str = "Sky_Core_Regex_Regex";
+
 struct TypedTwin {
     symbol: &'static str,
     params: Vec<Option<GoTy>>,
@@ -10498,6 +10604,32 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
         // v0.29.0: a Regex is a compiled value (erased `any`), the subject a
         // proven string.
         ("rt.Regex_contains", 2) => twin("rt.Regex_containsT", vec![None, Some(str_())], bool_()),
+        ("rt.Regex_find", 2) => twin("rt.Regex_findT", vec![None, Some(str_())], maybe(str_())),
+        ("rt.Regex_findAll", 2) => twin(
+            "rt.Regex_findAllT",
+            vec![None, Some(str_())],
+            GoTy::Slice(Box::new(str_())),
+        ),
+        ("rt.Regex_split", 2) => twin(
+            "rt.Regex_splitT",
+            vec![None, Some(str_())],
+            GoTy::Slice(Box::new(str_())),
+        ),
+        // `Regex.fromString` over a proven String returns the Go type of
+        // `Result Error Regex` itself: both ADTs are emitted `= rt.SkyADT`
+        // (unsealed stdlib ADTs, `should_seal_prefix`), and
+        // `rt.Regex_fromStringT` returns `rt.SkyResult[rt.SkyADT, rt.SkyADT]`.
+        ("rt.Regex_fromString", 1) => twin(
+            "rt.Regex_fromStringT",
+            vec![Some(str_())],
+            GoTy::Named(
+                "rt.SkyResult".into(),
+                vec![
+                    GoTy::Named("Sky_Core_Error_Error".into(), vec![]),
+                    GoTy::Named(REGEX_GO.into(), vec![]),
+                ],
+            ),
+        ),
         // v0.29.0 core helpers (runtime-go/rt/core_helpers_test.go checks
         // each against its erased kernel).
         ("rt.String_indexes", 2) => twin(

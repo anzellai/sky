@@ -199,6 +199,8 @@ type Config
 -- (default `False`) is set by [`withEmbedded`]; it maps to `Live.withEmbedded`.
 -- `sessionTransport` (default `CookieSession`) is set by
 -- [`withSessionTransport`]; it maps to `Live.withSessionTransport`.
+-- `persistExclude` (default `Nothing`) is set by [`withPersistExclude`]; it
+-- maps to `Live.withRefreshOnLoad`.
 type alias WebOpts =
     { port : Int
     , store : Maybe String
@@ -213,6 +215,7 @@ type alias WebOpts =
     , embedded : Bool
     , sessionTransport : SessionTransport
     , name : Maybe String
+    , persistExclude : Maybe (List String)
     }
 
 -- | How a Sky.Live session id travels between the browser and the server.
@@ -243,6 +246,7 @@ webDefaults =
     , embedded = False
     , sessionTransport = CookieSession
     , name = Nothing
+    , persistExclude = Nothing
     }
 
 -- | Tablet-target config — same Live-backed shape as [`WebOpts`].
@@ -415,7 +419,6 @@ type App fallback seed page model msg key
 , onRequest : Maybe (Request -> model -> ( model, Cmd msg ))
 , consoleAuth : Maybe (Request -> model -> Task Error (Maybe Console.Identity))
 , rpcError : Maybe (Error -> msg)
-, persistExclude : List String
 , durable : DurableWiring model
 }
 
@@ -478,7 +481,6 @@ app cfg =
         , onRequest = Nothing
         , consoleAuth = Nothing
         , rpcError = Nothing
-        , persistExclude = []
         , durable = noDurableWiring
         }
 
@@ -514,7 +516,6 @@ web cfg =
         , onRequest = Nothing
         , consoleAuth = Nothing
         , rpcError = Nothing
-        , persistExclude = []
         , durable = noDurableWiring
         }
 
@@ -549,7 +550,6 @@ cli cfg =
         , onRequest = Nothing
         , consoleAuth = Nothing
         , rpcError = Nothing
-        , persistExclude = []
         , durable = noDurableWiring
         }
 
@@ -586,7 +586,6 @@ tui cfg =
         , onRequest = Nothing
         , consoleAuth = Nothing
         , rpcError = Nothing
-        , persistExclude = []
         , durable = noDurableWiring
         }
 
@@ -1063,7 +1062,59 @@ withSessionLifetime _ appVal =
 -- nothing.
 withPersistExclude : List String -> App fallback seed page model msg key -> App fallback seed page model msg key
 withPersistExclude fields (App a) =
-    App { a | persistExclude = fields }
+    -- Appended to the config list like withName, and read by
+    -- persistExcludeIn_ (the last call wins). Not a field of the App record:
+    -- every `(App a)` unwrap of that stdlib ADT narrows each of its fields,
+    -- so a field there cost a list narrowing per builder in every app.
+    App
+        { a
+            | configs =
+                a.configs
+                    ++ [ WebConfig
+                             { webDefaults | persistExclude = Just fields }
+                       ]
+        }
+
+
+-- | The fields set by the last [`withPersistExclude`] in the config list,
+-- else none.
+persistExcludeIn_ : List Config -> List String
+persistExcludeIn_ configs =
+    case lastExcludeIn_ Nothing configs of
+
+        Just fields ->
+            fields
+
+        Nothing ->
+            []
+
+
+lastExcludeIn_ : Maybe (List String) -> List Config -> Maybe (List String)
+lastExcludeIn_ found configs =
+    case configs of
+
+        [] ->
+            found
+
+        (WebConfig o) :: rest ->
+            lastExcludeIn_ (newerExclude_ o found) rest
+
+        (TabletConfig o) :: rest ->
+            lastExcludeIn_ (newerExclude_ o found) rest
+
+        _ :: rest ->
+            lastExcludeIn_ found rest
+
+
+newerExclude_ : WebOpts -> Maybe (List String) -> Maybe (List String)
+newerExclude_ o found =
+    case o.persistExclude of
+
+        Just fields ->
+            Just fields
+
+        Nothing ->
+            found
 
 
 -- | The client build's boot step for [`withSessionLifetime`]: the lifetime
@@ -1625,12 +1676,13 @@ liveConfig_ (App a) =
 
                         Nothing ->
                             withTransport_
+                exclude_ = persistExcludeIn_ a.configs
                 withExclude_ =
-                    if List.isEmpty a.persistExclude then
+                    if List.isEmpty exclude_ then
                         withName_
 
                     else
-                        Live.withRefreshOnLoad a.persistExclude withName_
+                        Live.withRefreshOnLoad exclude_ withName_
             in
                 Just withExclude_
 

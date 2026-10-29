@@ -102,6 +102,51 @@ func TestRegexTypedTwinsAgree(t *testing.T) {
 	}
 }
 
+// The typed build twins (v0.29.0) agree with the erased kernels:
+// `Regex_fromStringT` returns the same Ok / Err as `Regex_fromString` as a
+// typed `SkyResult[SkyADT, SkyADT]` (the emitted
+// `rt.SkyResult[Sky_Core_Error_Error, Sky_Core_Regex_Regex]`), `Regex_neverT`
+// is `Regex.never`, and `findT` / `findAllT` / `splitT` agree on every input.
+func TestRegexBuildAndReadTwinsAgree(t *testing.T) {
+	for _, p := range []string{`[0-9]+`, `\s*`, "(", "a{3,2}"} {
+		typed := Regex_fromStringT(p)
+		erased, _ := Regex_fromString(p).(SkyResult[any, any])
+		if typed.Tag != erased.Tag {
+			t.Fatalf("fromStringT %q: tag %d, erased %d", p, typed.Tag, erased.Tag)
+		}
+		if typed.Tag == 1 {
+			if regexErrorText(typed.ErrValue) != regexErrorText(erased.ErrValue) {
+				t.Fatalf("fromStringT %q: %v, erased %v", p, typed.ErrValue, erased.ErrValue)
+			}
+			continue
+		}
+		for _, s := range []string{"", "a1", "abc", "42 7", " x "} {
+			if Regex_containsT(typed.OkValue, s) != AsBool(Regex_contains(erased.OkValue, s)) {
+				t.Fatalf("fromStringT %q: contains %q differs", p, s)
+			}
+		}
+	}
+	for _, s := range []string{"", "a", "\x00"} {
+		if Regex_containsT(Regex_neverT(), s) {
+			t.Fatalf("Regex_neverT matched %q", s)
+		}
+	}
+	re := mustRegex(t, `[0-9]+`)
+	for _, s := range []string{"", "a1", "abc", "42 7", "1,2,3"} {
+		ft := Regex_findT(re, s)
+		fe, _ := Regex_find(re, s).(SkyMaybe[any])
+		if ft.Tag != fe.Tag || (ft.Tag == 0 && ft.JustValue != fe.JustValue) {
+			t.Fatalf("findT %q: %#v, erased %#v", s, ft, fe)
+		}
+		if fmt.Sprint(Regex_findAllT(re, s)) != fmt.Sprint(asList(Regex_findAll(re, s))) {
+			t.Fatalf("findAllT %q", s)
+		}
+		if fmt.Sprint(Regex_splitT(re, s)) != fmt.Sprint(asList(Regex_split(re, s))) {
+			t.Fatalf("splitT %q", s)
+		}
+	}
+}
+
 // regexErrorText is the Error's text (its kind and message), read the way
 // every platform's runtime prints an Error.
 func regexErrorText(e any) string {

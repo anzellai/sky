@@ -4682,6 +4682,12 @@ func errorKindAdt(tag int, name string) any {
 }
 
 func makeError(kindTag int, kindName, msg string) any {
+	return makeErrorT(kindTag, kindName, msg)
+}
+
+// makeErrorT is makeError typed as the Sky Error ADT (`skyErrorAdt`, which is
+// `SkyADT`), for a typed runtime twin that returns `SkyResult[SkyADT, …]`.
+func makeErrorT(kindTag int, kindName, msg string) skyErrorAdt {
 	info := skyErrorInfo{Message: msg, Details: skyMaybeNothing()}
 	return skyErrorAdt{
 		Tag:     0,

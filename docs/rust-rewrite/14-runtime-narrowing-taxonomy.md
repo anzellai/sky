@@ -503,6 +503,25 @@ all 86 coerce-floor rows, adapter 0; `xtask perf-gate` cons-reverse (1e6
 conses then reverse) 0.032 s and 0.000 mallocs per element, where the erased
 form did not finish 32,000 conses in 13 s.
 
+**v0.29.0: a compiled Regex, and `Result.withDefault`.** `Regex.fromString`
+over a proven String goes to `rt.Regex_fromStringT`, which returns
+`rt.SkyResult[rt.SkyADT, rt.SkyADT]`: the Go type of `Result Error Regex`
+itself, because both stdlib ADTs are emitted `= rt.SkyADT`. The twin is used
+only where the call's own type is exactly that, or `any` (a typed Result
+anywhere else would need a rebuild). `Regex.never` in a `Regex` slot is
+`rt.Regex_neverT()`, and `findAll` / `find` / `split` over a proven String go
+to their typed twins. `Result.withDefault d r` over a proven
+`rt.SkyResult[E, A]` goes to `rt.Result_withDefaultT[E, A]`, on the Prelude
+kernel path and on the `Sky.Core.Result` def path (`SKY_LIST_HOF_TWINS`,
+`result_with_default_plan`); the erased forms narrowed the result (R5 / R12)
+and rebuilt a typed Result as `rt.SkyResult[any, any]`. In the same change
+`App.withPersistExclude` stopped adding a field to the `App` record: each
+`(App a)` unwrap of that unsealed stdlib ADT narrows every payload field (R6,
+§4.5), so the field cost one `rt.AsListT[string]` per builder in every
+`Std.App` program. The list travels in `WebOpts.persistExclude` instead,
+which is narrowed once as a whole. Measured: narrow 16974 -> 16561 over all
+86 coerce-floor rows (golden 16697), adapter 0, no row above its golden.
+
 **The new negative control is `List.head`.** It stays off every twin table for
 the reason given above: `rt.List_headT` returns `rt.SkyMaybe[A]` where its
 consumers take `rt.SkyMaybe[any]`, so routing it relocates the cost into a
