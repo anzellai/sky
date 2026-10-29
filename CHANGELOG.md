@@ -442,6 +442,48 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   and a copied name is dropped only from the module it was copied from (and
   only from imports of that module).
 
+### Repository and tooling
+
+- **The legacy compilers are gone from the tree.** The retired Haskell,
+  TypeScript and Sky-in-Sky compilers, and the scripts, fixtures and examples
+  only they used, are removed. Tag `v0.28.1` is the last tag that has them
+  (`docs/history/legacy-compilers.md`). None of them was part of the released
+  `sky` binary, and `xtask build-run --bless` now writes a golden from two
+  agreeing Rust captures alone, with no oracle.
+- **The README is rewritten.** It is short, puts the install line first, and
+  every code sample in it is a verbatim copy of code that CI builds
+  (`docs/showcase.md`, `examples/03-tea-external`), which
+  `rust/crates/xtask/tests/readme_samples_are_built.rs` enforces. The docs
+  index lists every stdlib module. `AGENTS.md`, `CLAUDE.md` and the `sky init`
+  templates are refreshed. The memory and CPU sizing notes moved to
+  `docs/perf/sizing.md`, with every measurement kept.
+- **Versions are stated once and checked.** `sky doctor` checks Go against
+  the `go` directive in `runtime-go/go.mod` (1.25), and the docs say 1.25.
+  `rust-toolchain.toml` pins Rust 1.99.1, the version CI builds with. The Nix
+  dev shell adds Node 22, which the Playwright gates need, and no longer sets
+  `SKY_RUNTIME_DIR`, which no current compiler reads.
+- **Superseded design records moved to `docs/history`**, and `ROADMAP.md`
+  links the public roadmap.
+
+### Fixed (gates)
+
+- **The `welltyped` gate had stopped testing anything.** It compared the Rust
+  compiler with the Haskell oracle and skipped when the oracle was absent,
+  which it was in CI. It now asserts that the Rust compiler accepts every
+  generated program. Doing so found two bugs in the program generator: a
+  zero-argument helper could name itself (a value cycle, `[E1018]`), and an
+  `if` at the head of `::` with no brackets took the cons into its `else`
+  branch. Both are fixed, and the gate passes 400 programs.
+- **The LSP test on the Stripe-scale FFI example ran nowhere.**
+  `scripts/lsp-test-skyshop.lua` was not wired to any gate, and its
+  hard-coded line and column numbers had drifted. It is now the `realffi`
+  group of the `lsp` gate (hover and completion on `examples/13-skyshop`),
+  finds its positions in the file, and has a falsifier.
+- **The Office e2e reads files LibreOffice wrote.** It already opened Sky's
+  `.xlsx` and `.docx` files in LibreOffice. It now also has LibreOffice save
+  both files again and checks that `Xlsx.read` and `Docx.read` read them,
+  cached formula value included.
+
 ## v0.28.1 — Insert text at the caret (Std.Native.insertAtCursor) (2026-10-28)
 
 ### Added
