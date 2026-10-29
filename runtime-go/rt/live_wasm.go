@@ -128,6 +128,7 @@ func spaRun(cfg any) any {
 	spaModelEncoder = fieldOrNil(cfg, "ModelEncoder")
 	spaPersistProt = spaStringList(fieldOrNil(cfg, "PersistProtectedFields"))
 	spaPersistSeed = spaStringList(fieldOrNil(cfg, "PersistSeedFields"))
+	spaPersistExclude = spaStringList(fieldOrNil(cfg, "PersistExcludeFields"))
 
 	doc := js.Global().Get("document")
 	spaRoot = doc.Call("getElementById", "app")

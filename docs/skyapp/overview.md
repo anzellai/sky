@@ -436,6 +436,30 @@ store; the Sky Console is one per process (the first app owns it). A build for
 a target that does not run Sky.Live refuses an entry that calls `App.serve`.
 See `docs/skylive/embedded.md`.
 
+## Session lifetime and fields that are never kept — `App.withSessionLifetime`, `App.withPersistExclude`
+
+Two builders for what a reload keeps (v0.29.0):
+
+```elm
+app =
+    App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withNotFound NotFound
+        |> App.withSessionLifetime (14 * 24 * 60 * 60)
+        |> App.withPersistExclude [ "siteConfig", "serverNow" ]
+```
+
+- `withSessionLifetime seconds` is how long a sign-in lasts on a client target
+  (`web:app` and the other Sky.Spa targets): the signed token's lifetime and the
+  `Max-Age` of its `sky_spa` cookie. The default is 30 days, and
+  `SKY_SPA_SESSION_LIFETIME` overrides it. Sky.Live keeps its session on the
+  server and ignores it (its length is `Live.withTtl` / `SKY_LIVE_TTL`).
+- `withPersistExclude fields` names model fields that never come back from an
+  earlier page: values the server owns, such as site settings or a feature
+  flag. On a client target they are left out of the model kept in
+  `localStorage` and taken from the server-rendered seed on a reload; on
+  Sky.Live a full page load of an existing session refreshes them from `init`.
+  A session field is never left out.
+
 ## Sessions without cookies — `App.withSessionTransport`
 
 For a host that cannot keep cookies (a native shell whose custom-scheme handler

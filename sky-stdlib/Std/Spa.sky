@@ -88,6 +88,7 @@ module Std.Spa exposing
     , withPersistProtectedFields
     , withPersistDecoder
     , withPersistSeedFields
+    , withPersistExcludeFields
     , getJson
     , postJson
     , rpc
@@ -292,6 +293,17 @@ withPersistDecoder =
 withPersistSeedFields : List String -> AppConfig model msg -> AppConfig model msg
 withPersistSeedFields =
     Ffi.kernel "Spa_withPersistSeedFields"
+
+
+-- | The model fields the client never stores in localStorage (v0.29.0). A
+-- field the server owns (site settings, a feature flag, the server clock) is
+-- left out of every stored copy and, on a full load, always comes from the
+-- server-rendered seed, so a stale copy cannot paint the page. A session
+-- field is never left out (the identity check reads it). `App.withPersistExclude`
+-- sets it for a `Std.App` client build.
+withPersistExcludeFields : List String -> AppConfig model msg -> AppConfig model msg
+withPersistExcludeFields =
+    Ffi.kernel "Spa_withPersistExcludeFields"
 
 
 -- | `getJson codec url toMsg` — GET `url` from the stateless backend and decode

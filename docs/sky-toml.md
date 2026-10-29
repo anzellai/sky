@@ -720,6 +720,10 @@ What's NOT affected:
   auto-generates and persists one under `SKY_DATA_DIR`; such a
   deployment also needs a shared `[live] store`, where the backend
   records sign-outs — docs/skyspa/auto-split.md §25),
+  `SKY_SPA_SESSION_LIFETIME` (v0.29.0: how long a Sky.Spa sign-in lasts, the
+  token's lifetime and the `sky_spa` cookie's `Max-Age`; a Go duration such as
+  `336h` or whole seconds; default 30 days; it overrides
+  `App.withSessionLifetime`),
   `SKY_DATA_DIR` (the durable data directory — the embedded-Postgres
   cluster, the Sky.Spa session-secret file and, with no store
   configured, the Sky.Spa sign-out records `spa-sessions.db`), and the developer

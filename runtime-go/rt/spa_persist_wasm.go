@@ -26,6 +26,10 @@ var (
 	// spaPersistSeed are the fields the `withRequest` hook writes: it runs on
 	// every SSR request, so they come from the seed on a reload (R2).
 	spaPersistSeed []string
+	// spaPersistExclude are the fields the app never stores
+	// (Spa_withPersistExcludeFields): left out of every write, taken from the
+	// seed on a reload.
+	spaPersistExclude []string
 )
 
 // spaEncodeModel applies the wired encoder to a model, returning the JSON string.
@@ -145,7 +149,7 @@ func spaRestoreFromStorage(cfg any, doc js.Value) bool {
 		return false
 	}
 	seed := spaReadSeedBlob(doc)
-	wins := spaSeedWinsFields(spaPersistProt, spaPersistSeed, spaPageSeedFields(doc))
+	wins := spaPersistWinsWithExclude(spaSeedWinsFields(spaPersistProt, spaPersistSeed, spaPageSeedFields(doc)), spaPersistExclude)
 	// Restores only a model stored under the seed's identity (spa_persist.go
 	// spaRestoreStored); another identity's copy is removed, never merged.
 	merged, useIt, life := spaRestoreStored(spaLocalKV{}, seed, spaPersistProt, wins, spaPersistMaxBytes)
@@ -190,7 +194,7 @@ func spaPersistAfterStep(prevModel, nextModel any) {
 	defer func() { _ = recover() }()
 	nextJSON := spaEncodeModel(nextModel)
 	if nextJSON != "" {
-		spaPersistWrite(spaLocalKV{}, &spaLife, nextJSON, spaPersistProt, spaPersistMaxBytes)
+		spaPersistWrite(spaLocalKV{}, &spaLife, spaPersistStripFields(nextJSON, spaPersistExclude, spaPersistProt), spaPersistProt, spaPersistMaxBytes)
 	}
 	if len(spaPersistProt) == 0 {
 		return // no session to protect → nothing to sign out

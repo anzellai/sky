@@ -5443,8 +5443,9 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
         "the establishing (login) branch must sign a Set-Cookie:\n{backend}"
     );
     assert!(
-        backend.contains(r#"Server.withCookie "sky_spa" tok "Path=/; HttpOnly; SameSite=Lax""#),
-        "signedResponse_ must set an httpOnly sky_spa cookie:\n{backend}"
+        backend.contains(r#"Server.withCookie "sky_spa" tok (spaSessionCookieAttrs_ ())"#)
+            && backend.contains(r#"Ffi.kernel "Spa_sessionCookieAttrs""#),
+        "signedResponse_ must set sky_spa with the runtime's attributes (httpOnly + Max-Age):\n{backend}"
     );
     // A-2b / E-3 / A-6 (generator half; the runtime is S2's): the token is read
     // through the runtime (legacy `sky_sid` converted once), every answer moves
@@ -5704,6 +5705,116 @@ fn curl_set_cookies(
         }
     }
     (status, cookies)
+}
+
+/// v0.29.0: the `sky_spa` session cookie carries a `Max-Age`. Without one it
+/// was a browser-session cookie: a browser that clears session cookies on quit
+/// dropped a sign-in whose token had weeks to run. `App.withSessionLifetime`
+/// sets the lifetime in code (carried into the backend's boot task), the
+/// sign-in cookie's Max-Age is that lifetime, and the sign-out write still
+/// carries `Max-Age=0`. The same build carries `App.withPersistExclude` to the
+/// client config.
+#[test]
+#[cfg(unix)]
+fn spa_session_cookie_has_the_session_lifetime() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-identity-slot");
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&fixture, &proj);
+    let main = proj.join("src/Main.sky");
+    let src = std::fs::read_to_string(&main).unwrap();
+    let src = src.replace(
+        "        |> App.withNotFound \"home\"\n",
+        "        |> App.withNotFound \"home\"\n        |> App.withSessionLifetime 3600\n        |> App.withPersistExclude [ \"note\" ]\n",
+    );
+    assert!(
+        src.contains("withSessionLifetime 3600"),
+        "the fixture changed shape"
+    );
+    std::fs::write(&main, src).unwrap();
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "the fixture must build:\n{log}");
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let backend = std::fs::read_to_string(backend_dir.join("src/Main.sky")).unwrap();
+    assert!(
+        backend.contains("applySessionLifetime (3600)"),
+        "the lifetime must reach the backend's boot task:\n{backend}"
+    );
+    // App.withPersistExclude reaches the client config (the wasm frontend
+    // built, so the builder type-checks and links there).
+    let frontend =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky")).unwrap();
+    assert!(
+        frontend.contains("|> Spa.withPersistExcludeFields spaPersistExclude_"),
+        "withPersistExclude must reach the client config:\n{frontend}"
+    );
+    let port = 19653u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = ChildGroup::spawn(
+        Command::new(backend_dir.join("sky-out/app"))
+            .current_dir(&proj)
+            .env("PORT", port.to_string())
+            .env(
+                "SKY_SPA_SESSION_SECRET",
+                "0123456789abcdef0123456789abcdef0123456789",
+            )
+            .env_remove("SKY_SPA_SESSION_LIFETIME")
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled backend");
+    if !wait_for_spa_backend(&log_path, 80) {
+        let _ = child.kill();
+        let server_log = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("backend never reported listening on :{port}:\n{server_log}");
+    }
+    let sign_in = r#"{"session":null,"kind":"practitioner","uid":"u1"}"#;
+    let (_, login) = curl_set_cookies(port, "POST", "/_rpc/SignIn", Some(sign_in), "");
+    let spa = login
+        .iter()
+        .find(|c| c.starts_with("sky_spa=") && !c.starts_with("sky_spa=;"))
+        .cloned();
+    let token = spa
+        .as_deref()
+        .and_then(|c| c.split(';').next())
+        .map(str::to_string);
+    let (_, out) = token
+        .as_deref()
+        .map(|t| curl_set_cookies(port, "POST", "/_rpc/__spaSignOut", Some("{}"), t))
+        .unwrap_or_default();
+    child.kill();
+    let server_log = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&proj);
+    let spa = spa.unwrap_or_else(|| panic!("sign-in set no sky_spa: {login:?}\n{server_log}"));
+    assert!(
+        spa.contains("Max-Age=3600") && spa.contains("HttpOnly"),
+        "the sign-in sky_spa cookie must carry the lifetime: {spa}"
+    );
+    let cleared = out
+        .iter()
+        .find(|c| c.starts_with("sky_spa="))
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        cleared.contains("Max-Age=0"),
+        "the sign-out write must still expire sky_spa: {out:?}"
+    );
 }
 
 /// RC R-2 (v0.27.0 real-app run). A request that carries the Spa session only

@@ -163,6 +163,21 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   an `s`, `m` or `h` unit; a value that does not parse is an error, never a
   silent fall back. The message for a stopped build names both.
 
+- **`App.withPersistExclude [ "siteConfig", … ]`: model fields a reload never
+  takes from an earlier page.** For values the server owns (site settings, a
+  feature flag, the server clock). On a client target (`web:app` and the other
+  Sky.Spa targets) the fields are left out of the model kept in
+  `localStorage` and come from the server-rendered seed on a full load, so a
+  stale stored copy cannot paint the first frame (`Spa.withPersistExcludeFields`
+  on a hand-written `Spa.app`). On Sky.Live a full page load of an existing
+  session refreshes them from `init` (`Live.withPersistExclude`). A session
+  field is never left out.
+
+- **`App.withSessionLifetime seconds` and `SKY_SPA_SESSION_LIFETIME`** set how
+  long a Sky.Spa sign-in lasts: the signed token's lifetime and the `sky_spa`
+  cookie's `Max-Age` (default 30 days; the variable, a Go duration or whole
+  seconds, wins over the builder).
+
 ### Migration
 
 The full list, with old and new code, is `docs/migration/v0.29.md`.
@@ -263,6 +278,14 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   are ordinary recursion and stay accepted, as do a reference under a lambda, a
   function named but not called, and a partial application. See
   `docs/errors/E1018-value-cycle.md`.
+
+- **The Sky.Spa session cookie `sky_spa` has a `Max-Age`.** It had none, so
+  it was a browser-session cookie: a browser that clears session cookies on
+  quit, a private window, or a mobile browser the system reclaimed, dropped a
+  sign-in whose token had weeks to run. Every `sky_spa` write that carries a
+  token now sets `Max-Age` to the session's lifetime (the token's `exp` span),
+  as Sky.Live does for `sky_sid`; the sign-out and legacy-clear writes keep
+  `Max-Age=0`.
 
 ## v0.28.1 — Insert text at the caret (Std.Native.insertAtCursor) (2026-10-28)
 

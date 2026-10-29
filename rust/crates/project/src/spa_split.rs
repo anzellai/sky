@@ -9348,6 +9348,12 @@ fn gen_backend(
              spaSessionCookies_ : Secret -> Request -> Response -> Response\n\
              spaSessionCookies_ =\n\
              \x20   Ffi.kernel \"Spa_sessionCookies\"\n\n\n\
+             -- v0.29.0: `sky_spa` carries a Max-Age, the session's lifetime\n\
+             -- (App.withSessionLifetime / SKY_SPA_SESSION_LIFETIME, default 30 days),\n\
+             -- so a browser does not drop it on quit while the token is valid.\n\
+             spaSessionCookieAttrs_ : () -> String\n\
+             spaSessionCookieAttrs_ =\n\
+             \x20   Ffi.kernel \"Spa_sessionCookieAttrs\"\n\n\n\
              spaSessionCookie_ : Request -> String\n\
              spaSessionCookie_ req =\n\
              \x20   spaSessionToken_ sessionSecret_ req\n\n\n\
@@ -9414,7 +9420,7 @@ fn gen_backend(
             "signedResponse_ req m resp =\n\
              \x20   case spaSignSession_ sessionSecret_ (spaSessionCookie_ req) {{ {claims} }} of\n\
              \x20       Ok tok ->\n\
-             \x20           Server.withCookie \"sky_spa\" tok \"Path=/; HttpOnly; SameSite=Lax\" resp\n\n\
+             \x20           Server.withCookie \"sky_spa\" tok (spaSessionCookieAttrs_ ()) resp\n\n\
              \x20       Err _ ->\n\
              \x20           resp\n\n\n"
         ));

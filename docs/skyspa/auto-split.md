@@ -1206,6 +1206,17 @@ session model and runs `onNavigate` over it, so a notice that `onNavigate` clear
 is cleared, and one it does not clear stays. A restore does not cancel `init`'s
 own command.
 
+**Fields that are never stored (v0.29.0).** A field the server owns (site
+settings, a feature flag, the server clock) should not come back from an earlier
+page. `App.withPersistExclude [ "siteConfig", "serverNow" ]` (or
+`Spa.withPersistExcludeFields` on a hand-written `Spa.app`) leaves the named
+fields out of every stored copy and, on a full load, always takes them from the
+SSR seed, so a stale copy cannot paint the first frame. A session field is never
+left out (the identity check below reads it). Without an SSR seed (a static
+deploy) the stored copy has no value for these fields, the model decoder refuses
+it, and the client boots from `init`. On Sky.Live the same builder makes a full
+page load of an existing session refresh the fields from `init`.
+
 **Persistence is per identity.** The stored model restores only when the
 identity it was stored under equals the identity of the SSR seed. The identity
 is the value of the session fields (`Spa.withPersistProtectedFields`),
@@ -1638,6 +1649,15 @@ token; after that it is refused. A forged or expired token is never converted,
 and a store that is down converts nothing (fail closed). The conversion needs
 the same signing key as the old build: set `SKY_SPA_SESSION_SECRET` when the key
 file is not persisted.
+
+**The cookie's lifetime (v0.29.0).** A `sky_spa` write that carries a token sets
+`Max-Age` to the session's lifetime, the same span as the token's `exp`, so the
+cookie and the token end together; before v0.29.0 the cookie had no Max-Age and
+a browser that clears session cookies on quit dropped a valid sign-in. The
+lifetime is 30 days. `App.withSessionLifetime <seconds>` sets it in code (the
+build carries it into the backend's boot task), and `SKY_SPA_SESSION_LIFETIME`
+(a Go duration such as `336h`, or whole seconds) overrides both. The sign-out
+and legacy-clear writes keep `Max-Age=0`.
 
 **The signing key.** A key minted in development is stored as
 `.skydata/spa-session-secret.dev` and is never read in production, so a

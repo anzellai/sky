@@ -372,20 +372,21 @@ func mountLiveSubAppInProcessWithGate(
 // handler methods.
 func newLiveAppFromCfg(cfg any, opts liveMountOpts) *liveApp {
 	app := &liveApp{
-		init:          fieldOrNil(cfg, "Init"),
-		update:        fieldOrNil(cfg, "Update"),
-		view:          fieldOrNil(cfg, "View"),
-		subscriptions: fieldOrNil(cfg, "Subscriptions"),
-		notFound:      fieldOrNil(cfg, "NotFound"),
-		guard:         fieldOrNil(cfg, "Guard"),
-		head:          fieldOrNil(cfg, "Head"),
-		consoleAuth:   fieldOrNil(cfg, "ConsoleAuth"),
-		locker:        newSessionLocker(),
-		msgTags:       make(map[string]int),
-		bannerCfg:     resolveBannerStrings(loadLiveBannerConfig(), cfg),
-		basePath:      opts.basePath,
-		cookieName:    opts.cookieName,
-		skyIDPrefix:   opts.skyIDPrefix,
+		init:           fieldOrNil(cfg, "Init"),
+		update:         fieldOrNil(cfg, "Update"),
+		view:           fieldOrNil(cfg, "View"),
+		subscriptions:  fieldOrNil(cfg, "Subscriptions"),
+		notFound:       fieldOrNil(cfg, "NotFound"),
+		guard:          fieldOrNil(cfg, "Guard"),
+		persistExclude: spaStringList(fieldOrNil(cfg, "PersistExclude")),
+		head:           fieldOrNil(cfg, "Head"),
+		consoleAuth:    fieldOrNil(cfg, "ConsoleAuth"),
+		locker:         newSessionLocker(),
+		msgTags:        make(map[string]int),
+		bannerCfg:      resolveBannerStrings(loadLiveBannerConfig(), cfg),
+		basePath:       opts.basePath,
+		cookieName:     opts.cookieName,
+		skyIDPrefix:    opts.skyIDPrefix,
 	}
 	for _, r := range asList(fieldOrNil(cfg, "Routes")) {
 		if lr, ok := r.(liveRoute); ok {

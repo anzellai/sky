@@ -644,6 +644,9 @@ over on the next request, and a pre-v0.27.0 token is converted once), a signed
 token with a session id: sign-out (the client
 clearing its `Session` field, or a server branch that changes it) ends that id
 in the session store, so a copy of the cookie from before sign-out is refused.
+The cookie lives as long as the token (30 days; `App.withSessionLifetime` /
+`SKY_SPA_SESSION_LIFETIME`), and `App.withPersistExclude [ … ]` names model
+fields a reload never takes from an earlier page (server-owned values).
 Several replicas need a shared store (`[live] store` / `SKY_LIVE_STORE` =
 `postgres` or `redis`) as well as a shared `SKY_SPA_SESSION_SECRET`
 (`docs/skyspa/auto-split.md` §25); production refuses to start with no store and

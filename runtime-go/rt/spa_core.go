@@ -198,6 +198,15 @@ func Spa_withPersistSeedFields(fields, cfg any) any {
 	return spaCfgSet(cfg, "PersistSeedFields", fields)
 }
 
+// Spa_withPersistExcludeFields stores the names of the model fields the
+// client never writes to localStorage (App.withPersistExclude, v0.29.0): a
+// field the server owns is left out of every stored copy and, on a full load,
+// always comes from the SSR seed. A session (protected) field is never left
+// out. The server IGNORES it.
+func Spa_withPersistExcludeFields(fields, cfg any) any {
+	return spaCfgSet(cfg, "PersistExcludeFields", fields)
+}
+
 // Spa_withGuard stores the `msg -> model -> Result Error ()` guard under
 // "Guard". The wasm client runs it before `update` for every Msg the app
 // dispatches (clicks, keystrokes, timer ticks, follow-ups), exactly as Sky.Live

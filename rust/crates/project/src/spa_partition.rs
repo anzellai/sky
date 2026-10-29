@@ -597,6 +597,7 @@ const SERVER_ONLY_MEMBERS: &[(&str, &str)] = &[
     ("Spa", "setWireHash"),
     ("Spa", "isLegacyRpc"),
     ("Spa", "applyServerSettings"),
+    ("Spa", "sessionCookieAttrs"),
 ];
 
 fn classify_kernel(module: &str, func: &str) -> KernelClass {
@@ -7967,6 +7968,7 @@ mod tests {
             "Spa_sessionBoot",
             "Spa_setWireHash",
             "Spa_isLegacyRpc",
+            "Spa_sessionCookieAttrs",
         ] {
             let mut acc = Refs::default();
             record_ffi_symbol(sym, &mut acc, false);

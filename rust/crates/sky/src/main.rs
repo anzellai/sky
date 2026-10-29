@@ -2341,6 +2341,16 @@ struct AppFields {
     /// the Sky.Live build does (operator env > code > default).
     server_configs: Vec<String>,
     server_base: Option<String>,
+    /// `App.withSessionLifetime <seconds>` (v0.29.0): the signed session's
+    /// lifetime and the `sky_spa` cookie's Max-Age. Carried into the
+    /// `spaServerConfig_` boot task (`App.applySessionLifetime`), so the
+    /// backend sets it before it listens (operator env > code > 30 days).
+    session_lifetime: Option<String>,
+    /// `App.withPersistExclude [ … ]` (v0.29.0): model fields the client never
+    /// stores in localStorage and always takes from the server-rendered seed.
+    /// Carried into a `spaPersistExclude_` binding the client config chain
+    /// passes to `Spa.withPersistExcludeFields`.
+    persist_exclude: Option<String>,
     /// `App.withClientCrypto` — the typed opt-in that keeps end-to-end key
     /// material (Std.Crypto.Noise / Cpace / Kx / Sign / Kdf) in the wasm client.
     /// It takes no argument; the synthesis carries it as
@@ -2380,6 +2390,8 @@ const SPA_CARRIED_BUILDERS: &[&str] = &[
     "withConsoleAuth",
     "withConfig",
     "withBase",
+    "withSessionLifetime",
+    "withPersistExclude",
 ];
 
 /// `Std.App` builders that do not apply to a Sky.Spa client build: terminal /
@@ -2456,6 +2468,8 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
     let mut console_auth = None;
     let mut server_configs: Vec<String> = Vec::new();
     let mut server_base: Option<String> = None;
+    let mut session_lifetime: Option<String> = None;
+    let mut persist_exclude: Option<String> = None;
     let mut client_crypto = false;
     let mut dropped_builders: Vec<String> = Vec::new();
     for step in &value.steps {
@@ -2522,6 +2536,8 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
                 server_configs.push(place(&format!("config{n}"), arg));
             }
             "withBase" => server_base = Some(place("base", arg)),
+            "withSessionLifetime" => session_lifetime = Some(place("sessionLifetime", arg)),
+            "withPersistExclude" => persist_exclude = Some(place("persistExclude", arg)),
             _ => unreachable!("carried builder list and match disagree: {name}"),
         }
     }
@@ -2540,6 +2556,8 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
         console_auth,
         server_configs,
         server_base,
+        session_lifetime,
+        persist_exclude,
         client_crypto,
         dropped_builders,
         hoisted,
@@ -3410,19 +3428,36 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
     // `spaServerConfig_` task the split backend runs at boot, before it
     // listens; it reaches a server-only kernel, so the split keeps it out of
     // the wasm client.
-    let server_config_binding = if fields.server_configs.is_empty() && fields.server_base.is_none()
-    {
-        String::new()
+    // `App.withSessionLifetime` joins the same boot task (v0.29.0): the
+    // lifetime becomes the `SPA_SESSION_LIFETIME` server setting before the
+    // backend listens.
+    let aq = fields.import.qualifier_or_default();
+    let config_task = if fields.server_configs.is_empty() && fields.server_base.is_none() {
+        None
     } else {
-        let aq = fields.import.qualifier_or_default();
-        format!(
-            "spaServerConfig_ =\n    {aq}.applyServerConfig [ {} ] {}\n\n\n",
+        Some(format!(
+            "{aq}.applyServerConfig [ {} ] {}",
             fields.server_configs.join(", "),
             fields
                 .server_base
                 .clone()
                 .unwrap_or_else(|| format!("{aq}.baseDefaults"))
-        )
+        ))
+    };
+    let server_config_binding = match (config_task, &fields.session_lifetime) {
+        (None, None) => String::new(),
+        (Some(t), None) => format!("spaServerConfig_ =\n    {t}\n\n\n"),
+        (t, Some(l)) => format!(
+            "spaServerConfig_ =\n    {}\n        |> Task.andThen (\\_ -> {aq}.applySessionLifetime {l})\n\n\n",
+            t.unwrap_or_else(|| "Task.succeed ()".to_string())
+        ),
+    };
+    let (persist_exclude_binding, persist_exclude_line) = match &fields.persist_exclude {
+        Some(f) => (
+            format!("spaPersistExclude_ =\n    {f}\n\n\n"),
+            "\n            |> Spa.withPersistExcludeFields spaPersistExclude_".to_string(),
+        ),
+        None => (String::new(), String::new()),
     };
     let rpc_error_binding = match &fields.rpc_error {
         Some(f) => format!("spaRpcError_ =\n    ({f})\n\n\n"),
@@ -3502,6 +3537,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
          {rpc_error_binding}\
          {console_auth_binding}\
          {server_config_binding}\
+         {persist_exclude_binding}\
          spaSubscriptions_ model_ =\n    ({subscriptions}) model_\n\n\n\
          spaView_ model_ =\n    \
          {spa_view_body}\n\n\n\
@@ -3513,7 +3549,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
          , update = {update}\n            \
          , view = spaView_\n            \
          , subscriptions = {subscriptions}\n            \
-         }}{routes_line}{not_found_line}{head_line}{on_navigate_line}{client_crypto_line}\n        \
+         }}{routes_line}{not_found_line}{head_line}{on_navigate_line}{persist_exclude_line}{client_crypto_line}\n        \
          )\n",
         hoisted = fields.hoisted,
         canonical_bindings = canonical_bindings,
@@ -18054,6 +18090,37 @@ mod tests {
         assert!(
             !out.contains("|> Spa.withConsoleAuth") && !out.contains("App.withConsoleAuth"),
             "the console gate is server-only and must not be wired onto the client config:\n{out}"
+        );
+    }
+
+    // v0.29.0: `App.withSessionLifetime` joins the backend's boot task (the
+    // `sky_spa` cookie's Max-Age and the token's lifetime), and
+    // `App.withPersistExclude` reaches the client config as
+    // `Spa.withPersistExcludeFields`. Before, both builders failed the client
+    // build as unknown.
+    #[test]
+    fn std_app_session_lifetime_and_persist_exclude_are_carried() {
+        let out = synth_ok(&sa_src(
+            "appDef =\n    App.app { init = init, update = update, view = view, subscriptions = subs }\n        |> App.withNotFound ()\n        |> App.withSessionLifetime 3600\n        |> App.withPersistExclude [ \"siteConfig\" ]\n\n\n\
+             main =\n    App.run appDef\n",
+        ));
+        assert!(
+            out.contains("spaServerConfig_ =\n    Task.succeed ()\n        |> Task.andThen (\\_ -> App.applySessionLifetime (3600))"),
+            "withSessionLifetime must reach the boot task:\n{out}"
+        );
+        assert!(
+            out.contains("spaPersistExclude_ =\n    ([ \"siteConfig\" ])")
+                && out.contains("|> Spa.withPersistExcludeFields spaPersistExclude_"),
+            "withPersistExclude must reach the client config:\n{out}"
+        );
+        // With an App.withConfig too, the lifetime follows the config task.
+        let both = synth_ok(&sa_src(
+            "appDef =\n    App.app { init = init, update = update, view = view, subscriptions = subs }\n        |> App.withNotFound ()\n        |> App.withConfig cfg\n        |> App.withSessionLifetime 60\n\n\n\
+             main =\n    App.run appDef\n",
+        ));
+        assert!(
+            both.contains("App.applyServerConfig [ cfg ] App.baseDefaults\n        |> Task.andThen (\\_ -> App.applySessionLifetime (60))"),
+            "the lifetime must follow the config task:\n{both}"
         );
     }
 
