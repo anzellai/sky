@@ -1462,6 +1462,27 @@ pub static GATES: &[Gate] = &[
         body: bodies::ai_stream_pieces,
     },
     Gate {
+        name: "spa-wasm-server-only",
+        tier: Tier::T1,
+        platforms: UNIX,
+        budget_s: 180,
+        expected: bodies::SPA_WASM_SERVER_ONLY_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a Sky.Spa wasm client links no server-only package (encoding/xml, archive/zip, database drivers, ...)",
+        mutations: Mutations::new(&[Mutation {
+            id: "spa-wasm-server-only.import-archive-zip-on-the-client",
+            description: "import archive/zip from zip_safe.go, which has no build tag and so \
+                          is compiled into every wasm client; the import-graph and \
+                          function-name assertions for archive/zip must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/zip_safe.go",
+                from: "import (\n\t\"path\"\n",
+                to: "import (\n\t_ \"archive/zip\"\n\t\"path\"\n",
+            },
+        }]),
+        body: bodies::spa_wasm_server_only,
+    },
+    Gate {
         name: "ai-device-blob-allowlist",
         tier: Tier::T1,
         platforms: UNIX,

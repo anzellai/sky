@@ -775,7 +775,7 @@ jobs:
           neovim: 'true'
       - name: Gate harness (T1 shard 2/3 — sky-verify, sky-suites, lsp, Std.Ai, fmt-clean) with proof requirement
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only sky-verify,sky-suites,lsp,ai-train-resume,ai-train-exactly-once,ai-serve-hot-load,ai-device-decide,ai-device-no-silent-fallback,ai-device-digest,ai-stream-pieces,ai-device-blob-allowlist,fmt-clean
+        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only sky-verify,sky-suites,lsp,ai-train-resume,ai-train-exactly-once,ai-serve-hot-load,ai-device-decide,ai-device-no-silent-fallback,ai-device-digest,ai-stream-pieces,ai-device-blob-allowlist,spa-wasm-server-only,fmt-clean
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1174,7 +1174,7 @@ jobs:
           postgres: 'true'
       - name: Falsifier verification (group 10 — Std.Ai and fmt-clean)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only ai-train-resume,ai-train-exactly-once,ai-serve-hot-load,ai-device-decide,ai-device-no-silent-fallback,ai-device-digest,ai-stream-pieces,ai-device-blob-allowlist,ai-device-partition,fmt-clean
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only ai-train-resume,ai-train-exactly-once,ai-serve-hot-load,ai-device-decide,ai-device-no-silent-fallback,ai-device-digest,ai-stream-pieces,ai-device-blob-allowlist,ai-device-partition,spa-wasm-server-only,fmt-clean
       - name: Bound the Go caches before save
         if: always()
         working-directory: .

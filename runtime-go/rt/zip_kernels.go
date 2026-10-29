@@ -10,7 +10,10 @@ package rt
 // like Image.dimensions.
 //
 // The Sky.Spa split classifies every `Zip_` kernel as a server effect
-// (spa_partition.rs EFFECT_KERNELS).
+// (spa_partition.rs EFFECT_KERNELS). This file has no build tag: the
+// archive/zip calls are behind zipListAll / zipReadAll / zipReadOne /
+// zipWriteAll (zip_archive.go, server only), and the wasm client gets the
+// zip_archive_js.go twins, which return a classified Unavailable Err.
 
 import "strconv"
 
@@ -40,22 +43,18 @@ func zipEntriesValue(entries []zipEntry) any {
 // Zip_list is `Zip.list : Bytes -> Result Error (List EntryInfo)`: the
 // central directory only, nothing inflated. O(entries).
 func Zip_list(data any) any {
-	r, names, fail := zipOpen(asBytesString(data), zipDefaultLimits.maxEntries)
+	infos, fail := zipListAll(asBytesString(data), zipDefaultLimits.maxEntries)
 	if fail != nil {
 		return Err[any, any](fail.skyError())
 	}
-	out := make([]any, len(r.File))
-	for i, f := range r.File {
-		var modified int
-		if !f.Modified.IsZero() {
-			modified = int(f.Modified.UnixMilli())
-		}
+	out := make([]any, len(infos))
+	for i, f := range infos {
 		out[i] = map[string]any{
-			"path":           names[i],
-			"size":           int(f.UncompressedSize64),
-			"compressedSize": int(f.CompressedSize64),
-			"isDirectory":    zipIsDir(f),
-			"modified":       modified,
+			"path":           f.path,
+			"size":           f.size,
+			"compressedSize": f.compressedSize,
+			"isDirectory":    f.isDir,
+			"modified":       f.modified,
 		}
 	}
 	return Ok[any, any](out)

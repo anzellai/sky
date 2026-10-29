@@ -589,6 +589,10 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     ("ai-device-privacy", &["stdlib.Std.Ai.Device"]),
     ("ai-device-csp", &["stdlib.Std.Ai.Device"]),
     ("ai-device-ios-sim", &["stdlib.Std.Ai.Device"]),
+    // v0.29.0: a Sky.Spa wasm client links no server-only package; the import
+    // of encoding/xml and archive/zip lives in `//go:build !js` files
+    // (runtime-go/rt/wasm_client_deps_test.go).
+    ("spa-wasm-server-only", &["stdlib.Std.Spa"]),
     (
         "live-time-every-mutex-survives-a-panic",
         &["runtime.periodic-goroutines", "skylive.session-sse-csrf"],

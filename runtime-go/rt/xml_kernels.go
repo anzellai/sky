@@ -9,9 +9,13 @@ package rt
 // one parsed tree may be shared by every request.
 //
 // No `//go:build !js` tag: Std.Codec imports Std.Xml and Codec is compiled for
-// the Sky.Spa wasm client too. encoding/xml builds for wasm, and the Go linker
-// drops it when no client branch reaches these kernels; the Sky.Spa split
-// classifies every `Xml_` kernel as a server effect (spa_partition.rs).
+// the Sky.Spa wasm client too. The linker dropping unreached functions is not
+// enough to keep encoding/xml out of the client: Go runs the init of every
+// imported package, so the import alone links it. The import therefore lives
+// only in xml_stream.go (server only); the client's xml_stream_js.go returns a
+// classified Unavailable Err. The Sky.Spa split classifies every `Xml_` kernel
+// as a server effect (spa_partition.rs), so a correct build never reaches it.
+// wasm_client_deps_test.go fails when encoding/xml reaches the js build again.
 //
 // Each accessor has a typed twin (the `T` suffix) that the lowering uses when
 // the call's Go type is known (lower.rs `kernel_typed_return_twin`, doc 14

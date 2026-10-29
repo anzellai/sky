@@ -1723,7 +1723,8 @@ two vocabularies share a name. A decode failure is kind `Decode`, code `decode`,
 with the path (`/feed/entry[3]`). `XE.encode` is total (a character XML cannot
 carry becomes U+FFFD, a bad name character `_`); `XE.encodeStrict` returns an
 `Err` instead. Runs on the server; under `--target web:app` the split sends it
-to the backend. Cost: `parse` is O(n) time, O(nodes) memory.
+to the backend, and the wasm client does not carry the parser (a call that
+reached it would be `Err Unavailable` with the code `server_only`). Cost: `parse` is O(n) time, O(nodes) memory.
 
 ### `Codec.toXml` / `Codec.fromXml` — a codec's value as XML
 
@@ -1763,7 +1764,9 @@ entries and methods other than Store and Deflate. A failure is `InvalidInput`
 with the domain `"zip"` and a code: `not_zip`, `too_many_entries`,
 `entry_too_large`, `total_too_large`, `ratio_exceeded`, `unsafe_path`,
 `duplicate_path`, `encrypted`, `unsupported_method`, `corrupt`. `write` stamps
-every entry 1980-01-01, so the same entries give the same bytes. Server side.
+every entry 1980-01-01, so the same entries give the same bytes. Server side:
+the wasm client does not carry `archive/zip`, and a call that reached it would
+be `Err Unavailable` with the code `server_only`.
 
 ### `Std.Office.Xlsx` — Excel workbooks
 

@@ -4211,6 +4211,22 @@ pub fn ai_stream_pieces(ctx: &GateCtx) -> GateOutcome {
     )
 }
 
+/// `TestWasmClientLinksNoServerOnlyPackage` (wasm_client_deps_test.go): a
+/// js/wasm program that references every Xml_, Zip_ and Office_ kernel links
+/// none of the 16 server-only packages, neither in its import graph (16) nor
+/// among the wasm's function names (16); the native build still imports the
+/// three the kernels use (3); and the wasm names the probed kernels (3).
+pub const SPA_WASM_SERVER_ONLY_EXPECTED: u64 = 38;
+
+pub fn spa_wasm_server_only(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestWasmClientLinksNoServerOnlyPackage",
+        SPA_WASM_SERVER_ONLY_EXPECTED,
+    )
+}
+
 /// `TestDeviceBlobServesOnlyOfferedDigests` (ai_device_serve_test.go): no
 /// blob before an offer, the offered one with Range, not a model the host
 /// holds that no offer names, three malformed names, and the chunk list.
