@@ -788,3 +788,19 @@ the backend booted with, so a tab from an older deploy reloads instead of \
 sending a request the backend cannot read. No user writes it."""
 owner  = "anzel"
 commit = "7611f8b0"
+
+[[config-surface-rise]]
+metric = "documented_without_reader"
+from   = 13
+to     = 19
+reason = """measurement, not surface: the six names (SKY_AUTH_SECRET, \
+SKY_AUTH_TOKEN_TTL, SKY_FFI_INSPECTOR, SKY_PORT, SKY_SKIP_GUI, \
+SKY_SOLVER_BUDGET_FACTOR) were 'read' only inside legacy-haskell-compiler/, \
+legacy-ts-compiler/ and legacy-sky-compiler/, which left the tree in v0.29.0. \
+No current compiler or runtime reads them, and the live docs that name them \
+already say so (docs/sky-toml.md, docs/development.md, docs/tooling/cli.md, \
+docs/KNOWN_LIMITATIONS.md, docs/rust-rewrite/06-type-system.md) or use the \
+name as a user's own variable (SKY_AUTH_TOKEN_TTL via System.getenvOr). No \
+setting stopped working."""
+owner  = "anzel"
+commit = "36312519d"

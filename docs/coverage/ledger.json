@@ -51,15 +51,15 @@
     "database_drivers": {
       "sqlite": 15
     },
-    "paths_with_sky_toml": 66,
+    "paths_with_sky_toml": 64,
     "sections": {
-      "[\"go.dependencies\"]": 11,
+      "[\"go.dependencies\"]": 9,
       "[analytics]": 1,
       "[app]": 5,
       "[database]": 15,
       "[dependencies]": 1,
       "[live]": 2,
-      "[source]": 62
+      "[source]": 61
     }
   },
   "gates": {
@@ -660,7 +660,7 @@
       "tier": "T1"
     },
     "fmt-clean": {
-      "expected_assertions": 403,
+      "expected_assertions": 401,
       "falsifier_mutation": "fmt-clean.unformat-a-tracked-file",
       "falsifier_proven": true,
       "summary": "every tracked .sky file in sky-stdlib/, sky-bundled/, apps/, examples/ and templates/ is already `sky fmt`-clean",
@@ -701,7 +701,7 @@
       "tier": "T1"
     },
     "lsp": {
-      "expected_assertions": 49,
+      "expected_assertions": 52,
       "falsifier_mutation": "lsp.hover-echoes-the-token",
       "falsifier_proven": true,
       "summary": "the editor answers hover / goto-def / completion / diagnostics through a REAL Neovim LSP client, on fixtures and a real app",
@@ -732,7 +732,7 @@
       "tier": "T1"
     },
     "roundtrip": {
-      "expected_assertions": 224,
+      "expected_assertions": 222,
       "falsifier_mutation": "roundtrip.error-node",
       "falsifier_proven": true,
       "summary": "byte-exact reprint + zero ERROR nodes over every corpus .sky file",
@@ -743,7 +743,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 170,
+      "expected_assertions": 168,
       "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
@@ -1008,13 +1008,13 @@
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
-      "Example": 72,
+      "Example": 70,
       "FlowTest": 61,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 152
+    "units_total": 150
   },
   "surfaces": [
     {
@@ -8469,11 +8469,6 @@
             "strength": 3
           },
           {
-            "by": "examples/simple (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
             "by": "flow:ai_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -8853,11 +8848,6 @@
             "by": "examples/75-ai-everywhere (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
-          },
-          {
-            "by": "examples/simple (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
           },
           {
             "by": "tests/Core — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
@@ -15351,16 +15341,6 @@
             "strength": 3
           },
           {
-            "by": "examples/simple (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
-            "by": "examples/test_pkg (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
             "by": "flow:ai_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -15760,16 +15740,6 @@
             "by": "examples/74-ai-cloud (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
-          },
-          {
-            "by": "examples/simple (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
-            "by": "examples/test_pkg (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
           },
           {
             "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
@@ -23302,35 +23272,6 @@
       "role": "Example",
       "sky_files": 5,
       "sky_toml_sections": [
-        "[source]"
-      ]
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "examples/simple",
-      "modules_imported": 2,
-      "path": "examples/simple",
-      "refs_generous": 5,
-      "refs_qualified": 4,
-      "role": "Example",
-      "sky_files": 1,
-      "sky_toml_sections": [
-        "[\"go.dependencies\"]"
-      ]
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "examples/test_pkg",
-      "modules_imported": 1,
-      "path": "examples/test_pkg",
-      "refs_generous": 1,
-      "refs_qualified": 0,
-      "role": "Example",
-      "sky_files": 1,
-      "sky_toml_sections": [
-        "[\"go.dependencies\"]",
         "[source]"
       ]
     },
