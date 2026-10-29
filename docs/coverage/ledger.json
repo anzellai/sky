@@ -640,7 +640,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 200,
+      "expected_assertions": 204,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -660,7 +660,7 @@
       "tier": "T1"
     },
     "fmt-clean": {
-      "expected_assertions": 396,
+      "expected_assertions": 400,
       "falsifier_mutation": "fmt-clean.unformat-a-tracked-file",
       "falsifier_proven": true,
       "summary": "every tracked .sky file in sky-stdlib/, sky-bundled/, apps/, examples/ and templates/ is already `sky fmt`-clean",
@@ -935,6 +935,30 @@
         "units": [
           "apps:relay"
         ]
+      },
+      "Std.Xml": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
+      "Std.Xml.Decode": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
+      "Std.Xml.Encode": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
+      "Std.Zip": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
       }
     }
   },
@@ -948,10 +972,10 @@
   "summary": {
     "stdlib_entries": 3072,
     "stdlib_modules": 132,
-    "surfaces_covered": 186,
-    "surfaces_covered_pct": 93.0,
-    "surfaces_equal": 19,
-    "surfaces_stronger": 181,
+    "surfaces_covered": 190,
+    "surfaces_covered_pct": 95.0,
+    "surfaces_equal": 15,
+    "surfaces_stronger": 185,
     "surfaces_total": 200,
     "surfaces_weaker": 0,
     "units_by_role": {
@@ -18596,66 +18620,114 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
       },
       "description": "the Std.Xml public API",
       "id": "stdlib.Std.Xml",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
       },
       "description": "the Std.Xml.Decode public API",
       "id": "stdlib.Std.Xml.Decode",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
       },
       "description": "the Std.Xml.Encode public API",
       "id": "stdlib.Std.Xml.Encode",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
       },
       "description": "the Std.Zip public API",
       "id": "stdlib.Std.Zip",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "ui",
@@ -18765,7 +18837,7 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 12,
+      "count": 8,
       "modules": [
         "Sky.Core.Basics",
         "Sky.Core.Io",
@@ -18774,13 +18846,9 @@
         "Std.Db.Migrate",
         "Std.Db.Table",
         "Std.Tui",
-        "Std.Webview",
-        "Std.Xml",
-        "Std.Xml.Decode",
-        "Std.Xml.Encode",
-        "Std.Zip"
+        "Std.Webview"
       ],
-      "pct_of_denominator": 9.1
+      "pct_of_denominator": 6.1
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -18788,7 +18856,7 @@
       "modules": []
     },
     "surfaces_with_zero_new_cover": {
-      "count": 13,
+      "count": 9,
       "surfaces": [
         "cli.console",
         "cli.console-serve",
@@ -18798,11 +18866,7 @@
         "stdlib.Std.Cli",
         "stdlib.Std.Db.Table",
         "stdlib.Std.Tui",
-        "stdlib.Std.Webview",
-        "stdlib.Std.Xml",
-        "stdlib.Std.Xml.Decode",
-        "stdlib.Std.Xml.Encode",
-        "stdlib.Std.Zip"
+        "stdlib.Std.Webview"
       ]
     },
     "symbols_unreferenced_generous": {
@@ -19438,15 +19502,11 @@
           ]
         },
         "Std.Codec": {
-          "count": 7,
+          "count": 3,
           "symbols": [
             "ColType",
             "JsonSchema",
-            "Variant",
-            "dict",
-            "fromXml",
-            "toXml",
-            "var3"
+            "Variant"
           ]
         },
         "Std.Crypto.Kdf": {
@@ -20132,91 +20192,46 @@
           ]
         },
         "Std.Xml": {
-          "count": 14,
+          "count": 5,
           "symbols": [
             "Limits",
             "Mode",
             "Node",
             "attribute",
-            "attributes",
-            "children",
-            "defaultLimits",
-            "elements",
-            "elementsNamed",
-            "name",
-            "namespace",
-            "parse",
-            "parseWith",
-            "text"
+            "elements"
           ]
         },
         "Std.Xml.Decode": {
-          "count": 27,
+          "count": 7,
           "symbols": [
-            "Decoder",
-            "andThen",
-            "at",
-            "attribute",
-            "bool",
-            "children",
             "decodeNode",
-            "decodeString",
-            "element",
-            "fail",
-            "float",
-            "inNamespace",
-            "int",
-            "list",
-            "localName",
             "map",
-            "map2",
-            "map3",
             "map4",
             "map5",
             "namespaceUri",
             "node",
-            "oneOf",
-            "optionalAttribute",
-            "optionalElement",
-            "string",
             "succeed"
           ]
         },
         "Std.Xml.Encode": {
-          "count": 11,
+          "count": 3,
           "symbols": [
             "Attribute",
             "Xml",
-            "attribute",
-            "cdata",
-            "document",
-            "element",
-            "encode",
-            "encodeStrict",
-            "text",
-            "xmlns",
             "xmlnsPrefix"
           ]
         },
         "Std.Zip": {
-          "count": 11,
+          "count": 3,
           "symbols": [
-            "Entry",
             "EntryInfo",
             "Limits",
-            "Method",
-            "defaultLimits",
-            "list",
-            "read",
-            "readEntry",
-            "readWith",
-            "write",
-            "writeWith"
+            "Method"
           ]
         }
       },
-      "count": 902,
-      "pct_of_denominator": 29.4
+      "count": 853,
+      "pct_of_denominator": 27.8
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -20916,15 +20931,11 @@
           ]
         },
         "Std.Codec": {
-          "count": 7,
+          "count": 3,
           "symbols": [
             "ColType",
             "JsonSchema",
-            "Variant",
-            "dict",
-            "fromXml",
-            "toXml",
-            "var3"
+            "Variant"
           ]
         },
         "Std.Crypto.Kdf": {
@@ -21687,91 +21698,46 @@
           ]
         },
         "Std.Xml": {
-          "count": 14,
+          "count": 5,
           "symbols": [
             "Limits",
             "Mode",
             "Node",
             "attribute",
-            "attributes",
-            "children",
-            "defaultLimits",
-            "elements",
-            "elementsNamed",
-            "name",
-            "namespace",
-            "parse",
-            "parseWith",
-            "text"
+            "elements"
           ]
         },
         "Std.Xml.Decode": {
-          "count": 27,
+          "count": 7,
           "symbols": [
-            "Decoder",
-            "andThen",
-            "at",
-            "attribute",
-            "bool",
-            "children",
             "decodeNode",
-            "decodeString",
-            "element",
-            "fail",
-            "float",
-            "inNamespace",
-            "int",
-            "list",
-            "localName",
             "map",
-            "map2",
-            "map3",
             "map4",
             "map5",
             "namespaceUri",
             "node",
-            "oneOf",
-            "optionalAttribute",
-            "optionalElement",
-            "string",
             "succeed"
           ]
         },
         "Std.Xml.Encode": {
-          "count": 11,
+          "count": 3,
           "symbols": [
             "Attribute",
             "Xml",
-            "attribute",
-            "cdata",
-            "document",
-            "element",
-            "encode",
-            "encodeStrict",
-            "text",
-            "xmlns",
             "xmlnsPrefix"
           ]
         },
         "Std.Zip": {
-          "count": 11,
+          "count": 3,
           "symbols": [
-            "Entry",
             "EntryInfo",
             "Limits",
-            "Method",
-            "defaultLimits",
-            "list",
-            "read",
-            "readEntry",
-            "readWith",
-            "write",
-            "writeWith"
+            "Method"
           ]
         }
       },
-      "count": 1009,
-      "pct_of_denominator": 32.8
+      "count": 960,
+      "pct_of_denominator": 31.3
     }
   },
   "units": [
@@ -23793,12 +23759,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 58,
+      "modules_imported": 62,
       "path": "tests/conformance",
-      "refs_generous": 819,
-      "refs_qualified": 799,
+      "refs_generous": 871,
+      "refs_qualified": 851,
       "role": "Conformance",
-      "sky_files": 50,
+      "sky_files": 53,
       "sky_toml_sections": []
     }
   ]

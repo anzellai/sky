@@ -3754,8 +3754,11 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// corpus surfaces.
 /// 199 -> 200 in v0.29.0: `stdlib.Sky.Core.Array`, covered by
 /// `tests/conformance/tests/ArrayConformanceTest.sky` (the `conformance` gate)
-/// and `runtime-go/rt/array_trie_test.go`.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 200;
+/// and `runtime-go/rt/array_trie_test.go`. 200 -> 204 in v0.29.0: `stdlib.Std.Xml`,
+/// `stdlib.Std.Xml.Decode`, `stdlib.Std.Xml.Encode` and `stdlib.Std.Zip`, covered by
+/// the Xml, Zip and CodecXml conformance suites, the `xml` and `zip` Family-S
+/// surfaces and `runtime-go/rt/xml_kernels_test.go` / `zip_kernels_test.go`.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 204;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///
@@ -3815,8 +3818,9 @@ pub const KERNEL_MEMBERS_EXPECTED: u64 = 116;
 /// One assertion per tracked `.sky` file under `sky-stdlib/`, `sky-bundled/`,
 /// `apps/`, `examples/` and `templates/`. EXACT: it moves when such a file is
 /// added or removed, measured by running the gate. 395 -> 396 in v0.29.0:
-/// `sky-stdlib/Sky/Core/Array.sky`.
-pub const FMT_CLEAN_EXPECTED: u64 = 396;
+/// `sky-stdlib/Sky/Core/Array.sky`. 396 -> 400: `sky-stdlib/Std/Xml.sky`,
+/// `Std/Xml/Decode.sky`, `Std/Xml/Encode.sky` and `Std/Zip.sky`.
+pub const FMT_CLEAN_EXPECTED: u64 = 400;
 
 /// Every tracked `.sky` file in scope is already `sky fmt`-clean.
 pub fn fmt_clean(ctx: &GateCtx) -> GateOutcome {

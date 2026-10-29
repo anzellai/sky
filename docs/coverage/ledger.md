@@ -21,9 +21,9 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | value |
 |---|---|
 | surfaces | 200 |
-| covered by the new corpus (>= Asserted) | 186 |
-| verdict `stronger` | 181 |
-| verdict `equal` | 19 |
+| covered by the new corpus (>= Asserted) | 190 |
+| verdict `stronger` | 185 |
+| verdict `equal` | 15 |
 | verdict `weaker` | 0 |
 | corpus units | 152 |
 | stdlib modules (denominator) | 132 |
@@ -33,9 +33,9 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 12 | 9.1% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 1009 | 32.8% |
-| symbols unreferenced under the generous rule | 902 | 29.4% |
+| stdlib modules imported by nothing | 8 | 6.1% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 960 | 31.3% |
+| symbols unreferenced under the generous rule | 853 | 27.8% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 0 | — |
 
 ### Surfaces with zero new cover
@@ -49,10 +49,6 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `stdlib.Std.Db.Table`
 - `stdlib.Std.Tui`
 - `stdlib.Std.Webview`
-- `stdlib.Std.Xml`
-- `stdlib.Std.Xml.Decode`
-- `stdlib.Std.Xml.Encode`
-- `stdlib.Std.Zip`
 
 ## Sole ownership
 
@@ -61,7 +57,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 26 |
-| stdlib modules owned by exactly one unit of any role | 11 |
+| stdlib modules owned by exactly one unit of any role | 15 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **0** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -277,10 +273,10 @@ None.
 | `stdlib.Std.Ui.Transition` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Watch` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Webview` | stdlib | None | None | equal |
-| `stdlib.Std.Xml` | stdlib | None | None | equal |
-| `stdlib.Std.Xml.Decode` | stdlib | None | None | equal |
-| `stdlib.Std.Xml.Encode` | stdlib | None | None | equal |
-| `stdlib.Std.Zip` | stdlib | None | None | equal |
+| `stdlib.Std.Xml` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Xml.Decode` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Xml.Encode` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Zip` | stdlib | Asserted | Falsified | stronger |
 | `ui.cross-backend` | ui | Asserted | Falsified | stronger |
 | `ui.tui` | ui | Runs | Falsified | stronger |
 | `ui.webview` | ui | Builds | Falsified | stronger |
