@@ -9,7 +9,9 @@
 #
 #   soffice  LibreOffice headless converts ledger.xlsx to CSV and
 #            invoice.docx to text; the values and the computed total
-#            (=SUM, written with no cached value) must be there.
+#            (=SUM, written with no cached value) must be there. Then
+#            LibreOffice saves both files again, and Sky reads what
+#            LibreOffice wrote (the read direction).
 #   macOS    textutil (Cocoa's .docx importer) reads invoice.docx, and
 #            mdimport (Spotlight's Office importer) reads ledger.xlsx.
 #            Checked on Darwin only, where both ship with the system.
@@ -71,6 +73,27 @@ if require_tool soffice "install LibreOffice (soffice on PATH) to open the files
   expect "soffice xlsx" "$TMP/lo/ledger.csv" "Total,\"10,100.00\""
   expect "soffice docx" "$TMP/lo/invoice.txt" "Invoice 2026-041"
   expect "soffice docx" "$TMP/lo/invoice.txt" "Pay within 30 days."
+
+  # The other direction: LibreOffice saves both files again in its own
+  # writer, and Sky reads what LibreOffice wrote.
+  echo "==> Sky reads files LibreOffice wrote"
+  mkdir -p "$TMP/lo-saved"
+  ( cd "$TMP/out" && with_timeout 180 soffice --headless --norestore --convert-to 'xlsx:Calc MS Excel 2007 XML' ledger.xlsx --outdir "$TMP/lo-saved" ) >"$TMP/lo-save.log" 2>&1 \
+    || { cat "$TMP/lo-save.log" >&2; echo "office-second-reader-e2e: soffice could not save ledger.xlsx" >&2; exit 1; }
+  ( cd "$TMP/out" && with_timeout 180 soffice --headless --norestore --convert-to 'docx:MS Word 2007 XML' invoice.docx --outdir "$TMP/lo-saved" ) >>"$TMP/lo-save.log" 2>&1 \
+    || { cat "$TMP/lo-save.log" >&2; echo "office-second-reader-e2e: soffice could not save invoice.docx" >&2; exit 1; }
+  with_timeout 120 "$TMP/app/sky-out/app" read "$TMP/lo-saved" >"$TMP/lo-read.log" 2>&1 \
+    || { cat "$TMP/lo-read.log" >&2; echo "office-second-reader-e2e: Sky could not read the files LibreOffice wrote" >&2; exit 1; }
+  expect "sky reads soffice xlsx" "$TMP/lo-read.log" "sheet Ledger frozen rows 1"
+  expect "sky reads soffice xlsx" "$TMP/lo-read.log" "row Date|Account|Amount"
+  expect "sky reads soffice xlsx" "$TMP/lo-read.log" "row 2026-10-01|Sales|12500"
+  expect "sky reads soffice xlsx" "$TMP/lo-read.log" "row 2026-10-03|Rent|-2400"
+  # LibreOffice stores the value it computed, so the formula now has one.
+  expect "sky reads soffice xlsx" "$TMP/lo-read.log" "=SUM(C2:C3) -> 10100"
+  expect "sky reads soffice docx" "$TMP/lo-read.log" "Invoice 2026-041"
+  expect "sky reads soffice docx" "$TMP/lo-read.log" "Design"
+  expect "sky reads soffice docx" "$TMP/lo-read.log" "1,200.00"
+  expect "sky reads soffice docx" "$TMP/lo-read.log" "Pay within 30 days."
 fi
 
 if [ "$(uname -s)" = "Darwin" ]; then

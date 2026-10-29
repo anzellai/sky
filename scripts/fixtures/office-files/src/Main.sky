@@ -4,7 +4,9 @@ module Main exposing (main)
 -- an invoice document into the folder given as the first argument, reads
 -- both back from disk with File.readFile, and prints what it read. The
 -- script then opens the two files in LibreOffice (a second reader) and checks
--- the values it shows.
+-- the values it shows. `office-files read <folder>` reads a ledger.xlsx and
+-- an invoice.docx that another program wrote (LibreOffice saves them in the
+-- script) and prints every cell and the document text.
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Error as Error
@@ -110,19 +112,90 @@ check dir =
         |> Task.andThen (\blocks -> println (Docx.toText blocks))
 
 
+cellText : Xlsx.Cell -> String
+cellText cell =
+    case cell of
+
+        Xlsx.Empty ->
+            ""
+
+        Xlsx.Text t ->
+            t
+
+        Xlsx.Number n ->
+            String.fromFloat n
+
+        Xlsx.Boolean b ->
+            if b then
+                "TRUE"
+
+            else
+                "FALSE"
+
+        Xlsx.Date d ->
+            String.fromInt d.year ++ "-"
+                ++ String.padLeft 2 '0' (String.fromInt d.month)
+                ++ "-"
+                ++ String.padLeft 2 '0' (String.fromInt d.day)
+
+        Xlsx.Formula f cached ->
+            "=" ++ f ++ " -> " ++ cellText cached
+
+        Xlsx.Failure e ->
+            "#" ++ e
+
+
+printSheet : Xlsx.Sheet -> Task Error ()
+printSheet sheet =
+    let
+        frozen =
+            case sheet.frozen of
+
+                Just f ->
+                    "frozen rows " ++ String.fromInt f.rows
+
+                Nothing ->
+                    "frozen none"
+    in
+        Task.sequence
+            (println ("sheet " ++ sheet.name ++ " " ++ frozen)
+                :: List.map
+                       (\row ->
+                           println
+                               ("row " ++ String.join "|" (List.map cellText row)))
+                       sheet.rows)
+            |> Task.map (\_ -> ())
+
+
+readForeign : String -> Task Error ()
+readForeign dir =
+    File.readFile (dir ++ "/ledger.xlsx")
+        |> Task.andThen (\b -> Task.fromResult (Xlsx.read b))
+        |> Task.andThen
+               (\book -> Task.sequence (List.map printSheet book.sheets))
+        |> Task.andThen (\_ -> File.readFile (dir ++ "/invoice.docx"))
+        |> Task.andThen (\b -> Task.fromResult (Docx.read b))
+        |> Task.andThen (\blocks -> println (Docx.toText blocks))
+
+
 run : List String -> Task Error ()
 run args =
-    case List.head args of
+    case args of
 
-        Just dir ->
+        [ "read", dir ] ->
+            readForeign dir
+
+        dir :: _ ->
             Task.sequence
                 [ save dir "ledger.xlsx" ledger
                 , save dir "invoice.docx" invoice
                 ]
                 |> Task.andThen (\_ -> check dir)
 
-        Nothing ->
-            Task.fail (Error.invalidInput "usage: office-files <folder>")
+        [] ->
+            Task.fail
+                (Error.invalidInput
+                    "usage: office-files <folder> | office-files read <folder>")
 
 
 main =
