@@ -70,7 +70,8 @@ if require_tool soffice "install LibreOffice (soffice on PATH) to open the files
   expect "soffice xlsx" "$TMP/lo/ledger.csv" "Sales"
   expect "soffice xlsx" "$TMP/lo/ledger.csv" "2026-10-01"
   # The total is a formula written with no cached value: LibreOffice computes it.
-  expect "soffice xlsx" "$TMP/lo/ledger.csv" "Total,\"10,100.00\""
+  # Its CSV export writes the raw value, not the number format.
+  expect "soffice xlsx" "$TMP/lo/ledger.csv" ",Total,10100"
   expect "soffice docx" "$TMP/lo/invoice.txt" "Invoice 2026-041"
   expect "soffice docx" "$TMP/lo/invoice.txt" "Pay within 30 days."
 
