@@ -118,7 +118,7 @@ cross-compile (`CGO_ENABLED=0 GOOS=linux go build .`), a Dockerfile or a custom
 CI step. The same values are served at `/_sky/buildinfo`:
 
 ```json
-{"commit":"4832428108f7","builtAt":"2026-09-21T14:13:20Z","skyVersion":"v0.28.0","goVersion":"go1.26.1","source":"ci:GITHUB_SHA"}
+{"commit":"4832428108f7","builtAt":"2026-09-21T14:13:20Z","skyVersion":"v0.29.0","goVersion":"go1.26.1","source":"ci:GITHUB_SHA"}
 ```
 
 The identity is resolved once, at the project root (the directory with your
@@ -143,7 +143,7 @@ would change the client's bytes and its hashed file name on every commit.
   every file the commit time, so an archive build reports its commit time.
   It is never the wall clock, so a rebuild of unchanged sources writes the same
   file and Go links nothing again.
-- **Sky version**: the compiler's release version (`v0.28.0`): the
+- **Sky version**: the compiler's release version (`v0.29.0`): the
   `[workspace.package] version` in `rust/Cargo.toml` it was built from, also
   for a compiler built from source.
 - **Source**: where the commit came from, as above. `ldflags` means a user's own

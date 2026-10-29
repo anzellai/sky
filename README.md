@@ -178,7 +178,7 @@ There are 73 projects in [`examples/`](examples/). Start with these:
 
 ## Status
 
-> **Status: v0.28.x, pre-1.0.** A minor version can include breaking changes.
+> **Status: v0.29.x, pre-1.0.** A minor version can include breaking changes.
 > Each one is listed in the [CHANGELOG](CHANGELOG.md) with a migration guide
 > under [`docs/migration/`](docs/migration/), and `sky upgrade` shows it. See
 > [VERSIONING.md](VERSIONING.md) and the
