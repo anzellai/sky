@@ -10,7 +10,6 @@ import Sky.Core.System as System
 import Sky.Core.Task as Task
 import Types exposing (..)
 
-
 type alias Plan =
     { rows : List String
     , joined : Int
