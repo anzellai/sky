@@ -183,6 +183,7 @@ pub const SURFACE: Axis = Axis::new(
         "secret",
         "image",
         "tuple",
+        "array",
         "sign",
         "kx",
         "kdf",

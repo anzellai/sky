@@ -260,6 +260,9 @@ pub const SURFACES: &[Surface] = &[
     // every member is value-assertable (the ratchet named it dark when it
     // landed; this is the cover).
     sf("tuple", "Sky.Core.Tuple"),
+    // `Sky.Core.Array` (v0.29.0): Elm's persistent array, pure, so every
+    // member is value-assertable. `List` folds a `toIndexedList`.
+    sf2("array", "Sky.Core.Array", &["Sky.Core.List as List"]),
     sf("char", "Sky.Core.Char"),
     sf("encoding", "Sky.Core.Encoding"),
     sf("crypto", "Sky.Core.Crypto"),
@@ -807,6 +810,7 @@ pub fn inventory(
 /// printed report used to count them as touched, which understated the dark set
 /// by exactly those 3 (it said 59; the honest number is 62).
 pub const ASSERTED_MODULES: &[&str] = &[
+    "Sky.Core.Array",
     "Sky.Core.Basics",
     "Sky.Core.Bytes",
     "Sky.Core.Char",
@@ -997,7 +1001,11 @@ pub const ASSERTED_MODULES: &[&str] = &[
 /// `runtime-go/rt/array_trie_test.go` (a 20,000-step model test against a Go
 /// slice with every old version re-checked). Adding an `array` surface here
 /// lowers the ceiling back to 75.
-pub const DARK_MODULE_CEILING: usize = 76;
+///
+/// Lowered 76 -> 75 (v0.29.0): `Sky.Core.Array` gained the `array` surface
+/// (every export asserted at the nominal, empty, boundary, unicode and
+/// failure edges, including pushes across the 32 and 1,024 trie boundaries).
+pub const DARK_MODULE_CEILING: usize = 75;
 
 /// The five modules item 3 named, with the EXACT number of their public symbols
 /// Family S asserts. **Exact, never `>=`** (registry.rs: *"`ty/tests/reject.rs`
@@ -1462,6 +1470,7 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "maybe" => maybe_battery(edge),
         "result" => result_battery(edge),
         "tuple" => tuple_battery(edge),
+        "array" => array_battery(edge),
         "char" => char_battery(edge),
         "encoding" => encoding_battery(edge),
         "crypto" => crypto_battery(edge),
@@ -2801,6 +2810,133 @@ fn set_battery(edge: &str) -> Vec<Check> {
             "Set.member 9 (Set.fromList [ 1, 2 ])",
             false,
         )],
+        _ => vec![],
+    }
+}
+
+// --- Sky.Core.Array --------------------------------------------------------
+//
+// Elm's `Array`, item for item. Every expectation follows from Elm's
+// definitions: `get` / `set` out of range give `Nothing` / the array
+// unchanged, `slice` takes a negative index from the end, `foldr` walks from
+// the last element. The boundary cases cross the trie's 32 (tail) and 1,024
+// (second level) sizes, where a persistent vector's index arithmetic changes.
+
+fn array_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            i(&["Array.length", "Array.fromList"], "Array.length (Array.fromList [ 1, 2, 3 ])", 3),
+            mi(&["Array.get"], "Array.get 1 (Array.fromList [ 10, 20, 30 ])", Some(20)),
+            li(
+                &["Array.set", "Array.toList"],
+                "Array.toList (Array.set 1 9 (Array.fromList [ 1, 2, 3 ]))",
+                "1,9,3",
+            ),
+            li(&["Array.push"], "Array.toList (Array.push 4 (Array.fromList [ 1, 2, 3 ]))", "1,2,3,4"),
+            li(
+                &["Array.append"],
+                "Array.toList (Array.append (Array.fromList [ 1, 2 ]) (Array.fromList [ 3 ]))",
+                "1,2,3",
+            ),
+            li(
+                &["Array.slice"],
+                "Array.toList (Array.slice 1 3 (Array.fromList [ 0, 1, 2, 3, 4 ]))",
+                "1,2",
+            ),
+            li(&["Array.map"], "Array.toList (Array.map (\\x -> x * 2) (Array.fromList [ 1, 2 ]))", "2,4"),
+            li(
+                &["Array.indexedMap"],
+                "Array.toList (Array.indexedMap (\\ix x -> ix + x) (Array.fromList [ 10, 20 ]))",
+                "10,21",
+            ),
+            i(&["Array.foldl"], "Array.foldl (\\x acc -> acc * 10 + x) 0 (Array.fromList [ 1, 2, 3 ])", 123),
+            i(&["Array.foldr"], "Array.foldr (\\x acc -> acc * 10 + x) 0 (Array.fromList [ 1, 2, 3 ])", 321),
+            li(
+                &["Array.filter"],
+                "Array.toList (Array.filter (\\x -> modBy 2 x == 0) (Array.fromList [ 1, 2, 3, 4 ]))",
+                "2,4",
+            ),
+            li(&["Array.initialize"], "Array.toList (Array.initialize 4 (\\ix -> ix * ix))", "0,1,4,9"),
+            li(&["Array.repeat"], "Array.toList (Array.repeat 3 7)", "7,7,7"),
+            bo(&["Array.isEmpty"], "Array.isEmpty (Array.fromList [ 1 ])", false),
+            // Index times value, summed: 0*5 + 1*6 + 2*7.
+            i(
+                &["Array.toIndexedList"],
+                "List.foldl (\\( ix, x ) acc -> acc + ix * x) 0 (Array.toIndexedList (Array.fromList [ 5, 6, 7 ]))",
+                20,
+            ),
+        ],
+        "empty" => vec![
+            i(&["Array.length", "Array.empty"], "Array.length emptyArray", 0),
+            bo(&["Array.isEmpty"], "Array.isEmpty emptyArray", true),
+            mi(&["Array.get"], "Array.get 0 emptyArray", None),
+            ln(&["Array.toList"], "Array.toList emptyArray", 0),
+            ln(&["Array.toIndexedList"], "Array.toIndexedList emptyArray", 0),
+            i(&["Array.push"], "Array.length (Array.push 1 emptyArray)", 1),
+            i(&["Array.foldl"], "Array.foldl (\\x acc -> acc + x) 0 emptyArray", 0),
+            i(&["Array.foldr"], "Array.foldr (\\x acc -> acc + x) 0 emptyArray", 0),
+            ln(&["Array.filter"], "Array.toList (Array.filter (\\x -> x > 0) emptyArray)", 0),
+            ln(&["Array.map"], "Array.toList (Array.map (\\x -> x + 1) emptyArray)", 0),
+            i(&["Array.initialize"], "Array.length (Array.initialize 0 (\\ix -> ix))", 0),
+            i(&["Array.repeat"], "Array.length (Array.repeat 0 5)", 0),
+            ln(&["Array.slice"], "Array.toList (Array.slice 0 3 emptyArray)", 0),
+            i(&["Array.append"], "Array.length (Array.append emptyArray emptyArray)", 0),
+        ],
+        "boundary" => vec![
+            mi(&["Array.get"], "Array.get 3 (Array.fromList [ 1, 2, 3 ])", None),
+            mi(&["Array.get"], "Array.get -1 (Array.fromList [ 1, 2, 3 ])", None),
+            li(&["Array.set"], "Array.toList (Array.set 5 9 (Array.fromList [ 1, 2 ]))", "1,2"),
+            // A negative index counts from the end (Elm).
+            li(
+                &["Array.slice"],
+                "Array.toList (Array.slice 1 -1 (Array.fromList [ 0, 1, 2, 3 ]))",
+                "1,2",
+            ),
+            // The tail fills at 32: the 33rd element starts a new leaf.
+            i(
+                &["Array.push", "Array.initialize"],
+                "Array.length (Array.push 0 (Array.initialize 32 (\\ix -> ix)))",
+                33,
+            ),
+            mi(
+                &["Array.get", "Array.push"],
+                "Array.get 32 (Array.push 99 (Array.initialize 32 (\\ix -> ix)))",
+                Some(99),
+            ),
+            // Past 1,024 elements the trie has a second level.
+            mi(
+                &["Array.get", "Array.initialize"],
+                "Array.get 1000 (Array.initialize 1100 (\\ix -> ix * 2))",
+                Some(2000),
+            ),
+            mi(
+                &["Array.set", "Array.get"],
+                "Array.get 1050 (Array.set 1050 7 (Array.initialize 1100 (\\ix -> ix)))",
+                Some(7),
+            ),
+            i(
+                &["Array.append"],
+                "Array.length (Array.append (Array.initialize 40 (\\ix -> ix)) (Array.initialize 40 (\\ix -> ix)))",
+                80,
+            ),
+            i(
+                &["Array.foldl", "Array.repeat"],
+                "Array.foldl (\\x acc -> acc + x) 0 (Array.repeat 2000 1)",
+                2000,
+            ),
+        ],
+        "unicode" => vec![
+            ms(&["Array.get"], "Array.get 0 (Array.fromList [ \"世界\" ])", Some("世界")),
+            ls(
+                &["Array.push", "Array.toList"],
+                "Array.toList (Array.push \"é\" (Array.fromList [ \"a\" ]))",
+                "a,é",
+            ),
+        ],
+        "failure" => vec![
+            mi(&["Array.get"], "Array.get 10 emptyArray", None),
+            li(&["Array.set"], "Array.toList (Array.set -1 9 (Array.fromList [ 1 ]))", "1"),
+        ],
         _ => vec![],
     }
 }
@@ -5498,6 +5634,7 @@ fn fixtures(slug: &str) -> &'static str {
         "list" => "emptyInts : List Int\nemptyInts =\n    []\n",
         "dict" => "emptyDict : Dict String Int\nemptyDict =\n    Dict.empty\n",
         "set" => "emptySet : Set Int\nemptySet =\n    Set.empty\n",
+        "array" => "emptyArray : Array Int\nemptyArray =\n    Array.empty\n",
         "maybe" => {
             "nothingInt : Maybe Int\nnothingInt =\n    Nothing\n\n\n\
              emptyMaybes : List (Maybe Int)\nemptyMaybes =\n    []\n"
@@ -7085,6 +7222,8 @@ fn import_exposing(module: &str) -> Option<&'static str> {
         // The canvas battery builds paths from the command constructors.
         "Std.Ui.Canvas" => Some("PathCommand(..)"),
         "Std.Watch" => Some("Change(..)"),
+        // The fixture names the `Array` type.
+        "Sky.Core.Array" => Some("Array"),
         // The AI failure battery builds failures from their constructors.
         "Std.Ai.Failure" => Some("Failure(..)"),
         "Std.Ai.Eval" => Some("Expect(..)"),

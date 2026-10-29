@@ -573,9 +573,10 @@ pub static GATES: &[Gate] = &[
                 // lambda_record_param stratum (+32 cases, 680 → 712), and the
                 // v0.27.16 generic_alias_slot stratum (+32 cases, 712 → 744), and the
                 // v0.28.0 Std.Ai surfaces (+24 cases, 744 → 768), and the
-                // v0.29.0 let_mutual_recursion stratum (+36 cases, 768 → 804).
-                from: "n_min = 804",
-                to: "n_min = 805",
+                // v0.29.0 let_mutual_recursion stratum (+36 cases, 768 → 804),
+                // and the v0.29.0 Sky.Core.Array surface (+5 cases, 804 → 809).
+                from: "n_min = 809",
+                to: "n_min = 810",
             },
         }]),
         body: bodies::corpus_manifest,

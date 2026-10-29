@@ -17,14 +17,14 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 804
+n_min = 809
 n_iso = 61
 n_iso_ceiling = 62
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 803
+class_v = 808
 class_d = 1
-family_S = 194
+family_S = 199
 family_L = 465
 family_E = 10
 family_R = 135
@@ -4098,6 +4098,71 @@ axes       = { edge = "boundary", surface = "tuple" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
 stdout     = "0"
+
+[[case]]
+id         = "stdlib_edge/nominal-array"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "array" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "3|20|1,9,3|1,2,3,4|1,2,3|1,2|2,4|10,21|123|321|2,4|0,1,4,9|7,7,7|F|20"
+
+[[case]]
+id         = "stdlib_edge/empty-array"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "array" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "0|T|N|0|0|1|0|0|0|0|0|0|0|0"
+
+[[case]]
+id         = "stdlib_edge/boundary-array"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "array" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "N|N|1,2|1,2|33|99|2000|7|80|2000"
+
+[[case]]
+id         = "stdlib_edge/unicode-array"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "unicode", surface = "array" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "世界|a,é"
+
+[[case]]
+id         = "stdlib_edge/failure-array"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "array" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "N|1"
 
 [[case]]
 id         = "stdlib_edge/nominal-sign"
