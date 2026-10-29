@@ -36,6 +36,13 @@ The previous mandate (Std.Ai lifecycle) is complete: v0.28.0 shipped, then v0.28
 >
 > that should go together in v0.29
 
+> essentially the repo needs some tidying up, keeping only the relevant + required files/scripts for current compiler.
+> and ensure everything is up to date, including nix setup, script, versions, docs etc.
+> so i expect v0.29 will have a very clean repo + folder + files structure going forward.
+
+> also for the claude.md + agents.md whatever related/relevant AI tooling files, we need to do some refresh/update,
+> keep context as much as possible -- but may clean up unnecessary parts/outdated parts or files
+
 ## Scope (user decisions, 2026-10-28)
 
 - ONE tag, v0.29.0, from this branch, when the whole batch is green on one SHA in
@@ -61,5 +68,12 @@ The previous mandate (Std.Ai lifecycle) is complete: v0.28.0 shipped, then v0.28
   are removed from the tree (they stay in git history and older tags; CI does not
   build them); sky-lang.org and the docs site updated to the v0.29 stdlib (Std.App
   single entry point, Std.Ai training modules, the new modules of this release).
+- Repo tidy in v0.29.0 (user, 2026-10-29): keep only the files and scripts the
+  current Rust compiler, its runtime, stdlib, tests, CI, examples and docs need.
+  Remove dead scripts, stale artefacts, legacy-only tooling and orphaned folders
+  (git history and older tags keep them). Bring the nix setup, scripts, pinned
+  versions (Rust, Go, Node, tools) and docs up to date. Every removal is checked
+  against what CI, the release workflow and the gates reference, so nothing a gate
+  needs is lost. The result is a clean folder structure going forward.
 - After the tag: migrate every private app (list in the private companion) to
   v0.29.0 and redeploy, except the one named there as excluded.
