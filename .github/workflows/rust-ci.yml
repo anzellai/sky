@@ -1859,7 +1859,7 @@ jobs:
   lsp-fuzz:
     runs-on: ubuntu-latest
     # "small; isolated setup" per this file's header. Reasoned: nvim setup ~1 min
-    # + debug workspace build ~4 min + lsp 49 cases (debug `sky`) ~5.5 min + fuzz
+    # + debug workspace build ~4 min + lsp 52 cases (debug `sky`) ~6 min + fuzz
     # ~4 min ≈ 14.5 min. The 32 corpus cases added ~35% to the lsp gate (measured:
     # 17 legacy 144 s + 32 corpus 51 s locally) — they share one LSP session per
     # group, so they cost ~1.6 s each against the legacy ~8.5 s. Ceiling stays 20.
@@ -1884,7 +1884,7 @@ jobs:
         with:
           neovim: true
       - run: cargo build --workspace --locked
-      - name: 'Gate — lsp (Neovim editor-parity: 17 symbol-class + 32 corpus cases)'
+      - name: 'Gate — lsp (Neovim editor-parity: 17 symbol-class + 32 corpus + 3 realffi cases)'
         run: cargo run -q -p xtask -- lsp
       - name: Gate — fuzz (robustness + determinism, L7 + L4)
         run: cargo run -q -p xtask -- fuzz

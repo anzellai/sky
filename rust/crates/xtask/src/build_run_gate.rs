@@ -4,7 +4,10 @@
 //! then verifies it end-to-end with a shape-appropriate strategy.
 //!
 //! CLI — build, `go build`, run (feed test stdin), normalise (strip ISO
-//! timestamps), diff stdout vs the Haskell oracle binary.
+//! timestamps), compare stdout to the committed golden. With `--run`, a
+//! reference binary at `<dir>/sky-out/app` (when one exists) is also compared.
+//! That slot held the legacy Haskell oracle build until v0.29.0. The oracle
+//! tree was removed then (it stays in git history at tag v0.28.1).
 //!
 //! Live / Http — build, `go build`, start the server binary on a spare port
 //! under a watchdog, wait-for-ready (parse the listening line), `curl /`,
@@ -447,7 +450,8 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     let all = args.iter().any(|a| a == "--all");
     // `--golden`: compare each CLI example's normalised stdout to its committed
     // `golden/<name>.stdout` (the CI runtime-correctness gate; NEVER runs the
-    // oracle). `--bless`: capture goldens, but ONLY the oracle-verified ones.
+    // oracle). `--bless`: capture goldens, but ONLY the Rust-verified ones
+    // (two identical non-empty captures).
     let golden = args.iter().any(|a| a == "--golden");
     let bless = args.iter().any(|a| a == "--bless");
 
@@ -525,7 +529,7 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     let base = gate_result(&rows);
 
     // ---- golden / bless phase (runtime-correctness) ----
-    // `--bless` captures oracle-verified goldens and returns (a capture run is
+    // `--bless` captures Rust-verified goldens and returns (a capture run is
     // not a gate). Otherwise, when `--golden` (compare) or `--run` (drift) is
     // active, run the golden gate over the committed snapshots.
     let gphase = if bless {
@@ -546,8 +550,6 @@ fn corpus(root: &Path) -> Vec<String> {
                 .filter(|e| e.path().is_dir())
                 .filter_map(|e| e.file_name().to_str().map(String::from))
                 .filter(|n| root.join("examples").join(n).join("src").is_dir())
-                // skip the non-example scratch dirs
-                .filter(|n| n != "simple" && n != "test_pkg")
                 // USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded
                 // from CI in general; skip every `crate::ci_excluded` example by name.
                 .filter(|n| !crate::ci_excluded::is_ci_excluded(n))
@@ -1155,7 +1157,7 @@ fn verify_std_app(
         let (ok, stdout, note) = run_cli_capture(&out_dir, name);
         row.run_ok = Some(ok);
         row.rust_stdout = stdout;
-        // A dispatched Std.App CLI has no legacy-Haskell oracle — the binary at
+        // A dispatched Std.App CLI has no separate reference build — the binary at
         // <dir>/sky-out/app IS the rust build. Populate oracle_stdout from it so
         // bless's rust==oracle guard holds and the local drift check has a value.
         if do_verify || bless {
@@ -2730,13 +2732,14 @@ fn golden_status(root: &Path, row: &Row) -> (bool, GoldenStatus) {
     }
 }
 
-// ---- bless (oracle-verified golden capture) ------------------------------
+// ---- bless (Rust-only golden capture) ------------------------------------
 //
-// For each in-scope CLI example: capture RUST twice (double-capture guard),
-// run the ORACLE, and write the golden ONLY when
-// rust_capture_1 == rust_capture_2 == oracle (all normalised). A missing oracle
-// binary → skip+warn (never write an unverified golden). rust != oracle → refuse
-// + report (a real runtime bug, not a bless).
+// For each in-scope CLI example: capture RUST twice (double-capture guard) and
+// write the golden ONLY when rust_capture_1 == rust_capture_2 (normalised), the
+// capture is non-empty, and it carries no machine-specific leak. The legacy
+// Haskell oracle that used to anchor a bless was removed in v0.29.0 (it remains
+// in git history at tag v0.28.1), so a golden is now anchored by the two Rust
+// captures and by review of the committed `.stdout` diff.
 fn bless_goldens(root: &Path, rows: &[Row], verbose: bool) -> i32 {
     let scope: Vec<&Row> = rows.iter().filter(|r| golden_in_scope(r)).collect();
     if let Err(e) = std::fs::create_dir_all(golden_dir(root)) {
@@ -2745,14 +2748,12 @@ fn bless_goldens(root: &Path, rows: &[Row], verbose: bool) -> i32 {
     }
 
     let mut written: Vec<String> = Vec::new();
-    let mut skipped_no_oracle: Vec<String> = Vec::new();
-    let mut refused_mismatch: Vec<(String, String)> = Vec::new();
     let mut refused_nondet: Vec<String> = Vec::new();
     let mut refused_leak: Vec<(String, String)> = Vec::new();
     let mut refused_empty: Vec<String> = Vec::new();
     let mut skipped_no_run: Vec<String> = Vec::new();
 
-    println!("\nbless — capturing oracle-verified CLI goldens\n");
+    println!("\nbless — capturing Rust-verified CLI goldens\n");
 
     for r in &scope {
         let name = r.name.as_str();
@@ -2772,12 +2773,9 @@ fn bless_goldens(root: &Path, rows: &[Row], verbose: bool) -> i32 {
         // byte: the example's `sky.toml` was missing the `[database]` section
         // every other `Db.connect` example has, so `Db.connect ()` failed, the
         // whole Task chain short-circuited, and the app printed nothing. The
-        // bless refused on no-run, nondeterminism, no-oracle, rust!=oracle and
-        // machine-leak — but not on "asserted nothing".
-        //
-        // This check is deliberately placed BEFORE the oracle comparison: when
-        // BOTH rust and oracle produce no output they agree, and agreement on
-        // emptiness is not evidence of correctness.
+        // bless refused on no-run, nondeterminism and machine-leak — but not on
+        // "asserted nothing". Two empty captures agree with each other, and
+        // agreement on emptiness is not evidence of correctness.
         if cap1.trim().is_empty() {
             refused_empty.push(name.to_string());
             continue;
@@ -2795,35 +2793,19 @@ fn bless_goldens(root: &Path, rows: &[Row], verbose: bool) -> i32 {
             refused_nondet.push(name.to_string());
             continue;
         }
-        // oracle capture — the verification anchor.
-        let dir = root.join("examples").join(name);
-        let oracle = match run_oracle_stdout(&dir, stdin_for(name)) {
-            Some(s) => normalise_stdout(&s),
-            None => {
-                skipped_no_oracle.push(name.to_string());
-                continue;
-            }
-        };
-        if cap1 != oracle {
-            refused_mismatch.push((
-                name.to_string(),
-                "rust_normalized != oracle_normalized".into(),
-            ));
-            continue;
-        }
         // machine-specific leak guard.
         if let Some(marker) = machine_leak(&cap1) {
             refused_leak.push((name.to_string(), marker));
             continue;
         }
-        // write it (verified: rust==rust==oracle, portable).
+        // write it (verified: rust==rust, non-empty, portable).
         let path = golden_file(root, name);
         let body = format!("{}\n", cap1.trim_end());
         match std::fs::write(&path, &body) {
             Ok(()) => {
                 written.push(name.to_string());
                 if verbose {
-                    println!("  wrote  {name}  ({} bytes, oracle-verified)", body.len());
+                    println!("  wrote  {name}  ({} bytes, rust-verified)", body.len());
                 }
             }
             Err(e) => {
@@ -2835,25 +2817,17 @@ fn bless_goldens(root: &Path, rows: &[Row], verbose: bool) -> i32 {
 
     // ---- summary ----
     println!(
-        "bless summary: {} written (oracle-verified)  |  {} skipped (no oracle)  |  \
-         {} skipped (no run)  |  {} refused (nondeterministic)  |  {} refused (rust != oracle)  \
-         |  {} refused (machine leak)  |  {} refused (empty capture)",
+        "bless summary: {} written (rust-verified)  |  {} skipped (no run)  |  \
+         {} refused (nondeterministic)  |  {} refused (machine leak)  |  \
+         {} refused (empty capture)",
         written.len(),
-        skipped_no_oracle.len(),
         skipped_no_run.len(),
         refused_nondet.len(),
-        refused_mismatch.len(),
         refused_leak.len(),
         refused_empty.len(),
     );
     if !written.is_empty() {
         println!("  written: {}", written.join(", "));
-    }
-    if !skipped_no_oracle.is_empty() {
-        println!(
-            "  skipped (no oracle binary — build it to verify): {}",
-            skipped_no_oracle.join(", ")
-        );
     }
     if !skipped_no_run.is_empty() {
         println!(
@@ -2873,26 +2847,13 @@ fn bless_goldens(root: &Path, rows: &[Row], verbose: bool) -> i32 {
         }
     }
 
-    // A rust != oracle mismatch is a REAL runtime bug — fail hard, do not paper
-    // over it (a bless must never write an unverified golden).
-    if !refused_mismatch.is_empty() {
-        eprintln!(
-            "\nBLESS: REFUSED — {} example(s) where the RUST output differs from the ORACLE \
-             (a real runtime-correctness bug, not a bless):",
-            refused_mismatch.len()
-        );
-        for (n, why) in &refused_mismatch {
-            eprintln!("  {n}: {why}");
-        }
-        return 1;
-    }
     if !refused_nondet.is_empty() {
         return 1;
     }
     // An empty capture means the run asserted NOTHING. Blessing it commits a
     // one-byte golden that matches itself forever — the strongest form of a
-    // gate that cannot fail. Treated as hard as a rust != oracle mismatch,
-    // because in practice it has the same cause: the program did not work.
+    // gate that cannot fail. Treated as a hard failure, because in practice it
+    // means the program did not work.
     if !refused_empty.is_empty() {
         eprintln!(
             "\nBLESS: REFUSED — {} example(s) produced NO output; an empty capture is not a \

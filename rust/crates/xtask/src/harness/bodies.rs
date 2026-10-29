@@ -3442,7 +3442,10 @@ pub fn sky_suites(ctx: &GateCtx) -> GateOutcome {
 
 /// The EXACT number of editor-parity cases: 17 single-fixture symbol-class
 /// cases (`scripts/lsp-test-nvim.lua`) + 32 corpus cases across the
-/// `multimodule` / `diagnostics` / `realapp` groups (`lsp-corpus-nvim.lua`).
+/// `multimodule` / `diagnostics` / `realapp` groups (`lsp-corpus-nvim.lua`) +
+/// 3 `realffi` cases on `examples/13-skyshop`'s Stripe FFI surface
+/// (`lsp-test-skyshop.lua`, wired in v0.29.0: before then the driver existed
+/// and `docs/tooling/lsp.md` said this suite ran it, but nothing did).
 ///
 /// `lsp_gate`'s CLI face deliberately does NOT assert a total — the script
 /// cross-checks each corpus group against the count that group declares, and a
@@ -3450,7 +3453,7 @@ pub fn sky_suites(ctx: &GateCtx) -> GateOutcome {
 /// REGISTRY needs one anyway: `expected` is how the harness distinguishes "the
 /// suite ran and passed" from "the suite ran three cases and passed", and a
 /// gate reporting 0 assertions is a FAIL (vacuous), never a pass.
-pub const LSP_EXPECTED: u64 = 49;
+pub const LSP_EXPECTED: u64 = 52;
 
 /// The Neovim editor-parity suite.
 ///
@@ -3619,7 +3622,7 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
     GateOutcome::new(
         true,
         total,
-        format!("{total} Neovim editor-parity cases (17 symbol-class + 32 corpus)"),
+        format!("{total} Neovim editor-parity cases (17 symbol-class + 32 corpus + 3 realffi)"),
     )
 }
 

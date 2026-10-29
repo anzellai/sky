@@ -41,7 +41,7 @@ flowchart TD
     subgraph T4["End-to-end runtime (reused as-is)"]
       WEB["verify-all-web.sh (Playwright)"]
       CLI["verify-cli.sh + example-e2e.sh"]
-      LSP["lsp-test-nvim.sh (49/49)"]
+      LSP["lsp-test-nvim.sh (52/52)"]
     end
     SNAP --> WTF --> GO --> REPRO --> WEB
     UNIT --> PF --> AR --> REPRO --> CLI
@@ -300,33 +300,26 @@ Generate random **well-typed** Sky programs; assert each `sky build`s and
 `./sky-out/app` runs with no panic (L6 — no runtime panic from well-typed Sky).
 This already exists in two tiers and is reused directly:
 
-- **Tier A (in-suite):** the Haskell `Sky.Build.WellTypedFuzzerSpec` (QuickCheck,
-  100 iters every CI). The Rust equivalent is a `proptest` generator over a typed
-  AST *builder* (so generated programs are well-typed by construction, not by
-  filtering) living in the `ty`/`lower` test crates.
-- **Tier B (milestone runner):** `scripts/fuzz-well-typed.sh` — ≥10,000
-  iterations, deterministic LCG seeding (failed seed replays via `--seed N
-  --iters 1 --keep`), template + corpus + composite modes, full forensics
-  (source + Go + logs) preserved on first failure. Backend-agnostic: point
-  `SKY=<rust-sky>` at it. Criterion-8 grade: ≥10k clean before a milestone
-  closes.
-- **Tier A′ — well-typed DIFFERENTIAL (`cargo run -p xtask -- welltyped`).**
-  The Rust-side `WellTypedFuzzerSpec` analog. A bounded, deterministic,
-  type-directed builder constructs well-typed Sky programs (build a typed term →
-  pretty-print → valid by construction), then runs BOTH the Rust compiler AND the
-  Haskell oracle in check-only mode (verdict read at the type-check boundary —
-  Rust's `-- Generating Go` / the oracle's `Types OK`, both strictly before
-  codegen / `go build`, so a check costs type-check time, not build time) and
-  asserts they AGREE on ACCEPT/REJECT for every program, modulo the ledgered
-  `known-divergences.toml` entries. This closes the accept/reject-parity gap on
-  GENERATED valid programs that neither `xtask fuzz` (mutates corpus → mostly
-  INVALID, asserts only no-panic + determinism) nor the accept-parity corpus gate
-  covers. Deterministic: a fixed base seed → identical programs + verdicts
-  run-to-run. LOCAL / release-only, exactly like `xtask divergences` — it shells
-  the oracle, which is not built in CI; absent oracle → the gate SKIPS (still
-  verifying generator determinism). `--count=N` (default 120) bounds it;
-  `--emit-only` prints the programs without a compiler. Point it at explicit
-  binaries with `SKY_RUST_BIN` / `SKY_ORACLE_BIN`.
+- **Tier A (historical):** the Haskell `Sky.Build.WellTypedFuzzerSpec`
+  (QuickCheck, 100 iters every CI) and its milestone runner
+  `scripts/fuzz-well-typed.sh` (≥10,000 iterations). Both went with the Haskell
+  compiler: the spec was removed with the tree in v0.29.0 and the runner with
+  it (both in git history at tag `v0.28.1`).
+- **Tier A′ — well-typed generator (`cargo run -p xtask -- welltyped`).**
+  A bounded, deterministic, type-directed builder constructs well-typed Sky
+  programs (build a typed term → pretty-print → valid by construction), then
+  runs the Rust compiler in check-only mode (verdict read at the type-check
+  boundary, `-- Generating Go`, strictly before codegen / `go build`, so a
+  check costs type-check time, not build time) and asserts it ACCEPTS every
+  program. Until v0.29.0 this was a DIFFERENTIAL against the Haskell oracle
+  (agree on ACCEPT/REJECT); with the oracle removed it asserts acceptance
+  directly, which is the property a well-typed generator can check without a
+  second compiler. It closes the gap on GENERATED valid programs that `xtask
+  fuzz` (mutates corpus → mostly INVALID, asserts only no-panic +
+  determinism) does not cover. Deterministic: a fixed base seed → identical
+  programs + verdicts run-to-run. `--count=N` (default 120) bounds it;
+  `--emit-only` prints the programs without a compiler. Point it at an explicit
+  binary with `SKY_RUST_BIN`. It runs in `scripts/test-local.sh`.
 
 ### 5b. Parser fuzzer → no crash + recovery invariant
 
@@ -381,7 +374,7 @@ tests miss.
 
 Because the LSP is a *front-end over the same query database* ([`01`](01-architecture-overview.md),
 L2) rather than a bolted-on fixpoint, the Rust `sky-lsp` is exercised by the
-identical nvim suite over stdio JSON-RPC. **49/49 green is a release gate**,
+identical nvim suite over stdio JSON-RPC. **52/52 green is a release gate**,
 same as today. The salsa core means the LSP is not a special case to
 independently re-verify — the same `resolve`/`infer` queries the batch build
 proves are the ones the LSP answers hover from — but the editor-level suite
@@ -393,9 +386,9 @@ surface.
 ## 8. CI structure
 
 The Rust CI lives in **`.github/workflows/rust-ci.yml`** (matrix:
-`ubuntu-latest` x64 + `macos-latest` arm64; fail-fast off) — **both** compilers
-build in CI (the oracle stays live under `legacy-haskell-compiler/`, see
-[`12`](12-migration-and-milestones.md)). Earlier text here named
+`ubuntu-latest` x64 + `macos-latest` arm64; fail-fast off). The Haskell oracle
+was removed from the tree in v0.29.0 (see
+[`../history/legacy-compilers.md`](../history/legacy-compilers.md)). Earlier text here named
 `.github/workflows/ci.yml`, which does not exist.
 
 > **Five rows of this table were wrong, and "Blocks merge? yes" is exactly the
@@ -415,10 +408,10 @@ build in CI (the oracle stays live under `legacy-haskell-compiler/`, see
 | Example sweep (build + run) | `scripts/example-sweep.sh` (SKY_BIN=rust) | yes | §1 tier-1 |
 | Runtime web | `scripts/verify-all-web.sh` (macOS: Playwright) | yes | §1 tier-2/3 |
 | Runtime CLI/TUI | `scripts/verify-cli.sh` + `scripts/example-e2e.sh` | yes | §1 |
-| LSP | `scripts/lsp-test-nvim.sh` | yes | §7, 49/49 (17 symbol-class + 32 corpus) |
+| LSP | `scripts/lsp-test-nvim.sh` | yes | §7, 52/52 (17 symbol-class + 32 corpus + 3 realffi) |
 | Fuzz (robustness + determinism) | `cargo run -p xtask -- fuzz` | yes | §5 — mutated-corpus no-panic + L4 determinism |
-| Well-typed differential (local/release) | `cargo run -p xtask -- welltyped` | no (oracle absent in CI) | §5a Tier-A′ — generated-valid-program accept/reject parity vs oracle |
-| ~~Fuzz (nightly)~~ | ~~`fuzz-well-typed.sh --iters 10000` + `cargo-fuzz` parser~~ — **nothing schedules either.** `.github/workflows/nightly-sweep.yml` runs four jobs (`example-sweep`, `web-runtime`, `behaviour-corpus`, `postgres-bundle-licence`); no workflow or script invokes `fuzz-well-typed.sh` or `cargo-fuzz` (`grep -rn 'cargo.fuzz' .github scripts rust` → zero). `scripts/fuzz-well-typed.sh` exists but is a **manual milestone runner**, not a nightly gate. The mutation fuzzer `xtask fuzz` *does* run per-push (`rust-ci.yml:540`) and is the row above | **manual, not nightly** | §5 milestone grade |
+| Well-typed generator (local) | `cargo run -p xtask -- welltyped` | no (`scripts/test-local.sh`) | §5a Tier-A′ — every generated well-typed program is accepted |
+| ~~Fuzz (nightly)~~ | ~~`fuzz-well-typed.sh --iters 10000` + `cargo-fuzz` parser~~ — **nothing scheduled either**, and `scripts/fuzz-well-typed.sh` was removed with the Haskell compiler in v0.29.0. The mutation fuzzer `xtask fuzz` *does* run per-push and is the row above | **removed** | §5 milestone grade |
 | fmt idempotent + `sky check` smoke | (existing steps) | yes | tooling parity |
 
 Notes carried from the Haskell CI that stay true:
@@ -489,10 +482,10 @@ The Rust compiler is *verified-compatible* when, on the CI matrix:
 3. **Every numbered example builds AND runs** through the three runtime tiers (§1) — zero
    panics, zero dead-click regressions.
 4. **The reproducibility gate is green** across N seeds × ≥2 platforms (§3).
-5. **LSP 49/49** (§7).
+5. **LSP 52/52** (§7).
 6. **Fuzzers clean** at milestone grade (§5).
 
 No "but / except / mostly / for the scope of." Compat-or-better means the whole
-list, on every push, with the Haskell oracle — preserved under
-`legacy-haskell-compiler/` — still standing behind it
-([`12`](12-migration-and-milestones.md) M8).
+list, on every push. The Haskell oracle stood behind it until v0.28.x
+([`12`](12-migration-and-milestones.md) M8); it was removed from the tree in
+v0.29.0.

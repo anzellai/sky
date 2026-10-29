@@ -1685,8 +1685,10 @@ pub static GATES: &[Gate] = &[
         platforms: UNIX,
         // Measured 2026-08-12 on a debug `sky`: ~250 s for 49 cases (17 legacy
         // at ~8.5 s each, 32 corpus at ~1.6 s each — the corpus groups share one
-        // LSP session). 900 leaves room for a cold session on a slow runner
-        // without turning a hang into a 15-minute wait.
+        // LSP session). The 3 realffi cases (v0.29.0) share one session on
+        // 13-skyshop and add the time to index its Stripe surface. 900 leaves
+        // room for a cold session on a slow runner without turning a hang into
+        // a 15-minute wait.
         budget_s: 900,
         expected: bodies::LSP_EXPECTED,
         expect: Expect::Falsifiable,
@@ -1702,17 +1704,34 @@ pub static GATES: &[Gate] = &[
         // (`type alias Model = …`, read from the type's home module) differs from
         // the source token (`Model`), so rendering the bare name instead is a
         // one-token change with no side effects on any other path.
-        mutations: Mutations::new(&[Mutation {
-            id: "lsp.hover-echoes-the-token",
-            description: "make hover on a TYPE return the bare identifier instead \
-                          of its declaration; the two type-hover cases must go red \
-                          (they did not, before their needles were strengthened)",
-            kind: MutationKind::ReplaceOnce {
-                path: "rust/crates/sky-lsp/src/lib.rs",
-                from: "format!(\"```sky\\n{decl_src}\\n```\")",
-                to: "format!(\"```sky\\n{name}\\n```\")",
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "lsp.hover-echoes-the-token",
+                description: "make hover on a TYPE return the bare identifier instead \
+                              of its declaration; the two type-hover cases must go red \
+                              (they did not, before their needles were strengthened)",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/sky-lsp/src/lib.rs",
+                    from: "format!(\"```sky\\n{decl_src}\\n```\")",
+                    to: "format!(\"```sky\\n{name}\\n```\")",
+                },
             },
-        }]),
+            // The `realffi` group (examples/13-skyshop's Stripe surface) is the
+            // only part of the suite that hovers a Go-FFI binding. Dropping the
+            // FFI signature from hover is the defect it exists to catch: both
+            // of its hover cases must go red.
+            Mutation {
+                id: "lsp.ffi-hover-drops-the-signature",
+                description: "make hover on a Go-FFI binding render no signature; the \
+                              realffi hover cases on 13-skyshop's Stripe surface must \
+                              go red",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/sky-lsp/src/lib.rs",
+                    from: ".map(|f| f.sky_type.clone())",
+                    to: ".map(|_| String::new())",
+                },
+            },
+        ]),
         body: bodies::lsp,
     },
     Gate {

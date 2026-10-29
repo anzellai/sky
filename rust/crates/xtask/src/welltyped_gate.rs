@@ -1,54 +1,40 @@
-//! `xtask welltyped` — the WELL-TYPED differential fuzzer (the `WellTypedFuzzerSpec`
-//! analog the self-host v1 gap named, and `fuzz_gate.rs`'s own docstring calls a
-//! still-open gap).
+//! `xtask welltyped` — the WELL-TYPED generator gate.
 //!
 //! ## What it does that `xtask fuzz` does NOT
 //! `xtask fuzz` MUTATES corpus inputs (mostly producing INVALID programs) and
-//! asserts robustness (no panic) + determinism. It never generates a VALID program
-//! and never diffs the Haskell oracle. This gate closes that hole: it
+//! asserts robustness (no panic) + determinism. It never generates a VALID
+//! program. This gate closes that hole: it
 //!
 //!   1. GENERATES well-typed Sky programs with a bounded, deterministic,
 //!      TYPE-DIRECTED builder (build a typed term, pretty-print it → valid by
 //!      construction), then
-//!   2. runs BOTH the Rust compiler AND the Haskell oracle in check-only mode and
-//!      asserts they AGREE on ACCEPT/REJECT for every program (modulo the ledgered
-//!      `known-divergences.toml` entries), then
+//!   2. runs the Rust compiler in check-only mode and asserts it ACCEPTS every
+//!      program (a well-typed program the checker rejects is a completeness bug),
+//!      then
 //!   3. asserts the generation itself is DETERMINISTIC (same seed → identical
 //!      program text, run-to-run).
 //!
-//! A well-typed generated program SHOULD be ACCEPTED by both. A disagreement that
-//! is not a ledgered divergence is a REAL Rust-vs-oracle parity / soundness bug and
-//! the gate FAILS with the minimal program + both verdicts.
+//! Until v0.29.0 step 2 was a DIFFERENTIAL against the legacy Haskell compiler.
+//! That oracle was removed from the tree in v0.29.0 (it remains in git history at
+//! tag v0.28.1), so the gate now asserts acceptance directly: the generator builds
+//! only well-typed terms, so ACCEPT is the expected verdict for every program.
 //!
 //! ## Type-check-phase verdict (why not full `sky check`)
-//! `sky check` = type-check + `go build`; `go build` on the oracle is ~14 s cold,
-//! which is untenable for hundreds of programs. This gate needs the parse, resolve
-//! and typecheck verdict only (the task's "check-only, no go build"), so it streams
-//! each compiler's stdout and reads the verdict at the type-check boundary — the
-//! Rust compiler prints `-- Generating Go` and the oracle prints `Types OK` once,
-//! and only once, type-checking has SUCCEEDED (both strictly before codegen /
-//! `go build`). The child is killed the instant that marker appears (or on exit
-//! without it = REJECT), so a check costs ~type-check time, not ~build time.
-//!
-//! This deliberately isolates the TYPE SYSTEM parity. A phase that runs AFTER
-//! type-check (the oracle's codegen validator, `go build`) is a DIFFERENT gate's
-//! job (`build-run` / `divergences`); e.g. the oracle type-checks `abs (0 - 7)`
-//! ("Types OK") but its codegen validator then rejects it (E4005: no
-//! `rt.Basics_abs`), while Rust compiles it fully — a real but codegen-phase
-//! divergence, out of scope for a TYPE-CHECK parity gate (and `abs` is simply not
-//! generated).
-//!
-//! ## LOCAL / release-only (like `xtask divergences`)
-//! It shells the Haskell oracle, which is NOT available in CI (see
-//! `divergences_gate.rs`). With no oracle binary discoverable the gate SKIPS
-//! (exit 0) with a clear message, exactly like the divergence ledger's oracle
-//! side. Point it at explicit binaries with `SKY_RUST_BIN` / `SKY_ORACLE_BIN`.
+//! `sky check` = type-check + `go build`, which is too slow for hundreds of
+//! programs. This gate needs the parse, resolve and typecheck verdict only, so it
+//! streams the compiler's stdout and reads the verdict at the type-check boundary:
+//! the Rust compiler prints `-- Generating Go` once, and only once,
+//! type-checking has SUCCEEDED (strictly before codegen / `go build`). The child is
+//! killed the instant that marker appears (or on exit without it = REJECT), so a
+//! check costs ~type-check time, not ~build time. A phase that runs AFTER
+//! type-check (`go build`) is a DIFFERENT gate's job (`build-run`).
 //!
 //! ## Bounded + deterministic
 //! A FIXED base seed drives a splitmix64 stream; program `i` uses a seed derived
 //! purely from `i`, so the whole set (and every verdict, a pure function of the
 //! program text) reproduces byte-for-byte. `--count=N` (default 120) bounds the
-//! run; each subprocess is timeout-bounded. The default finishes in a few minutes.
+//! run; each subprocess is timeout-bounded. Point it at an explicit binary with
+//! `SKY_RUST_BIN`.
 
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
@@ -62,8 +48,8 @@ use std::time::{Duration, Instant};
 const BASE_SEED: u64 = 0x5759_5F57_5459_5046; // "SY_WTYPF"
 
 /// Default number of generated programs. Override with `--count=N`. Each program
-/// costs ~type-check time on BOTH compilers (oracle ~3 s, rust ~0.7 s), so 120
-/// finishes in a few minutes. Bounded on purpose.
+/// costs ~type-check time (~0.7 s), so 120 finishes in a couple of minutes.
+/// Bounded on purpose.
 const DEFAULT_COUNT: usize = 120;
 
 /// Per-subprocess wall-clock ceiling. Type-check alone is a few seconds even cold;
@@ -293,7 +279,15 @@ impl Gen {
         }
 
         // Emit helper definitions (annotated → type known by construction).
-        for h in self.helpers.clone() {
+        //
+        // Helper `i` may call only helpers `0..i`. Without that, a body could
+        // name itself (`hlp1 = hlp1`): well-typed, but a zero-argument value
+        // defined in terms of itself is a value cycle the language rejects on
+        // purpose ([E1018]). The differential against the Haskell oracle only
+        // compared verdicts, so it never asserted acceptance and never saw it.
+        let all_helpers = self.helpers.clone();
+        for (i, h) in all_helpers.iter().cloned().enumerate() {
+            self.helpers = all_helpers[..i].to_vec();
             let sig_parts: Vec<String> = h
                 .params
                 .iter()
@@ -316,6 +310,7 @@ impl Gen {
                 indent_cont(&body)
             ));
         }
+        self.helpers = all_helpers;
 
         // main : a concrete scalar expression.
         let scalar = [Ty::Int, Ty::Float, Ty::Str, Ty::Bool];
@@ -597,9 +592,11 @@ impl Gen {
                     .collect();
                 format!("[ {} ]", parts.join(", "))
             }
+            // The head is parenthesised too: an unbracketed `if … else x` head
+            // would swallow the `::` into its else branch.
             2 => format!(
                 "({} :: {})",
-                self.gen_expr(elem, depth - 1, env),
+                paren_if_app(&self.gen_expr(elem, depth - 1, env)),
                 paren_if_app(&self.gen_list(elem, depth - 1, env))
             ),
             3 => format!(
@@ -948,76 +945,12 @@ fn find_rust_bin(root: &Path) -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.exists())
 }
 
-/// Discover the Haskell oracle binary: `SKY_ORACLE_BIN`, else glob the cabal
-/// dist-newstyle build tree. Returns None (→ gate SKIPS) when not present.
-fn find_oracle_bin(root: &Path) -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("SKY_ORACLE_BIN") {
-        let p = PathBuf::from(p);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    // dist-newstyle/build/<arch>/ghc-<ver>/sky-compiler-<ver>/x/sky/build/sky/sky
-    let base = root.join("dist-newstyle/build");
-    let mut found = None;
-    for arch in read_dirs(&base) {
-        for ghc in read_dirs(&arch) {
-            for pkg in read_dirs(&ghc) {
-                let cand = pkg.join("x/sky/build/sky/sky");
-                if cand.exists() {
-                    found = Some(cand);
-                }
-            }
-        }
-    }
-    found
-}
-
-fn read_dirs(dir: &Path) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map(|rd| {
-            rd.filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|p| p.is_dir())
-                .collect()
-        })
-        .unwrap_or_default();
-    v.sort();
-    v
-}
-
-// ---- ledgered-divergence filter ------------------------------------------
-
-/// The `known-divergences.toml` entries that this gate must ALLOW rather than fail
-/// on. D001 (export enforcement on stdlib) is the only active entry, and this
-/// generator never imports a stdlib-private name, so it cannot be triggered here —
-/// but the filter is kept so a future ledgered TYPE-CHECK divergence is honoured
-/// automatically. Returns the set of divergence ids read from the ledger.
-fn ledger_ids(root: &Path) -> Vec<String> {
-    let text = std::fs::read_to_string(root.join("known-divergences.toml")).unwrap_or_default();
-    text.lines()
-        .filter_map(|l| {
-            let t = l.trim_start();
-            let rest = t
-                .strip_prefix("id")?
-                .trim_start()
-                .strip_prefix('=')?
-                .trim_start();
-            let rest = rest.strip_prefix('"')?;
-            let end = rest.find('"')?;
-            Some(rest[..end].to_string())
-        })
-        .collect()
-}
-
 // ---- findings ------------------------------------------------------------
 
-struct Divergence {
+struct Rejection {
     index: usize,
     seed: u64,
-    rust: Verdict,
-    oracle: Verdict,
-    program: String,
-    rejecting_output: String,
+    output: String,
 }
 
 // ---- the gate ------------------------------------------------------------
@@ -1030,10 +963,10 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         .unwrap_or(DEFAULT_COUNT);
     let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
     // `--emit-only` prints the generated programs (no compiler) — a fast way to
-    // eyeball the generator + confirm determinism without the oracle.
+    // eyeball the generator + confirm determinism.
     let emit_only = args.iter().any(|a| a == "--emit-only");
 
-    println!("welltyped gate — well-typed differential fuzzer (Rust vs Haskell oracle)\n");
+    println!("welltyped gate — well-typed generator, every program must type-check\n");
     println!("base-seed = {BASE_SEED:#018x} (fixed → reproducible)");
     println!("count     = {count}   max-depth = {MAX_DEPTH}\n");
 
@@ -1061,31 +994,11 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         return if det_ok { 0 } else { 1 };
     }
 
-    // ---- discover both compilers ----
     let Some(rust_bin) = find_rust_bin(root) else {
         eprintln!("welltyped: no Rust `sky` binary found (set SKY_RUST_BIN or build sky-out/sky)");
         return 1;
     };
-    let oracle_bin = find_oracle_bin(root);
-    println!("rust   = {}", rust_bin.display());
-    match &oracle_bin {
-        Some(p) => println!("oracle = {}\n", p.display()),
-        None => {
-            println!("oracle = <not found>\n");
-            println!(
-                "welltyped gate: SKIP — the Haskell oracle binary is not available (it is not \
-                 built in CI; this gate is LOCAL / release-only, exactly like `xtask divergences`). \
-                 Determinism of the generator was still verified above. Set SKY_ORACLE_BIN to run \
-                 the differential."
-            );
-            return if det_ok { 0 } else { 1 };
-        }
-    }
-    let oracle_bin = oracle_bin.unwrap();
-    let allow = ledger_ids(root);
-    if !allow.is_empty() {
-        println!("ledgered divergences (allowed): {}\n", allow.join(", "));
-    }
+    println!("rust   = {}\n", rust_bin.display());
 
     // ---- a single scratch project we rewrite per program ----
     let work = std::env::temp_dir().join(format!("sky-welltyped-{}", std::process::id()));
@@ -1096,59 +1009,33 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     );
 
     let start = Instant::now();
-    let mut divergences: Vec<Divergence> = Vec::new();
-    let mut agree = 0usize;
-    let mut both_accept = 0usize;
-    let mut both_reject = 0usize;
+    let mut rejections: Vec<Rejection> = Vec::new();
+    let mut accepted = 0usize;
+    let mut timeouts = 0usize;
 
     for (i, (seed, prog)) in programs.iter().enumerate() {
         let _ = std::fs::write(work.join("src/Main.sky"), prog);
-
-        let (rv, _ro) = run_check(&rust_bin, &work, "Generating Go");
-        let (ov, oo) = run_check(&oracle_bin, &work, "Types OK");
-
-        let same = rv == ov;
-        if same {
-            agree += 1;
-            match rv {
-                Verdict::Accept => both_accept += 1,
-                Verdict::Reject => both_reject += 1,
-                Verdict::Timeout => {}
-            }
-        } else {
-            // Timeouts are infrastructure noise, not a parity claim — record but
-            // do not treat a lone TIMEOUT-vs-verdict as a divergence bug.
-            let is_timeout = rv == Verdict::Timeout || ov == Verdict::Timeout;
-            let rejecting_output = if rv == Verdict::Reject {
-                String::new()
-            } else {
-                oo.clone()
-            };
-            let div = Divergence {
+        let (verdict, output) = run_check(&rust_bin, &work, "Generating Go");
+        match verdict {
+            Verdict::Accept => accepted += 1,
+            Verdict::Reject => rejections.push(Rejection {
                 index: i,
                 seed: *seed,
-                rust: rv,
-                oracle: ov,
-                program: prog.clone(),
-                rejecting_output,
-            };
-            if is_timeout {
-                eprintln!(
-                    "  · #{i}: TIMEOUT (rust={} oracle={}) — infra, not a parity bug",
-                    rv.short(),
-                    ov.short()
-                );
-            } else {
-                divergences.push(div);
+                output,
+            }),
+            Verdict::Timeout => {
+                // A wedged check is recorded, not counted as a verdict: a gate
+                // that cannot establish acceptance must not report PASS.
+                timeouts += 1;
+                eprintln!("  · #{i}: TIMEOUT ({})", verdict.short());
             }
         }
-
         if verbose || (i + 1) % 20 == 0 {
             eprintln!(
-                "  · {}/{} checked — agree {agree}, divergences {}",
+                "  · {}/{} checked — accepted {accepted}, rejected {}",
                 i + 1,
                 count,
-                divergences.len()
+                rejections.len()
             );
         }
     }
@@ -1162,36 +1049,29 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         "checked {count} well-typed programs in {:.1}s",
         elapsed.as_secs_f64()
     );
-    println!("agreement: {agree}/{count}  (both-accept {both_accept}, both-reject {both_reject})");
-    println!("divergences (non-ledgered): {}", divergences.len());
+    println!(
+        "accepted: {accepted}/{count}  rejected: {}  timed out: {timeouts}",
+        rejections.len()
+    );
     println!("{}", "-".repeat(72));
 
-    if !divergences.is_empty() {
-        println!("\nREAL PARITY DIVERGENCES ({}):", divergences.len());
-        for d in &divergences {
-            println!(
-                "\n  #{} seed={:#018x}  rust={}  oracle={}",
-                d.index,
-                d.seed,
-                d.rust.short(),
-                d.oracle.short()
-            );
+    if !rejections.is_empty() {
+        println!("\nWELL-TYPED PROGRAMS REJECTED ({}):", rejections.len());
+        for r in &rejections {
+            println!("\n  #{} seed={:#018x}", r.index, r.seed);
             println!("  --- program ---");
-            for l in d.program.lines() {
+            for l in programs[r.index].1.lines() {
                 println!("  | {l}");
             }
-            if !d.rejecting_output.is_empty() {
-                println!("  --- rejecting compiler output (head) ---");
-                for l in d.rejecting_output.lines().take(20) {
-                    println!("  > {l}");
-                }
+            println!("  --- compiler output (head) ---");
+            for l in r.output.lines().take(20) {
+                println!("  > {l}");
             }
         }
         println!(
-            "\nWELLTYPED GATE: FAIL — {} well-typed program(s) on which the Rust compiler and the \
-             Haskell oracle DISAGREE (not a ledgered divergence). Each is a real parity / soundness \
-             finding: triage the minimal program above (do NOT paper over it in known-divergences.toml).",
-            divergences.len()
+            "\nWELLTYPED GATE: FAIL — {} well-typed program(s) the Rust compiler REJECTS. Each is \
+             a real type-checker completeness finding: triage the minimal program above.",
+            rejections.len()
         );
         return 1;
     }
@@ -1201,9 +1081,17 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         return 1;
     }
 
+    if timeouts > 0 {
+        println!(
+            "\nWELLTYPED GATE: FAIL — {timeouts} check(s) timed out, so acceptance is not \
+             established for every program."
+        );
+        return 1;
+    }
+
     println!(
-        "\nWELLTYPED GATE: PASS ({count} well-typed programs, Rust ⇄ oracle agree on every one, \
-         {both_accept} accepted / {both_reject} rejected by both; generator deterministic)"
+        "\nWELLTYPED GATE: PASS ({count} well-typed programs, all accepted by the Rust \
+         compiler; generator deterministic)"
     );
     0
 }

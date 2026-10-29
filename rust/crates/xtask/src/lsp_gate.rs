@@ -5,13 +5,15 @@
 //! filterText, scope handling — that the in-process JSON-RPC tests
 //! (`sky-lsp/tests/*.rs`) miss.
 //!
-//! Two suites run under that one script:
+//! Three suites run under that one script:
 //!   * the original 17 single-fixture cases (`lsp-test-nvim.lua`), one symbol
 //!     class each; and
 //!   * the corpus (`lsp-corpus-nvim.lua`) — cross-module resolution through
 //!     every import shape, goto-def into `sky-stdlib`, `[E1012]`/`[E2008]`/
 //!     `[E2007]` as an editor renders them, the broken-file usability cases,
-//!     and the server driven over a REAL `examples/` project.
+//!     and the server driven over a REAL `examples/` project; and
+//!   * the `realffi` group (`lsp-test-skyshop.lua`) — hover and completion on
+//!     `examples/13-skyshop`'s generated Stripe SDK surface.
 //!
 //! The script owns the per-case reporting and cross-checks each corpus group's
 //! parsed line count against the count that group declares. This gate adds the
@@ -30,48 +32,36 @@
 //!
 //! The gate builds/locates the `sky` binary, puts it on `PATH` (the harness
 //! launches `cmd = { "sky", "lsp" }`), and shells the script. If Neovim is not
-//! installed it prints a LOUD skip and returns 0 so a contributor without nvim
-//! isn't blocked — CI installs nvim explicitly, so the gate is really enforced
-//! there (never a silent skip).
+//! installed the gate FAILS naming what to install, like every other gate whose
+//! prerequisite is missing. `SKY_LIVE_TESTS=skip` is the one opt-out, said out
+//! loud (the same variable `scripts/lib/require-tool.sh` and
+//! `rust/crates/sky/src/live_gate.rs` read).
 
 use std::path::Path;
 use std::process::Command;
 
 pub fn run(_args: &[String], repo_root: &Path) -> i32 {
-    // nvim present? A missing nvim is a loud skip LOCALLY and a hard FAILURE in
-    // CI.
-    //
-    // The skip exists so a contributor without Neovim is not blocked, and the
-    // note above says "CI installs nvim explicitly, so the gate is really
-    // enforced there (never a silent skip)". That was an assumption about a
-    // workflow file, enforced by nothing in this process: if the install step is
-    // removed, renamed, or fails on a runner image change, this function returns
-    // 0 and prints SKIP, and `ci-green` reads a pass. The suite would stop
-    // running and no gate would say so — a gate that cannot fail, which is the
-    // one thing this cycle set out to remove.
-    //
-    // `CI` is set to `true` by GitHub Actions (and by every other major CI), so
-    // the environment that is supposed to enforce this now proves it did.
+    // nvim present? A missing nvim FAILS. It used to be a loud skip locally
+    // (and a failure only when `CI` was set), which made the gate the one
+    // prerequisite-gated check in the repository that passed on a machine
+    // without its prerequisite. The rule everywhere else is AGENTS.md's: a
+    // gate whose prerequisite is missing fails, naming what to install, and
+    // `SKY_LIVE_TESTS=skip` is the only way to say "I cannot run this".
     if !tool_available("nvim") {
-        let in_ci = std::env::var("CI").is_ok_and(|v| !v.is_empty() && v != "false");
-        if in_ci {
-            eprintln!(
-                "LSP GATE: FAIL — `nvim` is not installed, and CI=1.\n\n\
-                 The editor-parity suite (17 symbol-class + 32 corpus cases) did \
-                 NOT run. In CI that is a failure, not a skip: the workflow is \
-                 responsible for installing Neovim, and a missing binary means \
-                 that step is gone or broken. Returning 0 here would report a \
-                 green gate for a suite that executed nothing.\n\n\
-                 Fix the workflow's Neovim install step; do not silence this."
-            );
-            return 1;
-        }
-        println!(
-            "LSP GATE: SKIP — `nvim` is not installed. The editor-parity \
-             suite did NOT run. CI installs Neovim and enforces it; install nvim \
-             locally to run this gate (`brew install neovim` / `apt install neovim`)."
-        );
-        return 0;
+        return match missing_nvim_verdict(std::env::var("SKY_LIVE_TESTS").ok().as_deref()) {
+            Ok(()) => {
+                println!(
+                    "LSP GATE: SKIP — `nvim` is not installed and SKY_LIVE_TESTS=skip was set. \
+                     The editor-parity suite did NOT run, so nothing it proves is proven by \
+                     this run."
+                );
+                0
+            }
+            Err(msg) => {
+                eprintln!("{msg}");
+                1
+            }
+        };
     }
 
     // Locate the `sky` binary next to this xtask executable (same target dir),
@@ -124,6 +114,25 @@ pub fn run(_args: &[String], repo_root: &Path) -> i32 {
             println!("LSP GATE: FAIL — could not run the suite: {e}");
             1
         }
+    }
+}
+
+/// What a missing `nvim` means, given `SKY_LIVE_TESTS`: `Ok(())` is the one
+/// declared skip, every other value is a failure message.
+fn missing_nvim_verdict(live_tests: Option<&str>) -> Result<(), String> {
+    match live_tests {
+        Some("skip") => Ok(()),
+        None | Some("require") => Err(
+            "LSP GATE: FAIL — this gate needs `nvim` and it is not on PATH.\n  \
+             Install Neovim (`brew install neovim` / `apt-get install neovim`).\n  \
+             The editor-parity suite did NOT run. If you genuinely cannot install \
+             it, say so out loud: SKY_LIVE_TESTS=skip cargo run -p xtask -- lsp"
+                .to_string(),
+        ),
+        Some(other) => Err(format!(
+            "LSP GATE: FAIL — SKY_LIVE_TESTS='{other}' is not a value I know. Use \
+             'require' (the default) or 'skip'."
+        )),
     }
 }
 
@@ -235,4 +244,19 @@ fn shrink_check(json: &std::path::Path) -> Option<i32> {
         );
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::missing_nvim_verdict;
+
+    /// A missing `nvim` used to return 0 with a SKIP line whenever `CI` was
+    /// unset. It now fails unless the one opt-out is set.
+    #[test]
+    fn a_missing_nvim_fails_unless_skip_is_declared() {
+        assert!(missing_nvim_verdict(None).is_err());
+        assert!(missing_nvim_verdict(Some("require")).is_err());
+        assert!(missing_nvim_verdict(Some("1")).is_err());
+        assert!(missing_nvim_verdict(Some("skip")).is_ok());
+    }
 }

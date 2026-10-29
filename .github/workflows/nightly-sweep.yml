@@ -623,7 +623,7 @@ jobs:
   # baseline, then the mutated run — and a mutation to Rust source rebuilds the
   # `xtask` binary in between (v2 §7.5 costs it at "~13-24 s cold build per
   # mutation"). The app gates build ~35 MB server binaries from a wiped slate on
-  # both passes; `lsp` drives 49 Neovim cases twice. That is minutes per gate —
+  # both passes; `lsp` drives 52 Neovim cases twice. That is minutes per gate —
   # impossible on a per-push runner, exactly the tier nightly exists for.
   #
   # SCOPE: `--tier t1`, the merge-blocking tier — the same gates the per-push

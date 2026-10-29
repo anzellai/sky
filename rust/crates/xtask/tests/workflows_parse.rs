@@ -4,7 +4,7 @@
 //! step name containing `: ` —
 //!
 //! ```yaml
-//! - name: Gate — lsp (Neovim editor-parity: 17 symbol-class + 32 corpus cases)
+//! - name: Gate — lsp (Neovim editor-parity: 17 symbol-class + 32 corpus + 3 realffi cases)
 //! ```
 //!
 //! is invalid inside an unquoted plain scalar. GitHub could not parse

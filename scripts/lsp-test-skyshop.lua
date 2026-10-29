@@ -1,271 +1,211 @@
--- Headless LSP test driver targeting an existing project (no fixture
--- writes). Used to verify the Sky LSP behaves correctly on real
--- codebases — currently `examples/13-skyshop`, which exercises the
--- ~12MB Stripe SDK FFI surface.
+-- Headless LSP driver for a REAL FFI-heavy project: `examples/13-skyshop`,
+-- whose generated Go FFI surface (the Stripe SDK, ~76k symbols) is the largest
+-- in the repository. It leaves the project untouched: it opens one file and
+-- probes positions it FINDS in that file, so an edit that moves a line does not
+-- turn the cases into probes of whitespace.
 --
--- Unlike scripts/lsp-test-nvim.lua (which rewrites
--- `<project>/src/Main.sky` to a known fixture), this driver leaves
--- the project untouched. It opens the requested file and probes
--- specific (line, col) positions against the LSP.
+-- Run by `scripts/lsp-test-nvim.sh` as the `realffi` group of the `lsp` gate:
 --
--- Usage:
---   nvim --headless -u NONE -l scripts/lsp-test-skyshop.lua \
---        <project-dir> <relative-file> <test-name>
+--   nvim --headless -u NONE -l scripts/lsp-test-skyshop.lua <project-dir>
 --
--- Test names:
---   hover-stripe-newparams     — hover on `newCustomerListParams` in
---                                src/Lib/Stripe.sky:81 col 26
---   hover-stripe-setkey        — hover on `setKey` in
---                                src/Lib/Stripe.sky:48 col 21
---   completion-stripe-prefix   — completion at `Stripe.<probe>` in a
---                                temporary buffer line; checks that
---                                Stripe FFI symbols appear
---   completion-customer-prefix — same shape for `Customer.`
+-- Cases (one LSP session for all of them):
+--   ffi-hover-constructor   hover on `Stripe.newCustomerListParams` shows a
+--                           signature that names the FFI type it returns
+--   ffi-hover-function      hover on `Stripe.setKey` shows its signature
+--                           (`String`), not only the token
+--   ffi-completion-member   completion after `Stripe.set` offers `setKey`
 --
--- Output: prints "PASS: <test>" or "FAIL: <test>: <reason>" to stdout.
--- Exit code 0 on pass, 1 on fail.
+-- Output: one `PASS: <case>` / `FAIL: <case>: <reason>` line per case, then
+-- `CASES: realffi <n>`, the same protocol as scripts/lsp-corpus-nvim.lua.
+-- Exit code 0 when every case passes, 1 otherwise, 2 on a setup failure.
+--
+-- The compiler under test is the `sky` on `$PATH` (the gate puts the binary it
+-- just built first), exactly as for the other two drivers.
 
 local args = arg or {}
-if #args < 3 then
-    io.stderr:write("usage: lsp-test-skyshop.lua <project-dir> <relative-file> <test-name>\n")
-    os.exit(1)
+if #args < 1 then
+    io.stderr:write("usage: lsp-test-skyshop.lua <project-dir>\n")
+    os.exit(2)
 end
 
-local project_dir = args[1]
-local rel_file = args[2]
-local test_name = args[3]
+local group_name = "realffi"
+local project_dir = vim.fn.fnamemodify(args[1], ":p"):gsub("/$", "")
+local rel_file = "src/Lib/Stripe.sky"
 local target_path = project_dir .. "/" .. rel_file
 
-
--- The repo this script lives in, derived from the script's own path so the
--- freshness check below resolves the same tree however nvim was invoked.
-local script_path = debug.getinfo(1, "S").source:sub(2)
-local repo_root = vim.fn.fnamemodify(script_path, ":p:h:h")
-
--- The compiler this driver probes must be current with the tree, exactly as it
--- must be for every shell gate. `~/.local/bin/sky` — the first candidate below
--- — is a developer install that can be arbitrarily old, and a PASS from it says
--- nothing about the LSP in this checkout. The same failure was found in the
--- sibling driver on 2026-08-12: a mutated server was on `$PATH`, and the 17
--- cases in scripts/lsp-test-nvim.lua silently tested a `sky-out/sky` built an
--- hour earlier and reported PASS.
---
--- The check itself is scripts/lib/fresh-compiler.sh — run, not reimplemented in
--- Lua, so there is one definition of "fresh" across shell, Node and here.
-local function require_fresh(bin)
-    local lib = repo_root .. "/scripts/lib/fresh-compiler.sh"
-    local out = vim.fn.system({ "/bin/bash", lib, bin, repo_root })
-    if vim.v.shell_error ~= 0 then
-        io.stderr:write(out)
-        os.exit(vim.v.shell_error)
-    end
+if vim.fn.filereadable(target_path) ~= 1 then
+    io.stderr:write("ERROR: " .. target_path .. " is not readable\n")
+    os.exit(2)
 end
 
-local function find_sky_binary()
-    local candidates = {
-        vim.fn.expand("~/.local/bin/sky"),
-        repo_root .. "/sky-out/sky",
-        "sky",
-    }
-    for _, c in ipairs(candidates) do
-        if vim.fn.executable(c) == 1 then
-            require_fresh(c)
-            return c
+-- The FFI surface is generated, not committed (`sky-ffi/` is gitignored). The
+-- shell driver runs `sky install` when it is missing; if it is still missing
+-- here, every case would measure an LSP with no Stripe bindings at all.
+if vim.fn.filereadable(project_dir .. "/sky-ffi/stripe.skyi") ~= 1 then
+    io.stderr:write("ERROR: " .. project_dir .. "/sky-ffi/stripe.skyi is missing; "
+        .. "run `sky install` in the project first\n")
+    os.exit(2)
+end
+
+if vim.fn.executable("sky") ~= 1 then
+    io.stderr:write("ERROR: cannot find `sky` on $PATH\n")
+    os.exit(2)
+end
+
+local client_id = vim.lsp.start({
+    name = "sky-lsp",
+    cmd = { "sky", "lsp" },
+    root_dir = project_dir,
+    filetypes = { "sky" },
+})
+if not client_id then
+    io.stderr:write("ERROR: vim.lsp.start failed\n")
+    os.exit(2)
+end
+
+vim.cmd("edit " .. target_path)
+local bufnr = vim.api.nvim_get_current_buf()
+vim.lsp.buf_attach_client(bufnr, client_id)
+
+-- The first position of `needle` in the buffer, 0-based (line, col).
+local function locate(needle)
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    for i, l in ipairs(lines) do
+        local c = l:find(needle, 1, true)
+        if c then
+            return i - 1, c - 1
         end
     end
-    return nil
+    return nil, nil
 end
 
-
-local function start_lsp()
-    local sky = find_sky_binary()
-    if not sky then
-        io.stderr:write("ERROR: cannot find `sky` binary\n")
-        os.exit(2)
-    end
-
-    local client_id = vim.lsp.start({
-        name = "sky-lsp",
-        cmd = { sky, "lsp" },
-        root_dir = project_dir,
-        filetypes = { "sky" },
-    })
-
-    if not client_id then
-        io.stderr:write("ERROR: vim.lsp.start failed\n")
-        os.exit(2)
-    end
-
-    vim.cmd("edit " .. target_path)
-    local bufnr = vim.api.nvim_get_current_buf()
-    vim.lsp.buf_attach_client(bufnr, client_id)
-
-    -- Indexing a project of skyshop's size (43 modules + 18 FFI deps,
-    -- ~12MB Stripe SDK) takes longer than the synthetic fixture.
-    -- Generous wait for the workspace index to populate.
-    vim.wait(30000, function()
-        return #vim.lsp.get_clients({ bufnr = bufnr }) > 0
-    end, 100)
-    vim.wait(45000)
-
-    return bufnr, client_id
+local function request(method, line, col, timeout_ms)
+    local result, done = nil, false
+    vim.lsp.buf_request(bufnr, method, {
+        textDocument = vim.lsp.util.make_text_document_params(bufnr),
+        position = { line = line, character = col },
+    }, function(_, res, _, _)
+        result = res
+        done = true
+    end)
+    vim.wait(timeout_ms, function() return done end, 100)
+    return result
 end
 
+local function hover_text(line, col)
+    local res = request("textDocument/hover", line, col, 15000)
+    if not res or not res.contents then
+        return nil
+    end
+    local body = res.contents.value or res.contents
+    if type(body) ~= "string" then
+        return nil
+    end
+    return body
+end
 
-local function test_hover(bufnr, line, col, expected_substr)
-    local result = nil
-    vim.lsp.buf_request(bufnr, "textDocument/hover",
-        {
-            textDocument = vim.lsp.util.make_text_document_params(bufnr),
-            position     = { line = line, character = col },
-        },
-        function(_, res, _, _) result = res end)
-    vim.wait(15000, function() return result ~= nil end, 100)
+-- Wait until the server answers a hover on a Stripe binding: indexing a
+-- project of this size takes far longer than the fixture suites. Bounded, so a
+-- server that never answers turns into failed cases, not a hung gate.
+do
+    local l, c = locate("Stripe.setKey")
+    if l then
+        local deadline = vim.loop.now() + 120000
+        while vim.loop.now() < deadline do
+            if hover_text(l, c + #"Stripe.") then
+                break
+            end
+            vim.wait(2000)
+        end
+    end
+end
 
-    if not result or not result.contents then
+local results = {}
+local function case(name, fn)
+    local ok, msg = fn()
+    results[#results + 1] = { name = name, ok = ok, msg = msg or "" }
+end
+
+case("ffi-hover-constructor", function()
+    local needle = "Stripe.newCustomerListParams"
+    local l, c = locate(needle)
+    if not l then
+        return false, "the file no longer calls " .. needle
+    end
+    local body = hover_text(l, c + #"Stripe.")
+    if not body then
         return false, "no hover content"
     end
-
-    local body = result.contents.value or result.contents
-    if type(body) ~= "string" then
-        return false, "hover body not a string"
+    -- The token itself contains `CustomerListParams`, so the FFI type must
+    -- appear in a SIGNATURE: after an arrow.
+    local arrow = body:find("->", 1, true)
+    if not arrow or not body:find("CustomerListParams", arrow, true) then
+        return false, string.format("hover %q shows no signature returning CustomerListParams", body)
     end
+    return true
+end)
 
-    if not body:find(expected_substr, 1, true) then
-        return false, string.format("hover %q lacks %q", body, expected_substr)
+case("ffi-hover-function", function()
+    local needle = "Stripe.setKey"
+    local l, c = locate(needle)
+    if not l then
+        return false, "the file no longer calls " .. needle
     end
-    return true, body
-end
+    local body = hover_text(l, c + #"Stripe.")
+    if not body then
+        return false, "no hover content"
+    end
+    if not (body:find("setKey", 1, true) and body:find("String", 1, true)) then
+        return false, string.format("hover %q does not show setKey's String signature", body)
+    end
+    return true
+end)
 
-
-local function test_completion_at(bufnr, line, col, must_contain)
-    local result = nil
-    vim.lsp.buf_request(bufnr, "textDocument/completion",
-        {
-            textDocument = vim.lsp.util.make_text_document_params(bufnr),
-            position     = { line = line, character = col },
-        },
-        function(_, res, _, _) result = res end)
-    vim.wait(15000, function() return result ~= nil end, 100)
-
-    if not result then return false, "no completion response" end
-    local items = result.items or result
-    if type(items) ~= "table" then return false, "result not a list" end
-
+case("ffi-completion-member", function()
+    local needle = "Stripe.setKey"
+    local l, c = locate(needle)
+    if not l then
+        return false, "the file no longer calls " .. needle
+    end
+    local res = request("textDocument/completion", l, c + #"Stripe.set", 15000)
+    if not res then
+        return false, "no completion response"
+    end
+    local items = res.items or res
+    if type(items) ~= "table" then
+        return false, "completion result is not a list"
+    end
     for _, item in ipairs(items) do
-        if item.label == must_contain then
-            return true, string.format("found %q in %d items", must_contain, #items)
+        local label = item.label or ""
+        if label == "setKey" or label == "Stripe.setKey" then
+            return true
         end
     end
-
     local labels = {}
     for i = 1, math.min(8, #items) do
-        labels[#labels+1] = items[i].label or "?"
+        labels[#labels + 1] = items[i].label or "?"
     end
-    return false, string.format("expected %q in %d items; first 8: %s",
-        must_contain, #items, table.concat(labels, ", "))
-end
+    return false, string.format("setKey not among %d items; first 8: %s",
+        #items, table.concat(labels, ", "))
+end)
 
-
-local tests = {
-    -- Hover on `newCustomerListParams` (line 80 0-based, col 19 = the
-    -- 'n' of newCustomerListParams). Expect the FFI sig to surface.
-    ["hover-stripe-newparams"] = function()
-        local bufnr = start_lsp()
-        return test_hover(bufnr, 80, 19, "CustomerListParams")
-    end,
-
-    -- Diagnostic: probe across multiple (line, col) pairs and dump
-    -- each hover response so we can see what the LSP returns.
-    -- Reads probes from env var SKY_HOVER_PROBES (format
-    -- "line:col,line:col,..."), default probes line 80 cols 12..40.
-    ["hover-debug"] = function()
-        local bufnr = start_lsp()
-        local probes_env = vim.fn.getenv("SKY_HOVER_PROBES")
-        local probes = {}
-        if probes_env ~= vim.NIL and probes_env ~= "" then
-            for pair in string.gmatch(probes_env, "([^,]+)") do
-                local l, c = pair:match("(%d+):(%d+)")
-                if l and c then
-                    probes[#probes+1] = { tonumber(l), tonumber(c) }
-                end
-            end
-        else
-            for _, c in ipairs({12, 13, 16, 18, 19, 20, 26, 35, 40}) do
-                probes[#probes+1] = { 80, c }
-            end
-        end
-
-        local out = ""
-        for _, lc in ipairs(probes) do
-            local line, col = lc[1], lc[2]
-            local result = nil
-            vim.lsp.buf_request(bufnr, "textDocument/hover",
-                {
-                    textDocument = vim.lsp.util.make_text_document_params(bufnr),
-                    position     = { line = line, character = col },
-                },
-                function(_, res, _, _) result = res end)
-            vim.wait(8000, function() return result ~= nil end, 50)
-
-            local body = nil
-            if result and result.contents then
-                body = result.contents.value or result.contents
-            end
-            if type(body) == "string" then
-                body = body:sub(1, 100):gsub("\n", " | ")
-            else
-                body = "<nil>"
-            end
-            out = out .. string.format("\n  %d:%d  -> %s", line, col, body)
-        end
-        return false, out
-    end,
-
-    -- Hover on `setKey` (line 47 0-based, col 18 = the 's' of setKey).
-    ["hover-stripe-setkey"] = function()
-        local bufnr = start_lsp()
-        return test_hover(bufnr, 47, 18, "setKey")
-    end,
-
-    -- Completion at `Stripe.set` somewhere in the file. We probe the
-    -- existing line with `Stripe.setKey key` (line 47 0-based);
-    -- position cursor right after `Stripe.set` (col 21). Expect the
-    -- LSP to surface `Stripe.setKey` (or similar) in completion items.
-    -- Note: `setKey` is NOT a label "Stripe.setKey" but the qualified
-    -- completion path renders it as that.
-    ["completion-stripe-prefix"] = function()
-        local bufnr = start_lsp()
-        -- Line 47 source = `        _ = Stripe.setKey key`
-        --                   012345678901234567890123456789
-        -- col 21 = right after `Stripe.set` (between t and K).
-        return test_completion_at(bufnr, 47, 21, "Stripe.setKey")
-    end,
-}
-
-
-local fn = tests[test_name]
-if not fn then
-    io.stderr:write("Unknown test: " .. test_name .. "\n")
-    os.exit(1)
-end
-
-local ok, msg = fn()
-
--- Cleanup: stop every spawned LSP client BEFORE os.exit so the
--- child `sky lsp` subprocesses don't get reparented as orphans
--- (see lsp-test-nvim.lua's matching block for context).
-local clients = vim.lsp.get_clients and vim.lsp.get_clients()
-                or vim.lsp.get_active_clients()
-for _, client in ipairs(clients or {}) do
+-- Stop every spawned client BEFORE exit so no `sky lsp` child is reparented.
+for _, client in ipairs(vim.lsp.get_clients and vim.lsp.get_clients() or {}) do
     pcall(vim.lsp.stop_client, client.id, true)
 end
 vim.wait(200)
 
-if ok then
-    io.stdout:write("PASS: " .. test_name .. "\n")
-    os.exit(0)
-else
-    io.stdout:write("FAIL: " .. test_name .. ": " .. tostring(msg) .. "\n")
-    os.exit(1)
+-- Leading newline: nvim's own messages carry no trailing newline (see
+-- lsp-corpus-nvim.lua).
+io.stdout:write("\n")
+local failed = 0
+for _, r in ipairs(results) do
+    if r.ok then
+        io.stdout:write("PASS: " .. r.name .. "\n")
+    else
+        failed = failed + 1
+        io.stdout:write("FAIL: " .. r.name .. ": " .. r.msg .. "\n")
+    end
 end
+io.stdout:write(string.format("CASES: %s %d\n", group_name, #results))
+os.exit(failed == 0 and 0 or 1)

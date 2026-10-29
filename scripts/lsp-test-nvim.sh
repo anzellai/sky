@@ -22,6 +22,15 @@
 
 set -u
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# `require_tool` — a missing prerequisite FAILS naming what to install; the one
+# opt-out is SKY_LIVE_TESTS=skip (scripts/lib/require-tool.sh).
+source "$REPO_ROOT/scripts/lib/require-tool.sh"
+if ! require_tool nvim "install Neovim (brew install neovim / apt-get install neovim)"; then
+    # SKY_LIVE_TESTS=skip: said out loud by require_tool. Nothing ran.
+    exit 0
+fi
+
 JSON_OUT=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -75,7 +84,12 @@ CORPUS_GROUPS=(
 )
 
 CORPUS_DIR="${LSP_NVIM_CORPUS:-/tmp/lsp-corpus-work}"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# The REAL-FFI group (scripts/lsp-test-skyshop.lua): hover and completion on
+# examples/13-skyshop's generated Stripe SDK surface, the largest FFI surface in
+# the repository. That surface is generated, not committed (`sky-ffi/` is
+# gitignored), so it is produced here with the `sky` under test when absent.
+SKYSHOP_DIR="$REPO_ROOT/examples/13-skyshop"
 
 failures=()
 total=0
@@ -127,6 +141,44 @@ for g in "${CORPUS_GROUPS[@]}"; do
         esac
     done <<< "$lines"
 done
+
+# One driver, two protocols: the realffi group speaks the corpus protocol
+# (per-case lines + a CASES: line), so it is checked the same way.
+run_case_group() {
+    local g="$1" out="$2"
+    local lines parsed declared
+    lines=$(printf '%s' "$out" | grep -aoE '(PASS|FAIL): [A-Za-z0-9_-]+' || true)
+    parsed=$(printf '%s' "$lines" | grep -ac . || true)
+    declared=$(printf '%s' "$out" | grep -aoE "CASES: $g [0-9]+" | grep -oE '[0-9]+$' || true)
+    if [ -n "$lines" ]; then
+        printf '%s\n' "$lines"
+    fi
+    if [ -z "$declared" ]; then
+        printf '%s\n' "$out" | tail -5 >&2
+        echo "FAIL: $g: the group printed no CASES: line (it crashed, or nvim is broken)"
+        failures+=("$g")
+        total=$((total + parsed))
+        return
+    fi
+    if [ "$parsed" -ne "$declared" ]; then
+        echo "FAIL: $g: parsed $parsed result lines but the group ran $declared cases"
+        failures+=("$g")
+    fi
+    total=$((total + declared))
+    while IFS= read -r l; do
+        case "$l" in
+            FAIL:*) failures+=("${l#FAIL: }") ;;
+        esac
+    done <<< "$lines"
+}
+
+if [ ! -f "$SKYSHOP_DIR/sky-ffi/stripe.skyi" ]; then
+    echo "realffi: generating the examples/13-skyshop FFI surface (sky install)…"
+    ( cd "$SKYSHOP_DIR" && sky install ) >/dev/null 2>&1 \
+        || echo "realffi: sky install failed in $SKYSHOP_DIR" >&2
+fi
+out=$(nvim --headless -u NONE -l scripts/lsp-test-skyshop.lua "$SKYSHOP_DIR" 2>&1)
+run_case_group realffi "$out"
 
 if [ -n "$JSON_OUT" ]; then
     {
