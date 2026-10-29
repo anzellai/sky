@@ -51,7 +51,7 @@ func TestLivePageLoadRefreshesExcludedFieldsFromInit(t *testing.T) {
 	if got != want {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}
-	if fieldOrNil(Live_withPersistExclude([]any{"a", "b"}, map[string]any{}), "PersistExclude") == nil {
-		t.Fatalf("Live.withPersistExclude must set the config field")
+	if fieldOrNil(Live_withRefreshOnLoad([]any{"a", "b"}, map[string]any{}), "PersistExclude") == nil {
+		t.Fatalf("Live.withRefreshOnLoad must set the config field")
 	}
 }

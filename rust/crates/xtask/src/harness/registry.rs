@@ -574,9 +574,11 @@ pub static GATES: &[Gate] = &[
                 // v0.27.16 generic_alias_slot stratum (+32 cases, 712 → 744), and the
                 // v0.28.0 Std.Ai surfaces (+24 cases, 744 → 768), and the
                 // v0.29.0 let_mutual_recursion stratum (+36 cases, 768 → 804),
-                // and the v0.29.0 Sky.Core.Array surface (+5 cases, 804 → 809).
-                from: "n_min = 809",
-                to: "n_min = 810",
+                // and the v0.29.0 Sky.Core.Array surface (+5 cases, 804 → 809), and the
+                // v0.29.0 Family R defects value_cycle and regex_invalid_literal
+                // (+18 cases, 809 → 827).
+                from: "n_min = 827",
+                to: "n_min = 828",
             },
         }]),
         body: bodies::corpus_manifest,

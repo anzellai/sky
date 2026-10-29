@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1664,
+      "expected_assertions": 1672,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -607,7 +607,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 809,
+      "expected_assertions": 827,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -617,7 +617,7 @@
       "tier": "T1"
     },
     "corpus-reject": {
-      "expected_assertions": 270,
+      "expected_assertions": 306,
       "falsifier_mutation": "corpus-reject.repair-the-defect",
       "falsifier_proven": true,
       "summary": "reject matrix: rejection by DIAGNOSTIC CODE, each with an accepted twin",
@@ -721,7 +721,7 @@
       "tier": "T1"
     },
     "reject": {
-      "expected_assertions": 92,
+      "expected_assertions": 96,
       "falsifier_mutation": "reject.neutralise-axis",
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
@@ -946,7 +946,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2998,
+    "stdlib_entries": 3007,
     "stdlib_modules": 128,
     "surfaces_covered": 186,
     "surfaces_covered_pct": 94.9,
@@ -6415,6 +6415,11 @@
           },
           {
             "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "corpus:layer1 (gate `corpus`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -19287,7 +19292,7 @@
           ]
         },
         "Std.App": {
-          "count": 18,
+          "count": 21,
           "symbols": [
             "BaseConfig",
             "DesktopOpts",
@@ -19298,6 +19303,7 @@
             "WebOpts",
             "apiServerRoute",
             "applyServerConfig",
+            "applySessionLifetime",
             "baseDefaults",
             "desktopDefaults",
             "mobileDefaults",
@@ -19306,7 +19312,9 @@
             "tabletDefaults",
             "terminalDefaults",
             "withAppUrl",
-            "withBase"
+            "withBase",
+            "withPersistExclude",
+            "withSessionLifetime"
           ]
         },
         "Std.Bundle": {
@@ -19672,7 +19680,7 @@
           ]
         },
         "Std.Live": {
-          "count": 31,
+          "count": 32,
           "symbols": [
             "AppConfig",
             "Route",
@@ -19697,6 +19705,7 @@
             "withMaxBodyBytes",
             "withOnNavigate",
             "withPort",
+            "withRefreshOnLoad",
             "withRevocation",
             "withSessionTransport",
             "withStatic",
@@ -19762,7 +19771,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 22,
+          "count": 23,
           "symbols": [
             "AppConfig",
             "Route",
@@ -19783,6 +19792,7 @@
             "withNotFound",
             "withOnNavigate",
             "withPersistDecoder",
+            "withPersistExcludeFields",
             "withPersistProtectedFields",
             "withPersistSeedFields",
             "withRoutes"
@@ -20028,8 +20038,8 @@
           ]
         }
       },
-      "count": 822,
-      "pct_of_denominator": 27.4
+      "count": 827,
+      "pct_of_denominator": 27.5
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -20196,9 +20206,10 @@
           ]
         },
         "Sky.Core.Regex": {
-          "count": 1,
+          "count": 2,
           "symbols": [
-            "Match"
+            "Match",
+            "Regex"
           ]
         },
         "Sky.Core.Result": {
@@ -20650,7 +20661,7 @@
           ]
         },
         "Std.App": {
-          "count": 21,
+          "count": 24,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -20664,6 +20675,7 @@
             "WebOpts",
             "apiServerRoute",
             "applyServerConfig",
+            "applySessionLifetime",
             "baseDefaults",
             "desktopDefaults",
             "mobileDefaults",
@@ -20672,7 +20684,9 @@
             "tabletDefaults",
             "terminalDefaults",
             "withAppUrl",
-            "withBase"
+            "withBase",
+            "withPersistExclude",
+            "withSessionLifetime"
           ]
         },
         "Std.Bundle": {
@@ -21092,7 +21106,7 @@
           ]
         },
         "Std.Live": {
-          "count": 34,
+          "count": 35,
           "symbols": [
             "AppConfig",
             "Route",
@@ -21120,6 +21134,7 @@
             "withMaxBodyBytes",
             "withOnNavigate",
             "withPort",
+            "withRefreshOnLoad",
             "withRevocation",
             "withSessionTransport",
             "withStatic",
@@ -21186,7 +21201,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 22,
+          "count": 23,
           "symbols": [
             "AppConfig",
             "Route",
@@ -21207,6 +21222,7 @@
             "withNotFound",
             "withOnNavigate",
             "withPersistDecoder",
+            "withPersistExcludeFields",
             "withPersistProtectedFields",
             "withPersistSeedFields",
             "withRoutes"
@@ -21472,8 +21488,8 @@
           ]
         }
       },
-      "count": 928,
-      "pct_of_denominator": 31.0
+      "count": 934,
+      "pct_of_denominator": 31.1
     }
   },
   "units": [
@@ -21600,7 +21616,7 @@
       "db_drivers": [],
       "gate": "corpus",
       "id": "corpus:layer1",
-      "modules_imported": 8,
+      "modules_imported": 9,
       "path": "corpus:layer1",
       "refs_generous": 102,
       "refs_qualified": 101,
@@ -22363,8 +22379,8 @@
       "id": "examples/35-composite-generics",
       "modules_imported": 19,
       "path": "examples/35-composite-generics",
-      "refs_generous": 99,
-      "refs_qualified": 95,
+      "refs_generous": 102,
+      "refs_qualified": 97,
       "role": "Example",
       "sky_files": 6,
       "sky_toml_sections": [
@@ -23344,7 +23360,7 @@
       "refs_generous": 172,
       "refs_qualified": 164,
       "role": "FlowTest",
-      "sky_files": 136,
+      "sky_files": 139,
       "sky_toml_sections": []
     },
     {
@@ -23497,8 +23513,8 @@
       "id": "tests/conformance",
       "modules_imported": 58,
       "path": "tests/conformance",
-      "refs_generous": 815,
-      "refs_qualified": 796,
+      "refs_generous": 819,
+      "refs_qualified": 799,
       "role": "Conformance",
       "sky_files": 50,
       "sky_toml_sections": []

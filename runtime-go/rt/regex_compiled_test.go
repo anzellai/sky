@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -32,7 +33,7 @@ func TestRegexFromStringInvalidIsAnErrWithTheRE2Text(t *testing.T) {
 		if !ok || r.Tag != 1 {
 			t.Fatalf("Regex.fromString %q: want Err, got %#v", c.pattern, r)
 		}
-		msg := errorMessageOf(r.ErrValue)
+		msg := regexErrorText(r.ErrValue)
 		if !strings.Contains(msg, c.want) || !strings.Contains(msg, "Regex.fromString") {
 			t.Fatalf("Regex.fromString %q: message %q does not name %q", c.pattern, msg, c.want)
 		}
@@ -99,4 +100,10 @@ func TestRegexTypedTwinsAgree(t *testing.T) {
 			t.Fatalf("replaceT %q", s)
 		}
 	}
+}
+
+// regexErrorText is the Error's text (its kind and message), read the way
+// every platform's runtime prints an Error.
+func regexErrorText(e any) string {
+	return fmt.Sprintf("%v", e)
 }

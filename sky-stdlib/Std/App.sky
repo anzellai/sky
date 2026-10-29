@@ -1630,7 +1630,7 @@ liveConfig_ (App a) =
                         withName_
 
                     else
-                        Live.withPersistExclude a.persistExclude withName_
+                        Live.withRefreshOnLoad a.persistExclude withName_
             in
                 Just withExclude_
 

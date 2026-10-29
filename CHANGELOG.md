@@ -170,7 +170,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `localStorage` and come from the server-rendered seed on a full load, so a
   stale stored copy cannot paint the first frame (`Spa.withPersistExcludeFields`
   on a hand-written `Spa.app`). On Sky.Live a full page load of an existing
-  session refreshes them from `init` (`Live.withPersistExclude`). A session
+  session refreshes them from `init` (`Live.withRefreshOnLoad`). A session
   field is never left out.
 
 - **`App.withSessionLifetime seconds` and `SKY_SPA_SESSION_LIFETIME`** set how

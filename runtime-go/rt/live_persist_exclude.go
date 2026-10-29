@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// App.withPersistExclude / Live.withPersistExclude (v0.29.0): model fields a
+// App.withPersistExclude / Live.withRefreshOnLoad (v0.29.0): model fields a
 // full page load of an existing Sky.Live session refreshes from `init`.
 // Values the server owns (site settings, a feature flag, the server clock)
 // would otherwise keep the copy the session took on its first page, across
@@ -16,8 +16,10 @@ import (
 // other fields keep the session's value. (On a Sky.Spa client the same
 // builder leaves the fields out of localStorage: spa_persist.go.)
 
-// Live_withPersistExclude stores the field-name list under "PersistExclude".
-func Live_withPersistExclude(fields, cfg any) any { return liveCfgSet(cfg, "PersistExclude", fields) }
+// Live_withRefreshOnLoad stores the field-name list under "PersistExclude".
+func Live_withRefreshOnLoad(fields, cfg any) any {
+	return liveCfgSet(cfg, "PersistExclude", fields)
+}
 
 // refreshPersistExcluded runs `init` for this request (its command is not
 // run: the session is not new) and copies the excluded fields from its model
