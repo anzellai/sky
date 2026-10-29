@@ -53,10 +53,11 @@
 //!   three silent sites failed, and the fix is at each call site (`|| true`
 //!   into an unchecked capture, `&&` short-circuit, an empty log read as zero
 //!   failures). No text rule distinguishes a `|| true` that is deliberate from
-//!   one that is a hole, so those three carry their own assertions instead:
-//!   `verify-cli.sh` treats 125/127 as a harness fault, `test-ci.sh` checks
-//!   the binary exists afterwards, `grill-mutation-matrix.sh` requires the log
-//!   to contain a `go test` verdict line.
+//!   one that is a hole, so those sites carry their own assertions instead:
+//!   `verify-cli.sh` treats 125/127 as a harness fault and `test-ci.sh` checks
+//!   the binary exists afterwards. (The third, `grill-mutation-matrix.sh`,
+//!   required its log to contain a `go test` verdict line. It was a one-off
+//!   tool and was removed in v0.29.0.)
 //! * Perl behaving differently on a platform not tested here. The fallback is
 //!   exercised on whatever host runs `cargo test`; a second platform's
 //!   `waitpid`/`setpgid` semantics are covered by CI running this on both.

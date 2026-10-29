@@ -100,9 +100,10 @@ Sky's type inference is a derivative work adapted from the
 elm/compiler source tree (Copyright © 2012–present Evan Czaplicki,
 BSD-3-Clause). Two generations of the Sky compiler carry adapted
 files — the current Rust compiler (shipped in the released `sky`
-binary) and the legacy Haskell compiler (preserved under
-`legacy-haskell-compiler/`, not shipped). Each adapted file's header
-notes the upstream module it was adapted from.
+binary) and the legacy Haskell compiler (never shipped since the Rust
+rewrite; removed from the tree in v0.29.0 and kept in git history,
+last present at tag `v0.28.1`). Each adapted file's header notes the
+upstream module it was adapted from.
 
 **Current (Rust) compiler — shipped in the released `sky` binary:**
 
@@ -111,7 +112,7 @@ notes the upstream module it was adapted from.
 | `rust/crates/ty/src/unify.rs`  | `Type/UnionFind.hs` + `Type/Type.hs` + `Type/Occurs.hs` | Adapted (arena union-find; `Content` / `SuperType` shape; occurs-check) |
 | `rust/crates/ty/src/infer.rs`  | `Type/Unify.hs` + `Type/Solve.hs`                  | Adapted (unification + constraint-solving driver)               |
 
-**Legacy (Haskell) compiler — preserved under `legacy-haskell-compiler/`, not shipped:**
+**Legacy (Haskell) compiler — in git history only (last present at tag `v0.28.1`, under `legacy-haskell-compiler/`), not shipped:**
 
 | Sky file                            | Adapted from                  | Relation                               |
 | ---                                 | ---                           | ---                                    |
@@ -127,7 +128,9 @@ notes the upstream module it was adapted from.
 | `legacy-haskell-compiler/src/Sky/Parse/Primitives.hs`       | `Parse/Primitives.hs`         | Inspired (uses `Text` not `ByteString`) |
 
 For these files specifically, Sky redistributes derivative work
-under the terms of the BSD-3-Clause licence below (this NOTICE
+under the terms of the BSD-3-Clause licence below (the legacy files
+are redistributed only as part of the git history and the source
+archives of tags up to and including `v0.28.1`) (this NOTICE
 satisfies clause 1's requirement to retain the copyright notice +
 list of conditions + disclaimer in source-form distribution; the
 compiled `sky` binary's documentation reproduces the same in
@@ -152,13 +155,16 @@ ffi, fmt, sky-lsp, project, xtask, …}` and the non-adapted parts of
 (`sky-stdlib/`), the FFI generator (`tools/sky-ffi-inspect/`), and
 the legacy Haskell compiler's non-adapted modules
 (`legacy-haskell-compiler/src/Sky/{Build, Canonicalise, Format,
-Generate, Lsp, …}` and `legacy-haskell-compiler/app/`).
+Generate, Lsp, …}` and `legacy-haskell-compiler/app/`, in git
+history).
 
-The legacy bootstrap compilers in `legacy-ts-compiler/`,
-`legacy-sky-compiler/`, and `legacy-haskell-compiler/` are kept
-in-tree as historical reference and are not part of the released
-`sky` binary. `legacy-ts-compiler/` and `legacy-sky-compiler/`
-contain no elm/compiler source; the elm-derived files in
+The legacy bootstrap compilers `legacy-ts-compiler/`,
+`legacy-sky-compiler/`, and `legacy-haskell-compiler/` were never
+part of the released `sky` binary. They were removed from the tree in
+v0.29.0 and remain in git history; tag `v0.28.1` is the last tag that
+contains them (see `docs/history/legacy-compilers.md`).
+`legacy-ts-compiler/` and `legacy-sky-compiler/` contain no
+elm/compiler source; the elm-derived files in
 `legacy-haskell-compiler/src/Sky/` are listed above.
 
 The full BSD-3-Clause licence under which elm/compiler is released

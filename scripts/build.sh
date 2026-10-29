@@ -2,7 +2,7 @@
 # scripts/build.sh — local single-command build.
 #
 # Produces:
-#   sky-out/sky            — the Sky compiler (Haskell) — the only
+#   sky-out/sky            — the Sky compiler (Rust) — the only
 #                             artefact needed by end users; the
 #                             sky-ffi-inspect helper is embedded and
 #                             self-provisions into
@@ -14,13 +14,12 @@
 #
 # Optional flags:
 #   --sweep       run every example end-to-end after the build (takes ~2 min)
-#   --self-tests  run test-files/*.sky through `sky build`
 #   --clean       remove rust/target/, sky-out/, bin/ before building
 #   --help        print this help
 #
 # Prerequisites (expected on PATH):
 #   * cargo + rustc     — see rust/rust-toolchain.toml
-#   * go     (1.21+)    — required at runtime by `sky build`
+#   * go     (1.25+)    — required at runtime by `sky build`
 
 set -euo pipefail
 
@@ -31,16 +30,14 @@ cd "$ROOT"
 source "$ROOT/scripts/lib/cargo-target.sh"
 
 RUN_SWEEP=0
-RUN_SELF_TESTS=0
 DO_CLEAN=0
 
 for arg in "$@"; do
     case "$arg" in
         --sweep)      RUN_SWEEP=1 ;;
-        --self-tests) RUN_SELF_TESTS=1 ;;
         --clean)      DO_CLEAN=1 ;;
         --help|-h)
-            sed -n '2,20p' "$0"
+            sed -n '2,22p' "$0"
             exit 0
             ;;
         *)
@@ -66,10 +63,8 @@ fi
 mkdir -p sky-out bin
 
 # ─── build compiler ─────────────────────────────────────────────────
-# Audit P3-3: the old mtime dance (touching EmbeddedRuntime.hs when
-# any runtime-go file was newer) is no longer needed — cabal tracks
-# each embedded file via Template Haskell's qAddDependentFile. A
-# cabal-test spec (Sky.Build.EmbeddedRuntimeSpec) guards against drift.
+# The embedded runtime-go / sky-stdlib / sky-bundled trees are staged by
+# rust/crates/ffi/build.rs, which cargo re-runs when any of them changes.
 
 say "building sky compiler (cargo)"
 # Ask cargo where it put the binary rather than assuming `rust/target/release`.
@@ -88,77 +83,10 @@ say "building sky-ffi-inspect (go) — optional dev copy"
 ( cd tools/sky-ffi-inspect && go build -ldflags="-s -w" -o "$ROOT/bin/sky-ffi-inspect" . )
 test -x bin/sky-ffi-inspect
 
-# ─── optional: self-tests ──────────────────────────────────────────
-# v0.17 task #662 added a `sky build` repo-root guard that refuses to run
-# in any directory containing `sky-compiler.cabal` (would overwrite the
-# compiler binary).  The self-test loop ran from repo-root pre-guard;
-# post-guard each invocation fires the guard + reports FAIL.  Fix: stage
-# each fixture into a tempdir with a minimal `sky.toml` + `src/Main.sky`
-# layout, then `sky build src/Main.sky` from within.  Mirrors the
-# `compileInProcess` test helper's tempdir pattern.
-if [[ $RUN_SELF_TESTS -eq 1 ]]; then
-    say "running self-tests (test-files/*.sky)"
-    pass=0; fail_count=0; skip_count=0
-    sky_bin="$ROOT/sky-out/sky"
-    # Known-failure list — pre-existing typed-emit gaps surfaced when the
-    # v0.17 repo-root guard forced these tests through the tempdir flow
-    # (which actually compiles them).  Tracked for v0.17.x fix; not a
-    # regression from any current branch.
-    #
-    # * dict-test.sky      — Dict.get returns Maybe a; case-pattern v
-    #                        infers as `any` instead of `string`, so
-    #                        `"Name: " ++ v` fails go-build with
-    #                        mismatched types string and any.
-    # * validate-test.sky  — same shape (String.isEmail / isUrl on values
-    #                        flowing through polymorphic kernel paths).
-    #
-    # Both are the same class as the iter 17/37/42 Class-A swap closure
-    # work; deliberately deferred.  Removing a name from KNOWN_FAILURES
-    # WITHOUT a typed-emit fix is a regression: the test would silently
-    # start failing CI again.
-    KNOWN_FAILURES=(
-        dict-test
-        validate-test
-    )
-    is_known_failure() {
-        local needle="$1"
-        for k in "${KNOWN_FAILURES[@]}"; do
-            [[ "$k" = "$needle" ]] && return 0
-        done
-        return 1
-    }
-    for f in test-files/*.sky; do
-        fixture_name="$(basename "$f" .sky)"
-        if is_known_failure "$fixture_name"; then
-            skip_count=$((skip_count+1))
-            echo "  SKIP $f (pre-existing typed-emit gap — see KNOWN_FAILURES in scripts/build.sh)"
-            continue
-        fi
-        tmpdir="$(mktemp -d -t "sky-self-test-${fixture_name}.XXXXXX")"
-        mkdir -p "$tmpdir/src"
-        cp "$f" "$tmpdir/src/Main.sky"
-        cat > "$tmpdir/sky.toml" <<TOML
-name = "$fixture_name"
-version = "0.1.0"
-entry = "src/Main.sky"
-TOML
-        if (cd "$tmpdir" && "$sky_bin" build src/Main.sky 2>&1 | tail -1 | grep -q 'Build complete'); then
-            pass=$((pass+1))
-        else
-            fail_count=$((fail_count+1))
-            echo "  FAIL $f"
-        fi
-        rm -rf "$tmpdir"
-    done
-    echo "self-tests: $pass passed, $fail_count failed, $skip_count skipped (known-failures)"
-    [[ "$fail_count" = "0" ]] || fail "self-tests failed"
-fi
-
 # ─── optional: example sweep ────────────────────────────────────────
 if [[ $RUN_SWEEP -eq 1 ]]; then
     say "sweeping examples/* (clean builds, no runtime)"
     pass=0; fail_count=0; fails=()
-    export SKY_RUNTIME_DIR="$ROOT/runtime-go"
     for d in examples/*/; do
         # USER RULE (anzellai/sky#299): examples/76-ai-shell-command is excluded from
         # CI in general (no CI job builds, trains, evaluates or runs it), so it is
@@ -193,7 +121,7 @@ fi
 # ~/.cache/go-build; macOS uses ~/Library/Caches/go-build. Pre-fix,
 # the hardcoded macOS path made `du` exit non-zero on Linux runners
 # (path doesn't exist), and pipefail + set -e propagated that to a
-# script-level exit 1 — even though self-tests passed cleanly (Linux
+# script-level exit 1 — even though the build passed cleanly (Linux
 # CI failure 2026-06-04 on commit 549d4701).
 go_cache_dir="${HOME}/Library/Caches/go-build"
 [[ -d "$go_cache_dir" ]] || go_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/go-build"

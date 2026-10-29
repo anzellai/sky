@@ -1,7 +1,0 @@
-module Main exposing (main)
-
-import Std.Log exposing (println)
-
-
-main =
-    println messgae

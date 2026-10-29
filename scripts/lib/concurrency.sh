@@ -3,7 +3,7 @@
 # test worker counts.
 #
 # Why one helper: every parallel test step (example-sweep.sh,
-# Playwright, hspec, go test) needs to pick a worker count. If each
+# Playwright, cargo test, go test) needs to pick a worker count. If each
 # picks its own number we drift into either under-parallelism (slow
 # sweep) or over-parallelism (mem-guard kills look like flakes).
 #

@@ -44,10 +44,13 @@ attribution mechanism) to all users.
 
 ## Prior-art attribution and derivative-work files
 
-A small number of files in `legacy-haskell-compiler/src/Sky/` are
-derivative works adapted from elm/compiler under BSD-3-Clause (see
-[NOTICE.md](NOTICE.md) for
-the full list and licence text). When modifying those files, please:
+A small number of files are derivative works adapted from
+elm/compiler under BSD-3-Clause: `rust/crates/ty/src/unify.rs` and
+`rust/crates/ty/src/infer.rs` in the current compiler, and files in
+`legacy-haskell-compiler/src/Sky/`, which was removed from the tree in
+v0.29.0 and is kept in git history (last present at tag `v0.28.1`).
+See [NOTICE.md](NOTICE.md) for the full list and licence text. When
+modifying the adapted files, please:
 
 - Keep the per-file header that names the upstream module + licence
   + copyright.

@@ -1,8 +1,0 @@
-module Main exposing (main)
-
-import Std.Log exposing (println)
-
--- `frobnicate` is not defined anywhere: should surface as
--- a [E1001] NAMING ERROR.
-main =
-    println (frobnicate 42)

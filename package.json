@@ -2,7 +2,7 @@
   "name": "sky-verify-tooling",
   "private": true,
   "type": "module",
-  "description": "Dev-tooling deps for scripts/verify-examples.{sh,mjs}. Not part of the compiler/runtime; node_modules is gitignored.",
+  "description": "Pinned Playwright for the browser e2e verifiers (scripts/*-e2e.sh, scripts/verify-*.mjs, tools/perf). Not part of the compiler/runtime; node_modules is gitignored.",
   "devDependencies": {
     "playwright": "^1.63.0"
   }

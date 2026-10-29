@@ -10,25 +10,21 @@
 #                          CLI/Tui drive. Target <25 min.
 #
 # This script is Suite 1. It does NOT spawn a browser; it does NOT
-# need a display. It WILL exercise `sky verify` over every example
-# (via SKY_RUN_FULL_VERIFY=1 → VerifyAll's second `it` block).
+# need a display.
 #
 # Suite components:
 #
-#   1. cabal test (full hspec suite). VerifyAll's full per-example
-#      `sky verify` runs because SKY_RUN_FULL_VERIFY=1 is set.
-#   2. The cabal test includes ExampleSweep which delegates to
-#      scripts/example-sweep.sh — parallel, CPU/mem-aware via the
-#      concurrency helper.
-#   3. Hub / receiver / bridge Go tests (run as part of `go test
-#      ./runtime-go/...` inside cabal-test where applicable, or
-#      explicitly here for hub-only PRs).
+#   1. Compiler build (cargo build --release -p sky), installed to
+#      sky-out/sky.
+#   2. The Rust gate suite: cargo test --workspace and the xtask
+#      gates, under a time budget.
+#   3. xtask build-run --all over the examples corpus.
 #
 # Concurrency: every parallel step reads MAX_WORKERS from the shared
 # helper scripts/lib/concurrency.sh. Operators can pin via
 # MAX_TEST_WORKERS=N env var.
 #
-# Timings: each run emits per-describe CSV to /tmp/sky-cabal-timings.csv
+# Timings: each run emits per-describe CSV to /tmp/sky-test-timings.csv
 # (or SKY_TIMINGS_FILE if set). Use this to spot regressions over time
 # and to identify the next optimisation target.
 #
@@ -55,7 +51,7 @@ source "$ROOT/scripts/lib/fresh-compiler.sh"
 # anything by exporting before invoking the script.
 export SKY_RUN_FULL_VERIFY="${SKY_RUN_FULL_VERIFY:-1}"
 export SKY_SKIP_SWEEP="${SKY_SKIP_SWEEP:-}"  # leave unset → run sweep
-export SKY_TIMINGS_FILE="${SKY_TIMINGS_FILE:-/tmp/sky-cabal-timings.csv}"
+export SKY_TIMINGS_FILE="${SKY_TIMINGS_FILE:-/tmp/sky-test-timings.csv}"
 # Clear the timings CSV at the START so a fresh run is the only data.
 : > "$SKY_TIMINGS_FILE" 2>/dev/null || true
 
@@ -67,8 +63,8 @@ echo "  SKY_TIMINGS_FILE=$SKY_TIMINGS_FILE"
 echo "==========================================================="
 echo
 
-# Phase 1: ensure the compiler binary is fresh (TH re-embeds the
-# runtime-go tree; stale binary builds wrong artifacts).
+# Phase 1: ensure the compiler binary is fresh (the build re-embeds the
+# runtime-go tree; a stale binary builds wrong artifacts).
 phase_compiler_build() {
     echo "--- phase: compiler build ---"
     local t0; t0=$(date +%s)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/mem-guard.sh — memory kill-switch for Sky compiler dev sessions.
 #
-# Background: a runaway `sky` build / `sky lsp` / `cabal` process can pin the
+# Background: a runaway `sky` build / `sky lsp` / `cargo` process can pin the
 # entire Mac to swap and force a hard reboot. This watchdog polls memory every
 # few seconds and SIGKILLs the heaviest watched process before that happens.
 #
@@ -24,9 +24,8 @@
 #
 # Watched process names (basename of comm):
 #   Always-kill at PROC_MB:  sky, sky-ffi-inspect, cargo, rustc,
-#                            rust-analyzer, cabal, ghc, ghc-iserv,
-#                            cc1, ld64, haskell-language-server, hls-wrapper,
-#                            gopls, go, and the Go toolchain's own children
+#                            rust-analyzer, cc1, ld64, ld, gopls, go,
+#                            python, and the Go toolchain's own children
 #                            `compile` / `link` / `asm` / `cgo` (matched only
 #                            under a `…/pkg/tool/<os_arch>/` path, so an
 #                            unrelated `link` binary is never a target).
@@ -58,7 +57,7 @@ DRY="${MEM_GUARD_DRY:-}"
 MIN_VICTIM_MB="${MEM_GUARD_MIN_VICTIM_MB:-1024}"
 
 # basename(comm) regexes
-ALWAYS_KILL_RE='^(sky|sky-ffi-inspect|cargo|rustc|rust-analyzer|cabal|ghc|ghc-iserv|cc1|ld64|ld|haskell-language-server|hls-wrapper|gopls|go|Python|python|python3|python3\.[0-9]+)$'
+ALWAYS_KILL_RE='^(sky|sky-ffi-inspect|cargo|rustc|rust-analyzer|cc1|ld64|ld|gopls|go|Python|python|python3|python3\.[0-9]+)$'
 # The Go toolchain's children, by their full path: `<GOROOT>/pkg/tool/<os_arch>/<tool>`.
 GO_TOOL_RE='/pkg/tool/[^/]+/(compile|link|asm|cgo)$'
 PANIC_KILL_RE='^(claude|node|ghostty)$'
@@ -147,7 +146,7 @@ kill_proc() {
     fi
     log "KILL pid=$pid rss=${rss_mb}MB comm=$comm reason=$reason"
     kill -TERM "$pid" 2>/dev/null || true
-    # Brief grace; sky/cabal can usually clean up in <1s
+    # Brief grace; sky/cargo can usually clean up in <1s
     sleep 1
     if kill -0 "$pid" 2>/dev/null; then
         log "  pid=$pid ignored SIGTERM, sending SIGKILL"
@@ -273,7 +272,7 @@ while :; do
             if (( pressure )) && (( rss_mb > 4000 )); then
                 # Only sacrifice the host (claude/ghostty) if it's the heaviest
                 # AND already over 4GB itself. Avoids killing claude over a
-                # cabal child blowing out: the always-kill loop above handles
+                # cargo child blowing out: the always-kill loop above handles
                 # that case first.
                 kill_proc "$pid" "$rss_mb" "$comm" "PANIC: system free=${free}MB and host >4GB"
                 pressure=0

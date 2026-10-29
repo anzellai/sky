@@ -11,9 +11,9 @@
 #   --no-clean        keep existing sky-out/ .skycache/ (faster iteration)
 #   --workdir DIR     copy examples/* into DIR/examples/ and run there
 #                     instead of mutating the in-tree examples/. Fixes
-#                     bug #381: cabal-test ExampleSweep racing TypedFfi
-#                     by rm -rf'ing the in-tree sky-out/ + .skycache/go
-#                     directories TypedFfi reads from. Cleaned up on
+#                     bug #381: a sweep racing other readers by rm -rf'ing
+#                     the in-tree sky-out/ + .skycache/go directories they
+#                     read from. Cleaned up on
 #                     exit via trap.
 #   --jobs N          override parallel worker count. Default: read from
 #                     scripts/lib/concurrency.sh (CPU/mem-aware). Set 1
@@ -127,26 +127,19 @@ if [[ $LIST_ONLY -eq 0 ]]; then
 fi
 
 # Workdir mode (bug #381): copy examples/* into $WORKDIR/examples/ and
-# point EXAMPLES_ROOT at the copies. Stops cabal-test ExampleSweep from
-# rm -rf'ing the in-tree sky-out/ + .skycache/go directories that
-# TypedFfi / UnreachableGate specs read from while the sweep is mid-
-# flight.
+# point EXAMPLES_ROOT at the copies. Stops the sweep from rm -rf'ing the
+# in-tree sky-out/ + .skycache/go directories that other readers use
+# while the sweep is mid-flight.
 #
 # Preserves $ROOT for SKY_RUNTIME_DIR (the runtime + stdlib live there
 # and are NEVER mutated by the sweep). Only example dirs get copied.
 #
 # After a successful sweep we MIRROR THE WORKDIR BACK to the in-tree
 # examples/. Two reasons:
-#   1. Consumer specs (Sky.Build.TypedFfi, Sky.Build.UnreachableGate,
-#      Sky.Build.SkyshopCompiles) read in-tree paths. Without the
-#      mirror, a fresh checkout that runs `cabal test` would have
-#      empty `examples/*/sky-out/` and the consumer specs would
-#      cascade-fail.
+#   1. Later local steps read the in-tree examples/*/sky-out/ paths.
 #   2. Standalone `sky verify`/CI users expect the sweep to leave
 #      the in-tree examples/ in a built state.
-# The mirror is END-OF-SWEEP atomic from the consumer specs' point of
-# view (sequential hspec ordering: ExampleSweep `it` block completes,
-# THEN TypedFfi `it` block starts). No race possible.
+# The mirror runs once, at the end of the sweep.
 #
 # Cleanup: trap on EXIT removes $WORKDIR/examples — caller's wider
 # workdir tree (if any) is left intact.

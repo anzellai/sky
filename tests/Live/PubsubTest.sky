@@ -3,7 +3,7 @@ module Live.PubsubTest exposing (tests)
 -- Cycle 3 P48 — Sky-side pub/sub stdlib surface smoke test.
 --
 -- Pins the two new bindings (Std.Cmd.publish, Std.Sub.subscribeTopic)
--- so the cabal test gate catches a missing Kernel.hs registration or
+-- so the Sky test suite (scripts/sky-suites.sh) catches a missing kernel registration or
 -- a Sky-source signature regression. The functional contract (broker
 -- fan-out + diff-mode setupSubscriptions + Msg-shape dispatch) is
 -- exercised in runtime-go/rt/live_pubsub_dispatch_test.go; this file

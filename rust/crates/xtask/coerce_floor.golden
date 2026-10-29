@@ -687,10 +687,8 @@ examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=61
 examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=163
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=1
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=168
-simple	adapter=0	dispatch=0	narrow=3
 sky-bundled/ai	adapter=0	dispatch=0	narrow=615
 sky-bundled/ai-cloud	adapter=0	dispatch=0	narrow=497
 sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1185
 sky-bundled/console	adapter=0	dispatch=0	narrow=150
 sky-bundled/doc	adapter=0	dispatch=0	narrow=46
-test_pkg	adapter=0	dispatch=0	narrow=1

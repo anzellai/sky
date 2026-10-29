@@ -5,7 +5,7 @@
 //!
 //! Fifteen scripts consumed the compiler at `sky-out/sky`. Not one checked that
 //! it was current. The binary is installed there by exactly one line —
-//! `scripts/build.sh:80` — so a workflow that builds with a bare
+//! `scripts/build.sh:75` — so a workflow that builds with a bare
 //! `cargo build --release -p sky` leaves `rust/target/release/sky` fresh and
 //! `sky-out/sky` untouched, and every consumer then measures whatever
 //! `scripts/build.sh` last produced.
@@ -24,7 +24,7 @@
 //! built before that change. The QUIET direction is the one that ships: a stale
 //! binary that happens to PASS certifies source it never compiled, on the
 //! repository's most load-bearing verification, and nothing would catch it.
-//! `scripts/build.sh:77` already carried a comment about an earlier incident
+//! `scripts/build.sh:70` already carried a comment about an earlier incident
 //! where the build "installed a pre-fix compiler" — closed by hand, not by a
 //! gate.
 //!
@@ -156,14 +156,8 @@ const PRODUCERS: &[(&str, &str)] = &[
 
 /// Frozen records of a past run, excluded for the same reason
 /// `scripts_bound_time_portably.rs` excludes them: rewriting them would falsify
-/// the record. `legacy-*` are retired compilers kept as oracles.
-const FROZEN_PREFIXES: &[&str] = &[
-    "docs/history/",
-    "docs/perf/runs/",
-    "legacy-haskell-compiler/",
-    "legacy-sky-compiler/",
-    "legacy-ts-compiler/",
-];
+/// the record.
+const FROZEN_PREFIXES: &[&str] = &["docs/history/", "docs/perf/runs/"];
 
 fn repo() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."))
@@ -379,7 +373,8 @@ fn every_script_that_calls_the_check_sources_the_library() {
 /// is not on PATH. That is not a hypothetical on this repository: the entire
 /// `scripts/lib/with-timeout.sh` mechanism exists because a nix shell went away
 /// and took `timeout` with it. Running the check under the newest bash
-/// available would have passed `scripts/skylive-observe-remote.sh`, which bash
+/// available would have passed `skylive-observe-remote.sh` (now under
+/// `tools/perf/`), which bash
 /// 3.2 could not parse at all.
 #[test]
 fn every_shell_script_parses() {
