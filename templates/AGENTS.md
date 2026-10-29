@@ -2,10 +2,11 @@
 
 This is a [Sky](https://github.com/anzellai/sky) project: a pure functional,
 Elm-family language that compiles to typed Go and ships as a single `sky` binary
-(you also need Go 1.21+). **If it compiles, it works** — every side effect returns
-`Task Error a`, every fallible value returns `Result Error a`, and `sky check`
-runs `go build` on the emitted Go, so shape mismatches surface at check time. No
-runtime panics from well-typed code, no nil leakage, no silent numeric coercion.
+(you also need Go 1.25 or later on `PATH`). **If it compiles, it works** —
+every side effect returns `Task Error a`, every fallible value returns `Result
+Error a`, and `sky check` runs `go build` on the emitted Go, so shape mismatches
+surface at check time. No runtime panics from well-typed code, no nil leakage,
+no silent numeric coercion.
 
 Type annotations are load-bearing: `f : String -> Int -> Result Error Profile`
 rejects a body that would infer wider. Inline records aren't allowed in

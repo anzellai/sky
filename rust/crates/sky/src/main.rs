@@ -16530,11 +16530,11 @@ fn apply_fix(root: &Path, check: &str, fix: &Fix) -> String {
 
 // ---- upgrade-claude ------------------------------------------------------
 
-/// `sky upgrade-claude` — refresh the cwd's `./CLAUDE.md` from the template
-/// (`templates/CLAUDE.md`, from the repo tree in dev or the embedded copy
-/// standalone). Port of `Sky.Cli`'s `runUpgradeClaude` (`app/Main.hs:1848`):
-/// always overwrites, backs any existing file up to `CLAUDE.md.bak`, and prints
-/// the byte delta. Exit 0 on success, 1 if the template can't be located.
+/// `sky upgrade-claude` — refresh the cwd's `./AGENTS.md` and `./CLAUDE.md` from
+/// the templates (`templates/AGENTS.md` and `templates/CLAUDE.md`, from the repo
+/// tree in dev or the embedded copy standalone). Always overwrites, backs any
+/// existing file up to `<name>.bak`, and prints the byte delta. Exit 0 on
+/// success, 1 if a template can't be located.
 fn cmd_upgrade_claude(_args: &[String]) -> ExitCode {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
@@ -17667,7 +17667,7 @@ fn print_help() {
          \x20 install               regen/verify committed FFI surfaces\n\
          \x20 update                bump Go deps + regen surfaces\n\
          \x20 doctor [--fix] [-v]  diagnose project / environment health\n\
-         \x20 upgrade-claude       refresh ./CLAUDE.md from the embedded template\n\
+         \x20 upgrade-claude       refresh ./AGENTS.md + ./CLAUDE.md from the templates\n\
          \x20 verify [target]      build + run each example / the project\n\
          \x20 spa-partition <file>  infer Sky.Spa client/server update split (read-only)\n\
          \x20 spa-split <file> --out <dir> [--build|--target <t>] [--broker <url>]  auto-split: generate (+build) the wasm frontend + native backend\n\

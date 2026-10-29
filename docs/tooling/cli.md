@@ -1536,27 +1536,31 @@ names a commit: `sky v0.29.0 (1a2b3c4)`), and for `lsp` / `fmt` / `--version`. S
 
 ### `sky upgrade-claude`
 
-Refreshes the cwd's `CLAUDE.md` from the template embedded in the
-running `sky` binary at build time. Useful after `sky upgrade` —
-the binary's embedded template moves with new releases (new stdlib
-APIs, deprecation notes, current limitations) but a project's
-`CLAUDE.md` is a snapshot taken at `sky init` time and won't auto-
-update.
+Refreshes the cwd's `AGENTS.md` and `CLAUDE.md` from the templates
+embedded in the running `sky` binary at build time. Use it after `sky
+upgrade`. The embedded templates move with new releases (new stdlib
+APIs, deprecation notes, current limitations), but a project's copies
+are a snapshot taken at `sky init` time and do not update by
+themselves. `AGENTS.md` is the agent-agnostic guide. `CLAUDE.md` is
+the Claude Code entry point, and it imports `AGENTS.md`.
 
 Behaviour:
 
-- Always overwrites `./CLAUDE.md` (the file is AI-context, not
-  hand-edited project source).
-- Backs the prior file up to `./CLAUDE.md.bak` so an accidental run
-  on a project that customised the file is recoverable.
-- Prints a one-line summary including the byte-count delta and the
-  `sky` version that produced the new template, so you can see at a
-  glance whether the template actually changed.
+- Always overwrites `./AGENTS.md` and `./CLAUDE.md` (the files are AI
+  context, not hand-edited project source).
+- Backs each prior file up to `<name>.bak`, so an accidental run on a
+  project that customised a file is recoverable.
+- Prints one line per file with the byte-count delta, then the `sky`
+  version that produced the templates, so you can see at a glance
+  whether a template changed.
 
 ```bash
 $ sky upgrade-claude
-Refreshed CLAUDE.md (118432 → 132422 bytes, from sky v0.28.0)
+Refreshed AGENTS.md (61204 → 67701 bytes)
+  previous version saved as AGENTS.md.bak
+Refreshed CLAUDE.md (12918 → 13533 bytes)
   previous version saved as CLAUDE.md.bak
+(from sky v0.28.1 (70969ab3e))
 ```
 
 ## Dev console

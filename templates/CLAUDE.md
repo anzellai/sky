@@ -9,9 +9,10 @@
 > API (never drifts — generated from source); prefer it over any hand-copied
 > table.
 >
-> Upgrading a project from Sky v0.26? The migration guide lists every change,
-> old code and new code:
-> https://github.com/anzellai/sky/blob/main/docs/migration/v0.27.md
+> Upgrading a project to a new Sky minor? Each migration guide lists every
+> change, old code and new code, as loud, loud at run time or silent:
+> https://github.com/anzellai/sky/tree/main/docs/migration (`v0.27.md`,
+> `v0.28.md`, `v0.29.md`).
 
 ## Response style (INVIOLABLE)
 
