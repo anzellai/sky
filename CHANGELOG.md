@@ -359,6 +359,31 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
 
 ### Fixed
 
+- **Sky.Spa: typing while a hold RPC runs no longer rewinds the box.** A hold
+  RPC (a server branch that writes server data into the model, such as a
+  debounced search) holds later Msgs, the keystrokes among them, so for that
+  time the model is behind what the box shows. The render after the answer,
+  and the render of each held keystroke, wrote the model's older text into the
+  focused box and clamped the caret; the held keystrokes then ran against the
+  rewritten box, and letters landed in the wrong places ("clinicare" typed
+  against a slow search ended as "clienicar" with the caret at 4). Each queued
+  Msg now records the form control whose input or change event made it, and
+  while such a Msg waits the render does not write that control's value or
+  checked state. When the waiting Msgs have run, the model equals the box and
+  nothing is written; an arm that sets a different value still writes it. The
+  order is unchanged: each Msg runs once, in arrival order. In addition, an
+  input Msg runs at once during a hold when the split proves it commutes with
+  that hold (`Spa.withHoldFree`, generated): its arm is client code with no
+  command, it touches no model field the hold's result or follow-ups write or
+  read, `subscriptions` does not read both its fields and the hold's, and the
+  app has no guard and no `App.withRpcError`. It runs early only when no other
+  Msg waits ahead of it. Tests: `runtime-go/rt/spa_typing_test.go` (red
+  before: the box ended at caret 2 of 4), `rust/crates/project/tests/spa_typing_hold.rs`,
+  `spa_hold_free_table_reaches_the_client`, and the `spa-typing-hold` stage of
+  `scripts/spa-rpc-order-e2e.sh` in Chromium and WebKit (every `/_rpc` answer
+  held 900 ms, a word typed with 160 ms between keys; v0.28.1 ended with
+  "blueyberr", caret 5).
+
 - **Security: Std.Image had no pixel limit (decompression bomb).** A tiny
   PNG, JPEG, GIF or WebP that declares a huge size (a 70-byte PNG can claim
   20000 x 20000) was decoded in full: 1.6 GB of RGBA for that file, enough to

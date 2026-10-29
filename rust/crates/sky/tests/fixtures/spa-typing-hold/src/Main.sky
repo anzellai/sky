@@ -1,0 +1,140 @@
+module Main exposing (main)
+
+-- Sky.Spa typing-during-a-hold fixture (scripts/spa-typing-hold-verify.mjs,
+-- run by scripts/spa-rpc-order-e2e.sh, and the project test
+-- rust/crates/project/tests/spa_typing_hold.rs). A product search:
+--
+--   search  `SetQuery` (a client arm) feeds a debounced `RunSearch`, which
+--           writes server data into the model, so it is a HOLD: keystrokes
+--           typed while it runs wait behind it. The box must keep every
+--           letter and its caret (before v0.29.0 "clinicare" became
+--           "clienicar"). `subscriptions` reads `query` and `searchedFor`,
+--           which `RunSearch` writes, so `SetQuery` is NOT hold-free.
+--   note    `SetNote` writes only `note`, which no hold writes and
+--           `subscriptions` does not read, and it has no command: the split
+--           lists it as hold-free, so while `SaveNote` (a hold) runs, the
+--           typed note shows at once.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Input as Input
+
+type alias Model =
+    { query : String
+    , searchedFor : String
+    , hits : String
+    , note : String
+    , savedNote : String
+    }
+
+type Msg
+    = SetQuery String
+    | RunSearch
+    | SetNote String
+    | SaveNote
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { query = "", searchedFor = "", hits = "-", note = "", savedNote = "-" }
+    , Cmd.none
+    )
+
+
+-- The catalogue is server data: an arm that writes it into the model holds.
+catalogue : List String
+catalogue =
+    System.getenvOr
+        "SPA_TYPING_CATALOGUE"
+        "blueberry,blackberry,bread,butter,cherry"
+        |> String.split ","
+
+
+search : String -> String
+search q =
+    catalogue |> List.filter (\p -> String.startsWith q p) |> String.join ","
+
+
+serverStamp : String
+serverStamp =
+    System.getenvOr "SPA_TYPING_STAMP" "saved"
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        SetQuery q ->
+            ( { model | query = q }, Cmd.none )
+
+        RunSearch ->
+            ( { model | hits = search model.query, searchedFor = model.query }
+            , Cmd.none
+            )
+
+        SetNote n ->
+            ( { model | note = n }, Cmd.none )
+
+        SaveNote ->
+            ( { model | savedNote = serverStamp ++ ":" ++ model.note }
+            , Cmd.none
+            )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    if model.query /= model.searchedFor then
+        Sub.every 350 RunSearch
+
+    else
+        Sub.none
+
+
+row : String -> String -> Element Msg
+row id txt =
+    Ui.el [ Ui.htmlAttribute "id" id ] (Ui.text txt)
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Input.text
+              [ Ui.htmlAttribute "id" "query" ]
+              { onChange = SetQuery
+              , text = model.query
+              , placeholder = Nothing
+              , label = Input.labelHidden "search products"
+              }
+        , row "query-echo" ("QUERY=" ++ model.query)
+        , row "hits" ("HITS=" ++ model.hits)
+        , Input.text
+              [ Ui.htmlAttribute "id" "note" ]
+              { onChange = SetNote
+              , text = model.note
+              , placeholder = Nothing
+              , label = Input.labelHidden "note"
+              }
+        , row "note-echo" ("NOTE=" ++ model.note)
+        , row "saved" ("SAVED=" ++ model.savedNote)
+        , Ui.button
+              [ Ui.htmlAttribute "id" "save" ]
+              { onPress = Just SaveNote, label = Ui.text "save" }
+        ]
+
+
+main : Task Error ()
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+            |> App.withNotFound (Ui.text "nf"))

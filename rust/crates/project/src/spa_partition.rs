@@ -1941,6 +1941,16 @@ pub struct SettleFacts {
     pub request_continuations: Option<Vec<String>>,
     /// Whether the app declares a `withRequest` hook at all.
     pub has_request_hook: bool,
+    /// The `update` head constructors whose every arm returns `Cmd.none` on
+    /// every command leaf (no perform, no publish, no navigation). The
+    /// hold-free table ([`hold_free_pairs`]) lets only such a Msg run during a
+    /// hold: a Msg with a command would start its effect ahead of the hold.
+    pub quiet: BTreeSet<String>,
+    /// The model fields `subscriptions` reads, `None` when it cannot be read
+    /// (an inline lambda, an opaque use of the model). [`hold_free_pairs`]
+    /// needs it: a Msg that runs during a hold must not change which
+    /// subscriptions are live in a way Sky.Live never shows.
+    pub subscriptions_reads: Option<BTreeSet<String>>,
 }
 
 /// One SPA-3 follow-up branch (see [`SpaPartitionReport::follow_up`]).
@@ -2222,6 +2232,8 @@ pub fn analyze_checked(
     let mut server_chain_warnings: Vec<String> = Vec::new();
     let mut follow_up: Vec<FollowUpBranch> = Vec::new();
     let mut msg_continuations: BTreeMap<String, Option<Vec<String>>> = BTreeMap::new();
+    let mut quiet_heads: BTreeSet<String> = BTreeSet::new();
+    let mut subscriptions_reads: Option<BTreeSet<String>> = None;
 
     match update_field {
         UpdateField::Def(update_def) => {
@@ -2275,6 +2287,8 @@ pub fn analyze_checked(
                 server_chain_warnings = chaining.warnings;
                 follow_up = chaining.follow_up;
                 msg_continuations = chaining.continuations;
+                quiet_heads = chaining.quiet;
+                subscriptions_reads = subs_def.and_then(|d| helper_readset(db, d, 0, 0));
                 if boxed.is_some() {
                     for b in branches.iter_mut() {
                         if let Some(io) = b.io.as_mut() {
@@ -2384,6 +2398,8 @@ pub fn analyze_checked(
         follow_up,
         settle: SettleFacts {
             continuations: msg_continuations,
+            quiet: quiet_heads,
+            subscriptions_reads,
             ..settle_hook_facts(db, &check_ids, entry)
         },
         client_crypto,
@@ -2530,6 +2546,16 @@ fn tail_continuations(db: &dyn SkyDb, body: &Body, e: ExprId) -> Option<Vec<Stri
         }
     }
     Some(out.into_iter().collect())
+}
+
+/// Whether a command-valued tail expression is `Cmd.none` on every leaf: it
+/// reads, it starts no effect, publishes nothing and navigates nowhere. `false`
+/// when a leaf cannot be read.
+fn tail_cmd_quiet(db: &dyn SkyDb, body: &Body, e: ExprId) -> bool {
+    let mut leaves: Vec<(CmdLeaf, bool)> = Vec::new();
+    let mut visited: HashSet<DefId> = HashSet::new();
+    collect_tail_cmd_leaves_tagged(db, body, e, false, &mut leaves, 0, &mut visited);
+    !leaves.is_empty() && leaves.iter().all(|(l, _)| matches!(l, CmdLeaf::NoneCmd))
 }
 
 /// The model parameter local and body expression of a hook `f a0 … model …`
@@ -2904,6 +2930,153 @@ pub fn guard_readset(db: &skydb::SkyDatabase, entry: ModuleId) -> GuardReads {
         Some(fields) => GuardReads::Fields(fields),
         None => GuardReads::Whole,
     }
+}
+
+/// The model fields one `update` head constructor reads and writes, over all
+/// its arms. `None` from [`head_sets`] when an arm's sets are unknown or cover
+/// the whole model.
+struct HeadSets {
+    server: bool,
+    reads: BTreeSet<String>,
+    writes: BTreeSet<String>,
+}
+
+fn head_sets(report: &SpaPartitionReport) -> Option<BTreeMap<String, Option<HeadSets>>> {
+    if report.whole_update.is_some() {
+        return None;
+    }
+    let mut out: BTreeMap<String, Option<HeadSets>> = BTreeMap::new();
+    for b in &report.branches {
+        let head = pattern_head_ctor(&b.msg);
+        // A catch-all arm (`_ ->`, a variable) answers for constructors this
+        // table cannot name: then nothing is listed.
+        if !head.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+            return None;
+        }
+        let io = if b.server {
+            b.io.as_ref()
+        } else {
+            b.client_io.as_ref()
+        };
+        let entry = out.entry(head).or_insert_with(|| {
+            Some(HeadSets {
+                server: false,
+                reads: BTreeSet::new(),
+                writes: BTreeSet::new(),
+            })
+        });
+        match (entry.as_mut(), io) {
+            (Some(h), Some(io)) if !io.reads_whole_model && !io.writes_whole_model => {
+                h.server |= b.server;
+                h.reads.extend(io.read_fields.iter().cloned());
+                h.writes.extend(io.write_fields.iter().cloned());
+            }
+            // Unknown or whole-model sets: this constructor is neither a hold
+            // nor an input nor a follow-up of any pair.
+            _ => *entry = None,
+        }
+    }
+    Some(out)
+}
+
+/// v0.29.0: the `(hold, input)` constructor pairs whose input Msg may run
+/// while that hold RPC is in flight (`Spa.withHoldFree`), instead of waiting
+/// behind it.
+///
+/// The client holds every later Msg while a hold RPC runs, which is Sky.Live's
+/// order (spa_rpcqueue.go). Running a Msg `C` early instead is the same order
+/// whenever `C` COMMUTES with everything it overtakes, and the pair is listed
+/// only when the analysis proves it does:
+///
+/// - `C`'s every arm is client code (not a server branch) whose command is
+///   `Cmd.none` on every leaf ([`SettleFacts::quiet`]), with read and write
+///   sets that do not cover the whole model;
+/// - the hold `H` is a server branch whose write-set (what its `Applied<H>`
+///   arm writes) does not cover the whole model, and whose follow-up Msgs
+///   ([`SettleFacts::continuations`], less the server-internal ones whose
+///   sets are already in `H`'s) are all client arms with known sets;
+/// - `C` writes no field that `H` writes or a follow-up reads or writes, and
+///   reads no field that `H` or a follow-up writes;
+/// - `subscriptions` can be read, and does not read both a field `C` writes
+///   and a field `H` or a follow-up writes (else a model state Sky.Live never
+///   has could start or stop a subscription);
+/// - the app has no guard (`App.withGuard` reads the model before each Msg)
+///   and no `App.withRpcError` (its handler runs in `Applied<H>` and reads the
+///   model).
+///
+/// The runtime adds the last condition: `C` runs early only when no other Msg
+/// waits ahead of it, so it never overtakes a Msg this table did not check.
+/// Anything this analysis cannot read lists nothing, and that Msg waits as
+/// before.
+pub fn hold_free_pairs(
+    report: &SpaPartitionReport,
+    guard: &GuardReads,
+    has_rpc_error: bool,
+) -> Vec<(String, String)> {
+    if !matches!(guard, GuardReads::NoGuard) || has_rpc_error {
+        return Vec::new();
+    }
+    let Some(subs) = report.settle.subscriptions_reads.as_ref() else {
+        return Vec::new();
+    };
+    let Some(heads) = head_sets(report) else {
+        return Vec::new();
+    };
+    let internal: BTreeSet<&str> = report.server_internal.iter().map(|s| s.as_str()).collect();
+    let mut out = Vec::new();
+    for (h, hs) in &heads {
+        let Some(hs) = hs.as_ref() else { continue };
+        if !hs.server {
+            continue;
+        }
+        let Some(Some(conts)) = report.settle.continuations.get(h) else {
+            continue;
+        };
+        // The fields H's result and follow-ups write, and the fields the
+        // follow-ups read.
+        let mut w_after: BTreeSet<&str> = hs.writes.iter().map(|s| s.as_str()).collect();
+        let mut r_after: BTreeSet<&str> = BTreeSet::new();
+        let mut ok = true;
+        for f in conts {
+            if internal.contains(f.as_str()) {
+                continue;
+            }
+            match heads.get(f) {
+                Some(Some(fs)) if !fs.server => {
+                    w_after.extend(fs.writes.iter().map(|s| s.as_str()));
+                    r_after.extend(fs.reads.iter().map(|s| s.as_str()));
+                }
+                _ => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if !ok {
+            continue;
+        }
+        let subs_meet_after = subs.iter().any(|f| w_after.contains(f.as_str()));
+        for (c, cs) in &heads {
+            let Some(cs) = cs.as_ref() else { continue };
+            if cs.server
+                || c == h
+                || internal.contains(c.as_str())
+                || !report.settle.quiet.contains(c)
+            {
+                continue;
+            }
+            let writes_clash = cs
+                .writes
+                .iter()
+                .any(|f| w_after.contains(f.as_str()) || r_after.contains(f.as_str()));
+            let reads_clash = cs.reads.iter().any(|f| w_after.contains(f.as_str()));
+            let subs_clash = subs_meet_after && cs.writes.iter().any(|f| subs.contains(f));
+            if !writes_clash && !reads_clash && !subs_clash {
+                out.push((h.clone(), c.clone()));
+            }
+        }
+    }
+    out
 }
 
 /// Search the app modules for the `Spa.config { … }` call and read its `update`
@@ -3671,6 +3844,9 @@ pub struct ServerChaining {
     /// R2: per head constructor, the Msgs its command dispatches (see
     /// [`SettleFacts::continuations`]).
     pub continuations: BTreeMap<String, Option<Vec<String>>>,
+    /// The head constructors whose every arm's command is `Cmd.none` (see
+    /// [`SettleFacts::quiet`]).
+    pub quiet: BTreeSet<String>,
 }
 
 /// One leaf of a statically-resolved `Cmd` tree returned by an `update` arm.
@@ -5260,6 +5436,12 @@ fn compute_server_chaining(
         }
         out.continuations
             .insert(head.clone(), acc.map(|s| s.into_iter().collect()));
+        if idxs
+            .iter()
+            .all(|&ai| tail_cmd_quiet(db, body, arms[ai].body))
+        {
+            out.quiet.insert(head.clone());
+        }
     }
 
     out.server_internal = server_internal.into_iter().collect();

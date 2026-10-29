@@ -30,6 +30,27 @@ import (
 // the first render so event closures built here can call back into the loop.
 var spaDispatch func(msg any)
 
+// spaEventSrc is the form control whose input or change event is being
+// dispatched now, or nil. The first dispatch it makes takes it
+// (spaTakeEventSrc), so the scheduler knows which control the Msg came from
+// and the render leaves that control's value alone while the Msg waits
+// (spa_typing.go).
+var spaEventSrc any
+
+// spaTakeEventSrc returns the control of the event being dispatched, once.
+func spaTakeEventSrc() any {
+	src := spaEventSrc
+	spaEventSrc = nil
+	return src
+}
+
+// dispatchFromControl dispatches an input or change event of the control el.
+func dispatchFromControl(el js.Value, handler any, payload any) {
+	spaEventSrc = el
+	defer func() { spaEventSrc = nil }()
+	dispatchEvent(handler, payload)
+}
+
 // spaNodeFns maps a DOM element's sky-id to the listeners bound on it. A
 // rebuild, removal, or handler change releases them before dropping the node:
 // an unreleased js.Func leaks its Go closure for the life of the process.
@@ -509,6 +530,10 @@ func bindNodeEvents(n js.Value, el VNode) {
 					return nil
 				}
 			}
+			if e == "input" || e == "change" {
+				dispatchFromControl(this, cur, eventPayload(e, args))
+				return nil
+			}
 			dispatchEvent(cur, eventPayload(e, args))
 			return nil
 		})
@@ -599,7 +624,7 @@ func spaBindComposition(n js.Value, id string, h any, idOf func(js.Value) string
 		}
 		this.Set("__skyComposed", val)
 		if cur, ok := spaEventHandler(this, args, "input", idOf, h); ok {
-			dispatchEvent(cur, val)
+			dispatchFromControl(this, cur, val)
 		}
 		return nil
 	})
@@ -1119,14 +1144,17 @@ func spaRenameKept(renames []spaRename) {
 // applyAttrs sets/removes attributes on el with caret/selection preservation.
 //
 // Input-authority note (why there is no blanket "drop value on a focused
-// field"): a Sky.Spa dispatch is SYNCHRONOUS and client-authoritative — the
-// keystroke updates the model before the re-render, so there is never an
-// unacked in-flight value the way the server model has. diffTrees' clientState
-// alignment already skips a value patch precisely when the model equals what
-// the DOM shows (the user's own typing), so the only value patches that reach a
-// focused input here are genuine PROGRAMMATIC changes (model != DOM), which
-// SHOULD apply. We snapshot and restore the caret/selection around any value
-// write so even a programmatic change does not jump the cursor. Event-attribute
+// field"): a keystroke's Msg usually runs at once, before the re-render, so the
+// model has the typed text when the view is drawn. diffTrees' clientState
+// alignment skips a value patch when the model equals what the DOM shows (the
+// person's own typing). The one time the model is BEHIND the box is while a
+// hold RPC holds the keystroke Msgs (spa_rpcqueue.go): then the render drops
+// the value write for every control whose input Msgs still wait
+// (spaKeepTyped, spa_typing.go), before the patches reach here. So the value
+// patches that reach a focused input here are PROGRAMMATIC changes (model !=
+// DOM after the person's Msgs ran), which SHOULD apply. We snapshot and
+// restore the caret/selection around any value write so even a programmatic
+// change does not jump the cursor. Event-attribute
 // changes trigger a listener re-bind from the new VNode (real js.Func listeners
 // are the client's wiring; the sky-<event> attributes alone do nothing here).
 func applyAttrs(el js.Value, attrs map[string]string, id string, newRoot *VNode) {

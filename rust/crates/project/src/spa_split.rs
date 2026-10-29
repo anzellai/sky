@@ -5195,6 +5195,12 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         );
         notes.extend(plan_notes);
     }
+    // v0.29.0: which input Msgs may run while a given hold RPC is in flight.
+    let hold_free = spa_partition::hold_free_pairs(
+        &report,
+        &spa_partition::guard_readset(&db, entry),
+        has_rpc_error,
+    );
     let frontend_src = gen_frontend(
         &file,
         &src,
@@ -5227,6 +5233,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         pure_whole_update && update_in_entry,
         &device_only,
         &arm_routes,
+        &hold_free,
     )?;
 
     // Enforce the client-builder invariant: every synthesised `spa*_` wrapper the
@@ -10451,6 +10458,9 @@ fn gen_frontend(
     device_only: &[String],
     // Per-arm routing of `update`'s case (see [`ArmRoutes`]).
     arm_routes: &ArmRoutes,
+    // v0.29.0: the `(hold, input)` pairs whose input Msg may run while that
+    // hold RPC is in flight (`spa_partition::hold_free_pairs`).
+    hold_free: &[(String, String)],
 ) -> Result<String, String> {
     // Imports: drop any backend-only project module (the security spine — an
     // effectful module never reaches the client), add Error + Shared. A
@@ -10588,6 +10598,21 @@ fn gen_frontend(
                     )
                 } else {
                     main_text
+                };
+                // v0.29.0: the input Msgs that may run during a given hold
+                // (spa_partition::hold_free_pairs). Absent, every Msg waits.
+                let main_text = if hold_free.is_empty() {
+                    main_text
+                } else {
+                    let items: Vec<String> = hold_free
+                        .iter()
+                        .map(|(h, c)| format!("\"{h} {c}\""))
+                        .collect();
+                    inject_config_builder_into_main(
+                        &main_text,
+                        "Spa.withHoldFree",
+                        &format!("            |> Spa.withHoldFree [ {} ]\n", items.join(", ")),
+                    )
                 };
                 body.push_str(main_text.trim_end());
                 body.push_str("\n\n\n");

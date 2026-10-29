@@ -2,6 +2,7 @@ package rt
 
 import (
 	"strconv"
+	"strings"
 )
 
 // spa_rpcqueue.go — the Sky.Spa client's Msg scheduler: the order in which Msgs
@@ -28,7 +29,14 @@ import (
 //     client does the same: Msgs that arrive while a hold RPC is in flight wait
 //     in the queue, in order, and run (once, with their Cmds) after the response
 //     has been applied. The response's follow-up Msgs run first, as the
-//     completions of the server branch's own Cmds.
+//     completions of the server branch's own Cmds. One exception keeps the
+//     same model: an input Msg the auto-split lists as hold-free for that
+//     hold (it commutes with it, Spa.withHoldFree) runs at once when no other
+//     Msg waits ahead of it (holdFreeNow).
+//
+// While a Msg from a form control's input event waits, the render leaves that
+// control's value alone (typingSources, spa_typing.go): the model is behind
+// what the control shows until the Msg runs.
 //
 // There is no optimistic apply, no snapshot and no replay. Before this the
 // client applied Msgs during an RPC, then re-applied them on top of the answer.
@@ -51,6 +59,10 @@ type spaRpcJob struct {
 	toMsg any
 	// hold is true for a hold RPC: later Msgs wait until it answers.
 	hold bool
+	// name is the constructor of the Msg whose step issued this RPC (the
+	// server branch), "" when no Msg was running (init's command). It keys
+	// the hold-free table (spaSched.holdFree).
+	name string
 	// rid is the stable request id, reused verbatim by every retry.
 	rid string
 	// tick is the Sub.every interval (ms) whose tick issued this RPC; 0 for
@@ -65,6 +77,11 @@ type spaQueued struct {
 	msg    any
 	urgent bool
 	tick   int // the Sub.every interval this Msg is a tick of; 0 otherwise
+	// src is the form control whose input or change event made this Msg (a
+	// js.Value in the browser), nil for every other Msg. While a Msg from a
+	// control waits, the render does not write that control's value: the
+	// model is behind what the control shows (spaKeepTyped).
+	src any
 }
 
 // spaSched is the per-client Msg scheduler.
@@ -82,6 +99,15 @@ type spaSched struct {
 	curTick   int
 	tickNet   map[int]int
 	onTickNet func(ms int)
+	// curMsg is the Msg whose step runs now (nil between steps).
+	curMsg any
+	// holdFree maps a hold branch's constructor to the constructors of the
+	// input Msgs that may run while it is in flight (Spa.withHoldFree, built
+	// by the auto-split). The split lists a pair only when the two Msgs
+	// commute: the input arm is client code with no command, and it reads and
+	// writes no model field that the hold's result, the hold's follow-up arms
+	// or `subscriptions` read or write. Empty: every Msg waits (the default).
+	holdFree map[string]map[string]bool
 }
 
 // newSpaSched builds a scheduler whose request ids are `<nonce>-<seq>`. The
@@ -96,6 +122,88 @@ func newSpaSched(nonce string) *spaSched {
 func (s *spaSched) dispatch(msg any, run func(any)) {
 	s.queue = append(s.queue, spaQueued{msg: msg})
 	s.drain(run)
+}
+
+// dispatchFrom is dispatch for a Msg that a form control's input or change
+// event made; src identifies the control. The Msg keeps its place in the
+// queue (once, in arrival order), and while it waits the render leaves that
+// control's value alone (typingSources). One case runs it at once during a
+// hold: the hold-free table lists it for the hold in flight, and no other Msg
+// waits ahead of it, so running it now gives the same model as running it
+// after the hold (holdFreeNow).
+func (s *spaSched) dispatchFrom(msg, src any, run func(any)) {
+	q := spaQueued{msg: msg, src: src}
+	if s.holdFreeNow(msg) {
+		// Runs ahead of the hold. No non-urgent Msg waits (holdFreeNow), so
+		// appending it keeps arrival order.
+		q.urgent = true
+	}
+	s.queue = append(s.queue, q)
+	s.drain(run)
+}
+
+// holdFreeNow reports whether msg, an input Msg, may run now although a hold
+// RPC is in flight: the split listed it as commuting with that hold, no step
+// runs now, and every queued Msg is urgent (nothing ordinary waits ahead of it,
+// so it cannot overtake one).
+func (s *spaSched) holdFreeNow(msg any) bool {
+	if s.hold == nil || s.running || s.hold.name == "" || len(s.holdFree) == 0 {
+		return false
+	}
+	for _, q := range s.queue {
+		if !q.urgent {
+			return false
+		}
+	}
+	free := s.holdFree[s.hold.name]
+	name := spaMsgCtor(msg)
+	return name != "" && free[name]
+}
+
+// setHoldFree installs the hold-free table from the split's "Hold Input"
+// pairs (Spa.withHoldFree). A malformed entry is ignored, which only keeps
+// that Msg waiting.
+func (s *spaSched) setHoldFree(pairs []string) {
+	for _, p := range pairs {
+		f := strings.Fields(p)
+		if len(f) != 2 {
+			continue
+		}
+		if s.holdFree == nil {
+			s.holdFree = map[string]map[string]bool{}
+		}
+		if s.holdFree[f[0]] == nil {
+			s.holdFree[f[0]] = map[string]bool{}
+		}
+		s.holdFree[f[0]][f[1]] = true
+	}
+}
+
+// typingSources returns the sources of the input Msgs still in the queue: the
+// controls whose value the model has not caught up with yet.
+func (s *spaSched) typingSources() []any {
+	var out []any
+	for _, q := range s.queue {
+		if q.src != nil {
+			out = append(out, q.src)
+		}
+	}
+	return out
+}
+
+// spaMsgCtor is the constructor name of a Msg value, read without reflection
+// (the wasm client): a sealed variant, a runtime ADT or an all-nullary enum.
+// "" for anything else.
+func spaMsgCtor(msg any) string {
+	switch m := msg.(type) {
+	case SkyVariant:
+		return m.SkyVariantName()
+	case SkyADT:
+		return m.SkyName
+	case interface{ SkyEnumName() string }:
+		return m.SkyEnumName()
+	}
+	return ""
 }
 
 // dispatchFirst puts msgs at the HEAD of the queue, in order, and runs the
@@ -130,7 +238,9 @@ func (s *spaSched) drain(run func(any)) {
 		q := s.queue[0]
 		s.queue = s.queue[1:]
 		s.curTick = q.tick
+		s.curMsg = q.msg
 		run(q.msg)
+		s.curMsg = nil
 		s.curTick = 0
 	}
 }
@@ -140,6 +250,9 @@ func (s *spaSched) drain(run func(any)) {
 func (s *spaSched) issue(mk, toMsg any, hold bool) *spaRpcJob {
 	s.seq++
 	j := &spaRpcJob{mk: mk, toMsg: toMsg, hold: hold, rid: s.nonce + "-" + strconv.Itoa(s.seq)}
+	if s.curMsg != nil {
+		j.name = spaMsgCtor(s.curMsg)
+	}
 	if s.curTick > 0 {
 		j.tick = s.curTick
 		s.tickNetBegin(j.tick)

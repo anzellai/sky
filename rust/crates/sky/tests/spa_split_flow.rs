@@ -12241,3 +12241,47 @@ fn split_keeps_a_local_alias_that_shadows_an_exposing_all_name() {
         "Other's Plan is not a wire type and must not move into Shared:\n{shared}"
     );
 }
+
+/// v0.29.0: the auto-split's hold-free table reaches the client config, and
+/// the wasm client builds with it. In the `spa-typing-hold` fixture `SetNote`
+/// writes only `note`, so it may run during either hold; `SetQuery` writes
+/// `query`, which `subscriptions` reads together with `searchedFor`, which
+/// `RunSearch` writes, so it waits behind `RunSearch` but not behind
+/// `SaveNote` (the analysis: rust/crates/project/tests/spa_typing_hold.rs).
+#[test]
+#[cfg(unix)]
+fn spa_hold_free_table_reaches_the_client() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-typing-hold");
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&fixture, &proj);
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "the fixture must build:\n{log}");
+    let frontend =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky")).unwrap();
+    assert!(
+        frontend.contains(
+            "|> Spa.withHoldFree [ \"RunSearch SetNote\", \"SaveNote SetNote\", \"SaveNote SetQuery\" ]"
+        ),
+        "the client config must carry the hold-free table:\n{frontend}"
+    );
+    assert!(
+        frontend.contains("Spa.rpcHold runSearchReqCodec")
+            && frontend.contains("Spa.rpcHold saveNoteReqCodec"),
+        "RunSearch and SaveNote write server data: both hold:\n{frontend}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}

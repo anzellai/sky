@@ -207,6 +207,13 @@ func Spa_withPersistExcludeFields(fields, cfg any) any {
 	return spaCfgSet(cfg, "PersistExcludeFields", fields)
 }
 
+// Spa_withHoldFree stores the auto-split's hold-free table under "HoldFree":
+// "<Hold> <Input>" constructor pairs whose input Msg may run while that hold
+// RPC is in flight, because the two commute (spa_partition::hold_free_pairs).
+// The client reads it once at boot (spaSched.setHoldFree). The server IGNORES
+// it.
+func Spa_withHoldFree(pairs, cfg any) any { return spaCfgSet(cfg, "HoldFree", pairs) }
+
 // Spa_withGuard stores the `msg -> model -> Result Error ()` guard under
 // "Guard". The wasm client runs it before `update` for every Msg the app
 // dispatches (clicks, keystrokes, timer ticks, follow-ups), exactly as Sky.Live

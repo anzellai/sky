@@ -1096,6 +1096,34 @@ with its Cmds. The split gives each server constructor one of two kinds
   run (follow-ups first), then runs them in order, once each, with their Cmds.
   The `Applied<Msg>` arm applies the server's write-set.
 
+  Two rules keep typing correct during a hold (v0.29.0). **The render leaves a
+  waiting control alone:** each queued Msg records the form control whose input
+  or change event made it (`spaSched.dispatchFrom`), and while such a Msg waits
+  the render drops the `value` / `checked` write to that control
+  (`spaKeepTyped`, runtime-go/rt/spa_typing.go). The model is behind the box
+  only until those Msgs run; then it equals the box and the render writes
+  nothing. Writing the older value used to rewind the focused box and clamp
+  its caret. **Hold-free pairs:** `spa_partition::hold_free_pairs` lists a
+  `(hold, input)` pair, emitted as `|> Spa.withHoldFree [ "<Hold> <Input>", … ]`,
+  when the input Msg commutes with the hold: every arm of the input is client
+  code whose command is `Cmd.none` on every leaf (`SettleFacts::quiet`), with
+  read and write sets that are not the whole model; the hold's write-set is
+  not the whole model; the hold's follow-ups (`SettleFacts::continuations`,
+  less the server-internal Msgs already folded into the hold's sets) are client
+  arms with known sets; the input writes nothing the hold or a follow-up reads
+  or writes and reads nothing they write; `subscriptions` can be read and does
+  not read both a field the input writes and a field the hold or a follow-up
+  writes; there is no guard and no `App.withRpcError`; and no catch-all arm.
+  At run time an input Msg listed for the hold in flight runs at once only when
+  no other Msg waits ahead of it (`spaSched.holdFreeNow`), so it never
+  overtakes a Msg the table did not check. Anything the analysis cannot read
+  lists nothing, and that Msg waits as before. Tests:
+  `runtime-go/rt/spa_typing_test.go`, `rust/crates/project/tests/spa_typing_hold.rs`,
+  `spa_hold_free_table_reaches_the_client` (spa_split_flow.rs) and the
+  `spa-typing-hold` stage of `scripts/spa-rpc-order-e2e.sh` (every `/_rpc`
+  answer held 900 ms, a word typed with 160 ms between keys, Chromium and
+  WebKit).
+
 This replaced the v0.26 design (one RPC at a time; Msgs applied during the RPC
 recorded and REPLAYED on top of the response, without their Cmds). A replay
 re-runs a client arm, which is not safe: an arm that spends a single-use state

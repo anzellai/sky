@@ -230,7 +230,10 @@ their arguments, and a `Cmd.none` branch sends no request and dispatches
 nothing, as on Sky.Live. An arm whose model write needs server data (or reads
 the signed session) holds later Msgs until it answers; the build prints a
 `holds later Msgs` note naming each such arm and the change that makes it
-async (`docs/skyspa/overview.md`, "Msg order and server calls").
+async (`docs/skyspa/overview.md`, "Msg order and server calls"). While input
+Msgs wait behind a hold, the client does not write that control's value (the
+box keeps its letters and caret), and an input Msg the split proves commutes
+with the hold (`Spa.withHoldFree`) runs at once.
 The client re-sends a transiently failing request by itself (no answer, a
 30 s timeout, 408 / 425 / 429 / 502 / 503 / 504; full-jitter backoff, `Retry-After`
 wins, in failure order, 8 attempts or 60 s), shows a quiet "Reconnecting…" only
