@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1724,
+      "expected_assertions": 1748,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -433,7 +433,7 @@
       "tier": "T1"
     },
     "corpus-1": {
-      "expected_assertions": 169,
+      "expected_assertions": 170,
       "falsifier_mutation": "corpus-1.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 0 of 4: each case built + run; values compared against the generator's own",
@@ -471,7 +471,7 @@
       "tier": "T2"
     },
     "corpus-2": {
-      "expected_assertions": 168,
+      "expected_assertions": 170,
       "falsifier_mutation": "corpus-2.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 1 of 4: each case built + run; values compared against the generator's own",
@@ -509,7 +509,7 @@
       "tier": "T2"
     },
     "corpus-3": {
-      "expected_assertions": 168,
+      "expected_assertions": 169,
       "falsifier_mutation": "corpus-3.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 2 of 4: each case built + run; values compared against the generator's own",
@@ -547,7 +547,7 @@
       "tier": "T2"
     },
     "corpus-4": {
-      "expected_assertions": 168,
+      "expected_assertions": 169,
       "falsifier_mutation": "corpus-4.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 3 of 4: each case built + run; values compared against the generator's own",
@@ -607,7 +607,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 837,
+      "expected_assertions": 842,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -640,7 +640,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 204,
+      "expected_assertions": 206,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -660,7 +660,7 @@
       "tier": "T1"
     },
     "fmt-clean": {
-      "expected_assertions": 400,
+      "expected_assertions": 402,
       "falsifier_mutation": "fmt-clean.unformat-a-tracked-file",
       "falsifier_proven": true,
       "summary": "every tracked .sky file in sky-stdlib/, sky-bundled/, apps/, examples/ and templates/ is already `sky fmt`-clean",
@@ -795,7 +795,7 @@
       "tier": "T2"
     },
     "stdlib-bodies": {
-      "expected_assertions": 132,
+      "expected_assertions": 134,
       "falsifier_mutation": "stdlib-bodies.record-missing-field",
       "falsifier_proven": true,
       "summary": "every sky-stdlib module body type-checks (a build trusts stdlib signatures)",
@@ -924,6 +924,18 @@
           "apps:dispatch"
         ]
       },
+      "Std.Office.Docx": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
+      "Std.Office.Xlsx": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
       "Std.Qr": {
         "path": "tests/conformance",
         "units": [
@@ -970,13 +982,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3072,
-    "stdlib_modules": 132,
-    "surfaces_covered": 190,
+    "stdlib_entries": 3113,
+    "stdlib_modules": 134,
+    "surfaces_covered": 192,
     "surfaces_covered_pct": 95.0,
     "surfaces_equal": 15,
-    "surfaces_stronger": 185,
-    "surfaces_total": 200,
+    "surfaces_stronger": 187,
+    "surfaces_total": 202,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -15963,6 +15975,62 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Office.Docx public API",
+      "id": "stdlib.Std.Office.Docx",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Office.Xlsx public API",
+      "id": "stdlib.Std.Office.Xlsx",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
             "by": "apps:relay (gate `apps-relay`)",
             "class": "Falsified",
             "strength": 4
@@ -18848,7 +18916,7 @@
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 6.1
+      "pct_of_denominator": 6.0
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -19918,6 +19986,26 @@
             "ShareContent"
           ]
         },
+        "Std.Office.Docx": {
+          "count": 1,
+          "symbols": [
+            "Limits"
+          ]
+        },
+        "Std.Office.Xlsx": {
+          "count": 9,
+          "symbols": [
+            "CellSpec",
+            "Limits",
+            "Range",
+            "Workbook",
+            "bool",
+            "failure",
+            "fontSize",
+            "italic",
+            "wrap"
+          ]
+        },
         "Std.Qr": {
           "count": 1,
           "symbols": [
@@ -20230,8 +20318,8 @@
           ]
         }
       },
-      "count": 853,
-      "pct_of_denominator": 27.8
+      "count": 863,
+      "pct_of_denominator": 27.7
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -21404,6 +21492,32 @@
             "ShareContent"
           ]
         },
+        "Std.Office.Docx": {
+          "count": 4,
+          "symbols": [
+            "Block",
+            "Limits",
+            "ListKind",
+            "Run"
+          ]
+        },
+        "Std.Office.Xlsx": {
+          "count": 12,
+          "symbols": [
+            "Cell",
+            "CellSpec",
+            "Limits",
+            "Range",
+            "Validation",
+            "Visibility",
+            "Workbook",
+            "bool",
+            "failure",
+            "fontSize",
+            "italic",
+            "wrap"
+          ]
+        },
         "Std.Qr": {
           "count": 1,
           "symbols": [
@@ -21736,8 +21850,8 @@
           ]
         }
       },
-      "count": 960,
-      "pct_of_denominator": 31.3
+      "count": 976,
+      "pct_of_denominator": 31.4
     }
   },
   "units": [
@@ -23759,12 +23873,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 62,
+      "modules_imported": 64,
       "path": "tests/conformance",
-      "refs_generous": 871,
-      "refs_qualified": 851,
+      "refs_generous": 902,
+      "refs_qualified": 876,
       "role": "Conformance",
-      "sky_files": 53,
+      "sky_files": 55,
       "sky_toml_sections": []
     }
   ]
