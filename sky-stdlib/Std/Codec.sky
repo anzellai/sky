@@ -377,7 +377,7 @@ float =
         , dec = D.float
         , shp = SScalar CReal
         , sch = SnType "number"
-        , zro = \_ -> Just (E.float 0)
+        , zro = \_ -> Just (E.float 0.0)
         }
 
 
