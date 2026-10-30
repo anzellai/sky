@@ -98,3 +98,5 @@ The previous mandate (Std.Ai lifecycle) is complete: v0.28.0 shipped, then v0.28
   one rule (Maybe field nullable, otherwise NOT NULL; a declared builder default wins,
   else the zero value; existing columns are never altered), and the new functions use
   the requested SQL-style names in Store's current qualified style.
+  User decision (2026-10-30): a later "item 14" in the same request file (counts tables
+  kept by database triggers) is NOT built in v0.29.0; apps keep it in raw SQL.
