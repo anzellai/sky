@@ -289,13 +289,16 @@ func codecIndexExists(d *SkyDb, table, name string) (bool, error) {
 	return len(AsList(r.OkValue)) > 0, nil
 }
 
-// codecTableHasRows reports whether a table holds at least one row.
-func codecTableHasRows(d *SkyDb, table string) (bool, error) {
-	r, ok := AnyTaskRun(dbQueryRows(d, "SELECT 1 AS x FROM "+table+" LIMIT 1", []any{})).(SkyResult[any, any])
+// codecTableHasManyRows reports whether a table holds 2 or more rows: the
+// count at which one default value in a unique column must collide. The same
+// threshold explains a v2 migration file (migRequiredUniqueHint), so
+// Store.migrate and `sky db migrate` agree.
+func codecTableHasManyRows(d *SkyDb, table string) (bool, error) {
+	r, ok := AnyTaskRun(dbQueryRows(d, "SELECT 1 AS x FROM "+table+" LIMIT 2", []any{})).(SkyResult[any, any])
 	if !ok || r.Tag != 0 {
 		return false, fmt.Errorf("row check failed")
 	}
-	return len(AsList(r.OkValue)) > 0, nil
+	return len(AsList(r.OkValue)) > 1, nil
 }
 
 // codecValidIdent guards interpolated identifiers (table/column names, which come
@@ -441,7 +444,7 @@ func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 			mc := codecColspecMigColumn(name, AsString(t.V1), pk)
 			hasRows := false
 			if mc.Unique && !mc.Nullable {
-				if hasRows, err = codecTableHasRows(d, table); err != nil {
+				if hasRows, err = codecTableHasManyRows(d, table); err != nil {
 					return Err[any, any](ErrIo("Store.migrate: " + err.Error()))
 				}
 			}

@@ -62,7 +62,11 @@ func TestStoreMigratePostgresD1_AddsNotNullColumnsToATableWithRows(t *testing.T)
 	if r := autoMigrate(t, d, table, cs, nil); r.Tag != 0 || len(AsList(r.OkValue)) != 0 {
 		t.Fatalf("second migrate is not empty: %+v", r)
 	}
-	// A required unique column on a table with rows is Err, table unchanged.
+	// A required unique column on a table with 2 or more rows is Err, table
+	// unchanged.
+	if _, err := d.conn.Exec("INSERT INTO " + table + " (id) VALUES ('o9')"); err != nil {
+		t.Fatal(err)
+	}
 	if r := autoMigrate(t, d, table, append(cs, cspec("code", "text|u")...), nil); r.Tag == 0 {
 		t.Fatalf("a required unique column was added to a table with rows")
 	}

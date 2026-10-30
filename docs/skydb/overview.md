@@ -120,7 +120,7 @@ the DDL is the same per dialect:
 | required, no builder | `NOT NULL DEFAULT 0` / `''` / false |
 | required JSON (blob) field | nullable, and a warning (there is no simple zero) |
 | `defaultNow` (text) | PostgreSQL `NOT NULL DEFAULT now()`; SQLite `NOT NULL DEFAULT '<time of the ALTER>'` |
-| `unique` | added, then a unique index; a required unique column on a table with rows is `Err` |
+| `unique` | added, then a unique index; a required unique column on a table with 2 or more rows is `Err` (the same count as a `sky db migrate` file) |
 
 Notes: `migrate` adds and creates only, it never drops, renames or retypes,
 and it never makes an existing nullable column NOT NULL. Run it from one

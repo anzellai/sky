@@ -79,7 +79,8 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
     `renderMigOp` of those ops).
   - A required JSON (blob) field has no simple zero: it is added nullable,
     with a warning. A `unique` column is added, then given a unique index; a
-    required unique column on a table with rows is `Err`.
+    required unique column on a table with 2 or more rows is `Err` (the same
+    count at which a `sky db migrate` file fails).
   - A `defaultNow` column added on SQLite holds the time of the ALTER in the
     rows that exist (SQLite refuses `datetime('now')` in ADD COLUMN), and
     `insert` / `insertMany` / `upsert` bind the app clock for a new row. On

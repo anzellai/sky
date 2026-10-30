@@ -901,8 +901,9 @@ create conn store =
 -- * a `defaultNow` column added on SQLite holds the time of the ALTER in the
 --   rows that exist (SQLite refuses `datetime('now')` in ADD COLUMN);
 -- * a `unique` column is added, then given a unique index. A required unique
---   column cannot be added to a table with rows (every row would get the same
---   value): that is an `Err`, and the table is not changed.
+--   column cannot be added to a table with 2 or more rows (every row would get
+--   the same value): that is an `Err`, and the table is not changed. A
+--   `sky db migrate` file fails at the same count, with the same advice.
 --
 -- An existing column is never altered: a column an older `migrate` added
 -- nullable stays nullable. Nothing is dropped, renamed or retyped (see

@@ -246,7 +246,7 @@ func migAddDefault(driver, kind string, d *migDefault, nowAt string) string {
 //
 // An existing column is never altered: callers only pass a column the table
 // does not have.
-func renderAddColumn(driver, table string, c migColumn, nowAt string, tableHasRows bool) ([]string, []string, error) {
+func renderAddColumn(driver, table string, c migColumn, nowAt string, tableHasManyRows bool) ([]string, []string, error) {
 	if !codecValidIdent(table) {
 		return nil, nil, fmt.Errorf("invalid table identifier %q", table)
 	}
@@ -275,9 +275,9 @@ func renderAddColumn(driver, table string, c migColumn, nowAt string, tableHasRo
 	}
 	stmts := []string{s}
 	if c.Unique {
-		if !nullable && tableHasRows {
+		if !nullable && tableHasManyRows {
 			return nil, nil, fmt.Errorf(
-				"column %s.%s: a required unique column cannot be added to a table with rows, every row would get the same value",
+				"column %s.%s: a required unique column cannot be added to a table with rows (2 or more), every row would get the same value",
 				table, c.Name)
 		}
 		cols := []string{c.Name}

@@ -314,6 +314,18 @@ func TestStoreMigrateD1_SqliteRequiredUniqueOnATableWithRowsIsErr(t *testing.T) 
 	if _, err := d.conn.Exec("INSERT INTO accounts (id) VALUES ('a1')"); err != nil {
 		t.Fatal(err)
 	}
+	// One row: one default value cannot collide, so the column is added.
+	one := openStoreQueryDb(t)
+	_ = autoMigrate(t, one, "accounts", cspec("id", "text"), nil)
+	if _, err := one.conn.Exec("INSERT INTO accounts (id) VALUES ('a1')"); err != nil {
+		t.Fatal(err)
+	}
+	if r := autoMigrate(t, one, "accounts", cspec("id", "text", "code", "text|u"), nil); r.Tag != 0 {
+		t.Fatalf("a required unique column was refused on a table with 1 row: %+v", r)
+	}
+	if _, err := d.conn.Exec("INSERT INTO accounts (id) VALUES ('a2')"); err != nil {
+		t.Fatal(err)
+	}
 	r := autoMigrate(t, d, "accounts", cspec("id", "text", "code", "text|u"), nil)
 	if r.Tag == 0 {
 		t.Fatalf("a required unique column was added to a table with rows")
