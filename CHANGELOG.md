@@ -510,6 +510,16 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
 
 ### Fixed
 
+- **Builds use less memory: lowering types only the code the program
+  reaches.** Lowering inferred the body types of every top-level function of
+  every interned module, and the whole stdlib is interned, before it dropped
+  the unused ones. A build's memory then grew with the size of the stdlib,
+  not with the program, and the larger `Std.Db.Store` pushed the warm build
+  of the 50-field benchmark app over its peak-RSS budget. Lowering now types
+  only the functions reachable from `main`, `config` and the device slots.
+  The emitted Go is unchanged. On an Apple silicon Mac the warm build of that
+  app peaks at about 104 MiB instead of 136 MiB (`web`) and 164 MiB instead
+  of 198 MiB (`web:app`), and its lowering phase takes half the time.
 - **Embedded PostgreSQL: a crash no longer leaks a shared-memory segment.**
   After a SIGKILL, `--embed` clears the stale `postmaster.pid` before the next
   boot. That file is the only record of the dead postmaster's System V

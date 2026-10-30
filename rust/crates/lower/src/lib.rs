@@ -17,3 +17,14 @@ pub use ir::{GoTy, Prim};
 pub use lower::{
     lower_program, lower_program_cfg, FfiModInfo, FfiTable, LowerConfig, LowerDiag, LowerOutput,
 };
+
+/// Top-level def bodies whose types lowering has inferred, process-wide. It
+/// grows with the program a build lowers, never with the size of the stdlib a
+/// build merely interns (`tests/types_only_reachable_bodies.rs`). It never
+/// changes what the compiler computes.
+pub(crate) static BODIES_TYPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The current value of the bodies-typed counter (see [`BODIES_TYPED`]).
+pub fn bodies_typed() -> u64 {
+    BODIES_TYPED.load(std::sync::atomic::Ordering::Relaxed)
+}

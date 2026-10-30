@@ -292,6 +292,10 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
     // once the FFI surface lands (doc 09).
     let mut seen_name_errors: HashSet<(Option<String>, String)> = HashSet::new();
     let mut defs: BTreeMap<DefId, DefEntry> = BTreeMap::new();
+    let entry_prefix = module_prefix(db.module_name(entry));
+    let mut roots: Vec<DefId> = Vec::new();
+    let mut candidates: BTreeMap<DefId, (ModuleId, Vec<DefId>)> = BTreeMap::new();
+    let mut resolved_by_module = HashMap::new();
     for m in db.module_ids() {
         let mname = db.module_name(m).to_string();
         let resolved = db.resolve(m);
@@ -315,21 +319,60 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         }
         for td in &resolved.top_defs {
             if let Some(body) = resolved.bodies.get(&td.def) {
-                let types = typer.body_types(m, td.def, body);
-                let sig = typer.value_sig(td.def).map(|s| s.ty.clone());
-                defs.insert(
-                    td.def,
-                    DefEntry {
-                        module_name: mname.clone(),
-                        name: td.name.as_str().to_string(),
-                        body: body.clone(),
-                        types,
-                        sig,
-                    },
-                );
+                let name = td.name.as_str();
+                let is_root = ((name == "main" || name == "config")
+                    && module_prefix(&mname) == entry_prefix)
+                    || cfg
+                        .device_slots
+                        .iter()
+                        .any(|(sm, sn, _)| sm == &mname && sn == name);
+                if is_root {
+                    roots.push(td.def);
+                }
+                candidates.insert(td.def, (m, body_def_refs(body)));
             }
         }
+        resolved_by_module.insert(m, resolved);
     }
+    // Only the defs the program can reach are typed and lowered. Every interned
+    // module is resolved above (its name errors must still be reported), but the
+    // per-def body inference (`Typer::body_types`, the dominant cost) runs only
+    // over the reference closure of the roots `main`, `config` and the device
+    // slots. The whole stdlib is interned whether a program uses it or not, so
+    // typing every stdlib body made each build's memory grow with the size of
+    // the stdlib rather than with the program: the Std.Db.Store additions alone
+    // raised the warm-build peak RSS by about 15% (the build-perf budget). The
+    // closure follows every `Res::Def` in a body, lambdas and let-bodies
+    // included, so it is a superset of what the DCE work-list below lowers, and
+    // every whole-program pass that reads `defs` (the parameter/result types,
+    // the effect fixpoint) only ever looks a reachable def up.
+    let reachable = def_reference_closure(&roots, &candidates);
+    for (d, (m, _)) in &candidates {
+        if !reachable.contains(d) {
+            continue;
+        }
+        let resolved = &resolved_by_module[m];
+        let (Some(body), Some(td)) = (
+            resolved.bodies.get(d),
+            resolved.top_defs.iter().find(|td| td.def == *d),
+        ) else {
+            continue;
+        };
+        crate::BODIES_TYPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let types = typer.body_types(*m, *d, body);
+        let sig = typer.value_sig(*d).map(|s| s.ty.clone());
+        defs.insert(
+            *d,
+            DefEntry {
+                module_name: db.module_name(*m).to_string(),
+                name: td.name.as_str().to_string(),
+                body: body.clone(),
+                types,
+                sig,
+            },
+        );
+    }
+    drop(resolved_by_module);
 
     // ---- collect type declarations + the nominal name map ----
     let (nominal, nominal_by_module, type_decls) = collect_types(db);
@@ -1107,6 +1150,43 @@ fn prologue_init(cfg: &LowerConfig) -> GoItem {
 }
 
 // ---- module / name mangling (doc 08 §5) --------------------------------
+
+/// Every top-level def a body names: a `Res::Def` in a variable or as an
+/// operator's resolved callee, anywhere in the body's expression arena (lambda
+/// and let-bound bodies live in the same arena).
+fn body_def_refs(body: &Body) -> Vec<DefId> {
+    let mut out = Vec::new();
+    for (_, expr) in body.exprs.iter() {
+        match expr {
+            Expr::Var(Res::Def(d)) => out.push(*d),
+            Expr::Binop {
+                res: Res::Def(d), ..
+            } => out.push(*d),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The defs reachable from `roots` along [`body_def_refs`] edges. A reference
+/// to a def with no body (not in `edges`) is kept: lowering looks it up and
+/// skips it, as before.
+fn def_reference_closure(
+    roots: &[DefId],
+    edges: &BTreeMap<DefId, (ModuleId, Vec<DefId>)>,
+) -> HashSet<DefId> {
+    let mut seen: HashSet<DefId> = HashSet::new();
+    let mut work: Vec<DefId> = roots.to_vec();
+    while let Some(d) = work.pop() {
+        if !seen.insert(d) {
+            continue;
+        }
+        if let Some((_, refs)) = edges.get(&d) {
+            work.extend(refs.iter().copied().filter(|r| !seen.contains(r)));
+        }
+    }
+    seen
+}
 
 fn module_prefix(module: &str) -> String {
     module.replace('.', "_")
