@@ -16,7 +16,7 @@
 //           caret at its end, and the model must end equal to the box.
 //           Before v0.29.0 the render that followed the answer wrote the
 //           model's older text into the focused box and clamped the caret,
-//           and "clinicare" ended as "clienicar" with the caret at 4.
+//           and "harbourside" came out scrambled, the caret back in the word.
 //   code    the same, through a Std.Html input (`Ui.html (Html.input …)`)
 //           instead of Std.Ui.Input: both input paths keep their letters.
 //   note    (Sky.Spa only) `SetNote` is hold-free during `SaveNote` (Spa.withHoldFree): its

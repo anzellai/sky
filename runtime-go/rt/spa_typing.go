@@ -11,7 +11,7 @@ import "strings"
 // of each held keystroke as the queue drains, come from a model that is BEHIND
 // the box. Writing that model's text into the box rewinds it and clamps the
 // caret, and the held keystrokes then run against a box that was rewritten, so
-// letters land in the wrong places ("clinicare" became "clienicar").
+// letters land in the wrong places ("harbourside" came out scrambled).
 //
 // So while a control's own input Msgs wait in the queue, the render does not
 // write its value (or its checked state). Nothing is lost: when the last of

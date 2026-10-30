@@ -603,8 +603,9 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   time the model is behind what the box shows. The render after the answer,
   and the render of each held keystroke, wrote the model's older text into the
   focused box and clamped the caret; the held keystrokes then ran against the
-  rewritten box, and letters landed in the wrong places ("clinicare" typed
-  against a slow search ended as "clienicar" with the caret at 4). Each queued
+  rewritten box, and letters landed in the wrong places ("harbourside" typed
+  against a slow search lost and swapped letters, and the caret jumped back
+  into the word). Each queued
   Msg now records the form control whose input or change event made it, and
   while such a Msg waits the render does not write that control's value or
   checked state. When the waiting Msgs have run, the model equals the box and

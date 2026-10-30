@@ -268,7 +268,7 @@ the split picks the kind from the arm (`runtime-go/rt/spa_rpcqueue.go`):
   (a trim, a reset) still writes it once the Msgs have run. Before v0.29.0 the
   render after the answer wrote the model's older text into the focused box
   and clamped the caret, and a word typed against a slow debounced search lost
-  or swapped letters ("clinicare" became "clienicar").
+  or swapped letters (a word such as "harbourside" came out scrambled).
 
   **Hold-free input Msgs (v0.29.0).** An input Msg runs at once during a hold,
   instead of waiting, when the split proves that running it early gives the

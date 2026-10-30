@@ -7,8 +7,8 @@ module Main exposing (main)
 --   search  `SetQuery` (a client arm) feeds a debounced `RunSearch`, which
 --           writes server data into the model, so it is a HOLD: keystrokes
 --           typed while it runs wait behind it. The box must keep every
---           letter and its caret (before v0.29.0 "clinicare" became
---           "clienicar"). `subscriptions` reads `query` and `searchedFor`,
+--           letter and its caret (before v0.29.0 "harbourside" came out
+--           scrambled). `subscriptions` reads `query` and `searchedFor`,
 --           which `RunSearch` writes, so `SetQuery` is NOT hold-free.
 --   code    the same as `search`, through a `Std.Html` input (`Ui.html`)
 --           instead of `Std.Ui.Input`: `SetCode` feeds a debounced

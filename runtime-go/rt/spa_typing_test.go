@@ -7,7 +7,8 @@ import "testing"
 // is behind what the focused box shows. The render that follows the hold's
 // answer, and the renders of the held keystrokes as they run one by one, used
 // to write the model's older text into the box and clamp the caret: typing
-// "clinicare" against a slow search ended as "clienicar" with the caret at 4.
+// "harbourside" against a slow search lost and swapped letters, and the caret
+// jumped back into the word.
 //
 // The harness is the real scheduler (spa_rpcqueue.go), the real planner
 // (spaPlanRender, diffTrees with the focused-input alignment) and the real
