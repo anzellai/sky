@@ -1399,8 +1399,12 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   `countDistinctAs`/`sumAs`/`minAs`/`maxAs`, `having`, `toRows`), **projections**
   (`select`/`selectAs`/`selectColumn`/`distinct`, `latestPer`), escaped text match
   (`contains`/`containsCi`/`startsWith`/`endsWith`/`eqCi`), column conditions
-  (`eqCol`/`gtCol`/…) and JSON keys (`jsonText`), every name checked before the
-  query runs (v0.29.0) + **`selectRaw codec sql params`** for typed JOIN reads.
+  (`eqCol`/`gtCol`/…), JSON keys (`jsonText`), **joins of two stores**
+  (`join`/`leftJoin` + `on`/`onAll`, `whereLeft`/`whereRight`, `orderLeft*`/`orderRight*`,
+  `toPairs`/`toPairsMaybe`) and **subquery conditions** (`inQuery`/`notInQuery` with
+  `column`, `exists`/`notExists` with `correlate`/`correlateAll`), every name checked
+  before the query runs (v0.29.0) + **`selectRaw codec sql params`** for any other
+  SQL (a join of three tables, a CTE).
   Deliberately a single-table mapper, not an ORM.
 
 Full walkthrough: **[Std.Db overview → Std.Db.Store](skydb/overview.md#stddbstore--stdcodec--codec-driven-persistence-recommended-default)**.

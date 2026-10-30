@@ -112,6 +112,9 @@ fn internal_runtime_bases(module: &str) -> &'static [&'static str] {
             "execObjectWith",
             "queryDecodeRows",
             "queryObjects",
+            // v0.29.0: the Std.Db.Store read kernel. One JSON object per column
+            // group per row (one group, or `a__` / `b__` for a join).
+            "queryObjectGroups",
             "renderMigrations",
             "resetTables",
             "snakeName",

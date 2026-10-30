@@ -246,13 +246,86 @@ returns.
 ascending and last descending, on both dialects (SQLite's own default, now
 explicit for PostgreSQL). A term on a required column renders as before.
 
-### JOINs → `Store.selectRaw`
+### Joins of two stores
 
-A join of two Stores is not a builder yet, so `selectRaw` runs **any** SQL and
-decodes each row into a typed **projection** record via a codec (the sqlx
-split: you own the SQL, the codec owns the mapping — no ORM, no relations, no
-N+1). It stays the last escape hatch for a shape the builders do not model (a
-window function, a CTE):
+```elm
+Store.join invoices customers
+        (Store.onAll [ ( "region_id", "region_id" ), ( "customer_id", "id" ) ])
+    |> Store.whereLeft (Store.eq "region_id" (SqlString regionId))
+    |> Store.whereRight (Store.eq "archived" (SqlBool False))
+    |> Store.orderLeftDesc "sent_at"
+    |> Store.limit 50
+    |> Store.toPairs conn                  -- Task Error (List ( Invoice, Customer ))
+
+Store.leftJoin invoices customers (Store.on "customer_id" "id")
+    |> Store.toPairsMaybe conn             -- Task Error (List ( Invoice, Maybe Customer ))
+```
+
+One statement. In SQL the left store is `a` and the right store is `b`, and
+each result column has a quoted alias (`a.sent_at AS "a__sent_at"`), so two
+tables with the same column names never clash and PostgreSQL keeps a camelCase
+name. Each side decodes through its own codec.
+
+- **Names.** `whereLeft` / `whereRight` and `orderLeftAsc` / `orderLeftDesc` /
+  `orderRightAsc` / `orderRightDesc` read one side. In `where_`, `orderAsc`,
+  `select`, `groupBy` and an `Agg`, a bare name reads the store that has it;
+  a name both stores have must be written `"a.col"` or `"b.col"`, else the
+  query is an `Err`. ON columns must be of one kind. Every name is checked
+  against its own codec before the query runs.
+- **LEFT join.** `whereRight` goes into the ON clause, so it picks the right
+  row and never drops a left row (a `where_` on a right column filters rows as
+  usual). A right column can be NULL in any row, so `select` and an `Agg` need
+  a `Maybe` field for it.
+- **Reshape a join.** `select` / `selectAs`, `groupBy` + `aggregate` and
+  `count` take a join: `Store.join bills clients (Store.on "client_id" "id")
+  |> Store.groupBy [ "b.name" ] |> Store.aggregate totalCodec [ Store.keyAs
+  "name" "b.name", Store.sumAs "total" "a.amount" ]`.
+- **Limits.** A join reads two stores: a join of three tables is not
+  expressible (use `selectRaw`). `latestPer` does not take a join.
+  `whereLeft` / `whereRight` / `orderLeft*` / `orderRight*` on a query that is
+  not a join are an `Err` when it runs (the type cannot tell).
+
+### Subquery conditions
+
+```elm
+-- Delete the rows of old batches in ONE statement: rows added meanwhile are seen.
+Store.deleteWhere conn importRows
+    (Store.inQuery "batch_id"
+        (Store.query importBatches
+            |> Store.where_ (Store.lt "created_at" (SqlInt cutoff))
+            |> Store.column "id"))
+
+-- Customers with no invoice sent since a date.
+Store.query customers
+    |> Store.where_
+        (Store.notExists invoices
+            (Store.correlate "customer_id" "id")
+            (Store.gt "sent_at" (SqlInt since)))
+```
+
+`column "id" q` names one column of a query (a `Subquery`), checked against the
+inner store's codec. `inQuery` / `notInQuery` compare an outer column with it
+(the two of one kind). `exists` / `notExists` take a store, the `correlate inner
+outer` pairs that tie it to the outer row (`correlateAll` for several), and a
+condition on the inner store (`Store.and_ []` for none). They work in `where_`,
+in a join, and in the writes that take a `Cond` (`deleteWhere`, `updateWhere`,
+`updateFields`, `adjust`). The inner query is `sq1` (`sq2` inside it), and it
+takes `where_`, `orderAsc` / `orderDesc`, `limit` and `offset` only (a `limit`
+or `offset` needs an order); a `select`, `aggregate`, `distinct`, `latestPer` or
+join there is an `Err`. Subquery conditions do not apply in `having`.
+
+**NULL rules.** The subquery leaves out its NULLs (`… AND sq1.id IS NOT NULL`),
+so an outer NULL never matches `inQuery`, and `notInQuery` (or `not_ (inQuery
+…)`) keeps an outer value that is not in the set even when the inner column
+holds NULL. An outer NULL is left out by `notInQuery` when the inner set has
+rows, and kept when it is empty (`NULL NOT IN ()` is true on both engines).
+
+### `Store.selectRaw` — the last escape hatch
+
+`selectRaw` runs **any** SQL and decodes each row into a typed **projection**
+record via a codec (the sqlx split: you own the SQL, the codec owns the mapping
+— no ORM, no relations, no N+1). Use it for a shape the builders do not model
+(a join of three tables, a window function, a CTE):
 
 ```elm
 type alias Pair = { ideaId : String, author : String }

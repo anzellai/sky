@@ -656,6 +656,76 @@ func Db_queryObjects(connArg, sqlArg, paramsArg, colspecArg any) any {
 	}
 }
 
+// Db_queryObjectGroups : Db -> String -> List SqlValue
+//
+//	-> List ( String, String, List ( String, String ) ) -> Task Error (List (List String))
+//
+// The Std.Db.Store read kernel (v0.29.0). It runs a query and turns each row
+// into one JSON object per GROUP. A group is ( prefix, marker, colspec ): the
+// object holds every colspec column, read from the result column
+// `prefix ++ name` and keyed by `name` (the prefix is stripped). A plain query
+// has one group with an empty prefix. A join has two, `a__` and `b__`, so two
+// tables with the same column names never clash. When `marker` is not empty and
+// the result column `prefix ++ marker` is NULL, the group is the JSON text
+// `null`: that is the missing right side of a LEFT JOIN (the marker is a right
+// ON column, and an equality never matches NULL).
+func Db_queryObjectGroups(connArg, sqlArg, paramsArg, groupsArg any) any {
+	return func() any {
+		resp := AnyTaskRun(dbQueryRows(connArg, sqlArg, paramsArg))
+		r, ok := resp.(SkyResult[any, any])
+		if !ok || r.Tag != 0 {
+			return resp
+		}
+		driver := dbDriverOf(connArg)
+		type group struct {
+			prefix, marker string
+			names, kinds   []string
+		}
+		var groups []group
+		for _, g := range AsList(groupsArg) {
+			t := AsTuple3(g)
+			gr := group{prefix: AsString(t.V0), marker: AsString(t.V1)}
+			for _, cs := range AsList(t.V2) {
+				c := AsTuple2(cs)
+				base, _ := codecSplitKind(AsString(c.V1))
+				gr.names = append(gr.names, AsString(c.V0))
+				gr.kinds = append(gr.kinds, base)
+			}
+			groups = append(groups, gr)
+		}
+		out := []any{}
+		for _, row := range AsList(r.OkValue) {
+			m, ok := dbRowAsMap(row)
+			if !ok {
+				return Err[any, any](ErrDecode("Store: row is not a Dict"))
+			}
+			texts := make([]any, 0, len(groups))
+			for _, g := range groups {
+				if g.marker != "" {
+					raw, present := codecRowValue(driver, m, g.prefix+g.marker)
+					if rowValToJsonRaw(raw, present, "text") == nil {
+						texts = append(texts, "null")
+						continue
+					}
+				}
+				obj := jsonOrderedObject{}
+				for i, name := range g.names {
+					raw, present := codecRowValue(driver, m, g.prefix+name)
+					obj.keys = append(obj.keys, name)
+					obj.vals = append(obj.vals, rowValToJsonRaw(raw, present, g.kinds[i]))
+				}
+				b, err := json.Marshal(obj)
+				if err != nil {
+					return Err[any, any](ErrDecode("Store: marshal: " + err.Error()))
+				}
+				texts = append(texts, string(b))
+			}
+			out = append(out, texts)
+		}
+		return Ok[any, any](out)
+	}
+}
+
 // Db_dumpProject prints a project's schema as JSON between markers (SKY_SCHEMA_*)
 // so `sky db migrate --gen` can capture the target schema WITHOUT a live DB —
 // this is the pure schema-dump the file-based migration flow diffs against.

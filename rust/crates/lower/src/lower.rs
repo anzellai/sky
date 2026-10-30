@@ -1178,6 +1178,10 @@ fn is_store_read_kernel(module: &str, func: &str) -> bool {
             func,
             "query"
                 | "queryObjects"
+                // v0.29.0: the Std.Db.Store read kernel (every `toList` /
+                // `all` / `findBy` / `count` / `toPairs` / `selectRaw`).
+                // Without it a memoised `Store.all` read stopped warning.
+                | "queryObjectGroups"
                 | "queryDecode"
                 | "getById"
                 | "getByIdDecode"
@@ -1246,7 +1250,7 @@ fn is_stale_data_result(ty: &Ty) -> bool {
 /// effect must not propagate to a caller. NARROWER than `is_stale_data_result`'s
 /// suppression set: it deliberately does NOT include `Unit` / `Result _ ()` /
 /// functions, which are legitimate propagation CONDUITS in a read chain
-/// (`loadPosts → Store.toList → Db_queryObjects`) and must stay transparent.
+/// (`loadPosts → Store.toList → Db_queryObjectGroups`) and must stay transparent.
 fn is_config_or_handle_result(ty: &Ty) -> bool {
     let name = match ty {
         Ty::App(n, _) => n.as_str(),
@@ -11232,6 +11236,7 @@ mod memoised_effect_lint_tests {
         // Reads that go stale when frozen.
         assert!(is_store_read_kernel("Db", "query"));
         assert!(is_store_read_kernel("Db", "queryObjects"));
+        assert!(is_store_read_kernel("Db", "queryObjectGroups"));
         assert!(is_store_read_kernel("Db", "getById"));
         assert!(is_store_read_kernel("Db", "findManyByField"));
         assert!(is_store_read_kernel("Std.Db", "getById")); // fully-qualified alias

@@ -88,7 +88,7 @@ fn warns_about(warnings: &[String], name: &str) -> bool {
 }
 
 /// Shared prelude: a store, a blessed pool CAF, and the helpers the shapes
-/// under test are built from. `Store.all` reaches `Db_queryObjects`, so every
+/// under test are built from. `Store.all` reaches `Db_queryObjectGroups`, so every
 /// def that FORCES it carries `EffectKind::StoreRead`.
 const PRELUDE: &str = r#"module Main exposing (main)
 

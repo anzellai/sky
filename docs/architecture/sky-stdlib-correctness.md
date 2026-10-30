@@ -1379,13 +1379,28 @@ allowlist rejects characters outside `[A-Za-z0-9_.]`.
   Every verb (`create`, `migrate`, `insert`, `insertMany`, `upsert`,
   `update`, `updateWhere`, `updateFields`, `setFields`, `adjust`, `all`,
   `findBy`, `delete`, `deleteWhere`, `toList`, `toRows`, `toMaybe`,
-  `count`, `toSql`) runs the store check first: the table name matches
+  `count`, `toSql`, `toPairs`, `toPairsMaybe`) runs the store check first
+  (for a join, `exists` or `inQuery`, on every store it reads): the table name matches
   `^[A-Za-z_][A-Za-z0-9_]*$` and is at most 63 bytes, the primary key is
   empty or a codec column, and no builder recorded an unknown column.
   Every column, result field and JSON key a query names is resolved
   against the codec (field or snake name) and must pass the same rule.
   A failure is `Err` (InvalidInput) and no statement reaches the driver.
-  Sources: `storeError`, `refOf`, `prepare` in `Std/Db/Store.sky`.
+  In a join each name is checked against its own side's codec (ON pairs,
+  `whereLeft` / `whereRight`, `orderLeft*` / `orderRight*`), and a bare
+  name both sides have is refused. A subquery column, a `correlate`
+  pair and the inner condition are checked against the inner codec, the
+  outer column against the outer one, and the two must be of one kind.
+  Sources: `storeError`, `refOf`, `colRef`, `prepare`, `fromClause`,
+  `subSelect`, `existsSql` in `Std/Db/Store.sky`.
+* **One statement per Store call, joins and subqueries included.** A
+  join is `a INNER|LEFT JOIN b ON …` with every column under a quoted
+  alias (`a.col AS "a__col"`, so PostgreSQL keeps its case); the read
+  kernel `Db_queryObjectGroups` splits the row by prefix and gives the
+  right side as `null` when its first ON column is NULL (LEFT JOIN). A
+  subquery is `IN (SELECT sqN.col … AND sqN.col IS NOT NULL)` or
+  `[NOT] EXISTS (SELECT 1 FROM t sqN WHERE sqN.x = outer.y AND (…))`,
+  so a `deleteWhere` with `inQuery` sees one moment of the inner table.
 * **The only literals in Store SQL text**: LIMIT/OFFSET digits from a
   Sky `Int` (refused when negative), a JSON key (identifier rule), the
   fixed tokens of the renderer (`ESCAPE '!'`, `'$.key'`), and the DDL

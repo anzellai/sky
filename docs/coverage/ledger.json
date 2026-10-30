@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1861,
+      "expected_assertions": 1919,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -816,7 +816,7 @@
       "tier": "T1"
     },
     "store-query-postgres": {
-      "expected_assertions": 80,
+      "expected_assertions": 138,
       "falsifier_mutation": "store-query-postgres.drop-rows-err",
       "falsifier_proven": true,
       "summary": "Std.Db.Store query path (aggregates, select, latestPer, text match, jsonText) on PostgreSQL",
@@ -1010,7 +1010,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3176,
+    "stdlib_entries": 3198,
     "stdlib_modules": 135,
     "surfaces_covered": 193,
     "surfaces_covered_pct": 95.1,
@@ -8091,6 +8091,11 @@
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -8187,6 +8192,11 @@
             "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
+          },
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
         "strength": 3
@@ -19804,39 +19814,13 @@
           ]
         },
         "Std.Db.Store": {
-          "count": 31,
+          "count": 5,
           "symbols": [
             "Agg",
-            "aggregate",
-            "contains",
-            "containsCi",
-            "countAs",
+            "Correlate",
+            "JoinOn",
             "countDistinctAs",
-            "countIfAs",
-            "distinct",
-            "endsWith",
-            "eqCi",
-            "eqCol",
-            "groupBy",
-            "gtCol",
-            "gteCol",
-            "having",
-            "jsonText",
-            "key",
-            "keyAs",
-            "latestPer",
-            "ltCol",
-            "lteCol",
-            "maxAs",
-            "minAs",
-            "neqCol",
-            "select",
-            "selectAs",
-            "selectColumn",
-            "startsWith",
-            "sumAs",
-            "toRows",
-            "toSql"
+            "orderRightDesc"
           ]
         },
         "Std.Db.Table": {
@@ -20433,8 +20417,8 @@
           ]
         }
       },
-      "count": 897,
-      "pct_of_denominator": 28.2
+      "count": 871,
+      "pct_of_denominator": 27.2
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -21307,39 +21291,13 @@
           ]
         },
         "Std.Db.Store": {
-          "count": 31,
+          "count": 5,
           "symbols": [
             "Agg",
-            "aggregate",
-            "contains",
-            "containsCi",
-            "countAs",
+            "Correlate",
+            "JoinOn",
             "countDistinctAs",
-            "countIfAs",
-            "distinct",
-            "endsWith",
-            "eqCi",
-            "eqCol",
-            "groupBy",
-            "gtCol",
-            "gteCol",
-            "having",
-            "jsonText",
-            "key",
-            "keyAs",
-            "latestPer",
-            "ltCol",
-            "lteCol",
-            "maxAs",
-            "minAs",
-            "neqCol",
-            "select",
-            "selectAs",
-            "selectColumn",
-            "startsWith",
-            "sumAs",
-            "toRows",
-            "toSql"
+            "orderRightDesc"
           ]
         },
         "Std.Db.Table": {
@@ -22011,8 +21969,8 @@
           ]
         }
       },
-      "count": 1012,
-      "pct_of_denominator": 31.9
+      "count": 986,
+      "pct_of_denominator": 30.8
     }
   },
   "units": [
@@ -24005,12 +23963,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 65,
+      "modules_imported": 66,
       "path": "tests/conformance",
-      "refs_generous": 931,
-      "refs_qualified": 903,
+      "refs_generous": 985,
+      "refs_qualified": 957,
       "role": "Conformance",
-      "sky_files": 57,
+      "sky_files": 58,
       "sky_toml_sections": []
     }
   ]

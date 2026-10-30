@@ -42,6 +42,28 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   The same conformance suite runs on SQLite (`conformance`) and on PostgreSQL
   (the new harness gate `store-query-postgres`, T3, with the CI DSN).
 
+- **`Std.Db.Store` joins of two stores and subquery conditions.** One SQL
+  statement per call, the same on SQLite and PostgreSQL, every name checked
+  against its own codec before the query runs.
+  - `join : Store a -> Store b -> JoinOn -> Query ( a, b )` and `leftJoin :
+    … -> Query ( a, Maybe b )`, with `on "customer_id" "id"` or `onAll [ … ]`,
+    read with `toPairs` / `toPairsMaybe`. `whereLeft` / `whereRight` and
+    `orderLeftAsc` / `orderLeftDesc` / `orderRightAsc` / `orderRightDesc`
+    read one side; a name both stores have is written `"a.col"` / `"b.col"`.
+    On a `leftJoin`, `whereRight` goes into ON (it never drops a left row) and
+    a right column needs a `Maybe` field. `select`, `groupBy` + `aggregate`
+    and `count` take a join. A join of three tables is not expressible, and
+    `whereLeft` / `orderLeft*` on a query that is not a join is an `Err`.
+  - `inQuery "batch_id" (Store.query batches |> … |> Store.column "id")`,
+    `notInQuery`, `exists store (correlate "customer_id" "id") cond`,
+    `notExists`, `correlateAll`: a subquery in any `Cond`, so
+    `Store.deleteWhere conn rows (Store.inQuery …)` is one atomic statement.
+    The subquery leaves out NULLs, so `notInQuery` is right when the inner
+    column holds NULL.
+  - Every Store read now goes through one kernel, `Db_queryObjectGroups`
+    (one JSON object per column group, `a__` / `b__` for a join). The
+    memoised-read warning (a top-level `Store.all` CAF) keeps firing on it.
+
 - **`Std.Image.Canvas`: draw an image on the server.** A `Canvas` is a
   persistent display list: `blank` or `fromImage`, then `rect`,
   `roundedRect`, `ellipse`, `arc`, `line` (a `Paint` is `Fill colour` or
@@ -311,7 +333,10 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   `Sky.Core.Regex` export `contains`, `Sky.Core.String` `startsWith` and
   `endsWith`, `Std.Html` and `Std.Db.Table` `select`. A bare use under
   `import Std.Db.Store exposing (..)` and one of those is `[E1012]`; write
-  `Store.select` (Store is meant to be imported qualified).
+  `Store.select` (Store is meant to be imported qualified). The join and
+  subquery builders add `column` (Std.Ui, Std.Ui.Keyed), `exists`
+  (Sky.Core.File), `join` (Sky.Core.String, Sky.Core.Path) and `on`
+  (Std.Html.Events) to the same rule: write `Store.join`.
 
 - **`Std.Db.Store` refuses bad names before any statement (behaviour
   change).** `findBy` and `delete` refuse a column that is not in the codec.

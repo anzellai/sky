@@ -162,7 +162,7 @@ memorised signatures. This section covers *which layer to reach for*, not the AP
 | Records with straightforward CRUD (**default**) | `Std.Db.Store` + `Std.Codec` | ONE codec per type drives JSON encode/decode **and** dialect-safe DB read/write/schema — no hand-written row mappers. |
 | Records, JSON not needed | `Std.Db.Table` | Reflection record↔row mapper (camelCase↔snake_case), no codec to write. |
 | Explicit schema / DDL only | `Std.Db.Schema` | Typed, dialect-safe `CREATE TABLE` — one definition, correct on SQLite AND Postgres (no `INTEGER`-millis-overflow / `AUTOINCREMENT`-vs-`BIGSERIAL` drift). Reach the migration tooling with `db = Schema.toProject allTables` (`Store.Project` for `sky db push` / `migrate --gen`; tables/PK/UNIQUE/DEFAULTs carry, indexes stay on `createSchema`). |
-| Joins, transactions, custom SQL (grouped aggregates, projections and per-key newest rows are Store builders) | `Std.Db` — `query` / `exec` / `withTransaction` + `SqlValue` | The escape hatch the mappers don't model. |
+| Transactions, custom SQL (grouped aggregates, projections, per-key newest rows, joins of two stores and subquery conditions are Store builders) | `Std.Db` — `query` / `exec` / `withTransaction` + `SqlValue` | The escape hatch the mappers don't model. |
 
 ### Default — `Store` + `Codec`
 
@@ -188,7 +188,8 @@ products =
 --         Store.adjust conn products cond [("stock", -qty)]  (atomic SET col = col + delta)
 -- read:   Store.all conn products  ·  Store.findBy conn products "id" "p1"
 --         Store.query invoices |> Store.groupBy [ "customer_id" ] |> Store.aggregate tallyCodec [ ... ] |> Store.toRows conn
---         Store.selectRaw conn projCodec "<any JOIN SQL>" params
+--         Store.join invoices customers (Store.on "customer_id" "id") |> Store.toPairs conn
+--         Store.selectRaw conn projCodec "<any SQL>" params
 ```
 
 `Codec.auto` columns (and JSON keys) are **snake_case** by default — `priceMinor`
@@ -212,8 +213,15 @@ escaped text conditions `contains` / `startsWith` / `endsWith` / `eqCi` /
 `containsCi` (prefer them to `like` for user text), `eqCol` / `gtCol` (column
 against column) and `jsonText "props" "key"` (a key of a JSON column). Every
 name is checked before the query runs; `Store.toSql conn q` shows the SQL.
-**JOINs** → `Store.selectRaw codec "<SQL>" params`: you write the SQL, a codec
-decodes each row into a typed projection record. Exact signatures:
+**Joins and subqueries** are builders too: `Store.join a b (Store.on "customer_id" "id")`
+(`onAll` for several pairs) runs with `toPairs` → `List ( a, b )`, `leftJoin` with
+`toPairsMaybe` → `List ( a, Maybe b )`; `whereLeft` / `whereRight` / `orderLeftDesc`
+read one side, and a name both stores have is written `"a.col"` / `"b.col"`.
+`Store.inQuery "batch_id" (Store.query batches |> Store.where_ … |> Store.column "id")`
+and `Store.notExists invoices (Store.correlate "customer_id" "id") cond` put a
+subquery in any `Cond`, writes included (one statement). A join of three tables →
+`Store.selectRaw codec "<SQL>" params`: you write the SQL, a codec decodes each
+row into a typed projection record. Exact signatures:
 `sky doc Std.Db.Store` / `sky doc Std.Codec`.
 
 **Compose reads with the query builder** — filters bind as `SqlValue` params
@@ -251,7 +259,7 @@ Store.transaction conn (\tx ->
 ```
 
 Only drop to raw **`Std.Db`** (`query` / `exec` / `withTransaction` + `SqlValue`)
-for joins / CTEs / window functions the builders don't model. **Import both qualified**
+for CTEs / window functions / joins of three tables the builders don't model. **Import both qualified**
 (`import Std.Db.Store as Store` + `import Std.Db as Db`) — never `exposing (..)` on
 both, since `query`/`migrate` overlap; qualified is the intended usage.
 
@@ -479,8 +487,8 @@ reads better as `unless` / `when`, or as a named `chooseStep : Bool -> Task Erro
 Model a record table with `Std.Db.Store` + `Std.Codec` by DEFAULT — one codec
 drives the schema, the writes, and the TYPED reads (no untyped row access, so a
 column change is a compile error). Drop to raw `Std.Db` (`query`/`exec`) ONLY for
-what a `Store` cannot express: joins, aggregates, CTEs, or a query a typed `Cond`
-cannot state. Keep the two in clearly separated sections of a persistence module.
+what a `Store` cannot express: a join of three tables, a CTE, a window
+function, or a query a typed `Cond` cannot state. Keep the two in clearly separated sections of a persistence module.
 
 ## Language syntax
 
@@ -822,7 +830,7 @@ sign-in) if you run more than one replica. Key per-session data by
 ## Non-negotiables
 
 - **Types over strings for errors** — `Result Error a` / `Task Error a`, never `Result String a`.
-- **DB defaults to `Std.Db.Store` + `Std.Codec`** — one codec per record table drives the schema, the writes, and the TYPED reads. Drop to raw `Std.Db` (`query`/`exec`) ONLY for what a `Store` cannot express (joins, aggregates, CTEs, a query no typed `Cond` states); keep those in a clearly separated section. Never hand-write a row mapper for a plain record table.
+- **DB defaults to `Std.Db.Store` + `Std.Codec`** — one codec per record table drives the schema, the writes, and the TYPED reads. Drop to raw `Std.Db` (`query`/`exec`) ONLY for what a `Store` cannot express (a join of three tables, CTEs, window functions, a query no typed `Cond` states); keep those in a clearly separated section. Never hand-write a row mapper for a plain record table.
 - **Effect chains stay flat + named** — top-to-bottom `andThen`/`map` pipelines, named step functions over long inline lambdas, `sequence`/`map2` over nested `andThen`, a local `bestEffort`/`unless` over a repeated `onError`/`if`. A loop that can run many times reads best as `Task.loop`; `andThen` recursion is also stack-safe (v0.27.0). `let … in` names PURE sub-expressions only (it does not bind a `Task` result). See **Effect and control-flow style**.
 - **No raw HTML/JS** — `Std.Ui` escapes everything. `data-sky-eval` is gone (no runtime path evaluates a string); use `data-sky-path` for URL sync.
 - **Secrets are typed** — secret-bearing args are the opaque `Sky.Core.Secret.Secret` (redacts itself in every log/JSON path): `Auth.signToken`/`verifyToken`, `Jwt.hs256`/`rs256`, the `Crypto` AEAD keys, `Http.withBearer`/`withApiKey`; `Cli.readPassword` returns one. The `Std.Crypto` key types (`Sign.SecretKey`, `Kx.SecretKey`) are opaque the same way and export only to a `Secret`. Wrap with `Secret.fromEnv "VAR"`, unwrap only via `Secret.reveal`. Never `fmt.Sprintf("%v", secret)`.

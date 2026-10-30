@@ -29,7 +29,10 @@
 -- `distinct` for a projection, `latestPer` for the newest row per key,
 -- `contains` / `startsWith` / `endsWith` / `eqCi` / `containsCi` for text,
 -- `eqCol` and friends to compare two columns, and `jsonText` to read a key
--- inside a JSON text column. `toSql` shows the SQL a query renders.
+-- inside a JSON text column. `join` / `leftJoin` read two stores in one
+-- statement (`toPairs` / `toPairsMaybe`), and `inQuery` / `notInQuery` (with
+-- `column`) and `exists` / `notExists` (with `correlate`) put a subquery in a
+-- condition. `toSql` shows the SQL a query renders.
 --
 -- Every verb checks the store before any statement: the table name and every
 -- column name follow `[A-Za-z_][A-Za-z0-9_]*` (at most 63 bytes), the primary
@@ -103,6 +106,15 @@ module Std.Db.Store exposing
     , and_
     , or_
     , not_
+    , Subquery
+    , column
+    , inQuery
+    , notInQuery
+    , Correlate
+    , exists
+    , notExists
+    , correlate
+    , correlateAll
     , orderAsc
     , orderDesc
     , limit
@@ -124,8 +136,21 @@ module Std.Db.Store exposing
     , minAs
     , maxAs
     , having
+    , JoinOn
+    , join
+    , leftJoin
+    , on
+    , onAll
+    , whereLeft
+    , whereRight
+    , orderLeftAsc
+    , orderLeftDesc
+    , orderRightAsc
+    , orderRightDesc
     , toList
     , toRows
+    , toPairs
+    , toPairsMaybe
     , toMaybe
     , count
     , toSql
@@ -684,8 +709,9 @@ findBy conn store col value =
 -- | Run ANY SQL and decode each row into a typed projection record via a codec.
 -- The last escape hatch: `groupBy` + `aggregate`, `select`, `latestPer`,
 -- `jsonText` and the text conditions cover grouped counts, projections and
--- per-key newest rows with checked names. Reach for this for a shape they do not
--- model (a join, until the join builders land; a window function; a CTE). You
+-- per-key newest rows with checked names, `join` / `leftJoin` read two stores,
+-- and `inQuery` / `exists` take a subquery. Reach for this for a shape they do
+-- not model (a join of three tables, a window function, a CTE). You
 -- own the SQL; the codec owns the mapping, so rows come back as records, not
 -- `Dict String String`. The codec's columns must match the SELECT's output
 -- columns (alias to snake_case):
@@ -697,7 +723,7 @@ findBy conn store col value =
 --         []
 selectRaw : Db -> Codec row -> String -> List SqlValue -> Task Error (List row)
 selectRaw conn codec sql params =
-    dbQueryObjectsV conn sql params (codecColumns codec)
+    readRows conn (Ok ( sql, params )) [ ( "", "", codecColumns codec ) ]
         |> Task.andThen
                (\rows -> Task.fromResult (decodeAll (rowDecoder codec) rows []))
 
@@ -864,9 +890,44 @@ type Cond
     | CondNot Cond
     | CondCol String String String
     | CondText String String String
+    | CondNest Nest
 
-type OrderTerm
-    = OrderTerm String String
+-- A condition that holds a store or a query: `whereLeft` / `whereRight`
+-- (kind "side"), `inQuery` / `notInQuery` (kind "in"), `exists` /
+-- `notExists` (kind "exists"). One record, so the walk takes it apart once.
+type alias Nest =
+    { kind : String
+    , side : String
+    , col : String
+    , subCol : String
+    , negated : Bool
+    , source : Source
+    , pairs : List ( String, String )
+    , inner : Cond
+    , sub : QuerySpec
+    }
+
+-- An ORDER BY term: side ("" for any, "left" / "right" in a join), name,
+-- direction.
+type alias OrderTerm =
+    { side : String
+    , col : String
+    , dir : String
+    }
+
+-- | One column of a query, for `inQuery` / `notInQuery`. Build it with
+-- `column`. Opaque.
+type Subquery
+    = Subquery String QuerySpec
+
+-- | The ON pairs of a join: `on` for one pair, `onAll` for several. Opaque.
+type JoinOn
+    = JoinOn (List ( String, String ))
+
+-- | The pairs that tie an `exists` / `notExists` subquery to the outer row.
+-- Build it with `correlate`. Opaque.
+type Correlate
+    = Correlate (List ( String, String ))
 
 -- | One output column of `aggregate`. Build it with `key`, `keyAs`, `countAs`,
 -- `countIfAs`, `countDistinctAs`, `sumAs`, `minAs` or `maxAs`. Opaque.
@@ -892,6 +953,11 @@ type alias Source =
 
 type alias QuerySpec =
     { source : Source
+    , joined : Bool
+    , leftOuter : Bool
+    , right : Source
+    , onPairs : List ( String, String )
+    , onConds : List Cond
     , conds : List Cond
     , orders : List OrderTerm
     , limitN : Maybe Int
@@ -932,28 +998,36 @@ mapSpec f q =
 -- `Store.query products |> Store.where_ (Store.eq "active" (SqlBool True)) |> Store.toList conn`.
 query : Store a -> Query a
 query store =
+    Query (baseSpec (sourceOf store)) (rowDecoder (storeRec store).codec)
+
+
+sourceOf : Store a -> Source
+sourceOf store =
     let
         s = storeRec store
     in
-        Query
-            { source =
-                { table = s.name
-                , pk = s.pk
-                , cols = s.cols
-                , problems = s.problems
-                }
-            , conds = []
-            , orders = []
-            , limitN = Nothing
-            , offsetN = Nothing
-            , distinct = False
-            , groups = []
-            , out = OutStar
-            , outCols = s.cols
-            , having = []
-            , latest = Nothing
-            }
-            (rowDecoder s.codec)
+        { table = s.name, pk = s.pk, cols = s.cols, problems = s.problems }
+
+
+baseSpec : Source -> QuerySpec
+baseSpec src =
+    { source = src
+    , joined = False
+    , leftOuter = False
+    , right = src
+    , onPairs = []
+    , onConds = []
+    , conds = []
+    , orders = []
+    , limitN = Nothing
+    , offsetN = Nothing
+    , distinct = False
+    , groups = []
+    , out = OutStar
+    , outCols = src.cols
+    , having = []
+    , latest = Nothing
+    }
 
 
 rowDecoder : Codec r -> List String -> Result Error r
@@ -1143,19 +1217,134 @@ not_ cond =
     CondNot cond
 
 
+-- ── Subquery conditions ──────────────────────────────────────────────────────
+-- | One column of a query, for `inQuery` / `notInQuery`:
+--
+--     Store.deleteWhere conn importRows
+--         (Store.inQuery "batch_id"
+--             (Store.query importBatches
+--                 |> Store.where_ (Store.lt "created_at" (SqlInt cutoff))
+--                 |> Store.column "id"))
+--
+-- The column is checked against the inner store's codec when the outer query
+-- or write runs. The inner query takes `where_`, `orderAsc` / `orderDesc`,
+-- `limit` and `offset` (a `limit` or `offset` needs an order); a `select`,
+-- `aggregate`, `groupBy`, `distinct`, `latestPer` or join there is an `Err`.
+column : String -> Query a -> Subquery
+column col q =
+    Subquery col (specOf q)
+
+
+-- | `col IN (SELECT …)`: the outer column equals a value of the subquery
+-- column. Both columns must be of one kind. The subquery leaves out its NULLs
+-- (`… AND inner IS NOT NULL`), so an outer NULL never matches, and
+-- `not_ (inQuery …)` keeps an outer value that is not in the set even when the
+-- inner column holds NULL. Under `not_` (or `notInQuery`), an outer NULL is
+-- left out when the inner set has rows and kept when it is empty
+-- (`NULL NOT IN ()` is true on both engines). One statement: a delete or
+-- update with `inQuery` sees the inner rows of the same moment.
+inQuery : String -> Subquery -> Cond
+inQuery col sub =
+    subNest col False sub
+
+
+-- | `col NOT IN (SELECT …)`, the same as `not_ (inQuery col sub)`.
+notInQuery : String -> Subquery -> Cond
+notInQuery col sub =
+    subNest col True sub
+
+
+subNest : String -> Bool -> Subquery -> Cond
+subNest col negated (Subquery inner spec) =
+    CondNest
+        { kind = "in"
+        , side = ""
+        , col = col
+        , subCol = inner
+        , negated = negated
+        , source = spec.source
+        , pairs = []
+        , inner = noCond
+        , sub = spec
+        }
+
+
+-- A nest whose unused fields hold neutral values.
+nestOf : String -> String -> Bool -> Source -> List ( String, String ) -> Cond -> Cond
+nestOf kind side negated src pairs inner =
+    CondNest
+        { kind = kind
+        , side = side
+        , col = ""
+        , subCol = ""
+        , negated = negated
+        , source = src
+        , pairs = pairs
+        , inner = inner
+        , sub = baseSpec src
+        }
+
+
+-- | `EXISTS (SELECT 1 FROM inner WHERE <correlate pairs> AND (<cond>))`: true
+-- when the other store has a row tied to the outer row that meets `cond`.
+-- Names in `cond` are columns of the inner store; `correlate inner outer` ties
+-- them to the outer row:
+--
+--     Store.query customers
+--         |> Store.where_
+--             (Store.notExists invoices
+--                 (Store.correlate "customer_id" "id")
+--                 (Store.gt "sent_at" (SqlInt since)))
+--
+-- Use `Store.and_ []` for no extra condition.
+exists : Store b -> Correlate -> Cond -> Cond
+exists store corr cond =
+    nestOf "exists" "" False (sourceOf store) (correlatePairs corr) cond
+
+
+-- | `NOT EXISTS (…)`: true when the other store has no such row.
+notExists : Store b -> Correlate -> Cond -> Cond
+notExists store corr cond =
+    nestOf "exists" "" True (sourceOf store) (correlatePairs corr) cond
+
+
+-- | Tie an inner column (of the `exists` store) to an outer column (of the
+-- query, or of the store a write changes).
+correlate : String -> String -> Correlate
+correlate inner outer =
+    Correlate [ ( inner, outer ) ]
+
+
+-- | Several `correlate` pairs, all of which must be equal (a tenant column and
+-- an id, for example).
+correlateAll : List ( String, String ) -> Correlate
+correlateAll pairs =
+    Correlate pairs
+
+
+correlatePairs : Correlate -> List ( String, String )
+correlatePairs (Correlate pairs) =
+    pairs
+
+
 -- ── Ordering + paging ────────────────────────────────────────────────────────
 -- | Append `ORDER BY col ASC` (chain for multi-column ordering). On a nullable
 -- column NULLs come first, on both dialects.
 orderAsc : String -> Query r -> Query r
 orderAsc col q =
-    mapSpec (\s -> { s | orders = OrderTerm col "ASC" :: s.orders }) q
+    mapSpec
+        (\s -> { s | orders = { side = "", col = col, dir = "ASC" } :: s.orders })
+        q
 
 
 -- | Append `ORDER BY col DESC`. On a nullable column NULLs come last, on both
 -- dialects. After `aggregate`, name a result field.
 orderDesc : String -> Query r -> Query r
 orderDesc col q =
-    mapSpec (\s -> { s | orders = OrderTerm col "DESC" :: s.orders }) q
+    mapSpec
+        (\s ->
+            { s | orders = { side = "", col = col, dir = "DESC" } :: s.orders })
+        q
 
 
 -- | `LIMIT n`. A negative `n` makes the query fail before it runs.
@@ -1350,13 +1539,233 @@ having c q =
     mapSpec (\s -> { s | having = c :: s.having }) q
 
 
+-- ── Joins of two stores ──────────────────────────────────────────────────────
+-- | An inner join: every pair of a left row and a right row whose ON columns
+-- are equal. Run it with `toPairs`:
+--
+--     Store.join invoices customers
+--             (Store.onAll [ ( "region_id", "region_id" ), ( "customer_id", "id" ) ])
+--         |> Store.whereLeft (Store.eq "region_id" (SqlString regionId))
+--         |> Store.whereRight (Store.eq "archived" (SqlBool False))
+--         |> Store.orderLeftDesc "sent_at"
+--         |> Store.limit 50
+--         |> Store.toPairs conn          -- Task Error (List ( Invoice, Customer ))
+--
+-- In SQL the left store is `a` and the right store is `b`. A name in
+-- `where_`, `orderAsc`, `select`, `groupBy` or an `Agg` reads the store that
+-- has that column. A column both stores have must be written `"a.col"` or
+-- `"b.col"`, else the query is an `Err`. `whereLeft` / `whereRight` and
+-- `orderLeft*` / `orderRight*` read one side. ON columns must be of one kind.
+-- A join reads two stores only: a join of three tables is not expressible
+-- (use `selectRaw`). `latestPer` does not take a join.
+join : Store a -> Store b -> JoinOn -> Query ( a, b )
+join left right ons =
+    let
+        l = storeRec left
+        r = storeRec right
+    in
+        Query
+            (joinSpec False (sourceOf left) (sourceOf right) (joinPairs ons))
+            (pairDecoder l.codec r.codec)
+
+
+-- | A left join: every left row, paired with `Just` its matching right row, or
+-- with `Nothing` when no right row matches. Run it with `toPairsMaybe`:
+--
+--     Store.leftJoin invoices customers (Store.on "customer_id" "id")
+--         |> Store.toPairsMaybe conn     -- Task Error (List ( Invoice, Maybe Customer ))
+--
+-- `whereRight` conditions go into the ON clause, so they choose the matching
+-- right row and never drop a left row. A right column can be NULL in every
+-- row, so `select` and an `Agg` need a `Maybe` field for it.
+leftJoin : Store a -> Store b -> JoinOn -> Query ( a, Maybe b )
+leftJoin left right ons =
+    let
+        l = storeRec left
+        r = storeRec right
+    in
+        Query
+            (joinSpec True (sourceOf left) (sourceOf right) (joinPairs ons))
+            (pairMaybeDecoder l.codec r.codec)
+
+
+-- | One ON pair: a left column and a right column that must be equal.
+on : String -> String -> JoinOn
+on leftCol rightCol =
+    JoinOn [ ( leftCol, rightCol ) ]
+
+
+-- | Several ON pairs, all of which must be equal. An empty list is an `Err`.
+onAll : List ( String, String ) -> JoinOn
+onAll pairs =
+    JoinOn pairs
+
+
+-- | A condition on the left store of a join. On a query that is not a join it
+-- is an `Err` when the query runs.
+whereLeft : Cond -> Query r -> Query r
+whereLeft c q =
+    mapSpec (\s -> { s | conds = sideNest "left" c :: s.conds }) q
+
+
+-- | A condition on the right store of a join. On a `leftJoin` it goes into the
+-- ON clause (it picks the right row and keeps every left row); on a `join` it
+-- goes into WHERE. On a query that is not a join it is an `Err` when the query
+-- runs.
+whereRight : Cond -> Query r -> Query r
+whereRight c q =
+    mapSpec
+        (\s ->
+            if s.leftOuter then
+                { s | onConds = c :: s.onConds }
+
+            else
+                { s | conds = sideNest "right" c :: s.conds })
+        q
+
+
+sideNest : String -> Cond -> Cond
+sideNest side c =
+    nestOf "side" side False emptySource [] c
+
+
+emptySource : Source
+emptySource =
+    { table = "", pk = "", cols = [], problems = [] }
+
+
+-- | `ORDER BY` a left column, ascending. Only on a join.
+orderLeftAsc : String -> Query r -> Query r
+orderLeftAsc col q =
+    mapSpec
+        (\s ->
+            { s
+                | orders = { side = "left", col = col, dir = "ASC" } :: s.orders
+            })
+        q
+
+
+-- | `ORDER BY` a left column, descending. Only on a join.
+orderLeftDesc : String -> Query r -> Query r
+orderLeftDesc col q =
+    mapSpec
+        (\s ->
+            { s
+                | orders =
+                    { side = "left", col = col, dir = "DESC" } :: s.orders
+            })
+        q
+
+
+-- | `ORDER BY` a right column, ascending. Only on a join.
+orderRightAsc : String -> Query r -> Query r
+orderRightAsc col q =
+    mapSpec
+        (\s ->
+            { s
+                | orders =
+                    { side = "right", col = col, dir = "ASC" } :: s.orders
+            })
+        q
+
+
+-- | `ORDER BY` a right column, descending. Only on a join.
+orderRightDesc : String -> Query r -> Query r
+orderRightDesc col q =
+    mapSpec
+        (\s ->
+            { s
+                | orders =
+                    { side = "right", col = col, dir = "DESC" } :: s.orders
+            })
+        q
+
+
+joinPairs : JoinOn -> List ( String, String )
+joinPairs (JoinOn pairs) =
+    pairs
+
+
+joinSpec : Bool -> Source -> Source -> List ( String, String ) -> QuerySpec
+joinSpec isLeft l r pairs =
+    let
+        base = baseSpec l
+    in
+        { base | joined = True, leftOuter = isLeft, right = r, onPairs = pairs }
+
+
+pairDecoder : Codec a -> Codec b -> List String -> Result Error ( a, b )
+pairDecoder ca cb groups =
+    case groups of
+
+        [ ja, jb ] ->
+            case Codec.fromJson ca ja of
+
+                Err e ->
+                    Err e
+
+                Ok a ->
+                    case Codec.fromJson cb jb of
+
+                        Err e ->
+                            Err e
+
+                        Ok b ->
+                            Ok ( a, b )
+
+        _ ->
+            Err (Error.decode "Store: a joined row needs two column groups")
+
+
+pairMaybeDecoder : Codec a -> Codec b -> List String -> Result Error ( a, Maybe b )
+pairMaybeDecoder ca cb groups =
+    case groups of
+
+        [ ja, jb ] ->
+            case Codec.fromJson ca ja of
+
+                Err e ->
+                    Err e
+
+                Ok a ->
+                    if jb == "null" then
+                        Ok ( a, Nothing )
+
+                    else
+                        case Codec.fromJson cb jb of
+
+                            Err e ->
+                                Err e
+
+                            Ok b ->
+                                Ok ( a, Just b )
+
+        _ ->
+            Err (Error.decode "Store: a joined row needs two column groups")
+
+
 -- ── Terminals ────────────────────────────────────────────────────────────────
 -- | Run the query, decoding every matching row.
 toList : Db -> Query r -> Task Error (List r)
 toList conn q =
-    readRows conn (prepare (dialectOf conn) (specOf q)) (specOf q).outCols
+    readRows conn (prepare (dialectOf conn) (specOf q)) (groupsOf (specOf q))
         |> Task.andThen
                (\rows -> Task.fromResult (decodeAll (decoderOf q) rows []))
+
+
+-- | Run a `join`: each row is a ( left, right ) pair. The same as `toList`,
+-- with the pair type written out.
+toPairs : Db -> Query ( a, b ) -> Task Error (List ( a, b ))
+toPairs conn q =
+    toList conn q
+
+
+-- | Run a `leftJoin`: each row is a left row and `Just` its right row, or
+-- `Nothing` when no right row matched. The same as `toList`, with the pair
+-- type written out.
+toPairsMaybe : Db -> Query ( a, Maybe b ) -> Task Error (List ( a, Maybe b ))
+toPairsMaybe conn q =
+    toList conn q
 
 
 -- | The same as `toList`. Reads well after `aggregate`.
@@ -1375,7 +1784,7 @@ toMaybe conn q =
 -- `distinct`, `latestPer` or `aggregate` it counts the rows that query returns.
 count : Db -> Query r -> Task Error Int
 count conn q =
-    readRows conn (prepareCount (dialectOf conn) (specOf q)) [ ( "n", "int" ) ]
+    readRows conn (prepareCount (dialectOf conn) (specOf q)) countGroups
         |> Task.andThen (\rows -> Task.fromResult (countOf rows))
 
 
@@ -1410,16 +1819,76 @@ dbSqlOfValue =
 
 
 -- ── The read and write runners ───────────────────────────────────────────────
--- The only call site of the read kernel and of `Db_exec` for Store SQL.
-readRows : Db -> Result Error ( String, List SqlValue ) -> List ( String, String ) -> Task Error (List String)
-readRows conn prepared colspec =
+-- The only call site of the read kernel and of `Db_exec` for Store SQL. Each
+-- row comes back as one JSON text per column group (see `groupsOf`).
+readRows : Db -> Result Error ( String, List SqlValue ) -> List ( String, String, List ( String, String ) ) -> Task Error (List (List String))
+readRows conn prepared groups =
     case prepared of
 
         Err e ->
             Task.fail e
 
         Ok ( sql, params ) ->
-            dbQueryObjectsV conn sql params colspec
+            dbQueryObjectGroups conn sql params groups
+
+
+-- The column groups of a result row: one for a plain query or a reshaped one,
+-- two (`a__` and `b__` prefixes) for the rows of a join. On a LEFT join the
+-- right group is `null` when its first ON column is NULL.
+groupsOf : QuerySpec -> List ( String, String, List ( String, String ) )
+groupsOf spec =
+    case spec.out of
+
+        OutStar ->
+            if spec.joined then
+                [ ( "a__", "", spec.source.cols )
+                , ( "b__"
+                  , if spec.leftOuter then
+                        markerOf spec.right.cols spec.onPairs
+
+                    else
+                        ""
+                  , spec.right.cols
+                  )
+                ]
+
+            else
+                [ ( "", "", spec.outCols ) ]
+
+        _ ->
+            [ ( "", "", spec.outCols ) ]
+
+
+markerOf : List ( String, String ) -> List ( String, String ) -> String
+markerOf rightCols pairs =
+    case pairs of
+
+        ( _, rc ) :: _ ->
+            resolveCol rightCols (unqualified "b" rc)
+
+        [] ->
+            ""
+
+
+-- `"b.col"` → `"col"`; any other name is returned as it is.
+unqualified : String -> String -> String
+unqualified q name =
+    case String.split "." name of
+
+        [ p, bare ] ->
+            if p == q then
+                bare
+
+            else
+                name
+
+        _ ->
+            name
+
+
+countGroups : List ( String, String, List ( String, String ) )
+countGroups =
+    [ ( "", "", [ ( "n", "int" ) ] ) ]
 
 
 runExec : Db -> Result Error ( String, List SqlValue ) -> Task Error Int
@@ -1433,7 +1902,7 @@ runExec conn prepared =
             dbExecV conn sql params
 
 
-decodeAll : (List String -> Result Error r) -> List String -> List r -> Result Error (List r)
+decodeAll : (List String -> Result Error r) -> List (List String) -> List r -> Result Error (List r)
 decodeAll dec rows acc =
     case rows of
 
@@ -1441,7 +1910,7 @@ decodeAll dec rows acc =
             Ok (List.reverse acc)
 
         j :: rest ->
-            case dec [ j ] of
+            case dec j of
 
                 Ok x ->
                     decodeAll dec rest (x :: acc)
@@ -1450,14 +1919,14 @@ decodeAll dec rows acc =
                     Err e
 
 
-countOf : List String -> Result Error Int
+countOf : List (List String) -> Result Error Int
 countOf rows =
     case rows of
 
-        j :: _ ->
+        (j :: _) :: _ ->
             Codec.fromJson countCodec j
 
-        [] ->
+        _ ->
             Ok 0
 
 
@@ -1484,7 +1953,7 @@ prepare : Dialect -> QuerySpec -> Result Error ( String, List SqlValue )
 prepare d spec =
     let
         src = spec.source
-        ctx = plainCtx d src.cols
+        ctx = specCtx d 0 "" spec
     in
         case storeError src.table src.pk src.cols src.problems of
 
@@ -1504,35 +1973,153 @@ prepare d spec =
                                 Err e
 
                             Ok ( selSql, selParams, aliases ) ->
-                                case whereClause ctx spec.conds of
+                                case fromClause ctx spec of
 
                                     Err e ->
                                         Err e
 
-                                    Ok ( whereSql, whereParams ) ->
-                                        case clauseTail ctx spec aliases of
+                                    Ok ( fromSql, fromParams ) ->
+                                        case whereClause ctx spec.conds of
 
                                             Err e ->
                                                 Err e
 
-                                            Ok ( tailSql, tailParams ) ->
-                                                case latestCheck ctx spec of
+                                            Ok ( whereSql, whereParams ) ->
+                                                case clauseTail ctx spec aliases of
 
                                                     Err e ->
                                                         Err e
 
-                                                    Ok window ->
-                                                        Ok
-                                                            ( assemble
-                                                                  spec
-                                                                  window
-                                                                  selSql
-                                                                  whereSql
-                                                                  tailSql
-                                                            , selParams
-                                                                  ++ whereParams
-                                                                  ++ tailParams
-                                                            )
+                                                    Ok ( tailSql, tailParams ) ->
+                                                        case latestCheck
+                                                                 ctx
+                                                                 spec of
+
+                                                            Err e ->
+                                                                Err e
+
+                                                            Ok window ->
+                                                                Ok
+                                                                    ( assemble
+                                                                          spec
+                                                                          window
+                                                                          fromSql
+                                                                          selSql
+                                                                          whereSql
+                                                                          tailSql
+                                                                    , selParams
+                                                                          ++ fromParams
+                                                                          ++ whereParams
+                                                                          ++ tailParams
+                                                                    )
+
+
+-- The FROM clause: the table, or `left a INNER|LEFT JOIN right b ON …`. On a
+-- LEFT join the `whereRight` conditions are part of ON.
+fromClause : Ctx -> QuerySpec -> Result Error ( String, List SqlValue )
+fromClause ctx spec =
+    if not spec.joined then
+        Ok ( spec.source.table, noParams )
+
+    else
+        let
+            r = spec.right
+        in
+            case storeError r.table r.pk r.cols r.problems of
+
+                Just e ->
+                    Err e
+
+                Nothing ->
+                    case onPairs ctx spec.onPairs [] of
+
+                        Err e ->
+                            Err e
+
+                        Ok onSql ->
+                            case onExtra ctx spec.onConds of
+
+                                Err e ->
+                                    Err e
+
+                                Ok ( extraSql, extraParams ) ->
+                                    Ok
+                                        ( spec.source.table
+                                              ++ (if spec.leftOuter then
+                                                     " a LEFT JOIN "
+
+                                                 else
+                                                     " a INNER JOIN ")
+                                              ++ r.table
+                                              ++ " b ON "
+                                              ++ onSql
+                                              ++ extraSql
+                                        , extraParams
+                                        )
+
+
+-- `a.x = b.y AND …`, each column checked on its own side, kinds equal.
+onPairs : Ctx -> List ( String, String ) -> List String -> Result Error String
+onPairs ctx pairs acc =
+    case pairs of
+
+        [] ->
+            case acc of
+
+                [] ->
+                    Err <| storeErr "a join needs at least one ON pair"
+
+                _ ->
+                    Ok (String.join " AND " (List.reverse acc))
+
+        ( lc, rc ) :: rest ->
+            case colRef { ctx | side = "left" } lc of
+
+                Err e ->
+                    Err e
+
+                Ok ( lSql, lk ) ->
+                    case colRef { ctx | side = "right" } rc of
+
+                        Err e ->
+                            Err e
+
+                        Ok ( rSql, rk ) ->
+                            if kindBase lk /= kindBase rk then
+                                Err
+                                    <| storeErr
+                                           ("join: ON \"" ++ lc ++ "\" is "
+                                               ++ kindBase lk
+                                               ++ " and \""
+                                               ++ rc
+                                               ++ "\" is "
+                                               ++ kindBase rk
+                                               ++ ": the ON columns must be of one kind")
+
+                            else
+                                onPairs
+                                    ctx
+                                    rest
+                                    ((lSql ++ " = " ++ rSql) :: acc)
+
+
+onExtra : Ctx -> List Cond -> Result Error ( String, List SqlValue )
+onExtra ctx conds =
+    case conds of
+
+        [] ->
+            Ok ( "", noParams )
+
+        _ ->
+            case renderCond
+                     { ctx | side = "right" }
+                     (CondAnd (List.reverse conds)) of
+
+                Err e ->
+                    Err e
+
+                Ok ( sql, params ) ->
+                    Ok ( " AND " ++ sql, params )
 
 
 -- `count`: the plain form keeps its text (`SELECT COUNT(*) AS n FROM t …`). A
@@ -1565,9 +2152,32 @@ isPlain spec =
 
         OutStar ->
             not spec.distinct && List.isEmpty spec.groups
-                && spec.latest == Nothing
+                && noLatest spec.latest
 
         _ ->
+            False
+
+
+-- A `case`, not `== Nothing`: the comparison is a run-time narrowing.
+noLatest : Maybe ( List String, String ) -> Bool
+noLatest latest =
+    case latest of
+
+        Nothing ->
+            True
+
+        Just _ ->
+            False
+
+
+isSetInt : Maybe Int -> Bool
+isSetInt m =
+    case m of
+
+        Just _ ->
+            True
+
+        Nothing ->
             False
 
 
@@ -1605,12 +2215,15 @@ shapeError spec =
                         Just
                             "latestPer cannot be combined with distinct, groupBy or aggregate"
 
+                    else if spec.joined then
+                        Just "latestPer cannot be combined with a join"
+
                     else
                         Nothing
 
 
-assemble : QuerySpec -> String -> String -> String -> String -> String
-assemble spec window selSql whereSql tailSql =
+assemble : QuerySpec -> String -> String -> String -> String -> String -> String
+assemble spec window fromSql selSql whereSql tailSql =
     let
         src = spec.source
         distinctKw =
@@ -1623,7 +2236,7 @@ assemble spec window selSql whereSql tailSql =
         case spec.latest of
 
             Nothing ->
-                "SELECT " ++ distinctKw ++ selSql ++ " FROM " ++ src.table
+                "SELECT " ++ distinctKw ++ selSql ++ " FROM " ++ fromSql
                     ++ whereSql
                     ++ tailSql
 
@@ -1683,7 +2296,27 @@ selectList ctx spec =
     case spec.out of
 
         OutStar ->
-            Ok ( "*", [], [] )
+            if not spec.joined then
+                Ok ( "*", [], [] )
+
+            else
+                case prefixedItems "a" spec.source.cols [] of
+
+                    Err e ->
+                        Err e
+
+                    Ok leftItems ->
+                        case prefixedItems "b" spec.right.cols [] of
+
+                            Err e ->
+                                Err e
+
+                            Ok rightItems ->
+                                Ok
+                                    ( String.join ", " (leftItems ++ rightItems)
+                                    , []
+                                    , []
+                                    )
 
         OutCount ->
             Ok ( "COUNT(*) AS n", [], [] )
@@ -1733,6 +2366,32 @@ selectList ctx spec =
                                         , params
                                         , aliases
                                         )
+
+
+-- `a.col AS "a__col", …`: every column of one side of a join, under a quoted
+-- alias so PostgreSQL keeps its case.
+prefixedItems : String -> List ( String, String ) -> List String -> Result Error (List String)
+prefixedItems q cols acc =
+    case cols of
+
+        [] ->
+            Ok (List.reverse acc)
+
+        ( c, _ ) :: rest ->
+            let
+                qname = q ++ "__" ++ c
+            in
+                if not (isIdent qname) then
+                    Err
+                        <| storeErr
+                               ("join: the result name \"" ++ qname
+                                   ++ "\" is longer than 63 bytes or not an identifier")
+
+                else
+                    prefixedItems
+                        q
+                        rest
+                        ((q ++ "." ++ c ++ " AS " ++ quoteAlias qname) :: acc)
 
 
 -- Each result column, read from the explicit source or the same-named column.
@@ -2167,8 +2826,8 @@ orderTerms ctx spec orders acc =
         [] ->
             Ok (List.reverse acc)
 
-        (OrderTerm col dir) :: rest ->
-            case orderTerm ctx spec col dir of
+        t :: rest ->
+            case orderTerm { ctx | side = t.side } spec t.col t.dir of
 
                 Err e ->
                     Err e
@@ -2179,7 +2838,10 @@ orderTerms ctx spec orders acc =
 
 orderTerm : Ctx -> QuerySpec -> String -> String -> Result Error String
 orderTerm ctx spec col dir =
-    if isAggregate spec.out then
+    if ctx.side /= "" && not ctx.joined then
+        Err <| storeErr (sideVerb ctx.side ++ " needs a join query")
+
+    else if isAggregate spec.out then
         -- After aggregate, an order term names a result field.
         let
             rc = resolveCol spec.outCols col
@@ -2227,7 +2889,23 @@ projectedRefs ctx spec =
                     []
 
         _ ->
-            colNamesList spec.source.cols
+            if spec.joined then
+                qualifiedNames "a" spec.source.cols
+                    ++ qualifiedNames "b" spec.right.cols
+
+            else
+                colNamesList spec.source.cols
+
+
+qualifiedNames : String -> List ( String, String ) -> List String
+qualifiedNames q cols =
+    case cols of
+
+        [] ->
+            []
+
+        ( c, _ ) :: rest ->
+            (q ++ "." ++ c) :: qualifiedNames q rest
 
 
 -- NULLs sort first ascending and last descending on both dialects (SQLite's
@@ -2296,17 +2974,59 @@ pageClause d limitN offsetN =
 type alias Ref =
     ( String, List SqlValue, String )
 
+-- `cols` is the store (the left store of a join), `right` the right store.
+-- `qual` qualifies a column in SQL: "" at the top level, "a" in a join,
+-- "sqN" in the subquery at depth N. `side` restricts a name to one side of a
+-- join ("left" / "right", from `whereLeft` / `whereRight` / `orderLeft*` /
+-- `orderRight*`). `table` names the top-level table for a correlated
+-- subquery's outer column.
 type alias Ctx =
     { dialect : Dialect
     , cols : List ( String, String )
     , aliases : List ( String, Ref )
     , having : Bool
+    , table : String
+    , qual : String
+    , right : List ( String, String )
+    , joined : Bool
+    , rightNull : Bool
+    , side : String
+    , depth : Int
     }
 
 
-plainCtx : Dialect -> List ( String, String ) -> Ctx
-plainCtx d cols =
-    { dialect = d, cols = cols, aliases = [], having = False }
+plainCtx : Dialect -> String -> List ( String, String ) -> Ctx
+plainCtx d table cols =
+    { dialect = d
+    , cols = cols
+    , aliases = []
+    , having = False
+    , table = table
+    , qual = ""
+    , right = []
+    , joined = False
+    , rightNull = False
+    , side = ""
+    , depth = 0
+    }
+
+
+specCtx : Dialect -> Int -> String -> QuerySpec -> Ctx
+specCtx d depth qual spec =
+    let
+        base = plainCtx d spec.source.table spec.source.cols
+    in
+        if spec.joined then
+            { base
+                | qual = "a"
+                , right = spec.right.cols
+                , joined = True
+                , rightNull = spec.leftOuter
+                , depth = depth
+            }
+
+        else
+            { base | qual = qual, depth = depth }
 
 
 renderCond : Ctx -> Cond -> Result Error ( String, List SqlValue )
@@ -2429,6 +3149,260 @@ renderCond ctx c =
 
                     else
                         Ok (textMatch ctx.dialect kind rSql rParams needle)
+
+        CondNest n ->
+            if ctx.having then
+                Err
+                    <| storeErr
+                           "having: whereLeft, whereRight, inQuery and exists do not apply"
+
+            else if n.kind == "side" then
+                if not ctx.joined then
+                    Err <| storeErr (sideVerb n.side ++ " needs a join query")
+
+                else
+                    renderCond { ctx | side = n.side } n.inner
+
+            else if n.kind == "in" then
+                inSql ctx n.col n.negated n.subCol n.sub
+
+            else
+                existsSql ctx n.negated n.source n.pairs n.inner
+
+
+-- `col [NOT] IN (SELECT …)`, the two columns of one kind.
+inSql : Ctx -> String -> Bool -> String -> QuerySpec -> Result Error ( String, List SqlValue )
+inSql ctx col negated subCol sub =
+    case refOf ctx col of
+
+        Err e ->
+            Err e
+
+        Ok ( oSql, oParams, ok ) ->
+            case subSelect ctx subCol sub of
+
+                Err e ->
+                    Err e
+
+                Ok ( sSql, sParams, ik ) ->
+                    if kindBase ok /= kindBase ik then
+                        Err
+                            <| storeErr
+                                   ("inQuery \"" ++ col ++ "\" is "
+                                       ++ kindBase ok
+                                       ++ " but the subquery column is "
+                                       ++ kindBase ik)
+
+                    else
+                        Ok
+                            ( oSql
+                                  ++ (if negated then
+                                         " NOT IN ("
+
+                                     else
+                                         " IN (")
+                                  ++ sSql
+                                  ++ ")"
+                            , oParams ++ sParams
+                            )
+
+
+-- `SELECT sqN.col FROM t sqN WHERE (…) AND sqN.col IS NOT NULL …`, checked
+-- against the inner store's codec. Returns the text, params and column kind.
+subSelect : Ctx -> String -> QuerySpec -> Result Error ( String, List SqlValue, String )
+subSelect ctx col spec =
+    let
+        depth = ctx.depth + 1
+        qname = "sq" ++ String.fromInt depth
+        src = spec.source
+        ictx = specCtx ctx.dialect depth qname spec
+    in
+        case storeError src.table src.pk src.cols src.problems of
+
+            Just e ->
+                Err e
+
+            Nothing ->
+                case subShapeError spec of
+
+                    Just msg ->
+                        Err <| storeErr ("column \"" ++ col ++ "\": " ++ msg)
+
+                    Nothing ->
+                        case refOf ictx col of
+
+                            Err e ->
+                                Err e
+
+                            Ok ( cSql, cParams, k ) ->
+                                case whereClause ictx spec.conds of
+
+                                    Err e ->
+                                        Err e
+
+                                    Ok ( whereSql, whereParams ) ->
+                                        case orderClause ictx spec of
+
+                                            Err e ->
+                                                Err e
+
+                                            Ok orderSql ->
+                                                case pageClause
+                                                         ctx.dialect
+                                                         spec.limitN
+                                                         spec.offsetN of
+
+                                                    Err e ->
+                                                        Err e
+
+                                                    Ok pageSql ->
+                                                        Ok
+                                                            ( "SELECT " ++ cSql
+                                                                  ++ " FROM "
+                                                                  ++ src.table
+                                                                  ++ " "
+                                                                  ++ qname
+                                                                  ++ (if whereSql
+                                                                         == "" then
+                                                                         " WHERE "
+
+                                                                     else
+                                                                         whereSql
+                                                                             ++ " AND ")
+                                                                  ++ cSql
+                                                                  ++ " IS NOT NULL"
+                                                                  ++ orderSql
+                                                                  ++ pageSql
+                                                            , cParams
+                                                                  ++ whereParams
+                                                                  ++ cParams
+                                                            , k
+                                                            )
+
+
+-- What a subquery may hold: one store, `where_`, order and paging.
+subShapeError : QuerySpec -> Maybe String
+subShapeError spec =
+    if spec.joined then
+        Just "a subquery reads one store, not a join"
+
+    else if not (isPlain spec) then
+        Just
+            "a subquery takes where_, orderAsc / orderDesc, limit and offset only (no select, aggregate, groupBy, distinct or latestPer)"
+
+    else if (isSetInt spec.limitN || isSetInt spec.offsetN) && List.isEmpty spec.orders then
+        Just
+            "limit or offset in a subquery needs orderAsc / orderDesc, else the rows it keeps are not defined"
+
+    else
+        Nothing
+
+
+-- `[NOT] EXISTS (SELECT 1 FROM t sqN WHERE sqN.x = outer.y AND (cond))`.
+existsSql : Ctx -> Bool -> Source -> List ( String, String ) -> Cond -> Result Error ( String, List SqlValue )
+existsSql ctx negated src pairs inner =
+    let
+        depth = ctx.depth + 1
+        qname = "sq" ++ String.fromInt depth
+        base = plainCtx ctx.dialect src.table src.cols
+        ictx = { base | qual = qname, depth = depth }
+        octx =
+            if ctx.qual == "" && not ctx.joined then
+                { ctx | qual = ctx.table }
+
+            else
+                ctx
+    in
+        case storeError src.table src.pk src.cols src.problems of
+
+            Just e ->
+                Err e
+
+            Nothing ->
+                case correlations ictx octx pairs [] of
+
+                    Err e ->
+                        Err e
+
+                    Ok corrSql ->
+                        case renderCond ictx inner of
+
+                            Err e ->
+                                Err e
+
+                            Ok ( cSql, cParams ) ->
+                                Ok
+                                    ( (if negated then
+                                          "NOT EXISTS (SELECT 1 FROM "
+
+                                      else
+                                          "EXISTS (SELECT 1 FROM ")
+                                          ++ src.table
+                                          ++ " "
+                                          ++ qname
+                                          ++ " WHERE "
+                                          ++ corrSql
+                                          ++ " AND ("
+                                          ++ cSql
+                                          ++ "))"
+                                    , cParams
+                                    )
+
+
+-- `inner = outer AND …`: the inner column on the exists store, the outer
+-- column on the query (or the written store), kinds equal.
+correlations : Ctx -> Ctx -> List ( String, String ) -> List String -> Result Error String
+correlations ictx octx pairs acc =
+    case pairs of
+
+        [] ->
+            case acc of
+
+                [] ->
+                    Err <| storeErr "exists needs at least one correlate pair"
+
+                _ ->
+                    Ok (String.join " AND " (List.reverse acc))
+
+        ( ic, oc ) :: rest ->
+            case colRef ictx ic of
+
+                Err e ->
+                    Err e
+
+                Ok ( iSql, ik ) ->
+                    case colRef octx oc of
+
+                        Err e ->
+                            Err e
+
+                        Ok ( oSql, ok ) ->
+                            if kindBase ik /= kindBase ok then
+                                Err
+                                    <| storeErr
+                                           ("correlate \"" ++ ic ++ "\" is "
+                                               ++ kindBase ik
+                                               ++ " and \""
+                                               ++ oc
+                                               ++ "\" is "
+                                               ++ kindBase ok
+                                               ++ ": correlate columns of one kind")
+
+                            else
+                                correlations
+                                    ictx
+                                    octx
+                                    rest
+                                    ((iSql ++ " = " ++ oSql) :: acc)
+
+
+sideVerb : String -> String
+sideVerb side =
+    if side == "left" then
+        "whereLeft / orderLeftAsc / orderLeftDesc"
+
+    else
+        "whereRight / orderRightAsc / orderRightDesc"
 
 
 -- The text conditions. `%`, `_` and `!` in a needle are escaped with `!`
@@ -2590,26 +3564,119 @@ refOf ctx name =
         case String.split "->>" name of
 
             [ col, jsonKey ] ->
-                jsonRef ctx col jsonKey
+                case colRef ctx col of
+
+                    Err e ->
+                        Err e
+
+                    Ok ( cSql, k ) ->
+                        jsonRef ctx.dialect col cSql k jsonKey
 
             _ ->
-                let
-                    col = resolveCol ctx.cols name
-                in
-                    case lookupKind col ctx.cols of
+                case colRef ctx name of
 
-                        Nothing ->
-                            Err <| unknownColErr name ctx.cols
+                    Err e ->
+                        Err e
 
-                        Just k ->
-                            if isIdent col then
-                                Ok ( col, [], k )
+                    Ok ( cSql, k ) ->
+                        Ok ( cSql, noParams, k )
 
-                            else
-                                Err
-                                    <| storeErr
-                                           ("column \"" ++ col
-                                               ++ "\" is not a valid identifier")
+
+-- A column name to its SQL and kind. In a join `"a.col"` / `"b.col"` pick a
+-- side, `side` restricts a bare name to one side, and a bare name both sides
+-- have is an `Err`. A right column of a LEFT join is nullable.
+colRef : Ctx -> String -> Result Error ( String, String )
+colRef ctx name =
+    if not ctx.joined then
+        sideCol ctx.qual ctx.cols False name name
+
+    else
+        case String.split "." name of
+
+            [ q, bare ] ->
+                if q == "a" then
+                    sideCol "a" ctx.cols False name bare
+
+                else if q == "b" then
+                    sideCol "b" ctx.right ctx.rightNull name bare
+
+                else
+                    Err (unknownColErr name (ctx.cols ++ ctx.right))
+
+            _ ->
+                if ctx.side == "left" then
+                    sideCol "a" ctx.cols False name name
+
+                else if ctx.side == "right" then
+                    sideCol "b" ctx.right ctx.rightNull name name
+
+                else
+                    let
+                        inLeft = hasCol name ctx.cols
+                        inRight = hasCol name ctx.right
+                    in
+                        if inLeft && inRight then
+                            Err
+                                <| storeErr
+                                       ("column \"" ++ name
+                                           ++ "\" is in both stores of the join: write \"a."
+                                           ++ name
+                                           ++ "\" or \"b."
+                                           ++ name
+                                           ++ "\"")
+
+                        else if inRight then
+                            sideCol "b" ctx.right ctx.rightNull name name
+
+                        else if inLeft then
+                            sideCol "a" ctx.cols False name name
+
+                        else
+                            Err (unknownColErr name (ctx.cols ++ ctx.right))
+
+
+sideCol : String -> List ( String, String ) -> Bool -> String -> String -> Result Error ( String, String )
+sideCol qual cols nullable name bare =
+    let
+        col = resolveCol cols bare
+    in
+        case lookupKind col cols of
+
+            Nothing ->
+                Err <| unknownColErr name cols
+
+            Just k ->
+                if not (isIdent col) then
+                    Err
+                        <| storeErr
+                               ("column \"" ++ col
+                                   ++ "\" is not a valid identifier")
+
+                else if nullable && not (kindNullable k) then
+                    Ok ( qualified qual col, kindBase k ++ "?" )
+
+                else
+                    Ok ( qualified qual col, k )
+
+
+hasCol : String -> List ( String, String ) -> Bool
+hasCol name cols =
+    case lookupKind (resolveCol cols name) cols of
+
+        Just _ ->
+            True
+
+        Nothing ->
+            False
+
+
+qualified : String -> String -> String
+qualified q col =
+    if q == "" then
+        col
+
+    else
+        q ++ "." ++ col
 
 
 aliasRef : String -> List ( String, Ref ) -> Maybe Ref
@@ -2627,58 +3694,47 @@ aliasRef rc aliases =
                 aliasRef rc rest
 
 
-jsonRef : Ctx -> String -> String -> Result Error Ref
-jsonRef ctx name jsonKey =
-    let
-        col = resolveCol ctx.cols name
-    in
-        case lookupKind col ctx.cols of
+-- A key of a JSON text column, `cSql` being the column's SQL.
+jsonRef : Dialect -> String -> String -> String -> String -> Result Error Ref
+jsonRef d name cSql k jsonKey =
+    if kindBase k /= "text" && kindBase k /= "blob" then
+        Err
+            <| storeErr
+                   ("jsonText \"" ++ name ++ "\": the column is " ++ kindBase k
+                       ++ ", not a JSON text column")
 
-            Nothing ->
-                Err <| unknownColErr name ctx.cols
+    else if not (isIdent jsonKey) then
+        Err
+            <| storeErr
+                   ("jsonText \"" ++ name ++ "\" \"" ++ jsonKey
+                       ++ "\": the key is not a valid identifier")
 
-            Just k ->
-                if kindBase k /= "text" && kindBase k /= "blob" then
-                    Err
-                        <| storeErr
-                               ("jsonText \"" ++ name ++ "\": the column is "
-                                   ++ kindBase k
-                                   ++ ", not a JSON text column")
+    else
+        case d of
 
-                else if not (isIdent col) || not (isIdent jsonKey) then
-                    Err
-                        <| storeErr
-                               ("jsonText \"" ++ name ++ "\" \"" ++ jsonKey
-                                   ++ "\": the key is not a valid identifier")
+            Postgres ->
+                Ok
+                    ( "(CAST(" ++ cSql ++ " AS jsonb) ->> '" ++ jsonKey ++ "')"
+                    , noParams
+                    , "text?"
+                    )
 
-                else
-                    case ctx.dialect of
-
-                        Postgres ->
-                            Ok
-                                ( "(CAST(" ++ col ++ " AS jsonb) ->> '"
-                                      ++ jsonKey
-                                      ++ "')"
-                                , noParams
-                                , "text?"
-                                )
-
-                        Sqlite ->
-                            -- json_type first, so a JSON boolean reads 'true' /
-                            -- 'false' as it does through PostgreSQL's ->>.
-                            let
-                                path = "'$." ++ jsonKey ++ "'"
-                            in
-                                Ok
-                                    ( "(CASE json_type(" ++ col ++ ", " ++ path
-                                          ++ ") WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE CAST(json_extract("
-                                          ++ col
-                                          ++ ", "
-                                          ++ path
-                                          ++ ") AS TEXT) END)"
-                                    , noParams
-                                    , "text?"
-                                    )
+            Sqlite ->
+                -- json_type first, so a JSON boolean reads 'true' / 'false' as
+                -- it does through PostgreSQL's ->>.
+                let
+                    path = "'$." ++ jsonKey ++ "'"
+                in
+                    Ok
+                        ( "(CASE json_type(" ++ cSql ++ ", " ++ path
+                              ++ ") WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE CAST(json_extract("
+                              ++ cSql
+                              ++ ", "
+                              ++ path
+                              ++ ") AS TEXT) END)"
+                        , noParams
+                        , "text?"
+                        )
 
 
 refList : Ctx -> List String -> List String -> Result Error (List String)
@@ -2707,7 +3763,7 @@ writeWhere d name pk cols problems cond =
             Err e
 
         Nothing ->
-            renderCond (plainCtx d cols) cond
+            renderCond (plainCtx d name cols) cond
 
 
 -- `UPDATE t SET c = ? …` (or `c = c + ?` for `adjust`) `WHERE …`.
@@ -3078,9 +4134,9 @@ dbExecObjectWith =
     Ffi.kernel "Db_execObjectWith"
 
 
-dbQueryObjectsV : Db -> String -> List SqlValue -> List ( String, String ) -> Task Error (List String)
-dbQueryObjectsV =
-    Ffi.kernel "Db_queryObjects"
+dbQueryObjectGroups : Db -> String -> List SqlValue -> List ( String, String, List ( String, String ) ) -> Task Error (List (List String))
+dbQueryObjectGroups =
+    Ffi.kernel "Db_queryObjectGroups"
 
 
 dbExecV : Db -> String -> List SqlValue -> Task Error Int

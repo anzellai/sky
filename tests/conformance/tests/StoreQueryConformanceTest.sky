@@ -10,6 +10,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.Task as Task
 import Sky.Core.Result as Result
+import Sky.Core.Maybe as Maybe
 import Sky.Core.System as System
 import Sky.Core.String as String
 import Std.Db as Db exposing (SqlValue(..))
@@ -474,7 +475,12 @@ byDialect sqlite postgres =
 
 setup : () -> Result Error Db
 setup _ =
-    Task.run (openDb () |> Task.andThen (\db -> seed db |> Task.map (\_ -> db)))
+    Task.run
+        (openDb ()
+            |> Task.andThen
+                   (\db ->
+                       seed db |> Task.andThen (\_ -> seedJoins db)
+                           |> Task.map (\_ -> db)))
 
 
 ids : List Order -> List String
@@ -1417,6 +1423,973 @@ columnAndJsonTests db =
                                          (SqlString "web"))))))
     ]
 
+-- ── Item 2 and item 4: joins and subquery conditions ─────────────────────────
+type alias Client =
+    { id : String
+    , regionId : String
+    , name : String
+    , archived : Bool
+    }
+
+
+clientCodec : Codec Client
+clientCodec =
+    Codec.auto { id = "", regionId = "", name = "", archived = False }
+
+
+clients : Store Client
+clients =
+    Store.fromCodec "sqc_clients" clientCodec |> Store.primaryKey "id"
+
+
+emptyClients : Store Client
+emptyClients =
+    Store.fromCodec "sqc_clients_empty" clientCodec |> Store.primaryKey "id"
+
+
+clientRows : List Client
+clientRows =
+    [ { id = "c1", regionId = "r1", name = "Ada", archived = False }
+    , { id = "c2", regionId = "r1", name = "Bo", archived = True }
+    , { id = "c3", regionId = "r2", name = "Cy", archived = False }
+    , { id = "c4", regionId = "r1", name = "Di", archived = False }
+    ]
+
+type alias Bill =
+    { id : String
+    , regionId : String
+    , clientId : String
+    , sentAt : Int
+    , amount : Int
+    }
+
+
+billCodec : Codec Bill
+billCodec =
+    Codec.auto { id = "", regionId = "", clientId = "", sentAt = 0, amount = 0 }
+
+
+bills : Store Bill
+bills =
+    Store.fromCodec "sqc_bills" billCodec |> Store.primaryKey "id"
+
+
+emptyBills : Store Bill
+emptyBills =
+    Store.fromCodec "sqc_bills_empty" billCodec |> Store.primaryKey "id"
+
+
+bill : String -> String -> String -> Int -> Int -> Bill
+bill id regionId clientId sentAt amount =
+    { id = id
+    , regionId = regionId
+    , clientId = clientId
+    , sentAt = sentAt
+    , amount = amount
+    }
+
+
+-- b3 is in another region than its client; b6 has no client.
+billRows : List Bill
+billRows =
+    [ bill "b1" "r1" "c1" 100 10
+    , bill "b2" "r1" "c1" 200 20
+    , bill "b3" "r2" "c1" 300 30
+    , bill "b4" "r1" "c2" 400 5
+    , bill "b5" "r2" "c3" 50 7
+    , bill "b6" "r1" "c9" 60 8
+    ]
+
+type alias Batch =
+    { id : Int
+    , createdAt : Int
+    }
+
+
+batches : Store Batch
+batches =
+    Store.fromCodec "sqc_batches" (Codec.auto { id = 0, createdAt = 0 })
+        |> Store.primaryKey "id"
+
+type alias ImportRow =
+    { id : String
+    , batchId : Maybe Int
+    }
+
+
+importRowCodec : Codec ImportRow
+importRowCodec =
+    Codec.auto { id = "", batchId = Nothing }
+
+
+importRows : Store ImportRow
+importRows =
+    Store.fromCodec "sqc_import_rows" importRowCodec |> Store.primaryKey "id"
+
+
+-- The delete test's own copy, so the other tests read the full set.
+importRowsDel : Store ImportRow
+importRowsDel =
+    Store.fromCodec "sqc_import_rows_del" importRowCodec
+        |> Store.primaryKey "id"
+
+
+importRowList : List ImportRow
+importRowList =
+    [ { id = "r1", batchId = Just 1 }
+    , { id = "r2", batchId = Just 1 }
+    , { id = "r3", batchId = Just 2 }
+    , { id = "r4", batchId = Just 3 }
+    , { id = "r5", batchId = Nothing }
+    ]
+
+type alias BillClient =
+    { billId : String
+    , clientId : String
+    }
+
+
+billClientCodec : Codec BillClient
+billClientCodec =
+    Codec.auto { billId = "", clientId = "" }
+
+type alias BillName =
+    { billId : String
+    , clientName : Maybe String
+    }
+
+
+billNameCodec : Codec BillName
+billNameCodec =
+    Codec.object BillName |> Codec.field "billId" .billId Codec.string
+        |> Codec.field "clientName" .clientName (Codec.maybe Codec.string)
+        |> Codec.buildObject
+
+type alias BillNameStrict =
+    { billId : String
+    , clientName : String
+    }
+
+
+billNameStrictCodec : Codec BillNameStrict
+billNameStrictCodec =
+    Codec.auto { billId = "", clientName = "" }
+
+type alias NameTotal =
+    { name : String
+    , total : Int
+    }
+
+
+nameTotalCodec : Codec NameTotal
+nameTotalCodec =
+    Codec.auto { name = "", total = 0 }
+
+
+seedJoins : Db -> Task Error ()
+seedJoins db =
+    Task.sequence
+        [ drop db "sqc_clients"
+        , drop db "sqc_clients_empty"
+        , drop db "sqc_bills"
+        , drop db "sqc_bills_empty"
+        , drop db "sqc_batches"
+        , drop db "sqc_import_rows"
+        , drop db "sqc_import_rows_del"
+        , unit (Store.migrate db clients)
+        , unit (Store.migrate db emptyClients)
+        , unit (Store.migrate db bills)
+        , unit (Store.migrate db emptyBills)
+        , unit (Store.migrate db batches)
+        , unit (Store.migrate db importRows)
+        , unit (Store.migrate db importRowsDel)
+        , unit (Store.insertMany db clients clientRows)
+        , unit (Store.insertMany db bills billRows)
+        , unit
+              (Store.insertMany
+                  db
+                  batches
+                  [ { id = 1, createdAt = 100 }
+                  , { id = 2, createdAt = 200 }
+                  , { id = 3, createdAt = 900 }
+                  ])
+        , unit (Store.insertMany db importRows importRowList)
+        , unit (Store.insertMany db importRowsDel importRowList)
+        ]
+        |> unit
+
+
+pairIds : List ( Bill, Client ) -> List ( String, String )
+pairIds pairs =
+    List.map (\( b, c ) -> ( b.id, c.id )) pairs
+
+
+-- The tenancy join of the request: two ON pairs, a condition on each side.
+tenancyJoin : Store.Query ( Bill, Client )
+tenancyJoin =
+    Store.join
+        bills
+        clients
+        (Store.onAll [ ( "region_id", "region_id" ), ( "client_id", "id" ) ])
+        |> Store.whereLeft (Store.eq "region_id" (SqlString "r1"))
+        |> Store.whereRight (Store.eq "archived" (SqlBool False))
+        |> Store.orderLeftDesc "sent_at"
+        |> Store.limit 50
+
+
+oldBatchIds : Store.Subquery
+oldBatchIds =
+    Store.query batches |> Store.where_ (Store.lt "created_at" (SqlInt 500))
+        |> Store.column "id"
+
+
+clientIds : Db -> Store.Cond -> Result Error (List String)
+clientIds db cond =
+    Task.run
+        (Store.toList
+            db
+            (Store.query clients |> Store.where_ cond |> Store.orderAsc "id"))
+        |> Result.map (List.map .id)
+
+
+importIds : Db -> Store ImportRow -> Store.Cond -> Result Error (List String)
+importIds db store cond =
+    Task.run
+        (Store.toList
+            db
+            (Store.query store |> Store.where_ cond |> Store.orderAsc "id"))
+        |> Result.map (List.map .id)
+
+
+joinTests : Db -> List Test
+joinTests db =
+    [ Test.test
+          "join: toSql renders the qualified, quoted SELECT and the ON pairs"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      "SELECT a.id AS \"a__id\", a.region_id AS \"a__region_id\", a.client_id AS \"a__client_id\", a.sent_at AS \"a__sent_at\", a.amount AS \"a__amount\", b.id AS \"b__id\", b.region_id AS \"b__region_id\", b.name AS \"b__name\", b.archived AS \"b__archived\" FROM sqc_bills a INNER JOIN sqc_clients b ON a.region_id = b.region_id AND a.client_id = b.id WHERE (a.region_id = ? AND b.archived = ?) ORDER BY a.sent_at DESC LIMIT 50")
+                  (sqlOnly (Store.toSql db tenancyJoin)))
+    , Test.test
+          "join: toSql binds the whereLeft value before the whereRight value"
+          (\_ ->
+              Test.equal
+                  (Ok [ SqlString "r1", SqlBool False ])
+                  (Store.toSql db tenancyJoin |> Result.map (\( _, ps ) -> ps)))
+    , Test.test
+          "join: toPairs gives the matching pairs, both ON pairs and both conditions applied"
+          (\_ ->
+              Test.equal
+                  (Ok [ ( "b2", "c1" ), ( "b1", "c1" ) ])
+                  (Task.run (Store.toPairs db tenancyJoin) |> Result.map pairIds))
+    , Test.test
+          "join: the pairs equal a hand-written join through selectRaw"
+          (\_ ->
+              Test.equal
+                  (Task.run
+                      (Store.selectRaw
+                          db
+                          billClientCodec
+                          "SELECT x.id AS bill_id, y.id AS client_id FROM sqc_bills x JOIN sqc_clients y ON x.region_id = y.region_id AND x.client_id = y.id WHERE x.region_id = ? AND y.archived = ? ORDER BY x.sent_at DESC"
+                          [ SqlString "r1", SqlBool False ])
+                      |> Result.map (List.map (\r -> ( r.billId, r.clientId ))))
+                  (Task.run (Store.toPairs db tenancyJoin) |> Result.map pairIds))
+    , Test.test
+          "join: toPairs decodes both whole records"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ ( bill "b1" "r1" "c1" 100 10
+                        , { id = "c1"
+                          , regionId = "r1"
+                          , name = "Ada"
+                          , archived = False
+                          }
+                        )
+                      ])
+                  (Task.run
+                      (Store.toPairs
+                          db
+                          (Store.join bills clients (Store.on "client_id" "id")
+                              |> Store.whereLeft
+                                     (Store.eq "id" (SqlString "b1"))))))
+    , Test.test
+          "join: count counts the joined rows"
+          (\_ ->
+              Test.equal
+                  (Ok 4)
+                  (Task.run
+                      (Store.count
+                          db
+                          (Store.join bills clients (Store.on "client_id" "id")
+                              |> Store.whereRight
+                                     (Store.eq "archived" (SqlBool False))))))
+    , Test.test
+          "leftJoin: an unmatched left row gives Nothing"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ ( "b1", Just "Ada" )
+                      , ( "b2", Just "Ada" )
+                      , ( "b3", Just "Ada" )
+                      , ( "b4", Just "Bo" )
+                      , ( "b5", Just "Cy" )
+                      , ( "b6", Nothing )
+                      ])
+                  (Task.run
+                      (Store.toPairsMaybe
+                          db
+                          (Store.leftJoin
+                              bills
+                              clients
+                              (Store.on "client_id" "id")
+                              |> Store.orderLeftAsc "id"))
+                      |> Result.map
+                             (List.map
+                                 (\( b, mc ) -> ( b.id, Maybe.map .name mc )))))
+    , Test.test
+          "leftJoin: whereRight goes into ON and keeps every left row"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ ( "b1", Just "c1" )
+                      , ( "b2", Just "c1" )
+                      , ( "b3", Just "c1" )
+                      , ( "b4", Nothing )
+                      , ( "b5", Just "c3" )
+                      , ( "b6", Nothing )
+                      ])
+                  (Task.run
+                      (Store.toPairsMaybe
+                          db
+                          (Store.leftJoin
+                              bills
+                              clients
+                              (Store.on "client_id" "id")
+                              |> Store.whereRight
+                                     (Store.eq "archived" (SqlBool False))
+                              |> Store.orderLeftAsc "id"))
+                      |> Result.map
+                             (List.map (\( b, mc ) -> ( b.id, Maybe.map .id mc )))))
+    , Test.test
+          "leftJoin: toSql puts whereRight into ON"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      "SELECT a.id AS \"a__id\", a.region_id AS \"a__region_id\", a.client_id AS \"a__client_id\", a.sent_at AS \"a__sent_at\", a.amount AS \"a__amount\", b.id AS \"b__id\", b.region_id AS \"b__region_id\", b.name AS \"b__name\", b.archived AS \"b__archived\" FROM sqc_bills a LEFT JOIN sqc_clients b ON a.client_id = b.id AND (b.archived = ?) ORDER BY a.id ASC")
+                  (sqlOnly
+                      (Store.toSql
+                          db
+                          (Store.leftJoin
+                              bills
+                              clients
+                              (Store.on "client_id" "id")
+                              |> Store.whereRight
+                                     (Store.eq "archived" (SqlBool False))
+                              |> Store.orderLeftAsc "id"))))
+    , Test.test
+          "leftJoin: a right column read into a non-Maybe field is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.leftJoin
+                              bills
+                              clients
+                              (Store.on "client_id" "id")
+                              |> Store.selectAs
+                                     billNameStrictCodec
+                                     [ ( "billId", "a.id" )
+                                     , ( "clientName", "b.name" )
+                                     ]))))
+    , Test.test
+          "leftJoin: a right column reads into a Maybe field"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ { billId = "b5", clientName = Just "Cy" }
+                      , { billId = "b6", clientName = Nothing }
+                      ])
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.leftJoin
+                              bills
+                              clients
+                              (Store.on "client_id" "id")
+                              |> Store.selectAs
+                                     billNameCodec
+                                     [ ( "billId", "a.id" )
+                                     , ( "clientName", "b.name" )
+                                     ]
+                              |> Store.where_
+                                     (Store.inList
+                                         "a.id"
+                                         [ SqlString "b5", SqlString "b6" ])
+                              |> Store.orderAsc "a.id"))))
+    , Test.test
+          "join: groupBy and aggregate over a join"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ { name = "Ada", total = 60 }
+                      , { name = "Bo", total = 5 }
+                      , { name = "Cy", total = 7 }
+                      ])
+                  (Task.run
+                      (Store.toRows
+                          db
+                          (Store.join bills clients (Store.on "client_id" "id")
+                              |> Store.groupBy [ "b.name" ]
+                              |> Store.aggregate
+                                     nameTotalCodec
+                                     [ Store.keyAs "name" "b.name"
+                                     , Store.sumAs "total" "a.amount"
+                                     ]
+                              |> Store.orderAsc "name"))))
+    , Test.test
+          "join: a self join pairs a row with its siblings"
+          (\_ ->
+              Test.equal
+                  (Ok [ ( "b1", "b1" ), ( "b1", "b2" ), ( "b1", "b3" ) ])
+                  (Task.run
+                      (Store.toPairs
+                          db
+                          (Store.join
+                              bills
+                              bills
+                              (Store.on "client_id" "client_id")
+                              |> Store.whereLeft
+                                     (Store.eq "id" (SqlString "b1"))
+                              |> Store.orderRightAsc "id"))
+                      |> Result.map (List.map (\( x, y ) -> ( x.id, y.id )))))
+    , Test.test
+          "join: camelCase columns read back on both sides (quoted aliases)"
+          (\_ ->
+              let
+                  _ =
+                      Task.run
+                          (Store.insert
+                              db
+                              prices
+                              { id = "pj", priceMinor = 4200 })
+              in
+                  Test.equal
+                      (Ok [ ( 4200, 4200 ) ])
+                      (Task.run
+                          (Store.toPairs
+                              db
+                              (Store.join prices prices (Store.on "id" "id")
+                                  |> Store.whereLeft
+                                         (Store.eq "id" (SqlString "pj"))))
+                          |> Result.map
+                                 (List.map
+                                     (\( x, y ) -> ( x.priceMinor, y.priceMinor )))))
+    , Test.test
+          "join: an empty right table gives no pairs"
+          (\_ ->
+              Test.equal
+                  (Ok [])
+                  (Task.run
+                      (Store.toPairs
+                          db
+                          (Store.join
+                              bills
+                              emptyClients
+                              (Store.on "client_id" "id")))
+                      |> Result.map pairIds))
+    , Test.test
+          "leftJoin: an empty right table gives Nothing for every left row"
+          (\_ ->
+              Test.equal
+                  (Ok [ Nothing, Nothing, Nothing, Nothing, Nothing, Nothing ])
+                  (Task.run
+                      (Store.toPairsMaybe
+                          db
+                          (Store.leftJoin
+                              bills
+                              emptyClients
+                              (Store.on "client_id" "id")))
+                      |> Result.map (List.map (\( _, mc ) -> Maybe.map .id mc))))
+    , Test.test
+          "join: a column both stores have must be qualified"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toPairs
+                          db
+                          (Store.join bills clients (Store.on "client_id" "id")
+                              |> Store.where_
+                                     (Store.eq "region_id" (SqlString "r1"))))))
+    , Test.test
+          "join: an unknown right column is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toPairs
+                          db
+                          (Store.join bills clients (Store.on "client_id" "id")
+                              |> Store.whereRight
+                                     (Store.eq "nope" (SqlString "x"))))))
+    , Test.test
+          "join: an unknown ON column is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toPairs
+                          db
+                          (Store.join bills clients (Store.on "client_id" "nope")))))
+    , Test.test
+          "join: ON columns of two kinds are refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toPairs
+                          db
+                          (Store.join bills clients (Store.on "amount" "id")))))
+    , Test.test
+          "join: onAll [] is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toPairs
+                          db
+                          (Store.join bills clients (Store.onAll [])))))
+    , Test.test
+          "join: an injection in a qualified name is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toPairs
+                          db
+                          (Store.join bills clients (Store.on "client_id" "id")
+                              |> Store.where_
+                                     (Store.eq
+                                         "a.id = a.id; DROP TABLE sqc_clients; --"
+                                         (SqlString "x"))))))
+    , Test.test
+          "join: the refused query left sqc_clients in place"
+          (\_ ->
+              Test.equal
+                  (Ok 4)
+                  (Task.run (Store.count db (Store.query clients))))
+    , Test.test
+          "orderLeftDesc on a query that is not a join is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query bills |> Store.orderLeftDesc "sent_at"))))
+    , Test.test
+          "whereLeft on a query that is not a join is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query bills |> Store.whereLeft (Store.and_ [])))))
+    , Test.test
+          "join: latestPer on a join is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.join bills clients (Store.on "client_id" "id")
+                              |> Store.latestPer [ "a.client_id" ] "a.sent_at"))))
+    ]
+
+
+subqueryTests : Db -> List Test
+subqueryTests db =
+    [ Test.test
+          "inQuery: toSql renders the subquery with its own alias and IS NOT NULL"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      "SELECT * FROM sqc_import_rows WHERE (batch_id IN (SELECT sq1.id FROM sqc_batches sq1 WHERE (sq1.created_at < ?) AND sq1.id IS NOT NULL))")
+                  (sqlOnly
+                      (Store.toSql
+                          db
+                          (Store.query importRows
+                              |> Store.where_
+                                     (Store.inQuery "batch_id" oldBatchIds)))))
+    , Test.test
+          "inQuery: the rows of the old batches"
+          (\_ ->
+              Test.equal
+                  (Ok [ "r1", "r2", "r3" ])
+                  (importIds db importRows (Store.inQuery "batch_id" oldBatchIds)))
+    , Test.test
+          "notInQuery: an outer NULL is left out when the inner set has rows"
+          (\_ ->
+              Test.equal
+                  (Ok [ "r4" ])
+                  (importIds
+                      db
+                      importRows
+                      (Store.notInQuery "batch_id" oldBatchIds)))
+    , Test.test
+          "not_ (inQuery …) is the same as notInQuery"
+          (\_ ->
+              Test.equal
+                  (Ok [ "r4" ])
+                  (importIds
+                      db
+                      importRows
+                      (Store.not_ (Store.inQuery "batch_id" oldBatchIds))))
+    , Test.test
+          "notInQuery: an outer NULL is kept when the inner set is empty"
+          (\_ ->
+              Test.equal
+                  (Ok [ "r1", "r2", "r3", "r4", "r5" ])
+                  (importIds
+                      db
+                      importRows
+                      (Store.notInQuery
+                          "batch_id"
+                          (Store.query batches
+                              |> Store.where_ (Store.lt "created_at" (SqlInt 0))
+                              |> Store.column "id"))))
+    , Test.test
+          "notInQuery: a NULL in the inner column does not empty the result"
+          (\_ ->
+              Test.equal
+                  (Ok [ 1, 2 ])
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query batches
+                              |> Store.where_
+                                     (Store.notInQuery
+                                         "id"
+                                         (Store.query importRows
+                                             |> Store.where_
+                                                    (Store.inList
+                                                        "id"
+                                                        [ SqlString "r4"
+                                                        , SqlString "r5"
+                                                        ])
+                                             |> Store.column "batch_id"))
+                              |> Store.orderAsc "id"))
+                      |> Result.map (List.map .id)))
+    , Test.test
+          "inQuery: an ordered limit in the subquery"
+          (\_ ->
+              Test.equal
+                  (Ok [ "r3" ])
+                  (importIds
+                      db
+                      importRows
+                      (Store.inQuery
+                          "batch_id"
+                          (Store.query batches |> Store.orderDesc "created_at"
+                              |> Store.limit 1
+                              |> Store.offset 1
+                              |> Store.column "id"))))
+    , Test.test
+          "inQuery: a limit with no order is refused"
+          (\_ ->
+              storeRefused
+                  (importIds
+                      db
+                      importRows
+                      (Store.inQuery
+                          "batch_id"
+                          (Store.query batches |> Store.limit 1
+                              |> Store.column "id"))))
+    , Test.test
+          "inQuery: a subquery with distinct is refused"
+          (\_ ->
+              storeRefused
+                  (importIds
+                      db
+                      importRows
+                      (Store.inQuery
+                          "batch_id"
+                          (Store.query batches |> Store.distinct
+                              |> Store.column "id"))))
+    , Test.test
+          "inQuery: an unknown inner column is refused"
+          (\_ ->
+              storeRefused
+                  (importIds
+                      db
+                      importRows
+                      (Store.inQuery
+                          "batch_id"
+                          (Store.query batches |> Store.column "nope"))))
+    , Test.test
+          "inQuery: an unknown outer column is refused"
+          (\_ ->
+              storeRefused
+                  (importIds db importRows (Store.inQuery "nope" oldBatchIds)))
+    , Test.test
+          "inQuery: columns of two kinds are refused"
+          (\_ ->
+              storeRefused
+                  (importIds db importRows (Store.inQuery "id" oldBatchIds)))
+    , Test.test
+          "exists: toSql correlates the inner alias with the outer table"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      "SELECT * FROM sqc_clients WHERE (NOT EXISTS (SELECT 1 FROM sqc_bills sq1 WHERE sq1.client_id = sqc_clients.id AND (sq1.sent_at > ?)))")
+                  (sqlOnly
+                      (Store.toSql
+                          db
+                          (Store.query clients
+                              |> Store.where_
+                                     (Store.notExists
+                                         bills
+                                         (Store.correlate "client_id" "id")
+                                         (Store.gt "sent_at" (SqlInt 150)))))))
+    , Test.test
+          "notExists: the clients with no bill sent after 150"
+          (\_ ->
+              Test.equal
+                  (Ok [ "c3", "c4" ])
+                  (clientIds
+                      db
+                      (Store.notExists
+                          bills
+                          (Store.correlate "client_id" "id")
+                          (Store.gt "sent_at" (SqlInt 150)))))
+    , Test.test
+          "notExists: equals a hand-written NOT EXISTS through selectRaw"
+          (\_ ->
+              Test.equal
+                  (Task.run
+                      (Store.selectRaw
+                          db
+                          clientCodec
+                          "SELECT * FROM sqc_clients c WHERE NOT EXISTS (SELECT 1 FROM sqc_bills b WHERE b.client_id = c.id AND b.sent_at > ?) ORDER BY id"
+                          [ SqlInt 150 ])
+                      |> Result.map (List.map .id))
+                  (clientIds
+                      db
+                      (Store.notExists
+                          bills
+                          (Store.correlate "client_id" "id")
+                          (Store.gt "sent_at" (SqlInt 150)))))
+    , Test.test
+          "exists: correlateAll ties two column pairs"
+          (\_ ->
+              Test.equal
+                  (Ok [ "c1", "c2", "c3" ])
+                  (clientIds
+                      db
+                      (Store.exists
+                          bills
+                          (Store.correlateAll
+                              [ ( "client_id", "id" )
+                              , ( "region_id", "region_id" )
+                              ])
+                          (Store.and_ []))))
+    , Test.test
+          "exists: count with an exists condition"
+          (\_ ->
+              Test.equal
+                  (Ok 3)
+                  (Task.run
+                      (Store.count
+                          db
+                          (Store.query clients
+                              |> Store.where_
+                                     (Store.exists
+                                         bills
+                                         (Store.correlate "client_id" "id")
+                                         (Store.and_ []))))))
+    , Test.test
+          "exists: on a join the outer column reads one side"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ ( "b1", "c1" )
+                      , ( "b2", "c1" )
+                      , ( "b3", "c1" )
+                      , ( "b4", "c2" )
+                      ])
+                  (Task.run
+                      (Store.toPairs
+                          db
+                          (Store.join bills clients (Store.on "client_id" "id")
+                              |> Store.where_
+                                     (Store.exists
+                                         bills
+                                         (Store.correlate "client_id" "b.id")
+                                         (Store.gt "sent_at" (SqlInt 250)))
+                              |> Store.orderLeftAsc "id"))
+                      |> Result.map pairIds))
+    , Test.test
+          "notExists: an empty inner table keeps every row"
+          (\_ ->
+              Test.equal
+                  (Ok [ "c1", "c2", "c3", "c4" ])
+                  (clientIds
+                      db
+                      (Store.notExists
+                          emptyBills
+                          (Store.correlate "client_id" "id")
+                          (Store.and_ []))))
+    , Test.test
+          "exists: nested subqueries take sq1, then sq2"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      "SELECT * FROM sqc_batches WHERE (id IN (SELECT sq1.batch_id FROM sqc_import_rows sq1 WHERE (EXISTS (SELECT 1 FROM sqc_batches sq2 WHERE sq2.id = sq1.batch_id AND (sq2.created_at > ?))) AND sq1.batch_id IS NOT NULL))")
+                  (sqlOnly
+                      (Store.toSql
+                          db
+                          (Store.query batches
+                              |> Store.where_
+                                     (Store.inQuery
+                                         "id"
+                                         (Store.query importRows
+                                             |> Store.where_
+                                                    (Store.exists
+                                                        batches
+                                                        (Store.correlate
+                                                            "id"
+                                                            "batch_id")
+                                                        (Store.gt
+                                                            "created_at"
+                                                            (SqlInt 0)))
+                                             |> Store.column "batch_id"))))))
+    , Test.test
+          "exists: an unknown inner column is refused"
+          (\_ ->
+              storeRefused
+                  (clientIds
+                      db
+                      (Store.exists
+                          bills
+                          (Store.correlate "nope" "id")
+                          (Store.and_ []))))
+    , Test.test
+          "exists: an unknown outer column is refused"
+          (\_ ->
+              storeRefused
+                  (clientIds
+                      db
+                      (Store.exists
+                          bills
+                          (Store.correlate "client_id" "nope")
+                          (Store.and_ []))))
+    , Test.test
+          "exists: an unknown column in the inner condition is refused"
+          (\_ ->
+              storeRefused
+                  (clientIds
+                      db
+                      (Store.exists
+                          bills
+                          (Store.correlate "client_id" "id")
+                          (Store.gt "nope" (SqlInt 0)))))
+    , Test.test
+          "exists: correlate columns of two kinds are refused"
+          (\_ ->
+              storeRefused
+                  (clientIds
+                      db
+                      (Store.exists
+                          bills
+                          (Store.correlate "amount" "id")
+                          (Store.and_ []))))
+    , Test.test
+          "exists: correlateAll [] is refused"
+          (\_ ->
+              storeRefused
+                  (clientIds
+                      db
+                      (Store.exists bills (Store.correlateAll []) (Store.and_ []))))
+    , Test.test
+          "exists: an exists store with an injected table name is refused"
+          (\_ ->
+              storeRefused
+                  (clientIds
+                      db
+                      (Store.exists
+                          (Store.fromCodec
+                              "sqc_bills b; DROP TABLE sqc_clients"
+                              billCodec)
+                          (Store.correlate "client_id" "id")
+                          (Store.and_ []))))
+    , Test.test
+          "exists in having is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toRows
+                          db
+                          (Store.query bills |> Store.groupBy [ "client_id" ]
+                              |> Store.aggregate
+                                     nameTotalCodec
+                                     [ Store.keyAs "name" "client_id"
+                                     , Store.sumAs "total" "amount"
+                                     ]
+                              |> Store.having
+                                     (Store.exists
+                                         clients
+                                         (Store.correlate "id" "name")
+                                         (Store.and_ []))))))
+    , Test.test
+          "deleteWhere inQuery: one statement removes exactly the old batches' rows"
+          (\_ ->
+              Test.equal
+                  (Ok 3)
+                  (Task.run
+                      (Store.deleteWhere
+                          db
+                          importRowsDel
+                          (Store.inQuery "batch_id" oldBatchIds))))
+    , Test.test
+          "deleteWhere inQuery: the new batch's row and the NULL row stay"
+          (\_ ->
+              Test.equal
+                  (Ok [ "r4", "r5" ])
+                  (importIds db importRowsDel (Store.and_ [])))
+    , Test.test
+          "deleteWhere notExists: a write correlates with its own table"
+          (\_ ->
+              Test.equal
+                  (Ok ( 1, [ "r4" ] ))
+                  (Task.run
+                      (Store.deleteWhere
+                          db
+                          importRowsDel
+                          (Store.notExists
+                              batches
+                              (Store.correlate "id" "batch_id")
+                              (Store.and_ [])))
+                      |> Result.andThen
+                             (\n ->
+                                 importIds db importRowsDel (Store.and_ [])
+                                     |> Result.map (\rest -> ( n, rest )))))
+    , Test.test
+          "updateFields notExists: one UPDATE with a correlated subquery"
+          (\_ ->
+              Test.equal
+                  (Ok 2)
+                  (Task.run
+                      (Store.updateFields
+                          db
+                          clients
+                          (Store.notExists
+                              bills
+                              (Store.correlate "client_id" "id")
+                              (Store.gt "sent_at" (SqlInt 150)))
+                          [ ( "name", SqlString "Zed" ) ])))
+    , Test.test
+          "updateFields notExists: exactly the clients with no recent bill changed"
+          (\_ ->
+              Test.equal
+                  (Ok [ "c3", "c4" ])
+                  (clientIds db (Store.eq "name" (SqlString "Zed"))))
+    ]
+
 
 tests : List Test
 tests =
@@ -1432,6 +2405,8 @@ tests =
             bugTests db ++ aggregateTests db ++ projectionTests db
                 ++ textTests db
                 ++ columnAndJsonTests db
+                ++ joinTests db
+                ++ subqueryTests db
 
 
 main =

@@ -77,6 +77,15 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     "value endsWith",
     "value select",
     "value startsWith",
+    // v0.29.0: the Std.Db.Store join and subquery builders (D2 names).
+    // `Store.column` meets Std.Ui / Std.Ui.Keyed's `column`, `Store.exists`
+    // meets File.exists, `Store.join` meets String.join and Path.join, and
+    // `Store.on` meets Std.Html.Events.on. The fix is the qualified name
+    // (`Store.join`) or a narrower exposing list (docs/migration/v0.29.md).
+    "value column",
+    "value exists",
+    "value join",
+    "value on",
     "value fromString",
     // v0.29.0: String.foldl / String.foldr (Elm). List and Dict already
     // export `foldl` (List `foldr` too); Elm has the same set.

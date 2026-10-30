@@ -122,3 +122,9 @@ func TestStoreQueryPostgresB7_MigrateIgnoresOtherSchemas(t *testing.T) {
 		t.Fatalf("migrate altered sq_b7_other.%s: it has %d columns, want 1", table, n)
 	}
 }
+
+// Batch B: the join read kernel on PostgreSQL. The `a__clientId` alias is
+// quoted, so PostgreSQL keeps its case and the kernel finds it.
+func TestStoreQueryPostgresJoinGroups_StripsPrefixesAndNullsTheMissingSide(t *testing.T) {
+	assertJoinGroups(t, openStoreQueryPostgres(t, ""), "_pg")
+}

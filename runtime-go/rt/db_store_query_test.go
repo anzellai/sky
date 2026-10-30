@@ -108,3 +108,86 @@ func TestStoreQueryB2_DefaultTextValueIsDecodedNotParsed(t *testing.T) {
 		}
 	}
 }
+
+// Batch B: Db_queryObjectGroups, the read kernel of every Store query. A join
+// row comes back as `a__<col>` and `b__<col>` result columns; the kernel gives
+// one JSON object per group with the prefix stripped, and the JSON text `null`
+// for the right group of a LEFT JOIN when its marker column is NULL.
+
+func storeGroups(groups ...[3]any) []any {
+	out := make([]any, 0, len(groups))
+	for _, g := range groups {
+		out = append(out, SkyTuple3{V0: g[0], V1: g[1], V2: g[2]})
+	}
+	return out
+}
+
+// assertJoinGroups is shared by the SQLite and PostgreSQL arms. The aliases
+// are quoted and camelCase, so on PostgreSQL the test also proves the kernel
+// reads a quoted alias with its case.
+func assertJoinGroups(t *testing.T, d *SkyDb, suffix string) {
+	t.Helper()
+	left, right := "bills_grp"+suffix, "clients_grp"+suffix
+	for _, stmt := range []string{
+		"DROP TABLE IF EXISTS " + left,
+		"DROP TABLE IF EXISTS " + right,
+		"CREATE TABLE " + left + " (id TEXT, client_id TEXT, amount INTEGER)",
+		"CREATE TABLE " + right + " (id TEXT, name TEXT)",
+		"INSERT INTO " + left + " (id, client_id, amount) VALUES ('b1', 'c1', 10)",
+		"INSERT INTO " + left + " (id, client_id, amount) VALUES ('b2', 'c9', 20)",
+		"INSERT INTO " + right + " (id, name) VALUES ('c1', 'Ada')",
+	} {
+		if _, err := d.conn.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = d.conn.Exec("DROP TABLE IF EXISTS " + left)
+		_, _ = d.conn.Exec("DROP TABLE IF EXISTS " + right)
+	})
+	q := `SELECT a.id AS "a__id", a.client_id AS "a__clientId", a.amount AS "a__amount", ` +
+		`b.id AS "b__id", b.name AS "b__name" FROM ` + left + ` a LEFT JOIN ` + right +
+		` b ON a.client_id = b.id ORDER BY a.id ASC`
+	groups := storeGroups(
+		[3]any{"a__", "", colspec([2]string{"id", "text"}, [2]string{"clientId", "text"}, [2]string{"amount", "int"})},
+		[3]any{"b__", "id", colspec([2]string{"id", "text"}, [2]string{"name", "text"})},
+	)
+	res, ok := AnyTaskRun(Db_queryObjectGroups(d, q, []any{}, groups)).(SkyResult[any, any])
+	if !ok || res.Tag != 0 {
+		t.Fatalf("Db_queryObjectGroups: %#v", res)
+	}
+	var got [][]string
+	for _, row := range AsList(res.OkValue) {
+		var texts []string
+		for _, g := range AsList(row) {
+			texts = append(texts, AsString(g))
+		}
+		got = append(got, texts)
+	}
+	want := [][]string{
+		{`{"id":"b1","clientId":"c1","amount":10}`, `{"id":"c1","name":"Ada"}`},
+		{`{"id":"b2","clientId":"c9","amount":20}`, `null`},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d rows %v, want %v", len(got), got, want)
+	}
+	for i := range want {
+		if len(got[i]) != 2 || got[i][0] != want[i][0] || got[i][1] != want[i][1] {
+			t.Errorf("row %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestStoreQueryJoinGroups_SqliteStripsPrefixesAndNullsTheMissingSide(t *testing.T) {
+	assertJoinGroups(t, openStoreQueryDb(t), "")
+}
+
+// An error from the query is the kernel's Err, not an empty list.
+func TestStoreQueryJoinGroups_SqliteQueryErrorIsErr(t *testing.T) {
+	d := openStoreQueryDb(t)
+	groups := storeGroups([3]any{"", "", colspec([2]string{"n", "int"})})
+	res, ok := AnyTaskRun(Db_queryObjectGroups(d, "SELECT n FROM no_such_table", []any{}, groups)).(SkyResult[any, any])
+	if !ok || res.Tag == 0 {
+		t.Fatalf("a query on a missing table returned %#v, want Err", res)
+	}
+}
