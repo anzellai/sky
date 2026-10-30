@@ -5030,7 +5030,10 @@ fn t() {
 
         let root = std::env::temp_dir().join(format!(
             "sky-inapplicable-proof-{}-{}",
-            std::process::id(),
+            (u64::from(std::process::id()) << 32) | {
+                static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -5745,7 +5748,10 @@ fn t() {
     fn units_are_a_function_of_tracked_files_only() {
         let root = std::env::temp_dir().join(format!(
             "sky-ledger-tracked-{}-{}",
-            std::process::id(),
+            (u64::from(std::process::id()) << 32) | {
+                static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

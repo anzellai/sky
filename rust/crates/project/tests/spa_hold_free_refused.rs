@@ -32,7 +32,10 @@ main =\n    Task.succeed ()\n";
 fn project(tag: &str, toml_extra: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "sky-hold-free-{tag}-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

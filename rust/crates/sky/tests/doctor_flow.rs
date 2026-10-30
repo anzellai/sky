@@ -35,7 +35,10 @@ fn go_on_path() -> bool {
 fn scratch_dir(tag: &str) -> PathBuf {
     let uniq = format!(
         "sky-doctor-{tag}-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -198,7 +201,10 @@ fn doctor_outside_project_exits_2() {
     // and assert the "no sky.toml" diagnostic path.
     let dir = std::env::temp_dir().join(format!(
         "sky-doctor-noproject-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

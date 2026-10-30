@@ -31,7 +31,10 @@ fn repo_root() -> PathBuf {
 fn scratch_project(tag: &str, main_src: &str) -> PathBuf {
     let uniq = format!(
         "sky-typecheck-gate-{tag}-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -480,7 +483,10 @@ fn driver_honours_non_main_entry_module() {
     // A single-module project whose entry file declares `module App`, not Main.
     let uniq = format!(
         "sky-entry-mod-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1022,7 +1028,10 @@ fn diagnostic_names_correct_file_across_skydep_module_id_shift() {
     let repo = repo_root();
     let uniq = format!(
         "sky-typecheck-gate-skydepshift-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1131,7 +1140,10 @@ fn issue164_same_named_aliases_in_different_modules_not_conflated() {
     let repo = repo_root();
     let uniq = format!(
         "sky-typecheck-gate-issue164-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1217,7 +1229,10 @@ fn issue164_followup_importing_module_union_vs_imported_alias_same_name() {
     let repo = repo_root();
     let uniq = format!(
         "sky-typecheck-gate-issue164f-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

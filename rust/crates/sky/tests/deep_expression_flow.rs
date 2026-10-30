@@ -38,7 +38,10 @@ fn have_go() -> bool {
 fn project(name: &str, main_sky: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "sky-deep-{name}-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

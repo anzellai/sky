@@ -84,7 +84,10 @@ main =
 fn a_field_written_on_some_paths_rides_the_request() {
     let dir = std::env::temp_dir().join(format!(
         "sky-partial-write-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

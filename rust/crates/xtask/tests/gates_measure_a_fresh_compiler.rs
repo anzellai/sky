@@ -532,7 +532,10 @@ fn every_declared_source_root_contributes_files() {
 fn synthetic_tree(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "sky-fresh-compiler-{tag}-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
@@ -901,7 +904,10 @@ fn the_staged_embed_contains_no_gitignored_file() {
     let root = repo();
     let dest = std::env::temp_dir().join(format!(
         "sky-embed-checkignore-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
@@ -1114,7 +1120,10 @@ fn config_matrix_ext_filters_cover_every_staged_file() {
 
     let dest = std::env::temp_dir().join(format!(
         "sky-embed-extcover-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
@@ -1210,7 +1219,10 @@ fn the_shell_and_rust_fingerprints_agree() {
     let root = repo();
     let dest = std::env::temp_dir().join(format!(
         "sky-embed-fp-real-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())

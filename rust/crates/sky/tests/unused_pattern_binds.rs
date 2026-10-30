@@ -149,7 +149,10 @@ const EXPECTED: &str = "p,q|3|5|0|7|9|10|12|z!|17|14|18|20|o|pt|J S 77";
 fn scratch() -> PathBuf {
     let uniq = format!(
         "sky-unusedpat-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
