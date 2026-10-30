@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -100,6 +101,20 @@ func durableTestDir(t *testing.T, name string) string {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir
+}
+
+// releaseStaleClusters clears every stale postmaster.pid under root, which
+// also releases the shared-memory segment each one names.
+func releaseStaleClusters(t *testing.T, root string) {
+	t.Helper()
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && d.Name() == "postmaster.pid" {
+			if cerr := clearStalePidfile(filepath.Dir(path)); cerr != nil {
+				t.Errorf("release %s: %v", path, cerr)
+			}
+		}
+		return nil
+	})
 }
 
 func liveSupervisor(t *testing.T, root string) *pgSupervisor {
@@ -576,7 +591,14 @@ func TestDeadPostmasterExitsTheAppNonZero(t *testing.T) {
 			cmd := exec.Command(os.Args[0], "-test.run=^TestDeadPostmasterExitsTheAppNonZero$", "-test.v")
 			cmd.Env = append(os.Environ(), "SKY_PG_CHILD_MODE="+mode)
 			if mode == "live" {
-				cmd.Env = append(cmd.Env, "SKY_POSTGRES_BIN="+requirePgBinDir(t))
+				// The parent owns the child's data directory: the child ends in
+				// os.Exit, so its own defers never run, and its SIGKILLed
+				// postmaster leaves a stale pid file and a System V segment
+				// that only a later boot would release. Release both here, or
+				// each run leaks one of macOS's 32 segments and the directory.
+				root := durableTestDir(t, "deadchild")
+				t.Cleanup(func() { releaseStaleClusters(t, root) })
+				cmd.Env = append(cmd.Env, "SKY_POSTGRES_BIN="+requirePgBinDir(t), "SKY_PG_CHILD_ROOT="+root)
 			}
 			out, err := cmd.CombinedOutput()
 			code := cmd.ProcessState.ExitCode()
@@ -617,17 +639,9 @@ func childLiveDeadPostmaster() {
 	// mutation-matrix run whose baseline came back with 19 failures. Route new
 	// live-cluster paths through durableTestDir, or through this env var when
 	// there is no test context.
-	root := os.Getenv("SKY_LIVE_TEST_ROOT")
+	root := os.Getenv("SKY_PG_CHILD_ROOT")
 	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			os.Exit(9)
-		}
-		root = filepath.Join(home, ".sky", "p5-live-test")
-	}
-	root = filepath.Join(root, fmt.Sprintf("deadchild-%d", os.Getpid()))
-	_ = os.RemoveAll(root)
-	if err := os.MkdirAll(root, 0o700); err != nil {
+		os.Stderr.WriteString("child: SKY_PG_CHILD_ROOT is not set; the parent owns the data directory\n")
 		os.Exit(9)
 	}
 	cfg, err := resolveEmbedConfig([]string{"app", "--data-dir", root}, fakeEnv(nil), root)

@@ -510,6 +510,13 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
 
 ### Fixed
 
+- **Embedded PostgreSQL: a crash no longer leaks a shared-memory segment.**
+  After a SIGKILL, `--embed` clears the stale `postmaster.pid` before the next
+  boot. That file is the only record of the dead postmaster's System V
+  segment, so each crash leaked one. macOS allows 32, and once they were gone
+  no PostgreSQL on the machine could start (`initdb`: "could not create shared
+  memory segment"). Sky now releases the segment the file names before it
+  removes the file, when this user owns it and nothing is attached.
 - **`Std.Db.Store`: `pushProject` and `dumpSchema` refuse a builder
   problem.** A problem a builder recorded (an unknown column in `unique`,
   `index` or `uniqueOn`) did not travel with `Store.toTable`, so `sky db
