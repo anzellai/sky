@@ -36,16 +36,36 @@ fn tool_on_path(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// A fresh project directory that no other caller holds.
+///
+/// The name used to be pid + wall-clock nanoseconds alone. The tests in this
+/// file run on parallel threads of ONE process, so the pid is shared, and the
+/// macOS wall clock ticks in whole microseconds, so two threads that reach this
+/// line together read the same "nanoseconds". They then shared a project and
+/// broke each other (see `concurrent_scratch_projects_are_distinct`). A
+/// process-wide counter makes the name unique within the process, and
+/// `create_dir` (not `create_dir_all`) claims it exclusively, so a directory
+/// left by an earlier process with a reused pid is skipped, never shared.
 fn scratch_project() -> PathBuf {
-    let uniq = format!(
-        "sky-db-flow-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
-    let dir = std::env::temp_dir().join(uniq);
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let dir = loop {
+        let uniq = format!(
+            "sky-db-flow-{}-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(uniq);
+        match std::fs::create_dir(&dir) {
+            Ok(()) => break dir,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => panic!("create {}: {e}", dir.display()),
+        }
+    };
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("sky.toml"),
@@ -95,6 +115,37 @@ main =
     )
     .unwrap();
     dir
+}
+
+/// The two flow tests run on parallel threads of one process and each takes a
+/// `scratch_project()`. When two calls returned the same directory, the tests
+/// shared one project: one `sky db migrate` removed `db/_apply.json` while the
+/// other's apply binary was about to read it, and the second test rewrote
+/// `src/Main.sky` under the first. Seen as a rare
+/// `open db/_apply.json: no such file or directory` at the apply step.
+#[test]
+fn concurrent_scratch_projects_are_distinct() {
+    const N: usize = 16;
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(N));
+    let handles: Vec<_> = (0..N)
+        .map(|_| {
+            let b = barrier.clone();
+            std::thread::spawn(move || {
+                b.wait();
+                scratch_project()
+            })
+        })
+        .collect();
+    let dirs: Vec<PathBuf> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let distinct: std::collections::BTreeSet<&PathBuf> = dirs.iter().collect();
+    for d in &distinct {
+        let _ = std::fs::remove_dir_all(d);
+    }
+    assert_eq!(
+        distinct.len(),
+        N,
+        "{N} concurrent scratch_project() calls shared a directory"
+    );
 }
 
 /// Run `sky <args...>` in `dir` with an empty stdin (so any interactive prompt
