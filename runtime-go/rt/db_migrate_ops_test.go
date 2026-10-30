@@ -110,7 +110,10 @@ func TestMigrateCreateTableByteMatchesPush(t *testing.T) {
 	for _, driver := range []string{"sqlite", "pgx"} {
 		pushDDL := strings.Join(
 			schemaRenderTable(driver, codecColspecSchemaMap("users", pushColspec, "id")), ";\n")
-		migDDL, err := renderMigOp(driver, migOp{Kind: "createTable", Table: "users", Columns: migColumns})
+		// A v2 op (what `--gen` writes since v0.29.0). A v1 op keeps the
+		// v0.28.1 bytes for checksum stability, see
+		// TestStoreMigrateV1OpsKeepTheV0281Bytes.
+		migDDL, err := renderMigOp(driver, migOp{Kind: "createTable", V: 2, Table: "users", Columns: migColumns})
 		if err != nil {
 			t.Fatalf("%s migrate render error: %v", driver, err)
 		}

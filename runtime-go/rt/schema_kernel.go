@@ -19,6 +19,8 @@ package rt
 
 import (
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 )
 
@@ -83,6 +85,7 @@ func schemaRenderColumn(driver string, colArg any) string {
 	defKind := fmt.Sprintf("%v", fieldOrNil(colArg, "DefaultKind"))
 	defVal := fmt.Sprintf("%v", fieldOrNil(colArg, "DefaultVal"))
 	fk := fmt.Sprintf("%v", fieldOrNil(colArg, "ForeignKey"))
+	legacy := schemaBool(fieldOrNil(colArg, "Legacy"))
 
 	// Auto-increment PK is a single dialect-specific token that already implies
 	// PRIMARY KEY.
@@ -97,13 +100,20 @@ func schemaRenderColumn(driver string, colArg any) string {
 	if pk {
 		parts = append(parts, "PRIMARY KEY")
 	}
-	if notNull && !pk {
+	// B8: a primary key is always NOT NULL. SQLite lets a non-INTEGER PK
+	// hold NULL unless the column says NOT NULL. A v1 migration op sets
+	// Legacy to keep the v0.28.1 bytes (no NOT NULL on a PK, `now` as the
+	// timestamp text on every kind), so an applied migration keeps its
+	// checksum.
+	if (notNull || pk) && !(pk && legacy) {
 		parts = append(parts, "NOT NULL")
 	}
 	if uniq && !pk {
 		parts = append(parts, "UNIQUE")
 	}
-	if defKind != "none" && defKind != "" {
+	if defKind == "now" && !legacy {
+		parts = append(parts, "DEFAULT "+schemaNowDefault(driver, kind))
+	} else if defKind != "none" && defKind != "" {
 		parts = append(parts, "DEFAULT "+schemaDefault(driver, defKind, defVal))
 	}
 	if fk != "" {
@@ -178,6 +188,14 @@ func schemaDefault(driver, kind, val string) string {
 		return val
 	case "text":
 		return "'" + strings.ReplaceAll(val, "'", "''") + "'"
+	case "float":
+		// Store.defaultFloat refuses NaN and Infinity. A value that does not
+		// parse as a finite float renders 0, never raw text.
+		f, err := strconv.ParseFloat(val, 64)
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+			return "0"
+		}
+		return strconv.FormatFloat(f, 'g', -1, 64)
 	case "bool":
 		// BOOLEAN on Postgres (TRUE/FALSE); INTEGER 0/1 on SQLite.
 		if driver == "pgx" {
@@ -198,6 +216,27 @@ func schemaDefault(driver, kind, val string) string {
 	default:
 		return "NULL"
 	}
+}
+
+// schemaIsIntKind reports whether a schema kind is stored as an integer.
+func schemaIsIntKind(kind string) bool {
+	return kind == "int" || kind == "bigint" || kind == "timestamp"
+}
+
+// schemaNowDefault is the `now` DEFAULT of a column of `kind` in CREATE
+// TABLE. A text column takes the timestamp text (`datetime('now')` /
+// `now()`). An integer column (Std.Db.Schema `timestamp`, `bigInt`, `int`)
+// takes epoch milliseconds: `now()` on a BIGINT column made PostgreSQL refuse
+// the CREATE TABLE ("default expression is of type timestamp with time
+// zone"), and SQLite stored text that an Int field could not read.
+func schemaNowDefault(driver, kind string) string {
+	if schemaIsIntKind(kind) {
+		if driver == "pgx" {
+			return "(CAST(EXTRACT(EPOCH FROM now()) * 1000 AS BIGINT))"
+		}
+		return "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))"
+	}
+	return schemaDefault(driver, "now", "")
 }
 
 func schemaBool(v any) bool {

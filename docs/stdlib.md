@@ -1390,7 +1390,11 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   that holds a function, a `Secret`, a key or a runtime handle has no codec and
   is refused at compile time. Pure Sky.
 - **`Std.Db.Store`** — `fromCodec |> primaryKey`/`serial`/`unique`/`defaultNow`/
-  `touchOnUpdate`/`defaultWith`/`generated` (schema), `insert`/`insertMany`/`update`/
+  `touchOnUpdate`/`defaultText`/`defaultInt`/`defaultBool`/`defaultFloat`/`defaultWith`/
+  `generated` and the indexes `index`/`uniqueOn`/`uniqueWhere` (schema); `create` /
+  `migrate` (one rule with `sky db migrate --gen`: a `Maybe` field is nullable, any
+  other field `NOT NULL DEFAULT` its declared default else zero, an existing column
+  is never altered), `insert`/`insertMany`/`update`/
   `updateWhere`/`upsert`/`delete`/`deleteWhere` (writes), **`setFields`/`updateFields`**
   (partial-column PATCH — `SET` only the named columns, by PK or `Cond`) + **`adjust`**
   (atomic `SET col = col + delta` for counters/stock/balances), `all`/`findBy` + the

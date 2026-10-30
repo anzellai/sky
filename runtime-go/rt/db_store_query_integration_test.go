@@ -62,7 +62,7 @@ func TestStoreQueryPostgresB3_CamelCaseColumnsRoundTrip(t *testing.T) {
 	cs := colspec([2]string{"id", "text"}, [2]string{"priceMinor", "int"}, [2]string{"customerId", "text?"})
 
 	for i := 0; i < 2; i++ {
-		res, ok := AnyTaskRun(Db_autoMigrate(d, table, cs, "id")).(SkyResult[any, any])
+		res, ok := AnyTaskRun(Db_autoMigrate(d, table, cs, "id", []any{})).(SkyResult[any, any])
 		if !ok || res.Tag != 0 {
 			t.Fatalf("migrate run %d: %v", i+1, res.ErrValue)
 		}
@@ -103,7 +103,7 @@ func TestStoreQueryPostgresB7_MigrateIgnoresOtherSchemas(t *testing.T) {
 		_, _ = d.conn.Exec("DROP SCHEMA IF EXISTS sq_b7_other CASCADE")
 	})
 	cs := colspec([2]string{"id", "text"}, [2]string{"total", "int"})
-	res, _ := AnyTaskRun(Db_autoMigrate(d, table, cs, "id")).(SkyResult[any, any])
+	res, _ := AnyTaskRun(Db_autoMigrate(d, table, cs, "id", []any{})).(SkyResult[any, any])
 	if res.Tag != 0 {
 		t.Fatalf("migrate: %v", res.ErrValue)
 	}

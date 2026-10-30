@@ -1393,6 +1393,20 @@ allowlist rejects characters outside `[A-Za-z0-9_.]`.
   outer column against the outer one, and the two must be of one kind.
   Sources: `storeError`, `refOf`, `colRef`, `prepare`, `fromClause`,
   `subSelect`, `existsSql` in `Std/Db/Store.sky`.
+* **One migrate rule, one renderer** (v0.29.0, user decision D1).
+  `Store.migrate` / `sky db push` (`Db_autoMigrate`) and `sky db migrate`
+  (`renderMigOp` of a v2 `addColumn`) render an added column through one Go
+  function, `renderAddColumn` (`runtime-go/rt/db_migrate_ops.go`): a
+  `Maybe` field is nullable, any other field `NOT NULL DEFAULT <declared,
+  else zero>`, a required blob nullable with a warning, a unique column an
+  extra unique index. An existing column is never altered. The parity
+  fixture `runtime-go/rt/testdata/migrate_parity.json` is held by a Rust test
+  (the diff gives its ops) and Go tests on both dialects (the runtime runs
+  exactly `renderMigOp` of those ops). A v1 op renders the v0.28.1 bytes, so
+  an applied migration keeps its ledger checksum; the SQLite apply-time
+  stamp of a v2 file is swapped in after the checksum (`migApplyText`).
+  Every literal in index DDL is a constant rendered by Store
+  (`predicateSql`), and every index column is an identifier (B10).
 * **One statement per Store call, joins and subqueries included.** A
   join is `a INNER|LEFT JOIN b ON …` with every column under a quoted
   alias (`a.col AS "a__col"`, so PostgreSQL keeps its case); the read

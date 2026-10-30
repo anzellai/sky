@@ -49,8 +49,13 @@ module Std.Db.Store exposing
     , defaultText
     , defaultInt
     , defaultBool
+    , defaultFloat
     , defaultWith
     , generated
+    , IndexSpec
+    , index
+    , uniqueOn
+    , uniqueWhere
     , create
     , migrate
     , insert
@@ -181,6 +186,20 @@ type alias StoreRec a =
     , generated : List String
     , computed : List ( String, () -> SqlValue )
     , problems : List String
+    , indexes : List IndexSpec
+    }
+
+-- | One declared index (`index`, `uniqueOn`, `uniqueWhere`). `name` is empty
+-- for a Store builder: the runtime names it `ix_<table>_<h>` or
+-- `ux_<table>_<h>`, where `<h>` is 8 hex digits of a hash of the table, the
+-- columns, the unique flag and the predicate. A `Std.Db.Schema` `withIndex`
+-- keeps its own name. `predicate` is the partial-index WHERE, rendered from
+-- constants only ("" for a full index).
+type alias IndexSpec =
+    { name : String
+    , cols : List String
+    , unique : Bool
+    , predicate : String
     }
 
 
@@ -206,6 +225,7 @@ fromCodec name codec =
             , cols = cols
             , generated = []
             , computed = []
+            , indexes = []
             , problems =
                 case cols of
 
@@ -301,14 +321,25 @@ unique name store =
     withFlag "unique" name "u" store
 
 
--- | Give a column a `DEFAULT` of the current timestamp (`now()` on Postgres,
--- `datetime('now')` on SQLite) AND mark it `generated`, so `insert`/`update` OMIT
--- it and the database stamps it: `Store.defaultNow "created_at"`.
+-- | Give a text column a `DEFAULT` of the current timestamp (`now()` on
+-- PostgreSQL, `datetime('now')` on SQLite) AND mark it `generated`, so
+-- `insert` and `update` never write the record's value:
+-- `Store.defaultNow "created_at"`. On PostgreSQL the database stamps a new
+-- row. On SQLite `insert` / `insertMany` / `upsert` bind the app clock in the
+-- same `YYYY-MM-DD HH:MM:SS` (UTC) format, because a column that `migrate`
+-- added holds a constant default there (SQLite refuses `datetime('now')` in
+-- ADD COLUMN). The column must be text (a `String` or `Maybe String` field):
+-- on any other kind the first verb on the store fails.
 defaultNow : String -> Store a -> Store a
 defaultNow name store =
     let
         s = storeRec store
-        ( col, problems ) = builderCol "defaultNow" name s.cols s.problems
+        ( col, problems ) =
+            textOnly
+                "defaultNow"
+                name
+                s.cols
+                (builderCol "defaultNow" name s.cols s.problems)
     in
         Store
             { s
@@ -328,7 +359,11 @@ touchOnUpdate name store =
     let
         s = storeRec store
         ( col, problems ) =
-            builderCol "touchOnUpdate" name s.cols s.problems
+            textOnly
+                "touchOnUpdate"
+                name
+                s.cols
+                (builderCol "touchOnUpdate" name s.cols s.problems)
     in
         Store
             { s
@@ -368,6 +403,371 @@ defaultBool name val store =
         else
             "dbool=false")
         store
+
+
+-- | Give a column a `DEFAULT` float value in the generated DDL:
+-- `Store.defaultFloat "score" 1.5`. NaN and Infinity have no SQL literal: the
+-- first verb on the store fails with them.
+defaultFloat : String -> Float -> Store a -> Store a
+defaultFloat name val store =
+    if val - val == 0.0 then
+        withFlag "defaultFloat" name ("dfloat=" ++ String.fromFloat val) store
+
+    else
+        let
+            s = storeRec store
+        in
+            Store
+                { s
+                    | problems =
+                        s.problems
+                            ++ [ "Store.defaultFloat \"" ++ name
+                                     ++ "\": NaN and Infinity have no SQL literal"
+                               ]
+                }
+
+
+-- | Index the columns, in order: `Store.index [ "customer_id", "created_at" ]`.
+-- `create` and `migrate` create it (`CREATE INDEX IF NOT EXISTS`), and
+-- `migrate` creates a declared index that is missing on an existing table.
+-- The name is `ix_<table>_<h>` (see `IndexSpec`). An unknown column makes the
+-- first verb on the store fail.
+index : List String -> Store a -> Store a
+index names store =
+    addIndex "index" names False "" store
+
+
+-- | A UNIQUE index over the columns, in order:
+-- `Store.uniqueOn [ "customer_id", "code" ]`. Every column must be required
+-- (not a `Maybe` field): both engines treat NULLs as distinct, so a nullable
+-- column would let duplicate rows in. The name is `ux_<table>_<h>`.
+uniqueOn : List String -> Store a -> Store a
+uniqueOn names store =
+    let
+        s = storeRec store
+        ( cols, problems ) = builderCols "uniqueOn" names s.cols s.problems
+        withNullable =
+            case nullableIn cols s.cols of
+
+                "" ->
+                    problems
+
+                c ->
+                    problems
+                        ++ [ "Store.uniqueOn: column \"" ++ c
+                                 ++ "\" is nullable, and NULLs never conflict: use uniqueWhere with notNull, or a required field"
+                           ]
+    in
+        indexWith "uniqueOn" cols True "" { s | problems = withNullable }
+
+
+-- | A partial UNIQUE index: the columns are unique among the rows where the
+-- condition holds. `Store.uniqueWhere [ "slug" ] (Store.neq "slug" (SqlString ""))`
+-- lets many rows keep an empty slug. The condition is written into the DDL
+-- as constants, so it takes `eq` / `neq` / `gt` / `gte` / `lt` / `lte` with
+-- `SqlString` / `SqlInt` / `SqlFloat` / `SqlBool` values, `isNull` / `notNull`,
+-- `inList`, the column conditions `eqCol` and friends, and `and_` / `or_` /
+-- `not_` over them. Any other condition makes the first verb fail. A changed
+-- condition gives a new index name: `migrate` creates the new index and
+-- never drops the old one (`sky db migrate --gen` writes a `dropIndex`).
+uniqueWhere : List String -> Cond -> Store a -> Store a
+uniqueWhere names cond store =
+    let
+        s = storeRec store
+    in
+        case predicateSql s.cols cond of
+
+            Ok pred ->
+                addIndex "uniqueWhere" names True pred store
+
+            Err msg ->
+                Store
+                    { s
+                        | problems =
+                            s.problems ++ [ "Store.uniqueWhere: " ++ msg ]
+                    }
+
+
+addIndex : String -> List String -> Bool -> String -> Store a -> Store a
+addIndex verb names isUnique pred store =
+    let
+        s = storeRec store
+        ( cols, problems ) = builderCols verb names s.cols s.problems
+    in
+        indexWith verb cols isUnique pred { s | problems = problems }
+
+
+indexWith : String -> List String -> Bool -> String -> StoreRec a -> Store a
+indexWith verb cols isUnique pred s =
+    case cols of
+
+        [] ->
+            Store
+                { s
+                    | problems =
+                        s.problems ++ [ "Store." ++ verb ++ ": no columns" ]
+                }
+
+        _ ->
+            Store
+                { s
+                    | indexes =
+                        s.indexes
+                            ++ [ { name = ""
+                                 , cols = cols
+                                 , unique = isUnique
+                                 , predicate = pred
+                                 }
+                               ]
+                }
+
+
+-- The first of the columns whose kind is nullable, else "".
+nullableIn : List String -> List ( String, String ) -> String
+nullableIn names cols =
+    case names of
+
+        [] ->
+            ""
+
+        n :: rest ->
+            if kindNullable (kindOf n cols) then
+                n
+
+            else
+                nullableIn rest cols
+
+
+-- A builder that needs a text column records a problem for any other kind.
+textOnly : String -> String -> List ( String, String ) -> ( String, List String ) -> ( String, List String )
+textOnly verb name cols resolved =
+    let
+        ( col, problems ) = resolved
+    in
+        case lookupKind col cols of
+
+            Just k ->
+                if kindBase k == "text" then
+                    resolved
+
+                else
+                    ( col
+                    , problems
+                          ++ [ "Store." ++ verb ++ ": column \"" ++ name
+                                   ++ "\" is "
+                                   ++ kindBase k
+                                   ++ ", and the timestamp is text"
+                             ]
+                    )
+
+            Nothing ->
+                resolved
+
+
+-- The predicate of a partial index, as SQL with constants only (DDL takes no
+-- bound parameters). A string is quoted with `'` doubled.
+predicateSql : List ( String, String ) -> Cond -> Result String String
+predicateSql cols c =
+    case c of
+
+        CondOp col op v ->
+            case predicateCol cols col of
+
+                Err e ->
+                    Err e
+
+                Ok name ->
+                    if List.member op [ "=", "<>", ">", ">=", "<", "<=" ] then
+                        case sqlLiteral v of
+
+                            Ok lit ->
+                                Ok (name ++ " " ++ op ++ " " ++ lit)
+
+                            Err e ->
+                                Err e
+
+                    else
+                        Err
+                            ("the operator " ++ op
+                                ++ " is not supported in an index predicate")
+
+        CondNull col wantNull ->
+            case predicateCol cols col of
+
+                Err e ->
+                    Err e
+
+                Ok name ->
+                    if wantNull then
+                        Ok (name ++ " IS NULL")
+
+                    else
+                        Ok (name ++ " IS NOT NULL")
+
+        CondIn col vs ->
+            case predicateCol cols col of
+
+                Err e ->
+                    Err e
+
+                Ok name ->
+                    case sqlLiterals vs of
+
+                        Err e ->
+                            Err e
+
+                        Ok [] ->
+                            Ok "1 = 0"
+
+                        Ok lits ->
+                            Ok (name ++ " IN (" ++ String.join ", " lits ++ ")")
+
+        CondAnd cs ->
+            predicateGroup cols " AND " "1 = 1" cs
+
+        CondOr cs ->
+            predicateGroup cols " OR " "1 = 0" cs
+
+        CondNot inner ->
+            case predicateSql cols inner of
+
+                Ok p ->
+                    Ok ("NOT (" ++ p ++ ")")
+
+                Err e ->
+                    Err e
+
+        CondCol op left right ->
+            case predicateCol cols left of
+
+                Err e ->
+                    Err e
+
+                Ok l ->
+                    case predicateCol cols right of
+
+                        Err e ->
+                            Err e
+
+                        Ok r ->
+                            Ok (l ++ " " ++ op ++ " " ++ r)
+
+        CondText kind _ _ ->
+            Err (kind ++ " is not supported in an index predicate")
+
+        CondNest _ ->
+            Err
+                "a subquery or a join condition is not supported in an index predicate"
+
+
+predicateGroup : List ( String, String ) -> String -> String -> List Cond -> Result String String
+predicateGroup cols sep empty cs =
+    case cs of
+
+        [] ->
+            Ok empty
+
+        _ ->
+            case predicateList cols cs of
+
+                Ok parts ->
+                    Ok ("(" ++ String.join (")" ++ sep ++ "(") parts ++ ")")
+
+                Err e ->
+                    Err e
+
+
+predicateList : List ( String, String ) -> List Cond -> Result String (List String)
+predicateList cols cs =
+    case cs of
+
+        [] ->
+            Ok []
+
+        c :: rest ->
+            case predicateSql cols c of
+
+                Err e ->
+                    Err e
+
+                Ok p ->
+                    case predicateList cols rest of
+
+                        Err e ->
+                            Err e
+
+                        Ok more ->
+                            Ok (p :: more)
+
+
+predicateCol : List ( String, String ) -> String -> Result String String
+predicateCol cols name =
+    let
+        col = resolveCol cols name
+    in
+        case lookupKind col cols of
+
+            Just _ ->
+                Ok col
+
+            Nothing ->
+                Err
+                    ("unknown column \"" ++ name ++ "\" — columns are "
+                        ++ colNames cols)
+
+
+-- A constant in DDL: text quoted with `'` doubled, a finite number, TRUE or
+-- FALSE (SQLite reads TRUE as 1, which a bool column stores).
+sqlLiteral : SqlValue -> Result String String
+sqlLiteral v =
+    case v of
+
+        SqlString t ->
+            Ok ("'" ++ String.replace "'" "''" t ++ "'")
+
+        SqlInt n ->
+            Ok (String.fromInt n)
+
+        SqlFloat f ->
+            if f - f == 0.0 then
+                Ok (String.fromFloat f)
+
+            else
+                Err "NaN and Infinity have no SQL literal"
+
+        SqlBool b ->
+            if b then
+                Ok "TRUE"
+
+            else
+                Ok "FALSE"
+
+        _ ->
+            Err
+                "an index predicate takes SqlString, SqlInt, SqlFloat or SqlBool values"
+
+
+sqlLiterals : List SqlValue -> Result String (List String)
+sqlLiterals vs =
+    case vs of
+
+        [] ->
+            Ok []
+
+        v :: rest ->
+            case sqlLiteral v of
+
+                Err e ->
+                    Err e
+
+                Ok lit ->
+                    case sqlLiterals rest of
+
+                        Err e ->
+                            Err e
+
+                        Ok more ->
+                            Ok (lit :: more)
 
 
 -- | Give a column an APP-SIDE computed default: a `() -> SqlValue` the runtime
@@ -451,13 +851,31 @@ create conn store =
                 Task.fail e
 
             Nothing ->
-                dbCreateCols conn s.name s.cols s.pk
+                dbCreateCols conn s.name s.cols s.pk s.indexes
 
 
--- | Safe additive migration: create the table if absent, and ADD any columns
--- the record type has gained (nullable). Never drops, renames, or retypes a
--- column — those stay manual (see docs/history/v0.19/auto-migration-architecture.md).
--- Idempotent; returns the SQL statements it applied (empty when up to date).
+-- | Safe additive migration: create the table (with its indexes) if absent,
+-- ADD any column the record type has gained, and create any declared index
+-- (`index` / `uniqueOn` / `uniqueWhere`) that is missing. `sky db migrate
+-- --gen` follows the same rule, so both paths give the same column:
+--
+-- * a `Maybe` field gives a nullable column (with its declared default, if any);
+-- * any other field gives `NOT NULL DEFAULT <d>`, where `<d>` is the declared
+--   default (`defaultInt` / `defaultText` / `defaultBool` / `defaultFloat` /
+--   `defaultNow`), else the zero value of the type (`0`, `''`, false), so the
+--   rows that exist read a value;
+-- * a required JSON (blob) field has no simple zero: it is added nullable,
+--   with a warning in the log;
+-- * a `defaultNow` column added on SQLite holds the time of the ALTER in the
+--   rows that exist (SQLite refuses `datetime('now')` in ADD COLUMN);
+-- * a `unique` column is added, then given a unique index. A required unique
+--   column cannot be added to a table with rows (every row would get the same
+--   value): that is an `Err`, and the table is not changed.
+--
+-- An existing column is never altered: a column an older `migrate` added
+-- nullable stays nullable. Nothing is dropped, renamed or retyped (see
+-- docs/history/v0.19/auto-migration-architecture.md). Idempotent; returns the
+-- SQL statements it ran (empty when up to date).
 migrate : Db -> Store a -> Task Error (List String)
 migrate conn store =
     let
@@ -469,7 +887,7 @@ migrate conn store =
                 Task.fail e
 
             Nothing ->
-                dbAutoMigrate conn s.name s.cols s.pk
+                dbAutoMigrate conn s.name s.cols s.pk s.indexes
 
 
 -- | Insert a record. Columns marked `generated` (a `serial` PK, `defaultNow`) are
@@ -499,7 +917,7 @@ insert conn store record =
                 dbExecObjectWith
                     conn
                     s.name
-                    (colsExcluding s.generated s.cols)
+                    (insertCols s.generated s.cols)
                     (Codec.toValue s.codec record)
                     (computedValues s.computed)
                     s.pk
@@ -535,7 +953,7 @@ insertMany conn store records =
                 dbExecObjectMany
                     conn
                     s.name
-                    (colsExcluding s.generated s.cols)
+                    (insertCols s.generated s.cols)
                     (List.map (Codec.toValue s.codec) records)
 
 
@@ -560,7 +978,7 @@ upsert conn store record =
                 dbUpsertObject
                     conn
                     s.name
-                    (colsExcluding s.generated s.cols)
+                    (insertCols s.generated s.cols)
                     s.pk
                     (Codec.toValue s.codec record)
                     (kindOf s.pk s.cols)
@@ -762,6 +1180,7 @@ type alias Table =
     { name : String
     , pk : String
     , cols : List ( String, String )
+    , indexes : List IndexSpec
     }
 
 
@@ -771,7 +1190,7 @@ toTable store =
     let
         s = storeRec store
     in
-        { name = s.name, pk = s.pk, cols = s.cols }
+        { name = s.name, pk = s.pk, cols = s.cols, indexes = s.indexes }
 
 -- | A project's set of tables — the single declaration `sky db` reads to derive
 -- the target schema: `db = Store.project [ Store.toTable users, Store.toTable orders ]`.
@@ -798,7 +1217,32 @@ projectTableCount (Project tables) =
 -- against `db/schema.json`. Make this a project's `main` in the gen entry.
 dumpSchema : Project -> Task Error ()
 dumpSchema (Project tables) =
-    dbDumpProject tables
+    case tablesError tables of
+
+        Just e ->
+            Task.fail e
+
+        Nothing ->
+            dbDumpProject tables
+
+
+-- The name check every Store verb runs, over a project's tables: each table
+-- name follows the identifier rule and each primary key is empty or a column.
+tablesError : List Table -> Maybe Error
+tablesError tables =
+    case tables of
+
+        [] ->
+            Nothing
+
+        t :: rest ->
+            case storeError t.name t.pk t.cols [] of
+
+                Just e ->
+                    Just e
+
+                Nothing ->
+                    tablesError rest
 
 
 dbDumpProject : List Table -> Task Error ()
@@ -806,8 +1250,9 @@ dbDumpProject =
     Ffi.kernel "Db_dumpProject"
 
 
--- | Push the whole project's schema to the live DB — create each missing table
--- and ADD any new columns (nullable), for every store. The no-migration-files
+-- | Push the whole project's schema to the live DB — create each missing table,
+-- ADD any new columns and create any missing index, for every store, by the
+-- same rule as `migrate`. The no-migration-files
 -- "make my dev DB match my types" path (`sky db push`); production uses the
 -- committed `db/migrations/` files via `sky db migrate`. Returns the SQL applied.
 pushProject : Db -> Project -> Task Error (List String)
@@ -823,7 +1268,13 @@ pushTables conn tables =
             Task.succeed []
 
         t :: rest ->
-            dbAutoMigrate conn t.name t.cols t.pk
+            (case storeError t.name t.pk t.cols [] of
+
+                Just e ->
+                    Task.fail e
+
+                Nothing ->
+                    dbAutoMigrate conn t.name t.cols t.pk t.indexes)
                 |> Task.andThen
                        (\applied ->
                            Task.map
@@ -4016,6 +4467,37 @@ colsExcluding excl cols =
                 ( c, k ) :: colsExcluding excl rest
 
 
+-- | The INSERT colspec: every column that is not `generated`, plus the `dnow`
+-- columns (`defaultNow` / `touchOnUpdate`). The runtime binds the app clock to
+-- a `dnow` column on SQLite and leaves it out on PostgreSQL.
+insertCols : List String -> List ( String, String ) -> List ( String, String )
+insertCols gen cols =
+    colsExcluding gen cols ++ nowColsOf cols
+
+
+nowColsOf : List ( String, String ) -> List ( String, String )
+nowColsOf cols =
+    case cols of
+
+        [] ->
+            []
+
+        ( c, k ) :: rest ->
+            if hasFlag "dnow" k then
+                ( c, k ) :: nowColsOf rest
+
+            else
+                nowColsOf rest
+
+
+-- Whether a colspec kind carries the `|`-delimited flag, compared exactly. A
+-- default value cannot hold a literal `|` (flagValue encodes it), so the flag
+-- is `|flag` at the end or `|flag|` inside.
+hasFlag : String -> String -> Bool
+hasFlag flag k =
+    String.endsWith ("|" ++ flag) k || String.contains ("|" ++ flag ++ "|") k
+
+
 -- | Columns carrying the `touch` flag (Store.touchOnUpdate) — set to `now()` on
 -- every UPDATE by the runtime's codecSetClause. The flag is matched exactly: a
 -- default value that contains the text "touch" is not the flag.
@@ -4027,7 +4509,7 @@ touchColsOf cols =
             []
 
         ( c, k ) :: rest ->
-            if List.member "touch" (String.split "|" k) then
+            if hasFlag "touch" k then
                 ( c, k ) :: touchColsOf rest
 
             else
@@ -4109,12 +4591,12 @@ colTypeStr ct =
             colTypeStr inner ++ "?"
 
 
-dbCreateCols : Db -> String -> List ( String, String ) -> String -> Task Error ()
+dbCreateCols : Db -> String -> List ( String, String ) -> String -> List IndexSpec -> Task Error ()
 dbCreateCols =
     Ffi.kernel "Db_createCols"
 
 
-dbAutoMigrate : Db -> String -> List ( String, String ) -> String -> Task Error (List String)
+dbAutoMigrate : Db -> String -> List ( String, String ) -> String -> List IndexSpec -> Task Error (List String)
 dbAutoMigrate =
     Ffi.kernel "Db_autoMigrate"
 

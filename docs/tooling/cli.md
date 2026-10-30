@@ -1027,11 +1027,19 @@ types — **no database connection required**:
 sky db init                      # scaffold db/migrations/ + db/schema.json (once)
 sky db migrate --gen init        # first migration: CREATE TABLE for every store
 # …add a field to a record, then:
-sky db migrate --gen add_stock   # → addColumn (required cols get a safe backfill DEFAULT)
+sky db migrate --gen add_stock   # → addColumn (required cols: NOT NULL DEFAULT <declared or zero>)
 sky db status                    # ✓ applied / ○ pending per committed file vs the ledger
 sky db migrate                   # apply the committed db/migrations/*.json to the live DB
 sky db seed                      # run the entry module's seed : Db -> Task Error ()
 ```
+
+`--gen` follows the same rule as `Store.migrate`: a `Maybe` field is a nullable
+column, any other field `NOT NULL DEFAULT <declared default, else zero>`, a
+`unique` column gets an `addIndex`, and declared indexes (`Store.index` /
+`uniqueOn` / `uniqueWhere`, `Schema.withIndex`) become `addIndex` / `dropIndex`
+ops. It writes `"v": 2` on each new op, and a file with a v2 op applies with the
+header line `-- sky:migration v2`. A v1 op renders as it did in v0.28.1, so an
+applied file keeps its checksum.
 
 `sky db status` compares the committed files against the live `_sky_migrations`
 ledger and **exits non-zero while anything is pending** — a ready-made "is this
@@ -1046,8 +1054,10 @@ sky db push        # create missing tables + add new columns to match your types
 
 The fast prototyping loop (Prisma-style `db push`): syncs the live DB to your
 current `db : Store.Project` with **no migration files** — creates each missing
-table and adds any new (nullable) columns. Additive + idempotent; never drops or
-retypes. Use `sky db migrate --gen` once your schema stabilises and you want
+table, adds any new columns (by the `Store.migrate` rule: a `Maybe` field
+nullable, any other `NOT NULL DEFAULT <declared or zero>`) and creates any
+missing declared index. Additive + idempotent; never drops, retypes or alters
+an existing column. Use `sky db migrate --gen` once your schema stabilises and you want
 reviewable, committed history for production.
 
 ### `sky db reset [table]` · `sky db drop [table]` — destructive resets

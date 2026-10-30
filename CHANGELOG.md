@@ -64,6 +64,40 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
     (one JSON object per column group, `a__` / `b__` for a join). The
     memoised-read warning (a top-level `Store.all` CAF) keeps firing on it.
 
+- **`Std.Db.Store`: one migrate rule, indexes and `defaultFloat`.**
+  `Store.migrate` (and `sky db push`) and `sky db migrate --gen` now follow
+  one rule (user decision D1): "A `Maybe` field gives a nullable column, any
+  other field gives NOT NULL. A declared builder default wins (`defaultInt` /
+  `defaultText` / `defaultBool` / `defaultNow`, plus a new `defaultFloat`),
+  else the zero value of the type. Existing columns are never altered. No
+  builder makes a required field's column nullable."
+  - Both paths render an added column through one Go function
+    (`renderAddColumn`), so the DDL is the same per dialect by construction.
+    A parity fixture (`runtime-go/rt/testdata/migrate_parity.json`) is
+    checked by a Rust test (the diff gives the fixture's ops) and by Go tests
+    on SQLite and PostgreSQL (`Store.migrate` runs exactly the SQL of
+    `renderMigOp` of those ops).
+  - A required JSON (blob) field has no simple zero: it is added nullable,
+    with a warning. A `unique` column is added, then given a unique index; a
+    required unique column on a table with rows is `Err`.
+  - A `defaultNow` column added on SQLite holds the time of the ALTER in the
+    rows that exist (SQLite refuses `datetime('now')` in ADD COLUMN), and
+    `insert` / `insertMany` / `upsert` bind the app clock for a new row. On
+    PostgreSQL the column is `DEFAULT now()` and the database stamps it.
+    `defaultNow` and `touchOnUpdate` need a text column.
+  - `Store.index [ cols ]`, `Store.uniqueOn [ cols ]` (required columns
+    only) and `Store.uniqueWhere [ cols ] cond` (a partial unique index, the
+    condition written as constants). `create` and `migrate` create them, and
+    `migrate` creates a declared index that is missing. The name is
+    `ix_<table>_<h>` / `ux_<table>_<h>` (8 hex digits of a hash of the
+    definition), looked up by table and name. `Store.Table` has a new field
+    `indexes`; `Std.Db.Schema.toProject` carries `withIndex` /
+    `withUniqueIndex` into it, so `sky db push` and `--gen` see them.
+  - `--gen` writes `"v": 2` on each new op, emits `addIndex` / `dropIndex`,
+    and a file with a v2 op renders with the header line
+    `-- sky:migration v2`. A v1 op renders the v0.28.1 bytes, so every
+    migration file that an app applied keeps its checksum.
+
 - **`Std.Image.Canvas`: draw an image on the server.** A `Canvas` is a
   persistent display list: `blank` or `fromImage`, then `rect`,
   `roundedRect`, `ellipse`, `arc`, `line` (a `Paint` is `Fill colour` or
@@ -352,6 +386,15 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   ascending and first descending before. A term on a required column is
   unchanged.
 
+- **`Std.Db.Store.migrate` adds a required column NOT NULL (behaviour
+  change).** It added every new column nullable and ignored a declared
+  default. It now adds `NOT NULL DEFAULT <declared, else zero>` for a
+  non-`Maybe` field. An existing column is never altered: a column an older
+  `migrate` added nullable stays nullable. `Store.Table` has a new field
+  `indexes` (a hand-built `Table` adds `indexes = []`), and `Store.index`
+  is a new name that meets `Json.Decode.index` and `Std.Db.Table.index`
+  under two `exposing (..)` imports (`[E1012]`; write `Store.index`).
+
 - **A query that hit a row error now fails (behaviour change).** `Db.query`
   and the Store readers return `Err` for an error after the first row, where
   they returned the rows before it.
@@ -465,6 +508,21 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   `limit` or `offset` is `Err`.** SQLite refused `OFFSET` without `LIMIT`
   (a syntax error), and a negative limit meant "no limit" on SQLite but an
   error on PostgreSQL.
+- **`Std.Db.Store` migrate: a declared default is kept when a column is
+  added (B9).** `Store.migrate` ignored `defaultInt` / `defaultText` /
+  `defaultBool` / `defaultNow` on ALTER, and `--gen` wrote the zero value.
+- **`Std.Db.Store`: a text primary key on SQLite refuses NULL (B8).** A
+  non-integer PK had no NOT NULL, and SQLite then accepts a NULL key. A new
+  table (and a v2 `createTable` op) makes every PK NOT NULL.
+- **`sky db migrate`: an `addIndex` op checks its column names (B10).** They
+  were put into the DDL unchecked.
+- **`Std.Db.Schema`: `defaultNow` on a `timestamp` / `bigInt` / `int` column
+  works.** It rendered `DEFAULT now()` on a BIGINT column, which PostgreSQL
+  refuses in CREATE TABLE, and SQLite stored text that an Int field cannot
+  read. An integer column now takes epoch milliseconds.
+- **`Std.Db.Schema.toProject`: a default value with `|` stays a value.** The
+  bridge put a `defaultText` value into the colspec without the encoding
+  Store uses, so `"a|u"` made the column UNIQUE in `sky db push` and `--gen`.
 - **`Std.Db.Store`: every verb checks the table name, the primary key and the
   builders' column names.** `all`, `create`, `insert`, `insertMany`,
   `upsert` and `update` put the table name into SQL unchecked, and

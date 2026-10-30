@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // codecKindBase returns the base-kind portion of a colspec kind, before any
@@ -65,6 +66,31 @@ func codecColIsTouch(kind string) bool {
 	return false
 }
 
+// codecColIsNow reports whether a colspec kind carries the `dnow` flag that
+// `Store.defaultNow` and `Store.touchOnUpdate` stamp: the column's value is the
+// clock at INSERT. Each flag is compared exactly.
+func codecColIsNow(kind string) bool {
+	for _, f := range codecColFlags(kind) {
+		if f == "dnow" {
+			return true
+		}
+	}
+	return false
+}
+
+// codecNowValue is the value an INSERT binds for a `dnow` column. On SQLite
+// it is the app clock in `datetime('now')` format: a column that `migrate`
+// added holds a constant default (the clock at the ALTER), because SQLite
+// refuses a non-constant default in ADD COLUMN, so new rows must not take
+// it. On PostgreSQL the column is left out (ok is false) and the database
+// default `now()` stamps it.
+func codecNowValue(driver string) (any, bool) {
+	if driver == "pgx" {
+		return nil, false
+	}
+	return time.Now().UTC().Format(sqliteNowLayout), true
+}
+
 // codecColFlags returns the `|`-delimited flags after the base kind.
 func codecColFlags(kind string) []string {
 	i := strings.IndexByte(kind, '|')
@@ -81,7 +107,7 @@ var codecFlagValueDecoder = strings.NewReplacer("%7C", "|", "%25", "%")
 
 // codecColExtras parses the `|`-delimited flag suffix Store.unique / Store.default*
 // append onto a colspec kind, returning (unique, defaultKind, defaultVal) where
-// defaultKind ∈ {none,now,text,int,bool} matches schemaDefault. A default
+// defaultKind ∈ {none,now,text,int,bool,float} matches schemaDefault. A default
 // value arrives percent-encoded (see codecFlagValueDecoder) and is decoded here.
 func codecColExtras(kind string) (bool, string, string) {
 	unique := false
@@ -102,6 +128,8 @@ func codecColExtras(kind string) (bool, string, string) {
 			defKind, defVal = "int", f[len("dint="):]
 		case strings.HasPrefix(f, "dbool="):
 			defKind, defVal = "bool", f[len("dbool="):]
+		case strings.HasPrefix(f, "dfloat="):
+			defKind, defVal = "float", f[len("dfloat="):]
 		}
 	}
 	return unique, defKind, defVal
@@ -128,8 +156,8 @@ func codecColKindToSchema(kind string) string {
 // `sky db push` and `sky db migrate` byte-identical — they physically cannot diverge.
 //
 //   - A required (non-Maybe) column is NOT NULL on a FRESH table; the PK always is.
-//     (An ALTER ADD on an existing table stays nullable — see Db_autoMigrate — since
-//     existing rows can't satisfy NOT NULL.)
+//     (A column added to an existing table goes through renderAddColumn, which
+//     adds it NOT NULL DEFAULT <declared or zero> so existing rows read a value.)
 //   - Auto-increment only applies to the PK (schemaRenderColumn renders the serial
 //     token only when IsPk && IsAutoInc), so guard it with isPk here too.
 func schemaColMap(name, codecKind string, isPk, nullable, unique, autoInc bool, defKind, defVal string) map[string]any {
@@ -157,21 +185,117 @@ func codecColspecSchemaMap(table string, colspecArg any, pk string) map[string]a
 	return map[string]any{"Name": table, "Columns": cols, "Indexes": []any{}}
 }
 
-// Db_createCols renders + executes the CREATE TABLE derived from a colspec.
-func Db_createCols(connArg, tableArg, colspecArg, pkArg any) any {
+// Db_createCols : Db -> String -> colspec -> String -> List IndexSpec -> Task Error ()
+// renders + executes the CREATE TABLE derived from a colspec, then one CREATE
+// INDEX per declared index (Store.index / uniqueOn / uniqueWhere).
+func Db_createCols(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 	return func() any {
 		d, ok := connArg.(*SkyDb)
 		if !ok {
 			return Err[any, any](ErrInvalidInput("Store.create: first argument is not a Db"))
 		}
-		sm := codecColspecSchemaMap(AsString(tableArg), colspecArg, AsString(pkArg))
-		for _, stmt := range schemaRenderTable(d.driver, sm) {
+		table := AsString(tableArg)
+		indexes, err := codecStoreIndexes(table, indexesArg)
+		if err != nil {
+			return Err[any, any](ErrInvalidInput("Store.create: " + err.Error()))
+		}
+		sm := codecColspecSchemaMap(table, colspecArg, AsString(pkArg))
+		stmts := schemaRenderTable(d.driver, sm)
+		for _, ix := range indexes {
+			stmts = append(stmts, ix.ddl(table))
+		}
+		for _, stmt := range stmts {
 			if _, err := d.executor().Exec(stmt); err != nil {
 				return Err[any, any](ErrIo("Store.create: " + err.Error()))
 			}
 		}
 		return Ok[any, any](struct{}{})
 	}
+}
+
+// storeIndex is one declared Store index. A Store builder leaves the name
+// empty and codecStoreIndexes derives it (codecIndexName). A Std.Db.Schema
+// `withIndex` keeps its own name.
+type storeIndex struct {
+	Name    string   `json:"name"`
+	Columns []string `json:"columns"`
+	Unique  bool     `json:"unique,omitempty"`
+	Where   string   `json:"where,omitempty"`
+}
+
+func (ix storeIndex) ddl(table string) string {
+	return renderIndexDDL(table, ix.Name, ix.Columns, ix.Unique, ix.Where)
+}
+
+// codecStoreIndexes reads a Sky `List IndexSpec` ({ name, cols, unique,
+// predicate }). Every column name is spliced into DDL, so each must be an
+// identifier (B10), and so must the name.
+func codecStoreIndexes(table string, indexesArg any) ([]storeIndex, error) {
+	var out []storeIndex
+	for _, raw := range AsList(indexesArg) {
+		ix := storeIndex{
+			Name:   codecStrField(raw, "Name"),
+			Unique: schemaBool(fieldOrNil(raw, "Unique")),
+			Where:  codecStrField(raw, "Predicate"),
+		}
+		for _, c := range AsList(fieldOrNil(raw, "Cols")) {
+			ix.Columns = append(ix.Columns, AsString(c))
+		}
+		if len(ix.Columns) == 0 {
+			return nil, fmt.Errorf("an index on %s has no columns", table)
+		}
+		for _, c := range ix.Columns {
+			if !codecValidIdent(c) {
+				return nil, fmt.Errorf("index on %s: invalid column identifier %q", table, c)
+			}
+		}
+		if ix.Name == "" {
+			ix.Name = codecIndexName(table, ix.Columns, ix.Unique, ix.Where)
+		}
+		if !codecValidIdent(ix.Name) {
+			return nil, fmt.Errorf("invalid index name %q", ix.Name)
+		}
+		out = append(out, ix)
+	}
+	return out, nil
+}
+
+// codecStrField reads a String record field, "" when it is absent.
+func codecStrField(record any, field string) string {
+	v := fieldOrNil(record, field)
+	if v == nil {
+		return ""
+	}
+	return AsString(v)
+}
+
+// codecIndexExists looks an index up in the catalogue by table AND name, so
+// an index of the same name on another table is not taken for it.
+// PostgreSQL folds the unquoted DDL names to lower case.
+func codecIndexExists(d *SkyDb, table, name string) (bool, error) {
+	var q string
+	var params []any
+	if d.driver == "pgx" {
+		q = "SELECT 1 AS x FROM pg_indexes WHERE schemaname = current_schema() AND tablename = ? AND indexname = ?"
+		params = []any{strings.ToLower(table), strings.ToLower(name)}
+	} else {
+		q = "SELECT 1 AS x FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND name = ?"
+		params = []any{table, name}
+	}
+	r, ok := AnyTaskRun(dbQueryRows(d, q, params)).(SkyResult[any, any])
+	if !ok || r.Tag != 0 {
+		return false, fmt.Errorf("index lookup failed")
+	}
+	return len(AsList(r.OkValue)) > 0, nil
+}
+
+// codecTableHasRows reports whether a table holds at least one row.
+func codecTableHasRows(d *SkyDb, table string) (bool, error) {
+	r, ok := AnyTaskRun(dbQueryRows(d, "SELECT 1 AS x FROM "+table+" LIMIT 1", []any{})).(SkyResult[any, any])
+	if !ok || r.Tag != 0 {
+		return false, fmt.Errorf("row check failed")
+	}
+	return len(AsList(r.OkValue)) > 0, nil
 }
 
 // codecValidIdent guards interpolated identifiers (table/column names, which come
@@ -256,12 +380,18 @@ func Db_dialect(connArg any) any {
 	return "sqlite"
 }
 
-// Db_autoMigrate : Db -> String -> colspec -> String -> Task Error (List String).
-// SAFE additive migration: creates the table if absent; ADDs any columns the
-// type gained (nullable — the codec supplies defaults on read). Never drops,
-// renames, or retypes a column — those are gated/manual per the migration
-// architecture. Returns the applied statements (empty on an up-to-date table).
-func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg any) any {
+// Db_autoMigrate : Db -> String -> colspec -> String -> List IndexSpec
+//
+//	-> Task Error (List String)
+//
+// SAFE additive migration: creates the table if absent, ADDs any column the
+// type gained, and creates any declared index that is missing. A column is
+// added by renderAddColumn, the same renderer `sky db migrate` uses for a v2
+// addColumn op: a Maybe field is nullable, any other field is NOT NULL
+// DEFAULT <declared default, else the zero of its kind> (user decision D1).
+// An existing column is never altered, and nothing is dropped, renamed or
+// retyped. Returns the statements it ran (empty when up to date).
+func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 	return func() any {
 		d, ok := connArg.(*SkyDb)
 		if !ok {
@@ -271,34 +401,75 @@ func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg any) any {
 		if !codecValidIdent(table) {
 			return Err[any, any](ErrInvalidInput("Store.migrate: invalid table name"))
 		}
+		indexes, err := codecStoreIndexes(table, indexesArg)
+		if err != nil {
+			return Err[any, any](ErrInvalidInput("Store.migrate: " + err.Error()))
+		}
 		current, err := codecTableColumns(d, table)
 		if err != nil {
 			return Err[any, any](ErrIo("Store.migrate: " + err.Error()))
 		}
 		applied := []any{}
+		run := func(stmt string) error {
+			if _, e := d.executor().Exec(stmt); e != nil {
+				return e
+			}
+			applied = append(applied, stmt)
+			return nil
+		}
 		if len(current) == 0 {
-			// table absent → create it
-			for _, stmt := range schemaRenderTable(d.driver, codecColspecSchemaMap(table, colspecArg, AsString(pkArg))) {
-				if _, e := d.executor().Exec(stmt); e != nil {
+			// table absent → create it, with its indexes
+			stmts := schemaRenderTable(d.driver, codecColspecSchemaMap(table, colspecArg, AsString(pkArg)))
+			for _, ix := range indexes {
+				stmts = append(stmts, ix.ddl(table))
+			}
+			for _, stmt := range stmts {
+				if e := run(stmt); e != nil {
 					return Err[any, any](ErrIo("Store.migrate: " + e.Error()))
 				}
-				applied = append(applied, stmt)
 			}
 			return Ok[any, any](applied)
 		}
-		// existing → add any missing columns (nullable)
+		// existing → add any missing columns
+		pk := AsString(pkArg)
 		for _, cs := range AsList(colspecArg) {
 			t := AsTuple2(cs)
 			name := AsString(t.V0)
 			if !codecValidIdent(name) || codecHasColumn(d.driver, current, name) {
 				continue
 			}
-			sqlType := schemaTypeName(d.driver, codecColKindToSchema(AsString(t.V1)))
-			stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, name, sqlType)
-			if _, e := d.executor().Exec(stmt); e != nil {
+			mc := codecColspecMigColumn(name, AsString(t.V1), pk)
+			hasRows := false
+			if mc.Unique && !mc.Nullable {
+				if hasRows, err = codecTableHasRows(d, table); err != nil {
+					return Err[any, any](ErrIo("Store.migrate: " + err.Error()))
+				}
+			}
+			stmts, warnings, err := renderAddColumn(d.driver, table, mc, sqliteNowLiteral(), hasRows)
+			if err != nil {
+				return Err[any, any](ErrInvalidInput("Store.migrate: " + err.Error()))
+			}
+			for _, w := range warnings {
+				rtWarn("Store.migrate: " + w)
+			}
+			for _, stmt := range stmts {
+				if e := run(stmt); e != nil {
+					return Err[any, any](ErrIo("Store.migrate: " + e.Error()))
+				}
+			}
+		}
+		// declared indexes that are missing
+		for _, ix := range indexes {
+			exists, err := codecIndexExists(d, table, ix.Name)
+			if err != nil {
+				return Err[any, any](ErrIo("Store.migrate: " + err.Error()))
+			}
+			if exists {
+				continue
+			}
+			if e := run(ix.ddl(table)); e != nil {
 				return Err[any, any](ErrIo("Store.migrate: " + e.Error()))
 			}
-			applied = append(applied, stmt)
 		}
 		return Ok[any, any](applied)
 	}
@@ -476,15 +647,7 @@ func Db_execObjectWith(connArg, tableArg, colspecArg, objArg, extraArg, pkArg, p
 		if !ok {
 			return Err[any, any](ErrInvalidInput("Store.insert: value is not a record"))
 		}
-		cols := []string{}
-		params := []any{}
-		for _, cs := range AsList(colspecArg) {
-			t := AsTuple2(cs)
-			name := AsString(t.V0)
-			base, _ := codecSplitKind(AsString(t.V1))
-			cols = append(cols, name)
-			params = append(params, rawToSqlArg(fields[name], base))
-		}
+		cols, params := codecInsertColumns(d.driver, colspecArg, fields)
 		for _, ex := range AsList(extraArg) {
 			t := AsTuple2(ex)
 			cols = append(cols, AsString(t.V0))
@@ -523,16 +686,14 @@ func Db_upsertObject(connArg, tableArg, colspecArg, pkArg, objArg, pkKindArg any
 			return Err[any, any](ErrInvalidInput("Store.upsert: value is not a record"))
 		}
 		pk := AsString(pkArg)
-		cols := []string{}
-		params := []any{}
+		cols, params := codecInsertColumns(d.driver, colspecArg, fields)
+		// A stamped `dnow` column is an INSERT column only: an update keeps
+		// the stamp the row was created with.
 		setParts := []string{}
 		for _, cs := range AsList(colspecArg) {
 			t := AsTuple2(cs)
 			name := AsString(t.V0)
-			base, _ := codecSplitKind(AsString(t.V1))
-			cols = append(cols, name)
-			params = append(params, rawToSqlArg(fields[name], base))
-			if name != pk {
+			if name != pk && !codecColIsNow(AsString(t.V1)) {
 				setParts = append(setParts, name+" = excluded."+name)
 			}
 		}
@@ -562,12 +723,8 @@ func Db_execObjectMany(connArg, tableArg, colspecArg, objsArg any) any {
 		if len(objs) == 0 {
 			return Ok[any, any](0)
 		}
-		colspec := AsList(colspecArg)
-		cols := make([]string, len(colspec))
-		for i, cs := range colspec {
-			cols[i] = AsString(AsTuple2(cs).V0)
-		}
-		onePh := "(" + strings.TrimSuffix(strings.Repeat("?, ", len(cols)), ", ") + ")"
+		driver := dbDriverOf(connArg)
+		var cols []string
 		rowPh := make([]string, 0, len(objs))
 		params := []any{}
 		for _, obj := range objs {
@@ -575,17 +732,43 @@ func Db_execObjectMany(connArg, tableArg, colspecArg, objsArg any) any {
 			if !ok {
 				return Err[any, any](ErrInvalidInput("Store.insertMany: a value is not a record"))
 			}
-			rowPh = append(rowPh, onePh)
-			for _, cs := range colspec {
-				t := AsTuple2(cs)
-				base, _ := codecSplitKind(AsString(t.V1))
-				params = append(params, rawToSqlArg(fields[AsString(t.V0)], base))
-			}
+			rowCols, rowParams := codecInsertColumns(driver, colspecArg, fields)
+			cols = rowCols
+			rowPh = append(rowPh, "("+strings.TrimSuffix(strings.Repeat("?, ", len(rowCols)), ", ")+")")
+			params = append(params, rowParams...)
+		}
+		if len(cols) == 0 {
+			return Ok[any, any](0)
 		}
 		sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s",
 			AsString(tableArg), strings.Join(cols, ", "), strings.Join(rowPh, ", "))
 		return AnyTaskRun(Db_exec(connArg, sql, params))
 	}
+}
+
+// codecInsertColumns lists the INSERT columns and values of one record. A
+// `dnow` column (Store.defaultNow / touchOnUpdate) takes the app clock on
+// SQLite and is left out on PostgreSQL (see codecNowValue). Every other
+// column binds the record's value.
+func codecInsertColumns(driver string, colspecArg any, fields map[string]any) ([]string, []any) {
+	cols := []string{}
+	params := []any{}
+	for _, cs := range AsList(colspecArg) {
+		t := AsTuple2(cs)
+		name := AsString(t.V0)
+		rawKind := AsString(t.V1)
+		if codecColIsNow(rawKind) {
+			if v, ok := codecNowValue(driver); ok {
+				cols = append(cols, name)
+				params = append(params, v)
+			}
+			continue
+		}
+		base, _ := codecSplitKind(rawKind)
+		cols = append(cols, name)
+		params = append(params, rawToSqlArg(fields[name], base))
+	}
+	return cols, params
 }
 
 // rowValToJsonRaw converts a DB row value to a JSON raw value per column kind.
@@ -726,32 +909,39 @@ func Db_queryObjectGroups(connArg, sqlArg, paramsArg, groupsArg any) any {
 	}
 }
 
+// jcol is one column of the schema dump (`db/schema.json`).
+type jcol struct {
+	Name     string      `json:"name"`
+	Kind     string      `json:"kind"`
+	Nullable bool        `json:"nullable"`
+	Autoinc  bool        `json:"autoinc,omitempty"`
+	Unique   bool        `json:"unique,omitempty"`
+	Default  *migDefault `json:"default,omitempty"`
+}
+
+// codecDumpColumn is the schema-dump form of one colspec entry.
+func codecDumpColumn(name, rawKind string) jcol {
+	mc := codecColspecMigColumn(name, rawKind, "")
+	return jcol{
+		Name: mc.Name, Kind: mc.Type, Nullable: mc.Nullable,
+		Autoinc: mc.Autoinc, Unique: mc.Unique, Default: mc.Default,
+	}
+}
+
 // Db_dumpProject prints a project's schema as JSON between markers (SKY_SCHEMA_*)
 // so `sky db migrate --gen` can capture the target schema WITHOUT a live DB —
 // this is the pure schema-dump the file-based migration flow diffs against.
 func Db_dumpProject(tablesArg any) any {
 	return func() any {
-		// jdefault mirrors the runtime's migDefault (db_migrate_ops.go) AND the Rust
-		// side's default shape, so a captured DEFAULT round-trips dump → schema.json →
-		// createTable op → renderMigOp unchanged.
-		type jdefault struct {
-			Int  *int64  `json:"int,omitempty"`
-			Text *string `json:"text,omitempty"`
-			Bool *bool   `json:"bool,omitempty"`
-			Now  bool    `json:"now,omitempty"`
-		}
-		type jcol struct {
-			Name     string    `json:"name"`
-			Kind     string    `json:"kind"`
-			Nullable bool      `json:"nullable"`
-			Autoinc  bool      `json:"autoinc,omitempty"`
-			Unique   bool      `json:"unique,omitempty"`
-			Default  *jdefault `json:"default,omitempty"`
-		}
+		// A column's default is a migDefault, the shape renderMigOp reads, so a
+		// captured DEFAULT round-trips dump → schema.json → op unchanged. The
+		// column is read by codecColspecMigColumn, the same reading
+		// Db_autoMigrate uses (one migrate rule, D1).
 		type jtable struct {
-			Name    string `json:"name"`
-			Pk      string `json:"pk"`
-			Columns []jcol `json:"columns"`
+			Name    string       `json:"name"`
+			Pk      string       `json:"pk"`
+			Columns []jcol       `json:"columns"`
+			Indexes []storeIndex `json:"indexes,omitempty"`
 		}
 		out := struct {
 			Tables []jtable `json:"tables"`
@@ -763,29 +953,13 @@ func Db_dumpProject(tablesArg any) any {
 			}
 			for _, c := range AsList(fieldOrNil(t, "Cols")) {
 				tup := AsTuple2(c)
-				raw := AsString(tup.V1)
-				base, nullable := codecSplitKind(raw)
-				unique, defKind, defVal := codecColExtras(raw)
-				jc := jcol{
-					Name: AsString(tup.V0), Kind: base, Nullable: nullable,
-					Autoinc: codecColIsAutoInc(raw), Unique: unique,
-				}
-				switch defKind {
-				case "now":
-					jc.Default = &jdefault{Now: true}
-				case "int":
-					if n, err := strconv.ParseInt(defVal, 10, 64); err == nil {
-						jc.Default = &jdefault{Int: &n}
-					}
-				case "text":
-					v := defVal
-					jc.Default = &jdefault{Text: &v}
-				case "bool":
-					b := defVal == "true"
-					jc.Default = &jdefault{Bool: &b}
-				}
-				jt.Columns = append(jt.Columns, jc)
+				jt.Columns = append(jt.Columns, codecDumpColumn(AsString(tup.V0), AsString(tup.V1)))
 			}
+			ixs, err := codecStoreIndexes(jt.Name, fieldOrNil(t, "Indexes"))
+			if err != nil {
+				return Err[any, any](ErrInvalidInput("dumpProject: " + err.Error()))
+			}
+			jt.Indexes = ixs
 			out.Tables = append(out.Tables, jt)
 		}
 		b, err := json.Marshal(out)

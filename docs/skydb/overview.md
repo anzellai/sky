@@ -90,11 +90,46 @@ column (a typo fails fast with the column list):
 | `Store.primaryKey "id"` | mark the PK (String/UUID key you provide) |
 | `Store.serial "id"` | auto-increment PK (`INTEGER … AUTOINCREMENT` / `BIGSERIAL`) |
 | `Store.unique "email"` | `UNIQUE` constraint |
-| `Store.defaultNow "created_at"` | `DEFAULT now()`/`datetime('now')`, DB-stamped on insert |
+| `Store.defaultNow "created_at"` | a text column: `DEFAULT now()`/`datetime('now')`, stamped on insert (on SQLite `insert`/`insertMany`/`upsert` bind the app clock) |
 | `Store.touchOnUpdate "updated_at"` | stamped on insert **and auto-bumped to `now()` on every `update`** — no raw SQL |
-| `Store.defaultText/defaultInt/defaultBool "col" v` | literal column `DEFAULT` (`defaultBool` → `TRUE`/`FALSE` on Postgres, `1`/`0` on SQLite) |
+| `Store.defaultText/defaultInt/defaultBool/defaultFloat "col" v` | literal column `DEFAULT` (`defaultBool` → `TRUE`/`FALSE` on Postgres, `1`/`0` on SQLite; `defaultFloat` refuses NaN and Infinity) |
+| `Store.index [ "customer_id", "created_at" ]` | `CREATE INDEX` named `ix_<table>_<h>` |
+| `Store.uniqueOn [ "customer_id", "code" ]` | a unique index, `ux_<table>_<h>`; every column must be required (NULLs never conflict) |
+| `Store.uniqueWhere [ "slug" ] (Store.neq "slug" (SqlString ""))` | a partial unique index; the condition is written as constants (`eq`/`neq`/`gt`/…, `isNull`/`notNull`, `inList`, `eqCol`…, `and_`/`or_`/`not_`) |
 | `Store.defaultWith "id" (\_ -> SqlValue)` | **app-side** computed default at insert (e.g. a UUID PK via the unit-arg `Task.run` idiom) |
 | `Store.generated [ "id", "created_at" ]` | columns `insert`/`update` OMIT so the DB fills them |
+
+`<h>` is 8 hex digits of a hash of the table, the columns, the unique flag
+and the predicate, so every definition has its own name, and a changed
+`uniqueWhere` condition gives a new index. `create` and `migrate` create the
+declared indexes.
+
+**`Store.migrate` and `sky db migrate --gen` follow one rule** (user decision
+D1): "A `Maybe` field gives a nullable column, any other field gives NOT NULL.
+A declared builder default wins (`defaultInt` / `defaultText` / `defaultBool` /
+`defaultNow`, plus a new `defaultFloat`), else the zero value of the type.
+Existing columns are never altered. No builder makes a required field's column
+nullable." Both paths render an added column through one runtime function, so
+the DDL is the same per dialect:
+
+| Field and builder | Added column (SQLite / PostgreSQL) |
+|---|---|
+| `Maybe`, no default | `ADD COLUMN c <type>` (nullable) |
+| `Maybe` + a declared default | nullable, `DEFAULT <d>` |
+| required + `defaultInt/Text/Bool/Float` | `NOT NULL DEFAULT <d>` |
+| required, no builder | `NOT NULL DEFAULT 0` / `''` / false |
+| required JSON (blob) field | nullable, and a warning (there is no simple zero) |
+| `defaultNow` (text) | PostgreSQL `NOT NULL DEFAULT now()`; SQLite `NOT NULL DEFAULT '<time of the ALTER>'` |
+| `unique` | added, then a unique index; a required unique column on a table with rows is `Err` |
+
+Notes: `migrate` adds and creates only, it never drops, renames or retypes,
+and it never makes an existing nullable column NOT NULL. Run it from one
+process: two replicas that migrate at once can race on `ADD COLUMN`. On
+PostgreSQL, `CREATE INDEX` locks writes to the table while it runs, and from
+PostgreSQL 11 `ADD COLUMN … NOT NULL DEFAULT <constant or now()>` needs no
+rewrite (`now()` stamps the rows that exist with the time of the ALTER). A zero
+`''` cannot decode for a nullary enum, a `Codec.map` wrapper or a validated
+string: declare a default for such a field.
 
 ### Writes
 
@@ -417,13 +452,13 @@ db : Store.Project
 db = Schema.toProject allTables
 ```
 
-Table name, primary key, `UNIQUE`, `NOT NULL`, `DEFAULT` and autoincrement all
-carry through, so `sky db push` creates/updates the columns and `migrate --gen`
-diffs them. Secondary **INDEXES do not** cross the bridge (the `Store.Project`
-schema-dump models tables + columns only) — keep creating them via
-`createSchema`/`createTable` (which render `withIndex`) at app boot, or as raw
-`CREATE INDEX IF NOT EXISTS`. Ints widen to `BIGINT` under the codec pipeline
-(safe; no millis overflow).
+Table name, primary key, `UNIQUE`, `NOT NULL`, `DEFAULT`, autoincrement and
+the `withIndex` / `withUniqueIndex` indexes (with their own names) carry
+through, so `sky db push` creates the columns and missing indexes and
+`migrate --gen` diffs them (`addIndex` / `dropIndex`). A column added to an
+existing table follows the `Store.migrate` rule above. `defaultNow` on a
+`timestamp` / `bigInt` / `int` column is epoch milliseconds. Ints widen to
+`BIGINT` under the codec pipeline (safe; no millis overflow).
 
 > **Naming tip.** `Schema.text` collides with `Std.Html`/`Std.Ui`'s `text` if
 > both are exposed unqualified. In a module that already does

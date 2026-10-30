@@ -67,13 +67,13 @@ import Std.Log exposing (println)
 type alias User =
     { id : Int
     , email : String
-    , createdAt : Int
+    , createdAt : String
     }
 
 
 users : Store.Store User
 users =
-    Store.fromCodec "users" (Codec.auto { id = 0, email = "", createdAt = 0 })
+    Store.fromCodec "users" (Codec.auto { id = 0, email = "", createdAt = "" })
         |> Store.serial "id"
         |> Store.unique "email"
         |> Store.defaultNow "created_at"
@@ -194,5 +194,101 @@ fn committed_migration_preserves_column_constraints_and_matches_push() {
         "committed-migration DDL must BYTE-MATCH `sky db push` DDL\npush:    {push_ddl:?}\nmigrate: {migrate_ddl:?}"
     );
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// v0.29.0, user decision D1: after a field is added, `--gen` writes a v2
+/// `addColumn` that keeps the declared default and an `addIndex`; the applied
+/// file starts with the v2 header; `sky db status` shows no drift on a second
+/// run; and `sky db push` on a copy of the old database runs the same ALTER,
+/// so both paths leave the same DDL.
+#[test]
+fn added_field_follows_one_migrate_rule_on_both_paths() {
+    if !required(Need::Go, tool_on_path("go")) || !required(Need::Sqlite3, tool_on_path("sqlite3"))
+    {
+        return;
+    }
+    let dir = scratch_project();
+    for args in [
+        vec!["db", "init"],
+        vec!["db", "migrate", "--gen", "init"],
+        vec!["db", "migrate"],
+    ] {
+        let (ok, log) = run_sky(&dir, &args);
+        assert!(ok, "sky {args:?} failed:\n{log}");
+    }
+    // A row before the change, and a copy of the old database for `push`.
+    let ins = Command::new("sqlite3")
+        .arg(dir.join("app.db"))
+        .arg("INSERT INTO users (email) VALUES ('a@x')")
+        .output()
+        .expect("spawn sqlite3");
+    assert!(ins.status.success());
+    std::fs::copy(dir.join("app.db"), dir.join("push.db")).unwrap();
+
+    let main = dir.join("src").join("Main.sky");
+    let src = std::fs::read_to_string(&main).unwrap();
+    let src = src
+        .replace(
+            "    , createdAt : String\n    }",
+            "    , createdAt : String\n    , rank : Int\n    , nick : Maybe String\n    }",
+        )
+        .replace(
+            "createdAt = \"\" })",
+            "createdAt = \"\", rank = 0, nick = Nothing })",
+        )
+        .replace(
+            "        |> Store.defaultNow \"created_at\"\n",
+            "        |> Store.defaultNow \"created_at\"\n        |> Store.defaultInt \"rank\" 7\n        |> Store.index [ \"rank\" ]\n",
+        );
+    std::fs::write(&main, src).unwrap();
+
+    let (ok, log) = run_sky(&dir, &["db", "migrate", "--gen", "add_rank"]);
+    assert!(ok, "sky db migrate --gen add_rank failed:\n{log}");
+    let mig = std::fs::read_dir(dir.join("db").join("migrations"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| p.to_string_lossy().contains("add_rank"))
+        .expect("the add_rank migration file");
+    let body = std::fs::read_to_string(&mig).unwrap();
+    assert!(body.contains(r#""v": 2"#), "no v2 op:\n{body}");
+    assert!(
+        body.contains(r#""int": 7"#),
+        "the declared default was lost (B9):\n{body}"
+    );
+    assert!(
+        body.contains(r#""kind": "addIndex""#),
+        "no addIndex:\n{body}"
+    );
+
+    let (ok, log) = run_sky(&dir, &["db", "migrate"]);
+    assert!(ok, "applying add_rank failed:\n{log}");
+    let (ok, log) = run_sky(&dir, &["db", "migrate"]);
+    assert!(
+        ok && !log.contains("mismatch"),
+        "second apply drifted:\n{log}"
+    );
+
+    let rank = Command::new("sqlite3")
+        .arg(dir.join("app.db"))
+        .arg("SELECT rank FROM users")
+        .output()
+        .expect("spawn sqlite3");
+    assert_eq!(String::from_utf8_lossy(&rank.stdout).trim(), "7", "old row");
+
+    let out = Command::new(SKY)
+        .args(["db", "push"])
+        .current_dir(&dir)
+        .env("SKY_DB_PATH", dir.join("push.db"))
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky db push");
+    assert!(out.status.success(), "sky db push failed");
+    assert_eq!(
+        users_ddl(&dir.join("push.db")),
+        users_ddl(&dir.join("app.db")),
+        "push and the committed migration left different DDL"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

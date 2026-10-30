@@ -15,6 +15,7 @@ import Sky.Core.System as System
 import Sky.Core.String as String
 import Std.Db as Db exposing (SqlValue(..))
 import Std.Db.Store as Store exposing (Store)
+import Std.Db.Schema as Schema
 import Std.Codec as Codec exposing (Codec)
 import Sky.Test as Test exposing (Test)
 
@@ -2390,6 +2391,438 @@ subqueryTests db =
                   (clientIds db (Store.eq "name" (SqlString "Zed"))))
     ]
 
+-- ── Item 6 and D1: one migrate rule, indexes (batch C) ───────────────────────
+type alias LineV1 =
+    { id : String
+    , sku : String
+    }
+
+type alias LineV2 =
+    { id : String
+    , sku : String
+    , qty : Int
+    , label : String
+    , seenAt : String
+    , note : Maybe String
+    , rank : Int
+    , score : Float
+    , active : Bool
+    }
+
+
+linesV1 : Store LineV1
+linesV1 =
+    Store.fromCodec "sqc_mig_lines" (Codec.auto { id = "", sku = "" })
+        |> Store.primaryKey "id"
+
+
+lineV2Codec : Codec LineV2
+lineV2Codec =
+    Codec.auto
+        { id = ""
+        , sku = ""
+        , qty = 0
+        , label = ""
+        , seenAt = ""
+        , note = Nothing
+        , rank = 0
+        , score = 0.0
+        , active = False
+        }
+
+
+-- The same table with seven new fields, their builders and an index.
+linesV2 : Store LineV2
+linesV2 =
+    Store.fromCodec "sqc_mig_lines" lineV2Codec |> Store.primaryKey "id"
+        |> Store.defaultText "label" "new"
+        |> Store.defaultNow "seenAt"
+        |> Store.defaultInt "rank" 7
+        |> Store.defaultFloat "score" 1.5
+        |> Store.index [ "sku" ]
+
+type alias Code =
+    { id : String
+    , code : String
+    }
+
+
+-- A required unique column added to a table with rows.
+linesWithCode : Store Code
+linesWithCode =
+    Store.fromCodec "sqc_mig_lines" (Codec.auto { id = "", code = "" })
+        |> Store.primaryKey "id"
+        |> Store.unique "code"
+
+type alias Slug =
+    { id : String
+    , slug : String
+    , owner : Maybe String
+    }
+
+
+slugCodec : Codec Slug
+slugCodec =
+    Codec.auto { id = "", slug = "", owner = Nothing }
+
+
+slugs : Store Slug
+slugs =
+    Store.fromCodec "sqc_mig_slugs" slugCodec |> Store.primaryKey "id"
+        |> Store.uniqueWhere [ "slug" ] (Store.neq "slug" (SqlString ""))
+
+
+nullableUnique : Store Slug
+nullableUnique =
+    Store.fromCodec "sqc_mig_slugs_bad" slugCodec |> Store.primaryKey "id"
+        |> Store.uniqueOn [ "owner" ]
+
+
+nowOnInt : Store LineV2
+nowOnInt =
+    Store.fromCodec "sqc_mig_bad" lineV2Codec |> Store.primaryKey "id"
+        |> Store.defaultNow "rank"
+
+
+nanFloat : Store LineV2
+nanFloat =
+    Store.fromCodec "sqc_mig_bad" lineV2Codec |> Store.primaryKey "id"
+        |> Store.defaultFloat
+               "score"
+               (Maybe.withDefault 0.0 (String.toFloat "NaN"))
+
+
+badPredicate : Store Slug
+badPredicate =
+    Store.fromCodec "sqc_mig_bad" slugCodec |> Store.primaryKey "id"
+        |> Store.uniqueWhere [ "slug" ] (Store.contains "slug" "x")
+
+type alias Abc =
+    { id : String
+    , b : String
+    , c : String
+    }
+
+
+-- `a_b` + `c` and `a` + `b, c` named one index under a name made of the
+-- table and the columns.
+tableAB : Store Abc
+tableAB =
+    Store.fromCodec "sqc_mig_a_b" (Codec.auto { id = "", b = "", c = "" })
+        |> Store.primaryKey "id"
+        |> Store.uniqueOn [ "c" ]
+
+
+tableA : Store Abc
+tableA =
+    Store.fromCodec "sqc_mig_a" (Codec.auto { id = "", b = "", c = "" })
+        |> Store.primaryKey "id"
+        |> Store.uniqueOn [ "b", "c" ]
+
+
+created : Store Abc
+created =
+    Store.fromCodec "sqc_mig_created" (Codec.auto { id = "", b = "", c = "" })
+        |> Store.primaryKey "id"
+        |> Store.index [ "b", "c" ]
+
+
+-- Std.Db.Schema bridge: an index carries through, and a default with `|` is
+-- a value, not a UNIQUE flag.
+schemaNotes : Schema.Table
+schemaNotes =
+    Schema.table
+        "sqc_mig_schema"
+        [ Schema.id "id"
+        , Schema.text "note" |> Schema.notNull |> Schema.defaultText "a|u"
+        ]
+        |> Schema.withIndex "sqc_mig_schema_note_ix" [ "note" ]
+
+
+exec : Db -> String -> Result Error Int
+exec db sql =
+    Task.run (Db.exec db sql [])
+
+
+isErr : Result Error a -> Bool
+isErr r =
+    case r of
+
+        Err _ ->
+            True
+
+        Ok _ ->
+            False
+
+
+errHas : String -> Result Error a -> Bool
+errHas text r =
+    case r of
+
+        Err e ->
+            String.contains text (errorToString e)
+
+        Ok _ ->
+            False
+
+
+lineDefaults : LineV2 -> ( ( Int, String, Maybe String ), ( Int, Float, Bool ) )
+lineDefaults l =
+    ( ( l.qty, l.label, l.note ), ( l.rank, l.score, l.active ) )
+
+
+isStamp : String -> Bool
+isStamp t =
+    String.length t >= 19
+
+
+migrateTests : Db -> List Test
+migrateTests db =
+    [ Test.test
+          "migrate: the old table with one row"
+          (\_ ->
+              Test.equal
+                  (Ok 1)
+                  (Task.run
+                      (Task.sequence
+                          [ drop db "sqc_mig_lines"
+                          , drop db "sqc_mig_slugs"
+                          , drop db "sqc_mig_a_b"
+                          , drop db "sqc_mig_a"
+                          , drop db "sqc_mig_created"
+                          , drop db "sqc_mig_schema"
+                          , drop db "sqc_mig_pk"
+                          , unit (Store.migrate db linesV1)
+                          ]
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.insert
+                                         db
+                                         linesV1
+                                         { id = "l1", sku = "s1" }))))
+    , Test.test
+          "migrate (D1): seven ALTERs and one index, six NOT NULL"
+          (\_ ->
+              Test.equal
+                  (Ok ( 8, 6 ))
+                  (Task.run (Store.migrate db linesV2)
+                      |> Result.map
+                             (\stmts ->
+                                 ( List.length stmts
+                                 , List.length
+                                       (List.filter
+                                           (String.contains "NOT NULL")
+                                           stmts)
+                                 ))))
+    , Test.test
+          "migrate (D1, B9): the old row reads the declared default, else the zero"
+          (\_ ->
+              Test.equal
+                  (Ok (Just ( ( 0, "new", Nothing ), ( 7, 1.5, False ) )))
+                  (Task.run (Store.findBy db linesV2 "id" "l1")
+                      |> Result.map (Maybe.map lineDefaults)))
+    , Test.test
+          "migrate (D1): the old row's defaultNow column holds a timestamp"
+          (\_ ->
+              Test.equal
+                  (Ok (Just True))
+                  (Task.run (Store.findBy db linesV2 "id" "l1")
+                      |> Result.map (Maybe.map (\l -> isStamp l.seenAt))))
+    , Test.test
+          "migrate (D1): an added required column refuses NULL"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErr
+                      (exec
+                          db
+                          "INSERT INTO sqc_mig_lines (id, sku, qty) VALUES ('l9', 'x', NULL)")))
+    , Test.test
+          "migrate (D1): an added Maybe column takes NULL"
+          (\_ ->
+              Test.equal
+                  (Ok 1)
+                  (exec
+                      db
+                      "INSERT INTO sqc_mig_lines (id, sku, note) VALUES ('l8', 'x', NULL)"))
+    , Test.test
+          "insert stamps a defaultNow column, not the record's value"
+          (\_ ->
+              Test.equal
+                  (Ok (Just True))
+                  (Task.run
+                      (Store.insert
+                          db
+                          linesV2
+                          { id = "l2"
+                          , sku = "s2"
+                          , qty = 1
+                          , label = "x"
+                          , seenAt = "ignored"
+                          , note = Nothing
+                          , rank = 1
+                          , score = 2.0
+                          , active = True
+                          }
+                          |> Task.andThen
+                                 (\_ -> Store.findBy db linesV2 "id" "l2"))
+                      |> Result.map
+                             (Maybe.map
+                                 (\l -> isStamp l.seenAt && l.seenAt /= "ignored"))))
+    , Test.test
+          "migrate twice: the second run returns []"
+          (\_ -> Test.equal (Ok []) (Task.run (Store.migrate db linesV2)))
+    , Test.test
+          "migrate: a required unique column on a table with rows is Err"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "table with rows"
+                      (Task.run (Store.migrate db linesWithCode))))
+    , Test.test
+          "migrate: after that Err the table has no code column"
+          (\_ ->
+              Test.equal True (isErr (exec db "SELECT code FROM sqc_mig_lines")))
+    , Test.test
+          "uniqueWhere: migrate creates the table and the partial index"
+          (\_ ->
+              Test.equal
+                  (Ok 2)
+                  (Task.run (Store.migrate db slugs) |> Result.map List.length))
+    , Test.test
+          "uniqueWhere: two empty slugs are accepted"
+          (\_ ->
+              Test.equal
+                  (Ok 2)
+                  (Task.run
+                      (Store.insertMany
+                          db
+                          slugs
+                          [ { id = "1", slug = "", owner = Nothing }
+                          , { id = "2", slug = "", owner = Nothing }
+                          ])))
+    , Test.test
+          "uniqueWhere: a second equal non-empty slug is refused"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErr
+                      (Task.run
+                          (Store.insertMany
+                              db
+                              slugs
+                              [ { id = "3", slug = "a", owner = Nothing }
+                              , { id = "4", slug = "a", owner = Nothing }
+                              ]))))
+    , Test.test
+          "uniqueOn on a Maybe column fails the first verb"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas "nullable" (Task.run (Store.migrate db nullableUnique))))
+    , Test.test
+          "defaultNow on an Int column fails the first verb"
+          (\_ ->
+              Test.equal
+                  True
+                  (isStoreErr (Task.run (Store.migrate db nowOnInt))))
+    , Test.test
+          "defaultFloat NaN fails the first verb"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas "NaN" (Task.run (Store.migrate db nanFloat))))
+    , Test.test
+          "uniqueWhere with a text-match condition fails the first verb"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "uniqueWhere"
+                      (Task.run (Store.migrate db badPredicate))))
+    , Test.test
+          "index names: a_b (c) and a (b, c) get two indexes"
+          (\_ ->
+              Test.equal
+                  (Ok ( 2, 2 ))
+                  (Task.run
+                      (Store.migrate db tableAB
+                          |> Task.andThen
+                                 (\x ->
+                                     Store.migrate db tableA
+                                         |> Task.map
+                                                (\y ->
+                                                    ( List.length x
+                                                    , List.length y
+                                                    ))))))
+    , Test.test
+          "create makes the declared index, so migrate after it returns []"
+          (\_ ->
+              Test.equal
+                  (Ok [])
+                  (Task.run
+                      (Store.create db created
+                          |> Task.andThen (\_ -> Store.migrate db created))))
+    , Test.test
+          "B8: a String primary key refuses NULL"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErr
+                      (exec
+                          db
+                          "INSERT INTO sqc_mig_slugs (id, slug) VALUES (NULL, 'z')")))
+    , Test.test
+          "pushProject checks a table's primary key before any statement"
+          (\_ ->
+              Test.equal
+                  True
+                  (isStoreErr
+                      (Task.run
+                          (Store.pushProject
+                              db
+                              (Store.project
+                                  [ Store.toTable
+                                        (Store.fromCodec
+                                            "sqc_mig_badpk"
+                                            slugCodec
+                                            |> Store.primaryKey "idd")
+                                  ])))))
+    , Test.test
+          "Schema.toProject: pushProject creates the withIndex index"
+          (\_ ->
+              Test.equal
+                  (Ok True)
+                  (Task.run
+                      (Store.pushProject db (Schema.toProject [ schemaNotes ]))
+                      |> Result.map
+                             (List.any (String.contains "sqc_mig_schema_note_ix"))))
+    , Test.test
+          "Schema.toProject: a default with | is a value, not a UNIQUE flag"
+          (\_ ->
+              Test.equal
+                  (Ok 1)
+                  (exec db "INSERT INTO sqc_mig_schema (id) VALUES ('a')"
+                      |> Result.andThen
+                             (\_ ->
+                                 exec
+                                     db
+                                     "INSERT INTO sqc_mig_schema (id) VALUES ('b')")))
+    , Test.test
+          "Schema.toProject: the default value is stored as given"
+          (\_ ->
+              Test.equal
+                  (Ok [ "a|u", "a|u" ])
+                  (Task.run
+                      (Store.selectRaw
+                          db
+                          (Codec.auto { note = "" })
+                          "SELECT note FROM sqc_mig_schema ORDER BY id"
+                          [])
+                      |> Result.map (List.map .note)))
+    ]
+
 
 tests : List Test
 tests =
@@ -2407,6 +2840,7 @@ tests =
                 ++ columnAndJsonTests db
                 ++ joinTests db
                 ++ subqueryTests db
+                ++ migrateTests db
 
 
 main =

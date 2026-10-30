@@ -1710,7 +1710,11 @@ func dbMigrateCore(d *SkyDb, pairs []any, op string, fail func(msg string, e any
 		if err != nil {
 			return fail("begin: "+err.Error(), Err[any, any](ErrIo("db.migrate: begin: "+err.Error())))
 		}
-		if _, err := tx.Exec(stmt); err != nil {
+		// The checksum above is of the text as given. A v2 text (first line
+		// `-- sky:migration v2`) has its SQLite `defaultNow` token swapped
+		// for the apply time here, after the checksum, so the ledger holds
+		// one stable sum. Every other text runs as given.
+		if _, err := tx.Exec(migApplyText(stmt)); err != nil {
 			tx.Rollback()
 			return fail("migration '"+name+"': "+err.Error(),
 				Err[any, any](ErrIo("db.migrate: migration '"+name+"': "+err.Error())))

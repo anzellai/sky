@@ -79,7 +79,10 @@ Store builders. For transactions and other SQL, drop to raw `Std.Db`
 and decode each row into a typed projection record via a codec. The store is the
 default, not a cage. Schema changes ship as committed migration files:
 `sky db migrate --gen` diffs your types and writes one; `sky db migrate` applies
-it.
+it. `Store.migrate` and `--gen` follow one rule: a `Maybe` field is a nullable
+column, any other field `NOT NULL DEFAULT` its declared default (else zero), and
+an existing column is never altered. Indexes are builders too: `Store.index`,
+`Store.uniqueOn` and `Store.uniqueWhere`.
 
 Full surface: the [Std.Db guide](../skydb/overview.md),
 [Std.Db.Store](../m/Std.Db.Store.html), and [Std.Codec](../m/Std.Codec.html).

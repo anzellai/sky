@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1919,
+      "expected_assertions": 1943,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -816,7 +816,7 @@
       "tier": "T1"
     },
     "store-query-postgres": {
-      "expected_assertions": 138,
+      "expected_assertions": 162,
       "falsifier_mutation": "store-query-postgres.drop-rows-err",
       "falsifier_proven": true,
       "summary": "Std.Db.Store query path (aggregates, select, latestPer, text match, jsonText) on PostgreSQL",
@@ -1010,7 +1010,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3198,
+    "stdlib_entries": 3203,
     "stdlib_modules": 135,
     "surfaces_covered": 193,
     "surfaces_covered_pct": 95.1,
@@ -19814,10 +19814,11 @@
           ]
         },
         "Std.Db.Store": {
-          "count": 5,
+          "count": 6,
           "symbols": [
             "Agg",
             "Correlate",
+            "IndexSpec",
             "JoinOn",
             "countDistinctAs",
             "orderRightDesc"
@@ -20417,7 +20418,7 @@
           ]
         }
       },
-      "count": 871,
+      "count": 872,
       "pct_of_denominator": 27.2
     },
     "symbols_unreferenced_strict": {
@@ -21291,10 +21292,11 @@
           ]
         },
         "Std.Db.Store": {
-          "count": 5,
+          "count": 6,
           "symbols": [
             "Agg",
             "Correlate",
+            "IndexSpec",
             "JoinOn",
             "countDistinctAs",
             "orderRightDesc"
@@ -21969,7 +21971,7 @@
           ]
         }
       },
-      "count": 986,
+      "count": 987,
       "pct_of_denominator": 30.8
     }
   },
@@ -23965,8 +23967,8 @@
       "id": "tests/conformance",
       "modules_imported": 66,
       "path": "tests/conformance",
-      "refs_generous": 985,
-      "refs_qualified": 957,
+      "refs_generous": 992,
+      "refs_qualified": 964,
       "role": "Conformance",
       "sky_files": 58,
       "sky_toml_sections": []

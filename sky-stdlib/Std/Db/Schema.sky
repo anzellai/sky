@@ -296,11 +296,13 @@ createSchema =
 -- db = Schema.toProject allTables
 -- ```
 --
--- Table name, primary key, `UNIQUE`, `NOT NULL`, `DEFAULT` and autoincrement all
--- carry through. INDEXES do NOT — the `Store.Project` schema-dump models tables +
--- columns only; keep creating indexes via `createSchema`/`createTable` (which
--- render `withIndex`) at app boot, or as raw `CREATE INDEX IF NOT EXISTS`. Ints
--- widen to BIGINT under the codec pipeline (safe; no millis overflow).
+-- Table name, primary key, `UNIQUE`, `NOT NULL`, `DEFAULT`, autoincrement and
+-- the `withIndex` / `withUniqueIndex` indexes (with their own names) all carry
+-- through, so `sky db push` creates a missing index and `sky db migrate --gen`
+-- writes an `addIndex` for it. A column added to an existing table follows the
+-- `Store.migrate` rule: a nullable column stays nullable, a `notNull` column is
+-- `NOT NULL DEFAULT <declared, else zero>`. Ints widen to BIGINT under the
+-- codec pipeline (safe; no millis overflow).
 toProject : List Table -> Store.Project
 toProject tables =
     Store.project (List.map toStoreTable tables)
@@ -308,7 +310,20 @@ toProject tables =
 
 toStoreTable : Table -> Store.Table
 toStoreTable t =
-    { name = t.name, pk = pkOf t.columns, cols = List.map storeColOf t.columns }
+    { name = t.name
+    , pk = pkOf t.columns
+    , cols = List.map storeColOf t.columns
+    , indexes = List.map storeIndexOf t.indexes
+    }
+
+
+storeIndexOf : Index -> Store.IndexSpec
+storeIndexOf i =
+    { name = i.name
+    , cols = i.columns
+    , unique = i.isUniqueIndex
+    , predicate = ""
+    }
 
 
 pkOf : List Column -> String
@@ -375,6 +390,14 @@ storeKindBase c =
         base ++ nullable ++ autoInc
 
 
+-- A default value inside a colspec flag: `%` and `|` are percent-encoded, the
+-- same encoding as Store's builders, so a value with `|` cannot end the flag
+-- or inject another one (`"a|u"` made the column UNIQUE).
+flagValue : String -> String
+flagValue v =
+    String.replace "|" "%7C" (String.replace "%" "%25" v)
+
+
 storeKindFlags : Column -> String
 storeKindFlags c =
     let
@@ -388,7 +411,7 @@ storeKindFlags c =
             case c.defaultKind of
 
                 "text" ->
-                    "|dtext=" ++ c.defaultVal
+                    "|dtext=" ++ flagValue c.defaultVal
 
                 "int" ->
                     "|dint=" ++ c.defaultVal

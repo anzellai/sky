@@ -1,0 +1,71 @@
+{
+  "comment": "One fixture for both migrate paths (user decision D1). Each column is added to the existing table `orders`. `colspec` is the Std.Db.Store column (kind with builder flags), `schema` is its db/schema.json form (Db_dumpProject), `ops` are the v2 ops `sky db migrate --gen` writes for it. Go: renderMigOp(ops) equals the statements Db_autoMigrate runs for the colspec, on SQLite and PostgreSQL. Rust (db_migrate.rs): the diff of the schema gives exactly the ops.",
+  "table": "orders",
+  "pk": "id",
+  "existing": [["id", "text"], ["status", "text"]],
+  "columns": [
+    {
+      "colspec": ["qty", "int"],
+      "schema": {"name": "qty", "kind": "int", "nullable": false},
+      "ops": [{"kind": "addColumn", "v": 2, "table": "orders", "column": "qty", "type": "int", "nullable": false, "default": {"int": 0}}]
+    },
+    {
+      "colspec": ["label", "text|dtext=new"],
+      "schema": {"name": "label", "kind": "text", "nullable": false, "default": {"text": "new"}},
+      "ops": [{"kind": "addColumn", "v": 2, "table": "orders", "column": "label", "type": "text", "nullable": false, "default": {"text": "new"}}]
+    },
+    {
+      "colspec": ["seen_at", "text|dnow"],
+      "schema": {"name": "seen_at", "kind": "text", "nullable": false, "default": {"now": true}},
+      "ops": [{"kind": "addColumn", "v": 2, "table": "orders", "column": "seen_at", "type": "text", "nullable": false, "default": {"nowAtApply": true}}]
+    },
+    {
+      "colspec": ["seen_ms", "int|dnow"],
+      "schema": {"name": "seen_ms", "kind": "int", "nullable": false, "default": {"now": true}},
+      "ops": [{"kind": "addColumn", "v": 2, "table": "orders", "column": "seen_ms", "type": "int", "nullable": false, "default": {"nowAtApply": true}}]
+    },
+    {
+      "colspec": ["note", "text?"],
+      "schema": {"name": "note", "kind": "text", "nullable": true},
+      "ops": [{"kind": "addColumn", "v": 2, "table": "orders", "column": "note", "type": "text", "nullable": true}]
+    },
+    {
+      "colspec": ["rank", "int|dint=7"],
+      "schema": {"name": "rank", "kind": "int", "nullable": false, "default": {"int": 7}},
+      "ops": [{"kind": "addColumn", "v": 2, "table": "orders", "column": "rank", "type": "int", "nullable": false, "default": {"int": 7}}]
+    },
+    {
+      "colspec": ["score", "real|dfloat=1.5"],
+      "schema": {"name": "score", "kind": "real", "nullable": false, "default": {"float": 1.5}},
+      "ops": [{"kind": "addColumn", "v": 2, "table": "orders", "column": "score", "type": "real", "nullable": false, "default": {"float": 1.5}}]
+    },
+    {
+      "colspec": ["ratio", "real"],
+      "schema": {"name": "ratio", "kind": "real", "nullable": false},
+      "ops": [{"kind": "addColumn", "v": 2, "table": "orders", "column": "ratio", "type": "real", "nullable": false, "default": {"int": 0}}]
+    },
+    {
+      "colspec": ["active", "bool"],
+      "schema": {"name": "active", "kind": "bool", "nullable": false},
+      "ops": [{"kind": "addColumn", "v": 2, "table": "orders", "column": "active", "type": "bool", "nullable": false, "default": {"bool": false}}]
+    },
+    {
+      "colspec": ["flagged", "bool?|dbool=true"],
+      "schema": {"name": "flagged", "kind": "bool", "nullable": true, "default": {"bool": true}},
+      "ops": [{"kind": "addColumn", "v": 2, "table": "orders", "column": "flagged", "type": "bool", "nullable": true, "default": {"bool": true}}]
+    },
+    {
+      "colspec": ["payload", "blob"],
+      "schema": {"name": "payload", "kind": "blob", "nullable": false},
+      "ops": [{"kind": "addColumn", "v": 2, "table": "orders", "column": "payload", "type": "blob", "nullable": true}]
+    },
+    {
+      "colspec": ["email", "text?|u"],
+      "schema": {"name": "email", "kind": "text", "nullable": true, "unique": true},
+      "ops": [
+        {"kind": "addColumn", "v": 2, "table": "orders", "column": "email", "type": "text", "nullable": true},
+        {"kind": "addIndex", "v": 2, "table": "orders", "name": "ux_orders_ce8ccf41", "indexColumns": ["email"], "unique": true}
+      ]
+    }
+  ]
+}

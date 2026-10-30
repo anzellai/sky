@@ -86,6 +86,10 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     "value exists",
     "value join",
     "value on",
+    // v0.29.0: Std.Db.Store.index (D2 name, an index over columns) meets
+    // Json.Decode.index and Std.Db.Table.index. The fix is `Store.index` or a
+    // narrower exposing list (docs/migration/v0.29.md).
+    "value index",
     "value fromString",
     // v0.29.0: String.foldl / String.foldr (Elm). List and Dict already
     // export `foldl` (List `foldr` too); Elm has the same set.

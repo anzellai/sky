@@ -161,7 +161,7 @@ memorised signatures. This section covers *which layer to reach for*, not the AP
 |---|---|---|
 | Records with straightforward CRUD (**default**) | `Std.Db.Store` + `Std.Codec` | ONE codec per type drives JSON encode/decode **and** dialect-safe DB read/write/schema — no hand-written row mappers. |
 | Records, JSON not needed | `Std.Db.Table` | Reflection record↔row mapper (camelCase↔snake_case), no codec to write. |
-| Explicit schema / DDL only | `Std.Db.Schema` | Typed, dialect-safe `CREATE TABLE` — one definition, correct on SQLite AND Postgres (no `INTEGER`-millis-overflow / `AUTOINCREMENT`-vs-`BIGSERIAL` drift). Reach the migration tooling with `db = Schema.toProject allTables` (`Store.Project` for `sky db push` / `migrate --gen`; tables/PK/UNIQUE/DEFAULTs carry, indexes stay on `createSchema`). |
+| Explicit schema / DDL only | `Std.Db.Schema` | Typed, dialect-safe `CREATE TABLE` — one definition, correct on SQLite AND Postgres (no `INTEGER`-millis-overflow / `AUTOINCREMENT`-vs-`BIGSERIAL` drift). Reach the migration tooling with `db = Schema.toProject allTables` (`Store.Project` for `sky db push` / `migrate --gen`; tables/PK/UNIQUE/DEFAULTs and `withIndex` indexes carry). |
 | Transactions, custom SQL (grouped aggregates, projections, per-key newest rows, joins of two stores and subquery conditions are Store builders) | `Std.Db` — `query` / `exec` / `withTransaction` + `SqlValue` | The escape hatch the mappers don't model. |
 
 ### Default — `Store` + `Codec`
@@ -282,6 +282,13 @@ sky db seed                    # run the entry module's  seed : Db -> Task Error
 sky db reset [table]           # empty data (all declared tables, or one); keeps schema + ledger — prompts / --yes
 sky db drop [table]            # drop tables (all + ledger, or one); fresh "never migrated" state — prompts / --yes
 ```
+
+`Store.migrate`, `sky db push` and `--gen` follow one rule: a `Maybe` field is a
+nullable column, any other field `NOT NULL DEFAULT <declared default, else
+zero>` (`defaultInt` / `defaultText` / `defaultBool` / `defaultFloat` /
+`defaultNow`), and an existing column is never altered. Declare indexes on the
+store: `Store.index [ "customer_id", "created_at" ]`, `Store.uniqueOn [ "code" ]`
+(required columns), `Store.uniqueWhere [ "slug" ] (Store.neq "slug" (SqlString ""))`.
 
 ### Running PostgreSQL in development
 

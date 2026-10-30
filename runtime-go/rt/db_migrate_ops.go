@@ -9,15 +9,76 @@ package rt
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
+	"math"
 	"strconv"
 	"strings"
+	"time"
 )
 
+// migDefault is a column DEFAULT in the dialect-neutral op JSON. It is also
+// the shape Db_dumpProject writes, so a captured default round-trips dump →
+// schema.json → op → renderMigOp unchanged.
+//
+// NowAtApply is the v2 addColumn form of a `Store.defaultNow` column.
+// PostgreSQL renders it `now()`. SQLite refuses a non-constant default in
+// ADD COLUMN, so there it renders the constant token migNowToken, which
+// dbMigrateCore swaps for the apply time (only in a v2 text).
 type migDefault struct {
-	Int  *int64  `json:"int,omitempty"`
-	Text *string `json:"text,omitempty"`
-	Bool *bool   `json:"bool,omitempty"`
-	Now  bool    `json:"now,omitempty"`
+	Int        *int64   `json:"int,omitempty"`
+	Text       *string  `json:"text,omitempty"`
+	Bool       *bool    `json:"bool,omitempty"`
+	Float      *float64 `json:"float,omitempty"`
+	Now        bool     `json:"now,omitempty"`
+	NowAtApply bool     `json:"nowAtApply,omitempty"`
+}
+
+// The v2 migration text. `sky db migrate --gen` writes `"v": 2` on every new
+// op. A file with any v2 op renders with migV2Header as its first line, and
+// a SQLite `defaultNow` column added by a v2 op renders the constant
+// migNowToken. The text is a pure function of the op JSON, so its checksum is
+// stable. dbMigrateCore swaps the token for the apply time AFTER it takes the
+// checksum, and only in a text that starts with the header. A v1 op (no `v`)
+// renders exactly as v0.28.1 did, so an applied v1 migration keeps its
+// checksum.
+const (
+	migV2Header       = "-- sky:migration v2"
+	migNowToken       = "'__sky_now_at_apply__'"
+	migNowMsToken     = "'__sky_now_ms_at_apply__'"
+	sqliteNowLayout   = "2006-01-02 15:04:05"
+	migIndexHashChars = 8
+)
+
+// sqliteNowLiteral is the clock in SQLite's `datetime('now')` text format
+// (UTC), quoted as a SQL string literal.
+func sqliteNowLiteral() string {
+	return "'" + time.Now().UTC().Format(sqliteNowLayout) + "'"
+}
+
+// migApplyText is the SQL that dbMigrateCore runs for a migration text. Only
+// a v2 text (first line migV2Header) has its migNowToken replaced with the
+// apply time. Every other text (v1 files, hand-written Db.migrate SQL,
+// Ai_migrate) runs as given.
+func migApplyText(stmt string) string {
+	if !strings.HasPrefix(stmt, migV2Header+"\n") {
+		return stmt
+	}
+	now := time.Now().UTC()
+	stmt = strings.ReplaceAll(stmt, migNowToken, "'"+now.Format(sqliteNowLayout)+"'")
+	return strings.ReplaceAll(stmt, migNowMsToken, strconv.FormatInt(now.UnixMilli(), 10))
+}
+
+// migNowMs is the SQLite epoch-milliseconds constant that goes with nowAt:
+// the v2 token for the v2 token, else the time nowAt names.
+func migNowMs(nowAt string) string {
+	if nowAt == migNowToken {
+		return migNowMsToken
+	}
+	at, err := time.Parse(sqliteNowLayout, strings.Trim(nowAt, "'"))
+	if err != nil {
+		at = time.Now().UTC()
+	}
+	return strconv.FormatInt(at.UnixMilli(), 10)
 }
 
 type migColumn struct {
@@ -32,6 +93,7 @@ type migColumn struct {
 
 type migOp struct {
 	Kind         string      `json:"kind"`
+	V            int         `json:"v,omitempty"`
 	Table        string      `json:"table,omitempty"`
 	Column       string      `json:"column,omitempty"`
 	Type         string      `json:"type,omitempty"`
@@ -43,6 +105,7 @@ type migOp struct {
 	Columns      []migColumn `json:"columns,omitempty"`
 	IndexColumns []string    `json:"indexColumns,omitempty"`
 	Unique       bool        `json:"unique,omitempty"`
+	Where        string      `json:"where,omitempty"`
 	Sql          string      `json:"sql,omitempty"`
 }
 
@@ -61,7 +124,9 @@ func migDefKind(d *migDefault) string {
 		return "text"
 	case d.Bool != nil:
 		return "bool"
-	case d.Now:
+	case d.Float != nil:
+		return "float"
+	case d.Now, d.NowAtApply:
 		return "now"
 	}
 	return "none"
@@ -80,8 +145,180 @@ func migDefVal(d *migDefault) string {
 			return "true"
 		}
 		return "false"
+	case d.Float != nil:
+		return strconv.FormatFloat(*d.Float, 'g', -1, 64)
 	}
 	return ""
+}
+
+// migDefaultOf turns a colspec default (codecColExtras) into the op shape.
+// Db_dumpProject and Db_autoMigrate both read a colspec through here.
+func migDefaultOf(defKind, defVal string) *migDefault {
+	switch defKind {
+	case "now":
+		return &migDefault{Now: true}
+	case "int":
+		if n, err := strconv.ParseInt(defVal, 10, 64); err == nil {
+			return &migDefault{Int: &n}
+		}
+	case "text":
+		v := defVal
+		return &migDefault{Text: &v}
+	case "bool":
+		b := defVal == "true"
+		return &migDefault{Bool: &b}
+	case "float":
+		if f, err := strconv.ParseFloat(defVal, 64); err == nil && !math.IsNaN(f) && !math.IsInf(f, 0) {
+			return &migDefault{Float: &f}
+		}
+	}
+	return nil
+}
+
+// codecColspecMigColumn reads one colspec entry (name, kind with flags) as a
+// migColumn. It is the ONE reading of a Store column that Db_autoMigrate and
+// Db_dumpProject share, so `Store.migrate` and `sky db migrate --gen` start
+// from the same column.
+func codecColspecMigColumn(name, rawKind, pk string) migColumn {
+	base, nullable := codecSplitKind(rawKind)
+	unique, defKind, defVal := codecColExtras(rawKind)
+	return migColumn{
+		Name: name, Type: base, Nullable: nullable, Pk: name == pk,
+		Autoinc: codecColIsAutoInc(rawKind), Unique: unique,
+		Default: migDefaultOf(defKind, defVal),
+	}
+}
+
+// migZeroDefault is the DEFAULT of a required column added with no declared
+// default: the zero value of its kind. A real column takes `{"int":0}`, so
+// it renders `0`, the same bytes as `sky db migrate --gen` writes. A blob has
+// no simple zero, so it is nil (the column is added nullable, with a warning).
+func migZeroDefault(kind string) *migDefault {
+	switch kind {
+	case "int", "bigint", "real":
+		z := int64(0)
+		return &migDefault{Int: &z}
+	case "text":
+		z := ""
+		return &migDefault{Text: &z}
+	case "bool":
+		f := false
+		return &migDefault{Bool: &f}
+	}
+	return nil
+}
+
+// migAddDefault renders a DEFAULT for ADD COLUMN of a column of schema
+// `kind`. A `now` default is `now()` on PostgreSQL. On SQLite it is the
+// constant nowAt, because SQLite refuses a non-constant default in ADD
+// COLUMN. An integer column takes epoch milliseconds (see schemaNowDefault).
+func migAddDefault(driver, kind string, d *migDefault, nowAt string) string {
+	if d.Now || d.NowAtApply {
+		if driver == "pgx" {
+			return schemaNowDefault(driver, kind)
+		}
+		if schemaIsIntKind(kind) {
+			return migNowMs(nowAt)
+		}
+		return nowAt
+	}
+	return schemaDefault(driver, migDefKind(d), migDefVal(d))
+}
+
+// renderAddColumn is the ONE renderer of an added column. Db_autoMigrate
+// (`Store.migrate`, `sky db push`) and renderMigOp for a v2 addColumn op
+// (`sky db migrate`) both call it, so the two paths give the same DDL per
+// dialect by construction. The rule (user decision D1):
+//
+//   - a nullable (Maybe) column is added nullable, with its declared default
+//     if it has one;
+//   - any other column is added NOT NULL DEFAULT <declared, else the zero of
+//     its kind>, so the rows that exist read a value;
+//   - a required blob has no simple zero: it is added nullable, and a warning
+//     is returned;
+//   - a `now` default is `now()` on PostgreSQL and the constant nowAt on
+//     SQLite (the clock at the ALTER, or migNowToken in a v2 op);
+//   - a unique column is added without UNIQUE (SQLite refuses it in ADD
+//     COLUMN) and then gets a unique index named by codecIndexName. A required
+//     unique column cannot be added to a table with rows: every row would get
+//     the same value.
+//
+// An existing column is never altered: callers only pass a column the table
+// does not have.
+func renderAddColumn(driver, table string, c migColumn, nowAt string, tableHasRows bool) ([]string, []string, error) {
+	if !codecValidIdent(table) {
+		return nil, nil, fmt.Errorf("invalid table identifier %q", table)
+	}
+	if !codecValidIdent(c.Name) {
+		return nil, nil, fmt.Errorf("invalid column identifier %q", c.Name)
+	}
+	var warnings []string
+	kind := codecColKindToSchema(c.Type)
+	s := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, c.Name, schemaTypeName(driver, kind))
+	nullable := c.Nullable
+	d := c.Default
+	if !nullable && d == nil {
+		d = migZeroDefault(c.Type)
+		if d == nil {
+			nullable = true
+			warnings = append(warnings, fmt.Sprintf(
+				"column %s.%s is a required non-scalar — added NULLABLE (no default possible)", table, c.Name))
+		}
+	}
+	if nullable {
+		if d != nil {
+			s += " DEFAULT " + migAddDefault(driver, kind, d, nowAt)
+		}
+	} else {
+		s += " NOT NULL DEFAULT " + migAddDefault(driver, kind, d, nowAt)
+	}
+	stmts := []string{s}
+	if c.Unique {
+		if !nullable && tableHasRows {
+			return nil, nil, fmt.Errorf(
+				"column %s.%s: a required unique column cannot be added to a table with rows, every row would get the same value",
+				table, c.Name)
+		}
+		cols := []string{c.Name}
+		stmts = append(stmts, renderIndexDDL(table, codecIndexName(table, cols, true, ""), cols, true, ""))
+	}
+	return stmts, warnings, nil
+}
+
+// renderIndexDDL renders one CREATE INDEX. `where` is a partial-index
+// predicate (Store.uniqueWhere), rendered from constants only.
+func renderIndexDDL(table, name string, cols []string, unique bool, where string) string {
+	kw := "INDEX"
+	if unique {
+		kw = "UNIQUE INDEX"
+	}
+	s := fmt.Sprintf("CREATE %s IF NOT EXISTS %s ON %s (%s)", kw, name, table, strings.Join(cols, ", "))
+	if where != "" {
+		s += " WHERE " + where
+	}
+	return s
+}
+
+// codecIndexName names a Store index: `ix_<table>_<h>` or `ux_<table>_<h>`,
+// where <h> is 8 hex digits of FNV-1a 32 over the table, the columns, the
+// unique flag and the predicate. Every definition gets its own name, so two
+// tables can never share one (`a_b` + `c` and `a` + `b, c` differ), and a
+// changed predicate gives a new index. The table part is cut to 51 bytes so
+// the name stays inside PostgreSQL's 63-byte limit. rust/crates/sky/src/
+// db_migrate.rs `index_name` computes the same name; the parity fixture pins
+// both.
+func codecIndexName(table string, cols []string, unique bool, where string) string {
+	flag, prefix := "0", "ix_"
+	if unique {
+		flag, prefix = "1", "ux_"
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(table + "|" + strings.Join(cols, ",") + "|" + flag + "|" + where))
+	t := table
+	if len(t) > 51 {
+		t = t[:51]
+	}
+	return fmt.Sprintf("%s%s_%0*x", prefix, t, migIndexHashChars, h.Sum32())
 }
 
 func migColDefaultClause(driver string, d *migDefault) string {
@@ -103,11 +340,20 @@ func renderMigOp(driver string, op migOp) (string, error) {
 		// byte-identical to `sky db push` — carrying serial AUTOINCREMENT/BIGSERIAL,
 		// UNIQUE, and DEFAULT. Both paths converge on schemaRenderTable; the two DDL
 		// renderings cannot diverge.
+		//
+		// A v1 op keeps the v0.28.1 bytes (a non-serial PK without NOT NULL,
+		// a `now` default as timestamp text on every kind), so an applied v1
+		// migration keeps its checksum. A v2 op gets B8 (a PK is always NOT
+		// NULL) and an integer `now` column in epoch milliseconds.
 		cols := make([]any, 0, len(op.Columns))
 		for _, c := range op.Columns {
-			cols = append(cols, schemaColMap(
+			m := schemaColMap(
 				c.Name, c.Type, c.Pk, c.Nullable, c.Unique, c.Autoinc,
-				migDefKind(c.Default), migDefVal(c.Default)))
+				migDefKind(c.Default), migDefVal(c.Default))
+			if op.V < 2 {
+				m["Legacy"] = true
+			}
+			cols = append(cols, m)
 		}
 		sm := map[string]any{"Name": op.Table, "Columns": cols, "Indexes": []any{}}
 		return strings.Join(schemaRenderTable(driver, sm), ";\n"), nil
@@ -115,6 +361,16 @@ func renderMigOp(driver string, op migOp) (string, error) {
 	case "addColumn":
 		if !codecValidIdent(op.Column) {
 			return "", fmt.Errorf("migration: invalid column identifier %q", op.Column)
+		}
+		if op.V >= 2 {
+			stmts, _, err := renderAddColumn(driver, op.Table, migColumn{
+				Name: op.Column, Type: op.Type, Nullable: op.Nullable,
+				Unique: op.Unique, Default: op.Default,
+			}, migNowToken, false)
+			if err != nil {
+				return "", fmt.Errorf("migration: %v", err)
+			}
+			return strings.Join(stmts, ";\n"), nil
 		}
 		s := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", op.Table, op.Column, schemaTypeName(driver, codecColKindToSchema(op.Type)))
 		if !op.Nullable {
@@ -140,11 +396,17 @@ func renderMigOp(driver string, op migOp) (string, error) {
 		if !codecValidIdent(op.Name) {
 			return "", fmt.Errorf("migration: invalid index name %q", op.Name)
 		}
-		kw := "INDEX"
-		if op.Unique {
-			kw = "UNIQUE INDEX"
+		// B10: the column names are spliced into the DDL, so each one must be
+		// an identifier.
+		if len(op.IndexColumns) == 0 {
+			return "", fmt.Errorf("migration: index %q has no columns", op.Name)
 		}
-		return fmt.Sprintf("CREATE %s IF NOT EXISTS %s ON %s (%s)", kw, op.Name, op.Table, strings.Join(op.IndexColumns, ", ")), nil
+		for _, c := range op.IndexColumns {
+			if !codecValidIdent(c) {
+				return "", fmt.Errorf("migration: index %q: invalid column identifier %q", op.Name, c)
+			}
+		}
+		return renderIndexDDL(op.Table, op.Name, op.IndexColumns, op.Unique, op.Where), nil
 
 	case "dropIndex":
 		if !codecValidIdent(op.Name) {
@@ -173,16 +435,34 @@ func Db_renderMigrations(connArg, jsonArg any) any {
 		}
 		out := make([]any, 0, len(files))
 		for _, f := range files {
-			stmts := make([]string, 0, len(f.Ops))
-			for _, op := range f.Ops {
-				s, err := renderMigOp(d.driver, op)
-				if err != nil {
-					return Err[any, any](ErrInvalidInput(err.Error()))
-				}
-				stmts = append(stmts, s)
+			text, err := renderMigFile(d.driver, f)
+			if err != nil {
+				return Err[any, any](ErrInvalidInput(err.Error()))
 			}
-			out = append(out, T2[any, any]{V0: f.Id, V1: strings.Join(stmts, ";\n")})
+			out = append(out, T2[any, any]{V0: f.Id, V1: text})
 		}
 		return Ok[any, any](out)
 	}
+}
+
+// renderMigFile renders one migration file to the text the ledger checksums.
+// A file with any v2 op starts with the migV2Header line.
+func renderMigFile(driver string, f migFile) (string, error) {
+	v2 := false
+	body := make([]string, 0, len(f.Ops))
+	for _, op := range f.Ops {
+		if op.V >= 2 {
+			v2 = true
+		}
+		s, err := renderMigOp(driver, op)
+		if err != nil {
+			return "", err
+		}
+		body = append(body, s)
+	}
+	text := strings.Join(body, ";\n")
+	if v2 {
+		return migV2Header + "\n" + text, nil
+	}
+	return text, nil
 }
