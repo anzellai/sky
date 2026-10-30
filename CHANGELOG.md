@@ -359,7 +359,7 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
 
 ### Fixed
 
-- **Sky.Spa: typing while a hold RPC runs no longer rewinds the box.** A hold
+- **Typing while the server is slow no longer rewinds the box (Sky.Spa, Sky.Webview).** A hold
   RPC (a server branch that writes server data into the model, such as a
   debounced search) holds later Msgs, the keystrokes among them, so for that
   time the model is behind what the box shows. The render after the answer,
@@ -384,6 +384,22 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   `scripts/spa-rpc-order-e2e.sh` in Chromium and WebKit (every `/_rpc` answer
   held 900 ms, a word typed with 160 ms between keys; v0.28.1 ended with
   "blueyberr", caret 5).
+
+  The same e2e now runs the same Std.App source on Sky.Live (`--target web`,
+  which `tablet` and `desktop` also serve), through a `Std.Ui` input and a
+  `Std.Html` input, with every `/_sky/event` answer held 900 ms. Sky.Live was
+  already safe (the server skips a value patch equal to the `inputState` of
+  the event, and the client drops value writes to a field with unacked
+  keystrokes); the stage is red when both are switched off. The Sky.Webview
+  shim (`Webview.app`) had the bug: each keystroke went to the update loop
+  and the loop answered each one with a patch from the model after it, so a
+  loop slower than the typing rewound the box and clamped the caret. Each
+  input dispatch is now numbered and the loop acks it with that Msg's
+  patches; no value is written to a control with an unacked keystroke
+  (`runtime-go/rt/webview_typing_test.go`, red before: caret 1 of 3). The
+  mobile and `desktop:<os>` client shells run the Sky.Spa wasm client and
+  take its fix. Sky.Tui applies each key's Msg before it reads the next key,
+  so its input buffer is never ahead of the model.
 
 - **Security: Std.Image had no pixel limit (decompression bomb).** A tiny
   PNG, JPEG, GIF or WebP that declares a huge size (a 70-byte PNG can claim

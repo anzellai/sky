@@ -44,13 +44,15 @@
 # known to be pending. A `Cmd.none` branch sends no request; a hold arm is the
 # negative control.
 #
-# A fifth stage builds rust/crates/sky/tests/fixtures/spa-typing-hold
-# (--target web:app) and checks (scripts/spa-typing-hold-verify.mjs), with
-# every /_rpc answer held 900 ms: a word typed (160 ms between keys) while a
-# debounced hold search runs ends whole with the caret at its end, and the
-# model ends equal to the box (v0.29.0: the render no longer writes the value
-# of a control whose input Msgs wait); an input Msg the split lists as
-# hold-free (Spa.withHoldFree) shows at once while a hold runs.
+# A fifth stage builds rust/crates/sky/tests/fixtures/spa-typing-hold (a
+# Std.App app) twice, --target web:app (Sky.Spa) and --target web (Sky.Live,
+# also what tablet and desktop serve), and checks
+# (scripts/spa-typing-hold-verify.mjs), with every server answer held 900 ms
+# (/_rpc, /_sky/event): a word typed (160 ms between keys) into a Std.Ui
+# input and into a Std.Html input while a debounced server search runs ends
+# whole with the caret at its end, and the model ends equal to the box
+# (v0.29.0); on Sky.Spa an input Msg the split lists as hold-free
+# (Spa.withHoldFree) shows at once while a hold runs.
 #
 # Browsers: SKY_E2E_BROWSERS (default "chromium,webkit"); SKY_E2E_CHANNEL=chrome
 # uses Google Chrome; SKY_E2E_HEADED=1 runs them headed.
@@ -139,16 +141,24 @@ cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/spa-typing-hold/." "$TMP/typing/"
 echo "==> building fixture spa-typing-hold (--target web:app)"
 (cd "$TMP/typing" && with_timeout 1200 "$SKY" build --target web:app src/Main.sky) >"$TMP/build-typing.log" 2>&1 \
   || { cat "$TMP/build-typing.log" >&2; echo "spa-rpc-order-e2e: spa-typing-hold build failed" >&2; exit 1; }
+echo "==> building fixture spa-typing-hold (Sky.Live, --target web)"
+(cd "$TMP/typing" && with_timeout 1200 "$SKY" build --target web src/Main.sky) >"$TMP/build-typing-live.log" 2>&1 \
+  || { cat "$TMP/build-typing-live.log" >&2; echo "spa-rpc-order-e2e: spa-typing-hold web build failed" >&2; exit 1; }
 TYPING="$TMP/typing/.skyapp/web-app/.split/backend/sky-out/app"
+TYPING_LIVE="$TMP/typing/.skyapp/web/sky-out/app"
 [ -x "$TYPING" ] || { echo "spa-rpc-order-e2e: backend not built at $TYPING" >&2; exit 1; }
-echo "==> driving typing during a slow hold RPC in a browser"
+[ -x "$TYPING_LIVE" ] || { echo "spa-rpc-order-e2e: Live app not built at $TYPING_LIVE" >&2; exit 1; }
+echo "==> driving typing during a slow hold RPC in a browser (Sky.Spa)"
 SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
   with_timeout 300 node "$ROOT/scripts/spa-typing-hold-verify.mjs" "$TYPING" --port "${TYPING_HOLD_PORT:-9389}"
+echo "==> driving typing against slow event answers in a browser (Sky.Live)"
+SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
+  with_timeout 300 node "$ROOT/scripts/spa-typing-hold-verify.mjs" "$TYPING_LIVE" --port "${TYPING_HOLD_PORT:-9389}" --target live
 
 echo "spa-rpc-order-e2e: PASS — web:app runs each Msg once, in order, with its Cmds, as Sky.Live does;"
 echo "  every RPC names its wire schema, a mismatch reloads once and says the action was not sent;"
 echo "  a handled client Err logs nothing, an unhandled RPC failure logs once;"
 echo "  one click runs one Msg, server paths are full navigations, analytics are per visitor;"
 echo "  an async arm shows its write while its server call runs;"
-echo "  typing during a slow hold keeps every letter and the caret."
+echo "  typing against a slow server keeps every letter and the caret (Sky.Spa and Sky.Live)."
 rm -rf "$TMP"

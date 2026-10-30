@@ -301,6 +301,18 @@ The same filter runs for innerHTML patches targeting ancestors of a focused/dirt
 
 This preserves G1 even when the server sends a "wipe your whole form and rebuild" patch.
 
+### Typing against a slow server (regression gate)
+
+Two independent defences keep a box whole when the server answers more slowly
+than a person types: the server skips a value patch that equals the
+`inputState` the event carried (`clientStateFromRequest`, `live.go`), and the
+client drops value writes to a field with unacked keystrokes (`__skyIsDirty`,
+`live_client_asset.go`). The `spa-typing-hold` stage of
+`scripts/spa-rpc-order-e2e.sh` holds every `/_sky/event` answer 900 ms and
+types a word with 160 ms between keys into a `Std.Ui` input and a `Std.Html`
+input, in Chromium and WebKit; it is red when both defences are switched off
+("bry", caret 2), and green when only the client filter is switched off.
+
 ### The DOM is written only when the render changes (Elm semantics)
 
 This is the rule for a control after the user's own event, on Sky.Live,

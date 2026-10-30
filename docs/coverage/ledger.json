@@ -14301,6 +14301,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -14544,6 +14549,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -14607,6 +14617,11 @@
             "by": "examples/34-multi-tier-console (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
         "strength": 4
@@ -14702,6 +14717,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -14765,6 +14785,11 @@
             "by": "examples/34-multi-tier-console (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
         "strength": 4
@@ -22183,10 +22208,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "e2e:scripts/spa-rpc-order-e2e.sh",
-      "modules_imported": 17,
+      "modules_imported": 20,
       "path": "scripts/spa-rpc-order-e2e.sh",
-      "refs_generous": 54,
-      "refs_qualified": 53,
+      "refs_generous": 59,
+      "refs_qualified": 58,
       "role": "FlowTest",
       "sky_files": 5,
       "sky_toml_sections": []
@@ -23725,10 +23750,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "flow:spa_split_flow",
-      "modules_imported": 41,
+      "modules_imported": 43,
       "path": "rust/crates/sky/tests/spa_split_flow.rs",
-      "refs_generous": 174,
-      "refs_qualified": 166,
+      "refs_generous": 179,
+      "refs_qualified": 171,
       "role": "FlowTest",
       "sky_files": 140,
       "sky_toml_sections": []

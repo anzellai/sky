@@ -1743,7 +1743,8 @@ jobs:
       - name: Sky.Spa Msg order + client WebSocket + sign-out e2e (Chromium + WebKit, strict CSP)
         timeout-minutes: 20
         # Each Msg runs once, in arrival order, as on Sky.Live; RPCs overlap;
-        # typing while a slow hold RPC runs keeps every letter and the caret
+        # typing against a slow server keeps every letter and the caret, on
+        # Sky.Spa and Sky.Live, Std.Ui and Std.Html inputs
         # (spa-rpc-order-e2e.sh, spa-typing-hold stage); the
         # wasm client holds its own WebSocket; a sky_sid cookie copied before
         # sign-out is refused after it; a transiently failing request is re-sent

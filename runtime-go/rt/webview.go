@@ -184,6 +184,23 @@ func webviewURLRun(urlArg any, windowCfg any) any {
 // small enough to surface a stuck update loop quickly.
 const webviewMsgChCap = 32
 
+// webviewInputMsg is a Msg from a control's input or change event, with the
+// control's sky-id and the shim's number for that keystroke. The update loop
+// acks the number with the Msg's patches; until then the shim writes no value
+// to the control, because the patches of an earlier keystroke come from a
+// model that is behind what the control shows (v0.29.0).
+type webviewInputMsg struct {
+	msg any
+	sid string
+	seq int
+}
+
+// webviewAckJSON is the `{sid: seq}` ack object the shim reads.
+func webviewAckJSON(sid string, seq int) string {
+	b, _ := json.Marshal(map[string]int{sid: seq})
+	return string(b)
+}
+
 // webviewMsgDropped counts msgCh-full incidents over the program's
 // lifetime. Surfaced via the debug log so a user can spot a stuck
 // update loop or a runaway publisher. NOT a metric (no observability
@@ -283,34 +300,63 @@ func webviewAppRun(cfg any) any {
 	// (handlerId, args) on every typed DOM event. handlerId looks
 	// up the actual Msg ctor (which renderVNode populated into the
 	// handlers map at last render); applyMsgArgs decodes args.
-	if err := w.Bind("__skyDispatch", func(handlerId string, args []any) error {
+	// send turns (handlerId, args) into the Msg and queues it. For an
+	// input dispatch (__skyDispatchInput), sid/seq number the control's
+	// keystroke: the loop acks the number with the patches of that Msg, and
+	// the shim writes no value to the control while a later keystroke of it
+	// is unacked (webviewInputMsg). A Msg that cannot be queued is acked at
+	// once, so the control does not stay "typing" for good.
+	send := func(handlerId string, args []any, sid string, seq int) error {
+		ack := func() {
+			if seq > 0 {
+				js := fmt.Sprintf("__skyAckInputs(%s);", webviewAckJSON(sid, seq))
+				w.Dispatch(func() { w.Eval(js) })
+			}
+		}
 		ctor := state.lookupHandler(handlerId)
 		if ctor == nil {
 			// Stale handler from a previous render — silently drop;
 			// next event will dispatch against the fresh handlers map.
+			ack()
 			return nil
 		}
 		rawArgs := make([]json.RawMessage, len(args))
 		for i, a := range args {
 			b, err := json.Marshal(a)
 			if err != nil {
+				ack()
 				return err
 			}
 			rawArgs[i] = json.RawMessage(b)
 		}
 		msg := applyMsgArgs(ctor, rawArgs, "")
 		if msg == nil {
+			ack()
 			return nil
 		}
+		var queued any = msg
+		if seq > 0 {
+			queued = webviewInputMsg{msg: msg, sid: sid, seq: seq}
+		}
 		select {
-		case msgCh <- msg:
+		case msgCh <- queued:
 		default:
 			state.bumpDropped()
 			fmt.Fprintf(os.Stderr,
 				"[sky.webview] msgCh full (%d), dropped msg for handler %q (dropped total: %d)\n",
 				webviewMsgChCap, handlerId, state.msgDropped+1)
+			ack()
 		}
 		return nil
+	}
+	if err := w.Bind("__skyDispatchInput", func(handlerId string, args []any, sid string, seq float64) error {
+		return send(handlerId, args, sid, int(seq))
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "[sky.webview] Bind __skyDispatchInput failed: %v\n", err)
+		return Err[any, any](ErrIo("Webview.app: bind __skyDispatchInput: " + err.Error()))
+	}
+	if err := w.Bind("__skyDispatch", func(handlerId string, args []any) error {
+		return send(handlerId, args, "", 0)
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "[sky.webview] Bind __skyDispatch failed: %v\n", err)
 		return Err[any, any](ErrIo("Webview.app: bind __skyDispatch: " + err.Error()))
@@ -421,8 +467,22 @@ func webviewAppRun(cfg any) any {
 				if !ok {
 					return
 				}
+				// An input Msg carries its control's keystroke number,
+				// acked with this Msg's patches (or alone).
+				ack := ""
+				if im, isInput := msg.(webviewInputMsg); isInput {
+					msg = im.msg
+					ack = webviewAckJSON(im.sid, im.seq)
+				}
+				ackOnly := func() {
+					if ack != "" {
+						js := fmt.Sprintf("__skyAckInputs(%s);", ack)
+						w.Dispatch(func() { w.Eval(js) })
+					}
+				}
 				appMsg, ok := loop.resolve(msg)
 				if !ok {
+					ackOnly()
 					continue
 				}
 				model = loop.apply(appMsg, model)
@@ -453,15 +513,21 @@ func webviewAppRun(cfg any) any {
 
 				patches := diffTrees(prev, newTree, nil)
 				if len(patches) == 0 {
+					ackOnly()
 					continue
 				}
 				payload, err := json.Marshal(patches)
 				if err != nil {
 					fmt.Fprintf(os.Stderr,
 						"[sky.webview] patch marshal failed: %v\n", err)
+					ackOnly()
 					continue
 				}
-				js := fmt.Sprintf("__skyApplyPatches(%s);", string(payload))
+				ackArg := "null"
+				if ack != "" {
+					ackArg = ack
+				}
+				js := fmt.Sprintf("__skyApplyPatches(%s, %s);", string(payload), ackArg)
 				w.Dispatch(func() { w.Eval(js) })
 			case <-doneCh:
 				return
@@ -847,7 +913,38 @@ const webviewSharedJS = `
   // the Go side diffs against the tree it sent, so a skipped patch was
   // lost). Revives scripts at the end so newly-mounted JS bundles
   // bootstrap.
-  window.__skyApplyPatches = function (patches) {
+  // Keystroke numbering (v0.29.0). Every input or change dispatch of a control
+  // gets the next number (el.__skySentSeq); the Go loop acks the number with
+  // the patches of that Msg (el.__skyAckedSeq). While a control has a later
+  // keystroke than the loop has acked, a patch's value / checked / selected
+  // for it comes from a model behind what it shows, and is not written (it
+  // would rewind the text and clamp the caret). Sky.Live's client keeps the
+  // same rule with its lastSentSeq / lastAckedSeq.
+  var __skyInputSeq = 0;
+  function __skyTyping(el) {
+    return !!el.__skySentSeq && el.__skySentSeq > (el.__skyAckedSeq || 0);
+  }
+  window.__skyAckInputs = function (acks) {
+    if (!acks) return;
+    for (var sid in acks) {
+      if (!Object.prototype.hasOwnProperty.call(acks, sid)) continue;
+      var el = document.querySelector('[sky-id="' + String(sid).replace(/"/g, '\\"') + '"]');
+      if (el && acks[sid] > (el.__skyAckedSeq || 0)) el.__skyAckedSeq = acks[sid];
+    }
+  };
+  // __skySendInput dispatches an input / change Msg of control t, numbered.
+  function __skySendInput(t, hid, args) {
+    var seq = ++__skyInputSeq;
+    t.__skySentSeq = seq;
+    if (typeof window.__skyDispatchInput === "function") {
+      return window.__skyDispatchInput(hid, args, t.getAttribute("sky-id") || "", seq);
+    }
+    t.__skyAckedSeq = seq; // no numbered bridge: nothing to wait for
+    return window.__skyDispatch(hid, args);
+  }
+
+  window.__skyApplyPatches = function (patches, acks) {
+    window.__skyAckInputs(acks);
     if (!patches || patches.length === 0) return;
     var missed = 0;
     var openSel = __skyOpenSelect();
@@ -894,8 +991,10 @@ const webviewSharedJS = `
           savedScrollTop = el.scrollTop;
         }
         var valueChanged = false;
+        var typing = __skyTyping(el);
         for (var j = 0; j < keys.length; j++) {
           var k = keys[j], v = p.attrs[k];
+          if (typing && (k === "value" || k === "checked" || k === "selected")) continue;
           if (v === "") {
             el.removeAttribute(k);
             // Removing the attribute does not reset the DOM property the
@@ -1027,7 +1126,10 @@ const webviewSharedJS = `
           args = [e.key];
           break;
       }
-      try { window.__skyDispatch(hid, args); }
+      try {
+        if (ev === "input" || ev === "change") __skySendInput(t, hid, args);
+        else window.__skyDispatch(hid, args);
+      }
       catch (err) { __skyWarn("__skyDispatch failed: " + err); }
     };
   }
@@ -1041,7 +1143,7 @@ const webviewSharedJS = `
     if (!t || !t.getAttribute) return;
     t.__skyComposing = false;
     if (t.hasAttribute("sky-input")) {
-      try { window.__skyDispatch(__skyHid(t, "input"), [t.value == null ? "" : String(t.value)]); }
+      try { __skySendInput(t, __skyHid(t, "input"), [t.value == null ? "" : String(t.value)]); }
       catch (err) { __skyWarn("__skyDispatch failed: " + err); }
     }
   }, true);

@@ -10,6 +10,9 @@ module Main exposing (main)
 --           letter and its caret (before v0.29.0 "clinicare" became
 --           "clienicar"). `subscriptions` reads `query` and `searchedFor`,
 --           which `RunSearch` writes, so `SetQuery` is NOT hold-free.
+--   code    the same as `search`, through a `Std.Html` input (`Ui.html`)
+--           instead of `Std.Ui.Input`: `SetCode` feeds a debounced
+--           `RunLookup` hold. Both input paths must keep their letters.
 --   note    `SetNote` writes only `note`, which no hold writes and
 --           `subscriptions` does not read, and it has no command: the split
 --           lists it as hold-free, so while `SaveNote` (a hold) runs, the
@@ -21,6 +24,9 @@ import Sky.Core.String as String
 import Sky.Core.System as System
 import Std.App as App
 import Std.Cmd as Cmd
+import Std.Html as Html
+import Std.Html.Attributes as Attr
+import Std.Html.Events as Events
 import Std.Ui as Ui exposing (Element)
 import Std.Ui.Input as Input
 
@@ -30,6 +36,9 @@ type alias Model =
     , hits : String
     , note : String
     , savedNote : String
+    , code : String
+    , lookedUp : String
+    , codeHits : String
     }
 
 type Msg
@@ -37,11 +46,21 @@ type Msg
     | RunSearch
     | SetNote String
     | SaveNote
+    | SetCode String
+    | RunLookup
 
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { query = "", searchedFor = "", hits = "-", note = "", savedNote = "-" }
+    ( { query = ""
+      , searchedFor = ""
+      , hits = "-"
+      , note = ""
+      , savedNote = "-"
+      , code = ""
+      , lookedUp = ""
+      , codeHits = "-"
+      }
     , Cmd.none
     )
 
@@ -85,14 +104,29 @@ update msg model =
             , Cmd.none
             )
 
+        SetCode c ->
+            ( { model | code = c }, Cmd.none )
+
+        RunLookup ->
+            ( { model | codeHits = search model.code, lookedUp = model.code }
+            , Cmd.none
+            )
+
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    if model.query /= model.searchedFor then
-        Sub.every 350 RunSearch
+    Sub.batch
+        [ if model.query /= model.searchedFor then
+              Sub.every 350 RunSearch
 
-    else
-        Sub.none
+          else
+              Sub.none
+        , if model.code /= model.lookedUp then
+              Sub.every 350 RunLookup
+
+          else
+              Sub.none
+        ]
 
 
 row : String -> String -> Element Msg
@@ -122,6 +156,14 @@ view model =
               }
         , row "note-echo" ("NOTE=" ++ model.note)
         , row "saved" ("SAVED=" ++ model.savedNote)
+        , Ui.html
+              (Html.input
+                  [ Attr.id "code"
+                  , Attr.value model.code
+                  , Events.onInput SetCode
+                  ])
+        , row "code-echo" ("CODE=" ++ model.code)
+        , row "code-hits" ("CODEHITS=" ++ model.codeHits)
         , Ui.button
               [ Ui.htmlAttribute "id" "save" ]
               { onPress = Just SaveNote, label = Ui.text "save" }

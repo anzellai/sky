@@ -11,7 +11,9 @@
 //!   * `SetQuery` writes `query`, which `subscriptions` reads together with
 //!     `searchedFor`, which `RunSearch` writes: not free during `RunSearch`;
 //!   * `SetNote` writes only `note`: free during both holds;
-//!   * `SetQuery` is free during `SaveNote`, which writes only `savedNote`.
+//!   * `SetQuery` is free during `SaveNote`, which writes only `savedNote`;
+//!   * `SetCode` / `RunLookup` repeat the search pair through a `Std.Html`
+//!     input: `SetCode` waits for `RunLookup` and is free during `SaveNote`.
 
 use project::spa_partition;
 use std::collections::BTreeSet;
@@ -51,22 +53,29 @@ fn p(h: &str, c: &str) -> (String, String) {
 fn the_facts_the_table_is_built_from() {
     let r = analyze();
     let quiet: Vec<&str> = r.settle.quiet.iter().map(|s| s.as_str()).collect();
-    for c in ["SetQuery", "SetNote", "RunSearch", "SaveNote"] {
+    for c in [
+        "SetQuery",
+        "SetNote",
+        "RunSearch",
+        "SaveNote",
+        "SetCode",
+        "RunLookup",
+    ] {
         assert!(
             quiet.contains(&c),
             "`{c}` returns Cmd.none: it must be quiet; quiet = {quiet:?}"
         );
     }
-    let subs: BTreeSet<String> = ["query", "searchedFor"]
+    let subs: BTreeSet<String> = ["code", "lookedUp", "query", "searchedFor"]
         .iter()
         .map(|s| s.to_string())
         .collect();
     assert_eq!(
         r.settle.subscriptions_reads,
         Some(subs),
-        "subscriptions reads query and searchedFor"
+        "subscriptions reads both debounce pairs"
     );
-    for h in ["RunSearch", "SaveNote"] {
+    for h in ["RunSearch", "SaveNote", "RunLookup"] {
         let b = r.branches.iter().find(|b| b.msg == h).expect("branch");
         assert!(
             b.server,
@@ -82,11 +91,13 @@ fn only_commuting_input_msgs_are_hold_free() {
     assert_eq!(
         got,
         vec![
+            p("RunLookup", "SetNote"),
             p("RunSearch", "SetNote"),
+            p("SaveNote", "SetCode"),
             p("SaveNote", "SetNote"),
             p("SaveNote", "SetQuery")
         ],
-        "SetQuery must wait for RunSearch (subscriptions reads a field each writes)"
+        "SetQuery and SetCode must wait for RunSearch (subscriptions reads a field each writes)"
     );
 }
 
@@ -121,7 +132,7 @@ fn anything_the_analysis_cannot_read_lists_nothing() {
     loud.settle.quiet.remove("SetNote");
     assert_eq!(
         pairs(&loud),
-        vec![p("SaveNote", "SetQuery")],
+        vec![p("SaveNote", "SetCode"), p("SaveNote", "SetQuery")],
         "an input arm with a command is never hold-free"
     );
 
@@ -129,7 +140,7 @@ fn anything_the_analysis_cannot_read_lists_nothing() {
     unread.settle.continuations.insert("SaveNote".into(), None);
     assert_eq!(
         pairs(&unread),
-        vec![p("RunSearch", "SetNote")],
+        vec![p("RunLookup", "SetNote"), p("RunSearch", "SetNote")],
         "a hold whose follow-ups cannot be read frees nothing"
     );
 
@@ -139,7 +150,12 @@ fn anything_the_analysis_cannot_read_lists_nothing() {
     }
     assert_eq!(
         pairs(&whole),
-        vec![p("SaveNote", "SetNote"), p("SaveNote", "SetQuery")],
+        vec![
+            p("RunLookup", "SetNote"),
+            p("SaveNote", "SetCode"),
+            p("SaveNote", "SetNote"),
+            p("SaveNote", "SetQuery")
+        ],
         "a hold that rewrites the whole model frees nothing"
     );
 
@@ -150,7 +166,12 @@ fn anything_the_analysis_cannot_read_lists_nothing() {
         .insert("SaveNote".into(), Some(vec!["SetNote".into()]));
     assert_eq!(
         pairs(&follow),
-        vec![p("RunSearch", "SetNote"), p("SaveNote", "SetQuery")],
+        vec![
+            p("RunLookup", "SetNote"),
+            p("RunSearch", "SetNote"),
+            p("SaveNote", "SetCode"),
+            p("SaveNote", "SetQuery")
+        ],
         "a follow-up of SaveNote that writes `note` blocks SetNote during SaveNote"
     );
 }

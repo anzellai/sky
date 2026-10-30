@@ -49,6 +49,13 @@ desktop`:
   tags.
 - Bounded `msgCh chan any` — drops surface in stderr; the update
   loop cannot dead-lock.
+- Typing ahead of the update loop is safe (v0.29.0). Each input or
+  change dispatch of a control is numbered, and the loop acks the
+  number with the patches of that Msg. While a control has a later
+  keystroke than the loop has acked, a patch does not write its
+  value, checked or selected state, because that patch comes from a
+  model behind what the control shows. Writing it rewound the text
+  and clamped the caret. Sky.Live's client follows the same rule.
 - macOS (WKWebView) is the only smoke-validated platform; the
   runtime compiles on Windows + Linux but v0.2 owns the cross-OS
   smoke + tray-icon + always-on-top work.

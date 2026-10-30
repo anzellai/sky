@@ -12274,7 +12274,7 @@ fn spa_hold_free_table_reaches_the_client() {
         std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky")).unwrap();
     assert!(
         frontend.contains(
-            "|> Spa.withHoldFree [ \"RunSearch SetNote\", \"SaveNote SetNote\", \"SaveNote SetQuery\" ]"
+            "|> Spa.withHoldFree [ \"RunLookup SetNote\", \"RunSearch SetNote\", \"SaveNote SetCode\", \"SaveNote SetNote\", \"SaveNote SetQuery\" ]"
         ),
         "the client config must carry the hold-free table:\n{frontend}"
     );
