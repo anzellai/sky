@@ -119,7 +119,7 @@ encoded col =
 -- | The expected `toProject` output for a single-column table `t`.
 expectEncoded : String -> String -> String -> Store.Project
 expectEncoded colName pk kindStr =
-    Store.project [ { name = "t", pk = pk, cols = [ ( colName, kindStr ) ], indexes = [] } ]
+    Store.project [ { name = "t", pk = pk, cols = [ ( colName, kindStr ) ], indexes = [], problems = [] } ]
 
 
 -- | A realistic users table: serial pk, unique text, defaulted text, and a
@@ -430,6 +430,7 @@ tests =
                       , pk = "a"
                       , cols = [ ( "a", "text" ), ( "b", "text" ) ]
                       , indexes = []
+                      , problems = []
                       }
                     ]
                 )
@@ -452,6 +453,7 @@ tests =
                             , ( "nickname", "text?" )
                             ]
                       , indexes = []
+                      , problems = []
                       }
                     ]
                 )
@@ -461,8 +463,8 @@ tests =
         (\_ ->
             Test.equal
                 (Store.project
-                    [ { name = "users", pk = "id", cols = [ ( "id", "text" ) ], indexes = [] }
-                    , { name = "orders", pk = "id", cols = [ ( "id", "text" ) ], indexes = [] }
+                    [ { name = "users", pk = "id", cols = [ ( "id", "text" ) ], indexes = [], problems = [] }
+                    , { name = "orders", pk = "id", cols = [ ( "id", "text" ) ], indexes = [], problems = [] }
                     ]
                 )
                 (Schema.toProject
@@ -486,6 +488,7 @@ tests =
                             [ { name = "idx_orders_user", cols = [ "user_id" ], unique = False, predicate = "" }
                             , { name = "idx_orders_ref", cols = [ "user_id", "id" ], unique = True, predicate = "" }
                             ]
+                      , problems = []
                       }
                     ]
                 )
@@ -493,7 +496,7 @@ tests =
         )
     , Test.test "toProject of a column-less table encodes an empty cols list"
         (\_ ->
-            Test.equal (Store.project [ { name = "t", pk = "", cols = [], indexes = [] } ])
+            Test.equal (Store.project [ { name = "t", pk = "", cols = [], indexes = [], problems = [] } ])
                 (Schema.toProject [ Schema.table "t" [] ])
         )
     ]

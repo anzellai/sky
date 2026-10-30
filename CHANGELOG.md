@@ -358,6 +358,30 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   read every part through the `Std.Zip` and `Std.Xml` readers, under one
   tokeniser (`xmlStreamSafe`) that `Std.Xml.parse` now also uses.
 
+- **`Std.Db.Store` writes: insert-or-ignore, counter and partial upsert,
+  expression SET, insert from a query, RETURNING.** Each is ONE statement,
+  checks every column against the codec before it runs, and binds every value.
+  - `insertOrIgnore` (`ON CONFLICT DO NOTHING`, 1 or 0: of two concurrent
+    calls with one key exactly one gets 1) and `insertOrIgnoreOn [ cols ]`.
+  - `upsertWith conn store row { conflictOn, onConflict }` with
+    `addExcluded` (`c = t.c + excluded.c`), `keepMin` / `keepMax` (one CASE
+    text on both dialects, a NULL side gives the other value) and
+    `setExcluded`. `conflictOn` is the primary key, a `unique` column or a
+    `uniqueOn` set of required columns. It returns rows affected (`upsert`
+    still returns the key of an Int-keyed store).
+  - `updateSet conn store cond [ setCol / setValue / setWhen ]`, with `keep`
+    and `otherwise v` for the ELSE of `setWhen`; each CASE parameter is cast
+    to the column type, so it works on PostgreSQL for `Int` and `Bool`.
+  - `copyInto` / `copyIntoOrIgnore conn target query [ ( col, from / const ) ]`
+    (`INSERT … SELECT` from any query, an `aggregate` roll-up included).
+  - `insertReturning`, `updateFieldsReturning`, `deleteWhereReturning`
+    (`… RETURNING`, decoded by the codec; a refused write is `Err`, and a
+    GET server-side render suppresses them like `Db.exec`).
+  - Two new `Db` kernels: `Db_objectSqlValues` and `Db_writeReturningObjects`.
+  - Docs: the like note now names `\` too, and a paragraph says why there is
+    no regex condition (SQLite has no built-in `REGEXP`: match a normalised
+    column with `contains`). Counters kept by triggers stay raw SQL.
+
 ### Migration
 
 The full list, with old and new code, is `docs/migration/v0.29.md`.
@@ -391,7 +415,7 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   default. It now adds `NOT NULL DEFAULT <declared, else zero>` for a
   non-`Maybe` field. An existing column is never altered: a column an older
   `migrate` added nullable stays nullable. `Store.Table` has a new field
-  `indexes` (a hand-built `Table` adds `indexes = []`), and `Store.index`
+  `indexes` and `problems` (a hand-built `Table` adds `indexes = [], problems = []`), and `Store.index`
   is a new name that meets `Json.Decode.index` and `Std.Db.Table.index`
   under two `exposing (..)` imports (`[E1012]`; write `Store.index`).
 
@@ -478,6 +502,19 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   never run is affected. Give one value a base case, or a parameter.
 
 ### Fixed
+
+- **`Std.Db.Store`: `pushProject` and `dumpSchema` refuse a builder
+  problem.** A problem a builder recorded (an unknown column in `unique`,
+  `index` or `uniqueOn`) did not travel with `Store.toTable`, so `sky db
+  push` created the table and then failed on the index with a driver error,
+  and `sky db migrate --gen` wrote it. `Store.Table` now has `problems`, and
+  both refuse the table, naming the column, before any DDL.
+- **`sky db migrate`: a required unique column added to a table with rows
+  names the cause.** A `--gen` file adds such a column `NOT NULL DEFAULT
+  <d>` and then a unique index; on 2 or more rows the index failed with the
+  raw database error. The apply still rolls back, and now names the table,
+  the column and the fix (a data step that gives each row its own value, or
+  a `Maybe` field).
 
 - **`Std.Db`: a row error after the first row is `Err`, not a short list.**
   `dbQueryRows` did not check `rows.Err()` after its loop. SQLite (modernc)

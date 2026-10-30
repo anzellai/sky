@@ -1406,8 +1406,13 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   (`eqCol`/`gtCol`/…), JSON keys (`jsonText`), **joins of two stores**
   (`join`/`leftJoin` + `on`/`onAll`, `whereLeft`/`whereRight`, `orderLeft*`/`orderRight*`,
   `toPairs`/`toPairsMaybe`) and **subquery conditions** (`inQuery`/`notInQuery` with
-  `column`, `exists`/`notExists` with `correlate`/`correlateAll`), every name checked
-  before the query runs (v0.29.0) + **`selectRaw codec sql params`** for any other
+  `column`, `exists`/`notExists` with `correlate`/`correlateAll`), **conflict-rule
+  writes** (`insertOrIgnore`/`insertOrIgnoreOn`, `upsertWith` with `addExcluded`/
+  `keepMin`/`keepMax`/`setExcluded`), **expression SET** (`updateSet` with `setCol`/
+  `setValue`/`setWhen` + `keep`/`otherwise`), **insert from a query**
+  (`copyInto`/`copyIntoOrIgnore` with `from`/`const`) and **RETURNING**
+  (`insertReturning`/`updateFieldsReturning`/`deleteWhereReturning`), every name checked
+  before the statement runs (v0.29.0) + **`selectRaw codec sql params`** for any other
   SQL (a join of three tables, a CTE).
   Deliberately a single-table mapper, not an ORM.
 

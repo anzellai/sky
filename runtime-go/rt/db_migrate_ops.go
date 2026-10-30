@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -465,4 +466,68 @@ func renderMigFile(driver string, f migFile) (string, error) {
 		return migV2Header + "\n" + text, nil
 	}
 	return text, nil
+}
+
+var (
+	migAddRequiredRe = regexp.MustCompile(
+		`^ALTER TABLE ([A-Za-z_][A-Za-z0-9_]*) ADD COLUMN ([A-Za-z_][A-Za-z0-9_]*) .* NOT NULL DEFAULT `)
+	migUniqueIndexRe = regexp.MustCompile(
+		`^CREATE UNIQUE INDEX IF NOT EXISTS [A-Za-z_][A-Za-z0-9_]* ON ([A-Za-z_][A-Za-z0-9_]*) \(([^)]*)\)`)
+)
+
+// migRequiredUniqueHint explains a v2 migration that failed because it adds
+// a required unique column to a table that already has 2 or more rows.
+// `sky db migrate --gen` writes such a column as an addColumn op (NOT NULL
+// DEFAULT <declared, else zero>) and then an addIndex op (UNIQUE). Every row
+// that exists takes the same default, so the unique index fails, and the
+// database error names an index, not the cause. The text is a pure function
+// of the op JSON, so the hint reads the rendered statements: a column that
+// this text adds NOT NULL and then puts in a UNIQUE index of the same table.
+// It is used only when the error is a unique violation and, after the
+// rollback, the table holds 2 or more rows. It returns "" otherwise, and the
+// caller reports the database error as it is.
+func migRequiredUniqueHint(d *SkyDb, text string, execErr error) string {
+	if execErr == nil || !strings.HasPrefix(text, migV2Header+"\n") ||
+		!strings.Contains(strings.ToLower(execErr.Error()), "unique") {
+		return ""
+	}
+	added := map[string]bool{}
+	for _, raw := range strings.Split(strings.TrimPrefix(text, migV2Header+"\n"), ";\n") {
+		stmt := strings.TrimSpace(raw)
+		if m := migAddRequiredRe.FindStringSubmatch(stmt); m != nil {
+			added[m[1]+"."+m[2]] = true
+			continue
+		}
+		m := migUniqueIndexRe.FindStringSubmatch(stmt)
+		if m == nil {
+			continue
+		}
+		table := m[1]
+		for _, c := range strings.Split(m[2], ",") {
+			col := strings.TrimSpace(c)
+			if !added[table+"."+col] || !codecValidIdent(table) {
+				continue
+			}
+			n, err := migRowCountUpTo2(d, table)
+			if err != nil || n < 2 {
+				continue
+			}
+			return fmt.Sprintf(
+				"column %s.%s is required and unique, and table %s already has rows: "+
+					"the added column gives every row the same default, so the unique index "+
+					"cannot be built (the migration was rolled back). Fix: give each row its "+
+					"own value in a data step, a {\"kind\": \"raw\", \"sql\": \"UPDATE %s SET %s = ...\"} "+
+					"op between the addColumn op and the addIndex op, or make the field a Maybe "+
+					"so the column is nullable. Database error: %v",
+				table, col, table, table, col, execErr)
+		}
+	}
+	return ""
+}
+
+// migRowCountUpTo2 counts the rows of a table, stopping at 2.
+func migRowCountUpTo2(d *SkyDb, table string) (int, error) {
+	var n int
+	err := d.conn.QueryRow("SELECT COUNT(*) FROM (SELECT 1 AS x FROM " + table + " LIMIT 2) sky_n").Scan(&n)
+	return n, err
 }

@@ -1076,3 +1076,63 @@ func Db_sqlOfValue(valueArg any) any {
 		return SkyADT{Tag: 0, SkyName: "SqlString", Fields: []any{AsString(JsonEnc_encode(0, jv))}}
 	}
 }
+
+// Db_objectSqlValues : List ( String, String ) -> Value -> List SqlValue
+//
+// The values of one record, one SqlValue per colspec column, in colspec
+// order (v0.29.0). Std.Db.Store renders the INSERT text of insertOrIgnore,
+// upsertWith and insertReturning itself and binds these values, so the
+// column list and the values cannot drift apart. A column binds the
+// record's value read by its kind, as Db_execObject does: a blob is its
+// JSON text, a missing or null value is SqlNull. A value that is not a
+// record gives one SqlNull per column (Store refuses a non-record codec
+// before any statement, so that never reaches the database).
+func Db_objectSqlValues(colspecArg, objArg any) any {
+	fields, _ := jsonObjFields(objArg)
+	out := []any{}
+	for _, cs := range AsList(colspecArg) {
+		t := AsTuple2(cs)
+		base, _ := codecSplitKind(AsString(t.V1))
+		out = append(out, codecSqlValueOf(rawToSqlArg(fields[AsString(t.V0)], base)))
+	}
+	return out
+}
+
+// codecSqlValueOf wraps a driver value from rawToSqlArg as a Std.Db.SqlValue.
+func codecSqlValueOf(v any) any {
+	switch x := v.(type) {
+	case nil:
+		return SkyADT{Tag: 8, SkyName: "SqlNull", Fields: []any{
+			SkyADT{Tag: 0, SkyName: "SqlString", Fields: []any{""}},
+		}}
+	case string:
+		return SkyADT{Tag: 0, SkyName: "SqlString", Fields: []any{x}}
+	case int64:
+		return SkyADT{Tag: 1, SkyName: "SqlInt", Fields: []any{int(x)}}
+	case int:
+		return SkyADT{Tag: 1, SkyName: "SqlInt", Fields: []any{x}}
+	case float64:
+		return SkyADT{Tag: 2, SkyName: "SqlFloat", Fields: []any{x}}
+	case bool:
+		return SkyADT{Tag: 3, SkyName: "SqlBool", Fields: []any{x}}
+	default:
+		return SkyADT{Tag: 0, SkyName: "SqlString", Fields: []any{fmt.Sprintf("%v", x)}}
+	}
+}
+
+// Db_writeReturningObjects : Db -> String -> List SqlValue
+//
+//	-> List ( String, String, List ( String, String ) ) -> Task Error (List (List String))
+//
+// The Std.Db.Store RETURNING kernel (v0.29.0): an INSERT / UPDATE / DELETE
+// … RETURNING, read back as Db_queryObjectGroups reads a SELECT, so the rows
+// decode through the store's codec. It is a write, so it carries the SSR
+// settle guard that Db_exec has: a GET server-side render never mutates.
+func Db_writeReturningObjects(connArg, sqlArg, paramsArg, groupsArg any) any {
+	return func() any {
+		if r := ssrSuppressedWrite("store.write:returning"); r != nil {
+			return r
+		}
+		return AnyTaskRun(Db_queryObjectGroups(connArg, sqlArg, paramsArg, groupsArg))
+	}
+}

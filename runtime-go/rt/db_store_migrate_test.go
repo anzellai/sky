@@ -513,3 +513,90 @@ func assertMigrateParity(t *testing.T, d *SkyDb) {
 func TestStoreMigrateParity_SqliteRealDb(t *testing.T) {
 	assertMigrateParity(t, openStoreQueryDb(t))
 }
+
+// --- A required unique column added by a v2 migration to a table with rows --
+//
+// Found bug (batch D gap b): `sky db migrate --gen` writes a required unique
+// column as an addColumn op (NOT NULL DEFAULT <zero>) and an addIndex op
+// (UNIQUE). On a table with 2 or more rows every row took the same default,
+// the unique index failed, and `sky db migrate` showed only the raw database
+// error ("UNIQUE constraint failed" / "could not create unique index"). The
+// apply now names the table, the column and the fix, and still rolls back.
+func assertRequiredUniqueOnRowsIsExplained(t *testing.T, d *SkyDb, table string) {
+	t.Helper()
+	id := "0002_" + table + "_code"
+	cleanup := func() {
+		_, _ = d.conn.Exec("DROP TABLE IF EXISTS " + table)
+		_, _ = d.conn.Exec("DELETE FROM _sky_migrations WHERE name = '" + id + "'")
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+	for _, s := range []string{
+		"CREATE TABLE " + table + " (id TEXT PRIMARY KEY)",
+		"INSERT INTO " + table + " (id) VALUES ('a')",
+		"INSERT INTO " + table + " (id) VALUES ('b')",
+	} {
+		if _, err := d.conn.Exec(s); err != nil {
+			t.Fatalf("%s: %v", s, err)
+		}
+	}
+	zero := ""
+	cols := []string{"code"}
+	f := migFile{Id: id, Ops: []migOp{
+		{Kind: "addColumn", V: 2, Table: table, Column: "code", Type: "text",
+			Nullable: false, Default: &migDefault{Text: &zero}},
+		{Kind: "addIndex", V: 2, Table: table, Name: codecIndexName(table, cols, true, ""),
+			IndexColumns: cols, Unique: true},
+	}}
+	text, err := renderMigFile(d.driver, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, ok := dbMigrateCore(d, []any{T2[any, any]{V0: id, V1: text}}, "",
+		func(_ string, e any) any { return e }).(SkyResult[any, any])
+	if !ok || r.Tag == 0 {
+		t.Fatalf("the migration was applied: %+v", r)
+	}
+	msg := fmt.Sprintf("%v", r.ErrValue)
+	for _, want := range []string{"column " + table + ".code", "required and unique",
+		"table " + table + " already has rows", "data step", "Maybe", "rolled back"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("the error does not say %q:\n%s", want, msg)
+		}
+	}
+	if cols, _ := codecTableColumns(d, table); cols["code"] {
+		t.Fatalf("the column was added: the migration did not roll back")
+	}
+	var n int
+	_ = d.conn.QueryRow("SELECT COUNT(*) FROM _sky_migrations WHERE name = '" + id + "'").Scan(&n)
+	if n != 0 {
+		t.Fatalf("the failed migration was recorded in the ledger")
+	}
+}
+
+func TestStoreMigrateSqliteRequiredUniqueOnRowsIsExplained(t *testing.T) {
+	assertRequiredUniqueOnRowsIsExplained(t, openStoreQueryDb(t), "codes_ru")
+}
+
+// One row takes the default and the unique index holds: no hint, it applies.
+func TestStoreMigrateSqliteRequiredUniqueOnOneRowApplies(t *testing.T) {
+	d := openStoreQueryDb(t)
+	for _, s := range []string{
+		"CREATE TABLE codes_one (id TEXT PRIMARY KEY)",
+		"INSERT INTO codes_one (id) VALUES ('a')",
+	} {
+		if _, err := d.conn.Exec(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	zero := ""
+	cols := []string{"code"}
+	text, _ := renderMigFile("sqlite", migFile{Id: "0002_one", Ops: []migOp{
+		{Kind: "addColumn", V: 2, Table: "codes_one", Column: "code", Type: "text", Default: &migDefault{Text: &zero}},
+		{Kind: "addIndex", V: 2, Table: "codes_one", Name: codecIndexName("codes_one", cols, true, ""),
+			IndexColumns: cols, Unique: true},
+	}})
+	if r := migrateCoreSqlite(t, d, []any{T2[any, any]{V0: "0002_one", V1: text}}); r.Tag != 0 {
+		t.Fatalf("apply: %+v", r)
+	}
+}

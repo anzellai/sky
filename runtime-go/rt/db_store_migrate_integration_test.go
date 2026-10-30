@@ -118,3 +118,9 @@ func TestStoreMigratePostgresInsertLeavesDefaultNowToTheDatabase(t *testing.T) {
 func TestStoreMigratePostgresSchemaNowOnTimestampIsMillis(t *testing.T) {
 	assertSchemaNowIsMillis(t, openStoreQueryPostgres(t, ""), "schema_now_ms_pg")
 }
+
+// A required unique column that a v2 migration adds to a table with 2 rows:
+// the apply error names the table, the column and the fix, and rolls back.
+func TestStoreMigratePostgresRequiredUniqueOnRowsIsExplained(t *testing.T) {
+	assertRequiredUniqueOnRowsIsExplained(t, openStoreQueryPostgres(t, ""), "codes_ru_pg")
+}

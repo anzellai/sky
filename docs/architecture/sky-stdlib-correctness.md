@@ -1379,7 +1379,10 @@ allowlist rejects characters outside `[A-Za-z0-9_.]`.
   Every verb (`create`, `migrate`, `insert`, `insertMany`, `upsert`,
   `update`, `updateWhere`, `updateFields`, `setFields`, `adjust`, `all`,
   `findBy`, `delete`, `deleteWhere`, `toList`, `toRows`, `toMaybe`,
-  `count`, `toSql`, `toPairs`, `toPairsMaybe`) runs the store check first
+  `count`, `toSql`, `toPairs`, `toPairsMaybe`, and the v0.29.0 writes
+  `insertOrIgnore`, `insertOrIgnoreOn`, `upsertWith`, `updateSet`,
+  `copyInto`, `copyIntoOrIgnore`, `insertReturning`,
+  `updateFieldsReturning`, `deleteWhereReturning`) runs the store check first
   (for a join, `exists` or `inQuery`, on every store it reads): the table name matches
   `^[A-Za-z_][A-Za-z0-9_]*$` and is at most 63 bytes, the primary key is
   empty or a codec column, and no builder recorded an unknown column.
@@ -1393,6 +1396,24 @@ allowlist rejects characters outside `[A-Za-z0-9_.]`.
   outer column against the outer one, and the two must be of one kind.
   Sources: `storeError`, `refOf`, `colRef`, `prepare`, `fromClause`,
   `subSelect`, `existsSql` in `Std/Db/Store.sky`.
+  `pushProject` and `dumpSchema` run the same check on every `Table`,
+  builder problems included (`Table.problems`), so `sky db push` and
+  `sky db migrate --gen` refuse an unknown index column before any DDL.
+* **Conflict and RETURNING writes are one statement, checked first**
+  (v0.29.0). A conflict target (`upsertWith`, `insertOrIgnoreOn`) is the
+  primary key, a `unique` column or a `uniqueOn` set of required columns;
+  a rule never sets a key or generated column; `keepMin` / `keepMax` spell
+  out the NULL rule in one CASE text for both dialects (LEAST / GREATEST
+  differ). `updateSet` and `copyInto` check every target and source kind
+  and refuse a nullable source into a required target; every parameter in
+  a CASE or SELECT list is `CAST(? AS <type>)`, so PostgreSQL can type it.
+  `copyInto` refuses an unmapped required column without a default and an
+  unmapped `defaultWith` column. RETURNING goes through
+  `Db_writeReturningObjects`, which carries the SSR settle guard of
+  `Db_exec` and decodes through the codec; a refused write is `Err`.
+  Of concurrent `insertOrIgnore` (or `updateFieldsReturning` claim) calls on
+  one key exactly one wins: pinned by `StoreQueryConformanceTest` and the
+  `TestStoreWritePostgres*` Go tests on separate PostgreSQL sessions.
 * **One migrate rule, one renderer** (v0.29.0, user decision D1).
   `Store.migrate` / `sky db push` (`Db_autoMigrate`) and `sky db migrate`
   (`renderMigOp` of a v2 `addColumn`) render an added column through one Go
@@ -1405,6 +1426,9 @@ allowlist rejects characters outside `[A-Za-z0-9_.]`.
   exactly `renderMigOp` of those ops). A v1 op renders the v0.28.1 bytes, so
   an applied migration keeps its ledger checksum; the SQLite apply-time
   stamp of a v2 file is swapped in after the checksum (`migApplyText`).
+  A v2 file that adds a required unique column to a table with 2 or more
+  rows fails on its unique index; the apply rolls back and names the
+  table, the column and the fix (`migRequiredUniqueHint`).
   Every literal in index DDL is a constant rendered by Store
   (`predicateSql`), and every index column is an identifier (B10).
 * **One statement per Store call, joins and subqueries included.** A

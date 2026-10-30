@@ -131,6 +131,17 @@ rewrite (`now()` stamps the rows that exist with the time of the ALTER). A zero
 `''` cannot decode for a nullary enum, a `Codec.map` wrapper or a validated
 string: declare a default for such a field.
 
+A required `unique` column in a `--gen` migration file is an `addColumn` op
+(`NOT NULL DEFAULT <d>`) and then an `addIndex` op. On a table with 2 or more
+rows every row takes the same default, so the index cannot be built: `sky db
+migrate` rolls the migration back and names the table, the column and the fix.
+Give each row its own value in a data step, a `{"kind": "raw", "sql": "UPDATE t
+SET c = …"}` op between the two ops, or make the field a `Maybe`.
+
+`pushProject` and `dumpSchema` (so `sky db migrate --gen` and `sky db push`)
+refuse a store whose builders recorded a problem (for example an unknown column
+in `unique`, `index` or `uniqueOn`), naming the column, before any DDL.
+
 ### Writes
 
 `insert` · **`insertMany`** (one multi-row INSERT — bulk / time-series) · `update`
@@ -151,6 +162,89 @@ Store.setFields conn orders (SqlString orderId)
 -- atomic stock decrement (value depends on the current value — no read first)
 Store.adjust conn products (Store.eq "id" (SqlString pid)) [ ( "stock", -qty ) ]
 ```
+
+**Conflict rules, expression SET, copy and RETURNING (v0.29.0).** Each renders
+ONE statement, checks every column against the codec first, and binds every
+value as a parameter. They need SQLite 3.35+ (the bundled engine is 3.46) or
+PostgreSQL 9.5+.
+
+| Verb | Statement | Returns |
+|---|---|---|
+| `insertOrIgnore conn s row` | `INSERT … ON CONFLICT DO NOTHING` (any unique key) | 1 written, 0 already there |
+| `insertOrIgnoreOn [ "dedupe_key" ] conn s row` | `… ON CONFLICT (dedupe_key) DO NOTHING` | 1 or 0 |
+| `upsertWith conn s row { conflictOn, onConflict }` | `… ON CONFLICT (cols) DO UPDATE SET …` | rows affected |
+| `updateSet conn s cond [ setCol / setValue / setWhen ]` | `UPDATE … SET c = other_col, d = CASE WHEN … END` | rows affected |
+| `copyInto` / `copyIntoOrIgnore conn target query [ ( col, from / const ) ]` | `INSERT … SELECT …` | rows inserted |
+| `insertReturning conn s row` | `INSERT … RETURNING …` | the stored row |
+| `updateFieldsReturning conn s cond sets` | `UPDATE … RETURNING …` | the updated rows |
+| `deleteWhereReturning conn s cond` | `DELETE … RETURNING …` | the deleted rows |
+
+```elm
+-- claim once: of two concurrent calls with one key, exactly one gets 1
+Store.insertOrIgnore conn sentEmails { key = "welcome:" ++ userId, sentAt = now }
+
+-- a counter row per day, customer and event, in one atomic statement
+Store.upsertWith conn dailyCounts row
+    { conflictOn = [ "day", "customer_id", "event" ]
+    , onConflict =
+        [ Store.addExcluded "count"      -- count = daily_counts.count + excluded.count
+        , Store.keepMin "first_at"       -- the smaller; a NULL side gives the other
+        , Store.keepMax "last_at"
+        , Store.setExcluded "source"     -- source = excluded.source
+        ]
+    }
+
+-- set columns from expressions, every row from its own values
+Store.updateSet conn orderLines (Store.eq "wanted_at" (SqlInt 0))
+    [ Store.setCol "wanted_at" "status_at"
+    , Store.setWhen "status" (Store.eq "status" (SqlString "ai")) (SqlString "open") Store.keep
+    ]
+
+-- a copy or a roll-up from any query (after select / aggregate, a result field)
+Store.copyInto conn enquiries
+    (Store.query supportRequests |> Store.where_ (Store.gt "created_at" (SqlInt cutoff)))
+    [ ( "id", Store.from "id" ), ( "kind", Store.const (SqlString "support") ), ( "customer_id", Store.from "customer_id" ) ]
+
+-- the read-after-write of a claim, in one statement
+Store.updateFieldsReturning conn jobs
+    (Store.and_ [ Store.eq "id" (SqlString jobId), Store.isNull "owner" ])
+    [ ( "owner", SqlString me ) ]     -- [ job ] for the one caller that won, [] for the others
+```
+
+The rules, all checked before any statement:
+
+- `conflictOn` (and `insertOrIgnoreOn`) is the primary key, a `unique` column
+  or a `uniqueOn` set (not a `uniqueWhere`), of required columns: both engines
+  treat NULLs as distinct, so a nullable key never conflicts.
+- A conflict rule never names the primary key, a `conflictOn` column, or a
+  generated column (`serial`, `defaultNow`, `defaultWith`, `generated`), and a
+  column has one rule. `addExcluded` needs a required `Int` / `Float` column.
+  `keepMin` / `keepMax` refuse a bool or JSON column. An empty rule list is
+  `DO NOTHING`. `touchOnUpdate` columns take the clock on the update.
+- `upsertWith` returns rows affected; `upsert` returns the primary key for an
+  Int-keyed store (see Writes above).
+- `updateSet`: a target is a codec column, not the primary key or a generated
+  column, set once. `setCol` copies a column of the same kind (a nullable source
+  needs a nullable target). `setWhen target cond value Store.keep` leaves the
+  other rows as they are; `Store.otherwise v` sets `v` on them. Each CASE
+  parameter is cast to the column type, so it works on PostgreSQL for `Int` and
+  `Bool` columns. An empty list runs nothing and returns 0.
+- `copyInto`: the source is any query, read as a subquery. `from` names a column
+  of its rows (after `select` / `aggregate`, a result field), `const` binds one
+  value for every row. Kinds match, a nullable source needs a nullable target,
+  every required target column without a default is mapped, and so is every
+  `defaultWith` column (the copy does not compute it). A `serial` column is never
+  mapped. A join source needs `select` first. `copyIntoOrIgnore` skips a row that
+  breaks a unique key.
+- RETURNING decodes each row through the codec. `insertReturning` gives the row
+  with its `serial` id and `defaultNow` stamp, and fails if no row comes back.
+  A write that the database refuses (a UNIQUE violation in `UPDATE … RETURNING`)
+  is an `Err`, never an empty list. An empty `updateFieldsReturning` set list is
+  an `Err`. Inside a GET server-side render every one of these writes is
+  suppressed, as `Db.exec` is.
+
+Counters that the database keeps by itself (an aggregate table kept current by
+triggers) stay raw SQL: write the trigger in a migration.
 
 ### Reads — query builder
 
@@ -185,8 +279,9 @@ dialect that refuses it. **Never build a column argument from user input:** a
 `jsonText` reference can read any key of a JSON column.
 
 **Text matching.** `like` uses its pattern as given: `%` and `_` are wildcards,
-there is no escape, and it is case-sensitive on PostgreSQL but ignores ASCII
-case on SQLite. For text a user typed, use the escaped forms, which match the
+it does not escape `%`, `_` or `\`, and it is case-sensitive on PostgreSQL but
+ignores ASCII case on SQLite. `Store.like "email" ("%" ++ domain)` matches wrong
+addresses when `domain` holds `_`. For text a user typed, use the escaped forms, which match the
 same way on both dialects:
 
 | Condition | Matches |
@@ -200,6 +295,13 @@ An empty needle matches every non-NULL row. The column must be a text column.
 SQLite's `LOWER` folds ASCII letters only; PostgreSQL folds all letters. To
 escape a `like` pattern by hand, prefix `!`, `%` and `_` with `!` and use raw
 SQL with `ESCAPE '!'`.
+
+**Regular expressions: not offered, on purpose.** SQLite has no built-in
+`REGEXP` (a portable form would need a function registered on every
+connection), so `Std.Db.Store` has no regex condition. Store a normalised
+column (lower case, punctuation removed) when you write the row, and match it
+with `contains` / `startsWith` / `endsWith` / `eqCi` / `containsCi`. A regex
+that must run in the database stays raw SQL for the one dialect you run.
 
 **Column against column.** `eqCol`, `neqCol`, `gtCol`, `gteCol`, `ltCol` and
 `lteCol` compare two columns of the same kind:

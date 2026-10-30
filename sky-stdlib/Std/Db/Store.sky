@@ -34,6 +34,14 @@
 -- `column`) and `exists` / `notExists` (with `correlate`) put a subquery in a
 -- condition. `toSql` shows the SQL a query renders.
 --
+-- Writes beyond one row have builders too, each ONE statement: `insertOrIgnore`
+-- / `insertOrIgnoreOn` (the atomic "claim once"), `upsertWith` with
+-- `addExcluded` / `keepMin` / `keepMax` / `setExcluded` (a counter or partial
+-- upsert), `updateSet` with `setCol` / `setValue` / `setWhen` (a column copy or
+-- a CASE), `copyInto` / `copyIntoOrIgnore` with `from` / `const` (INSERT …
+-- SELECT from any query), and RETURNING (`insertReturning`,
+-- `updateFieldsReturning`, `deleteWhereReturning`), decoded by the codec.
+--
 -- Every verb checks the store before any statement: the table name and every
 -- column name follow `[A-Za-z_][A-Za-z0-9_]*` (at most 63 bytes), the primary
 -- key is empty or a codec column, and a builder that named an unknown column
@@ -71,6 +79,30 @@ module Std.Db.Store exposing
     , selectRaw
     , delete
     , deleteWhere
+    , insertOrIgnore
+    , insertOrIgnoreOn
+    , OnConflict
+    , upsertWith
+    , addExcluded
+    , keepMin
+    , keepMax
+    , setExcluded
+    , insertReturning
+    , updateFieldsReturning
+    , deleteWhereReturning
+    , SetExpr
+    , updateSet
+    , setCol
+    , setValue
+    , setWhen
+    , Otherwise
+    , keep
+    , otherwise
+    , CopyFrom
+    , copyInto
+    , copyIntoOrIgnore
+    , from
+    , const
     , Table
     , toTable
     , Project
@@ -964,6 +996,8 @@ insertMany conn store records =
 -- Returns the row's PK for an Int-keyed store (0 when an `ON CONFLICT DO
 -- NOTHING` wrote nothing), and the affected-row count otherwise — the same
 -- contract as `insert`.
+-- To keep some columns, add to a counter, or conflict on a `uniqueOn` set,
+-- use `upsertWith` (it returns rows affected, never the key).
 upsert : Db -> Store a -> a -> Task Error Int
 upsert conn store record =
     let
@@ -1173,24 +1207,1183 @@ deleteWhere conn store cond =
                         , whereParams
                         ))
 
+-- ── Writes with a conflict rule, expression SET, copy and RETURNING ─────────
+-- Each verb below renders ONE statement in Sky, checks every name against
+-- the codec first, and binds every value as a parameter. The text is the same
+-- on SQLite (3.35+) and PostgreSQL except where noted.
+--
+-- | One rule for a column when `upsertWith` meets a row that exists. Build it
+-- with `addExcluded`, `keepMin`, `keepMax` or `setExcluded`. Opaque.
+type OnConflict
+    = OnConflict String String
+
+
+-- | Add the new row's value to the stored one: `count = t.count + excluded.count`.
+-- A required `Int` or `Float` column only (a NULL would make the sum NULL).
+addExcluded : String -> OnConflict
+addExcluded col =
+    OnConflict "add" col
+
+
+-- | Keep the smaller of the stored and the new value. A NULL on either side
+-- gives the other value. Not for a bool or JSON (blob) column. Text compares
+-- by the database collation (byte order on SQLite).
+keepMin : String -> OnConflict
+keepMin col =
+    OnConflict "min" col
+
+
+-- | Keep the larger of the stored and the new value (NULL rules as `keepMin`).
+keepMax : String -> OnConflict
+keepMax col =
+    OnConflict "max" col
+
+
+-- | Set the column to the new row's value: `c = excluded.c`.
+setExcluded : String -> OnConflict
+setExcluded col =
+    OnConflict "set" col
+
+-- | One column of `updateSet`. Build it with `setCol`, `setValue` or
+-- `setWhen`. Opaque.
+type SetExpr
+    = SetExpr SetSpec
+
+type alias SetSpec =
+    { kind : String
+    , target : String
+    , source : String
+    , cond : Cond
+    , value : SqlValue
+    , keepOld : Bool
+    , orElse : SqlValue
+    }
+
+-- | The ELSE branch of `setWhen`: `keep` (the value the row holds) or
+-- `otherwise v`. Opaque.
+type Otherwise
+    = Otherwise Bool SqlValue
+
+-- | One source of a `copyInto` column: `from` a column of the source query,
+-- or a `const` value. Opaque.
+type CopyFrom
+    = CopyFrom Bool String SqlValue
+
+
+noValue : SqlValue
+noValue =
+    SqlNull (SqlString "")
+
+
+-- | Copy another column of the same row: `Store.setCol "wanted_at" "status_at"`
+-- renders `wanted_at = status_at`. The two columns have one kind, and a
+-- nullable source needs a nullable target.
+setCol : String -> String -> SetExpr
+setCol target source =
+    SetExpr
+        { kind = "col"
+        , target = target
+        , source = source
+        , cond = CondAnd []
+        , value = noValue
+        , keepOld = True
+        , orElse = noValue
+        }
+
+
+-- | Set a value: `Store.setValue "status" (SqlString "open")` renders `status = ?`.
+setValue : String -> SqlValue -> SetExpr
+setValue target v =
+    SetExpr
+        { kind = "value"
+        , target = target
+        , source = ""
+        , cond = CondAnd []
+        , value = v
+        , keepOld = True
+        , orElse = noValue
+        }
+
+
+-- | Set a value on the rows where a condition holds:
+-- `Store.setWhen "status" (Store.eq "status" (SqlString "ai")) (SqlString "open") Store.keep`
+-- renders `status = CASE WHEN (status = ?) THEN CAST(? AS TEXT) ELSE status END`.
+-- The condition takes the same leaves as `where_`.
+setWhen : String -> Cond -> SqlValue -> Otherwise -> SetExpr
+setWhen target cond v orElse =
+    case orElse of
+
+        Otherwise keepOld other ->
+            SetExpr
+                { kind = "when"
+                , target = target
+                , source = ""
+                , cond = cond
+                , value = v
+                , keepOld = keepOld
+                , orElse = other
+                }
+
+
+-- | `setWhen`'s ELSE: the row keeps the value it holds.
+keep : Otherwise
+keep =
+    Otherwise True noValue
+
+
+-- | `setWhen`'s ELSE: set this value.
+otherwise : SqlValue -> Otherwise
+otherwise v =
+    Otherwise False v
+
+
+-- | A `copyInto` column read from the source query's column (a field or
+-- snake name of the source rows).
+from : String -> CopyFrom
+from col =
+    CopyFrom True col noValue
+
+
+-- | A `copyInto` column set to one value for every copied row.
+const : SqlValue -> CopyFrom
+const v =
+    CopyFrom False "" v
+
+
+-- | Insert the record, or do nothing when it would break the primary key or
+-- any unique constraint (`INSERT … ON CONFLICT DO NOTHING`). Returns 1 when
+-- it wrote the row and 0 when one was there. The atomic "claim once": of two
+-- concurrent calls with one key, exactly one returns 1. Columns marked
+-- `generated` are left out, `defaultWith` columns are computed, as `insert`.
+insertOrIgnore : Db -> Store a -> a -> Task Error Int
+insertOrIgnore conn store record =
+    runExec
+        conn
+        (case insertHead (dialectOf conn) (storeRec store) record of
+
+            Err e ->
+                Err e
+
+            Ok ( head, params ) ->
+                Ok ( head ++ " ON CONFLICT DO NOTHING", params ))
+
+
+-- | `insertOrIgnore` that ignores only a conflict on these columns:
+-- `Store.insertOrIgnoreOn [ "dedupe_key" ] conn followups row`. The columns are
+-- the primary key, a `unique` column or a `uniqueOn` set, and required (both
+-- engines treat NULLs as distinct). A conflict on any other constraint is an
+-- `Err`. Returns 1 or 0.
+insertOrIgnoreOn : List String -> Db -> Store a -> a -> Task Error Int
+insertOrIgnoreOn names conn store record =
+    let
+        s = storeRec store
+    in
+        runExec
+            conn
+            (case insertHead (dialectOf conn) s record of
+
+                Err e ->
+                    Err e
+
+                Ok ( head, params ) ->
+                    case conflictTarget "insertOrIgnoreOn" s names of
+
+                        Err e ->
+                            Err e
+
+                        Ok target ->
+                            Ok
+                                ( head ++ " ON CONFLICT ("
+                                      ++ String.join ", " target
+                                      ++ ") DO NOTHING"
+                                , params
+                                ))
+
+
+-- | Insert the record, or apply the rules to the row that exists — a partial
+-- or counter upsert in one statement:
+--
+--     Store.upsertWith conn dailyCounts row
+--         { conflictOn = [ "day", "customer_id", "event" ]
+--         , onConflict =
+--             [ Store.addExcluded "count"
+--             , Store.keepMin "first_at"
+--             , Store.keepMax "last_at"
+--             , Store.setExcluded "source"
+--             ]
+--         }
+--
+-- `conflictOn` is the primary key, a `unique` column or a `uniqueOn` set
+-- (not a `uniqueWhere`), of required columns. A column that a rule does not
+-- name keeps its value; `touchOnUpdate` columns take the clock. No rule may
+-- name a `conflictOn`, primary-key or generated column. An empty rule list
+-- is `DO NOTHING`. Returns rows affected (1, or 0 for `DO NOTHING`), not the
+-- primary key that `upsert` returns for an Int-keyed store.
+upsertWith : Db -> Store a -> a -> { conflictOn : List String, onConflict : List OnConflict } -> Task Error Int
+upsertWith conn store record rule =
+    let
+        s = storeRec store
+        d = dialectOf conn
+    in
+        runExec
+            conn
+            (case insertHead d s record of
+
+                Err e ->
+                    Err e
+
+                Ok ( head, params ) ->
+                    case conflictTarget "upsertWith" s rule.conflictOn of
+
+                        Err e ->
+                            Err e
+
+                        Ok target ->
+                            case conflictItems s target rule.onConflict [] [] of
+
+                                Err e ->
+                                    Err e
+
+                                Ok items ->
+                                    Ok
+                                        ( head ++ " ON CONFLICT ("
+                                              ++ String.join ", " target
+                                              ++ ") "
+                                              ++ conflictAction d s.cols items
+                                        , params
+                                        ))
+
+
+-- | Insert the record and return the row as the database stored it — with a
+-- `serial` id and `defaultNow` stamp filled (`INSERT … RETURNING`). Fails
+-- when no row comes back.
+insertReturning : Db -> Store a -> a -> Task Error a
+insertReturning conn store record =
+    let
+        s = storeRec store
+    in
+        runReturning conn s.codec s.cols (insertHead (dialectOf conn) s record)
+            |> Task.andThen
+                   (\rows ->
+                       case rows of
+
+                           r :: _ ->
+                               Task.succeed r
+
+                           [] ->
+                               Task.fail
+                                   (storeErr
+                                       "insertReturning: the database returned no row"))
+
+
+-- | `updateFields` that returns the updated rows (`UPDATE … RETURNING`),
+-- decoded by the codec. The read-after-write of a claim in one statement:
+-- `updateFieldsReturning conn jobs (and_ [ eq "id" id, isNull "owner" ]) [ ( "owner", me ) ]`
+-- gives `[ job ]` to the one caller that claimed it and `[]` to the others.
+-- An empty set list is an `Err`.
+updateFieldsReturning : Db -> Store a -> Cond -> List ( String, SqlValue ) -> Task Error (List a)
+updateFieldsReturning conn store cond sets =
+    let
+        s = storeRec store
+    in
+        case sets of
+
+            [] ->
+                Task.fail (storeErr "updateFieldsReturning: no columns to set")
+
+            _ ->
+                runReturning
+                    conn
+                    s.codec
+                    s.cols
+                    (prepareSet
+                        (dialectOf conn)
+                        s.name
+                        s.pk
+                        s.cols
+                        s.problems
+                        cond
+                        False
+                        sets)
+
+
+-- | `deleteWhere` that returns the deleted rows (`DELETE … RETURNING`).
+deleteWhereReturning : Db -> Store a -> Cond -> Task Error (List a)
+deleteWhereReturning conn store cond =
+    let
+        s = storeRec store
+    in
+        runReturning
+            conn
+            s.codec
+            s.cols
+            (case writeWhere (dialectOf conn) s.name s.pk s.cols s.problems cond of
+
+                Err e ->
+                    Err e
+
+                Ok ( whereSql, whereParams ) ->
+                    Ok
+                        ( "DELETE FROM " ++ s.name ++ " WHERE " ++ whereSql
+                        , whereParams
+                        ))
+
+
+-- | Set columns from expressions in one `UPDATE` over the rows a condition
+-- matches: copy a column (`setCol`), set a value (`setValue`), or set a
+-- value where a condition holds (`setWhen` with `keep` / `otherwise`):
+--
+--     Store.updateSet conn orderLines (Store.eq "wanted_at" (SqlInt 0))
+--         [ Store.setCol "wanted_at" "status_at"
+--         , Store.setWhen "status" (Store.eq "status" (SqlString "ai")) (SqlString "open") Store.keep
+--         ]
+--
+-- Every row takes its own values. A target is a codec column, not the
+-- primary key or a generated column, at most once. `touchOnUpdate` columns
+-- take the clock. An empty list returns 0 and runs nothing. Returns rows
+-- affected.
+updateSet : Db -> Store a -> Cond -> List SetExpr -> Task Error Int
+updateSet conn store cond exprs =
+    case exprs of
+
+        [] ->
+            Task.succeed 0
+
+        _ ->
+            runExec
+                conn
+                (prepareUpdateSet (dialectOf conn) (storeRec store) cond exprs)
+
+
+-- | Insert the rows of a query in one `INSERT … SELECT`: a copy between
+-- tables, or a roll-up from an `aggregate` query.
+--
+--     Store.copyInto conn enquiries
+--         (Store.query supportRequests |> Store.where_ (Store.gt "created_at" (SqlInt 0)))
+--         [ ( "id", Store.from "id" ), ( "kind", Store.const (SqlString "support") ), ( "customer_id", Store.from "customer_id" ) ]
+--
+-- Each pair names a target column and its source: `from` a column of the
+-- query's rows (after `select` / `aggregate`, a result field), or a `const`
+-- value. The kinds match, and a nullable source needs a nullable target.
+-- Every required target column without a default is mapped, and so is every
+-- `defaultWith` column. A `serial` column is never mapped (the database
+-- assigns it). A join query needs `select` first. Returns rows inserted.
+copyInto : Db -> Store t -> Query s -> List ( String, CopyFrom ) -> Task Error Int
+copyInto conn store q mapping =
+    runExec
+        conn
+        (prepareCopy False (dialectOf conn) (storeRec store) (specOf q) mapping)
+
+
+-- | `copyInto` that skips a row that would break the primary key or a unique
+-- constraint (`ON CONFLICT DO NOTHING`). Returns rows inserted.
+copyIntoOrIgnore : Db -> Store t -> Query s -> List ( String, CopyFrom ) -> Task Error Int
+copyIntoOrIgnore conn store q mapping =
+    runExec
+        conn
+        (prepareCopy True (dialectOf conn) (storeRec store) (specOf q) mapping)
+
+
+-- The `INSERT INTO t (…) VALUES (…)` of one record. Every column that is not
+-- generated binds the record's value (Db_objectSqlValues), a `defaultWith`
+-- column its computed value, and a `defaultNow` column takes `datetime('now')`
+-- on SQLite (the same text as the app clock `insert` binds) and the
+-- database default on PostgreSQL.
+insertHead : Dialect -> StoreRec a -> a -> Result Error ( String, List SqlValue )
+insertHead d s record =
+    case storeError s.name s.pk s.cols s.problems of
+
+        Just e ->
+            Err e
+
+        Nothing ->
+            let
+                plain = colsExcluding s.generated s.cols
+                computed = computedValues s.computed
+                nowCols =
+                    case d of
+
+                        Sqlite ->
+                            colNamesList (nowColsOf s.cols)
+
+                        Postgres ->
+                            []
+                cols = colNamesList plain ++ pairNames computed ++ nowCols
+                marks =
+                    repeatText (List.length plain + List.length computed) "?"
+                        ++ repeatText (List.length nowCols) "datetime('now')"
+            in
+                case cols of
+
+                    [] ->
+                        Err
+                            <| storeErr
+                                   ("\"" ++ s.name ++ "\": no column to insert")
+
+                    _ ->
+                        Ok
+                            ( "INSERT INTO " ++ s.name ++ " ("
+                                  ++ String.join ", " cols
+                                  ++ ") VALUES ("
+                                  ++ String.join ", " marks
+                                  ++ ")"
+                            , dbObjectSqlValues
+                                  plain
+                                  (Codec.toValue s.codec record)
+                                  ++ pairValues computed
+                            )
+
+
+repeatText : Int -> String -> List String
+repeatText n text =
+    if n <= 0 then
+        []
+
+    else
+        text :: repeatText (n - 1) text
+
+
+pairNames : List ( String, SqlValue ) -> List String
+pairNames pairs =
+    case pairs of
+
+        [] ->
+            []
+
+        ( c, _ ) :: rest ->
+            c :: pairNames rest
+
+
+pairValues : List ( String, SqlValue ) -> List SqlValue
+pairValues pairs =
+    case pairs of
+
+        [] ->
+            []
+
+        ( _, v ) :: rest ->
+            v :: pairValues rest
+
+
+-- The conflict target: every name a required codec column, the set equal to
+-- the primary key, one `unique` column, or a `uniqueOn` set.
+conflictTarget : String -> StoreRec a -> List String -> Result Error (List String)
+conflictTarget verb s names =
+    case resolveNames verb s.cols names [] of
+
+        Err e ->
+            Err e
+
+        Ok cols ->
+            case cols of
+
+                [] ->
+                    Err <| storeErr (verb ++ ": no conflict columns")
+
+                _ ->
+                    case nullableIn cols s.cols of
+
+                        "" ->
+                            if isConflictKey s cols then
+                                Ok cols
+
+                            else
+                                Err
+                                    <| storeErr
+                                           (verb ++ ": ("
+                                               ++ String.join ", " cols
+                                               ++ ") is not the primary key, a unique column or a uniqueOn set of \""
+                                               ++ s.name
+                                               ++ "\"")
+
+                        c ->
+                            Err
+                                <| storeErr
+                                       (verb ++ ": column \"" ++ c
+                                           ++ "\" is nullable, and NULLs never conflict")
+
+
+-- Resolve names to codec columns, refusing an unknown one or a repeat.
+resolveNames : String -> List ( String, String ) -> List String -> List String -> Result Error (List String)
+resolveNames verb cols names acc =
+    case names of
+
+        [] ->
+            Ok (List.reverse acc)
+
+        n :: rest ->
+            let
+                col = resolveCol cols n
+            in
+                case lookupKind col cols of
+
+                    Nothing ->
+                        Err <| unknownColErr n cols
+
+                    Just _ ->
+                        if List.member col acc then
+                            Err
+                                <| storeErr
+                                       (verb ++ ": column \"" ++ col
+                                           ++ "\" is named twice")
+
+                        else
+                            resolveNames verb cols rest (col :: acc)
+
+
+isConflictKey : StoreRec a -> List String -> Bool
+isConflictKey s cols =
+    (s.pk /= "" && sameNames cols [ s.pk ]) || uniqueColumn cols s.cols
+        || uniqueIndex cols s.indexes
+
+
+uniqueColumn : List String -> List ( String, String ) -> Bool
+uniqueColumn cols all =
+    case cols of
+
+        [ c ] ->
+            hasFlag "u" (kindOf c all)
+
+        _ ->
+            False
+
+
+uniqueIndex : List String -> List IndexSpec -> Bool
+uniqueIndex cols indexes =
+    case indexes of
+
+        [] ->
+            False
+
+        ix :: rest ->
+            (ix.unique && ix.predicate == "" && sameNames cols ix.cols)
+                || uniqueIndex cols rest
+
+
+sameNames : List String -> List String -> Bool
+sameNames a b =
+    List.length a == List.length b && allIn a b
+
+
+allIn : List String -> List String -> Bool
+allIn names within =
+    case names of
+
+        [] ->
+            True
+
+        n :: rest ->
+            List.member n within && allIn rest within
+
+
+-- The DO UPDATE SET items of `upsertWith`, one per rule.
+conflictItems : StoreRec a -> List String -> List OnConflict -> List String -> List String -> Result Error (List String)
+conflictItems s target rules seen items =
+    case rules of
+
+        [] ->
+            Ok (List.reverse items)
+
+        (OnConflict kind name) :: rest ->
+            let
+                col = resolveCol s.cols name
+            in
+                case lookupKind col s.cols of
+
+                    Nothing ->
+                        Err <| unknownColErr name s.cols
+
+                    Just k ->
+                        case conflictRuleError kind col k s target seen of
+
+                            Just msg ->
+                                Err <| storeErr ("upsertWith: " ++ msg)
+
+                            Nothing ->
+                                conflictItems
+                                    s
+                                    target
+                                    rest
+                                    (col :: seen)
+                                    (conflictRuleSql kind s.name col :: items)
+
+
+conflictRuleError : String -> String -> String -> StoreRec a -> List String -> List String -> Maybe String
+conflictRuleError kind col k s target seen =
+    let
+        base = kindBase k
+    in
+        if col == s.pk || List.member col target then
+            Just
+                ("\"" ++ col
+                    ++ "\" identifies the row (primary key or conflictOn): no rule may set it")
+
+        else if List.member col s.generated then
+            Just
+                ("\"" ++ col
+                    ++ "\" is generated (serial, defaultNow, defaultWith or generated): the database or the Store fills it")
+
+        else if List.member col seen then
+            Just ("\"" ++ col ++ "\" has two rules")
+
+        else if kind == "add" && (kindNullable k || (base /= "int" && base /= "real")) then
+            Just
+                ("addExcluded \"" ++ col
+                    ++ "\": the column must be a required Int or Float")
+
+        else if (kind == "min" || kind == "max") && (base == "bool" || base == "blob") then
+            Just
+                ("keepMin / keepMax \"" ++ col ++ "\": a " ++ base
+                    ++ " column has no order")
+
+        else
+            Nothing
+
+
+conflictRuleSql : String -> String -> String -> String
+conflictRuleSql kind table col =
+    let
+        old = table ++ "." ++ col
+        new = "excluded." ++ col
+    in
+        if kind == "add" then
+            col ++ " = " ++ old ++ " + " ++ new
+
+        else if kind == "min" then
+            col ++ " = " ++ keepCase old new "<"
+
+        else if kind == "max" then
+            col ++ " = " ++ keepCase old new ">"
+
+        else
+            col ++ " = " ++ new
+
+
+-- One text on both dialects: LEAST / GREATEST and the scalar MIN / MAX
+-- treat NULL differently, so the NULL rule is spelled out.
+keepCase : String -> String -> String -> String
+keepCase old new op =
+    "CASE WHEN " ++ new ++ " IS NULL THEN " ++ old ++ " WHEN " ++ old
+        ++ " IS NULL THEN "
+        ++ new
+        ++ " WHEN "
+        ++ new
+        ++ " "
+        ++ op
+        ++ " "
+        ++ old
+        ++ " THEN "
+        ++ new
+        ++ " ELSE "
+        ++ old
+        ++ " END"
+
+
+conflictAction : Dialect -> List ( String, String ) -> List String -> String
+conflictAction d cols items =
+    case items of
+
+        [] ->
+            "DO NOTHING"
+
+        _ ->
+            "DO UPDATE SET " ++ String.join ", " (items ++ touchItems d cols)
+
+
+-- `c = <clock>` for each `touchOnUpdate` column.
+touchItems : Dialect -> List ( String, String ) -> List String
+touchItems d cols =
+    case touchColsOf cols of
+
+        [] ->
+            []
+
+        touched ->
+            touchSql (nowSql d) touched
+
+
+touchSql : String -> List ( String, String ) -> List String
+touchSql now cols =
+    case cols of
+
+        [] ->
+            []
+
+        ( c, _ ) :: rest ->
+            (c ++ " = " ++ now) :: touchSql now rest
+
+
+nowSql : Dialect -> String
+nowSql d =
+    case d of
+
+        Sqlite ->
+            "datetime('now')"
+
+        Postgres ->
+            "now()"
+
+
+-- A parameter typed as the column, so PostgreSQL can type a CASE branch or
+-- a SELECT-list value.
+castParam : String -> String
+castParam k =
+    "CAST(? AS " ++ sqlTypeOf k ++ ")"
+
+
+sqlTypeOf : String -> String
+sqlTypeOf k =
+    let
+        base = kindBase k
+    in
+        if base == "int" then
+            "BIGINT"
+
+        else if base == "real" then
+            "DOUBLE PRECISION"
+
+        else if base == "bool" then
+            "BOOLEAN"
+
+        else
+            "TEXT"
+
+
+prepareUpdateSet : Dialect -> StoreRec a -> Cond -> List SetExpr -> Result Error ( String, List SqlValue )
+prepareUpdateSet d s cond exprs =
+    case writeWhere d s.name s.pk s.cols s.problems cond of
+
+        Err e ->
+            Err e
+
+        Ok ( whereSql, whereParams ) ->
+            case setExprItems d s exprs [] [] noParams of
+
+                Err e ->
+                    Err e
+
+                Ok ( items, params ) ->
+                    Ok
+                        ( "UPDATE " ++ s.name ++ " SET "
+                              ++ String.join ", " (items ++ touchItems d s.cols)
+                              ++ " WHERE "
+                              ++ whereSql
+                        , params ++ whereParams
+                        )
+
+
+setExprItems : Dialect -> StoreRec a -> List SetExpr -> List String -> List String -> List SqlValue -> Result Error ( List String, List SqlValue )
+setExprItems d s exprs seen items params =
+    case exprs of
+
+        [] ->
+            Ok ( items, params )
+
+        (SetExpr e) :: rest ->
+            let
+                target = resolveCol s.cols e.target
+            in
+                case lookupKind target s.cols of
+
+                    Nothing ->
+                        Err <| unknownColErr e.target s.cols
+
+                    Just tk ->
+                        case setTargetError s target seen of
+
+                            Just msg ->
+                                Err <| storeErr ("updateSet: " ++ msg)
+
+                            Nothing ->
+                                case setExprSql d s target tk e of
+
+                                    Err err ->
+                                        Err err
+
+                                    Ok ( sql, ps ) ->
+                                        setExprItems
+                                            d
+                                            s
+                                            rest
+                                            (target :: seen)
+                                            (items ++ [ target ++ " = " ++ sql ])
+                                            (params ++ ps)
+
+
+setTargetError : StoreRec a -> String -> List String -> Maybe String
+setTargetError s target seen =
+    if not (isIdent target) then
+        Just ("column \"" ++ target ++ "\" is not a valid identifier")
+
+    else if target == s.pk then
+        Just ("\"" ++ target ++ "\" is the primary key")
+
+    else if List.member target s.generated then
+        Just
+            ("\"" ++ target
+                ++ "\" is generated (serial, defaultNow, defaultWith or generated)")
+
+    else if List.member target seen then
+        Just ("\"" ++ target ++ "\" is set twice")
+
+    else
+        Nothing
+
+
+setExprSql : Dialect -> StoreRec a -> String -> String -> SetSpec -> Result Error ( String, List SqlValue )
+setExprSql d s target tk e =
+    if e.kind == "col" then
+        let
+            src = resolveCol s.cols e.source
+        in
+            case lookupKind src s.cols of
+
+                Nothing ->
+                    Err <| unknownColErr e.source s.cols
+
+                Just sk ->
+                    case fitError target tk sk of
+
+                        Just msg ->
+                            Err <| storeErr ("updateSet: " ++ msg)
+
+                        Nothing ->
+                            if isIdent src then
+                                Ok ( src, noParams )
+
+                            else
+                                Err
+                                    <| storeErr
+                                           ("updateSet: column \"" ++ src
+                                               ++ "\" is not a valid identifier")
+
+    else if e.kind == "value" then
+        Ok ( "?", [ e.value ] )
+
+    else
+        case renderCond (plainCtx d s.name s.cols) e.cond of
+
+            Err err ->
+                Err err
+
+            Ok ( cSql, cParams ) ->
+                if e.keepOld then
+                    Ok
+                        ( "CASE WHEN (" ++ cSql ++ ") THEN " ++ castParam tk
+                              ++ " ELSE "
+                              ++ target
+                              ++ " END"
+                        , cParams ++ [ e.value ]
+                        )
+
+                else
+                    Ok
+                        ( "CASE WHEN (" ++ cSql ++ ") THEN " ++ castParam tk
+                              ++ " ELSE "
+                              ++ castParam tk
+                              ++ " END"
+                        , cParams ++ [ e.value, e.orElse ]
+                        )
+
+
+-- `INSERT INTO t (…) SELECT … FROM (<the source query>) sky_s`. The source
+-- query renders through `prepare`, so its names are checked there; the
+-- outer SELECT reads its result columns by name.
+prepareCopy : Bool -> Dialect -> StoreRec t -> QuerySpec -> List ( String, CopyFrom ) -> Result Error ( String, List SqlValue )
+prepareCopy ignore d s spec mapping =
+    case storeError s.name s.pk s.cols s.problems of
+
+        Just e ->
+            Err e
+
+        Nothing ->
+            if List.isEmpty mapping then
+                Err <| storeErr "copyInto: no columns to copy"
+
+            else if spec.joined && isStar spec.out then
+                Err <| storeErr "copyInto: a join source needs select first"
+
+            else
+                case prepare d spec of
+
+                    Err e ->
+                        Err e
+
+                    Ok ( srcSql, srcParams ) ->
+                        case copyItems
+                                 s
+                                 spec.outCols
+                                 (isStar spec.out)
+                                 mapping
+                                 []
+                                 []
+                                 noParams of
+
+                            Err e ->
+                                Err e
+
+                            Ok ( ( cols, exprs ), params ) ->
+                                case unmappedError s cols of
+
+                                    Just msg ->
+                                        Err <| storeErr ("copyInto: " ++ msg)
+
+                                    Nothing ->
+                                        let
+                                            stamped =
+                                                copyNowCols d s.cols cols
+                                        in
+                                            Ok
+                                                ( "INSERT INTO " ++ s.name
+                                                      ++ " ("
+                                                      ++ String.join
+                                                             ", "
+                                                             (cols ++ stamped)
+                                                      ++ ") SELECT "
+                                                      ++ String.join
+                                                             ", "
+                                                             (exprs
+                                                                 ++ repeatText
+                                                                        (List.length
+                                                                            stamped)
+                                                                        (nowSql d))
+                                                      ++ " FROM ("
+                                                      ++ srcSql
+                                                      ++ ") sky_s"
+                                                      ++ (if ignore then
+                                                             " WHERE 1 = 1 ON CONFLICT DO NOTHING"
+
+                                                         else
+                                                             "")
+                                                , params ++ srcParams
+                                                )
+
+
+isStar : Output -> Bool
+isStar out =
+    case out of
+
+        OutStar ->
+            True
+
+        _ ->
+            False
+
+
+copyItems : StoreRec t -> List ( String, String ) -> Bool -> List ( String, CopyFrom ) -> List String -> List String -> List SqlValue -> Result Error ( ( List String, List String ), List SqlValue )
+copyItems s srcCols star mapping cols exprs params =
+    case mapping of
+
+        [] ->
+            Ok ( ( cols, exprs ), params )
+
+        ( field, CopyFrom isCol name v ) :: rest ->
+            let
+                target = resolveCol s.cols field
+            in
+                case lookupKind target s.cols of
+
+                    Nothing ->
+                        Err <| unknownColErr field s.cols
+
+                    Just tk ->
+                        if not (isIdent target) then
+                            Err
+                                <| storeErr
+                                       ("copyInto: column \"" ++ target
+                                           ++ "\" is not a valid identifier")
+
+                        else if List.member target cols then
+                            Err
+                                <| storeErr
+                                       ("copyInto: \"" ++ target
+                                           ++ "\" is mapped twice")
+
+                        else if String.contains "!" (beforeFlags tk) then
+                            Err
+                                <| storeErr
+                                       ("copyInto: \"" ++ target
+                                           ++ "\" is serial: the database assigns it")
+
+                        else if isCol then
+                            let
+                                src = resolveCol srcCols name
+                            in
+                                case lookupKind src srcCols of
+
+                                    Nothing ->
+                                        Err
+                                            <| storeErr
+                                                   ("copyInto: \"" ++ name
+                                                       ++ "\" is not a column of the source query — columns are "
+                                                       ++ colNames srcCols)
+
+                                    Just sk ->
+                                        case fitError target tk sk of
+
+                                            Just msg ->
+                                                Err
+                                                    <| storeErr
+                                                           ("copyInto: " ++ msg)
+
+                                            Nothing ->
+                                                copyItems
+                                                    s
+                                                    srcCols
+                                                    star
+                                                    rest
+                                                    (cols ++ [ target ])
+                                                    (exprs
+                                                        ++ [ "sky_s."
+                                                                 ++ (if star then
+                                                                        src
+
+                                                                    else
+                                                                        quoteAlias
+                                                                            src)
+                                                           ])
+                                                    params
+
+                        else
+                            copyItems
+                                s
+                                srcCols
+                                star
+                                rest
+                                (cols ++ [ target ])
+                                (exprs ++ [ castParam tk ])
+                                (params ++ [ v ])
+
+
+-- A target column the mapping leaves out must be nullable, have a declared
+-- default, or be filled by the database; a `defaultWith` column must be
+-- mapped (the copy does not compute it).
+unmappedError : StoreRec t -> List String -> Maybe String
+unmappedError s mapped =
+    unmappedIn s.cols (computedNames s.computed) s.generated mapped
+
+
+computedNames : List ( String, () -> SqlValue ) -> List String
+computedNames computed =
+    case computed of
+
+        [] ->
+            []
+
+        ( c, _ ) :: rest ->
+            c :: computedNames rest
+
+
+unmappedIn : List ( String, String ) -> List String -> List String -> List String -> Maybe String
+unmappedIn cols computed gen mapped =
+    case cols of
+
+        [] ->
+            Nothing
+
+        ( c, k ) :: rest ->
+            if List.member c mapped then
+                unmappedIn rest computed gen mapped
+
+            else if List.member c computed then
+                Just
+                    ("\"" ++ c
+                        ++ "\" has a defaultWith: map it (the copy does not compute it)")
+
+            else if kindNullable k || hasDeclaredDefault k || List.member c gen
+                || String.contains "!" (beforeFlags k) then
+                unmappedIn rest computed gen mapped
+
+            else
+                Just
+                    ("required column \"" ++ c
+                        ++ "\" is not mapped and has no default")
+
+
+hasDeclaredDefault : String -> Bool
+hasDeclaredDefault k =
+    String.contains "|dint=" k || String.contains "|dtext=" k
+        || String.contains "|dbool=" k
+        || String.contains "|dfloat=" k
+        || hasFlag "dnow" k
+
+
+-- On SQLite an unmapped `defaultNow` column takes the clock (a column that
+-- `migrate` added holds the time of the ALTER as its default).
+copyNowCols : Dialect -> List ( String, String ) -> List String -> List String
+copyNowCols d cols mapped =
+    case d of
+
+        Postgres ->
+            []
+
+        Sqlite ->
+            unmappedNow (nowColsOf cols) mapped
+
+
+unmappedNow : List ( String, String ) -> List String -> List String
+unmappedNow cols mapped =
+    case cols of
+
+        [] ->
+            []
+
+        ( c, _ ) :: rest ->
+            if List.member c mapped then
+                unmappedNow rest mapped
+
+            else
+                c :: unmappedNow rest mapped
+
+
+-- The only call site of the RETURNING kernel: the write runs, and each
+-- returned row decodes through the codec.
+runReturning : Db -> Codec a -> List ( String, String ) -> Result Error ( String, List SqlValue ) -> Task Error (List a)
+runReturning conn codec cols prepared =
+    case prepared of
+
+        Err e ->
+            Task.fail e
+
+        Ok ( sql, params ) ->
+            dbWriteReturningObjects
+                conn
+                (sql ++ " RETURNING " ++ colNames cols)
+                params
+                [ ( "", "", cols ) ]
+                |> Task.andThen
+                       (\rows ->
+                           Task.fromResult
+                               (decodeAll (rowDecoder codec) rows []))
+
 -- ── Project (schema-dump for file-based migrations) ─────────────────────────
 -- | A table's schema erased of its record type — name, primary key, and
--- (column, kind) list — for the migration schema-dump.
+-- (column, kind) list — for the migration schema-dump. `problems` holds the
+-- store's builder problems (see `toTable`); a hand-built `Table` sets
+-- `problems = []`.
 type alias Table =
     { name : String
     , pk : String
     , cols : List ( String, String )
     , indexes : List IndexSpec
+    , problems : List String
     }
 
 
--- | Erase a store to its `Table` schema.
+-- | Erase a store to its `Table` schema. The store's builder problems (an
+-- unknown column in `unique` / `index` / `uniqueOn`, …) go with it, so
+-- `pushProject` and `dumpSchema` (`sky db migrate --gen`) refuse the table.
 toTable : Store a -> Table
 toTable store =
     let
         s = storeRec store
     in
-        { name = s.name, pk = s.pk, cols = s.cols, indexes = s.indexes }
+        { name = s.name
+        , pk = s.pk
+        , cols = s.cols
+        , indexes = s.indexes
+        , problems = s.problems
+        }
 
 -- | A project's set of tables — the single declaration `sky db` reads to derive
 -- the target schema: `db = Store.project [ Store.toTable users, Store.toTable orders ]`.
@@ -1227,7 +2420,8 @@ dumpSchema (Project tables) =
 
 
 -- The name check every Store verb runs, over a project's tables: each table
--- name follows the identifier rule and each primary key is empty or a column.
+-- name follows the identifier rule, each primary key is empty or a column,
+-- and no builder recorded a problem.
 tablesError : List Table -> Maybe Error
 tablesError tables =
     case tables of
@@ -1236,7 +2430,7 @@ tablesError tables =
             Nothing
 
         t :: rest ->
-            case storeError t.name t.pk t.cols [] of
+            case storeError t.name t.pk t.cols t.problems of
 
                 Just e ->
                     Just e
@@ -1268,7 +2462,7 @@ pushTables conn tables =
             Task.succeed []
 
         t :: rest ->
-            (case storeError t.name t.pk t.cols [] of
+            (case storeError t.name t.pk t.cols t.problems of
 
                 Just e ->
                     Task.fail e
@@ -4629,3 +5823,13 @@ dbExecV =
 dbDialect : Db -> String
 dbDialect =
     Ffi.kernel "Db_dialect"
+
+
+dbObjectSqlValues : List ( String, String ) -> Value -> List SqlValue
+dbObjectSqlValues =
+    Ffi.kernel "Db_objectSqlValues"
+
+
+dbWriteReturningObjects : Db -> String -> List SqlValue -> List ( String, String, List ( String, String ) ) -> Task Error (List (List String))
+dbWriteReturningObjects =
+    Ffi.kernel "Db_writeReturningObjects"

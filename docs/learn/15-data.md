@@ -73,7 +73,10 @@ backend you connect to.
 
 Grouped counts and sums (`groupBy` + `aggregate`), projections (`select`), the
 newest row per key (`latestPer`), text search (`contains`, `eqCi`), joins of two
-stores (`join`, `leftJoin`) and subquery conditions (`inQuery`, `exists`) are
+stores (`join`, `leftJoin`), subquery conditions (`inQuery`, `exists`), the
+"claim once" insert (`insertOrIgnore`), counter and partial upserts
+(`upsertWith`), expression updates (`updateSet`), insert from a query
+(`copyInto`) and RETURNING (`insertReturning`, `updateFieldsReturning`) are
 Store builders. For transactions and other SQL, drop to raw `Std.Db`
 (`query` / `exec` / `withTransaction`) — or use `Store.selectRaw` to run any SQL
 and decode each row into a typed projection record via a codec. The store is the

@@ -2823,6 +2823,876 @@ migrateTests db =
                       |> Result.map (List.map .note)))
     ]
 
+-- ── Items 5, 8, 9, 12: writes (batch D) ──────────────────────────────────────
+type alias Claim =
+    { key : String
+    , owner : String
+    }
+
+
+claimCodec : Codec Claim
+claimCodec =
+    Codec.auto { key = "", owner = "" }
+
+
+claims : Store Claim
+claims =
+    Store.fromCodec "sqc_claims" claimCodec |> Store.primaryKey "key"
+
+type alias DailyCount =
+    { day : String
+    , customerId : String
+    , event : String
+    , count : Int
+    , firstAt : Maybe Int
+    , lastAt : Maybe Int
+    , source : String
+    , note : String
+    }
+
+
+dailyCountCodec : Codec DailyCount
+dailyCountCodec =
+    Codec.auto
+        { day = ""
+        , customerId = ""
+        , event = ""
+        , count = 0
+        , firstAt = Nothing
+        , lastAt = Nothing
+        , source = ""
+        , note = ""
+        }
+
+
+dailyCounts : Store DailyCount
+dailyCounts =
+    Store.fromCodec "sqc_daily_counts" dailyCountCodec
+        |> Store.uniqueOn [ "day", "customerId", "event" ]
+
+
+daily : Int -> Maybe Int -> Maybe Int -> String -> String -> DailyCount
+daily n first last source note =
+    { day = "2026-10-30"
+    , customerId = "c1"
+    , event = "open"
+    , count = n
+    , firstAt = first
+    , lastAt = last
+    , source = source
+    , note = note
+    }
+
+
+countRule : List Store.OnConflict -> { conflictOn : List String, onConflict : List Store.OnConflict }
+countRule rules =
+    { conflictOn = [ "day", "customer_id", "event" ], onConflict = rules }
+
+
+dailyRow : Db -> Result Error (Maybe DailyCount)
+dailyRow db =
+    Task.run (Store.toMaybe db (Store.query dailyCounts))
+
+type alias Job =
+    { id : String
+    , owner : Maybe String
+    , code : String
+    }
+
+
+jobCodec : Codec Job
+jobCodec =
+    Codec.auto { id = "", owner = Nothing, code = "" }
+
+
+jobs : Store Job
+jobs =
+    Store.fromCodec "sqc_jobs" jobCodec |> Store.primaryKey "id"
+        |> Store.unique "code"
+
+type alias Stamped =
+    { id : Int
+    , label : String
+    , createdAt : String
+    }
+
+
+stamped : Store Stamped
+stamped =
+    Store.fromCodec
+        "sqc_stamped"
+        (Codec.auto { id = 0, label = "", createdAt = "" })
+        |> Store.serial "id"
+        |> Store.defaultNow "createdAt"
+
+type alias Line =
+    { id : String
+    , status : String
+    , statusAt : Int
+    , wantedAt : Int
+    , qty : Int
+    , flag : Bool
+    , note : Maybe String
+    }
+
+
+lineCodec : Codec Line
+lineCodec =
+    Codec.auto
+        { id = ""
+        , status = ""
+        , statusAt = 0
+        , wantedAt = 0
+        , qty = 0
+        , flag = False
+        , note = Nothing
+        }
+
+
+lines : Store Line
+lines =
+    Store.fromCodec "sqc_lines" lineCodec |> Store.primaryKey "id"
+
+
+line : String -> String -> Int -> Int -> Line
+line id status statusAt wantedAt =
+    { id = id
+    , status = status
+    , statusAt = statusAt
+    , wantedAt = wantedAt
+    , qty = 1
+    , flag = False
+    , note = Nothing
+    }
+
+
+lineRows : Db -> Result Error (List Line)
+lineRows db =
+    Task.run (Store.toList db (Store.query lines |> Store.orderAsc "id"))
+
+type alias Enquiry =
+    { id : String
+    , kind : String
+    , customerId : String
+    }
+
+
+enquiryCodec : Codec Enquiry
+enquiryCodec =
+    Codec.auto { id = "", kind = "", customerId = "" }
+
+
+enquiries : Store Enquiry
+enquiries =
+    Store.fromCodec "sqc_enquiries" enquiryCodec |> Store.primaryKey "id"
+
+type alias CustomerTotal =
+    { customerId : String
+    , total : Int
+    }
+
+
+customerTotalCodec : Codec CustomerTotal
+customerTotalCodec =
+    Codec.auto { customerId = "", total = 0 }
+
+
+customerTotals : Store CustomerTotal
+customerTotals =
+    Store.fromCodec "sqc_customer_totals" customerTotalCodec
+        |> Store.primaryKey "customerId"
+
+
+enquiryIds : Db -> Result Error (List String)
+enquiryIds db =
+    Task.run (Store.toList db (Store.query enquiries |> Store.orderAsc "id"))
+        |> Result.map
+               (List.map (\e -> e.id ++ ":" ++ e.kind ++ ":" ++ e.customerId))
+
+
+copyOpen : List ( String, Store.CopyFrom )
+copyOpen =
+    [ ( "id", Store.from "id" )
+    , ( "kind", Store.const (SqlString "support") )
+    , ( "customerId", Store.from "customerId" )
+    ]
+
+
+openOrders : Store.Query Order
+openOrders =
+    Store.query orders |> Store.where_ (Store.eq "status" (SqlString "open"))
+
+
+-- Gap (a): a builder problem travels with `toTable`.
+badIndexOrders : Store Order
+badIndexOrders =
+    Store.fromCodec "sqc_bad_index" orderCodec |> Store.primaryKey "id"
+        |> Store.uniqueOn [ "nope_col" ]
+
+
+sumInts : List Int -> Int
+sumInts ns =
+    List.foldl (\a b -> a + b) 0 ns
+
+
+writeTests : Db -> List Test
+writeTests db =
+    [ Test.test
+          "insertOrIgnore: a new key writes the row (1)"
+          (\_ ->
+              Test.equal
+                  (Ok 1)
+                  (Task.run
+                      (Task.sequence
+                          [ drop db "sqc_claims"
+                          , drop db "sqc_daily_counts"
+                          , drop db "sqc_jobs"
+                          , drop db "sqc_stamped"
+                          , drop db "sqc_lines"
+                          , drop db "sqc_enquiries"
+                          , drop db "sqc_customer_totals"
+                          , drop db "sqc_bad_index"
+                          , unit (Store.migrate db claims)
+                          , unit (Store.migrate db dailyCounts)
+                          , unit (Store.migrate db jobs)
+                          , unit (Store.migrate db stamped)
+                          , unit (Store.migrate db lines)
+                          , unit (Store.migrate db enquiries)
+                          , unit (Store.migrate db customerTotals)
+                          ]
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.insertOrIgnore
+                                         db
+                                         claims
+                                         { key = "k1", owner = "a" }))))
+    , Test.test
+          "insertOrIgnore: the same key again writes nothing (0) and keeps the row"
+          (\_ ->
+              Test.equal
+                  ( Ok 0, Ok (Just { key = "k1", owner = "a" }) )
+                  ( Task.run
+                        (Store.insertOrIgnore
+                            db
+                            claims
+                            { key = "k1", owner = "b" })
+                  , Task.run (Store.findBy db claims "key" "k1")
+                  ))
+    , Test.test
+          "insertOrIgnore: two concurrent claims of one key, exactly one wins"
+          (\_ ->
+              Test.equal
+                  (Ok 1)
+                  (Task.run
+                      (Task.parallel
+                          [ Store.insertOrIgnore
+                                db
+                                claims
+                                { key = "k2", owner = "a" }
+                          , Store.insertOrIgnore
+                                db
+                                claims
+                                { key = "k2", owner = "b" }
+                          ]
+                          |> Task.map sumInts)))
+    , Test.test
+          "insertOrIgnore: text with ' and ; is stored verbatim"
+          (\_ ->
+              let
+                  evil = "x'); DROP TABLE sqc_claims; --"
+                  _ =
+                      Task.run
+                          (Store.insertOrIgnore
+                              db
+                              claims
+                              { key = "k3", owner = evil })
+              in
+                  Test.equal
+                      (Ok (Just { key = "k3", owner = evil }))
+                      (Task.run (Store.findBy db claims "key" "k3")))
+    , Test.test
+          "insertOrIgnoreOn: a conflict on the primary key writes nothing"
+          (\_ ->
+              Test.equal
+                  (Ok 0)
+                  (Task.run
+                      (Store.insertOrIgnoreOn
+                          [ "key" ]
+                          db
+                          claims
+                          { key = "k1", owner = "z" })))
+    , Test.test
+          "insertOrIgnoreOn: a column that is not unique is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.insertOrIgnoreOn
+                          [ "owner" ]
+                          db
+                          missingClaims
+                          { key = "k9", owner = "z" })))
+    , Test.test
+          "insertOrIgnoreOn: an unknown column is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.insertOrIgnoreOn
+                          [ "nope" ]
+                          db
+                          missingClaims
+                          { key = "k9", owner = "z" })))
+    , Test.test
+          "upsertWith: a new key inserts the row (1)"
+          (\_ ->
+              Test.equal
+                  ( Ok 1, Ok (Just (daily 2 Nothing (Just 9) "web" "first")) )
+                  ( Task.run
+                        (Store.upsertWith
+                            db
+                            dailyCounts
+                            (daily 2 Nothing (Just 9) "web" "first")
+                            (countRule
+                                [ Store.addExcluded "count"
+                                , Store.keepMin "firstAt"
+                                , Store.keepMax "lastAt"
+                                , Store.setExcluded "source"
+                                ]))
+                  , dailyRow db
+                  ))
+    , Test.test
+          "upsertWith: addExcluded adds, keepMin takes the value over a stored NULL, keepMax keeps the larger, setExcluded sets only its column"
+          (\_ ->
+              Test.equal
+                  ( Ok 1, Ok (Just (daily 5 (Just 5) (Just 9) "app" "first")) )
+                  ( Task.run
+                        (Store.upsertWith
+                            db
+                            dailyCounts
+                            (daily 3 (Just 5) (Just 3) "app" "second")
+                            (countRule
+                                [ Store.addExcluded "count"
+                                , Store.keepMin "firstAt"
+                                , Store.keepMax "lastAt"
+                                , Store.setExcluded "source"
+                                ]))
+                  , dailyRow db
+                  ))
+    , Test.test
+          "upsertWith: a NULL new value keeps the stored one, a smaller one wins keepMin"
+          (\_ ->
+              Test.equal
+                  ( Ok 1, Ok (Just (daily 6 (Just 2) (Just 9) "app" "first")) )
+                  ( Task.run
+                        (Store.upsertWith
+                            db
+                            dailyCounts
+                            (daily 1 (Just 2) Nothing "app" "third")
+                            (countRule
+                                [ Store.addExcluded "count"
+                                , Store.keepMin "firstAt"
+                                , Store.keepMax "lastAt"
+                                ]))
+                  , dailyRow db
+                  ))
+    , Test.test
+          "upsertWith: no rule is DO NOTHING (0)"
+          (\_ ->
+              Test.equal
+                  ( Ok 0, Ok (Just (daily 6 (Just 2) (Just 9) "app" "first")) )
+                  ( Task.run
+                        (Store.upsertWith
+                            db
+                            dailyCounts
+                            (daily 100 Nothing Nothing "x" "x")
+                            (countRule []))
+                  , dailyRow db
+                  ))
+    , Test.test
+          "upsertWith: conflictOn that is not a unique set is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.upsertWith
+                          db
+                          missingDaily
+                          (daily 1 Nothing Nothing "" "")
+                          { conflictOn = [ "day" ]
+                          , onConflict = [ Store.addExcluded "count" ]
+                          })))
+    , Test.test
+          "upsertWith: a nullable conflictOn column is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.upsertWith
+                          db
+                          missingDaily
+                          (daily 1 Nothing Nothing "" "")
+                          { conflictOn = [ "firstAt" ], onConflict = [] })))
+    , Test.test
+          "upsertWith: addExcluded on a nullable column is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.upsertWith
+                          db
+                          missingDaily
+                          (daily 1 Nothing Nothing "" "")
+                          (countRule [ Store.addExcluded "firstAt" ]))))
+    , Test.test
+          "upsertWith: a rule on a conflictOn column is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.upsertWith
+                          db
+                          missingDaily
+                          (daily 1 Nothing Nothing "" "")
+                          (countRule [ Store.setExcluded "event" ]))))
+    , Test.test
+          "upsertWith: keepMax on a text column works, an unknown rule column is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.upsertWith
+                          db
+                          missingDaily
+                          (daily 1 Nothing Nothing "" "")
+                          (countRule
+                              [ Store.keepMax "source"
+                              , Store.setExcluded "nope"
+                              ]))))
+    , Test.test
+          "insertReturning: a serial id and a defaultNow stamp come back"
+          (\_ ->
+              Test.equal
+                  (Ok ( True, "first", True ))
+                  (Task.run
+                      (Store.insertReturning
+                          db
+                          stamped
+                          { id = 0, label = "first", createdAt = "" })
+                      |> Result.map
+                             (\r -> ( r.id > 0, r.label, isStamp r.createdAt ))))
+    , Test.test
+          "insertReturning: the second row has the next id"
+          (\_ ->
+              Test.equal
+                  (Ok True)
+                  (Task.run
+                      (Task.sequence
+                          [ Store.insertReturning
+                                db
+                                stamped
+                                { id = 0, label = "a", createdAt = "" }
+                          , Store.insertReturning
+                                db
+                                stamped
+                                { id = 0, label = "b", createdAt = "" }
+                          ])
+                      |> Result.map
+                             (\rs ->
+                                 case rs of
+
+                                     [ a, b ] ->
+                                         b.id == a.id + 1
+
+                                     _ ->
+                                         False)))
+    , Test.test
+          "updateFieldsReturning: two concurrent claims of one job, exactly one gets the row"
+          (\_ ->
+              let
+                  _ =
+                      Task.run
+                          (Store.insert
+                              db
+                              jobs
+                              { id = "j1", owner = Nothing, code = "c1" })
+                  claim me =
+                      Store.updateFieldsReturning
+                          db
+                          jobs
+                          (Store.and_
+                              [ Store.eq "id" (SqlString "j1")
+                              , Store.isNull "owner"
+                              ])
+                          [ ( "owner", SqlString me ) ]
+              in
+                  Test.equal
+                      (Ok 1)
+                      (Task.run
+                          (Task.parallel [ claim "a", claim "b" ]
+                              |> Task.map (\rs -> List.length (List.concat rs)))))
+    , Test.test
+          "updateFieldsReturning: the returned row is the row after the update"
+          (\_ ->
+              let
+                  _ =
+                      Task.run
+                          (Store.insert
+                              db
+                              jobs
+                              { id = "j2", owner = Nothing, code = "c2" })
+              in
+                  Test.equal
+                      (Ok [ { id = "j2", owner = Just "me", code = "c2" } ])
+                      (Task.run
+                          (Store.updateFieldsReturning
+                              db
+                              jobs
+                              (Store.eq "id" (SqlString "j2"))
+                              [ ( "owner", SqlString "me" ) ])))
+    , Test.test
+          "updateFieldsReturning: a UNIQUE violation is an Err, not an empty list"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErr
+                      (Task.run
+                          (Store.updateFieldsReturning
+                              db
+                              jobs
+                              (Store.eq "id" (SqlString "j2"))
+                              [ ( "code", SqlString "c1" ) ]))))
+    , Test.test
+          "deleteWhereReturning: returns the deleted rows and removes them"
+          (\_ ->
+              Test.equal
+                  ( Ok [ "j1", "j2" ], Ok [] )
+                  ( Task.run
+                        (Store.deleteWhereReturning
+                            db
+                            jobs
+                            (Store.neq "id" (SqlString "")))
+                        |> Result.map (\rs -> List.sort (List.map .id rs))
+                  , Task.run (Store.all db jobs)
+                  ))
+    , Test.test
+          "updateSet: setCol copies each row's own column in one statement"
+          (\_ ->
+              let
+                  _ =
+                      Task.run
+                          (Store.insertMany
+                              db
+                              lines
+                              [ line "l1" "ai" 11 0
+                              , line "l2" "open" 22 0
+                              , line "l3" "ai" 33 5
+                              ])
+              in
+                  Test.equal
+                      ( Ok 2, Ok [ 11, 22, 5 ] )
+                      ( Task.run
+                            (Store.updateSet
+                                db
+                                lines
+                                (Store.eq "wanted_at" (SqlInt 0))
+                                [ Store.setCol "wanted_at" "status_at" ])
+                      , lineRows db |> Result.map (List.map .wantedAt)
+                      ))
+    , Test.test
+          "updateSet: setWhen with keep changes only the rows where the condition holds"
+          (\_ ->
+              Test.equal
+                  ( Ok 3, Ok [ "open", "open", "open" ] )
+                  ( Task.run
+                        (Store.updateSet
+                            db
+                            lines
+                            (Store.neq "id" (SqlString ""))
+                            [ Store.setWhen
+                                  "status"
+                                  (Store.eq "status" (SqlString "ai"))
+                                  (SqlString "open")
+                                  Store.keep
+                            ])
+                  , lineRows db |> Result.map (List.map .status)
+                  ))
+    , Test.test
+          "updateSet: setWhen otherwise on an int and a bool column, and setValue"
+          (\_ ->
+              Test.equal
+                  ( Ok 3
+                  , Ok
+                        [ ( 7, True, Just "n" )
+                        , ( 0, False, Just "n" )
+                        , ( 0, False, Just "n" )
+                        ]
+                  )
+                  ( Task.run
+                        (Store.updateSet
+                            db
+                            lines
+                            (Store.neq "id" (SqlString ""))
+                            [ Store.setWhen
+                                  "qty"
+                                  (Store.eq "id" (SqlString "l1"))
+                                  (SqlInt 7)
+                                  (Store.otherwise (SqlInt 0))
+                            , Store.setWhen
+                                  "flag"
+                                  (Store.eq "id" (SqlString "l1"))
+                                  (SqlBool True)
+                                  (Store.otherwise (SqlBool False))
+                            , Store.setValue "note" (SqlString "n")
+                            ])
+                  , lineRows db
+                        |> Result.map
+                               (List.map (\l -> ( l.qty, l.flag, l.note )))
+                  ))
+    , Test.test
+          "updateSet: an empty list returns 0"
+          (\_ ->
+              Test.equal
+                  (Ok 0)
+                  (Task.run
+                      (Store.updateSet
+                          db
+                          missingLines
+                          (Store.eq "id" (SqlString "x"))
+                          [])))
+    , Test.test
+          "updateSet: an unknown target is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.updateSet
+                          db
+                          missingLines
+                          (Store.eq "id" (SqlString "x"))
+                          [ Store.setValue "nope" (SqlInt 1) ])))
+    , Test.test
+          "updateSet: an unknown source is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.updateSet
+                          db
+                          missingLines
+                          (Store.eq "id" (SqlString "x"))
+                          [ Store.setCol "wantedAt" "nope" ])))
+    , Test.test
+          "updateSet: the primary key as target is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.updateSet
+                          db
+                          missingLines
+                          (Store.eq "id" (SqlString "x"))
+                          [ Store.setValue "id" (SqlString "y") ])))
+    , Test.test
+          "updateSet: a source of another kind is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.updateSet
+                          db
+                          missingLines
+                          (Store.eq "id" (SqlString "x"))
+                          [ Store.setCol "qty" "status" ])))
+    , Test.test
+          "updateSet: a nullable source into a required target is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.updateSet
+                          db
+                          missingLines
+                          (Store.eq "id" (SqlString "x"))
+                          [ Store.setCol "status" "note" ])))
+    , Test.test
+          "copyInto: the copied rows equal the source rows"
+          (\_ ->
+              Test.equal
+                  ( Ok 2, Ok [ "o1:support:c1", "o3:support:c2" ] )
+                  ( Task.run (Store.copyInto db enquiries openOrders copyOpen)
+                  , enquiryIds db
+                  ))
+    , Test.test
+          "copyIntoOrIgnore: a conflict is skipped, the new rows are copied"
+          (\_ ->
+              Test.equal
+                  ( Ok 2
+                  , Ok
+                        [ "o1:support:c1"
+                        , "o2:support:c1"
+                        , "o3:support:c2"
+                        , "o4:support:c3"
+                        ]
+                  )
+                  ( Task.run
+                        (Store.copyIntoOrIgnore
+                            db
+                            enquiries
+                            (Store.query orders
+                                |> Store.where_
+                                       (Store.neq "id" (SqlString "o1")))
+                            copyOpen)
+                  , enquiryIds db
+                  ))
+    , Test.test
+          "copyInto: without ignore a conflict is an Err"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErr
+                      (Task.run (Store.copyInto db enquiries openOrders copyOpen))))
+    , Test.test
+          "copyInto: a roll-up from an aggregate query"
+          (\_ ->
+              Test.equal
+                  ( Ok 3, Ok [ ( "c1", 35 ), ( "c2", 7 ), ( "c3", 0 ) ] )
+                  ( Task.run
+                        (Store.copyInto
+                            db
+                            customerTotals
+                            (Store.query orders
+                                |> Store.groupBy [ "customer_id" ]
+                                |> Store.aggregate
+                                       customerTotalCodec
+                                       [ Store.key "customer_id"
+                                       , Store.sumAs "total" "total"
+                                       ])
+                            [ ( "customerId", Store.from "customerId" )
+                            , ( "total", Store.from "total" )
+                            ])
+                  , Task.run
+                        (Store.toList
+                            db
+                            (Store.query customerTotals
+                                |> Store.orderAsc "customer_id"))
+                        |> Result.map
+                               (List.map (\t -> ( t.customerId, t.total )))
+                  ))
+    , Test.test
+          "copyInto: an empty source copies nothing (0)"
+          (\_ ->
+              Test.equal
+                  (Ok 0)
+                  (Task.run
+                      (Store.copyIntoOrIgnore
+                          db
+                          enquiries
+                          (Store.query orders
+                              |> Store.where_ (Store.eq "id" (SqlString "none")))
+                          copyOpen)))
+    , Test.test
+          "copyInto: an unknown target column is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.copyInto
+                          db
+                          missingEnquiries
+                          openOrders
+                          (( "nope", Store.from "id" ) :: copyOpen))))
+    , Test.test
+          "copyInto: an unknown source column is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.copyInto
+                          db
+                          missingEnquiries
+                          openOrders
+                          [ ( "id", Store.from "nope" )
+                          , ( "kind", Store.const (SqlString "k") )
+                          , ( "customerId", Store.from "customerId" )
+                          ])))
+    , Test.test
+          "copyInto: an unmapped required column is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.copyInto
+                          db
+                          missingEnquiries
+                          openOrders
+                          [ ( "id", Store.from "id" )
+                          , ( "customerId", Store.from "customerId" )
+                          ])))
+    , Test.test
+          "copyInto: an unmapped defaultWith column is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.copyInto
+                          db
+                          missingEnquiriesGen
+                          openOrders
+                          [ ( "kind", Store.const (SqlString "k") )
+                          , ( "customerId", Store.from "customerId" )
+                          ])))
+    , Test.test
+          "copyInto: a nullable source into a required column is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.copyInto
+                          db
+                          missingEnquiries
+                          openOrders
+                          [ ( "id", Store.from "id" )
+                          , ( "kind", Store.from "note" )
+                          , ( "customerId", Store.from "customerId" )
+                          ])))
+    , Test.test
+          "gap (a): pushProject refuses a uniqueOn with an unknown column, naming it"
+          (\_ ->
+              Test.equal
+                  ( True, True )
+                  ( errHas
+                        "unknown column \"nope_col\""
+                        (Task.run
+                            (Store.pushProject
+                                db
+                                (Store.project [ Store.toTable badIndexOrders ])))
+                  , isErr (exec db "SELECT id FROM sqc_bad_index")
+                  ))
+    , Test.test
+          "gap (a): dumpSchema refuses a uniqueOn with an unknown column, naming it"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "unknown column \"nope_col\""
+                      (Task.run
+                          (Store.dumpSchema
+                              (Store.project [ Store.toTable badIndexOrders ])))))
+    ]
+
+
+-- The same stores on a table that does not exist: a refusal must come from
+-- the Store, before any statement.
+missingClaims : Store Claim
+missingClaims =
+    Store.fromCodec "sqc_missing" claimCodec |> Store.primaryKey "key"
+
+
+missingDaily : Store DailyCount
+missingDaily =
+    Store.fromCodec "sqc_missing" dailyCountCodec
+        |> Store.uniqueOn [ "day", "customerId", "event" ]
+
+
+missingLines : Store Line
+missingLines =
+    Store.fromCodec "sqc_missing" lineCodec |> Store.primaryKey "id"
+
+
+missingEnquiries : Store Enquiry
+missingEnquiries =
+    Store.fromCodec "sqc_missing" enquiryCodec |> Store.primaryKey "id"
+
+
+missingEnquiriesGen : Store Enquiry
+missingEnquiriesGen =
+    Store.fromCodec "sqc_missing" enquiryCodec |> Store.primaryKey "id"
+        |> Store.defaultWith "id" (\_ -> SqlString "gen")
+
 
 tests : List Test
 tests =
@@ -2841,6 +3711,7 @@ tests =
                 ++ joinTests db
                 ++ subqueryTests db
                 ++ migrateTests db
+                ++ writeTests db
 
 
 main =

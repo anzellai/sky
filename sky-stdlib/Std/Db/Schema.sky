@@ -314,6 +314,7 @@ toStoreTable t =
     , pk = pkOf t.columns
     , cols = List.map storeColOf t.columns
     , indexes = List.map storeIndexOf t.indexes
+    , problems = []
     }
 
 

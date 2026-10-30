@@ -186,6 +186,11 @@ products =
 -- patch:  Store.setFields conn products pk [("stock", SqlInt 5)]  (by PK — only named cols)
 --         Store.updateFields conn products cond [("status", SqlString "sold")]  (by Cond)
 --         Store.adjust conn products cond [("stock", -qty)]  (atomic SET col = col + delta)
+--         Store.insertOrIgnore conn sent row  (1 or 0: the atomic "claim once")
+--         Store.upsertWith conn counts row { conflictOn = [ "day", "event" ], onConflict = [ Store.addExcluded "count" ] }
+--         Store.updateSet conn lines cond [ Store.setCol "wanted_at" "status_at" ]  (column / CASE SET)
+--         Store.copyInto conn target query [ ( "id", Store.from "id" ) ]  (INSERT … SELECT)
+--         Store.updateFieldsReturning conn jobs cond sets  (the updated rows, RETURNING)
 -- read:   Store.all conn products  ·  Store.findBy conn products "id" "p1"
 --         Store.query invoices |> Store.groupBy [ "customer_id" ] |> Store.aggregate tallyCodec [ ... ] |> Store.toRows conn
 --         Store.join invoices customers (Store.on "customer_id" "id") |> Store.toPairs conn

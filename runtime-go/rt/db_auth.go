@@ -1716,6 +1716,13 @@ func dbMigrateCore(d *SkyDb, pairs []any, op string, fail func(msg string, e any
 		// one stable sum. Every other text runs as given.
 		if _, err := tx.Exec(migApplyText(stmt)); err != nil {
 			tx.Rollback()
+			// A required unique column added to a table with rows fails
+			// on its unique index: name the table, the column and the fix
+			// instead of the raw index error.
+			if hint := migRequiredUniqueHint(d, stmt, err); hint != "" {
+				return fail("migration '"+name+"': "+hint,
+					Err[any, any](ErrInvalidInput("db.migrate: migration '"+name+"': "+hint)))
+			}
 			return fail("migration '"+name+"': "+err.Error(),
 				Err[any, any](ErrIo("db.migrate: migration '"+name+"': "+err.Error())))
 		}

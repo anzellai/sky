@@ -110,6 +110,9 @@ fn internal_runtime_bases(module: &str) -> &'static [&'static str] {
             "execObject",
             "execObjectMany",
             "execObjectWith",
+            // v0.29.0: the values of one record as `List SqlValue` (Store renders
+            // the INSERT of insertOrIgnore / upsertWith / insertReturning).
+            "objectSqlValues",
             "queryDecodeRows",
             "queryObjects",
             // v0.29.0: the Std.Db.Store read kernel. One JSON object per column
@@ -122,6 +125,8 @@ fn internal_runtime_bases(module: &str) -> &'static [&'static str] {
             "updateByPk",
             "updateWhere",
             "upsertObject",
+            // v0.29.0: Store's RETURNING kernel (a write, with the SSR guard).
+            "writeReturningObjects",
         ],
         // `rt.Process_loadEnv` is the backing for `System.loadEnv`; `Process`'s
         // only member is `run`. A bare `Process.loadEnv` is not intended.
