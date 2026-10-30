@@ -31,6 +31,8 @@ asserted ACTIVE below.
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict exposing (Dict)
 import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Json.Encode as Encode
 import Std.Codec as Codec exposing (Codec)
 import Std.Money as Money exposing (Money, Currency(..))
 import Sky.Core.Error as Error exposing (Error, ErrorKind(..), ErrorDetails(..))
@@ -646,7 +648,51 @@ tests =
         (\_ -> roundTrip (Codec.result Codec.error Codec.string) (Err (mkErr Network "send failed" (Just (HttpStatus 500)))))
     , Test.test "result: nested detail through the wire round-trips"
         (\_ -> roundTrip (Codec.result Codec.error Codec.int) (Err (mkErr Ffi "x" (Just (FfiPanic { message = "p", stack = [] })))))
+
+    -- ── Codec.zeroJson: the JSON of the codec's zero value ────────────────
+    , Test.test "zeroJson: an auto codec gives its blank record, with snake keys in field order"
+        (\_ ->
+            Test.equal
+                (Just "{\"tag_list\":[\"it's\"],\"total\":0,\"note\":null}")
+                (Maybe.map (Encode.encode 0) (Codec.zeroJson (Codec.auto zeroAutoBlank))))
+    , Test.test "zeroJson: an object codec gives each field's zero, in field order"
+        (\_ ->
+            Test.equal
+                (Just "{\"n\":\"\",\"xs\":[],\"on\":false,\"m\":null}")
+                (Maybe.map (Encode.encode 0) (Codec.zeroJson zeroRecord)))
+    , Test.test "zeroJson: a taggedUnion and a result have none"
+        (\_ ->
+            Test.equal
+                ( Nothing, Nothing )
+                ( Maybe.map (Encode.encode 0) (Codec.zeroJson Codec.error)
+                , Maybe.map (Encode.encode 0) (Codec.zeroJson (Codec.result Codec.error Codec.int))
+                ))
     ]
+
+
+type alias ZeroAuto =
+    { tagList : List String, total : Int, note : Maybe String }
+
+
+zeroAutoBlank : ZeroAuto
+zeroAutoBlank =
+    { tagList = [ "it's" ], total = 0, note = Nothing }
+
+
+type alias ZeroRecord =
+    { n : String, xs : List Int, on : Bool, m : Maybe Float, e : Error }
+
+
+-- A field with no zero (an `Error`, a taggedUnion) is left out of the object.
+zeroRecord : Codec ZeroRecord
+zeroRecord =
+    Codec.object ZeroRecord
+        |> Codec.field "n" .n Codec.string
+        |> Codec.field "xs" .xs (Codec.list Codec.int)
+        |> Codec.field "on" .on Codec.bool
+        |> Codec.field "m" .m (Codec.maybe Codec.float)
+        |> Codec.field "e" .e Codec.error
+        |> Codec.buildObject
 
 
 main =
