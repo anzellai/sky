@@ -679,13 +679,20 @@ map to from (Codec c) =
 -- ── Records (object builder) ─────────────────────────────────────────────────
 -- | Intermediate builder for a record codec. `a` is the record type; `b` is the
 -- constructor still awaiting fields.
+--
+-- The payload is a named record, so a function that matches an
+-- `ObjectCodec` reads it with one runtime narrowing instead of one per field
+-- (doc 14 §4.5, R6), as `CodecPayload` does.
 type ObjectCodec a b
-    = ObjectCodec { encFields : a -> List ( String, Value )
-, decValue : Decoder b
-, cols : List ( String, ColType )
-, schs : List ( String, SchemaNode )
-, zros : List ( String, () -> Maybe Value )
-}
+    = ObjectCodec (ObjectPayload a b)
+
+type alias ObjectPayload a b =
+    { encFields : a -> List ( String, Value )
+    , decValue : Decoder b
+    , cols : List ( String, ColType )
+    , schs : List ( String, SchemaNode )
+    , zros : List ( String, () -> Maybe Value )
+    }
 
 
 -- | Start a record codec from its constructor.
