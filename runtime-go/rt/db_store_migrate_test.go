@@ -407,7 +407,7 @@ func TestStoreMigrateD1_SqliteAddsNotNullColumnsToATableWithRows(t *testing.T) {
 	}
 	cs := cspec("id", "text", "status", "text",
 		"qty", "int", "label", "text|dtext=new", "seen_at", "text|dnow", "note", "text?",
-		"rank", "int|dint=7", "score", "real|dfloat=1.5", "active", "bool", "payload", "blob")
+		"rank", "int|dint=7", "score", "real|dfloat=1.5", "active", "bool", "payload", `blob|zero=["it's"]`)
 	r := autoMigrate(t, d, "orders", cs, nil)
 	if r.Tag != 0 {
 		t.Fatalf("migrate: %+v", r)
@@ -425,7 +425,7 @@ func TestStoreMigrateD1_SqliteAddsNotNullColumnsToATableWithRows(t *testing.T) {
 		"ALTER TABLE orders ADD COLUMN rank INTEGER NOT NULL DEFAULT 7",
 		"ALTER TABLE orders ADD COLUMN score REAL NOT NULL DEFAULT 1.5",
 		"ALTER TABLE orders ADD COLUMN active INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE orders ADD COLUMN payload TEXT",
+		`ALTER TABLE orders ADD COLUMN payload TEXT NOT NULL DEFAULT '["it''s"]'`,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("statements:\n%s", strings.Join(got, "\n"))
@@ -446,12 +446,102 @@ func TestStoreMigrateD1_SqliteAddsNotNullColumnsToATableWithRows(t *testing.T) {
 	if qty != 0 || label != "new" || note != nil || rank != 7 || score != 1.5 || !stamp.MatchString("'"+seen+"'") {
 		t.Fatalf("old row reads qty=%d label=%q seen=%q note=%v rank=%d score=%v", qty, label, seen, note, rank, score)
 	}
+	// A required JSON (blob) column reads the codec's blank value (Gap A).
+	var payload string
+	if err := d.conn.QueryRow("SELECT payload FROM orders WHERE id = 'o1'").Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload != `["it's"]` {
+		t.Fatalf("old row reads payload=%q, want the blank's JSON", payload)
+	}
 	if _, err := d.conn.Exec("INSERT INTO orders (id, status, qty) VALUES ('o2', 'x', NULL)"); err == nil {
 		t.Fatalf("NULL was accepted in the NOT NULL column qty")
 	}
 	if r := autoMigrate(t, d, "orders", cs, nil); r.Tag != 0 || len(AsList(r.OkValue)) != 0 {
 		t.Fatalf("second migrate is not empty: %+v", r)
 	}
+}
+
+// assertRequiredBlobWithoutZero: a required JSON (blob) column whose codec
+// knows no zero value (a hand-built codec with a taggedUnion field, a
+// `Std.Db.Schema.blob` column) is added NOT NULL with no default, which only
+// an empty table can take. On a table with a row `Store.migrate` is Err and
+// the table is unchanged, and a migration file fails with the same advice and
+// rolls back. Before Gap A the column was added NULLABLE on both paths, which
+// broke rule D1. Shared by the SQLite and PostgreSQL arms.
+func assertRequiredBlobWithoutZero(t *testing.T, d *SkyDb, table string) {
+	t.Helper()
+	empty := table + "_empty"
+	id := "0002_" + table + "_doc"
+	cleanup := func() {
+		_, _ = d.conn.Exec("DROP TABLE IF EXISTS " + table)
+		_, _ = d.conn.Exec("DROP TABLE IF EXISTS " + empty)
+		_, _ = d.conn.Exec("DELETE FROM _sky_migrations WHERE name = '" + id + "'")
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+	// An empty table takes the column NOT NULL, with no default.
+	if r := autoMigrate(t, d, empty, cspec("id", "text"), nil); r.Tag != 0 {
+		t.Fatalf("create: %+v", r)
+	}
+	r := autoMigrate(t, d, empty, cspec("id", "text", "doc", "blob"), nil)
+	if r.Tag != 0 {
+		t.Fatalf("migrate an empty table: %+v", r)
+	}
+	ran := []string{}
+	for _, s := range AsList(r.OkValue) {
+		ran = append(ran, AsString(s))
+	}
+	if want := "ALTER TABLE " + empty + " ADD COLUMN doc TEXT NOT NULL"; strings.Join(ran, "\n") != want {
+		t.Fatalf("statements:\n%s\nwant\n%s", strings.Join(ran, "\n"), want)
+	}
+	// A table with one row: Err, and the table is unchanged.
+	if r := autoMigrate(t, d, table, cspec("id", "text"), nil); r.Tag != 0 {
+		t.Fatalf("create: %+v", r)
+	}
+	if _, err := d.conn.Exec("INSERT INTO " + table + " (id) VALUES ('a')"); err != nil {
+		t.Fatal(err)
+	}
+	advice := []string{"column " + table + ".doc", "no zero value", "Maybe", "Codec.auto"}
+	r = autoMigrate(t, d, table, cspec("id", "text", "doc", "blob"), nil)
+	if r.Tag == 0 {
+		t.Fatalf("a required blob with no zero value was added to a table with a row: %+v", r.OkValue)
+	}
+	msg := fmt.Sprintf("%v", r.ErrValue)
+	for _, want := range advice {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("Store.migrate error does not say %q:\n%s", want, msg)
+		}
+	}
+	if cols, _ := codecTableColumns(d, table); codecHasColumn(d.driver, cols, "doc") {
+		t.Fatalf("Store.migrate changed the table")
+	}
+	// The same column from a migration file: the same advice, rolled back.
+	f := migFile{Id: id, Ops: []migOp{
+		{Kind: "addColumn", Table: table, Column: "doc", Type: "blob", Nullable: false},
+	}}
+	r = migrateOpsJson(t, d, migFilesJson(t, f))
+	if r.Tag == 0 {
+		t.Fatalf("the migration file was applied")
+	}
+	msg = fmt.Sprintf("%v", r.ErrValue)
+	for _, want := range append(advice, "rolled back") {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("sky db migrate error does not say %q:\n%s", want, msg)
+		}
+	}
+	if cols, _ := codecTableColumns(d, table); codecHasColumn(d.driver, cols, "doc") {
+		t.Fatalf("the migration file did not roll back")
+	}
+	var n int
+	_ = d.conn.QueryRow("SELECT COUNT(*) FROM _sky_migrations WHERE name = '" + id + "'").Scan(&n)
+	if n != 0 {
+		t.Fatalf("the failed migration was recorded in the ledger")
+	}
+}
+
+func TestStoreMigrateD1_SqliteRequiredBlobWithoutZero(t *testing.T) {
+	assertRequiredBlobWithoutZero(t, openStoreQueryDb(t), "docs_nz")
 }
 
 func TestStoreMigrateD1_SqliteRequiredUniqueOnATableWithRowsIsErr(t *testing.T) {
@@ -624,7 +714,7 @@ func TestStoreMigrateParity_DumpAndRendererAgree(t *testing.T) {
 			t.Errorf("%v: dump %s, fixture %s", c.Colspec, b, c.Schema)
 		}
 		for _, driver := range []string{"sqlite", "pgx"} {
-			stmts, _, err := renderAddColumn(driver, f.Table, codecColspecMigColumn(c.Colspec[0], c.Colspec[1], f.Pk), sqliteNowLiteral(), false)
+			stmts, err := renderAddColumn(driver, f.Table, codecColspecMigColumn(c.Colspec[0], c.Colspec[1], f.Pk), sqliteNowLiteral(), 0)
 			if err != nil {
 				t.Fatal(err)
 			}

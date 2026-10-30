@@ -77,8 +77,16 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
     checked by a Rust test (the diff gives the fixture's ops) and by Go tests
     on SQLite and PostgreSQL (`Store.migrate` runs exactly the SQL of
     `renderMigOp` of those ops).
-  - A required JSON (blob) field has no simple zero: it is added nullable,
-    with a warning. A `unique` column is added, then given a unique index; a
+  - A required JSON (blob) field is NOT NULL too. Its DEFAULT is the JSON of
+    the field in the codec's zero value (new `Codec.zeroJson`: the blank
+    record of `Codec.auto`, or each field's zero in a `Codec.object` codec),
+    a SQL string literal with its quotes escaped, the same on both paths and
+    both dialects. The schema dump carries it as the column's `zero`, so
+    `--gen` writes it as the addColumn op's default. A field whose codec has
+    no zero (a `taggedUnion` or `result` field of a `Codec.object` codec) is
+    `NOT NULL` with no default: `Store.migrate` is `Err` on a table with 1 or
+    more rows, and a migration file fails and rolls back with the same
+    advice. A `unique` column is added, then given a unique index; a
     required unique column on a table with 2 or more rows is `Err` (the same
     count at which a `sky db migrate` file fails).
   - A `defaultNow` column added on SQLite holds the time of the ALTER in the

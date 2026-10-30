@@ -1384,6 +1384,12 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   required, `exact` is `False` where a part is open, as in `taggedUnion`).
   `Std.Ai` sends it as a typed tool's parameters and as a structured answer's
   `response_format`.
+  `Codec.zeroJson codec` (v0.29) is the JSON of the codec's zero value, when
+  it knows one: the encoded blank record of `Codec.auto`, or, for a
+  `Codec.object` codec, each field whose codec has a zero (`""`, `0`,
+  `false`, `null`, `[]`, an enum's first name). `taggedUnion` and `result`
+  have none. `Store.migrate` and `sky db migrate --gen` use it as the
+  DEFAULT of a required JSON column added to a table with rows.
   `Codec.dict keyCodec valueCodec` (v0.27) encodes a `Dict` as a JSON array of
   `[key, value]` pairs, so any comparable key round-trips. `Codec.fromJson`
   reads exactly one JSON document: text after it is an `Err` (v0.27). A type

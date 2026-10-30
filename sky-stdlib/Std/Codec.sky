@@ -31,6 +31,7 @@ module Std.Codec exposing
     , Shape(..)
     , ObjectCodec
     , shape
+    , zeroJson
     , JsonSchema
     , jsonSchema
     , toValue
@@ -104,6 +105,7 @@ type alias CodecPayload a =
     , dec : Decoder a
     , shp : Shape
     , sch : SchemaNode
+    , zro : () -> Maybe Value
     }
 
 -- | The JSON Schema of the JSON a codec reads and writes. `exact` is `True`
@@ -293,6 +295,22 @@ shape (Codec c) =
     c.shp
 
 
+-- | The JSON of the codec's zero value, when the codec knows one. For an
+-- `auto` / `autoCamel` / `autoWith` codec it is the encoded blank record (the
+-- witness). For a `buildObject` codec it is an object of each field whose codec
+-- knows a zero: `""`, `0`, `false`, `null` for `maybe`, `[]` for `list` and
+-- `dict`, and the first name of an `enum`. A `taggedUnion`, a `result` and
+-- `error` know none. `Std.Db.Store.migrate` and `sky db migrate --gen` use it
+-- as the DEFAULT of a required JSON (blob) column added to a table with rows,
+-- so the rows that exist decode.
+--
+--     Codec.zeroJson (Codec.auto { id = "", tags = [ "new" ] })
+--     -- Just {"id":"","tags":["new"]}
+zeroJson : Codec a -> Maybe Value
+zeroJson (Codec c) =
+    c.zro ()
+
+
 -- | The codec's encoder as a plain function `a -> Value` (a JSON `Value`, the DB
 -- backend's write side). Use `toJson` for a JSON string.
 toValue : Codec a -> a -> Value
@@ -335,6 +353,7 @@ string =
         , dec = D.string
         , shp = SScalar CText
         , sch = SnType "string"
+        , zro = \_ -> Just (E.string "")
         }
 
 
@@ -342,7 +361,12 @@ string =
 int : Codec Int
 int =
     Codec
-        { enc = E.int, dec = D.int, shp = SScalar CInt, sch = SnType "integer" }
+        { enc = E.int
+        , dec = D.int
+        , shp = SScalar CInt
+        , sch = SnType "integer"
+        , zro = \_ -> Just (E.int 0)
+        }
 
 
 -- | Codec for a `Float` — JSON number; REAL column.
@@ -353,6 +377,7 @@ float =
         , dec = D.float
         , shp = SScalar CReal
         , sch = SnType "number"
+        , zro = \_ -> Just (E.float 0)
         }
 
 
@@ -365,6 +390,7 @@ bool =
         , dec = D.bool
         , shp = SScalar CBool
         , sch = SnType "boolean"
+        , zro = \_ -> Just (E.bool False)
         }
 
 
@@ -394,6 +420,7 @@ maybe (Codec c) =
                 _ ->
                     SBlob
         , sch = SnNullable c.sch
+        , zro = \_ -> Just E.null
         }
 
 
@@ -406,6 +433,7 @@ list (Codec c) =
         , dec = D.list c.dec
         , shp = SBlob
         , sch = SnArray c.sch
+        , zro = \_ -> Just (E.list identity [])
         }
 
 
@@ -437,6 +465,7 @@ result (Codec ce) (Codec ca) =
                 (D.index 0 D.string)
         , shp = SBlob
         , sch = SnResult ce.sch ca.sch
+        , zro = \_ -> Nothing
         }
 
 
@@ -463,6 +492,7 @@ dict (Codec ck) (Codec cv) =
                         (D.index 1 cv.dec)))
         , shp = SBlob
         , sch = SnDict ck.sch cv.sch
+        , zro = \_ -> Just (E.list identity [])
         }
 
 
@@ -614,6 +644,7 @@ domainFailureCodec =
                     ])
         , shp = SBlob
         , sch = SnOpen
+        , zro = \_ -> Nothing
         }
 
 
@@ -642,6 +673,7 @@ map to from (Codec c) =
         , dec = D.map to c.dec
         , shp = c.shp
         , sch = c.sch
+        , zro = c.zro
         }
 
 -- ── Records (object builder) ─────────────────────────────────────────────────
@@ -652,6 +684,7 @@ type ObjectCodec a b
 , decValue : Decoder b
 , cols : List ( String, ColType )
 , schs : List ( String, SchemaNode )
+, zros : List ( String, () -> Maybe Value )
 }
 
 
@@ -663,6 +696,7 @@ object ctor =
         , decValue = D.succeed ctor
         , cols = []
         , schs = []
+        , zros = []
         }
 
 
@@ -675,6 +709,7 @@ field name getter (Codec fc) (ObjectCodec o) =
         , decValue = codecAndMap (D.field name fc.dec) o.decValue
         , cols = o.cols ++ [ ( name, colTypeOf fc.shp ) ]
         , schs = o.schs ++ [ ( name, fc.sch ) ]
+        , zros = o.zros ++ [ ( name, fc.zro ) ]
         }
 
 
@@ -705,6 +740,7 @@ inline getter (ObjectCodec inner) (ObjectCodec o) =
         , decValue = codecAndMap inner.decValue o.decValue
         , cols = o.cols ++ inner.cols
         , schs = o.schs ++ inner.schs
+        , zros = o.zros ++ inner.zros
         }
 
 
@@ -721,7 +757,26 @@ buildObject (ObjectCodec o) =
         , dec = objectDecoder o.cols o.decValue
         , shp = SRecord o.cols
         , sch = SnObject o.schs
+        , zro = \_ -> Just (E.object (knownZeros o.zros))
         }
+
+
+-- The fields of a record codec whose codec knows a zero value, with it.
+knownZeros : List ( String, () -> Maybe Value ) -> List ( String, Value )
+knownZeros zros =
+    case zros of
+
+        [] ->
+            []
+
+        ( name, z ) :: rest ->
+            case z () of
+
+                Just v ->
+                    ( name, v ) :: knownZeros rest
+
+                Nothing ->
+                    knownZeros rest
 
 
 -- | A record codec's decoder: `dec`, or a decoder that always fails when two
@@ -817,6 +872,7 @@ autoBase snake witness =
                     (\( n, k ) -> ( n, kindToColType k ))
                     (autoColsK snake witness))
         , sch = SnAuto (\_ -> autoSchemaK snake witness) []
+        , zro = \_ -> Just (autoEncK snake witness)
         }
 
 
@@ -849,6 +905,7 @@ autoWith overrides witness =
                 SnAuto
                     (\_ -> autoSchemaK True witness)
                     (List.map (\( col, Codec c ) -> ( col, c.sch )) overrides)
+            , zro = \_ -> Just (autoEncOverridesK True encs witness)
             }
 
 
@@ -1054,6 +1111,7 @@ taggedUnion toTagged variants =
                 D.andThen (\tag -> pickVariant tag arms) (D.index 0 D.string)
             , shp = SBlob
             , sch = SnUnion (variantSchemas arms)
+            , zro = \_ -> Nothing
             }
 
 
@@ -1110,6 +1168,15 @@ enum pairs =
         , dec = D.andThen (\name -> enumValueFor name pairs) D.string
         , shp = SScalar CText
         , sch = SnEnum (\_ -> List.map (\( _, n ) -> n) pairs)
+        , zro =
+            \_ ->
+                case pairs of
+
+                    ( _, n ) :: _ ->
+                        Just (E.string n)
+
+                    [] ->
+                        Nothing
         }
 
 

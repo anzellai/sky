@@ -109,6 +109,19 @@ var codecFlagValueDecoder = strings.NewReplacer("%7C", "|", "%25", "%")
 // append onto a colspec kind, returning (unique, defaultKind, defaultVal) where
 // defaultKind ∈ {none,now,text,int,bool,float} matches schemaDefault. A default
 // value arrives percent-encoded (see codecFlagValueDecoder) and is decoded here.
+// codecColZero reads the `zero=` flag Std.Db.Store adds to a required blob
+// column: the JSON of the column in the codec's zero value (Codec.zeroJson),
+// as a text default for renderAddColumn. nil when there is no flag.
+func codecColZero(kind string) *migDefault {
+	for _, f := range codecColFlags(kind) {
+		if strings.HasPrefix(f, "zero=") {
+			v := codecFlagValueDecoder.Replace(f[len("zero="):])
+			return &migDefault{Text: &v}
+		}
+	}
+	return nil
+}
+
 func codecColExtras(kind string) (bool, string, string) {
 	unique := false
 	defKind, defVal := "none", ""
@@ -289,16 +302,17 @@ func codecIndexExists(d *SkyDb, table, name string) (bool, error) {
 	return len(AsList(r.OkValue)) > 0, nil
 }
 
-// codecTableHasManyRows reports whether a table holds 2 or more rows: the
-// count at which one default value in a unique column must collide. The same
-// threshold explains a migration file (migRequiredUniqueHint), so
-// Store.migrate and `sky db migrate` agree.
-func codecTableHasManyRows(d *SkyDb, table string) (bool, error) {
+// codecTableRowsUpTo2 counts a table's rows, stopping at 2: at 1 a required
+// column with no zero value has a row with no value, and at 2 one default in a
+// unique column must collide. The same thresholds explain a migration file
+// (migRequiredNoZeroHint, migRequiredUniqueHint), so Store.migrate and
+// `sky db migrate` agree.
+func codecTableRowsUpTo2(d *SkyDb, table string) (int, error) {
 	r, ok := AnyTaskRun(dbQueryRows(d, "SELECT 1 AS x FROM "+table+" LIMIT 2", []any{})).(SkyResult[any, any])
 	if !ok || r.Tag != 0 {
-		return false, fmt.Errorf("row check failed")
+		return 0, fmt.Errorf("row check failed")
 	}
-	return len(AsList(r.OkValue)) > 1, nil
+	return len(AsList(r.OkValue)), nil
 }
 
 // codecValidIdent guards interpolated identifiers (table/column names, which come
@@ -442,18 +456,15 @@ func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 				continue
 			}
 			mc := codecColspecMigColumn(name, AsString(t.V1), pk)
-			hasRows := false
-			if mc.Unique && !mc.Nullable {
-				if hasRows, err = codecTableHasManyRows(d, table); err != nil {
+			rows := 0
+			if migNeedsRowCount(mc) {
+				if rows, err = codecTableRowsUpTo2(d, table); err != nil {
 					return Err[any, any](ErrIo("Store.migrate: " + err.Error()))
 				}
 			}
-			stmts, warnings, err := renderAddColumn(d.driver, table, mc, sqliteNowLiteral(), hasRows)
+			stmts, err := renderAddColumn(d.driver, table, mc, sqliteNowLiteral(), rows)
 			if err != nil {
 				return Err[any, any](ErrInvalidInput("Store.migrate: " + err.Error()))
-			}
-			for _, w := range warnings {
-				rtWarn("Store.migrate: " + w)
 			}
 			for _, stmt := range stmts {
 				if e := run(stmt); e != nil {
@@ -920,6 +931,9 @@ type jcol struct {
 	Autoinc  bool        `json:"autoinc,omitempty"`
 	Unique   bool        `json:"unique,omitempty"`
 	Default  *migDefault `json:"default,omitempty"`
+	// Zero is a required blob column's value in the codec's zero value
+	// (migColumn.Zero). `--gen` makes it the DEFAULT of the addColumn op.
+	Zero *migDefault `json:"zero,omitempty"`
 }
 
 // codecDumpColumn is the schema-dump form of one colspec entry.
@@ -927,7 +941,7 @@ func codecDumpColumn(name, rawKind string) jcol {
 	mc := codecColspecMigColumn(name, rawKind, "")
 	return jcol{
 		Name: mc.Name, Kind: mc.Type, Nullable: mc.Nullable,
-		Autoinc: mc.Autoinc, Unique: mc.Unique, Default: mc.Default,
+		Autoinc: mc.Autoinc, Unique: mc.Unique, Default: mc.Default, Zero: mc.Zero,
 	}
 }
 

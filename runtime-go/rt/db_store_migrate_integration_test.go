@@ -29,7 +29,7 @@ func TestStoreMigratePostgresD1_AddsNotNullColumnsToATableWithRows(t *testing.T)
 		t.Fatal(err)
 	}
 	cs := cspec("id", "text", "qty", "int", "label", "text|dtext=new", "seen_at", "text|dnow",
-		"note", "text?", "score", "real|dfloat=1.5", "active", "bool")
+		"note", "text?", "score", "real|dfloat=1.5", "active", "bool", "payload", `blob|zero=["it's"]`)
 	r := autoMigrate(t, d, table, cs, nil)
 	if r.Tag != 0 {
 		t.Fatalf("migrate: %+v", r)
@@ -45,6 +45,7 @@ func TestStoreMigratePostgresD1_AddsNotNullColumnsToATableWithRows(t *testing.T)
 		"ALTER TABLE " + table + " ADD COLUMN note TEXT",
 		"ALTER TABLE " + table + " ADD COLUMN score DOUBLE PRECISION NOT NULL DEFAULT 1.5",
 		"ALTER TABLE " + table + " ADD COLUMN active BOOLEAN NOT NULL DEFAULT FALSE",
+		"ALTER TABLE " + table + ` ADD COLUMN payload TEXT NOT NULL DEFAULT '["it''s"]'`,
 	}, "\n")
 	if got := strings.Join(ran, "\n"); got != want {
 		t.Fatalf("statements:\n%s\nwant\n%s", got, want)
@@ -52,12 +53,13 @@ func TestStoreMigratePostgresD1_AddsNotNullColumnsToATableWithRows(t *testing.T)
 	var qty int
 	var label, seen string
 	var active bool
-	if err := d.conn.QueryRow("SELECT qty, label, seen_at, active FROM "+table+" WHERE id = 'o1'").
-		Scan(&qty, &label, &seen, &active); err != nil {
+	var payload string
+	if err := d.conn.QueryRow("SELECT qty, label, seen_at, active, payload FROM "+table+" WHERE id = 'o1'").
+		Scan(&qty, &label, &seen, &active, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if qty != 0 || label != "new" || seen == "" || active {
-		t.Fatalf("old row: qty=%d label=%q seen=%q active=%v", qty, label, seen, active)
+	if qty != 0 || label != "new" || seen == "" || active || payload != `["it's"]` {
+		t.Fatalf("old row: qty=%d label=%q seen=%q active=%v payload=%q", qty, label, seen, active, payload)
 	}
 	if r := autoMigrate(t, d, table, cs, nil); r.Tag != 0 || len(AsList(r.OkValue)) != 0 {
 		t.Fatalf("second migrate is not empty: %+v", r)
@@ -73,6 +75,12 @@ func TestStoreMigratePostgresD1_AddsNotNullColumnsToATableWithRows(t *testing.T)
 	if cols, _ := codecTableColumns(d, table); cols["code"] {
 		t.Fatalf("the table was changed")
 	}
+}
+
+// A required blob with no zero value: NOT NULL with no default, refused on a
+// table with a row by Store.migrate and by a migration file (Gap A).
+func TestStoreMigratePostgresD1_RequiredBlobWithoutZero(t *testing.T) {
+	assertRequiredBlobWithoutZero(t, openStoreQueryPostgres(t, ""), "docs_nz_pg")
 }
 
 func TestStoreMigratePostgresIndexes_CreatedOnceAndLookedUpByTable(t *testing.T) {

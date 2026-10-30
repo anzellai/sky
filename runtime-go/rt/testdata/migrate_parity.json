@@ -55,9 +55,14 @@
       "ops": [{"kind": "addColumn", "table": "orders", "column": "flagged", "type": "bool", "nullable": true, "default": {"bool": true}}]
     },
     {
-      "colspec": ["payload", "blob"],
-      "schema": {"name": "payload", "kind": "blob", "nullable": false},
-      "ops": [{"kind": "addColumn", "table": "orders", "column": "payload", "type": "blob", "nullable": true}]
+      "colspec": ["payload", "blob|zero=[\"it's\"]"],
+      "schema": {"name": "payload", "kind": "blob", "nullable": false, "zero": {"text": "[\"it's\"]"}},
+      "ops": [{"kind": "addColumn", "table": "orders", "column": "payload", "type": "blob", "nullable": false, "default": {"text": "[\"it's\"]"}}]
+    },
+    {
+      "colspec": ["meta", "blob|zero={\"a\":\"x%7Cy%25z\"}"],
+      "schema": {"name": "meta", "kind": "blob", "nullable": false, "zero": {"text": "{\"a\":\"x|y%z\"}"}},
+      "ops": [{"kind": "addColumn", "table": "orders", "column": "meta", "type": "blob", "nullable": false, "default": {"text": "{\"a\":\"x|y%z\"}"}}]
     },
     {
       "colspec": ["email", "text?|u"],

@@ -201,7 +201,8 @@ import Sky.Core.Task as Task
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Char as Char
-import Sky.Core.Json.Encode exposing (Value)
+import Sky.Core.Json.Encode as JE exposing (Value)
+import Sky.Core.Json.Decode as JD
 import Std.Codec as Codec exposing (Codec, ColType(..), Shape(..))
 import Std.Db as Db exposing (SqlValue(..))
 
@@ -903,8 +904,13 @@ create conn store =
 --   default (`defaultInt` / `defaultText` / `defaultBool` / `defaultFloat` /
 --   `defaultNow`), else the zero value of the type (`0`, `''`, false), so the
 --   rows that exist read a value;
--- * a required JSON (blob) field has no simple zero: it is added nullable,
---   with a warning in the log;
+-- * a required JSON (blob) field gives `NOT NULL DEFAULT '<json>'`, where
+--   `<json>` is the field's value in the codec's zero value
+--   (`Codec.zeroJson`: the blank record of `Codec.auto`, or each field's zero
+--   in a `Codec.object` codec). A field whose codec has no zero (a
+--   `taggedUnion` or `result` field) is `NOT NULL` with no default: an empty
+--   table takes it, a table with 1 or more rows is an `Err`, and a
+--   `sky db migrate` file fails there with the same advice;
 -- * a `defaultNow` column added on SQLite holds the time of the ALTER in the
 --   rows that exist (SQLite refuses `datetime('now')` in ADD COLUMN);
 -- * a `unique` column is added, then given a unique index. A required unique
@@ -927,7 +933,12 @@ migrate conn store =
                 Task.fail e
 
             Nothing ->
-                dbAutoMigrate conn s.name s.cols s.pk s.indexes
+                dbAutoMigrate
+                    conn
+                    s.name
+                    (withZeros s.codec s.cols)
+                    s.pk
+                    s.indexes
 
 
 -- | Insert a record. Columns marked `generated` (a `serial` PK, `defaultNow`) are
@@ -2388,7 +2399,7 @@ toTable store =
     in
         { name = s.name
         , pk = s.pk
-        , cols = s.cols
+        , cols = withZeros s.codec s.cols
         , indexes = s.indexes
         , problems = s.problems
         }
@@ -5628,6 +5639,39 @@ resolveCol known col =
 
                     Nothing ->
                         col
+
+
+-- Rule D1 for a required JSON (blob) column: give each one the `zero=` flag,
+-- the JSON of its field in the codec's zero value (`Codec.zeroJson`: the blank
+-- record of an `auto` codec). `migrate` and `toTable` (so `pushProject` and
+-- the `sky db migrate --gen` schema dump) add it; the runtime's
+-- renderAddColumn makes it the DEFAULT of the column added to a table with
+-- rows. A column whose codec knows no zero gets no flag: it is added NOT NULL
+-- with no default, which a table with rows refuses.
+withZeros : Codec a -> List ( String, String ) -> List ( String, String )
+withZeros codec cols =
+    case Codec.zeroJson codec of
+
+        Nothing ->
+            cols
+
+        Just zero ->
+            List.map
+                (\( c, k ) ->
+                    if kindBase k == "blob" && not (kindNullable k) then
+                        case JD.decodeValue (JD.field c JD.value) zero of
+
+                            Ok v ->
+                                ( c
+                                , k ++ "|zero=" ++ flagValue (JE.encode 0 v)
+                                )
+
+                            Err _ ->
+                                ( c, k )
+
+                    else
+                        ( c, k ))
+                cols
 
 
 -- The base kind of a colspec kind: no `|` flags, no `!`, no `?`.

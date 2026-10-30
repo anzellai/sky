@@ -1824,10 +1824,15 @@ func dbMigrateCore(d *SkyDb, entries []migEntry, op string, fail func(msg string
 		if _, err := tx.Exec(run); err != nil {
 			tx.Rollback()
 			// A required unique column that an op file adds to a table
-			// with rows fails on its unique index: name the table, the
-			// column and the fix instead of the raw index error.
+			// with rows fails on its unique index, and a required column
+			// with no zero value fails on its NOT NULL: name the table,
+			// the column and the fix instead of the raw database error.
 			if e.isOps() {
-				if hint := migRequiredUniqueHint(d, e.sql, err); hint != "" {
+				hint := migRequiredUniqueHint(d, e.sql, err)
+				if hint == "" {
+					hint = migRequiredNoZeroHint(d, e.sql, err)
+				}
+				if hint != "" {
 					return fail("migration '"+name+"': "+hint,
 						Err[any, any](ErrInvalidInput("db.migrate: migration '"+name+"': "+hint)))
 				}

@@ -232,11 +232,11 @@ fn added_field_follows_one_migrate_rule_on_both_paths() {
     let src = src
         .replace(
             "    , createdAt : String\n    }",
-            "    , createdAt : String\n    , rank : Int\n    , nick : Maybe String\n    }",
+            "    , createdAt : String\n    , rank : Int\n    , nick : Maybe String\n    , tags : List String\n    }",
         )
         .replace(
             "createdAt = \"\" })",
-            "createdAt = \"\", rank = 0, nick = Nothing })",
+            "createdAt = \"\", rank = 0, nick = Nothing, tags = [ \"it's\" ] })",
         )
         .replace(
             "        |> Store.defaultNow \"created_at\"\n",
@@ -265,6 +265,16 @@ fn added_field_follows_one_migrate_rule_on_both_paths() {
         body.contains(r#""kind": "addIndex""#),
         "no addIndex:\n{body}"
     );
+    // Gap A: a required JSON (blob) field is NOT NULL, and its DEFAULT is the
+    // JSON of the codec's blank value (here `[ "it's" ]`).
+    assert!(
+        body.contains(r#""text": "[\"it's\"]""#),
+        "the required blob field did not take the blank's JSON as its default:\n{body}"
+    );
+    assert!(
+        !log.contains("NULLABLE"),
+        "--gen still adds a required field nullable:\n{log}"
+    );
 
     let (ok, log) = run_sky(&dir, &["db", "migrate"]);
     assert!(ok, "applying add_rank failed:\n{log}");
@@ -280,6 +290,26 @@ fn added_field_follows_one_migrate_rule_on_both_paths() {
         .output()
         .expect("spawn sqlite3");
     assert_eq!(String::from_utf8_lossy(&rank.stdout).trim(), "7", "old row");
+    let tags = Command::new("sqlite3")
+        .arg(dir.join("app.db"))
+        .arg("SELECT tags FROM users")
+        .output()
+        .expect("spawn sqlite3");
+    assert_eq!(
+        String::from_utf8_lossy(&tags.stdout).trim(),
+        r#"["it's"]"#,
+        "the old row does not read the blank's JSON"
+    );
+    let notnull = Command::new("sqlite3")
+        .arg(dir.join("app.db"))
+        .arg("SELECT \"notnull\" FROM pragma_table_info('users') WHERE name = 'tags'")
+        .output()
+        .expect("spawn sqlite3");
+    assert_eq!(
+        String::from_utf8_lossy(&notnull.stdout).trim(),
+        "1",
+        "the required blob column is nullable"
+    );
     let kind = Command::new("sqlite3")
         .arg(dir.join("app.db"))
         .arg("SELECT kind FROM _sky_migrations WHERE name LIKE '%add_rank%'")

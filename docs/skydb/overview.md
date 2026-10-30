@@ -118,7 +118,8 @@ the DDL is the same per dialect:
 | `Maybe` + a declared default | nullable, `DEFAULT <d>` |
 | required + `defaultInt/Text/Bool/Float` | `NOT NULL DEFAULT <d>` |
 | required, no builder | `NOT NULL DEFAULT 0` / `''` / false |
-| required JSON (blob) field | nullable, and a warning (there is no simple zero) |
+| required JSON (blob) field | `NOT NULL DEFAULT '<json>'`, where `<json>` is the field's value in the codec's zero value (`Codec.zeroJson`: the blank record of `Codec.auto`, or `[]` / `""` / `0` / `null` per field of a `Codec.object` codec) |
+| required JSON field whose codec has no zero (a `taggedUnion` or `result` field of a `Codec.object` codec, a `Schema.blob` column) | `NOT NULL` with no default: an empty table takes it, a table with 1 or more rows is `Err` (a `sky db migrate` file fails at the same count, with the same advice) |
 | `defaultNow` (text) | PostgreSQL `NOT NULL DEFAULT now()`; SQLite `NOT NULL DEFAULT '<time of the ALTER>'` |
 | `unique` | added, then a unique index; a required unique column on a table with 2 or more rows is `Err` (the same count as a `sky db migrate` file) |
 

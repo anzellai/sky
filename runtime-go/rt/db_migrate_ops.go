@@ -87,6 +87,11 @@ type migColumn struct {
 	Autoinc  bool        `json:"autoinc"`
 	Unique   bool        `json:"unique"`
 	Default  *migDefault `json:"default,omitempty"`
+	// Zero is the JSON of a required blob column's value in the codec's zero
+	// value (the `zero=` flag Std.Db.Store adds from Codec.zeroJson), as a
+	// text default. It is used only when a column is added (renderAddColumn),
+	// never in CREATE TABLE.
+	Zero *migDefault `json:"-"`
 }
 
 // migOp is one op of a migration file. A `"v"` key, which an earlier v0.29
@@ -184,14 +189,14 @@ func codecColspecMigColumn(name, rawKind, pk string) migColumn {
 	return migColumn{
 		Name: name, Type: base, Nullable: nullable, Pk: name == pk,
 		Autoinc: codecColIsAutoInc(rawKind), Unique: unique,
-		Default: migDefaultOf(defKind, defVal),
+		Default: migDefaultOf(defKind, defVal), Zero: codecColZero(rawKind),
 	}
 }
 
 // migZeroDefault is the DEFAULT of a required column added with no declared
 // default: the zero value of its kind. A real column takes `{"int":0}`, so
 // it renders `0`, the same bytes as `sky db migrate --gen` writes. A blob has
-// no simple zero, so it is nil (the column is added nullable, with a warning).
+// no zero of its kind: its zero is the codec's (migColumn.Zero), else nil.
 func migZeroDefault(kind string) *migDefault {
 	switch kind {
 	case "int", "bigint", "real":
@@ -231,57 +236,93 @@ func migAddDefault(driver, kind string, d *migDefault, nowAt string) string {
 //
 //   - a nullable (Maybe) column is added nullable, with its declared default
 //     if it has one;
-//   - any other column is added NOT NULL DEFAULT <declared, else the zero of
-//     its kind>, so the rows that exist read a value;
-//   - a required blob has no simple zero: it is added nullable, and a warning
-//     is returned;
+//   - any other column is added NOT NULL DEFAULT <declared, else the zero
+//     value>, so the rows that exist read a value. The zero of a required
+//     JSON (blob) column is the JSON of its field in the codec's zero value
+//     (Codec.zeroJson, the blank record of an `auto` codec), a text literal;
+//     the zero of any other column is the zero of its kind;
+//   - a required column with no zero value (a blob whose codec knows none) is
+//     added NOT NULL with no default. Only an empty table takes it, so with
+//     rows >= 1 it is an error, and the table is not changed;
 //   - a `now` default is `now()` on PostgreSQL and the constant nowAt on
 //     SQLite (the clock at the ALTER, or migNowToken in an op file);
 //   - a unique column is added without UNIQUE (SQLite refuses it in ADD
 //     COLUMN) and then gets a unique index named by codecIndexName. A required
-//     unique column cannot be added to a table with rows: every row would get
-//     the same value.
+//     unique column cannot be added to a table with rows >= 2: every row would
+//     get the same value.
+//
+// rows is the table's row count, stopped at 2. renderMigOp renders an op file
+// without a database and passes 0: there the database refuses the ALTER, and
+// dbMigrateCore explains it (migRequiredNoZeroHint, migRequiredUniqueHint).
 //
 // An existing column is never altered: callers only pass a column the table
 // does not have.
-func renderAddColumn(driver, table string, c migColumn, nowAt string, tableHasManyRows bool) ([]string, []string, error) {
+func renderAddColumn(driver, table string, c migColumn, nowAt string, rows int) ([]string, error) {
 	if !codecValidIdent(table) {
-		return nil, nil, fmt.Errorf("invalid table identifier %q", table)
+		return nil, fmt.Errorf("invalid table identifier %q", table)
 	}
 	if !codecValidIdent(c.Name) {
-		return nil, nil, fmt.Errorf("invalid column identifier %q", c.Name)
+		return nil, fmt.Errorf("invalid column identifier %q", c.Name)
 	}
-	var warnings []string
 	kind := codecColKindToSchema(c.Type)
 	s := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, c.Name, schemaTypeName(driver, kind))
-	nullable := c.Nullable
-	d := c.Default
-	if !nullable && d == nil {
-		d = migZeroDefault(c.Type)
-		if d == nil {
-			nullable = true
-			warnings = append(warnings, fmt.Sprintf(
-				"column %s.%s is a required non-scalar — added NULLABLE (no default possible)", table, c.Name))
-		}
-	}
-	if nullable {
+	d := migAddedDefault(c)
+	switch {
+	case c.Nullable:
 		if d != nil {
 			s += " DEFAULT " + migAddDefault(driver, kind, d, nowAt)
 		}
-	} else {
+	case d != nil:
 		s += " NOT NULL DEFAULT " + migAddDefault(driver, kind, d, nowAt)
+	default:
+		if rows >= 1 {
+			return nil, fmt.Errorf("%s", migNoZeroAdvice(table, c.Name))
+		}
+		s += " NOT NULL"
 	}
 	stmts := []string{s}
 	if c.Unique {
-		if !nullable && tableHasManyRows {
-			return nil, nil, fmt.Errorf(
+		if !c.Nullable && rows >= 2 {
+			return nil, fmt.Errorf(
 				"column %s.%s: a required unique column cannot be added to a table with rows (2 or more), every row would get the same value",
 				table, c.Name)
 		}
 		cols := []string{c.Name}
 		stmts = append(stmts, renderIndexDDL(table, codecIndexName(table, cols, true, ""), cols, true, ""))
 	}
-	return stmts, warnings, nil
+	return stmts, nil
+}
+
+// migAddedDefault is the DEFAULT of an added column under rule D1: the
+// declared default, else (for a required column) the codec's zero value of
+// the column, else the zero of its kind. nil for a nullable column with no
+// declared default, and for a required column with no zero value.
+func migAddedDefault(c migColumn) *migDefault {
+	if c.Default != nil || c.Nullable {
+		return c.Default
+	}
+	if c.Zero != nil {
+		return c.Zero
+	}
+	return migZeroDefault(c.Type)
+}
+
+// migNeedsRowCount reports whether renderAddColumn reads the row count for
+// this column: a required unique column, or a required column with no zero.
+func migNeedsRowCount(c migColumn) bool {
+	return !c.Nullable && (c.Unique || migAddedDefault(c) == nil)
+}
+
+// migNoZeroAdvice explains a required column with no zero value added to a
+// table with rows. Store.migrate returns it, and dbMigrateCore puts it in the
+// error of a migration file that the database refused.
+func migNoZeroAdvice(table, col string) string {
+	return fmt.Sprintf(
+		"column %s.%s is required and its codec has no zero value, so it is added NOT NULL "+
+			"with no default, and table %s already has rows that would hold no value. Fix: make "+
+			"the field a Maybe (a nullable column), derive the codec with Codec.auto (its blank "+
+			"record gives the default), or give the rows a value in a data step",
+		table, col, table)
 }
 
 // renderIndexDDL renders one CREATE INDEX. `where` is a partial-index
@@ -346,10 +387,10 @@ func renderMigOp(driver string, op migOp) (string, error) {
 		if !codecValidIdent(op.Column) {
 			return "", fmt.Errorf("migration: invalid column identifier %q", op.Column)
 		}
-		stmts, _, err := renderAddColumn(driver, op.Table, migColumn{
+		stmts, err := renderAddColumn(driver, op.Table, migColumn{
 			Name: op.Column, Type: op.Type, Nullable: op.Nullable,
 			Unique: op.Unique, Default: op.Default,
-		}, migNowToken, false)
+		}, migNowToken, 0)
 		if err != nil {
 			return "", fmt.Errorf("migration: %v", err)
 		}
@@ -517,6 +558,8 @@ func renderMigFile(driver string, f migFile) (string, error) {
 }
 
 var (
+	migAddNoDefaultRe = regexp.MustCompile(
+		`^ALTER TABLE ([A-Za-z_][A-Za-z0-9_]*) ADD COLUMN ([A-Za-z_][A-Za-z0-9_]*) [A-Za-z ]+ NOT NULL$`)
 	migAddRequiredRe = regexp.MustCompile(
 		`^ALTER TABLE ([A-Za-z_][A-Za-z0-9_]*) ADD COLUMN ([A-Za-z_][A-Za-z0-9_]*) .* NOT NULL DEFAULT `)
 	migUniqueIndexRe = regexp.MustCompile(
@@ -569,6 +612,30 @@ func migRequiredUniqueHint(d *SkyDb, text string, execErr error) string {
 					"so the column is nullable. Database error: %v",
 				table, col, table, table, col, execErr)
 		}
+	}
+	return ""
+}
+
+// migRequiredNoZeroHint explains an op-file migration that failed because it
+// adds a required column with no zero value (`NOT NULL` with no DEFAULT) to a
+// table that has rows. Both dialects refuse that ALTER (SQLite: "Cannot add a
+// NOT NULL column with default value NULL", PostgreSQL: "column … contains
+// null values"), and neither error names the fix. dbMigrateCore calls it
+// only for an op file; it reads the rendered statements and needs the table
+// to hold a row after the rollback. It returns "" otherwise.
+func migRequiredNoZeroHint(d *SkyDb, text string, execErr error) string {
+	if execErr == nil || !strings.Contains(strings.ToLower(execErr.Error()), "null") {
+		return ""
+	}
+	for _, raw := range strings.Split(text, ";\n") {
+		m := migAddNoDefaultRe.FindStringSubmatch(strings.TrimSpace(raw))
+		if m == nil || !codecValidIdent(m[1]) {
+			continue
+		}
+		if n, err := migRowCountUpTo2(d, m[1]); err != nil || n < 1 {
+			continue
+		}
+		return migNoZeroAdvice(m[1], m[2]) + " (the migration was rolled back). Database error: " + execErr.Error()
 	}
 	return ""
 }
