@@ -65,7 +65,8 @@ func TestRenderMigOpCreateTableConstraints(t *testing.T) {
 	for _, want := range []string{
 		"id INTEGER PRIMARY KEY AUTOINCREMENT",
 		"email TEXT NOT NULL UNIQUE",
-		"created_at INTEGER NOT NULL DEFAULT (datetime('now'))",
+		// An integer `now` column takes epoch milliseconds (every op file).
+		"created_at INTEGER NOT NULL DEFAULT (CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))",
 	} {
 		if !strings.Contains(gotSqlite, want) {
 			t.Errorf("sqlite createTable missing %q in:\n%s", want, gotSqlite)
@@ -79,7 +80,7 @@ func TestRenderMigOpCreateTableConstraints(t *testing.T) {
 	for _, want := range []string{
 		"id BIGSERIAL PRIMARY KEY",
 		"email TEXT NOT NULL UNIQUE",
-		"created_at BIGINT NOT NULL DEFAULT now()",
+		"created_at BIGINT NOT NULL DEFAULT (CAST(EXTRACT(EPOCH FROM now()) * 1000 AS BIGINT))",
 	} {
 		if !strings.Contains(gotPg, want) {
 			t.Errorf("pg createTable missing %q in:\n%s", want, gotPg)
@@ -110,10 +111,7 @@ func TestMigrateCreateTableByteMatchesPush(t *testing.T) {
 	for _, driver := range []string{"sqlite", "pgx"} {
 		pushDDL := strings.Join(
 			schemaRenderTable(driver, codecColspecSchemaMap("users", pushColspec, "id")), ";\n")
-		// A v2 op (what `--gen` writes since v0.29.0). A v1 op keeps the
-		// v0.28.1 bytes for checksum stability, see
-		// TestStoreMigrateV1OpsKeepTheV0281Bytes.
-		migDDL, err := renderMigOp(driver, migOp{Kind: "createTable", V: 2, Table: "users", Columns: migColumns})
+		migDDL, err := renderMigOp(driver, migOp{Kind: "createTable", Table: "users", Columns: migColumns})
 		if err != nil {
 			t.Fatalf("%s migrate render error: %v", driver, err)
 		}

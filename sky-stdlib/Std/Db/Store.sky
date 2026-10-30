@@ -512,11 +512,12 @@ uniqueWhere names cond store =
             Ok pred ->
                 addIndex "uniqueWhere" names True pred store
 
-            Err msg ->
+            Err (Error.Error _ info) ->
                 Store
                     { s
                         | problems =
-                            s.problems ++ [ "Store.uniqueWhere: " ++ msg ]
+                            s.problems
+                                ++ [ "Store.uniqueWhere: " ++ info.message ]
                     }
 
 
@@ -598,7 +599,7 @@ textOnly verb name cols resolved =
 
 -- The predicate of a partial index, as SQL with constants only (DDL takes no
 -- bound parameters). A string is quoted with `'` doubled.
-predicateSql : List ( String, String ) -> Cond -> Result String String
+predicateSql : List ( String, String ) -> Cond -> Result Error String
 predicateSql cols c =
     case c of
 
@@ -620,8 +621,9 @@ predicateSql cols c =
 
                     else
                         Err
-                            ("the operator " ++ op
-                                ++ " is not supported in an index predicate")
+                            (Error.invalidInput
+                                ("the operator " ++ op
+                                    ++ " is not supported in an index predicate"))
 
         CondNull col wantNull ->
             case predicateCol cols col of
@@ -685,14 +687,17 @@ predicateSql cols c =
                             Ok (l ++ " " ++ op ++ " " ++ r)
 
         CondText kind _ _ ->
-            Err (kind ++ " is not supported in an index predicate")
+            Err
+                (Error.invalidInput
+                    (kind ++ " is not supported in an index predicate"))
 
         CondNest _ ->
             Err
-                "a subquery or a join condition is not supported in an index predicate"
+                (Error.invalidInput
+                    "a subquery or a join condition is not supported in an index predicate")
 
 
-predicateGroup : List ( String, String ) -> String -> String -> List Cond -> Result String String
+predicateGroup : List ( String, String ) -> String -> String -> List Cond -> Result Error String
 predicateGroup cols sep empty cs =
     case cs of
 
@@ -709,7 +714,7 @@ predicateGroup cols sep empty cs =
                     Err e
 
 
-predicateList : List ( String, String ) -> List Cond -> Result String (List String)
+predicateList : List ( String, String ) -> List Cond -> Result Error (List String)
 predicateList cols cs =
     case cs of
 
@@ -732,7 +737,7 @@ predicateList cols cs =
                             Ok (p :: more)
 
 
-predicateCol : List ( String, String ) -> String -> Result String String
+predicateCol : List ( String, String ) -> String -> Result Error String
 predicateCol cols name =
     let
         col = resolveCol cols name
@@ -744,13 +749,14 @@ predicateCol cols name =
 
             Nothing ->
                 Err
-                    ("unknown column \"" ++ name ++ "\" — columns are "
-                        ++ colNames cols)
+                    (Error.invalidInput
+                        ("unknown column \"" ++ name ++ "\" — columns are "
+                            ++ colNames cols))
 
 
 -- A constant in DDL: text quoted with `'` doubled, a finite number, TRUE or
 -- FALSE (SQLite reads TRUE as 1, which a bool column stores).
-sqlLiteral : SqlValue -> Result String String
+sqlLiteral : SqlValue -> Result Error String
 sqlLiteral v =
     case v of
 
@@ -765,7 +771,7 @@ sqlLiteral v =
                 Ok (String.fromFloat f)
 
             else
-                Err "NaN and Infinity have no SQL literal"
+                Err (Error.invalidInput "NaN and Infinity have no SQL literal")
 
         SqlBool b ->
             if b then
@@ -776,10 +782,11 @@ sqlLiteral v =
 
         _ ->
             Err
-                "an index predicate takes SqlString, SqlInt, SqlFloat or SqlBool values"
+                (Error.invalidInput
+                    "an index predicate takes SqlString, SqlInt, SqlFloat or SqlBool values")
 
 
-sqlLiterals : List SqlValue -> Result String (List String)
+sqlLiterals : List SqlValue -> Result Error (List String)
 sqlLiterals vs =
     case vs of
 

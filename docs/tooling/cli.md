@@ -1037,9 +1037,17 @@ sky db seed                      # run the entry module's seed : Db -> Task Erro
 column, any other field `NOT NULL DEFAULT <declared default, else zero>`, a
 `unique` column gets an `addIndex`, and declared indexes (`Store.index` /
 `uniqueOn` / `uniqueWhere`, `Schema.withIndex`) become `addIndex` / `dropIndex`
-ops. It writes `"v": 2` on each new op, and a file with a v2 op applies with the
-header line `-- sky:migration v2`. A v1 op renders as it did in v0.28.1, so an
-applied file keeps its checksum.
+ops. Every migration file, old or new, renders with this one rule.
+
+The `_sky_migrations` ledger keeps a checksum of each migration file's **ops**
+(a canonical form of the op list, the same on every dialect), not of the SQL
+they render to, and a `kind` column (`ops`, or `sql` for hand-written
+`Db.migrate` SQL). A later change to how an op renders never makes an applied
+file look edited, and an edit to an applied file is still refused (checksum
+mismatch). A ledger written by v0.28 is upgraded on the first migrate, with no
+configuration: the `kind` column is added, and each applied op file is
+re-stamped once with its ops checksum (one log line per file). See
+`docs/migration/v0.29.md`.
 
 `sky db status` compares the committed files against the live `_sky_migrations`
 ledger and **exits non-zero while anything is pending** — a ready-made "is this

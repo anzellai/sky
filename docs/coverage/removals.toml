@@ -723,6 +723,12 @@ reason = "v0.28.0 (unreleased, branch-only, never shipped): with SKY_AI_TRAIN_GR
 owner  = "anzel"
 commit = "feat/std-ai-lifecycle"
 
+[[removal]]
+symbol = "Std.Db.Migrate.migrateApply"
+reason = "v0.29.0: a private (not exposed) kernel alias inside Std.Db.Migrate. migrateOps is now the kernel Db_migrateOps itself, which renders and applies each migration file with its ops checksum, so the private (id, sql) apply step has no caller. No user could reach it; Db.migrate (Std.Db) is unchanged. db_store_migrate_test.go TestStoreMigrateSqliteLegacyLedgerRestamped and its Postgres arm pin the new path."
+owner  = "anzel"
+commit = "feat/realworld-requests"
+
 # ===========================================================================
 # ## The FOURTH ledger: `[[correction]]` — a false credit removed
 # ===========================================================================

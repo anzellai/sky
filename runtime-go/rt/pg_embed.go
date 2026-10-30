@@ -124,7 +124,7 @@ func StopEmbeddedPostgres() {
 // inside `main` skips `defer rt.StopEmbeddedPostgres()` and leaves the embedded
 // postmaster running with nothing left to stop it. That is not hypothetical:
 // `SKY_DB_OP=migrate ./app --embed` is a one-shot deploy step whose whole job is
-// to exit, and Db_migrateApply exits the process itself. Without this, the
+// to exit, and Db_migrateOps / Db_migrateApply exit the process. Without this, the
 // deploy sequence "migrate, then serve" would orphan a postmaster on the first
 // half and adopt it forever on the second.
 //

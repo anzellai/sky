@@ -101,13 +101,6 @@ fn zero_default(kind: &str) -> Option<Value> {
     }
 }
 
-/// The op version `--gen` writes on every new op. A file with a v2 op renders
-/// with the `-- sky:migration v2` header, a v2 `createTable` makes every PK NOT
-/// NULL, and a v2 `addColumn` goes through the runtime's one `renderAddColumn`
-/// (the same renderer `Store.migrate` uses). A v1 op (no `v`) renders exactly as
-/// v0.28.1 did, so an applied migration keeps its checksum.
-pub const OP_VERSION: u64 = 2;
-
 /// The name of a Store index: `ix_<table>_<h>` / `ux_<table>_<h>`, where `<h>`
 /// is 8 hex digits of FNV-1a 32 over `table|cols joined by ,|1 or 0|predicate`.
 /// The runtime's `codecIndexName` (runtime-go/rt/db_migrate_ops.go) computes the
@@ -134,7 +127,7 @@ pub fn index_name(table: &str, cols: &[String], unique: bool, predicate: &str) -
 
 fn add_index_op(table: &str, ix: &SchemaIndex) -> Value {
     let mut op = json!({
-        "kind": "addIndex", "v": OP_VERSION, "table": table,
+        "kind": "addIndex", "table": table,
         "name": ix.name, "indexColumns": ix.columns,
     });
     let m = op.as_object_mut().unwrap();
@@ -156,7 +149,7 @@ fn add_index_op(table: &str, ix: &SchemaIndex) -> Value {
 /// `addIndex` (SQLite refuses UNIQUE in ADD COLUMN).
 fn add_column_ops(table: &str, c: &SchemaColumn, warnings: &mut Vec<String>) -> Vec<Value> {
     let mut op = json!({
-        "kind": "addColumn", "v": OP_VERSION, "table": table,
+        "kind": "addColumn", "table": table,
         "column": c.name, "type": c.kind,
     });
     let m = op.as_object_mut().unwrap();
@@ -267,7 +260,7 @@ pub fn diff(target: &Schema, snapshot: &Schema) -> Diff {
                     })
                     .collect();
                 ops.push(json!({
-                    "kind": "createTable", "v": OP_VERSION,
+                    "kind": "createTable",
                     "table": t.name, "columns": columns,
                 }));
                 for ix in &t.indexes {
@@ -298,7 +291,7 @@ pub fn diff(target: &Schema, snapshot: &Schema) -> Diff {
                 for pi in &prev.indexes {
                     if !t.indexes.contains(pi) {
                         ops.push(json!({
-                            "kind": "dropIndex", "v": OP_VERSION,
+                            "kind": "dropIndex",
                             "table": t.name, "name": pi.name,
                         }));
                     }
@@ -954,7 +947,11 @@ mod tests {
             &Schema::default(),
         );
         assert_eq!(fresh.ops.len(), 2, "{:?}", fresh.ops);
-        assert_eq!(fresh.ops[0]["v"], json!(2));
+        assert!(
+            fresh.ops.iter().all(|op| op.get("v").is_none()),
+            "{:?}",
+            fresh.ops
+        );
         assert_eq!(fresh.ops[1]["kind"], json!("addIndex"));
         let partial = ix("orders", &["slug"], true, "slug <> ''");
         let changed = diff(

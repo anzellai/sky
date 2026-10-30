@@ -1416,19 +1416,25 @@ allowlist rejects characters outside `[A-Za-z0-9_.]`.
   `TestStoreWritePostgres*` Go tests on separate PostgreSQL sessions.
 * **One migrate rule, one renderer** (v0.29.0, user decision D1).
   `Store.migrate` / `sky db push` (`Db_autoMigrate`) and `sky db migrate`
-  (`renderMigOp` of a v2 `addColumn`) render an added column through one Go
+  (`renderMigOp` of an `addColumn` op) render an added column through one Go
   function, `renderAddColumn` (`runtime-go/rt/db_migrate_ops.go`): a
   `Maybe` field is nullable, any other field `NOT NULL DEFAULT <declared,
   else zero>`, a required blob nullable with a warning, a unique column an
   extra unique index. An existing column is never altered. The parity
   fixture `runtime-go/rt/testdata/migrate_parity.json` is held by a Rust test
   (the diff gives its ops) and Go tests on both dialects (the runtime runs
-  exactly `renderMigOp` of those ops). A v1 op renders the v0.28.1 bytes, so
-  an applied migration keeps its ledger checksum; the SQLite apply-time
-  stamp of a v2 file is swapped in after the checksum (`migApplyText`).
-  A v2 file that adds a required unique column to a table with 2 or more
-  rows fails on its unique index; the apply rolls back and names the
-  table, the column and the fix (`migRequiredUniqueHint`).
+  exactly `renderMigOp` of those ops). Every op file, old or new, renders
+  with this one renderer. The ledger checksum of an op file is
+  `migOpsChecksum`, the sha256 of its ops in a canonical form (sorted keys,
+  numbers as written, a `"v"` key dropped), so a renderer change never
+  changes it; hand-written `Db.migrate` SQL and `Ai_migrate` keep the sha256
+  of the SQL text. `_sky_migrations.kind` (`ops` / `sql`) says which; a row
+  with no kind (written by v0.28) of an op file is re-stamped once with the
+  ops checksum (`migLedgerCheck`, shared by apply and `SKY_DB_OP=status`).
+  The SQLite apply-time stamp of an op file is swapped in at apply
+  (`migApplyText`), never in hand-written SQL. An op file that adds a
+  required unique column to a table with 2 or more rows fails on its unique
+  index; the apply rolls back and names the table, the column and the fix (`migRequiredUniqueHint`).
   Every literal in index DDL is a constant rendered by Store
   (`predicateSql`), and every index column is an identifier (B10).
 * **One statement per Store call, joins and subqueries included.** A

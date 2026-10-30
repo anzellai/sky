@@ -110,6 +110,9 @@ fn internal_runtime_bases(module: &str) -> &'static [&'static str] {
             "execObject",
             "execObjectMany",
             "execObjectWith",
+            // v0.29.0: Std.Db.Migrate.migrateOps renders and applies op files
+            // through the ledger with the ops checksum.
+            "migrateOps",
             // v0.29.0: the values of one record as `List SqlValue` (Store renders
             // the INSERT of insertOrIgnore / upsertWith / insertReturning).
             "objectSqlValues",

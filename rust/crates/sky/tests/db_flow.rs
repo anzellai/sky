@@ -197,11 +197,12 @@ fn committed_migration_preserves_column_constraints_and_matches_push() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// v0.29.0, user decision D1: after a field is added, `--gen` writes a v2
-/// `addColumn` that keeps the declared default and an `addIndex`; the applied
-/// file starts with the v2 header; `sky db status` shows no drift on a second
-/// run; and `sky db push` on a copy of the old database runs the same ALTER,
-/// so both paths leave the same DDL.
+/// v0.29.0, user decision D1: after a field is added, `--gen` writes an
+/// `addColumn` that keeps the declared default and an `addIndex`, with no op
+/// version and no header; the ledger records the file by its ops checksum
+/// (kind `ops`); a second `sky db migrate` shows no drift; and `sky db push`
+/// on a copy of the old database runs the same ALTER, so both paths leave the
+/// same DDL.
 #[test]
 fn added_field_follows_one_migrate_rule_on_both_paths() {
     if !required(Need::Go, tool_on_path("go")) || !required(Need::Sqlite3, tool_on_path("sqlite3"))
@@ -252,7 +253,10 @@ fn added_field_follows_one_migrate_rule_on_both_paths() {
         .find(|p| p.to_string_lossy().contains("add_rank"))
         .expect("the add_rank migration file");
     let body = std::fs::read_to_string(&mig).unwrap();
-    assert!(body.contains(r#""v": 2"#), "no v2 op:\n{body}");
+    assert!(
+        !body.contains(r#""v":"#) && !body.contains("sky:migration"),
+        "--gen wrote an op version or a header:\n{body}"
+    );
     assert!(
         body.contains(r#""int": 7"#),
         "the declared default was lost (B9):\n{body}"
@@ -276,6 +280,16 @@ fn added_field_follows_one_migrate_rule_on_both_paths() {
         .output()
         .expect("spawn sqlite3");
     assert_eq!(String::from_utf8_lossy(&rank.stdout).trim(), "7", "old row");
+    let kind = Command::new("sqlite3")
+        .arg(dir.join("app.db"))
+        .arg("SELECT kind FROM _sky_migrations WHERE name LIKE '%add_rank%'")
+        .output()
+        .expect("spawn sqlite3");
+    assert_eq!(
+        String::from_utf8_lossy(&kind.stdout).trim(),
+        "ops",
+        "the ledger did not record the file by its ops checksum"
+    );
 
     let out = Command::new(SKY)
         .args(["db", "push"])

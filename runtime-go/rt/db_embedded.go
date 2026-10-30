@@ -26,8 +26,8 @@ var SkyEmbeddedMigrations string
 // It opens the app's database from the standard config (DATABASE_URL /
 // <PREFIX>_DB_PATH), renders each op to dialect-correct SQL, and applies them
 // through the checksummed `_sky_migrations` ledger (at most once each) —
-// delegating to the same `Db_renderMigrations` + `Db_migrateApply` kernels the
-// `sky db migrate` CLI uses. `Db_migrateApply` prints the human summary and exits
+// delegating to the same `Db_migrateOps` kernel the
+// `sky db migrate` CLI uses. `Db_migrateOps` prints the human summary and exits
 // the process itself under `SKY_DB_OP`, so control does not return in that path.
 //
 // The call site is `main`, NOT the generated `embedded_migrations.go` `init()`
@@ -53,15 +53,15 @@ func MaybeApplyEmbeddedMigrationsAndExit() {
 	// Open the DB from the app's standard config (unit arg → DB_PATH/DATABASE_URL).
 	connRes := AnyTaskRun(Db_connect(struct{}{}))
 	if tag, conn, _ := anyResultView(connRes); tag == 0 {
-		// Render dialect-correct SQL, then apply. Db_migrateApply prints a summary
-		// and exits (0 / 1) itself under SKY_DB_OP.
-		renderRes := AnyTaskRun(Db_renderMigrations(conn, SkyEmbeddedMigrations))
-		if rtag, pairs, _ := anyResultView(renderRes); rtag == 0 {
-			_ = AnyTaskRun(Db_migrateApply(conn, pairs))
-			ExitProcess(0)
+		// Render dialect-correct SQL and apply it with the ops checksum.
+		// Db_migrateOps prints a summary and exits (0 / 1) itself under
+		// SKY_DB_OP; an error it returns (a file that does not render) is
+		// reported here.
+		if rtag, _, e := anyResultView(AnyTaskRun(Db_migrateOps(conn, SkyEmbeddedMigrations))); rtag != 0 {
+			fmt.Fprintf(os.Stderr, "db: could not apply embedded migrations: %v\n", e)
+			ExitProcess(1)
 		}
-		fmt.Fprintln(os.Stderr, "db: could not render embedded migrations")
-		ExitProcess(1)
+		ExitProcess(0)
 	}
 	fmt.Fprintln(os.Stderr,
 		"db: could not open database for embedded migrations (set DATABASE_URL or "+

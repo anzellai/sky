@@ -94,10 +94,16 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
     definition), looked up by table and name. `Store.Table` has a new field
     `indexes`; `Std.Db.Schema.toProject` carries `withIndex` /
     `withUniqueIndex` into it, so `sky db push` and `--gen` see them.
-  - `--gen` writes `"v": 2` on each new op, emits `addIndex` / `dropIndex`,
-    and a file with a v2 op renders with the header line
-    `-- sky:migration v2`. A v1 op renders the v0.28.1 bytes, so every
-    migration file that an app applied keeps its checksum.
+  - `--gen` emits `addIndex` / `dropIndex`. Every migration file, old or
+    new, renders with one rule (no op version, no header).
+  - `sky db migrate`: the `_sky_migrations` ledger keeps a checksum of each
+    migration file's ops (a canonical form, the same on every dialect), not
+    of the SQL they render to, and a `kind` column. A renderer change never
+    makes an applied file look edited. A v0.28 ledger is upgraded on the
+    first migrate: the column is added and each applied op file is
+    re-stamped once, with a log line. Hand-written `Db.migrate` SQL keeps
+    the SQL-text checksum. See `docs/migration/v0.29.md`, "sky db migrate:
+    one rule for every migration file".
 
 - **`Std.Image.Canvas`: draw an image on the server.** A `Canvas` is a
   persistent display list: `blank` or `fromImage`, then `rect`,

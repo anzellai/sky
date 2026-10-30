@@ -291,7 +291,7 @@ func codecIndexExists(d *SkyDb, table, name string) (bool, error) {
 
 // codecTableHasManyRows reports whether a table holds 2 or more rows: the
 // count at which one default value in a unique column must collide. The same
-// threshold explains a v2 migration file (migRequiredUniqueHint), so
+// threshold explains a migration file (migRequiredUniqueHint), so
 // Store.migrate and `sky db migrate` agree.
 func codecTableHasManyRows(d *SkyDb, table string) (bool, error) {
 	r, ok := AnyTaskRun(dbQueryRows(d, "SELECT 1 AS x FROM "+table+" LIMIT 2", []any{})).(SkyResult[any, any])

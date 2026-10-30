@@ -12,7 +12,7 @@ import (
 )
 
 // D1 parity on a real PostgreSQL table with a row: Store.migrate runs the
-// same SQL as renderMigOp of the v2 ops `sky db migrate --gen` writes.
+// same SQL as renderMigOp of the ops `sky db migrate --gen` writes.
 func TestStoreMigratePostgresParity(t *testing.T) {
 	assertMigrateParity(t, openStoreQueryPostgres(t, ""))
 }
@@ -123,8 +123,43 @@ func TestStoreMigratePostgresSchemaNowOnTimestampIsMillis(t *testing.T) {
 	assertSchemaNowIsMillis(t, openStoreQueryPostgres(t, ""), "schema_now_ms_pg")
 }
 
-// A required unique column that a v2 migration adds to a table with 2 rows:
+// A required unique column that a migration file adds to a table with 2 rows:
 // the apply error names the table, the column and the fix, and rolls back.
 func TestStoreMigratePostgresRequiredUniqueOnRowsIsExplained(t *testing.T) {
 	assertRequiredUniqueOnRowsIsExplained(t, openStoreQueryPostgres(t, ""), "codes_ru_pg")
+}
+
+// openLedgerSchemaPostgres opens a connection whose search_path is a fresh
+// schema, so a test owns its own `_sky_migrations` ledger (the shared test
+// database already has one, with the `kind` column).
+func openLedgerSchemaPostgres(t *testing.T, schema string) *SkyDb {
+	t.Helper()
+	admin := openStoreQueryPostgres(t, "")
+	drop := func() { _, _ = admin.conn.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE") }
+	drop()
+	if _, err := admin.conn.Exec("CREATE SCHEMA " + schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(drop)
+	d := openStoreQueryPostgres(t, "search_path="+schema)
+	d.conn.SetMaxOpenConns(1)
+	return d
+}
+
+// An op file applied by v0.28 (a ledger without `kind`, the checksum of the
+// v0.28.1 SQL) is re-stamped once; the second run is a no-op.
+func TestStoreMigratePostgresLegacyLedgerRestamped(t *testing.T) {
+	assertLegacyLedgerRestamped(t, openLedgerSchemaPostgres(t, "sky_mig_legacy_restamp"))
+}
+
+func TestStoreMigratePostgresLegacyHandWrittenSql(t *testing.T) {
+	assertLegacyHandWrittenSql(t, openLedgerSchemaPostgres(t, "sky_mig_legacy_hand"))
+}
+
+func TestStoreMigratePostgresEditedOpFileFails(t *testing.T) {
+	assertEditedOpFileFails(t, openLedgerSchemaPostgres(t, "sky_mig_legacy_edit"))
+}
+
+func TestStoreMigratePostgresPendingV028FileAppliesWithTheNewRule(t *testing.T) {
+	assertPendingV028FileAppliesWithTheNewRule(t, openLedgerSchemaPostgres(t, "sky_mig_legacy_pending"))
 }

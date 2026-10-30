@@ -7,6 +7,8 @@
 package rt
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -21,10 +23,10 @@ import (
 // the shape Db_dumpProject writes, so a captured default round-trips dump →
 // schema.json → op → renderMigOp unchanged.
 //
-// NowAtApply is the v2 addColumn form of a `Store.defaultNow` column.
+// NowAtApply is the addColumn form of a `Store.defaultNow` column.
 // PostgreSQL renders it `now()`. SQLite refuses a non-constant default in
 // ADD COLUMN, so there it renders the constant token migNowToken, which
-// dbMigrateCore swaps for the apply time (only in a v2 text).
+// dbMigrateCore swaps for the apply time (only in an op-file text).
 type migDefault struct {
 	Int        *int64   `json:"int,omitempty"`
 	Text       *string  `json:"text,omitempty"`
@@ -34,16 +36,15 @@ type migDefault struct {
 	NowAtApply bool     `json:"nowAtApply,omitempty"`
 }
 
-// The v2 migration text. `sky db migrate --gen` writes `"v": 2` on every new
-// op. A file with any v2 op renders with migV2Header as its first line, and
-// a SQLite `defaultNow` column added by a v2 op renders the constant
-// migNowToken. The text is a pure function of the op JSON, so its checksum is
-// stable. dbMigrateCore swaps the token for the apply time AFTER it takes the
-// checksum, and only in a text that starts with the header. A v1 op (no `v`)
-// renders exactly as v0.28.1 did, so an applied v1 migration keeps its
-// checksum.
+// The migration text of an op file. A SQLite `defaultNow` column added by an
+// op renders the constant migNowToken, so the text is a pure function of the
+// op JSON. dbMigrateCore swaps the token for the apply time, and only in the
+// text of an op file (never in hand-written Db.migrate SQL).
+//
+// The ledger checksum of an op file is NOT taken over this text: it is
+// migOpsChecksum, a checksum of the ops themselves, so a later change to the
+// renderer never makes an applied file look edited.
 const (
-	migV2Header       = "-- sky:migration v2"
 	migNowToken       = "'__sky_now_at_apply__'"
 	migNowMsToken     = "'__sky_now_ms_at_apply__'"
 	sqliteNowLayout   = "2006-01-02 15:04:05"
@@ -56,21 +57,17 @@ func sqliteNowLiteral() string {
 	return "'" + time.Now().UTC().Format(sqliteNowLayout) + "'"
 }
 
-// migApplyText is the SQL that dbMigrateCore runs for a migration text. Only
-// a v2 text (first line migV2Header) has its migNowToken replaced with the
-// apply time. Every other text (v1 files, hand-written Db.migrate SQL,
-// Ai_migrate) runs as given.
+// migApplyText is the SQL that dbMigrateCore runs for the text of an op file:
+// migNowToken is replaced with the apply time. The caller takes the checksum
+// first, and never calls this for hand-written Db.migrate SQL.
 func migApplyText(stmt string) string {
-	if !strings.HasPrefix(stmt, migV2Header+"\n") {
-		return stmt
-	}
 	now := time.Now().UTC()
 	stmt = strings.ReplaceAll(stmt, migNowToken, "'"+now.Format(sqliteNowLayout)+"'")
 	return strings.ReplaceAll(stmt, migNowMsToken, strconv.FormatInt(now.UnixMilli(), 10))
 }
 
 // migNowMs is the SQLite epoch-milliseconds constant that goes with nowAt:
-// the v2 token for the v2 token, else the time nowAt names.
+// the milliseconds token for migNowToken, else the time nowAt names.
 func migNowMs(nowAt string) string {
 	if nowAt == migNowToken {
 		return migNowMsToken
@@ -92,9 +89,10 @@ type migColumn struct {
 	Default  *migDefault `json:"default,omitempty"`
 }
 
+// migOp is one op of a migration file. A `"v"` key, which an earlier v0.29
+// development build of `--gen` wrote, is accepted and ignored.
 type migOp struct {
 	Kind         string      `json:"kind"`
-	V            int         `json:"v,omitempty"`
 	Table        string      `json:"table,omitempty"`
 	Column       string      `json:"column,omitempty"`
 	Type         string      `json:"type,omitempty"`
@@ -227,7 +225,7 @@ func migAddDefault(driver, kind string, d *migDefault, nowAt string) string {
 }
 
 // renderAddColumn is the ONE renderer of an added column. Db_autoMigrate
-// (`Store.migrate`, `sky db push`) and renderMigOp for a v2 addColumn op
+// (`Store.migrate`, `sky db push`) and renderMigOp for an addColumn op
 // (`sky db migrate`) both call it, so the two paths give the same DDL per
 // dialect by construction. The rule (user decision D1):
 //
@@ -238,7 +236,7 @@ func migAddDefault(driver, kind string, d *migDefault, nowAt string) string {
 //   - a required blob has no simple zero: it is added nullable, and a warning
 //     is returned;
 //   - a `now` default is `now()` on PostgreSQL and the constant nowAt on
-//     SQLite (the clock at the ALTER, or migNowToken in a v2 op);
+//     SQLite (the clock at the ALTER, or migNowToken in an op file);
 //   - a unique column is added without UNIQUE (SQLite refuses it in ADD
 //     COLUMN) and then gets a unique index named by codecIndexName. A required
 //     unique column cannot be added to a table with rows: every row would get
@@ -322,13 +320,6 @@ func codecIndexName(table string, cols []string, unique bool, where string) stri
 	return fmt.Sprintf("%s%s_%0*x", prefix, t, migIndexHashChars, h.Sum32())
 }
 
-func migColDefaultClause(driver string, d *migDefault) string {
-	if d == nil {
-		return ""
-	}
-	return " DEFAULT " + schemaDefault(driver, migDefKind(d), migDefVal(d))
-}
-
 // renderMigOp → the dialect-correct SQL for one op.
 func renderMigOp(driver string, op migOp) (string, error) {
 	if !codecValidIdent(op.Table) && op.Kind != "dropIndex" && op.Kind != "raw" {
@@ -340,21 +331,13 @@ func renderMigOp(driver string, op migOp) (string, error) {
 		// (schemaColMap in db_codec.go) so the committed-migration CREATE TABLE is
 		// byte-identical to `sky db push` — carrying serial AUTOINCREMENT/BIGSERIAL,
 		// UNIQUE, and DEFAULT. Both paths converge on schemaRenderTable; the two DDL
-		// renderings cannot diverge.
-		//
-		// A v1 op keeps the v0.28.1 bytes (a non-serial PK without NOT NULL,
-		// a `now` default as timestamp text on every kind), so an applied v1
-		// migration keeps its checksum. A v2 op gets B8 (a PK is always NOT
-		// NULL) and an integer `now` column in epoch milliseconds.
+		// renderings cannot diverge. B8: a PK is always NOT NULL, and an
+		// integer `now` column takes epoch milliseconds.
 		cols := make([]any, 0, len(op.Columns))
 		for _, c := range op.Columns {
-			m := schemaColMap(
+			cols = append(cols, schemaColMap(
 				c.Name, c.Type, c.Pk, c.Nullable, c.Unique, c.Autoinc,
-				migDefKind(c.Default), migDefVal(c.Default))
-			if op.V < 2 {
-				m["Legacy"] = true
-			}
-			cols = append(cols, m)
+				migDefKind(c.Default), migDefVal(c.Default)))
 		}
 		sm := map[string]any{"Name": op.Table, "Columns": cols, "Indexes": []any{}}
 		return strings.Join(schemaRenderTable(driver, sm), ";\n"), nil
@@ -363,23 +346,14 @@ func renderMigOp(driver string, op migOp) (string, error) {
 		if !codecValidIdent(op.Column) {
 			return "", fmt.Errorf("migration: invalid column identifier %q", op.Column)
 		}
-		if op.V >= 2 {
-			stmts, _, err := renderAddColumn(driver, op.Table, migColumn{
-				Name: op.Column, Type: op.Type, Nullable: op.Nullable,
-				Unique: op.Unique, Default: op.Default,
-			}, migNowToken, false)
-			if err != nil {
-				return "", fmt.Errorf("migration: %v", err)
-			}
-			return strings.Join(stmts, ";\n"), nil
+		stmts, _, err := renderAddColumn(driver, op.Table, migColumn{
+			Name: op.Column, Type: op.Type, Nullable: op.Nullable,
+			Unique: op.Unique, Default: op.Default,
+		}, migNowToken, false)
+		if err != nil {
+			return "", fmt.Errorf("migration: %v", err)
 		}
-		s := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", op.Table, op.Column, schemaTypeName(driver, codecColKindToSchema(op.Type)))
-		if !op.Nullable {
-			s += " NOT NULL" + migColDefaultClause(driver, op.Default)
-		} else if op.Default != nil {
-			s += migColDefaultClause(driver, op.Default)
-		}
-		return s, nil
+		return strings.Join(stmts, ";\n"), nil
 
 	case "dropColumn":
 		if !codecValidIdent(op.Column) {
@@ -422,50 +396,124 @@ func renderMigOp(driver string, op migOp) (string, error) {
 }
 
 // Db_renderMigrations : Db -> String(json) -> Task Error (List (String, String)).
-// Renders a JSON array of {id, ops} into (id, sql) pairs for Db.migrateApply
-// (which owns the checksummed _sky_migrations ledger).
+// Renders a JSON array of {id, ops} into (id, sql) pairs, without applying
+// (`sky db migrate --sql`). Db_migrateOps applies them.
 func Db_renderMigrations(connArg, jsonArg any) any {
 	return func() any {
 		d, ok := connArg.(*SkyDb)
 		if !ok {
 			return Err[any, any](ErrInvalidInput("renderMigrations: first argument is not a Db"))
 		}
-		var files []migFile
-		if err := json.Unmarshal([]byte(AsString(jsonArg)), &files); err != nil {
-			return Err[any, any](ErrInvalidInput("renderMigrations: bad JSON: " + err.Error()))
+		entries, err := migOpEntries(d.driver, AsString(jsonArg))
+		if err != nil {
+			return Err[any, any](ErrInvalidInput("renderMigrations: " + err.Error()))
 		}
-		out := make([]any, 0, len(files))
-		for _, f := range files {
-			text, err := renderMigFile(d.driver, f)
-			if err != nil {
-				return Err[any, any](ErrInvalidInput(err.Error()))
-			}
-			out = append(out, T2[any, any]{V0: f.Id, V1: text})
+		out := make([]any, 0, len(entries))
+		for _, e := range entries {
+			out = append(out, T2[any, any]{V0: e.name, V1: e.sql})
 		}
 		return Ok[any, any](out)
 	}
 }
 
-// renderMigFile renders one migration file to the text the ledger checksums.
-// A file with any v2 op starts with the migV2Header line.
+// Db_migrateOps : Db -> String(json) -> Task Error (List String).
+// The kernel behind Std.Db.Migrate.migrateOps, `sky db migrate` and
+// `SKY_DB_OP=migrate ./app`: renders each {id, ops} file and applies it
+// through the `_sky_migrations` ledger with the ops checksum (migOpsChecksum).
+// Under SKY_DB_OP it reports and exits, as Db_migrateApply does.
+func Db_migrateOps(connArg, jsonArg any) any {
+	raw := AsString(jsonArg)
+	return dbMigrateTask(connArg, func(d *SkyDb) ([]migEntry, error) {
+		return migOpEntries(d.driver, raw)
+	})
+}
+
+// migEntry is one migration for dbMigrateCore. opsSum is "" for hand-written
+// SQL (Db.migrate): its ledger checksum is the sha256 of sql. For an op file
+// it is migOpsChecksum of the file's ops, and the ledger keeps that instead.
+type migEntry struct {
+	name   string
+	sql    string
+	opsSum string
+}
+
+func (e migEntry) isOps() bool { return e.opsSum != "" }
+
+// migSQLChecksum is the ledger checksum of hand-written SQL, and the checksum
+// v0.28 recorded for every migration.
+func migSQLChecksum(sql string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(sql)))
+}
+
+// migOpsChecksum is the ledger checksum of an op file: the sha256 of its ops
+// in a canonical form. The ops are parsed as JSON (numbers kept as written),
+// a `"v"` key on an op is dropped (an earlier v0.29 build of `--gen` wrote
+// it), and the list is written back with sorted keys and no spaces. The form
+// does not depend on the dialect or on the renderer, so a change to how an op
+// renders never changes the checksum of a file that was already applied.
+func migOpsChecksum(ops json.RawMessage) (string, error) {
+	dec := json.NewDecoder(bytes.NewReader(ops))
+	dec.UseNumber()
+	var list []any
+	if err := dec.Decode(&list); err != nil {
+		return "", err
+	}
+	for _, op := range list {
+		if m, ok := op.(map[string]any); ok {
+			delete(m, "v")
+		}
+	}
+	canon, err := json.Marshal(list)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(append([]byte("sky-migration-ops:"), canon...))), nil
+}
+
+// migOpEntries parses a JSON array of {id, ops} migration files and renders
+// each for the driver. Every entry carries its ops checksum.
+func migOpEntries(driver, raw string) ([]migEntry, error) {
+	var files []struct {
+		Id  string          `json:"id"`
+		Ops json.RawMessage `json:"ops"`
+	}
+	if err := json.Unmarshal([]byte(raw), &files); err != nil {
+		return nil, fmt.Errorf("bad JSON: %v", err)
+	}
+	out := make([]migEntry, 0, len(files))
+	for _, f := range files {
+		ops := f.Ops
+		if len(bytes.TrimSpace(ops)) == 0 || string(bytes.TrimSpace(ops)) == "null" {
+			ops = json.RawMessage("[]")
+		}
+		var typed []migOp
+		if err := json.Unmarshal(ops, &typed); err != nil {
+			return nil, fmt.Errorf("migration %q: bad ops: %v", f.Id, err)
+		}
+		text, err := renderMigFile(driver, migFile{Id: f.Id, Ops: typed})
+		if err != nil {
+			return nil, err
+		}
+		sum, err := migOpsChecksum(ops)
+		if err != nil {
+			return nil, fmt.Errorf("migration %q: bad ops: %v", f.Id, err)
+		}
+		out = append(out, migEntry{name: f.Id, sql: text, opsSum: sum})
+	}
+	return out, nil
+}
+
+// renderMigFile renders one migration file to the SQL that applies it.
 func renderMigFile(driver string, f migFile) (string, error) {
-	v2 := false
 	body := make([]string, 0, len(f.Ops))
 	for _, op := range f.Ops {
-		if op.V >= 2 {
-			v2 = true
-		}
 		s, err := renderMigOp(driver, op)
 		if err != nil {
 			return "", err
 		}
 		body = append(body, s)
 	}
-	text := strings.Join(body, ";\n")
-	if v2 {
-		return migV2Header + "\n" + text, nil
-	}
-	return text, nil
+	return strings.Join(body, ";\n"), nil
 }
 
 var (
@@ -475,24 +523,24 @@ var (
 		`^CREATE UNIQUE INDEX IF NOT EXISTS [A-Za-z_][A-Za-z0-9_]* ON ([A-Za-z_][A-Za-z0-9_]*) \(([^)]*)\)`)
 )
 
-// migRequiredUniqueHint explains a v2 migration that failed because it adds
-// a required unique column to a table that already has 2 or more rows.
+// migRequiredUniqueHint explains an op-file migration that failed because it
+// adds a required unique column to a table that already has 2 or more rows.
 // `sky db migrate --gen` writes such a column as an addColumn op (NOT NULL
 // DEFAULT <declared, else zero>) and then an addIndex op (UNIQUE). Every row
 // that exists takes the same default, so the unique index fails, and the
 // database error names an index, not the cause. The text is a pure function
 // of the op JSON, so the hint reads the rendered statements: a column that
 // this text adds NOT NULL and then puts in a UNIQUE index of the same table.
-// It is used only when the error is a unique violation and, after the
-// rollback, the table holds 2 or more rows. It returns "" otherwise, and the
-// caller reports the database error as it is.
+// dbMigrateCore calls it only for an op file, only when the error is a unique
+// violation, and the hint needs the table to hold 2 or more rows after the
+// rollback. It returns "" otherwise, and the caller reports the database
+// error as it is.
 func migRequiredUniqueHint(d *SkyDb, text string, execErr error) string {
-	if execErr == nil || !strings.HasPrefix(text, migV2Header+"\n") ||
-		!strings.Contains(strings.ToLower(execErr.Error()), "unique") {
+	if execErr == nil || !strings.Contains(strings.ToLower(execErr.Error()), "unique") {
 		return ""
 	}
 	added := map[string]bool{}
-	for _, raw := range strings.Split(strings.TrimPrefix(text, migV2Header+"\n"), ";\n") {
+	for _, raw := range strings.Split(text, ";\n") {
 		stmt := strings.TrimSpace(raw)
 		if m := migAddRequiredRe.FindStringSubmatch(stmt); m != nil {
 			added[m[1]+"."+m[2]] = true

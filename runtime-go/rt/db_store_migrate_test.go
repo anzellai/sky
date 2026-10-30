@@ -3,7 +3,7 @@ package rt
 // Std.Db.Store migrate, SQLite arm and pure renderers (v0.29.0, batch C).
 //
 // User decision D1: `Store.migrate` (Db_autoMigrate) and `sky db migrate
-// --gen` (renderMigOp of a v2 op) follow ONE rule. A Maybe field gives a
+// --gen` (renderMigOp of an op) follow ONE rule. A Maybe field gives a
 // nullable column, any other field NOT NULL DEFAULT <declared, else zero>.
 // Both paths render an added column through renderAddColumn.
 //
@@ -12,7 +12,7 @@ package rt
 // B10: renderMigOp addIndex spliced unchecked column names into DDL.
 
 import (
-	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -91,83 +91,83 @@ func TestStoreMigrateB10_AddIndexColumnsAreValidated(t *testing.T) {
 	}
 }
 
-// --- v1 golden bytes: an applied v1 migration keeps its checksum -------------
+// --- One renderer for every op file: no header, the stamp at apply ----------
 
-func TestStoreMigrateV1OpsKeepTheV0281Bytes(t *testing.T) {
-	zero := int64(0)
-	create := migOp{Kind: "createTable", Table: "users", Columns: []migColumn{
-		{Name: "id", Type: "text", Pk: true},
-		{Name: "email", Type: "text", Unique: true},
-		{Name: "age", Type: "int", Default: &migDefault{Int: &zero}},
-		{Name: "nick", Type: "text", Nullable: true},
-	}}
-	add := migOp{Kind: "addColumn", Table: "users", Column: "score", Type: "int", Default: &migDefault{Int: &zero}}
-	addNull := migOp{Kind: "addColumn", Table: "users", Column: "bio", Type: "text", Nullable: true}
-	golden := map[string][]string{
-		"sqlite": {
-			"CREATE TABLE IF NOT EXISTS users (\n  id TEXT PRIMARY KEY,\n  email TEXT NOT NULL UNIQUE,\n  age INTEGER NOT NULL DEFAULT 0,\n  nick TEXT\n)",
-			"ALTER TABLE users ADD COLUMN score INTEGER NOT NULL DEFAULT 0",
-			"ALTER TABLE users ADD COLUMN bio TEXT",
-		},
-		"pgx": {
-			"CREATE TABLE IF NOT EXISTS users (\n  id TEXT PRIMARY KEY,\n  email TEXT NOT NULL UNIQUE,\n  age BIGINT NOT NULL DEFAULT 0,\n  nick TEXT\n)",
-			"ALTER TABLE users ADD COLUMN score BIGINT NOT NULL DEFAULT 0",
-			"ALTER TABLE users ADD COLUMN bio TEXT",
-		},
-	}
-	for driver, want := range golden {
-		for i, op := range []migOp{create, add, addNull} {
-			got, err := renderMigOp(driver, op)
-			if err != nil || got != want[i] {
-				t.Errorf("%s op %d: got %q err=%v\nwant %q", driver, i, got, err, want[i])
-			}
-		}
-		text, err := renderMigFile(driver, migFile{Id: "001", Ops: []migOp{create, add}})
-		if err != nil || strings.Contains(text, migV2Header) {
-			t.Errorf("%s: a v1 file gained the v2 header: %q err=%v", driver, text, err)
-		}
-	}
-}
-
-// --- v2 header and the apply-time stamp -------------------------------------
-
-func TestStoreMigrateV2HeaderAndNowToken(t *testing.T) {
-	op := migOp{Kind: "addColumn", V: 2, Table: "orders", Column: "seen_at", Type: "text",
+func TestStoreMigrateOpFileHasNoHeaderAndSwapsNowAtApply(t *testing.T) {
+	op := migOp{Kind: "addColumn", Table: "orders", Column: "seen_at", Type: "text",
 		Default: &migDefault{NowAtApply: true}}
 	text, err := renderMigFile("sqlite", migFile{Id: "002", Ops: []migOp{op}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := migV2Header + "\nALTER TABLE orders ADD COLUMN seen_at TEXT NOT NULL DEFAULT " + migNowToken
-	if text != want {
-		t.Fatalf("sqlite v2 text:\n got %q\nwant %q", text, want)
+	if want := "ALTER TABLE orders ADD COLUMN seen_at TEXT NOT NULL DEFAULT " + migNowToken; text != want {
+		t.Fatalf("sqlite text:\n got %q\nwant %q", text, want)
 	}
-	pg, _ := renderMigFile("pgx", migFile{Id: "002", Ops: []migOp{op}})
-	if pg != migV2Header+"\nALTER TABLE orders ADD COLUMN seen_at TEXT NOT NULL DEFAULT now()" {
-		t.Fatalf("pg v2 text: %q", pg)
+	if pg, _ := renderMigFile("pgx", migFile{Id: "002", Ops: []migOp{op}}); pg != "ALTER TABLE orders ADD COLUMN seen_at TEXT NOT NULL DEFAULT now()" {
+		t.Fatalf("pg text: %q", pg)
 	}
 	applied := migApplyText(text)
 	if strings.Contains(applied, migNowToken) || !regexp.MustCompile(`DEFAULT '\d{4}-\d\d-\d\d \d\d:\d\d:\d\d'$`).MatchString(applied) {
-		t.Fatalf("the v2 token was not swapped for the apply time: %q", applied)
-	}
-	// Hand-written SQL (Db.migrate) that holds the token text but no header
-	// runs unchanged.
-	raw := "INSERT INTO notes (body) VALUES (" + migNowToken + ")"
-	if migApplyText(raw) != raw {
-		t.Fatalf("a text without the v2 header was rewritten")
+		t.Fatalf("the token was not swapped for the apply time: %q", applied)
 	}
 }
 
-func migrateCoreSqlite(t *testing.T, d *SkyDb, pairs []any) SkyResult[any, any] {
+// Hand-written Db.migrate SQL that holds the token text runs unchanged.
+func TestStoreMigrateHandWrittenSqlKeepsTheTokenText(t *testing.T) {
+	d := openStoreQueryDb(t)
+	raw := "CREATE TABLE notes (body TEXT);\nINSERT INTO notes (body) VALUES (" + migNowToken + ")"
+	if r := migrateSql(t, d, "001_notes", raw); r.Tag != 0 {
+		t.Fatalf("apply: %+v", r)
+	}
+	var body string
+	_ = d.conn.QueryRow("SELECT body FROM notes").Scan(&body)
+	if "'"+body+"'" != migNowToken {
+		t.Fatalf("hand-written SQL was rewritten: %q", body)
+	}
+}
+
+// migrateOpsJson runs Db_migrateOps (`sky db migrate`) on a JSON array of
+// migration files.
+func migrateOpsJson(t *testing.T, d *SkyDb, files string) SkyResult[any, any] {
 	t.Helper()
-	r, ok := dbMigrateCore(d, pairs, "", func(_ string, e any) any { return e }).(SkyResult[any, any])
+	r, ok := AnyTaskRun(Db_migrateOps(d, files)).(SkyResult[any, any])
 	if !ok {
-		t.Fatalf("dbMigrateCore returned a non-Result")
+		t.Fatalf("Db_migrateOps returned a non-Result")
 	}
 	return r
 }
 
-func TestStoreMigrateV2SqliteNowAppliedOnceWithOneChecksum(t *testing.T) {
+// migrateSql runs Db_migrateApply (`Db.migrate`) on one hand-written migration.
+func migrateSql(t *testing.T, d *SkyDb, name, sqlText string) SkyResult[any, any] {
+	t.Helper()
+	r, ok := AnyTaskRun(Db_migrateApply(d, []any{T2[any, any]{V0: name, V1: sqlText}})).(SkyResult[any, any])
+	if !ok {
+		t.Fatalf("Db_migrateApply returned a non-Result")
+	}
+	return r
+}
+
+func migLedgerRow(t *testing.T, d *SkyDb, name string) (string, string) {
+	t.Helper()
+	var sum string
+	var kind sql.NullString
+	if err := d.conn.QueryRow("SELECT checksum, kind FROM _sky_migrations WHERE name = "+d.placeholder(1), name).
+		Scan(&sum, &kind); err != nil {
+		t.Fatalf("ledger row %s: %v", name, err)
+	}
+	return sum, kind.String
+}
+
+func opsChecksumOf(t *testing.T, ops string) string {
+	t.Helper()
+	sum, err := migOpsChecksum(json.RawMessage(ops))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sum
+}
+
+func TestStoreMigrateSqliteNowAppliedOnceWithTheOpsChecksum(t *testing.T) {
 	d := openStoreQueryDb(t)
 	for _, s := range []string{
 		"CREATE TABLE orders (id TEXT PRIMARY KEY, status TEXT)",
@@ -177,11 +177,9 @@ func TestStoreMigrateV2SqliteNowAppliedOnceWithOneChecksum(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	op := migOp{Kind: "addColumn", V: 2, Table: "orders", Column: "seen_at", Type: "text",
-		Default: &migDefault{NowAtApply: true}}
-	text, _ := renderMigFile("sqlite", migFile{Id: "002_seen", Ops: []migOp{op}})
-	pairs := []any{T2[any, any]{V0: "002_seen", V1: text}}
-	if r := migrateCoreSqlite(t, d, pairs); r.Tag != 0 || len(AsList(r.OkValue)) != 1 {
+	ops := `[{"kind":"addColumn","table":"orders","column":"seen_at","type":"text","nullable":false,"default":{"nowAtApply":true}}]`
+	files := `[{"id":"002_seen","ops":` + ops + `}]`
+	if r := migrateOpsJson(t, d, files); r.Tag != 0 || len(AsList(r.OkValue)) != 1 {
 		t.Fatalf("first apply: %+v", r)
 	}
 	var first string
@@ -192,13 +190,11 @@ func TestStoreMigrateV2SqliteNowAppliedOnceWithOneChecksum(t *testing.T) {
 		t.Fatalf("existing row holds %q, want the apply time", first)
 	}
 	time.Sleep(1100 * time.Millisecond)
-	if r := migrateCoreSqlite(t, d, pairs); r.Tag != 0 || len(AsList(r.OkValue)) != 0 {
+	if r := migrateOpsJson(t, d, files); r.Tag != 0 || len(AsList(r.OkValue)) != 0 {
 		t.Fatalf("second apply drifted or re-ran: %+v", r)
 	}
-	var sum string
-	_ = d.conn.QueryRow("SELECT checksum FROM _sky_migrations WHERE name = '002_seen'").Scan(&sum)
-	if sum != fmt.Sprintf("%x", sha256.Sum256([]byte(text))) {
-		t.Fatalf("the ledger checksum is not the checksum of the v2 template")
+	if sum, kind := migLedgerRow(t, d, "002_seen"); sum != opsChecksumOf(t, ops) || kind != "ops" {
+		t.Fatalf("ledger row = (%s, %q), want the ops checksum and kind 'ops'", sum, kind)
 	}
 	var again string
 	_ = d.conn.QueryRow("SELECT seen_at FROM orders WHERE id = 'o1'").Scan(&again)
@@ -207,29 +203,179 @@ func TestStoreMigrateV2SqliteNowAppliedOnceWithOneChecksum(t *testing.T) {
 	}
 }
 
-// A v1 migration applied by v0.28.1 (ledger holds the checksum of its
-// golden text) is not seen as drifted by the new renderer.
-func TestStoreMigrateV1AppliedMigrationDoesNotDrift(t *testing.T) {
-	d := openStoreQueryDb(t)
-	zero := int64(0)
-	golden := "CREATE TABLE IF NOT EXISTS users (\n  id TEXT PRIMARY KEY,\n  age INTEGER NOT NULL DEFAULT 0\n)"
-	for _, s := range []string{
-		golden,
+// The ops checksum ignores layout, key order and a `"v"` key, and changes
+// when an op changes.
+func TestStoreMigrateOpsChecksumIsCanonical(t *testing.T) {
+	a := opsChecksumOf(t, `[{"kind":"addColumn","table":"t","column":"n","type":"int","default":{"int":9007199254740993}}]`)
+	b := opsChecksumOf(t, "[ {\"v\": 2, \"default\": {\"int\": 9007199254740993}, \"type\": \"int\",\n \"column\": \"n\", \"table\": \"t\", \"kind\": \"addColumn\"} ]")
+	if a != b {
+		t.Fatalf("the same ops gave two checksums")
+	}
+	if c := opsChecksumOf(t, `[{"kind":"addColumn","table":"t","column":"n","type":"int","default":{"int":9007199254740992}}]`); c == a {
+		t.Fatalf("a changed default kept the checksum")
+	}
+}
+
+// --- Upgrade from a v0.28 ledger --------------------------------------------
+//
+// A v0.28 ledger has no `kind` column, and its checksum of an op file is the
+// sha256 of the SQL that the v0.28.1 renderer gave. This renderer gives
+// different SQL for the same file (B8 adds NOT NULL to a text PK), so the old
+// rule would fail every existing deployment with "checksum mismatch".
+
+// legacyOps is an op file that v0.28 --gen wrote (no "v" key).
+const legacyOps = `[{"kind":"createTable","table":"ledger_users","columns":[` +
+	`{"name":"id","type":"text","nullable":false,"pk":true,"autoinc":false,"unique":false},` +
+	`{"name":"age","type":"int","nullable":false,"pk":false,"autoinc":false,"unique":false,"default":{"int":0}}]},` +
+	`{"kind":"addColumn","table":"ledger_users","column":"score","type":"int","nullable":false,"default":{"int":0}}]`
+
+// legacyText is the SQL that v0.28.1 rendered for legacyOps, taken from the
+// v1 renderer before it was removed.
+var legacyText = map[string]string{
+	"sqlite": "CREATE TABLE IF NOT EXISTS ledger_users (\n  id TEXT PRIMARY KEY,\n  age INTEGER NOT NULL DEFAULT 0\n);\n" +
+		"ALTER TABLE ledger_users ADD COLUMN score INTEGER NOT NULL DEFAULT 0",
+	"pgx": "CREATE TABLE IF NOT EXISTS ledger_users (\n  id TEXT PRIMARY KEY,\n  age BIGINT NOT NULL DEFAULT 0\n);\n" +
+		"ALTER TABLE ledger_users ADD COLUMN score BIGINT NOT NULL DEFAULT 0",
+}
+
+// legacyLedger sets d up as v0.28 left it: the schema of legacyText applied,
+// a ledger without `kind`, and rows with v0.28 checksums for the op file and
+// for one hand-written SQL migration.
+func legacyLedger(t *testing.T, d *SkyDb) (handSql string) {
+	t.Helper()
+	handSql = "CREATE TABLE ledger_notes (body TEXT)"
+	at := "2026-10-01T00:00:00Z"
+	stmts := strings.Split(legacyText[d.driver], ";\n")
+	stmts = append(stmts, handSql,
 		"CREATE TABLE _sky_migrations (name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)",
-		fmt.Sprintf("INSERT INTO _sky_migrations VALUES ('001_users', '%x', '2026-10-01T00:00:00Z')", sha256.Sum256([]byte(golden))),
-	} {
+		fmt.Sprintf("INSERT INTO _sky_migrations VALUES ('001_users', '%s', '%s')", migSQLChecksum(legacyText[d.driver]), at),
+		fmt.Sprintf("INSERT INTO _sky_migrations VALUES ('000_notes', '%s', '%s')", migSQLChecksum(handSql), at),
+	)
+	for _, s := range stmts {
 		if _, err := d.conn.Exec(s); err != nil {
-			t.Fatal(err)
+			t.Fatalf("%s: %v", s, err)
 		}
 	}
-	text, err := renderMigFile("sqlite", migFile{Id: "001_users", Ops: []migOp{{Kind: "createTable", Table: "users",
-		Columns: []migColumn{{Name: "id", Type: "text", Pk: true}, {Name: "age", Type: "int", Default: &migDefault{Int: &zero}}}}}})
-	if err != nil {
+	// The renderer of this release gives other SQL: the old rule would fail.
+	if text, _ := renderMigFile(d.driver, migFile{Ops: mustOps(t, legacyOps)}); text == legacyText[d.driver] {
+		t.Fatalf("the fixture renders as it did in v0.28.1: it proves nothing")
+	}
+	return handSql
+}
+
+func mustOps(t *testing.T, ops string) []migOp {
+	t.Helper()
+	var out []migOp
+	if err := json.Unmarshal([]byte(ops), &out); err != nil {
 		t.Fatal(err)
 	}
-	if r := migrateCoreSqlite(t, d, []any{T2[any, any]{V0: "001_users", V1: text}}); r.Tag != 0 {
-		t.Fatalf("an applied v1 migration drifted: %+v", r)
+	return out
+}
+
+func migKindColumns(t *testing.T, d *SkyDb) int {
+	t.Helper()
+	q := "SELECT COUNT(*) FROM pragma_table_info('_sky_migrations') WHERE name = 'kind'"
+	if d.driver == "pgx" {
+		q = "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = current_schema() " +
+			"AND table_name = '_sky_migrations' AND column_name = 'kind'"
 	}
+	var n int
+	if err := d.conn.QueryRow(q).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// An op file applied by v0.28 is re-stamped once with its ops checksum; the
+// second run is a no-op and the `kind` column is added once.
+func assertLegacyLedgerRestamped(t *testing.T, d *SkyDb) {
+	t.Helper()
+	legacyLedger(t, d)
+	files := `[{"id":"001_users","ops":` + legacyOps + `}]`
+	for run := 1; run <= 2; run++ {
+		if r := migrateOpsJson(t, d, files); r.Tag != 0 || len(AsList(r.OkValue)) != 0 {
+			t.Fatalf("run %d: %+v", run, r)
+		}
+		if sum, kind := migLedgerRow(t, d, "001_users"); sum != opsChecksumOf(t, legacyOps) || kind != "ops" {
+			t.Fatalf("run %d: ledger row = (%s, %q), want the ops checksum and kind 'ops'", run, sum, kind)
+		}
+		if n := migKindColumns(t, d); n != 1 {
+			t.Fatalf("run %d: %d kind columns", run, n)
+		}
+	}
+	// The hand-written row is not touched by an op-file run.
+	if _, kind := migLedgerRow(t, d, "000_notes"); kind != "" {
+		t.Fatalf("the hand-written row got kind %q", kind)
+	}
+}
+
+// A hand-written SQL migration applied under the v0.28 ledger still verifies
+// by its SQL text, and an edited one still fails.
+func assertLegacyHandWrittenSql(t *testing.T, d *SkyDb) {
+	t.Helper()
+	hand := legacyLedger(t, d)
+	if r := migrateSql(t, d, "000_notes", hand); r.Tag != 0 || len(AsList(r.OkValue)) != 0 {
+		t.Fatalf("the applied hand-written migration did not verify: %+v", r)
+	}
+	r := migrateSql(t, d, "000_notes", hand+" -- edited")
+	if r.Tag == 0 || !strings.Contains(fmt.Sprint(r.ErrValue), "checksum mismatch") {
+		t.Fatalf("an edited hand-written migration was accepted: %+v", r)
+	}
+}
+
+// After the re-stamp an op file is checked by its ops: an edit fails.
+func assertEditedOpFileFails(t *testing.T, d *SkyDb) {
+	t.Helper()
+	legacyLedger(t, d)
+	if r := migrateOpsJson(t, d, `[{"id":"001_users","ops":`+legacyOps+`}]`); r.Tag != 0 {
+		t.Fatalf("re-stamp: %+v", r)
+	}
+	edited := strings.Replace(legacyOps, `"column":"score"`, `"column":"points"`, 1)
+	r := migrateOpsJson(t, d, `[{"id":"001_users","ops":`+edited+`}]`)
+	if r.Tag == 0 || !strings.Contains(fmt.Sprint(r.ErrValue), "checksum mismatch") {
+		t.Fatalf("an edited op file was accepted: %+v", r)
+	}
+}
+
+// A pending op file that v0.28 --gen wrote (no "v") applies with this
+// release's rule: a required field is NOT NULL with its zero default.
+func assertPendingV028FileAppliesWithTheNewRule(t *testing.T, d *SkyDb) {
+	t.Helper()
+	legacyLedger(t, d)
+	if _, err := d.conn.Exec("INSERT INTO ledger_users (id, age, score) VALUES ('u1', 3, 4)"); err != nil {
+		t.Fatal(err)
+	}
+	ops := `[{"kind":"addColumn","table":"ledger_users","column":"visits","type":"int","nullable":false}]`
+	files := `[{"id":"001_users","ops":` + legacyOps + `},{"id":"002_visits","ops":` + ops + `}]`
+	if r := migrateOpsJson(t, d, files); r.Tag != 0 || len(AsList(r.OkValue)) != 1 {
+		t.Fatalf("apply: %+v", r)
+	}
+	var visits int64
+	if err := d.conn.QueryRow("SELECT visits FROM ledger_users WHERE id = 'u1'").Scan(&visits); err != nil || visits != 0 {
+		t.Fatalf("existing row reads visits = %d (%v), want 0", visits, err)
+	}
+	if _, err := d.conn.Exec("INSERT INTO ledger_users (id, age, score, visits) VALUES ('u2', 1, 1, NULL)"); err == nil {
+		t.Fatalf("visits accepted NULL: the column is not NOT NULL")
+	}
+	if sum, kind := migLedgerRow(t, d, "002_visits"); sum != opsChecksumOf(t, ops) || kind != "ops" {
+		t.Fatalf("ledger row = (%s, %q)", sum, kind)
+	}
+}
+
+func TestStoreMigrateSqliteLegacyLedgerRestamped(t *testing.T) {
+	assertLegacyLedgerRestamped(t, openStoreQueryDb(t))
+}
+
+func TestStoreMigrateSqliteLegacyHandWrittenSql(t *testing.T) {
+	assertLegacyHandWrittenSql(t, openStoreQueryDb(t))
+}
+
+func TestStoreMigrateSqliteEditedOpFileFails(t *testing.T) {
+	assertEditedOpFileFails(t, openStoreQueryDb(t))
+}
+
+func TestStoreMigrateSqlitePendingV028FileAppliesWithTheNewRule(t *testing.T) {
+	assertPendingV028FileAppliesWithTheNewRule(t, openStoreQueryDb(t))
 }
 
 // --- D1 on a table with rows (SQLite) ----------------------------------------
@@ -448,14 +594,14 @@ func loadParity(t *testing.T) parityFixture {
 
 var parityStamp = regexp.MustCompile(`'(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d|__sky_now_at_apply__)'|'__sky_now_ms_at_apply__'|\b\d{13}\b`)
 
-// parityNormalise maps the runtime stamp and the v2 token to one marker and
-// drops the v2 header line.
+// parityNormalise maps the runtime stamp and the apply-time token to one
+// marker.
 func parityNormalise(stmts []string) string {
-	s := strings.TrimPrefix(strings.Join(stmts, ";\n"), migV2Header+"\n")
+	s := strings.Join(stmts, ";\n")
 	return parityStamp.ReplaceAllString(s, "<now>")
 }
 
-// renderParityOps renders a column's v2 ops the way `sky db migrate` does.
+// renderParityOps renders a column's ops the way `sky db migrate` does.
 func renderParityOps(t *testing.T, driver string, ops []migOp) string {
 	t.Helper()
 	text, err := renderMigFile(driver, migFile{Id: "p", Ops: ops})
@@ -526,7 +672,7 @@ func TestStoreMigrateParity_SqliteRealDb(t *testing.T) {
 	assertMigrateParity(t, openStoreQueryDb(t))
 }
 
-// --- A required unique column added by a v2 migration to a table with rows --
+// --- A required unique column added by a migration file to a table with rows
 //
 // Found bug (batch D gap b): `sky db migrate --gen` writes a required unique
 // column as an addColumn op (NOT NULL DEFAULT <zero>) and an addIndex op
@@ -555,18 +701,13 @@ func assertRequiredUniqueOnRowsIsExplained(t *testing.T, d *SkyDb, table string)
 	zero := ""
 	cols := []string{"code"}
 	f := migFile{Id: id, Ops: []migOp{
-		{Kind: "addColumn", V: 2, Table: table, Column: "code", Type: "text",
+		{Kind: "addColumn", Table: table, Column: "code", Type: "text",
 			Nullable: false, Default: &migDefault{Text: &zero}},
-		{Kind: "addIndex", V: 2, Table: table, Name: codecIndexName(table, cols, true, ""),
+		{Kind: "addIndex", Table: table, Name: codecIndexName(table, cols, true, ""),
 			IndexColumns: cols, Unique: true},
 	}}
-	text, err := renderMigFile(d.driver, f)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r, ok := dbMigrateCore(d, []any{T2[any, any]{V0: id, V1: text}}, "",
-		func(_ string, e any) any { return e }).(SkyResult[any, any])
-	if !ok || r.Tag == 0 {
+	r := migrateOpsJson(t, d, migFilesJson(t, f))
+	if r.Tag == 0 {
 		t.Fatalf("the migration was applied: %+v", r)
 	}
 	msg := fmt.Sprintf("%v", r.ErrValue)
@@ -603,12 +744,22 @@ func TestStoreMigrateSqliteRequiredUniqueOnOneRowApplies(t *testing.T) {
 	}
 	zero := ""
 	cols := []string{"code"}
-	text, _ := renderMigFile("sqlite", migFile{Id: "0002_one", Ops: []migOp{
-		{Kind: "addColumn", V: 2, Table: "codes_one", Column: "code", Type: "text", Default: &migDefault{Text: &zero}},
-		{Kind: "addIndex", V: 2, Table: "codes_one", Name: codecIndexName("codes_one", cols, true, ""),
+	f := migFile{Id: "0002_one", Ops: []migOp{
+		{Kind: "addColumn", Table: "codes_one", Column: "code", Type: "text", Default: &migDefault{Text: &zero}},
+		{Kind: "addIndex", Table: "codes_one", Name: codecIndexName("codes_one", cols, true, ""),
 			IndexColumns: cols, Unique: true},
-	}})
-	if r := migrateCoreSqlite(t, d, []any{T2[any, any]{V0: "0002_one", V1: text}}); r.Tag != 0 {
+	}}
+	if r := migrateOpsJson(t, d, migFilesJson(t, f)); r.Tag != 0 {
 		t.Fatalf("apply: %+v", r)
 	}
+}
+
+// migFilesJson writes migration files as the JSON array Db_migrateOps reads.
+func migFilesJson(t *testing.T, files ...migFile) string {
+	t.Helper()
+	b, err := json.Marshal(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

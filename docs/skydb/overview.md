@@ -138,6 +138,13 @@ migrate` rolls the migration back and names the table, the column and the fix.
 Give each row its own value in a data step, a `{"kind": "raw", "sql": "UPDATE t
 SET c = …"}` op between the two ops, or make the field a `Maybe`.
 
+The `_sky_migrations` ledger checks a `--gen` migration file by a checksum of
+its **ops** (a canonical form of the op list, the same on every dialect), not
+by the SQL they render to. A later change to how an op renders never makes an
+applied file look edited; an edit to the file is still a `checksum mismatch`.
+A ledger that v0.28 wrote is upgraded on the first `sky db migrate`, with no
+configuration (see `docs/migration/v0.29.md`).
+
 `pushProject` and `dumpSchema` (so `sky db migrate --gen` and `sky db push`)
 refuse a store whose builders recorded a problem (for example an unknown column
 in `unique`, `index` or `uniqueOn`), naming the column, before any DDL.
@@ -1032,8 +1039,8 @@ main =
 How it works:
 
 - A `_sky_migrations` table (created automatically) records the
-  `name`, a `checksum` of the SQL, and `applied_at` of every
-  applied migration.
+  `name`, a `checksum` of the SQL, `applied_at` and `kind` (`sql` here,
+  `ops` for a `sky db migrate` file) of every applied migration.
 - On each `migrate` call, migrations whose `name` is not yet
   recorded run **in list order, each in its own transaction**, and
   are recorded. Already-recorded migrations are skipped.

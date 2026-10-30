@@ -85,7 +85,6 @@ func schemaRenderColumn(driver string, colArg any) string {
 	defKind := fmt.Sprintf("%v", fieldOrNil(colArg, "DefaultKind"))
 	defVal := fmt.Sprintf("%v", fieldOrNil(colArg, "DefaultVal"))
 	fk := fmt.Sprintf("%v", fieldOrNil(colArg, "ForeignKey"))
-	legacy := schemaBool(fieldOrNil(colArg, "Legacy"))
 
 	// Auto-increment PK is a single dialect-specific token that already implies
 	// PRIMARY KEY.
@@ -101,17 +100,14 @@ func schemaRenderColumn(driver string, colArg any) string {
 		parts = append(parts, "PRIMARY KEY")
 	}
 	// B8: a primary key is always NOT NULL. SQLite lets a non-INTEGER PK
-	// hold NULL unless the column says NOT NULL. A v1 migration op sets
-	// Legacy to keep the v0.28.1 bytes (no NOT NULL on a PK, `now` as the
-	// timestamp text on every kind), so an applied migration keeps its
-	// checksum.
-	if (notNull || pk) && !(pk && legacy) {
+	// hold NULL unless the column says NOT NULL.
+	if notNull || pk {
 		parts = append(parts, "NOT NULL")
 	}
 	if uniq && !pk {
 		parts = append(parts, "UNIQUE")
 	}
-	if defKind == "now" && !legacy {
+	if defKind == "now" {
 		parts = append(parts, "DEFAULT "+schemaNowDefault(driver, kind))
 	} else if defKind != "none" && defKind != "" {
 		parts = append(parts, "DEFAULT "+schemaDefault(driver, defKind, defVal))
