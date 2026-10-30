@@ -354,8 +354,10 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `SheetSpec`s of `CellSpec`s (`text`, `number`, `int`, `bool`, `date`,
   `formula`, `failure`, `empty`, `fromCell`) styled with `bold`, `italic`,
   `fontSize`, `fill`, `numberFormat` and `wrap`; styles are deduplicated, a
-  date is a serial with a date format, and a formula is computed when the file
-  opens. The same sheets give the same bytes. `Limits` bound sheets, rows,
+  date is a serial with a date format, and a formula is written with no
+  cached value and a request to compute it on open (LibreOffice does, which
+  `scripts/office-second-reader-e2e.sh` checks). The same sheets give the
+  same bytes. `Limits` bound sheets, rows,
   columns and cells (gaps count), on top of the zip limits. Failures are
   `InvalidInput` in the domain `"office"` with a code (`sheet_name`,
   `no_visible_sheet`, `validation_too_long`, `range`, `too_many_cells`, …).

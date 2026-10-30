@@ -1899,7 +1899,8 @@ name rows` also takes `visibility`, `columnWidths`, `frozen`, `merged` and
 for more than 255 characters). Styles are deduplicated; text goes in the shared
 strings; a date is a serial number with a date format (`yyyy-mm-dd` unless you
 give one); a formula has no cached value and the workbook asks to be computed
-when it opens. `read (write (List.map (List.map fromCell) rows))` gives `rows`
+when it opens (LibreOffice computes it, which
+`scripts/office-second-reader-e2e.sh` checks). `read (write (List.map (List.map fromCell) rows))` gives `rows`
 back (a formula's cached value as `Empty`).
 
 `Limits` is `{ zip : Zip.Limits, maxSheets, maxRows, maxCells, maxColumns }`

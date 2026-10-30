@@ -234,7 +234,8 @@ Read and write `.xlsx` with `Std.Office.Xlsx` and `.docx` with
 `Std.Office.Docx`, on the server. Read the bytes with `File.readFile` (or take
 an upload), not `File.readFileBytes` (that gives a `List Int`). Write a date
 with `Xlsx.date`, not a number, so it reads back as a `Date`. Write a total as
-`Xlsx.formula "SUM(B2:B9)"`: the spreadsheet computes it when the file opens.
+`Xlsx.formula "SUM(B2:B9)"`: it has no cached value, and the file asks to be
+computed when it opens (LibreOffice does, and is the tested reader).
 An inline drop-down list holds 255 characters at most; put longer lists in
 cells and use `ListFromRange`. A `Docx` link must be http, https, mailto or an
 internal `#anchor`. Bound a read of an upload with `readWith` and `Limits`

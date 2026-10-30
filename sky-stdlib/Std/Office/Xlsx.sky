@@ -51,8 +51,11 @@
 -- **Writing.** Styles are deduplicated. A date is written as a serial number
 -- with a date format (`yyyy-mm-dd` unless `numberFormat` gives one). A
 -- formula is written with no cached value and the workbook asks to be
--- calculated when it opens, so Excel, LibreOffice and Google Sheets compute
--- it. The same sheets always give the same bytes. Cost: O(cells).
+-- calculated when it opens (`fullCalcOnLoad`). LibreOffice computes it on
+-- open, which scripts/office-second-reader-e2e.sh checks; no other program
+-- is tested for this. A reader that ignores the request shows the formula
+-- with no value. The same sheets always give the same bytes. Cost:
+-- O(cells).
 --
 -- **Errors.** A limit crossed while reading, or a sheet `write` refuses, is
 -- an `Error` of kind `InvalidInput` with the domain `"office"` and one of

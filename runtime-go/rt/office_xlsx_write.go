@@ -12,8 +12,8 @@ package rt
 //   - writes a date as its serial number (1900 system, Excel's phantom
 //     1900-02-29 kept) with a date format, `yyyy-mm-dd` unless one is given;
 //   - writes a formula as `<f>` with no cached value and sets
-//     `calcPr fullCalcOnLoad="1"`, so Excel, LibreOffice and Google Sheets
-//     compute it when the file opens;
+//     `calcPr fullCalcOnLoad="1"`, which asks a reader to compute it when the
+//     file opens (LibreOffice does: scripts/office-second-reader-e2e.sh);
 //   - is deterministic: the same sheets give the same bytes (the zip writer
 //     stamps a fixed time).
 //
