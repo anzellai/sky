@@ -746,6 +746,12 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
         ],
     ),
     ("apps-ledger-postgres", &["db.postgres", "db.migrations"]),
+    // v0.29.0: the Std.Db.Store query path on PostgreSQL (aggregates, select,
+    // latestPer, text match, jsonText, B1 to B6).
+    (
+        "store-query-postgres",
+        &["db.postgres", "db.codec-store", "stdlib.Std.Db.Store"],
+    ),
     (
         "apps-fleet",
         &["skylive.multi-replica", "skylive.session-sse-csrf"],

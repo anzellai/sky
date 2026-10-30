@@ -102,6 +102,9 @@ fn internal_runtime_bases(module: &str) -> &'static [&'static str] {
         "Db" => &[
             "autoMigrate",
             "createCols",
+            // v0.29.0: `Std.Db.Store` reads the dialect once per verb to render
+            // dialect-correct SQL (the prepare path's closed `Dialect` union).
+            "dialect",
             "dropTables",
             "dumpProject",
             "execObject",

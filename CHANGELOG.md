@@ -15,6 +15,33 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Added
 
+- **`Std.Db.Store` query builders: grouped aggregates, projections, newest
+  row per key, escaped text match, column conditions and JSON keys.** Each
+  builds data that the terminal checks against the codecs, renders for the
+  connection's dialect and binds by parameter, so a wrong name is `Err` before
+  any statement runs.
+  - `groupBy` + `aggregate codec [ key, keyAs, countAs, countIfAs,
+    countDistinctAs, sumAs, minAs, maxAs ]` + `having`, read with `toRows`.
+    Kinds and nullability are checked (a `minAs` without `groupBy` needs a
+    `Maybe` field, a `Bool` column has no min or max).
+  - `select`, `selectAs` (explicit sources, `jsonText` too), `selectColumn
+    "col" Codec.string` (a `List String`), `distinct`, and `latestPer [ keys ]
+    "newestBy"` (the newest row per key: NULL is never the newest, a tie goes
+    to the larger primary key).
+  - `contains`, `startsWith`, `endsWith` (case-sensitive on both dialects;
+    `%`, `_` and `!` literal), `eqCi` and `containsCi` (ignore case). An empty
+    needle matches every non-NULL row.
+  - `eqCol`, `neqCol`, `gtCol`, `gteCol`, `ltCol`, `lteCol`: a column against
+    a column of the same kind.
+  - `jsonText "props" "source"`: one key of a JSON text column, wherever a
+    column name goes. A JSON boolean reads `"true"` / `"false"` on both
+    dialects.
+  - `toSql conn q`: the SQL text and parameters a query renders, or its `Err`.
+  - `count` counts the rows a `distinct` / `latestPer` / `aggregate` query
+    returns.
+  The same conformance suite runs on SQLite (`conformance`) and on PostgreSQL
+  (the new harness gate `store-query-postgres`, T3, with the CI DSN).
+
 - **`Std.Image.Canvas`: draw an image on the server.** A `Canvas` is a
   persistent display list: `blank` or `fromImage`, then `rect`,
   `roundedRect`, `ellipse`, `arc`, `line` (a `Paint` is `Fill colour` or
@@ -279,6 +306,31 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 The full list, with old and new code, is `docs/migration/v0.29.md`.
 
+- **`Std.Db.Store` exports `contains`, `startsWith`, `endsWith` and `select`
+  (breaking for two `exposing (..)` imports).** `Sky.Core.String` and
+  `Sky.Core.Regex` export `contains`, `Sky.Core.String` `startsWith` and
+  `endsWith`, `Std.Html` and `Std.Db.Table` `select`. A bare use under
+  `import Std.Db.Store exposing (..)` and one of those is `[E1012]`; write
+  `Store.select` (Store is meant to be imported qualified).
+
+- **`Std.Db.Store` refuses bad names before any statement (behaviour
+  change).** `findBy` and `delete` refuse a column that is not in the codec.
+  Every verb refuses a table name outside `[A-Za-z_][A-Za-z0-9_]*` (at most
+  63 bytes), a `primaryKey` that is not a column, and a builder (`unique`,
+  `defaultText`, `generated`, …) that named an unknown column. A negative
+  `limit` or `offset` is `Err`. Each is `Err (InvalidInput …)` naming the bad
+  name; before, the SQL ran or the builder was silently ignored.
+
+- **`Std.Db.Store` on PostgreSQL sorts NULLs like SQLite (behaviour change).**
+  An order term on a nullable column now renders `NULLS FIRST` ascending and
+  `NULLS LAST` descending on both dialects. PostgreSQL put NULLs last
+  ascending and first descending before. A term on a required column is
+  unchanged.
+
+- **A query that hit a row error now fails (behaviour change).** `Db.query`
+  and the Store readers return `Err` for an error after the first row, where
+  they returned the rows before it.
+
 - **`Std.Image.Format` has two more constructors (breaking for a `case` that
   lists every one).** `Gif` and `WebpLossless` join `Jpeg`, `Png` and
   `Preserve`. A `case` on `Format` with no `_` branch fails to compile with a
@@ -358,6 +410,40 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   never run is affected. Give one value a base case, or a parameter.
 
 ### Fixed
+
+- **`Std.Db`: a row error after the first row is `Err`, not a short list.**
+  `dbQueryRows` did not check `rows.Err()` after its loop. SQLite (modernc)
+  steps inside `Next`, and pgx preloads one row, so an error after row 1 (a
+  malformed JSON value, `SQLITE_BUSY`) ended the loop and `Db.query`,
+  `Store.toList` and every typed reader returned `Ok` with the rows before
+  it. Pinned by Go tests on both dialects and a conformance case.
+- **`Std.Db.Store`: a `defaultText` value cannot change the column's flags.**
+  The `touch` flag was found by a substring match, so
+  `Store.defaultText "status" "untouched"` made every `Store.update` write the
+  clock into `status`. A `|` in a default value started a new flag (`"a|u"`
+  made the column UNIQUE, `"a|dnow"` changed the default), and `"a|b%c"`
+  stored `'a'`. The value is now percent-encoded in the colspec and the
+  flags are compared exactly.
+- **`Std.Db.Store` on PostgreSQL: `Codec.autoCamel` stores work.** The DDL is
+  unquoted, so PostgreSQL stores `priceMinor` as `priceminor`. The second
+  `Store.migrate` failed with "column already exists", and reads gave NULL
+  for every camelCase column (a required field failed to decode, a `Maybe`
+  field was silently `Nothing`). Column lookups now fold case on PostgreSQL.
+- **`Std.Db.Store` on PostgreSQL: `migrate` reads only the current schema.**
+  A table of the same name in another schema on the `search_path` made
+  `migrate` skip the CREATE and ALTER the other table.
+- **`Std.Db.Store`: `findBy` and `delete` check the column name.** They put
+  the column argument into the SQL unchecked, so `findBy conn s "id = id OR
+  1" "x"` returned the first row and `delete` with it deleted every row on
+  SQLite. Both now go through the checked query path.
+- **`Std.Db.Store`: `offset` without `limit` works on SQLite, and a negative
+  `limit` or `offset` is `Err`.** SQLite refused `OFFSET` without `LIMIT`
+  (a syntax error), and a negative limit meant "no limit" on SQLite but an
+  error on PostgreSQL.
+- **`Std.Db.Store`: every verb checks the table name, the primary key and the
+  builders' column names.** `all`, `create`, `insert`, `insertMany`,
+  `upsert` and `update` put the table name into SQL unchecked, and
+  `primaryKey "idd"` or `unique "emial"` kept the unknown name silently.
 
 - **Typing while the server is slow no longer rewinds the box (Sky.Spa, Sky.Webview).** A hold
   RPC (a server branch that writes server data into the model, such as a

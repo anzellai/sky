@@ -958,6 +958,28 @@ pub static GATES: &[Gate] = &[
         body: bodies::apps_ledger_postgres,
     },
     Gate {
+        name: "store-query-postgres",
+        tier: Tier::T3,
+        platforms: UNIX,
+        // One `sky test` build (cold Go cache) plus 80 cases on PostgreSQL.
+        budget_s: 900,
+        expected: bodies::STORE_QUERY_POSTGRES_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "Std.Db.Store query path (aggregates, select, latestPer, text match, jsonText) on PostgreSQL",
+        mutations: Mutations::new(&[Mutation {
+            id: "store-query-postgres.drop-rows-err",
+            description: "revert B1: drop the rows.Err() check after the dbQueryRows loop. \
+                          pgx then loses the error a malformed JSON row raises after row 1, \
+                          and the jsonText `a malformed JSON row is Err` case must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/db_auth.go",
+                from: "\t\t\tif err := rows.Err(); err != nil {\n\t\t\t\treturn Err[any, any](ErrIo(\"db.query: \" + err.Error()))\n\t\t\t}\n\t\t\treturn Ok[any, any](out)",
+                to: "\t\t\treturn Ok[any, any](out)",
+            },
+        }]),
+        body: bodies::store_query_postgres,
+    },
+    Gate {
         name: "apps-dispatch",
         tier: Tier::T1,
         platforms: UNIX,

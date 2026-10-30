@@ -1375,6 +1375,35 @@ allowlist rejects characters outside `[A-Za-z0-9_.]`.
   / `insertFields` are validated against `[A-Za-z0-9_.]`. An
   attempted `'; DROP TABLE users; --` column name is rejected
   before SQL generation.
+* **`Std.Db.Store` checks every name before any statement** (v0.29.0).
+  Every verb (`create`, `migrate`, `insert`, `insertMany`, `upsert`,
+  `update`, `updateWhere`, `updateFields`, `setFields`, `adjust`, `all`,
+  `findBy`, `delete`, `deleteWhere`, `toList`, `toRows`, `toMaybe`,
+  `count`, `toSql`) runs the store check first: the table name matches
+  `^[A-Za-z_][A-Za-z0-9_]*$` and is at most 63 bytes, the primary key is
+  empty or a codec column, and no builder recorded an unknown column.
+  Every column, result field and JSON key a query names is resolved
+  against the codec (field or snake name) and must pass the same rule.
+  A failure is `Err` (InvalidInput) and no statement reaches the driver.
+  Sources: `storeError`, `refOf`, `prepare` in `Std/Db/Store.sky`.
+* **The only literals in Store SQL text**: LIMIT/OFFSET digits from a
+  Sky `Int` (refused when negative), a JSON key (identifier rule), the
+  fixed tokens of the renderer (`ESCAPE '!'`, `'$.key'`), and the DDL
+  defaults (`schemaDefault`, `'` doubled). Every value binds as a
+  parameter, including a `countIfAs` condition and a text needle. A
+  `defaultText` value is percent-encoded inside the colspec flag (`%`
+  and `|`), so it cannot add a flag (`codecFlagValueDecoder`,
+  `db_codec.go`), and the `touch` flag is matched exactly.
+* **A row error is never a short list**: `dbQueryRows` checks
+  `rows.Err()` after the loop, so an error after row 1 (a malformed
+  JSON value, `SQLITE_BUSY`) is `Err` (v0.29.0, B1).
+* **Same answer on both dialects** for the Store query builders, with
+  the documented exceptions: text collation (`minAs`/`maxAs`/`gt`/ORDER
+  BY on text), the text of a JSON number through `jsonText`, and
+  `LOWER` (ASCII only on SQLite). NULLs order first ascending and last
+  descending on a nullable column on both. Pinned by
+  `StoreQueryConformanceTest` on SQLite (`conformance`) and PostgreSQL
+  (`store-query-postgres`).
 * **`Db.unsafeFindWhere`** is the only escape hatch with raw SQL.
   Its name carries the warning; CLAUDE.md flags it. Callers must
   ensure no untrusted input enters the WHERE clause.

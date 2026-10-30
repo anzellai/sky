@@ -1133,7 +1133,7 @@ jobs:
         env:
           SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
           DATABASE_URL: postgres://sky:sky@localhost:5432/sky?sslmode=disable
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only build-new-dir-compiles-nothing,apps-fleet,apps-dispatch-postgres
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only build-new-dir-compiles-nothing,apps-fleet,apps-dispatch-postgres,store-query-postgres
 
   gate-falsifiers-8:
     runs-on: ubuntu-latest

@@ -65,7 +65,18 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     // Money `fromString`, already exist; Elm has the same pairs. A program that
     // exposes Sky.Core.Regex with `(..)` beside one of them and uses the bare
     // name gets `[E1012]`; see the v0.29.0 CHANGELOG.
+    // v0.29.0: Std.Db.Store.contains (a text condition) joins the same name,
+    // with String.contains and Regex.contains (docs/migration/v0.29.md).
     "value contains",
+    // v0.29.0: Std.Db.Store query builders, named as SQL names them (user
+    // decision D2, Store's short qualified style). `Store.startsWith` /
+    // `endsWith` meet String's, `Store.select` meets Std.Html's element and
+    // Std.Db.Table's projection. A program that exposes two of them with
+    // `(..)` and uses the bare name gets `[E1012]`; the fix is `Store.select`,
+    // or a narrower exposing list (docs/migration/v0.29.md).
+    "value endsWith",
+    "value select",
+    "value startsWith",
     "value fromString",
     // v0.29.0: String.foldl / String.foldr (Elm). List and Dict already
     // export `foldl` (List `foldr` too); Elm has the same set.

@@ -1081,6 +1081,14 @@ func dbQueryRows(db any, query any, args any) any {
 				}
 				out = append(out, rowDict)
 			}
+			// An error that surfaces after the first row ends the loop with
+			// Next() == false. modernc runs sqlite3_step inside Next, and pgx
+			// preloads only row 1, so without this check a malformed JSON
+			// value in row 2 (or a SQLITE_BUSY, or a constraint failure in an
+			// UPDATE … RETURNING) came back as Ok with a short list.
+			if err := rows.Err(); err != nil {
+				return Err[any, any](ErrIo("db.query: " + err.Error()))
+			}
 			return Ok[any, any](out)
 		})
 	}

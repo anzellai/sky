@@ -1394,9 +1394,14 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   `updateWhere`/`upsert`/`delete`/`deleteWhere` (writes), **`setFields`/`updateFields`**
   (partial-column PATCH — `SET` only the named columns, by PK or `Cond`) + **`adjust`**
   (atomic `SET col = col + delta` for counters/stock/balances), `all`/`findBy` + the
-  composable query builder (`where_`/`and_`/`or_`/order/limit/`toList`/`count`) +
-  **`selectRaw codec sql params`** for typed JOIN/aggregate reads. Deliberately a
-  single-table mapper, not an ORM.
+  composable query builder (`where_`/`and_`/`or_`/order/limit/`toList`/`count`/`toSql`),
+  **grouped aggregates** (`groupBy` + `aggregate` with `key`/`countAs`/`countIfAs`/
+  `countDistinctAs`/`sumAs`/`minAs`/`maxAs`, `having`, `toRows`), **projections**
+  (`select`/`selectAs`/`selectColumn`/`distinct`, `latestPer`), escaped text match
+  (`contains`/`containsCi`/`startsWith`/`endsWith`/`eqCi`), column conditions
+  (`eqCol`/`gtCol`/…) and JSON keys (`jsonText`), every name checked before the
+  query runs (v0.29.0) + **`selectRaw codec sql params`** for typed JOIN reads.
+  Deliberately a single-table mapper, not an ORM.
 
 Full walkthrough: **[Std.Db overview → Std.Db.Store](skydb/overview.md#stddbstore--stdcodec--codec-driven-persistence-recommended-default)**.
 Exact signatures: `sky doc Std.Db.Store` · `sky doc Std.Codec`.

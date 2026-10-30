@@ -27,15 +27,15 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | verdict `weaker` | 0 |
 | corpus units | 150 |
 | stdlib modules (denominator) | 135 |
-| stdlib entries (denominator) | 3145 |
+| stdlib entries (denominator) | 3176 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 8 | 5.9% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 981 | 31.2% |
-| symbols unreferenced under the generous rule | 866 | 27.5% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 1012 | 31.9% |
+| symbols unreferenced under the generous rule | 897 | 28.2% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 0 | — |
 
 ### Surfaces with zero new cover
@@ -347,4 +347,5 @@ None.
 | `spa-diff-fuzz` | T2 | PROVEN | `stdlib.Std.Spa` |
 | `spa-wasm-server-only` | T1 | PROVEN | `stdlib.Std.Spa` |
 | `stdlib-bodies` | T1 | PROVEN | `compiler.infer` · `compiler.reject` |
+| `store-query-postgres` | T3 | PROVEN | `db.postgres` · `db.codec-store` · `stdlib.Std.Db.Store` |
 | `verify-cli` | T1 | PROVEN | `ui.tui` · `config.sky-toml` |

@@ -1,0 +1,1438 @@
+module StoreQueryConformanceTest exposing (main, tests)
+
+{-| Behavioural conformance for the Std.Db.Store query path (v0.29.0). One
+body runs on both dialects: PostgreSQL when SKY_TEST_POSTGRES_DSN is set (the
+`store-query-postgres` harness gate), else SQLite in a temp file (the
+`conformance` gate). The case named `store-dialect=<d>` proves which engine
+ran. Each found bug has its own cases (B2 to B6). -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.System as System
+import Sky.Core.String as String
+import Std.Db as Db exposing (SqlValue(..))
+import Std.Db.Store as Store exposing (Store)
+import Std.Codec as Codec exposing (Codec)
+import Sky.Test as Test exposing (Test)
+
+type alias Order =
+    { id : String
+    , customerId : String
+    , status : String
+    , total : Int
+    , note : Maybe String
+    }
+
+
+orderCodec : Codec Order
+orderCodec =
+    Codec.auto
+        { id = "", customerId = "", status = "", total = 0, note = Nothing }
+
+
+orders : Store Order
+orders =
+    Store.fromCodec "sqc_orders" orderCodec |> Store.primaryKey "id"
+
+type alias Tag =
+    { id : String
+    , status : String
+    }
+
+
+tagCodec : Codec Tag
+tagCodec =
+    Codec.auto { id = "", status = "" }
+
+
+-- B2: a default value that contains the text "touch".
+tags : Store Tag
+tags =
+    Store.fromCodec "sqc_tags" tagCodec |> Store.primaryKey "id"
+        |> Store.defaultText "status" "untouched"
+
+type alias Memo =
+    { id : String
+    , note : String
+    }
+
+
+memoCodec : Codec Memo
+memoCodec =
+    Codec.auto { id = "", note = "" }
+
+
+-- B2: a default value with a `|` must not inject the UNIQUE flag.
+memosPipe : Store Memo
+memosPipe =
+    Store.fromCodec "sqc_memos_pipe" memoCodec |> Store.primaryKey "id"
+        |> Store.defaultText "note" "a|u"
+
+
+-- B2: a default value with `|` and `%` is stored as given.
+memosDefault : Store Memo
+memosDefault =
+    Store.fromCodec "sqc_memos_default" memoCodec |> Store.primaryKey "id"
+        |> Store.defaultText "note" "a|b%c"
+        |> Store.generated [ "note" ]
+
+type alias Price =
+    { id : String
+    , priceMinor : Int
+    }
+
+
+-- B3: camelCase columns (PostgreSQL folds unquoted names).
+prices : Store Price
+prices =
+    Store.fromCodec "sqc_prices" (Codec.autoCamel { id = "", priceMinor = 0 })
+        |> Store.primaryKey "id"
+
+
+dsn : String
+dsn =
+    System.getenvOr "SKY_TEST_POSTGRES_DSN" ""
+
+
+dialectName : String
+dialectName =
+    if dsn == "" then
+        "sqlite"
+
+    else
+        "postgres"
+
+
+openDb : () -> Task Error Db
+openDb _ =
+    if dsn == "" then
+        Db.open "sqlite" "/tmp/sky-store-query-conformance.db"
+
+    else
+        Db.open "postgres" dsn
+
+
+unit : Task Error a -> Task Error ()
+unit t =
+    Task.map (\_ -> ()) t
+
+
+drop : Db -> String -> Task Error ()
+drop db table =
+    unit (Db.exec db ("DROP TABLE IF EXISTS " ++ table) [])
+
+
+order : String -> String -> String -> Int -> Maybe String -> Order
+order id customerId status total note =
+    { id = id
+    , customerId = customerId
+    , status = status
+    , total = total
+    , note = note
+    }
+
+
+seed : Db -> Task Error ()
+seed db =
+    Task.sequence
+        [ drop db "sqc_orders"
+        , drop db "sqc_tags"
+        , drop db "sqc_memos_pipe"
+        , drop db "sqc_memos_default"
+        , drop db "sqc_prices"
+        , drop db "sqc_events"
+        , unit (Store.migrate db orders)
+        , unit (Store.migrate db tags)
+        , unit (Store.migrate db memosPipe)
+        , unit (Store.migrate db memosDefault)
+        , unit
+              (Store.insert db orders (order "o1" "c1" "open" 10 (Just "first")))
+        , unit (Store.insert db orders (order "o2" "c1" "paid" 25 Nothing))
+        , unit
+              (Store.insert db orders (order "o3" "c2" "open" 7 (Just "third")))
+        , unit (Store.insert db orders (order "o4" "c3" "void" 0 Nothing))
+        , drop db "sqc_invoices"
+        , drop db "sqc_invoices_empty"
+        , drop db "sqc_customers"
+        , drop db "sqc_events_bad"
+        , drop db "sqc_missing"
+        , unit (Store.migrate db invoices)
+        , unit (Store.migrate db emptyInvoices)
+        , unit (Store.migrate db customers)
+        , unit (Store.migrate db badEvents)
+        , unit (Store.insertMany db invoices invoiceRows)
+        , unit (Store.insertMany db customers customerRows)
+        , unit
+              (Store.insert
+                  db
+                  badEvents
+                  { id = "b1", props = "{\"source\":\"web\"}" })
+        , unit (Store.insert db badEvents { id = "b2", props = "not json" })
+        ]
+        |> unit
+
+-- ── Items 1, 3, 10, 11: invoices ─────────────────────────────────────────────
+type alias Invoice =
+    { id : String
+    , customerId : String
+    , sentAt : Int
+    , openedAt : Maybe Int
+    , amount : Int
+    , price : Float
+    , paid : Bool
+    , props : String
+    }
+
+
+invoiceCodec : Codec Invoice
+invoiceCodec =
+    Codec.auto
+        { id = ""
+        , customerId = ""
+        , sentAt = 0
+        , openedAt = Nothing
+        , amount = 0
+        , price = 0.0
+        , paid = False
+        , props = ""
+        }
+
+
+invoices : Store Invoice
+invoices =
+    Store.fromCodec "sqc_invoices" invoiceCodec |> Store.primaryKey "id"
+
+
+emptyInvoices : Store Invoice
+emptyInvoices =
+    Store.fromCodec "sqc_invoices_empty" invoiceCodec |> Store.primaryKey "id"
+
+
+-- A table that does not exist: a refused query must fail with the Store's own
+-- error, before any statement reaches the database.
+missing : Store Invoice
+missing =
+    Store.fromCodec "sqc_missing" invoiceCodec |> Store.primaryKey "id"
+
+
+invoice : String -> String -> Int -> Maybe Int -> Int -> Float -> Bool -> String -> Invoice
+invoice id customerId sentAt openedAt amount price paid props =
+    { id = id
+    , customerId = customerId
+    , sentAt = sentAt
+    , openedAt = openedAt
+    , amount = amount
+    , price = price
+    , paid = paid
+    , props = props
+    }
+
+
+invoiceRows : List Invoice
+invoiceRows =
+    [ invoice
+          "i1"
+          "c1"
+          100
+          (Just 150)
+          10
+          1.5
+          True
+          "{\"source\":\"web\",\"n\":1,\"flag\":true}"
+    , invoice
+          "i2"
+          "c1"
+          200
+          Nothing
+          20
+          2.5
+          False
+          "{\"source\":\"mail\",\"n\":2,\"flag\":false}"
+    , invoice
+          "i3"
+          "c1"
+          300
+          (Just 310)
+          30
+          0.5
+          False
+          "{\"source\":\"web\",\"n\":3}"
+    , invoice "i4" "c2" 400 Nothing 5 1.0 True "{\"n\":4}"
+    , invoice "i5" "c3" 50 (Just 60) 7 3.0 False "{}"
+    , invoice "i6" "c3" 50 Nothing 8 2.0 False "{}"
+    ]
+
+type alias Tally =
+    { customerId : String
+    , sent : Int
+    , opened : Int
+    , lastSentAt : Int
+    }
+
+
+tallyCodec : Codec Tally
+tallyCodec =
+    Codec.auto { customerId = "", sent = 0, opened = 0, lastSentAt = 0 }
+
+
+tallyQuery : Store.Query Invoice -> Store.Query Tally
+tallyQuery q =
+    q |> Store.where_ (Store.gt "sent_at" (SqlInt 0))
+        |> Store.groupBy [ "customer_id" ]
+        |> Store.aggregate
+               tallyCodec
+               [ Store.key "customer_id"
+               , Store.countAs "sent"
+               , Store.countIfAs "opened" (Store.gt "opened_at" (SqlInt 0))
+               , Store.maxAs "last_sent_at" "sent_at"
+               ]
+
+type alias Totals =
+    { sent : Int
+    , amount : Int
+    , price : Float
+    , firstSent : Maybe Int
+    }
+
+
+totalsCodec : Codec Totals
+totalsCodec =
+    Codec.auto { sent = 0, amount = 0, price = 0.0, firstSent = Nothing }
+
+
+totalsQuery : Store Invoice -> Store.Query Totals
+totalsQuery store =
+    Store.query store
+        |> Store.aggregate
+               totalsCodec
+               [ Store.countAs "sent"
+               , Store.sumAs "amount" "amount"
+               , Store.sumAs "price" "price"
+               , Store.minAs "first_sent" "sent_at"
+               ]
+
+type alias CamelTally =
+    { customerId : String
+    , sentCount : Int
+    }
+
+
+camelTallyCodec : Codec CamelTally
+camelTallyCodec =
+    Codec.autoCamel { customerId = "", sentCount = 0 }
+
+type alias SourceCount =
+    { source : Maybe String
+    , n : Int
+    }
+
+
+sourceCountCodec : Codec SourceCount
+sourceCountCodec =
+    Codec.auto { source = Nothing, n = 0 }
+
+type alias MaybeFlag =
+    { n : Maybe Bool }
+
+
+maybeFlagCodec : Codec MaybeFlag
+maybeFlagCodec =
+    Codec.auto { n = Nothing }
+
+type alias Brief =
+    { id : String
+    , amount : Int
+    }
+
+
+briefCodec : Codec Brief
+briefCodec =
+    Codec.auto { id = "", amount = 0 }
+
+type alias Opened =
+    { id : String
+    , openedAt : Int
+    }
+
+
+-- `openedAt` is required here, but the column is nullable.
+openedCodec : Codec Opened
+openedCodec =
+    Codec.auto { id = "", openedAt = 0 }
+
+type alias Sourced =
+    { id : String
+    , source : Maybe String
+    }
+
+
+sourcedCodec : Codec Sourced
+sourcedCodec =
+    Codec.auto { id = "", source = Nothing }
+
+-- ── Item 7: customers ────────────────────────────────────────────────────────
+type alias Customer =
+    { id : String
+    , name : String
+    , email : String
+    , nickname : Maybe String
+    }
+
+
+customerCodec : Codec Customer
+customerCodec =
+    Codec.auto { id = "", name = "", email = "", nickname = Nothing }
+
+
+customers : Store Customer
+customers =
+    Store.fromCodec "sqc_customers" customerCodec |> Store.primaryKey "id"
+
+
+customerRows : List Customer
+customerRows =
+    [ { id = "k1", name = "a_b", email = "x@work.io", nickname = Just "" }
+    , { id = "k2", name = "axb", email = "Y@Work.IO", nickname = Nothing }
+    , { id = "k3"
+      , name = "50% off"
+      , email = "z@home.org"
+      , nickname = Just "zed"
+      }
+    , { id = "k4", name = "a!b", email = "w@work.io", nickname = Nothing }
+    , { id = "k5", name = "Abc", email = "v@home.org", nickname = Just "vee" }
+    , { id = "k6", name = "abc", email = "u@home.org", nickname = Nothing }
+    ]
+
+type alias BadEvent =
+    { id : String
+    , props : String
+    }
+
+
+badEvents : Store BadEvent
+badEvents =
+    Store.fromCodec "sqc_events_bad" (Codec.auto { id = "", props = "" })
+        |> Store.primaryKey "id"
+
+
+customerIds : Db -> Store.Cond -> Result Error (List String)
+customerIds db cond =
+    Task.run
+        (Store.toList
+            db
+            (Store.query customers |> Store.where_ cond |> Store.orderAsc "id"))
+        |> Result.map (List.map .id)
+
+
+invoiceIds : Db -> Store.Cond -> Result Error (List String)
+invoiceIds db cond =
+    Task.run
+        (Store.toList
+            db
+            (Store.query invoices |> Store.where_ cond |> Store.orderAsc "id"))
+        |> Result.map (List.map .id)
+
+
+-- A refusal made by the Store, not by the driver: the message names the
+-- Store. Run on a missing table, a query that reached the database would
+-- fail with the driver's "no such table" instead.
+storeRefused : Result Error a -> Test.TestResult
+storeRefused result =
+    Test.equal "refused by the Store" (refusal result)
+
+
+refusal : Result Error a -> String
+refusal result =
+    case result of
+
+        Ok _ ->
+            "Ok: the query ran"
+
+        Err e ->
+            if String.contains "Store" (errorToString e) then
+                "refused by the Store"
+
+            else
+                "driver error: " ++ errorToString e
+
+
+sqlOnly : Result Error ( String, List SqlValue ) -> Result Error String
+sqlOnly r =
+    Result.map (\( sql, _ ) -> sql) r
+
+
+byDialect : String -> String -> String
+byDialect sqlite postgres =
+    if dsn == "" then
+        sqlite
+
+    else
+        postgres
+
+
+setup : () -> Result Error Db
+setup _ =
+    Task.run (openDb () |> Task.andThen (\db -> seed db |> Task.map (\_ -> db)))
+
+
+ids : List Order -> List String
+ids rows =
+    List.map .id rows
+
+
+orderIds : Db -> Store.Query Order -> Result Error (List String)
+orderIds db q =
+    Task.run (Store.toList db q) |> Result.map ids
+
+
+dialectProbe : String
+dialectProbe =
+    if dsn == "" then
+        "SELECT sqlite_version() AS v"
+
+    else
+        "SELECT current_setting('server_version') AS v"
+
+
+bugTests : Db -> List Test
+bugTests db =
+    [ Test.test
+          ("store-dialect=" ++ dialectName)
+          (\_ -> Test.ok (Task.run (Db.query db dialectProbe [])))
+    -- B2
+    , Test.test
+          "B2: defaultText \"untouched\" is not the touch flag (update keeps the value)"
+          (\_ ->
+              let
+                  _ =
+                      Task.run
+                          (Store.insert db tags { id = "t1", status = "open" })
+                  _ =
+                      Task.run
+                          (Store.update db tags { id = "t1", status = "closed" })
+              in
+                  Test.equal
+                      (Ok (Just { id = "t1", status = "closed" }))
+                      (Task.run (Store.findBy db tags "id" "t1")))
+    , Test.test
+          "B2: defaultText \"a|u\" does not make the column UNIQUE"
+          (\_ ->
+              Test.equal
+                  (Ok [ 1, 1 ])
+                  (Task.run
+                      (Task.sequence
+                          [ Store.insert
+                                db
+                                memosPipe
+                                { id = "m1", note = "same" }
+                          , Store.insert
+                                db
+                                memosPipe
+                                { id = "m2", note = "same" }
+                          ])))
+    , Test.test
+          "B2: defaultText \"a|b%c\" is the DEFAULT, byte for byte"
+          (\_ ->
+              let
+                  _ =
+                      Task.run
+                          (Store.insert
+                              db
+                              memosDefault
+                              { id = "d1", note = "ignored" })
+              in
+                  Test.equal
+                      (Ok (Just { id = "d1", note = "a|b%c" }))
+                      (Task.run (Store.findBy db memosDefault "id" "d1")))
+    -- B3
+    , Test.test
+          "B3: an autoCamel store migrates twice (the second run applies nothing)"
+          (\_ ->
+              Test.equal
+                  (Ok [])
+                  (Task.run
+                      (Store.migrate db prices
+                          |> Task.andThen (\_ -> Store.migrate db prices))))
+    , Test.test
+          "B3: an autoCamel store reads back what it wrote"
+          (\_ ->
+              Test.equal
+                  (Ok [ { id = "p1", priceMinor = 1250 } ])
+                  (Task.run
+                      (Store.migrate db prices
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.insert
+                                         db
+                                         prices
+                                         { id = "p1", priceMinor = 1250 })
+                          |> Task.andThen (\_ -> Store.all db prices))))
+    -- B4
+    , Test.test
+          "B4: findBy refuses a column name that is not a codec column"
+          (\_ -> Test.err (Task.run (Store.findBy db orders "id = id OR 1" "x")))
+    , Test.test
+          "B4: delete refuses a column name that is not a codec column"
+          (\_ -> Test.err (Task.run (Store.delete db orders "id = id OR 1" "x")))
+    , Test.test
+          "B4: the refused delete removed nothing"
+          (\_ ->
+              Test.equal (Ok 4) (Task.run (Store.count db (Store.query orders))))
+    -- B5
+    , Test.test
+          "B5: offset without limit skips rows on both dialects"
+          (\_ ->
+              Test.equal
+                  (Ok [ "o2", "o3", "o4" ])
+                  (orderIds
+                      db
+                      (Store.query orders |> Store.orderAsc "id"
+                          |> Store.offset 1)))
+    , Test.test
+          "B5: a negative limit is Err"
+          (\_ ->
+              Test.err
+                  (Task.run
+                      (Store.toList db (Store.query orders |> Store.limit (-1)))))
+    , Test.test
+          "B5: a negative offset is Err"
+          (\_ ->
+              Test.err
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query orders |> Store.limit 2
+                              |> Store.offset (-1)))))
+    -- B6
+    , Test.test
+          "B6: an injected table name is refused by insert"
+          (\_ ->
+              Test.err
+                  (Task.run
+                      (Store.insert
+                          db
+                          (Store.fromCodec
+                              "sqc_events; DROP TABLE sqc_orders"
+                              orderCodec)
+                          (order "e1" "c1" "open" 1 Nothing))))
+    , Test.test
+          "B6: the refused insert left sqc_orders in place"
+          (\_ ->
+              Test.equal (Ok 4) (Task.run (Store.count db (Store.query orders))))
+    , Test.test
+          "B6: a table name that is valid SQL but not an identifier is refused by all"
+          (\_ ->
+              Test.err
+                  (Task.run
+                      (Store.all db (Store.fromCodec "sqc_orders o" orderCodec))))
+    , Test.test
+          "B6: an unknown primaryKey is refused by findBy"
+          (\_ ->
+              Test.err
+                  (Task.run
+                      (Store.findBy
+                          db
+                          (Store.fromCodec "sqc_orders" orderCodec
+                              |> Store.primaryKey "idd")
+                          "id"
+                          "o1")))
+    , Test.test
+          "B6: an unknown column in a builder is refused by the first verb"
+          (\_ ->
+              Test.err
+                  (Task.run
+                      (Store.all
+                          db
+                          (Store.fromCodec "sqc_orders" orderCodec
+                              |> Store.unique "emial"))))
+    ]
+
+
+-- ── Item 1: grouped aggregates ───────────────────────────────────────────────
+aggregateTests : Db -> List Test
+aggregateTests db =
+    [ Test.test
+          "aggregate: toSql renders the grouped SELECT, params in text order"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      ( "SELECT customer_id AS \"customer_id\", COUNT(*) AS \"sent\", CAST(COALESCE(SUM(CASE WHEN opened_at > ? THEN 1 ELSE 0 END), 0) AS BIGINT) AS \"opened\", MAX(sent_at) AS \"last_sent_at\" FROM sqc_invoices WHERE (sent_at > ?) GROUP BY customer_id HAVING (COUNT(*) >= ?) ORDER BY \"sent\" DESC"
+                      , [ SqlInt 0, SqlInt 0, SqlInt 2 ]
+                      ))
+                  (Store.toSql
+                      db
+                      (tallyQuery (Store.query invoices)
+                          |> Store.having (Store.gte "sent" (SqlInt 2))
+                          |> Store.orderDesc "sent")))
+    , Test.test
+          "aggregate: having keeps the groups with two or more rows"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ { customerId = "c1"
+                        , sent = 3
+                        , opened = 2
+                        , lastSentAt = 300
+                        }
+                      , { customerId = "c3"
+                        , sent = 2
+                        , opened = 1
+                        , lastSentAt = 50
+                        }
+                      ])
+                  (Task.run
+                      (Store.toRows
+                          db
+                          (tallyQuery (Store.query invoices)
+                              |> Store.having (Store.gte "sent" (SqlInt 2))
+                              |> Store.orderDesc "sent"))))
+    , Test.test
+          "aggregate: the rows equal a hand-written GROUP BY through selectRaw"
+          (\_ ->
+              let
+                  built =
+                      Task.run
+                          (Store.toRows
+                              db
+                              (tallyQuery (Store.query invoices)
+                                  |> Store.orderAsc "customer_id"))
+                  raw =
+                      Task.run
+                          (Store.selectRaw
+                              db
+                              tallyCodec
+                              "SELECT customer_id, COUNT(*) AS sent, SUM(CASE WHEN opened_at > 0 THEN 1 ELSE 0 END) AS opened, MAX(sent_at) AS last_sent_at FROM sqc_invoices WHERE sent_at > 0 GROUP BY customer_id ORDER BY customer_id"
+                              [])
+              in
+                  if Result.map List.length built == Ok 3 then
+                      Test.equal raw built
+
+                  else
+                      Test.fail "expected 3 groups")
+    , Test.test
+          "aggregate: countIfAs is 0 for a group with no match"
+          (\_ ->
+              Test.equal
+                  (Ok [ 0 ])
+                  (Task.run
+                      (Store.toRows
+                          db
+                          (tallyQuery
+                              (Store.query invoices
+                                  |> Store.where_
+                                         (Store.eq "customer_id" (SqlString "c2"))))
+                          |> Task.map (List.map .opened))))
+    , Test.test
+          "aggregate: having on a countIf field binds its params in order"
+          (\_ ->
+              Test.equal
+                  (Ok [ "c1", "c3" ])
+                  (Task.run
+                      (Store.toRows
+                          db
+                          (tallyQuery (Store.query invoices)
+                              |> Store.having (Store.gte "opened" (SqlInt 1))
+                              |> Store.orderAsc "customer_id")
+                          |> Task.map (List.map .customerId))))
+    , Test.test
+          "aggregate: sums, count and min over the whole table (no groupBy)"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ { sent = 6
+                        , amount = 80
+                        , price = 10.5
+                        , firstSent = Just 50
+                        }
+                      ])
+                  (Task.run (Store.toRows db (totalsQuery invoices))))
+    , Test.test
+          "aggregate: an empty table without groupBy gives one row of zeros"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ { sent = 0
+                        , amount = 0
+                        , price = 0.0
+                        , firstSent = Nothing
+                        }
+                      ])
+                  (Task.run (Store.toRows db (totalsQuery emptyInvoices))))
+    , Test.test
+          "aggregate: an empty table with groupBy gives no rows"
+          (\_ ->
+              Test.equal
+                  (Ok [])
+                  (Task.run
+                      (Store.toRows db (tallyQuery (Store.query emptyInvoices)))))
+    , Test.test
+          "aggregate: a camelCase result codec decodes (quoted aliases)"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ { customerId = "c1", sentCount = 3 }
+                      , { customerId = "c2", sentCount = 1 }
+                      , { customerId = "c3", sentCount = 2 }
+                      ])
+                  (Task.run
+                      (Store.toRows
+                          db
+                          (Store.query invoices
+                              |> Store.groupBy [ "customer_id" ]
+                              |> Store.aggregate
+                                     camelTallyCodec
+                                     [ Store.keyAs "customerId" "customer_id"
+                                     , Store.countAs "sentCount"
+                                     ]
+                              |> Store.orderAsc "customerId"))))
+    , Test.test
+          "aggregate: an injection in a countIfAs value is bound, not run"
+          (\_ ->
+              Test.equal
+                  (Ok [ 0, 0, 0 ])
+                  (Task.run
+                      (Store.toRows
+                          db
+                          (Store.query invoices
+                              |> Store.groupBy [ "customer_id" ]
+                              |> Store.aggregate
+                                     tallyCodec
+                                     [ Store.key "customer_id"
+                                     , Store.countAs "sent"
+                                     , Store.countIfAs
+                                           "opened"
+                                           (Store.eq
+                                               "id"
+                                               (SqlString "x' OR '1'='1"))
+                                     , Store.maxAs "last_sent_at" "sent_at"
+                                     ]
+                              |> Store.orderAsc "customer_id")
+                          |> Task.map (List.map .opened))))
+    , Test.test
+          "aggregate: maxAs into an Int field without groupBy is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toRows
+                          db
+                          (Store.query missing
+                              |> Store.aggregate
+                                     (Codec.auto { n = 0 })
+                                     [ Store.maxAs "n" "sent_at" ]))))
+    , Test.test
+          "aggregate: an unknown source column is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toRows
+                          db
+                          (Store.query missing
+                              |> Store.aggregate
+                                     (Codec.auto { n = 0 })
+                                     [ Store.sumAs "n" "amout" ]))))
+    , Test.test
+          "aggregate: an unknown result field is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toRows
+                          db
+                          (Store.query missing
+                              |> Store.aggregate
+                                     (Codec.auto { n = 0 })
+                                     [ Store.countAs "nn" ]))))
+    , Test.test
+          "aggregate: a result field without an Agg is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toRows
+                          db
+                          (Store.query missing |> Store.groupBy [ "customer_id" ]
+                              |> Store.aggregate
+                                     tallyCodec
+                                     [ Store.key "customer_id"
+                                     , Store.countAs "sent"
+                                     ]))))
+    , Test.test
+          "aggregate: a key that is not in groupBy is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toRows
+                          db
+                          (Store.query missing |> Store.groupBy [ "customer_id" ]
+                              |> Store.aggregate
+                                     (Codec.auto { id = "", n = 0 })
+                                     [ Store.key "id", Store.countAs "n" ]))))
+    , Test.test
+          "aggregate: max of a Bool column is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toRows
+                          db
+                          (Store.query missing
+                              |> Store.aggregate
+                                     maybeFlagCodec
+                                     [ Store.maxAs "n" "paid" ]))))
+    , Test.test
+          "aggregate: groupBy or having without aggregate is refused"
+          (\_ ->
+              Test.equal
+                  [ True, True ]
+                  [ isStoreErr
+                        (Task.run
+                            (Store.toList
+                                db
+                                (Store.query missing
+                                    |> Store.groupBy [ "customer_id" ])))
+                  , isStoreErr
+                        (Task.run
+                            (Store.toList
+                                db
+                                (Store.query missing
+                                    |> Store.having
+                                           (Store.gt "amount" (SqlInt 1)))))
+                  ])
+    ]
+
+
+isStoreErr : Result Error a -> Bool
+isStoreErr r =
+    case r of
+
+        Err e ->
+            String.contains "Store" (errorToString e)
+
+        Ok _ ->
+            False
+
+
+-- ── Item 3: projection, DISTINCT, latestPer ──────────────────────────────────
+projectionTests : Db -> List Test
+projectionTests db =
+    [ Test.test
+          "select: toSql lists only the named columns"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      "SELECT id AS \"id\", amount AS \"amount\" FROM sqc_invoices ORDER BY id ASC")
+                  (sqlOnly
+                      (Store.toSql
+                          db
+                          (Store.query invoices |> Store.select briefCodec
+                              |> Store.orderAsc "id"))))
+    , Test.test
+          "select: reads the smaller record"
+          (\_ ->
+              Test.equal
+                  (Ok [ { id = "i1", amount = 10 }, { id = "i2", amount = 20 } ])
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query invoices |> Store.select briefCodec
+                              |> Store.orderAsc "id"
+                              |> Store.limit 2))))
+    , Test.test
+          "selectColumn: gives a List String"
+          (\_ ->
+              Test.equal
+                  (Ok [ "i6", "i5" ])
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query invoices
+                              |> Store.selectColumn "id" Codec.string
+                              |> Store.orderDesc "id"
+                              |> Store.limit 2))))
+    , Test.test
+          "distinct: drops duplicate rows"
+          (\_ ->
+              Test.equal
+                  (Ok [ "c1", "c2", "c3" ])
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query invoices
+                              |> Store.selectColumn "customer_id" Codec.string
+                              |> Store.distinct
+                              |> Store.orderAsc "customer_id"))))
+    , Test.test
+          "count: counts the rows a distinct query returns"
+          (\_ ->
+              Test.equal
+                  (Ok 3)
+                  (Task.run
+                      (Store.count
+                          db
+                          (Store.query invoices
+                              |> Store.selectColumn "customer_id" Codec.string
+                              |> Store.distinct))))
+    , Test.test
+          "distinct: an order column outside the selection is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query missing
+                              |> Store.selectColumn "customer_id" Codec.string
+                              |> Store.distinct
+                              |> Store.orderAsc "id"))))
+    , Test.test
+          "latestPer: toSql renders the window"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      "SELECT * FROM (SELECT sqc_invoices.*, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY sent_at DESC NULLS LAST, id DESC) AS sky_rn FROM sqc_invoices WHERE (paid = ?)) sky_l WHERE sky_rn = 1 ORDER BY sent_at DESC LIMIT 20")
+                  (sqlOnly
+                      (Store.toSql
+                          db
+                          (Store.query invoices
+                              |> Store.where_ (Store.eq "paid" (SqlBool False))
+                              |> Store.latestPer [ "customer_id" ] "sent_at"
+                              |> Store.orderDesc "sent_at"
+                              |> Store.limit 20))))
+    , Test.test
+          "latestPer: one row per key, and NULL is never the newest"
+          (\_ ->
+              Test.equal
+                  (Ok [ "i3", "i4", "i5" ])
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query invoices
+                              |> Store.latestPer [ "customer_id" ] "opened_at"
+                              |> Store.orderAsc "id"))
+                      |> Result.map ids2))
+    , Test.test
+          "latestPer: a tie goes to the larger primary key"
+          (\_ ->
+              Test.equal
+                  (Ok [ "i3", "i4", "i6" ])
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query invoices
+                              |> Store.latestPer [ "customer_id" ] "sent_at"
+                              |> Store.orderAsc "id"))
+                      |> Result.map ids2))
+    , Test.test
+          "latestPer: conditions apply before the pick"
+          (\_ ->
+              Test.equal
+                  (Ok [ "i3", "i6" ])
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query invoices
+                              |> Store.where_ (Store.eq "paid" (SqlBool False))
+                              |> Store.latestPer [ "customer_id" ] "sent_at"
+                              |> Store.orderAsc "id"))
+                      |> Result.map ids2))
+    , Test.test
+          "latestPer: with distinct is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query missing |> Store.distinct
+                              |> Store.latestPer [ "customer_id" ] "sent_at"))))
+    , Test.test
+          "select: a nullable column into a required field is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query missing |> Store.select openedCodec))))
+    , Test.test
+          "select: an empty table gives no rows"
+          (\_ ->
+              Test.equal
+                  (Ok [])
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query emptyInvoices |> Store.select briefCodec))))
+    , Test.test
+          "selectAs: a jsonText source, NULL for a missing key"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ { id = "i1", source = Just "web" }
+                      , { id = "i2", source = Just "mail" }
+                      , { id = "i3", source = Just "web" }
+                      , { id = "i4", source = Nothing }
+                      , { id = "i5", source = Nothing }
+                      , { id = "i6", source = Nothing }
+                      ])
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query invoices
+                              |> Store.selectAs
+                                     sourcedCodec
+                                     [ ( "source"
+                                       , Store.jsonText "props" "source"
+                                       )
+                                     ]
+                              |> Store.orderAsc "id"))))
+    , Test.test
+          "plain query: the text is unchanged (no NULLS clause on a required column)"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      "SELECT * FROM sqc_orders WHERE (status = ?) ORDER BY id ASC LIMIT 5")
+                  (sqlOnly
+                      (Store.toSql
+                          db
+                          (Store.query orders
+                              |> Store.where_
+                                     (Store.eq "status" (SqlString "open"))
+                              |> Store.orderAsc "id"
+                              |> Store.limit 5))))
+    , Test.test
+          "order: a nullable column sorts NULLs last descending"
+          (\_ ->
+              Test.equal
+                  (Ok "SELECT * FROM sqc_orders ORDER BY note DESC NULLS LAST")
+                  (sqlOnly
+                      (Store.toSql
+                          db
+                          (Store.query orders |> Store.orderDesc "note"))))
+    , Test.test
+          "order: NULLs sort the same way on both dialects"
+          (\_ ->
+              Test.equal
+                  (Ok [ "o3", "o1", "o2", "o4" ])
+                  (orderIds
+                      db
+                      (Store.query orders |> Store.orderDesc "note"
+                          |> Store.orderAsc "id")))
+    , Test.test
+          "offset: toSql per dialect"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      (byDialect
+                          "SELECT * FROM sqc_orders LIMIT -1 OFFSET 2"
+                          "SELECT * FROM sqc_orders OFFSET 2"))
+                  (sqlOnly
+                      (Store.toSql db (Store.query orders |> Store.offset 2))))
+    ]
+
+
+ids2 : List Invoice -> List String
+ids2 rows =
+    List.map .id rows
+
+
+-- ── Item 7: text match ───────────────────────────────────────────────────────
+textTests : Db -> List Test
+textTests db =
+    [ Test.test
+          "contains: `_` is literal (a_b does not match axb)"
+          (\_ ->
+              Test.equal
+                  (Ok [ "k1" ])
+                  (customerIds db (Store.contains "name" "a_b")))
+    , Test.test
+          "contains: `%` is literal"
+          (\_ ->
+              Test.equal
+                  (Ok [ "k3" ])
+                  (customerIds db (Store.contains "name" "50%")))
+    , Test.test
+          "contains: `!` is literal"
+          (\_ ->
+              Test.equal
+                  (Ok [ "k4" ])
+                  (customerIds db (Store.contains "name" "a!b")))
+    , Test.test
+          "contains: case-sensitive on both dialects"
+          (\_ ->
+              Test.equal
+                  (Ok [ "k6" ])
+                  (customerIds db (Store.contains "name" "abc")))
+    , Test.test
+          "eqCi: any case"
+          (\_ ->
+              Test.equal
+                  (Ok [ "k5", "k6" ])
+                  (customerIds db (Store.eqCi "name" "ABC")))
+    , Test.test
+          "containsCi: any case"
+          (\_ ->
+              Test.equal
+                  (Ok [ "k1", "k2", "k4" ])
+                  (customerIds db (Store.containsCi "email" "WORK")))
+    , Test.test
+          "containsCi: `_` is literal"
+          (\_ ->
+              Test.equal
+                  (Ok [ "k1" ])
+                  (customerIds db (Store.containsCi "name" "A_B")))
+    , Test.test
+          "startsWith: \"Ab\" does not match \"abc\""
+          (\_ ->
+              Test.equal
+                  (Ok [ "k5" ])
+                  (customerIds db (Store.startsWith "name" "Ab")))
+    , Test.test
+          "endsWith: case-sensitive suffix"
+          (\_ ->
+              Test.equal
+                  (Ok [ "k1", "k4" ])
+                  (customerIds db (Store.endsWith "email" "@work.io")))
+    , Test.test
+          "empty needle: every non-NULL row, for all four functions"
+          (\_ ->
+              Test.equal
+                  [ Ok [ "k1", "k3", "k5" ]
+                  , Ok [ "k1", "k3", "k5" ]
+                  , Ok [ "k1", "k3", "k5" ]
+                  , Ok [ "k1", "k3", "k5" ]
+                  ]
+                  [ customerIds db (Store.contains "nickname" "")
+                  , customerIds db (Store.containsCi "nickname" "")
+                  , customerIds db (Store.startsWith "nickname" "")
+                  , customerIds db (Store.endsWith "nickname" "")
+                  ])
+    , Test.test
+          "text match: an injection in the needle is bound"
+          (\_ ->
+              Test.equal
+                  (Ok [])
+                  (customerIds db (Store.contains "name" "' OR 1=1 --")))
+    , Test.test
+          "text match: a non-text column is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query missing
+                              |> Store.where_ (Store.contains "amount" "1")))))
+    , Test.test
+          "text match: an unknown column is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query missing
+                              |> Store.where_ (Store.startsWith "nmae" "x")))))
+    , Test.test
+          "startsWith: toSql per dialect"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      (byDialect
+                          "SELECT * FROM sqc_customers WHERE (substr(name, 1, length(?)) = ?)"
+                          "SELECT * FROM sqc_customers WHERE (name LIKE ? ESCAPE '!')"))
+                  (sqlOnly
+                      (Store.toSql
+                          db
+                          (Store.query customers
+                              |> Store.where_ (Store.startsWith "name" "Ab")))))
+    ]
+
+
+-- ── Items 10 and 11: column conditions, jsonText ─────────────────────────────
+columnAndJsonTests : Db -> List Test
+columnAndJsonTests db =
+    [ Test.test
+          "gtCol: rows where one column is above another"
+          (\_ ->
+              Test.equal
+                  (Ok [ "i1", "i3", "i5" ])
+                  (invoiceIds db (Store.gtCol "opened_at" "sent_at")))
+    , Test.test
+          "gtCol: toSql compares the two columns"
+          (\_ ->
+              Test.equal
+                  (Ok "SELECT * FROM sqc_invoices WHERE (opened_at > sent_at)")
+                  (sqlOnly
+                      (Store.toSql
+                          db
+                          (Store.query invoices
+                              |> Store.where_
+                                     (Store.gtCol "opened_at" "sent_at")))))
+    , Test.test
+          "eqCol / neqCol / lteCol: each row once"
+          (\_ ->
+              Test.equal
+                  [ Ok [ "i1", "i2", "i3", "i4", "i5", "i6" ]
+                  , Ok []
+                  , Ok [ "i1", "i2", "i3", "i4", "i5", "i6" ]
+                  ]
+                  [ invoiceIds db (Store.eqCol "sent_at" "sent_at")
+                  , invoiceIds db (Store.neqCol "sent_at" "sent_at")
+                  , invoiceIds db (Store.lteCol "amount" "sent_at")
+                  ])
+    , Test.test
+          "column condition: an unknown side is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query missing
+                              |> Store.where_ (Store.ltCol "opened_at" "sentat")))))
+    , Test.test
+          "column condition: two kinds are refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query missing
+                              |> Store.where_
+                                     (Store.gteCol "opened_at" "customer_id")))))
+    , Test.test
+          "jsonText: eq on a key"
+          (\_ ->
+              Test.equal
+                  (Ok [ "i1", "i3" ])
+                  (invoiceIds
+                      db
+                      (Store.eq
+                          (Store.jsonText "props" "source")
+                          (SqlString "web"))))
+    , Test.test
+          "jsonText: a number reads as its text on both dialects"
+          (\_ ->
+              Test.equal
+                  (Ok [ "i2" ])
+                  (invoiceIds
+                      db
+                      (Store.eq (Store.jsonText "props" "n") (SqlString "2"))))
+    , Test.test
+          "jsonText: a boolean reads true / false on both dialects"
+          (\_ ->
+              Test.equal
+                  [ Ok [ "i1" ], Ok [ "i2" ] ]
+                  [ invoiceIds
+                        db
+                        (Store.eq
+                            (Store.jsonText "props" "flag")
+                            (SqlString "true"))
+                  , invoiceIds
+                        db
+                        (Store.eq
+                            (Store.jsonText "props" "flag")
+                            (SqlString "false"))
+                  ])
+    , Test.test
+          "jsonText: group counts, a missing key under NULL"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ { source = Nothing, n = 3 }
+                      , { source = Just "mail", n = 1 }
+                      , { source = Just "web", n = 2 }
+                      ])
+                  (Task.run
+                      (Store.toRows
+                          db
+                          (Store.query invoices
+                              |> Store.groupBy
+                                     [ Store.jsonText "props" "source" ]
+                              |> Store.aggregate
+                                     sourceCountCodec
+                                     [ Store.keyAs
+                                           "source"
+                                           (Store.jsonText "props" "source")
+                                     , Store.countAs "n"
+                                     ]
+                              |> Store.orderAsc "source"))))
+    , Test.test
+          "jsonText: an injection in the key is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query missing
+                              |> Store.where_
+                                     (Store.eq
+                                         (Store.jsonText "props" "a') OR 1=1 --")
+                                         (SqlString "x"))))))
+    , Test.test
+          "jsonText: an Int column is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query missing
+                              |> Store.where_
+                                     (Store.eq
+                                         (Store.jsonText "amount" "x")
+                                         (SqlString "1"))))))
+    , Test.test
+          "jsonText: a value that is not SqlString is refused"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query missing
+                              |> Store.where_
+                                     (Store.eq
+                                         (Store.jsonText "props" "n")
+                                         (SqlInt 2))))))
+    , Test.test
+          "jsonText: a malformed JSON row is Err, not a short list (B1)"
+          (\_ ->
+              Test.err
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query badEvents
+                              |> Store.where_
+                                     (Store.eq
+                                         (Store.jsonText "props" "source")
+                                         (SqlString "web"))))))
+    , Test.test
+          "jsonText: toSql per dialect"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      (byDialect
+                          "SELECT * FROM sqc_invoices WHERE ((CASE json_type(props, '$.source') WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE CAST(json_extract(props, '$.source') AS TEXT) END) = ?)"
+                          "SELECT * FROM sqc_invoices WHERE ((CAST(props AS jsonb) ->> 'source') = ?)"))
+                  (sqlOnly
+                      (Store.toSql
+                          db
+                          (Store.query invoices
+                              |> Store.where_
+                                     (Store.eq
+                                         (Store.jsonText "props" "source")
+                                         (SqlString "web"))))))
+    ]
+
+
+tests : List Test
+tests =
+    case setup () of
+
+        Err e ->
+            [ Test.test
+                  "setup"
+                  (\_ -> Test.fail ("DB setup failed: " ++ errorToString e))
+            ]
+
+        Ok db ->
+            bugTests db ++ aggregateTests db ++ projectionTests db
+                ++ textTests db
+                ++ columnAndJsonTests db
+
+
+main =
+    Test.runMain tests

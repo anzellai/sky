@@ -7,7 +7,7 @@
 > [`../history/compiler/journey.md`](../history/compiler/journey.md) for the changelog.
 
 
-**One database API, two backends.** `Std.Db` works identically against SQLite and PostgreSQL — pick the driver in `sky.toml`, never touch it again in your code. For record-shaped tables the **recommended default is `Std.Db.Store` + `Std.Codec`**: write one codec per type and let the Store drive the schema, the reads, and the writes — no hand-written SQL, no row mappers. Drop down to raw `Db.exec` / `Db.query` only for JOINs, aggregates, or SQL the Store can't express (the [escape hatch](#dropping-to-raw-sql) shown later).
+**One database API, two backends.** `Std.Db` works identically against SQLite and PostgreSQL — pick the driver in `sky.toml`, never touch it again in your code. For record-shaped tables the **recommended default is `Std.Db.Store` + `Std.Codec`**: write one codec per type and let the Store drive the schema, the reads, and the writes — no hand-written SQL, no row mappers. Drop down to raw `Db.exec` / `Db.query` only for JOINs or SQL the Store can't express (grouped aggregates, projections and per-key newest rows have Store builders) (the [escape hatch](#dropping-to-raw-sql) shown later).
 
 ```elm
 module Main exposing (main)
@@ -124,31 +124,142 @@ Composable, injection-safe `Cond` values; you never touch a SQL string:
 ```elm
 Store.query users
     |> Store.where_ (Store.eq "verified" (SqlInt 1))
-    |> Store.where_ (Store.or_ [ Store.like "email" "%@work.io", Store.gt "createdAt" (SqlString cutoff) ])
+    |> Store.where_ (Store.or_ [ Store.endsWith "email" "@work.io", Store.gt "createdAt" (SqlString cutoff) ])
     |> Store.orderDesc "createdAt"
     |> Store.limit 20
-    |> Store.toList conn        -- terminals: toList / toMaybe / count
+    |> Store.toList conn        -- terminals: toList / toRows / toMaybe / count
 ```
 
 Leaves (`eq`/`neq`/`gt`/`gte`/`lt`/`lte`/`like`/`isNull`/`notNull`/`inList "col" v`)
 combine with `and_`/`or_`/`not_`; multiple `where_` clauses AND together (so OR /
 nesting is first-class). `Store.sqlOf codec value` filters by a **typed** value
 (enum / `Money` / `Time` / a `Codec.map` wrapper) via its codec. Whole-table /
-single-row shortcuts: `all` / `findBy`.
+single-row shortcuts: `all` / `findBy`. `Store.toSql conn q` returns the SQL text
+(with `?`) and the parameters a query renders on that connection's dialect, or
+the `Err` it would fail with.
 
-### JOINs and aggregates → `Store.selectRaw`
+**Every name is checked before any statement runs.** A column argument is a
+codec column (the record field or its snake name) or a `jsonText` reference. A
+table, column, alias or JSON key must match `[A-Za-z_][A-Za-z0-9_]*` and be at
+most 63 bytes, the primary key must be a codec column, and a builder that names
+an unknown column (`Store.unique "emial"`) makes the first verb fail with that
+name. `findBy` and `delete` follow the same rule. A negative `limit` or `offset`
+is an `Err`; `offset` without `limit` works on both dialects. There is no
+reserved-word list: a column named `order` or `user` stays a driver error on the
+dialect that refuses it. **Never build a column argument from user input:** a
+`jsonText` reference can read any key of a JSON column.
 
-A single-table Store can't express a JOIN or `GROUP BY` — so `selectRaw` runs
-**any** SQL and decodes each row into a typed **projection** record via a codec
-(the sqlx split: you own the SQL, the codec owns the mapping — no ORM, no
-relations, no N+1):
+**Text matching.** `like` uses its pattern as given: `%` and `_` are wildcards,
+there is no escape, and it is case-sensitive on PostgreSQL but ignores ASCII
+case on SQLite. For text a user typed, use the escaped forms, which match the
+same way on both dialects:
+
+| Condition | Matches |
+|---|---|
+| `Store.contains "name" "50%"` | the text contains the needle; `%`, `_`, `!` are literal; case-sensitive |
+| `Store.startsWith "name" "Ab"` / `Store.endsWith "email" "@work.io"` | a prefix / suffix, case-sensitive |
+| `Store.eqCi "name" "ada"` | equal, ignoring case (`LOWER(col) = LOWER(?)`) |
+| `Store.containsCi "email" "WORK"` | contains, ignoring case |
+
+An empty needle matches every non-NULL row. The column must be a text column.
+SQLite's `LOWER` folds ASCII letters only; PostgreSQL folds all letters. To
+escape a `like` pattern by hand, prefix `!`, `%` and `_` with `!` and use raw
+SQL with `ESCAPE '!'`.
+
+**Column against column.** `eqCol`, `neqCol`, `gtCol`, `gteCol`, `ltCol` and
+`lteCol` compare two columns of the same kind:
+`Store.where_ (Store.gtCol "last_staff_at" "customer_read_at")`.
+
+**Inside a JSON column.** `Store.jsonText "props" "source"` names one key of a
+JSON text column and works wherever a column name does (a condition,
+`groupBy`, `keyAs`, `selectAs`, an order term). It reads the key's text, or
+NULL when the key is missing. A JSON `true` reads `"true"` on both dialects. A
+number reads as its text, which can differ (`1e2` reads `100.0` on SQLite and
+`100` on PostgreSQL), and an object differs in spacing. The column must be a
+text or blob column, and a compared value must be `SqlString`. A row with
+malformed JSON makes the query `Err`, never a short list.
+
+### Grouped aggregates
+
+`groupBy` + `aggregate` give one row per group, decoded by a result codec.
+Each field of the result codec is covered by exactly one `Agg`:
 
 ```elm
-type alias Tally = { ideaId : String, votes : Int }
+type alias Tally = { customerId : String, sent : Int, opened : Int, lastSentAt : Int }
 
-Store.selectRaw conn (Codec.auto { ideaId = "", votes = 0 })
-    "SELECT idea_id, COUNT(*) AS votes FROM votes GROUP BY idea_id"
-    []                                             -- : Task Error (List Tally)
+Store.query invoices
+    |> Store.where_ (Store.gt "sent_at" (SqlInt since))
+    |> Store.groupBy [ "customer_id" ]
+    |> Store.aggregate (Codec.auto { customerId = "", sent = 0, opened = 0, lastSentAt = 0 })
+        [ Store.key "customer_id"
+        , Store.countAs "sent"
+        , Store.countIfAs "opened" (Store.gt "opened_at" (SqlInt 0))
+        , Store.maxAs "last_sent_at" "sent_at"
+        ]
+    |> Store.having (Store.gte "sent" (SqlInt 2))
+    |> Store.orderDesc "sent"
+    |> Store.toRows conn                           -- : Task Error (List Tally)
+```
+
+| `Agg` | Renders | Result field |
+|---|---|---|
+| `key "col"` / `keyAs "field" "col"` | the group column (it must be in `groupBy`) | the column's kind; `Maybe` if the column is nullable |
+| `countAs "field"` | `COUNT(*)` | `Int` |
+| `countIfAs "field" cond` | rows of the group that match `cond` (0 when none) | `Int` |
+| `countDistinctAs "field" "col"` | `COUNT(DISTINCT col)` | `Int` |
+| `sumAs "field" "col"` | the sum of an `Int` / `Float` column, 0 when empty | the column's kind |
+| `minAs` / `maxAs "field" "col"` | the smallest / largest value (not a `Bool` column) | the column's kind; `Maybe` when the column is nullable or there is no `groupBy` |
+
+`having` and the order terms after `aggregate` name result fields. Without
+`groupBy` the result is one row over the selection: an empty table gives zero
+counts and sums and `Nothing` for `minAs` / `maxAs`. A wrong kind, an unknown
+column or field, a `key` that is not grouped, or a field with no `Agg` is an
+`Err` before any statement runs. Text compares by the database collation
+(SQLite `BINARY`, PostgreSQL the database collation), so `minAs` / `maxAs`, `gt`
+and `ORDER BY` on text can differ between the dialects.
+
+### Projection, DISTINCT, newest row per key
+
+```elm
+Store.query orders |> Store.select summaryCodec |> Store.toList conn
+    -- each field of summaryCodec reads the column of the same name
+
+Store.query orders |> Store.selectColumn "customer_id" Codec.string |> Store.distinct |> Store.toList conn
+    -- : Task Error (List String)
+
+Store.query events
+    |> Store.selectAs sourcedCodec [ ( "source", Store.jsonText "props" "source" ) ]
+
+Store.query orders
+    |> Store.where_ (Store.eq "status" (SqlString "open"))
+    |> Store.latestPer [ "customer_id" ] "created_at"   -- the newest open order per customer
+    |> Store.toList conn
+```
+
+A nullable column needs a `Maybe` field. With `distinct` and a projection,
+every order column must be a selected column. `latestPer` never picks a NULL as
+the newest, breaks a tie by the larger primary key, and does not combine with
+`distinct`, `groupBy` or `aggregate`. `count` counts the rows such a query
+returns.
+
+**NULL ordering.** An order term on a nullable column sorts NULLs first
+ascending and last descending, on both dialects (SQLite's own default, now
+explicit for PostgreSQL). A term on a required column renders as before.
+
+### JOINs → `Store.selectRaw`
+
+A join of two Stores is not a builder yet, so `selectRaw` runs **any** SQL and
+decodes each row into a typed **projection** record via a codec (the sqlx
+split: you own the SQL, the codec owns the mapping — no ORM, no relations, no
+N+1). It stays the last escape hatch for a shape the builders do not model (a
+window function, a CTE):
+
+```elm
+type alias Pair = { ideaId : String, author : String }
+
+Store.selectRaw conn (Codec.auto { ideaId = "", author = "" })
+    "SELECT i.id AS idea_id, u.name AS author FROM ideas i JOIN users u ON u.id = i.author_id"
+    []                                             -- : Task Error (List Pair)
 ```
 
 Raw `Std.Db` (`query`/`exec`/`withTransaction`) remains the escape hatch for
@@ -503,8 +614,8 @@ atomic `SET col = col + delta` (counters, stock levels) — see
 
 ### Dropping to raw SQL
 
-When you need SQL the Store can't express — a JOIN, a `GROUP BY`, a hand-tuned
-query — drop to raw `Db.exec` / `Db.execRaw` / `Db.queryDecode` with a
+When you need SQL the Store can't express — a JOIN, a window function, a
+hand-tuned query — drop to raw `Db.exec` / `Db.execRaw` / `Db.queryDecode` with a
 hand-written row decoder. The row shape from the runtime is `Dict String String`
 — every column lands stringified, and the typed accessors (`Db.getInt` /
 `Db.getString` / `Db.getBool`) parse on read with a default-supplied fallback.

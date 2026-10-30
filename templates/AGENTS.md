@@ -162,7 +162,7 @@ memorised signatures. This section covers *which layer to reach for*, not the AP
 | Records with straightforward CRUD (**default**) | `Std.Db.Store` + `Std.Codec` | ONE codec per type drives JSON encode/decode **and** dialect-safe DB read/write/schema — no hand-written row mappers. |
 | Records, JSON not needed | `Std.Db.Table` | Reflection record↔row mapper (camelCase↔snake_case), no codec to write. |
 | Explicit schema / DDL only | `Std.Db.Schema` | Typed, dialect-safe `CREATE TABLE` — one definition, correct on SQLite AND Postgres (no `INTEGER`-millis-overflow / `AUTOINCREMENT`-vs-`BIGSERIAL` drift). Reach the migration tooling with `db = Schema.toProject allTables` (`Store.Project` for `sky db push` / `migrate --gen`; tables/PK/UNIQUE/DEFAULTs carry, indexes stay on `createSchema`). |
-| Joins, aggregates, transactions, custom SQL | `Std.Db` — `query` / `exec` / `withTransaction` + `SqlValue` | The escape hatch the mappers don't model. |
+| Joins, transactions, custom SQL (grouped aggregates, projections and per-key newest rows are Store builders) | `Std.Db` — `query` / `exec` / `withTransaction` + `SqlValue` | The escape hatch the mappers don't model. |
 
 ### Default — `Store` + `Codec`
 
@@ -187,7 +187,8 @@ products =
 --         Store.updateFields conn products cond [("status", SqlString "sold")]  (by Cond)
 --         Store.adjust conn products cond [("stock", -qty)]  (atomic SET col = col + delta)
 -- read:   Store.all conn products  ·  Store.findBy conn products "id" "p1"
---         Store.selectRaw conn projCodec "<any JOIN / GROUP BY SQL>" params
+--         Store.query invoices |> Store.groupBy [ "customer_id" ] |> Store.aggregate tallyCodec [ ... ] |> Store.toRows conn
+--         Store.selectRaw conn projCodec "<any JOIN SQL>" params
 ```
 
 `Codec.auto` columns (and JSON keys) are **snake_case** by default — `priceMinor`
@@ -204,10 +205,16 @@ UUID PK) · `generated [ "id", "created_at" ]` (columns `insert`/`update` omit s
 the DB fills them). `Store.create conn store` emits the dialect-correct DDL;
 `Store.upsert` is INSERT … ON CONFLICT DO UPDATE (idempotent config rows).
 
-**JOINs / aggregates** → `Store.selectRaw codec "<SQL>" params`: you write the SQL
-(joins, `GROUP BY`, `COUNT`), a codec decodes each row into a typed projection
-record. Store stays a single-table mapper — deliberately not an ORM. Exact
-signatures: `sky doc Std.Db.Store` / `sky doc Std.Codec`.
+**Aggregates and projections** are builders: `groupBy` + `aggregate` with
+`key` / `countAs` / `countIfAs` / `sumAs` / `minAs` / `maxAs` (+ `having`),
+`select` / `selectColumn` / `distinct`, `latestPer` (newest row per key), the
+escaped text conditions `contains` / `startsWith` / `endsWith` / `eqCi` /
+`containsCi` (prefer them to `like` for user text), `eqCol` / `gtCol` (column
+against column) and `jsonText "props" "key"` (a key of a JSON column). Every
+name is checked before the query runs; `Store.toSql conn q` shows the SQL.
+**JOINs** → `Store.selectRaw codec "<SQL>" params`: you write the SQL, a codec
+decodes each row into a typed projection record. Exact signatures:
+`sky doc Std.Db.Store` / `sky doc Std.Codec`.
 
 **Compose reads with the query builder** — filters bind as `SqlValue` params
 (injection-safe), so you never touch a SQL string:
@@ -244,7 +251,7 @@ Store.transaction conn (\tx ->
 ```
 
 Only drop to raw **`Std.Db`** (`query` / `exec` / `withTransaction` + `SqlValue`)
-for joins / aggregates / CTEs the builder doesn't model. **Import both qualified**
+for joins / CTEs / window functions the builders don't model. **Import both qualified**
 (`import Std.Db.Store as Store` + `import Std.Db as Db`) — never `exposing (..)` on
 both, since `query`/`migrate` overlap; qualified is the intended usage.
 

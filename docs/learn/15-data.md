@@ -71,7 +71,9 @@ backend you connect to.
 
 ## When you outgrow the store
 
-For joins, aggregates, and transactions, drop to raw `Std.Db`
+Grouped counts and sums (`groupBy` + `aggregate`), projections (`select`), the
+newest row per key (`latestPer`) and text search (`contains`, `eqCi`) are Store
+builders. For joins and transactions, drop to raw `Std.Db`
 (`query` / `exec` / `withTransaction`) — or use `Store.selectRaw` to run any SQL
 and decode each row into a typed projection record via a codec. The store is the
 default, not a cage. Schema changes ship as committed migration files:

@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1781,
+      "expected_assertions": 1861,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -815,6 +815,18 @@
       ],
       "tier": "T1"
     },
+    "store-query-postgres": {
+      "expected_assertions": 80,
+      "falsifier_mutation": "store-query-postgres.drop-rows-err",
+      "falsifier_proven": true,
+      "summary": "Std.Db.Store query path (aggregates, select, latestPer, text match, jsonText) on PostgreSQL",
+      "surfaces": [
+        "db.postgres",
+        "db.codec-store",
+        "stdlib.Std.Db.Store"
+      ],
+      "tier": "T3"
+    },
     "verify-cli": {
       "expected_assertions": 13,
       "falsifier_mutation": "verify-cli.drop-expected-output",
@@ -998,7 +1010,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3145,
+    "stdlib_entries": 3176,
     "stdlib_modules": 135,
     "surfaces_covered": 193,
     "surfaces_covered_pct": 95.1,
@@ -2211,6 +2223,11 @@
             "strength": 4
           },
           {
+            "by": "gate `store-query-postgres`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": ".github/workflows/rust-ci.yml: scripts/conformance.sh (`script:scripts/conformance.sh` is not harness-registered — no proven falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -2293,6 +2310,11 @@
           },
           {
             "by": "gate `apps-ledger-postgres`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `store-query-postgres`",
             "class": "Falsified",
             "strength": 4
           }
@@ -13941,6 +13963,11 @@
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "gate `store-query-postgres`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -19776,6 +19803,42 @@
             "createTable"
           ]
         },
+        "Std.Db.Store": {
+          "count": 31,
+          "symbols": [
+            "Agg",
+            "aggregate",
+            "contains",
+            "containsCi",
+            "countAs",
+            "countDistinctAs",
+            "countIfAs",
+            "distinct",
+            "endsWith",
+            "eqCi",
+            "eqCol",
+            "groupBy",
+            "gtCol",
+            "gteCol",
+            "having",
+            "jsonText",
+            "key",
+            "keyAs",
+            "latestPer",
+            "ltCol",
+            "lteCol",
+            "maxAs",
+            "minAs",
+            "neqCol",
+            "select",
+            "selectAs",
+            "selectColumn",
+            "startsWith",
+            "sumAs",
+            "toRows",
+            "toSql"
+          ]
+        },
         "Std.Db.Table": {
           "count": 14,
           "symbols": [
@@ -20370,8 +20433,8 @@
           ]
         }
       },
-      "count": 866,
-      "pct_of_denominator": 27.5
+      "count": 897,
+      "pct_of_denominator": 28.2
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -21243,6 +21306,42 @@
             "createTable"
           ]
         },
+        "Std.Db.Store": {
+          "count": 31,
+          "symbols": [
+            "Agg",
+            "aggregate",
+            "contains",
+            "containsCi",
+            "countAs",
+            "countDistinctAs",
+            "countIfAs",
+            "distinct",
+            "endsWith",
+            "eqCi",
+            "eqCol",
+            "groupBy",
+            "gtCol",
+            "gteCol",
+            "having",
+            "jsonText",
+            "key",
+            "keyAs",
+            "latestPer",
+            "ltCol",
+            "lteCol",
+            "maxAs",
+            "minAs",
+            "neqCol",
+            "select",
+            "selectAs",
+            "selectColumn",
+            "startsWith",
+            "sumAs",
+            "toRows",
+            "toSql"
+          ]
+        },
         "Std.Db.Table": {
           "count": 14,
           "symbols": [
@@ -21912,8 +22011,8 @@
           ]
         }
       },
-      "count": 981,
-      "pct_of_denominator": 31.2
+      "count": 1012,
+      "pct_of_denominator": 31.9
     }
   },
   "units": [

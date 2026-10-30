@@ -52,11 +52,37 @@ func codecColIsAutoInc(kind string) bool {
 // codecColIsTouch reports whether a colspec kind carries the `touch` flag that
 // `Store.touchOnUpdate` stamps — such a column is set to the current timestamp on
 // every UPDATE (an `updated_at`), not bound from the record value.
-func codecColIsTouch(kind string) bool { return strings.Contains(kind, "touch") }
+//
+// Each flag is compared EXACTLY. A substring match made
+// `Store.defaultText "status" "untouched"` a touch column, so every
+// Store.update overwrote `status` with the clock.
+func codecColIsTouch(kind string) bool {
+	for _, f := range codecColFlags(kind) {
+		if f == "touch" {
+			return true
+		}
+	}
+	return false
+}
+
+// codecColFlags returns the `|`-delimited flags after the base kind.
+func codecColFlags(kind string) []string {
+	i := strings.IndexByte(kind, '|')
+	if i < 0 {
+		return nil
+	}
+	return strings.Split(kind[i+1:], "|")
+}
+
+// codecFlagValueDecoder reverses the Sky-side encoding of a default value
+// (Store.sky `flagValue`): `%` is sent as `%25` and `|` as `%7C`, so a value
+// can hold either character without splitting into, or injecting, a flag.
+var codecFlagValueDecoder = strings.NewReplacer("%7C", "|", "%25", "%")
 
 // codecColExtras parses the `|`-delimited flag suffix Store.unique / Store.default*
 // append onto a colspec kind, returning (unique, defaultKind, defaultVal) where
-// defaultKind ∈ {none,now,text,int,bool} matches schemaDefault.
+// defaultKind ∈ {none,now,text,int,bool} matches schemaDefault. A default
+// value arrives percent-encoded (see codecFlagValueDecoder) and is decoded here.
 func codecColExtras(kind string) (bool, string, string) {
 	unique := false
 	defKind, defVal := "none", ""
@@ -71,7 +97,7 @@ func codecColExtras(kind string) (bool, string, string) {
 		case f == "dnow":
 			defKind = "now"
 		case strings.HasPrefix(f, "dtext="):
-			defKind, defVal = "text", f[len("dtext="):]
+			defKind, defVal = "text", codecFlagValueDecoder.Replace(f[len("dtext="):])
 		case strings.HasPrefix(f, "dint="):
 			defKind, defVal = "int", f[len("dint="):]
 		case strings.HasPrefix(f, "dbool="):
@@ -168,8 +194,12 @@ func codecTableColumns(d *SkyDb, table string) (map[string]bool, error) {
 	var sql string
 	var params []any
 	if d.driver == "pgx" {
-		sql = "SELECT column_name FROM information_schema.columns WHERE table_name = ?"
-		params = []any{table}
+		// The schema filter matters: without it a same-named table in another
+		// schema on the search_path made migrate skip the CREATE and ALTER
+		// that other table (B7). Names come back folded to lower case,
+		// because the Store DDL is unquoted (B3), so the set is keyed folded.
+		sql = "SELECT column_name FROM information_schema.columns WHERE table_name = ? AND table_schema = current_schema()"
+		params = []any{strings.ToLower(table)}
 	} else {
 		sql = "PRAGMA table_info(" + table + ")" // PRAGMA takes no bind params
 		params = []any{}
@@ -189,10 +219,41 @@ func codecTableColumns(d *SkyDb, table string) (map[string]bool, error) {
 		if v, present := m["name"]; present {
 			out[dbRawToString(v)] = true
 		} else if v, present := m["column_name"]; present {
-			out[dbRawToString(v)] = true
+			out[strings.ToLower(dbRawToString(v))] = true
 		}
 	}
 	return out, nil
+}
+
+// codecHasColumn looks a codec column name up in the set codecTableColumns
+// returned. On PostgreSQL an unquoted name is folded to lower case, so the
+// lookup folds too (B3): an autoCamel `priceMinor` exists as `priceminor`.
+func codecHasColumn(driver string, current map[string]bool, name string) bool {
+	if driver == "pgx" {
+		return current[strings.ToLower(name)]
+	}
+	return current[name]
+}
+
+// codecRowValue reads a column from a row map. PostgreSQL returns an unquoted
+// column folded to lower case, so on pgx a missing key is retried folded (B3).
+// An output alias is quoted by Store, so it arrives with its case and the
+// first lookup finds it.
+func codecRowValue(driver string, m map[string]any, name string) (any, bool) {
+	v, ok := m[name]
+	if !ok && driver == "pgx" {
+		v, ok = m[strings.ToLower(name)]
+	}
+	return v, ok
+}
+
+// Db_dialect : Db -> String. "postgres" for a pgx handle, else "sqlite".
+// Std.Db.Store reads it once per verb to render dialect-correct SQL.
+func Db_dialect(connArg any) any {
+	if d, ok := connArg.(*SkyDb); ok && d.driver == "pgx" {
+		return "postgres"
+	}
+	return "sqlite"
 }
 
 // Db_autoMigrate : Db -> String -> colspec -> String -> Task Error (List String).
@@ -229,7 +290,7 @@ func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg any) any {
 		for _, cs := range AsList(colspecArg) {
 			t := AsTuple2(cs)
 			name := AsString(t.V0)
-			if !codecValidIdent(name) || current[name] {
+			if !codecValidIdent(name) || codecHasColumn(d.driver, current, name) {
 				continue
 			}
 			sqlType := schemaTypeName(d.driver, codecColKindToSchema(AsString(t.V1)))
@@ -569,6 +630,7 @@ func Db_queryObjects(connArg, sqlArg, paramsArg, colspecArg any) any {
 		if !ok || r.Tag != 0 {
 			return resp
 		}
+		driver := dbDriverOf(connArg)
 		out := []any{}
 		for _, row := range AsList(r.OkValue) {
 			m, ok := dbRowAsMap(row)
@@ -580,7 +642,7 @@ func Db_queryObjects(connArg, sqlArg, paramsArg, colspecArg any) any {
 				t := AsTuple2(cs)
 				name := AsString(t.V0)
 				base, _ := codecSplitKind(AsString(t.V1))
-				raw, present := m[name]
+				raw, present := codecRowValue(driver, m, name)
 				obj.keys = append(obj.keys, name)
 				obj.vals = append(obj.vals, rowValToJsonRaw(raw, present, base))
 			}
