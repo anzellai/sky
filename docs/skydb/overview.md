@@ -7,7 +7,7 @@
 > [`../history/compiler/journey.md`](../history/compiler/journey.md) for the changelog.
 
 
-**One database API, two backends.** `Std.Db` works identically against SQLite and PostgreSQL — pick the driver in `sky.toml`, never touch it again in your code. For record-shaped tables the **recommended default is `Std.Db.Store` + `Std.Codec`**: write one codec per type and let the Store drive the schema, the reads, and the writes — no hand-written SQL, no row mappers. Drop down to raw `Db.exec` / `Db.query` only for JOINs or SQL the Store can't express (grouped aggregates, projections and per-key newest rows have Store builders) (the [escape hatch](#dropping-to-raw-sql) shown later).
+**One database API, two backends.** `Std.Db` works identically against SQLite and PostgreSQL — pick the driver in `sky.toml`, never touch it again in your code. For record-shaped tables the **recommended default is `Std.Db.Store` + `Std.Codec`**: write one codec per type and let the Store drive the schema, the reads, and the writes — no hand-written SQL, no row mappers. A Store query also joins two stores (`join` / `leftJoin`), groups and aggregates (`groupBy` / `aggregate` / `having`), projects (`select`), filters on a subquery (`inQuery` / `exists`), and upserts (`upsert` / `upsertWith`). Drop down to raw `Db.exec` / `Db.query` only for what it cannot express: a join of three or more tables, a window function, a CTE, a regular-expression match, or a trigger (such as a counter column the database maintains on each insert) (the [escape hatch](#dropping-to-raw-sql) shown later).
 
 ```elm
 module Main exposing (main)
@@ -832,8 +832,9 @@ atomic `SET col = col + delta` (counters, stock levels) — see
 
 ### Dropping to raw SQL
 
-When you need SQL the Store can't express — a JOIN, a window function, a
-hand-tuned query — drop to raw `Db.exec` / `Db.execRaw` / `Db.queryDecode` with a
+When you need SQL the Store can't express (a join of three or more tables, a
+window function, a CTE, a regular-expression match, a trigger such as a counter
+column the database maintains, a hand-tuned query), drop to raw `Db.exec` / `Db.execRaw` / `Db.queryDecode` with a
 hand-written row decoder. The row shape from the runtime is `Dict String String`
 — every column lands stringified, and the typed accessors (`Db.getInt` /
 `Db.getString` / `Db.getBool`) parse on read with a default-supplied fallback.
