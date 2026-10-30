@@ -10601,6 +10601,17 @@ fn gen_frontend(
                 };
                 // v0.29.0: the input Msgs that may run during a given hold
                 // (spa_partition::hold_free_pairs). Absent, every Msg waits.
+                // The table is the split's alone: a `Spa.withHoldFree` already
+                // in the source is refused ([E1011] in the checker; refused
+                // here too, so a hand-written list is never kept or merged).
+                if main_text.contains("Spa.withHoldFree") {
+                    return Err(
+                        "[E1011] `Spa.withHoldFree` is not exposed to application code. Only \
+                         the Sky.Spa split writes it (it lists the input Msgs it proves may \
+                         run during a hold). Remove the call from `main`."
+                            .to_string(),
+                    );
+                }
                 let main_text = if hold_free.is_empty() {
                     main_text
                 } else {

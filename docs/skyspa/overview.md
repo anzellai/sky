@@ -279,7 +279,9 @@ the split picks the kind from the arm (`runtime-go/rt/spa_rpcqueue.go`):
   `subscriptions` does not read both a field the input writes and a field the
   hold writes; and the app has no `App.withGuard` and no `App.withRpcError`.
   The client also runs it early only when no other Msg waits ahead of it, so
-  it never overtakes a Msg the analysis did not check. A note box whose
+  it never overtakes a Msg the analysis did not check. `Spa.withHoldFree` is
+  generated-only: a call in hand-written code is refused with `[E1011]`
+  (docs/errors/E1011-not-exposed.md). A note box whose
   `SetNote` writes only `note` updates at once while a `Save` runs; a search
   box whose `SetQuery` feeds a debounced search that `subscriptions` reads
   waits, and the rule above keeps its letters.

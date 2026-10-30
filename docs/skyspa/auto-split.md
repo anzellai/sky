@@ -1117,7 +1117,11 @@ with its Cmds. The split gives each server constructor one of two kinds
   At run time an input Msg listed for the hold in flight runs at once only when
   no other Msg waits ahead of it (`spaSched.holdFreeNow`), so it never
   overtakes a Msg the table did not check. Anything the analysis cannot read
-  lists nothing, and that Msg waits as before. Tests:
+  lists nothing, and that Msg waits as before. `Spa.withHoldFree` is
+  generated-only: the checker refuses a reference to it with `[E1011]` in any
+  project without the `[spa] generated = true` marker, and `gen_frontend`
+  refuses a source `main` that already calls it, so a hand-written list is
+  never kept or merged (`rust/crates/project/tests/spa_hold_free_refused.rs`). Tests:
   `runtime-go/rt/spa_typing_test.go`, `rust/crates/project/tests/spa_typing_hold.rs`,
   `spa_hold_free_table_reaches_the_client` (spa_split_flow.rs) and the
   `spa-typing-hold` stage of `scripts/spa-rpc-order-e2e.sh` (every `/_rpc`

@@ -377,7 +377,8 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   command, it touches no model field the hold's result or follow-ups write or
   read, `subscriptions` does not read both its fields and the hold's, and the
   app has no guard and no `App.withRpcError`. It runs early only when no other
-  Msg waits ahead of it. Tests: `runtime-go/rt/spa_typing_test.go` (red
+  Msg waits ahead of it. `Spa.withHoldFree` is generated-only: a call in
+  hand-written code is refused with `[E1011]`. Tests: `runtime-go/rt/spa_typing_test.go` (red
   before: the box ended at caret 2 of 4), `rust/crates/project/tests/spa_typing_hold.rs`,
   `spa_hold_free_table_reaches_the_client`, and the `spa-typing-hold` stage of
   `scripts/spa-rpc-order-e2e.sh` in Chromium and WebKit (every `/_rpc` answer

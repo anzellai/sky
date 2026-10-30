@@ -1120,6 +1120,58 @@ pub fn check_modules_with_world(
             }
         }
 
+        // `[E1011]` — `Spa.withHoldFree` is generated-only (v0.29.0). It lets
+        // the Sky.Spa client run an input Msg while a hold RPC is in flight,
+        // which keeps Sky.Live's order only for the pairs the split proves
+        // commute (`spa_partition::hold_free_pairs`). A hand-written call
+        // could list any pair and bring back the reordering the hold exists to
+        // prevent, so a reference is refused in every module the build did not
+        // grant the split's `Spa_*` plumbing (a project the split generated,
+        // `[spa] generated = true`, or compiler-owned source).
+        if !sky.ffi_member_allowed(&mname, "kernel", Some("Spa_withHoldFree")) {
+            for body in resolved.bodies.values() {
+                for (e, expr) in body.exprs.iter() {
+                    let Expr::Var(Res::Def(d)) = expr else {
+                        continue;
+                    };
+                    let Some(loc) = sky.def_loc(*d) else {
+                        continue;
+                    };
+                    if loc.name.as_str() != "withHoldFree"
+                        || &*sky.module_name(loc.module) != "Std.Spa"
+                    {
+                        continue;
+                    }
+                    out.name_errors += 1;
+                    out.diagnostics.push(Diagnostic {
+                        severity: Severity::Error,
+                        code: Code("E1011".to_string()),
+                        message: "`Spa.withHoldFree` is not exposed to application code. Only the \
+                                  Sky.Spa split writes it: it lets an input Msg run while a hold \
+                                  RPC is in flight, which is safe only for the pairs the split \
+                                  proves commute. A pair listed by hand can run a Msg out of \
+                                  order."
+                            .to_string(),
+                        labels: body
+                            .expr_span(e)
+                            .map(|sp| {
+                                vec![diagnostics::Label {
+                                    span: trim_leading_ws(&module_src, sp),
+                                    message: "generated-only".into(),
+                                }]
+                            })
+                            .unwrap_or_default(),
+                        suggestion: Some(
+                            "remove the call: `sky build --target web:app` derives the pairs from \
+                             `update` and adds them to the generated client. \
+                             see docs/errors/E1011-not-exposed.md"
+                                .to_string(),
+                        ),
+                    });
+                }
+            }
+        }
+
         // `[E2014]` — a literal `Regex.fromString` pattern that is not valid
         // RE2. The same parse `regexp.Compile` runs (re2_syntax.rs), so the
         // program is refused with source context instead of an `Err` at run
