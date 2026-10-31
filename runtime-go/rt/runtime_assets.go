@@ -216,7 +216,7 @@ func skyAssetGuard(mux *http.ServeMux, rootFiles http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		kind := classifySkyAsset(r.URL.Path)
 		if kind == notSkyAsset {
-			mux.ServeHTTP(w, r)
+			serveMuxWithTelemetry(mux, w, r)
 			return
 		}
 		if kind == skyDistAsset && rootFiles != nil && !muxRouteIsExact(mux, r) {
@@ -224,7 +224,7 @@ func skyAssetGuard(mux *http.ServeMux, rootFiles http.Handler) http.Handler {
 			return
 		}
 		nw := &noHTMLAssetWriter{ResponseWriter: w}
-		mux.ServeHTTP(nw, r)
+		serveMuxWithTelemetry(mux, nw, r)
 		nw.finish()
 	})
 }

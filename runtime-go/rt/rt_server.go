@@ -53,6 +53,10 @@ func System_exit(code any) any {
 // NotFound fallback (a genuine file-server 404 SSRs the app's NotFound page
 // through this same path, so the fallback page gets identical treatment).
 func dispatchSkyHandler(w http.ResponseWriter, req *http.Request, handler any, paramNames []string) {
+	// The mux set req.Pattern. Record it now, so a panic report and
+	// Middleware.withLogging inside the handler see the route template, not
+	// the raw path (telemetry_url.go).
+	noteTelemetryPattern(req, req.Pattern)
 	// Panic recovery — one bad handler mustn't kill the process.
 	// Audit P1-5: prod-mode logs omit the Go stack trace from
 	// stderr (to avoid leaking internal paths + memory
@@ -73,7 +77,7 @@ func dispatchSkyHandler(w http.ResponseWriter, req *http.Request, handler any, p
 		if rec == http.ErrAbortHandler {
 			panic(rec)
 		}
-		logPanicFrame(req.Method, req.URL.Path, rec)
+		logPanicFrame(req.Method, telemetryPath(req), rec)
 		w.WriteHeader(500)
 		fmt.Fprint(w, "Internal Server Error")
 	}()

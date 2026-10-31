@@ -411,7 +411,7 @@ func (sh *streamHandle) runSpool() {
 		if err != nil {
 			// Network read error. Surface to Sky as ErrNetwork; the
 			// consumer dispatches Errored Error and decides what to do.
-			sh.deliver(streamEvent{kind: streamErrEv, err: ErrNetwork("http.stream read: " + err.Error())})
+			sh.deliver(streamEvent{kind: streamErrEv, err: ErrNetwork("http.stream read: " + redactURLError(err, ""))})
 			sh.Close()
 			return
 		}
@@ -537,7 +537,7 @@ func HttpStream_open(reqArg any) any {
 		}
 		req, err := http.NewRequest(method, url, bodyReader)
 		if err != nil {
-			return Err[any, any](ErrNetwork("http.stream.open: " + err.Error()))
+			return Err[any, any](ErrNetwork("http.stream.open: " + redactURLError(err, url)))
 		}
 		applyHttpHeaders(req, headers)
 		// Carry the request's trace context onto the downstream call
@@ -547,7 +547,7 @@ func HttpStream_open(reqArg any) any {
 
 		resp, err := streamHTTPClient().Do(req)
 		if err != nil {
-			return Err[any, any](ErrNetwork("http.stream.open do: " + err.Error()))
+			return Err[any, any](ErrNetwork("http.stream.open do: " + redactURLError(err, url)))
 		}
 		// HTTP error statuses (4xx/5xx) still surface as a stream —
 		// the body might carry the error JSON the user wants to

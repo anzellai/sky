@@ -88,6 +88,32 @@ the codec does not carry, and makes a Store builder problem loud.
   a BOOLEAN or REAL column (`'true'` never matches on SQLite, an error on
   PostgreSQL), and notes that ordering on such a column compares text until
   it is converted (`sky db check --sql` writes the conversion from v0.29.2).
+- **Telemetry never records a secret or personal data from a URL.** An
+  outbound `Http.get` span recorded the whole URL in `http.url`, so an API key
+  in a query string (`?key=…`) left the process with every exported span.
+  Server spans, the access log, panic reports, `Middleware.withLogging` and
+  Std.Analytics page views recorded the raw request path.
+  - Outbound spans record `url.full` (and `http.url`) as scheme, host, port
+    and the path, with no query string, userinfo or fragment, plus
+    `server.address` and `url.path`. `Http.request` now has a client span.
+  - The text of an outbound transport error carries the same redacted URL.
+    Go's error text held the full URL, so the key also reached the Sky
+    `Error` and the app's logs.
+  - Request paths are recorded as the route template (a Sky.Live route such
+    as `/reset/:token`, a `Server` pattern such as `/blog/{slug}`), else with
+    each segment that can hold data replaced by `:redacted`. Query strings
+    are dropped. In-process sub-apps record their own templates.
+  - The serverless access-log line is built with `json.Marshal`. A `"` in a
+    path broke the line.
+  - The client IP in spans (`net.peer.ip`, the new `client.address`) is
+    anonymised by the Std.Analytics rule: the last IPv4 octet and the last 80
+    bits of an IPv6 address are zeroed.
+  - `SKY_TELEMETRY_URL` (`redacted`, `path`, `full`),
+    `SKY_TELEMETRY_QUERY_KEYS` (and the builder
+    `Sky.Config.withTelemetryQueryKeys`) and `SKY_TELEMETRY_CLIENT_IP`
+    (`anonymised`, `full`) are the overrides. `docs/observability.md` has the
+    rules, and `docs/migration/v0.29.md` lists what dashboards see now.
+  - Std.Ai download errors no longer repeat the download URL with its query.
 
 ## v0.29.0 — Real-world capabilities (2026-10-29)
 

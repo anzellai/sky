@@ -317,7 +317,7 @@ func aiHubTree(ctx context.Context, repo, rev string) ([]aiHubTreeEntry, error) 
 		}
 		resp, err := aiHTTPClient.Do(req)
 		if err != nil {
-			return nil, aiFailf(aiUnreachable, "list %s@%s: %v", repo, rev[:12], err).with("target", aiRedactURL(url))
+			return nil, aiFailf(aiUnreachable, "list %s@%s: %v", repo, rev[:12], aiStripURL(err)).with("target", aiRedactURL(url))
 		}
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 		resp.Body.Close()
@@ -363,7 +363,7 @@ func aiHubBlobSha256(ctx context.Context, repo, rev string, e aiHubTreeEntry) (s
 	}
 	resp, err := aiHTTPClient.Do(req)
 	if err != nil {
-		return "", aiFailf(aiUnreachable, "download %s: %v", url, err).with("target", aiRedactURL(url))
+		return "", aiFailf(aiUnreachable, "download %s: %v", url, aiStripURL(err)).with("target", aiRedactURL(url))
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	resp.Body.Close()

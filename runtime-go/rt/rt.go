@@ -9682,7 +9682,7 @@ func Middleware_withLogging(handler any) any {
 					dur := time.Since(start).Milliseconds()
 					ctx := map[string]any{
 						"method": r.Method,
-						"path":   r.Path,
+						"path":   telemetrySkyPath(r.Path),
 						"status": status,
 						"ms":     dur,
 					}
@@ -9693,7 +9693,7 @@ func Middleware_withLogging(handler any) any {
 			dur := time.Since(start).Milliseconds()
 			ctx := map[string]any{
 				"method": r.Method,
-				"path":   r.Path,
+				"path":   telemetrySkyPath(r.Path),
 				"status": status,
 				"ms":     dur,
 			}
