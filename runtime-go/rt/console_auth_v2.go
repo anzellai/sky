@@ -999,12 +999,7 @@ func buildConsoleAuthRequest(r *http.Request) SkyRequest {
 		RemoteAddr: r.RemoteAddr,
 		Host:       r.Host,
 	}
-	for k, v := range r.Header {
-		if len(v) > 0 {
-			req.Headers[k] = v[0]
-		}
-	}
-	requestHostHeader(req.Headers, r.Host)
+	req.Headers = canonicalRequestHeaders(r.Header, r.Host)
 	for _, c := range r.Cookies() {
 		req.Cookies[c.Name] = c.Value
 	}

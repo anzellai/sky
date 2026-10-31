@@ -2819,6 +2819,7 @@ impl<'a> Ctx<'a> {
             }
         };
         let root = self.body.root;
+        self.lint_header_dict_lookups();
         let mut body = param_destructure;
         // When the return type is otherwise `any`, recover it from the body's own
         // lowered actual type. An unannotated def whose body is e.g. a `case`
@@ -7891,6 +7892,77 @@ impl<'a> Ctx<'a> {
         })
     }
 
+    /// Header-name lint: `Dict.get "x-api-key" req.headers` (or `Dict.member`,
+    /// or the piped `req.headers |> Dict.get "…"`) with a literal name that is
+    /// not in canonical MIME form. The runtime stores every request and
+    /// response header under its canonical name (`X-Api-Key`, `X-Real-Ip`),
+    /// whatever case the client sent, so such a lookup never matches. HTTP
+    /// header names are case-insensitive (RFC 9110 section 5.1); the lint names
+    /// the canonical key and `Server.header` / `Http.header`, which ignore case.
+    /// It keys on the field name `headers`, so it also fires on a user record
+    /// with a `headers` Dict; the message says when to ignore it.
+    fn lint_header_dict_lookups(&mut self) {
+        let mut hits: Vec<(ExprId, String, String, String)> = Vec::new();
+        for (id, expr) in self.body.exprs.iter() {
+            let (callee, key, dict) = match expr {
+                Expr::Call(c, args) if args.len() == 2 => (*c, args[0], args[1]),
+                Expr::Call(c, args) if args.len() == 1 => match &self.body.exprs[*c] {
+                    Expr::Call(inner, first) if first.len() == 1 => (*inner, first[0], args[0]),
+                    _ => continue,
+                },
+                Expr::Binop { op, lhs, rhs, .. } if op.as_str() == "|>" => {
+                    match &self.body.exprs[*rhs] {
+                        Expr::Call(c, args) if args.len() == 1 => (*c, args[0], *lhs),
+                        _ => continue,
+                    }
+                }
+                _ => continue,
+            };
+            let func = match &self.body.exprs[callee] {
+                Expr::Var(Res::Def(d)) => match self.kernel_alias.get(d).map(String::as_str) {
+                    Some("Dict_get") => "get",
+                    Some("Dict_member") => "member",
+                    _ => continue,
+                },
+                Expr::Var(Res::Kernel { module, func })
+                    if module.as_str().ends_with("Dict")
+                        && matches!(func.as_str(), "get" | "member") =>
+                {
+                    if func.as_str() == "get" {
+                        "get"
+                    } else {
+                        "member"
+                    }
+                }
+                _ => continue,
+            };
+            let Expr::Str(name) = &self.body.exprs[key] else {
+                continue;
+            };
+            if !matches!(&self.body.exprs[dict], Expr::Access(_, f) if f.as_str() == "headers") {
+                continue;
+            }
+            let canonical = canonical_header_name(name);
+            if canonical != name.as_ref() {
+                hits.push((id, func.to_string(), name.to_string(), canonical));
+            }
+        }
+        for (id, func, name, canonical) in hits {
+            let prev = self.cur_span;
+            if let Some(sp) = self.body.expr_span(id) {
+                self.cur_span = Some(sp);
+            }
+            self.warn(format!(
+                "`Dict.{func} \"{name}\"` on `.headers` never matches an HTTP header: Sky \
+                 stores every request and response header under its canonical name \
+                 (`{canonical}`), whatever case the client sent. Write `\"{canonical}\"`, or \
+                 use `Server.header \"{name}\" req` (a request) or `Http.header \"{name}\" resp` \
+                 (a response), which ignore case. Ignore this if `headers` is your own Dict."
+            ));
+            self.cur_span = prev;
+        }
+    }
+
     /// Every child expression, for a NON-tail (`inTail = false`) walk. Includes
     /// let-def RHS bodies (a self-call there is non-tail) and `if` conditions.
     /// New AST variants MUST get an arm here — a missing child → a missed
@@ -11538,5 +11610,51 @@ mod erases_against_tests {
             &named("Main_Fig", vec![])
         ));
         assert!(!erases_against(&int, &int));
+    }
+}
+
+/// The canonical form of an HTTP header name, exactly as Go's
+/// `textproto.CanonicalMIMEHeaderKey` computes it (the form the runtime stores
+/// request and response header names in): the first letter and every letter
+/// after a hyphen upper case, the rest lower case. A name holding a byte that
+/// is not a valid header-field byte is returned unchanged, as Go does.
+pub(crate) fn canonical_header_name(name: &str) -> String {
+    let valid = |b: u8| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b);
+    if name.is_empty() || !name.bytes().all(valid) {
+        return name.to_string();
+    }
+    let mut out = String::with_capacity(name.len());
+    let mut upper = true;
+    for b in name.bytes() {
+        let c = if upper {
+            b.to_ascii_uppercase()
+        } else {
+            b.to_ascii_lowercase()
+        };
+        out.push(c as char);
+        upper = b == b'-';
+    }
+    out
+}
+
+#[cfg(test)]
+mod canonical_header_name_tests {
+    use super::canonical_header_name;
+
+    #[test]
+    fn matches_go_canonical_mime_header_key() {
+        for (input, want) in [
+            ("x-sky-api-key", "X-Sky-Api-Key"),
+            ("X-SKY-API-KEY", "X-Sky-Api-Key"),
+            ("X-Sky-Api-Key", "X-Sky-Api-Key"),
+            ("X-Real-IP", "X-Real-Ip"),
+            ("content-type", "Content-Type"),
+            ("www-authenticate", "Www-Authenticate"),
+            ("x_api_key", "X_api_key"),
+            ("bad header", "bad header"),
+            ("", ""),
+        ] {
+            assert_eq!(canonical_header_name(input), want, "{input}");
+        }
     }
 }

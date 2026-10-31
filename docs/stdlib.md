@@ -905,7 +905,18 @@ fetchData =
         (Http.request req)
 ```
 
-`get`, `post`, `request` (custom method/headers/timeout).
+**Response headers.** `resp.headers` holds each header name in canonical
+form (`Content-Type`, `Etag`, `X-Request-Id`), whatever case the server or a
+proxy sent, on the server and in a Sky.Spa client. `Http.header name resp`
+(v0.29.1) reads one in any case:
+
+```elm
+requestId : HttpResponse -> Maybe String
+requestId resp =
+    Http.header "x-request-id" resp
+```
+
+`get`, `post`, `request` (custom method/headers/timeout), `header`.
 `parseQuery` parses a URL query string into a `Dict String String`
 (pure — backed by Go's `net/url`, proper percent-decoding).
 
@@ -2230,6 +2241,19 @@ Sky.Webview static mounts.
 Extractors (Layer 3 Sky source — `Sky.Http.Server.sky`): `param`
 (path `:id`), `queryParam`, `header`, `getCookie`. Kernel-side
 extras: `formValue`, `body`, `path`, `method`.
+
+**Header names in any case.** HTTP header names are case-insensitive, and
+HTTP/2 sends them in lower case. `Server.header name req` ignores case:
+`"x-sky-api-key"`, `"X-Sky-Api-Key"` and `"X-SKY-API-KEY"` find the same
+header. `req.headers` holds each name in canonical form (`X-Sky-Api-Key`,
+`X-Real-Ip`), whatever case the client sent, on a `Sky.Http.Server` route, a
+Sky.Spa `/_rpc` call, a Sky.Live `App.api` route, the `App.withRequest` hook
+and the console request. So `Dict.get "X-Sky-Api-Key" req.headers` works,
+and `Dict.get "x-sky-api-key" req.headers` never matches (`sky check` warns
+about it). A request a test builds by hand keeps the keys it was given:
+prefer `Server.header`, which finds them in any case. The middlewares
+(`withCors`, `withBasicAuth`, `withRateLimit`, `withCsrf`) also read their
+headers in any case.
 
 `Request` fields: `method`, `path`, `body`, `headers`, `params`, `query`,
 `cookies`, `remoteAddr` and `host` (v0.27.13). `host` is the name the client

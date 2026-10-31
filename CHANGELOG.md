@@ -14,7 +14,8 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 ## v0.29.1 — Fixes for v0.29.0 (2026-10-31)
 
 A patch release for v0.29.0. It restores `Std.Db.Store` builders on a column
-the codec does not carry, and makes a Store builder problem loud.
+the codec does not carry, makes a Store builder problem loud, and makes every
+header lookup find a header whatever the case of its name.
 
 ### Fixed
 
@@ -47,6 +48,35 @@ the codec does not carry, and makes a Store builder problem loud.
 - **`sky verify` has a `stores` step.** When the entry module exposes `db`
   (a `Store.Project`), it runs `Store.dumpSchema db` in a scratch build and
   fails on a Store builder problem, before a deploy.
+- **A header is found whatever the case of its name.** HTTP header names are
+  case-insensitive (RFC 9110). HTTP/2 sends them in lower case and a proxy may
+  send any case. One rule now holds on every path:
+  - A request's `headers` Dict holds each name in canonical form
+    (`X-Sky-Api-Key`, `X-Real-Ip`, `Content-Type`), whatever case the client
+    sent. This holds for a `Sky.Http.Server` route, a Sky.Spa `/_rpc` call, a
+    Sky.Live `App.api` route, the `App.withRequest` hook and the console's
+    `App.withConsoleAuth` request. Go's server already canonicalised a name it
+    parsed. The runtime no longer relies on that, so a header map built
+    another way (a handler wrapper) follows the rule too. So
+    `Dict.get "X-Sky-Api-Key" req.headers` finds `x-sky-api-key`.
+  - An HTTP client response's `headers` Dict holds canonical names too. In a
+    Sky.Spa client it was always empty. It now carries the response's headers
+    (the browser gives them in lower case, the Dict holds the canonical name).
+  - New `Http.header name resp : Maybe String` reads a response header in any
+    case. It is the response twin of `Server.header`, which already ignored
+    case (v0.29.0).
+  - The middlewares read their headers in any case: `Middleware.withCors`
+    (`Origin`), `withBasicAuth` (`Authorization`), `withRateLimit`
+    (`X-Forwarded-For`, `X-Real-Ip`) and `withCsrf` (`X-Csrf-Token`). Before,
+    a request a test built by hand with `"authorization"` was refused.
+  - A response record that names `content-type` in lower case keeps its own
+    value on a Sky.Live `App.api` route. Before, the default content type
+    could replace it, depending on map order.
+  - `sky check` warns about `Dict.get "x-sky-api-key" req.headers` (and
+    `Dict.member`, and the piped form): a literal name that is not canonical
+    never matches. The warning names the canonical key and `Server.header` /
+    `Http.header`.
+  - Header names Sky sends are not changed.
 - `docs/migration/v0.29.md` said a `defaultWith` on an unknown column "was
   ignored" in v0.28. It was not: it wrote the column. The page now says so,
   and has an "External columns (v0.29.1)" section.

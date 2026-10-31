@@ -248,7 +248,11 @@ update calls the server is coalesced and held back while the page is hidden
 **Request host and binary data.** A `Sky.Http.Server` handler, an `App.api`
 route and the `App.withRequest` hook get `req.host`: the name the client used,
 port included (`"a.localhost:8000"`), also in `req.headers` under `"Host"`. An
-app that serves several domains reads it. `Server.bytes contentType bytes`
+app that serves several domains reads it. Header names are case-insensitive:
+`req.headers` (and an HTTP client's `resp.headers`) holds each name in canonical
+form (`X-Sky-Api-Key`, `X-Real-Ip`) whatever case the client sent, so read a
+header with `Server.header name req` / `Http.header name resp`, which ignore
+case. `Dict.get "x-sky-api-key" req.headers` never matches, and `sky check` warns. `Server.bytes contentType bytes`
 answers binary data byte for byte, and `File.writeBytes path bytes` writes it
 (a `Bytes` is a `String` whose bytes need not be UTF-8, e.g. from
 `Bytes.fromBase64`). `List.repeat n x` is `n` copies of `x`, as in Elm.

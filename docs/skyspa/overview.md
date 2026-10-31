@@ -359,6 +359,11 @@ retry code and no network banner (v0.27.3, `runtime-go/rt/spa_retry.go`).
   a request id, and the backend answers a repeated id from its dedupe cache
   without running the effect again. A client `Http.get` is re-sent too; a
   client `Http.post` is not.
+- **Response headers.** A client response's `headers` holds the response's
+  headers under canonical names (`Content-Type`), as on the server, although
+  the browser gives them in lower case (v0.29.1; before, the client Dict was
+  empty). `Http.header name resp` reads one in any case. A cross-origin
+  response shows only the headers its CORS policy exposes.
 - **Schedule.** Full jitter: the wait before retry *n* is random in
   `[0, min(30 s, 1 s × 2^(n-1))]`. A `Retry-After` header (seconds or a date)
   wins. One request is re-sent at a time, in the order they failed, so a

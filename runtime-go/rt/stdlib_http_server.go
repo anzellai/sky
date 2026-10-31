@@ -27,6 +27,12 @@ import (
 // init(), so a .env SKY_HTTP_CLIENT_TIMEOUT has been applied by then).
 var skyHTTPClientOnce = sync.OnceValue(newSkyHttpClient)
 
+// httpResponseHeaders is the `headers` Dict of an HTTP client response: the
+// first value of each header, under its canonical name (canonicalHeaderDict).
+func httpResponseHeaders(h http.Header) SkyDict[string] {
+	return canonicalHeaderDict(firstHeaderValues(h))
+}
+
 func skyHTTPClient() *http.Client { return skyHTTPClientOnce() }
 
 // skyHTTPClientTimeout — the whole-request deadline for outbound HTTP,
@@ -82,16 +88,10 @@ func Http_getT(url string) func() SkyResult[string, HttpResponse] {
 		if err != nil {
 			return Err[string, HttpResponse]("http.get read: " + redactURLError(err, url))
 		}
-		hdrs := map[string]string{}
-		for k, v := range resp.Header {
-			if len(v) > 0 {
-				hdrs[k] = v[0]
-			}
-		}
 		return Ok[string, HttpResponse](HttpResponse{
 			Status:  resp.StatusCode,
 			Body:    body,
-			Headers: dictFromTypedMap(hdrs),
+			Headers: httpResponseHeaders(resp.Header),
 		})
 	}
 }
@@ -174,16 +174,10 @@ func httpRequestDo(method, url, body string, headers any, timeoutMs int, followR
 	if err != nil {
 		return Err[any, any](ErrNetwork("http.request read: " + redactURLError(err, url)))
 	}
-	hdrs := map[string]string{}
-	for k, v := range resp.Header {
-		if len(v) > 0 {
-			hdrs[k] = v[0]
-		}
-	}
 	return Ok[any, any](HttpResponse{
 		Status:  resp.StatusCode,
 		Body:    rb,
-		Headers: dictFromTypedMap(hdrs),
+		Headers: httpResponseHeaders(resp.Header),
 	})
 }
 

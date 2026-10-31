@@ -1493,12 +1493,7 @@ func (app *liveApp) serveAPI(ar apiRoute, params []string, w http.ResponseWriter
 		RemoteAddr: r.RemoteAddr,
 		Host:       r.Host,
 	}
-	for k, v := range r.Header {
-		if len(v) > 0 {
-			skyReq.Headers[k] = v[0]
-		}
-	}
-	requestHostHeader(skyReq.Headers, r.Host)
+	skyReq.Headers = canonicalRequestHeaders(r.Header, r.Host)
 	for _, ck := range r.Cookies() {
 		skyReq.Cookies[ck.Name] = ck.Value
 	}
@@ -1632,7 +1627,13 @@ func unpackResponse(v any) (int, map[string]string, string) {
 		// Fall back to ContentType field when Headers doesn't set it.
 		// SkyResponse uses ContentType as a convenience field set by
 		// Server.html / Server.json / Server.text.
-		if _, hasCT := headers["Content-Type"]; !hasCT {
+		hasCT := false
+		for k := range headers {
+			if strings.EqualFold(k, "Content-Type") {
+				hasCT = true
+			}
+		}
+		if !hasCT {
 			if f := rv.FieldByName("ContentType"); f.IsValid() {
 				if s, ok := f.Interface().(string); ok && s != "" {
 					headers["Content-Type"] = s
@@ -1738,31 +1739,17 @@ func buildRouteParamsDict(pattern string, values []string) any {
 	return d
 }
 
-// v0.16.8 #423 — headersToDict folds an http.Header (case-canonicalised
-// by Go's net/http stack already) into a Sky `Dict String String`.  We
-// take the first value for each key — Sky-side iteration over multi-
-// valued headers is exotic enough that callers who need it can hit
-// `Live.api` or look at raw request shape from Sky.Http.Server.
-// Empty Header → empty Dict.
-func headersToDict(h http.Header) any {
-	d := Dict_empty()
-	for k, vs := range h {
-		if len(vs) == 0 {
-			continue
-		}
-		d = Dict_insert(k, vs[0], d)
-	}
-	return d
-}
-
-// requestHeadersToDict is headersToDict over a request's headers plus its
-// Host, which net/http keeps in r.Host rather than r.Header. Without it
-// `Dict.get "Host" req.headers` was always Nothing in an init / withRequest
-// seed.
+// requestHeadersToDict folds a request's headers (the first value of each)
+// into a Sky `Dict String String`, plus its Host, which net/http keeps in
+// r.Host rather than r.Header. Without it `Dict.get "Host" req.headers` was
+// always Nothing in an init / withRequest seed.
+//
+// The keys are canonical (`X-Sky-Api-Key`) whatever case the client sent, the
+// same rule as every other request (canonicalRequestHeaders).
 func requestHeadersToDict(r *http.Request) any {
-	d := headersToDict(r.Header)
-	if r.Host != "" && len(r.Header.Values("Host")) == 0 {
-		d = Dict_insert("Host", r.Host, d)
+	d := Dict_empty()
+	for k, v := range canonicalRequestHeaders(r.Header, r.Host) {
+		d = Dict_insert(k, v, d)
 	}
 	return d
 }

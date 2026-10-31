@@ -153,7 +153,8 @@
   whole thing.
 - (P3) deferred to P4/later (in scope there): `Cmd.publish` client fan-out is a
   server-boundary concern (P4); only `Sub.every` timers are wired (topic/stream/
-  ws subs later); client `HttpResponse.Headers` empty (status+body only);
+  ws subs later); client `HttpResponse.Headers` empty (status+body only; filled, with canonical
+  names, since v0.29.1);
   `Http_getT`/`Http_request` still net/http under js (latent, not on the client
   path). None block P3's acceptance.
 - (P5) FINDING — **`Std.Ui` renders under the Spa client renderer** (criterion 6

@@ -21,16 +21,27 @@ module Sky.Core.Http exposing
     , withFollowRedirects
     , withMaxRedirects
     , parseQuery
+    , header
     )
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Sky.Core.Secret as Secret exposing (Secret)
+import Sky.Core.Dict as Dict
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe exposing (Maybe(..))
 
 -- | The shape of an HTTP response.  Returned by every Sky.Core.Http
 -- call (`get`, `post`, `request`).  Maps 1:1 to `rt.HttpResponse`
 -- on the Go side — record-field access (`resp.status` / `.body` /
 -- `.headers`) is the typed read path.
+--
+-- `headers` holds each header name in canonical form (`Content-Type`,
+-- `X-Request-Id`), whatever case the server or a proxy sent, on the server
+-- and in a Sky.Spa client alike. `Dict.get "Content-Type" resp.headers`
+-- works; `Dict.get "content-type" resp.headers` never matches. Use
+-- [`header`] to look a header up in any case.
 type alias HttpResponse =
     { status : Int
     , body : String
@@ -173,3 +184,30 @@ withMaxRedirects n req =
 parseQuery : String -> Dict String String
 parseQuery =
     Ffi.kernel "Http_parseQuery"
+
+
+-- | `header name resp` — read a response header, ignoring the case of its
+-- name: HTTP header names are case-insensitive, so `"content-type"`,
+-- `"Content-Type"` and `"CONTENT-TYPE"` all find it. The response twin of
+-- `Server.header` for a request.
+--
+--     Http.header "x-request-id" resp  -- Just "abc"
+header : String -> HttpResponse -> Maybe String
+header name resp =
+    case Dict.get name resp.headers of
+
+        Just v ->
+            Just v
+
+        Nothing ->
+            let
+                wanted = String.toLower name
+                matches ( k, _ ) = String.toLower k == wanted
+            in
+                case List.filter matches (Dict.toList resp.headers) of
+
+                    ( _, v ) :: _ ->
+                        Just v
+
+                    [] ->
+                        Nothing

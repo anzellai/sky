@@ -139,6 +139,12 @@ func TestNoiseWasmInitiatorInteropsWithNativeResponder(t *testing.T) {
 		out := cryOk(t, Crypto_chacha20Poly1305Seal(aeadKey, "111111111111", "ad", "pong")).(string)
 		_, _ = io.WriteString(w, hex.EncodeToString([]byte(out)))
 	})
+	// The client's response headers (noisewasm/headers_js_test.go).
+	mux.HandleFunc("/headers", func(w http.ResponseWriter, r *http.Request) {
+		w.Header()["x-sky-api-key"] = []string{"k3"}
+		w.Header().Set("X-UPSTREAM-ID", "u3")
+		_, _ = io.WriteString(w, "ok")
+	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -164,7 +170,7 @@ func TestNoiseWasmInitiatorInteropsWithNativeResponder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the wasm initiator failed: %v\n%s", err, out)
 	}
-	for _, name := range []string{"TestWasmKeysAreRandom", "TestWasmInitiatorTalksToNativeResponder", "TestWasmAeadAndMacInteropWithNative"} {
+	for _, name := range []string{"TestWasmKeysAreRandom", "TestWasmInitiatorTalksToNativeResponder", "TestWasmAeadAndMacInteropWithNative", "TestWasmHttpResponseHeadersAreCanonical"} {
 		if !strings.Contains(string(out), "--- PASS: "+name) {
 			t.Fatalf("the wasm test %s did not pass:\n%s", name, out)
 		}

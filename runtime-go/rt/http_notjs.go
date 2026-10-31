@@ -45,16 +45,10 @@ func Http_get(url any) any {
 			if err != nil {
 				return Err[any, any](ErrNetwork("http.get read: " + redactURLError(err, u)))
 			}
-			hdrs := map[string]string{}
-			for k, v := range resp.Header {
-				if len(v) > 0 {
-					hdrs[k] = v[0]
-				}
-			}
 			return Ok[any, any](HttpResponse{
 				Status:  resp.StatusCode,
 				Body:    body,
-				Headers: dictFromTypedMap(hdrs),
+				Headers: httpResponseHeaders(resp.Header),
 			})
 		})
 	}
@@ -85,16 +79,10 @@ func Http_post(url any, body any) any {
 			if err != nil {
 				return Err[any, any](ErrNetwork("http.post read: " + redactURLError(err, u)))
 			}
-			hdrs := map[string]string{}
-			for k, v := range resp.Header {
-				if len(v) > 0 {
-					hdrs[k] = v[0]
-				}
-			}
 			return Ok[any, any](HttpResponse{
 				Status:  resp.StatusCode,
 				Body:    rb,
-				Headers: dictFromTypedMap(hdrs),
+				Headers: httpResponseHeaders(resp.Header),
 			})
 		})
 	}
