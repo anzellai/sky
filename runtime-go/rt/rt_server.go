@@ -52,6 +52,34 @@ func System_exit(code any) any {
 // injection. It is shared by the per-route mux handlers and the Server.static SPA
 // NotFound fallback (a genuine file-server 404 SSRs the app's NotFound page
 // through this same path, so the fallback page gets identical treatment).
+// canonicalRequestHeaders is the one place a request's headers become the
+// `headers` a Sky handler sees (a route, a Sky.Spa /_rpc call, a Sky.Live api
+// route, the withRequest seed, the console request). Every name is canonical
+// (canonicalHeaderMap). Go's server already canonicalises a name it parses;
+// this also covers a header map built another way (a handler wrapper, a
+// test). The first value of a repeated header is kept. `host` (Go keeps it in
+// r.Host) is added under "Host".
+func canonicalRequestHeaders(h http.Header, host string) map[string]any {
+	canon := canonicalHeaderMap(firstHeaderValues(h))
+	out := make(map[string]any, len(canon)+1)
+	for k, v := range canon {
+		out[k] = v
+	}
+	requestHostHeader(out, host)
+	return out
+}
+
+// firstHeaderValues lists each header name in h with its first value.
+func firstHeaderValues(h http.Header) (names, values []string) {
+	for k, vs := range h {
+		if len(vs) > 0 {
+			names = append(names, k)
+			values = append(values, vs[0])
+		}
+	}
+	return names, values
+}
+
 func dispatchSkyHandler(w http.ResponseWriter, req *http.Request, handler any, paramNames []string) {
 	// Panic recovery — one bad handler mustn't kill the process.
 	// Audit P1-5: prod-mode logs omit the Go stack trace from
@@ -96,12 +124,7 @@ func dispatchSkyHandler(w http.ResponseWriter, req *http.Request, handler any, p
 	for _, ck := range req.Cookies() {
 		skyReq.Cookies[ck.Name] = ck.Value
 	}
-	for k, v := range req.Header {
-		if len(v) > 0 {
-			skyReq.Headers[k] = v[0]
-		}
-	}
-	requestHostHeader(skyReq.Headers, req.Host)
+	skyReq.Headers = canonicalRequestHeaders(req.Header, req.Host)
 	if req.Body != nil {
 		bodyBytes, err := io.ReadAll(req.Body)
 		if err != nil {
@@ -797,8 +820,8 @@ func Middleware_withCsrf(handler any) any {
 			}
 			// Header takes precedence over form field.
 			var providedToken string
-			if v, ok := r.Headers[csrfHeader].(string); ok && v != "" {
-				providedToken = v
+			if v, ok := requestHeaderLookup(r.Headers, csrfHeader); ok && AsString(v) != "" {
+				providedToken = AsString(v)
 			} else if r.Form != nil {
 				if v, ok := r.Form[csrfFormField]; ok {
 					providedToken = v

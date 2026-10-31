@@ -51,7 +51,10 @@ start (port in use) is the Task's `Err`, and `Task.spawn` drops it unless you
 handle it. See `sky doc Std.App`.
 
 A handler's `req.host` is the name the client used (port included, also in
-`req.headers` under `"Host"`), so one app can serve several domains.
+`req.headers` under `"Host"`), so one app can serve several domains. Read a
+header with `Server.header "x-api-key" req` (and a client response's with
+`Http.header name resp`): both ignore case. `req.headers` holds canonical names
+(`X-Api-Key`), so `Dict.get "x-api-key" req.headers` never matches.
 `Server.bytes "image/png" png` answers binary data byte for byte, and
 `File.writeBytes path bytes` saves it (`png` from `Bytes.fromBase64`, for
 example).

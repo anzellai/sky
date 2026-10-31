@@ -160,6 +160,7 @@ func fetchOnce(method, url, body string, resend bool) (SkyResult[any, any], spaO
 	armedAt := time.Now()
 	status := 0
 	retryAfter := ""
+	respHeaders := SkyDict[string]{}
 
 	onText = js.FuncOf(func(this js.Value, a []js.Value) any {
 		b := ""
@@ -169,7 +170,7 @@ func fetchOnce(method, url, body string, resend bool) (SkyResult[any, any], spaO
 		finish(Ok[any, any](HttpResponse{
 			Status:  status,
 			Body:    b,
-			Headers: SkyDict[string]{},
+			Headers: respHeaders,
 		}), spaClassifyResponse(status, retryAfter, time.Now()))
 		return nil
 	})
@@ -193,6 +194,7 @@ func fetchOnce(method, url, body string, resend bool) (SkyResult[any, any], spaO
 			status = s.Int()
 		}
 		hdrs := resp.Get("headers")
+		respHeaders = fetchResponseHeaders(hdrs)
 		if ra := hdrs.Call("get", "Retry-After"); ra.Type() == js.TypeString {
 			retryAfter = ra.String()
 		}
@@ -260,4 +262,30 @@ func rejectReason(a []js.Value) string {
 		return v.String()
 	}
 	return v.Call("toString").String()
+}
+
+// fetchResponseHeaders reads a fetch Response's headers into the response's
+// `headers` Dict. The browser gives every name in lower case; the Dict holds
+// the canonical name (`Content-Type`), as on the server, so one
+// `Dict.get "Content-Type" resp.headers` works on both sides of a Sky.Spa app.
+// A repeated header arrives as one value joined with ", " (the Fetch rule).
+// Before v0.29.1 the client Dict was always empty.
+func fetchResponseHeaders(hdrs js.Value) SkyDict[string] {
+	if hdrs.Type() != js.TypeObject {
+		return SkyDict[string]{}
+	}
+	if fe := hdrs.Get("forEach"); fe.Type() != js.TypeFunction {
+		return SkyDict[string]{}
+	}
+	var names, values []string
+	cb := js.FuncOf(func(this js.Value, a []js.Value) any {
+		if len(a) >= 2 && a[0].Type() == js.TypeString && a[1].Type() == js.TypeString {
+			values = append(values, a[0].String())
+			names = append(names, a[1].String())
+		}
+		return nil
+	})
+	defer cb.Release()
+	hdrs.Call("forEach", cb)
+	return canonicalHeaderDict(names, values)
 }

@@ -1,0 +1,102 @@
+module HttpHeaderConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for header-name case (v0.29.1).
+--
+-- HTTP header names are case-insensitive (RFC 9110 section 5.1). HTTP/2
+-- sends them in lower case and a proxy may send any case. The runtime stores
+-- each request and response header under its canonical name
+-- (`X-Sky-Api-Key`), and the two lookups below ignore case:
+--
+--   * `Server.header name req` for a request;
+--   * `Http.header name resp` for an HTTP client response.
+--
+-- Each case uses a record built by hand, the way a `sky test` builds a request
+-- or a mocked response, with names in more than one case.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.Http as Http
+import Sky.Http.Server as Server
+import Sky.Test as Test exposing (Test)
+
+
+request : List ( String, String ) -> Server.Request
+request headers =
+    { method = "POST"
+    , path = "/hook"
+    , body = ""
+    , headers = Dict.fromList headers
+    , params = Dict.empty
+    , query = Dict.empty
+    , cookies = Dict.empty
+    , remoteAddr = ""
+    , host = ""
+    }
+
+
+response : List ( String, String ) -> Http.HttpResponse
+response headers =
+    { status = 200, body = "", headers = Dict.fromList headers }
+
+
+canonicalRequest : Server.Request
+canonicalRequest =
+    request [ ( "X-Sky-Api-Key", "k1" ), ( "Content-Type", "application/json" ) ]
+
+
+lowerRequest : Server.Request
+lowerRequest =
+    request [ ( "x-sky-api-key", "k2" ), ( "stripe-signature", "t=1,v1=abc" ) ]
+
+
+canonicalResponse : Http.HttpResponse
+canonicalResponse =
+    response [ ( "Etag", "\"v1\"" ), ( "X-Request-Id", "r1" ) ]
+
+
+tests : List Test
+tests =
+    [ -- ─── Server.header ─────────────────────────────────────────
+      Test.test
+        "Server.header: the canonical name finds a canonical key"
+        (\_ -> Test.equal (Just "k1") (Server.header "X-Sky-Api-Key" canonicalRequest))
+    , Test.test
+        "Server.header: a lower-case name finds a canonical key"
+        (\_ -> Test.equal (Just "k1") (Server.header "x-sky-api-key" canonicalRequest))
+    , Test.test
+        "Server.header: an upper-case name finds a canonical key"
+        (\_ -> Test.equal (Just "k1") (Server.header "X-SKY-API-KEY" canonicalRequest))
+    , Test.test
+        "Server.header: the canonical name finds a lower-case key in a hand-built request"
+        (\_ -> Test.equal (Just "k2") (Server.header "X-Sky-Api-Key" lowerRequest))
+    , Test.test
+        "Server.header: a webhook signature header in any case"
+        (\_ -> Test.equal (Just "t=1,v1=abc") (Server.header "Stripe-Signature" lowerRequest))
+    , Test.test
+        "Server.header: an absent header is Nothing"
+        (\_ -> Test.equal Nothing (Server.header "Authorization" lowerRequest))
+
+    -- ─── Http.header ───────────────────────────────────────────
+    , Test.test
+        "Http.header: the canonical name finds a canonical key"
+        (\_ -> Test.equal (Just "r1") (Http.header "X-Request-Id" canonicalResponse))
+    , Test.test
+        "Http.header: a lower-case name finds a canonical key"
+        (\_ -> Test.equal (Just "r1") (Http.header "x-request-id" canonicalResponse))
+    , Test.test
+        "Http.header: the spelling a server uses (ETag) finds the canonical Etag"
+        (\_ -> Test.equal (Just "\"v1\"") (Http.header "ETag" canonicalResponse))
+    , Test.test
+        "Http.header: the canonical name finds a lower-case key in a mocked response"
+        (\_ ->
+            Test.equal
+                (Just "text/csv")
+                (Http.header "Content-Type" (response [ ( "content-type", "text/csv" ) ])))
+    , Test.test
+        "Http.header: an absent header is Nothing"
+        (\_ -> Test.equal Nothing (Http.header "Retry-After" canonicalResponse))
+    ]
+
+
+main =
+    Test.runMain tests

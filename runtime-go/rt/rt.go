@@ -9484,6 +9484,42 @@ func requestHeaderLookup(headers map[string]any, name string) (any, bool) {
 	return nil, false
 }
 
+// canonicalHeaderMap is the one rule for the header names a Sky program sees,
+// on a request (`req.headers`) and on an HTTP client response
+// (`resp.headers`): each name is stored in canonical form (`Content-Type`,
+// `X-Sky-Api-Key`), whatever case the client, the server or a proxy sent.
+// HTTP header names are case-insensitive (RFC 9110 section 5.1), and HTTP/2
+// and the browser's fetch give them in lower case. So `Dict.get
+// "X-Sky-Api-Key" req.headers` finds `x-sky-api-key`. When two spellings of
+// one name are present, the canonical spelling wins, then the first in sorted
+// order, so the result never depends on map order.
+func canonicalHeaderMap(names, values []string) map[string]string {
+	out := make(map[string]string, len(names))
+	var other []int
+	for i, k := range names {
+		if textproto.CanonicalMIMEHeaderKey(k) == k {
+			out[k] = values[i]
+		} else {
+			other = append(other, i)
+		}
+	}
+	sort.Slice(other, func(a, b int) bool { return names[other[a]] < names[other[b]] })
+	for _, i := range other {
+		ck := textproto.CanonicalMIMEHeaderKey(names[i])
+		if _, taken := out[ck]; !taken {
+			out[ck] = values[i]
+		}
+	}
+	return out
+}
+
+// canonicalHeaderDict is the `headers` Dict of an HTTP client response
+// (canonicalHeaderMap). The host build gets names from Go's client, the
+// Sky.Spa client from the browser's fetch.
+func canonicalHeaderDict(names, values []string) SkyDict[string] {
+	return dictFromTypedMap(canonicalHeaderMap(names, values))
+}
+
 // ═══════════════════════════════════════════════════════════
 // Sky.Http.Middleware — handler → handler transformations
 // ═══════════════════════════════════════════════════════════
@@ -9613,7 +9649,7 @@ func Middleware_withCors(origins any, handler any) any {
 		return func() any {
 			r, _ := asSkyRequest(req)
 			origin := ""
-			if o, ok := r.Headers["Origin"]; ok {
+			if o, ok := requestHeaderLookup(r.Headers, "Origin"); ok {
 				origin = fmt.Sprintf("%v", o)
 			}
 			allow := ""
@@ -9713,7 +9749,8 @@ func Middleware_withBasicAuth(expectedUser any, expectedPass any, handler any) a
 	return func(req any) any {
 		return func() any {
 			r, _ := asSkyRequest(req)
-			authHeader, _ := r.Headers["Authorization"].(string)
+			authValue, _ := requestHeaderLookup(r.Headers, "Authorization")
+			authHeader, _ := authValue.(string)
 			const prefix = "Basic "
 			if !strings.HasPrefix(authHeader, prefix) {
 				return Ok[any, any](SkyResponse{
@@ -9754,7 +9791,8 @@ func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler 
 			r, _ := asSkyRequest(req)
 			ip := ""
 			// Try X-Forwarded-For first (behind reverse proxy), then Remote.
-			if v, ok := r.Headers["X-Forwarded-For"].(string); ok && v != "" {
+			if xff, _ := requestHeaderLookup(r.Headers, "X-Forwarded-For"); xff != nil && AsString(xff) != "" {
+				v := AsString(xff)
 				if idx := strings.Index(v, ","); idx > 0 {
 					ip = strings.TrimSpace(v[:idx])
 				} else {
@@ -9762,8 +9800,8 @@ func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler 
 				}
 			}
 			if ip == "" {
-				if v, ok := r.Headers["X-Real-Ip"].(string); ok {
-					ip = v
+				if v, ok := requestHeaderLookup(r.Headers, "X-Real-Ip"); ok {
+					ip = AsString(v)
 				}
 			}
 			if ip == "" {

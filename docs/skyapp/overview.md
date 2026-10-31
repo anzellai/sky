@@ -175,6 +175,10 @@ correct on first paint — no logged-out flash, no `Cmd.perform` round-trip. It
 returns the same `( model, Cmd msg )` shape, so it can also fire a startup
 command.
 
+Read a header with `Server.header "accept-language" req`, which ignores the
+case of the name (HTTP/2 sends every name in lower case). `req.headers` holds
+canonical names (`Accept-Language`), so a `Dict.get` must use that form.
+
 Do not key data by the Sky.Live session cookie here. Its value changes every
 time the signed-in user changes (session-id rotation, see
 [Sky.Live sessions](../skylive/overview.md#session-ids-change-at-sign-in)), and
