@@ -148,7 +148,7 @@ func runHandler(handler any, req any) any {
 	return anyTaskInvoke(SkyCall(handler, req))
 }
 
-func textHandler() func(any) any {
+func okTextHandler() func(any) any {
 	return func(req any) any {
 		return func() any { return Ok[any, any](Server_text("ok")) }
 	}
@@ -156,7 +156,7 @@ func textHandler() func(any) any {
 
 // Middleware.withCors reads Origin whatever its case.
 func TestMiddlewareCorsReadsOriginWhateverTheCase(t *testing.T) {
-	h := Middleware_withCors([]any{"https://a.example"}, textHandler())
+	h := Middleware_withCors([]any{"https://a.example"}, okTextHandler())
 	for _, name := range []string{"origin", "ORIGIN", "Origin"} {
 		req := SkyRequest{Method: "GET", Path: "/", Headers: map[string]any{name: "https://a.example"}}
 		resp := okResponse(t, runHandler(h, req))
@@ -168,7 +168,7 @@ func TestMiddlewareCorsReadsOriginWhateverTheCase(t *testing.T) {
 
 // Middleware.withBasicAuth reads Authorization whatever its case.
 func TestMiddlewareBasicAuthReadsAuthorizationWhateverTheCase(t *testing.T) {
-	h := Middleware_withBasicAuth("ada", "pw", textHandler())
+	h := Middleware_withBasicAuth("ada", "pw", okTextHandler())
 	for _, name := range []string{"authorization", "AUTHORIZATION", "Authorization"} {
 		req := SkyRequest{Method: "GET", Path: "/", Headers: map[string]any{name: "Basic YWRhOnB3"}}
 		resp := okResponse(t, runHandler(h, req))
@@ -183,7 +183,7 @@ func TestMiddlewareBasicAuthReadsAuthorizationWhateverTheCase(t *testing.T) {
 func TestMiddlewareRateLimitReadsForwardedForWhateverTheCase(t *testing.T) {
 	for _, name := range []string{"x-forwarded-for", "X-FORWARDED-FOR", "x-real-ip"} {
 		bucket := "hdr-case-" + name
-		h := Middleware_withRateLimit(bucket, 1, 1, textHandler())
+		h := Middleware_withRateLimit(bucket, 1, 1, okTextHandler())
 		for _, ip := range []string{"203.0.113.1", "203.0.113.2"} {
 			req := SkyRequest{Method: "GET", Path: "/", Headers: map[string]any{name: ip}}
 			resp := okResponse(t, runHandler(h, req))
@@ -196,7 +196,7 @@ func TestMiddlewareRateLimitReadsForwardedForWhateverTheCase(t *testing.T) {
 
 // Middleware.withCsrf reads X-Csrf-Token whatever its case.
 func TestMiddlewareCsrfReadsTokenHeaderWhateverTheCase(t *testing.T) {
-	h := Middleware_withCsrf(textHandler())
+	h := Middleware_withCsrf(okTextHandler())
 	for _, name := range []string{"x-csrf-token", "X-CSRF-TOKEN"} {
 		req := SkyRequest{
 			Method:  "POST",
