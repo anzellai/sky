@@ -1449,7 +1449,7 @@ pub fn check_modules_with_world(
                         }]
                     })
                     .unwrap_or_default(),
-                suggestion: Some(codec_elem::suggestion()),
+                suggestion: Some(codec_elem::suggestion(f.container)),
             });
         }
     }

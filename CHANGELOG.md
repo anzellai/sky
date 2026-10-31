@@ -51,6 +51,23 @@ finds a header whatever the case of its name.
 - **`sky verify` has a `stores` step.** When the entry module exposes `db`
   (a `Store.Project`), it runs `Store.dumpSchema db` in a scratch build and
   fails on a Store builder problem, before a deploy.
+- **`Codec.autoWith` reads a `Maybe` override correctly (a silent wrong
+  answer).** An override such as `( "published_at", Codec.maybe Codec.int )`
+  decodes to an erased `Maybe`, and the record field is a typed `Maybe Int`.
+  The decoder only assigned or converted the value, which Go refuses between
+  the two, and then kept the field's zero value with no error. So 3000 read as
+  `Just 0` and NULL read as `Just 0`, through `Codec.fromJson` and through
+  every `Std.Db.Store` read on SQLite and PostgreSQL, with one override or
+  more. The decoder now rebuilds the value as the field's type, the `Just`
+  value too. An override whose value does not fit the field is an `Err` that
+  names the column. An override encoder that returns no JSON value now fails
+  loud (a classified `JsonEncodeFailure`), where it wrote `null`.
+  `Codec.auto` with a `Nothing` blank was not affected: a `Maybe Int`,
+  `Float`, `Bool`, `String`, a record and a nested `Maybe` each round-trip a
+  value and NULL, as the new cases show. An unannotated codec whose `Maybe`
+  blank is `Nothing` is still refused at check time (`[E2009]`). That message
+  now names the `Nothing` blank and suggests a `Just` blank or `Codec.maybe`,
+  where it talked about an empty list.
 - **`sky db migrate --gen` describes an external column of a new table
   correctly.** Its warning said every insert fails until a migration adds
   the column. That holds for `defaultWith`, `defaultNow` and `touchOnUpdate`,
