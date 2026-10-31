@@ -33,6 +33,7 @@ import Sky.Core.Dict as Dict exposing (Dict)
 import Sky.Core.String as String
 import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe
+import Sky.Core.Tuple as Tuple
 import Sky.Core.Json.Encode as Encode
 import Std.Codec as Codec exposing (Codec)
 import Std.Money as Money exposing (Money, Currency(..))
@@ -652,12 +653,11 @@ tests =
             Test.equal (Ok (Error.unavailable "x"))
                 (Codec.fromJson Codec.error "[\"Error\",\"Unavailable\",{\"message\":\"x\",\"details\":[\"Future\",1]}]")
         )
-    , Test.test "error: a known details variant with a bad payload, or a retryAfterMs that is not an Int, is an Err"
+    , Test.test "error: details are the one lenient Maybe (a bad payload is no details), the message stays strict"
         (\_ ->
-            Test.equal ( True, True, True )
-                ( failed (Codec.fromJson Codec.error "[\"Error\",\"Network\",{\"message\":\"x\",\"details\":[\"HttpStatus\",\"500\"]}]")
-                , failed (Codec.fromJson Codec.error "[\"Error\",\"Conflict\",{\"message\":\"x\",\"details\":[\"Domain\",{\"domain\":\"db\",\"code\":\"Deadlock\",\"retryAfterMs\":\"soon\"}]}]")
-                , failed (Codec.fromJson Codec.error "[\"Error\",\"Conflict\",{\"message\":\"x\",\"details\":[\"Domain\",{\"domain\":\"db\",\"code\":\"Deadlock\",\"retryable\":\"yes\"}]}]")
+            Test.equal ( Ok (Error.network "x"), True )
+                ( Codec.fromJson Codec.error "[\"Error\",\"Network\",{\"message\":\"x\",\"details\":[\"HttpStatus\",\"500\"]}]"
+                , failed (Codec.fromJson Codec.error "[\"Error\",\"Network\",{\"message\":5,\"details\":null}]")
                 )
         )
 
@@ -779,23 +779,23 @@ tests =
                   , failed (Codec.fromJson zeroRecord "{\"n\":\"a\",\"xs\":[],\"on\":true,\"m\":\"x\"}")
                   )
                 ))
-    , Test.test "fieldReadError: a field reads its value or names the reason, for object and auto codecs"
+    , Test.test "fieldReadError: the first field of an object its codec does not read, by name"
         (\_ ->
             Test.equal
-                ( ( True, False ), ( True, False ), False )
-                ( ( Codec.fieldReadError zeroRecord "m" (Encode.string "x") /= Nothing
-                  , Codec.fieldReadError zeroRecord "m" Encode.null /= Nothing
+                ( ( Just "m", Nothing, Just "e" ), ( Nothing, Nothing ) )
+                ( ( Maybe.map Tuple.first (Codec.fieldReadError zeroRecord "{\"n\":\"a\",\"m\":\"x\"}")
+                  , Codec.fieldReadError zeroRecord "{\"m\":null,\"zz\":1}"
+                  , Maybe.map Tuple.first (Codec.fieldReadError zeroRecordNoZero "{\"e\":\"x\"}")
                   )
-                , ( Codec.fieldReadError zeroRecordNoZero "e" (Encode.string "x") /= Nothing
-                  , Codec.fieldReadError (Codec.auto zeroAutoBlank) "note" (Encode.string "fine") /= Nothing
+                , ( Codec.fieldReadError (Codec.auto zeroAutoBlank) "{\"note\":\"fine\"}"
+                  , Codec.fieldReadError (Codec.list Codec.int) "{\"xs\":\"x\"}"
                   )
-                , Codec.fieldReadError (Codec.list Codec.int) "xs" (Encode.string "x") /= Nothing
                 ))
     , Test.test "fieldReadError: an auto codec's field reads by its blank's siblings"
         (\_ ->
             Test.equal
-                True
-                (Codec.fieldReadError (Codec.auto zeroAutoBlank) "total" (Encode.string "x") /= Nothing))
+                (Just "total")
+                (Maybe.map Tuple.first (Codec.fieldReadError (Codec.auto zeroAutoBlank) "{\"total\":\"x\"}")))
     ]
 
 

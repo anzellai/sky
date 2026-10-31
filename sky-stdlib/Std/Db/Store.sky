@@ -3054,7 +3054,7 @@ decodeRow table codec j =
 -- the table and the decoder's reason.
 rowReadError : String -> Codec r -> String -> Error -> Error
 rowReadError table codec j e =
-    case badColumn codec j (codecColumns codec) of
+    case Codec.fieldReadError codec j of
 
         Just ( col, why ) ->
             Error.decode
@@ -3075,27 +3075,30 @@ rowReadError table codec j e =
                     ++ Error.toString e)
 
 
-badColumn : Codec r -> String -> List ( String, String ) -> Maybe ( String, String )
-badColumn codec j cols =
-    case cols of
+-- The JSON text `text` as a value, or `Nothing` when it is not JSON. One
+-- decode site for every caller, so the kernel's result is narrowed once
+-- (docs/rust-rewrite/14-runtime-narrowing-taxonomy.md, R5).
+jsonOf : String -> Maybe Value
+jsonOf text =
+    case JD.decodeString JD.value text of
 
-        [] ->
+        Ok v ->
+            Just v
+
+        Err _ ->
             Nothing
 
-        ( c, _ ) :: rest ->
-            case JD.decodeString (JD.field c JD.value) j of
 
-                Err _ ->
-                    badColumn codec j rest
+-- The part of `v` at `path`, or `Nothing`. One decode site, as `jsonOf`.
+jsonAt : List String -> Value -> Maybe Value
+jsonAt path v =
+    case JD.decodeValue (JD.at path JD.value) v of
 
-                Ok v ->
-                    case Codec.fieldReadError codec c v of
+        Ok part ->
+            Just part
 
-                        Just why ->
-                            Just ( c, why )
-
-                        Nothing ->
-                            badColumn codec j rest
+        Err _ ->
+            Nothing
 
 
 -- The table a projection reads, to name in a read error: "" on a join, whose
@@ -6283,12 +6286,12 @@ writeCheck s col kind v =
             Nothing ->
                 if tag == "SqlString" && kindBase kind == "blob"
                     && hasOpenPart col s.nodes then
-                    case JD.decodeString JD.value text of
+                    case jsonOf text of
 
-                        Ok json ->
+                        Just json ->
                             openPartError s col json
 
-                        Err _ ->
+                        Nothing ->
                             Nothing
 
                 else
@@ -6315,9 +6318,11 @@ hasOpenPart col nodes =
 -- `Codec.map` that maps a value to `Nothing`).
 openPartError : StoreRec a -> String -> Value -> Maybe String
 openPartError s col json =
-    case Codec.fieldReadError s.codec col json of
+    case Codec.fieldReadError
+             s.codec
+             (JE.encode 0 (JE.object [ ( col, json ) ])) of
 
-        Just why ->
+        Just ( _, why ) ->
             Just
                 ("column \"" ++ col ++ "\": its codec does not read the value: "
                     ++ why)
@@ -6434,15 +6439,15 @@ writeValueError nodes col kind v =
 textContentError : List ( String, Value ) -> String -> String -> String -> Maybe String
 textContentError nodes col kind text =
     if kindBase kind == "blob" then
-        case JD.decodeString JD.value text of
+        case jsonOf text of
 
-            Err _ ->
+            Nothing ->
                 Just
                     ("column \"" ++ col ++ "\" is JSON, and "
                         ++ showValue (SqlString text)
                         ++ " is not JSON")
 
-            Ok json ->
+            Just json ->
                 nodeValueError nodes col json
 
     else
@@ -6487,12 +6492,12 @@ schemaFieldsOf schema cols =
             []
 
         ( c, _ ) :: rest ->
-            case JD.decodeValue (JD.at [ "properties", c ] JD.value) schema of
+            case jsonAt [ "properties", c ] schema of
 
-                Ok part ->
+                Just part ->
                     ( c, part ) :: schemaFieldsOf schema rest
 
-                Err _ ->
+                Nothing ->
                     schemaFieldsOf schema rest
 
 

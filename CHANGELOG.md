@@ -421,9 +421,9 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   before. A `Codec.fromJson` of third-party JSON that puts a value of another
   type where the codec expects a `Maybe` (`""` for a missing number) was
   `Nothing` and is now an `Err`: repair the input, or read that payload with
-  `Sky.Core.Json.Decode` and `Decode.maybe`. `Codec.error` still reads a
-  details variant a later release adds as no details; a known variant with a
-  bad payload, and a domain-failure key with the wrong type, are an `Err`.
+  `Sky.Core.Json.Decode` and `Decode.maybe`. `Codec.error` is unchanged: its
+  `details` stay the one lenient `Maybe`, so details from a newer peer read
+  as no details.
 - **`Std.Db.Store` exports `contains`, `startsWith`, `endsWith` and `select`
   (breaking for two `exposing (..)` imports).** `Sky.Core.String` and
   `Sky.Core.Regex` export `contains`, `Sky.Core.String` `startsWith` and

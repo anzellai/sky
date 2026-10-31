@@ -1400,10 +1400,10 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   `target`, as itself, and
   `Codec.schemaValueError schema json` whether a JSON value is one the schema
   reads. `Std.Db.Store` uses them for its kind checks.
-  `Codec.fieldReadError codec "col" json` (v0.29) gives the reason field
-  `col` of a record codec does not read `json` (the field's own decoder, or,
-  for `Codec.auto`, the blank record with `json` in that field); the Store
-  uses it to name the column a row fails on.
+  `Codec.fieldReadError codec objectText` (v0.29) gives the first field of a
+  JSON object that its field's codec does not read, with the reason (the
+  field's own decoder, or, for `Codec.auto`, the blank record with that
+  value in the field); the Store uses it to name the column a row fails on.
   `Codec.maybe c` reads only JSON `null` as `Nothing` (v0.29): any other
   value must decode as `c`, at any depth, so a `"x"` in a `Maybe Int` field
   or a bad element of a `List (Maybe a)` is an `Err` naming where it failed,
