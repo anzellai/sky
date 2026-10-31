@@ -14,8 +14,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 ## v0.29.1 — Fixes for v0.29.0 (2026-10-31)
 
 A patch release for v0.29.0. It restores `Std.Db.Store` builders on a column
-the codec does not carry, makes a Store builder problem loud, and makes every
-header lookup find a header whatever the case of its name.
+the codec does not carry and makes a Store builder problem loud. It closes the
+SQLite and Store findings deferred from v0.29.0. A form submitted before a
+Sky.Spa or Sky.Live page is live no longer ends on a 403 page. Telemetry no
+longer records a secret from a URL or a full client IP. Every header lookup
+finds a header whatever the case of its name.
 
 ### Fixed
 
@@ -48,35 +51,11 @@ header lookup find a header whatever the case of its name.
 - **`sky verify` has a `stores` step.** When the entry module exposes `db`
   (a `Store.Project`), it runs `Store.dumpSchema db` in a scratch build and
   fails on a Store builder problem, before a deploy.
-- **A header is found whatever the case of its name.** HTTP header names are
-  case-insensitive (RFC 9110). HTTP/2 sends them in lower case and a proxy may
-  send any case. One rule now holds on every path:
-  - A request's `headers` Dict holds each name in canonical form
-    (`X-Sky-Api-Key`, `X-Real-Ip`, `Content-Type`), whatever case the client
-    sent. This holds for a `Sky.Http.Server` route, a Sky.Spa `/_rpc` call, a
-    Sky.Live `App.api` route, the `App.withRequest` hook and the console's
-    `App.withConsoleAuth` request. Go's server already canonicalised a name it
-    parsed. The runtime no longer relies on that, so a header map built
-    another way (a handler wrapper) follows the rule too. So
-    `Dict.get "X-Sky-Api-Key" req.headers` finds `x-sky-api-key`.
-  - An HTTP client response's `headers` Dict holds canonical names too. In a
-    Sky.Spa client it was always empty. It now carries the response's headers
-    (the browser gives them in lower case, the Dict holds the canonical name).
-  - New `Http.header name resp : Maybe String` reads a response header in any
-    case. It is the response twin of `Server.header`, which already ignored
-    case (v0.29.0).
-  - The middlewares read their headers in any case: `Middleware.withCors`
-    (`Origin`), `withBasicAuth` (`Authorization`), `withRateLimit`
-    (`X-Forwarded-For`, `X-Real-Ip`) and `withCsrf` (`X-Csrf-Token`). Before,
-    a request a test built by hand with `"authorization"` was refused.
-  - A response record that names `content-type` in lower case keeps its own
-    value on a Sky.Live `App.api` route. Before, the default content type
-    could replace it, depending on map order.
-  - `sky check` warns about `Dict.get "x-sky-api-key" req.headers` (and
-    `Dict.member`, and the piped form): a literal name that is not canonical
-    never matches. The warning names the canonical key and `Server.header` /
-    `Http.header`.
-  - Header names Sky sends are not changed.
+- **`sky db migrate --gen` describes an external column of a new table
+  correctly.** Its warning said every insert fails until a migration adds
+  the column. That holds for `defaultWith`, `defaultNow` and `touchOnUpdate`,
+  which write it. A column with only a `default*` builder is never written,
+  so inserts work, and the warning now says so.
 - `docs/migration/v0.29.md` said a `defaultWith` on an unknown column "was
   ignored" in v0.28. It was not: it wrote the column. The page now says so,
   and has an "External columns (v0.29.1)" section.
@@ -102,11 +81,6 @@ header lookup find a header whatever the case of its name.
   in a `Db.query` whose table or column is not an identifier is now skipped,
   and the arguments are bound as passed. Before, the table name was spliced
   into a `PRAGMA table_info` statement.
-- **`sky db migrate --gen` describes an external column of a new table
-  correctly.** Its warning said every insert fails until a migration adds
-  the column. That holds for `defaultWith`, `defaultNow` and `touchOnUpdate`,
-  which write it. A column with only a `default*` builder is never written,
-  so inserts work, and the warning now says so.
 - Docs: `Codec.auto` cannot derive a data-carrying custom type (reading one
   is an `Err`). `docs/skydb/overview.md` and `docs/stdlib.md` said it became a
   JSON blob. They now say to give that field a `taggedUnion` codec through
@@ -118,32 +92,6 @@ header lookup find a header whatever the case of its name.
   a BOOLEAN or REAL column (`'true'` never matches on SQLite, an error on
   PostgreSQL), and notes that ordering on such a column compares text until
   it is converted (`sky db check --sql` writes the conversion from v0.29.2).
-- **Telemetry never records a secret or personal data from a URL.** An
-  outbound `Http.get` span recorded the whole URL in `http.url`, so an API key
-  in a query string (`?key=…`) left the process with every exported span.
-  Server spans, the access log, panic reports, `Middleware.withLogging` and
-  Std.Analytics page views recorded the raw request path.
-  - Outbound spans record `url.full` (and `http.url`) as scheme, host, port
-    and the path, with no query string, userinfo or fragment, plus
-    `server.address` and `url.path`. `Http.request` now has a client span.
-  - The text of an outbound transport error carries the same redacted URL.
-    Go's error text held the full URL, so the key also reached the Sky
-    `Error` and the app's logs.
-  - Request paths are recorded as the route template (a Sky.Live route such
-    as `/reset/:token`, a `Server` pattern such as `/blog/{slug}`), else with
-    each segment that can hold data replaced by `:redacted`. Query strings
-    are dropped. In-process sub-apps record their own templates.
-  - The serverless access-log line is built with `json.Marshal`. A `"` in a
-    path broke the line.
-  - The client IP in spans (`net.peer.ip`, the new `client.address`) is
-    anonymised by the Std.Analytics rule: the last IPv4 octet and the last 80
-    bits of an IPv6 address are zeroed.
-  - `SKY_TELEMETRY_URL` (`redacted`, `path`, `full`),
-    `SKY_TELEMETRY_QUERY_KEYS` (and the builder
-    `Sky.Config.withTelemetryQueryKeys`) and `SKY_TELEMETRY_CLIENT_IP`
-    (`anonymised`, `full`) are the overrides. `docs/observability.md` has the
-    rules, and `docs/migration/v0.29.md` lists what dashboards see now.
-  - Std.Ai download errors no longer repeat the download URL with its query.
 - **A form submitted before a page is live no longer ends on a 403 JSON
   page.** On a `web:app` (Sky.Spa) page, Enter, a phone's "Go" key or a
   password manager could submit a form before the wasm client hydrated. The
@@ -178,6 +126,61 @@ header lookup find a header whatever the case of its name.
   could keep the other leg's output pipe open, so the build waited for good
   (the backend leg waited for the frontend's wasm name, which comes only when
   that pipe ends). The two legs now start one at a time, then build together.
+- **Telemetry never records a secret or personal data from a URL.** An
+  outbound `Http.get` span recorded the whole URL in `http.url`, so an API key
+  in a query string (`?key=…`) left the process with every exported span.
+  Server spans, the access log, panic reports, `Middleware.withLogging` and
+  Std.Analytics page views recorded the raw request path.
+  - Outbound spans record `url.full` (and `http.url`) as scheme, host, port
+    and the path, with no query string, userinfo or fragment, plus
+    `server.address` and `url.path`. `Http.request` now has a client span.
+  - The text of an outbound transport error carries the same redacted URL.
+    Go's error text held the full URL, so the key also reached the Sky
+    `Error` and the app's logs.
+  - Request paths are recorded as the route template (a Sky.Live route such
+    as `/reset/:token`, a `Server` pattern such as `/blog/{slug}`), else with
+    each segment that can hold data replaced by `:redacted`. Query strings
+    are dropped. In-process sub-apps record their own templates.
+  - The serverless access-log line is built with `json.Marshal`. A `"` in a
+    path broke the line.
+  - The client IP in spans (`net.peer.ip`, the new `client.address`) is
+    anonymised by the Std.Analytics rule: the last IPv4 octet and the last 80
+    bits of an IPv6 address are zeroed.
+  - `SKY_TELEMETRY_URL` (`redacted`, `path`, `full`),
+    `SKY_TELEMETRY_QUERY_KEYS` (and the builder
+    `Sky.Config.withTelemetryQueryKeys`) and `SKY_TELEMETRY_CLIENT_IP`
+    (`anonymised`, `full`) are the overrides. `docs/observability.md` has the
+    rules, and `docs/migration/v0.29.md` lists what dashboards see now.
+  - Std.Ai download errors no longer repeat the download URL with its query.
+- **A header is found whatever the case of its name.** HTTP header names are
+  case-insensitive (RFC 9110). HTTP/2 sends them in lower case and a proxy may
+  send any case. One rule now holds on every path:
+  - A request's `headers` Dict holds each name in canonical form
+    (`X-Sky-Api-Key`, `X-Real-Ip`, `Content-Type`), whatever case the client
+    sent. This holds for a `Sky.Http.Server` route, a Sky.Spa `/_rpc` call, a
+    Sky.Live `App.api` route, the `App.withRequest` hook and the console's
+    `App.withConsoleAuth` request. Go's server already canonicalised a name it
+    parsed. The runtime no longer relies on that, so a header map built
+    another way (a handler wrapper) follows the rule too. So
+    `Dict.get "X-Sky-Api-Key" req.headers` finds `x-sky-api-key`.
+  - An HTTP client response's `headers` Dict holds canonical names too. In a
+    Sky.Spa client it was always empty. It now carries the response's headers
+    (the browser gives them in lower case, the Dict holds the canonical name).
+  - New `Http.header name resp : Maybe String` reads a response header in any
+    case. It is the response twin of `Server.header`, which already ignored
+    case (v0.29.0).
+  - The middlewares read their headers in any case: `Middleware.withCors`
+    (`Origin`), `withBasicAuth` (`Authorization`), `withRateLimit`
+    (`X-Forwarded-For`, `X-Real-Ip`) and `withCsrf` (`X-Csrf-Token`). Before,
+    a request a test built by hand with `"authorization"` was refused.
+  - A response record that names `content-type` in lower case keeps its own
+    value on a Sky.Live `App.api` route. Before, the default content type
+    could replace it, depending on map order.
+  - `sky check` warns about `Dict.get "x-sky-api-key" req.headers` (and
+    `Dict.member`, and the piped form): a literal name that is not canonical
+    never matches. The warning names the canonical key and `Server.header` /
+    `Http.header`.
+  - Header names Sky sends are not changed.
 
 ## v0.29.0 — Real-world capabilities (2026-10-29)
 
