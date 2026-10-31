@@ -2873,6 +2873,39 @@ zeroMaybeList table =
             |> Codec.buildObject)
         |> Store.primaryKey "id"
 
+type alias ZeroJusts =
+    { id : String
+    , tags : Maybe (List String)
+    , label : Maybe ZeroLabel
+    , deep : Maybe (Maybe (List String))
+    , n : Maybe (Maybe Int)
+    }
+
+
+-- `Just` values through nullable blob columns and a nested `Maybe`: each is
+-- one nullable column of the inner kind, stored as JSON, never as text.
+zeroJusts : Store ZeroJusts
+zeroJusts =
+    Store.fromCodec
+        "sqc_zero_justs"
+        (Codec.object ZeroJusts |> Codec.field "id" .id Codec.string
+            |> Codec.field "tags" .tags (Codec.maybe (Codec.list Codec.string))
+            |> Codec.field
+                   "label"
+                   .label
+                   (Codec.maybe
+                       (Codec.object ZeroLabel
+                           |> Codec.field "id" .id Codec.string
+                           |> Codec.field "label" .label Codec.string
+                           |> Codec.buildObject))
+            |> Codec.field
+                   "deep"
+                   .deep
+                   (Codec.maybe (Codec.maybe (Codec.list Codec.string)))
+            |> Codec.field "n" .n (Codec.maybe (Codec.maybe Codec.int))
+            |> Codec.buildObject)
+        |> Store.primaryKey "id"
+
 
 zeroShadeCodec : Codec ZeroShade
 zeroShadeCodec =
@@ -3098,6 +3131,27 @@ zeroTests db =
                   Test.equal
                       ( Ok [ Nothing, Nothing ], Ok [ Nothing ] )
                       ( added, created ))
+    , Test.test
+          "Store: Just values round-trip through nullable blob columns and a nested Maybe"
+          (\_ ->
+              let
+                  row =
+                      { id = "a"
+                      , tags = Just [ "x", "y" ]
+                      , label = Just { id = "l", label = "it's" }
+                      , deep = Just (Just [ "p" ])
+                      , n = Just (Just 5)
+                      }
+              in
+                  Test.equal
+                      (Ok [ row ])
+                      (Task.run
+                          (drop db "sqc_zero_justs"
+                              |> Task.andThen
+                                     (\_ -> unit (Store.migrate db zeroJusts))
+                              |> Task.andThen
+                                     (\_ -> Store.insert db zeroJusts row)
+                              |> Task.andThen (\_ -> Store.all db zeroJusts))))
     ]
 
 -- ── Items 5, 8, 9, 12: writes (batch D) ──────────────────────────────────────

@@ -425,6 +425,8 @@ bool =
 -- | Optional value. `Nothing` encodes as JSON `null`; a `null` or type-mismatch
 -- on decode yields `Nothing`. A `Maybe scalar` stays a (nullable) scalar column;
 -- anything deeper becomes a nullable blob column, so `Nothing` stores as NULL.
+-- A `Maybe (Maybe a)` is the same one nullable column as `Maybe a`: JSON has
+-- one `null`, so `Just Nothing` reads back as `Nothing`.
 maybe : Codec a -> Codec (Maybe a)
 maybe (Codec c) =
     Codec
@@ -440,6 +442,9 @@ maybe (Codec c) =
         , dec = D.oneOf [ D.map Just c.dec, D.succeed Nothing ]
         , shp =
             case c.shp of
+
+                SScalar (CNull t) ->
+                    SScalar (CNull t)
 
                 SScalar t ->
                     SScalar (CNull t)

@@ -535,6 +535,12 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   already made it. Existing columns are not altered: an app that created such
   a table can make the column nullable by hand (`ALTER TABLE t ALTER COLUMN c
   DROP NOT NULL` on PostgreSQL, a table rebuild on SQLite).
+- **A nested `Codec.maybe` no longer stores its value as text.** In a
+  `Codec.object` codec, `Codec.maybe (Codec.maybe x)` gave a column kind the
+  runtime did not know (`int??`), so the value was written as plain text and
+  `Just (Just 5)` read back as `Just Nothing`, with no error. It is now one
+  nullable column of the inner kind, as `Codec.auto` already made it. JSON has
+  one `null`, so `Just Nothing` reads back as `Nothing`.
 - **Builds use less memory: lowering types only the code the program
   reaches.** Lowering inferred the body types of every top-level function of
   every interned module, and the whole stdlib is interned, before it dropped
