@@ -323,7 +323,13 @@ try {
 
   // traffic: page views + a 404, through the same origin
   for (let i = 0; i < 6; i++) await ctx.request.get(ORIGIN + "/").catch(() => {});
-  await ctx.request.get(ORIGIN + "/console-live-e2e-missing").catch(() => {});
+  // The access log records a path by the telemetry rules (v0.29.1,
+  // docs/observability.md): a segment that looks like a route name is kept,
+  // and one with a digit is `:redacted`. So the run marks its own request
+  // with a name the rule keeps, and checks that a data-looking path never
+  // reaches the Logs tab raw.
+  await ctx.request.get(ORIGIN + "/console-live-missing").catch(() => {});
+  await ctx.request.get(ORIGIN + "/console-live-e2e-token123").catch(() => {});
 
   // 2. live header, counting uptime
   const h1 = await waitHeader(page, (h) => h.mode === "prod", 15000);
@@ -365,11 +371,14 @@ try {
     while (Date.now() < end && !ok) {
       const t = await bodyText(page);
       // The access log of the request this run made (its path is unique).
-      ok = t.includes("console-live-e2e-missing");
+      ok = t.includes("console-live-missing");
       if (!ok) await sleep(500);
     }
     if (!ok) fail("the Logs tab did not list the access log line of a request this run made");
     else info("logs tab lists entries");
+    const raw = await bodyText(page);
+    if (raw.includes("console-live-e2e-token123")) fail("the Logs tab shows a data-looking request path raw; telemetry must record it as :redacted");
+    else info("a data-looking path is not in the Logs tab raw");
   }
   await clickTab(page, "Traces");
   {
