@@ -17,6 +17,7 @@ package rt
 // plus one read-only dist directory scan.
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -37,6 +38,22 @@ func RenderSpaHead(head, model any) string {
 // RenderSpaHead so the render logic has one home.
 func Spa_ssrRenderHead(head, model any) string {
 	return RenderSpaHead(head, model)
+}
+
+// Spa_pageRoute is the `Ffi.kernel "Spa_pageRoute"` alias the generated backend
+// mounts each SSR page with: `spaPageRoute_ "/form" ssrHandler`. It is a GET
+// route, like `Server.get`, so the CSRF middleware sees the page request: it
+// sets the CSRF cookie on a first visit and stashes the token on the request,
+// and the response path (rt_server.go) puts the `__sky_csrf` field into every
+// `method="post"` form of the page. (The split used to mount pages with
+// `Server.api "GET …"`, which skips the CSRF middleware, so the page had no
+// field and a native POST before hydration ended on a 403 JSON page.)
+//
+// The route is also marked SpaPage: serverRouteMux answers a native form POST
+// to the page with 303 to the same URL (pagePostRedirect), unless another
+// route on the path takes POST (an `App.api "POST /form"`), which then keeps it.
+func Spa_pageRoute(pattern any, handler any) any {
+	return SkyRoute{Method: "GET", Path: fmt.Sprintf("%v", pattern), Handler: handler, SpaPage: true}
 }
 
 // Spa_ssrRenderBody is the `Ffi.kernel "Spa_ssrRenderBody"` alias: it renders

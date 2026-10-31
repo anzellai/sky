@@ -564,6 +564,12 @@ in the session store, so a copy of the cookie from before sign-out is refused.
 The cookie lives as long as the token (30 days; `App.withSessionLifetime` /
 `SKY_SPA_SESSION_LIFETIME`), and `App.withPersistExclude [ … ]` names model
 fields a reload never takes from an earlier page (server-owned values).
+A form submitted while the client hydrates (Enter, a phone's "Go" key, a
+password manager) is held, with the text typed so far, and the client submits
+it once it is live (clicks before then are not replayed). A server-rendered
+page's POST forms carry the `__sky_csrf` field, and a native form POST to a
+page (no JavaScript, or a lost cookie) answers 303 to the same URL, on Sky.Spa
+and Sky.Live, never a 403 JSON page (v0.29.1).
 Several replicas need a shared store (`[live] store` / `SKY_LIVE_STORE` =
 `postgres` or `redis`) as well as a shared `SKY_SPA_SESSION_SECRET`
 (`docs/skyspa/auto-split.md` §25); production refuses to start with no store and

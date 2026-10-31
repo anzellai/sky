@@ -176,6 +176,26 @@ Adjacent texts (`text "Hello, "` next to `text name`) arrive as one browser
 text node, and hydration splits that node at the client's boundaries; the
 server's nodes stay in the page.
 
+**A form submitted before the client is live (v0.29.1).** Until the wasm
+client hydrates, `<html data-sky-hydrating>` is set and an overlay takes
+clicks. A keyboard can still submit a form: Enter in a field, a phone's "Go"
+key, or a password manager. The boot loader (`spa-boot.<hash>.js`) holds that
+submit when the form is one the app handles (`Ui.onSubmit`), with the text
+typed into each field so far. When the client is live it puts the text back,
+sends it to the app as `input` and `change` events, and submits the form
+through the app, so `update` runs once with what the person typed. Text typed
+without a submit is kept the same way. Clicks before then are not replayed:
+the overlay takes them, and the element under the click is not known. A form
+without `Ui.onSubmit` (a plain form to an `App.api` route) submits natively,
+as before.
+
+Without JavaScript, or if the client never starts, a submit is a native POST
+to the page's own URL. The server-rendered page carries the `__sky_csrf` field
+in each POST form, and a page answers that POST with `303 See Other` to the
+same URL, so the browser shows the page again. It is never the CSRF 403 JSON
+page (before v0.29.1 it was). The body is not read. An `App.api "POST /path"`
+route on a page's path keeps its POST.
+
 A widget island (`Ui.island`, [Std.Ui overview](../skyui/overview.md#widget-islands--third-party-js-widgets))
 works the same as on Sky.Live. The boot loader carries the island runtime, so a
 widget file loaded with `<script defer>` can register before the wasm boots.

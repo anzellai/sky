@@ -1339,6 +1339,36 @@ The check is fail-closed:
   `Spa.app` entry is read by its top-level `subscriptions` name. With neither,
   the backend refuses every topic and `sky spa-split` prints a warning.
 
+**SSR pages are CSRF-checked GETs (v0.29.1).** The backend mounts each page
+with `spaPageRoute_ "<pattern>" ssrHandler` (the `Spa_pageRoute` kernel,
+`runtime-go/rt/spa_ssr_notjs.go`). Before v0.29.1 a page was a
+`Server.api "GET <pattern>"` route, which skips the CSRF middleware: the page
+set no CSRF cookie and its forms had no `__sky_csrf` field. A form submitted
+before hydration was then a native POST that ended on the CSRF 403 JSON page.
+Now the page GET takes the CSRF middleware, which sets the cookie on a first
+visit and passes the same token to the render, and each `method="post"` form
+of the page gets the hidden field. The runtime answers a native POST to a page
+(a form content type with no `X-Sky-Csrf` header) with `303 See Other` to the
+same URL, `Cache-Control: no-store`, and does not read the body. It does so
+when the CSRF check fails as well, so a stale page or a lost cookie also lands
+on the page. The `Location` is always a path on the same origin (`//host` and
+`/\host` collapse to `/host`). A page leaves POST to another route on its path
+(`App.api "POST /path"`, `Server.any`), and a page whose POST entry would
+conflict with another route at start is skipped with a log line, never a
+panic. Sky.Live answers a native POST to a page the same way.
+
+A page with the field carries one visitor's token, and its response sets that
+visitor's CSRF cookie. Such a response gets `Vary: Cookie` and
+`Cache-Control: private` (an app `Cache-Control` keeps its other directives,
+less `public` and `s-maxage`), so a shared cache does not give one visitor's
+token to the next. Do not cache Sky pages in a shared cache.
+
+Tests: `runtime-go/rt/page_native_post_test.go` (the page field, the 303, the
+App.api / `/_rpc` / JSON cases, the `Location` guard, Sky.Live),
+`spa_split_flow.rs` (`spaPageRoute_` mounts, the `App.api "POST /items"` on a
+page path), and `scripts/spa-early-submit-verify.mjs` (the browser stage of
+`scripts/spa-rpc-order-e2e.sh`).
+
 Tests: `runtime-go/rt/spa_rpc_guard_test.go` (the guard, method-keyed CSRF
 exemptions, Secure over TLS, the topic check) and `spa_split_flow.rs`
 (`spa_rpc_origin_guard_and_sub_topic_authorisation`, a live backend built from

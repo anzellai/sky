@@ -693,6 +693,12 @@ refuses to start with no store and an unwritable data dir. A link to a path with
 no client route (or a `Spa.serverRoute` path) is a full page load. A handled
 client `Err` is never logged as an RPC failure; call `Spa.reportRpcFailure` for a
 real unhandled one. A `Dict k v` field crosses the wire through `Codec.dict`.
+A form submitted while the client hydrates (Enter, a phone's "Go" key, a
+password manager) is held, with the text typed so far, and the client submits
+it once it is live (clicks before then are not replayed). A server-rendered
+page's POST forms carry the `__sky_csrf` field, and a native form POST to a
+page (no JavaScript, or a lost cookie) answers 303 to the same URL, on Sky.Spa
+and Sky.Live, never a 403 JSON page.
 
 **Serving a Sky.Spa build — precompress the wasm.** A Go→wasm client is multi-MB
 raw (~2.5 MB brotli), so it MUST be served compressed or the first paint drags on

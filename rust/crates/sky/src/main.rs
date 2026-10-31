@@ -225,6 +225,32 @@ fn take_spa_await_flag(args: &[String]) -> (Vec<String>, bool) {
     (args.iter().filter(|a| *a != flag).cloned().collect(), found)
 }
 
+/// Held around each child spawn of the split's two parallel legs.
+///
+/// On macOS the standard library makes a child's pipe and marks it
+/// close-on-exec in two steps. When the frontend and backend legs spawn from
+/// two threads at once, one child can be forked between those steps and keep
+/// the other child's pipe open. The backend leg then held the write end of the
+/// frontend's output pipe while it waited for the wasm name on its stdin, and
+/// the name is sent only after that pipe ends: the build hung for good
+/// (v0.29.1, seen in `spa_split_flow`). One spawn at a time closes the window.
+static LEG_SPAWN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// `c.spawn()` under [`LEG_SPAWN_LOCK`].
+fn spawn_leg(c: &mut Command) -> std::io::Result<std::process::Child> {
+    let _one_at_a_time = LEG_SPAWN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    c.spawn()
+}
+
+/// `c.output()` with the spawn under [`LEG_SPAWN_LOCK`]: stdin is null and
+/// stdout and stderr are captured, as `Command::output` does.
+fn leg_output(c: &mut Command) -> std::io::Result<std::process::Output> {
+    c.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    spawn_leg(c)?.wait_with_output()
+}
+
 /// Run a Sky.Spa SSR backend leg with its wasm-name handoff on its stdin
 /// (project::spa_wasm_handoff): spawn it with [`project::spa_wasm_handoff::FLAG`]
 /// and a piped stdin, hand the pipe to `tx` (which writes a delivery already
@@ -237,7 +263,7 @@ fn run_with_handoff(
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let mut child = c.spawn()?;
+    let mut child = spawn_leg(&mut c)?;
     if let Some(stdin) = child.stdin.take() {
         if let Err(e) = tx.attach(stdin) {
             eprintln!("sky build: could not hand the frontend's wasm name to the backend leg: {e}");
@@ -4312,7 +4338,7 @@ fn spa_split_and_build(
         c.arg("src/Main.sky").current_dir(&backend_dir);
         let out = match tx {
             Some(tx) => run_with_handoff(c, tx),
-            None => c.output(),
+            None => leg_output(&mut c),
         };
         t.end();
         out
@@ -4345,7 +4371,7 @@ fn spa_split_and_build(
         if let Some(n) = leg_go_jobs {
             c.env(project::go_jobs::ENV_JOBS, n.to_string());
         }
-        let out = c.current_dir(&frontend_dir).output();
+        let out = leg_output(c.current_dir(&frontend_dir));
         t.end();
         out
     };
@@ -20239,6 +20265,51 @@ echo key > "$ks"
         let slug = bundled_cache_slug();
         assert!(slug.starts_with(&version_slug()), "{slug}");
         assert!(slug.ends_with(&hex[..12]), "{slug} lacks {}", &hex[..12]);
+    }
+
+    /// The split's two legs spawn from two threads, and the backend leg waits
+    /// on its stdin for a name the parent sends only once the frontend leg's
+    /// output has ended. A backend child that kept the frontend's pipe open
+    /// (forked between the pipe's creation and its close-on-exec mark) hung
+    /// the build. The model here: leg A waits on its stdin, leg B prints and
+    /// exits, and B's output must end without A having ended.
+    #[test]
+    #[cfg(unix)]
+    fn parallel_leg_spawns_do_not_keep_each_others_pipes() {
+        use std::io::Write as _;
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let start = std::sync::Barrier::new(2);
+            for _ in 0..3000 {
+                std::thread::scope(|s| {
+                    let waiter = s.spawn(|| {
+                        start.wait();
+                        let mut c = Command::new("/bin/sh");
+                        c.args(["-c", "read x; echo \"$x\""])
+                            .stdin(std::process::Stdio::piped())
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::piped());
+                        spawn_leg(&mut c).expect("spawn the waiting leg")
+                    });
+                    let printer = s.spawn(|| {
+                        start.wait();
+                        let mut c = Command::new("/bin/sh");
+                        c.args(["-c", "echo done"]);
+                        leg_output(&mut c).expect("run the printing leg")
+                    });
+                    let out = printer.join().unwrap();
+                    assert_eq!(String::from_utf8_lossy(&out.stdout), "done\n");
+                    let mut waiter = waiter.join().unwrap();
+                    waiter.stdin.take().unwrap().write_all(b"name\n").unwrap();
+                    let w = waiter.wait_with_output().unwrap();
+                    assert_eq!(String::from_utf8_lossy(&w.stdout), "name\n");
+                });
+            }
+            let _ = done_tx.send(());
+        });
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(120))
+            .expect("a leg kept the other leg's output pipe open: the spawns deadlocked");
     }
 
     /// The dist loader and the runtime's `SpaBootJS` must be the same bytes:

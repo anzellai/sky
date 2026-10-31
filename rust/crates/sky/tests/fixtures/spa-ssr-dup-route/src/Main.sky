@@ -3,12 +3,17 @@ module Main exposing (main)
 -- Sky.Spa auto-split INPUT reproducing FINDING A: a path that is BOTH an
 -- `App.route` PAGE route (`/admin/login`, in the sibling `Routes`) AND an
 -- `App.api "GET /admin/login"` server endpoint (`apiRoutes`, below). The App→Spa
--- synthesis mounts the page route as `Server.api "GET /admin/login" ssrHandler`
+-- synthesis mounts the page route as `spaPageRoute_ "/admin/login" ssrHandler`
 -- (a per-route SSR GET) and the api endpoint via `App.apiServerRoute
 -- spaApiRoutes_` — both register `GET /admin/login` on Go's mux, which PANICS at
 -- boot on the duplicate pattern. The api endpoint (a deliberate server handler,
 -- e.g. an OAuth entry) must WIN; the SSR page mount for the same method+path is
 -- suppressed, so the backend boots.
+--
+-- v0.29.1: the `/items` PAGE route also has an `App.api "POST /items"`
+-- endpoint. A page answers a native form POST with 303, unless an app route
+-- takes POST on its path: that POST reaches `handleItemsPost`, and the two
+-- POST registrations never collide at boot.
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
@@ -79,6 +84,11 @@ handleLogin _req =
     Task.succeed (Server.text "login")
 
 
+handleItemsPost : Request -> Task Error Response
+handleItemsPost req =
+    Task.succeed (Server.text ("items-posted:" ++ req.body))
+
+
 handleHealthz : Request -> Task Error Response
 handleHealthz _req =
     Task.succeed (Server.text "ok")
@@ -88,6 +98,7 @@ apiRoutes : List any
 apiRoutes =
     [ App.api "GET /admin/login" handleLogin
     , App.api "GET /healthz" handleHealthz
+    , App.api "POST /items" handleItemsPost
     ]
 
 
