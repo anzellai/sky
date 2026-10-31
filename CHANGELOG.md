@@ -53,10 +53,16 @@ finds a header whatever the case of its name.
   an invalid table name or a primary key that is not a column fails every
   verb on the store. Each problem is now logged at ERROR level once per table
   and problem, shown in the Sky Console's logs, and counted in the metric
-  `sky_store_problems_total{table}` on every refused verb.
+  `sky_store_problems_total{table}` on every refused verb. An unknown column
+  in a query condition, an order, a set or a conflict rule is loud the same
+  way, and its `Err` is unchanged. At most 1000 distinct problems are logged,
+  so a column name built from input cannot flood the log. The counter still
+  counts every refusal.
 - **`sky verify` has a `stores` step.** When the entry module exposes `db`
   (a `Store.Project`), it runs `Store.dumpSchema db` in a scratch build and
-  fails on a Store builder problem, before a deploy.
+  fails on a Store builder problem, before a deploy. It skips with a note
+  only when `db` is not a `Store.Project`. Any other failure of the scratch
+  build fails the step with the build error.
 - **`Codec.autoWith` reads a `Maybe` override correctly (a silent wrong
   answer).** An override such as `( "published_at", Codec.maybe Codec.int )`
   decodes to an erased `Maybe`, and the record field is a typed `Maybe Int`.

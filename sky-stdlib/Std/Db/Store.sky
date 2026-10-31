@@ -2084,7 +2084,7 @@ pairValues pairs =
 -- the primary key, one `unique` column, or a `uniqueOn` set.
 conflictTarget : String -> StoreRec a -> List String -> Result Error (List String)
 conflictTarget verb s names =
-    case resolveNames verb s.cols names [] of
+    case resolveNames verb s.name s.cols names [] of
 
         Err e ->
             Err e
@@ -2119,8 +2119,8 @@ conflictTarget verb s names =
 
 
 -- Resolve names to codec columns, refusing an unknown one or a repeat.
-resolveNames : String -> List ( String, String ) -> List String -> List String -> Result Error (List String)
-resolveNames verb cols names acc =
+resolveNames : String -> String -> List ( String, String ) -> List String -> List String -> Result Error (List String)
+resolveNames verb table cols names acc =
     case names of
 
         [] ->
@@ -2133,7 +2133,7 @@ resolveNames verb cols names acc =
                 case lookupKind col cols of
 
                     Nothing ->
-                        Err <| unknownColErr n cols
+                        Err <| unknownColErr table n cols
 
                     Just _ ->
                         if List.member col acc then
@@ -2143,7 +2143,7 @@ resolveNames verb cols names acc =
                                            ++ "\" is named twice")
 
                         else
-                            resolveNames verb cols rest (col :: acc)
+                            resolveNames verb table cols rest (col :: acc)
 
 
 isConflictKey : StoreRec a -> List String -> Bool
@@ -2206,7 +2206,7 @@ conflictItems s target rules seen items =
                 case lookupKind col s.cols of
 
                     Nothing ->
-                        Err <| unknownColErr name s.cols
+                        Err <| unknownColErr s.name name s.cols
 
                     Just k ->
                         case conflictRuleError kind col k s target seen of
@@ -2475,7 +2475,7 @@ setExprItems d s exprs seen items params =
                 case lookupKind target s.cols of
 
                     Nothing ->
-                        Err <| unknownColErr e.target s.cols
+                        Err <| unknownColErr s.name e.target s.cols
 
                     Just tk ->
                         case setTargetError s target seen of
@@ -2528,7 +2528,7 @@ setExprSql d s target tk e =
             case lookupKind src s.cols of
 
                 Nothing ->
-                    Err <| unknownColErr e.source s.cols
+                    Err <| unknownColErr s.name e.source s.cols
 
                 Just sk ->
                     case deepFitError
@@ -2714,7 +2714,7 @@ copyItems d s ( srcCols, srcNodes ) star mapping cols exprs params =
                 case lookupKind target s.cols of
 
                     Nothing ->
-                        Err <| unknownColErr field s.cols
+                        Err <| unknownColErr s.name field s.cols
 
                     Just tk ->
                         if not (isIdent target) then
@@ -6228,27 +6228,27 @@ refOf ctx name =
 colRef : Ctx -> String -> Result Error ( String, String )
 colRef ctx name =
     if not ctx.joined then
-        sideCol ctx.qual ctx.cols False name name
+        sideCol ctx.table ctx.qual ctx.cols False name name
 
     else
         case String.split "." name of
 
             [ q, bare ] ->
                 if q == "a" then
-                    sideCol "a" ctx.cols False name bare
+                    sideCol ctx.table "a" ctx.cols False name bare
 
                 else if q == "b" then
-                    sideCol "b" ctx.right ctx.rightNull name bare
+                    sideCol ctx.rightTable "b" ctx.right ctx.rightNull name bare
 
                 else
-                    Err (unknownColErr name (ctx.cols ++ ctx.right))
+                    Err (unknownColErr ctx.table name (ctx.cols ++ ctx.right))
 
             _ ->
                 if ctx.side == "left" then
-                    sideCol "a" ctx.cols False name name
+                    sideCol ctx.table "a" ctx.cols False name name
 
                 else if ctx.side == "right" then
-                    sideCol "b" ctx.right ctx.rightNull name name
+                    sideCol ctx.rightTable "b" ctx.right ctx.rightNull name name
 
                 else
                     let
@@ -6266,24 +6266,34 @@ colRef ctx name =
                                            ++ "\"")
 
                         else if inRight then
-                            sideCol "b" ctx.right ctx.rightNull name name
+                            sideCol
+                                ctx.rightTable
+                                "b"
+                                ctx.right
+                                ctx.rightNull
+                                name
+                                name
 
                         else if inLeft then
-                            sideCol "a" ctx.cols False name name
+                            sideCol ctx.table "a" ctx.cols False name name
 
                         else
-                            Err (unknownColErr name (ctx.cols ++ ctx.right))
+                            Err
+                                (unknownColErr
+                                    ctx.table
+                                    name
+                                    (ctx.cols ++ ctx.right))
 
 
-sideCol : String -> List ( String, String ) -> Bool -> String -> String -> Result Error ( String, String )
-sideCol qual cols nullable name bare =
+sideCol : String -> String -> List ( String, String ) -> Bool -> String -> String -> Result Error ( String, String )
+sideCol table qual cols nullable name bare =
     let
         col = resolveCol cols bare
     in
         case lookupKind col cols of
 
             Nothing ->
-                Err <| unknownColErr name cols
+                Err <| unknownColErr table name cols
 
             Just k ->
                 if not (isIdent col) then
@@ -6443,7 +6453,7 @@ setItems d table cols check relative sets items params =
                 case lookupKind col cols of
 
                     Nothing ->
-                        Err <| unknownColErr field cols
+                        Err <| unknownColErr table field cols
 
                     Just k ->
                         if not (isIdent col) then
@@ -7252,11 +7262,17 @@ storeErr msg =
     Error.invalidInput ("Store: " ++ msg)
 
 
-unknownColErr : String -> List ( String, String ) -> Error
-unknownColErr name cols =
-    (Error.invalidInput
-        ("Store: unknown column \"" ++ name ++ "\" — columns are "
-            ++ colNames cols))
+-- An unknown column in a condition, an order, a set or a conflict rule of a
+-- verb on `table`. The Err is loud like a builder problem (`storeError`): an
+-- app that turns it into an empty list still shows the cause in the log, the
+-- Sky Console and `sky_store_problems_total{table}`.
+unknownColErr : String -> String -> List ( String, String ) -> Error
+unknownColErr table name cols =
+    Error.invalidInput
+        (storeProblem
+            table
+            ("Store: unknown column \"" ++ name ++ "\" — columns are "
+                ++ colNames cols))
 
 
 colNames : List ( String, String ) -> String

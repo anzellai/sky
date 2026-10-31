@@ -365,7 +365,9 @@ most 63 bytes, the primary key must be a codec column, and a builder that names
 an unknown column (`Store.unique "emial"`) makes every verb fail with that
 name. The problem is loud even when the app shows the `Err` as an empty list:
 it is logged at ERROR level once per table and problem, shown in the Sky
-Console, and counted in the metric `sky_store_problems_total{table}`. `findBy` and `delete` follow the same rule. A negative `limit` or `offset`
+Console, and counted in the metric `sky_store_problems_total{table}`. An
+unknown column in a query condition, an order, a set or a conflict rule is an
+`Err` that is loud the same way. `findBy` and `delete` follow the same rule. A negative `limit` or `offset`
 is an `Err`; `offset` without `limit` works on both dialects. There is no
 reserved-word list: a column named `order` or `user` stays a driver error on the
 dialect that refuses it. **Never build a column argument from user input:** a

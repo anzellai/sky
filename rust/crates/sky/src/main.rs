@@ -14589,21 +14589,62 @@ fn build_temp_db_entry_at(
     code: &str,
     quiet: bool,
 ) -> Option<(PathBuf, PathBuf, DbScratch)> {
-    let (repo_root, project_dir) = resolve(file)?;
+    match build_temp_db_entry_checked(file, label, module, filename, code) {
+        Ok(built) => Some(built),
+        Err(e) => {
+            if !quiet || !e.build {
+                eprintln!("{}", e.message);
+            }
+            None
+        }
+    }
+}
+
+/// Why [`build_temp_db_entry_checked`] produced no binary.
+struct TempEntryFailure {
+    /// The error text, prefixed with the caller's label.
+    message: String,
+    /// The failure is the build itself (not the scratch setup).
+    build: bool,
+    /// Every error is a type error inside the synthesised entry: the code the
+    /// caller wrote does not type-check against the project (for example
+    /// `Store.dumpSchema db` on a `db` that is not a `Store.Project`).
+    entry_type_error: bool,
+}
+
+/// [`build_temp_db_entry_at`] that returns the failure, so a caller can tell
+/// a type error in its own synthesised entry from any other failure.
+fn build_temp_db_entry_checked(
+    file: &Path,
+    label: &str,
+    module: &str,
+    filename: &str,
+    code: &str,
+) -> Result<(PathBuf, PathBuf, DbScratch), TempEntryFailure> {
+    let setup = |message: String| TempEntryFailure {
+        message,
+        build: false,
+        entry_type_error: false,
+    };
+    let Some((repo_root, project_dir)) = resolve(file) else {
+        return Err(setup(format!(
+            "{label}: cannot resolve the project of {}",
+            file.display()
+        )));
+    };
     if is_compiler_repo_root(&project_dir) {
-        eprintln!("{label}: refusing to run from the Sky compiler repo root");
-        return None;
+        return Err(setup(format!(
+            "{label}: refusing to run from the Sky compiler repo root"
+        )));
     }
     let scratch = db_scratch_dir(module);
     if let Err(e) = std::fs::create_dir_all(&scratch) {
-        eprintln!("{label}: cannot create scratch dir: {e}");
-        return None;
+        return Err(setup(format!("{label}: cannot create scratch dir: {e}")));
     }
     let src = scratch.join(filename);
     if let Err(e) = std::fs::write(&src, code) {
-        eprintln!("{label}: cannot write temp entry: {e}");
         let _ = std::fs::remove_dir_all(&scratch);
-        return None;
+        return Err(setup(format!("{label}: cannot write temp entry: {e}")));
     }
     let out_dir = scratch.join("sky-out");
     let opts = BuildOptions {
@@ -14620,17 +14661,26 @@ fn build_temp_db_entry_at(
     };
     let report = build_project(&opts, &[scratch.clone()], Some(module));
     if !(report.emitted && report.go_build_ok) {
-        if !quiet {
-            eprintln!(
+        let entry_type_error = !report.emitted
+            && !report.errors.is_empty()
+            && report.errors.iter().all(|e| {
+                e.code.as_deref().is_some_and(|c| c.starts_with("E2"))
+                    && e.file
+                        .as_deref()
+                        .is_some_and(|f| Path::new(f).file_name() == Some(filename.as_ref()))
+            });
+        let _ = std::fs::remove_dir_all(&scratch);
+        return Err(TempEntryFailure {
+            message: format!(
                 "{label}: build failed\n{}\n{}",
                 report.note, report.go_build_stderr
-            );
-        }
-        let _ = std::fs::remove_dir_all(&scratch);
-        return None;
+            ),
+            build: true,
+            entry_type_error,
+        });
     }
     let bin = out_dir.join(project::configured_bin_name(&project_dir));
-    Some((bin, project_dir, DbScratch(scratch)))
+    Ok((bin, project_dir, DbScratch(scratch)))
 }
 
 /// `sky db status` (file-based) — list committed `db/migrations/*.json` and mark
@@ -16941,7 +16991,8 @@ fn module_exposes(src: &str, name: &str) -> bool {
 /// entry runs `Store.dumpSchema db`, which refuses a store with a builder
 /// problem (a builder naming an unknown column, an invalid table name, a
 /// primary key that is not a column), the same check every Store verb runs
-/// first. A `db` that is not a `Store.Project` is skipped with a note.
+/// first. A `db` that is not a `Store.Project` is skipped with a note. Any
+/// other failure of the scratch build fails the step with its error.
 fn run_verify_stores(dir: &Path, failed: &mut Vec<&str>) {
     let entry = dir.join(toml_entry(dir).unwrap_or_else(|| "src/Main.sky".into()));
     let Ok(src) = std::fs::read_to_string(&entry) else {
@@ -16960,16 +17011,29 @@ fn run_verify_stores(dir: &Path, failed: &mut Vec<&str>) {
     let code = format!(
         "module SkyVerifyStores exposing (main)\n\nimport {module} exposing (db)\nimport Std.Db.Store as Store\n\nmain =\n    Store.dumpSchema db\n"
     );
-    let Some((bin, project_dir, _scratch)) = build_temp_db_entry_at(
+    // Only a type error in the step's own entry means `db` is not a
+    // Store.Project: the check step passed, and that entry is one call on
+    // `db`. Any other failure fails the step with its error.
+    let (bin, project_dir, _scratch) = match build_temp_db_entry_checked(
         &entry,
         "sky verify: stores",
         "SkyVerifyStores",
         "_skyverifystores.sky",
         &code,
-        true,
-    ) else {
-        println!("  – stores   (`db` is not a Store.Project)");
-        return;
+    ) {
+        Ok(built) => built,
+        Err(e) if e.entry_type_error => {
+            println!("  – stores   (`db` is not a Store.Project)");
+            return;
+        }
+        Err(e) => {
+            println!("  ✗ stores   the schema dump did not build");
+            for line in e.message.lines().filter(|l| !l.trim().is_empty()) {
+                println!("             {line}");
+            }
+            failed.push("stores");
+            return;
+        }
     };
     let out = Command::new(&bin)
         .current_dir(&project_dir)

@@ -505,6 +505,170 @@ fn verify_reports_a_store_builder_problem() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `sky verify`'s stores step skips with a note only when `db` is not a
+/// `Store.Project` (the type error is in the step's own entry). Any other
+/// failure of the scratch build fails the step with the build error. Before,
+/// every build failure printed the note and passed.
+#[test]
+fn verify_stores_fails_on_a_scratch_build_failure() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = scratch("verifystoresbuild");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"storesb\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    )
+    .unwrap();
+    let main = |db: &str| {
+        format!(
+            "module Main exposing (db, main)\n\n\
+             import Sky.Core.Prelude exposing (..)\n\
+             import Std.Codec as Codec exposing (Codec)\n\
+             import Std.Db.Store as Store exposing (Store)\n\
+             import Std.Log exposing (println)\n\n\
+             type alias Lead =\n    {{ id : String\n    , email : String\n    }}\n\n\n\
+             leadCodec : Codec Lead\nleadCodec =\n    Codec.auto {{ id = \"\", email = \"\" }}\n\n\n\
+             leads : Store Lead\nleads =\n    Store.fromCodec \"leads\" leadCodec\n        |> Store.primaryKey \"id\"\n\n\n\
+             {db}\n\n\n\
+             main =\n    println \"ok\"\n"
+        )
+    };
+    let write_fmt = |file: &str, src: String| {
+        std::fs::write(dir.join(file), src).unwrap();
+        let fmt = Command::new(SKY)
+            .args(["fmt", file])
+            .current_dir(&dir)
+            .output()
+            .expect("spawn sky fmt");
+        assert!(fmt.status.success(), "{fmt:?}");
+    };
+
+    // `db` is not a Store.Project: the step skips with the note and passes.
+    write_fmt("src/Main.sky", main("db : Int\ndb =\n    1"));
+    let (code, out) = run_verify(&dir);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("– stores   (`db` is not a Store.Project)"),
+        "{out}"
+    );
+
+    // `db` is a Store.Project, and the scratch build fails for another
+    // reason: its scratch directory cannot be made (TMPDIR is under a
+    // file, while Go keeps a working GOTMPDIR, so the check step builds).
+    // The step fails with the error, not the note.
+    write_fmt(
+        "src/Main.sky",
+        main("db : Store.Project\ndb =\n    Store.project [ Store.toTable leads ]"),
+    );
+    let blocker = dir.join("not-a-dir");
+    std::fs::write(&blocker, "").unwrap();
+    let gotmp = dir.join("gotmp");
+    std::fs::create_dir_all(&gotmp).unwrap();
+    let o = Command::new(SKY)
+        .arg("verify")
+        .current_dir(&dir)
+        .env("TMPDIR", blocker.join("tmp"))
+        .env("GOTMPDIR", &gotmp)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky verify");
+    let mut out = String::from_utf8_lossy(&o.stdout).into_owned();
+    out.push_str(&String::from_utf8_lossy(&o.stderr));
+    assert!(out.contains("✓ check"), "the check step builds:\n{out}");
+    assert_ne!(
+        o.status.code(),
+        Some(0),
+        "a failed scratch build fails verify:\n{out}"
+    );
+    assert!(out.contains("✗ stores"), "{out}");
+    assert!(
+        out.contains("cannot create scratch dir"),
+        "the step shows the build error:\n{out}"
+    );
+    assert!(
+        !out.contains("is not a Store.Project"),
+        "the note is only for a db that is not a Store.Project:\n{out}"
+    );
+    assert!(out.contains("verify failed: stores"), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An unknown column in a query condition, an order or a set is an `Err`
+/// (v0.29.0). An app that turned that Err into an empty list showed an empty
+/// page with no trace. It is now loud like a builder problem (v0.29.1): one
+/// ERROR line per table and problem, whatever the app does with the Err. The
+/// Err itself is unchanged.
+#[test]
+fn an_unknown_query_column_is_logged_once() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = scratch("loudquery");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"loudq\"\nversion = \"0.1.0\"\n\n[source]\nroot = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/Placeholder.sky"),
+        "module Placeholder exposing (x)\n\nimport Sky.Core.Prelude exposing (..)\n\n\nx : Int\nx =\n    1\n",
+    )
+    .unwrap();
+    let suite = dir.join("tests/LoudTest.sky");
+    std::fs::write(
+        &suite,
+        "module LoudTest exposing (tests)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.Task as Task\n\
+         import Std.Codec as Codec exposing (Codec)\n\
+         import Std.Db as Db exposing (Db, SqlValue(..))\n\
+         import Std.Db.Store as Store exposing (Store)\n\
+         import Sky.Test as Test exposing (Test)\n\n\n\
+         type alias Lead =\n    { id : String, email : String }\n\n\n\
+         leadCodec : Codec Lead\nleadCodec =\n    Codec.auto { id = \"\", email = \"\" }\n\n\n\
+         leads : Store Lead\nleads =\n    Store.fromCodec \"loud_leads\" leadCodec |> Store.primaryKey \"id\"\n\n\n\
+         refusedOnce : () -> Test.TestResult\n\
+         refusedOnce _ =\n    \
+         case Task.run (Db.open \"sqlite\" \":memory:\") of\n        \
+         Err _ ->\n            Test.fail \"open\"\n\n        \
+         Ok conn ->\n            \
+         Test.err (Store.toSql conn (Store.query leads |> Store.where_ (Store.eq \"nope_col\" (SqlString \"x\"))))\n\n\n\
+         tests : List Test\n\
+         tests =\n    \
+         [ Test.test \"one\" refusedOnce\n    \
+         , Test.test \"two\" refusedOnce\n    \
+         , Test.test \"three\" refusedOnce\n    \
+         ]\n",
+    )
+    .unwrap();
+    let fmt = Command::new(SKY)
+        .args(["fmt", "tests/LoudTest.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("spawn sky fmt");
+    assert!(fmt.status.success(), "{fmt:?}");
+    let (code, out, _) = run_test(&dir, &suite);
+    assert_eq!(code, 0, "the three refusals pass as Err:\n{out}");
+    let lines: Vec<&str> = out
+        .lines()
+        .filter(|l| l.contains("unknown column") && l.contains("nope_col"))
+        .collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "one ERROR line for three refusals of one unknown column:\n{out}"
+    );
+    assert!(
+        lines[0].contains("loud_leads"),
+        "the line names the table:\n{out}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `sky test` printed a failing `Test.equal`'s values as Go structs
 /// (`expected {0 a <nil>} but got {0 b <nil>}`; a downstream project reported
 /// it). They print as Sky values, with the printer `Debug.toString` uses. A

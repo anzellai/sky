@@ -470,7 +470,8 @@ pass its path) and it runs, in order, stopping non-zero on the first failure:
    problem: a builder that names an unknown column, an invalid table name or
    a primary key that is not a column. That problem makes every verb on the
    store fail at run time, so the gate stops it before a deploy. A `db` that
-   is not a `Store.Project` is skipped with a note.
+   is not a `Store.Project` is skipped with a note. Any other failure of the
+   scratch build fails the step with the build error.
 4. **test** — every `tests/*.sky` suite passes.
 
 ```sh

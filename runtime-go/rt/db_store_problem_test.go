@@ -64,3 +64,23 @@ func TestStoreProblemLogsOncePerTableAndProblem(t *testing.T) {
 		t.Fatalf("%s{table=%q} = %v, want 4", storeProblemMetric, table, c)
 	}
 }
+
+// The logged set is bounded: a column name built from input must not grow
+// the map, or the log, with every new name. The counter still counts.
+func TestStoreProblemLogIsBounded(t *testing.T) {
+	table := "sp_test_bounded"
+	before := storeProblemLogged.Load()
+	storeProblemLogged.Store(storeProblemLogLimit)
+	t.Cleanup(func() { storeProblemLogged.Store(before) })
+	msg := `Store: unknown column "from_input_1" — columns are id`
+	Db_storeProblem(table, msg)
+	if n := storeProblemLogLines(table, msg); n != 0 {
+		t.Fatalf("a problem past the bound logged %d lines, want 0", n)
+	}
+	if _, kept := storeProblemSeen.Load(table + "\x00" + msg); kept {
+		t.Fatalf("a problem past the bound was kept in the seen set")
+	}
+	if c := storeProblemCount(table); c != 1 {
+		t.Fatalf("%s{table=%q} = %v, want 1", storeProblemMetric, table, c)
+	}
+}
