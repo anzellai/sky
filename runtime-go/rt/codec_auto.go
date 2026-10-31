@@ -274,9 +274,12 @@ func Codec_autoEncOverrides(snakeArg, encsArg, record any) any {
 		col := skyColKey(f, snake)
 		var raw any
 		if enc, ok := ov[col]; ok {
-			if jv, isJV := SkyCall(enc, rv.Field(i).Interface()).(JsonValue); isJV {
-				raw = jv.raw
+			jv, isJV := SkyCall(enc, rv.Field(i).Interface()).(JsonValue)
+			if !isJV {
+				// Fail loud, never a silent null in the column (see Codec_autoEnc).
+				panic("Codec.auto: cannot encode field " + col + " — its Codec.autoWith override returned no JSON value")
 			}
+			raw = jv.raw
 		} else {
 			r, err := codecAutoEncodeTyped(rv.Field(i), skyTagType(f), snake)
 			if err != nil {
@@ -325,13 +328,12 @@ func Codec_autoDecoderOverrides(snakeArg, decsArg, witness any) any {
 				if !isRes || r.Tag != 0 {
 					return res // propagate the override's Err verbatim
 				}
-				fvv := reflect.ValueOf(r.OkValue)
-				switch {
-				case fvv.IsValid() && fvv.Type().AssignableTo(f.Type):
-					out.Field(i).Set(fvv)
-				case fvv.IsValid() && fvv.Type().ConvertibleTo(f.Type):
-					out.Field(i).Set(fvv.Convert(f.Type))
+				fv, ok := codecNarrowOverride(reflect.ValueOf(r.OkValue), f.Type)
+				if !ok {
+					return Err[any, any](ErrDecode(fmt.Sprintf(
+						"Codec.autoWith: the override for %q decoded a value that is not the field's type %s", col, skyTagType(f))))
 				}
+				out.Field(i).Set(fv)
 			} else {
 				key := skyColKey(f, snake)
 				val, present := m[key]
@@ -347,6 +349,96 @@ func Codec_autoDecoderOverrides(snakeArg, decsArg, witness any) any {
 		}
 		return Ok[any, any](out.Interface())
 	}}
+}
+
+// codecNarrowOverride turns the value a `Codec.autoWith` override decoded into
+// the record field's Go type, or reports false. An override's decoder returns
+// erased values: `Codec.maybe Codec.int` yields `SkyMaybe[any]` holding an
+// `int`, and the field is `SkyMaybe[int]`. Go sees two unrelated generic
+// instances, so the value is neither assignable nor convertible. It is rebuilt
+// here, the `Just` value narrowed in turn. A value that does not fit is false,
+// so the decoder returns an Err. Before v0.29.1 the field silently kept its
+// zero value (`Just 0`), so 3000 and NULL both read as `Just 0`.
+func codecNarrowOverride(v reflect.Value, target reflect.Type) (reflect.Value, bool) {
+	for v.IsValid() && v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			v = reflect.Value{}
+			break
+		}
+		v = v.Elem()
+	}
+	if target.Kind() == reflect.Interface {
+		out := reflect.New(target).Elem()
+		if !v.IsValid() {
+			return out, true
+		}
+		if !v.Type().Implements(target) {
+			return reflect.Value{}, false
+		}
+		out.Set(v)
+		return out, true
+	}
+	if !v.IsValid() {
+		return reflect.Value{}, false
+	}
+	if v.Type().AssignableTo(target) {
+		return v, true
+	}
+	switch target.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		switch v.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			return v.Convert(target), true
+		}
+		return reflect.Value{}, false
+	case reflect.Float32, reflect.Float64:
+		switch v.Kind() {
+		case reflect.Float32, reflect.Float64:
+			return v.Convert(target), true
+		}
+		return reflect.Value{}, false
+	case reflect.String, reflect.Bool:
+		if v.Kind() == target.Kind() {
+			return v.Convert(target), true
+		}
+		return reflect.Value{}, false
+	case reflect.Slice:
+		if v.Kind() != reflect.Slice {
+			return reflect.Value{}, false
+		}
+		out := reflect.MakeSlice(target, v.Len(), v.Len())
+		for i := 0; i < v.Len(); i++ {
+			e, ok := codecNarrowOverride(v.Index(i), target.Elem())
+			if !ok {
+				return reflect.Value{}, false
+			}
+			out.Index(i).Set(e)
+		}
+		return out, true
+	case reflect.Struct:
+		if isSkyMaybeType(target) {
+			if !isSkyMaybeType(v.Type()) {
+				return reflect.Value{}, false
+			}
+			out := reflect.New(target).Elem()
+			tag := v.FieldByName("Tag").Int()
+			out.FieldByName("Tag").SetInt(tag)
+			if tag == 0 {
+				inner, ok := codecNarrowOverride(v.FieldByName("JustValue"), codecMaybeJustType(target))
+				if !ok {
+					return reflect.Value{}, false
+				}
+				out.FieldByName("JustValue").Set(inner)
+			}
+			return out, true
+		}
+	}
+	// Any other shape (a Dict, a record, a tuple, a custom type): the runtime's
+	// one narrowing. It returns the zero Value when it cannot narrow.
+	if n := narrowReflectValue(v, target); n.IsValid() {
+		return n, true
+	}
+	return reflect.Value{}, false
 }
 
 func codecAutoEncodeStruct(rv reflect.Value, snake bool) (any, error) {
@@ -1180,4 +1272,10 @@ func codecAutoDecodeDict(gt reflect.Type, valType string, raw any, snake bool) (
 		return reflect.Value{}, err
 	}
 	return reflect.ValueOf(out), nil
+}
+
+// codecMaybeJustType is the `Just` value type of a SkyMaybe type.
+func codecMaybeJustType(t reflect.Type) reflect.Type {
+	f, _ := t.FieldByName("JustValue")
+	return f.Type
 }

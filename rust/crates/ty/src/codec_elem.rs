@@ -213,22 +213,36 @@ pub fn scan_body(
 /// The `[E2009]` diagnostic body for one offending call. Names the container, the
 /// runtime failure it prevents, and why an empty witness list defeats reflection.
 pub fn message(container: &str) -> String {
+    // A `Maybe` blank has no list: its empty case is `Nothing`. Say so, so the
+    // message does not tell a user about a list their record does not have.
+    let empty = if container == "Maybe" {
+        "The witness is `Nothing`, so reflection has no `Just` value to read the \
+         type from"
+    } else {
+        "The witness is empty, so reflection has no element value to read the \
+         type from"
+    };
     format!(
         "`Codec.auto` cannot derive an element codec for this `{container}` \
-         field: its element type is not determined here. The witness list is \
-         empty, so reflection has no element value to read the type from, and the \
-         element erases to `any` — at decode time the generated code panics with \
+         field: its element type is not determined here. {empty}, and the \
+         element erases to `any` — at decode time the generated code fails with \
          `Codec.auto: cannot decode kind interface`, out of a program that passed \
          `sky check`."
     )
 }
 
 /// The `Try: …` line — the workarounds that actually resolve the element.
-pub fn suggestion() -> String {
-    "annotate the codec binding with its concrete type so the element resolves \
-     (e.g. `myCodec : Codec MyRecord`), give the witness a non-empty list, or set \
-     the field's codec explicitly with `Codec.list <elementCodec>`."
-        .to_string()
+pub fn suggestion(container: &str) -> String {
+    let (witness, codec) = match container {
+        "Maybe" => ("give the witness a `Just` value", "Codec.maybe"),
+        "Dict" => ("give the witness a non-empty dict", "Codec.dict"),
+        _ => ("give the witness a non-empty list", "Codec.list"),
+    };
+    format!(
+        "annotate the codec binding with its concrete type so the element resolves \
+         (e.g. `myCodec : Codec MyRecord`), {witness}, or set the field's codec \
+         explicitly with `{codec} <elementCodec>`."
+    )
 }
 
 #[cfg(test)]
@@ -320,5 +334,19 @@ mod tests {
         let m = message("List");
         assert!(m.contains("`List`"), "{m}");
         assert!(m.contains("cannot decode kind interface"), "{m}");
+        assert!(suggestion("List").contains("Codec.list"));
+    }
+
+    // A `Maybe` field's empty witness is `Nothing`, not an empty list: the
+    // message and the fix name that, not a list the record does not have.
+    #[test]
+    fn maybe_message_names_nothing_and_a_just_witness() {
+        let m = message("Maybe");
+        assert!(m.contains("`Nothing`"), "{m}");
+        assert!(!m.contains("list"), "{m}");
+        let s = suggestion("Maybe");
+        assert!(s.contains("`Just` value"), "{s}");
+        assert!(s.contains("Codec.maybe"), "{s}");
+        assert!(!s.contains("list"), "{s}");
     }
 }

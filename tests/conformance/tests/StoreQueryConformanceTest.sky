@@ -5410,6 +5410,185 @@ externalTests db =
                       (Task.run (Store.all db extSpaceLeads))))
     ]
 
+-- v0.29.1: a Maybe field of every kind, read and written through Store with
+-- a `Nothing` blank. `autoWith` overrides of 1, 2 and 3 Maybe Int fields at
+-- different positions. Before the fix an override read 3000 as `Just 0` and
+-- NULL as `Just 0`, with no error.
+type alias NulPt =
+    { x : Int }
+
+type alias Nul =
+    { id : String
+    , a : Maybe Int
+    , name : String
+    , b : Maybe Float
+    , c : Maybe Bool
+    , g : Maybe Int
+    , d : Maybe String
+    , e : Maybe NulPt
+    , f : Maybe (Maybe Int)
+    , h : Maybe Int
+    }
+
+
+nulBlank : Nul
+nulBlank =
+    { id = ""
+    , a = Nothing
+    , name = ""
+    , b = Nothing
+    , c = Nothing
+    , g = Nothing
+    , d = Nothing
+    , e = Nothing
+    , f = Nothing
+    , h = Nothing
+    }
+
+
+nulAuto : Codec Nul
+nulAuto =
+    Codec.auto nulBlank
+
+
+nulWith1 : Codec Nul
+nulWith1 =
+    Codec.autoWith [ ( "a", Codec.maybe Codec.int ) ] nulBlank
+
+
+nulWith2 : Codec Nul
+nulWith2 =
+    Codec.autoWith
+        [ ( "a", Codec.maybe Codec.int ), ( "h", Codec.maybe Codec.int ) ]
+        nulBlank
+
+
+nulWith3 : Codec Nul
+nulWith3 =
+    Codec.autoWith
+        [ ( "a", Codec.maybe Codec.int )
+        , ( "g", Codec.maybe Codec.int )
+        , ( "h", Codec.maybe Codec.int )
+        ]
+        nulBlank
+
+
+-- Values that are the zero of their kind sit next to NULL, so a NULL read as
+-- a zero (or a zero read as NULL) fails the case.
+nulValues : Nul
+nulValues =
+    { id = "v"
+    , a = Just 3000
+    , name = "values"
+    , b = Just 2.5
+    , c = Just False
+    , g = Just 0
+    , d = Just ""
+    , e = Just { x = 7 }
+    , f = Just (Just 5)
+    , h = Just (-1)
+    }
+
+
+nulNulls : Nul
+nulNulls =
+    { nulBlank | id = "w", name = "nulls" }
+
+
+nulRoundTrip : Db -> String -> Codec Nul -> Result Error (List Nul)
+nulRoundTrip db table codec =
+    let
+        st = Store.fromCodec table codec |> Store.primaryKey "id"
+    in
+        Task.run
+            (Task.sequence
+                [ drop db table
+                , unit (Store.migrate db st)
+                , unit (Store.insert db st nulValues)
+                , unit (Store.insert db st nulNulls)
+                ]
+                |> Task.andThen
+                       (\_ ->
+                           Store.toList
+                               db
+                               (Store.query st |> Store.orderAsc "id")))
+
+
+-- The same table read after raw SQL wrote 3000 and NULL (the report's shape).
+nulRawRead : Db -> Codec Nul -> Result Error (List ( Maybe Int, Maybe Int, Maybe Int ))
+nulRawRead db codec =
+    let
+        st = Store.fromCodec "sqc_nul_raw" codec |> Store.primaryKey "id"
+    in
+        Task.run
+            (Task.sequence
+                [ drop db "sqc_nul_raw"
+                , unit (Store.migrate db st)
+                , unit
+                      (Db.exec
+                          db
+                          "INSERT INTO sqc_nul_raw (id, a, name, g, h) VALUES ('r1', 3000, 'x', NULL, 0)"
+                          [])
+                , unit
+                      (Db.exec
+                          db
+                          "INSERT INTO sqc_nul_raw (id, a, name, g, h) VALUES ('r2', NULL, 'y', 12, NULL)"
+                          [])
+                ]
+                |> Task.andThen
+                       (\_ ->
+                           Store.toList
+                               db
+                               (Store.query st |> Store.orderAsc "id"))
+                |> Task.map (List.map (\r -> ( r.a, r.g, r.h ))))
+
+
+maybeFieldTests : Db -> List Test
+maybeFieldTests db =
+    [ Test.test
+          "Maybe fields: Codec.auto with a Nothing blank round-trips a value and NULL of every Maybe kind"
+          (\_ ->
+              Test.equal
+                  (Ok [ nulValues, nulNulls ])
+                  (nulRoundTrip db "sqc_nul_auto" nulAuto))
+    , Test.test
+          "Maybe fields: autoWith with one Maybe Int override round-trips a value and NULL"
+          (\_ ->
+              Test.equal
+                  (Ok [ nulValues, nulNulls ])
+                  (nulRoundTrip db "sqc_nul_with1" nulWith1))
+    , Test.test
+          "Maybe fields: autoWith with two Maybe Int overrides round-trips a value and NULL"
+          (\_ ->
+              Test.equal
+                  (Ok [ nulValues, nulNulls ])
+                  (nulRoundTrip db "sqc_nul_with2" nulWith2))
+    , Test.test
+          "Maybe fields: autoWith with three Maybe Int overrides round-trips a value and NULL"
+          (\_ ->
+              Test.equal
+                  (Ok [ nulValues, nulNulls ])
+                  (nulRoundTrip db "sqc_nul_with3" nulWith3))
+    , Test.test
+          "Maybe fields: autoWith with two overrides reads 3000, 0 and NULL written by raw SQL"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ ( Just 3000, Nothing, Just 0 )
+                      , ( Nothing, Just 12, Nothing )
+                      ])
+                  (nulRawRead db nulWith2))
+    , Test.test
+          "Maybe fields: Codec.auto with a Nothing blank reads 3000, 0 and NULL written by raw SQL"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ ( Just 3000, Nothing, Just 0 )
+                      , ( Nothing, Just 12, Nothing )
+                      ])
+                  (nulRawRead db nulAuto))
+    ]
+
 
 tests : List Test
 tests =
@@ -5433,6 +5612,7 @@ tests =
                 ++ kindTests db
                 ++ nestedMaybeTests db
                 ++ externalTests db
+                ++ maybeFieldTests db
 
 
 main =
