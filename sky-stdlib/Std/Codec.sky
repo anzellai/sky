@@ -943,20 +943,20 @@ autoCamel witness =
 
 autoBase : Bool -> a -> Codec a
 autoBase snake witness =
-    Codec
-        { enc = \r -> autoEncK snake r
-        , dec = autoDecoderK snake witness
-        , shp =
-            SRecord
-                (List.map
-                    (\( n, k ) -> ( n, kindToColType k ))
-                    (autoColsK snake witness))
-        , sch = SnAuto (\_ -> autoSchemaK snake witness) []
-        , zro = \_ -> Just (autoEncK snake witness)
-        , fzr =
-            \_ ->
-                witnessZeros (autoColsK snake witness) (autoEncK snake witness)
-        }
+    let
+        -- Read once: `shp` and `fzr` share the witness's columns, so the
+        -- kernel's result is narrowed at one site.
+        cols = autoColsK snake witness
+    in
+        Codec
+            { enc = \r -> autoEncK snake r
+            , dec = autoDecoderK snake witness
+            , shp =
+                SRecord (List.map (\( n, k ) -> ( n, kindToColType k )) cols)
+            , sch = SnAuto (\_ -> autoSchemaK snake witness) []
+            , zro = \_ -> Just (autoEncK snake witness)
+            , fzr = \_ -> witnessZeros cols (autoEncK snake witness)
+            }
 
 
 -- | Like `auto`, but OVERRIDE the codec for named columns — auto-derive everything
@@ -975,25 +975,20 @@ autoWith overrides witness =
         encs = List.map (\( col, Codec c ) -> ( col, c.enc )) overrides
         decs = List.map (\( col, Codec c ) -> ( col, c.dec )) overrides
         shps = List.map (\( col, Codec c ) -> ( col, c.shp )) overrides
+        cols = autoColsWith True shps witness
     in
         Codec
             { enc = \r -> autoEncOverridesK True encs r
             , dec = autoDecoderOverridesK True decs witness
             , shp =
-                SRecord
-                    (List.map
-                        (\( n, k ) -> ( n, kindToColType k ))
-                        (autoColsWith True shps witness))
+                SRecord (List.map (\( n, k ) -> ( n, kindToColType k )) cols)
             , sch =
                 SnAuto
                     (\_ -> autoSchemaK True witness)
                     (List.map (\( col, Codec c ) -> ( col, c.sch )) overrides)
             , zro = \_ -> Just (autoEncOverridesK True encs witness)
             , fzr =
-                \_ ->
-                    witnessZeros
-                        (autoColsWith True shps witness)
-                        (autoEncOverridesK True encs witness)
+                \_ -> witnessZeros cols (autoEncOverridesK True encs witness)
             }
 
 
