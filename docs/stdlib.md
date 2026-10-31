@@ -1367,10 +1367,15 @@ The **recommended default** for record-shaped tables: write ONE `Codec` per type
 hand-written SQL, no row mappers. The same codec also serves JSON.
 
 - **`Std.Codec`** — `Codec.auto blank` reflection-derives from a zero-value witness
-  (scalars → columns, `Maybe` → nullable, list/nested/ADT → JSON blob, nullary enum
-  → readable name); **snake_case** columns/keys by default (`Codec.autoCamel` keeps
+  (scalars → columns, `Maybe` → nullable, list/nested record → JSON blob, nullary
+  enum → readable name); a data-carrying custom type is not derivable (reading it is
+  an `Err`), so give that field a `taggedUnion` codec through `Codec.autoWith`; **snake_case** columns/keys by default (`Codec.autoCamel` keeps
   camelCase). A `Json.Value` field carries any JSON when the blank gives it a JSON
   value (`data = Json.Encode.null`; `Just Json.Encode.null` for a `Maybe Json.Value`).
+  The blank cannot mark the elements of a `List Json.Value` or a
+  `Dict String Json.Value` field, so reading one is a loud `Err`. Make the field one
+  `Json.Value` that holds the whole array or object, and read its parts with
+  `Json.Decode`.
   **`Codec.autoWith [ ("active", intBool) ] blank`** overrides specific
   fields' codecs while auto-deriving the rest (a Bool stored 0/1, a custom enum
   format) — no full hand-written codec for a one-field tweak. `toJson` / `fromJson`

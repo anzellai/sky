@@ -73,8 +73,10 @@ users =
 ```
 
 **`Codec.auto blank`** reflection-derives the codec from a zero-value witness:
-scalars → typed columns, `Maybe` → nullable, list / nested-record / data-ADT →
-JSON TEXT blob, nullary enum → readable name. Columns + JSON keys are
+scalars → typed columns, `Maybe` → nullable, list / nested-record → JSON TEXT
+blob, nullary enum → readable name. A data-carrying custom type is not
+derivable: reading it is an `Err`. Give that field a `taggedUnion` codec through
+`Codec.autoWith [ ( "shape", shapeCodec ) ] blank`. Columns + JSON keys are
 **snake_case** by default (`priceMinor` → `price_minor`); **`Codec.autoCamel`**
 keeps camelCase; **`Codec.autoWith [ ("active", intBool) ] blank`** overrides one
 field's codec (a Bool stored 0/1, a custom enum) while auto-deriving the rest; a

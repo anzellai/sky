@@ -1854,6 +1854,23 @@ func dbMigrateCore(d *SkyDb, entries []migEntry, op string, fail func(msg string
 			return fail("migration '"+name+"': "+err.Error(),
 				Err[any, any](ErrIo("db.migrate: migration '"+name+"': "+err.Error())))
 		}
+		// A partial index that compares a v0.28 TEXT column with a number
+		// or TRUE / FALSE is refused, and the migration rolls back. The
+		// check reads the schema inside the transaction, after the whole
+		// file ran, so a file that converts the column first passes.
+		if d.driver != "pgx" {
+			for _, op := range e.partial {
+				if err := sqliteIndexPredicateLegacyErr(tx, op.Table, op.Name, op.Where); err != nil {
+					tx.Rollback()
+					sqliteDeclCacheReset(d.conn)
+					msg := "migration '" + name + "': " + err.Error()
+					if _, refused := err.(sqliteLegacyIndexError); refused {
+						return fail(msg, Err[any, any](ErrInvalidInput("db.migrate: "+msg)))
+					}
+					return fail(msg, Err[any, any](ErrIo("db.migrate: "+msg)))
+				}
+			}
+		}
 		if _, err := tx.Exec(
 			"INSERT INTO _sky_migrations (name, checksum, applied_at, kind) VALUES ("+
 				d.placeholder(1)+", "+d.placeholder(2)+", "+d.placeholder(3)+", "+d.placeholder(4)+")",

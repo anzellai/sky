@@ -808,7 +808,35 @@ tests =
                     , Codec.fromJson hookAuto "{\"id\":\"h2\",\"data\":null}"
                         |> Result.map (\h -> Encode.encode 0 h.data)
                     ))
+    , Test.test "auto: a List or Dict of Json.Value cannot be marked by the blank, so reading one is an Err"
+        (\_ ->
+            Test.equal
+                ( True, True )
+                ( failed (Codec.fromJson hooksAuto "{\"id\":\"h1\",\"items\":[1]}")
+                , failed (Codec.fromJson hookMapAuto "{\"id\":\"h1\",\"items\":{\"a\":1}}")
+                ))
     ]
+
+
+-- A `List Json.Value` or `Dict String Json.Value` field under Codec.auto: the
+-- blank cannot mark the elements, so a read is a loud Err. One `Json.Value`
+-- field holding the whole array (hookAuto above) reads.
+type alias HooksAuto =
+    { id : String, items : List Encode.Value }
+
+
+hooksAuto : Codec HooksAuto
+hooksAuto =
+    Codec.auto { id = "", items = [ Encode.null ] }
+
+
+type alias HookMapAuto =
+    { id : String, items : Dict String Encode.Value }
+
+
+hookMapAuto : Codec HookMapAuto
+hookMapAuto =
+    Codec.auto { id = "", items = Dict.fromList [ ( "a", Encode.null ) ] }
 
 
 -- A `Json.Value` field under Codec.auto: the blank's JSON value marks it.

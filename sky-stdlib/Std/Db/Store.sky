@@ -3563,6 +3563,12 @@ endsWith col suffix =
 
 
 -- | `left = right`, two columns of the same kind.
+--
+-- A column that v0.28 made TEXT for a nested `Maybe` Bool or Float holds
+-- text (`'true'`, `'7'`). On SQLite, compared with a BOOLEAN or REAL column,
+-- numeric text still matches (`'7'` = 7.0), but `'true'` never equals 1. On
+-- PostgreSQL the comparison is an error. Convert the column first
+-- (docs/migration/v0.29.md). The same holds for a join `on`.
 eqCol : String -> String -> Cond
 eqCol left right =
     CondCol (leafOf left "=" noValue [] right False)
@@ -4030,6 +4036,8 @@ leftJoin left right ons =
 
 
 -- | One ON pair: a left column and a right column that must be equal.
+-- A v0.28 TEXT Bool or Float column on one side and a BOOLEAN or REAL
+-- column on the other do not match `'true'` rows: see `eqCol`.
 on : String -> String -> JoinOn
 on leftCol rightCol =
     JoinOn [ ( leftCol, rightCol ) ]

@@ -286,6 +286,11 @@ func Db_createCols(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 				return Err[any, any](ErrInvalidInput("Store.create: " + err.Error()))
 			}
 		}
+		// A partial index on a v0.28 TEXT column is refused before any
+		// statement (db_sqlite_legacy.go).
+		if err := sqliteCheckIndexes(d, table, indexes); err != nil {
+			return sqliteIndexCheckErr("Store.create", err)
+		}
 		sm := codecColspecSchemaMap(table, own, AsString(pkArg))
 		stmts := schemaRenderTable(d.driver, sm)
 		for _, ix := range indexes {
@@ -507,6 +512,14 @@ func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 		colspecArg, ext := codecSplitExternal(colspecArg)
 		if err := codecCheckExternal(d.driver, table, current, ext); err != nil {
 			return Err[any, any](ErrInvalidInput("Store.migrate: " + err.Error()))
+		}
+		// A partial index on a v0.28 TEXT column is refused before any
+		// statement (db_sqlite_legacy.go). A table that does not exist yet
+		// has no such column.
+		if len(current) > 0 {
+			if err := sqliteCheckIndexes(d, table, indexes); err != nil {
+				return sqliteIndexCheckErr("Store.migrate", err)
+			}
 		}
 		applied := []any{}
 		run := func(stmt string) error {

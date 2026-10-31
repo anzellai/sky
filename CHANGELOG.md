@@ -50,6 +50,44 @@ the codec does not carry, and makes a Store builder problem loud.
 - `docs/migration/v0.29.md` said a `defaultWith` on an unknown column "was
   ignored" in v0.28. It was not: it wrote the column. The page now says so,
   and has an "External columns (v0.29.1)" section.
+- **A partial index on a v0.28 TEXT Bool or Float column is refused on
+  SQLite.** The condition of a partial index is DDL with constants, so the
+  v0.29.0 column marks cannot reach it. `Store.uniqueWhere [ "id" ]
+  (Store.eq "active" (SqlBool True))` on such a column compared `active` with
+  `1` as text: the index left out every `'true'` row, with no error, and a
+  unique one let duplicates in. `Store.migrate`, `Store.create` and a
+  migration file's `addIndex` now refuse a partial index whose condition
+  compares a TEXT column with a number or `TRUE` / `FALSE`, before any
+  statement runs (a migration file rolls back). The error names the column and
+  points to the conversion in `docs/migration/v0.29.md`.
+- **The SQLite runtime sees a converted column without a restart.** v0.29.0
+  read a table's declared column types once per connection pool and table.
+  A column converted by another process, or by another pool on the same file,
+  kept its old type until the app restarted, so a marked write still bound
+  v0.28's text into the new BOOLEAN or REAL column. The cache is now keyed on
+  `PRAGMA schema_version`, which every schema change raises. Each marked
+  statement reads it on its own connection, and a changed version reloads
+  the types, inside a transaction too.
+- **A hand-written column mark runs no PRAGMA.** A `?/*sky:table|col*/` mark
+  in a `Db.query` whose table or column is not an identifier is now skipped,
+  and the arguments are bound as passed. Before, the table name was spliced
+  into a `PRAGMA table_info` statement.
+- **`sky db migrate --gen` describes an external column of a new table
+  correctly.** Its warning said every insert fails until a migration adds
+  the column. That holds for `defaultWith`, `defaultNow` and `touchOnUpdate`,
+  which write it. A column with only a `default*` builder is never written,
+  so inserts work, and the warning now says so.
+- Docs: `Codec.auto` cannot derive a data-carrying custom type (reading one
+  is an `Err`). `docs/skydb/overview.md` and `docs/stdlib.md` said it became a
+  JSON blob. They now say to give that field a `taggedUnion` codec through
+  `Codec.autoWith`. A `List Json.Value` or `Dict String Json.Value` field
+  under `Codec.auto` cannot be marked by the blank, so reading one is an
+  `Err`: use one `Json.Value` field for the whole array or object
+  (`Std.Codec.auto`, `docs/stdlib.md`). `docs/migration/v0.29.md` now covers
+  `Store.eqCol` and a join `on` between a v0.28 TEXT Bool or Float column and
+  a BOOLEAN or REAL column (`'true'` never matches on SQLite, an error on
+  PostgreSQL), and notes that ordering on such a column compares text until
+  it is converted (`sky db check --sql` writes the conversion from v0.29.2).
 
 ## v0.29.0 — Real-world capabilities (2026-10-29)
 
@@ -641,7 +679,7 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   compared as the text `1`, so it missed every v0.28 row with no error. On
   SQLite, Std.Db.Store now marks each placeholder of a nullable `Float` or
   `Bool` column, and the runtime reads the column's declared type (once per
-  connection and table): into a TEXT column it binds the text v0.28 wrote
+  connection pool and table): into a TEXT column it binds the text v0.28 wrote
   (`true` / `false`, `7`, `7.5`), into any other column the value as before.
   Every write keeps one spelling, and `eq`, `inList`, `setValue`, `setWhen`,
   `updateFields`, `insert`, `upsert` and `copyInto` match and write old and

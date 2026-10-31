@@ -542,6 +542,10 @@ type migEntry struct {
 	name   string
 	sql    string
 	opsSum string
+	// partial lists the addIndex ops with a `where`, which dbMigrateCore
+	// checks on SQLite against a v0.28 TEXT column
+	// (sqliteIndexPredicateLegacyErr).
+	partial []migOp
 }
 
 func (e migEntry) isOps() bool { return e.opsSum != "" }
@@ -605,7 +609,13 @@ func migOpEntries(driver, raw string) ([]migEntry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("migration %q: bad ops: %v", f.Id, err)
 		}
-		out = append(out, migEntry{name: f.Id, sql: text, opsSum: sum})
+		var partial []migOp
+		for _, op := range typed {
+			if op.Kind == "addIndex" && strings.TrimSpace(op.Where) != "" {
+				partial = append(partial, op)
+			}
+		}
+		out = append(out, migEntry{name: f.Id, sql: text, opsSum: sum, partial: partial})
 	}
 	return out, nil
 }

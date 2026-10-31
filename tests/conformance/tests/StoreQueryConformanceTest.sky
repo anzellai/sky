@@ -4315,18 +4315,26 @@ type alias OldFlag =
     }
 
 
+oldFlagCodec : Codec OldFlag
+oldFlagCodec =
+    Codec.object OldFlag |> Codec.field "id" .id Codec.string
+        |> Codec.field "flag" .flag (Codec.maybe (Codec.maybe Codec.bool))
+        |> Codec.field "score" .score (Codec.maybe (Codec.maybe Codec.float))
+        |> Codec.buildObject
+
+
 oldFlags : Store OldFlag
 oldFlags =
-    Store.fromCodec
-        "sqc_legacy_flags"
-        (Codec.object OldFlag |> Codec.field "id" .id Codec.string
-            |> Codec.field "flag" .flag (Codec.maybe (Codec.maybe Codec.bool))
-            |> Codec.field
-                   "score"
-                   .score
-                   (Codec.maybe (Codec.maybe Codec.float))
-            |> Codec.buildObject)
-        |> Store.primaryKey "id"
+    Store.fromCodec "sqc_legacy_flags" oldFlagCodec |> Store.primaryKey "id"
+
+
+-- A partial unique index on the v0.28 TEXT column. SQLite would compare
+-- `flag = TRUE` as text and miss every `true` row, so migrate refuses it and
+-- names the column. PostgreSQL refuses `text = boolean` itself.
+oldFlagsTrueIndex : Store OldFlag
+oldFlagsTrueIndex =
+    Store.fromCodec "sqc_legacy_ix" oldFlagCodec |> Store.primaryKey "id"
+        |> Store.uniqueWhere [ "id" ] (Store.eq "flag" (SqlBool True))
 
 
 oldFlagIds : Db -> Store.Cond -> Task Error (List String)
@@ -4525,6 +4533,32 @@ nestedMaybeTests db =
                       (Store.query oldFlags
                           |> Store.where_ (Store.eq "flag" (SqlBool True)))
                       |> Result.map (\( sql, _ ) -> String.contains "/*" sql)))
+    , Test.test
+          "nested Maybe: migrate refuses a partial index comparing a v0.28 TEXT Bool column with TRUE, naming the column"
+          (\_ ->
+              let
+                  result =
+                      Task.run
+                          (Task.sequence
+                              [ drop db "sqc_legacy_ix"
+                              , unit
+                                    (Db.exec
+                                        db
+                                        "CREATE TABLE sqc_legacy_ix (id TEXT PRIMARY KEY NOT NULL, flag TEXT, score TEXT)"
+                                        [])
+                              ]
+                              |> Task.andThen
+                                     (\_ -> Store.migrate db oldFlagsTrueIndex))
+              in
+                  Test.equal
+                      True
+                      (if dialectName == "sqlite" then
+                          errHas
+                              "column \"flag\" of sqc_legacy_ix is TEXT"
+                              result
+
+                      else
+                          isErr result))
     , Test.test
           "open JSON: a value with a nested key named like its column, set to null, is written"
           (\_ ->

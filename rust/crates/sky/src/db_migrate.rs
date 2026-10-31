@@ -261,12 +261,27 @@ pub fn diff(target: &Schema, snapshot: &Schema) -> Diff {
             None => {
                 // New table. An external column is not the Store's to create:
                 // the table must get it from a Std.Db.Schema table or a
-                // hand-written migration, and the warning says so.
+                // hand-written migration, and the warning says so. A
+                // `default*` builder (a declared default that is not `now`)
+                // only declares the column: the Store never writes it, so
+                // inserts work without it. `defaultWith`, `defaultNow` and
+                // `touchOnUpdate` write it, so an insert fails until it exists.
                 for c in t.columns.iter().filter(|c| c.external) {
+                    let declared_only = matches!(
+                        &c.default,
+                        Some(Value::Object(m)) if !m.contains_key("now") && !m.contains_key("nowAtApply")
+                    );
+                    let effect = if declared_only {
+                        "the Store never writes it (a default* builder only declares it), so inserts \
+                         work, and the column is missing until a migration or a Std.Db.Schema table \
+                         adds it"
+                    } else {
+                        "an insert that writes it (defaultWith, defaultNow, touchOnUpdate) fails until \
+                         a migration or a Std.Db.Schema table adds it"
+                    };
                     warnings.push(format!(
                         "column {}.{} is not a record field (an external column of a Store builder): \
-                         the new table is created without it, and every insert fails until a \
-                         migration or a Std.Db.Schema table adds it",
+                         the new table is created without it, and {effect}",
                         t.name, c.name
                     ));
                 }
@@ -1171,7 +1186,42 @@ mod tests {
             fresh
                 .warnings
                 .iter()
-                .any(|w| w.contains("enquiries.created_at")),
+                .any(|w| w.contains("enquiries.created_at")
+                    && w.contains("an insert that writes it")),
+            "{:?}",
+            fresh.warnings
+        );
+        // A `default*` builder only declares the column: the Store never
+        // writes it, so the warning must not say inserts fail.
+        let declared = SchemaColumn {
+            default: Some(json!({ "int": 0 })),
+            ..ext("attempts", "int")
+        };
+        let stamped = SchemaColumn {
+            default: Some(json!({ "now": true })),
+            ..ext("seen_at", "text")
+        };
+        let fresh = diff(
+            &Schema {
+                tables: vec![table(vec![plain.clone(), declared, stamped])],
+            },
+            &Schema::default(),
+        );
+        let warning = |col: &str| {
+            fresh
+                .warnings
+                .iter()
+                .find(|w| w.contains(col))
+                .cloned()
+                .unwrap_or_default()
+        };
+        let attempts = warning("enquiries.attempts");
+        assert!(
+            attempts.contains("never writes it") && !attempts.contains("fails"),
+            "{attempts}"
+        );
+        assert!(
+            warning("enquiries.seen_at").contains("an insert that writes it"),
             "{:?}",
             fresh.warnings
         );
