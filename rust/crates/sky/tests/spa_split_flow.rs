@@ -5523,10 +5523,13 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     // non-admin / no-session paths (`( model, … )`): without it the server would
     // rebuild `note` as the empty-Model default and clobber the client's value
     // (soundness bug #1). The forged `session` is still overridden server-side.
+    // It is a well-formed `Session` (`Codec.auto` keys are snake_case): since
+    // v0.29 `Codec.maybe` reads only `null` as `Nothing`, so a malformed one is
+    // a 400 before the handler, and only a valid forgery tests the override.
     let forged = curl_post_full(
         port,
         "/_rpc/SaveAdmin",
-        r#"{"session":{"userId":"x","role":"admin"},"content":"pwned","note":"keep"}"#,
+        r#"{"session":{"user_id":"x","role":"admin"},"content":"pwned","note":"keep"}"#,
         None,
     );
     let admin_after_forge =
