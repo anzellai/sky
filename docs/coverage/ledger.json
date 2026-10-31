@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 2042,
+      "expected_assertions": 2052,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -816,7 +816,7 @@
       "tier": "T1"
     },
     "store-query-postgres": {
-      "expected_assertions": 247,
+      "expected_assertions": 252,
       "falsifier_mutation": "store-query-postgres.drop-rows-err",
       "falsifier_proven": true,
       "summary": "Std.Db.Store query path (aggregates, select, latestPer, text match, jsonText) on PostgreSQL",
@@ -1010,7 +1010,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3231,
+    "stdlib_entries": 3232,
     "stdlib_modules": 135,
     "surfaces_covered": 193,
     "surfaces_covered_pct": 95.1,
@@ -20421,7 +20421,7 @@
         }
       },
       "count": 874,
-      "pct_of_denominator": 27.1
+      "pct_of_denominator": 27.0
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -23971,8 +23971,8 @@
       "id": "tests/conformance",
       "modules_imported": 66,
       "path": "tests/conformance",
-      "refs_generous": 1021,
-      "refs_qualified": 993,
+      "refs_generous": 1022,
+      "refs_qualified": 994,
       "role": "Conformance",
       "sky_files": 58,
       "sky_toml_sections": []
