@@ -99,7 +99,7 @@ column (a typo fails fast with the column list):
 | `Store.uniqueOn [ "customer_id", "code" ]` | a unique index, `ux_<table>_<h>`; every column must be required (NULLs never conflict) |
 | `Store.uniqueWhere [ "slug" ] (Store.neq "slug" (SqlString ""))` | a partial unique index; the condition is written as constants (`eq`/`neq`/`gt`/…, `isNull`/`notNull`, `inList`, `eqCol`…, `and_`/`or_`/`not_`) |
 | `Store.defaultWith "id" (\_ -> SqlValue)` | **app-side** computed default at insert (e.g. a UUID PK via the unit-arg `Task.run` idiom) |
-| `Store.generated [ "id", "created_at" ]` | columns `insert`/`update` OMIT so the DB fills them |
+| `Store.generated [ "id", "created_at" ]` | columns `insert`/`update` OMIT so the DB fills them, added to the ones `serial` and the other builders marked |
 
 `<h>` is 8 hex digits of a hash of the table, the columns, the unique flag
 and the predicate, so every definition has its own name, and a changed

@@ -1046,14 +1046,32 @@ defaultWith name gen store =
 -- timestamp — so `insert` and `update` OMIT them (the DB assigns/keeps them):
 -- `Store.fromCodec "notes" codec |> Store.primaryKey "id" |> Store.generated [ "id", "created_at" ]`.
 -- A name the codec does not carry (an external column, see `defaultWith`) is
--- accepted and changes nothing: the Store never writes that column.
+-- accepted and changes nothing: the Store never writes that column. The
+-- columns are added to the ones `serial`, `defaultNow`, `touchOnUpdate`,
+-- `defaultWith` or an earlier `generated` marked, never in place of them.
 generated : List String -> Store a -> Store a
 generated names store =
     let
         s = storeRec store
         ( cols, problems ) = generatedCols names s.cols s.problems
     in
-        Store { s | generated = cols, problems = problems }
+        Store { s | generated = addNames s.generated cols, problems = problems }
+
+
+-- `names` added to the end of `existing`, each once.
+addNames : List String -> List String -> List String
+addNames existing names =
+    case names of
+
+        [] ->
+            existing
+
+        n :: rest ->
+            if List.member n existing then
+                addNames existing rest
+
+            else
+                addNames (existing ++ [ n ]) rest
 
 
 generatedCols : List String -> List ( String, String ) -> List String -> ( List String, List String )

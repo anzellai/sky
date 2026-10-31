@@ -5589,6 +5589,64 @@ maybeFieldTests db =
                   (nulRawRead db nulAuto))
     ]
 
+-- ── Store.generated adds to the generated list (v0.29.1) ─────────────────────
+-- `Store.generated` replaced the list, so a `serial` id named before it was
+-- written again: the first insert wrote id 0 and the second failed on the
+-- primary key. It now adds its columns to the list.
+type alias SerialGen =
+    { id : Int
+    , label : String
+    , createdAt : Maybe String
+    }
+
+
+serialGen : Store SerialGen
+serialGen =
+    Store.fromCodec
+        "sqc_serial_gen"
+        (Codec.auto { id = 0, label = "", createdAt = Just "" })
+        |> Store.serial "id"
+        |> Store.generated [ "created_at" ]
+
+
+generatedTests : Db -> List Test
+generatedTests db =
+    [ Test.test
+          "generated after serial keeps the serial id: two inserts get ids 1 and 2, and created_at is not written"
+          (\_ ->
+              Test.equal
+                  (Ok [ ( 1, "a", Nothing ), ( 2, "b", Nothing ) ])
+                  (Task.run
+                      (Task.sequence
+                          [ drop db "sqc_serial_gen"
+                          , unit (Store.migrate db serialGen)
+                          , unit
+                                (Store.insert
+                                    db
+                                    serialGen
+                                    { id = 0
+                                    , label = "a"
+                                    , createdAt = Just "x"
+                                    })
+                          , unit
+                                (Store.insert
+                                    db
+                                    serialGen
+                                    { id = 0
+                                    , label = "b"
+                                    , createdAt = Just "y"
+                                    })
+                          ]
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.toList
+                                         db
+                                         (Store.query serialGen
+                                             |> Store.orderAsc "id")))
+                      |> Result.map
+                             (List.map (\r -> ( r.id, r.label, r.createdAt )))))
+    ]
+
 
 tests : List Test
 tests =
@@ -5613,6 +5671,7 @@ tests =
                 ++ nestedMaybeTests db
                 ++ externalTests db
                 ++ maybeFieldTests db
+                ++ generatedTests db
 
 
 main =

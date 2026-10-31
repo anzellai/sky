@@ -49,6 +49,13 @@ finds a header whatever the case of its name.
     the text with no error and PostgreSQL failed at the first update.
     `Store.migrate` and `Store.create` now refuse such a column on both
     dialects, with an `Err` naming the column, its type and the builder.
+- **`Store.generated` adds to the generated columns (a silent wrong
+  answer).** It replaced the list, so `Store.serial "id" |> Store.generated
+  [ "created_at" ]` dropped the serial column. The first insert wrote id 0
+  and the second failed on the primary key. It now adds its columns to the
+  ones `serial`, `defaultNow`, `touchOnUpdate`, `defaultWith` or an earlier
+  `generated` marked, on SQLite and PostgreSQL. No other builder replaced a
+  list.
 - **A Store builder problem is loud.** A builder that names an unknown column,
   an invalid table name or a primary key that is not a column fails every
   verb on the store. Each problem is now logged at ERROR level once per table
