@@ -38,6 +38,11 @@ was tagged on 2b89d90da and published on 2026-10-31.
    of time, leave that for 0.29.2 the others are more priority to rollout +
    migrate all apps"): `sky db check`, `--sql`, `--code`.
 5. Every finding deferred from v0.29.0 (listed in the private companion).
+6. Added by the user (2026-10-31): "the header case sensitive get/check isn't
+   consistent. so checking/getting like X-Sky-Api-Key very often incorrectly if
+   with x-sky-api-key or X-SKY-API-KEY etc. could you check and fix if possible
+   too?" Every place Sky reads or checks an HTTP header name must match it
+   without regard to case.
 
 ## Done means
 
