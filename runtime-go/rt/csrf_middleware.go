@@ -52,12 +52,14 @@ package rt
 //     loaded SPA, not an external link.
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -227,9 +229,18 @@ func IsCsrfEnabled() bool {
 //     `X-Sky-Csrf` header matching `__sky_csrf` cookie. Both
 //     present + equal → pass. Missing or mismatch → 403.
 //
-// The Sky.Http.Server and Sky.Live listeners use csrfMiddlewareWithPages, so
-// a native form POST to one of their pages that fails the check answers 303
-// to the same URL instead of the JSON 403.
+// Every response that passes through sets the CSRF cookie, so it goes out
+// private (csrfPrivateWriter).
+//
+// The Sky.Http.Server and Sky.Live listeners use csrfMiddlewareWithPages:
+// a native form POST to one of their pages answers 303 to the same URL, not
+// the JSON 403, and its body is never read. A page is more than an api or rpc
+// route can be (those are exempt and never reach that point): a Sky.Spa page
+// (Spa_pageRoute), every path a `Server.staticNotFound` catch-all serves
+// (spaNotFoundPagePattern), and every path of a Sky.Live app that is not a
+// `Live.api` route or a runtime endpoint (liveApp.isNativePagePost). The
+// 403 stays for a JSON POST, a POST with the X-Sky-Csrf header, and any
+// path that is not a page.
 func CSRFMiddleware(next http.Handler) http.Handler {
 	return csrfMiddlewareWithPages(next, nil)
 }
@@ -346,6 +357,15 @@ func csrfMiddlewareWithPages(next http.Handler, isPage func(*http.Request) bool)
 			SameSite: sameSite,
 			Secure:   cookieSecureFor(r, cookieName, sameSite),
 		})
+		// The response now sets this visitor's CSRF cookie, so a shared cache
+		// must never store it: whatever the handler writes, and when, it goes
+		// out with `Vary: Cookie` and `Cache-Control: private`
+		// (markPerVisitorPage, which keeps an app's own directives less
+		// `public` and `s-maxage`). Before, only a page that got a form field
+		// was marked, and a page with no form set the cookie unmarked.
+		pw := &csrfPrivateWriter{ResponseWriter: w}
+		w = pw
+		defer pw.mark()
 		if newlyIssued {
 			// Stash the freshly-generated token on the request so downstream
 			// handlers calling `CurrentCsrfToken(r)` (in particular Sky.Live's
@@ -361,6 +381,16 @@ func csrfMiddlewareWithPages(next http.Handler, isPage func(*http.Request) bool)
 
 		if !isMutating {
 			next.ServeHTTP(w, r)
+			return
+		}
+
+		// A native form POST to a page answers 303 to the same URL before the
+		// token is looked for, so the body (a password in it) is never read.
+		// A page takes no POST: with or without the right token the answer is
+		// the same 303 (dispatchRoot and Spa_pageRoute give it to one that
+		// passes).
+		if isPage != nil && isNativeFormPost(r) && isPage(r) {
+			pagePostRedirect(w, r)
 			return
 		}
 
@@ -851,8 +881,9 @@ func (s *spaPageSet) add(pattern string) {
 // spaNotFoundPagePattern is added by a `Server.staticNotFound` route (the
 // Sky.Spa split's `/` catch-all), which renders the NotFound page for any path
 // no other route takes. Every path but the runtime's own (`/_sky/`, `/_rpc/`)
-// is then a page. Such a POST reaches the reject only when it is not an api or
-// rpc route (those are exempt and pass first).
+// is then a page, so a native form POST to ANY such path that no api or rpc
+// route takes (those are exempt and pass first) answers the 303, not only a
+// declared page.
 const spaNotFoundPagePattern = "/{notfound...}"
 
 // matches reports whether r's path is one of the set's pages.
@@ -914,3 +945,50 @@ func pagePatternMatch(pat, path string) bool {
 	}
 	return true
 }
+
+// csrfPrivateWriter marks a response that sets the CSRF cookie as private
+// (markPerVisitorPage) when its header goes out: at the first WriteHeader,
+// Write or Flush, or after the handler returns when it wrote nothing. The
+// handler may set its own Cache-Control first; `public` and `s-maxage` are
+// dropped from it and every other directive is kept.
+type csrfPrivateWriter struct {
+	http.ResponseWriter
+	marked bool
+}
+
+func (c *csrfPrivateWriter) mark() {
+	if !c.marked {
+		c.marked = true
+		markPerVisitorPage(c.ResponseWriter.Header())
+	}
+}
+
+func (c *csrfPrivateWriter) WriteHeader(code int) {
+	c.mark()
+	c.ResponseWriter.WriteHeader(code)
+}
+
+func (c *csrfPrivateWriter) Write(b []byte) (int, error) {
+	c.mark()
+	return c.ResponseWriter.Write(b)
+}
+
+// Flush keeps http.Flusher for the SSE handlers behind the middleware.
+func (c *csrfPrivateWriter) Flush() {
+	c.mark()
+	if f, ok := c.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack keeps http.Hijacker for a WebSocket upgrade behind the middleware.
+func (c *csrfPrivateWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	c.marked = true
+	if h, ok := c.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errHijackNotSupported
+}
+
+// Unwrap exposes the wrapped writer to http.ResponseController.
+func (c *csrfPrivateWriter) Unwrap() http.ResponseWriter { return c.ResponseWriter }

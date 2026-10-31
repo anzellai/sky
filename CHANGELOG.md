@@ -142,9 +142,16 @@ finds a header whatever the case of its name.
     The body is not read, and the `Location` never leaves the origin. An
     `App.api "POST /path"` route, `/_rpc` and the Sky.Live event endpoint
     are unchanged.
-  - A page that carries a CSRF token is sent with `Vary: Cookie` and
-    `Cache-Control: private`, so a shared cache does not give one visitor's
-    token to another.
+  - Every response that sets the CSRF cookie is sent with `Vary: Cookie`
+    and `Cache-Control: private`, a page with no form too, so a shared cache
+    does not give one visitor's cookie or token to another. An app's own
+    `Cache-Control` keeps its other directives, less `public` and
+    `s-maxage`.
+  - A native form POST to a page answers the 303 before the CSRF token is
+    looked for, so its body is never read. A `Server.staticNotFound`
+    catch-all makes every path no api or rpc route takes a page, and in a
+    Sky.Live app every path that is not an api route or a runtime endpoint
+    is a page.
 - **Two routes whose path differs only in a parameter name no longer stop
   the server at start.** A page `/post/:slug` next to
   `App.api "POST /post/:id"` (or two `Server` routes like that) made Go's

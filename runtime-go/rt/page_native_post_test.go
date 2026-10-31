@@ -449,3 +449,119 @@ func TestSpaPage_PagesBelongToTheirOwnServer(t *testing.T) {
 		t.Fatalf("a server without pages answered %d, want 403", rec.Code)
 	}
 }
+
+// Any response that sets the CSRF cookie is private (v0.29.1). A Sky.Spa page
+// with no form got no `__sky_csrf` field, so it was not marked, yet it set the
+// visitor's CSRF cookie: a shared cache that stored it handed every later
+// visitor the same cookie. Now every response that sets the cookie carries
+// `Vary: Cookie` and `Cache-Control: private`, keeping an app's own
+// directives less `public` and `s-maxage`.
+func TestCsrfCookieResponseIsPrivate(t *testing.T) {
+	const noForm = `<!DOCTYPE html><html><body><p>hello</p></body></html>`
+	h := pageTestServer(t, func() []any {
+		return []any{Spa_pageRoute("/about", pageHandler(noForm))}
+	})
+	rec := serve(h, httptest.NewRequest(http.MethodGet, "http://app.example/about", nil))
+	if rec.Code != 200 {
+		t.Fatalf("GET /about: %d", rec.Code)
+	}
+	csrfCookieOf(t, rec)
+	if got := rec.Header().Get("Cache-Control"); got != "private" {
+		t.Fatalf("a page with no form that sets the CSRF cookie: Cache-Control %q, want private", got)
+	}
+	if !headerHasToken(rec.Header().Values("Vary"), "Cookie") {
+		t.Fatalf("a page that sets the CSRF cookie has no Vary: Cookie: %v", rec.Header().Values("Vary"))
+	}
+
+	// Any handler behind the middleware, whatever it writes and when.
+	SetCsrfEnabled(true)
+	t.Cleanup(func() { refreshCsrfEnabled() })
+	for name, handler := range map[string]http.HandlerFunc{
+		"write": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=600")
+			_, _ = w.Write([]byte("x"))
+		},
+		"writeHeader": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=600")
+			w.WriteHeader(204)
+		},
+		"nothing": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=600")
+		},
+		"flush": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=600")
+			f, ok := w.(http.Flusher)
+			if !ok {
+				t.Errorf("the CSRF middleware hides http.Flusher")
+				return
+			}
+			f.Flush()
+		},
+	} {
+		rec := serve(CSRFMiddleware(handler), httptest.NewRequest(http.MethodGet, "http://app.example/x", nil))
+		csrfCookieOf(t, rec)
+		if got := rec.Header().Get("Cache-Control"); got != "private, max-age=60" {
+			t.Fatalf("%s: Cache-Control %q, want %q", name, got, "private, max-age=60")
+		}
+		if !headerHasToken(rec.Header().Values("Vary"), "Cookie") {
+			t.Fatalf("%s: no Vary: Cookie: %v", name, rec.Header().Values("Vary"))
+		}
+	}
+}
+
+// readCounter counts the bytes a handler or a middleware read from a body.
+type readCounter struct {
+	r *strings.Reader
+	n int
+}
+
+func (c *readCounter) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += n
+	return n, err
+}
+
+// A native form POST that fails the CSRF check reaches the 303 from more than
+// api and rpc routes: a `Server.staticNotFound` catch-all page, and any
+// non-api path of a Sky.Live app. Both answer 303 from the middleware, with
+// no handler run and the body not read.
+func TestCsrfRejectAnswers303ForCatchAllAndLivePages(t *testing.T) {
+	post := func(target string) (*http.Request, *readCounter) {
+		body := &readCounter{r: strings.NewReader("password=secret")}
+		req := httptest.NewRequest(http.MethodPost, "http://app.example"+target, body)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return req, body
+	}
+
+	dir := t.TempDir()
+	h := pageTestServer(t, func() []any {
+		return []any{Server_staticNotFound("/", dir, pageHandler(pageFormHTML))}
+	})
+	req, body := post("/no/such/page")
+	wantSeeOther(t, "catch-all page", serve(h, req), "/no/such/page")
+	if body.n != 0 {
+		t.Fatalf("catch-all page: the 303 read %d body bytes, want 0", body.n)
+	}
+
+	app := newBindingTestApp("sky_sid")
+	SetCsrfEnabled(true)
+	t.Cleanup(func() { refreshCsrfEnabled() })
+	ran := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/_sky/event", app.handleEvent)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			ran = true
+		}
+		app.dispatchRoot(w, r)
+	})
+	lh := liveListenerHandlerFor(app, mux, "")
+	req, body = post("/account/settings")
+	wantSeeOther(t, "Live non-api POST", serve(lh, req), "/account/settings")
+	if ran {
+		t.Fatalf("Live non-api POST: the page handler ran for a POST that failed the check")
+	}
+	if body.n != 0 {
+		t.Fatalf("Live non-api POST: the 303 read %d body bytes, want 0", body.n)
+	}
+}
