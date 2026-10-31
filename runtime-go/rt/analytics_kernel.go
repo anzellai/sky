@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"reflect"
@@ -234,27 +233,10 @@ func analyticsSetContext(userAgent, remoteAddr string) {
 // analyticsAnonIP truncates a client IP to its network prefix: the last octet
 // of an IPv4 (1.2.3.4 -> 1.2.3.0), the last 80 bits of an IPv6 (keep the /48) —
 // the standard "IP anonymisation" GA/Matomo apply. Returns "" for an
-// unparseable address, so nothing personal leaks by accident.
+// unparseable address, so nothing personal leaks by accident. Telemetry
+// applies the same rule to the client address (anonymiseIP, telemetry_url.go).
 func analyticsAnonIP(remoteAddr string) string {
-	host := remoteAddr
-	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
-		host = h
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return ""
-	}
-	if v4 := ip.To4(); v4 != nil {
-		v4[3] = 0
-		return v4.String()
-	}
-	if v6 := ip.To16(); v6 != nil {
-		for i := 6; i < 16; i++ {
-			v6[i] = 0
-		}
-		return v6.String()
-	}
-	return ""
+	return anonymiseIP(remoteAddr)
 }
 
 // analyticsTrackPageView emits a consent-gated `page_view` for the Sky.Live

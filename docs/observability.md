@@ -308,6 +308,48 @@ Captured (OTEL semantic conventions):
 - SQL bind *values* (PII risk)
 - Request / response bodies
 - Session contents
+- Userinfo and fragments of outbound URLs
+
+By default, and with the overrides below:
+
+- Query strings of request and outbound URLs
+- Raw path segments that can hold data (IDs, tokens, emails, postcodes)
+- The full client IP address
+
+### Request paths, query strings and client addresses
+
+A path or a query can carry a token or personal data (`/reset/<token>`,
+`/postcodes/<postcode>`, `?key=<API key>`). The runtime records them by these
+rules in server spans (`http.target`, `url.path`, the span name), metric and
+trace route labels, the access log, panic reports, `Middleware.withLogging`
+and Std.Analytics page views:
+
+- **The route template when one is known.** A Sky.Live route records
+  `/reset/:token`, a `Server.get "/blog/:slug"` route records `/blog/{slug}`.
+  An in-process sub-app records its own templates, with its base path.
+- **Otherwise each path segment is checked.** A segment is kept when it is a
+  letter followed by up to 31 letters, `_`, `.` or `-`, or an API version
+  (`v1`, `v2beta`). Any other segment becomes `:redacted`, so
+  `/reset/3f9a77c2` is recorded as `/reset/:redacted`.
+- **No query string.** Only the keys you allow are kept, with their values.
+- **Outbound URLs** (`Http.get`, `Http.post`, `Http.request`) record
+  `url.full` (and `http.url`) as scheme, host, port and the redacted path,
+  without the query string or userinfo, plus `server.address` and `url.path`.
+  The text of a transport error (`Get "https://…": connection refused`)
+  carries the same redacted URL, so a key in a query never reaches an `Error`
+  or a log.
+- **The client IP is anonymised** by the rule Std.Analytics uses: the last
+  IPv4 octet and the last 80 bits of an IPv6 address are zeroed
+  (`net.peer.ip`, `client.address`).
+
+| Variable | Values | Effect |
+|---|---|---|
+| `SKY_TELEMETRY_URL` | `redacted` (default), `path`, `full` | `path` records the raw path with no query. `full` records the raw path and query. Userinfo and fragments are never recorded. An unknown value is `redacted`. |
+| `SKY_TELEMETRY_QUERY_KEYS` | comma list, such as `page,sort` | The query keys kept with their values. Builder: `Sky.Config.withTelemetryQueryKeys [ "page", "sort" ]`. |
+| `SKY_TELEMETRY_CLIENT_IP` | `anonymised` (default), `full` | `full` records the whole client IP. |
+
+Use `path` or `full` only when the collector is trusted to hold personal data.
+The Sky.Spa auto-split backend has no `Sky.Config`, so set the variable there.
 
 ## Sampling
 

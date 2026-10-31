@@ -73,23 +73,52 @@ func skyResultError(v any) error {
 // Returns the updated context (with the span attached) + the span
 // itself. Caller is responsible for calling span.End() — typically
 // via a defer at the top of the middleware.
+//
+// No raw request value is recorded: http.target and url.path come from
+// telemetry_url.go (the route template, else the path with data segments
+// redacted, plus only allow-listed query keys), and the client address is
+// anonymised unless SKY_TELEMETRY_CLIENT_IP=full.
 func StartHTTPServerSpan(r *http.Request, route string) (context.Context, trace.Span) {
 	ctx := telemetry.Propagator().Extract(r.Context(),
 		propagationHeaderCarrier(r.Header))
 	tracer := telemetry.Tracer()
+	ip := telemetryClientIP(r)
+	attrs := []attribute.KeyValue{
+		attribute.String("http.method", r.Method),
+		attribute.String("http.route", route),
+		attribute.String("http.target", telemetryTarget(r)),
+		attribute.String("url.path", telemetryPath(r)),
+		attribute.String("http.scheme", schemeOf(r)),
+		attribute.String("net.peer.ip", ip),
+		attribute.String("client.address", ip),
+		attribute.String("user_agent.original", r.UserAgent()),
+		attribute.String("sky.req_id", RequestIDFromContext(r.Context())),
+	}
+	if q := telemetryQueryOf(r); q != "" {
+		attrs = append(attrs, attribute.String("url.query", q))
+	}
 	ctx, span := tracer.Start(ctx, r.Method+" "+route,
 		trace.WithSpanKind(trace.SpanKindServer),
-		trace.WithAttributes(
-			attribute.String("http.method", r.Method),
-			attribute.String("http.route", route),
-			attribute.String("http.target", r.URL.Path),
-			attribute.String("http.scheme", schemeOf(r)),
-			attribute.String("net.peer.ip", clientIP(r)),
-			attribute.String("user_agent.original", r.UserAgent()),
-			attribute.String("sky.req_id", RequestIDFromContext(r.Context())),
-		),
+		trace.WithAttributes(attrs...),
 	)
 	return ctx, span
+}
+
+// FinishHTTPServerSpanRoute renames the server span and sets its route and
+// path once dispatch has run. Before dispatch only the fallback route is
+// known; the app writes the template (a Sky.Live route, a mux pattern)
+// during dispatch. The trace ring reads the name when the span ends, so the
+// Console sees the final name.
+func FinishHTTPServerSpanRoute(span trace.Span, method, route, target, path string) {
+	if span == nil || !span.IsRecording() {
+		return
+	}
+	span.SetName(method + " " + route)
+	span.SetAttributes(
+		attribute.String("http.route", route),
+		attribute.String("http.target", target),
+		attribute.String("url.path", path),
+	)
 }
 
 // EndHTTPServerSpan finalises the span with response metadata.
@@ -265,12 +294,20 @@ func WithAuthSpan(op string, fn func() any) any {
 		[]attribute.KeyValue{attribute.String("sky.auth.op", op)}, fn)
 }
 
-// WithHTTPClientSpan wraps an outbound HTTP call.
-func WithHTTPClientSpan(method, url string, fn func() any) any {
+// WithHTTPClientSpan wraps an outbound HTTP call. The URL is recorded
+// without userinfo, fragment or query (allow-listed keys aside), with data
+// path segments redacted (telemetryOutboundURL). url.full follows the
+// current OTel semantic conventions; http.url keeps the older name, with the
+// same redacted value, for dashboards that read it.
+func WithHTTPClientSpan(method, rawURL string, fn func() any) any {
+	full, host, path := telemetryOutboundURL(rawURL)
 	return WithSpan("http "+method, trace.SpanKindClient,
 		[]attribute.KeyValue{
 			attribute.String("http.method", method),
-			attribute.String("http.url", url),
+			attribute.String("http.url", full),
+			attribute.String("url.full", full),
+			attribute.String("server.address", host),
+			attribute.String("url.path", path),
 		}, fn)
 }
 

@@ -1425,11 +1425,16 @@ func (app *liveApp) dispatchRoot(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if params, ok := matchRoute(ar.pattern, r.URL.Path); ok {
+			// Telemetry records the route template, never the raw path
+			// (telemetry_url.go). An api pattern is matched against the
+			// full path, so it already carries any base path.
+			noteTelemetryRoute(r, ar.pattern)
 			app.serveAPI(ar, params, w, r)
 			return
 		}
 	}
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		noteTelemetryRoute(r, app.telemetryPageTemplate(r.URL.Path))
 		app.handleInitial(w, r)
 		return
 	}
@@ -2070,6 +2075,10 @@ func liveListenerHandlerFor(app *liveApp, mux *http.ServeMux, bindHost string) h
 	}
 	observed := ObservabilityMiddleware(authSlid)
 	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The telemetry route slot goes on here, outside the panic
+		// recovery, so a panic report names the route template the app
+		// found (telemetry_url.go). ObservabilityMiddleware reuses it.
+		r = withTelemetryRouteSlot(r)
 		defer func() {
 			rec := recover()
 			if rec == nil {
@@ -2088,7 +2097,7 @@ func liveListenerHandlerFor(app *liveApp, mux *http.ServeMux, bindHost string) h
 			// Real panic — log to stderr so `go run` / tailing the
 			// server surfaces the cause. Client still gets a
 			// generic 500.
-			LogRecoveredPanic("sky.live", r.Method+" "+r.URL.Path, rec)
+			LogRecoveredPanic("sky.live", r.Method+" "+telemetryPath(r), rec)
 			w.WriteHeader(500)
 			fmt.Fprint(w, "Internal Server Error")
 		}()
@@ -2518,12 +2527,12 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		// the session is stamped above, so this one call captures all navigations,
 		// consent-gated + session-scoped. Referer gives the previous page.
 		if app.analyticsPageViews {
-			analyticsSetContext(r.Header.Get("User-Agent"), r.RemoteAddr)
+			analyticsSetContextFor(r)
 			// Attribute an already-authenticated session BEFORE the page-view, so even
 			// the first render carries the user (the returning-visitor case a manual
 			// `identify` in an update handler can't reach).
 			analyticsApplyIdentity(app.analyticsIdentify, model)
-			analyticsTrackPageView(r.URL.Path, r.Header.Get("Referer"))
+			analyticsTrackPageViewFor(r)
 		}
 		// v0.16.7 #418 — onNavigate Msg dispatch after every URL-driven
 		// route update.  No-op when cfg.onNavigate is nil (the default).

@@ -106,7 +106,7 @@ func writeSSESessionLostFrame(w http.ResponseWriter, reason string) {
 func logSSESessionLost(r *http.Request, reason string) {
 	path := ""
 	if r != nil {
-		path = r.URL.Path
+		path = telemetryPath(r)
 	}
 	logStructured("info", "live.sse.session_lost",
 		"reason", reason,

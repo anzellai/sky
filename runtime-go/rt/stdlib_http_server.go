@@ -76,11 +76,11 @@ func Http_getT(url string) func() SkyResult[string, HttpResponse] {
 	return func() SkyResult[string, HttpResponse] {
 		resp, err := skyHTTPClient().Get(url)
 		if err != nil {
-			return Err[string, HttpResponse]("http.get: " + err.Error())
+			return Err[string, HttpResponse]("http.get: " + redactURLError(err, url))
 		}
 		body, err := readBoundedBody(resp.Body)
 		if err != nil {
-			return Err[string, HttpResponse]("http.get read: " + err.Error())
+			return Err[string, HttpResponse]("http.get read: " + redactURLError(err, url))
 		}
 		hdrs := map[string]string{}
 		for k, v := range resp.Header {
@@ -145,35 +145,46 @@ func Http_request(firstArg any, rest ...any) any {
 		method = "GET"
 	}
 	return func() any {
-		req, err := http.NewRequest(method, url, strings.NewReader(body))
-		if err != nil {
-			return Err[any, any](ErrNetwork("http.request: " + err.Error()))
-		}
-		applyHttpHeaders(req, headers)
-		client := skyHTTPClient()
-		if timeoutMs >= 0 || !followRedirects || maxRedirects != 10 {
-			client = httpClientFor(timeoutMs, followRedirects, maxRedirects)
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return Err[any, any](ErrNetwork("http.request do: " + err.Error()))
-		}
-		rb, err := readBoundedBody(resp.Body)
-		if err != nil {
-			return Err[any, any](ErrNetwork("http.request read: " + err.Error()))
-		}
-		hdrs := map[string]string{}
-		for k, v := range resp.Header {
-			if len(v) > 0 {
-				hdrs[k] = v[0]
-			}
-		}
-		return Ok[any, any](HttpResponse{
-			Status:  resp.StatusCode,
-			Body:    rb,
-			Headers: dictFromTypedMap(hdrs),
+		// One client span per call, as Http.get and Http.post have. The
+		// span records the redacted URL (WithHTTPClientSpan). No trace
+		// headers are added: Http.request sends exactly the headers the
+		// app gave it.
+		return WithHTTPClientSpan(method, url, func() any {
+			return httpRequestDo(method, url, body, headers, timeoutMs, followRedirects, maxRedirects)
 		})
 	}
+}
+
+// httpRequestDo runs one Http.request call (see Http_request).
+func httpRequestDo(method, url, body string, headers any, timeoutMs int, followRedirects bool, maxRedirects int) any {
+	req, err := http.NewRequest(method, url, strings.NewReader(body))
+	if err != nil {
+		return Err[any, any](ErrNetwork("http.request: " + redactURLError(err, url)))
+	}
+	applyHttpHeaders(req, headers)
+	client := skyHTTPClient()
+	if timeoutMs >= 0 || !followRedirects || maxRedirects != 10 {
+		client = httpClientFor(timeoutMs, followRedirects, maxRedirects)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return Err[any, any](ErrNetwork("http.request do: " + redactURLError(err, url)))
+	}
+	rb, err := readBoundedBody(resp.Body)
+	if err != nil {
+		return Err[any, any](ErrNetwork("http.request read: " + redactURLError(err, url)))
+	}
+	hdrs := map[string]string{}
+	for k, v := range resp.Header {
+		if len(v) > 0 {
+			hdrs[k] = v[0]
+		}
+	}
+	return Ok[any, any](HttpResponse{
+		Status:  resp.StatusCode,
+		Body:    rb,
+		Headers: dictFromTypedMap(hdrs),
+	})
 }
 
 // httpClientFor returns a *http.Client that honours per-request

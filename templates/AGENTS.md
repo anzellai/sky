@@ -808,7 +808,10 @@ typed front door — a top-level `config` binding built with **`Sky.Config`**
 resolving through the SAME precedence (operator env still wins). It includes
 telemetry **storage** tuning — `withTelemetryAggregationWindow` /
 `withTelemetryHistogramWindow` (coalesce metric rows to cut DB growth) and
-`withTelemetryDbCapacity` (the size-report "near full" flag). Run
+`withTelemetryDbCapacity` (the size-report "near full" flag), and
+`withTelemetryQueryKeys [ "page" ]` (query keys telemetry may keep: spans and
+logs record route templates, no query string and an anonymised client IP by
+default; `SKY_TELEMETRY_URL` / `SKY_TELEMETRY_CLIENT_IP` widen it). Run
 `sky doc Sky.Config` for the full set; each builder names its `SKY_TELEMETRY_*`
 env override.
 
