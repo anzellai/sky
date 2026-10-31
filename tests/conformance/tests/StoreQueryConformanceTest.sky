@@ -2856,6 +2856,23 @@ type alias ZeroLabel =
     , label : String
     }
 
+type alias ZeroMaybeList =
+    { id : String
+    , tags : Maybe (List String)
+    }
+
+
+-- A `Maybe` over a list in a `Codec.object` codec: a nullable column, so
+-- `Nothing` inserts (D1: a Maybe field gives a nullable column).
+zeroMaybeList : String -> Store ZeroMaybeList
+zeroMaybeList table =
+    Store.fromCodec
+        table
+        (Codec.object ZeroMaybeList |> Codec.field "id" .id Codec.string
+            |> Codec.field "tags" .tags (Codec.maybe (Codec.list Codec.string))
+            |> Codec.buildObject)
+        |> Store.primaryKey "id"
+
 
 zeroShadeCodec : Codec ZeroShade
 zeroShadeCodec =
@@ -3029,6 +3046,58 @@ zeroTests db =
                              (\stmts ->
                                  Task.run (Store.all db zeroLabelAuto)
                                      |> Result.map (\rows -> ( stmts, rows )))))
+    , Test.test
+          "migrate (D1): a Maybe list field of a Codec.object codec is nullable, added or created"
+          (\_ ->
+              let
+                  added =
+                      zeroMigrate
+                          db
+                          "sqc_zero_maybe_added"
+                          (zeroMaybeList "sqc_zero_maybe_added")
+                          |> Result.andThen
+                                 (\_ ->
+                                     Task.run
+                                         (Store.insert
+                                             db
+                                             (zeroMaybeList
+                                                 "sqc_zero_maybe_added")
+                                             { id = "new", tags = Nothing }
+                                             |> Task.andThen
+                                                    (\_ ->
+                                                        Store.all
+                                                            db
+                                                            (zeroMaybeList
+                                                                "sqc_zero_maybe_added"))))
+                          |> Result.map (List.map .tags)
+                  created =
+                      Task.run
+                          (drop db "sqc_zero_maybe_created"
+                              |> Task.andThen
+                                     (\_ ->
+                                         unit
+                                             (Store.migrate
+                                                 db
+                                                 (zeroMaybeList
+                                                     "sqc_zero_maybe_created")))
+                              |> Task.andThen
+                                     (\_ ->
+                                         Store.insert
+                                             db
+                                             (zeroMaybeList
+                                                 "sqc_zero_maybe_created")
+                                             { id = "a", tags = Nothing })
+                              |> Task.andThen
+                                     (\_ ->
+                                         Store.all
+                                             db
+                                             (zeroMaybeList
+                                                 "sqc_zero_maybe_created")))
+                          |> Result.map (List.map .tags)
+              in
+                  Test.equal
+                      ( Ok [ Nothing, Nothing ], Ok [ Nothing ] )
+                      ( added, created ))
     ]
 
 -- ── Items 5, 8, 9, 12: writes (batch D) ──────────────────────────────────────

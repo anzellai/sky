@@ -424,7 +424,7 @@ bool =
 -- ── Combinators ──────────────────────────────────────────────────────────────
 -- | Optional value. `Nothing` encodes as JSON `null`; a `null` or type-mismatch
 -- on decode yields `Nothing`. A `Maybe scalar` stays a (nullable) scalar column;
--- anything deeper becomes a blob.
+-- anything deeper becomes a nullable blob column, so `Nothing` stores as NULL.
 maybe : Codec a -> Codec (Maybe a)
 maybe (Codec c) =
     Codec
@@ -445,7 +445,7 @@ maybe (Codec c) =
                     SScalar (CNull t)
 
                 _ ->
-                    SBlob
+                    SScalar (CNull CBlob)
         , sch = SnNullable c.sch
         , zro = \_ -> Just E.null
         , fzr = \_ -> []

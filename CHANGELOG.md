@@ -528,6 +528,13 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
 
 ### Fixed
 
+- **`Codec.maybe` over a list, a record or a union gives a nullable column.**
+  In a `Codec.object` codec such a field was a NOT NULL blob column, so
+  `Store.insert` of `Nothing` failed with a NOT NULL violation (a new table,
+  and from this release a migrated one). It is now `blob?`, as `Codec.auto`
+  already made it. Existing columns are not altered: an app that created such
+  a table can make the column nullable by hand (`ALTER TABLE t ALTER COLUMN c
+  DROP NOT NULL` on PostgreSQL, a table rebuild on SQLite).
 - **Builds use less memory: lowering types only the code the program
   reaches.** Lowering inferred the body types of every top-level function of
   every interned module, and the whole stdlib is interned, before it dropped
