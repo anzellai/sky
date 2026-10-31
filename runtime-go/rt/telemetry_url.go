@@ -378,15 +378,17 @@ func isAPIVersionSegment(s string) bool {
 //     including any {wildcard} placeholders) when non-empty AND
 //     non-"/" (the bare "/" pattern means "catch-all" and would
 //     collapse every dynamic URL into one label).
-//  2. The FIRST path segment, and only when it matches a known-safe
-//     route shape (safeRouteSegment).
-//  3. The "/:dynamic" sentinel.
+//  2. The FIRST path segment, under telemetryPath's segment rule
+//     (telemetrySafeSegment): a segment that looks like a route name is
+//     kept, and any other one becomes `:redacted`.
 //
 // This used to take the first TWO raw segments, which put raw path
 // IDs into label values: /users/12345 minted a fresh series per
 // user, so 10k unique IDs exhausted the per-name series cap in 10k
 // requests and froze the request metrics for the process lifetime
-// (first-N-win, no eviction).
+// (first-N-win, no eviction). It then kept a first segment with
+// digits (`/Abc123Token` on a 404) in the span name and http.route,
+// a rule looser than telemetryPath's. Both now apply one rule.
 //
 // The first segment is still requester-chosen for unrouted paths,
 // which is why the series cap remains per-name with a global
@@ -404,31 +406,10 @@ func routeLabelFor(r *http.Request) string {
 	if i := strings.IndexByte(seg, '/'); i >= 0 {
 		seg = seg[:i]
 	}
-	if safeRouteSegment(seg) {
+	if telemetrySafeSegment(seg) {
 		return "/" + seg
 	}
-	return "/:dynamic"
-}
-
-// safeRouteSegment reports whether a path segment looks like a
-// hand-registered route name rather than data: starts with a
-// letter, continues with letters / digits / '_' / '-' / '.', and
-// stays within 64 bytes. IDs ("12345"), encodings ("%41"), and
-// junk collapse to the sentinel instead of becoming label values.
-func safeRouteSegment(s string) bool {
-	if len(s) == 0 || len(s) > 64 {
-		return false
-	}
-	if !isASCIILetter(s[0]) {
-		return false
-	}
-	for i := 1; i < len(s); i++ {
-		c := s[i]
-		if !isASCIILetter(c) && !isASCIIDigit(c) && c != '_' && c != '-' && c != '.' {
-			return false
-		}
-	}
-	return true
+	return "/" + telemetryRedacted
 }
 
 // ─── Outbound URLs and their errors ─────────────────────────────────

@@ -170,6 +170,13 @@ finds a header whatever the case of its name.
     as `/reset/:token`, a `Server` pattern such as `/blog/{slug}`), else with
     each segment that can hold data replaced by `:redacted`. Query strings
     are dropped. In-process sub-apps record their own templates.
+  - With no template, the span name, `http.route` and the metric `route`
+    label take the first path segment by the same rule. A requester-chosen
+    segment such as `/Abc123Token` on a 404 was kept there, and is now
+    `/:redacted`. The label stays bounded.
+  - The Sky Console auth audit log keeps the full client address on
+    purpose, and its `path` is now only ever a `/_sky/` console path
+    (`docs/observability.md`).
   - The serverless access-log line is built with `json.Marshal`. A `"` in a
     path broke the line.
   - The client IP in spans (`net.peer.ip`, the new `client.address`) is
