@@ -34,12 +34,9 @@ was tagged on 2b89d90da and published on 2026-10-31.
    to a Spa page route with 303 to the same URL.
 3. OTel / metrics / traces / logs: never record secrets or personal data
    from a request path or query string (tokens, secret path links, PII).
-4. `sky db check`, `sky db check --sql`, `sky db check --code`: compare a
-   live database (any DSN, remote included, read-only) with the Store and
-   Schema tables in the code, report every difference, exit non-zero on
-   drift, print the SQL that makes the database match the code (unsafe steps
-   commented out with the reason), and print what the code needs to match
-   the database. Never edit code or run destructive SQL automatically.
+4. Moved to v0.29.2 by the user ("If sky dB check takes considerable amount
+   of time, leave that for 0.29.2 the others are more priority to rollout +
+   migrate all apps"): `sky db check`, `--sql`, `--code`.
 5. Every finding deferred from v0.29.0 (listed in the private companion).
 
 ## Done means
