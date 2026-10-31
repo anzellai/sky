@@ -385,7 +385,8 @@ unique name store =
 --
 -- The column may also be one the codec does not carry, such as a
 -- `created_at` the record leaves out: an external column (see `defaultWith`).
--- It is written as above, and the table must have it.
+-- It is written as above, and the table must have it as a text or a
+-- timestamp column: `migrate` and `create` refuse any other type.
 defaultNow : String -> Store a -> Store a
 defaultNow name store =
     nowBuilder "defaultNow" "|dnow" name store

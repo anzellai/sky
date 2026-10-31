@@ -213,10 +213,28 @@ func codecColExternal(kind string) (string, bool) {
 }
 
 // codecExternalCol is one external column of a colspec and the builder that
-// named it.
+// named it. `clock` names the builder that writes the current time into it
+// (defaultNow or touchOnUpdate, from the `dnow` / `touch` flags), or is ""
+// when no builder does.
 type codecExternalCol struct {
 	name    string
 	builder string
+	clock   string
+}
+
+// codecExternalClock returns the clock builder a colspec kind carries:
+// touchOnUpdate for the `touch` flag, defaultNow for `dnow`, else "".
+func codecExternalClock(kind string) string {
+	clock := ""
+	for _, f := range codecColFlags(kind) {
+		switch f {
+		case "touch":
+			return "touchOnUpdate"
+		case "dnow":
+			clock = "defaultNow"
+		}
+	}
+	return clock
 }
 
 // codecSplitExternal splits a Store colspec into the columns the Store owns
@@ -228,7 +246,8 @@ func codecSplitExternal(colspecArg any) ([]any, []codecExternalCol) {
 	for _, cs := range AsList(colspecArg) {
 		t := AsTuple2(cs)
 		if b, ok := codecColExternal(AsString(t.V1)); ok {
-			ext = append(ext, codecExternalCol{name: AsString(t.V0), builder: b})
+			kind := AsString(t.V1)
+			ext = append(ext, codecExternalCol{name: AsString(t.V0), builder: b, clock: codecExternalClock(kind)})
 			continue
 		}
 		own = append(own, cs)
@@ -257,6 +276,95 @@ func codecCheckExternal(driver, table string, current map[string]bool, ext []cod
 	return nil
 }
 
+// codecCheckExternalClock checks the declared type of every external column
+// a clock builder writes (Store.defaultNow / touchOnUpdate). The Store writes
+// the time as text on SQLite (`datetime('now')` and the app clock in the same
+// format) and as `now()` on PostgreSQL, so the column must be a text or a
+// timestamp column. Any other type is refused the same way on both dialects:
+// on SQLite an INTEGER column would take text without a word, and on
+// PostgreSQL the first update would fail. Called after codecCheckExternal,
+// so every column exists.
+func codecCheckExternalClock(d *SkyDb, table string, ext []codecExternalCol) error {
+	need := false
+	for _, c := range ext {
+		if c.clock != "" {
+			need = true
+		}
+	}
+	if !need {
+		return nil
+	}
+	types, err := codecTableColumnTypes(d, table)
+	if err != nil {
+		return err
+	}
+	for _, c := range ext {
+		if c.clock == "" {
+			continue
+		}
+		key := c.name
+		if d.driver == "pgx" {
+			key = strings.ToLower(c.name)
+		}
+		typ := types[key]
+		if !codecClockColumnType(d.driver, typ) {
+			shown := typ
+			if shown == "" {
+				shown = "(none)"
+			}
+			return fmt.Errorf("Store.%s names %s, a column of table %s with type %s. "+
+				"The Store writes the current time there as text on SQLite and as now() on PostgreSQL, "+
+				"so the column must be a text or a timestamp column: change its type in a migration, "+
+				"or fill it with Store.defaultWith instead", c.clock, c.name, table, shown)
+		}
+	}
+	return nil
+}
+
+// codecClockColumnType reports whether a declared column type can hold the
+// time a clock builder writes: a text type, or a date or timestamp type.
+func codecClockColumnType(driver, typ string) bool {
+	t := strings.ToLower(strings.TrimSpace(typ))
+	if driver == "pgx" {
+		return t == "text" || strings.HasPrefix(t, "character") ||
+			strings.HasPrefix(t, "timestamp") || t == "date"
+	}
+	return sqliteTextAffinity(typ) || strings.Contains(t, "date") || strings.Contains(t, "time")
+}
+
+// codecTableColumnTypes returns each column's declared type: the SQLite
+// `PRAGMA table_info` type as written, or the PostgreSQL information_schema
+// data_type, keyed by the folded name.
+func codecTableColumnTypes(d *SkyDb, table string) (map[string]string, error) {
+	var sql string
+	var params []any
+	if d.driver == "pgx" {
+		sql = "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = ? AND table_schema = current_schema()"
+		params = []any{strings.ToLower(table)}
+	} else {
+		sql = "PRAGMA table_info(" + table + ")" // PRAGMA takes no bind params
+		params = []any{}
+	}
+	resp := AnyTaskRun(dbQueryRows(d, sql, params))
+	r, ok := resp.(SkyResult[any, any])
+	if !ok || r.Tag != 0 {
+		return nil, fmt.Errorf("introspection of the column types of %s failed", table)
+	}
+	out := map[string]string{}
+	for _, row := range AsList(r.OkValue) {
+		m, ok := dbRowAsMap(row)
+		if !ok {
+			continue
+		}
+		if v, present := m["name"]; present {
+			out[dbRawToString(v)] = dbRawToString(m["type"])
+		} else if v, present := m["column_name"]; present {
+			out[strings.ToLower(dbRawToString(v))] = dbRawToString(m["data_type"])
+		}
+	}
+	return out, nil
+}
+
 // Db_createCols : Db -> String -> colspec -> String -> List IndexSpec -> Task Error ()
 // renders + executes the CREATE TABLE derived from a colspec, then one CREATE
 // INDEX per declared index (Store.index / uniqueOn / uniqueWhere). A colspec
@@ -283,6 +391,9 @@ func Db_createCols(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 				return Err[any, any](ErrIo("Store.create: " + err.Error()))
 			}
 			if err := codecCheckExternal(d.driver, table, current, ext); err != nil {
+				return Err[any, any](ErrInvalidInput("Store.create: " + err.Error()))
+			}
+			if err := codecCheckExternalClock(d, table, ext); err != nil {
 				return Err[any, any](ErrInvalidInput("Store.create: " + err.Error()))
 			}
 		}
@@ -511,6 +622,9 @@ func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 		// does not carry) is checked, never created or added.
 		colspecArg, ext := codecSplitExternal(colspecArg)
 		if err := codecCheckExternal(d.driver, table, current, ext); err != nil {
+			return Err[any, any](ErrInvalidInput("Store.migrate: " + err.Error()))
+		}
+		if err := codecCheckExternalClock(d, table, ext); err != nil {
 			return Err[any, any](ErrInvalidInput("Store.migrate: " + err.Error()))
 		}
 		// A partial index on a v0.28 TEXT column is refused before any

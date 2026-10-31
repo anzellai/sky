@@ -181,3 +181,7 @@ func TestStoreMigratePostgresPendingV028FileAppliesWithTheNewRule(t *testing.T) 
 func TestStoreMigratePostgresExternalColumnsCheckedNeverAdded(t *testing.T) {
 	assertExternalColumnsCheckedNeverAdded(t, openLedgerSchemaPostgres(t, "sky_mig_external_cols"), "ext_cols")
 }
+
+func TestStoreMigratePostgresExternalNowColumnTypeChecked(t *testing.T) {
+	assertExternalNowColumnTypeChecked(t, openLedgerSchemaPostgres(t, "sky_mig_external_now"), "ext_now_types", "TIMESTAMPTZ")
+}

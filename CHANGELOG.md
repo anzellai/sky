@@ -43,6 +43,12 @@ finds a header whatever the case of its name.
     op for it: the schema dump marks it `"external": true`.
   - `primaryKey`, `serial`, `unique`, `index`, `uniqueOn` and `uniqueWhere`
     still take codec columns only, so a typo in them stays an error.
+  - An external `defaultNow` or `touchOnUpdate` column must be a text or a
+    timestamp column. The Store writes the current time there as text on
+    SQLite and as `now()` on PostgreSQL. On an `INTEGER` column SQLite stored
+    the text with no error and PostgreSQL failed at the first update.
+    `Store.migrate` and `Store.create` now refuse such a column on both
+    dialects, with an `Err` naming the column, its type and the builder.
 - **A Store builder problem is loud.** A builder that names an unknown column,
   an invalid table name or a primary key that is not a column fails every
   verb on the store. Each problem is now logged at ERROR level once per table

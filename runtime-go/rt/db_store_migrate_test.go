@@ -1029,3 +1029,52 @@ func errorText(e any) string {
 func TestStoreMigrateExternalColumnsCheckedNeverAddedSqlite(t *testing.T) {
 	assertExternalColumnsCheckedNeverAdded(t, openStoreQueryDb(t), "ext_cols")
 }
+
+// An external `defaultNow` / `touchOnUpdate` column must be a text or a
+// timestamp column. The Store writes the current time as text on SQLite
+// (`datetime('now')`) and `now()` on PostgreSQL, so an INTEGER created_at
+// would silently take text on SQLite and fail at the first update on
+// PostgreSQL. migrate and create refuse it on both dialects, naming the
+// column, its type and the builder. A text or timestamp column passes.
+func assertExternalNowColumnTypeChecked(t *testing.T, d *SkyDb, table, tsType string) {
+	t.Helper()
+	_, _ = d.conn.Exec("DROP TABLE IF EXISTS " + table)
+	t.Cleanup(func() { _, _ = d.conn.Exec("DROP TABLE IF EXISTS " + table) })
+	if _, err := d.conn.Exec("CREATE TABLE " + table +
+		" (id TEXT PRIMARY KEY, created_at BIGINT NOT NULL DEFAULT 0, updated_at INTEGER, seen_at TEXT, stamped " + tsType + ")"); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ col, kind, builder string }{
+		{"created_at", "text|ext=defaultNow|dnow", "defaultNow"},
+		{"updated_at", "text|ext=touchOnUpdate|touch|dnow", "touchOnUpdate"},
+	} {
+		cs := cspec("id", "text", c.col, c.kind)
+		want := "Store." + c.builder + " names " + c.col
+		r := autoMigrate(t, d, table, cs, []any{})
+		if r.Tag == 0 || !strings.Contains(errorText(r.ErrValue), want) ||
+			!strings.Contains(strings.ToLower(errorText(r.ErrValue)), "type ") {
+			t.Fatalf("migrate with an integer external %s column = %v, want an Err containing %q and the type", c.builder, r, want)
+		}
+		cr, _ := AnyTaskRun(Db_createCols(d, table, cs, "id", []any{})).(SkyResult[any, any])
+		if cr.Tag == 0 || !strings.Contains(errorText(cr.ErrValue), want) {
+			t.Fatalf("create with an integer external %s column = %v, want an Err containing %q", c.builder, cr, want)
+		}
+	}
+	// A text column and a timestamp column pass both builders.
+	ok := cspec("id", "text", "seen_at", "text|ext=defaultNow|dnow", "stamped", "text|ext=touchOnUpdate|touch|dnow")
+	if r := autoMigrate(t, d, table, ok, []any{}); r.Tag != 0 {
+		t.Fatalf("migrate with a text and a %s external clock column = %v, want Ok", tsType, r)
+	}
+	if cr, _ := AnyTaskRun(Db_createCols(d, table, ok, "id", []any{})).(SkyResult[any, any]); cr.Tag != 0 {
+		t.Fatalf("create with a text and a %s external clock column = %v, want Ok", tsType, cr)
+	}
+	// A `defaultWith` external column carries no clock, so its type is the
+	// app's business.
+	if r := autoMigrate(t, d, table, cspec("id", "text", "created_at", "|ext=defaultWith"), []any{}); r.Tag != 0 {
+		t.Fatalf("migrate with an integer defaultWith external column = %v, want Ok", r)
+	}
+}
+
+func TestStoreMigrateExternalNowColumnTypeCheckedSqlite(t *testing.T) {
+	assertExternalNowColumnTypeChecked(t, openStoreQueryDb(t), "ext_now_types", "DATETIME")
+}
