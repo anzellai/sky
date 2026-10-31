@@ -208,7 +208,13 @@ snake column): `serial "id"` (auto-increment PK) · `unique "email"` ·
 `touchOnUpdate "updated_at"` (DB-stamped on insert AND auto-bumped to `now()` on
 every update) · `defaultWith "id" (\_ -> SqlValue)` (app-computed default, e.g. a
 UUID PK) · `generated [ "id", "created_at" ]` (columns `insert`/`update` omit so
-the DB fills them). `Store.create conn store` emits the dialect-correct DDL;
+the DB fills them). `defaultWith`, `defaultNow`, `touchOnUpdate`, `default*` and
+`generated` may also name a column the table has and the codec does not carry
+(an external column, such as a `created_at` the record leaves out): the name is
+used as written, the Store writes it as the builder says, and it never creates,
+adds or drops it, so a migration or a `Std.Db.Schema` table must own it. A
+builder problem (an unknown column in `unique` / `index` / `primaryKey`) fails
+every verb on the store; it is logged at ERROR level and `sky verify` reports it. `Store.create conn store` emits the dialect-correct DDL;
 `Store.upsert` is INSERT … ON CONFLICT DO UPDATE (idempotent config rows).
 A default must fit its column (`defaultBool` for a `Bool` field, an enum's
 default one of its names), and every `SqlValue` must be of its column's kind:
@@ -609,7 +615,7 @@ sky build src/Main.sky       # compile → sky-out/app
 sky run src/Main.sky [-- args] # build + run; args after -- reach System.args (--profile for runtime CPU/mem/hang profiling)
 sky check src/Main.sky       # type-check + go build (keeps no binary — but DOES compile)
 sky check --format json src/Main.sky   # NDJSON diagnostics on stdout, for CI and tools (also build / test / fmt --check)
-sky verify                   # one-shot project gate: fmt + check + build + tests
+sky verify                   # one-shot project gate: fmt + check + build + stores + tests
 sky test tests/MyTest.sky    # Sky.Test runner (SKY_TEST_JSON=<path> also writes a per-case JSON report)
 sky fuzz src/Main.sky [--target web:app]   # no-panic model fuzz of update; a Sky.Spa target adds the differential split oracle
 sky fmt src/Main.sky         # format (always run after editing .sky)
@@ -715,8 +721,9 @@ does NOT cache it by default; add a cache rule for `*.wasm`), or the origin
 re-sends it every visit.
 
 Run `sky verify` before you consider a change done — it runs fmt-clean +
-type-check + production build + every `tests/*.sky` suite, and exits non-zero on
-any failure.
+type-check + production build + a Store check (when the entry exposes `db`, no
+Store builder names an unknown column) + every `tests/*.sky` suite, and exits
+non-zero on any failure.
 
 **Test mode and mocks (offline scenario tests).** A project with a `.env.test`
 file runs `sky test` in test mode: outbound HTTP is mocked, a `[database]`

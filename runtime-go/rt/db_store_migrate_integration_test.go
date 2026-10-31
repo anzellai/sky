@@ -177,3 +177,7 @@ func TestStoreMigratePostgresEditedOpFileFails(t *testing.T) {
 func TestStoreMigratePostgresPendingV028FileAppliesWithTheNewRule(t *testing.T) {
 	assertPendingV028FileAppliesWithTheNewRule(t, openLedgerSchemaPostgres(t, "sky_mig_legacy_pending"))
 }
+
+func TestStoreMigratePostgresExternalColumnsCheckedNeverAdded(t *testing.T) {
+	assertExternalColumnsCheckedNeverAdded(t, openLedgerSchemaPostgres(t, "sky_mig_external_cols"), "ext_cols")
+}

@@ -443,6 +443,68 @@ fn verify_checks_a_library_package_and_runs_its_tests() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `sky verify` reports Store builder problems (v0.29.1). A builder that names
+/// an unknown column fails every verb on that store at run time, and an app
+/// that shows the Err as an empty list showed an empty page with no cause. The
+/// stores step builds `Store.dumpSchema db` and fails the gate on it. An
+/// external column (`defaultWith` on a column the codec does not carry) is
+/// not a problem.
+#[test]
+fn verify_reports_a_store_builder_problem() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = scratch("verifystores");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"stores\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    )
+    .unwrap();
+    let main = |builder: &str| {
+        format!(
+            "module Main exposing (db, main)\n\n\
+             import Sky.Core.Prelude exposing (..)\n\
+             import Std.Codec as Codec exposing (Codec)\n\
+             import Std.Db exposing (SqlValue(..))\n\
+             import Std.Db.Store as Store exposing (Store)\n\
+             import Std.Log exposing (println)\n\n\
+             type alias Lead =\n    {{ id : String\n    , email : String\n    }}\n\n\n\
+             leadCodec : Codec Lead\nleadCodec =\n    Codec.auto {{ id = \"\", email = \"\" }}\n\n\n\
+             leads : Store Lead\nleads =\n    Store.fromCodec \"leads\" leadCodec\n        |> Store.primaryKey \"id\"\n        |> {builder}\n\n\n\
+             db : Store.Project\ndb =\n    Store.project [ Store.toTable leads ]\n\n\n\
+             main =\n    println \"ok\"\n"
+        )
+    };
+    let write_fmt = |src: String| {
+        std::fs::write(dir.join("src/Main.sky"), src).unwrap();
+        let fmt = Command::new(SKY)
+            .args(["fmt", "src/Main.sky"])
+            .current_dir(&dir)
+            .output()
+            .expect("spawn sky fmt");
+        assert!(fmt.status.success(), "{fmt:?}");
+    };
+
+    write_fmt(main("Store.unique \"emial\""));
+    let (code, out) = run_verify(&dir);
+    assert_ne!(code, 0, "a Store builder problem fails verify:\n{out}");
+    assert!(out.contains("✗ stores"), "{out}");
+    assert!(
+        out.contains("Store.unique: unknown column \\\"emial\\\"")
+            || out.contains("Store.unique: unknown column \"emial\""),
+        "the problem is named:\n{out}"
+    );
+    assert!(out.contains("verify failed: stores"), "{out}");
+
+    // An external column is not a problem: the step passes.
+    write_fmt(main("Store.defaultWith \"created_at\" (\\_ -> SqlInt 0)"));
+    let (code, out) = run_verify(&dir);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("✓ stores   (1 table(s)"), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `sky test` printed a failing `Test.equal`'s values as Go structs
 /// (`expected {0 a <nil>} but got {0 b <nil>}`; a downstream project reported
 /// it). They print as Sky values, with the printer `Debug.toString` uses. A

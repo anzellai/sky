@@ -93,6 +93,10 @@ type migColumn struct {
 	// default. It is used only when a column is added (renderAddColumn),
 	// never in CREATE TABLE.
 	Zero *migDefault `json:"-"`
+	// External marks a Store column the codec does not carry (the `ext=`
+	// flag, Store.defaultWith & co.): the table must have it, and nothing
+	// creates, adds or drops it. Never in a migration file.
+	External bool `json:"-"`
 }
 
 // migOp is one op of a migration file. A `"v"` key, which an earlier v0.29
@@ -180,6 +184,12 @@ func migDefaultOf(defKind, defVal string) *migDefault {
 	return nil
 }
 
+// codecColIsExternal reports the `ext=<builder>` flag (codecColExternal).
+func codecColIsExternal(kind string) bool {
+	_, ok := codecColExternal(kind)
+	return ok
+}
+
 // codecColspecMigColumn reads one colspec entry (name, kind with flags) as a
 // migColumn. It is the ONE reading of a Store column that Db_autoMigrate and
 // Db_dumpProject share, so `Store.migrate` and `sky db migrate --gen` start
@@ -191,6 +201,7 @@ func codecColspecMigColumn(name, rawKind, pk string) migColumn {
 		Name: name, Type: base, Nullable: nullable, Pk: name == pk,
 		Autoinc: codecColIsAutoInc(rawKind), Unique: unique,
 		Default: migDefaultOf(defKind, defVal), Zero: codecColZero(rawKind),
+		External: codecColIsExternal(rawKind),
 	}
 }
 

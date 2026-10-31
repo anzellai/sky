@@ -199,9 +199,69 @@ func codecColspecSchemaMap(table string, colspecArg any, pk string) map[string]a
 	return map[string]any{"Name": table, "Columns": cols, "Indexes": []any{}}
 }
 
+// codecColExternal reports whether a colspec kind carries the `ext=<builder>`
+// flag Std.Db.Store adds to an external column (a column the table has and
+// the codec does not carry, named by Store.defaultWith, defaultNow,
+// touchOnUpdate or a default* builder), and returns the builder.
+func codecColExternal(kind string) (string, bool) {
+	for _, f := range codecColFlags(kind) {
+		if strings.HasPrefix(f, "ext=") {
+			return f[len("ext="):], true
+		}
+	}
+	return "", false
+}
+
+// codecExternalCol is one external column of a colspec and the builder that
+// named it.
+type codecExternalCol struct {
+	name    string
+	builder string
+}
+
+// codecSplitExternal splits a Store colspec into the columns the Store owns
+// and its external ones. An external column is never created, added or
+// dropped: the table must have it (codecCheckExternal).
+func codecSplitExternal(colspecArg any) ([]any, []codecExternalCol) {
+	own := []any{}
+	var ext []codecExternalCol
+	for _, cs := range AsList(colspecArg) {
+		t := AsTuple2(cs)
+		if b, ok := codecColExternal(AsString(t.V1)); ok {
+			ext = append(ext, codecExternalCol{name: AsString(t.V0), builder: b})
+			continue
+		}
+		own = append(own, cs)
+	}
+	return own, ext
+}
+
+// codecCheckExternal checks that the table exists and has every external
+// column. `current` is codecTableColumns of the table (empty when absent).
+func codecCheckExternal(driver, table string, current map[string]bool, ext []codecExternalCol) error {
+	for _, c := range ext {
+		if !codecValidIdent(c.name) {
+			return fmt.Errorf("invalid column identifier %q", c.name)
+		}
+		if len(current) == 0 {
+			return fmt.Errorf("table %s does not exist, and Store.%s names %s, a column the codec does not carry. "+
+				"The Store never creates a column outside its codec: create the table with %s in a migration "+
+				"or a Std.Db.Schema table, or add the field to the record", table, c.builder, c.name, c.name)
+		}
+		if !codecHasColumn(driver, current, c.name) {
+			return fmt.Errorf("table %s has no column %s, which Store.%s names. %s is not a codec column, "+
+				"so the Store never adds it: add it in a migration or a Std.Db.Schema table, "+
+				"or add the field to the record", table, c.name, c.builder, c.name)
+		}
+	}
+	return nil
+}
+
 // Db_createCols : Db -> String -> colspec -> String -> List IndexSpec -> Task Error ()
 // renders + executes the CREATE TABLE derived from a colspec, then one CREATE
-// INDEX per declared index (Store.index / uniqueOn / uniqueWhere).
+// INDEX per declared index (Store.index / uniqueOn / uniqueWhere). A colspec
+// with an external column creates no table: the table must exist and have
+// the column, else this is an Err naming it.
 func Db_createCols(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 	return func() any {
 		d, ok := connArg.(*SkyDb)
@@ -213,7 +273,20 @@ func Db_createCols(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 		if err != nil {
 			return Err[any, any](ErrInvalidInput("Store.create: " + err.Error()))
 		}
-		sm := codecColspecSchemaMap(table, colspecArg, AsString(pkArg))
+		own, ext := codecSplitExternal(colspecArg)
+		if len(ext) > 0 {
+			if !codecValidIdent(table) {
+				return Err[any, any](ErrInvalidInput("Store.create: invalid table name"))
+			}
+			current, err := codecTableColumns(d, table)
+			if err != nil {
+				return Err[any, any](ErrIo("Store.create: " + err.Error()))
+			}
+			if err := codecCheckExternal(d.driver, table, current, ext); err != nil {
+				return Err[any, any](ErrInvalidInput("Store.create: " + err.Error()))
+			}
+		}
+		sm := codecColspecSchemaMap(table, own, AsString(pkArg))
 		stmts := schemaRenderTable(d.driver, sm)
 		for _, ix := range indexes {
 			stmts = append(stmts, ix.ddl(table))
@@ -408,7 +481,9 @@ func Db_dialect(connArg any) any {
 // addColumn op: a Maybe field is nullable, any other field is NOT NULL
 // DEFAULT <declared default, else the zero of its kind> (user decision D1).
 // An existing column is never altered, and nothing is dropped, renamed or
-// retyped. Returns the statements it ran (empty when up to date).
+// retyped. An external column (the `ext=` flag) is checked and never added:
+// a missing table or column is an Err naming it. Returns the statements it
+// ran (empty when up to date).
 func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 	return func() any {
 		d, ok := connArg.(*SkyDb)
@@ -426,6 +501,12 @@ func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 		current, err := codecTableColumns(d, table)
 		if err != nil {
 			return Err[any, any](ErrIo("Store.migrate: " + err.Error()))
+		}
+		// An external column (Store.defaultWith & co. on a column the codec
+		// does not carry) is checked, never created or added.
+		colspecArg, ext := codecSplitExternal(colspecArg)
+		if err := codecCheckExternal(d.driver, table, current, ext); err != nil {
+			return Err[any, any](ErrInvalidInput("Store.migrate: " + err.Error()))
 		}
 		applied := []any{}
 		run := func(stmt string) error {
@@ -1087,6 +1168,9 @@ type jcol struct {
 	// Zero is a required blob or enum column's own field zero
 	// (migColumn.Zero). `--gen` makes it the DEFAULT of the addColumn op.
 	Zero *migDefault `json:"zero,omitempty"`
+	// External marks a column the table has and the codec does not carry
+	// (Store.defaultWith & co.): `--gen` never adds or drops it.
+	External bool `json:"external,omitempty"`
 }
 
 // codecDumpColumn is the schema-dump form of one colspec entry.
@@ -1095,6 +1179,7 @@ func codecDumpColumn(name, rawKind string) jcol {
 	return jcol{
 		Name: mc.Name, Kind: mc.Type, Nullable: mc.Nullable,
 		Autoinc: mc.Autoinc, Unique: mc.Unique, Default: mc.Default, Zero: mc.Zero,
+		External: mc.External,
 	}
 }
 

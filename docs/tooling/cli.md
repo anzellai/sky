@@ -465,7 +465,13 @@ pass its path) and it runs, in order, stopping non-zero on the first failure:
    `sky fmt`-clean.
 2. **check** — type-checks + `go build`s and emits the production binary
    (`sky check` ≡ `sky build` minus the artefact, so this one build covers both).
-3. **test** — every `tests/*.sky` suite passes.
+3. **stores** — when the entry module exposes `db` (a `Store.Project`),
+   a scratch build runs `Store.dumpSchema db` and fails on a Store builder
+   problem: a builder that names an unknown column, an invalid table name or
+   a primary key that is not a column. That problem makes every verb on the
+   store fail at run time, so the gate stops it before a deploy. A `db` that
+   is not a `Store.Project` is skipped with a note.
+4. **test** — every `tests/*.sky` suite passes.
 
 ```sh
 sky verify           # gate the current project

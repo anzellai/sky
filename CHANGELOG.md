@@ -11,6 +11,46 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.1 — Fixes for v0.29.0 (2026-10-31)
+
+A patch release for v0.29.0. It restores `Std.Db.Store` builders on a column
+the codec does not carry, and makes a Store builder problem loud.
+
+### Fixed
+
+- **`Store.defaultWith` on a column the codec does not carry works again
+  (a v0.29.0 regression).** v0.29.0 refused it with `Store.defaultWith:
+  unknown column`, so every verb on the store failed, and an app that showed
+  the `Err` as an empty list showed an empty page. In v0.28 the builder wrote
+  the column on every insert. Such a column is now an external column: one
+  the table has and the codec does not carry, such as a `created_at` the
+  record leaves out.
+  - `defaultWith` writes it on `insert`, `insertMany`, `upsert` and
+    `insertReturning`. `defaultNow` stamps it on insert, and `touchOnUpdate`
+    also bumps it on `update` and `updateWhere`. `defaultText`,
+    `defaultInt`, `defaultBool`, `defaultFloat` and `generated` accept it
+    and leave it to the database default.
+  - The name is used as written (no snake_case mapping) and must be a column
+    name. On PostgreSQL write it in lower case.
+  - The Store never creates, adds or drops an external column. `Store.migrate`
+    and `sky db push` check that the table has it, and a missing table or
+    column is an `Err` naming the column and the builder. `Store.create` of a
+    table that does not exist is an `Err`. `sky db migrate --gen` writes no
+    op for it: the schema dump marks it `"external": true`.
+  - `primaryKey`, `serial`, `unique`, `index`, `uniqueOn` and `uniqueWhere`
+    still take codec columns only, so a typo in them stays an error.
+- **A Store builder problem is loud.** A builder that names an unknown column,
+  an invalid table name or a primary key that is not a column fails every
+  verb on the store. Each problem is now logged at ERROR level once per table
+  and problem, shown in the Sky Console's logs, and counted in the metric
+  `sky_store_problems_total{table}` on every refused verb.
+- **`sky verify` has a `stores` step.** When the entry module exposes `db`
+  (a `Store.Project`), it runs `Store.dumpSchema db` in a scratch build and
+  fails on a Store builder problem, before a deploy.
+- `docs/migration/v0.29.md` said a `defaultWith` on an unknown column "was
+  ignored" in v0.28. It was not: it wrote the column. The page now says so,
+  and has an "External columns (v0.29.1)" section.
+
 ## v0.29.0 — Real-world capabilities (2026-10-29)
 
 ### Added

@@ -14543,7 +14543,26 @@ fn build_temp_db_entry(
     filename: &str,
     code: &str,
 ) -> Option<(PathBuf, PathBuf, DbScratch)> {
-    let file = Path::new("src/Main.sky");
+    build_temp_db_entry_at(
+        Path::new("src/Main.sky"),
+        label,
+        module,
+        filename,
+        code,
+        false,
+    )
+}
+
+/// [`build_temp_db_entry`] for the project of `file` (its entry module).
+/// With `quiet`, a failed build prints nothing: the caller reports it.
+fn build_temp_db_entry_at(
+    file: &Path,
+    label: &str,
+    module: &str,
+    filename: &str,
+    code: &str,
+    quiet: bool,
+) -> Option<(PathBuf, PathBuf, DbScratch)> {
     let (repo_root, project_dir) = resolve(file)?;
     if is_compiler_repo_root(&project_dir) {
         eprintln!("{label}: refusing to run from the Sky compiler repo root");
@@ -14575,10 +14594,12 @@ fn build_temp_db_entry(
     };
     let report = build_project(&opts, &[scratch.clone()], Some(module));
     if !(report.emitted && report.go_build_ok) {
-        eprintln!(
-            "{label}: build failed\n{}\n{}",
-            report.note, report.go_build_stderr
-        );
+        if !quiet {
+            eprintln!(
+                "{label}: build failed\n{}\n{}",
+                report.note, report.go_build_stderr
+            );
+        }
         let _ = std::fs::remove_dir_all(&scratch);
         return None;
     }
@@ -16629,7 +16650,8 @@ fn cmd_verify(args: &[String]) -> ExitCode {
              In a project (a dir with sky.toml), run the full pre-release gate:\n  \
              1. fmt     — every .sky file is already `sky fmt`-clean\n  \
              2. check   — type-checks + `go build`s (the production build)\n  \
-             3. test    — every tests/*.sky suite passes\n\n\
+             3. stores  — when the entry exposes `db`, no Store builder problem\n  \
+             4. test    — every tests/*.sky suite passes\n\n\
              In the compiler repo, build AND run every example.\n\
              Non-zero exit if any phase fails."
         );
@@ -16761,7 +16783,7 @@ fn verify_project_gate(dir: &Path, out_override: Option<String>) -> ExitCode {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("project");
-    println!("Verifying {name} — fmt, type-check, build, tests\n");
+    println!("Verifying {name} — fmt, type-check, build, stores, tests\n");
 
     let Some(repo_root) = assets_root_for(dir) else {
         eprintln!("  ✗ could not locate the Sky stdlib + runtime");
@@ -16835,10 +16857,128 @@ fn verify_project_gate(dir: &Path, out_override: Option<String>) -> ExitCode {
         failed.push("build");
     }
 
-    // 3. tests — run every tests/*.sky suite (only when a build succeeded, so a
+    // 3. stores — a Store builder problem fails every verb on that store at
+    //    run time (an app that shows the Err as [] shows an empty page), so
+    //    it fails the gate here, before a deploy.
+    run_verify_stores(dir, &mut failed);
+
+    // 4. tests — run every tests/*.sky suite (only when a build succeeded, so a
     //    type error isn't reported twice).
     run_verify_tests(dir, &out_dir_name, &mut failed);
     verify_verdict(&failed)
+}
+
+/// Whether the module header of `src` exposes `name`: listed in its
+/// `exposing ( … )`, or `exposing (..)` with a top-level `name` declaration.
+fn module_exposes(src: &str, name: &str) -> bool {
+    let Some(start) = src.find("module ") else {
+        return false;
+    };
+    let header = &src[start..];
+    let Some(open) = header.find("exposing") else {
+        return false;
+    };
+    let rest = &header[open + "exposing".len()..];
+    let Some(lp) = rest.find('(') else {
+        return false;
+    };
+    let mut depth = 0usize;
+    let mut end = None;
+    for (i, c) in rest[lp..].char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(lp + i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(end) = end else {
+        return false;
+    };
+    let list = &rest[lp + 1..end];
+    if list.trim() == ".." {
+        return src.lines().any(|l| {
+            l.strip_prefix(name)
+                .map(|r| r.starts_with(" :") || r.starts_with(" ="))
+                .unwrap_or(false)
+        });
+    }
+    list.split(',').any(|item| item.trim() == name)
+}
+
+/// `sky verify`'s stores step. When the entry module exposes `db`, a DB-free
+/// entry runs `Store.dumpSchema db`, which refuses a store with a builder
+/// problem (a builder naming an unknown column, an invalid table name, a
+/// primary key that is not a column), the same check every Store verb runs
+/// first. A `db` that is not a `Store.Project` is skipped with a note.
+fn run_verify_stores(dir: &Path, failed: &mut Vec<&str>) {
+    let entry = dir.join(toml_entry(dir).unwrap_or_else(|| "src/Main.sky".into()));
+    let Ok(src) = std::fs::read_to_string(&entry) else {
+        println!("  – stores   (no entry module)");
+        return;
+    };
+    if !module_exposes(&src, "db") {
+        println!("  – stores   (the entry module does not expose `db`)");
+        return;
+    }
+    if failed.contains(&"check") || failed.contains(&"build") {
+        println!("  – stores   (skipped — fix the check failure first)");
+        return;
+    }
+    let module = entry_module_name(&entry).unwrap_or_else(|| "Main".into());
+    let code = format!(
+        "module SkyVerifyStores exposing (main)\n\nimport {module} exposing (db)\nimport Std.Db.Store as Store\n\nmain =\n    Store.dumpSchema db\n"
+    );
+    let Some((bin, project_dir, _scratch)) = build_temp_db_entry_at(
+        &entry,
+        "sky verify: stores",
+        "SkyVerifyStores",
+        "_skyverifystores.sky",
+        &code,
+        true,
+    ) else {
+        println!("  – stores   (`db` is not a Store.Project)");
+        return;
+    };
+    let out = Command::new(&bin)
+        .current_dir(&project_dir)
+        .stdin(std::process::Stdio::null())
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            let tables = extract_between(&stdout, "SKY_SCHEMA_BEGIN", "SKY_SCHEMA_END")
+                .and_then(|j| serde_json::from_str::<db_migrate::Schema>(j.trim()).ok())
+                .map(|s| s.tables.len())
+                .unwrap_or(0);
+            println!("  ✓ stores   ({tables} table(s), no Store builder problem)");
+        }
+        Ok(o) => {
+            let mut text = String::from_utf8_lossy(&o.stderr).into_owned();
+            text.push_str(&String::from_utf8_lossy(&o.stdout));
+            // The failed Task's Err line (`… ERROR InvalidInput: Store "t": …`),
+            // else the first line naming a Store.
+            let problem = text
+                .lines()
+                .find_map(|l| l.split_once("InvalidInput: ").map(|(_, m)| m))
+                .or_else(|| text.lines().find(|l| l.contains("Store")))
+                .unwrap_or("the schema dump failed")
+                .trim()
+                .to_string();
+            println!("  ✗ stores   {problem}");
+            println!("             every verb on that store fails at run time until it is fixed");
+            failed.push("stores");
+        }
+        Err(e) => {
+            println!("  ✗ stores   could not run the schema dump: {e}");
+            failed.push("stores");
+        }
+    }
 }
 
 /// `sky verify`'s test phase: every `tests/*.sky` suite, skipped when the

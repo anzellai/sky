@@ -32,6 +32,13 @@ pub struct SchemaColumn {
     /// to an existing table (never in CREATE TABLE).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zero: Option<Value>,
+    /// A column the table has and the record codec does not carry, named by
+    /// `Store.defaultWith` / `defaultNow` / `touchOnUpdate` / a `default*`
+    /// builder (the dump's `"external": true`). The Store never creates,
+    /// adds or drops it, so the diff skips it on both sides: `--gen` never
+    /// writes an op for it. A Std.Db.Schema table or a migration owns it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub external: bool,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -252,10 +259,21 @@ pub fn diff(target: &Schema, snapshot: &Schema) -> Diff {
     for t in &target.tables {
         match snapshot.table(&t.name) {
             None => {
-                // New table.
+                // New table. An external column is not the Store's to create:
+                // the table must get it from a Std.Db.Schema table or a
+                // hand-written migration, and the warning says so.
+                for c in t.columns.iter().filter(|c| c.external) {
+                    warnings.push(format!(
+                        "column {}.{} is not a record field (an external column of a Store builder): \
+                         the new table is created without it, and every insert fails until a \
+                         migration or a Std.Db.Schema table adds it",
+                        t.name, c.name
+                    ));
+                }
                 let columns: Vec<Value> = t
                     .columns
                     .iter()
+                    .filter(|c| !c.external)
                     .map(|c| {
                         // Carry the column-level constraints through to the
                         // createTable op so the applier renders serial
@@ -285,9 +303,11 @@ pub fn diff(target: &Schema, snapshot: &Schema) -> Diff {
                 }
             }
             Some(prev) => {
-                // New columns.
-                for c in &t.columns {
+                // New columns. An external column (either side) is never
+                // added, retyped or dropped.
+                for c in t.columns.iter().filter(|c| !c.external) {
                     match prev.column(&c.name) {
+                        Some(pc) if pc.external => {}
                         None => ops.extend(add_column_ops(&t.name, c, &mut warnings)),
                         Some(pc) if pc.kind != c.kind => {
                             // Type change → destructive.
@@ -319,7 +339,7 @@ pub fn diff(target: &Schema, snapshot: &Schema) -> Diff {
                     }
                 }
                 // Dropped columns (in snapshot, not in target) → destructive.
-                for pc in &prev.columns {
+                for pc in prev.columns.iter().filter(|c| !c.external) {
                     if t.column(&pc.name).is_none() {
                         destructive.push(json!({
                             "kind": "dropColumn", "table": t.name, "column": pc.name,
@@ -546,6 +566,7 @@ mod tests {
                 unique: false,
                 default: None,
                 zero: None,
+                external: false,
             }],
         };
         let target = Schema {
@@ -577,6 +598,7 @@ mod tests {
             unique: false,
             default: None,
             zero: None,
+            external: false,
         }
     }
 
@@ -596,6 +618,7 @@ mod tests {
             unique,
             default,
             zero: None,
+            external: false,
         }
     }
 
@@ -1111,5 +1134,85 @@ mod tests {
             },
         );
         assert!(same.is_empty());
+    }
+
+    /// External columns (v0.29.1): a column the table has and the record
+    /// codec does not carry (`Store.defaultWith "created_at"` on a codec with
+    /// no createdAt). `--gen` never adds, retypes or drops it, whichever side
+    /// lists it, and `external` is not serialised when false, so a snapshot
+    /// with no external column does not change.
+    #[test]
+    fn external_columns_never_enter_a_migration() {
+        let ext = |name: &str, kind: &str| SchemaColumn {
+            external: true,
+            ..col(name, kind, false)
+        };
+        let table = |columns: Vec<SchemaColumn>| SchemaTable {
+            name: "enquiries".into(),
+            pk: "id".into(),
+            columns,
+            indexes: vec![],
+        };
+        let plain = col("id", "text", false);
+        // New table: created without the external column, with a warning.
+        let fresh = diff(
+            &Schema {
+                tables: vec![table(vec![plain.clone(), ext("created_at", "")])],
+            },
+            &Schema::default(),
+        );
+        assert_eq!(fresh.ops.len(), 1, "{:?}", fresh.ops);
+        assert!(
+            !fresh.ops[0].to_string().contains("created_at"),
+            "{:?}",
+            fresh.ops
+        );
+        assert!(
+            fresh
+                .warnings
+                .iter()
+                .any(|w| w.contains("enquiries.created_at")),
+            "{:?}",
+            fresh.warnings
+        );
+        // Existing table: the external column is never added; a column that
+        // became external, or an external one that left, is never dropped;
+        // one that became a codec column is never added either.
+        for (target, snap) in [
+            (
+                vec![plain.clone(), ext("created_at", "")],
+                vec![plain.clone()],
+            ),
+            (
+                vec![plain.clone(), ext("created_at", "text")],
+                vec![plain.clone(), col("created_at", "int", false)],
+            ),
+            (
+                vec![plain.clone()],
+                vec![plain.clone(), ext("created_at", "")],
+            ),
+            (
+                vec![plain.clone(), col("created_at", "int", false)],
+                vec![plain.clone(), ext("created_at", "")],
+            ),
+        ] {
+            let d = diff(
+                &Schema {
+                    tables: vec![table(target)],
+                },
+                &Schema {
+                    tables: vec![table(snap)],
+                },
+            );
+            assert!(d.ops.is_empty(), "{:?}", d.ops);
+            assert!(d.destructive.is_empty(), "{:?}", d.destructive);
+        }
+        // Serialisation: `external` only when true.
+        let plain_json = serde_json::to_string(&plain).unwrap();
+        assert!(!plain_json.contains("external"), "{plain_json}");
+        let ext_json = serde_json::to_string(&ext("created_at", "")).unwrap();
+        assert!(ext_json.contains("\"external\":true"), "{ext_json}");
+        let back: SchemaColumn = serde_json::from_str(&ext_json).unwrap();
+        assert!(back.external);
     }
 }

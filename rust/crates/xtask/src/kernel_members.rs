@@ -125,6 +125,9 @@ fn internal_runtime_bases(module: &str) -> &'static [&'static str] {
             "resetTables",
             "snakeName",
             "sqlOfValue",
+            // v0.29.1: Std.Db.Store reports a builder problem (ERROR log once,
+            // Console, sky_store_problems_total) before a verb returns its Err.
+            "storeProblem",
             "updateByPk",
             "updateWhere",
             "upsertObject",

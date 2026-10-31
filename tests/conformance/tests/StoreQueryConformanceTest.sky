@@ -5121,6 +5121,261 @@ kindTests db =
                       |> Result.map (List.map (\e -> ( e.id, e.kind )))))
     ]
 
+-- ── External columns (v0.29.1) ───────────────────────────────────────────────
+-- A column the table has and the codec does not carry. v0.29.0 refused
+-- `defaultWith` on it ("unknown column"), so every verb on the store failed
+-- and an app that turned the Err into [] showed an empty page. The table is
+-- made by hand here, as a Std.Db.Schema table or a migration would make it.
+type alias Lead =
+    { id : String
+    , name : String
+    }
+
+
+leadCodec : Codec Lead
+leadCodec =
+    Codec.auto { id = "", name = "" }
+
+
+leadStamp : Int
+leadStamp =
+    1700000000000
+
+
+-- The production shape: `Codec.auto` with no createdAt, a `created_at` column.
+extLeads : Store Lead
+extLeads =
+    Store.fromCodec "sqc_ext_leads" leadCodec |> Store.primaryKey "id"
+        |> Store.defaultWith "created_at" (\_ -> SqlInt leadStamp)
+
+
+extNowLeads : Store Lead
+extNowLeads =
+    Store.fromCodec "sqc_ext_now" leadCodec |> Store.primaryKey "id"
+        |> Store.defaultNow "stamp"
+        |> Store.touchOnUpdate "touched"
+
+
+extDefaultLeads : Store Lead
+extDefaultLeads =
+    Store.fromCodec "sqc_ext_default" leadCodec |> Store.primaryKey "id"
+        |> Store.defaultInt "score" 7
+        |> Store.generated [ "score" ]
+
+
+extTypoLeads : Store Lead
+extTypoLeads =
+    Store.fromCodec "sqc_ext_leads" leadCodec |> Store.primaryKey "id"
+        |> Store.defaultWith "created_at" (\_ -> SqlInt leadStamp)
+        |> Store.unique "emial"
+
+
+extSpaceLeads : Store Lead
+extSpaceLeads =
+    Store.fromCodec "sqc_ext_leads" leadCodec |> Store.primaryKey "id"
+        |> Store.defaultWith "created at" (\_ -> SqlInt leadStamp)
+
+
+lead : String -> String -> Lead
+lead id name =
+    { id = id, name = name }
+
+
+-- Drop the table and make it with `ddl`, as a migration would.
+remake : Db -> String -> String -> Task Error ()
+remake db table ddl =
+    drop db table |> Task.andThen (\_ -> unit (Db.exec db ddl []))
+
+
+-- The text of one column of each row, ordered by id.
+columnTexts : Db -> String -> String -> Task Error (List String)
+columnTexts db table col =
+    Db.query db ("SELECT " ++ col ++ " FROM " ++ table ++ " ORDER BY id") []
+        |> Task.map (List.map (\row -> Maybe.withDefault "" (Dict.get col row)))
+
+
+leadsTable : String
+leadsTable =
+    "CREATE TABLE sqc_ext_leads (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at BIGINT NOT NULL)"
+
+
+externalTests : Db -> List Test
+externalTests db =
+    [ Test.test
+          "external column: defaultWith on a column the codec does not carry, insert, all and findBy succeed and the column is stamped"
+          (\_ ->
+              Test.equal
+                  (Ok ( ( [ "e1" ], Just "e1" ), [ String.fromInt leadStamp ] ))
+                  (Task.run
+                      (remake db "sqc_ext_leads" leadsTable
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.insert db extLeads (lead "e1" "Ada"))
+                          |> Task.andThen
+                                 (\_ ->
+                                     Task.map2
+                                         (\all found ->
+                                             ( List.map .id all
+                                             , Maybe.map .id found
+                                             ))
+                                         (Store.all db extLeads)
+                                         (Store.findBy db extLeads "id" "e1"))
+                          |> Task.andThen
+                                 (\got ->
+                                     Task.map
+                                         (\stamps -> ( got, stamps ))
+                                         (columnTexts
+                                             db
+                                             "sqc_ext_leads"
+                                             "created_at")))))
+    , Test.test
+          "external column: insertMany and upsert write the defaultWith value, and an upsert that updates keeps it"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ String.fromInt leadStamp
+                      , String.fromInt leadStamp
+                      , String.fromInt leadStamp
+                      ])
+                  (Task.run
+                      (Task.sequence
+                          [ remake db "sqc_ext_leads" leadsTable
+                          , unit
+                                (Store.insertMany
+                                    db
+                                    extLeads
+                                    [ lead "e1" "Ada", lead "e2" "Bo" ])
+                          , unit (Store.upsert db extLeads (lead "e3" "Cy"))
+                          , unit (Store.upsert db extLeads (lead "e1" "Ada L"))
+                          ]
+                          |> Task.andThen
+                                 (\_ ->
+                                     columnTexts db "sqc_ext_leads" "created_at"))))
+    , Test.test
+          "external column: defaultNow stamps it on insert and touchOnUpdate bumps it on update"
+          (\_ ->
+              Test.equal
+                  (Ok ( ( True, True ), ( True, "Ada L" ) ))
+                  (Task.run
+                      (Task.sequence
+                          [ remake
+                                db
+                                "sqc_ext_now"
+                                "CREATE TABLE sqc_ext_now (id TEXT PRIMARY KEY, name TEXT NOT NULL, stamp TEXT DEFAULT CURRENT_TIMESTAMP, touched TEXT DEFAULT CURRENT_TIMESTAMP)"
+                          , unit (Store.insert db extNowLeads (lead "n1" "Ada"))
+                          , unit
+                                (Db.exec
+                                    db
+                                    "UPDATE sqc_ext_now SET touched = '2000-01-01 00:00:00'"
+                                    [])
+                          , unit
+                                (Store.update db extNowLeads (lead "n1" "Ada L"))
+                          ]
+                          |> Task.andThen
+                                 (\_ ->
+                                     Task.map3
+                                         (\stamps touched names ->
+                                             ( ( stamps /= [ "" ]
+                                               , stamps /= []
+                                               )
+                                             , ( touched
+                                                     /= [ "2000-01-01 00:00:00"
+                                                        ]
+                                                     && touched /= [ "" ]
+                                               , String.join "," names
+                                               )
+                                             ))
+                                         (columnTexts db "sqc_ext_now" "stamp")
+                                         (columnTexts db "sqc_ext_now" "touched")
+                                         (columnTexts db "sqc_ext_now" "name")))))
+    , Test.test
+          "external column: defaultInt and generated are accepted, and the database default applies"
+          (\_ ->
+              Test.equal
+                  (Ok [ "7" ])
+                  (Task.run
+                      (remake
+                          db
+                          "sqc_ext_default"
+                          "CREATE TABLE sqc_ext_default (id TEXT PRIMARY KEY, name TEXT NOT NULL, score BIGINT NOT NULL DEFAULT 7)"
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.insert
+                                         db
+                                         extDefaultLeads
+                                         (lead "d1" "Ada"))
+                          |> Task.andThen
+                                 (\_ -> columnTexts db "sqc_ext_default" "score"))))
+    , Test.test
+          "external column: migrate of a table without it is an Err naming the column and the builder, and adds nothing"
+          (\_ ->
+              Test.equal
+                  ( True, True )
+                  ( errHas
+                        "has no column created_at, which Store.defaultWith names"
+                        (Task.run
+                            (remake
+                                db
+                                "sqc_ext_leads"
+                                "CREATE TABLE sqc_ext_leads (id TEXT PRIMARY KEY, name TEXT NOT NULL)"
+                                |> Task.andThen
+                                       (\_ -> Store.migrate db extLeads)))
+                  , isErr
+                        (Task.run
+                            (Db.query
+                                db
+                                "SELECT created_at FROM sqc_ext_leads"
+                                []))
+                  ))
+    , Test.test
+          "external column: create of a new table is an Err naming the column, and creates nothing"
+          (\_ ->
+              Test.equal
+                  ( True, True )
+                  ( errHas
+                        "does not exist, and Store.defaultWith names created_at"
+                        (Task.run
+                            (drop db "sqc_ext_leads"
+                                |> Task.andThen (\_ -> Store.create db extLeads)))
+                  , isErr
+                        (Task.run (Db.query db "SELECT * FROM sqc_ext_leads" []))
+                  ))
+    , Test.test
+          "external column: pushProject checks it and never adds it"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "has no column created_at, which Store.defaultWith names"
+                      (Task.run
+                          (remake
+                              db
+                              "sqc_ext_leads"
+                              "CREATE TABLE sqc_ext_leads (id TEXT PRIMARY KEY, name TEXT NOT NULL)"
+                              |> Task.andThen
+                                     (\_ ->
+                                         Store.pushProject
+                                             db
+                                             (Store.project
+                                                 [ Store.toTable extLeads ]))))))
+    , Test.test
+          "external column: unique on a name the codec does not carry is still refused"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "Store.unique: unknown column \"emial\""
+                      (Task.run (Store.all db extTypoLeads))))
+    , Test.test
+          "external column: defaultWith on a name that is not a column name is still refused"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "Store.defaultWith: unknown column \"created at\""
+                      (Task.run (Store.all db extSpaceLeads))))
+    ]
+
 
 tests : List Test
 tests =
@@ -5143,6 +5398,7 @@ tests =
                 ++ writeTests db
                 ++ kindTests db
                 ++ nestedMaybeTests db
+                ++ externalTests db
 
 
 main =

@@ -45,7 +45,12 @@
 -- Every verb checks the store before any statement: the table name and every
 -- column name follow `[A-Za-z_][A-Za-z0-9_]*` (at most 63 bytes), the primary
 -- key is empty or a codec column, and a builder that named an unknown column
--- makes the first verb fail with that name. Values always bind as parameters.
+-- makes every verb fail with that name. That problem is logged at ERROR level
+-- once, shown in the Sky Console and counted in `sky_store_problems_total`,
+-- and `sky verify` reports it before a deploy. `defaultWith`, `defaultNow`,
+-- `touchOnUpdate`, the `default*` builders and `generated` may also name an
+-- external column, one the table has and the codec does not carry (see
+-- `defaultWith`). Values always bind as parameters.
 -- Every `SqlValue` is checked against its column's kind (and a written one
 -- against the field's codec) before any statement, every projection against
 -- the source's codec, and a stored value that does not read as its column's
@@ -216,6 +221,11 @@ import Std.Db as Db exposing (SqlValue(..))
 type Store a
     = Store (StoreRec a)
 
+-- `extras` holds the external columns: a column the table has and the codec
+-- does not carry, named by `defaultWith`, `defaultNow`, `touchOnUpdate`, a
+-- `default*` builder or `generated`. Each is ( column, colspec kind ), and
+-- the kind carries the `ext=<builder>` flag. The Store writes them as the
+-- builders say, and never creates, adds or drops them (`builderColOrExtra`).
 type alias StoreRec a =
     { name : String
     , codec : Codec a
@@ -223,6 +233,7 @@ type alias StoreRec a =
     , cols : List ( String, String )
     , generated : List String
     , computed : List ( String, () -> SqlValue )
+    , extras : List ( String, String )
     , problems : List String
     , indexes : List IndexSpec
     , nodes : List ( String, Value )
@@ -264,6 +275,7 @@ fromCodec name codec =
             , cols = cols
             , generated = []
             , computed = []
+            , extras = []
             , nodes = schemaFields codec cols
             , indexes = []
             , problems =
@@ -370,47 +382,54 @@ unique name store =
 -- added holds a constant default there (SQLite refuses `datetime('now')` in
 -- ADD COLUMN). The column must be text (a `String` or `Maybe String` field):
 -- on any other kind the first verb on the store fails.
+--
+-- The column may also be one the codec does not carry, such as a
+-- `created_at` the record leaves out: an external column (see `defaultWith`).
+-- It is written as above, and the table must have it.
 defaultNow : String -> Store a -> Store a
 defaultNow name store =
+    nowBuilder "defaultNow" "|dnow" name store
+
+
+-- `defaultNow` and `touchOnUpdate`: the flags go on the codec column, which
+-- must be text, or on an external column, declared text.
+nowBuilder : String -> String -> String -> Store a -> Store a
+nowBuilder verb flags name store =
     let
         s = storeRec store
-        ( col, problems ) =
-            textOnly
-                "defaultNow"
-                name
-                s.cols
-                (builderCol "defaultNow" name s.cols s.problems)
+        ( col, external, resolved ) =
+            builderColOrExtra verb name s.cols s.problems
     in
-        Store
-            { s
-                | cols = appendKind col "|dnow" s.cols
-                , generated = col :: s.generated
-                , problems = problems
-            }
+        if external then
+            Store
+                { s
+                    | extras = addExtra verb col "text" flags s.extras
+                    , generated = col :: s.generated
+                    , problems = resolved
+                }
+
+        else
+            let
+                ( _, problems ) =
+                    textOnly verb name s.cols ( col, resolved )
+            in
+                Store
+                    { s
+                        | cols = appendKind col flags s.cols
+                        , generated = col :: s.generated
+                        , problems = problems
+                    }
 
 
 -- | Mark a timestamp column that the DB stamps on INSERT (`defaultNow`) AND that
 -- `Store.update`/`updateWhere` auto-bump to the current time on EVERY update — the
 -- classic `updated_at`: `Store.touchOnUpdate "updated_at"`. No read-modify-write and
 -- no raw SQL: `Store.update` sets it to `now()` for you (a SQL DEFAULT alone only
--- fires on INSERT).
+-- fires on INSERT). The column may be one the codec does not carry (an
+-- external column, see `defaultWith`): it is stamped and bumped the same way.
 touchOnUpdate : String -> Store a -> Store a
 touchOnUpdate name store =
-    let
-        s = storeRec store
-        ( col, problems ) =
-            textOnly
-                "touchOnUpdate"
-                name
-                s.cols
-                (builderCol "touchOnUpdate" name s.cols s.problems)
-    in
-        Store
-            { s
-                | cols = appendKind col "|dnow" (appendKind col "|touch" s.cols)
-                , generated = col :: s.generated
-                , problems = problems
-            }
+    nowBuilder "touchOnUpdate" "|touch|dnow" name store
 
 
 -- | Give a column a `DEFAULT` text value in the generated DDL:
@@ -492,7 +511,45 @@ withDefault : String -> String -> String -> (StoreRec a -> String -> String -> M
 withDefault verb name flag check store =
     let
         s = storeRec store
-        ( col, problems ) = builderCol verb name s.cols s.problems
+        ( col, external, problems ) =
+            builderColOrExtra verb name s.cols s.problems
+    in
+        if external then
+            Store
+                { s
+                    | extras =
+                        addExtra
+                            verb
+                            col
+                            (defaultBase verb)
+                            ("|" ++ flag)
+                            s.extras
+                    , problems = problems
+                }
+
+        else
+            withCodecDefault verb name col flag check problems s
+
+
+-- The declared kind of an external column a `default*` builder names.
+defaultBase : String -> String
+defaultBase verb =
+    if verb == "defaultInt" then
+        "int"
+
+    else if verb == "defaultBool" then
+        "bool"
+
+    else if verb == "defaultFloat" then
+        "real"
+
+    else
+        "text"
+
+
+withCodecDefault : String -> String -> String -> String -> (StoreRec a -> String -> String -> Maybe String) -> List String -> StoreRec a -> Store a
+withCodecDefault verb name col flag check problems s =
+    let
         checked =
             case lookupKind col s.cols of
 
@@ -948,16 +1005,38 @@ sqlLiterals vs =
 -- unit-arg `Task.run` idiom inside for effectful generators like `Uuid.v4`). The
 -- column is marked `generated`, so `insert` ignores the record's value and writes
 -- the computed one instead.
+--
+-- The column may be one the codec does not carry, an external column: a
+-- `created_at` the table has and the record leaves out, stamped with
+-- `Store.defaultWith "created_at" (\_ -> SqlInt (nowMs ()))`. A name that is
+-- not a codec field or column is taken as written (no snake_case mapping),
+-- and must be a column name (`[A-Za-z_][A-Za-z0-9_]*`). Every insert writes
+-- the value (`copyInto` does not: it leaves the column to the database), and
+-- nothing reads it back into the record. The Store never
+-- creates, adds or drops an external column: `create` and `migrate` fail
+-- when the table does not have it, so declare it in a `Std.Db.Schema` table
+-- or a migration. `defaultNow`, `touchOnUpdate`, the `default*` builders and
+-- `generated` take an external column too. `primaryKey`, `serial`,
+-- `unique`, `index`, `uniqueOn` and `uniqueWhere` take only codec columns.
+-- On PostgreSQL an unquoted name folds to lower case, so name an external
+-- column in lower case.
 defaultWith : String -> (() -> SqlValue) -> Store a -> Store a
 defaultWith name gen store =
     let
         s = storeRec store
-        ( col, problems ) = builderCol "defaultWith" name s.cols s.problems
+        ( col, external, problems ) =
+            builderColOrExtra "defaultWith" name s.cols s.problems
     in
         Store
             { s
                 | computed = ( col, gen ) :: s.computed
                 , generated = col :: s.generated
+                , extras =
+                    if external then
+                        addExtra "defaultWith" col "" "" s.extras
+
+                    else
+                        s.extras
                 , problems = problems
             }
 
@@ -965,13 +1044,97 @@ defaultWith name gen store =
 -- | Mark columns the DATABASE fills — a `serial` PK, a `DEFAULT`/`defaultNow`
 -- timestamp — so `insert` and `update` OMIT them (the DB assigns/keeps them):
 -- `Store.fromCodec "notes" codec |> Store.primaryKey "id" |> Store.generated [ "id", "created_at" ]`.
+-- A name the codec does not carry (an external column, see `defaultWith`) is
+-- accepted and changes nothing: the Store never writes that column.
 generated : List String -> Store a -> Store a
 generated names store =
     let
         s = storeRec store
-        ( cols, problems ) = builderCols "generated" names s.cols s.problems
+        ( cols, problems ) = generatedCols names s.cols s.problems
     in
         Store { s | generated = cols, problems = problems }
+
+
+generatedCols : List String -> List ( String, String ) -> List String -> ( List String, List String )
+generatedCols names cols problems =
+    case names of
+
+        [] ->
+            ( [], problems )
+
+        n :: rest ->
+            let
+                ( col, _, p1 ) =
+                    builderColOrExtra "generated" n cols problems
+                ( more, p2 ) = generatedCols rest cols p1
+            in
+                ( col :: more, p2 )
+
+
+-- | Resolve a builder's column name that may name an external column: a
+-- codec column resolves as `builderCol` resolves it (field or snake name).
+-- Any other name that is a column name is an external column, taken as
+-- written: the result is ( name, True, problems ). A name that is not a
+-- column name is recorded as a problem, as `builderCol` records it.
+builderColOrExtra : String -> String -> List ( String, String ) -> List String -> ( String, Bool, List String )
+builderColOrExtra verb name cols problems =
+    let
+        col = resolveCol cols name
+    in
+        case lookupKind col cols of
+
+            Just _ ->
+                ( col, False, problems )
+
+            Nothing ->
+                if isIdent name then
+                    ( name, True, problems )
+
+                else
+                    let
+                        ( bad, recorded ) =
+                            builderCol verb name cols problems
+                    in
+                        ( bad, False, recorded )
+
+
+-- Add flags to an external column, or add the column with its declared base
+-- kind and the `ext=<builder>` flag of the builder that named it first. A
+-- column named before with no kind (`defaultWith`) takes the base kind.
+addExtra : String -> String -> String -> String -> List ( String, String ) -> List ( String, String )
+addExtra verb col base flags extras =
+    case extras of
+
+        [] ->
+            [ ( col, base ++ "|ext=" ++ verb ++ flags ) ]
+
+        ( c, k ) :: rest ->
+            if c == col then
+                let
+                    kb = beforeFlags k
+                    flagsBefore = String.dropLeft (String.length kb) k
+                in
+                    ( c
+                    , (if kb == "" then
+                          base
+
+                      else
+                          kb)
+                          ++ flagsBefore
+                          ++ flags
+                    )
+                        :: rest
+
+            else
+                ( c, k ) :: addExtra verb col base flags rest
+
+
+-- The codec columns and the external ones (`extras`): the INSERT and UPDATE
+-- column lists read both, so an external `defaultNow` / `touchOnUpdate`
+-- column is stamped like a codec one.
+allCols : StoreRec a -> List ( String, String )
+allCols s =
+    s.cols ++ s.extras
 
 
 -- | Resolve a builder's column name. An unknown name is recorded as a problem.
@@ -1010,7 +1173,10 @@ builderCols verb names cols problems =
                 ( col :: more, p2 )
 
 
--- | Create the table (dialect-correct DDL derived from the codec).
+-- | Create the table (dialect-correct DDL derived from the codec). A store
+-- with an external column (one the codec does not carry, see `defaultWith`)
+-- does not create its table: the table must exist and have the column, or
+-- this is an `Err` naming it.
 create : Db -> Store a -> Task Error ()
 create conn store =
     let
@@ -1022,7 +1188,7 @@ create conn store =
                 Task.fail e
 
             Nothing ->
-                dbCreateCols conn s.name s.cols s.pk s.indexes
+                dbCreateCols conn s.name (allCols s) s.pk s.indexes
 
 
 -- | Safe additive migration: create the table (with its indexes) if absent,
@@ -1054,6 +1220,11 @@ create conn store =
 --   the same value): that is an `Err`, and the table is not changed. A
 --   `sky db migrate` file fails at the same count, with the same advice.
 --
+-- An external column (one the codec does not carry, see `defaultWith`) is
+-- never created, added or dropped: `migrate` checks that the table has it,
+-- and a missing table or column is an `Err` naming the column and the
+-- builder. Declare it in a `Std.Db.Schema` table or a migration.
+--
 -- An existing column is never altered: a column an older `migrate` added
 -- nullable stays nullable. Nothing is dropped, renamed or retyped (see
 -- docs/history/v0.19/auto-migration-architecture.md). Idempotent; returns the
@@ -1072,7 +1243,7 @@ migrate conn store =
                 dbAutoMigrate
                     conn
                     s.name
-                    (withZeros s.codec s.cols)
+                    (withZeros s.codec s.cols ++ s.extras)
                     s.pk
                     s.indexes
 
@@ -1110,7 +1281,7 @@ insert conn store record =
                         dbExecObjectWith
                             conn
                             s.name
-                            (insertCols s.generated s.cols)
+                            (insertColsOf s)
                             (Codec.toValue s.codec record)
                             computed
                             s.pk
@@ -1154,7 +1325,7 @@ insertMany conn store records =
                         dbExecObjectMany
                             conn
                             s.name
-                            (insertCols s.generated s.cols)
+                            (insertColsOf s)
                             (List.map (Codec.toValue s.codec) records)
                             computed
 
@@ -1214,7 +1385,7 @@ upsert conn store record =
                         dbUpsertObject
                             conn
                             s.name
-                            (insertCols s.generated s.cols)
+                            (insertColsOf s)
                             s.pk
                             (Codec.toValue s.codec record)
                             (kindOf s.pk s.cols)
@@ -1238,7 +1409,7 @@ update conn store record =
                 dbUpdateByPk
                     conn
                     s.name
-                    (setColspecOf s.pk s.generated s.cols)
+                    (setColsOf s)
                     s.pk
                     (kindOf s.pk s.cols)
                     (Codec.toValue s.codec record)
@@ -1261,7 +1432,7 @@ updateWhere conn store cond record =
                 dbUpdateWhere
                     conn
                     s.name
-                    (setColspecOf s.pk s.generated s.cols)
+                    (setColsOf s)
                     (Codec.toValue s.codec record)
                     whereSql
                     whereParams
@@ -1667,7 +1838,10 @@ upsertWith conn store record rule =
                                         ( head ++ " ON CONFLICT ("
                                               ++ String.join ", " target
                                               ++ ") "
-                                              ++ conflictAction d s.cols items
+                                              ++ conflictAction
+                                                     d
+                                                     (allCols s)
+                                                     items
                                         , params
                                         ))
 
@@ -1840,7 +2014,7 @@ insertHeadOf d s record computed =
             case d of
 
                 Sqlite ->
-                    colNamesList (nowColsOf s.cols)
+                    colNamesList (nowColsOf (allCols s))
 
                 Postgres ->
                     []
@@ -2277,7 +2451,9 @@ prepareUpdateSet d s cond exprs =
                 Ok ( items, params ) ->
                     Ok
                         ( "UPDATE " ++ s.name ++ " SET "
-                              ++ String.join ", " (items ++ touchItems d s.cols)
+                              ++ String.join
+                                     ", "
+                                     (items ++ touchItems d (allCols s))
                               ++ " WHERE "
                               ++ whereSql
                         , params ++ whereParams
@@ -2484,7 +2660,7 @@ prepareCopy ignore d s spec mapping =
                                     Nothing ->
                                         let
                                             stamped =
-                                                copyNowCols d s.cols cols
+                                                copyNowCols d (allCols s) cols
                                         in
                                             Ok
                                                 ( "INSERT INTO " ++ s.name
@@ -2741,6 +2917,9 @@ type alias Table =
 -- | Erase a store to its `Table` schema. The store's builder problems (an
 -- unknown column in `unique` / `index` / `uniqueOn`, …) go with it, so
 -- `pushProject` and `dumpSchema` (`sky db migrate --gen`) refuse the table.
+-- An external column (see `defaultWith`) is in `cols` with the
+-- `ext=<builder>` flag: `pushProject` checks the table has it, and
+-- `sky db migrate --gen` never adds or drops it.
 toTable : Store a -> Table
 toTable store =
     let
@@ -2748,7 +2927,7 @@ toTable store =
     in
         { name = s.name
         , pk = s.pk
-        , cols = withZeros s.codec s.cols
+        , cols = withZeros s.codec s.cols ++ s.extras
         , indexes = s.indexes
         , problems = s.problems
         }
@@ -6954,29 +7133,63 @@ adjustError col kind =
 -- ── Names ────────────────────────────────────────────────────────────────────
 -- The store check every verb runs first: the table name follows the identifier
 -- rule, the primary key is empty or a column, and no builder recorded a problem.
+--
+-- A problem is loud: `storeProblem` logs it at ERROR level once per table and
+-- problem, adds it to the Sky Console and counts it in
+-- `sky_store_problems_total{table}`, so an app that turns the `Err` into an
+-- empty list still shows the cause.
 storeError : String -> String -> List ( String, String ) -> List String -> Maybe Error
 storeError name pk cols problems =
+    case storeProblemText name pk cols problems of
+
+        Just msg ->
+            Just (Error.invalidInput (storeProblem name msg))
+
+        Nothing ->
+            Nothing
+
+
+storeProblemText : String -> String -> List ( String, String ) -> List String -> Maybe String
+storeProblemText name pk cols problems =
     if not (isIdent name) then
         Just
-            (Error.invalidInput
-                ("Store: invalid table name \"" ++ name
-                    ++ "\": use letters, digits and _, not starting with a digit, at most 63 bytes"))
+            ("Store: invalid table name \"" ++ name
+                ++ "\": use letters, digits and _, not starting with a digit, at most 63 bytes")
 
-    else if pk /= "" && lookupKind pk cols == Nothing then
+    else if pk /= "" && not (isColumn pk cols) then
         Just
-            (Error.invalidInput
-                ("Store \"" ++ name ++ "\": primaryKey \"" ++ pk
-                    ++ "\" is not a column — columns are "
-                    ++ colNames cols))
+            ("Store \"" ++ name ++ "\": primaryKey \"" ++ pk
+                ++ "\" is not a column — columns are "
+                ++ colNames cols)
 
     else
         case problems of
 
             p :: _ ->
-                Just (Error.invalidInput ("Store \"" ++ name ++ "\": " ++ p))
+                Just ("Store \"" ++ name ++ "\": " ++ p)
 
             [] ->
                 Nothing
+
+
+-- Whether `col` is one of `cols`. A pattern match, not `== Nothing`: the
+-- structural compare narrows its result at run time.
+isColumn : String -> List ( String, String ) -> Bool
+isColumn col cols =
+    case lookupKind col cols of
+
+        Just _ ->
+            True
+
+        Nothing ->
+            False
+
+
+-- | Report a Store problem (see `storeError`) and return its message. The
+-- runtime logs it once per table and problem.
+storeProblem : String -> String -> String
+storeProblem =
+    Ffi.kernel "Db_storeProblem"
 
 
 -- `^[A-Za-z_][A-Za-z0-9_]*$`, at most 63 bytes (PostgreSQL's identifier
@@ -7277,6 +7490,22 @@ touchColsOf cols =
 setColspecOf : String -> List String -> List ( String, String ) -> List ( String, String )
 setColspecOf pk gen cols =
     colsExcluding (pk :: gen) cols ++ touchColsOf cols
+
+
+-- | The INSERT colspec of a store: `insertCols` over the codec columns, plus
+-- the external `defaultNow` / `touchOnUpdate` columns (`extras`). No other
+-- external column is in it: a `defaultWith` one comes as a computed pair,
+-- and a `default*` one is left to the database.
+insertColsOf : StoreRec a -> List ( String, String )
+insertColsOf s =
+    insertCols s.generated s.cols ++ nowColsOf s.extras
+
+
+-- | The UPDATE colspec of a store: `setColspecOf` over the codec columns,
+-- plus the external `touchOnUpdate` columns.
+setColsOf : StoreRec a -> List ( String, String )
+setColsOf s =
+    setColspecOf s.pk s.generated s.cols ++ touchColsOf s.extras
 
 
 -- | The declared kind of a column (defaults to "text" when absent).

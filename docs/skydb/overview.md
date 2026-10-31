@@ -104,6 +104,33 @@ and the predicate, so every definition has its own name, and a changed
 `uniqueWhere` condition gives a new index. `create` and `migrate` create the
 declared indexes.
 
+**External columns.** `defaultWith`, `defaultNow`, `touchOnUpdate`, the
+`default*` builders and `generated` may also name a column the table has and
+the codec does not carry, such as a `created_at` the record leaves out:
+
+```elm
+leads : Store Lead
+leads =
+    Store.fromCodec "leads" leadCodec
+        |> Store.primaryKey "id"
+        |> Store.defaultWith "created_at" (\_ -> SqlInt (nowMs ()))
+```
+
+- The name is used as written, with no snake_case mapping. On PostgreSQL write
+  it in lower case, because an unquoted name folds to lower case.
+- `defaultWith` writes the computed value on every insert (`copyInto` leaves
+  the column to the database default). `defaultNow` stamps
+  it on insert, and `touchOnUpdate` also bumps it on `update`. A `default*`
+  builder and `generated` declare it only: the database default applies.
+- Nothing reads it back into the record.
+- The Store never creates, adds or drops it. A `Std.Db.Schema` table or a
+  migration owns it. `migrate` and `sky db push` check that the table has it,
+  and a missing table or column is an `Err` naming the column and the
+  builder. `create` of a table that does not exist is an `Err`. `sky db
+  migrate --gen` never writes an op for it.
+- `primaryKey`, `serial`, `unique`, `index`, `uniqueOn` and `uniqueWhere` take
+  codec columns only, so a typo in them stays an error.
+
 **`Store.migrate` and `sky db migrate --gen` follow one rule** (user decision
 D1): "A `Maybe` field gives a nullable column, any other field gives NOT NULL.
 A declared builder default wins (`defaultInt` / `defaultText` / `defaultBool` /
@@ -150,7 +177,8 @@ configuration (see `docs/migration/v0.29.md`).
 
 `pushProject` and `dumpSchema` (so `sky db migrate --gen` and `sky db push`)
 refuse a store whose builders recorded a problem (for example an unknown column
-in `unique`, `index` or `uniqueOn`), naming the column, before any DDL.
+in `unique`, `index` or `uniqueOn`), naming the column, before any DDL. So
+does the `stores` step of `sky verify`, when the entry module exposes `db`.
 
 ### Writes
 
@@ -332,8 +360,10 @@ the `Err` it would fail with.
 codec column (the record field or its snake name) or a `jsonText` reference. A
 table, column, alias or JSON key must match `[A-Za-z_][A-Za-z0-9_]*` and be at
 most 63 bytes, the primary key must be a codec column, and a builder that names
-an unknown column (`Store.unique "emial"`) makes the first verb fail with that
-name. `findBy` and `delete` follow the same rule. A negative `limit` or `offset`
+an unknown column (`Store.unique "emial"`) makes every verb fail with that
+name. The problem is loud even when the app shows the `Err` as an empty list:
+it is logged at ERROR level once per table and problem, shown in the Sky
+Console, and counted in the metric `sky_store_problems_total{table}`. `findBy` and `delete` follow the same rule. A negative `limit` or `offset`
 is an `Err`; `offset` without `limit` works on both dialects. There is no
 reserved-word list: a column named `order` or `user` stays a driver error on the
 dialect that refuses it. **Never build a column argument from user input:** a
