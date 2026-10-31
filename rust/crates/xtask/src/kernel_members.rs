@@ -75,7 +75,26 @@ fn internal_runtime_bases(module: &str) -> &'static [&'static str] {
         ],
         // `Dict_map2T` is the typed variant of a `map2` the surface never
         // exposes (no bare `rt.Dict_map2`); it is internal dispatch.
-        "Dict" => &["map2"],
+        // `Dict_getProbeT` / `Dict_memberProbeT` are the typed-map twins the
+        // lowerer picks for `Dict.get` / `Dict.member` (v0.29.0 D1); a user
+        // calls `get` / `member`.
+        // The D2 typed-key twins (`Dict_getIntT`, `Dict_insertStrT`,
+        // `Dict_insertProbeT`, …) are lowering targets too, never Sky names.
+        "Dict" => &[
+            "map2",
+            "getProbe",
+            "memberProbe",
+            "getIntT",
+            "getStrT",
+            "insertIntT",
+            "insertProbeT",
+            "insertStrT",
+            "memberIntT",
+            "memberStrT",
+            "removeIntT",
+            "removeProbeT",
+            "removeStrT",
+        ],
         // Std.Db Store/Codec/migration machinery — invoked by generated code and
         // the `Std.Db.Store` layer, NOT a `Db.<name>` user surface. (`getFloat`
         // is deliberately NOT here: it parallels `getString`/`getInt`/`getBool`
@@ -83,13 +102,25 @@ fn internal_runtime_bases(module: &str) -> &'static [&'static str] {
         "Db" => &[
             "autoMigrate",
             "createCols",
+            // v0.29.0: `Std.Db.Store` reads the dialect once per verb to render
+            // dialect-correct SQL (the prepare path's closed `Dialect` union).
+            "dialect",
             "dropTables",
             "dumpProject",
             "execObject",
             "execObjectMany",
             "execObjectWith",
+            // v0.29.0: Std.Db.Migrate.migrateOps renders and applies op files
+            // through the ledger with the ops checksum.
+            "migrateOps",
+            // v0.29.0: the values of one record as `List SqlValue` (Store renders
+            // the INSERT of insertOrIgnore / upsertWith / insertReturning).
+            "objectSqlValues",
             "queryDecodeRows",
             "queryObjects",
+            // v0.29.0: the Std.Db.Store read kernel. One JSON object per column
+            // group per row (one group, or `a__` / `b__` for a join).
+            "queryObjectGroups",
             "renderMigrations",
             "resetTables",
             "snakeName",
@@ -97,6 +128,8 @@ fn internal_runtime_bases(module: &str) -> &'static [&'static str] {
             "updateByPk",
             "updateWhere",
             "upsertObject",
+            // v0.29.0: Store's RETURNING kernel (a write, with the SSR guard).
+            "writeReturningObjects",
         ],
         // `rt.Process_loadEnv` is the backing for `System.loadEnv`; `Process`'s
         // only member is `run`. A bare `Process.loadEnv` is not intended.

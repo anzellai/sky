@@ -1,15 +1,14 @@
 # known-divergences.toml
 #
 # The authoritative ledger of INTENTIONAL differences between the Rust compiler
-# (the primary toolchain) and the Haskell oracle (legacy-haskell-compiler/,
-# retained as the differential oracle + one-flag rollback).
+# (the primary toolchain) and the Haskell oracle (legacy-haskell-compiler/).
 #
-# ── The contract ────────────────────────────────────────────────────────────
-# The Rust compiler matches the oracle EXCEPT for the entries below. Any
-# UNLISTED divergence is a BUG, not a feature. This file is the paper trail that
-# lets us confidently retire the oracle at v1: after it is deleted we can no
-# longer diff against it, so this ledger is the permanent record of exactly how
-# the Rust compiler intentionally departed from the thing we removed.
+# ── Status: frozen record ───────────────────────────────────────────────────
+# The oracle was removed from the tree in v0.29.0 (last present at tag
+# v0.28.1; see docs/history/legacy-compilers.md). We can no longer diff against
+# it, so this ledger is the permanent record of exactly how the Rust compiler
+# intentionally departed from the thing we removed. The Rust-side checks below
+# still run: each `rust-stricter` fixture must still be rejected.
 #
 # ── How it is enforced ──────────────────────────────────────────────────────
 #   * `xtask divergences` — for every `rust-stricter` entry, re-verifies the
@@ -23,11 +22,10 @@
 #   * `xtask infer` / `golden` / `build-run` — accept-parity + emitted-Go
 #     byte-match on programs BOTH compilers accept (40/40 deterministic examples).
 #
-# ── How an entry is authored ────────────────────────────────────────────────
-# Empirically, with a differential probe against the ABSOLUTE oracle path
-# (sky-out/sky): build the fixture with BOTH compilers and record the outcomes.
-# Never ledger a divergence you have not observed. See
-# docs/rust-rewrite/known-divergences.md.
+# ── How an entry was authored ───────────────────────────────────────────────
+# Empirically, with a differential probe against the oracle binary: build the
+# fixture with BOTH compilers and record the outcomes. No new entry can be
+# authored now that the oracle is gone. See docs/rust-rewrite/known-divergences.md.
 #
 # Direction is small on purpose: Rust and the current oracle are in strong
 # parity. As of 2026-07-24 there is exactly one active behavioural divergence.

@@ -299,6 +299,7 @@ fn code_title(code: &str) -> &'static str {
         "E1015" => "UNKNOWN EXPORT",
         "E1016" => "RECURSIVE TYPE ALIAS",
         "E1017" => "CONSTRUCTOR CLASH",
+        "E1018" => "BAD RECURSION",
         "E2001" => "TYPE ERROR",
         "E2007" => "ARITY MISMATCH",
         // E2001-E2007 are allocated by the Haskell oracle
@@ -310,6 +311,7 @@ fn code_title(code: &str) -> &'static str {
         "E2011" => "PUB/SUB PAYLOAD MISMATCH",
         "E2012" => "VALUE RESTRICTION",
         "E2013" => "GO INTERFACE ARGUMENT",
+        "E2014" => "INVALID REGEX",
         "E3001" => "MISSING PATTERNS",
         "E4005" => "CODEGEN ERROR",
         _ => "ERROR",

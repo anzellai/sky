@@ -40,13 +40,19 @@ func TestAsMapT_FailsLoudly(t *testing.T) {
 			t.Errorf("%s: panicked %q, classified %s, want CoerceFailure", name, msg, kind)
 		}
 	}
-	if m := AsMapT[int](nil); len(m) != 0 {
+	if m := AsMapT[int](nil); m.Len() != 0 {
 		t.Errorf("AsMapT(nil) = %v, want the empty Dict", m)
 	}
-	if m := AsMapT[string](map[string]any{"a": "x", "b": 3}); m["a"] != "x" || m["b"] != "3" {
+	if m := AsMapT[string](map[string]any{"a": "x", "b": 3}); dictAt(m, "a") != "x" || dictAt(m, "b") != "3" {
 		t.Errorf("the string-widening path changed: %v", m)
 	}
-	if m := AsMapT[int](map[string]int{"a": 1}); m["a"] != 1 {
+	if m := AsMapT[int](map[string]int{"a": 1}); dictAt(m, "a") != 1 {
 		t.Errorf("a typed map lost its entries: %v", m)
 	}
+}
+
+// dictAt is the value under an encoded key, or V's zero value.
+func dictAt[V any](d SkyDict[V], k string) V {
+	v, _ := d.Lookup(k)
+	return v
 }

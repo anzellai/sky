@@ -11,6 +11,877 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.0 — Real-world capabilities (2026-10-29)
+
+### Added
+
+- **`Std.Db.Store` query builders: grouped aggregates, projections, newest
+  row per key, escaped text match, column conditions and JSON keys.** Each
+  builds data that the terminal checks against the codecs, renders for the
+  connection's dialect and binds by parameter, so a wrong name is `Err` before
+  any statement runs.
+  - `groupBy` + `aggregate codec [ key, keyAs, countAs, countIfAs,
+    countDistinctAs, sumAs, minAs, maxAs ]` + `having`, read with `toRows`.
+    Kinds and nullability are checked (a `minAs` without `groupBy` needs a
+    `Maybe` field, a `Bool` column has no min or max).
+  - `select`, `selectAs` (explicit sources, `jsonText` too), `selectColumn
+    "col" Codec.string` (a `List String`), `distinct`, and `latestPer [ keys ]
+    "newestBy"` (the newest row per key: NULL is never the newest, a tie goes
+    to the larger primary key).
+  - `contains`, `startsWith`, `endsWith` (case-sensitive on both dialects;
+    `%`, `_` and `!` literal), `eqCi` and `containsCi` (ignore case). An empty
+    needle matches every non-NULL row.
+  - `eqCol`, `neqCol`, `gtCol`, `gteCol`, `ltCol`, `lteCol`: a column against
+    a column of the same kind.
+  - `jsonText "props" "source"`: one key of a JSON text column, wherever a
+    column name goes. A JSON boolean reads `"true"` / `"false"` on both
+    dialects.
+  - `toSql conn q`: the SQL text and parameters a query renders, or its `Err`.
+  - `count` counts the rows a `distinct` / `latestPer` / `aggregate` query
+    returns.
+  The same conformance suite runs on SQLite (`conformance`) and on PostgreSQL
+  (the new harness gate `store-query-postgres`, T3, with the CI DSN).
+
+- **`Std.Db.Store` joins of two stores and subquery conditions.** One SQL
+  statement per call, the same on SQLite and PostgreSQL, every name checked
+  against its own codec before the query runs.
+  - `join : Store a -> Store b -> JoinOn -> Query ( a, b )` and `leftJoin :
+    … -> Query ( a, Maybe b )`, with `on "customer_id" "id"` or `onAll [ … ]`,
+    read with `toPairs` / `toPairsMaybe`. `whereLeft` / `whereRight` and
+    `orderLeftAsc` / `orderLeftDesc` / `orderRightAsc` / `orderRightDesc`
+    read one side; a name both stores have is written `"a.col"` / `"b.col"`.
+    On a `leftJoin`, `whereRight` goes into ON (it never drops a left row) and
+    a right column needs a `Maybe` field. `select`, `groupBy` + `aggregate`
+    and `count` take a join. A join of three tables is not expressible, and
+    `whereLeft` / `orderLeft*` on a query that is not a join is an `Err`.
+  - `inQuery "batch_id" (Store.query batches |> … |> Store.column "id")`,
+    `notInQuery`, `exists store (correlate "customer_id" "id") cond`,
+    `notExists`, `correlateAll`: a subquery in any `Cond`, so
+    `Store.deleteWhere conn rows (Store.inQuery …)` is one atomic statement.
+    The subquery leaves out NULLs, so `notInQuery` is right when the inner
+    column holds NULL.
+  - Every Store read now goes through one kernel, `Db_queryObjectGroups`
+    (one JSON object per column group, `a__` / `b__` for a join). The
+    memoised-read warning (a top-level `Store.all` CAF) keeps firing on it.
+
+- **`Std.Db.Store`: one migrate rule, indexes and `defaultFloat`.**
+  `Store.migrate` (and `sky db push`) and `sky db migrate --gen` now follow
+  one rule (user decision D1): "A `Maybe` field gives a nullable column, any
+  other field gives NOT NULL. A declared builder default wins (`defaultInt` /
+  `defaultText` / `defaultBool` / `defaultNow`, plus a new `defaultFloat`),
+  else the zero value of the type. Existing columns are never altered. No
+  builder makes a required field's column nullable."
+  - Both paths render an added column through one Go function
+    (`renderAddColumn`), so the DDL is the same per dialect by construction.
+    A parity fixture (`runtime-go/rt/testdata/migrate_parity.json`) is
+    checked by a Rust test (the diff gives the fixture's ops) and by Go tests
+    on SQLite and PostgreSQL (`Store.migrate` runs exactly the SQL of
+    `renderMigOp` of those ops).
+  - A required JSON (blob) field is NOT NULL too. Its DEFAULT is the JSON of
+    that field's OWN zero (new `Codec.fieldZeros`: its value in the blank
+    record of `Codec.auto`, or its codec's zero in a `Codec.object` codec),
+    a SQL string literal with its quotes escaped, the same on both paths and
+    both dialects. A `Codec.list` field beside a `taggedUnion` field still
+    gets `DEFAULT '[]'`: one field with no zero does not take the others'
+    away (`Codec.zeroJson`, the zero of a whole value, stays `Nothing` for
+    such an object, as a nested field needs). A required enum field (a
+    `Codec.enum` field, or a nullary custom type under `Codec.auto`) is a
+    TEXT column whose DEFAULT is the enum's first name (the witness's name
+    under `Codec.auto`), never `''`, which no enum decodes. A plain String
+    column keeps `''`. The schema dump carries the value as the column's
+    `zero`, so `--gen` writes it as the addColumn op's default. A field with
+    no zero (a `taggedUnion`, `result` or `Codec.error` field of a
+    `Codec.object` codec, or an object field holding one) is
+    `NOT NULL` with no default: `Store.migrate` is `Err` on a table with 1 or
+    more rows, and a migration file fails and rolls back with the same
+    advice. A `unique` column is added, then given a unique index; a
+    required unique column on a table with 2 or more rows is `Err` (the same
+    count at which a `sky db migrate` file fails).
+  - A `defaultNow` column added on SQLite holds the time of the ALTER in the
+    rows that exist (SQLite refuses `datetime('now')` in ADD COLUMN), and
+    `insert` / `insertMany` / `upsert` bind the app clock for a new row. On
+    PostgreSQL the column is `DEFAULT now()` and the database stamps it.
+    `defaultNow` and `touchOnUpdate` need a text column.
+  - `Store.index [ cols ]`, `Store.uniqueOn [ cols ]` (required columns
+    only) and `Store.uniqueWhere [ cols ] cond` (a partial unique index, the
+    condition written as constants). `create` and `migrate` create them, and
+    `migrate` creates a declared index that is missing. The name is
+    `ix_<table>_<h>` / `ux_<table>_<h>` (8 hex digits of a hash of the
+    definition), looked up by table and name. `Store.Table` has a new field
+    `indexes`; `Std.Db.Schema.toProject` carries `withIndex` /
+    `withUniqueIndex` into it, so `sky db push` and `--gen` see them.
+  - `--gen` emits `addIndex` / `dropIndex`. Every migration file, old or
+    new, renders with one rule (no op version, no header).
+  - `sky db migrate`: the `_sky_migrations` ledger keeps a checksum of each
+    migration file's ops (a canonical form, the same on every dialect), not
+    of the SQL they render to, and a `kind` column. A renderer change never
+    makes an applied file look edited. A v0.28 ledger is upgraded on the
+    first migrate: the column is added and each applied op file is
+    re-stamped once, with a log line. Hand-written `Db.migrate` SQL keeps
+    the SQL-text checksum. See `docs/migration/v0.29.md`, "sky db migrate:
+    one rule for every migration file".
+
+- **`Std.Image.Canvas`: draw an image on the server.** A `Canvas` is a
+  persistent display list: `blank` or `fromImage`, then `rect`,
+  `roundedRect`, `ellipse`, `arc`, `line` (a `Paint` is `Fill colour` or
+  `Stroke width colour`), `paste` and `pasteCanvas` through a `Mask`
+  (`roundedMask`, `ellipseMask`, `alphaMask`), `blur` (three box passes,
+  O(width x height) whatever the sigma), `resize` (`Nearest`, `Bilinear`,
+  `CatmullRom`, `Lanczos`) and `text` with a TrueType or OpenType font
+  (`loadFont`, `fontFromBytes`, a `.ttc` by index, or the built-in
+  `defaultFont`, Go Regular). `measure` gives a text's width, height, ascent
+  and descent. Each step is O(1) and touches no pixel; `encode` draws the list
+  once and writes PNG, JPEG, GIF or lossless WebP. Errors that depend on the
+  input are the `Err` of `encode`, in the domain `"image"`: `colour_range`,
+  `canvas_too_large` (over 16384 on a side), `too_many_pixels`, a pasted image
+  that does not decode. `pixelDiff tolerance a b` counts the pixels two images
+  differ in, for tests. Server only, like `Std.Image`. Shapes and text use
+  `golang.org/x/image` (already a dependency); no cgo.
+
+- **`Std.Image`: animated GIF, `Gif` and `WebpLossless` output, `frames` and
+  `reduceFrames`.** `Format` gains `Gif` and `WebpLossless`. Written as `Gif`
+  or `Preserve`, an animated GIF keeps every frame: `resizeToFit`,
+  `thumbnail`, `crop`, `trim`, `toAlpha` and `whiteToAlpha` run on each frame
+  as it is shown (composed onto the logical screen with its disposal applied:
+  none, background, restore previous), and each frame keeps its delay and
+  disposal and the file its loop count. Frames are decoded, processed, mapped
+  to a palette (exact at 256 colours or fewer, else median cut with
+  Floyd-Steinberg dithering) and written one at a time. Comment and other
+  application extensions are dropped; only the NETSCAPE loop is written.
+  `frames : String -> Task Error Int` counts the frames from the block
+  structure (no decode). `reduceFrames n` keeps 1 frame in n and adds the
+  dropped delays to the kept frame. `WebpLossless` is an in-tree pure-Go VP8L
+  encoder (subtract-green, the 14 predictors per tile, colour indexing with
+  pixel bundling, colour cache, LZ77 with a hash chain, canonical Huffman);
+  its output decodes pixel-exact with `golang.org/x/image/webp` and libwebp's
+  `dwebp`. WebP input (lossy or lossless) is now read too.
+
+- **`sky run` passes arguments to the program.** Everything after `--` goes to
+  the program, as with `go run` and `cargo run`: `sky run src/Main.sky -- a "b
+  c"` gives `System.args ()` the arguments `a` and `b c`. A flag after `--`
+  belongs to the program (`sky run src/Main.sky -- --help`). Without `--` the
+  program gets no arguments, as before. This works for a plain app, a Sky.Spa
+  entry (the backend gets them) and a `Std.App` entry.
+
+- **Small core functions: `Char.isAlphaNum`, `Char.isSpace`, `List.map2`,
+  `List.map3`, `List.unique` and `String.indexes`.** All pure, so they run on
+  the client and the server. `Char.isAlphaNum` is `isAlpha || isDigit`
+  (Unicode, like both). `Char.isSpace` is the Unicode White_Space property,
+  the set `String.trim` removes. `List.map2` / `map3` apply a function pairwise
+  and stop at the shorter list, as in Elm, in one pass with one allocation and
+  no tuples: with a typed callback the lowering calls a typed runtime twin
+  (`rt.List_map2T`), which over 1,000,000 Ints is about 35x faster than
+  `List.map` over `List.zip`, with 1 allocation instead of 2,000,006.
+  `List.unique` keeps the first occurrence of each `comparable` value, in
+  order, in O(n) expected time. `String.indexes sub s` gives the start of
+  every non-overlapping occurrence of `sub`, counted in characters (the unit
+  of `String.slice`), O(n); an empty `sub` gives `[]`, as in Elm.
+
+- **Regex matches with positions and capture groups: `Regex.findMatch`,
+  `Regex.findAllMatches` and `Regex.replaceWith`.** Each match is a
+  `Regex.Match`, Elm's shape: `{ match : String, index : Int, number : Int,
+  submatches : List (Maybe String) }`. `index` counts characters, the unit of
+  `String.slice`, never bytes, so it stays right after `£` or `─`. A capture
+  group that did not take part is `Nothing`. `replaceWith pattern f s` builds
+  each replacement from the whole match. Pure (client and server), linear in
+  the input. An invalid pattern gives no match, like the other Regex functions.
+
+- **`Process.runCommand` and `Process.withStdin`: standard input and a
+  structured result.** `runCommand` runs a command built with
+  `Process.command` and the `with*` helpers to completion and returns
+  `{ code, stdout, stderr }` (`Process.Completed`). A non-zero exit is a result,
+  not an `Err`; only a child that cannot start is an error. `withStdin text`
+  gives the child that text on its standard input, then end of file, so a
+  script reaches `psql -f -` or `sh` without squeezing it into an argument;
+  with `spawn` the runtime writes it and closes stdin. Server side only. Both
+  outputs are held in memory: use `spawn` for a long-running or chatty child.
+
+- **`Native.selection` and `Native.setSelection`: read and set a text
+  control's selection.** `selection elementId` yields
+  `{ start, end, text }` (`Native.Selection`) for a textarea or a text input;
+  `setSelection elementId start end` selects a range (clamped to the value),
+  focuses the control and records the range, so a later `insertAtCursor` from
+  a menu button replaces it. Positions are characters, the unit of
+  `String.slice`; the runtime converts from the browser's UTF-16 units. A
+  control that is not focused reports the last selection the person made in
+  it, the same rule as `insertAtCursor`, with the same errors. A Sky.Spa
+  client capability: `Err Unavailable` on Sky.Live, a server, a CLI or a TUI.
+
+- **Every collection function states its cost.** Each exported function of
+  `Sky.Core.List`, `Dict`, `Set`, `Array` and `String` has a `-- Cost:` line
+  in its doc comment, so `sky doc` shows it, including what stays O(n)
+  (`List.append` copies both lists). A test
+  (`rust/crates/project/tests/collection_cost_lines.rs`) fails when a new
+  export has none. `Dict.size` and `Dict.isEmpty` on a typed dict are now
+  O(1) (`rt.Dict_sizeT` / `Dict_isEmptyT`).
+
+- **`Sky.Core.Array`: Elm's persistent array.** `empty`, `initialize`,
+  `repeat`, `fromList`, `isEmpty`, `length`, `get`, `set`, `push`, `toList`,
+  `toIndexedList`, `map`, `indexedMap`, `foldl`, `foldr`, `filter`, `append`
+  and `slice`, over a 32-way persistent trie with a tail
+  (`runtime-go/rt/array_trie.go`): `get` / `set` O(log32 n), `push`
+  amortised O(1), `length` O(1). Every value is immutable; `set` copies one
+  path and shares the rest. `get` / `set` out of range give `Nothing` / the
+  array unchanged, as in Elm. `==` compares elements, `toString` prints
+  `Array.fromList [ … ]`, and an Array in a Sky.Live model survives the
+  session store (gob). Pure: client and server. A new module, so no existing
+  program changes; read it qualified, since its names match List, Dict and
+  String.
+
+- **`x :: xs` is amortised O(1).** A typed `::` lowered to
+  `rt.AsListT[T](rt.List_cons(any(x), any(xs)))`, which reflect-widened the
+  whole tail and narrowed it back on every cons: an accumulator loop of n
+  conses was O(n²) (32,000 conses took 13 s). It now lowers to the typed twin
+  `rt.List_consT[T]`, which writes into free room in front of the list's
+  backing block, claimed with one compare-and-swap, so no other list can see
+  the slot (`runtime-go/rt/list_block.go`). 1e6 conses then `List.reverse`
+  take about 0.03 s. A list under 32 elements is copied exactly, as before.
+  Three shapes still copy (replacing a head, two conses onto one shared tail,
+  the first cons onto a list that is not a cons block); `Sky.Core.List`
+  states them, and the space cost: an old list keeps its whole block alive.
+  The `List.cons` value in a typed slot, the erased `[]any` cons, and typed
+  `xs ++ ys` (which claims room in front of `ys` when it can) use the same
+  blocks. `List.reverse`, `List.take` and `List.drop` over a typed list lower
+  to their typed twins (`take` / `drop` are now O(1) re-slices). Go code
+  called through FFI must treat a slice argument as read-only
+  (`docs/ffi/boundary-philosophy.md`).
+
+- **`Dict` and `Set` are persistent: `insert` and `remove` are O(log n).**
+  A Dict was a Go map that every `insert` / `remove` copied, so a fold that
+  built a Dict was O(n²) (1e4 updates took 1.2 s, 4e4 took 20 s). A Dict is
+  now `rt.SkyDict[V]` (`runtime-go/rt/dict_persistent.go`): a flat array of up
+  to 16 entries, then a 16-way hash array mapped trie with a seeded hash. An
+  update copies one path and shares the rest; the old Dict is unchanged.
+  `xtask perf-gate` `dict-counts` (1e6 updates over 1e5 keys) runs in about
+  0.9 s, with 7.8 allocations per update. Small dicts got faster, not slower:
+  at 1 to 64 entries an insert takes 0.03x to 0.38x the old time and a lookup
+  at most 1.06x (`docs/perf/runs/dict-hamt-20261028/`). `get` / `member` /
+  `insert` / `remove` over a typed dict call typed twins (`rt.Dict_getIntT`,
+  `rt.Dict_insertStrT`, `…ProbeT` for other key types), an erased kernel keeps
+  the dict's value type, and a callback whose parameter is a Dict now takes
+  the typed eta path (no `reflect.Call` per element). Key encoding, the D1
+  probe of the bare key a `Std.Db`, JSON or FFI map holds, ascending-key
+  enumeration, `==`, `toString`, JSON, `Codec.auto`, `Std.Db` rows, HTTP
+  headers and the Sky.Spa wire keep their behaviour. `Set` sits on the same
+  store, and a Set in a Sky.Live model now survives the session store (gob).
+  One change: the stored form of a Dict in a Sky.Live session is new, so a
+  session saved by v0.28 whose model holds a Dict is dropped once on upgrade
+  (see Migration).
+
+- **`String.uncons`, `String.foldl` and `String.foldr`, and String kernels that
+  walk instead of copying.** `uncons s` gives `Just ( first, rest )` in O(1),
+  and the rest shares the bytes of `s`; over a proven string it returns its
+  tuple by value (`rt.String_unconsT`), so a character loop allocates nothing
+  per character. `foldl` / `foldr` fold over the characters in O(n).
+  `slice`, `left`, `dropLeft` (O(k) for index k), `right` and `dropRight`
+  (O(k) from the end) walk to the index and return a substring, where they
+  converted the whole string to runes before (O(n) time and 4n bytes per
+  call). Over a proven `Int` and `String` they lower to typed twins, and so do
+  `toList`, `fromList`, `concat` and `slice`. The erased kernels take a Go
+  string without the `fmt.Sprintf` copy, and `concat` / `join` size the result
+  once. Every index counts Unicode code points; this is now stated in the
+  module and in `docs/stdlib.md`. A per-character `slice` loop over a string
+  of 4 kB or more uses a one-entry index cache, with the limits stated in
+  `runtime-go/rt/string_fast.go`. One change for invalid UTF-8: the walking
+  kernels keep an invalid byte inside the result as it was (the rune round
+  trip replaced it with U+FFFD); valid text gives the same bytes as before.
+
+- **`xtask perf-gate`: a collection performance gate.** Six Sky programs
+  under `tests/perf/` (cons and reverse of 1e6 Ints; a fold of 1e6 Ints into a
+  `Dict` of counts with 1e5 keys; `String.toList` and `fromList` over 4M code
+  points; a character tokeniser with `String.uncons`, against
+  `Regex.findAll`; cons over `List ()`; eight Tasks that each cons their own
+  1e5 list) run at n and 4n. The gate requires `t(4n)/t(n) <= 6` (quadratic
+  growth gives 16), an allocation budget per element, no erased cons on a
+  typed tail and a 3 s ceiling (`--strict`: 1 s). It reads the counters from
+  `SKY_RT_MEMSTATS_ON_EXIT=1`, which makes a normal exit print one JSON line
+  with `runtime.MemStats` to stderr. It runs in the release gate.
+
+- **The `go build` time limit is configurable.** `sky build`, `sky check` and
+  `sky run` stop a `go build` after 10 minutes, so a wedged Go toolchain cannot
+  hang a build. A slow runner can now raise it: `--go-build-timeout 15m` (or
+  `SKY_GO_BUILD_TIMEOUT=900`). The value is whole seconds or a whole number with
+  an `s`, `m` or `h` unit; a value that does not parse is an error, never a
+  silent fall back. The message for a stopped build names both.
+
+- **`App.withPersistExclude [ "siteConfig", … ]`: model fields a reload never
+  takes from an earlier page.** For values the server owns (site settings, a
+  feature flag, the server clock). On a client target (`web:app` and the other
+  Sky.Spa targets) the fields are left out of the model kept in
+  `localStorage` and come from the server-rendered seed on a full load, so a
+  stale stored copy cannot paint the first frame (`Spa.withPersistExcludeFields`
+  on a hand-written `Spa.app`). On Sky.Live a full page load of an existing
+  session refreshes them from `init` (`Live.withRefreshOnLoad`). A session
+  field is never left out.
+
+- **`App.withSessionLifetime seconds` and `SKY_SPA_SESSION_LIFETIME`** set how
+  long a Sky.Spa sign-in lasts: the signed token's lifetime and the `sky_spa`
+  cookie's `Max-Age` (default 30 days; the variable, a Go duration or whole
+  seconds, wins over the builder).
+
+- **`Std.Xml`, `Std.Xml.Decode` and `Std.Xml.Encode`: safe XML on the
+  server.** `Xml.parse` reads a document into an opaque `Node` (`name` is the
+  local name, `namespace` the URI, `attributes`, `children`, `text`).
+  `Std.Xml.Decode` reads it into your types in the style of `Json.Decode`
+  (`element`, `list`, `attribute`, `at`, `inNamespace`, `map`..`map5`,
+  `oneOf`); a failure names its path, such as `/feed/entry[3]`.
+  `Std.Xml.Encode` writes XML (`element`, `text`, `cdata`, `xmlns`,
+  `document`); `encode` is total and `encodeStrict` refuses a character or
+  name XML cannot carry. The parser refuses any DOCTYPE (so billion-laughs and
+  external entities cannot work), reads UTF-8, US-ASCII, ISO-8859-1 and
+  Windows-1252, and bounds size, depth, nodes and attributes (`Limits`,
+  `parseWith`, `HtmlEntities` mode for `&nbsp;`). Failures are `InvalidInput`
+  in the domain `"xml"` with a code (`too_large`, `too_deep`,
+  `too_many_nodes`, `too_many_attributes`, `doctype`, `charset`,
+  `malformed`). The accessors call typed runtime twins, so a read narrows
+  nothing.
+
+- **`Codec.toXml` and `Codec.fromXml`.** A codec reads and writes XML with no
+  hand-written decoder: a record is one element per field, a list repeats the
+  element, a `Nothing` field is left out, a `taggedUnion` variant, a `result`
+  and a `dict` have their own element shapes, and a field can also be read
+  from an attribute. Names are local names, so a namespaced document (a SOAP
+  body) reads by the codec's names. `Codec.jsonSchema` output is unchanged.
+
+- **`Std.Zip`: safe ZIP archives.** `read`, `readWith`, `readEntry`, `list`,
+  `write` and `writeWith` return a `Result`. Reading counts bytes while it
+  inflates under `Limits` (entries, bytes per entry, total bytes, compression
+  ratio), and refuses zip-slip names, repeated names, symbolic links,
+  encrypted entries and unknown methods. `write` gives the same bytes for the
+  same entries. Failures are `InvalidInput` in the domain `"zip"` with a code.
+
+- **`Std.Office.Xlsx`: read and write Excel workbooks.** `read` / `readWith`
+  give a `Workbook` of sheets whose rows are `Cell`s (`Empty`, `Text`,
+  `Number`, `Boolean`, `Date`, `Formula` with its cached value, `Failure`), with
+  each sheet's visibility, merged ranges, column widths, frozen panes and list
+  validations. Rows keep their index. Dates come from the number format
+  (built-in and custom), with Excel's phantom 1900-02-29 and 1904 workbooks
+  handled. Shared strings and worksheets are streamed; rich text is joined,
+  phonetic runs are skipped, and a shared formula's followers get their own
+  references. `sheetNames` reads the workbook part only. `write` takes
+  `SheetSpec`s of `CellSpec`s (`text`, `number`, `int`, `bool`, `date`,
+  `formula`, `failure`, `empty`, `fromCell`) styled with `bold`, `italic`,
+  `fontSize`, `fill`, `numberFormat` and `wrap`; styles are deduplicated, a
+  date is a serial with a date format, and a formula is written with no
+  cached value and a request to compute it on open (LibreOffice does, which
+  `scripts/office-second-reader-e2e.sh` checks). The same sheets give the
+  same bytes. `Limits` bound sheets, rows,
+  columns and cells (gaps count), on top of the zip limits. Failures are
+  `InvalidInput` in the domain `"office"` with a code (`sheet_name`,
+  `no_visible_sheet`, `validation_too_long`, `range`, `too_many_cells`, …).
+
+- **`Std.Office.Docx`: read and write Word documents.** A document is a list
+  of `Block`s: `Heading` (0 for the Title style, 1 to 9), `Paragraph`,
+  `ListItem Bulleted|Numbered level` and `Table`, with runs that keep bold,
+  italic and hyperlinks. Reading finds headings by style name (so localized
+  style ids work) and outline level, list kinds from the numbering part, skips
+  tracked deletions, flattens content controls, and never reads drawings, text
+  boxes or embedded objects. `write` makes the styles, a bullet and a numbered
+  list (each run of numbered items starts at 1) and refuses a link that is
+  not http, https, mailto or `#anchor` (`unsafe_link`). `toText` gives the
+  plain text, pure, for a search index. Both modules run on the server and
+  read every part through the `Std.Zip` and `Std.Xml` readers, under one
+  tokeniser (`xmlStreamSafe`) that `Std.Xml.parse` now also uses.
+
+- **`Std.Db.Store` writes: insert-or-ignore, counter and partial upsert,
+  expression SET, insert from a query, RETURNING.** Each is ONE statement,
+  checks every column against the codec before it runs, and binds every value.
+  - `insertOrIgnore` (`ON CONFLICT DO NOTHING`, 1 or 0: of two concurrent
+    calls with one key exactly one gets 1) and `insertOrIgnoreOn [ cols ]`.
+  - `upsertWith conn store row { conflictOn, onConflict }` with
+    `addExcluded` (`c = t.c + excluded.c`), `keepMin` / `keepMax` (one CASE
+    text on both dialects, a NULL side gives the other value) and
+    `setExcluded`. `conflictOn` is the primary key, a `unique` column or a
+    `uniqueOn` set of required columns. It returns rows affected (`upsert`
+    still returns the key of an Int-keyed store).
+  - `updateSet conn store cond [ setCol / setValue / setWhen ]`, with `keep`
+    and `otherwise v` for the ELSE of `setWhen`; each CASE parameter is cast
+    to the column type, so it works on PostgreSQL for `Int` and `Bool`.
+  - `copyInto` / `copyIntoOrIgnore conn target query [ ( col, from / const ) ]`
+    (`INSERT … SELECT` from any query, an `aggregate` roll-up included).
+  - `insertReturning`, `updateFieldsReturning`, `deleteWhereReturning`
+    (`… RETURNING`, decoded by the codec; a refused write is `Err`, and a
+    GET server-side render suppresses them like `Db.exec`).
+  - Two new `Db` kernels: `Db_objectSqlValues` and `Db_writeReturningObjects`.
+  - Docs: the like note now names `\` too, and a paragraph says why there is
+    no regex condition (SQLite has no built-in `REGEXP`: match a normalised
+    column with `contains`). Counters kept by triggers stay raw SQL.
+
+### Migration
+
+The full list, with old and new code, is `docs/migration/v0.29.md`.
+
+- **`Codec.maybe` reads only `null` as `Nothing`.** Its decoder turned any
+  value the inner codec could not read into `Nothing`, so `"x"` in a
+  `Maybe Int` field, a name that is not one of an enum's, or a bad element of
+  a `List (Maybe a)` vanished with no error, in `Codec.fromJson`, Sky.Spa wire
+  decoding and `Std.Db.Store` reads alike. Now any value other than `null`
+  must decode as the inner value, and one that does not makes the decode an
+  `Err` naming where it failed. Values a codec wrote itself read back as
+  before. A `Codec.fromJson` of third-party JSON that puts a value of another
+  type where the codec expects a `Maybe` (`""` for a missing number) was
+  `Nothing` and is now an `Err`: repair the input, or read that payload with
+  `Sky.Core.Json.Decode` and `Decode.maybe`. `Codec.error` is unchanged: its
+  `details` stay the one lenient `Maybe`, so details from a newer peer read
+  as no details.
+- **`Std.Db.Store` exports `contains`, `startsWith`, `endsWith` and `select`
+  (breaking for two `exposing (..)` imports).** `Sky.Core.String` and
+  `Sky.Core.Regex` export `contains`, `Sky.Core.String` `startsWith` and
+  `endsWith`, `Std.Html` and `Std.Db.Table` `select`. A bare use under
+  `import Std.Db.Store exposing (..)` and one of those is `[E1012]`; write
+  `Store.select` (Store is meant to be imported qualified). The join and
+  subquery builders add `column` (Std.Ui, Std.Ui.Keyed), `exists`
+  (Sky.Core.File), `join` (Sky.Core.String, Sky.Core.Path) and `on`
+  (Std.Html.Events) to the same rule: write `Store.join`.
+
+- **`Std.Db.Store` refuses bad names before any statement (behaviour
+  change).** `findBy` and `delete` refuse a column that is not in the codec.
+  Every verb refuses a table name outside `[A-Za-z_][A-Za-z0-9_]*` (at most
+  63 bytes), a `primaryKey` that is not a column, and a builder (`unique`,
+  `defaultText`, `generated`, …) that named an unknown column. A negative
+  `limit` or `offset` is `Err`. Each is `Err (InvalidInput …)` naming the bad
+  name; before, the SQL ran or the builder was silently ignored.
+
+- **`Std.Db.Store` on PostgreSQL sorts NULLs like SQLite (behaviour change).**
+  An order term on a nullable column now renders `NULLS FIRST` ascending and
+  `NULLS LAST` descending on both dialects. PostgreSQL put NULLs last
+  ascending and first descending before. A term on a required column is
+  unchanged.
+
+- **`Std.Db.Store.migrate` adds a required column NOT NULL (behaviour
+  change).** It added every new column nullable and ignored a declared
+  default. It now adds `NOT NULL DEFAULT <declared, else zero>` for a
+  non-`Maybe` field. An existing column is never altered: a column an older
+  `migrate` added nullable stays nullable. `Store.Table` has a new field
+  `indexes` and `problems` (a hand-built `Table` adds `indexes = [], problems = []`), and `Store.index`
+  is a new name that meets `Json.Decode.index` and `Std.Db.Table.index`
+  under two `exposing (..)` imports (`[E1012]`; write `Store.index`).
+
+- **A query that hit a row error now fails (behaviour change).** `Db.query`
+  and the Store readers return `Err` for an error after the first row, where
+  they returned the rows before it.
+
+- **`Std.Image.Format` has two more constructors (breaking for a `case` that
+  lists every one).** `Gif` and `WebpLossless` join `Jpeg`, `Png` and
+  `Preserve`. A `case` on `Format` with no `_` branch fails to compile with a
+  missing-pattern error; add the two branches or a `_`.
+
+- **`Image.Preserve` keeps a GIF a GIF (behaviour change).** Before, a GIF
+  under `Preserve` became a PNG of its first frame. Now it stays a GIF, with
+  every frame of an animation. Code that saved the output of `Preserve` under
+  a `.png` name for a GIF input should pass `Image.Png` to keep the old
+  output, or save under `.gif`. A WebP under `Preserve` is now a lossless
+  WebP (WebP input was refused before). `toAlpha` and `whiteToAlpha` of an
+  animated GIF now give an animated GIF; of any other image, PNG as before.
+
+- **Std.Image refuses an image over 100 megapixels (behaviour change).** Each
+  function that decodes reads the header first and refuses an image over
+  100 megapixels (width x height), a GIF of more than 1,000 frames, or a GIF
+  of more than 250 million pixels over its frames, with `InvalidInput` in the
+  domain `"image"` (codes `too_many_pixels`, `too_many_frames`,
+  `too_many_frame_pixels`). An image that size used to decode (400 MB or more
+  as RGBA). Resize such an image before upload, or check `Image.dimensions`
+  first and tell the user. `dimensions` and `frames` never refuse.
+
+- **`Sky.Core.Regex` takes a compiled `Regex` (breaking).** A new opaque type
+  `Regex`; `Regex.fromString : String -> Result Error Regex` is the only
+  constructor, and `contains` (also `match`), `find`, `findAll`, `findMatch`,
+  `findAllMatches`, `replace`, `replaceWith` and `split` take the compiled
+  value instead of the pattern String. `Regex.never` matches nothing. Before,
+  each call compiled the pattern again and an invalid pattern silently matched
+  nothing; now it is an `Err` (kind `InvalidInput`) with the RE2 error text. A
+  LITERAL pattern (a plain string, or a triple-quoted string with no `{{ }}`)
+  is checked when the program compiles: an invalid one is the new `[E2014]`
+  INVALID REGEX, with source context and Go's own error text (the check is a
+  port of Go's `regexp/syntax` validation, compared with Go on a table and
+  4,000 generated patterns). Old code fails to compile with a type error whose
+  hint names the change. A `Regex` cannot be encoded (`Codec.auto` refuses
+  it). Every in-repo use (the `Std.Ai` modules, the examples, the tests) is
+  migrated. See `docs/migration/v0.29.md#regex-takes-a-compiled-regex` and
+  `docs/errors/E2014-invalid-regex.md`. The two new names collide with
+  existing ones under `exposing (..)`: `contains` with `Sky.Core.String`, and
+  `fromString` with `Sky.Core.Bytes`, `Sky.Core.Secret`, `Std.Decimal` and
+  `Std.Money`. A bare use under both `exposing (..)` imports is `[E1012]`;
+  qualify it (`Regex.contains`).
+
+- **Sky.Live sessions that hold a Dict start fresh once.** A Dict is now a
+  persistent value with a new stored form. With a SQLite, PostgreSQL or Redis
+  session store, a session saved by v0.28 whose model holds a `Dict` cannot be read by
+  v0.29.0: the runtime logs `failed to decode
+  session … written by an older Sky and holds a Dict or a Set … the visitor
+  starts a new session` and serves `init`, as for an expired session. There
+  is no panic and no half-read model. Sessions without a Dict, the memory
+  store and `App.withDurable` snapshots (JSON) are not affected. Nothing to
+  do; expect a visitor with such a session to see a fresh page once after
+  the deploy.
+
+- **Go code reached through FFI must not change a list argument.** A list
+  built by cons now shares memory with the older lists it was built on, so a
+  Go function that sorts a slice argument in place also changes them. Copy
+  first (`slices.Clone`). See `docs/ffi/boundary-philosophy.md`.
+
+- **New stdlib names `foldl` and `foldr` in `Sky.Core.String`.** A module that
+  imports `Sky.Core.String exposing (..)` together with `Sky.Core.List` or
+  `Sky.Core.Dict` `exposing (..)`, and uses the bare name, now gets `[E1012]`
+  at the use. Qualify the name (`List.foldl`), or narrow one `exposing` list.
+
+- **New stdlib names `map2`, `map3` and `unique` in `Sky.Core.List`.** A
+  module that imports `Sky.Core.List exposing (..)` together with
+  `Sky.Core.Maybe`, `Sky.Core.Result`, `Sky.Core.Task`, `Sky.Core.Json.Decode`
+  or `Std.Db.Decode` `exposing (..)` (for `map2` / `map3`), or with
+  `Std.Db.Schema`, `Std.Db.Store` or `Std.Db.Table` `exposing (..)` (for
+  `unique`), and uses the bare name, now gets `[E1012]` at the use. Qualify the
+  name (`Maybe.map2`, `Schema.unique`), or narrow one `exposing` list.
+
+- **A value defined in terms of itself no longer compiles.** A program with a
+  cycle of values (`a = b + 1` and `b = a * 2`, `xs = 1 :: xs`) used to pass
+  `sky check` and then hang or fail `go build`; it is now `[E1018]` at the
+  first value of the cycle. Such a program never worked, so only code that was
+  never run is affected. Give one value a base case, or a parameter.
+
+### Fixed
+
+- **`Std.Db.Store` never stores or reads a value of the wrong kind with no
+  error.** A `SqlValue` reached the database to be converted: SQLite's
+  `CAST('abc' AS BIGINT)` is 0, so `setWhen` / `otherwise` wrote 0 with
+  `Ok 1`, a `2.7` in an integer column truncated on SQLite and rounded on
+  PostgreSQL, and `SqlString "abc"` into a `Maybe Int` column stored `'abc'`
+  and read back `Nothing`. One rule, the same on both dialects, is now checked
+  before any statement (`docs/skydb/overview.md`, "Value kinds"): a written
+  value (`updateFields`, `setFields`, `setValue`, `setWhen`, `otherwise`,
+  `const`, a `defaultWith` result) must be of the column's kind, `SqlNull`
+  only into a `Maybe` field, an enum column takes one of its names and a JSON
+  column JSON its codec reads. A compared value follows the kind rule, a
+  `SqlString` on an int, real or bool column is read as the column's kind
+  (text that is not a value of it is an `Err`), and `SqlNull` is refused (it
+  never matched). A declared default (`defaultText` / `defaultInt` /
+  `defaultBool` / `defaultFloat`, a `Schema.Table` default, an `addColumn` op)
+  must fit its column, because `migrate` writes it into the rows that exist.
+  `adjust` needs a required `Int` or `Float` column.
+- **A projection never reads a source its codec decodes as `Nothing`.** The
+  `select` / `selectAs` / `selectColumn` / `Agg` / `copyInto` / `setCol` fit
+  checks compared base kinds and nullability only, so a `List Int` column
+  into a `Maybe (List String)` field, or a `String` column into a `Maybe` enum
+  field, read `Nothing` in every row. They now compare the codecs
+  (`Codec.schemaFitError`, new): a `Maybe x` field reads a source `x` or
+  `Maybe x`, and a list, record or custom type is compared part by part.
+- **A stored value that does not read as its column's kind is an `Err`, not
+  `Nothing`.** The read kernel turned it into JSON null, which a
+  `Codec.maybe` decoder reads as `Nothing`; now the `Err` names the table, the
+  column and the kind. SQL NULL is still `Nothing`, and the shapes earlier
+  versions wrote still read (an integer stored as text, an integral float,
+  `1` / `0` bools, timestamps as text). A column that holds a value its
+  `Maybe` field's codec reads as `Nothing` (JSON of another custom type, a
+  projection into another type) is an `Err` naming the column, and so is JSON
+  of another custom type written into such a column. A `selectRaw` result
+  that leaves out a codec column is an `Err` naming it. On the write side, a codec value whose
+  JSON is not of the column's kind is an `Err` naming the column, where the
+  kernel wrote 0, false or the value's Go `%v` text.
+- **A `Maybe` nested inside a JSON column never reads as `Nothing` by
+  mistake.** The read and write checks above looked at top-level columns
+  only, so an element of a `List (Maybe Shade)` (a taggedUnion or an enum)
+  that was not a `Shade`, or a `Maybe` custom type inside a nested record,
+  read as `Nothing` with no error, and `setValue` of such JSON ran when the
+  record had a field with no zero. With `Codec.maybe` strict, such a row is an
+  `Err` naming the table and the column (`column "palettes.xs" holds a value
+  its field's codec does not read (…)`), and the write check reads the JSON
+  with the column's own field decoder (`Codec.fieldReadError`, new). A JSON
+  `null` element still reads as `Nothing`.
+- **PostgreSQL takes a number into a TEXT column.** v0.28 created the column
+  of a `Codec.maybe (Codec.maybe Codec.int)` field (also `float`, `bool`) as
+  TEXT and wrote its text. v0.29 binds the value as a number, and pgx had no
+  plan for an int64, float64 or bool into a TEXT parameter, so every write to
+  such a table failed on PostgreSQL (SQLite stored the text). An int, float
+  or bool argument now binds into a TEXT parameter as its text, and into any
+  other parameter exactly as before. The column stays TEXT and sorts as
+  text; `docs/migration/v0.29.md` has the one-time conversion.
+- **SQLite writes and compares v0.28's text in a v0.28 TEXT Bool or Float
+  column.** v0.29 bound a Go bool / float64 there, which SQLite stored as `1`
+  / `7.0` beside v0.28's `true` / `7`, and `Store.eq "flag" (SqlBool True)`
+  compared as the text `1`, so it missed every v0.28 row with no error. On
+  SQLite, Std.Db.Store now marks each placeholder of a nullable `Float` or
+  `Bool` column, and the runtime reads the column's declared type (once per
+  connection and table): into a TEXT column it binds the text v0.28 wrote
+  (`true` / `false`, `7`, `7.5`), into any other column the value as before.
+  Every write keeps one spelling, and `eq`, `inList`, `setValue`, `setWhen`,
+  `updateFields`, `insert`, `upsert` and `copyInto` match and write old and
+  new rows alike. `Store.toSql` shows the SQL without the marks.
+- **A JSON value with a key named like its column is written.** The write
+  check of an open JSON column (`Json.Value`, a `taggedUnion`, a `dict`)
+  searched the encoded record for the text `"<col>":null`, so
+  `{"data":null,"errors":[]}` in a column `data` (a GraphQL-style payload)
+  was refused as "reads the value as Nothing". The check, and the read check
+  that a nullable column did not come back `Nothing`, now read the record's
+  own key, not a substring of the text.
+- **`Codec.auto` reads a `Json.Value` field.** The field lowers to Go `any`,
+  and the decoder refused it ("cannot decode kind interface"), so every read
+  of such a record failed. The blank's JSON value marks the field
+  (`Codec.auto { data = Json.Encode.null }`), and the field now reads any
+  JSON. An `any` slot whose blank holds anything else (a key type) is still
+  never built from JSON. A `Maybe Json.Value` field needs a `Just` blank
+  (`more = Just Json.Encode.null`) for the same reason.
+- **`insertMany` and `upsert` compute a `defaultWith` column.** They left it
+  out of the INSERT, so the row took the column's database default or NULL.
+- **`Codec.maybe` over a list, a record or a union gives a nullable column.**
+  In a `Codec.object` codec such a field was a NOT NULL blob column, so
+  `Store.insert` of `Nothing` failed with a NOT NULL violation (a new table,
+  and from this release a migrated one). It is now `blob?`, as `Codec.auto`
+  already made it. Existing columns are not altered: an app that created such
+  a table can make the column nullable by hand (`ALTER TABLE t ALTER COLUMN c
+  DROP NOT NULL` on PostgreSQL, a table rebuild on SQLite).
+- **A nested `Codec.maybe` no longer stores its value as text.** In a
+  `Codec.object` codec, `Codec.maybe (Codec.maybe x)` gave a column kind the
+  runtime did not know (`int??`), so the value was written as plain text and
+  `Just (Just 5)` read back as `Just Nothing`, with no error. It is now one
+  nullable column of the inner kind, as `Codec.auto` already made it. JSON has
+  one `null`, so `Just Nothing` reads back as `Nothing`.
+- **Builds use less memory: lowering types only the code the program
+  reaches.** Lowering inferred the body types of every top-level function of
+  every interned module, and the whole stdlib is interned, before it dropped
+  the unused ones. A build's memory then grew with the size of the stdlib,
+  not with the program, and the larger `Std.Db.Store` pushed the warm build
+  of the 50-field benchmark app over its peak-RSS budget. Lowering now types
+  only the functions reachable from `main`, `config` and the device slots.
+  The emitted Go is unchanged. On an Apple silicon Mac the warm build of that
+  app peaks at about 104 MiB instead of 136 MiB (`web`) and 164 MiB instead
+  of 198 MiB (`web:app`), and its lowering phase takes half the time.
+- **Embedded PostgreSQL: a crash no longer leaks a shared-memory segment.**
+  After a SIGKILL, `--embed` clears the stale `postmaster.pid` before the next
+  boot. That file is the only record of the dead postmaster's System V
+  segment, so each crash leaked one. macOS allows 32, and once they were gone
+  no PostgreSQL on the machine could start (`initdb`: "could not create shared
+  memory segment"). Sky now releases the segment the file names before it
+  removes the file, when this user owns it and nothing is attached.
+- **`Std.Db.Store`: `pushProject` and `dumpSchema` refuse a builder
+  problem.** A problem a builder recorded (an unknown column in `unique`,
+  `index` or `uniqueOn`) did not travel with `Store.toTable`, so `sky db
+  push` created the table and then failed on the index with a driver error,
+  and `sky db migrate --gen` wrote it. `Store.Table` now has `problems`, and
+  both refuse the table, naming the column, before any DDL.
+- **`sky db migrate`: a required unique column added to a table with rows
+  names the cause.** A `--gen` file adds such a column `NOT NULL DEFAULT
+  <d>` and then a unique index; on 2 or more rows the index failed with the
+  raw database error. The apply still rolls back, and now names the table,
+  the column and the fix (a data step that gives each row its own value, or
+  a `Maybe` field).
+
+- **`Std.Db`: a row error after the first row is `Err`, not a short list.**
+  `dbQueryRows` did not check `rows.Err()` after its loop. SQLite (modernc)
+  steps inside `Next`, and pgx preloads one row, so an error after row 1 (a
+  malformed JSON value, `SQLITE_BUSY`) ended the loop and `Db.query`,
+  `Store.toList` and every typed reader returned `Ok` with the rows before
+  it. Pinned by Go tests on both dialects and a conformance case.
+- **`Std.Db.Store`: a `defaultText` value cannot change the column's flags.**
+  The `touch` flag was found by a substring match, so
+  `Store.defaultText "status" "untouched"` made every `Store.update` write the
+  clock into `status`. A `|` in a default value started a new flag (`"a|u"`
+  made the column UNIQUE, `"a|dnow"` changed the default), and `"a|b%c"`
+  stored `'a'`. The value is now percent-encoded in the colspec and the
+  flags are compared exactly.
+- **`Std.Db.Store` on PostgreSQL: `Codec.autoCamel` stores work.** The DDL is
+  unquoted, so PostgreSQL stores `priceMinor` as `priceminor`. The second
+  `Store.migrate` failed with "column already exists", and reads gave NULL
+  for every camelCase column (a required field failed to decode, a `Maybe`
+  field was silently `Nothing`). Column lookups now fold case on PostgreSQL.
+- **`Std.Db.Store` on PostgreSQL: `migrate` reads only the current schema.**
+  A table of the same name in another schema on the `search_path` made
+  `migrate` skip the CREATE and ALTER the other table.
+- **`Std.Db.Store`: `findBy` and `delete` check the column name.** They put
+  the column argument into the SQL unchecked, so `findBy conn s "id = id OR
+  1" "x"` returned the first row and `delete` with it deleted every row on
+  SQLite. Both now go through the checked query path.
+- **`Std.Db.Store`: `offset` without `limit` works on SQLite, and a negative
+  `limit` or `offset` is `Err`.** SQLite refused `OFFSET` without `LIMIT`
+  (a syntax error), and a negative limit meant "no limit" on SQLite but an
+  error on PostgreSQL.
+- **`Std.Db.Store` migrate: a declared default is kept when a column is
+  added (B9).** `Store.migrate` ignored `defaultInt` / `defaultText` /
+  `defaultBool` / `defaultNow` on ALTER, and `--gen` wrote the zero value.
+- **`Std.Db.Store`: a text primary key on SQLite refuses NULL (B8).** A
+  non-integer PK had no NOT NULL, and SQLite then accepts a NULL key. A new
+  table (and a v2 `createTable` op) makes every PK NOT NULL.
+- **`sky db migrate`: an `addIndex` op checks its column names (B10).** They
+  were put into the DDL unchecked.
+- **`Std.Db.Schema`: `defaultNow` on a `timestamp` / `bigInt` / `int` column
+  works.** It rendered `DEFAULT now()` on a BIGINT column, which PostgreSQL
+  refuses in CREATE TABLE, and SQLite stored text that an Int field cannot
+  read. An integer column now takes epoch milliseconds.
+- **`Std.Db.Schema.toProject`: a default value with `|` stays a value.** The
+  bridge put a `defaultText` value into the colspec without the encoding
+  Store uses, so `"a|u"` made the column UNIQUE in `sky db push` and `--gen`.
+- **`Std.Db.Store`: every verb checks the table name, the primary key and the
+  builders' column names.** `all`, `create`, `insert`, `insertMany`,
+  `upsert` and `update` put the table name into SQL unchecked, and
+  `primaryKey "idd"` or `unique "emial"` kept the unknown name silently.
+
+- **Typing while the server is slow no longer rewinds the box (Sky.Spa, Sky.Webview).** A hold
+  RPC (a server branch that writes server data into the model, such as a
+  debounced search) holds later Msgs, the keystrokes among them, so for that
+  time the model is behind what the box shows. The render after the answer,
+  and the render of each held keystroke, wrote the model's older text into the
+  focused box and clamped the caret; the held keystrokes then ran against the
+  rewritten box, and letters landed in the wrong places ("harbourside" typed
+  against a slow search lost and swapped letters, and the caret jumped back
+  into the word). Each queued
+  Msg now records the form control whose input or change event made it, and
+  while such a Msg waits the render does not write that control's value or
+  checked state. When the waiting Msgs have run, the model equals the box and
+  nothing is written; an arm that sets a different value still writes it. The
+  order is unchanged: each Msg runs once, in arrival order. In addition, an
+  input Msg runs at once during a hold when the split proves it commutes with
+  that hold (`Spa.withHoldFree`, generated): its arm is client code with no
+  command, it touches no model field the hold's result or follow-ups write or
+  read, `subscriptions` does not read both its fields and the hold's, and the
+  app has no guard and no `App.withRpcError`. It runs early only when no other
+  Msg waits ahead of it. `Spa.withHoldFree` is generated-only: a call in
+  hand-written code is refused with `[E1011]`. Tests: `runtime-go/rt/spa_typing_test.go` (red
+  before: the box ended at caret 2 of 4), `rust/crates/project/tests/spa_typing_hold.rs`,
+  `spa_hold_free_table_reaches_the_client`, and the `spa-typing-hold` stage of
+  `scripts/spa-rpc-order-e2e.sh` in Chromium and WebKit (every `/_rpc` answer
+  held 900 ms, a word typed with 160 ms between keys; v0.28.1 ended with
+  "blueyberr", caret 5).
+
+  The same e2e now runs the same Std.App source on Sky.Live (`--target web`,
+  which `tablet` and `desktop` also serve), through a `Std.Ui` input and a
+  `Std.Html` input, with every `/_sky/event` answer held 900 ms. Sky.Live was
+  already safe (the server skips a value patch equal to the `inputState` of
+  the event, and the client drops value writes to a field with unacked
+  keystrokes); the stage is red when both are switched off. The Sky.Webview
+  shim (`Webview.app`) had the bug: each keystroke went to the update loop
+  and the loop answered each one with a patch from the model after it, so a
+  loop slower than the typing rewound the box and clamped the caret. Each
+  input dispatch is now numbered and the loop acks it with that Msg's
+  patches; no value is written to a control with an unacked keystroke
+  (`runtime-go/rt/webview_typing_test.go`, red before: caret 1 of 3). The
+  mobile and `desktop:<os>` client shells run the Sky.Spa wasm client and
+  take its fix. Sky.Tui applies each key's Msg before it reads the next key,
+  so its input buffer is never ahead of the model.
+
+- **Security: Std.Image had no pixel limit (decompression bomb).** A tiny
+  PNG, JPEG, GIF or WebP that declares a huge size (a 70-byte PNG can claim
+  20000 x 20000) was decoded in full: 1.6 GB of RGBA for that file, enough to
+  take down a small server through any upload that `resizeToFit` or `crop`
+  read. Every Std.Image and Std.Image.Canvas entry that decodes now reads the
+  header with `image.DecodeConfig` and refuses the image before it allocates
+  (`too_many_pixels`); a GIF's frames are counted from its block structure
+  before any frame is decoded and again while decoding. Regression tests in
+  `runtime-go/rt/image_gif_test.go` (a tiny PNG and JPEG that claim 20000 x
+  20000, a 1x1 GIF of 100,000 frames, a 5000x5000 GIF of 50 frames) and the
+  `ImageGif` conformance suite.
+
+- **The stdlib docs named the wrong function for reading a binary file.**
+  `Std.Zip`, `Sky.Core.Bytes`, `Std.Email` and `File.writeBytes` said to pass
+  `File.readFileBytes` output, which is a `List Int`, where a `Bytes`
+  `String` is taken (a type error). `File.readFile` returns a file's bytes as
+  they are, binary included; the docs now say so and name it.
+
+- **A type a module declares with the name `Decoder`, `Value`, `Cmd` or `Sub`
+  builds.** Its annotation lowered to `any` (the rule for the kernel handles
+  of those names) while its pattern used the module's own type, so a program
+  with, for example, `type Decoder a = Decoder (Int -> a)` and a function
+  `run : Decoder a -> …` passed `sky check` and failed `go build`. A
+  data-carrying union a module declares now lowers to that module's type
+  everywhere.
+
+- **`String.padLeft` and `String.padRight` are O(n).** They added one pad
+  character per loop step and recounted the string each time: O(n²) in the
+  target width (a 200,000-character pad took seconds). They now count once and
+  add the padding in one step.
+
+- **`Regex.find` finds an empty match.** `Regex.find "x*" "abc"` was `Nothing`
+  because an empty matched text was read as "no match"; it is `Just ""`, as
+  `findAll` and Elm have it.
+
+- **`sky run --help` prints help and builds nothing.** Before, `sky run --help`
+  in a project directory built and ran the project.
+
+- **Local functions of one `let` that call each other build.** Two (or more)
+  local functions that call each other (`follow n = … piece … ; piece n = …
+  follow …`) passed the type check, then failed `go build` with `undefined:
+  piece_6`; the workaround was to lift them to the top level. The lowering now
+  declares the whole group before it assigns any closure. A plain binding
+  beside the group, before or after it in source order, is emitted around it.
+  A `let` in the `else` branch of a tail-recursive function now orders its
+  forward references like every other `let` (it was emitted in source order,
+  so a forward reference there failed `go build` too).
+
+- **`Server.header` ignores the case of the header name.** HTTP header names
+  are case-insensitive, and the doc said so, but the lookup was exact:
+  `Server.header "content-type" req` was `Nothing` for a request that sent
+  `Content-Type`, because the request holds Go's canonical spelling. The
+  lookup now tries the canonical form, then the exact name, then any key that
+  differs only in case.
+
+- **A value defined in terms of itself is a compile error, `[E1018]` BAD
+  RECURSION.** `a = b + 1` with `b = a * 2`, or `xs = 1 :: xs`, passed `sky
+  check`: a top-level cycle deadlocked on its first read, and the same cycle
+  inside a `let` failed `go build`. The checker now refuses a cycle that holds
+  a value (a definition with no parameters whose body is not a lambda), names
+  it (`a -> b -> a`), and says how to break it. Functions that call each other
+  are ordinary recursion and stay accepted, as do a reference under a lambda, a
+  function named but not called, and a partial application. See
+  `docs/errors/E1018-value-cycle.md`.
+
+- **The Sky.Spa session cookie `sky_spa` has a `Max-Age`.** It had none, so
+  it was a browser-session cookie: a browser that clears session cookies on
+  quit, a private window, or a mobile browser the system reclaimed, dropped a
+  sign-in whose token had weeks to run. Every `sky_spa` write that carries a
+  token now sets `Max-Age` to the session's lifetime (the token's `exp` span),
+  as Sky.Live does for `sky_sid`; the sign-out and legacy-clear writes keep
+  `Max-Age=0`.
+
+- **The Sky.Spa split keeps a local type alias that shadows an imported
+  name.** A module with `import Types exposing (..)` and its own `type alias
+  Plan`, where `Types.Plan` was a wire type, passed `sky check` and failed the
+  client build with `record is missing field(s)`: the split chose wire types by
+  BARE name, so it also moved the module's own `Plan` into `Shared` (declared
+  twice there) and stripped it from the module's client copy, where `Plan` then
+  meant `Types.Plan`. The type-copy seed now carries each type's owning module,
+  and a copied name is dropped only from the module it was copied from (and
+  only from imports of that module).
+
+### Repository and tooling
+
+- **The legacy compilers are gone from the tree.** The retired Haskell,
+  TypeScript and Sky-in-Sky compilers, and the scripts, fixtures and examples
+  only they used, are removed. Tag `v0.28.1` is the last tag that has them
+  (`docs/history/legacy-compilers.md`). None of them was part of the released
+  `sky` binary, and `xtask build-run --bless` now writes a golden from two
+  agreeing Rust captures alone, with no oracle.
+- **The README is rewritten.** It is short, puts the install line first, and
+  every code sample in it is a verbatim copy of code that CI builds
+  (`docs/showcase.md`, `examples/03-tea-external`), which
+  `rust/crates/xtask/tests/readme_samples_are_built.rs` enforces. The docs
+  index lists every stdlib module. `AGENTS.md`, `CLAUDE.md` and the `sky init`
+  templates are refreshed. The memory and CPU sizing notes moved to
+  `docs/perf/sizing.md`, with every measurement kept.
+- **Versions are stated once and checked.** `sky doctor` checks Go against
+  the `go` directive in `runtime-go/go.mod` (1.25), and the docs say 1.25.
+  `rust-toolchain.toml` pins Rust 1.99.1, the version CI builds with. The Nix
+  dev shell adds Node 22, which the Playwright gates need, and no longer sets
+  `SKY_RUNTIME_DIR`, which no current compiler reads.
+- **Superseded design records moved to `docs/history`**, and `ROADMAP.md`
+  links the public roadmap.
+
+### Fixed (gates)
+
+- **The `welltyped` gate had stopped testing anything.** It compared the Rust
+  compiler with the Haskell oracle and skipped when the oracle was absent,
+  which it was in CI. It now asserts that the Rust compiler accepts every
+  generated program. Doing so found two bugs in the program generator: a
+  zero-argument helper could name itself (a value cycle, `[E1018]`), and an
+  `if` at the head of `::` with no brackets took the cons into its `else`
+  branch. Both are fixed, and the gate passes 400 programs.
+- **The LSP test on the Stripe-scale FFI example ran nowhere.**
+  `scripts/lsp-test-skyshop.lua` was not wired to any gate, and its
+  hard-coded line and column numbers had drifted. It is now the `realffi`
+  group of the `lsp` gate (hover and completion on `examples/13-skyshop`),
+  finds its positions in the file, and has a falsifier.
+- **The Office e2e reads files LibreOffice wrote.** It already opened Sky's
+  `.xlsx` and `.docx` files in LibreOffice. It now also has LibreOffice save
+  both files again and checks that `Xlsx.read` and `Docx.read` read them,
+  cached formula value included.
+
 ## v0.28.1 — Insert text at the caret (Std.Native.insertAtCursor) (2026-10-28)
 
 ### Added
@@ -7766,7 +8637,7 @@ migration section. `sky upgrade --notes` previews the notes without upgrading.
 
 ## v0.17.0 — typed-emit soundness floor (2026-06-28)
 
-Release plan: [`docs/v0.17/release-plan.md`](docs/v0.17/release-plan.md).
+Release plan: [`docs/v0.17/release-plan.md`](docs/history/v0.17/release-plan.md).
 Judge re-verdict: REFRAMED 100% ACHIEVED + VERIFIED.
 
 ### Compiler
@@ -7979,7 +8850,7 @@ full current-state catalog. Items closed since v0.16.x:
   type map (`globalRegionTypes`); `LowerCtx` threads the expected
   type down through `exprToGoExpectGo`. Closes the long-standing
   parametric-record-alias bug class (every Surface 1/2/3 is now
-  shipped). Architecture: [`docs/v1-rfc/type-soundness-deep-analysis.md`](docs/v1-rfc/type-soundness-deep-analysis.md).
+  shipped). Architecture: [`docs/v1-rfc/type-soundness-deep-analysis.md`](docs/history/v1-rfc/type-soundness-deep-analysis.md).
 - **Go generics on parametric record aliases.** `type alias Cfg msg
   = { onSubmit : msg, label : String, ... }` now emits
   `type Cfg_R[T1 any] struct { OnSubmit T1; Label string; ... }`

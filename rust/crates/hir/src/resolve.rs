@@ -205,6 +205,21 @@ pub fn resolve(db: &dyn SkyDb, module: ModuleId) -> ResolveResult {
     let mut r = Resolver::new(db, module);
     r.build_env();
     r.walk_module();
+    // `[E1018]`: a value defined in terms of itself (value_cycle.rs).
+    let spans: HashMap<DefId, Span> = r.result.def_spans.iter().copied().collect();
+    let names: HashMap<DefId, (String, Option<Span>)> = r
+        .result
+        .top_defs
+        .iter()
+        .map(|td| {
+            (
+                td.def,
+                (td.name.as_str().to_string(), spans.get(&td.def).copied()),
+            )
+        })
+        .collect();
+    let cycles = crate::value_cycle::check(&r.result.bodies, &names);
+    r.result.diagnostics.extend(cycles);
     r.result
 }
 
@@ -942,9 +957,9 @@ impl<'a> Resolver<'a> {
         for (name, res) in wins {
             // Measured before landing (`SKY_AUDIT_PRECEDENCE` instrumentation,
             // since removed): across all 56 examples and 6 real apps —
-            // skydeploy's control-plane, sky-lang.org, shop-app, sendcrafts,
-            // rfcflow, sky-urlshortener — the layer winner picked here was
-            // IDENTICAL to the old last-import-wins value in every case. The
+            // sky-lang.org, sky-urlshortener and four downstream apps — the
+            // layer winner picked here was IDENTICAL to the old last-import-wins
+            // value in every case. The
             // lattice therefore changes no working program's meaning; it only
             // makes the choice independent of import order and rejects the ties.
             //

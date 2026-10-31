@@ -13,6 +13,19 @@
 -- conformance + so `sky doc` shows a stable source location for
 -- every entry.  The runtime bodies live in `runtime-go/rt/rt.go`
 -- (`String_*` helpers).
+--
+-- THE UNIT. Every index and every length in this module counts
+-- Unicode code points (Go runes): not bytes (that is
+-- `Sky.Core.Bytes`) and not graphemes (that is `String.graphemes`).
+-- `String.length "€5" == 2`, `String.slice 1 2 "é!" == "!"`.
+--
+-- BUILDING A STRING. `a ++ b` copies both sides, so `++` in a loop is
+-- O(n²). Cons the pieces onto a list and call
+-- `String.concat (List.reverse pieces)` once: O(n). To walk a string
+-- one character at a time, use `uncons`, `foldl` or `toList` (O(n) in
+-- all); a loop of `slice i (i + 1)` is O(n) per call except on the one
+-- large string the runtime's index cache holds
+-- (`runtime-go/rt/string_fast.go` states its limits).
 module Sky.Core.String exposing
     ( fromInt
     , fromFloat
@@ -22,6 +35,10 @@ module Sky.Core.String exposing
     , split
     , replace
     , slice
+    , indexes
+    , uncons
+    , foldl
+    , foldr
     , dropLeft
     , dropRight
     , toInt
@@ -71,47 +88,74 @@ import Sky.Ffi as Ffi
 
 
 -- ─── Construction ──────────────────────────────────────────────────
+-- | `fromInt n` — the decimal text of `n`.
+--
+-- Cost: O(number of digits).
 fromInt : Int -> String
 fromInt =
     Ffi.kernel "String_fromInt"
 
 
+-- | `fromFloat x` — the decimal text of `x`.
+--
+-- Cost: O(number of digits).
 fromFloat : Float -> String
 fromFloat =
     Ffi.kernel "String_fromFloat"
 
 
+-- | `fromChar c` — the one-character string of `c`.
+--
+-- Cost: O(1).
 fromChar : Char -> String
 fromChar =
     Ffi.kernel "String_fromChar"
 
 
+-- | `fromList chars` — the string of the characters, in order.
+--
+-- Cost: O(n).
 fromList : List Char -> String
 fromList =
     Ffi.kernel "String_fromList"
 
 
 -- ─── Sizes + predicates ────────────────────────────────────────────
+-- | `length s` — the number of characters (code points) in `s`.
+--
+-- Cost: O(n), no allocation.
 length : String -> Int
 length =
     Ffi.kernel "String_length"
 
 
+-- | `isEmpty s` — `True` for `""`.
+--
+-- Cost: O(1).
 isEmpty : String -> Bool
 isEmpty =
     Ffi.kernel "String_isEmpty"
 
 
+-- | `contains needle haystack` — `True` when `needle` occurs in `haystack`.
+--
+-- Cost: O(n).
 contains : String -> String -> Bool
 contains =
     Ffi.kernel "String_contains"
 
 
+-- | `startsWith prefix s` — `True` when `s` starts with `prefix`.
+--
+-- Cost: O(length of the prefix).
 startsWith : String -> String -> Bool
 startsWith =
     Ffi.kernel "String_startsWith"
 
 
+-- | `endsWith suffix s` — `True` when `s` ends with `suffix`.
+--
+-- Cost: O(length of the suffix).
 endsWith : String -> String -> Bool
 endsWith =
     Ffi.kernel "String_endsWith"
@@ -122,6 +166,8 @@ endsWith =
 --     "hello world" |> String.containsIn "world"   -- True
 --
 -- Equivalent to `\\haystack needle -> contains needle haystack`.
+--
+-- Cost: O(n).
 containsIn : String -> String -> Bool
 containsIn haystack needle =
     contains needle haystack
@@ -130,6 +176,8 @@ containsIn haystack needle =
 -- | Haystack-first companion to `startsWith`.
 --
 --     "/api/users" |> String.startsWithIn "/api"  -- True
+--
+-- Cost: O(length of the prefix).
 startsWithIn : String -> String -> Bool
 startsWithIn haystack prefix =
     startsWith prefix haystack
@@ -138,106 +186,215 @@ startsWithIn haystack prefix =
 -- | Haystack-first companion to `endsWith`.
 --
 --     "image.png" |> String.endsWithIn ".png"  -- True
+--
+-- Cost: O(length of the suffix).
 endsWithIn : String -> String -> Bool
 endsWithIn haystack suffix =
     endsWith suffix haystack
 
 
+-- | `isEmail s` — `True` when `s` has the form of an email address.
+--
+-- Cost: O(n).
 isEmail : String -> Bool
 isEmail =
     Ffi.kernel "String_isEmail"
 
 
+-- | `isUrl s` — `True` when `s` has the form of an absolute URL.
+--
+-- Cost: O(n).
 isUrl : String -> Bool
 isUrl =
     Ffi.kernel "String_isUrl"
 
 
+-- | `equalFold a b` — `True` when `a` and `b` are equal after Unicode case folding.
+--
+-- Cost: O(n).
 equalFold : String -> String -> Bool
 equalFold =
     Ffi.kernel "String_equalFold"
 
 
 -- ─── Parsing ───────────────────────────────────────────────────────
+-- | `toInt s` — the whole number `s` spells, or `Nothing`.
+--
+-- Cost: O(n).
 toInt : String -> Maybe Int
 toInt =
     Ffi.kernel "String_toInt"
 
 
+-- | `toFloat s` — the number `s` spells, or `Nothing`.
+--
+-- Cost: O(n).
 toFloat : String -> Maybe Float
 toFloat =
     Ffi.kernel "String_toFloat"
 
 
 -- ─── Case + whitespace ─────────────────────────────────────────────
+-- | `toUpper s` — `s` in upper case (Unicode).
+--
+-- Cost: O(n).
 toUpper : String -> String
 toUpper =
     Ffi.kernel "String_toUpper"
 
 
+-- | `toLower s` — `s` in lower case (Unicode).
+--
+-- Cost: O(n).
 toLower : String -> String
 toLower =
     Ffi.kernel "String_toLower"
 
 
+-- | `casefold s` — `s` in Unicode case-folded form, for case-insensitive comparison.
+--
+-- Cost: O(n).
 casefold : String -> String
 casefold =
     Ffi.kernel "String_casefold"
 
 
+-- | `trim s` — `s` without white space at either end.
+--
+-- Cost: O(n).
 trim : String -> String
 trim =
     Ffi.kernel "String_trim"
 
 
+-- | `trimStart s` — `s` without white space at the start.
+--
+-- Cost: O(n).
 trimStart : String -> String
 trimStart =
     Ffi.kernel "String_trimStart"
 
 
+-- | `trimEnd s` — `s` without white space at the end.
+--
+-- Cost: O(n).
 trimEnd : String -> String
 trimEnd =
     Ffi.kernel "String_trimEnd"
 
 
 -- ─── Slicing + assembly ────────────────────────────────────────────
+-- | `reverse s` — the characters of `s` in reverse order.
+--
+-- Cost: O(n).
 reverse : String -> String
 reverse =
     Ffi.kernel "String_reverse"
 
 
+-- | `append a b` — `a` followed by `b` (the same as `a ++ b`).
+--
+-- Cost: O(length a + length b); in a loop that is O(n²), use `concat`.
 append : String -> String -> String
 append =
     Ffi.kernel "String_append"
 
 
+-- | `concat parts` — the strings of the list joined with nothing between them.
+--
+-- Cost: O(total length); the result is sized once.
 concat : List String -> String
 concat =
     Ffi.kernel "String_concat"
 
 
+-- | `join sep parts` — the strings of the list with `sep` between each pair.
+--
+-- Cost: O(total length); the result is sized once.
 join : String -> List String -> String
 join =
     Ffi.kernel "String_join"
 
 
+-- | `split sep s` — the parts of `s` between each `sep`.
+--
+-- Cost: O(n).
 split : String -> String -> List String
 split =
     Ffi.kernel "String_split"
 
 
+-- | `replace old new s` — `s` with every `old` replaced by `new`.
+--
+-- Cost: O(n).
 replace : String -> String -> String -> String
 replace =
     Ffi.kernel "String_replace"
 
 
+-- | `uncons s` — the first character and the rest of the string, or
+-- `Nothing` for `""`. The rest shares the bytes of `s` (no copy).
+--
+--     String.uncons "é!" == Just ( 'é', "!" )
+--
+-- Cost: O(1).
+uncons : String -> Maybe ( Char, String )
+uncons =
+    Ffi.kernel "String_uncons"
+
+
+-- | `foldl f acc s` — fold over the characters of `s` from the first.
+--
+--     String.foldl (::) [] "abc" == [ 'c', 'b', 'a' ]
+--
+-- Cost: O(n).
+foldl : (Char -> b -> b) -> b -> String -> b
+foldl f acc s =
+    case uncons s of
+
+        Nothing ->
+            acc
+
+        Just ( c, rest ) ->
+            foldl f (f c acc) rest
+
+
+-- | `foldr f acc s` — fold over the characters of `s` from the last.
+--
+--     String.foldr (::) [] "abc" == [ 'a', 'b', 'c' ]
+--
+-- Cost: O(n).
+foldr : (Char -> b -> b) -> b -> String -> b
+foldr f acc s =
+    foldl f acc (reverse s)
+
+
+-- | `slice start end s` — the characters from `start` up to, not including, `end`. A negative index counts from the end; the range is clamped.
+--
+-- Cost: O(end) for indexes >= 0, with no copy (the result shares the input's bytes); O(n) when an index is negative.
 slice : Int -> Int -> String -> String
 slice =
     Ffi.kernel "String_slice"
 
 
+-- | `indexes sub s` — the start of every non-overlapping occurrence of
+-- `sub` in `s`, left to right, counted in characters (Unicode code
+-- points: the unit of `String.slice` and `String.length`, never bytes).
+-- An empty `sub` gives `[]`, as in Elm. Runs anywhere (pure: client and
+-- server). Cost: O(n) in the length of `s`.
+--
+--     String.indexes "i" "Mississippi" == [ 1, 4, 7, 10 ]
+--     String.indexes "ss" "Mississippi" == [ 2, 5 ]
+--     String.indexes "=" "£1=─2" == [ 2 ]
+indexes : String -> String -> List Int
+indexes =
+    Ffi.kernel "String_indexes"
+
+
 -- | Drop the first n characters (runes) from s.  Elm semantics:
 -- negative n returns s unchanged; n >= length returns "".
+--
+-- Cost: O(k) for k characters, with no copy.
 dropLeft : Int -> String -> String
 dropLeft =
     Ffi.kernel "String_dropLeft"
@@ -245,37 +402,57 @@ dropLeft =
 
 -- | Drop the last n characters (runes) from s.  Elm semantics:
 -- negative n returns s unchanged; n >= length returns "".
+--
+-- Cost: O(k) for k characters (walks back from the end), with no copy.
 dropRight : Int -> String -> String
 dropRight =
     Ffi.kernel "String_dropRight"
 
 
+-- | `repeat n s` — `n` copies of `s` joined together (`""` when `n` is 0 or less).
+--
+-- Cost: O(n * length s).
 repeat : Int -> String -> String
 repeat =
     Ffi.kernel "String_repeat"
 
 
+-- | `padLeft n c s` — `s` with `c` added in front until it is `n` characters long.
+--
+-- Cost: O(n).
 padLeft : Int -> Char -> String -> String
 padLeft =
     Ffi.kernel "String_padLeft"
 
 
+-- | `padRight n c s` — `s` with `c` added at the end until it is `n` characters long.
+--
+-- Cost: O(n).
 padRight : Int -> Char -> String -> String
 padRight =
     Ffi.kernel "String_padRight"
 
 
 -- ─── Word / line / character views ─────────────────────────────────
+-- | `words s` — the words of `s`, split at runs of white space.
+--
+-- Cost: O(n).
 words : String -> List String
 words =
     Ffi.kernel "String_words"
 
 
+-- | `lines s` — `s` split at each newline.
+--
+-- Cost: O(n).
 lines : String -> List String
 lines =
     Ffi.kernel "String_lines"
 
 
+-- | `toList s` — the characters (code points) of `s`, in order.
+--
+-- Cost: O(n).
 toList : String -> List Char
 toList =
     Ffi.kernel "String_toList"
@@ -291,12 +468,16 @@ toList =
 -- variable.
 -- | The first `n` runes of `s` (the whole string when `n` exceeds it,
 -- `""` when `n` is negative).
+--
+-- Cost: O(k) for k characters, with no copy.
 left : Int -> String -> String
 left =
     Ffi.kernel "String_left"
 
 
 -- | The last `n` runes of `s`.
+--
+-- Cost: O(k) for k characters (walks back from the end), with no copy.
 right : Int -> String -> String
 right =
     Ffi.kernel "String_right"
@@ -304,12 +485,16 @@ right =
 
 -- | The first `n` GRAPHEME CLUSTERS of `s` — never splits a combining
 -- sequence or an emoji ZWJ sequence.  `""` when `n <= 0`.
+--
+-- Cost: O(n) (walks grapheme clusters).
 truncate : Int -> String -> String
 truncate =
     Ffi.kernel "String_truncate"
 
 
 -- | `truncate n s` with a trailing `…` when anything was cut.
+--
+-- Cost: O(n) (counts grapheme clusters).
 ellipsize : Int -> String -> String
 ellipsize =
     Ffi.kernel "String_ellipsize"
@@ -319,6 +504,8 @@ ellipsize =
 -- | HTML-escape `&`, `<`, `>`, `"` and `'`.  `Std.Ui` already escapes
 -- everything it renders; reach for this only when building markup by
 -- hand.
+--
+-- Cost: O(n).
 htmlEscape : String -> String
 htmlEscape =
     Ffi.kernel "String_htmlEscape"
@@ -326,24 +513,32 @@ htmlEscape =
 
 -- | Lowercase, alphanumerics kept, runs of space/`-`/`_` collapsed to
 -- one `-`, no leading or trailing `-`.
+--
+-- Cost: O(n).
 slugify : String -> String
 slugify =
     Ffi.kernel "String_slugify"
 
 
 -- | Is `s` well-formed UTF-8?
+--
+-- Cost: O(n).
 isValid : String -> Bool
 isValid =
     Ffi.kernel "String_isValid"
 
 
 -- | Unicode NFC (composed) normalisation.
+--
+-- Cost: O(n).
 normalize : String -> String
 normalize =
     Ffi.kernel "String_normalize"
 
 
 -- | Unicode NFD (decomposed) normalisation.
+--
+-- Cost: O(n).
 normalizeNFD : String -> String
 normalizeNFD =
     Ffi.kernel "String_normalizeNFD"
@@ -356,18 +551,24 @@ normalizeNFD =
 -- `uniseg.GraphemeClusterCount` (`runtime-go/rt/stdlib_extra.go`), and
 -- the signature follows the runtime.  A `List String` here would be a
 -- signature the runtime does not honour.
+--
+-- Cost: O(n).
 graphemes : String -> Int
 graphemes =
     Ffi.kernel "String_graphemes"
 
 
 -- | The first `Char` of `s` (the null character when `s` is empty).
+--
+-- Cost: O(1).
 toChar : String -> Char
 toChar =
     Ffi.kernel "String_toChar"
 
 
 -- | The UTF-8 bytes of `s`, each as an `Int` in `0..255`.
+--
+-- Cost: O(n).
 toBytes : String -> List Int
 toBytes =
     Ffi.kernel "String_toBytes"
@@ -375,6 +576,8 @@ toBytes =
 
 -- | Rebuild a string from UTF-8 byte values.  Values outside `0..255`
 -- are truncated to their low byte by the runtime.
+--
+-- Cost: O(n).
 fromBytes : List Int -> String
 fromBytes =
     Ffi.kernel "String_fromBytes"

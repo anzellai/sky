@@ -65,7 +65,8 @@ func TestRenderMigOpCreateTableConstraints(t *testing.T) {
 	for _, want := range []string{
 		"id INTEGER PRIMARY KEY AUTOINCREMENT",
 		"email TEXT NOT NULL UNIQUE",
-		"created_at INTEGER NOT NULL DEFAULT (datetime('now'))",
+		// An integer `now` column takes epoch milliseconds (every op file).
+		"created_at INTEGER NOT NULL DEFAULT (CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))",
 	} {
 		if !strings.Contains(gotSqlite, want) {
 			t.Errorf("sqlite createTable missing %q in:\n%s", want, gotSqlite)
@@ -79,7 +80,7 @@ func TestRenderMigOpCreateTableConstraints(t *testing.T) {
 	for _, want := range []string{
 		"id BIGSERIAL PRIMARY KEY",
 		"email TEXT NOT NULL UNIQUE",
-		"created_at BIGINT NOT NULL DEFAULT now()",
+		"created_at BIGINT NOT NULL DEFAULT (CAST(EXTRACT(EPOCH FROM now()) * 1000 AS BIGINT))",
 	} {
 		if !strings.Contains(gotPg, want) {
 			t.Errorf("pg createTable missing %q in:\n%s", want, gotPg)

@@ -106,6 +106,11 @@ func codecSchemaType(t reflect.Type, snake bool, depth int) codecSchema {
 		s := codecSchemaType(t.Elem(), snake, depth+1)
 		return codecSchema{json: `{"type":"object","additionalProperties":` + s.json + `}`, exact: s.exact}
 	case reflect.Struct:
+		if isSkyDictType(t) {
+			vt := reflect.Zero(t).Interface().(skyDictAny).dictValueType()
+			s := codecSchemaType(vt, snake, depth+1)
+			return codecSchema{json: `{"type":"object","additionalProperties":` + s.json + `}`, exact: s.exact}
+		}
 		if isSkyMaybeType(t) {
 			if jv, ok := t.FieldByName("JustValue"); ok {
 				s := codecSchemaType(jv.Type, snake, depth+1)

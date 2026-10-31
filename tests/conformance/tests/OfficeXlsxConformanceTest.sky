@@ -1,0 +1,486 @@
+module OfficeXlsxConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for Std.Office.Xlsx (v0.29.0) through the Sky API:
+-- read (write x) == x for every Cell kind and every sheet feature (hidden and
+-- veryHidden sheets, merges, frozen panes, validations, column widths), the
+-- 1900 phantom leap day, deterministic bytes, sheetNames, the write refusals
+-- and read limits, and an accountant's ledger export. Files shaped like
+-- Excel, LibreOffice and Google Sheets output, the second (struct-decoding)
+-- reader, zip bombs and hostile parts are in
+-- runtime-go/rt/office_xlsx_test.go.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Std.Office.Xlsx as Xlsx exposing (Cell(..), Validation(..), Visibility(..))
+import Std.Zip as Zip
+import Sky.Test as Test exposing (Test)
+
+
+codeOf : Result Error a -> String
+codeOf r =
+    case r of
+
+        Ok _ ->
+            "ok"
+
+        Err e ->
+            case Error.failureOf e of
+
+                Just f ->
+                    Error.failureDomain f ++ "/" ++ Error.failureCode f
+
+                Nothing ->
+                    "no-domain"
+
+
+messageOf : Result Error a -> String
+messageOf r =
+    case r of
+
+        Ok _ ->
+            ""
+
+        Err e ->
+            Error.toString e
+
+
+at : Int -> List a -> Maybe a
+at i xs =
+    List.head (List.drop i xs)
+
+
+dt : Int -> Int -> Int -> Int -> Int -> Int -> Int -> Xlsx.DateTime
+dt y mo d h mi s ms =
+    { year = y
+    , month = mo
+    , day = d
+    , hour = h
+    , minute = mi
+    , second = s
+    , millisecond = ms
+    }
+
+
+-- Every kind of cell, as a reader gives it back.
+cells : List (List Cell)
+cells =
+    [ [ Text "Name"
+      , Text ""
+      , Text "  spaced  "
+      , Text "ünïcødé 漢字 😀"
+      , Text "tab\tline\nbreak"
+      ]
+    , []
+    , [ Number 0.0, Number (-1.5), Number 1.0e300, Number 1250.5, Number 0.1 ]
+    , [ Boolean True, Boolean False, Empty, Failure "#DIV/0!", Failure "#N/A" ]
+    , [ Date (dt 2026 10 29 0 0 0 0)
+      , Date (dt 2026 10 29 13 45 7 123)
+      , Date (dt 1900 1 1 0 0 0 0)
+      , Date (dt 1900 2 29 0 0 0 0)
+      , Date (dt 1900 3 1 0 0 0 0)
+      , Date (dt 9999 12 31 23 59 59 999)
+      ]
+    , [ Formula "SUM(C3:E3)" Empty, Formula "A1&\" x\"" Empty ]
+    , [ Empty, Empty, Text "after a gap" ]
+    ]
+
+
+roundTrip : List (List Cell) -> Result Error (List (List Cell))
+roundTrip rows =
+    case Xlsx.write
+             [ Xlsx.sheet "Data" (List.map (List.map Xlsx.fromCell) rows) ] of
+
+        Ok bytes ->
+            case Xlsx.read bytes of
+
+                Ok book ->
+                    case List.head book.sheets of
+
+                        Just s ->
+                            Ok s.rows
+
+                        Nothing ->
+                            Ok []
+
+                Err e ->
+                    Err e
+
+        Err e ->
+            Err e
+
+
+features : List Xlsx.SheetSpec
+features =
+    let
+        lists =
+            Xlsx.sheet
+                "Lists"
+                [ [ Xlsx.text "ana" ], [ Xlsx.text "bo" ], [ Xlsx.text "cy" ] ]
+        data =
+            Xlsx.sheet
+                "Data"
+                [ [ Xlsx.text "Status", Xlsx.text "Owner" ]
+                , [ Xlsx.text "open", Xlsx.text "ana" ]
+                ]
+        secret = Xlsx.sheet "Secret" [ [ Xlsx.text "x" ] ]
+    in
+        [ { lists | visibility = Hidden }
+        , { data
+              | columnWidths = [ ( 0, 12.5 ), ( 3, 40.0 ) ]
+              , frozen = Just { rows = 1, columns = 2 }
+              , merged =
+                  [ { firstRow = 3
+                    , firstColumn = 0
+                    , lastRow = 4
+                    , lastColumn = 2
+                    }
+                  ]
+              , validations =
+                  [ ListOf
+                        { firstRow = 1
+                        , firstColumn = 0
+                        , lastRow = 99
+                        , lastColumn = 0
+                        }
+                        [ "open", "closed", "on hold" ]
+                  , ListFromRange
+                        { firstRow = 1
+                        , firstColumn = 1
+                        , lastRow = 99
+                        , lastColumn = 1
+                        }
+                        "Lists!$A$1:$A$3"
+                  ]
+          }
+        , { secret | visibility = VeryHidden }
+        ]
+
+
+featuresBack : Result Error (List Xlsx.Sheet)
+featuresBack =
+    case Xlsx.write features of
+
+        Ok bytes ->
+            case Xlsx.read bytes of
+
+                Ok book ->
+                    Ok book.sheets
+
+                Err e ->
+                    Err e
+
+        Err e ->
+            Err e
+
+
+-- An accountant's ledger export: bold headers, a frozen header row, a date
+-- column, money with a thousands format, a negative in red, a percentage, and
+-- a total the spreadsheet computes.
+ledger : Result Error String
+ledger =
+    let
+        money = Xlsx.numberFormat "#,##0.00;[Red]-#,##0.00"
+        header s = Xlsx.fill 221 235 247 (Xlsx.bold (Xlsx.text s))
+        entry d account amount =
+            [ Xlsx.date d, Xlsx.text account, money (Xlsx.number amount) ]
+        sheet =
+            Xlsx.sheet
+                "Ledger"
+                [ [ header "Date", header "Account", header "Amount" ]
+                , entry (dt 2026 10 1 0 0 0 0) "Sales" 12500.0
+                , entry (dt 2026 10 3 0 0 0 0) "Rent" (-2400.0)
+                , entry (dt 2026 10 9 0 0 0 0) "Refund" (-120.5)
+                , [ Xlsx.empty
+                  , Xlsx.bold (Xlsx.text "Total")
+                  , money (Xlsx.bold (Xlsx.formula "=SUM(C2:C4)"))
+                  ]
+                , [ Xlsx.empty
+                  , Xlsx.text "Margin"
+                  , Xlsx.numberFormat "0.0%" (Xlsx.number 0.7856)
+                  ]
+                ]
+    in
+        Xlsx.write
+            [ { sheet
+                  | frozen = Just { rows = 1, columns = 0 }
+                  , columnWidths = [ ( 0, 12.0 ), ( 1, 24.0 ), ( 2, 14.0 ) ]
+              }
+            ]
+
+
+ledgerRows : Result Error (List (List Cell))
+ledgerRows =
+    case ledger of
+
+        Ok bytes ->
+            case Xlsx.read bytes of
+
+                Ok book ->
+                    Ok (List.concatMap .rows book.sheets)
+
+                Err e ->
+                    Err e
+
+        Err e ->
+            Err e
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "read (write x) == x for every cell kind"
+          (\_ -> Test.equal (Ok cells) (roundTrip cells))
+    , Test.test
+          "the phantom 1900-02-29 and the days around it keep their dates"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ [ Date (dt 1900 2 28 0 0 0 0)
+                        , Date (dt 1900 2 29 0 0 0 0)
+                        , Date (dt 1900 3 1 6 0 0 0)
+                        ]
+                      ])
+                  (roundTrip
+                      [ [ Date (dt 1900 2 28 0 0 0 0)
+                        , Date (dt 1900 2 29 0 0 0 0)
+                        , Date (dt 1900 3 1 6 0 0 0)
+                        ]
+                      ]))
+    , Test.test
+          "a formula keeps its text, a leading = dropped"
+          (\_ ->
+              Test.equal
+                  (Ok [ [ Formula "1+1" Empty ] ])
+                  (Xlsx.write [ Xlsx.sheet "F" [ [ Xlsx.formula "=1+1" ] ] ]
+                      |> Result.andThen Xlsx.read
+                      |> Result.map (\b -> List.concatMap .rows b.sheets)))
+    , Test.test
+          "names, visibility, merges, frozen panes, widths and validations read back"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      (List.map
+                          (\s ->
+                              ( ( s.name, s.visibility, s.merged )
+                              , ( s.columnWidths, s.frozen, s.validations )
+                              ))
+                          features))
+                  (featuresBack
+                      |> Result.map
+                             (List.map
+                                 (\s ->
+                                     ( ( s.name, s.visibility, s.merged )
+                                     , ( s.columnWidths
+                                       , s.frozen
+                                       , s.validations
+                                       )
+                                     )))))
+    , Test.test
+          "sheetNames reads the workbook part only"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ ( "Lists", Hidden )
+                      , ( "Data", Visible )
+                      , ( "Secret", VeryHidden )
+                      ])
+                  (Xlsx.write features |> Result.andThen Xlsx.sheetNames
+                      |> Result.map (List.map (\n -> ( n.name, n.visibility )))))
+    , Test.test
+          "write gives the same bytes every time"
+          (\_ -> Test.equal (Xlsx.write features) (Xlsx.write features))
+    , Test.test
+          "a ledger export reads back with its values"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ [ Text "Date", Text "Account", Text "Amount" ]
+                      , [ Date (dt 2026 10 1 0 0 0 0)
+                        , Text "Sales"
+                        , Number 12500.0
+                        ]
+                      , [ Date (dt 2026 10 3 0 0 0 0)
+                        , Text "Rent"
+                        , Number (-2400.0)
+                        ]
+                      , [ Date (dt 2026 10 9 0 0 0 0)
+                        , Text "Refund"
+                        , Number (-120.5)
+                        ]
+                      , [ Empty, Text "Total", Formula "SUM(C2:C4)" Empty ]
+                      , [ Empty, Text "Margin", Number 0.7856 ]
+                      ])
+                  ledgerRows)
+    , Test.test
+          "a bad sheet name is refused"
+          (\_ ->
+              Test.equal
+                  [ "office/sheet_name"
+                  , "office/sheet_name"
+                  , "office/sheet_name"
+                  , "office/sheet_name"
+                  , "office/sheet_name"
+                  , "ok"
+                  ]
+                  [ codeOf (Xlsx.write [ Xlsx.sheet "" [] ])
+                  , codeOf (Xlsx.write [ Xlsx.sheet "a:b" [] ])
+                  , codeOf (Xlsx.write [ Xlsx.sheet "History" [] ])
+                  , codeOf
+                        (Xlsx.write
+                            [ Xlsx.sheet "abcdefghijklmnopqrstuvwxyz123456" [] ])
+                  , codeOf
+                        (Xlsx.write
+                            [ Xlsx.sheet "Data" [], Xlsx.sheet "data" [] ])
+                  , codeOf
+                        (Xlsx.write
+                            [ Xlsx.sheet "abcdefghijklmnopqrstuvwxyz12345" [] ])
+                  ])
+    , Test.test
+          "a workbook with no visible sheet is refused"
+          (\_ ->
+              let
+                  s = Xlsx.sheet "A" []
+              in
+                  Test.equal
+                      [ "office/no_visible_sheet", "office/no_visible_sheet" ]
+                      [ codeOf (Xlsx.write [])
+                      , codeOf (Xlsx.write [ { s | visibility = Hidden } ])
+                      ])
+    , Test.test
+          "an inline list over 255 characters is refused and names ListFromRange"
+          (\_ ->
+              let
+                  s = Xlsx.sheet "A" []
+                  long =
+                      { s
+                          | validations =
+                              [ ListOf
+                                    { firstRow = 0
+                                    , firstColumn = 0
+                                    , lastRow = 9
+                                    , lastColumn = 0
+                                    }
+                                    (List.map
+                                        (\i -> "option " ++ String.fromInt i)
+                                        (List.range 1 40))
+                              ]
+                      }
+              in
+                  Test.equal
+                      ( "office/validation_too_long", True )
+                      ( codeOf (Xlsx.write [ long ])
+                      , String.contains
+                            "ListFromRange"
+                            (messageOf (Xlsx.write [ long ]))
+                      ))
+    , Test.test
+          "a bad or overlapping range is refused"
+          (\_ ->
+              let
+                  s = Xlsx.sheet "A" []
+              in
+                  Test.equal
+                      [ "office/range", "office/range" ]
+                      [ codeOf
+                            (Xlsx.write
+                                [ { s
+                                      | merged =
+                                          [ { firstRow = 2
+                                            , firstColumn = 0
+                                            , lastRow = 1
+                                            , lastColumn = 0
+                                            }
+                                          ]
+                                  }
+                                ])
+                      , codeOf
+                            (Xlsx.write
+                                [ { s
+                                      | merged =
+                                          [ { firstRow = 0
+                                            , firstColumn = 0
+                                            , lastRow = 2
+                                            , lastColumn = 2
+                                            }
+                                          , { firstRow = 1
+                                            , firstColumn = 1
+                                            , lastRow = 3
+                                            , lastColumn = 3
+                                            }
+                                          ]
+                                  }
+                                ])
+                      ])
+    , Test.test
+          "read limits: rows, cells, sheets"
+          (\_ ->
+              let
+                  bytes =
+                      Xlsx.write
+                          [ Xlsx.sheet
+                                "A"
+                                [ [ Xlsx.int 1 ]
+                                , [ Xlsx.int 2 ]
+                                , [ Xlsx.int 3, Xlsx.int 4 ]
+                                ]
+                          , Xlsx.sheet "B" []
+                          ]
+                  limits = Xlsx.defaultLimits
+              in
+                  Test.equal
+                      [ "office/too_many_rows"
+                      , "office/too_many_cells"
+                      , "office/too_many_sheets"
+                      , "ok"
+                      ]
+                      [ codeOf
+                            (Result.andThen
+                                (Xlsx.readWith { limits | maxRows = 2 })
+                                bytes)
+                      , codeOf
+                            (Result.andThen
+                                (Xlsx.readWith { limits | maxCells = 3 })
+                                bytes)
+                      , codeOf
+                            (Result.andThen
+                                (Xlsx.readWith { limits | maxSheets = 1 })
+                                bytes)
+                      , codeOf
+                            (Result.andThen
+                                (Xlsx.readWith
+                                    { limits
+                                        | maxRows = 3
+                                        , maxCells = 4
+                                        , maxSheets = 2
+                                        , maxColumns = 2
+                                    })
+                                bytes)
+                      ])
+    , Test.test
+          "bytes that are not a workbook"
+          (\_ ->
+              Test.equal
+                  [ "zip/not_zip", "office/not_office" ]
+                  [ codeOf (Xlsx.read "not a zip")
+                  , codeOf
+                        (Zip.write [ { path = "a.txt", bytes = "x" } ]
+                            |> Result.andThen Xlsx.read)
+                  ])
+    , Test.test
+          "a date before 1900 is refused"
+          (\_ ->
+              Test.equal
+                  "office/date_range"
+                  (codeOf
+                      (Xlsx.write
+                          [ Xlsx.sheet
+                                "A"
+                                [ [ Xlsx.date (dt 1850 1 1 0 0 0 0) ] ]
+                          ])))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

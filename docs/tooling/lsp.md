@@ -14,16 +14,11 @@ compiler's embedded copy, so hover, completion, and go-to work in any
 project — not only inside the compiler repo.
 
 **LSP contract**: every USED symbol class has hover + goto-definition
-coverage. The gate asserts an exact case count — `LSP_EXPECTED: u64 = 49`
-(`rust/crates/xtask/src/harness/bodies.rs:2758`), enforced at `:2902` so a
-case that silently stops running fails the build. `docs/rust-rewrite/11`
-decomposes that as 17 symbol-class + 32 corpus.
-
-> **This heading said "(100 % coverage)" and listed a total of 20 (17 + 3),
-> which disagrees with the 49 the gate enforces.** The "100 %" figure has no
-> derivation behind it — there is no denominator anywhere — so it is dropped
-> rather than restated. The 17 below are the symbol-class half; take the
-> total from `LSP_EXPECTED`, not from this page.
+coverage. The gate asserts an exact case count, `LSP_EXPECTED` in
+`rust/crates/xtask/src/harness/bodies.rs` (52 in v0.29.0), so a case that
+silently stops running fails the build. The count is 17 symbol-class +
+32 corpus + 3 realffi. Take the total from `LSP_EXPECTED`, not from this
+page.
 
 The 17 symbol-class cases run via the headless Neovim gate driver
 (`scripts/lsp-test-nvim.{lua,sh}`):
@@ -36,11 +31,20 @@ The 17 symbol-class cases run via the headless Neovim gate driver
 - completion-qualified-insert-text, completion-field,
   completion-let-binding
 
-Plus 3 huge-FFI tests against `examples/13-skyshop` (Stripe SDK +
-Firebase) via `scripts/lsp-test-skyshop.lua`. The driver runs via the
-`scripts/lsp-test-nvim.sh` gate (alongside `cargo test`); skipped if
-`nvim` isn't on PATH (so CI environments without headless Neovim
-setup stay green).
+The 32 corpus cases (`scripts/lsp-corpus-nvim.lua`) cover cross-module
+resolution, diagnostics as an editor renders them, and a real app.
+
+The 3 `realffi` cases (`scripts/lsp-test-skyshop.lua`) run against
+`examples/13-skyshop` and its generated Stripe SDK surface, the largest
+FFI surface in the repository: hover on an FFI constructor and an FFI
+function must show their signatures, and completion after `Stripe.set`
+must offer `setKey`. `scripts/lsp-test-nvim.sh` runs all three groups
+and runs `sky install` in `examples/13-skyshop` first when its
+`sky-ffi/` surface is missing.
+
+`nvim` is a prerequisite: without it the gate FAILS and names what to
+install. `SKY_LIVE_TESTS=skip` is the one way to skip it, and the skip is
+printed. CI installs Neovim in every job that runs the gate.
 
 ## Capabilities declared
 

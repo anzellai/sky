@@ -1,4 +1,4 @@
--- | Sky.Core.Set — unordered set of unique elements (Layer 3 Sky source).
+-- | Sky.Core.Set — a set of unique elements, listed in ascending order (Layer 3 Sky source).
 --
 -- Every function in this module is declared as a Sky-source binding
 -- aliased to a kernel via `Ffi.kernel "Set_<name>"`.  The Stage-4
@@ -10,7 +10,9 @@
 -- The Sky-source layer exists for discoverability + Layer 3
 -- conformance + so `sky doc` shows a stable source location for
 -- every entry.  The runtime bodies live in `runtime-go/rt/rt.go`
--- (`Set_*` helpers).
+-- (`Set_*` helpers). A set is a persistent value over the same store
+-- as `Dict` (`runtime-go/rt/dict_persistent.go`): `insert` and `remove`
+-- copy one path, O(log n), and the old set is unchanged.
 --
 -- The elements of a set are comparable (see `List.sort`): building or
 -- querying a set of functions, secrets or handles is a type error.
@@ -33,6 +35,8 @@ import Sky.Ffi as Ffi
 
 -- ─── Construction ──────────────────────────────────────────────────
 -- | The empty set.
+--
+-- Cost: O(1).
 empty : Set a
 empty =
     Ffi.kernel "Set_empty"
@@ -40,12 +44,16 @@ empty =
 
 -- ─── Queries ───────────────────────────────────────────────────────
 -- | Number of distinct elements.
+--
+-- Cost: O(1).
 size : Set a -> Int
 size =
     Ffi.kernel "Set_size"
 
 
 -- | `member x s` — `True` iff `x` is in `s`.
+--
+-- Cost: O(log n): a walk of the persistent hash trie.
 member : comparable -> Set comparable -> Bool
 member =
     Ffi.kernel "Set_member"
@@ -53,12 +61,16 @@ member =
 
 -- ─── Mutation (returns new Set) ────────────────────────────────────
 -- | `insert x s` — add `x` to `s`. No-op if already present.
+--
+-- Cost: O(log n): one path is copied; the old set is unchanged and shares the rest.
 insert : comparable -> Set comparable -> Set comparable
 insert =
     Ffi.kernel "Set_insert"
 
 
 -- | `remove x s` — drop `x` from `s`. No-op if absent.
+--
+-- Cost: O(log n): one path is copied; the old set is unchanged and shares the rest.
 remove : comparable -> Set comparable -> Set comparable
 remove =
     Ffi.kernel "Set_remove"
@@ -66,12 +78,16 @@ remove =
 
 -- ─── Conversion ────────────────────────────────────────────────────
 -- | All elements in the set (unsorted).
+--
+-- Cost: O(n log n): the elements are sorted on every call.
 toList : Set a -> List a
 toList =
     Ffi.kernel "Set_toList"
 
 
 -- | Build a set from a list, de-duplicating along the way.
+--
+-- Cost: O(n): built in one pass.
 fromList : List comparable -> Set comparable
 fromList =
     Ffi.kernel "Set_fromList"
@@ -79,18 +95,24 @@ fromList =
 
 -- ─── Set algebra ───────────────────────────────────────────────────
 -- | `union a b` — every element in `a` OR `b`.
+--
+-- Cost: O(m log n): the smaller set is inserted into the larger.
 union : Set comparable -> Set comparable -> Set comparable
 union =
     Ffi.kernel "Set_union"
 
 
 -- | `intersect a b` — every element in BOTH `a` and `b`.
+--
+-- Cost: O(n log m).
 intersect : Set comparable -> Set comparable -> Set comparable
 intersect =
     Ffi.kernel "Set_intersect"
 
 
 -- | `diff a b` — every element in `a` BUT NOT in `b`.
+--
+-- Cost: O(n log m).
 diff : Set comparable -> Set comparable -> Set comparable
 diff =
     Ffi.kernel "Set_diff"

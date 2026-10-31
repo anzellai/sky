@@ -95,7 +95,10 @@ fn scratch_state_dir(tag: &str) -> PathBuf {
     let home = std::env::var("HOME").expect("HOME");
     PathBuf::from(home).join(format!(
         ".sky-p6-{tag}-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

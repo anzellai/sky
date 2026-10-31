@@ -4,7 +4,6 @@ package rt
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -66,6 +65,17 @@ type dbExecutor interface {
 // the connection pool. Data ops call d.executor() rather than d.conn directly
 // so they transparently participate in an open transaction.
 func (d *SkyDb) executor() dbExecutor {
+	ex := d.rawExecutor()
+	if d.driver == "pgx" {
+		// An int, float or bool also binds into a TEXT column (db_pgx_args.go).
+		return pgArgExecutor{inner: ex}
+	}
+	// A nullable Float or Bool written into a v0.28 TEXT column binds the
+	// text v0.28 wrote (db_sqlite_legacy.go).
+	return sqliteArgExecutor{inner: ex, pool: d.conn}
+}
+
+func (d *SkyDb) rawExecutor() dbExecutor {
 	if d.tx != nil {
 		// Retry configured → hand back the wrapper that records a
 		// retryable SQLSTATE while the typed driver error is still in
@@ -1081,6 +1091,14 @@ func dbQueryRows(db any, query any, args any) any {
 				}
 				out = append(out, rowDict)
 			}
+			// An error that surfaces after the first row ends the loop with
+			// Next() == false. modernc runs sqlite3_step inside Next, and pgx
+			// preloads only row 1, so without this check a malformed JSON
+			// value in row 2 (or a SQLITE_BUSY, or a constraint failure in an
+			// UPDATE … RETURNING) came back as Ok with a short list.
+			if err := rows.Err(); err != nil {
+				return Err[any, any](ErrIo("db.query: " + err.Error()))
+			}
 			return Ok[any, any](out)
 		})
 	}
@@ -1148,6 +1166,9 @@ func Db_queryDecode(db any, query any, args any, decoder any) any {
 func dbAnyToStringMap(v any) (map[string]any, bool) {
 	if m, ok := v.(map[string]any); ok {
 		return m, true
+	}
+	if d, ok := v.(skyDictAny); ok {
+		return dictToMapAny(d), true
 	}
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
@@ -1548,6 +1569,9 @@ func dbTransactionAttempt(d *SkyDb, capBody any) (any, bool) {
 	sr, isResult := result.(SkyResult[any, any])
 	if panicked || !isResult || sr.Tag != 0 {
 		tx.Rollback()
+		// The body may have read a column type its own schema change made:
+		// forget what it read (db_sqlite_legacy.go).
+		sqliteDeclCacheReset(d.conn)
 		// A panic is never retried: it is a defect in the body, not a
 		// conflict, and replaying it just panics again.
 		return result, !panicked && txDb.sawRetryableTxError()
@@ -1566,12 +1590,6 @@ func dbTransactionAttempt(d *SkyDb, capBody any) (any, bool) {
 // budget is configured — the flag is only installed then.
 func (d *SkyDb) sawRetryableTxError() bool {
 	return d.txRetryFlag != nil && d.txRetryFlag.Load()
-}
-
-// appliedMigration — a row of the _sky_migrations bookkeeping table.
-type appliedMigration struct {
-	checksum  string
-	appliedAt string
 }
 
 // Db_migrateApply — kernel behind Std.Db.migrate.
@@ -1614,6 +1632,20 @@ type appliedMigration struct {
 //     findManyByField / findByConditions / unsafeFindWhere) —
 //     only this one kernel is exempt.
 func Db_migrateApply(dbA, pairsA any) any {
+	pairs := asList(pairsA)
+	return dbMigrateTask(dbA, func(*SkyDb) ([]migEntry, error) {
+		entries := make([]migEntry, 0, len(pairs))
+		for _, p := range pairs {
+			entries = append(entries, migEntry{name: AsString(tupleFirst(p)), sql: AsString(tupleSecond(p))})
+		}
+		return entries, nil
+	})
+}
+
+// dbMigrateTask is the Task shared by Db_migrateApply (hand-written SQL) and
+// Db_migrateOps (op files): it reads the DB-ops mode, builds the entries for
+// the connection and runs dbMigrateCore.
+func dbMigrateTask(dbA any, build func(*SkyDb) ([]migEntry, error)) any {
 	return func() any {
 		return WithDbSpan(dbSystemOf(dbA), "migrate", "schema migration", func() any {
 			op := strings.ToLower(strings.TrimSpace(skyGetenv("DB_OP")))
@@ -1633,81 +1665,199 @@ func Db_migrateApply(dbA, pairsA any) any {
 			if !ok {
 				return fail("not a Db handle", Err[any, any](ErrInvalidInput("db.migrate: not a Db")))
 			}
-			return dbMigrateCore(d, asList(pairsA), op, fail)
+			entries, err := build(d)
+			if err != nil {
+				return fail(err.Error(), Err[any, any](ErrInvalidInput("db.migrate: "+err.Error())))
+			}
+			return dbMigrateCore(d, entries, op, fail)
 		})
 	}
 }
 
-// dbMigrateCore applies (name, sql) pairs through the `_sky_migrations`
-// ledger: each pending migration in its own transaction, an applied one
-// checksum-verified and skipped. `op` is the DB-ops mode (`status`,
-// `migrate`, or "" for an ordinary call); `fail` routes an error the way the
-// caller wants it. Db.migrate passes the ops mode it read, so `sky db
-// migrate` exits after the app's own list. A stdlib module that owns tables
-// (Std.Ai.Registry, Ai_migrate) passes "" and a fail that returns the
-// error, so its migrations land in the same ledger and never end the process.
-func dbMigrateCore(d *SkyDb, pairs []any, op string, fail func(msg string, e any) any) any {
+// appliedMigration is a row of the _sky_migrations ledger. kind is "ops"
+// (checksum = migOpsChecksum of an op file), "sql" (checksum = sha256 of
+// hand-written SQL), or "" for a row that v0.28 or earlier wrote (checksum =
+// sha256 of the SQL text that v0.28 ran).
+type appliedMigration struct {
+	checksum  string
+	appliedAt string
+	kind      string
+}
+
+// migLedgerVerdict is how one migration stands against the ledger.
+type migLedgerVerdict int
+
+const (
+	migPending  migLedgerVerdict = iota
+	migVerified                  // applied, checksum matches
+	migRestamp                   // applied by v0.28: re-stamp with the ops checksum
+	migDrifted                   // applied, then changed: checksum mismatch
+)
+
+// migLedgerCheck is the ONE ledger rule, shared by apply and status:
+//
+//   - a row with kind "ops" or "sql" matches the checksum of its kind, strictly;
+//   - a row with no kind (written by v0.28 or earlier) of hand-written SQL
+//     matches the sha256 of the SQL text, as before;
+//   - a row with no kind of an op file is re-stamped once with the ops
+//     checksum. v0.28 took the checksum over the SQL that its renderer gave,
+//     and this renderer gives different SQL for some ops, so that checksum
+//     cannot be checked again here.
+func migLedgerCheck(e migEntry, prev appliedMigration, seen bool) migLedgerVerdict {
+	switch {
+	case !seen:
+		return migPending
+	case prev.kind == "":
+		if e.isOps() {
+			return migRestamp
+		}
+		if prev.checksum == migSQLChecksum(e.sql) {
+			return migVerified
+		}
+		return migDrifted
+	case e.isOps():
+		if prev.kind == "ops" && prev.checksum == e.opsSum {
+			return migVerified
+		}
+		return migDrifted
+	default:
+		if prev.kind == "sql" && prev.checksum == migSQLChecksum(e.sql) {
+			return migVerified
+		}
+		return migDrifted
+	}
+}
+
+// migEnsureLedger creates `_sky_migrations` if it is absent, and adds the
+// `kind` column to a ledger that v0.28 or earlier created. Both steps are
+// idempotent, so two processes that migrate at the same time both succeed.
+func migEnsureLedger(d *SkyDb) error {
 	if _, err := d.conn.Exec(
 		`CREATE TABLE IF NOT EXISTS _sky_migrations (` +
-			`name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)`,
+			`name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL, kind TEXT)`,
 	); err != nil {
-		return fail("create _sky_migrations: "+err.Error(),
-			Err[any, any](ErrIo("db.migrate: create _sky_migrations: "+err.Error())))
+		return fmt.Errorf("create _sky_migrations: %v", err)
 	}
-	// Existing applied migrations: name → {checksum, applied_at}.
+	hasKind := func() bool {
+		rows, err := d.conn.Query(`SELECT kind FROM _sky_migrations WHERE 1 = 0`)
+		if err != nil {
+			return false
+		}
+		rows.Close()
+		return true
+	}
+	if hasKind() {
+		return nil
+	}
+	alter := `ALTER TABLE _sky_migrations ADD COLUMN kind TEXT`
+	if d.driver == "pgx" {
+		alter = `ALTER TABLE _sky_migrations ADD COLUMN IF NOT EXISTS kind TEXT`
+	}
+	if _, err := d.conn.Exec(alter); err != nil && !hasKind() {
+		return fmt.Errorf("add _sky_migrations.kind: %v", err)
+	}
+	return nil
+}
+
+// dbMigrateCore applies migrations through the `_sky_migrations` ledger: each
+// pending migration in its own transaction, an applied one checked by
+// migLedgerCheck and skipped. `op` is the DB-ops mode (`status`, `migrate`,
+// or "" for an ordinary call); `fail` routes an error the way the caller
+// wants it. Db.migrate passes the ops mode it read, so `sky db migrate` exits
+// after the app's own list. A stdlib module that owns tables (Std.Ai, through
+// Ai_migrate) passes "" and a fail that returns the error, so its migrations
+// land in the same ledger and never end the process.
+func dbMigrateCore(d *SkyDb, entries []migEntry, op string, fail func(msg string, e any) any) any {
+	if err := migEnsureLedger(d); err != nil {
+		return fail(err.Error(), Err[any, any](ErrIo("db.migrate: "+err.Error())))
+	}
+	// Existing applied migrations: name → {checksum, applied_at, kind}.
 	applied := map[string]appliedMigration{}
-	rows, err := d.conn.Query(`SELECT name, checksum, applied_at FROM _sky_migrations`)
+	rows, err := d.conn.Query(`SELECT name, checksum, applied_at, kind FROM _sky_migrations`)
 	if err != nil {
 		return fail("read _sky_migrations: "+err.Error(),
 			Err[any, any](ErrIo("db.migrate: read _sky_migrations: "+err.Error())))
 	}
 	for rows.Next() {
 		var n, c, at string
-		if err := rows.Scan(&n, &c, &at); err != nil {
+		var kind sql.NullString
+		if err := rows.Scan(&n, &c, &at, &kind); err != nil {
 			rows.Close()
 			return fail("scan _sky_migrations: "+err.Error(),
 				Err[any, any](ErrIo("db.migrate: scan _sky_migrations: "+err.Error())))
 		}
-		applied[n] = appliedMigration{checksum: c, appliedAt: at}
+		applied[n] = appliedMigration{checksum: c, appliedAt: at, kind: kind.String}
 	}
 	rows.Close()
 
 	// status — read-only report, then exit.
 	if op == "status" {
-		dbPrintMigrationStatus(applied, pairs)
+		dbPrintMigrationStatus(applied, entries)
 		ExitProcess(0)
 	}
 
 	out := []any{}
-	for _, p := range pairs {
-		name := AsString(tupleFirst(p))
-		stmt := AsString(tupleSecond(p))
-		sum := fmt.Sprintf("%x", sha256.Sum256([]byte(stmt)))
-		if prev, seen := applied[name]; seen {
-			if prev.checksum != sum {
-				return fail("migration '"+name+"' changed after it was applied — checksum mismatch",
-					Err[any, any](ErrUnexpected(
-						"db.migrate: migration '"+name+
-							"' changed after it was applied — checksum mismatch")))
-			}
+	for _, e := range entries {
+		name := e.name
+		prev, seen := applied[name]
+		switch migLedgerCheck(e, prev, seen) {
+		case migVerified:
 			continue // already up to date
+		case migDrifted:
+			return fail("migration '"+name+"' changed after it was applied — checksum mismatch",
+				Err[any, any](ErrUnexpected(
+					"db.migrate: migration '"+name+
+						"' changed after it was applied — checksum mismatch")))
+		case migRestamp:
+			if _, err := d.conn.Exec(
+				"UPDATE _sky_migrations SET checksum = "+d.placeholder(1)+", kind = 'ops' WHERE name = "+
+					d.placeholder(2)+" AND kind IS NULL",
+				e.opsSum, name,
+			); err != nil {
+				return fail("re-stamp '"+name+"': "+err.Error(),
+					Err[any, any](ErrIo("db.migrate: re-stamp '"+name+"': "+err.Error())))
+			}
+			rtInfo("db.migrate: migration '" + name + "' re-stamped from the v0.28 checksum to its ops checksum")
+			continue
 		}
-		// Each migration in its own transaction: a failure
-		// rolls back only that migration; earlier ones stay
-		// applied, so re-running resumes from the failure.
+		// Pending. Each migration in its own transaction: a failure rolls
+		// back only that migration; earlier ones stay applied, so re-running
+		// resumes from the failure.
+		sum, kind := migSQLChecksum(e.sql), "sql"
+		run := e.sql
+		if e.isOps() {
+			// The SQLite `defaultNow` token of an op file is swapped for the
+			// apply time here. The ledger keeps the ops checksum, so the
+			// stamp never changes it. Hand-written SQL runs as given.
+			sum, kind, run = e.opsSum, "ops", migApplyText(e.sql)
+		}
 		tx, err := d.conn.Begin()
 		if err != nil {
 			return fail("begin: "+err.Error(), Err[any, any](ErrIo("db.migrate: begin: "+err.Error())))
 		}
-		if _, err := tx.Exec(stmt); err != nil {
+		if _, err := tx.Exec(run); err != nil {
 			tx.Rollback()
+			// A required unique column that an op file adds to a table
+			// with rows fails on its unique index, and a required column
+			// with no zero value fails on its NOT NULL: name the table,
+			// the column and the fix instead of the raw database error.
+			if e.isOps() {
+				hint := migRequiredUniqueHint(d, e.sql, err)
+				if hint == "" {
+					hint = migRequiredNoZeroHint(d, e.sql, err)
+				}
+				if hint != "" {
+					return fail("migration '"+name+"': "+hint,
+						Err[any, any](ErrInvalidInput("db.migrate: migration '"+name+"': "+hint)))
+				}
+			}
 			return fail("migration '"+name+"': "+err.Error(),
 				Err[any, any](ErrIo("db.migrate: migration '"+name+"': "+err.Error())))
 		}
 		if _, err := tx.Exec(
-			"INSERT INTO _sky_migrations (name, checksum, applied_at) VALUES ("+
-				d.placeholder(1)+", "+d.placeholder(2)+", "+d.placeholder(3)+")",
-			name, sum, time.Now().UTC().Format(time.RFC3339),
+			"INSERT INTO _sky_migrations (name, checksum, applied_at, kind) VALUES ("+
+				d.placeholder(1)+", "+d.placeholder(2)+", "+d.placeholder(3)+", "+d.placeholder(4)+")",
+			name, sum, time.Now().UTC().Format(time.RFC3339), kind,
 		); err != nil {
 			tx.Rollback()
 			return fail("record '"+name+"': "+err.Error(),
@@ -1717,6 +1867,7 @@ func dbMigrateCore(d *SkyDb, pairs []any, op string, fail func(msg string, e any
 			return fail("commit '"+name+"': "+err.Error(),
 				Err[any, any](ErrIo("db.migrate: commit '"+name+"': "+err.Error())))
 		}
+		sqliteDeclCacheReset(d.conn)
 		out = append(out, name)
 	}
 
@@ -1736,28 +1887,31 @@ func dbMigrateCore(d *SkyDb, pairs []any, op string, fail func(msg string, e any
 }
 
 // dbPrintMigrationStatus renders the `sky db status` report: every
-// migration in the app's list tagged applied / pending / drifted.
-func dbPrintMigrationStatus(applied map[string]appliedMigration, pairs []any) {
+// migration in the app's list tagged applied / pending / drifted, by the
+// same rule as apply (migLedgerCheck).
+func dbPrintMigrationStatus(applied map[string]appliedMigration, entries []migEntry) {
 	appliedN, pendingN, driftN := 0, 0, 0
 	type line struct{ mark, name, detail string }
-	lines := make([]line, 0, len(pairs))
-	for _, p := range pairs {
-		name := AsString(tupleFirst(p))
-		sum := fmt.Sprintf("%x", sha256.Sum256([]byte(AsString(tupleSecond(p)))))
-		if rec, seen := applied[name]; seen {
-			if rec.checksum != sum {
-				driftN++
-				lines = append(lines, line{"✗", name, "DRIFT — SQL changed since applied " + rec.appliedAt})
-			} else {
-				appliedN++
-				lines = append(lines, line{"✓", name, "applied " + rec.appliedAt})
-			}
-		} else {
+	lines := make([]line, 0, len(entries))
+	for _, e := range entries {
+		rec, seen := applied[e.name]
+		switch migLedgerCheck(e, rec, seen) {
+		case migDrifted:
+			driftN++
+			lines = append(lines, line{"✗", e.name, "DRIFT — changed since applied " + rec.appliedAt})
+		case migVerified:
+			appliedN++
+			lines = append(lines, line{"✓", e.name, "applied " + rec.appliedAt})
+		case migRestamp:
+			appliedN++
+			lines = append(lines, line{"✓", e.name, "applied " + rec.appliedAt +
+				" (v0.28 checksum, re-stamped on the next migrate)"})
+		default:
 			pendingN++
-			lines = append(lines, line{"•", name, "pending"})
+			lines = append(lines, line{"•", e.name, "pending"})
 		}
 	}
-	fmt.Printf("db: %d migration(s) — %d applied, %d pending", len(pairs), appliedN, pendingN)
+	fmt.Printf("db: %d migration(s) — %d applied, %d pending", len(entries), appliedN, pendingN)
 	if driftN > 0 {
 		fmt.Printf(", %d DRIFTED", driftN)
 	}
@@ -1776,7 +1930,7 @@ func dbPrintMigrationStatus(applied map[string]appliedMigration, pairs []any) {
 	}
 	if driftN > 0 {
 		fmt.Fprintln(os.Stderr,
-			"\ndb: drift detected — an applied migration's SQL was edited. "+
+			"\ndb: drift detected — an applied migration was edited. "+
 				"Restore its original text, or ship a new compensating migration.")
 		ExitProcess(1)
 	}
@@ -2320,6 +2474,7 @@ func Auth_setRole(db any, userId any, role any) any {
 // Db.getFieldOr with a sentinel default, or the dedicated
 // getString/getInt/getBool helpers (which still return Result).
 func Db_getField(fname any, row any) string {
+	row = dbRowOfDict(row)
 	key := fmt.Sprintf("%v", fname)
 	// Typed codegen passes map[string]string when the Sky-side row
 	// type is Dict String String (the Db.query kernel sig). Runtime
@@ -2342,6 +2497,7 @@ func Db_getField(fname any, row any) string {
 
 // Db.getFieldOr : default -> row -> fieldName -> any
 func Db_getFieldOr(defaultVal any, row any, fname any) any {
+	row = dbRowOfDict(row)
 	if m, ok := row.(map[string]any); ok {
 		if v, exists := m[fmt.Sprintf("%v", fname)]; exists {
 			return v
@@ -2354,6 +2510,7 @@ func Db_getFieldOr(defaultVal any, row any, fname any) any {
 // Returns "" when the field is missing. Matches Db_getField semantics
 // so the Sky-side type signature (String, not Result) holds.
 func Db_getString(fname any, row any) string {
+	row = dbRowOfDict(row)
 	key := fmt.Sprintf("%v", fname)
 	if m, ok := row.(map[string]string); ok {
 		if v, exists := m[key]; exists {
@@ -2373,6 +2530,7 @@ func Db_getString(fname any, row any) string {
 // Returns 0 when the field is missing or not numeric. String-map values
 // go through strconv; any-map values through AsIntOrZero.
 func Db_getInt(fname any, row any) int {
+	row = dbRowOfDict(row)
 	key := fmt.Sprintf("%v", fname)
 	if m, ok := row.(map[string]string); ok {
 		if v, exists := m[key]; exists {
@@ -2404,6 +2562,7 @@ func Db_getInt(fname any, row any) int {
 // Db_getInt's shape — strconv on string-map values, AsFloatOrZero
 // on any-map values.
 func Db_getFloat(fname any, row any) float64 {
+	row = dbRowOfDict(row)
 	key := fmt.Sprintf("%v", fname)
 	if m, ok := row.(map[string]string); ok {
 		if v, exists := m[key]; exists {
@@ -2443,6 +2602,7 @@ func dbTruthy(s string) bool {
 }
 
 func Db_getBool(fname any, row any) bool {
+	row = dbRowOfDict(row)
 	key := fmt.Sprintf("%v", fname)
 	if m, ok := row.(map[string]string); ok {
 		if v, exists := m[key]; exists {
@@ -2462,4 +2622,14 @@ func Db_getBool(fname any, row any) bool {
 		}
 	}
 	return false
+}
+
+// dbRowOfDict reads a row that arrives as a Dict (a `Dict String String` row
+// from Db.query, after the typed slot narrowed it) as the map the getters
+// read. Rows are a handful of columns, so the copy is small.
+func dbRowOfDict(row any) any {
+	if d, ok := row.(skyDictAny); ok {
+		return dictToMapAny(d)
+	}
+	return row
 }

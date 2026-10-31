@@ -2,10 +2,11 @@
 
 This is a [Sky](https://github.com/anzellai/sky) project: a pure functional,
 Elm-family language that compiles to typed Go and ships as a single `sky` binary
-(you also need Go 1.21+). **If it compiles, it works** — every side effect returns
-`Task Error a`, every fallible value returns `Result Error a`, and `sky check`
-runs `go build` on the emitted Go, so shape mismatches surface at check time. No
-runtime panics from well-typed code, no nil leakage, no silent numeric coercion.
+(you also need Go 1.25 or later on `PATH`). **If it compiles, it works** —
+every side effect returns `Task Error a`, every fallible value returns `Result
+Error a`, and `sky check` runs `go build` on the emitted Go, so shape mismatches
+surface at check time. No runtime panics from well-typed code, no nil leakage,
+no silent numeric coercion.
 
 Type annotations are load-bearing: `f : String -> Int -> Result Error Profile`
 rejects a body that would infer wider. Inline records aren't allowed in
@@ -136,8 +137,11 @@ desktop only; a `web:app` build refuses it) and put it behind sign-in.
 | DB | Records → `Std.Db.Store` + `Std.Codec` (one codec drives JSON **and** dialect-safe DB). SQLite for prototypes, PostgreSQL for multi-instance. Schema via committed file migrations (`sky db migrate --gen`). See **Database** below for the layer choice + the `sky doc` API source of truth. |
 | Serialization | `Std.Codec` — **the portable default** for turning a record into JSON and back. ONE codec (`Codec.auto blank`) gives you `Codec.toJson` / `Codec.fromJson` AND, if you persist it, the dialect-safe DB mapping — from a single definition, with no drift between your JSON and DB shapes. Same codec works on every backend (Sky.Live / Http.Server / Cli). Reach for raw `Sky.Core.Json.Encode` / `Sky.Core.Json.Decode` only for a JSON shape a codec can't express — a custom/legacy wire format, or decoding third-party JSON you don't own (there, a hand-written `Decoder` + `Decode.decodeString` is right). |
 | Money / decimals | `Std.Money` on `Std.Decimal`. Never raw `Float` for currency. |
+| XML / ZIP | `Std.Xml` (`parse`, safe by default: no DOCTYPE, bounded) + `Std.Xml.Decode` (`Json.Decode` style, by local name) + `Std.Xml.Encode` (`element` / `text`, `encode` total, `encodeStrict` refuses); `Codec.toXml` / `Codec.fromXml` reuse a codec. `Std.Zip` (`read` / `readEntry` / `list` / `write`) refuses unsafe names, encrypted entries and zip bombs. Server side; failures are `InvalidInput` in the domain `"xml"` / `"zip"`. See `sky doc Std.Xml` / `sky doc Std.Zip`. |
+| Excel / Word files | `Std.Office.Xlsx` (`read` → sheets of `Cell`, `write` of `SheetSpec`s with styled cells, formulas written with no cached value and computed on open by LibreOffice, the tested reader) and `Std.Office.Docx` (`read` / `write` of `Block`s: headings, paragraphs, list items, tables, links; `toText`). Bounded by `Limits`, no macros or embedded objects, unsafe links refused. Server side; failures are `InvalidInput` in the domain `"office"`. See `sky doc Std.Office.Xlsx` / `sky doc Std.Office.Docx`. |
+| Images | `Std.Image` (`resizeToFit` / `thumbnail` / `crop` / `trim` / `toAlpha` as `Jpeg q`, `Png`, `Gif`, `WebpLossless` or `Preserve`; an animated GIF keeps every frame; `frames`, `reduceFrames`) and `Std.Image.Canvas` (shapes, masks, pasted images, blur, resize and text drawn on the server, then `encode`). Decoding refuses images over 100 megapixels and GIFs over 1,000 frames before it decodes (`InvalidInput`, domain `"image"`). Server side. See `sky doc Std.Image` / `sky doc Std.Image.Canvas`. |
 | Encryption / signatures | `Crypto.xchachaSeal` / `xchachaOpen` (seal is a `Task`: it draws a random nonce). Only when a protocol fixes the nonce: `Crypto.chacha20Poly1305Seal` / `xchacha20Poly1305Seal` (caller nonce, pure; never reuse a nonce under one key). Keys are 32-byte `Secret`s (`Crypto.keyFromPasswordStrong { iterations, salt }` from a password, at least 600 000 iterations and a 16-byte salt, or `Kdf.derive` from `Std.Crypto.Kdf`). Ed25519 `Std.Crypto.Sign`, X25519 `Std.Crypto.Kx`, Noise IK sessions `Std.Crypto.Noise`, pairing codes `Std.Crypto.Cpace` (experimental: awaiting external review, not for production data yet), QR codes `Std.Qr`. Secret keys are opaque and never `String`. |
-| Child processes / file watching | `Process.run` for a one-shot command; `Process.spawn` (builder: `withArgs`, `withEnv`, `withCwd`, `withPty`) for a long-running child, read with `readFrom` (Task) or the `Process.events` Sub, not both. `close` ends the child's whole tree. A handle belongs to the Sky.Live session that opened it: open it in the session that uses it. `Std.Watch` for file changes (`next` Task or `changes` Sub; `Overflow` means rescan). |
+| Child processes / file watching | `Process.run` for a one-shot command (`Process.runCommand` with `withStdin` for text on stdin and a separate exit code, stdout and stderr; a non-zero exit is a result); `Process.spawn` (builder: `withArgs`, `withEnv`, `withCwd`, `withPty`) for a long-running child, read with `readFrom` (Task) or the `Process.events` Sub, not both. `close` ends the child's whole tree. A handle belongs to the Sky.Live session that opened it: open it in the session that uses it. `Std.Watch` for file changes (`next` Task or `changes` Sub; `Overflow` means rescan). |
 | Concurrency | `Cmd.batch` / `Task.parallel`; **`Task.parallelN limit tasks`** for bounded fan-out under load (`parallel` is unbounded); in-process pub/sub via `Cmd.publish` + `Sub.subscribeTopic`. Shared state between concurrent Tasks: `Std.Sync` (`Ref` with atomic `update` / `compareAndSwap`, `Mutex` + `withLock`, a bounded `Queue` with `push` / `pop` / `popWithin`); pure code needs none of it. Keep a client-supplied path inside a directory with `File.resolveWithin root path`. |
 | Errors | `Result Error a` / `Task Error a`. Never `String` as the error type. A domain's typed failure travels inside `Error` as `Domain DomainFailure` (v0.28): react generically with `Error.domain` / `Error.isRetryable` / `Error.retryAfter`, or read a domain's typed view (`Std.Ai.Failure.fromError`) with a `_ ->` branch. Never match `ErrorDetails` without a `_ ->`. Your own domain: `Error.failure "myapp.billing" "CardDeclined" \|> Error.fromDomain Error.InvalidInput "…"`. |
 | LLM / models | `Std.Ai`: `Std.Ai.Endpoint` names a model slot (`Endpoint.endpoint "chat"`) whose `withX` builders hold the local default and fall back to `SKY_AI_<SLOT>_*` env vars; `withLocal` runs a pinned local engine (`Local.withDraft` adds a draft model, `Local.withAdapters` several named LoRA adapters a call picks with `Provider.Options`' `adapter`), a URL makes it remote. An `SKY_AI_*` value that does not parse is `InvalidSetting` naming the variable, never skipped. Failures are typed (`Std.Ai.Failure`: `Overloaded`, `TimedOut`, `ModelTooLarge`, …). Evaluate a model with `Std.Ai.Eval` (suites of cases, exact / contains / regex / JSON-shape / tool / refusal scorers, a judge slot that is a local pinned model by default, a seeded repeatable run, a typed report, `check` / `gate` thresholds that fail CI; judge calls are journalled, a judge can be calibrated on labelled cases, `pairwise` compares two models in both orders). Register fine-tuned adapters with `Std.Ai.Registry` (records in your own database, files in a local / GCS / S3 store, promotion needs an `Eval.Passed`, `rollback`, `lineage`), and serve an alias with `Endpoint.fromRegistry` + `withAdapter "registry:<name>@<alias>"`. Training data is `Std.Ai.Dataset` (typed `Chat` / `Instruction` / `Preference` rows from JSONL / CSV / a Store, chunked steps, `dedupeBy`, a seeded hash `split`, `validate`, and `freeze` to a SHA-256-named version with a manifest; `sky ai data freeze <file.jsonl>`), `Std.Ai.Dataset.Scrub` (secrets, email, IBAN, card, SSN, NINO, phone; counts only) and `Std.Ai.Dataset.Synthetic` (a teacher slot, topics and personas, a pure seeded `plan`, dedupe, filters, the eval judge, a call limit and a cost budget). Record what model calls do and cost with `Std.Ai.Trace` (`Trace.tracedChat db (Trace.ledger run |> Trace.priced book) …`: tokens, exact cost, slot, tier, latency, time to first token, tokens per second, outcome; eval and training runs record their own rows; `totalCost` refuses to add two currencies).  The project's lifecycle is one value, `pipeline` in `src/Ai.sky` (`Std.Ai.Pipeline`: `withSlot`, `withDataset`, `withSuite`, `withTask`), which the CLI runs: `sky ai eval <suite> --candidate <model>@v<n> --against prod --promote-to prod` (compare with production, gate, JUnit, exit 1 on failure, promote only on a pass), `sky ai data freeze <dataset>` (frozen and registered as `<name>@<n>`), `sky ai run <task>`; `--test-mode` answers model calls from `tests/mocks/`. Under `sky test` every model call is answered by a `tests/mocks/` fixture, and `Pipeline.evalSuite` makes a suite a test. `sky doc Std.Ai.Eval`, `sky doc Std.Ai.Registry`, `sky doc Std.Ai.Dataset`, `sky doc Std.Ai.Pipeline`. Fine-tune a LoRA / QLoRA adapter on a frozen version with `Std.Ai.Train` (`Train.lora Train.devBase version`, `Train.drive db job` or `start` + `poll`): the backend comes from the host (MLX on Apple silicon, Unsloth on Linux with an NVIDIA GPU) or `SKY_AI_TRAIN_BACKEND`, the trainer is native and needs no Python (`sky ai provision --train mlx` installs the pinned `sky-trainer` bundle; Unsloth's Python is managed and invisible), the trainer survives a restart and resumes from its newest checkpoint, `withGgufExport` + `withRegistry` register the adapter with its lineage, and `Local.withAdapter` serves it (`sky ai train`, `sky ai export`). `Train.withBackend Train.Vertex` trains the same job on Google Cloud Vertex AI (one L4, a `withBudget` in `Std.Money`, a dated price book), and `Std.Ai.Serve` serves one base and many adapters on one GPU with vLLM, hot-loading each promotion; `Serve.deploy` puts it on Cloud Run (scales to zero, never public) and `Endpoint.withGoogleAuth` calls it. Test it offline with `SKY_AI_GCP_ENDPOINT=http://sky-gcp.invalid` in `.env.test` (`sky doc Std.Ai.Serve`, `docs/ai/deploy-gcp.md`). Under `sky test` every model call is answered by a `tests/mocks/` fixture. `sky doc Std.Ai.Eval`, `sky doc Std.Ai.Registry`, `sky doc Std.Ai.Dataset`, `sky doc Std.Ai.Train`. Run a slot on the user's own device with `Std.Ai.Device`: give the server's slot `Endpoint.withDevice (Device.spec Device.Auto)` and ask `Device.provider "<slot>"` in the client; it answers on the device after `Device.prepare` (the app's consent, `Device.status` shows the size) and from the server otherwise (experts can set `Device.withThreads` / `Device.withGpuLayers`; GPU layers above 0 skip a backend with no GPU), never downloads on its own, and sends nothing to the server for a call it answers. `sky ai provision --device web|ios|android` installs the engines. `sky doc Std.Ai.Device`. Show an answer as it is written with `Provider.openStream` + `Provider.readStream` (one piece per update: `Piece text next` / `Finished response`; `Provider.closeStream` stops early), or `Provider.chatStream` with a callback in a Task program; slots, the built-in backends and device slots stream. Give a tool typed arguments with `Tool.typed name description codec exec` (the model gets the codec's JSON Schema, bad arguments go back to the model and never run) and ask for a typed answer with `Provider.chatStructured (Provider.responseShape "name" codec) …` (an OpenAI-compatible `response_format`; a mismatch is a `Decode` error) or `Agent.structuredToolLoop`. |
@@ -157,8 +161,8 @@ memorised signatures. This section covers *which layer to reach for*, not the AP
 |---|---|---|
 | Records with straightforward CRUD (**default**) | `Std.Db.Store` + `Std.Codec` | ONE codec per type drives JSON encode/decode **and** dialect-safe DB read/write/schema — no hand-written row mappers. |
 | Records, JSON not needed | `Std.Db.Table` | Reflection record↔row mapper (camelCase↔snake_case), no codec to write. |
-| Explicit schema / DDL only | `Std.Db.Schema` | Typed, dialect-safe `CREATE TABLE` — one definition, correct on SQLite AND Postgres (no `INTEGER`-millis-overflow / `AUTOINCREMENT`-vs-`BIGSERIAL` drift). Reach the migration tooling with `db = Schema.toProject allTables` (`Store.Project` for `sky db push` / `migrate --gen`; tables/PK/UNIQUE/DEFAULTs carry, indexes stay on `createSchema`). |
-| Joins, aggregates, transactions, custom SQL | `Std.Db` — `query` / `exec` / `withTransaction` + `SqlValue` | The escape hatch the mappers don't model. |
+| Explicit schema / DDL only | `Std.Db.Schema` | Typed, dialect-safe `CREATE TABLE` — one definition, correct on SQLite AND Postgres (no `INTEGER`-millis-overflow / `AUTOINCREMENT`-vs-`BIGSERIAL` drift). Reach the migration tooling with `db = Schema.toProject allTables` (`Store.Project` for `sky db push` / `migrate --gen`; tables/PK/UNIQUE/DEFAULTs and `withIndex` indexes carry). |
+| Transactions, custom SQL (grouped aggregates, projections, per-key newest rows, joins of two stores and subquery conditions are Store builders) | `Std.Db` — `query` / `exec` / `withTransaction` + `SqlValue` | The escape hatch the mappers don't model. |
 
 ### Default — `Store` + `Codec`
 
@@ -182,8 +186,15 @@ products =
 -- patch:  Store.setFields conn products pk [("stock", SqlInt 5)]  (by PK — only named cols)
 --         Store.updateFields conn products cond [("status", SqlString "sold")]  (by Cond)
 --         Store.adjust conn products cond [("stock", -qty)]  (atomic SET col = col + delta)
+--         Store.insertOrIgnore conn sent row  (1 or 0: the atomic "claim once")
+--         Store.upsertWith conn counts row { conflictOn = [ "day", "event" ], onConflict = [ Store.addExcluded "count" ] }
+--         Store.updateSet conn lines cond [ Store.setCol "wanted_at" "status_at" ]  (column / CASE SET)
+--         Store.copyInto conn target query [ ( "id", Store.from "id" ) ]  (INSERT … SELECT)
+--         Store.updateFieldsReturning conn jobs cond sets  (the updated rows, RETURNING)
 -- read:   Store.all conn products  ·  Store.findBy conn products "id" "p1"
---         Store.selectRaw conn projCodec "<any JOIN / GROUP BY SQL>" params
+--         Store.query invoices |> Store.groupBy [ "customer_id" ] |> Store.aggregate tallyCodec [ ... ] |> Store.toRows conn
+--         Store.join invoices customers (Store.on "customer_id" "id") |> Store.toPairs conn
+--         Store.selectRaw conn projCodec "<any SQL>" params
 ```
 
 `Codec.auto` columns (and JSON keys) are **snake_case** by default — `priceMinor`
@@ -199,11 +210,31 @@ every update) · `defaultWith "id" (\_ -> SqlValue)` (app-computed default, e.g.
 UUID PK) · `generated [ "id", "created_at" ]` (columns `insert`/`update` omit so
 the DB fills them). `Store.create conn store` emits the dialect-correct DDL;
 `Store.upsert` is INSERT … ON CONFLICT DO UPDATE (idempotent config rows).
+A default must fit its column (`defaultBool` for a `Bool` field, an enum's
+default one of its names), and every `SqlValue` must be of its column's kind:
+a text column takes `SqlString`, an int `SqlInt`, a real `SqlFloat` or
+`SqlInt`, a bool `SqlBool`, a JSON column `SqlString` holding JSON its codec
+reads, `SqlNull` only a `Maybe` field (compare NULL with `isNull`). A
+`SqlString` compared with an int column is read as an Int. Anything else is an
+`Err` before the statement, the same on SQLite and PostgreSQL.
 
-**JOINs / aggregates** → `Store.selectRaw codec "<SQL>" params`: you write the SQL
-(joins, `GROUP BY`, `COUNT`), a codec decodes each row into a typed projection
-record. Store stays a single-table mapper — deliberately not an ORM. Exact
-signatures: `sky doc Std.Db.Store` / `sky doc Std.Codec`.
+**Aggregates and projections** are builders: `groupBy` + `aggregate` with
+`key` / `countAs` / `countIfAs` / `sumAs` / `minAs` / `maxAs` (+ `having`),
+`select` / `selectColumn` / `distinct`, `latestPer` (newest row per key), the
+escaped text conditions `contains` / `startsWith` / `endsWith` / `eqCi` /
+`containsCi` (prefer them to `like` for user text), `eqCol` / `gtCol` (column
+against column) and `jsonText "props" "key"` (a key of a JSON column). Every
+name is checked before the query runs; `Store.toSql conn q` shows the SQL.
+**Joins and subqueries** are builders too: `Store.join a b (Store.on "customer_id" "id")`
+(`onAll` for several pairs) runs with `toPairs` → `List ( a, b )`, `leftJoin` with
+`toPairsMaybe` → `List ( a, Maybe b )`; `whereLeft` / `whereRight` / `orderLeftDesc`
+read one side, and a name both stores have is written `"a.col"` / `"b.col"`.
+`Store.inQuery "batch_id" (Store.query batches |> Store.where_ … |> Store.column "id")`
+and `Store.notExists invoices (Store.correlate "customer_id" "id") cond` put a
+subquery in any `Cond`, writes included (one statement). A join of three tables →
+`Store.selectRaw codec "<SQL>" params`: you write the SQL, a codec decodes each
+row into a typed projection record. Exact signatures:
+`sky doc Std.Db.Store` / `sky doc Std.Codec`.
 
 **Compose reads with the query builder** — filters bind as `SqlValue` params
 (injection-safe), so you never touch a SQL string:
@@ -240,7 +271,7 @@ Store.transaction conn (\tx ->
 ```
 
 Only drop to raw **`Std.Db`** (`query` / `exec` / `withTransaction` + `SqlValue`)
-for joins / aggregates / CTEs the builder doesn't model. **Import both qualified**
+for CTEs / window functions / joins of three tables the builders don't model. **Import both qualified**
 (`import Std.Db.Store as Store` + `import Std.Db as Db`) — never `exposing (..)` on
 both, since `query`/`migrate` overlap; qualified is the intended usage.
 
@@ -263,6 +294,13 @@ sky db seed                    # run the entry module's  seed : Db -> Task Error
 sky db reset [table]           # empty data (all declared tables, or one); keeps schema + ledger — prompts / --yes
 sky db drop [table]            # drop tables (all + ledger, or one); fresh "never migrated" state — prompts / --yes
 ```
+
+`Store.migrate`, `sky db push` and `--gen` follow one rule: a `Maybe` field is a
+nullable column, any other field `NOT NULL DEFAULT <declared default, else
+zero>` (`defaultInt` / `defaultText` / `defaultBool` / `defaultFloat` /
+`defaultNow`), and an existing column is never altered. Declare indexes on the
+store: `Store.index [ "customer_id", "created_at" ]`, `Store.uniqueOn [ "code" ]`
+(required columns), `Store.uniqueWhere [ "slug" ] (Store.neq "slug" (SqlString ""))`.
 
 ### Running PostgreSQL in development
 
@@ -468,8 +506,8 @@ reads better as `unless` / `when`, or as a named `chooseStep : Bool -> Task Erro
 Model a record table with `Std.Db.Store` + `Std.Codec` by DEFAULT — one codec
 drives the schema, the writes, and the TYPED reads (no untyped row access, so a
 column change is a compile error). Drop to raw `Std.Db` (`query`/`exec`) ONLY for
-what a `Store` cannot express: joins, aggregates, CTEs, or a query a typed `Cond`
-cannot state. Keep the two in clearly separated sections of a persistence module.
+what a `Store` cannot express: a join of three tables, a CTE, a window
+function, or a query a typed `Cond` cannot state. Keep the two in clearly separated sections of a persistence module.
 
 ## Language syntax
 
@@ -495,6 +533,14 @@ main = println (String.fromInt (update Increment 0))
 `{{expr}}` interpolation (escape as `\{{`). A let-bound helper function is
 polymorphic (`twice x = ( x, x )` works at two types in one body), and
 `Module.value.field` reads a field of another module's value.
+
+**Collection costs.** Every `List` / `Dict` / `Set` / `Array` / `String`
+function states its cost in `sky doc` (a `Cost:` line). `x :: xs` is amortised
+O(1): cons onto an accumulator and `List.reverse` once. To build a string, cons
+the pieces and `String.concat (List.reverse pieces)` once; `++` in a loop is
+O(n²). Walk a string with `String.uncons` / `String.foldl`; every String index
+counts code points. Use `Sky.Core.Array` for indexed access. A `Dict` write
+copies the map: for many entries build a list and call `Dict.fromList` once.
 
 Every non-aliased `import M exposing (..)` also binds `M.<name>` as an
 auto-qualifier. An `exposing` name that the module doesn't export is a hard
@@ -560,7 +606,7 @@ on the payload type, or the build fails naming both sites (`[E2011]`).
 ```sh
 sky init [name] [--production]  # new project — SQLite default; --production = Postgres one-DB + docker-compose
 sky build src/Main.sky       # compile → sky-out/app
-sky run src/Main.sky         # build + run   (--profile for runtime CPU/mem/hang profiling)
+sky run src/Main.sky [-- args] # build + run; args after -- reach System.args (--profile for runtime CPU/mem/hang profiling)
 sky check src/Main.sky       # type-check + go build (keeps no binary — but DOES compile)
 sky check --format json src/Main.sky   # NDJSON diagnostics on stdout, for CI and tools (also build / test / fmt --check)
 sky verify                   # one-shot project gate: fmt + check + build + tests
@@ -618,7 +664,9 @@ entitlements with `Bundle.withEntitlement`, keep secrets in `Native.secureSet`
 `localStorage`), scan a QR code or barcode with `Native.scanCode`, insert text
 at a textarea's caret (an editor's "Insert" menu) with `Native.insertAtCursor
 "body" "{{first_name}}"` (it yields the new value and uses the selection the
-person left when focus moved to the menu; `Err Unavailable` on Sky.Live), and make the
+person left when focus moved to the menu; `Err Unavailable` on Sky.Live), read or set a
+control's selection with `Native.selection` / `Native.setSelection` (positions in
+characters), and make the
 store build with `sky package
 --release` (it refuses a local or `http` backend address). Guide:
 `docs/skyapp/native.md`. `sky
@@ -801,7 +849,7 @@ sign-in) if you run more than one replica. Key per-session data by
 ## Non-negotiables
 
 - **Types over strings for errors** — `Result Error a` / `Task Error a`, never `Result String a`.
-- **DB defaults to `Std.Db.Store` + `Std.Codec`** — one codec per record table drives the schema, the writes, and the TYPED reads. Drop to raw `Std.Db` (`query`/`exec`) ONLY for what a `Store` cannot express (joins, aggregates, CTEs, a query no typed `Cond` states); keep those in a clearly separated section. Never hand-write a row mapper for a plain record table.
+- **DB defaults to `Std.Db.Store` + `Std.Codec`** — one codec per record table drives the schema, the writes, and the TYPED reads. Drop to raw `Std.Db` (`query`/`exec`) ONLY for what a `Store` cannot express (a join of three tables, CTEs, window functions, a query no typed `Cond` states); keep those in a clearly separated section. Never hand-write a row mapper for a plain record table.
 - **Effect chains stay flat + named** — top-to-bottom `andThen`/`map` pipelines, named step functions over long inline lambdas, `sequence`/`map2` over nested `andThen`, a local `bestEffort`/`unless` over a repeated `onError`/`if`. A loop that can run many times reads best as `Task.loop`; `andThen` recursion is also stack-safe (v0.27.0). `let … in` names PURE sub-expressions only (it does not bind a `Task` result). See **Effect and control-flow style**.
 - **No raw HTML/JS** — `Std.Ui` escapes everything. `data-sky-eval` is gone (no runtime path evaluates a string); use `data-sky-path` for URL sync.
 - **Secrets are typed** — secret-bearing args are the opaque `Sky.Core.Secret.Secret` (redacts itself in every log/JSON path): `Auth.signToken`/`verifyToken`, `Jwt.hs256`/`rs256`, the `Crypto` AEAD keys, `Http.withBearer`/`withApiKey`; `Cli.readPassword` returns one. The `Std.Crypto` key types (`Sign.SecretKey`, `Kx.SecretKey`) are opaque the same way and export only to a `Secret`. Wrap with `Secret.fromEnv "VAR"`, unwrap only via `Secret.reveal`. Never `fmt.Sprintf("%v", secret)`.
@@ -809,13 +857,15 @@ sign-in) if you run more than one replica. Key per-session data by
 - **Types the checker enforces (v0.27.0)**: a top-level value with no parameters is not polymorphic inside a `Ref`, `Cache`, `Codec` or `Table` (`[E2012]`: give it a concrete type); `any` in your own signature is a hole the body fills, not a cast; ordering (`<`, `compare`, `List.sort`, `Set`) needs a `comparable` type; `Codec.auto`, `App.withDurable` and `Auth.signToken` need an encodable type (no function, `Secret`, key or handle); `Auth.verifyToken` returns `Result Error Json.Value`; a `Cookie` goes through `Server.addCookie`. Upgrading from v0.26: https://github.com/anzellai/sky/blob/main/docs/migration/v0.27.md lists every change, old code and new code.
 - **Money is `Std.Money`**, never `Float`.
 - **Models are slots, configured in code with env overrides** (v0.28.0): `chat = Endpoint.provider (Endpoint.endpoint "chat" |> Endpoint.withLocal (Local.model Local.devModel))` runs a managed local `llama-server` with the pinned Qwen2.5 0.5B model in development and no setup; production sets `SKY_AI_<SLOT>_URL` (+ `_KEY`, a `Secret`) and the same binary calls the remote server. No `sky.toml` keys for AI. A down remote never falls back to local; a full slot is `Unavailable` (Overloaded), a slow one `Timeout`. `sky ai ps` / `sky ai stop <slot>` show and stop engines. See `docs/ai/local.md`. A fine-tuned adapter is a registry version: `Registry.promote` needs the `Eval.Passed` of a suite run with `Eval.runAs (Registry.label v)`, and a slot with `Endpoint.fromRegistry` + `Endpoint.withAdapter "registry:<name>@prod"` serves whatever `prod` points at (`sky ai promote | rollback | lineage`). The lifecycle is driven from `src/Ai.sky` (`module Ai exposing (pipeline)`, `Std.Ai.Pipeline`): `sky ai eval <suite> --against prod` is the merge gate for a model change (exit 1 on a regression); never `--promote-to` or `--force` past a red gate. See `docs/ai/pipeline.md`. Train the adapter with `Std.Ai.Train`, a durable workflow. Set `SKY_AI_TRAIN_BACKEND=fake` in `.env.test` so `sky test` simulates the trainer offline. See `docs/ai/train.md`. To train on Google Cloud, use `Train.withBackend Train.Vertex` with a budget, and serve with `Std.Ai.Serve` on Cloud Run; test both with `SKY_AI_GCP_ENDPOINT=http://sky-gcp.invalid` in `.env.test`. See `docs/ai/deploy-gcp.md`.
-- **JSON decoding is strict on a present value (v0.27.12)**: `Pipeline.optional name dec default` gives `default` only when the field is absent or `null` (or the input is not an object); a present value `dec` rejects is an `Err` naming the field. Say a lenient fallback out loud: `Pipeline.optional "n" (Decode.oneOf [ Decode.int, Decode.succeed 0 ]) 0`. `Decode.nullable` (null is `Nothing`, a wrong type is `Err`), `Decode.maybe` (any failure is `Nothing`) and `Decode.null` are as in Elm.
+- **JSON decoding is strict on a present value (v0.27.12)**: `Pipeline.optional name dec default` gives `default` only when the field is absent or `null` (or the input is not an object); a present value `dec` rejects is an `Err` naming the field. Say a lenient fallback out loud: `Pipeline.optional "n" (Decode.oneOf [ Decode.int, Decode.succeed 0 ]) 0`. `Decode.nullable` (null is `Nothing`, a wrong type is `Err`), `Decode.maybe` (any failure is `Nothing`) and `Decode.null` are as in Elm. `Codec.maybe` follows the same rule (v0.29.0): only `null` is `Nothing`, and any other value must decode as the inner value at any depth (a bad element of a `List (Maybe a)` is an `Err`, also on a `Std.Db.Store` read).
 - **Numbers**: `toFloat : Int -> Float` is in the Prelude (as in Elm); Float to Int is `Math.round` / `floor` / `ceil` / `trunc`.
 - **Reserved words**: `module exposing import as type alias if then else case of let in` cannot be names (one parse error names the word). `foreign`, `where` and `port` are ordinary names.
 - **`sky fmt` after editing**, **`sky verify` before shipping.**
 - **Production gate**: set `ENV=production`, and `SKY_CONSOLE_AUTH=token` with `SKY_CONSOLE_TOKEN`, or `SKY_CONSOLE_AUTH=app` with `App.withConsoleAuth check` (the app's own admins open the console; everyone else gets 403); use a shared session store (redis/postgres) + sticky sessions when you run more than one replica. Content-Security-Policy: every Sky page works under `script-src 'self' 'wasm-unsafe-eval'` with no hashes and no `'unsafe-inline'` (the scripts are same-origin files); send it from the proxy, or set `SKY_CSP=strict` so the runtime sends it (it never overwrites a policy the app set). `SKY_AUTH_TOKEN_SECRET` is **not** a runtime setting — nothing in the runtime reads it (`sky_sid` is unsigned random hex, and `Auth.signToken` takes its secret as a Sky-level *argument*). It is a convention in your own code that only `sky doctor` knows about: if you use `Std.Auth`, whatever variable you feed into `Auth.signToken` must be ≥ 32 bytes; if you don't, setting it changes nothing.
-- **WebSocket from a Task, Live inside a Task program**: outside a TEA loop read a socket with `WebSocket.receive` / `receiveWithin ms` / `forEachMessage` (one reader per socket: a Sub or a Task, not both). A server that needs the frame type uses `Ws.withOnFrame` (`Text` / `Binary`). A `web:app` client holds its own socket over the browser WebSocket API (`WebSocket.connect "/ws"` is same-origin; serve it with `App.api "GET /ws"` and `Ws.upgrade`), and runs every Msg once, in arrival order, with several server RPCs in flight together. A server arm whose model write reads no server data runs async (the client makes the write at once, also through `case` / `if` / `let` and top-level helpers called with all their arguments), and its `Cmd.none` branch sends no request and dispatches nothing, as on Sky.Live; an arm whose write needs server data holds later Msgs until it answers, and the build's `holds later Msgs` note names it and the change that makes it async. To run a Sky.Live UI next to other work, `App.withEmbedded` the app and `Task.spawn (App.run app)`: no signal handler, no process exit, a failure to start is its Task's `Err`. To stop it again, `App.serve app` returns an `App.Running` once listening (`App.address` gives `host:port`, port `0` picks a free one) and `App.stop` stops it gracefully. Each served app has its own session cookie (`sky_sid_<name>`): name it with `App.withName "<name>"` (port 0 with a durable store needs the name).
+- **WebSocket from a Task, Live inside a Task program**: outside a TEA loop read a socket with `WebSocket.receive` / `receiveWithin ms` / `forEachMessage` (one reader per socket: a Sub or a Task, not both). A server that needs the frame type uses `Ws.withOnFrame` (`Text` / `Binary`). A `web:app` client holds its own socket over the browser WebSocket API (`WebSocket.connect "/ws"` is same-origin; serve it with `App.api "GET /ws"` and `Ws.upgrade`), and runs every Msg once, in arrival order, with several server RPCs in flight together. A server arm whose model write reads no server data runs async (the client makes the write at once, also through `case` / `if` / `let` and top-level helpers called with all their arguments), and its `Cmd.none` branch sends no request and dispatches nothing, as on Sky.Live; an arm whose write needs server data holds later Msgs until it answers, and the build's `holds later Msgs` note names it and the change that makes it async. While keystroke Msgs wait behind such a hold the client leaves that box's value alone (it keeps its letters and caret), and an input Msg the split proves commutes with the hold (`Spa.withHoldFree`) runs at once. To run a Sky.Live UI next to other work, `App.withEmbedded` the app and `Task.spawn (App.run app)`: no signal handler, no process exit, a failure to start is its Task's `Err`. To stop it again, `App.serve app` returns an `App.Running` once listening (`App.address` gives `host:port`, port `0` picks a free one) and `App.stop` stops it gracefully. Each served app has its own session cookie (`sky_sid_<name>`): name it with `App.withName "<name>"` (port 0 with a durable store needs the name).
 - **No cookies** (a native shell or web view that drops `Set-Cookie`): `App.withSessionTransport HeaderToken` carries the Sky.Live session in the `X-Sky-Session` header (the header is the CSRF defence; the server stores only a hash of the token). Sky.Live only; a full page reload starts a new session.
+- **What a reload keeps (v0.29.0)**: `App.withPersistExclude [ "siteConfig" ]` names model fields the server owns; they never come back from an earlier page (a client target leaves them out of `localStorage` and takes them from the server-rendered seed; Sky.Live refreshes them from `init` on a full page load). `App.withSessionLifetime seconds` sets how long a client (`web:app`) sign-in lasts, the `sky_spa` cookie's `Max-Age` (default 30 days, `SKY_SPA_SESSION_LIFETIME` overrides).
+- **Regex (v0.29.0)**: compile once with `Regex.fromString` (`Result Error Regex`; `import Sky.Core.Regex as Regex exposing (Regex)`), then `Regex.contains re s` / `find` / `replace` / `split`. Write the pattern triple-quoted so a backslash stays (`"""\d+"""`); a literal pattern is checked at compile time (`[E2014]`).
 - **Dev Host guard + WebSocket origins**: outside production a loopback server refuses a `Host` that is not `localhost` / `*.localhost` / a loopback IP (anti DNS rebinding); a dev proxy name, a Codespaces URL or a LAN name needs `SKY_ALLOWED_HOSTS` (comma list, `*.app.github.dev` wildcards) or `SKY_PUBLIC_URL`. In production a loopback bind is not access control: put the proxy in front of it. A desktop window mounts no console unless `SKY_CONSOLE_AUTH` names a mode. A `Sky.Http.Server.WebSocket` upgrade needs `Ws.withOriginPatterns [...]` in production (403 without it); outside production only same-host, loopback and `SKY_ALLOWED_HOSTS` origins pass.
 - **Sky.Live resilience (automatic)**: an explicitly-configured `store` (postgres/sqlite/redis) that can't connect at boot **fails loud in production** (the app refuses to start) instead of silently using memory — so make sure `DATABASE_URL` is reachable, or set `SKY_LIVE_STORE=memory` to opt in to in-memory sessions. `/_sky/readyz` returns 503 when the store/DB is down. Point health checks at `/_sky/healthz` or `/_sky/readyz`, never at a path your app does not declare: the `App.withNotFound` page is sent with HTTP 404, so a probe on `/healthz` fails unless the app declares it. Keep `view` a **pure** function of the model (no `Time.now`/`Random` in `view`); enable `SKY_LIVE_VIEW_DETERMINISM_CHECK=1` in dev to catch violations.
 

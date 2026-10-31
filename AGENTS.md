@@ -39,9 +39,9 @@ soundness requirement. "No runtime panic" therefore means *no UNCLASSIFIED panic
 silent corruption* — the property a service actually needs.
 
 The compiler is the **Rust rewrite** (cargo workspace at `rust/`). The retired
-Haskell compiler lives under `legacy-haskell-compiler/` and serves as a
-**differential oracle** (`sky-out/sky`) the Rust output is checked against
-byte-for-byte. Current line: **v0.28.x**.
+Haskell compiler, once its byte-for-byte differential oracle, was removed from
+the tree in v0.29.0 (`docs/history/legacy-compilers.md`; tag `v0.28.1` is the
+last that has it). Current line: **v0.29.x**.
 
 ## Language essentials
 
@@ -78,7 +78,8 @@ Core syntax you must get right:
 - **Lambdas**: `\x -> x + 1`. **Cons**: `head :: tail`. **Lists**: `[ 1, 2, 3 ]`.
 - **`let … in`** for locals; **`case … of`** for pattern matching (must be exhaustive).
   A let-bound function is polymorphic, like a top-level one (let-generalisation
-  under the value restriction, `docs/language/types.md`).
+  under the value restriction, `docs/language/types.md`). Local functions of one
+  `let` may call each other (mutual recursion), in any source order.
 - **Field access**: `model.user.name`; `Shape.origin.x` is field `x` of the
   qualified value `Shape.origin`.
 - **Record update**: `{ user | age = 41 }` (keeps every other field).
@@ -93,6 +94,18 @@ Core syntax you must get right:
   field is absent or `null`; a present value `dec` rejects is an `Err` (since
   v0.27.12). `Decode.nullable` / `Decode.maybe` / `Decode.null` are as in Elm.
 - No custom operators, no `where` clauses (use `let`), no higher-kinded types (HM only).
+
+**Collection costs (v0.29.0) — every `List` / `Dict` / `Set` / `Array` /
+`String` function states its cost in a `-- Cost:` line (`sky doc`).** `x :: xs`
+is amortised O(1), so the accumulator loop `go (x :: acc) rest` plus one
+`List.reverse` is O(n); replacing a head or consing twice onto one shared tail
+copies (O(n)). To build a string, cons the pieces and call `String.concat
+(List.reverse pieces)` once (`++` in a loop is O(n²)). Walk a string with
+`String.uncons` / `foldl` / `toList`; every String index counts code points.
+Use `Sky.Core.Array` for indexed access (`get` / `set` O(log32 n), `push`
+amortised O(1)). A `Dict` write copies the map (O(n)): for many entries build
+a list and call `Dict.fromList` once. Go code reached through FFI must treat a
+list argument as read-only (`docs/ffi/boundary-philosophy.md`).
 
 **Effect boundary — the single most important rule.** Every observable side
 effect returns `Task Error a`. Pure code is bare `a`; fallible-pure is
@@ -127,6 +140,16 @@ keeps its `int` / `float` / `bool` key type; a callback is typed from the Go
 signature, result included; an integer out of range across the boundary is an
 `Err`; and a Sky value where Go wants an interface is `[E2013]`. See
 `docs/ffi/boundary-philosophy.md`.
+
+**Upgrading a v0.28 project?** `docs/migration/v0.29.md` lists every change,
+split into loud (fails to compile, the error shows the fix), loud at run time
+and silent. Among them: `Sky.Core.Regex` takes a compiled `Regex`
+(`Regex.fromString` is the only constructor, a literal pattern is checked at
+compile time, `[E2014]`), a new stdlib name that two `exposing (..)` imports
+both export is `[E1012]` (qualify it), a value defined in terms of itself is
+refused, `Std.Image` refuses images over its decode limits, and a Sky.Live
+session in a persistent store whose model holds a `Dict` starts fresh once
+after the upgrade.
 
 **Upgrading a v0.26 project?** `docs/migration/v0.27.md` lists every change
 that stops the build (the error links its entry) and every change that
@@ -207,7 +230,10 @@ their arguments, and a `Cmd.none` branch sends no request and dispatches
 nothing, as on Sky.Live. An arm whose model write needs server data (or reads
 the signed session) holds later Msgs until it answers; the build prints a
 `holds later Msgs` note naming each such arm and the change that makes it
-async (`docs/skyspa/overview.md`, "Msg order and server calls").
+async (`docs/skyspa/overview.md`, "Msg order and server calls"). While input
+Msgs wait behind a hold, the client does not write that control's value (the
+box keeps its letters and caret), and an input Msg the split proves commutes
+with the hold (`Spa.withHoldFree`) runs at once.
 The client re-sends a transiently failing request by itself (no answer, a
 30 s timeout, 408 / 425 / 429 / 502 / 503 / 504; full-jitter backoff, `Retry-After`
 wins, in failure order, 8 attempts or 60 s), shows a quiet "Reconnecting…" only
@@ -276,130 +302,30 @@ non-obvious ones as questions:
    more than one replica.
 5. **Deployment target** — local binary / Docker / Cloud Run / Kubernetes / VM.
    Ask what the host *is*, because a Sky.Live app plus its own embedded
-   PostgreSQL fits comfortably in **1 GB**, and most people over-provision:
+   PostgreSQL fits comfortably in **1 GB**, and most people over-provision.
+   The measured facts, each with its run, commit and caveats, are in
+   **`docs/perf/sizing.md`** (moved there from this file in v0.29.0). The
+   short form:
 
-   | | RAM |
-   |---|---|
-   | Sky app binary (Go), idle | **~21–27 MB** (measured, `26-ui-showcase` on an e2-small) |
-   | Sky app, settled under real traffic | **~56 MB** (measured mean, sky-lang.org on an e2-micro; a 45-min window after ~40 h of process uptime) |
-   | Embedded PostgreSQL — the whole tree, as `MemAvailable` actually falls | **+21.9 MB** idle · **+28.4 MB** once sessions are written through it |
-   | Sky.Live sessions, **625–650 kB each on x86, PostgreSQL store, stock `GOGC=100`** (the shipped default raises this — see below) | ~65 MB at 100 concurrent |
-   | **Base, before sessions — measured whole-machine, not a sum of the rows** | **~382 MB** app alone · **~410 MB** with embedded PostgreSQL carrying the sessions |
+   - An idle app binary is **~21–27 MB**; a settled app under real traffic
+     **~56 MB**. Embedded PostgreSQL adds **+21.9 MB** idle, **+28.4 MB** with
+     sessions written through it. The whole machine before sessions measured
+     **~382 MB** (app alone) and **~410 MB** (with embedded PostgreSQL).
+   - PostgreSQL is a fixed block (a flat 6-connection pool), not a per-session
+     tax.
+   - **CPU binds ≈9–18× before memory.** An e2-micro holds ~450 sessions but
+     is unusable past ~50; an e2-small sustains 64.3 int/s at 300 sessions
+     (commit `3ed83c08`). Count physical cores, not vCPUs.
+   - The runtime derives `GOMEMLIMIT` and sets `GOGC=400` under it; an explicit
+     `GOGC` / `GOMEMLIMIT` always wins. There is no `sky.toml` knob.
+   - On a burstable e2 instance the first run after idling overstates sustained
+     capacity by ~2.7×. Plan with the sustained figure.
+   - Interaction cost tracks view size (`view` re-runs in full), not the diff.
+   - A single `--embed` instance has no replica and no backup timer: a
+     `pg_dump` schedule is the operator's to add.
 
-   Every row: `docs/perf/runs/gcp-embed-postgres-20260815/sweep.tsv`, analysed
-   in `docs/perf/skylive-interaction-cost.md:1044-1100`; the settled-app row is
-   that document's row 7. The base line is `MemTotal − MemAvailable` on the
-   measured machine (2,023,888 kB total; median idle `MemAvailable` 1,632,340
-   / 1,603,636 kB for the two configurations), so it already contains the OS
-   and needs no OS row added to it.
-
-   > **This table used to open with "Minimal Linux | ~250 MB" and close with
-   > "Base, before sessions | ~380 MB", and the rows between them no longer
-   > added up to it** — the ~380 was left in place when the PostgreSQL rows
-   > were corrected downward, so it had become an orphan of an earlier
-   > arithmetic. The OS row is deleted rather than adjusted: no run in
-   > `docs/perf/runs/` measured a bare Linux image, and on the machine that
-   > *was* measured the OS plus an idle app came to ~382 MB, so ~250 MB was
-   > not a conservative allowance either. A "PG backends" row also sat here
-   > carrying no MB value at all; its content was a process count, not RAM,
-   > and it has moved into the paragraph below — with the count corrected.
-
-   **PostgreSQL is a fixed block, not a per-session tax.** Its tree's RSS
-   slope against established sessions is −10 kB / +22 kB per session — zero
-   within noise (`docs/perf/skylive-interaction-cost.md:156-158`), because the
-   pool holds a flat **6-connection pool** (`dbSharedAuxPoolSizeFor(2) = 6`) at
-   25, 50 and 100 concurrent sessions; `pg_backends_max` reads **7** — the pool
-   plus the 1-Hz sampler's own psql
-   (`gcp-embed-postgres-20260815/sweep.tsv`: 7 in the config-C rows at 50 and
-   100 and one of the three at n=25, the other two a documented sampler bug,
-   `README:78-82`) — and **7, occasionally 8, at 100 / 300 / 500**
-   (`gcp-x86-capacity-20260816/README.md:49-53`, against
-   `max_connections = 56`). Earlier text here and in
-   `skylive-interaction-cost.md` said `pg_backends_max` was **6**; the column
-   reads 7 (the 6 is the pool).
-
-   **Sessions are the number that decides the instance** — and the per-session
-   figure moves with the collector, which is why it changed. At the stock
-   `GOGC=100` a session costs **625–650 kB on x86 with a PostgreSQL session
-   store** and 451–531 kB with the memory store, measured as an OLS-free slope
-   across n = 100 → 500 on `examples/19-skyforum` at a 94-element view
-   (`docs/perf/runs/gcp-x86-capacity-20260816/`). Sky now ships **`GOGC=400`
-   under a derived `GOMEMLIMIT`** (below), and `GOGC` multiplies the slope, not
-   just the baseline: 100 → 400 scales it **2.9×** on the same app and store
-   (`docs/perf/runs/gogc-postgres-20260816/`). The x86 slope at the shipped
-   default is **unmeasured** — do not multiply the two runs together and quote
-   the product; this programme's projections have been wrong by several-fold,
-   repeatedly. What bounds memory at the shipped default is the derived
-   `GOMEMLIMIT` itself, not a per-session figure.
-
-   > Quote a per-session number **with its view size and its `GOGC`**, or it
-   > will be wrong. This table long carried ~1.35–1.42 MB, which was measured
-   > on a *different app* — `26-ui-showcase` at 384 elements, memory store — and
-   > is not the cost of a session in general.
-
-   **CPU binds a full order of magnitude before memory on real GCE
-   instances.** The e2-micro's ~450-session memory ceiling against its
-   25–50-session CPU knee is a **≈9–18× gap** — a ratio of two measured
-   observations, not itself a directly measured quantity. An
-   e2-micro *holds* ~450 sessions and is **unusable past ~50** (knee 25–50,
-   peak ~18 interactions/sec, and at 250 sessions it fails 74–91% of
-   interactions across three repeats, 96% at 500; commit `ba3c3b1d`,
-   `docs/perf/runs/gcp-x86-20260815/micro-noagent.tsv`). The
-   ~450 is an **observation, not a division**: asked for 500, that machine
-   established **447** (`gcp-x86-20260815/micro-noagent.tsv`, n=500 row, which
-   also records 96% of interactions failing there) with `MemAvailable` down to
-   **~43 MB** (`micro-rss-n500-r1-memexhaustion.txt`) — so it does not move
-   when the per-session slope is restated. No comparable memory ceiling was
-   ever *reached* on e2-small: it established **500 of 500** in all three
-   repeats of the same sweep (`small-noagent.tsv`).
-   Re-measured at commit `3ed83c08` with embedded PostgreSQL carrying the
-   sessions (`docs/perf/runs/gcp-x86-capacity-20260816/`): an **e2-small
-   sustains 64.3 int/s at 300 sessions** (failure knee between 100 and 300),
-   an **e2-medium 261.5** (knee above 500). Quote throughput with its commit
-   — these figures predate later optimisation work. Sizing on memory alone
-   overstates an e2-micro by roughly an order of magnitude (≈9–18×).
-
-   **Count physical cores, not vCPUs.** A GCE vCPU is an SMT thread:
-   `e2-standard-8` is **4 cores × 2 threads**, not 8 cores. Four threads on four
-   distinct physical cores serve **1,568 int/s**; the same four threads on two
-   physical cores serve **1,097** — 70%. The second thread on a core is worth
-   ~1.27×, not 2× (`docs/perf/runs/gomaxprocs-scaling-20260816/`). Any capacity
-   number derived from a vCPU count overstates the machine by roughly that
-   factor. Counted in physical cores, throughput scales at **79–80% efficiency
-   per doubling** (same run) — a larger instance is a legitimate route when
-   sized on cores.
-
-   **The GC default is derived, not configured.** At startup the runtime sizes
-   `GOMEMLIMIT` from detected machine memory — the cgroup limit first, so a
-   container is not sized to its host — after subtracting the OS and, under
-   `--embed`, the cluster's own `shared_buffers`, and sets `GOGC=400` under it.
-   Measured: **+19% throughput at 759 MB peak RSS** at 500 sessions on the
-   PostgreSQL store, against 1,827 MB for a bare `GOGC=800`. An explicit `GOGC`
-   or `GOMEMLIMIT` in the environment always wins, and a machine too small to
-   hold the bound is left on Go's defaults entirely. There is no `sky.toml`
-   knob: the Go env vars are the escape hatch, and they work even when the
-   process is launched by something that never reads `sky.toml`.
-
-   Two things to tell a user picking a burstable e2 instance: **the first run
-   after idling overstates sustained capacity by ~2.7×** — a rested e2-small
-   measured 183.5 int/s, then 58–71 for six consecutive runs (seven-run soak,
-   `docs/perf/runs/gcp-x86-capacity-20260816/`; the same decay on e2-micro
-   read 17.5 → 9.6 → 9.5/s, `docs/perf/runs/gcp-x86-20260815/`) — so plan
-   with the sustained figure, never the first number they see. And a figure
-   measured under a container CPU quota was optimistic against real hardware
-   by **2.5–5×**.
-
-   The **diff** is not the cost — ~128 ns per VNode, under 1% of an
-   interaction — but the interaction as a whole **does track view size**,
-   because `view(model)` re-runs in full every interaction:
-   `cost_ms ≈ 0.124 + 0.018 × elements` over the three smallest views (30–94
-   elements) on one core (`docs/perf/runs/forum-rebaseline-20260816/`; the
-   all-seven-sizes fit is `−0.147 + 0.0197 × elements`). Optimising the differ buys
-   nothing; trimming a large view is a real lever. And **a single instance
-   has no replica**:
-   `sky db provision --shared` generates a backup timer, a single `--embed` app
-   does not, so a `pg_dump` schedule is the operator's to add. Sizing detail:
-   `docs/skydb/embedded-postgres.md`.
+   Quote a per-session number **with its view size and its `GOGC`**, or it
+   will be wrong. Never quote a number no run in `docs/perf/runs/` measured.
 6. **Observability** — local logs + embedded console / central console hub /
    OTel collector (Honeycomb / Tempo / Datadog).
 
@@ -465,6 +391,8 @@ signed `.ipa` to App Store Connect with `xcrun altool` (API key from
 caret with `Native.insertAtCursor "body" "{{first_name}}"` (`Task Error String`,
 the control's new value; it uses the selection the person left when focus moved
 to the menu; a Sky.Spa client only, `Err Unavailable` on Sky.Live).
+`Native.selection "body"` reads a control's selection (`{ start, end, text }`,
+in characters) and `Native.setSelection "body" s e` sets it, with the same rules.
 `web` requires `App.withNotFound` (compile-enforced). Invalid combos are rejected
 at parse time (`web:ios` → *"did you mean `mobile:ios`?"*). `sky check` checks
 the same target a bare `sky build` builds (`--target`, else `[app] target`, else
@@ -485,12 +413,16 @@ for UX/DX/security/scalability, not by accident.
 | Concern | Default (and why) |
 |---|---|
 | **View layer** | `Std.Ui` — the typed, no-CSS layout DSL — **not** `Std.Html`. The same `Element` view renders across **Sky.Live (web), Sky.Tui (terminal), and Sky.Webview (desktop)**, so one view function is cross-platform; `Std.Ui` also HTML-escapes everything. Reach for `Std.Html` *only* to wrap raw markup `Std.Ui` can't express. `Ui.text` outside a paragraph is its own wrapping box (`Ui.textNoWrap` keeps one line). **`Std.Ui.Canvas`** draws typed 2D scenes (SVG on Sky.Live, a batched `<canvas>` on the Sky.Spa client, Braille cells on a terminal; pointer events in scene units; `label` required). **`Std.Ui.Terminal`** binds a `Process.withPty` child to a built-in terminal widget (Sky.Live and desktop; a `web:app` build refuses it) — gate it behind sign-in. See `docs/skyui/overview.md`. |
-| **Database** | **Tier-driven.** Pet / prototype / simple / single-instance → **SQLite** (embeds, single file, zero ops). Production / multi-instance → **PostgreSQL**. (Future: **BlueDB** — the Sky-native reactive data layer, WIP — will become the default once it lands; prefer it when it ships.) Always model records through **`Std.Db.Store` + `Std.Codec`** (one codec drives JSON + dialect-safe DB); drop to raw `Std.Db` only for joins / aggregates / transactions. The *same app code* works on SQLite and Postgres — only the driver differs. |
+| **Database** | **Tier-driven.** Pet / prototype / simple / single-instance → **SQLite** (embeds, single file, zero ops). Production / multi-instance → **PostgreSQL**. (Future: **BlueDB** — the Sky-native reactive data layer, WIP — will become the default once it lands; prefer it when it ships.) Always model records through **`Std.Db.Store` + `Std.Codec`** (one codec drives JSON + dialect-safe DB); grouped aggregates (`groupBy` + `aggregate`), projections (`select`), the newest row per key (`latestPer`), escaped text match (`contains` / `startsWith` / `endsWith` / `eqCi`), JSON keys (`jsonText`), joins of two stores (`join` / `leftJoin` → `toPairs` / `toPairsMaybe`) and subquery conditions (`inQuery` / `notInQuery` with `column`, `exists` / `notExists` with `correlate`), the atomic "claim once" (`insertOrIgnore`), counter and partial upserts (`upsertWith` with `addExcluded` / `keepMin` / `keepMax` / `setExcluded`), expression updates (`updateSet` with `setCol` / `setWhen`), insert from a query (`copyInto`) and RETURNING (`insertReturning` / `updateFieldsReturning` / `deleteWhereReturning`) are Store builders with checked names; indexes are builders (`index`, `uniqueOn`, `uniqueWhere`), and `Store.migrate` and `sky db migrate --gen` follow one rule (a `Maybe` field is nullable, any other field `NOT NULL DEFAULT` its declared default else zero, an existing column is never altered); drop to raw `Std.Db` only for transactions / SQL the builders do not model (a join of three tables, a CTE). The *same app code* works on SQLite and Postgres — only the driver differs. |
 | **Auth** | The internal **`Std.Auth`** module by default (bcrypt + HS256 JWT cookies — you own the users). OAuth (Google/GitHub) or external (Auth0/Clerk) only when the user needs them. Never `fmt.Sprintf("%v", secret)` — secrets are typed. |
-| **Serialization** | `Std.Codec` (`Codec.auto blank`) for record↔JSON+DB from one definition. Raw `Json.Encode/Decode` only for a shape a codec can't express (legacy/third-party wire formats). |
+| **Serialization** | `Std.Codec` (`Codec.auto blank`) for record↔JSON+DB from one definition. Raw `Json.Encode/Decode` only for a shape a codec can't express (legacy/third-party wire formats). The same codec reads and writes XML: `Codec.toXml "root" codec value` / `Codec.fromXml "root" codec text` (server side). |
+| **XML / ZIP** | Read XML with **`Std.Xml`** (`parse` → a `Node`; safe by default: no DOCTYPE, no entities, bounded size / depth / nodes / attributes, UTF-8 / Latin-1 / Windows-1252) and decode it with **`Std.Xml.Decode`** (`Json.Decode` style, by local name, errors carry a path such as `/feed/entry[3]`); write it with **`Std.Xml.Encode`** (`element` / `text` / `cdata`, `encode` is total, `encodeStrict` refuses). Read and write archives with **`Std.Zip`** (`read` / `readEntry` / `list` / `write`, `Result` not `Task`; refuses zip-slip names, symlinks, encrypted entries and zip bombs under `Limits`; `write` is deterministic). All run on the server (a Sky.Spa split sends them to the backend). Failures are `InvalidInput` with the domain `"xml"` / `"zip"` and a code. |
+| **Excel / Word files** | **`Std.Office.Xlsx`** reads a workbook (`read` → sheets of `Cell`: `Text` / `Number` / `Boolean` / `Date` / `Formula` with its cached value / `Failure` / `Empty`; rows keep their index; hidden sheets, merges, frozen panes, column widths and list validations read back; dates from the number format, 1904 workbooks) and writes one (`write` of `SheetSpec`s built from `text` / `number` / `date` / `formula` cells styled with `bold` / `fill` / `numberFormat` / …; formulas carry no cached value and ask to be computed on open, which LibreOffice does (tested); deterministic bytes). **`Std.Office.Docx`** reads and writes a document as `Block`s (`Heading` / `Paragraph` / `ListItem` / `Table`, runs with bold, italic and links; `toText` for search). Both are `Result`s on the ZIP and XML readers above, bounded by `Limits` (sheets, rows, cells, columns; blocks, depth), never read macros or embedded objects, and refuse an unsafe link or a sheet name Excel would refuse. Server side. Failures are `InvalidInput` with the domain `"office"` and a code. Bytes come from `File.readFile` or an upload. |
+| **Images** | **`Std.Image`** resizes, crops, trims and keys out a background (`resizeToFit` / `thumbnail` / `crop` / `trim` / `toAlpha`) as JPEG, PNG, `Gif` or `WebpLossless`; an animated GIF stays animated under `Gif` / `Preserve` (every frame composed, delays and loop kept; `frames`, `reduceFrames` to drop frames). **`Std.Image.Canvas`** draws on the server: a display list of shapes, masks, pasted images, blur, resize and text (TTF/OTF, `defaultFont` built in), written by `encode`; `pixelDiff` compares two images in tests. Decoding refuses an image over 100 megapixels, a GIF over 1,000 frames or 250 million frame pixels, before it decodes (`InvalidInput`, domain `"image"`). Server side. |
 | **Money / decimals** | `Std.Money` on `Std.Decimal`. **Never** raw `Float` for currency. |
+| **Regex / text patterns** | `Sky.Core.Regex` (v0.29.0): compile once with `Regex.fromString` (`Result Error Regex`; `import Sky.Core.Regex as Regex exposing (Regex)`), then `Regex.contains re s` / `find` / `findAll` / `replace` / `split`. Write the pattern triple-quoted so a backslash stays (`"""\d+"""`); a literal pattern is checked at compile time (`[E2014]`). There is no String-pattern form. |
 | **Encryption / signatures** | Encrypt with **`Crypto.xchachaSeal`** / `xchachaOpen` (XChaCha20-Poly1305, 24-byte random nonce; seal is a `Task`, open is pure). Only when a protocol fixes the nonce: `Crypto.chacha20Poly1305Seal` / `xchacha20Poly1305Seal` (caller nonce, pure; never reuse a nonce under one key). Keys are 32-byte `Secret`s: `Crypto.keyFromPasswordStrong { iterations, salt }` from a password (PBKDF2, at least 600 000 iterations and a 16-byte salt; `aesKeyFromPassword` is the older fixed-cost form), `Kdf.derive` (`Std.Crypto.Kdf`, HKDF) from key material. Sign with `Std.Crypto.Sign` (Ed25519), agree keys with `Std.Crypto.Kx` (X25519; refuses a low-order peer key). An encrypted session with a pinned server key: `Std.Crypto.Noise` (IK). A short pairing code: `Std.Crypto.Cpace` (a PAKE, **experimental: awaiting external review**, not for production data yet). A QR code for a pairing URL: `Std.Qr`. Never a `String` secret key. |
-| **Child processes / file watching** | Run a command to completion: `Process.run`. Talk to a long-running child: **`Process.spawn`** (`Process.command "x" \|> Process.withArgs [...]`, `withPty { cols, rows }` on Linux/macOS) with output in an offset-addressed ring (`readFrom` from a Task, or the `Process.events` Sub in a TEA app, never both), `write` / `closeStdin` / `resize` / `kill` (whole process group) / `wait` / `close`. Children are reaped, closed with their Sky.Live session, and killed on exit (a program with a child also ends them on SIGINT / SIGTERM / SIGHUP, exiting 130 / 143 / 129); `close` ends the child's whole tree (a descendant that clears its environment, leaves the session and double-forks is not found; on the BSDs close ends the process group only). A handle belongs to the Sky.Live session that opened it (another session gets `Err PermissionDenied`; open it in the session that uses it). PTY sizes are 1-500 columns by 1-200 rows. Watch files with **`Std.Watch`** (`watch` / `next` / `changes` Sub / `close`; coalesced batches, `Overflow` means rescan). |
+| **Child processes / file watching** | Run a command to completion: `Process.run`, or `Process.runCommand` for `{ code, stdout, stderr }` with `withStdin` text (a non-zero exit is a result, not an `Err`). Talk to a long-running child: **`Process.spawn`** (`Process.command "x" \|> Process.withArgs [...]`, `withPty { cols, rows }` on Linux/macOS) with output in an offset-addressed ring (`readFrom` from a Task, or the `Process.events` Sub in a TEA app, never both), `write` / `closeStdin` / `resize` / `kill` (whole process group) / `wait` / `close`. Children are reaped, closed with their Sky.Live session, and killed on exit (a program with a child also ends them on SIGINT / SIGTERM / SIGHUP, exiting 130 / 143 / 129); `close` ends the child's whole tree (a descendant that clears its environment, leaves the session and double-forks is not found; on the BSDs close ends the process group only). A handle belongs to the Sky.Live session that opened it (another session gets `Err PermissionDenied`; open it in the session that uses it). PTY sizes are 1-500 columns by 1-200 rows. Watch files with **`Std.Watch`** (`watch` / `next` / `changes` Sub / `close`; coalesced batches, `Overflow` means rescan). |
 | **Errors** | `Result Error a` / `Task Error a`. **Never** `String` as an error type. A domain's failure travels inside `Error` as the one open variant `Domain DomainFailure` (v0.28.0; domain, code, retryable flag, retry delay, string attributes, always with an `ErrorKind`): react generically with `Error.domain` / `Error.isRetryable` (the domain's flag wins) / `Error.retryAfter`, or through a domain's typed view (`Std.Ai.Failure.fromError`) with a `_ ->` branch. A `case` over `ErrorDetails` without `_ ->` is `[E3001]` with a hint. An app's own domain: `Error.failure "myapp.billing" "CardDeclined" \|> Error.withAttr "reason" r \|> Error.fromDomain Error.InvalidInput "…"`. See `docs/errors/error-system.md#domain-failures`. |
 | **Concurrency** | `Cmd.batch` / `Task.parallel`; **`Task.parallelN limit tasks`** for bounded fan-out under load (`parallel` is unbounded — a goroutine/connection storm at scale); in-process pub/sub via `Cmd.publish` + `Sub.subscribeTopic`. Shared state between concurrent Tasks: **`Std.Sync`** (`Ref` with atomic `update` / `compareAndSwap`, `Mutex` + `withLock`, a bounded `Queue` with `push` / `pop` / `popWithin`); pure code needs none of it. A path a client sends is kept inside a directory with `File.resolveWithin root path` (follows symlinks and `..`). |
 | **Durable workflows** | **`Std.Durable`** for a multi-step process that must survive a restart (checkout / payment sagas, order fulfilment, onboarding, approvals). Mark side-effect boundaries with `Durable.step`; each step's result is journalled, so a resumed run replays completed steps instead of re-running them. `Durable.sleep` / `awaitSignal` suspend passively (a waiting run holds no process); a worker `Durable.poll` claims + advances due runs. **Worker versioning:** `registerVersioned` stamps a run's version at `start`, and `pollWith` reconciles a resumed run against the registered defs (`FailSafe` / `PinToStart`) for rolling deploys. **History compaction:** `Durable.compact db retentionMs` collapses terminal runs' journals while keeping their summary. **Zero-annotation durable TEA:** `App.withDurable db modelCodec` (or `App.withDurableId "<id>" db modelCodec`) makes any `Std.App` app durable with NO change to `model` / `msg` / `update` — the backend loop restores the Model on start and snapshots it after each update (Cli / Tui key by run id; Live keys by session id, covering a memory session store across a restart). The Model must be a `Codec`-serialisable data value (no function fields). The Model snapshot is at-most-once for an in-flight effect; use `Durable.step` when an effect needs exactly-once. (Substrate: `Durable.saveSnapshot`/`loadSnapshot`.) Postgres or SQLite; the code between steps must be deterministic. See `docs/design/durable-execution.md` + `docs/skyapp/overview.md`. |
@@ -578,7 +510,7 @@ Env var reference: `docs/sky-toml.md` + `docs/skylive/architecture.md`.
 ```bash
 sky init [name] [--production]   # new project
 sky build src/Main.sky           # compile → sky-out/app
-sky run src/Main.sky             # build + run  (--profile for pprof)
+sky run src/Main.sky [-- args]   # build + run; args after -- reach System.args (--profile for pprof)
 sky check src/Main.sky           # type-check + go build  (≡ sky build)
 sky check --format json src/Main.sky   # NDJSON diagnostics on stdout (also build / test / fmt --check)
 sky watch src/Main.sky           # file-watch rebuild + restart
@@ -629,6 +561,9 @@ over on the next request, and a pre-v0.27.0 token is converted once), a signed
 token with a session id: sign-out (the client
 clearing its `Session` field, or a server branch that changes it) ends that id
 in the session store, so a copy of the cookie from before sign-out is refused.
+The cookie lives as long as the token (30 days; `App.withSessionLifetime` /
+`SKY_SPA_SESSION_LIFETIME`), and `App.withPersistExclude [ … ]` names model
+fields a reload never takes from an earlier page (server-owned values).
 Several replicas need a shared store (`[live] store` / `SKY_LIVE_STORE` =
 `postgres` or `redis`) as well as a shared `SKY_SPA_SESSION_SECRET`
 (`docs/skyspa/auto-split.md` §25); production refuses to start with no store and
@@ -828,8 +763,8 @@ These apply to any Sky code you write or any compiler change you make:
   "Pre-existing / defer / known issue" are not shipping excuses. The user may
   explicitly override with "ship without fixing X"; that is the only exception.
 - **Every feature/bug becomes a regression test** before the fix lands — the
-  failing test is the discovery artefact. Compile-time behaviour → cargo/`hspec`
-  specs; runtime helpers → `runtime-go/rt/*_test.go`; stdlib semantics →
+  failing test is the discovery artefact. Compile-time behaviour → cargo tests
+  (`rust/crates/*/tests`, the `ty` corpora); runtime helpers → `runtime-go/rt/*_test.go`; stdlib semantics →
   `tests/**/*Test.sky`; behaviour → `tests/conformance/`.
 - **Timeout-bound every long command — through the shim, never a bare
   `timeout`.** `cargo test` / xtask gates run under a 60 min ceiling. A test
@@ -849,7 +784,7 @@ These apply to any Sky code you write or any compiler change you make:
   `SKY_LIVE_TESTS=skip` — and both treat any other value as an error rather
   than guessing.
 - **A gate may not measure a compiler older than the tree.** `sky-out/sky` is
-  installed by exactly one line (`scripts/build.sh:80`), so a bare
+  installed by exactly one line (`scripts/build.sh:75`), so a bare
   `cargo build --release -p sky` leaves `rust/target/release/sky` fresh and
   `sky-out/sky` untouched — and every consumer then measures whatever
   `build.sh` last produced. Sixteen scripts read that path and none checked it.
@@ -905,6 +840,10 @@ These apply to any Sky code you write or any compiler change you make:
   (each `Ffi.kernel` alias names a real `rt` function),
   `kernel_signature_coverage.rs` (an advertised member has a signature) and
   `kernel_signature_runtime_arity.rs` (the signature arity matches the runtime).
+  The public surfaces follow in the same commit too: `README.md` (when a module,
+  CLI verb, target, install step or headline capability changes; every README
+  sample is a copy of a file CI builds) and the docs index `docs/README.md`.
+  The sky-lang.org site is checked and redeployed at each release.
 - **Release = bump the version and write the notes in one commit, then the
   version claims follow.** The ONE version source is `[workspace.package]
   version` in `rust/Cargo.toml`: every crate inherits it, `sky --version` prints
@@ -951,6 +890,10 @@ before assuming a limitation still holds.
 | Topic | Doc |
 |---|---|
 | Full stdlib reference | `docs/stdlib.md` (+ `sky doc <Module>`) |
+| Collections and their costs (`List`, `Dict`, `Set`, `Array`, `String`), `Regex` | `docs/stdlib.md` (the `Array` and `Regex` sections; each function's `Cost:` line in `sky doc`) |
+| XML and ZIP — `Std.Xml` (+ `Decode` / `Encode`), `Codec.toXml` / `fromXml`, `Std.Zip` | `docs/stdlib.md` (`sky doc Std.Xml` / `Std.Zip`) |
+| Excel and Word — `Std.Office.Xlsx`, `Std.Office.Docx` | `docs/stdlib.md` (`sky doc Std.Office.Xlsx` / `Std.Office.Docx`) |
+| Images — `Std.Image`, `Std.Image.Canvas` | `docs/stdlib.md` (`sky doc Std.Image` / `Std.Image.Canvas`) |
 | Language + errors | `docs/language/`, `docs/errors/` |
 | Compiler architecture (Rust, primary) | `docs/rust-rewrite/` |
 | Change verification / edge cases | `docs/rust-rewrite/13-change-verification-and-edge-cases.md` |
@@ -969,7 +912,9 @@ before assuming a limitation still holds.
 | Typed AI failures and evals — `Std.Ai.Failure` / `Std.Ai.Eval` | `docs/ai/local.md#failures`, `docs/ai/eval.md` (`sky doc Std.Ai.Failure` / `Eval`) |
 | Model registry — `Std.Ai.Registry` / `Std.Ai.Store` | `docs/ai/registry.md` (`sky doc Std.Ai.Registry` / `Store`); example `examples/71-ai-registry` |
 | The project's AI pipeline — `Std.Ai.Pipeline`, `sky ai eval` | `docs/ai/pipeline.md` (`sky doc Std.Ai.Pipeline`); full-stack example `examples/72-ai-support-desk` |
+| Training and eval data — `Std.Ai.Dataset`, `Dataset.Scrub`, `Dataset.Synthetic` | `docs/ai/dataset.md` (`sky doc Std.Ai.Dataset`); examples `68-ai-dataset`, `69-ai-scrub`, `70-ai-synthetic` |
 | Fine-tuning adapters: `Std.Ai.Train` | `docs/ai/train.md` (`sky doc Std.Ai.Train`), example `examples/73-ai-train` |
+| Cost and call ledger — `Std.Ai.Trace` | `docs/ai/trace.md` (`sky doc Std.Ai.Trace`) |
 | Cloud training and the GPU tier: `Train.Vertex`, `Std.Ai.Serve`, `Std.Ai.Cloud.Google` | `docs/ai/serve.md`, `docs/ai/deploy-gcp.md` (`sky doc Std.Ai.Serve`); example `examples/74-ai-cloud` |
 | On-device models: `Std.Ai.Device` | `docs/ai/device.md` (`sky doc Std.Ai.Device`), example `examples/75-ai-everywhere` |
 | Testing the AI lifecycle (offline, local engine, live GCP) | `docs/ai/testing-guide.md` |
@@ -978,6 +923,8 @@ before assuming a limitation still holds.
 | `sky.toml` + env vars | `docs/sky-toml.md` |
 | Observability / console | `docs/observability.md` |
 | Getting started | `docs/getting-started.md`, `README.md` |
+| Upgrading between minors | `docs/migration/v0.27.md`, `v0.28.md`, `v0.29.md` (loud / loud at run time / silent) |
+| Sizing: memory, CPU, sessions | `docs/perf/sizing.md` |
 
 ## The test corpus — two layers, and where `examples/` now sits
 
@@ -988,7 +935,7 @@ Which one a change belongs in is decided by what the change can break.
 |---|---|---|
 | **Layer 1** — the combinatorial corpus | `corpus/manifest.toml` + `xtask corpus` | Systematic VARIATION of language + type shapes, generated, expected values *constructed* by the generator. Membership is the manifest; no gate calls `read_dir`. Every historical defect is a pinned coordinate whose distance-1 neighbourhood is expanded automatically. |
 | **Layer 2** — real-world projects | `apps/manifest.toml` (`apps/ledger`, `apps/relay`, `apps/fieldbook`, `sky-bundled/`, `examples/13-skyshop`, `rust/crates/sky/tests/*_flow.rs`) | Surfaces exercised IN COMBINATION as a user would build them: session/SSE/CSRF lifecycle, a real SQL engine (**the only Postgres coverage in the repo**), multi-replica topology, cross-backend `Std.Ui`, the CLI verbs. The class Layer 1 is structurally blind to. |
-| **`examples/`** | `examples/00`–`examples/55` | **Documentation samples** — and the standing corpus for the *compiler-facing* ratchets that key on them. |
+| **`examples/`** | `examples/00`–`examples/76` (73 projects) | **Documentation samples** — and the standing corpus for the *compiler-facing* ratchets that key on them. |
 
 ### The `examples/` contract
 
@@ -1036,7 +983,6 @@ quote a number a script did not produce**:
 ```
 rust/                     Sky compiler (Rust, PRIMARY — cargo workspace)
   crates/{syntax,hir,ty,lower,codegen,ffi,fmt,sky-lsp,project,xtask,sky}
-legacy-haskell-compiler/  retired Haskell compiler (differential oracle)
 runtime-go/rt/            Go runtime (embedded)
 sky-stdlib/               Sky-side stdlib (embedded)
 sky-bundled/              Sky Console + doc-server mini-apps

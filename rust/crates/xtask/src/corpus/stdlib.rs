@@ -260,6 +260,9 @@ pub const SURFACES: &[Surface] = &[
     // every member is value-assertable (the ratchet named it dark when it
     // landed; this is the cover).
     sf("tuple", "Sky.Core.Tuple"),
+    // `Sky.Core.Array` (v0.29.0): Elm's persistent array, pure, so every
+    // member is value-assertable. `List` folds a `toIndexedList`.
+    sf2("array", "Sky.Core.Array", &["Sky.Core.List as List"]),
     sf("char", "Sky.Core.Char"),
     sf("encoding", "Sky.Core.Encoding"),
     sf("crypto", "Sky.Core.Crypto"),
@@ -348,6 +351,28 @@ pub const SURFACES: &[Surface] = &[
         &["Sky.Core.Secret as Secret", "Sky.Core.Task as Task"],
     ),
     sf("qr", "Std.Qr"),
+    // v0.29.0 Std.Xml (with Decode and Encode) and Std.Zip: parsing and
+    // building are pure `Result`s, so every member is value-assertable.
+    sf2(
+        "xml",
+        "Std.Xml",
+        &["Std.Xml.Decode as XD", "Std.Xml.Encode as XE"],
+    ),
+    sf("zip", "Std.Zip"),
+    // v0.29.0 Std.Office.Xlsx and Std.Office.Docx: read and write are pure
+    // `Result`s over bytes, so a write read back is value-assertable.
+    sf2("office", "Std.Office.Xlsx", &["Std.Office.Docx as Docx"]),
+    // v0.29.0 Std.Image.Canvas: drawings asserted by their encoded size and
+    // by pixelDiff against a base canvas (`Task`s bridged with `Task.run`).
+    sf2(
+        "imagecanvas",
+        "Std.Image.Canvas",
+        &[
+            "Sky.Core.Task as Task",
+            "Std.Image as Image",
+            "Sky.Core.Error as Error",
+        ],
+    ),
     // v0.27.0 streaming child processes and file watching. Both surfaces are
     // `Task`s bridged with `Task.run`; the expected values are what the
     // spawned POSIX tools (`sh`, `cat`, `stty`) and the documented coalescing
@@ -807,6 +832,7 @@ pub fn inventory(
 /// printed report used to count them as touched, which understated the dark set
 /// by exactly those 3 (it said 59; the honest number is 62).
 pub const ASSERTED_MODULES: &[&str] = &[
+    "Sky.Core.Array",
     "Sky.Core.Basics",
     "Sky.Core.Bytes",
     "Sky.Core.Char",
@@ -842,6 +868,17 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Std.Markdown",
     "Std.Money",
     "Std.Qr",
+    // v0.29.0: Std.Xml, its Decode and Encode, and Std.Zip land covered
+    // (`xml` and `zip` surfaces).
+    "Std.Xml",
+    "Std.Xml.Decode",
+    "Std.Xml.Encode",
+    "Std.Zip",
+    // v0.29.0: Std.Office.Xlsx and Std.Office.Docx land covered (`office`).
+    "Std.Office.Xlsx",
+    "Std.Office.Docx",
+    // v0.29.0: Std.Image.Canvas lands covered (`imagecanvas`).
+    "Std.Image.Canvas",
     // v0.27.0: the streaming process surface and Std.Watch land covered.
     "Sky.Core.Process",
     "Std.Watch",
@@ -988,6 +1025,19 @@ pub const ASSERTED_MODULES: &[&str] = &[
 /// `ai_local_live.rs` (a compiled program's slots on a fake and on the real
 /// engine). `Std.Ai.Local`, added in the same release, lands covered
 /// (`ailocal` surface).
+///
+/// Raised 75 -> 76 (v0.29.0): the new `Sky.Core.Array`. It IS pure and
+/// value-assertable, so this raise is a gap, not a property of the module: no
+/// Family-S battery was written for it in the collection-performance batch.
+/// It is covered by `tests/conformance/tests/ArrayConformanceTest.sky` (12
+/// cases in the `conformance` gate, including an edit-distance table) and by
+/// `runtime-go/rt/array_trie_test.go` (a 20,000-step model test against a Go
+/// slice with every old version re-checked). Adding an `array` surface here
+/// lowers the ceiling back to 75.
+///
+/// Lowered 76 -> 75 (v0.29.0): `Sky.Core.Array` gained the `array` surface
+/// (every export asserted at the nominal, empty, boundary, unicode and
+/// failure edges, including pushes across the 32 and 1,024 trie boundaries).
 pub const DARK_MODULE_CEILING: usize = 75;
 
 /// The five modules item 3 named, with the EXACT number of their public symbols
@@ -1453,6 +1503,7 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "maybe" => maybe_battery(edge),
         "result" => result_battery(edge),
         "tuple" => tuple_battery(edge),
+        "array" => array_battery(edge),
         "char" => char_battery(edge),
         "encoding" => encoding_battery(edge),
         "crypto" => crypto_battery(edge),
@@ -1473,12 +1524,16 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "markdown" => markdown_battery(edge),
         "compression" => compression_battery(edge),
         "image" => image_battery(edge),
+        "imagecanvas" => imagecanvas_battery(edge),
         "sign" => sign_battery(edge),
         "kx" => kx_battery(edge),
         "kdf" => kdf_battery(edge),
         "noise" => noise_battery(edge),
         "cpace" => cpace_battery(edge),
         "qr" => qr_battery(edge),
+        "xml" => xml_battery(edge),
+        "zip" => zip_battery(edge),
+        "office" => office_battery(edge),
         "process" => process_battery(edge),
         "watch" => watch_battery(edge),
         "sync" => sync_battery(edge),
@@ -2200,6 +2255,24 @@ fn image_battery(edge: &str) -> Vec<Check> {
                 "dimsOf (Image.thumbnail Image.Preserve 2 src6x4_)",
                 "2x1",
             ),
+            // v0.29.0: frames, reduceFrames (a PNG comes back unchanged), and
+            // the Gif and WebpLossless formats.
+            s(&["Image.frames"], "framesOf src6x4_", "1"),
+            s(
+                &["Image.reduceFrames"],
+                "dimsOf (Image.reduceFrames 2 src6x4_)",
+                "6x4",
+            ),
+            s(
+                &["Image.resizeToFit"],
+                "dimsOf (Image.resizeToFit Image.Gif 3 3 src6x4_)",
+                "3x2",
+            ),
+            s(
+                &["Image.thumbnail"],
+                "dimsOf (Image.thumbnail Image.WebpLossless 2 src6x4_)",
+                "2x1",
+            ),
         ],
         "boundary" => vec![
             // A box larger than the image must NOT upscale — the source size is
@@ -2211,6 +2284,603 @@ fn image_battery(edge: &str) -> Vec<Check> {
             ),
             // A non-image input is a classified error, not a crash.
             s(&["Image.dimensions"], "dimsRes \"not a real image\"", "E"),
+            s(&["Image.frames"], "framesOf \"not a real image\"", "E"),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Image.Canvas (v0.29.0) ----------------------------------------------
+//
+// A drawing is asserted by its encoded size and by the pixels it changes
+// against `base` (Canvas.pixelDiff). The failure edge asserts the refusals
+// `encode`, `pixelDiff` and the font readers promise.
+fn imagecanvas_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Canvas.blank", "Canvas.rgba", "Canvas.encode"],
+                "dimsOf (Canvas.encode Image.WebpLossless base)",
+                "6x4",
+            ),
+            s(
+                &["Canvas.rect", "Canvas.pixelDiff"],
+                "diffOf base (Canvas.rect 1 1 2 2 (Canvas.Fill black) base)",
+                "4",
+            ),
+            s(
+                &["Canvas.roundedRect"],
+                "diffOf base (Canvas.roundedRect 0 0 6 4 0 (Canvas.Stroke 1 black) base)",
+                "16",
+            ),
+            s(
+                &["Canvas.line"],
+                "diffOf base (Canvas.line 0 1 5 1 1 black base)",
+                "6",
+            ),
+            s(
+                &["Canvas.ellipse", "Canvas.arc", "Canvas.blur"],
+                "if diffOf base (base |> Canvas.ellipse 0 0 6 4 (Canvas.Fill black) |> Canvas.arc 3 2 2 0.0 90.0 (Canvas.Fill black) |> Canvas.blur 1.0) == \"0\" then \"F\" else \"T\"",
+                "T",
+            ),
+            s(
+                &["Canvas.fromImage", "Canvas.paste", "Canvas.ellipseMask", "Canvas.roundedMask", "Canvas.alphaMask", "Canvas.pasteCanvas"],
+                "diffOf (Canvas.fromImage (pngOf base)) (base |> Canvas.paste 0 0 (Just (Canvas.ellipseMask 6 4)) (pngOf base) |> Canvas.paste 0 0 (Just (Canvas.roundedMask 6 4 1)) (pngOf base) |> Canvas.paste 0 0 (Just (Canvas.alphaMask (pngOf base))) (pngOf base) |> Canvas.pasteCanvas 0 0 Nothing base)",
+                "0",
+            ),
+            s(
+                &["Canvas.resize"],
+                "dimsOf (Canvas.encode Image.Png (Canvas.resize Canvas.Lanczos 3 2 base))",
+                "3x2",
+            ),
+            s(&["Canvas.measure", "Canvas.defaultFont"], "measured", "T"),
+            s(
+                &["Canvas.text"],
+                "if diffOf base (Canvas.text { font = Canvas.defaultFont, size = 8.0, colour = black } 0 0 \"W\" base) == \"0\" then \"F\" else \"T\"",
+                "T",
+            ),
+        ],
+        "failure" => vec![
+            s(
+                &["Canvas.encode", "Canvas.rgba"],
+                "codeOf (Canvas.encode Image.Png (Canvas.rect 0 0 1 1 (Canvas.Fill (Canvas.rgba 300 0 0 255)) base))",
+                "colour_range",
+            ),
+            s(
+                &["Canvas.pixelDiff"],
+                "codeOf (Task.map String.fromInt (Canvas.pixelDiff 0 (pngOf base) (pngOf (Canvas.blank 2 2 black))))",
+                "size_mismatch",
+            ),
+            rs(
+                &["Canvas.fontFromBytes"],
+                "Result.map (\\_ -> \"ok\") (Canvas.fontFromBytes \"not a font\" 0)",
+                None,
+            ),
+            s(
+                &["Canvas.loadFont"],
+                "codeOf (Task.map (\\_ -> \"ok\") (Canvas.loadFont \"/no/such/font.ttf\" 0))",
+                "E",
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Xml / Std.Xml.Decode / Std.Xml.Encode (v0.29.0) -------------------
+//
+// Every member returns a value (`Result Error a` for a parse or a decode), so
+// each is asserted by what it reads or writes. The failure edge asserts the
+// refusals the module promises (a DOCTYPE, a missing element, a character XML
+// cannot carry in `encodeStrict`).
+
+fn xml_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            rs(
+                &["Xml.parse", "Xml.name"],
+                r#"Result.map Xml.name (Xml.parse "<a/>")"#,
+                Some("a"),
+            ),
+            rs(
+                &["Xml.namespace"],
+                r#"Result.map Xml.namespace (Xml.parse "<a xmlns='urn:x'/>")"#,
+                Some("urn:x"),
+            ),
+            rs(
+                &["Xml.text"],
+                r#"Result.map Xml.text (Xml.parse "<a>x<b>y</b></a>")"#,
+                Some("xy"),
+            ),
+            rs(
+                &["Xml.attributes"],
+                r#"Result.map (\n -> String.join "," (List.map (\( k, v ) -> k ++ "=" ++ v) (Xml.attributes n))) (Xml.parse "<a k='1' j='2'/>")"#,
+                Some("k=1,j=2"),
+            ),
+            rs(
+                &["Xml.children", "Xml.elements", "Xml.elementsNamed"],
+                r#"Result.map (\n -> String.fromInt (List.length (Xml.children n)) ++ "/" ++ String.fromInt (List.length (Xml.elements n)) ++ "/" ++ String.fromInt (List.length (Xml.elementsNamed "b" n))) (Xml.parse "<a>t<b/><c/><b/></a>")"#,
+                Some("4/3/2"),
+            ),
+            rs(
+                &["Xml.attribute"],
+                r#"Result.map (\n -> Maybe.withDefault "N" (Xml.attribute "k" n)) (Xml.parse "<a k='1'/>")"#,
+                Some("1"),
+            ),
+            rs(
+                &["Xml.parseWith", "Xml.defaultLimits"],
+                r#"Result.map Xml.text (Xml.parseWith Xml.HtmlEntities Xml.defaultLimits "<a>&amp;&eacute;</a>")"#,
+                Some("&é"),
+            ),
+            rs(
+                &["XD.decodeString", "XD.element", "XD.string"],
+                r#"XD.decodeString (XD.map (\s -> "[" ++ s ++ "]") (XD.element "b" XD.string)) "<a><b> x </b></a>""#,
+                Some("[ x ]"),
+            ),
+            rs(
+                &["XD.int", "XD.map"],
+                r#"XD.decodeString (XD.map String.fromInt XD.int) "<a> 7 </a>""#,
+                Some("7"),
+            ),
+            rs(
+                &["XD.float"],
+                r#"XD.decodeString (XD.map String.fromFloat XD.float) "<a>2.5</a>""#,
+                Some("2.5"),
+            ),
+            rs(
+                &["XD.bool"],
+                r#"XD.decodeString (XD.map (\b -> if b then "T" else "F") XD.bool) "<a>1</a>""#,
+                Some("T"),
+            ),
+            rs(
+                &["XD.attribute"],
+                r#"XD.decodeString (XD.attribute "k") "<a k='v'/>""#,
+                Some("v"),
+            ),
+            rs(
+                &["XD.optionalAttribute"],
+                r#"XD.decodeString (XD.map (Maybe.withDefault "N") (XD.optionalAttribute "k")) "<a/>""#,
+                Some("N"),
+            ),
+            rs(
+                &["XD.optionalElement"],
+                r#"XD.decodeString (XD.map (Maybe.withDefault "N") (XD.optionalElement "b" XD.string)) "<a><b>x</b></a>""#,
+                Some("x"),
+            ),
+            rs(
+                &["XD.list"],
+                r#"XD.decodeString (XD.map (String.join ",") (XD.list "b" XD.string)) "<a><b>1</b><c/><b>2</b></a>""#,
+                Some("1,2"),
+            ),
+            rs(
+                &["XD.children", "XD.localName"],
+                r#"XD.decodeString (XD.map (String.join ",") (XD.children XD.localName)) "<a>t<b/><c/></a>""#,
+                Some("b,c"),
+            ),
+            rs(
+                &["XD.at"],
+                r#"XD.decodeString (XD.at [ "b", "c" ] XD.string) "<a><b><c>z</c></b></a>""#,
+                Some("z"),
+            ),
+            rs(
+                &["XD.namespaceUri", "XD.inNamespace"],
+                r#"XD.decodeString (XD.inNamespace "urn:x" XD.namespaceUri) "<a xmlns='urn:x'/>""#,
+                Some("urn:x"),
+            ),
+            rs(
+                &["XD.node"],
+                r#"XD.decodeString (XD.map Xml.name XD.node) "<a/>""#,
+                Some("a"),
+            ),
+            rs(
+                &["XD.decodeNode"],
+                r#"Xml.parse "<q/>" |> Result.andThen (XD.decodeNode XD.localName)"#,
+                Some("q"),
+            ),
+            rs(
+                &["XD.map2", "XD.map3"],
+                r#"XD.decodeString (XD.map3 (\a b c -> a ++ b ++ c) (XD.attribute "x") (XD.map2 (\b c -> b ++ c) (XD.attribute "y") (XD.attribute "z")) XD.string) "<a x='1' y='2' z='3'>4</a>""#,
+                Some("1234"),
+            ),
+            rs(
+                &["XD.map4", "XD.map5"],
+                r#"XD.decodeString (XD.map5 (\a b c d e -> a ++ b ++ c ++ d ++ e) XD.localName XD.localName (XD.map4 (\a b c d -> a ++ b ++ c ++ d) XD.localName XD.localName XD.localName XD.localName) XD.localName XD.localName) "<a/>""#,
+                Some("aaaaaaaa"),
+            ),
+            rs(
+                &["XD.andThen", "XD.succeed"],
+                r#"XD.decodeString (XD.andThen (\n -> XD.succeed (n ++ "!")) XD.localName) "<a/>""#,
+                Some("a!"),
+            ),
+            rs(
+                &["XD.oneOf", "XD.fail"],
+                r#"XD.decodeString (XD.oneOf [ XD.fail "no", XD.attribute "k" ]) "<a k='y'/>""#,
+                Some("y"),
+            ),
+            s(
+                &["XE.encode", "XE.element", "XE.text", "XE.attribute"],
+                r#"XE.encode 0 (XE.element "a" [ XE.attribute "k" "v" ] [ XE.text "x" ])"#,
+                r#"<a k="v">x</a>"#,
+            ),
+            s(
+                &["XE.cdata"],
+                r#"XE.encode 0 (XE.element "a" [] [ XE.cdata "<b>" ])"#,
+                "<a><![CDATA[<b>]]></a>",
+            ),
+            s(
+                &["XE.xmlns", "XE.xmlnsPrefix"],
+                r#"XE.encode 0 (XE.element "a" [ XE.xmlns "urn:a", XE.xmlnsPrefix "p" "urn:p" ] [])"#,
+                r#"<a xmlns="urn:a" xmlns:p="urn:p"/>"#,
+            ),
+            s(
+                &["XE.document"],
+                r#"String.replace "\n" ";" (XE.document 0 (XE.element "a" [] []))"#,
+                r#"<?xml version="1.0" encoding="UTF-8"?>;<a/>"#,
+            ),
+            rs(
+                &["XE.encodeStrict"],
+                r#"XE.encodeStrict 0 (XE.element "a" [] [])"#,
+                Some("<a/>"),
+            ),
+        ],
+        "empty" => vec![
+            rs(
+                &["Xml.parse"],
+                r#"Result.map Xml.name (Xml.parse "")"#,
+                None,
+            ),
+            rs(
+                &["Xml.text"],
+                r#"Result.map Xml.text (Xml.parse "<a/>")"#,
+                Some(""),
+            ),
+            rs(
+                &["XD.list"],
+                r#"XD.decodeString (XD.map (String.join ",") (XD.list "b" XD.string)) "<a/>""#,
+                Some(""),
+            ),
+            s(
+                &["XE.encode", "XE.element"],
+                r#"XE.encode 0 (XE.element "a" [] [])"#,
+                "<a/>",
+            ),
+            s(
+                &["XE.text"],
+                r#"XE.encode 0 (XE.element "a" [] [ XE.text "" ])"#,
+                "<a></a>",
+            ),
+        ],
+        // The limits and the line-end and escape rules.
+        "boundary" => vec![
+            rs(
+                &["Xml.parse"],
+                r#"Result.map Xml.name (Xml.parse (String.repeat 300 "<a>" ++ String.repeat 300 "</a>"))"#,
+                None,
+            ),
+            rs(
+                &["Xml.parse"],
+                r#"Result.map Xml.name (Xml.parse (String.repeat 256 "<a>" ++ String.repeat 256 "</a>"))"#,
+                Some("a"),
+            ),
+            rs(
+                &["Xml.parseWith"],
+                r#"Result.map Xml.name (Xml.parseWith Xml.Strict { maxBytes = 100, maxDepth = 4, maxNodes = 2, maxAttributes = 1 } "<a><b/><c/></a>")"#,
+                None,
+            ),
+            s(
+                &["XE.encode", "XE.attribute"],
+                r#"XE.encode 0 (XE.element "a" [ XE.attribute "k" "\"<&>" ] [ XE.text "<&>" ])"#,
+                r#"<a k="&quot;&lt;&amp;&gt;">&lt;&amp;&gt;</a>"#,
+            ),
+            s(
+                &["XE.cdata"],
+                r#"XE.encode 0 (XE.element "a" [] [ XE.cdata "]]>" ])"#,
+                "<a><![CDATA[]]]]><![CDATA[>]]></a>",
+            ),
+        ],
+        "unicode" => vec![
+            rs(
+                &["Xml.text"],
+                r#"Result.map Xml.text (Xml.parse "<a>世界é</a>")"#,
+                Some("世界é"),
+            ),
+            rs(
+                &["Xml.name"],
+                r#"Result.map Xml.name (Xml.parse "<é/>")"#,
+                Some("é"),
+            ),
+            s(
+                &["XE.encode"],
+                r#"XE.encode 0 (XE.element "é" [] [ XE.text "世" ])"#,
+                "<é>世</é>",
+            ),
+        ],
+        "failure" => vec![
+            rs(
+                &["Xml.parse"],
+                r#"Result.map Xml.name (Xml.parse "<!DOCTYPE a><a/>")"#,
+                None,
+            ),
+            rs(
+                &["Xml.parse"],
+                r#"Result.map Xml.name (Xml.parse "<a><b></a>")"#,
+                None,
+            ),
+            rs(
+                &["XD.element"],
+                r#"XD.decodeString (XD.element "b" XD.string) "<a/>""#,
+                None,
+            ),
+            rs(
+                &["XD.int"],
+                r#"XD.decodeString (XD.map String.fromInt XD.int) "<a>x</a>""#,
+                None,
+            ),
+            rs(
+                &["XD.inNamespace"],
+                r#"XD.decodeString (XD.inNamespace "urn:y" XD.localName) "<a xmlns='urn:x'/>""#,
+                None,
+            ),
+            rs(
+                &["XE.encodeStrict"],
+                r#"XE.encodeStrict 0 (XE.element "a b" [] [])"#,
+                None,
+            ),
+            s(
+                &["XE.encode"],
+                r#"XE.encode 0 (XE.element "a b" [] [])"#,
+                "<a_b/>",
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Zip (v0.29.0) -----------------------------------------------------
+//
+// An archive is written and read back in the same expression, so a check
+// asserts what the reader returns for what the writer was given. `entries`
+// renders a read as `path=bytes` pairs.
+
+fn zip_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            rs(
+                &["Zip.write", "Zip.read"],
+                r#"Result.map entries (Zip.write [ { path = "a.txt", bytes = "hi" }, { path = "d/b.txt", bytes = "yo" } ] |> Result.andThen Zip.read)"#,
+                Some("a.txt=hi,d/b.txt=yo"),
+            ),
+            rs(
+                &["Zip.list"],
+                r#"Result.map (\is -> String.join "," (List.map (\i -> i.path ++ ":" ++ String.fromInt i.size) is)) (Zip.write [ { path = "a", bytes = "abc" } ] |> Result.andThen Zip.list)"#,
+                Some("a:3"),
+            ),
+            rs(
+                &["Zip.readEntry", "Zip.defaultLimits"],
+                r#"Result.map (Maybe.withDefault "N") (Zip.write [ { path = "a", bytes = "1" }, { path = "b", bytes = "2" } ] |> Result.andThen (Zip.readEntry Zip.defaultLimits "b"))"#,
+                Some("2"),
+            ),
+            rs(
+                &["Zip.readWith"],
+                r#"Result.map entries (Zip.write [ { path = "a", bytes = "x" } ] |> Result.andThen (Zip.readWith Zip.defaultLimits))"#,
+                Some("a=x"),
+            ),
+            rs(
+                &["Zip.writeWith"],
+                r#"Result.map entries (Zip.writeWith Zip.Store [ { path = "a", bytes = "x" } ] |> Result.andThen Zip.read)"#,
+                Some("a=x"),
+            ),
+        ],
+        "empty" => vec![
+            rs(
+                &["Zip.write", "Zip.read"],
+                r#"Result.map entries (Zip.write [] |> Result.andThen Zip.read)"#,
+                Some(""),
+            ),
+            rs(
+                &["Zip.write", "Zip.read"],
+                r#"Result.map entries (Zip.write [ { path = "e", bytes = "" } ] |> Result.andThen Zip.read)"#,
+                Some("e="),
+            ),
+        ],
+        "boundary" => vec![
+            rs(
+                &["Zip.readEntry"],
+                r#"Result.map (Maybe.withDefault "N") (Zip.write [ { path = "a", bytes = "1" } ] |> Result.andThen (Zip.readEntry Zip.defaultLimits "z"))"#,
+                Some("N"),
+            ),
+            rs(
+                &["Zip.readWith"],
+                r#"Result.map entries (Zip.write [ { path = "a", bytes = "12345" } ] |> Result.andThen (Zip.readWith { maxEntries = 1, maxEntryBytes = 4, maxTotalBytes = 100, maxRatio = 100 }))"#,
+                None,
+            ),
+            rs(
+                &["Zip.readWith"],
+                r#"Result.map entries (Zip.write [ { path = "a", bytes = "1234" } ] |> Result.andThen (Zip.readWith { maxEntries = 1, maxEntryBytes = 4, maxTotalBytes = 100, maxRatio = 100 }))"#,
+                Some("a=1234"),
+            ),
+            bo(
+                &["Zip.write"],
+                r#"Zip.write [ { path = "a", bytes = "x" } ] == Zip.write [ { path = "a", bytes = "x" } ]"#,
+                true,
+            ),
+        ],
+        "unicode" => vec![rs(
+            &["Zip.write", "Zip.read"],
+            r#"Result.map entries (Zip.write [ { path = "世界.txt", bytes = "é" } ] |> Result.andThen Zip.read)"#,
+            Some("世界.txt=é"),
+        )],
+        "failure" => vec![
+            rs(
+                &["Zip.read"],
+                r#"Result.map entries (Zip.read "not a zip")"#,
+                None,
+            ),
+            rs(
+                &["Zip.write"],
+                r#"Result.map (\_ -> "ok") (Zip.write [ { path = "../x", bytes = "x" } ])"#,
+                None,
+            ),
+            rs(
+                &["Zip.write"],
+                r#"Result.map (\_ -> "ok") (Zip.write [ { path = "a", bytes = "1" }, { path = "./a", bytes = "2" } ])"#,
+                None,
+            ),
+            rs(
+                &["Zip.list"],
+                r#"Result.map (\_ -> "ok") (Zip.list "")"#,
+                None,
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Office.Xlsx / Std.Office.Docx (v0.29.0) ----------------------------
+//
+// Every member returns a value, so each is asserted by reading back what the
+// writer was given (`rows1` and `docText` in the surface helpers). The failure
+// edge asserts the refusals the modules promise (bytes that are not a file, a
+// bad sheet name, an unsafe link).
+
+fn office_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            rs(
+                &[
+                    "Xlsx.write",
+                    "Xlsx.read",
+                    "Xlsx.sheet",
+                    "Xlsx.text",
+                    "Xlsx.number",
+                    "Xlsx.bool",
+                ],
+                r#"rows1 [ [ Xlsx.text "a", Xlsx.number 1.5, Xlsx.bool True ], [ Xlsx.bool False ] ]"#,
+                Some("a,1.5,T;F"),
+            ),
+            rs(&["Xlsx.int"], r#"rows1 [ [ Xlsx.int 7 ] ]"#, Some("7")),
+            rs(
+                &["Xlsx.date"],
+                r#"rows1 [ [ Xlsx.date { year = 2026, month = 10, day = 29, hour = 13, minute = 5, second = 0, millisecond = 0 } ] ]"#,
+                Some("2026-10-29 13:5"),
+            ),
+            rs(
+                &["Xlsx.formula", "Xlsx.failure", "Xlsx.empty"],
+                r##"rows1 [ [ Xlsx.formula "=1+1", Xlsx.empty, Xlsx.failure "#N/A" ] ]"##,
+                Some("=1+1,_,#N/A"),
+            ),
+            rs(
+                &[
+                    "Xlsx.bold",
+                    "Xlsx.italic",
+                    "Xlsx.fontSize",
+                    "Xlsx.fill",
+                    "Xlsx.numberFormat",
+                    "Xlsx.wrap",
+                ],
+                r#"rows1 [ [ Xlsx.wrap (Xlsx.numberFormat "0.00" (Xlsx.fill 1 2 3 (Xlsx.fontSize 14 (Xlsx.italic (Xlsx.bold (Xlsx.number 1.5)))))) ] ]"#,
+                Some("1.5"),
+            ),
+            rs(
+                &["Xlsx.fromCell"],
+                r#"rows1 [ List.map Xlsx.fromCell [ Xlsx.Text "t", Xlsx.Boolean False, Xlsx.Formula "A1" (Xlsx.Number 2.5) ] ]"#,
+                Some("t,F,=A1"),
+            ),
+            rs(
+                &["Xlsx.sheetNames"],
+                r#"Result.map (\ns -> String.join "," (List.map .name ns)) (Xlsx.write [ Xlsx.sheet "A" [], Xlsx.sheet "B" [] ] |> Result.andThen Xlsx.sheetNames)"#,
+                Some("A,B"),
+            ),
+            rs(
+                &["Xlsx.readWith", "Xlsx.defaultLimits"],
+                r#"Result.map (\b -> String.fromInt (List.length b.sheets)) (Xlsx.write [ Xlsx.sheet "A" [] ] |> Result.andThen (Xlsx.readWith Xlsx.defaultLimits))"#,
+                Some("1"),
+            ),
+            rs(
+                &["Docx.write", "Docx.read", "Docx.run", "Docx.toText"],
+                r#"docText [ Docx.Heading 1 [ Docx.run "T" ], Docx.Paragraph [ Docx.run "p" ], Docx.ListItem Docx.Numbered 0 [ Docx.run "n" ] ]"#,
+                Some("T/p/1. n"),
+            ),
+            rs(
+                &["Docx.readWith", "Docx.defaultLimits"],
+                r#"Docx.write [ Docx.Paragraph [ Docx.run "x" ] ] |> Result.andThen (Docx.readWith Docx.defaultLimits) |> Result.map Docx.toText"#,
+                Some("x"),
+            ),
+        ],
+        "empty" => vec![
+            rs(&["Xlsx.write", "Xlsx.read"], r#"rows1 []"#, Some("")),
+            rs(
+                &["Xlsx.write"],
+                r#"Result.map (\_ -> "ok") (Xlsx.write [])"#,
+                None,
+            ),
+            rs(&["Docx.write", "Docx.read"], r#"docText []"#, Some("")),
+            s(&["Docx.toText"], r#"Docx.toText []"#, ""),
+        ],
+        "boundary" => vec![
+            rs(
+                &["Xlsx.readWith"],
+                r#"Result.map (\_ -> "ok") (Xlsx.write [ Xlsx.sheet "A" [ [ Xlsx.int 1 ], [ Xlsx.int 2 ] ] ] |> Result.andThen (Xlsx.readWith { zip = Xlsx.defaultLimits.zip, maxSheets = 1, maxRows = 1, maxCells = 10, maxColumns = 10 }))"#,
+                None,
+            ),
+            rs(
+                &["Xlsx.readWith"],
+                r#"Result.map (\_ -> "ok") (Xlsx.write [ Xlsx.sheet "A" [ [ Xlsx.int 1 ], [ Xlsx.int 2 ] ] ] |> Result.andThen (Xlsx.readWith { zip = Xlsx.defaultLimits.zip, maxSheets = 1, maxRows = 2, maxCells = 2, maxColumns = 1 }))"#,
+                Some("ok"),
+            ),
+            rs(
+                &["Xlsx.date"],
+                r#"rows1 [ [ Xlsx.date { year = 1900, month = 2, day = 29, hour = 0, minute = 0, second = 0, millisecond = 0 } ] ]"#,
+                Some("1900-2-29 0:0"),
+            ),
+            rs(
+                &["Docx.readWith"],
+                r#"Docx.write [ Docx.Paragraph [ Docx.run "a" ], Docx.Paragraph [ Docx.run "b" ] ] |> Result.andThen (Docx.readWith { zip = Docx.defaultLimits.zip, maxBlocks = 1, maxDepth = 64 }) |> Result.map Docx.toText"#,
+                None,
+            ),
+            bo(
+                &["Xlsx.write"],
+                r#"Xlsx.write [ Xlsx.sheet "A" [ [ Xlsx.text "x" ] ] ] == Xlsx.write [ Xlsx.sheet "A" [ [ Xlsx.text "x" ] ] ]"#,
+                true,
+            ),
+        ],
+        "unicode" => vec![
+            rs(
+                &["Xlsx.text", "Xlsx.write", "Xlsx.read"],
+                r#"rows1 [ [ Xlsx.text "漢字 😀", Xlsx.text "é" ] ]"#,
+                Some("漢字 😀,é"),
+            ),
+            rs(
+                &["Xlsx.sheetNames"],
+                r#"Result.map (\ns -> String.join "," (List.map .name ns)) (Xlsx.write [ Xlsx.sheet "Données" [] ] |> Result.andThen Xlsx.sheetNames)"#,
+                Some("Données"),
+            ),
+            rs(
+                &["Docx.write", "Docx.read"],
+                r#"docText [ Docx.Paragraph [ Docx.run "ünï 世界" ] ]"#,
+                Some("ünï 世界"),
+            ),
+        ],
+        "failure" => vec![
+            rs(
+                &["Xlsx.read"],
+                r#"Result.map (\_ -> "ok") (Xlsx.read "not a zip")"#,
+                None,
+            ),
+            rs(
+                &["Xlsx.write"],
+                r#"Result.map (\_ -> "ok") (Xlsx.write [ Xlsx.sheet "a/b" [] ])"#,
+                None,
+            ),
+            rs(
+                &["Docx.read"],
+                r#"Result.map (\_ -> "ok") (Docx.read "not a zip")"#,
+                None,
+            ),
+            rs(
+                &["Docx.write"],
+                r#"Result.map (\_ -> "ok") (Docx.write [ Docx.Paragraph [ { text = "x", bold = False, italic = False, link = Just "javascript:x" } ] ])"#,
+                None,
+            ),
         ],
         _ => vec![],
     }
@@ -2792,6 +3462,133 @@ fn set_battery(edge: &str) -> Vec<Check> {
             "Set.member 9 (Set.fromList [ 1, 2 ])",
             false,
         )],
+        _ => vec![],
+    }
+}
+
+// --- Sky.Core.Array --------------------------------------------------------
+//
+// Elm's `Array`, item for item. Every expectation follows from Elm's
+// definitions: `get` / `set` out of range give `Nothing` / the array
+// unchanged, `slice` takes a negative index from the end, `foldr` walks from
+// the last element. The boundary cases cross the trie's 32 (tail) and 1,024
+// (second level) sizes, where a persistent vector's index arithmetic changes.
+
+fn array_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            i(&["Array.length", "Array.fromList"], "Array.length (Array.fromList [ 1, 2, 3 ])", 3),
+            mi(&["Array.get"], "Array.get 1 (Array.fromList [ 10, 20, 30 ])", Some(20)),
+            li(
+                &["Array.set", "Array.toList"],
+                "Array.toList (Array.set 1 9 (Array.fromList [ 1, 2, 3 ]))",
+                "1,9,3",
+            ),
+            li(&["Array.push"], "Array.toList (Array.push 4 (Array.fromList [ 1, 2, 3 ]))", "1,2,3,4"),
+            li(
+                &["Array.append"],
+                "Array.toList (Array.append (Array.fromList [ 1, 2 ]) (Array.fromList [ 3 ]))",
+                "1,2,3",
+            ),
+            li(
+                &["Array.slice"],
+                "Array.toList (Array.slice 1 3 (Array.fromList [ 0, 1, 2, 3, 4 ]))",
+                "1,2",
+            ),
+            li(&["Array.map"], "Array.toList (Array.map (\\x -> x * 2) (Array.fromList [ 1, 2 ]))", "2,4"),
+            li(
+                &["Array.indexedMap"],
+                "Array.toList (Array.indexedMap (\\ix x -> ix + x) (Array.fromList [ 10, 20 ]))",
+                "10,21",
+            ),
+            i(&["Array.foldl"], "Array.foldl (\\x acc -> acc * 10 + x) 0 (Array.fromList [ 1, 2, 3 ])", 123),
+            i(&["Array.foldr"], "Array.foldr (\\x acc -> acc * 10 + x) 0 (Array.fromList [ 1, 2, 3 ])", 321),
+            li(
+                &["Array.filter"],
+                "Array.toList (Array.filter (\\x -> modBy 2 x == 0) (Array.fromList [ 1, 2, 3, 4 ]))",
+                "2,4",
+            ),
+            li(&["Array.initialize"], "Array.toList (Array.initialize 4 (\\ix -> ix * ix))", "0,1,4,9"),
+            li(&["Array.repeat"], "Array.toList (Array.repeat 3 7)", "7,7,7"),
+            bo(&["Array.isEmpty"], "Array.isEmpty (Array.fromList [ 1 ])", false),
+            // Index times value, summed: 0*5 + 1*6 + 2*7.
+            i(
+                &["Array.toIndexedList"],
+                "List.foldl (\\( ix, x ) acc -> acc + ix * x) 0 (Array.toIndexedList (Array.fromList [ 5, 6, 7 ]))",
+                20,
+            ),
+        ],
+        "empty" => vec![
+            i(&["Array.length", "Array.empty"], "Array.length emptyArray", 0),
+            bo(&["Array.isEmpty"], "Array.isEmpty emptyArray", true),
+            mi(&["Array.get"], "Array.get 0 emptyArray", None),
+            ln(&["Array.toList"], "Array.toList emptyArray", 0),
+            ln(&["Array.toIndexedList"], "Array.toIndexedList emptyArray", 0),
+            i(&["Array.push"], "Array.length (Array.push 1 emptyArray)", 1),
+            i(&["Array.foldl"], "Array.foldl (\\x acc -> acc + x) 0 emptyArray", 0),
+            i(&["Array.foldr"], "Array.foldr (\\x acc -> acc + x) 0 emptyArray", 0),
+            ln(&["Array.filter"], "Array.toList (Array.filter (\\x -> x > 0) emptyArray)", 0),
+            ln(&["Array.map"], "Array.toList (Array.map (\\x -> x + 1) emptyArray)", 0),
+            i(&["Array.initialize"], "Array.length (Array.initialize 0 (\\ix -> ix))", 0),
+            i(&["Array.repeat"], "Array.length (Array.repeat 0 5)", 0),
+            ln(&["Array.slice"], "Array.toList (Array.slice 0 3 emptyArray)", 0),
+            i(&["Array.append"], "Array.length (Array.append emptyArray emptyArray)", 0),
+        ],
+        "boundary" => vec![
+            mi(&["Array.get"], "Array.get 3 (Array.fromList [ 1, 2, 3 ])", None),
+            mi(&["Array.get"], "Array.get -1 (Array.fromList [ 1, 2, 3 ])", None),
+            li(&["Array.set"], "Array.toList (Array.set 5 9 (Array.fromList [ 1, 2 ]))", "1,2"),
+            // A negative index counts from the end (Elm).
+            li(
+                &["Array.slice"],
+                "Array.toList (Array.slice 1 -1 (Array.fromList [ 0, 1, 2, 3 ]))",
+                "1,2",
+            ),
+            // The tail fills at 32: the 33rd element starts a new leaf.
+            i(
+                &["Array.push", "Array.initialize"],
+                "Array.length (Array.push 0 (Array.initialize 32 (\\ix -> ix)))",
+                33,
+            ),
+            mi(
+                &["Array.get", "Array.push"],
+                "Array.get 32 (Array.push 99 (Array.initialize 32 (\\ix -> ix)))",
+                Some(99),
+            ),
+            // Past 1,024 elements the trie has a second level.
+            mi(
+                &["Array.get", "Array.initialize"],
+                "Array.get 1000 (Array.initialize 1100 (\\ix -> ix * 2))",
+                Some(2000),
+            ),
+            mi(
+                &["Array.set", "Array.get"],
+                "Array.get 1050 (Array.set 1050 7 (Array.initialize 1100 (\\ix -> ix)))",
+                Some(7),
+            ),
+            i(
+                &["Array.append"],
+                "Array.length (Array.append (Array.initialize 40 (\\ix -> ix)) (Array.initialize 40 (\\ix -> ix)))",
+                80,
+            ),
+            i(
+                &["Array.foldl", "Array.repeat"],
+                "Array.foldl (\\x acc -> acc + x) 0 (Array.repeat 2000 1)",
+                2000,
+            ),
+        ],
+        "unicode" => vec![
+            ms(&["Array.get"], "Array.get 0 (Array.fromList [ \"世界\" ])", Some("世界")),
+            ls(
+                &["Array.push", "Array.toList"],
+                "Array.toList (Array.push \"é\" (Array.fromList [ \"a\" ]))",
+                "a,é",
+            ),
+        ],
+        "failure" => vec![
+            mi(&["Array.get"], "Array.get 10 emptyArray", None),
+            li(&["Array.set"], "Array.toList (Array.set -1 9 (Array.fromList [ 1 ]))", "1"),
+        ],
         _ => vec![],
     }
 }
@@ -5262,74 +6059,83 @@ fn csv_battery(edge: &str) -> Vec<Check> {
 fn regex_battery(edge: &str) -> Vec<Check> {
     match edge {
         "nominal" => vec![
-            bo(&["Regex.match"], "Regex.match \"^a\" \"abc\"", true),
-            bo(&["Regex.match"], "Regex.match \"c$\" \"abc\"", true),
-            ms(&["Regex.find"], "Regex.find \"b+\" \"abbbc\"", Some("bbb")),
-            ln(&["Regex.findAll"], "Regex.findAll \"a\" \"aba\"", 2),
+            bo(&["Regex.contains", "Regex.fromString"], "Regex.contains (Regex.fromString \"^a\" |> Result.withDefault Regex.never) \"abc\"", true),
+            bo(&["Regex.match"], "Regex.match (Regex.fromString \"c$\" |> Result.withDefault Regex.never) \"abc\"", true),
+            ms(&["Regex.find"], "Regex.find (Regex.fromString \"b+\" |> Result.withDefault Regex.never) \"abbbc\"", Some("bbb")),
+            ln(&["Regex.findAll"], "Regex.findAll (Regex.fromString \"a\" |> Result.withDefault Regex.never) \"aba\"", 2),
             ls(
                 &["Regex.findAll"],
-                "Regex.findAll \"[0-9]+\" \"a1b22c\"",
+                "Regex.findAll (Regex.fromString \"[0-9]+\" |> Result.withDefault Regex.never) \"a1b22c\"",
                 "1,22",
             ),
             s(
                 &["Regex.replace"],
-                "Regex.replace \"a\" \"X\" \"aba\"",
+                "Regex.replace (Regex.fromString \"a\" |> Result.withDefault Regex.never) \"X\" \"aba\"",
                 "XbX",
             ),
             // `$1` group expansion in the replacement.
             s(
                 &["Regex.replace"],
-                "Regex.replace \"(a)(b)\" \"$2$1\" \"ab\"",
+                "Regex.replace (Regex.fromString \"(a)(b)\" |> Result.withDefault Regex.never) \"$2$1\" \"ab\"",
                 "ba",
             ),
-            ls(&["Regex.split"], "Regex.split \",\" \"a,b,c\"", "a,b,c"),
-            ln(&["Regex.split"], "Regex.split \"[,;]\" \"a,b;c\"", 3),
+            ls(&["Regex.split"], "Regex.split (Regex.fromString \",\" |> Result.withDefault Regex.never) \"a,b,c\"", "a,b,c"),
+            ln(&["Regex.split"], "Regex.split (Regex.fromString \"[,;]\" |> Result.withDefault Regex.never) \"a,b;c\"", 3),
             // `find` returns the WHOLE match span, never a capture group.
             ms(
                 &["Regex.find"],
-                "Regex.find \"(foo)(bar)\" \"xxfoobaryy\"",
+                "Regex.find (Regex.fromString \"(foo)(bar)\" |> Result.withDefault Regex.never) \"xxfoobaryy\"",
                 Some("foobar"),
             ),
         ],
         "empty" => vec![
-            ln(&["Regex.findAll"], "Regex.findAll \"a\" \"\"", 0),
-            ms(&["Regex.find"], "Regex.find \"a\" \"\"", None),
-            bo(&["Regex.match"], "Regex.match \"a\" \"\"", false),
+            ln(&["Regex.findAll"], "Regex.findAll (Regex.fromString \"a\" |> Result.withDefault Regex.never) \"\"", 0),
+            ms(&["Regex.find"], "Regex.find (Regex.fromString \"a\" |> Result.withDefault Regex.never) \"\"", None),
+            bo(&["Regex.contains"], "Regex.contains (Regex.fromString \"a\" |> Result.withDefault Regex.never) \"\"", false),
             // Splitting an empty string yields one empty piece.
-            ln(&["Regex.split"], "Regex.split \",\" \"\"", 1),
-            s(&["Regex.replace"], "Regex.replace \"a\" \"X\" \"\"", ""),
+            ln(&["Regex.split"], "Regex.split (Regex.fromString \",\" |> Result.withDefault Regex.never) \"\"", 1),
+            s(&["Regex.replace"], "Regex.replace (Regex.fromString \"a\" |> Result.withDefault Regex.never) \"X\" \"\"", ""),
         ],
         "boundary" => vec![
             // A match at the very start / end produces an empty leading /
             // trailing element.
-            ln(&["Regex.split"], "Regex.split \",\" \",a\"", 2),
-            ln(&["Regex.split"], "Regex.split \",\" \"a,\"", 2),
+            ln(&["Regex.split"], "Regex.split (Regex.fromString \",\" |> Result.withDefault Regex.never) \",a\"", 2),
+            ln(&["Regex.split"], "Regex.split (Regex.fromString \",\" |> Result.withDefault Regex.never) \"a,\"", 2),
             // No match leaves the subject whole.
-            ln(&["Regex.split"], "Regex.split \"z\" \"abc\"", 1),
+            ln(&["Regex.split"], "Regex.split (Regex.fromString \"z\" |> Result.withDefault Regex.never) \"abc\"", 1),
             s(
                 &["Regex.replace"],
-                "Regex.replace \"z\" \"X\" \"abc\"",
+                "Regex.replace (Regex.fromString \"z\" |> Result.withDefault Regex.never) \"X\" \"abc\"",
                 "abc",
             ),
-            ls(&["Regex.findAll"], "Regex.findAll \"a*\" \"b\"", ","),
+            ls(&["Regex.findAll"], "Regex.findAll (Regex.fromString \"a*\" |> Result.withDefault Regex.never) \"b\"", ","),
         ],
         "unicode" => vec![
-            bo(&["Regex.match"], "Regex.match \"世\" \"世界\"", true),
+            bo(&["Regex.contains"], "Regex.contains (Regex.fromString \"世\" |> Result.withDefault Regex.never) \"世界\"", true),
             ms(
                 &["Regex.find"],
-                "Regex.find \"[世界]+\" \"a世界b\"",
+                "Regex.find (Regex.fromString \"[世界]+\" |> Result.withDefault Regex.never) \"a世界b\"",
                 Some("世界"),
             ),
             s(
                 &["Regex.replace"],
-                "Regex.replace \"世\" \"X\" \"世界\"",
+                "Regex.replace (Regex.fromString \"世\" |> Result.withDefault Regex.never) \"X\" \"世界\"",
                 "X界",
             ),
         ],
         "failure" => vec![
-            bo(&["Regex.match"], "Regex.match \"z\" \"abc\"", false),
-            ms(&["Regex.find"], "Regex.find \"z\" \"abc\"", None),
-            ln(&["Regex.findAll"], "Regex.findAll \"z\" \"abc\"", 0),
+            bo(&["Regex.contains"], "Regex.contains (Regex.fromString \"z\" |> Result.withDefault Regex.never) \"abc\"", false),
+            ms(&["Regex.find"], "Regex.find (Regex.fromString \"z\" |> Result.withDefault Regex.never) \"abc\"", None),
+            ln(&["Regex.findAll"], "Regex.findAll (Regex.fromString \"z\" |> Result.withDefault Regex.never) \"abc\"", 0),
+            // v0.29.0: a pattern that does not compile is an `Err` (built at
+            // run time here, so the compile-time check `[E2014]` does not see
+            // it), and `Regex.never` matches nothing.
+            rs(
+                &["Regex.fromString"],
+                "Result.map (\\_ -> \"ok\") (Regex.fromString (String.fromList [ '(' ]))",
+                None,
+            ),
+            bo(&["Regex.never"], "Regex.contains Regex.never \"abc\"", false),
         ],
         _ => vec![],
     }
@@ -5489,6 +6295,7 @@ fn fixtures(slug: &str) -> &'static str {
         "list" => "emptyInts : List Int\nemptyInts =\n    []\n",
         "dict" => "emptyDict : Dict String Int\nemptyDict =\n    Dict.empty\n",
         "set" => "emptySet : Set Int\nemptySet =\n    Set.empty\n",
+        "array" => "emptyArray : Array Int\nemptyArray =\n    Array.empty\n",
         "maybe" => {
             "nothingInt : Maybe Int\nnothingInt =\n    Nothing\n\n\n\
              emptyMaybes : List (Maybe Int)\nemptyMaybes =\n    []\n"
@@ -5577,7 +6384,8 @@ fn fixtures(slug: &str) -> &'static str {
         // A real 6x4 PNG (base64), decoded into `src6x4_`. `dimsRes` renders an
         // image's dimensions as "WxH"; `dimsOf` runs a resize Task and renders
         // the result's dimensions — so a resize/thumbnail is asserted by the
-        // exact output size, deterministically.
+        // exact output size, deterministically. `framesOf` renders Image.frames
+        // (v0.29.0).
         "image" => {
             "src6x4_ : String\nsrc6x4_ =\n    case Encoding.base64Decode \"iVBORw0KGgoAAAANSUhEUgAAAAYAAAAECAIAAAAiZtkUAAAAHUlEQVR4nGJhYEjRYGBARiwMNgxogDghQAAAAP//bKgB8VO8ExcAAAAASUVORK5CYII=\" of\n\
              \x20       Ok b ->\n            b\n\n        Err _ ->\n            \"\"\n\n\n\
@@ -5585,7 +6393,77 @@ fn fixtures(slug: &str) -> &'static str {
              \x20       Ok d ->\n            String.fromInt d.width ++ \"x\" ++ String.fromInt d.height\n\n\
              \x20       Err _ ->\n            \"E\"\n\n\n\
              dimsOf : Task Error String -> String\ndimsOf tk =\n    case Task.run tk of\n\
-             \x20       Ok v ->\n            dimsRes v\n\n        Err _ ->\n            \"E\"\n"
+             \x20       Ok v ->\n            dimsRes v\n\n        Err _ ->\n            \"E\"\n\n\n\
+             framesOf : String -> String\nframesOf b =\n    case Task.run (Image.frames b) of\n\
+             \x20       Ok n ->\n            String.fromInt n\n\n        Err _ ->\n            \"E\"\n"
+        }
+        // v0.29.0 Std.Image.Canvas. `base` is a white 6x4 canvas; `diffOf`
+        // counts the pixels two drawings differ in (Canvas.pixelDiff over
+        // their PNGs), so a shape is asserted by what it covers; `codeOf`
+        // renders a refusal's domain code.
+        "imagecanvas" => {
+            r#"base : Canvas.Canvas
+base =
+    Canvas.blank 6 4 (Canvas.rgba 255 255 255 255)
+
+
+black : Canvas.Rgba
+black =
+    Canvas.rgba 0 0 0 255
+
+
+pngOf : Canvas.Canvas -> String
+pngOf c =
+    Result.withDefault "" (Task.run (Canvas.encode Image.Png c))
+
+
+dimsOf : Task Error String -> String
+dimsOf tk =
+    case Task.run (tk |> Task.andThen Image.dimensions) of
+        Ok d ->
+            String.fromInt d.width ++ "x" ++ String.fromInt d.height
+
+        Err _ ->
+            "E"
+
+
+diffOf : Canvas.Canvas -> Canvas.Canvas -> String
+diffOf a b =
+    case Task.run (Canvas.pixelDiff 0 (pngOf a) (pngOf b)) of
+        Ok n ->
+            String.fromInt n
+
+        Err _ ->
+            "E"
+
+
+codeOf : Task Error String -> String
+codeOf tk =
+    case Task.run tk of
+        Ok _ ->
+            "ok"
+
+        Err e ->
+            case Error.failureOf e of
+                Just f ->
+                    Error.failureCode f
+
+                Nothing ->
+                    "E"
+
+
+measured : String
+measured =
+    let
+        m =
+            Canvas.measure Canvas.defaultFont 20.0 "Sky"
+    in
+    if m.height == m.ascent + m.descent && m.width > 10 then
+        "T"
+
+    else
+        "F"
+"#
         }
         // Ed25519 against RFC 8032 §7.1 TEST 1. `keyOr` keeps a failed key
         // import visible as "E" instead of hiding it behind a default key.
@@ -6980,6 +7858,53 @@ aiUnpinnedFetch =
             "E"
 "#
         }
+        "office" => {
+            r#"cellStr : Xlsx.Cell -> String
+cellStr c =
+    case c of
+        Xlsx.Empty ->
+            "_"
+
+        Xlsx.Text t ->
+            t
+
+        Xlsx.Number f ->
+            String.fromFloat f
+
+        Xlsx.Boolean b ->
+            if b then
+                "T"
+
+            else
+                "F"
+
+        Xlsx.Date d ->
+            String.fromInt d.year ++ "-" ++ String.fromInt d.month ++ "-" ++ String.fromInt d.day ++ " " ++ String.fromInt d.hour ++ ":" ++ String.fromInt d.minute
+
+        Xlsx.Formula f _ ->
+            "=" ++ f
+
+        Xlsx.Failure e ->
+            e
+
+
+rows1 : List (List Xlsx.CellSpec) -> Result Error String
+rows1 rows =
+    Xlsx.write [ Xlsx.sheet "S" rows ]
+        |> Result.andThen Xlsx.read
+        |> Result.map (\b -> String.join ";" (List.map (\r -> String.join "," (List.map cellStr r)) (List.concatMap .rows b.sheets)))
+
+
+docText : List Docx.Block -> Result Error String
+docText blocks =
+    Docx.write blocks
+        |> Result.andThen Docx.read
+        |> Result.map (\bs -> String.replace "\n" "/" (Docx.toText bs))
+"#
+        }
+        "zip" => {
+            "entries : List Zip.Entry -> String\nentries es =\n    String.join \",\" (List.map (\\e -> e.path ++ \"=\" ++ e.bytes) es)\n"
+        }
         "qr" => {
             r#"tf : Bool -> String
 tf b =
@@ -7076,6 +8001,8 @@ fn import_exposing(module: &str) -> Option<&'static str> {
         // The canvas battery builds paths from the command constructors.
         "Std.Ui.Canvas" => Some("PathCommand(..)"),
         "Std.Watch" => Some("Change(..)"),
+        // The fixture names the `Array` type.
+        "Sky.Core.Array" => Some("Array"),
         // The AI failure battery builds failures from their constructors.
         "Std.Ai.Failure" => Some("Failure(..)"),
         "Std.Ai.Eval" => Some("Expect(..)"),

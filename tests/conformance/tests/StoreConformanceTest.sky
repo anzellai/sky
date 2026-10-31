@@ -29,6 +29,88 @@ rowsStore : Store Row
 rowsStore =
     Store.fromCodec "conf_rows" rowCodec |> Store.primaryKey "id"
 
+-- Gap A (rule D1): a required JSON (blob) field gives a NOT NULL column. A
+-- column `migrate` adds to a table with rows takes the JSON of the codec's
+-- blank value as its DEFAULT, so the old rows decode. The blank holds a quote,
+-- so the SQL literal must escape it.
+type alias Tagged =
+    { id : String
+    , tags : List String
+    }
+
+
+taggedAuto : Store Tagged
+taggedAuto =
+    Store.fromCodec "conf_blob_auto" (Codec.auto { id = "", tags = [ "it's" ] })
+        |> Store.primaryKey "id"
+
+
+-- A hand-built record codec: the zero of a `list` field is `[]`.
+taggedObject : Store Tagged
+taggedObject =
+    Store.fromCodec
+        "conf_blob_obj"
+        (Codec.object Tagged |> Codec.field "id" .id Codec.string
+            |> Codec.field "tags" .tags (Codec.list Codec.string)
+            |> Codec.buildObject)
+        |> Store.primaryKey "id"
+
+type Shade
+    = Plain
+    | Mixed Int
+
+type alias Painted =
+    { id : String
+    , shade : Shade
+    }
+
+
+-- A `taggedUnion` field has no zero value: the column is NOT NULL with no
+-- default, so `migrate` refuses it on a table with a row.
+paintedStore : Store Painted
+paintedStore =
+    Store.fromCodec
+        "conf_blob_union"
+        (Codec.object Painted |> Codec.field "id" .id Codec.string
+            |> Codec.field
+                   "shade"
+                   .shade
+                   (Codec.taggedUnion
+                       (\v ->
+                           case v of
+
+                               Plain ->
+                                   ( "Plain", [] )
+
+                               Mixed n ->
+                                   ( "Mixed", [ Codec.toValue Codec.int n ] ))
+                       [ Codec.var0 "Plain" Plain
+                       , Codec.var1 "Mixed" Mixed Codec.int
+                       ])
+            |> Codec.buildObject)
+        |> Store.primaryKey "id"
+
+
+-- A table with one row and only an `id` column, then `migrate` on the store.
+migrateOldTable : Db -> String -> Store a -> Result Error (List String)
+migrateOldTable db table store =
+    let
+        _ = Task.run (Db.exec db ("DROP TABLE IF EXISTS " ++ table) [])
+        _ =
+            Task.run
+                (Db.exec
+                    db
+                    ("CREATE TABLE " ++ table ++ " (id TEXT PRIMARY KEY)")
+                    [])
+        _ =
+            Task.run
+                (Db.exec
+                    db
+                    ("INSERT INTO " ++ table ++ " (id) VALUES ('old')")
+                    [])
+    in
+        Task.run (Store.migrate db store)
+
 
 {-| Fresh sqlite DB with adversarial rows: the `id` collates OPPOSITE to
 `sort_pos`, so a query that confuses the two order keys returns the wrong order.
@@ -118,6 +200,37 @@ tests =
                           (runQuery
                               db
                               (Store.query rowsStore |> Store.orderAsc "id")))
+            , Test.test
+                  "migrate: a required blob field (Codec.auto) is NOT NULL DEFAULT the blank's JSON"
+                  (\_ ->
+                      Test.equal
+                          (Ok
+                              [ "ALTER TABLE conf_blob_auto ADD COLUMN tags TEXT NOT NULL DEFAULT '[\"it''s\"]'"
+                              ])
+                          (migrateOldTable db "conf_blob_auto" taggedAuto))
+            , Test.test
+                  "migrate: the old row decodes the blank's value (Codec.auto)"
+                  (\_ ->
+                      Test.equal
+                          (Ok [ { id = "old", tags = [ "it's" ] } ])
+                          (Task.run (Store.all db taggedAuto)))
+            , Test.test
+                  "migrate: a required list field of a Codec.object codec defaults to []"
+                  (\_ ->
+                      case migrateOldTable db "conf_blob_obj" taggedObject of
+
+                          Err e ->
+                              Test.fail (errorToString e)
+
+                          Ok _ ->
+                              Test.equal
+                                  (Ok [ { id = "old", tags = [] } ])
+                                  (Task.run (Store.all db taggedObject)))
+            , Test.test
+                  "migrate: a required blob with no zero value is Err on a table with a row"
+                  (\_ ->
+                      Test.err
+                          (migrateOldTable db "conf_blob_union" paintedStore))
             , Test.test
                   "orderDesc primary key precedence"
                   (\_ ->

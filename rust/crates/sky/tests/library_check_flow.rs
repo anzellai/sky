@@ -23,7 +23,10 @@ fn have_go() -> bool {
 fn library(tag: &str, body: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "sky-libcheck-{tag}-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -84,7 +87,10 @@ fn a_library_checks_green_and_red() {
 fn app_with_helper(tag: &str, helper_body: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "sky-modcheck-{tag}-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

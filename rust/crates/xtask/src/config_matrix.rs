@@ -780,7 +780,7 @@ fn sky_binary_candidates(root: &Path) -> Vec<PathBuf> {
         candidates.push(PathBuf::from(t).join("release/sky"));
     }
     candidates.push(root.join("rust/target/release/sky"));
-    // `scripts/build.sh:80` installs the cargo-built Rust binary here, so this
+    // `scripts/build.sh:75` installs the cargo-built Rust binary here, so this
     // is the same artefact, not the retired Haskell compiler.
     candidates.push(root.join("sky-out/sky"));
     candidates

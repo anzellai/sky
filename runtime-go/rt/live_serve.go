@@ -153,6 +153,7 @@ func buildLiveServerFor(cfg any, embedded, served bool) (ls *liveServer, err err
 		subscriptions:      fieldOrNil(cfg, "Subscriptions"),
 		notFound:           fieldOrNil(cfg, "NotFound"),
 		guard:              fieldOrNil(cfg, "Guard"),
+		persistExclude:     spaStringList(fieldOrNil(cfg, "PersistExclude")),
 		head:               fieldOrNil(cfg, "Head"),
 		consoleAuth:        fieldOrNil(cfg, "ConsoleAuth"),
 		onNavigate:         fieldOrNil(cfg, "OnNavigate"),

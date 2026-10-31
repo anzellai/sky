@@ -9,9 +9,10 @@
 > API (never drifts — generated from source); prefer it over any hand-copied
 > table.
 >
-> Upgrading a project from Sky v0.26? The migration guide lists every change,
-> old code and new code:
-> https://github.com/anzellai/sky/blob/main/docs/migration/v0.27.md
+> Upgrading a project to a new Sky minor? Each migration guide lists every
+> change, old code and new code, as loud, loud at run time or silent:
+> https://github.com/anzellai/sky/tree/main/docs/migration (`v0.27.md`,
+> `v0.28.md`, `v0.29.md`).
 
 ## Response style (INVIOLABLE)
 
@@ -198,3 +199,50 @@ unset it to get the default. `Trace.totalCost` refuses two currencies: read
 `Trace.runSummary`. Give a new tool typed arguments with `Tool.typed` and a
 `Codec`, and ask for a typed answer with `Provider.chatStructured`, rather
 than parsing a string by hand.
+
+### After an upgrade to v0.29.0, prefer the O(1) and O(n) shapes
+
+`x :: xs` is now amortised O(1) and `String.uncons` / `foldl` exist, so a
+character loop or an accumulator loop is O(n). Rewrite a loop that used
+`String.slice i (i + 1)` or `++` per step to `uncons` and a reversed list of
+pieces. Use `Sky.Core.Array` where a list needed an index. Read the `Cost:`
+line in `sky doc` before choosing a collection function.
+
+`Codec.maybe` now reads only `null` as `Nothing`: a value the inner codec does
+not read is an `Err`, at any depth, where it used to be a silent `Nothing`.
+Run `sky test` and exercise each JSON input once. Where a lenient read is
+intended, read that payload with `Decode.maybe`; do not loosen a codec only to
+make a test pass.
+
+### XML and ZIP input is hostile: use Std.Xml and Std.Zip
+
+Read XML with `Std.Xml.parse` / `Std.Xml.Decode` (or `Codec.fromXml`) and
+archives with `Std.Zip`. They refuse a DOCTYPE, entity tricks, zip-slip names,
+encrypted entries and zip bombs, and bound size and depth. Do not parse XML
+with `String` functions or a Go FFI binding, and do not raise the limits to
+get one file through: pass a `Limits` record that fits the input you expect.
+
+### Images: Std.Image and Std.Image.Canvas, on the server
+
+Resize, crop and re-encode uploads with `Std.Image` in the backend (it also
+strips metadata, since it decodes and encodes again). Keep an animated GIF
+animated with `Image.Gif` or `Image.Preserve`, and make it smaller with
+`Image.reduceFrames`. Check `Image.dimensions` / `Image.frames` before work if
+you want to refuse early: images over 100 megapixels and GIFs over 1,000 frames
+are refused with `InvalidInput` in the domain `"image"`. Draw cards, badges and
+thumbnails with `Std.Image.Canvas` (`blank` or `fromImage`, shapes, `paste`
+with a mask, `text` with `Canvas.defaultFont` or `loadFont`, then `encode`).
+Do not shell out to ImageMagick or Pillow.
+
+### Excel and Word files: use Std.Office.Xlsx and Std.Office.Docx
+
+Read and write `.xlsx` with `Std.Office.Xlsx` and `.docx` with
+`Std.Office.Docx`, on the server. Read the bytes with `File.readFile` (or take
+an upload), not `File.readFileBytes` (that gives a `List Int`). Write a date
+with `Xlsx.date`, not a number, so it reads back as a `Date`. Write a total as
+`Xlsx.formula "SUM(B2:B9)"`: it has no cached value, and the file asks to be
+computed when it opens (LibreOffice does, and is the tested reader).
+An inline drop-down list holds 255 characters at most; put longer lists in
+cells and use `ListFromRange`. A `Docx` link must be http, https, mailto or an
+internal `#anchor`. Bound a read of an upload with `readWith` and `Limits`
+that fit the files you expect.

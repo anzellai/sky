@@ -1,0 +1,170 @@
+module CoreSmallFunctionsConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for the small core functions added in v0.29.0:
+-- `Char.isAlphaNum`, `Char.isSpace`, `List.map2`, `List.map3`,
+-- `List.unique` and `String.indexes`. Each has Elm's meaning where Elm has
+-- the function; the use cases below go past a single example (a dot
+-- product, a table row, a tokeniser, placeholder positions).
+
+import Sky.Core.Char as Char
+import Sky.Core.List as List
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Tuple as Tuple
+import Sky.Test as Test exposing (Test)
+
+
+dot : List Int -> List Int -> Int
+dot xs ys =
+    List.foldl (\a b -> a + b) 0 (List.map2 (\a b -> a * b) xs ys)
+
+
+row : String -> Int -> Bool -> String
+row name qty paid =
+    name
+        ++ ":"
+        ++ String.fromInt qty
+        ++ (if paid then
+                "+"
+
+            else
+                "-"
+           )
+
+
+-- Split a line into words of letters and digits; everything else separates.
+tokens : String -> List String
+tokens line =
+    let
+        step c ( current, done ) =
+            if Char.isAlphaNum c then
+                ( current ++ String.fromChar c, done )
+
+            else if current == "" then
+                ( current, done )
+
+            else
+                ( "", done ++ [ current ] )
+
+        ( last, words ) =
+            List.foldl step ( "", [] ) (String.toList line)
+    in
+    if last == "" then
+        words
+
+    else
+        words ++ [ last ]
+
+
+tests : List Test
+tests =
+    [ -- ─── Char.isAlphaNum ───────────────────────────────────────
+      Test.test
+        "Char.isAlphaNum: ASCII letters and digits"
+        (\_ -> Test.equal [ True, True, True ] (List.map Char.isAlphaNum [ 'a', 'Z', '7' ]))
+    , Test.test
+        "Char.isAlphaNum: punctuation, space and symbols are not"
+        (\_ -> Test.equal [ False, False, False, False ] (List.map Char.isAlphaNum [ '_', ' ', '-', '£' ]))
+    , Test.test
+        "Char.isAlphaNum: Unicode letters and digits are (isAlpha || isDigit)"
+        (\_ -> Test.equal [ True, True ] (List.map Char.isAlphaNum [ 'é', 'ж' ]))
+    , Test.test
+        "Char.isAlphaNum: a tokeniser splits on everything else"
+        (\_ -> Test.equal [ "id", "42", "ok" ] (tokens "id=42; (ok)"))
+
+    -- ─── Char.isSpace ─────────────────────────────────────────
+    , Test.test
+        "Char.isSpace: space, tab, newline, carriage return"
+        (\_ -> Test.equal [ True, True, True, True ] (List.map Char.isSpace [ ' ', '\t', '\n', Char.fromCode 13 ]))
+    , Test.test
+        "Char.isSpace: no-break space and em space are white space"
+        (\_ -> Test.equal [ True, True ] (List.map Char.isSpace [ Char.fromCode 160, Char.fromCode 8195 ]))
+    , Test.test
+        "Char.isSpace: letters, digits and zero-width space are not"
+        (\_ -> Test.equal [ False, False, False ] (List.map Char.isSpace [ 'x', '0', Char.fromCode 8203 ]))
+    , Test.test
+        "Char.isSpace: agrees with String.trim"
+        (\_ ->
+            Test.equal
+                (String.trim " \t a \n ")
+                (String.fromList (List.filter (\c -> not (Char.isSpace c)) (String.toList " \t a \n ")))
+        )
+
+    -- ─── List.map2 / map3 ─────────────────────────────────────
+    , Test.test
+        "List.map2: pairwise"
+        (\_ -> Test.equal [ 11, 22, 33 ] (List.map2 (\a b -> a + b) [ 1, 2, 3 ] [ 10, 20, 30 ]))
+    , Test.test
+        "List.map2: stops at the shorter list (first shorter)"
+        (\_ -> Test.equal [ 11 ] (List.map2 (\a b -> a + b) [ 1 ] [ 10, 20, 30 ]))
+    , Test.test
+        "List.map2: stops at the shorter list (second shorter)"
+        (\_ -> Test.equal [ "1a", "2b" ] (List.map2 (\n s -> String.fromInt n ++ s) [ 1, 2, 3 ] [ "a", "b" ]))
+    , Test.test
+        "List.map2: an empty list gives []"
+        (\_ -> Test.equal [] (List.map2 (\a b -> a + b) [] [ 1, 2 ]))
+    , Test.test
+        "List.map2 Tuple.pair is List.zip"
+        (\_ -> Test.equal (List.zip [ 1, 2, 3 ] [ "a", "b" ]) (List.map2 Tuple.pair [ 1, 2, 3 ] [ "a", "b" ]))
+    , Test.test
+        "List.map2: a dot product"
+        (\_ -> Test.equal 32 (dot [ 1, 2, 3 ] [ 4, 5, 6 ]))
+    , Test.test
+        "List.map3: three lists, stops at the shortest"
+        (\_ -> Test.equal [ "tea:2+", "cake:1-" ] (List.map3 row [ "tea", "cake", "jam" ] [ 2, 1, 5 ] [ True, False ]))
+    , Test.test
+        "List.map3: an empty list gives []"
+        (\_ -> Test.equal [] (List.map3 row [] [ 1 ] [ True ]))
+    , Test.test
+        "List.map2: 100,000 elements in one pass"
+        (\_ ->
+            Test.equal 100000
+                (List.length (List.map2 (\a b -> a + b) (List.range 1 100000) (List.range 1 100000)))
+        )
+
+    -- ─── List.unique ──────────────────────────────────────────
+    , Test.test
+        "List.unique: keeps the first occurrence, in order"
+        (\_ -> Test.equal [ 3, 1, 2 ] (List.unique [ 3, 1, 3, 2, 1, 3 ]))
+    , Test.test
+        "List.unique: strings, the empty string included"
+        (\_ -> Test.equal [ "b", "a", "" ] (List.unique [ "b", "a", "b", "", "" ]))
+    , Test.test
+        "List.unique: tuples compare by value"
+        (\_ -> Test.equal [ ( 1, "x" ), ( 1, "y" ) ] (List.unique [ ( 1, "x" ), ( 1, "x" ), ( 1, "y" ) ]))
+    , Test.test
+        "List.unique: [] stays []"
+        (\_ -> Test.equal [] (List.unique []))
+    , Test.test
+        "List.unique: tags from several posts"
+        (\_ ->
+            Test.equal
+                [ "sky", "go", "elm" ]
+                (List.unique (List.concat [ [ "sky", "go" ], [ "go", "elm" ], [ "sky" ] ]))
+        )
+
+    -- ─── String.indexes ───────────────────────────────────────
+    , Test.test
+        "String.indexes: Elm's examples"
+        (\_ -> Test.equal ( [ 1, 4, 7, 10 ], [ 2, 5 ] ) ( String.indexes "i" "Mississippi", String.indexes "ss" "Mississippi" ))
+    , Test.test
+        "String.indexes: non-overlapping"
+        (\_ -> Test.equal [ 0, 2 ] (String.indexes "aa" "aaaa"))
+    , Test.test
+        "String.indexes: no match and an empty needle give []"
+        (\_ -> Test.equal ( [], [] ) ( String.indexes "needle" "haystack", String.indexes "" "abc" ))
+    , Test.test
+        "String.indexes: counts characters, not bytes"
+        (\_ -> Test.equal [ 2, 5 ] (String.indexes "=" "£1=─2="))
+    , Test.test
+        "String.indexes: each index is a String.slice start"
+        (\_ ->
+            Test.equal
+                [ "{{name}}", "{{name}}" ]
+                (List.map (\i -> String.slice i (i + 8) "Hi {{name}}, bye {{name}}") (String.indexes "{{name}}" "Hi {{name}}, bye {{name}}"))
+        )
+    ]
+
+
+main =
+    Test.runMain tests

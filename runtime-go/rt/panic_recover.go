@@ -54,6 +54,7 @@ func LogPanicAndExit() {
 		// Normal main return. Flush profiles if `sky run --profile` armed them
 		// (no-op otherwise) — folded here so no extra line is emitted into main.
 		stopProfiling("exit")
+		emitMemStatsOnExit()
 		return
 	}
 	stopProfiling("panic")

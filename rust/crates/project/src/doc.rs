@@ -1930,25 +1930,22 @@ fn wrap_guide_page(title: &str, body: &str) -> String {
 
 /// Curated site map for the prose docs (everything under `docs/`, minus
 /// `history/`). Returns `Some(section)` for a doc that belongs on the site, or
-/// `None` to EXCLUDE it (legacy Haskell architecture, version roadmaps, RFCs,
-/// planning notes, findings — real but not user-facing live reference).
+/// `None` to EXCLUDE it (version roadmaps, RFCs, planning notes — real but not
+/// user-facing live reference).
 ///
 /// `rel` is the docs-relative path (`skylive/overview.md`). `learn/` is handled
 /// by the tour, not here, so it is excluded too.
 fn guide_section(rel: &str) -> Option<&'static str> {
     // Hard excludes — not live user-facing reference.
     let excluded_exact = [
-        "README.md",                                 // replaced by the landing
-        "architecture/sky-compiler-architecture.md", // LEGACY Haskell pipeline
-        "conformance-findings.md",
+        "README.md", // replaced by the landing
         "rust-rewrite/12-migration-and-milestones.md",
-        "skywebview/PLAN.md",
     ];
     if excluded_exact.contains(&rel) {
         return None;
     }
     // Excluded directories: the tour owns learn/; the rest are plans and RFCs.
-    for dir in ["learn/", "rfcs/", "testing/"] {
+    for dir in ["learn/", "rfcs/"] {
         if rel.starts_with(dir) {
             return None;
         }

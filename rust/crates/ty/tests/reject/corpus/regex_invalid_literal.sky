@@ -1,0 +1,22 @@
+-- gate: reject
+-- defect: a literal Regex.fromString pattern that is not valid RE2
+-- rust: reject [E2014] invalid regex, with Go's error text
+--
+-- v0.29.0. A literal pattern is checked when the program compiles, with the
+-- same parse Go's regexp.Compile runs (ty/src/re2_syntax.rs). Before
+-- v0.29.0 every Regex function took the pattern String and an invalid one
+-- silently matched nothing. The accepted twins (valid literals, a pattern
+-- built at run time) are in `ty/tests/regex_literal.rs`.
+module Main exposing (main)
+
+import Sky.Core.Regex as Regex exposing (Regex)
+import Std.Log exposing (println)
+
+
+price : Regex
+price =
+    Regex.fromString """(\d+""" |> Result.withDefault Regex.never
+
+
+main =
+    println (String.join "," (Regex.findAll price "a 12 b 3"))

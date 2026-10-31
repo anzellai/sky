@@ -1,6 +1,0 @@
-module Sky.Core.Platform exposing (..)
-
-foreign import "sky_wrappers" exposing (Sky_os_GetArgs)
-
-getArgs _ =
-    Sky_os_GetArgs ()

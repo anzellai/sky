@@ -33,6 +33,12 @@ source "$ROOT/scripts/lib/with-timeout.sh"
 # test. See the header of scripts/lib/fresh-compiler.sh.
 source "$ROOT/scripts/lib/fresh-compiler.sh"
 PROJ="$ROOT/tests/conformance"
+# This script is the SQLite arm of every DB-backed suite. A suite that reads
+# SKY_TEST_POSTGRES_DSN (StoreQueryConformanceTest) runs on PostgreSQL when it
+# is set, and the PostgreSQL arm is its own harness gate (store-query-postgres).
+# Clear the variable here, so a CI job that sets it for other tests does not
+# turn this run into a second PostgreSQL run and leave SQLite untested.
+unset SKY_TEST_POSTGRES_DSN
 
 FILTER=""
 JSON_OUT=""

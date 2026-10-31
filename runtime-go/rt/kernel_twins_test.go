@@ -157,7 +157,8 @@ func TestMathAndListTwinsMatchErased(t *testing.T) {
 		}
 	}
 	for _, c := range [][3]string{{"a+", "X", "caaab"}, {"(", "x", "a(b"}, {"```\\w*", "", "```json {}```"}} {
-		if Regex_replaceT(c[0], c[1], c[2]) != Regex_replace(c[0], c[1], c[2]) {
+		re := regexForTest(c[0])
+		if Regex_replaceT(re, c[1], c[2]) != Regex_replace(re, c[1], c[2]) {
 			t.Errorf("regex replace %v", c)
 		}
 	}
@@ -177,9 +178,10 @@ func TestStringLengthTrimReplaceMatchTwinsMatchErased(t *testing.T) {
 				t.Errorf("replace %q in %q: %q vs %q", old, s, got, want)
 			}
 		}
-		for _, re := range []string{"^a", "\\s", "[", "ö", "^$"} {
-			if got, want := Regex_matchT(re, s), Regex_match(re, s); got != want {
-				t.Errorf("match %q %q: %v vs %v", re, s, got, want)
+		for _, p := range []string{"^a", "\\s", "[", "ö", "^$"} {
+			re := regexForTest(p)
+			if got, want := Regex_containsT(re, s), Regex_contains(re, s); got != want {
+				t.Errorf("contains %q %q: %v vs %v", p, s, got, want)
 			}
 		}
 	}
@@ -223,5 +225,27 @@ func TestSplitLinesEnvSecretShaTwinsMatchErased(t *testing.T) {
 	}
 	if got, want := System_getenvOrT("TWIN_TEST_UNSET_VARIABLE_Q", "fallback"), System_getenvOr("TWIN_TEST_UNSET_VARIABLE_Q", "fallback").(string); got != want || got != "fallback" {
 		t.Errorf("getenvOr default: %q vs %q", got, want)
+	}
+}
+
+// regexForTest compiles a pattern the way Regex.fromString does, and an
+// invalid one to Regex.never (what `Result.withDefault Regex.never` gives).
+func regexForTest(p string) any {
+	if r, ok := Regex_fromString(p).(SkyResult[any, any]); ok && r.Tag == 0 {
+		return r.OkValue
+	}
+	return Regex_never()
+}
+
+// `Result.withDefault` over a proven `SkyResult[E, A]` is lowered to
+// `Result_withDefaultT[E, A]` (v0.29.0, lower.rs `result_with_default_plan`).
+// It agrees with the erased kernel on an Ok and on an Err.
+func TestResultWithDefaultTwinMatchesErased(t *testing.T) {
+	ok := Ok[SkyADT, string]("v")
+	bad := Err[SkyADT, string](makeErrorT(7, "InvalidInput", "x"))
+	for _, r := range []SkyResult[SkyADT, string]{ok, bad} {
+		if got, want := Result_withDefaultT("d", r), AsString(Result_withDefault("d", r)); got != want {
+			t.Fatalf("withDefaultT %#v: %q, erased %q", r, got, want)
+		}
 	}
 }

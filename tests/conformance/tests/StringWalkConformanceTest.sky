@@ -1,0 +1,126 @@
+module StringWalkConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for the v0.29.0 String walking kernels:
+-- `String.uncons`, `String.foldl`, `String.foldr`, and `slice` / `left` /
+-- `right` / `dropLeft` / `dropRight`, which now walk to the index instead
+-- of converting the whole string. Every index counts Unicode code points.
+
+import Sky.Core.List as List
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Test as Test exposing (Test)
+
+
+-- Split on commas with uncons: a CSV field splitter.
+fields : String -> List Char -> List String -> List String
+fields rest cur acc =
+    case String.uncons rest of
+
+        Nothing ->
+            List.reverse (String.fromList (List.reverse cur) :: acc)
+
+        Just ( c, more ) ->
+            if c == ',' then
+                fields more [] (String.fromList (List.reverse cur) :: acc)
+
+            else
+                fields more (c :: cur) acc
+
+
+text : String
+text =
+    "£1=─2€é漢字"
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "String.uncons: first character and the rest"
+          (\_ -> Test.equal (Just ( 'é', "!" )) (String.uncons "é!"))
+    , Test.test
+          "String.uncons: \"\" is Nothing"
+          (\_ -> Test.equal Nothing (String.uncons ""))
+    , Test.test
+          "String.uncons: a CSV field splitter keeps empty fields"
+          (\_ ->
+              Test.equal [ "näme", "€5", "", "漢字" ] (fields "näme,€5,,漢字" [] []))
+    , Test.test
+          "String.foldl: from the first character"
+          (\_ ->
+              Test.equal
+                  [ 'c', 'b', 'a' ]
+                  (String.foldl (\c acc -> c :: acc) [] "abc"))
+    , Test.test
+          "String.foldr: from the last character"
+          (\_ ->
+              Test.equal
+                  [ 'a', 'é', '漢' ]
+                  (String.foldr (\c acc -> c :: acc) [] "aé漢"))
+    , Test.test
+          "String.foldl: counts multibyte characters once each"
+          (\_ -> Test.equal 9 (String.foldl (\_ n -> n + 1) 0 text))
+    , Test.test
+          "String.slice: code points, not bytes"
+          (\_ ->
+              Test.equal
+                  ( "=─2", "€é" )
+                  ( String.slice 2 5 text, String.slice 5 7 text ))
+    , Test.test
+          "String.slice: negative indexes count from the end"
+          (\_ ->
+              Test.equal
+                  ( "漢", "字" )
+                  ( String.slice (-2) (-1) text, String.slice (-1) 9 text ))
+    , Test.test
+          "String.slice: clamped, and start past end is empty"
+          (\_ ->
+              Test.equal
+                  ( text, "", "" )
+                  ( String.slice (-20) 50 text
+                  , String.slice 6 3 text
+                  , String.slice 20 30 text
+                  ))
+    , Test.test
+          "String.left / right on multibyte text"
+          (\_ ->
+              Test.equal
+                  ( "£1=", "漢字", "" )
+                  ( String.left 3 text
+                  , String.right 2 text
+                  , String.left (-1) text
+                  ))
+    , Test.test
+          "String.dropLeft / dropRight on multibyte text"
+          (\_ ->
+              Test.equal
+                  ( "€é漢字", "£1=─2", text )
+                  ( String.dropLeft 5 text
+                  , String.dropRight 4 text
+                  , String.dropLeft (-3) text
+                  ))
+    , Test.test
+          "String.toList / fromList round trip"
+          (\_ -> Test.equal text (String.fromList (String.toList text)))
+    , Test.test
+          "String.concat of a reversed list of pieces is the builder idiom"
+          (\_ ->
+              Test.equal
+                  "a-b-c"
+                  (String.concat (List.reverse [ "c", "-", "b", "-", "a" ])))
+    , Test.test
+          "String.slice: a character loop over a large string"
+          (\_ ->
+              let
+                  big = String.repeat 1000 "aé漢 "
+              in
+                  Test.equal
+                      (String.toList big)
+                      (List.map
+                          (\i -> String.slice i (i + 1) big)
+                          (List.range 0 3999)
+                          |> List.concatMap String.toList))
+    ]
+
+
+main =
+    Test.runMain tests

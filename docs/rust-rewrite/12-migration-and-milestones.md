@@ -2,18 +2,19 @@
 
 How the Rust compiler was brought up **without breaking anything that ships
 today**, using the Haskell compiler as a differential oracle. The Rust compiler
-is now the primary Sky compiler; the Haskell compiler is preserved under
-`legacy-haskell-compiler/` as reference, oracle, and rollback path. This was a
-strangler migration ([`docs/self-host/00`](../self-host/00-feasibility-and-architecture.md)
+is now the Sky compiler. The Haskell compiler served as reference, oracle and
+rollback path under `legacy-haskell-compiler/` until v0.28.x, and was removed
+from the tree in v0.29.0 (tag `v0.28.1` is the last that has it). This was a
+strangler migration ([`docs/self-host/00`](../history/self-host/00-feasibility-and-architecture.md)
 §6, the strategy that survived the grill): each phase landed one subsystem that
 diff-matched the oracle before the next began. Never big-bang.
 
 Two facts framed every decision:
 
-- **The Haskell compiler is preserved under `legacy-haskell-compiler/` as the
-  differential oracle + rollback path.** It bootstrapped the Rust compiler and
-  remains available for parity checks; the primary release artifact is now the
-  Rust `sky` binary ([`11`](11-testing-and-verification.md) §10).
+- **The Haskell compiler was the differential oracle + rollback path.** It
+  bootstrapped the Rust compiler and was available for parity checks until
+  v0.28.x (in git history at tag `v0.28.1` since v0.29.0); the release
+  artifact is the Rust `sky` binary ([`11`](11-testing-and-verification.md) §10).
   SkyDeploy (commercial, [MEMORY: `project_skydeploy_business`]) tracks the
   primary compiler; the migration must not perturb it.
 - **The oracle is only as good as its rejection half.** The single most important
@@ -46,7 +47,7 @@ that the functional results do not depend on, plus a handful of narrow items.
 | **M5** full corpus build+run | **Built** | Whole corpus builds; run+match vs a freshly-rebuilt oracle across the non-FFI set + skyshop; `11-fyne` GUI is build-only (headless-unverifiable); `36-composite-server`'s only non-match is a genuine **oracle-side** Haskell bug (Rust serves correctly). |
 | **M6** LSP | **Built (minus 3 endpoints)** | Hover/goto/completion/references/rename/semantic-tokens/document-symbol; 49/49 nvim + broader suite. Runs on `hir::db::SourceDb`, not salsa. `inlayHint`/`signatureHelp`/`formatting` **not implemented** ([`10`](10-lsp-and-tooling.md) status). |
 | **M7** reproducibility gate | **Built** | Byte-stable emission across seeds (37/37); deterministic FFI inspector runs only at `add`/`install`/`update`, never mid-build (L4). |
-| **M8** cutover (Rust default) | **Landed (refinements ongoing)** | Rust is the primary Sky compiler; the Haskell tree is preserved under `legacy-haskell-compiler/` as oracle + rollback path. The remaining architectural refinements (salsa DAG, structural Go-IR) are tracked above and do not block primacy. |
+| **M8** cutover (Rust default) | **Landed (refinements ongoing)** | Rust is the Sky compiler; the Haskell tree served as oracle + rollback path until v0.28.x and was removed in v0.29.0. The remaining architectural refinements (salsa DAG, structural Go-IR) are tracked above and do not block primacy. |
 
 ### Subsystems (built / interim / target)
 
@@ -72,7 +73,8 @@ the table above as the ground truth for what is already done.
 ## 0. Repo layout: in-tree `rust/` subdir (decided)
 
 **Decision: an in-tree `rust/` subdirectory, not a parallel repo.** The Haskell
-compiler now lives under `legacy-haskell-compiler/` in the same repo. Rationale:
+compiler lived under `legacy-haskell-compiler/` in the same repo until v0.29.0.
+Rationale:
 
 | Concern | In-tree `rust/` (chosen) | Parallel repo (rejected) |
 |---|---|---|

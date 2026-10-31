@@ -48,6 +48,7 @@ package rt
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -60,9 +61,22 @@ const spaSessionCookieName = "sky_spa"
 // with Sky.Live's `sky_sid`.
 const spaLegacySessionCookieName = "sky_sid"
 
-// spaSessionCookieAttrs are the attributes the generated backend sets on the
-// session cookie.
+// spaSessionCookieAttrs are the attributes of the session cookie, without its
+// lifetime (the clearing writes add `Max-Age=0`).
 const spaSessionCookieAttrs = "Path=/; HttpOnly; SameSite=Lax"
+
+// spaSessionCookieSetAttrs are the attributes of a `sky_spa` write that
+// carries a token: the base attributes and `Max-Age` = the token's lifetime.
+// A cookie with no Max-Age (and no Expires) is a browser-session cookie, which
+// a browser drops on quit while the token it holds has weeks to run.
+func spaSessionCookieSetAttrs() string {
+	return fmt.Sprintf("%s; Max-Age=%d", spaSessionCookieAttrs, int64(spaSessionLifetime().Seconds()))
+}
+
+// Spa_sessionCookieAttrs is `spaSessionCookieAttrs_ : () -> String`, the
+// attributes the generated backend sets on `sky_spa` when it signs a session
+// (spa_split.rs `signedResponse_`).
+func Spa_sessionCookieAttrs(_ any) any { return spaSessionCookieSetAttrs() }
 
 // spaLegacyGrace is how long a converted legacy token keeps converting to the
 // same session id. A variable so tests can shorten it.
@@ -237,7 +251,7 @@ func Spa_sessionCookies(secret, req, resp any) any {
 		}
 	}
 	if !setsSpa {
-		out = addSetCookie(out, spaSessionCookieName+"="+tok+"; "+securifyCookieAttrs(spaSessionCookieAttrs))
+		out = addSetCookie(out, spaSessionCookieName+"="+tok+"; "+securifyCookieAttrs(spaSessionCookieSetAttrs()))
 	}
 	return addSetCookie(out, spaLegacySessionCookieName+"=; "+securifyCookieAttrs(spaSessionCookieAttrs+"; Max-Age=0"))
 }

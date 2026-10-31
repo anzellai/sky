@@ -1,0 +1,242 @@
+module ZipConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for Std.Zip (v0.29.0) through the Sky API: three
+-- CSV reports as one download, an EPUB container.xml read by path, the
+-- deterministic writer, and the refusals (unsafe and repeated paths, the
+-- entry, total and ratio limits, bytes that are not an archive). The zip
+-- bomb, symlink and encrypted cases need archives Zip.write refuses to make;
+-- runtime-go/rt/zip_kernels_test.go builds those with archive/zip.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Std.Zip as Zip
+import Std.Xml.Decode as XD
+import Sky.Test as Test exposing (Test)
+
+
+codeOf : Result Error a -> String
+codeOf r =
+    case r of
+
+        Ok _ ->
+            "ok"
+
+        Err e ->
+            case Error.failureOf e of
+
+                Just f ->
+                    Error.failureDomain f ++ "/" ++ Error.failureCode f
+
+                Nothing ->
+                    "no-domain"
+
+
+reports : List Zip.Entry
+reports =
+    [ { path = "users.csv", bytes = "id,name\n1,Ada\n2,Grace\n" }
+    , { path = "orders.csv", bytes = "id,user,total\n10,1,9.99\n" }
+    , { path = "refunds.csv", bytes = "id,order\n" }
+    ]
+
+
+epub : Result Error String
+epub =
+    Zip.writeWith
+        Zip.Store
+        [ { path = "mimetype", bytes = "application/epub+zip" }
+        , { path = "META-INF/", bytes = "" }
+        , { path = "META-INF/container.xml"
+          , bytes =
+              """<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
+</container>"""
+          }
+        , { path = "OEBPS/content.opf", bytes = "<package/>" }
+        ]
+
+
+packagePath : String -> Result Error String
+packagePath book =
+    case Zip.readEntry Zip.defaultLimits "META-INF/container.xml" book of
+
+        Ok (Just xml) ->
+            XD.decodeString
+                (XD.at [ "rootfiles", "rootfile" ] (XD.attribute "full-path"))
+                xml
+
+        Ok Nothing ->
+            Err (Error.notFound)
+
+        Err e ->
+            Err e
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "three CSVs as one download round-trip"
+          (\_ ->
+              Test.equal
+                  (Ok reports)
+                  (Zip.write reports |> Result.andThen Zip.read))
+    , Test.test
+          "list reads the central directory"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ ( "users.csv", 22, False )
+                      , ( "orders.csv", 24, False )
+                      , ( "refunds.csv", 9, False )
+                      ])
+                  (Zip.write reports |> Result.andThen Zip.list
+                      |> Result.map
+                             (List.map (\i -> ( i.path, i.size, i.isDirectory )))))
+    , Test.test
+          "every entry has the fixed 1980-01-01 time"
+          (\_ ->
+              Test.equal
+                  (Ok [ 315532800000, 315532800000, 315532800000 ])
+                  (Zip.write reports |> Result.andThen Zip.list
+                      |> Result.map (List.map .modified)))
+    , Test.test
+          "write is byte-identical across runs"
+          (\_ -> Test.equal (Zip.write reports) (Zip.write reports))
+    , Test.test
+          "read an EPUB container.xml"
+          (\_ ->
+              Test.equal
+                  (Ok "OEBPS/content.opf")
+                  (Result.andThen packagePath epub))
+    , Test.test
+          "read leaves directories out, list keeps them"
+          (\_ ->
+              Test.equal
+                  ( Ok
+                        [ "mimetype"
+                        , "META-INF/container.xml"
+                        , "OEBPS/content.opf"
+                        ]
+                  , Ok [ False, True, False, False ]
+                  )
+                  ( Result.andThen Zip.read epub |> Result.map (List.map .path)
+                  , Result.andThen Zip.list epub
+                        |> Result.map (List.map .isDirectory)
+                  ))
+    , Test.test
+          "readEntry of a missing path is Nothing"
+          (\_ ->
+              Test.equal
+                  (Ok Nothing)
+                  (Result.andThen
+                      (Zip.readEntry Zip.defaultLimits "nope.txt")
+                      epub))
+    , Test.test
+          "an unsafe path is refused"
+          (\_ ->
+              Test.equal
+                  [ "zip/unsafe_path"
+                  , "zip/unsafe_path"
+                  , "zip/unsafe_path"
+                  , "zip/unsafe_path"
+                  ]
+                  (List.map
+                      (\p -> codeOf (Zip.write [ { path = p, bytes = "x" } ]))
+                      [ "../../etc/passwd"
+                      , "/etc/passwd"
+                      , "C:/boot.ini"
+                      , "a\\b"
+                      ]))
+    , Test.test
+          "a repeated path is refused"
+          (\_ ->
+              Test.equal
+                  "zip/duplicate_path"
+                  (codeOf
+                      (Zip.write
+                          [ { path = "a/b", bytes = "1" }
+                          , { path = "a/./b", bytes = "2" }
+                          ])))
+    , Test.test
+          "the entry, total and ratio limits"
+          (\_ ->
+              let
+                  big = String.repeat 2097152 "a"
+                  archive =
+                      Zip.write
+                          [ { path = "a", bytes = big }
+                          , { path = "b", bytes = big }
+                          ]
+                  limits = Zip.defaultLimits
+              in
+                  Test.equal
+                      [ "zip/entry_too_large"
+                      , "zip/total_too_large"
+                      , "zip/ratio_exceeded"
+                      , "ok"
+                      , "no-domain"
+                      ]
+                      [ codeOf
+                            (Result.andThen
+                                (Zip.readWith
+                                    { limits | maxEntryBytes = 1048576 })
+                                archive)
+                      , codeOf
+                            (Result.andThen
+                                (Zip.readWith
+                                    { limits
+                                        | maxTotalBytes = 3000000
+                                        , maxRatio = 100000
+                                    })
+                                archive)
+                      , codeOf
+                            (Result.andThen
+                                (Zip.readWith { limits | maxRatio = 10 })
+                                archive)
+                      , codeOf
+                            (Result.andThen
+                                (Zip.readWith { limits | maxRatio = 100000 })
+                                archive)
+                      , codeOf
+                            (Result.andThen
+                                (Zip.readWith { limits | maxRatio = 0 })
+                                archive)
+                      ])
+    , Test.test
+          "too many entries"
+          (\_ ->
+              let
+                  limits = Zip.defaultLimits
+              in
+                  Test.equal
+                      "zip/too_many_entries"
+                      (codeOf
+                          (Zip.write reports
+                              |> Result.andThen
+                                     (Zip.readWith { limits | maxEntries = 2 }))))
+    , Test.test
+          "bytes that are not an archive"
+          (\_ ->
+              Test.equal
+                  [ "zip/not_zip", "zip/not_zip" ]
+                  [ codeOf (Zip.read "hello"), codeOf (Zip.list "") ])
+    , Test.test
+          "binary bytes survive Store and Deflate"
+          (\_ ->
+              let
+                  entries =
+                      [ { path = "b.bin", bytes = "\u{0}\u{1}\u{FF}" } ]
+              in
+                  Test.equal
+                      ( Ok entries, Ok entries )
+                      ( Zip.writeWith Zip.Store entries
+                            |> Result.andThen Zip.read
+                      , Zip.writeWith Zip.Deflate entries
+                            |> Result.andThen Zip.read
+                      ))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

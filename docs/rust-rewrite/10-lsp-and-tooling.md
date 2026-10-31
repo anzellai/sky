@@ -23,7 +23,7 @@ the lossless CST, so hover/goto/completion work on broken code).
 > fields, type names, kernel calls, ctors, lambda params, case patterns),
 > `goto`/definition, `completion` (qualified / field / let-binding), `references`,
 > `prepare_rename` + `rename`, `semantic_tokens` (a frozen 12-type legend), and
-> document-symbols. It passes the 49/49 Neovim gate (`scripts/lsp-test-nvim.sh`)
+> document-symbols. It passes the 52/52 Neovim gate (`scripts/lsp-test-nvim.sh`)
 > plus a broader in-process + JSON-RPC suite. It owns no IORef pile — the 8-IORef +
 > 5-round-fixpoint + background-`sky check` scars are genuinely gone. **Two gaps
 > vs the present-tense text below:**
@@ -359,7 +359,7 @@ runs both in CI; see
 The 17 above all run against ONE synthetic single-module fixture (a record
 alias, one ADT, two functions, a `let`, a lambda). That fixture cannot express
 the shapes real Sky code has, so the corpus adds 32 cases in three groups. The
-script runs both suites; `xtask lsp` reports the combined 49.
+script runs both suites; `xtask lsp` reports the combined 52 (with the 3 realffi cases on `examples/13-skyshop`).
 
 | Group | Cases | Shapes covered |
 |---|---|---|
@@ -591,7 +591,7 @@ query output, so they *cannot* diverge (the LSP-vs-CLI asymmetry that forced the
 
 ## Acceptance gates (this doc)
 
-1. **49/49 nvim LSP cases pass** against `scripts/lsp-test-nvim.sh` unmodified —
+1. **52/52 nvim LSP cases pass** against `scripts/lsp-test-nvim.sh` unmodified —
    the editor-parity floor.
 2. **LSP capability parity** with `Server.hs:1108–1148` (hover, goto, declaration,
    completion, references, rename+prepare, document-symbol, formatting,

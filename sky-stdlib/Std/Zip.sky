@@ -1,0 +1,188 @@
+-- | Std.Zip — read and write ZIP archives safely.
+--
+-- Bytes are `Sky.Core.Bytes` (an alias of `String` whose bytes need not be
+-- UTF-8), as `File.readFile` and an upload give them.
+--
+--     import Std.Zip as Zip
+--
+--     -- Three CSV reports as one download.
+--     reports : String -> String -> String -> Result Error String
+--     reports users orders refunds =
+--         Zip.write
+--             [ { path = "users.csv", bytes = users }
+--             , { path = "orders.csv", bytes = orders }
+--             , { path = "refunds.csv", bytes = refunds }
+--             ]
+--
+--     -- The package document of an EPUB.
+--     container : String -> Result Error (Maybe String)
+--     container epub =
+--         Zip.readEntry Zip.defaultLimits "META-INF/container.xml" epub
+--
+-- The functions return a `Result`, not a `Task`: reading and writing an
+-- archive parses and builds bytes and has no outside effect.
+--
+-- **Safe by default.** An archive is treated as hostile:
+--
+-- * sizes are counted while entries inflate; a declared size is never
+--   trusted. `Limits` bounds the entries, each entry, the total and the
+--   compression ratio (applied once an entry passes 1 MiB), so a zip bomb
+--   stops early;
+-- * an entry name that is absolute, has a `..` segment, a backslash, a drive
+--   letter or a NUL, or repeats another name after normalisation, is refused
+--   (zip-slip), and so are symbolic links, encrypted entries and compression
+--   methods other than Store and Deflate. The CRC of each entry is checked.
+--
+-- A failure is an `Error` of kind `InvalidInput` with the domain `"zip"` and
+-- one of these codes: `not_zip`, `too_many_entries`, `entry_too_large`,
+-- `total_too_large`, `ratio_exceeded`, `unsafe_path`, `duplicate_path`,
+-- `encrypted`, `unsupported_method`, `corrupt`. A limit that is not positive
+-- is an `InvalidInput` with no domain.
+--
+-- **Where it runs.** On the server (and in a CLI). A Sky.Spa app reads and
+-- writes archives in its backend: the split sends every `Std.Zip` call to the
+-- server.
+module Std.Zip exposing
+    ( Entry
+    , EntryInfo
+    , Limits
+    , Method(..)
+    , defaultLimits
+    , list
+    , read
+    , readWith
+    , readEntry
+    , write
+    , writeWith
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+-- | One file in an archive: its path inside the archive (`/`-separated) and
+-- its bytes.
+type alias Entry =
+    { path : String
+    , bytes : String
+    }
+
+-- | What the central directory says about one entry, read without
+-- inflating it. `size` and `compressedSize` are in bytes (as declared:
+-- `read` counts the real size), `modified` is Unix milliseconds (0 when the
+-- archive has none).
+type alias EntryInfo =
+    { path : String
+    , size : Int
+    , compressedSize : Int
+    , isDirectory : Bool
+    , modified : Int
+    }
+
+-- | Bounds for one read. Each must be positive.
+--
+-- * `maxEntries` — entries in the archive.
+-- * `maxEntryBytes` — the inflated size of one entry.
+-- * `maxTotalBytes` — the inflated size of all entries read.
+-- * `maxRatio` — inflated size over compressed size, applied once an entry
+--   has inflated past 1 MiB.
+type alias Limits =
+    { maxEntries : Int
+    , maxEntryBytes : Int
+    , maxTotalBytes : Int
+    , maxRatio : Int
+    }
+
+-- | How `writeWith` stores entries: `Deflate` compresses, `Store` does not
+-- (for data that is already compressed, such as images, or a format that
+-- needs a stored first entry).
+type Method
+    = Deflate
+    | Store
+
+
+-- | 10,000 entries, 50 MiB an entry, 200 MiB in all, a ratio of 200.
+defaultLimits : Limits
+defaultLimits =
+    { maxEntries = 10000
+    , maxEntryBytes = 52428800
+    , maxTotalBytes = 209715200
+    , maxRatio = 200
+    }
+
+
+-- | The entries of an archive, read from the central directory only (nothing
+-- is inflated). Directories are included (`isDirectory`). The entry count is
+-- bounded by `defaultLimits`, and unsafe or repeated names are refused as by
+-- `read`. Cost: O(entries).
+list : String -> Result Error (List EntryInfo)
+list =
+    Ffi.kernel "Zip_list"
+
+
+-- | Every file in an archive, in archive order, under `defaultLimits`.
+-- Directory entries are left out. Cost: O(total inflated bytes).
+read : String -> Result Error (List Entry)
+read bytes =
+    readWith defaultLimits bytes
+
+
+-- | `read` with chosen limits.
+readWith : Limits -> String -> Result Error (List Entry)
+readWith limits bytes =
+    read_
+        limits.maxEntries
+        limits.maxEntryBytes
+        limits.maxTotalBytes
+        limits.maxRatio
+        bytes
+
+
+-- | One file by its path, or `Nothing` when the archive has no such file.
+-- Only that entry is inflated; every name is still checked.
+readEntry : Limits -> String -> String -> Result Error (Maybe String)
+readEntry limits path bytes =
+    readEntry_
+        limits.maxEntries
+        limits.maxEntryBytes
+        limits.maxTotalBytes
+        limits.maxRatio
+        path
+        bytes
+
+
+-- | Build an archive with `Deflate`. Every entry gets the time 1980-01-01
+-- 00:00, so the same entries always give the same bytes. A path that ends in
+-- `/` with empty bytes is a directory. An unsafe or repeated path is an `Err`
+-- (`unsafe_path`, `duplicate_path`).
+write : List Entry -> Result Error String
+write entries =
+    writeWith Deflate entries
+
+
+-- | `write` with a chosen `Method`.
+writeWith : Method -> List Entry -> Result Error String
+writeWith method entries =
+    case method of
+
+        Deflate ->
+            write_ True entries
+
+        Store ->
+            write_ False entries
+
+
+-- The primitives: the Limits record as four Ints and the Method as a Bool,
+-- so the kernel boundary carries no Sky ADT or record in.
+read_ : Int -> Int -> Int -> Int -> String -> Result Error (List Entry)
+read_ =
+    Ffi.kernel "Zip_read"
+
+
+readEntry_ : Int -> Int -> Int -> Int -> String -> String -> Result Error (Maybe String)
+readEntry_ =
+    Ffi.kernel "Zip_readEntry"
+
+
+write_ : Bool -> List Entry -> Result Error String
+write_ =
+    Ffi.kernel "Zip_write"

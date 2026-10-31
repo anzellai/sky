@@ -1,0 +1,183 @@
+module RegexMatchConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for the Sky.Core.Regex match records added in
+-- v0.29.0: `findMatch`, `findAllMatches` and `replaceWith`, which give a
+-- match's text, its position in CHARACTERS (the unit of String.slice), its
+-- 1-based number and its capture groups (`Nothing` for an optional group
+-- that did not take part). The use cases go past one example: a key/value
+-- reader, a log-line parser, a template filler.
+
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Regex as Regex exposing (Match, Regex)
+import Sky.Core.String as String
+import Sky.Test as Test exposing (Test)
+
+
+-- A pattern compiled with `Regex.fromString` (since v0.29.0 every Regex
+-- function takes the compiled value).
+re : String -> Regex
+re p =
+    Regex.fromString p |> Result.withDefault Regex.never
+
+
+groups : Maybe Match -> List (Maybe String)
+groups m =
+    case m of
+        Just x ->
+            x.submatches
+
+        Nothing ->
+            []
+
+
+-- `2026-10-28 12:00:01 [WARN] disk at 91%` → ( level, message )
+logLine : String -> Maybe ( String, String )
+logLine line =
+    case Regex.findMatch (re "^(\\S+) (\\S+) \\[(\\w+)\\] (.*)$") line |> Maybe.map .submatches of
+        Just [ _, _, Just level, Just message ] ->
+            Just ( level, message )
+
+        _ ->
+            Nothing
+
+
+-- Fill `{{name}}` placeholders from a list of pairs; unknown names stay.
+fill : List ( String, String ) -> String -> String
+fill vars template =
+    Regex.replaceWith (re "\\{\\{(\\w+)\\}\\}")
+        (\m ->
+            case m.submatches of
+                [ Just key ] ->
+                    List.filterMap
+                        (\( k, v ) ->
+                            if k == key then
+                                Just v
+
+                            else
+                                Nothing
+                        )
+                        vars
+                        |> List.head
+                        |> Maybe.withDefault m.match
+
+                _ ->
+                    m.match
+        )
+        template
+
+
+tests : List Test
+tests =
+    [ -- ─── findMatch ─────────────────────────────────────────────
+      Test.test
+        "findMatch: two groups"
+        (\_ ->
+            Test.equal
+                (Just { match = "video = \"abc\"", index = 2, number = 1, submatches = [ Just "video", Just "abc" ] })
+                (Regex.findMatch (re "(\\w+) = \"([^\"]*)\"") "  video = \"abc\"")
+        )
+    , Test.test
+        "findMatch: an optional group that did not take part is Nothing"
+        (\_ -> Test.equal [ Just "10", Nothing ] (groups (Regex.findMatch (re "(\\d+)(px)?") "w=10;")))
+    , Test.test
+        "findMatch: an optional group that took part is Just"
+        (\_ -> Test.equal [ Just "10", Just "px" ] (groups (Regex.findMatch (re "(\\d+)(px)?") "w=10px;")))
+    , Test.test
+        "findMatch: a group that matched nothing is Just \"\""
+        (\_ -> Test.equal [ Just "" ] (groups (Regex.findMatch (re "(a*)b") "b")))
+    , Test.test
+        "findMatch: no match is Nothing"
+        (\_ -> Test.equal Nothing (Regex.findMatch (re "[0-9]+") "abc"))
+    , Test.test
+        "findMatch: no groups gives []"
+        (\_ -> Test.equal (Just []) (Regex.findMatch (re "b") "abc" |> Maybe.map .submatches))
+    , Test.test
+        "findMatch: Regex.never is Nothing"
+        (\_ -> Test.equal Nothing (Regex.findMatch Regex.never "x"))
+
+    -- ─── positions in characters ──────────────────────────────
+    , Test.test
+        "findAllMatches: index counts characters after £ and ─"
+        (\_ -> Test.equal [ 1, 5 ] (List.map .index (Regex.findAllMatches (re "\\d+") "£4 ─ 10")))
+    , Test.test
+        "findAllMatches: each index and match length is a String.slice"
+        (\_ ->
+            let
+                s =
+                    "£4 ─ 10 ── 300"
+            in
+            Test.equal
+                [ "4", "10", "300" ]
+                (List.map (\m -> String.slice m.index (m.index + String.length m.match) s) (Regex.findAllMatches (re "\\d+") s))
+        )
+    , Test.test
+        "findAllMatches: number counts from 1"
+        (\_ -> Test.equal [ 1, 2, 3 ] (List.map .number (Regex.findAllMatches (re "a") "banana")))
+    , Test.test
+        "findAllMatches: groups of every match"
+        (\_ ->
+            Test.equal
+                [ [ Just "a", Just "1" ], [ Just "b", Nothing ] ]
+                (List.map .submatches (Regex.findAllMatches (re "(\\w)=?(\\d)?") "a=1 b"))
+        )
+    , Test.test
+        "findAllMatches: empty matches are matches, as in findAll"
+        (\_ -> Test.equal [ 0, 1, 2 ] (List.map .index (Regex.findAllMatches (re "x*") "ab")))
+    , Test.test
+        "findAllMatches: no match and Regex.never give []"
+        (\_ -> Test.equal ( [], [] ) ( Regex.findAllMatches (re "z") "abc", Regex.findAllMatches Regex.never "abc" ))
+    , Test.test
+        "findAllMatches: agrees with findAll on the matched text"
+        (\_ -> Test.equal (Regex.findAll (re "[a-z]+") "ab 12 cd") (List.map .match (Regex.findAllMatches (re "[a-z]+") "ab 12 cd")))
+
+    -- ─── replaceWith ──────────────────────────────────────────
+    , Test.test
+        "replaceWith: a replacement that uses a group"
+        (\_ ->
+            Test.equal
+                "b@a, d@c"
+                (Regex.replaceWith (re "(\\w)@(\\w)")
+                    (\m ->
+                        case m.submatches of
+                            [ Just x, Just y ] ->
+                                y ++ "@" ++ x
+
+                            _ ->
+                                m.match
+                    )
+                    "a@b, c@d"
+                )
+        )
+    , Test.test
+        "replaceWith: the callback sees the match number"
+        (\_ -> Test.equal "x1 x2 x3" (Regex.replaceWith (re "x") (\m -> "x" ++ String.fromInt m.number) "x x x"))
+    , Test.test
+        "replaceWith: keeps multi-byte text between matches"
+        (\_ -> Test.equal "£[4] ─ [10]" (Regex.replaceWith (re "\\d+") (\m -> "[" ++ m.match ++ "]") "£4 ─ 10"))
+    , Test.test
+        "replaceWith: no match and Regex.never leave the text"
+        (\_ -> Test.equal ( "abc", "abc" ) ( Regex.replaceWith (re "z") (\_ -> "!") "abc", Regex.replaceWith Regex.never (\_ -> "!") "abc" ))
+    , Test.test
+        "replaceWith: fills template placeholders, unknown names stay"
+        (\_ -> Test.equal "Hi Ada, see {{link}}" (fill [ ( "name", "Ada" ) ] "Hi {{name}}, see {{link}}"))
+
+    -- ─── a log-line parser ────────────────────────────────────
+    , Test.test
+        "a log line parser reads the level and the message"
+        (\_ ->
+            Test.equal
+                [ Just ( "WARN", "disk at 91%" ), Nothing, Just ( "INFO", "ok" ) ]
+                (List.map logLine [ "2026-10-28 12:00:01 [WARN] disk at 91%", "garbage", "d t [INFO] ok" ])
+        )
+
+    -- ─── find: an empty match is a match ──────────────────────
+    , Test.test
+        "find: an empty match is Just \"\""
+        (\_ -> Test.equal (Just "") (Regex.find (re "x*") "abc"))
+    ]
+
+
+main =
+    Test.runMain tests

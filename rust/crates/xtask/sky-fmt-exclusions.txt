@@ -5,9 +5,6 @@
 # fails the gate. Add an entry only when the file's layout or its parse error is
 # the thing a test depends on, or the tree is not live source.
 
-legacy-haskell-compiler/ # retired compiler, kept as a differential oracle; its fixtures are frozen with it
-legacy-sky-compiler/ # retired compiler; frozen
-legacy-ts-compiler/ # retired compiler; frozen
 docs/history/ # frozen per-version history, not live docs
 docs/perf/runs/ # the source a recorded measurement ran; reformatting it would no longer be the measured program
 rust/crates/xtask/fmt-fixtures/ # formatter inputs: the fmt gate formats them and checks comments survive, so they must stay unformatted

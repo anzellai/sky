@@ -19,7 +19,7 @@ signal your app generates"*. This example exercises that claim:
   AND a namespace selector
 
 The four telemetry topologies covered by Sky Console are documented
-in [`docs/v0.16.x-console/TELEMETRY_FLOW.md`](../../docs/v0.16.x-console/TELEMETRY_FLOW.md).
+in [`docs/history/v0.16.x-console/TELEMETRY_FLOW.md`](../../docs/history/v0.16.x-console/TELEMETRY_FLOW.md).
 This example focuses on **Topology 2** — a single process containing
 multiple logical sub-apps. (Topology 1 is just any single-page Live
 app; Topology 3 is `MountSubApp` fork+exec; Topology 4 is the
@@ -116,6 +116,6 @@ node ../../scripts/playwright-multi-tier-console.mjs
 
 ## See also
 
-- [`docs/v0.16.x-console/TELEMETRY_FLOW.md`](../../docs/v0.16.x-console/TELEMETRY_FLOW.md)
-- [`docs/v0.16.x-console/RFC-v0.16.1-pr10-architecture.md`](../../docs/v0.16.x-console/RFC-v0.16.1-pr10-architecture.md)
-- [`docs/v0.16.x-console/EMBEDDED.md`](../../docs/v0.16.x-console/EMBEDDED.md)
+- [`docs/history/v0.16.x-console/TELEMETRY_FLOW.md`](../../docs/history/v0.16.x-console/TELEMETRY_FLOW.md)
+- [`docs/history/archive/v0.16.x-console/RFC-v0.16.1-pr10-architecture.md`](../../docs/history/archive/v0.16.x-console/RFC-v0.16.1-pr10-architecture.md)
+- [`docs/history/v0.16.x-console/EMBEDDED.md`](../../docs/history/v0.16.x-console/EMBEDDED.md)

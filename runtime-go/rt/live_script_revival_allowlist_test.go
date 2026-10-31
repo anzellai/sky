@@ -31,9 +31,8 @@ package rt
 //      marker so repeated passes don't re-warn.
 //
 // These tests are JS-shape pins: substring asserts on the
-// liveJS() output. The Playwright probe at
-// scripts/verify-script-revival-allowlist.{html,sh} runs the
-// JS in a real browser and asserts no attacker callback fires.
+// liveJS() output. The browser-level behaviour is covered by the
+// Sky.Live e2e scripts (scripts/*-e2e.sh).
 
 import (
 	"strings"

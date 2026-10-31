@@ -1382,6 +1382,27 @@ impl World {
             ("range", fun(int_(), fun(int_(), list(int_())))),
             ("repeat", fun(int_(), fun(a(), list(a())))),
             ("zip", fun(list(a()), fun(list(b()), list(tup2(a(), b()))))),
+            // v0.29.0: the pairwise maps and `unique`. Seeded like `map`, so a
+            // call site's callback params take the list element types and the
+            // typed lowering (`rt.List_map2T`) can prove them.
+            (
+                "map2",
+                fun(
+                    fun(a(), fun(b(), c())),
+                    fun(list(a()), fun(list(b()), list(c()))),
+                ),
+            ),
+            (
+                "map3",
+                fun(
+                    fun(a(), fun(b(), fun(c(), d()))),
+                    fun(list(a()), fun(list(b()), fun(list(c()), list(d())))),
+                ),
+            ),
+            (
+                "unique",
+                fun(list(Ty::var("comparable")), list(Ty::var("comparable"))),
+            ),
             ("length", fun(list(a()), int_())),
             ("isEmpty", fun(list(a()), bool_())),
             ("head", fun(list(a()), maybe(a()))),

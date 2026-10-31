@@ -248,7 +248,7 @@ jobs:
           #   tag v0.19.1  + binary "sky v0.19.10"    -> passed (wrong release!)
           #   tag v0.19.1  + binary "sky v0.19.1-rc1" -> passed (prerelease!)
           # Both are rejected below. So is a binary that names a commit after
-          # the version (`sky v0.27.5 (1a2b3c4)`, a source build): a release
+          # the version (`sky v0.29.0 (1a2b3c4)`, a source build): a release
           # sets SKY_GIT_REV="" and prints the version alone.
           REPORTED=$(printf '%s\n' "$ACTUAL" | head -1 | sed -n 's/^sky v\([^ ]*\)$/\1/p')
           if [ -z "$REPORTED" ]; then
@@ -693,6 +693,14 @@ jobs:
           echo "── xtask coerce-floor (SKY_LIVE_TESTS=skip: FFI-gitignored rows) ──"
           SKY_LIVE_TESTS=skip cargo run --release --locked -q -p xtask -- coerce-floor
 
+      # The collection performance gate: six Sky programs under tests/perf/
+      # run at n and 4n (growth ratio <= 6, mallocs per element within a
+      # budget, no erased cons on a typed tail, 3 s ceiling). A return to an
+      # O(n^2) List/Dict/String path goes red here, on any runner.
+      - name: Collection perf gate (xtask perf-gate)
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- perf-gate
+
       # Every full-module Sky example in the live docs must still `sky check`.
       # Ran per-commit only (rust-ci behaviour-docs); a release runs it too.
       - name: Live docs (full-module doc examples still compile)
@@ -767,7 +775,7 @@ jobs:
           neovim: 'true'
       - name: Gate harness (T1 shard 2/3 — sky-verify, sky-suites, lsp, Std.Ai, fmt-clean) with proof requirement
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only sky-verify,sky-suites,lsp,ai-train-resume,ai-train-exactly-once,ai-serve-hot-load,ai-device-decide,ai-device-no-silent-fallback,ai-device-digest,ai-stream-pieces,ai-device-blob-allowlist,fmt-clean
+        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only sky-verify,sky-suites,lsp,ai-train-resume,ai-train-exactly-once,ai-serve-hot-load,ai-device-decide,ai-device-no-silent-fallback,ai-device-digest,ai-stream-pieces,ai-device-blob-allowlist,spa-wasm-server-only,fmt-clean
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1125,7 +1133,7 @@ jobs:
         env:
           SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
           DATABASE_URL: postgres://sky:sky@localhost:5432/sky?sslmode=disable
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only build-new-dir-compiles-nothing,apps-fleet,apps-dispatch-postgres
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only build-new-dir-compiles-nothing,apps-fleet,apps-dispatch-postgres,store-query-postgres
 
   gate-falsifiers-8:
     runs-on: ubuntu-latest
@@ -1166,7 +1174,7 @@ jobs:
           postgres: 'true'
       - name: Falsifier verification (group 10 — Std.Ai and fmt-clean)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only ai-train-resume,ai-train-exactly-once,ai-serve-hot-load,ai-device-decide,ai-device-no-silent-fallback,ai-device-digest,ai-stream-pieces,ai-device-blob-allowlist,ai-device-partition,fmt-clean
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only ai-train-resume,ai-train-exactly-once,ai-serve-hot-load,ai-device-decide,ai-device-no-silent-fallback,ai-device-digest,ai-stream-pieces,ai-device-blob-allowlist,ai-device-partition,spa-wasm-server-only,fmt-clean
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1733,8 +1741,11 @@ jobs:
       - uses: ./.github/actions/gate-setup
       - uses: ./.github/actions/playwright-setup
       - name: Sky.Spa Msg order + client WebSocket + sign-out e2e (Chromium + WebKit, strict CSP)
-        timeout-minutes: 18
-        # Each Msg runs once, in arrival order, as on Sky.Live; RPCs overlap; the
+        timeout-minutes: 20
+        # Each Msg runs once, in arrival order, as on Sky.Live; RPCs overlap;
+        # typing against a slow server keeps every letter and the caret, on
+        # Sky.Spa and Sky.Live, Std.Ui and Std.Html inputs
+        # (spa-rpc-order-e2e.sh, spa-typing-hold stage); the
         # wasm client holds its own WebSocket; a sky_sid cookie copied before
         # sign-out is refused after it; a transiently failing request is re-sent
         # by the runtime (offline, 503 + Retry-After, a hung request, a hidden
@@ -1822,6 +1833,17 @@ jobs:
         run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" jq lsof sqlite3
       - name: Example behavioural contracts
         run: scripts/example-e2e.sh
+      - name: Install LibreOffice (headless)
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends libreoffice-calc-nogui libreoffice-writer-nogui
+          type -P soffice
+      - name: Std.Office files open in LibreOffice
+        timeout-minutes: 10
+        # A workbook and a document written by Std.Office.Xlsx / Docx are
+        # converted by LibreOffice (a second reader); the formula total is
+        # computed on open.
+        run: scripts/office-second-reader-e2e.sh
       - name: Bound the Go caches before save
         if: always()
         working-directory: .

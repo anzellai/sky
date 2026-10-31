@@ -45,7 +45,10 @@ func Ai_migrate(dbArg, jsonArg any) any {
 		if err := json.Unmarshal([]byte(raw), &files); err != nil {
 			return Err[any, any](ErrInvalidInput("Std.Ai.Registry: the migrations do not parse: " + err.Error()))
 		}
-		pairs := make([]any, 0, len(files))
+		// The stdlib's own migrations keep the SQL-text checksum (no
+		// opsSum): their ops render the same SQL as in v0.28, so the rows
+		// that v0.28 wrote verify as they are.
+		entries := make([]migEntry, 0, len(files))
 		for _, f := range files {
 			stmts := make([]string, 0, len(f.Ops))
 			for _, op := range f.Ops {
@@ -55,13 +58,13 @@ func Ai_migrate(dbArg, jsonArg any) any {
 				}
 				stmts = append(stmts, sql)
 			}
-			pairs = append(pairs, T2[any, any]{V0: f.Id, V1: strings.Join(stmts, ";\n")})
+			entries = append(entries, migEntry{name: f.Id, sql: strings.Join(stmts, ";\n")})
 		}
 		aiMigrateMu.Lock()
 		defer aiMigrateMu.Unlock()
 		var last any
 		for attempt := 0; attempt < 3; attempt++ {
-			r := dbMigrateCore(d, pairs, "", func(_ string, e any) any { return e })
+			r := dbMigrateCore(d, entries, "", func(_ string, e any) any { return e })
 			if tag, _, _ := anyResultView(r); tag == 0 {
 				aiRememberEvalDb(d, files)
 				return r

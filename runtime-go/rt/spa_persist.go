@@ -377,3 +377,60 @@ func spaPersistWrite(st spaKV, life *spaPersistLife, modelJSON string, protected
 	}
 	st.Set(spaPersistKey, modelJSON)
 }
+
+// spaPersistStripFields removes the excluded fields (App.withPersistExclude /
+// Spa.withPersistExcludeFields, v0.29.0) from a model's JSON before it is
+// stored: a field the server owns (site settings, a flag, the server clock) is
+// never written to localStorage, so a stale copy cannot paint a later page.
+// Both the field name and the snake_case key Codec.auto derives are removed. A
+// protected (session) field is never removed, because the identity rule reads
+// it. No exclusion, or JSON that does not parse, returns the input unchanged.
+func spaPersistStripFields(modelJSON string, exclude, protected []string) string {
+	if len(exclude) == 0 || modelJSON == "" {
+		return modelJSON
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(modelJSON), &m); err != nil || m == nil {
+		return modelJSON
+	}
+	isProtected := func(f string) bool {
+		for _, p := range protected {
+			if p == f {
+				return true
+			}
+		}
+		return false
+	}
+	removed := false
+	for _, f := range exclude {
+		if isProtected(f) {
+			continue
+		}
+		for _, k := range spaFieldKeys(f) {
+			if _, ok := m[k]; ok {
+				delete(m, k)
+				removed = true
+			}
+		}
+	}
+	if !removed {
+		return modelJSON
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return modelJSON
+	}
+	return string(out)
+}
+
+// spaPersistWinsWithExclude adds the excluded fields to the set a reload takes
+// from the SSR seed: an excluded field always comes from the seed, never from
+// a stored copy (an older build may have stored it).
+func spaPersistWinsWithExclude(wins, exclude []string) []string {
+	if len(exclude) == 0 {
+		return wins
+	}
+	out := make([]string, 0, len(wins)+len(exclude))
+	out = append(out, wins...)
+	return append(out, exclude...)
+}

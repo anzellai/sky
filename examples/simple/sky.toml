@@ -1,5 +1,0 @@
-name = "unknown"
-version = "0.0.0"
-
-["go.dependencies"]
-"net/http" = "latest"

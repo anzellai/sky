@@ -131,7 +131,7 @@ fn repo_root() -> PathBuf {
 ///     alternating slice, so the runtime is WIDER than any single HM type. The
 ///     `List a` its `infoWith` sibling carries is already narrower than the
 ///     runtime and would false-reject `Log.with "msg" someDict`, which
-///     `test-files/log-test.sky` does today. The `*With` family shares the
+///     existing code does. The `*With` family shares the
 ///     defect and should be re-derived from `logAttrsToMap` together.
 ///   * **`Server.group`, `Server.use` (2)** — `rt.Server_use` DISCARDED its
 ///     middleware argument until v0.27 (it now wraps each route's handler).

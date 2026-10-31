@@ -12,8 +12,8 @@
 
 use super::axes::{
     Assignment, ACC_POS, ANON_DEPTH, ANON_ROLE, AS_BINDER, EQ_CARRIER, EQ_PAIR, GA_PARAMS, GA_SITE,
-    GA_SLOT, LET_BINDING, LET_SITE, LET_USES, LIST_IMPORT, NESTED_PAYLOAD, QUAL_PATH, QUAL_USE,
-    STEP_SITE, TASK_CALLEE, TASK_LINK, TASK_RESULT, UNION_REP,
+    GA_SLOT, LETREC_DEP, LETREC_GROUP, LETREC_SITE, LET_BINDING, LET_SITE, LET_USES, LIST_IMPORT,
+    NESTED_PAYLOAD, QUAL_PATH, QUAL_USE, STEP_SITE, TASK_CALLEE, TASK_LINK, TASK_RESULT, UNION_REP,
 };
 use super::gen::{Body, SURVIVOR, UPDATED};
 
@@ -545,5 +545,102 @@ pub fn generic_alias_slot(a: &Assignment) -> (Body, String) {
             check,
         },
         "42:Go".to_string(),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// let_mutual_recursion (v0.29.0)
+// ---------------------------------------------------------------------------
+
+/// Local functions of one `let` that call each other in a ring (`walk` calls
+/// `hop`, `hop` calls `skip`, `skip` calls `walk`), one, two or three of them,
+/// with an optional plain binding the group reads (`step`, written after the
+/// group) or that calls the group (`total`, written before it). Each member
+/// returns its own base (`walk` 0, `hop` 10, `skip` 100) at `n <= 0` and adds
+/// one per call, so `walk SURVIVOR` (42 calls) is the base of the member the
+/// ring stops on (`42 mod size`, always `walk`) plus 42: `42` for every size. A
+/// ring that called the wrong member would stop on `hop` or `skip` and print
+/// 52 or 142. Two members failed `go build` with `undefined: hop_N` before
+/// v0.29.0.
+pub fn let_mutual_recursion(a: &Assignment) -> (Body, String) {
+    let size = match a.get(LETREC_GROUP) {
+        "self" => 1,
+        "two" => 2,
+        "three" => 3,
+        other => panic!("let_mutual_recursion: unknown group {other:?}"),
+    };
+    let dep = a.get(LETREC_DEP);
+    let names = ["walk", "hop", "skip"];
+    let bases = [0, 10, 100];
+    let step = if dep == "before" { "step" } else { "1" };
+    let start = SURVIVOR;
+    let expected = (bases[(start as usize) % size] + start).to_string();
+    let usage = if dep == "after" {
+        "String.fromInt total".to_string()
+    } else {
+        format!("String.fromInt (walk {start})")
+    };
+    // The `let` binders at `ind` spaces, then `in` and `body` at `ind - 4`.
+    let block = |ind: usize, body: &str| -> String {
+        let i = " ".repeat(ind);
+        let j = " ".repeat(ind + 4);
+        let k = " ".repeat(ind + 8);
+        let o = " ".repeat(ind - 4);
+        let mut binders: Vec<String> = Vec::new();
+        if dep == "after" {
+            binders.push(format!("total =\n{j}walk {start}"));
+        }
+        for m in 0..size {
+            binders.push(format!(
+                "{f} n =\n{j}if n <= 0 then\n{k}{base}\n\n{j}else\n{k}{next} (n - {step}) + 1",
+                f = names[m],
+                base = bases[m],
+                next = names[(m + 1) % size],
+            ));
+        }
+        if dep == "before" {
+            binders.push(format!("step =\n{j}1"));
+        }
+        let joined = binders
+            .iter()
+            .map(|b| format!("{i}{b}"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        format!("let\n{joined}\n{o}in\n{o}{body}")
+    };
+    let (decls, check) = match a.get(LETREC_SITE) {
+        "in_def" => (String::new(), block(8, &usage)),
+        "in_case_branch" => (
+            String::new(),
+            format!(
+                "case Just 0 of\n        Just _ ->\n            {}\n\n        Nothing ->\n            \"\"",
+                block(16, &usage)
+            ),
+        ),
+        "in_lambda" => (
+            String::new(),
+            format!(
+                "let\n        run =\n            \\_ ->\n                {}\n    in\n    run ()",
+                block(20, &usage)
+            ),
+        ),
+        // A tail-recursive function whose `else` holds the `let`: one round,
+        // so the result is `usage` once.
+        "tail_loop" => (
+            format!(
+                "loop : String -> Int -> String\nloop acc k =\n    if k <= 0 then\n        acc\n\n    else\n        {}\n",
+                block(12, &format!("loop (acc ++ {usage}) (k - 1)"))
+            ),
+            "loop \"\" 1".to_string(),
+        ),
+        other => panic!("let_mutual_recursion: unknown site {other:?}"),
+    };
+    (
+        Body {
+            imports: String::new(),
+            decls,
+            check,
+        },
+        expected,
     )
 }

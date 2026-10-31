@@ -192,3 +192,20 @@ func Native_insertAtCursor(_ any, _ any) any {
 			"Native.insertAtCursor is a client-only capability: it needs the browser DOM of a Sky.Spa client"))
 	}
 }
+
+// Native_selection on a non-client build: Err Unavailable, like
+// insertAtCursor (native_selection_wasm.go is the client side).
+func Native_selection(_ any) any {
+	return func() any {
+		return Err[any, any](ErrUnavailable(
+			"Native.selection is a client-only capability: it needs the browser DOM of a Sky.Spa client"))
+	}
+}
+
+// Native_setSelection on a non-client build: Err Unavailable.
+func Native_setSelection(_ any, _ any, _ any) any {
+	return func() any {
+		return Err[any, any](ErrUnavailable(
+			"Native.setSelection is a client-only capability: it needs the browser DOM of a Sky.Spa client"))
+	}
+}

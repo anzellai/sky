@@ -1,0 +1,83 @@
+module Main exposing (main)
+
+-- Perf gate program 4: split n code points of text into words, one
+-- character at a time with String.uncons and cons (mode "uncons"), or
+-- with Regex.findAll (mode "regex"). The gate requires the uncons
+-- tokeniser to stay within 10x of the regex on the same input.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Regex as Regex exposing (Regex)
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import System
+import Std.Log exposing (println)
+
+
+-- 16 code points, three words and a separator each.
+sample : String
+sample =
+    "word föö, 漢字x "
+
+
+-- A word: a run of anything but a space, compiled once.
+wordRe : Regex
+wordRe =
+    Regex.fromString "[^ ]+" |> Result.withDefault Regex.never
+
+
+flush : List Char -> List String -> List String
+flush cur acc =
+    case cur of
+
+        [] ->
+            acc
+
+        _ ->
+            String.fromList (List.reverse cur) :: acc
+
+
+tokenise : String -> List Char -> List String -> List String
+tokenise rest cur acc =
+    case String.uncons rest of
+
+        Nothing ->
+            List.reverse (flush cur acc)
+
+        Just ( c, more ) ->
+            if c == ' ' then
+                tokenise more [] (flush cur acc)
+
+            else
+                tokenise more (c :: cur) acc
+
+
+work : String -> Int -> String
+work mode n =
+    let
+        text = String.repeat (n // 16) sample
+        tokens =
+            if mode == "regex" then
+                Regex.findAll wordRe text
+
+            else
+                tokenise text [] []
+    in
+        String.fromInt (List.length tokens)
+
+
+main =
+    let
+        _ =
+            Task.map2 (\a b -> ( a, b )) (System.getArg 1) (System.getArg 2)
+                |> Task.map
+                       (\( m, mode ) ->
+                           ( m |> Maybe.andThen String.toInt
+                                 |> Maybe.withDefault 1000
+                           , Maybe.withDefault "uncons" mode
+                           ))
+                |> Task.andThen (\( n, mode ) -> println (work mode n))
+                |> Task.run
+    in
+        ()

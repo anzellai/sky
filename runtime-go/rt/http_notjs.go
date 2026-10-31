@@ -54,7 +54,7 @@ func Http_get(url any) any {
 			return Ok[any, any](HttpResponse{
 				Status:  resp.StatusCode,
 				Body:    body,
-				Headers: hdrs,
+				Headers: dictFromTypedMap(hdrs),
 			})
 		})
 	}
@@ -94,7 +94,7 @@ func Http_post(url any, body any) any {
 			return Ok[any, any](HttpResponse{
 				Status:  resp.StatusCode,
 				Body:    rb,
-				Headers: hdrs,
+				Headers: dictFromTypedMap(hdrs),
 			})
 		})
 	}

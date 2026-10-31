@@ -20,23 +20,23 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 195 |
-| covered by the new corpus (>= Asserted) | 185 |
-| verdict `stronger` | 180 |
+| surfaces | 203 |
+| covered by the new corpus (>= Asserted) | 193 |
+| verdict `stronger` | 188 |
 | verdict `equal` | 15 |
 | verdict `weaker` | 0 |
-| corpus units | 152 |
-| stdlib modules (denominator) | 127 |
-| stdlib entries (denominator) | 2962 |
+| corpus units | 150 |
+| stdlib modules (denominator) | 135 |
+| stdlib entries (denominator) | 3232 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 8 | 6.3% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 926 | 31.3% |
-| symbols unreferenced under the generous rule | 822 | 27.8% |
-| stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
+| stdlib modules imported by nothing | 8 | 5.9% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 989 | 30.6% |
+| symbols unreferenced under the generous rule | 874 | 27.0% |
+| stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 0 | — |
 
 ### Surfaces with zero new cover
 
@@ -57,7 +57,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 26 |
-| stdlib modules owned by exactly one unit of any role | 11 |
+| stdlib modules owned by exactly one unit of any role | 18 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **0** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -146,9 +146,10 @@ None.
 | `skylive.multi-replica` | skylive | Asserted | Falsified | stronger |
 | `skylive.session-sse-csrf` | skylive | Asserted | Falsified | stronger |
 | `stdlib.Sky.Config` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Sky.Core.Array` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Basics` | stdlib | None | Falsified | stronger |
 | `stdlib.Sky.Core.Bytes` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Sky.Core.Char` | stdlib | None | Falsified | stronger |
+| `stdlib.Sky.Core.Char` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Crypto` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Dict` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Encoding` | stdlib | Asserted | Falsified | stronger |
@@ -236,6 +237,7 @@ None.
 | `stdlib.Std.Html.Attributes` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html.Events` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Image` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Image.Canvas` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Jobs` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Live` | stdlib | Runs | Asserted | stronger |
 | `stdlib.Std.Live.Console` | stdlib | None | Asserted | stronger |
@@ -245,6 +247,8 @@ None.
 | `stdlib.Std.Money` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Native` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Nav` | stdlib | None | Asserted | stronger |
+| `stdlib.Std.Office.Docx` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Office.Xlsx` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.PubSub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Qr` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Spa` | stdlib | None | Falsified | stronger |
@@ -272,6 +276,10 @@ None.
 | `stdlib.Std.Ui.Transition` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Watch` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Webview` | stdlib | None | None | equal |
+| `stdlib.Std.Xml` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Xml.Decode` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Xml.Encode` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Zip` | stdlib | Asserted | Falsified | stronger |
 | `ui.cross-backend` | ui | Asserted | Falsified | stronger |
 | `ui.tui` | ui | Runs | Falsified | stronger |
 | `ui.webview` | ui | Builds | Falsified | stronger |
@@ -337,5 +345,7 @@ None.
 | `sky-suites` | T1 | PROVEN | `lang.constructs` |
 | `sky-verify` | T1 | PROVEN | `compiler.fmt` · `lang.constructs` |
 | `spa-diff-fuzz` | T2 | PROVEN | `stdlib.Std.Spa` |
+| `spa-wasm-server-only` | T1 | PROVEN | `stdlib.Std.Spa` |
 | `stdlib-bodies` | T1 | PROVEN | `compiler.infer` · `compiler.reject` |
+| `store-query-postgres` | T3 | PROVEN | `db.postgres` · `db.codec-store` · `stdlib.Std.Db.Store` |
 | `verify-cli` | T1 | PROVEN | `ui.tui` · `config.sky-toml` |

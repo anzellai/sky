@@ -31,6 +31,11 @@ asserted ACTIVE below.
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict exposing (Dict)
 import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Result as Result
+import Sky.Core.Tuple as Tuple
+import Sky.Core.Json.Encode as Encode
 import Std.Codec as Codec exposing (Codec)
 import Std.Money as Money exposing (Money, Currency(..))
 import Sky.Core.Error as Error exposing (Error, ErrorKind(..), ErrorDetails(..))
@@ -304,6 +309,17 @@ categoryCodec =
 
 
 -- ── Helpers ──────────────────────────────────────────────────────────────────
+
+fits : Codec t -> Codec s -> Bool
+fits target source =
+    Codec.schemaFitError (Codec.jsonSchema target).schema (Codec.jsonSchema source).schema
+        == Nothing
+
+
+valueFits : Codec a -> Encode.Value -> Bool
+valueFits codec v =
+    Codec.schemaValueError (Codec.jsonSchema codec).schema v == Nothing
+
 
 -- Round-trip a value through its codec and assert structural identity.
 roundTrip : Codec a -> a -> Test.TestResult
@@ -638,6 +654,13 @@ tests =
             Test.equal (Ok (Error.unavailable "x"))
                 (Codec.fromJson Codec.error "[\"Error\",\"Unavailable\",{\"message\":\"x\",\"details\":[\"Future\",1]}]")
         )
+    , Test.test "error: details are the one lenient Maybe (a bad payload is no details), the message stays strict"
+        (\_ ->
+            Test.equal ( Ok (Error.network "x"), True )
+                ( Codec.fromJson Codec.error "[\"Error\",\"Network\",{\"message\":\"x\",\"details\":[\"HttpStatus\",\"500\"]}]"
+                , failed (Codec.fromJson Codec.error "[\"Error\",\"Network\",{\"message\":5,\"details\":null}]")
+                )
+        )
 
     -- ── Codec.result: Ok / Err over Codec.error round-trip ────────────────
     , Test.test "result: Ok String round-trips"
@@ -646,7 +669,217 @@ tests =
         (\_ -> roundTrip (Codec.result Codec.error Codec.string) (Err (mkErr Network "send failed" (Just (HttpStatus 500)))))
     , Test.test "result: nested detail through the wire round-trips"
         (\_ -> roundTrip (Codec.result Codec.error Codec.int) (Err (mkErr Ffi "x" (Just (FfiPanic { message = "p", stack = [] })))))
+
+    -- ── Codec.zeroJson: the JSON of the codec's zero value ────────────────
+    , Test.test "zeroJson: an auto codec gives its blank record, with snake keys in field order"
+        (\_ ->
+            Test.equal
+                (Just "{\"tag_list\":[\"it's\"],\"total\":0,\"note\":null}")
+                (Maybe.map (Encode.encode 0) (Codec.zeroJson (Codec.auto zeroAutoBlank))))
+    , Test.test "zeroJson: an object codec gives each field's zero, in field order"
+        (\_ ->
+            Test.equal
+                (Just "{\"n\":\"\",\"xs\":[],\"on\":false,\"m\":null}")
+                (Maybe.map (Encode.encode 0) (Codec.zeroJson zeroRecord)))
+    , Test.test "zeroJson: a taggedUnion, a result and an object with a field that has none have none"
+        (\_ ->
+            Test.equal
+                ( Nothing, Nothing, Nothing )
+                ( Maybe.map (Encode.encode 0) (Codec.zeroJson Codec.error)
+                , Maybe.map (Encode.encode 0) (Codec.zeroJson (Codec.result Codec.error Codec.int))
+                , Maybe.map (Encode.encode 0) (Codec.zeroJson zeroRecordNoZero)
+                ))
+
+    -- ── Codec.fieldZeros: each field's own zero ─────────────────────────────
+    , Test.test "fieldZeros: an object codec keeps the zeros of the fields that have one"
+        (\_ ->
+            Test.equal
+                "{\"n\":\"\"}"
+                (Encode.encode 0 (Encode.object (Codec.fieldZeros zeroRecordNoZero))))
+    , Test.test "fieldZeros: an auto codec gives each field of its blank record"
+        (\_ ->
+            Test.equal
+                "{\"tag_list\":[\"it's\"],\"total\":0,\"note\":null}"
+                (Encode.encode 0 (Encode.object (Codec.fieldZeros (Codec.auto zeroAutoBlank)))))
+    , Test.test "fieldZeros: a nested object with no zero is left out, a non-record codec gives none"
+        (\_ ->
+            Test.equal
+                ( "{\"xs\":[]}", 0 )
+                ( Encode.encode 0 (Encode.object (Codec.fieldZeros zeroOuter))
+                , List.length (Codec.fieldZeros (Codec.list Codec.int))
+                ))
+    -- ── schemaFitError / schemaValueError (Std.Db.Store's codec checks) ──
+    , Test.test "schemaFitError: a Maybe reads its own kind, and refuses a value it would read as Nothing"
+        (\_ ->
+            Test.equal
+                ( [ True, True, True, True, True ], [ False, False, False, False ] )
+                ( [ fits (Codec.maybe Codec.int) Codec.int
+                  , fits (Codec.maybe Codec.int) (Codec.maybe Codec.int)
+                  , fits Codec.string categoryCodec
+                  , fits Codec.float Codec.int
+                  , fits (Codec.maybe categoryCodec) categoryCodec
+                  ]
+                , [ fits (Codec.maybe (Codec.list Codec.string)) (Codec.list Codec.int)
+                  , fits (Codec.maybe categoryCodec) Codec.string
+                  , fits Codec.int (Codec.maybe Codec.int)
+                  , fits (Codec.list (Codec.maybe Codec.int)) (Codec.list Codec.string)
+                  ]
+                ))
+    , Test.test "schemaFitError: a Maybe of an open part (a custom type) reads only an open part"
+        (\_ ->
+            Test.equal
+                ( True, False, True )
+                ( fits (Codec.maybe shipmentCodec) shipmentCodec
+                , fits (Codec.maybe shipmentCodec) (Codec.list Codec.int)
+                , fits shipmentCodec (Codec.list Codec.int)
+                ))
+    , Test.test "schemaValueError: a value the codec reads passes, any other names the reason"
+        (\_ ->
+            Test.equal
+                ( [ True, True, True, True ], [ False, False, False, False ] )
+                ( [ valueFits (Codec.list Codec.int) (Encode.list Encode.int [ 1, 2 ])
+                  , valueFits categoryCodec (Encode.string "prints")
+                  , valueFits (Codec.maybe Codec.int) Encode.null
+                  , valueFits shipmentCodec (Encode.list Encode.int [ 1 ])
+                  ]
+                , [ valueFits (Codec.list Codec.int) (Encode.list Encode.string [ "a" ])
+                  , valueFits categoryCodec (Encode.string "posters")
+                  , valueFits Codec.int Encode.null
+                  , valueFits (Codec.auto { id = 0, name = "" }) (Encode.object [ ( "id", Encode.int 1 ) ])
+                  ]
+                ))
+    , Test.test "schemaFitError: a record reads a source record that has every one of its fields"
+        (\_ ->
+            Test.equal
+                ( True, False )
+                ( fits (Codec.auto { id = 0 }) (Codec.auto { id = 0, name = "" })
+                , fits (Codec.auto { id = 0, name = "" }) (Codec.auto { id = 0 })
+                ))
+    -- ── Codec.maybe is strict: only JSON null is Nothing ──
+    , Test.test "maybe: null is Nothing, a value the inner codec does not read is an Err, not Nothing"
+        (\_ ->
+            Test.equal
+                ( ( Ok Nothing, Ok (Just 5) ), ( True, True ), ( Ok Nothing, Ok (Just (Just 5)) ) )
+                ( ( Codec.fromJson (Codec.maybe Codec.int) "null"
+                  , Codec.fromJson (Codec.maybe Codec.int) "5"
+                  )
+                , ( failed (Codec.fromJson (Codec.maybe Codec.int) "\"x\"")
+                  , failed (Codec.fromJson (Codec.maybe categoryCodec) "\"posters\"")
+                  )
+                , ( Codec.fromJson (Codec.maybe (Codec.maybe Codec.int)) "null"
+                  , Codec.fromJson (Codec.maybe (Codec.maybe Codec.int)) "5"
+                  )
+                ))
+    , Test.test "maybe: in a list or a record field, a value the inner codec does not read fails the decode"
+        (\_ ->
+            Test.equal
+                ( Ok [ Just 1, Nothing ], ( True, True, True ) )
+                ( Codec.fromJson (Codec.list (Codec.maybe Codec.int)) "[1,null]"
+                , ( failed (Codec.fromJson (Codec.list (Codec.maybe Codec.int)) "[1,\"x\"]")
+                  , failed (Codec.fromJson (Codec.list (Codec.maybe categoryCodec)) "[\"prints\",\"posters\"]")
+                  , failed (Codec.fromJson zeroRecord "{\"n\":\"a\",\"xs\":[],\"on\":true,\"m\":\"x\"}")
+                  )
+                ))
+    , Test.test "fieldReadError: the first field of an object its codec does not read, by name"
+        (\_ ->
+            Test.equal
+                ( ( Just "m", Nothing, Just "e" ), ( Nothing, Nothing ) )
+                ( ( Maybe.map Tuple.first (Codec.fieldReadError zeroRecord "{\"n\":\"a\",\"m\":\"x\"}")
+                  , Codec.fieldReadError zeroRecord "{\"m\":null,\"zz\":1}"
+                  , Maybe.map Tuple.first (Codec.fieldReadError zeroRecordNoZero "{\"e\":\"x\"}")
+                  )
+                , ( Codec.fieldReadError (Codec.auto zeroAutoBlank) "{\"note\":\"fine\"}"
+                  , Codec.fieldReadError (Codec.list Codec.int) "{\"xs\":\"x\"}"
+                  )
+                ))
+    , Test.test "fieldReadError: an auto codec's field reads by its blank's siblings"
+        (\_ ->
+            Test.equal
+                (Just "total")
+                (Maybe.map Tuple.first (Codec.fieldReadError (Codec.auto zeroAutoBlank) "{\"total\":\"x\"}")))
+    , Test.test "auto: a Json.Value field reads back any JSON, with a tag key or a key named like the field"
+        (\_ ->
+            let
+                text = "{\"id\":\"h1\",\"data\":{\"data\":null,\"tag\":\"X\",\"v0\":[1]}}"
+            in
+                Test.equal
+                    ( Ok text, Ok "null" )
+                    ( Codec.fromJson hookAuto text |> Result.map (Codec.toJson hookAuto)
+                    , Codec.fromJson hookAuto "{\"id\":\"h2\",\"data\":null}"
+                        |> Result.map (\h -> Encode.encode 0 h.data)
+                    ))
     ]
+
+
+-- A `Json.Value` field under Codec.auto: the blank's JSON value marks it.
+type alias HookAuto =
+    { id : String, data : Encode.Value }
+
+
+hookAuto : Codec HookAuto
+hookAuto =
+    Codec.auto { id = "", data = Encode.null }
+
+
+failed : Result e a -> Bool
+failed r =
+    case r of
+
+        Ok _ ->
+            False
+
+        Err _ ->
+            True
+
+
+type alias ZeroAuto =
+    { tagList : List String, total : Int, note : Maybe String }
+
+
+zeroAutoBlank : ZeroAuto
+zeroAutoBlank =
+    { tagList = [ "it's" ], total = 0, note = Nothing }
+
+
+type alias ZeroRecord =
+    { n : String, xs : List Int, on : Bool, m : Maybe Float }
+
+
+zeroRecord : Codec ZeroRecord
+zeroRecord =
+    Codec.object ZeroRecord
+        |> Codec.field "n" .n Codec.string
+        |> Codec.field "xs" .xs (Codec.list Codec.int)
+        |> Codec.field "on" .on Codec.bool
+        |> Codec.field "m" .m (Codec.maybe Codec.float)
+        |> Codec.buildObject
+
+
+type alias ZeroRecordNoZero =
+    { n : String, e : Error }
+
+
+-- A field with no zero (an `Error`, a taggedUnion) leaves the whole object
+-- with none: a partial object would be a DEFAULT no existing row decodes.
+zeroRecordNoZero : Codec ZeroRecordNoZero
+zeroRecordNoZero =
+    Codec.object ZeroRecordNoZero
+        |> Codec.field "n" .n Codec.string
+        |> Codec.field "e" .e Codec.error
+        |> Codec.buildObject
+
+
+type alias ZeroOuter =
+    { inner : ZeroRecordNoZero, xs : List Int }
+
+
+-- The nested object has no zero, so it is left out. The list keeps `[]`.
+zeroOuter : Codec ZeroOuter
+zeroOuter =
+    Codec.object ZeroOuter
+        |> Codec.field "inner" .inner zeroRecordNoZero
+        |> Codec.field "xs" .xs (Codec.list Codec.int)
+        |> Codec.buildObject
 
 
 main =

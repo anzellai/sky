@@ -163,6 +163,18 @@ tests =
                       _ = everything
                   in
                       Bundle.assetUrl "logo.png"))
+    , Test.test
+          "selection off a Sky.Spa client is Unavailable"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.Unavailable
+                  (Task.run (Native.selection "body")))
+    , Test.test
+          "setSelection off a Sky.Spa client is Unavailable"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.Unavailable
+                  (Task.run (Native.setSelection "body" 0 3)))
     ]
 
 

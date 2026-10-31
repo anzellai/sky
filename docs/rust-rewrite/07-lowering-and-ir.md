@@ -375,6 +375,33 @@ are stdlib source, not compiler passes — they land as ordinary tail-recursive
 defs that this pass turns into loops. Result: constant Go stack, the arena/no-GC
 memory story of L3 continued into the runtime.
 
+### 4.1 `let` groups: forward references and local recursion (v0.29.0)
+
+A `let` is forward-referencing (doc 05 §4): every binder is in scope in every
+right-hand side. Go is declare-before-use, so every `let` form (an expression
+`let`, a tail `let` on the TCO path, `main`'s `let`) emits its bindings through
+one function, `lower_let_defs`, in the order `order_let_defs` returns:
+
+- The acyclic part is a stable Kahn sort, one def per group, so a `let` with no
+  cycle keeps its source order byte for byte.
+- What is left is split into strongly connected components (Tarjan), emitted
+  dependencies first.
+- A SELF-recursive local function is a one-def group: `var f T` then `f =
+  func…` (#162).
+- A group of two or more MUTUALLY recursive local functions declares every
+  member first (`var follow_1 func(int) int`, `var piece_2 func(int) int`) and
+  assigns the closures after. Before v0.29.0 each member took `:=` and the
+  first closure named the second before its declaration (`undefined:
+  piece_2`). Assigning a closure runs nothing, so the assignment order is free.
+- A cycle through a plain VALUE (`a = f 1; f n = … a …`) is not a function
+  group and keeps the source-order emission: it fails `go build`. It needs a
+  checker rule (Elm's "bad recursion"), not a lowering. The same cycle at the
+  top level builds and deadlocks in the CAF lock at run time.
+
+Gate: the corpus stratum `let_mutual_recursion` (group size x a plain binding
+before or after the group x four sites, one of them the TCO `else` branch) and
+the pinned repro `corpus/repro/let-mutual-recursion.sky`.
+
 ## 5. There is no monomorphiser — and DCE is a demand worklist
 
 ### 5.1 No monomorphisation. This is policy, not a gap.
@@ -429,7 +456,7 @@ slice or map, trading an O(1) reflect box for an O(n) copy
 > needs monomorphisation, check whether the shape is statically known at the
 > emit site — it usually is, and then the answer is an eta-expansion.
 >
-> `docs/architecture/sky-compiler-architecture.md` §5.3 retracted the same
+> `docs/history/compiler/sky-compiler-architecture.md` §5.3 retracted the same
 > claim on 2026-08-15 ("Both halves were wrong, and together they are why this
 > category was filed as irreducible"). That retraction landed in the *legacy*
 > reference while this — the **primary** one — still described the

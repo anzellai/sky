@@ -17,17 +17,17 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 768
+n_min = 844
 n_iso = 61
 n_iso_ceiling = 62
-n_iso_static = 146
+n_iso_static = 164
 n_iso_static_ceiling = 300
-class_v = 767
+class_v = 843
 class_d = 1
-family_S = 194
-family_L = 429
+family_S = 216
+family_L = 465
 family_E = 10
-family_R = 135
+family_R = 153
 family_F = 0
 
 [[case]]
@@ -3629,7 +3629,7 @@ witness    = "value"
 axes       = { edge = "failure", surface = "regex" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "F|N|0"
+stdout     = "F|N|0|E|F"
 
 [[case]]
 id         = "stdlib_edge/nominal-json"
@@ -4058,7 +4058,7 @@ witness    = "value"
 axes       = { edge = "nominal", surface = "image" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "6x4|3x2|2x1"
+stdout     = "6x4|3x2|2x1|1|6x4|3x2|2x1"
 
 [[case]]
 id         = "stdlib_edge/boundary-image"
@@ -4071,7 +4071,7 @@ witness    = "value"
 axes       = { edge = "boundary", surface = "image" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "6x4|E"
+stdout     = "6x4|E|E"
 
 [[case]]
 id         = "stdlib_edge/nominal-tuple"
@@ -4098,6 +4098,71 @@ axes       = { edge = "boundary", surface = "tuple" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
 stdout     = "0"
+
+[[case]]
+id         = "stdlib_edge/nominal-array"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "array" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "3|20|1,9,3|1,2,3,4|1,2,3|1,2|2,4|10,21|123|321|2,4|0,1,4,9|7,7,7|F|20"
+
+[[case]]
+id         = "stdlib_edge/empty-array"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "array" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "0|T|N|0|0|1|0|0|0|0|0|0|0|0"
+
+[[case]]
+id         = "stdlib_edge/boundary-array"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "array" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "N|N|1,2|1,2|33|99|2000|7|80|2000"
+
+[[case]]
+id         = "stdlib_edge/unicode-array"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "unicode", surface = "array" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "世界|a,é"
+
+[[case]]
+id         = "stdlib_edge/failure-array"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "array" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "N|1"
 
 [[case]]
 id         = "stdlib_edge/nominal-sign"
@@ -4852,6 +4917,227 @@ axes       = { edge = "failure", surface = "terminal" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
 stdout     = "N/N"
+
+[[case]]
+id         = "stdlib_edge/nominal-xml"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "xml" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "a|urn:x|xy|k=1,j=2|4/3/2|1|&é|[ x ]|7|2.5|T|v|N|x|1,2|b,c|z|urn:x|a|q|1234|aaaaaaaa|a!|y|<a k="v">x</a>|<a><![CDATA[<b>]]></a>|<a xmlns="urn:a" xmlns:p="urn:p"/>|<?xml version="1.0" encoding="UTF-8"?>;<a/>|<a/>"
+
+[[case]]
+id         = "stdlib_edge/empty-xml"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "xml" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|||<a/>|<a></a>"
+
+[[case]]
+id         = "stdlib_edge/boundary-xml"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "xml" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|a|E|<a k="&quot;&lt;&amp;&gt;">&lt;&amp;&gt;</a>|<a><![CDATA[]]]]><![CDATA[>]]></a>"
+
+[[case]]
+id         = "stdlib_edge/unicode-xml"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "unicode", surface = "xml" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "世界é|é|<é>世</é>"
+
+[[case]]
+id         = "stdlib_edge/failure-xml"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "xml" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|E|E|E|E|E|<a_b/>"
+
+[[case]]
+id         = "stdlib_edge/nominal-zip"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "zip" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "a.txt=hi,d/b.txt=yo|a:3|2|a=x|a=x"
+
+[[case]]
+id         = "stdlib_edge/empty-zip"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "zip" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "|e="
+
+[[case]]
+id         = "stdlib_edge/boundary-zip"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "zip" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "N|E|a=1234|T"
+
+[[case]]
+id         = "stdlib_edge/unicode-zip"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "unicode", surface = "zip" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "世界.txt=é"
+
+[[case]]
+id         = "stdlib_edge/failure-zip"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "zip" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|E|E|E"
+
+[[case]]
+id         = "stdlib_edge/nominal-office"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "office" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "a,1.5,T;F|7|2026-10-29 13:5|=1+1,_,#N/A|1.5|t,F,=A1|A,B|1|T/p/1. n|x"
+
+[[case]]
+id         = "stdlib_edge/empty-office"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "office" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "|E||"
+
+[[case]]
+id         = "stdlib_edge/boundary-office"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "office" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|ok|1900-2-29 0:0|E|T"
+
+[[case]]
+id         = "stdlib_edge/unicode-office"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "unicode", surface = "office" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "漢字 😀,é|Données|ünï 世界"
+
+[[case]]
+id         = "stdlib_edge/failure-office"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "office" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|E|E|E"
+
+[[case]]
+id         = "stdlib_edge/nominal-imagecanvas"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "imagecanvas" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "6x4|4|16|6|T|0|3x2|T|T"
+
+[[case]]
+id         = "stdlib_edge/failure-imagecanvas"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "imagecanvas" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "colour_range|size_mismatch|E|E"
 
 [[case]]
 id         = "stdlib_import/plain-none"
@@ -8131,6 +8417,474 @@ expect     = "accept"
 stdout     = "42:Go"
 
 [[case]]
+id         = "let_mutual_recursion/none-self-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "self", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-self-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "self", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-self-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "self", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-self-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "self", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-self-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "self", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-self-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "self", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-self-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "self", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-self-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "self", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-self-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "self", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-self-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "self", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-self-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "self", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-self-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "self", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-two-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "two", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-two-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "two", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-two-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "two", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-two-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "two", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-two-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "two", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-two-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "two", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-two-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "two", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-two-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "two", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-two-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "two", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-two-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "two", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-two-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "two", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-two-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "two", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-three-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "three", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-three-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "three", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-three-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "three", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/none-three-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "none", letrec_group = "three", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-three-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "three", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-three-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "three", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-three-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "three", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/before-three-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "before", letrec_group = "three", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-three-in_def"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "three", letrec_site = "in_def" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-three-in_case_branch"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "three", letrec_site = "in_case_branch" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-three-in_lambda"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "three", letrec_site = "in_lambda" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_mutual_recursion/after-three-tail_loop"
+family     = "L"
+stratum    = "let_mutual_recursion"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { letrec_dep = "after", letrec_group = "three", letrec_site = "tail_loop" }
+coordinate = "v0.29.0: two local functions of one `let` that call each other"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
 id         = "reject_matrix/arity_over-plain-bare"
 family     = "R"
 stratum    = "reject_matrix"
@@ -10018,6 +10772,258 @@ axes       = { defect = "dict_composite_key", rimport = "exposing_list", rpositi
 coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
 expect     = "reject"
 code       = "E2008"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/value_cycle-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "value_cycle", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1018"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/value_cycle-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "value_cycle", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1018"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/value_cycle-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "value_cycle", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1018"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/value_cycle-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "value_cycle", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1018"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/value_cycle-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "value_cycle", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1018"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/value_cycle-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "value_cycle", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1018"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/value_cycle-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "value_cycle", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1018"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/value_cycle-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "value_cycle", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1018"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/value_cycle-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "value_cycle", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1018"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/regex_invalid_literal-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "regex_invalid_literal", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2014"
 twin       = true
 
 [[case]]

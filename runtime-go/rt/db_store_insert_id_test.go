@@ -136,7 +136,7 @@ func TestStoreUpsert_ReturnsAssignedId(t *testing.T) {
 	db := openStoreIdDb(t)
 	res := runTask(t, Db_upsertObject(db, "notes",
 		colspec([2]string{"id", "int"}, [2]string{"body", "text"}),
-		"id", storeObj([]string{"id", "body"}, []any{7, "seven"}), "int"))
+		"id", storeObj([]string{"id", "body"}, []any{7, "seven"}), "int", []any{}))
 	if res.Tag != 0 {
 		t.Fatalf("upsert: %+v", res.ErrValue)
 	}
@@ -156,7 +156,8 @@ func TestStoreInsertMany_StaysRowsAffected(t *testing.T) {
 			storeObj([]string{"body"}, []any{"x"}),
 			storeObj([]string{"body"}, []any{"y"}),
 			storeObj([]string{"body"}, []any{"z"}),
-		}))
+		},
+		[]any{[]any{}, []any{}, []any{}}))
 	if res.Tag != 0 {
 		t.Fatalf("insertMany: %+v", res.ErrValue)
 	}

@@ -40,6 +40,9 @@ firebaseadminsdk*.json
 # Exception: AUTONOMOUS_GOAL.md is tracked so live autonomous mandates
 # survive clones / new sessions per CLAUDE.md non-negotiable #0.
 !.claude/AUTONOMOUS_GOAL.md
+# Per-developer Claude Code permissions. Already covered by `.claude/*`; named
+# here because it was once force-added and must never be tracked again.
+.claude/settings.local.json
 
 # Databases
 *.db
@@ -70,50 +73,12 @@ examples/13-skyshop/assets/
 *.swp
 *~
 
-# Bootstrap build artifact (source is kept, binary is not)
-bootstrap/app
+# A local clone of the website repository, never committed here.
 sky-lang.org
-dist-newstyle/
-.cabal-sandbox/
-cabal.sandbox.config
-*.hi
-*.o
-*.dyn_hi
-*.dyn_o
-.ghc.environment.*
-dist-newstyle/
-.cabal-sandbox/
-cabal.sandbox.config
-*.hi
-*.o
-*.dyn_hi
-*.dyn_o
-.ghc.environment.*
-
-# Haskell compiler build
-dist-newstyle/
-
-# Legacy compilers
-legacy-sky-compiler/bin/
-legacy-sky-compiler/dist/
-legacy-sky-compiler/sky-out/
-legacy-sky-compiler/.skycache/
-legacy-ts-compiler/node_modules/
-
-# Runtime database files (from running examples at repo root)
-*.db
-*.db-shm
-*.db-wal
 
 # Stray SQLite files named literally "{}" when a test's connection
 # string was the unsubstituted placeholder. Never source; never commit.
 **/\{\}
-
-# macOS
-.DS_Store
-
-# Legacy dist output (kept under legacy-ts-compiler/ if needed)
-/dist/
 
 # Embedded Sky stdlib materialised next to project src by the LSP
 # (Sky.Build.Compile.writeStdlibTo) so goto-definition has a stable
@@ -132,9 +97,8 @@ legacy-ts-compiler/node_modules/
 /.envrc.local
 sky.zip
 
-# Local-only example verification — playwright recordings,
-# screenshots, traces. Not source; per-developer; regenerated
-# whenever scripts/verify-examples.sh is run.
+# Local-only browser verification output: Playwright recordings,
+# screenshots, traces. Not source; per-developer.
 _verify/
 
 # v0.16.0 PR 3 — auto-generated dev-mode console token persisted
@@ -174,8 +138,8 @@ isolated-target/
 /target/
 
 # Sky.Spa spike build artifacts
-docs/skyspa/spike/main.wasm
-docs/skyspa/spike/wasm_exec.js
+docs/history/skyspa/spike/main.wasm
+docs/history/skyspa/spike/wasm_exec.js
 
 # Auto-testing fuzzer scratch dirs (differential split fuzz + model fuzz)
 .difffuzz/

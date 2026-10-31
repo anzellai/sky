@@ -1,24 +1,26 @@
 -- | Sky.Core.Dict — associative map, ordered by key (Layer 3 Sky source).
 --
 -- Every function in this module is declared as a Sky-source binding
--- aliased to a kernel via `Ffi.kernel "Dict_<name>"`.  The Stage-4
--- compiler primitive rewrites every call site to the existing typed
--- kernel dispatch — so `Dict.get "k" d` continues to emit
--- `rt.Dict_getT[V]("k", d)` exactly as before, preserving the
--- typed-codegen guarantees the kernel-direct route already enjoyed.
+-- aliased to a kernel via `Ffi.kernel "Dict_<name>"`. Over a typed
+-- dict the compiler calls typed runtime twins instead (`get`, `member`,
+-- `insert` and `remove` with an `Int` or `String` key go to
+-- `rt.Dict_getIntT[V]` / `rt.Dict_insertStrT[V]` / …). The runtime
+-- bodies live in `runtime-go/rt/rt.go` and
+-- `runtime-go/rt/dict_persistent.go`.
 --
--- The Sky-source layer exists for discoverability + Layer 3
--- conformance + so `sky doc` shows a stable source location for
--- every entry.  The runtime bodies live in `runtime-go/rt/rt.go`
--- (`Dict_*` helpers; the typed `Dict_*T[V]` variants live alongside).
+-- A dict is a persistent value (`rt.SkyDict[V]`): a flat array of up
+-- to 16 entries, then a 16-way hash array mapped trie. `insert` and
+-- `remove` copy one path, O(log n), and the old dict is unchanged and
+-- shares the rest, so a fold that builds a dict is O(n log n). Order is
+-- not a property of the structure: the operations that list the
+-- entries sort them by key, so they cost O(n log n).
 --
--- Key-type note: at runtime the underlying map is `map[string]V`, so
--- every key is encoded to a string on the way in. Lookup-shaped
--- operations (`get`, `member`, `insert`, `remove`) encode the probe
--- the same way and so agree for any key type. The operations that let
--- the key back OUT — `toList`, `keys`, `values`, `foldl`, `map` —
--- decode it back to the Sky type. The encoded key carries its own
--- kind tag, so the decode needs no type information from the call
+-- Key-type note: every key is encoded to a string on the way in.
+-- Lookup-shaped operations (`get`, `member`, `insert`, `remove`) encode
+-- the probe the same way and so agree for any key type. The operations
+-- that let the key back OUT — `toList`, `keys`, `values`, `foldl`,
+-- `map` — decode it back to the Sky type. The encoded key carries its
+-- own kind tag, so the decode needs no type information from the call
 -- site: it is just as correct inside a key-polymorphic helper
 -- (`f : Dict k v -> …`), where the compiler has erased `k`, as it is
 -- at a call site typed `Dict Int v`. `String`, `Int`, `Float`, `Char`
@@ -59,6 +61,8 @@ import Sky.Ffi as Ffi
 
 -- ─── Construction ──────────────────────────────────────────────────
 -- | The empty dictionary.
+--
+-- Cost: O(1).
 empty : Dict k v
 empty =
     Ffi.kernel "Dict_empty"
@@ -66,24 +70,32 @@ empty =
 
 -- ─── Cardinality / queries ─────────────────────────────────────────
 -- | `True` when the dictionary contains no entries.
+--
+-- Cost: O(1).
 isEmpty : Dict k v -> Bool
 isEmpty =
     Ffi.kernel "Dict_isEmpty"
 
 
 -- | Number of key/value pairs.
+--
+-- Cost: O(1).
 size : Dict k v -> Int
 size =
     Ffi.kernel "Dict_size"
 
 
 -- | `member k d` — `True` iff `k` is bound in `d`.
+--
+-- Cost: O(log n): a walk of the persistent hash trie (a scan of at most 16 entries while the dict is small).
 member : k -> Dict k v -> Bool
 member =
     Ffi.kernel "Dict_member"
 
 
 -- | `get k d` — look up `k`; `Nothing` if absent.
+--
+-- Cost: O(log n): a walk of the persistent hash trie (a scan of at most 16 entries while the dict is small).
 get : k -> Dict k v -> Maybe v
 get =
     Ffi.kernel "Dict_get"
@@ -91,12 +103,16 @@ get =
 
 -- ─── Mutation (returns new Dict) ───────────────────────────────────
 -- | `insert k v d` — bind `k → v`, replacing any prior value.
+--
+-- Cost: O(log n): one path of the persistent dict is copied; the old dict is unchanged and shares the rest.
 insert : k -> v -> Dict k v -> Dict k v
 insert =
     Ffi.kernel "Dict_insert"
 
 
 -- | `remove k d` — drop `k`'s binding; no-op if absent.
+--
+-- Cost: O(log n): one path of the persistent dict is copied; the old dict is unchanged and shares the rest.
 remove : k -> Dict k v -> Dict k v
 remove =
     Ffi.kernel "Dict_remove"
@@ -104,12 +120,16 @@ remove =
 
 -- ─── Conversion ────────────────────────────────────────────────────
 -- | All keys in the dictionary, in ascending key order.
+--
+-- Cost: O(n log n): the keys are sorted on every call.
 keys : Dict k v -> List k
 keys =
     Ffi.kernel "Dict_keys"
 
 
 -- | All values in the dictionary, in ascending order of their KEY.
+--
+-- Cost: O(n log n): the keys are sorted on every call.
 values : Dict k v -> List v
 values =
     Ffi.kernel "Dict_values"
@@ -123,6 +143,8 @@ values =
 -- `Dict Int v`, and `Char.toCode` on the keys of a `Dict Char v`,
 -- both work. See the key-type note at the top of this module for the
 -- two shapes that do not round-trip.
+--
+-- Cost: O(n log n): the keys are sorted on every call.
 toList : Dict k v -> List ( k, v )
 toList =
     Ffi.kernel "Dict_toList"
@@ -130,6 +152,8 @@ toList =
 
 -- | `fromList pairs` — build a dictionary from a list of tuples.
 -- Later pairs overwrite earlier ones with the same key.
+--
+-- Cost: O(n): built in one pass (a later pair with the same key wins).
 fromList : List ( k, v ) -> Dict k v
 fromList =
     Ffi.kernel "Dict_fromList"
@@ -139,6 +163,8 @@ fromList =
 -- | `map fn d` — apply `fn k v` to every entry, building a new
 -- dictionary with the transformed values. The keys are unchanged;
 -- `fn` receives each one as its Sky type.
+--
+-- Cost: O(n log n): the keys are sorted on every call.
 map : (k -> v -> w) -> Dict k v -> Dict k w
 map =
     Ffi.kernel "Dict_map"
@@ -146,6 +172,8 @@ map =
 
 -- | `foldl fn acc d` — accumulate over every entry, in ascending key
 -- order. `fn` receives each key as its Sky type.
+--
+-- Cost: O(n log n): the keys are sorted on every call.
 foldl : (k -> v -> a -> a) -> a -> Dict k v -> a
 foldl =
     Ffi.kernel "Dict_foldl"
@@ -153,6 +181,8 @@ foldl =
 
 -- | `union a b` — merge two dictionaries. `a`'s bindings win on
 -- key collision.
+--
+-- Cost: O(m log n): the smaller dict is inserted into the larger.
 union : Dict k v -> Dict k v -> Dict k v
 union =
     Ffi.kernel "Dict_union"

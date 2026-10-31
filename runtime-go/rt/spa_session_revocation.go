@@ -49,10 +49,20 @@ import (
 	"time"
 )
 
-// spaSessionLifetimeSeconds is the signed session token's lifetime (its `exp`).
-// It was the literal `2592000` in the generated `signedResponse_` before the
-// signing moved here.
-const spaSessionLifetimeSeconds = 30 * 24 * 60 * 60
+// spaDefaultSessionLifetime is the signed session token's lifetime (its `exp`)
+// when nothing sets one. It was the literal `2592000` in the generated
+// `signedResponse_` before the signing moved here.
+const spaDefaultSessionLifetime = 30 * 24 * time.Hour
+
+// spaSessionLifetime is the signed session token's lifetime, and the Max-Age
+// of the `sky_spa` cookie that carries it, so the cookie and the token end
+// together. Resolved through the one precedence (configLayers): the operator's
+// SKY_SPA_SESSION_LIFETIME, then `App.withSessionLifetime` (applied at boot as
+// a server setting, Spa_applyServerSettings), then 30 days. A value is a Go
+// duration (`720h`) or whole seconds; one that does not parse falls through.
+func spaSessionLifetime() time.Duration {
+	return parseTTL(configLayers("SPA_SESSION_LIFETIME", ""), spaDefaultSessionLifetime)
+}
 
 // spaRevocationKeyPrefix namespaces a Spa sign-out record in the session
 // store's alias table, so it can never be read as a Sky.Live session alias.
@@ -376,7 +386,7 @@ func Spa_signSession(secret, prevToken, claims any) any {
 	now := time.Now().Unix()
 	m["sid"] = sid
 	m["iat"] = now
-	m["exp"] = now + spaSessionLifetimeSeconds
+	m["exp"] = now + int64(spaSessionLifetime().Seconds())
 	return signHS256Claims(keyBytes, m, "spaSignSession")
 }
 

@@ -292,6 +292,10 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
     // once the FFI surface lands (doc 09).
     let mut seen_name_errors: HashSet<(Option<String>, String)> = HashSet::new();
     let mut defs: BTreeMap<DefId, DefEntry> = BTreeMap::new();
+    let entry_prefix = module_prefix(db.module_name(entry));
+    let mut roots: Vec<DefId> = Vec::new();
+    let mut candidates: BTreeMap<DefId, (ModuleId, Vec<DefId>)> = BTreeMap::new();
+    let mut resolved_by_module = HashMap::new();
     for m in db.module_ids() {
         let mname = db.module_name(m).to_string();
         let resolved = db.resolve(m);
@@ -315,21 +319,60 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         }
         for td in &resolved.top_defs {
             if let Some(body) = resolved.bodies.get(&td.def) {
-                let types = typer.body_types(m, td.def, body);
-                let sig = typer.value_sig(td.def).map(|s| s.ty.clone());
-                defs.insert(
-                    td.def,
-                    DefEntry {
-                        module_name: mname.clone(),
-                        name: td.name.as_str().to_string(),
-                        body: body.clone(),
-                        types,
-                        sig,
-                    },
-                );
+                let name = td.name.as_str();
+                let is_root = ((name == "main" || name == "config")
+                    && module_prefix(&mname) == entry_prefix)
+                    || cfg
+                        .device_slots
+                        .iter()
+                        .any(|(sm, sn, _)| sm == &mname && sn == name);
+                if is_root {
+                    roots.push(td.def);
+                }
+                candidates.insert(td.def, (m, body_def_refs(body)));
             }
         }
+        resolved_by_module.insert(m, resolved);
     }
+    // Only the defs the program can reach are typed and lowered. Every interned
+    // module is resolved above (its name errors must still be reported), but the
+    // per-def body inference (`Typer::body_types`, the dominant cost) runs only
+    // over the reference closure of the roots `main`, `config` and the device
+    // slots. The whole stdlib is interned whether a program uses it or not, so
+    // typing every stdlib body made each build's memory grow with the size of
+    // the stdlib rather than with the program: the Std.Db.Store additions alone
+    // raised the warm-build peak RSS by about 15% (the build-perf budget). The
+    // closure follows every `Res::Def` in a body, lambdas and let-bodies
+    // included, so it is a superset of what the DCE work-list below lowers, and
+    // every whole-program pass that reads `defs` (the parameter/result types,
+    // the effect fixpoint) only ever looks a reachable def up.
+    let reachable = def_reference_closure(&roots, &candidates);
+    for (d, (m, _)) in &candidates {
+        if !reachable.contains(d) {
+            continue;
+        }
+        let resolved = &resolved_by_module[m];
+        let (Some(body), Some(td)) = (
+            resolved.bodies.get(d),
+            resolved.top_defs.iter().find(|td| td.def == *d),
+        ) else {
+            continue;
+        };
+        crate::BODIES_TYPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let types = typer.body_types(*m, *d, body);
+        let sig = typer.value_sig(*d).map(|s| s.ty.clone());
+        defs.insert(
+            *d,
+            DefEntry {
+                module_name: db.module_name(*m).to_string(),
+                name: td.name.as_str().to_string(),
+                body: body.clone(),
+                types,
+                sig,
+            },
+        );
+    }
+    drop(resolved_by_module);
 
     // ---- collect type declarations + the nominal name map ----
     let (nominal, nominal_by_module, type_decls) = collect_types(db);
@@ -1108,6 +1151,43 @@ fn prologue_init(cfg: &LowerConfig) -> GoItem {
 
 // ---- module / name mangling (doc 08 §5) --------------------------------
 
+/// Every top-level def a body names: a `Res::Def` in a variable or as an
+/// operator's resolved callee, anywhere in the body's expression arena (lambda
+/// and let-bound bodies live in the same arena).
+fn body_def_refs(body: &Body) -> Vec<DefId> {
+    let mut out = Vec::new();
+    for (_, expr) in body.exprs.iter() {
+        match expr {
+            Expr::Var(Res::Def(d)) => out.push(*d),
+            Expr::Binop {
+                res: Res::Def(d), ..
+            } => out.push(*d),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The defs reachable from `roots` along [`body_def_refs`] edges. A reference
+/// to a def with no body (not in `edges`) is kept: lowering looks it up and
+/// skips it, as before.
+fn def_reference_closure(
+    roots: &[DefId],
+    edges: &BTreeMap<DefId, (ModuleId, Vec<DefId>)>,
+) -> HashSet<DefId> {
+    let mut seen: HashSet<DefId> = HashSet::new();
+    let mut work: Vec<DefId> = roots.to_vec();
+    while let Some(d) = work.pop() {
+        if !seen.insert(d) {
+            continue;
+        }
+        if let Some((_, refs)) = edges.get(&d) {
+            work.extend(refs.iter().copied().filter(|r| !seen.contains(r)));
+        }
+    }
+    seen
+}
+
 fn module_prefix(module: &str) -> String {
     module.replace('.', "_")
 }
@@ -1178,6 +1258,10 @@ fn is_store_read_kernel(module: &str, func: &str) -> bool {
             func,
             "query"
                 | "queryObjects"
+                // v0.29.0: the Std.Db.Store read kernel (every `toList` /
+                // `all` / `findBy` / `count` / `toPairs` / `selectRaw`).
+                // Without it a memoised `Store.all` read stopped warning.
+                | "queryObjectGroups"
                 | "queryDecode"
                 | "getById"
                 | "getByIdDecode"
@@ -1246,7 +1330,7 @@ fn is_stale_data_result(ty: &Ty) -> bool {
 /// effect must not propagate to a caller. NARROWER than `is_stale_data_result`'s
 /// suppression set: it deliberately does NOT include `Unit` / `Result _ ()` /
 /// functions, which are legitimate propagation CONDUITS in a read chain
-/// (`loadPosts → Store.toList → Db_queryObjects`) and must stay transparent.
+/// (`loadPosts → Store.toList → Db_queryObjectGroups`) and must stay transparent.
 fn is_config_or_handle_result(ty: &Ty) -> bool {
     let name = match ty {
         Ty::App(n, _) => n.as_str(),
@@ -3158,9 +3242,7 @@ impl<'a> Ctx<'a> {
             }
             // Dependency-order the defs (Go declare-before-use vs Sky's out-of-order
             // forward references — `let a = b + 1; b = 5`).
-            for &i in &self.order_let_defs(&defs) {
-                self.lower_let_def(&defs[i], out);
-            }
+            self.lower_let_defs(&defs, out);
             self.lower_main_body(body, out);
         } else {
             let ty = self.types.expr(e);
@@ -3740,7 +3822,12 @@ impl<'a> Ctx<'a> {
         // would copy the whole accumulator on every element — O(n·k) where the
         // reflect adapter hands the same map through in O(1). Never trade an
         // O(1) reflect box for an O(n) copy: leave those to the runtime coerce.
-        let rebuilds = |t: &GoTy| matches!(t, GoTy::Slice(_) | GoTy::Map(_, _));
+        // A `Dict` (`GoTy::Map`) is NOT in this set any more: since v0.29.0 a
+        // Dict is the persistent `rt.SkyDict[V]`, and `rt.AsMapT[V]` passes a
+        // `SkyDict[V]` through in O(1) (the erased kernels keep a Dict's value
+        // type), so the eta's narrowing costs what the reflect adapter's
+        // `Coerce` did, without the per-call `reflect.Call`.
+        let rebuilds = |t: &GoTy| matches!(t, GoTy::Slice(_));
         if from_ps
             .iter()
             .zip(to_ps.iter())
@@ -4406,6 +4493,24 @@ impl<'a> Ctx<'a> {
     /// `rt.AsMapT` REBUILDS a `map[string]V`, which is a different (invariant) Go
     /// map type, so there is no sound narrowing available.
     fn nullary_kernel_value(&mut self, go: &str, actual: &GoTy, expected: &GoTy) -> GoExpr {
+        // A nullary kernel whose typed twin returns the value's own Go type
+        // (`Regex.never` → `rt.Regex_neverT()`, a `Sky_Core_Regex_Regex`):
+        // called at that type, so a typed slot narrows nothing (doc 14 R5,
+        // lever §5.3; §1: the twin's Go result is fixed in `rt` and equals
+        // the node's own lowered type).
+        if go == "rt.Regex_never" && *actual == GoTy::Named(REGEX_GO.into(), vec![]) {
+            let fn_ty = GoTy::Func(vec![], Box::new(actual.clone()));
+            return GoExpr::new(
+                GoExprKind::Call(
+                    Box::new(GoExpr::new(
+                        GoExprKind::Ident("rt.Regex_neverT".into()),
+                        fn_ty,
+                    )),
+                    vec![],
+                ),
+                actual.clone(),
+            );
+        }
         let any_key_map = matches!(actual, GoTy::Map(k, _) if **k == GoTy::Any);
         // A concrete-key map slot narrowed via `rt.AsMapT` even when the node was
         // only being widened — preserved verbatim so its emission does not move.
@@ -4476,6 +4581,50 @@ impl<'a> Ctx<'a> {
         let GoTy::Func(params, ret) = expected else {
             return None;
         };
+        // The `(::)` value in a slot of shape `func(T, []T) []T`
+        // (`List.foldl (::) [] xs`): a closure over the typed twin
+        // `rt.List_consT[T]`, the same entry point as the `::` operator, so
+        // the value form is amortised O(1) too (doc 14 R5, lever §5.1 at the
+        // slot's shape + §5.3). An all-`any` slot keeps the bare symbol.
+        if go == "rt.List_cons" {
+            if let ([h, GoTy::Slice(t)], GoTy::Slice(rt_)) = (params.as_slice(), &**ret) {
+                if h == &**t && t == rt_ && *h != GoTy::Any {
+                    let (p0, p1) = (
+                        format!("_p{}", self.local_counter),
+                        format!("_p{}", self.local_counter + 1),
+                    );
+                    self.local_counter += 2;
+                    let call = GoExpr::new(
+                        GoExprKind::GenericCall(
+                            "rt.List_consT".to_string(),
+                            vec![h.clone()],
+                            vec![
+                                GoExpr::new(GoExprKind::Ident(p0.clone()), h.clone()),
+                                GoExpr::new(GoExprKind::Ident(p1.clone()), params[1].clone()),
+                            ],
+                        ),
+                        (**ret).clone(),
+                    );
+                    return Some(GoExpr::new(
+                        GoExprKind::FuncLit(
+                            vec![
+                                GoParam {
+                                    name: p0,
+                                    ty: h.clone(),
+                                },
+                                GoParam {
+                                    name: p1,
+                                    ty: params[1].clone(),
+                                },
+                            ],
+                            (**ret).clone(),
+                            vec![GoStmt::Return(Some(call))],
+                        ),
+                        expected.clone(),
+                    ));
+                }
+            }
+        }
         let arity = self.kernel_runtime_arity(go)?;
         if arity == 0 {
             return None;
@@ -5728,13 +5877,7 @@ impl<'a> Ctx<'a> {
             // The type arguments name concrete Go types; register them so their
             // decls survive the type-reachability BFS even if this is the only
             // site that mentions them.
-            for t in &targs {
-                let mut names = Vec::new();
-                collect_named(t, &mut names);
-                for n in names {
-                    self.used_types.insert(n);
-                }
-            }
+            self.register_used(&targs);
             return GoExpr::new(GoExprKind::GenericCall(sym.to_string(), targs, largs), ret);
         }
         GoExpr::new(GoExprKind::Call(Box::new(c), largs), ret_goty)
@@ -6238,6 +6381,26 @@ impl<'a> Ctx<'a> {
                 return self.list_hof_typed(hof, go, f, xs, actual);
             }
         }
+        // `List.map2` / `List.map3`, fully applied: the typed one-pass twin
+        // when every list and the callback are provable (`list_map_n_typed`).
+        let map_n = match go {
+            "rt.List_map2" => Some(("rt.List_map2T", 3)),
+            "rt.List_map3" => Some(("rt.List_map3T", 4)),
+            _ => None,
+        };
+        if let Some((typed_symbol, n)) = map_n {
+            if args.len() == n {
+                // Same proof rules as `List.map` (`list_hof_typed`): the callback
+                // and the lists are lowered at `any` and the typed twin is used
+                // only when every Go type is proven.
+                let f = self.lower_expr(args[0], &GoTy::Any);
+                let lists: Vec<GoExpr> = args[1..]
+                    .iter()
+                    .map(|a| self.lower_expr(*a, &GoTy::Any))
+                    .collect();
+                return self.list_map_n_typed(go, typed_symbol, f, lists, actual);
+            }
+        }
         // `toFloat` over a proven Go `int` goes to its typed twin
         // `rt.Basics_toFloatT(int) float64`, so the call carries no `any` box
         // and no R5 return narrowing. Doc 14: origin R5 (the kernel return),
@@ -6265,6 +6428,161 @@ impl<'a> Ctx<'a> {
         // A UNARY list kernel that only needs the list's LENGTH, over a proven
         // slice, goes to its typed twin. See `list_unary_prim_twin` for why the
         // table stops where it does.
+        // `List.reverse` over a proven slice: the typed twin
+        // `rt.List_reverseT[T]` (one fresh `[]T`), instead of the erased
+        // `rt.List_reverseAny`, which reflect-boxes every element into a
+        // `[]any` that the slot then narrows back element by element. Doc 14
+        // R5, lever §5.3; measured by `xtask perf-gate` (cons-reverse).
+        if args.len() == 1 && go == "rt.List_reverseAny" {
+            let xs = Self::kernel_to_kernel(self.lower_expr(args[0], &GoTy::Any));
+            if let GoTy::Slice(e) = &xs.ty {
+                if provable(e) {
+                    let elem = (**e).clone();
+                    let ret = xs.ty.clone();
+                    let call = GoExpr::new(
+                        GoExprKind::GenericCall(
+                            "rt.List_reverseT".to_string(),
+                            vec![elem],
+                            vec![xs],
+                        ),
+                        ret,
+                    );
+                    return self.coerce_if_needed(call, actual);
+                }
+            }
+            // Unproven: exactly the general path below.
+            let wxs = self.widen(xs);
+            return self.kernel_call_lowered(go, vec![wxs], actual);
+        }
+        // `Dict.get` / `Dict.member` / `Dict.remove` / `Dict.insert` over a
+        // typed Dict (`rt.SkyDict[V]`, `GoTy::Map(Str, V)`): a typed twin, so
+        // the Dict is never boxed into `any` and the result needs no
+        // `rt.AsMapT` narrowing. A key whose Go type is `int` (Sky `Int`) or
+        // `string` (Sky `String`) takes the `…IntT` / `…StrT` twin, which
+        // encodes the key without boxing it (an Int key into a stack buffer,
+        // so a lookup allocates nothing); any other key stays erased for the
+        // probe (`…ProbeT`), which needs its runtime kind. Doc 14 R5 (the
+        // kernel return, and the `any(d)` widening into it), lever §5.3
+        // (typed kernel entry point); floor check (§1): the Dict's Go type is
+        // the argument's own lowered `rt.SkyDict[V]`, the key's is its lowered
+        // `int` / `string`, and the result is `SkyMaybe[V]` / `bool` /
+        // `rt.SkyDict[V]`, all known at emit time. Verified by `xtask
+        // perf-gate` (dict-counts: allocations per element) and
+        // `lower/tests/dict_probe_typed.rs`.
+        let dict_op = match go {
+            "rt.Dict_get" if args.len() == 2 => Some("get"),
+            "rt.Dict_member" if args.len() == 2 => Some("member"),
+            "rt.Dict_remove" if args.len() == 2 => Some("remove"),
+            "rt.Dict_insert" if args.len() == 3 => Some("insert"),
+            _ => None,
+        };
+        if let Some(op) = dict_op {
+            let k = self.lower_expr(args[0], &GoTy::Any);
+            let d_arg = if op == "insert" { args[2] } else { args[1] };
+            // A dict that is itself a direct kernel result stays erased (its R5
+            // narrowing is dropped, `kernel_to_kernel`), so it takes the erased
+            // kernel exactly as before rather than a narrowing into the twin.
+            let d = Self::kernel_to_kernel(self.lower_expr(d_arg, &GoTy::Any));
+            if let GoTy::Map(kt, v) = &d.ty {
+                if **kt == GoTy::Bare(Prim::Str) {
+                    let v = (**v).clone();
+                    let (key_kind, key) = match &k.ty {
+                        GoTy::Bare(Prim::Int) => ("Int", k),
+                        GoTy::Bare(Prim::Str) => ("Str", k),
+                        _ => ("Probe", self.widen(Self::kernel_to_kernel(k))),
+                    };
+                    let (base, ret) = match op {
+                        "get" => ("get", GoTy::Named("rt.SkyMaybe".into(), vec![v.clone()])),
+                        "member" => ("member", GoTy::Bare(Prim::Bool)),
+                        "remove" => ("remove", d.ty.clone()),
+                        _ => ("insert", d.ty.clone()),
+                    };
+                    let mut call_args = vec![key];
+                    if op == "insert" {
+                        let val = self.lower_expr(args[1], &v);
+                        call_args.push(self.coerce_if_needed(val, &v));
+                    }
+                    call_args.push(d);
+                    let sym = format!("rt.Dict_{base}{key_kind}T");
+                    let call = GoExpr::new(GoExprKind::GenericCall(sym, vec![v], call_args), ret);
+                    return self.coerce_if_needed(call, actual);
+                }
+            }
+            let mut largs = vec![self.widen(Self::kernel_to_kernel(k))];
+            if op == "insert" {
+                let val = self.lower_expr(args[1], &GoTy::Any);
+                largs.push(self.widen(val));
+            }
+            largs.push(self.widen(d));
+            return self.kernel_call_lowered(go, largs, actual);
+        }
+        // `Dict.size d` / `Dict.isEmpty d` over a typed `map[string]V`: `len`
+        // through `rt.Dict_sizeT[V]` / `Dict_isEmptyT[V]`, O(1), where the
+        // erased kernels reflect-copy a typed map first. Same lever and proof
+        // as `get` / `member` above.
+        if args.len() == 1 && (go == "rt.Dict_size" || go == "rt.Dict_isEmpty") {
+            let d = Self::kernel_to_kernel(self.lower_expr(args[0], &GoTy::Any));
+            if let GoTy::Map(kt, v) = &d.ty {
+                if **kt == GoTy::Bare(Prim::Str) {
+                    let v = (**v).clone();
+                    let (sym, ret) = if go == "rt.Dict_size" {
+                        ("rt.Dict_sizeT", GoTy::Bare(Prim::Int))
+                    } else {
+                        ("rt.Dict_isEmptyT", GoTy::Bare(Prim::Bool))
+                    };
+                    let call = GoExpr::new(
+                        GoExprKind::GenericCall(sym.to_string(), vec![v], vec![d]),
+                        ret,
+                    );
+                    return self.coerce_if_needed(call, actual);
+                }
+            }
+            let wd = self.widen(d);
+            return self.kernel_call_lowered(go, vec![wd], actual);
+        }
+        // `Result.withDefault d r` (the Prelude kernel path) over a proven
+        // `rt.SkyResult[E, A]`: the typed generic `rt.Result_withDefaultT[E, A]`
+        // returns `A`, where the erased kernel returns `any` and the slot
+        // narrows it back. Same plan and proof as the `Sky.Core.Result` def
+        // path (`sky_list_hof_plan`). Unproven: the erased call, as before.
+        if args.len() == 2 && go == "rt.Result_withDefault" {
+            if let Some((targs, slots, ret)) = self.result_with_default_plan(args) {
+                let d = self.lower_expr(args[0], &slots[0]);
+                let r = self.lower_expr(args[1], &slots[1]);
+                self.register_used(&targs);
+                let call = GoExpr::new(
+                    GoExprKind::GenericCall("rt.Result_withDefaultT".into(), targs, vec![d, r]),
+                    ret,
+                );
+                return self.coerce_if_needed(call, actual);
+            }
+        }
+        // `List.take k` / `List.drop k` over a proven Int and slice: the typed
+        // twins `rt.List_takeT[T]` / `List_dropT[T]` are a re-slice, O(1),
+        // where the erased kernels reflect-widen the whole list and the slot
+        // narrows it back, O(n). Same lever and proof as `reverse` above.
+        if args.len() == 2 && (go == "rt.List_take" || go == "rt.List_drop") {
+            let k = self.lower_expr(args[0], &GoTy::Any);
+            let xs = Self::kernel_to_kernel(self.lower_expr(args[1], &GoTy::Any));
+            if let (GoTy::Bare(Prim::Int), GoTy::Slice(e)) = (&k.ty, &xs.ty) {
+                if provable(e) {
+                    let elem = (**e).clone();
+                    let ret = xs.ty.clone();
+                    let typed = if go == "rt.List_take" {
+                        "rt.List_takeT"
+                    } else {
+                        "rt.List_dropT"
+                    };
+                    let call = GoExpr::new(
+                        GoExprKind::GenericCall(typed.to_string(), vec![elem], vec![k, xs]),
+                        ret,
+                    );
+                    return self.coerce_if_needed(call, actual);
+                }
+            }
+            let largs = vec![self.widen(Self::kernel_to_kernel(k)), self.widen(xs)];
+            return self.kernel_call_lowered(go, largs, actual);
+        }
         if args.len() == 1 {
             if let Some((typed, ret)) = list_unary_prim_twin(go) {
                 let xs = self.lower_expr(args[0], &GoTy::Any);
@@ -6310,8 +6628,18 @@ impl<'a> Ctx<'a> {
                 .or(Some(t)),
             other => other,
         };
+        // A twin whose result is a NOMINAL container (`Regex.fromString`'s
+        // `rt.SkyResult[Sky_Core_Error_Error, Sky_Core_Regex_Regex]`) is used
+        // only where the call's own type is exactly that, or `any`: anything
+        // else would trade the erased kernel's one narrowing for a container
+        // rebuild between two typed Results.
+        let ret_fits = |twin: &TypedTwin| {
+            !matches!(&twin.ret, GoTy::Named(n, _) if n == "rt.SkyResult")
+                || twin.ret == *actual
+                || *actual == GoTy::Any
+        };
         if let Some(twin) = chosen {
-            if fits(&twin) {
+            if fits(&twin) && ret_fits(&twin) {
                 let targs: Vec<GoExpr> = twin
                     .params
                     .iter()
@@ -6622,7 +6950,9 @@ impl<'a> Ctx<'a> {
         if matches!(&self.body.exprs[cb], Expr::Var(Res::Def(_))) {
             return true;
         }
-        let rebuilds = |t: &GoTy| matches!(t, GoTy::Slice(_) | GoTy::Map(_, _));
+        // A Dict narrows in O(1) (`rt.AsMapT` of a `SkyDict[V]`), so only a
+        // slice rebuilds; see `func_shape_eta_applies`.
+        let rebuilds = |t: &GoTy| matches!(t, GoTy::Slice(_));
         !ps.iter().any(rebuilds) && !rebuilds(r)
     }
 
@@ -6664,6 +6994,11 @@ impl<'a> Ctx<'a> {
             return None;
         }
         match sym {
+            // withDefault d r — see `result_with_default_plan`.
+            "rt.Result_withDefaultT" => {
+                let (targs, slots, ret) = self.result_with_default_plan(args)?;
+                Some((sym, targs, slots, ret))
+            }
             // foldl fn acc list — Sky applies `fn x acc`, ELEMENT first. The
             // runtime twin matches that order (see `List_foldlElemFirstT`), so
             // the callback needs no permuting wrapper.
@@ -6710,6 +7045,58 @@ impl<'a> Ctx<'a> {
                 ))
             }
             _ => None,
+        }
+    }
+
+    /// `Result.withDefault d r` whose result is a proven `rt.SkyResult[E, A]`:
+    /// the typed generic `rt.Result_withDefaultT[E, A]` (`rt.go`), with `d`
+    /// lowered at `A` and `r` at `rt.SkyResult[E, A]`. Shared by the
+    /// `Sky.Core.Result` def path (`SKY_LIST_HOF_TWINS`) and the Prelude
+    /// kernel path (`kernel_call`).
+    ///
+    /// Doc 14: origin R12 (the erased polymorphic def returns `any`, so the
+    /// CALLER narrows its result, surfacing as R1) and R5 on the kernel path
+    /// (`rt.Result_withDefault` returns `any`). Lever §5.3, a typed entry
+    /// point. Floor check (§1): `E` and `A` are read off the Go type the
+    /// Result argument lowers to, and `provable` refuses `any`, a type
+    /// parameter and an anonymous struct, so both shapes are known at emit
+    /// time. The erased path narrowed the RESULT (one `rt.Coerce[A]`) and
+    /// rebuilt a typed Result as `rt.SkyResult[any, any]`; the typed path
+    /// does neither. Where `d` does not already lower to `A` it is narrowed
+    /// at its own site instead, one narrowing for one, never more. A func `A`
+    /// keeps the erased call: a func default would go through the eta lever,
+    /// which this does not need to decide.
+    fn result_with_default_plan(
+        &mut self,
+        args: &[ExprId],
+    ) -> Option<(Vec<GoTy>, Vec<GoTy>, GoTy)> {
+        if args.len() != 2 {
+            return None;
+        }
+        let r = self.probe_goty(args[1]);
+        let GoTy::Named(n, ta) = &r else {
+            return None;
+        };
+        if n != "rt.SkyResult" || ta.len() != 2 {
+            return None;
+        }
+        let (e, a) = (ta[0].clone(), ta[1].clone());
+        if !provable(&e) || !provable(&a) || matches!(a, GoTy::Func(..)) {
+            return None;
+        }
+        Some((vec![e, a.clone()], vec![a.clone(), r.clone()], a))
+    }
+
+    /// Keep the declarations of the named types in `targs` past the
+    /// type-reachability walk, for a generic call that may be the only site
+    /// naming them.
+    fn register_used(&mut self, targs: &[GoTy]) {
+        for t in targs {
+            let mut names = Vec::new();
+            collect_named(t, &mut names);
+            for n in names {
+                self.used_types.insert(n);
+            }
         }
     }
 
@@ -6862,6 +7249,74 @@ impl<'a> Ctx<'a> {
         let call = GoExpr::new(
             GoExprKind::GenericCall(hof.typed_symbol().to_string(), targs, vec![typed_f, xs]),
             out,
+        );
+        self.coerce_if_needed(call, actual)
+    }
+
+    /// `List.map2` / `List.map3` at a call site whose list element types and
+    /// callback shape are all statically known: the typed one-pass twin
+    /// `rt.List_map2T[A, B, C](fn func(A, B) C, xs []A, ys []B) []C` (and
+    /// `List_map3T`), so no element is boxed through `any` and the callback is
+    /// called directly, not through `SkyCall`. The same proof rules as
+    /// [`Self::list_hof_typed`]'s `Map` arm, one element type per list; any
+    /// unproven piece keeps the erased `rt.List_map2` call, byte-identical.
+    ///
+    /// Doc 14: origin R1 (the HOF callback slot) and R5 (the erased kernel's
+    /// `any` return); lever §5.3 (a typed kernel entry point). Floor check
+    /// (§1): every slice element type, the callback's Go shape and the result
+    /// element are known at emit time, or the site is left erased.
+    fn list_map_n_typed(
+        &mut self,
+        go: &str,
+        typed_symbol: &str,
+        f: GoExpr,
+        lists: Vec<GoExpr>,
+        actual: &GoTy,
+    ) -> GoExpr {
+        let erased = |s: &mut Self, f: GoExpr, lists: Vec<GoExpr>| {
+            let mut largs = vec![s.widen(f)];
+            for l in lists {
+                largs.push(s.widen(l));
+            }
+            s.kernel_call_lowered(go, largs, actual)
+        };
+        let mut elems: Vec<GoTy> = Vec::with_capacity(lists.len());
+        for l in &lists {
+            match l.ty.clone().into_slice() {
+                Ok(e) if provable(&e) => elems.push(e),
+                _ => return erased(self, f, lists),
+            }
+        }
+        let Ok((f_ps, f_r)) = f.ty.clone().into_func() else {
+            return erased(self, f, lists);
+        };
+        if f_ps.len() != lists.len() || !provable(&f_r) {
+            return erased(self, f, lists);
+        }
+        // A kernel referenced as a value types as its inferred Sky shape, not
+        // as the `any`-based runtime symbol it emits (see `list_hof_typed`).
+        if matches!(&f.kind, GoExprKind::Ident(n) if n.starts_with("rt.") || n.starts_with("skyffi."))
+        {
+            return erased(self, f, lists);
+        }
+        let want_cb = GoTy::Func(elems.clone(), Box::new(f_r.clone()));
+        let typed_f = if f.ty == want_cb {
+            f.clone()
+        } else if Self::func_shape_eta_applies(&f, &want_cb) {
+            match self.func_shape_eta(&f, &want_cb) {
+                Some(e) if e.ty == want_cb => e,
+                _ => return erased(self, f, lists),
+            }
+        } else {
+            return erased(self, f, lists);
+        };
+        let mut targs = elems;
+        targs.push(f_r.clone());
+        let mut cargs = vec![typed_f];
+        cargs.extend(lists);
+        let call = GoExpr::new(
+            GoExprKind::GenericCall(typed_symbol.to_string(), targs, cargs),
+            GoTy::Slice(Box::new(f_r)),
         );
         self.coerce_if_needed(call, actual)
     }
@@ -7130,6 +7585,52 @@ impl<'a> Ctx<'a> {
                 let elem = actual.elem_ty();
                 let l = self.lower_expr(lhs, &elem);
                 let r = self.lower_expr(rhs, actual);
+                // A tail that lowers to a Go slice `[]T` conses through the
+                // typed twin `rt.List_consT[T]`, typed `[]T`, with no widen of
+                // the tail and no `rt.AsListT` narrow of the result: amortised
+                // O(1) on the cons blocks of `runtime-go/rt/list_block.go`.
+                //
+                // Doc 14: origin R5 (the erased kernel return `any` narrowed
+                // back with `rt.AsListT[T]` by `coerce_if_needed`, R1), lever
+                // §5.3 (a typed kernel entry point). Floor check (§1): the
+                // tail's Go type is `r.ty`, the slot's is `actual`, both known
+                // at emit time; the twin is used only when they are the same
+                // `[]T` (or the slot is `any`, which only widens). `T` may be
+                // `any`, a struct or a type parameter: Go's type checker
+                // decides the claim, so a wrong one is a `go build` error,
+                // never a silent miscompile (§5.3, first property). The head
+                // is used as it is when it lowers to `T`, widened when `T` is
+                // `any`, and narrowed by one O(1) element coerce when it is an
+                // erased `any` under a provable `T`; any other head shape keeps
+                // the erased call. Verified by `xtask perf-gate`
+                // (`erasedTypedCons` must be 0) and `coerce-floor` (narrow goes
+                // down). The erased `rt.List_cons` stays for a tail that is
+                // genuinely erased.
+                if let GoTy::Slice(e) = &r.ty {
+                    let t = (**e).clone();
+                    let out_ty = r.ty.clone();
+                    let slot_ok = *actual == r.ty || *actual == GoTy::Any;
+                    let head = if l.ty == t {
+                        Some(l.clone())
+                    } else if t == GoTy::Any {
+                        Some(self.widen(l.clone()))
+                    } else if l.ty == GoTy::Any && provable(&t) {
+                        Some(self.coerce_if_needed(l.clone(), &t))
+                    } else {
+                        None
+                    };
+                    if let (true, Some(head)) = (slot_ok, head) {
+                        let call = GoExpr::new(
+                            GoExprKind::GenericCall(
+                                "rt.List_consT".to_string(),
+                                vec![t],
+                                vec![head, r],
+                            ),
+                            out_ty,
+                        );
+                        return self.coerce_if_needed(call, actual);
+                    }
+                }
                 // x :: xs  →  rt.List_cons(x, xs). `rt.List_cons` returns Go
                 // `any`, so the node's type is `Any`; the enclosing slot
                 // (`lower_expr`) coerces to the expected `[]T` via `rt.AsListT`.
@@ -7561,9 +8062,10 @@ impl<'a> Ctx<'a> {
                             let _ = self.fresh_local_named(*lid, Some(bn.as_str()));
                         }
                     }
-                    for d in &defs {
-                        self.lower_let_def(d, out);
-                    }
+                    // Same dependency order + mutual-recursion handling as
+                    // every other `let` (a forward reference in a tail `let`
+                    // was emitted in source order here before).
+                    self.lower_let_defs(&defs, out);
                     self.lower_tail_stmts(body, ret, out);
                 }
                 Expr::Case {
@@ -7712,15 +8214,24 @@ impl<'a> Ctx<'a> {
         })
     }
 
-    /// Return the emission order of a `let` group's defs so each def is emitted
-    /// AFTER every sibling whose binder it references (Kahn topo-sort). A cycle
-    /// (mutual value recursion — ill-typed; or mutually-recursive local functions,
-    /// whose names are pre-registered so closures still resolve) leaves the
-    /// remaining defs in source order.
-    fn order_let_defs(&self, defs: &[hir::LocalDef]) -> Vec<usize> {
+    /// Return the emission order of a `let` group's defs as dependency
+    /// GROUPS, so each group is emitted AFTER every sibling group whose binders
+    /// it references. Go requires declare-before-use; Sky's `let` is
+    /// forward-referencing (doc 05 §4, "`let` is forward-referencing").
+    ///
+    /// The acyclic part is a stable Kahn topo-sort (each pass emits, in source
+    /// order, every def whose deps are emitted), one def per group, so a `let`
+    /// with no cycle keeps its prior emission order byte for byte. What is left
+    /// after Kahn is every def on, or downstream of, a cycle: those are split
+    /// into strongly connected components (Tarjan) and emitted in dependency
+    /// order. A component of two or more defs is a MUTUALLY RECURSIVE group
+    /// (`follow n = … piece …; piece n = … follow …`), which
+    /// [`Self::lower_let_defs`] emits as `var` declarations first and closure
+    /// assignments after, so every closure can name every other.
+    fn order_let_defs(&self, defs: &[hir::LocalDef]) -> Vec<Vec<usize>> {
         let n = defs.len();
         if n <= 1 {
-            return (0..n).collect();
+            return (0..n).map(|i| vec![i]).collect();
         }
         // binder LocalId -> the def index that introduces it.
         let mut owner: HashMap<LocalId, usize> = HashMap::new();
@@ -7746,13 +8257,13 @@ impl<'a> Ctx<'a> {
         // all satisfied, scanning in source order so independent defs keep their
         // original order.
         let mut emitted = vec![false; n];
-        let mut order = Vec::with_capacity(n);
+        let mut order: Vec<Vec<usize>> = Vec::with_capacity(n);
         loop {
             let mut progressed = false;
             for i in 0..n {
                 if !emitted[i] && deps[i].iter().all(|&j| emitted[j]) {
                     emitted[i] = true;
-                    order.push(i);
+                    order.push(vec![i]);
                     progressed = true;
                 }
             }
@@ -7760,13 +8271,130 @@ impl<'a> Ctx<'a> {
                 break;
             }
         }
-        // Any defs left in a cycle: append in source order (prior behaviour).
-        for i in 0..n {
-            if !emitted[i] {
-                order.push(i);
+        if emitted.iter().all(|&e| e) {
+            return order;
+        }
+        // The rest: strongly connected components of the remaining defs,
+        // emitted dependencies first. Tarjan finishes a component only after
+        // every component it reaches, which is exactly deps-first order;
+        // starting the walks in source order keeps the result deterministic.
+        struct Tarjan<'a> {
+            deps: &'a [HashSet<usize>],
+            live: &'a [bool],
+            index: Vec<Option<usize>>,
+            low: Vec<usize>,
+            on_stack: Vec<bool>,
+            stack: Vec<usize>,
+            next: usize,
+            out: Vec<Vec<usize>>,
+        }
+        impl Tarjan<'_> {
+            fn visit(&mut self, v: usize) {
+                self.index[v] = Some(self.next);
+                self.low[v] = self.next;
+                self.next += 1;
+                self.stack.push(v);
+                self.on_stack[v] = true;
+                let mut ws: Vec<usize> = self.deps[v]
+                    .iter()
+                    .copied()
+                    .filter(|&w| self.live[w])
+                    .collect();
+                ws.sort_unstable();
+                for w in ws {
+                    match self.index[w] {
+                        None => {
+                            self.visit(w);
+                            self.low[v] = self.low[v].min(self.low[w]);
+                        }
+                        Some(iw) if self.on_stack[w] => {
+                            self.low[v] = self.low[v].min(iw);
+                        }
+                        Some(_) => {}
+                    }
+                }
+                if Some(self.low[v]) == self.index[v] {
+                    let mut comp = Vec::new();
+                    while let Some(w) = self.stack.pop() {
+                        self.on_stack[w] = false;
+                        comp.push(w);
+                        if w == v {
+                            break;
+                        }
+                    }
+                    comp.sort_unstable();
+                    self.out.push(comp);
+                }
             }
         }
+        let live: Vec<bool> = emitted.iter().map(|&e| !e).collect();
+        let mut t = Tarjan {
+            deps: &deps,
+            live: &live,
+            index: vec![None; n],
+            low: vec![0; n],
+            on_stack: vec![false; n],
+            stack: Vec::new(),
+            next: 0,
+            out: Vec::new(),
+        };
+        for i in 0..n {
+            if live[i] && t.index[i].is_none() {
+                t.visit(i);
+            }
+        }
+        order.extend(t.out);
         order
+    }
+
+    /// Lower a `let` group's defs into `out`, in [`Self::order_let_defs`]
+    /// order. The ONE place every `let` form (an expression `let`, a tail
+    /// `let`, `main`'s `let`) emits its bindings, so all three order forward
+    /// references and mutual recursion the same way.
+    ///
+    /// A singleton group goes through [`Self::lower_let_def`], which already
+    /// handles a SELF-recursive local function (`var f T; f = func…`, #162).
+    /// A group of two or more MUTUALLY recursive local functions declares every
+    /// member before assigning any: `var follow_1 func(int) int`, `var piece_2
+    /// func(int) int`, then `follow_1 = func…`, `piece_2 = func…`. Go's `:=`
+    /// would leave the later name undefined inside the earlier closure
+    /// (`undefined: piece_2`). Only parameterised functions qualify: a closure
+    /// does not run when it is assigned, so the order of the assignments is
+    /// free. A cycle through a plain VALUE (`a = f 1; f n = … a …`) has no
+    /// such freedom (the value would read its partner before it is set), so it
+    /// keeps the source-order emission.
+    fn lower_let_defs(&mut self, defs: &[hir::LocalDef], out: &mut Vec<GoStmt>) {
+        for group in self.order_let_defs(defs) {
+            let all_fns = group.len() > 1
+                && group
+                    .iter()
+                    .all(|&i| !defs[i].params.is_empty() && defs[i].binders.len() == 1);
+            if !all_fns {
+                for i in group {
+                    self.lower_let_def(&defs[i], out);
+                }
+                continue;
+            }
+            let mut assigns: Vec<(String, GoExpr)> = Vec::with_capacity(group.len());
+            for &i in &group {
+                let d = &defs[i];
+                let (bn, lid) = d.binders[0].clone();
+                let gname = self.fresh_local_named(lid, Some(bn.as_str()));
+                let lowered = self.lower_local_fn(&d.params, d.body);
+                self.local_tys.insert(lid, lowered.ty.clone());
+                assigns.push((gname, lowered));
+            }
+            for (gname, lowered) in &assigns {
+                out.push(GoStmt::VarDecl(gname.clone(), lowered.ty.clone()));
+            }
+            for (gname, lowered) in assigns {
+                out.push(GoStmt::Assign(gname.clone(), lowered));
+                out.push(GoStmt::Expr(GoExpr::new(
+                    GoExprKind::Ident(format!("_ = {gname}")),
+                    GoTy::Unit,
+                )));
+            }
+        }
     }
 
     fn lower_let_expr(&mut self, defs: &[hir::LocalDef], body: ExprId, actual: &GoTy) -> GoExpr {
@@ -7787,9 +8415,7 @@ impl<'a> Ctx<'a> {
         // Dependency-order the defs so a forward reference emits its target first
         // (Go requires declare-before-use; names are pre-registered above so a
         // genuine cycle still resolves by name).
-        for &i in &self.order_let_defs(&defs) {
-            self.lower_let_def(&defs[i], &mut stmts);
-        }
+        self.lower_let_defs(&defs, &mut stmts);
         let b = self.lower_expr(body, actual);
         stmts.push(GoStmt::Return(Some(b)));
         GoExpr::new(GoExprKind::Block(stmts), actual.clone())
@@ -9973,6 +10599,12 @@ fn call_rt(name: &str, args: Vec<GoExpr>, ty: GoTy) -> GoExpr {
 const SKY_LIST_HOF_TWINS: &[(&str, &str, &str, usize)] = &[
     ("Sky.Core.List", "foldl", "rt.List_foldlElemFirstT", 3),
     ("Sky.Core.List", "any", "rt.List_anyT", 2),
+    (
+        "Sky.Core.Result",
+        "withDefault",
+        "rt.Result_withDefaultT",
+        2,
+    ),
 ];
 
 /// The UNARY list kernels whose typed twin returns a Go PRIMITIVE, keyed by the
@@ -9994,10 +10626,9 @@ const SKY_LIST_HOF_TWINS: &[(&str, &str, &str, usize)] = &[
 /// `rt.SkyMaybe[any]`, a distinct Go instantiation needing a reflective
 /// `rt.MaybeCoerce` rebuild — it RELOCATES the cost rather than removing it,
 /// which is the same reason `head` is absent from `SKY_LIST_HOF_TWINS` above.
-/// `rt.List_reverseT` returns `[]A` and would qualify on that test, but it is a
-/// different measurement (it is O(n) work, not an O(1) length read) and doc 14
-/// §5.5's staged-rollout rule is that widening the table re-runs the
-/// measurement. It is deliberately left for a later tranche.
+/// `rt.List_reverseT` / `takeT` / `dropT` return `[]A` and qualify on that
+/// test; since v0.29.0 `kernel_call` routes them separately (with `::` and
+/// the `List.cons` value, doc 14 §5.3), measured by `xtask perf-gate`.
 ///
 /// Fields: `(typed runtime symbol, the twin's Go return type)`.
 /// A kernel whose runtime has a TYPED twin taking the same `any` arguments and
@@ -10017,6 +10648,20 @@ const SKY_LIST_HOF_TWINS: &[(&str, &str, &str, usize)] = &[
 /// A typed runtime twin: its symbol, one entry per parameter (`None` takes the
 /// argument widened to `any`, `Some(t)` takes it only when it lowers to exactly
 /// `t`), and its Go result type.
+/// The emitted Go name of `Sky.Core.Regex.Regex` (an unsealed stdlib ADT,
+/// `type Sky_Core_Regex_Regex = rt.SkyADT`).
+const REGEX_GO: &str = "Sky_Core_Regex_Regex";
+
+/// The emitted Go names of the Std.Image.Canvas handles (unsealed stdlib ADTs,
+/// `type Std_Image_Canvas_Canvas = rt.SkyADT`).
+const CANVAS_GO: &str = "Std_Image_Canvas_Canvas";
+const CANVAS_MASK_GO: &str = "Std_Image_Canvas_Mask";
+const CANVAS_FONT_GO: &str = "Std_Image_Canvas_Font";
+
+/// The emitted Go name of `Std.Xml.Node` (an unsealed stdlib ADT,
+/// `type Std_Xml_Node = rt.SkyADT`).
+const XML_NODE_GO: &str = "Std_Xml_Node";
+
 struct TypedTwin {
     symbol: &'static str,
     params: Vec<Option<GoTy>>,
@@ -10029,6 +10674,7 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
     let bool_ = || GoTy::Bare(Prim::Bool);
     let float = || GoTy::Bare(Prim::Float);
     let maybe = |t: GoTy| GoTy::Named("rt.SkyMaybe".into(), vec![t]);
+    let canvas = || GoTy::Named(CANVAS_GO.into(), vec![]);
     let twin = |symbol: &'static str, params: Vec<Option<GoTy>>, ret: GoTy| {
         Some(TypedTwin {
             symbol,
@@ -10050,7 +10696,52 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
             vec![Some(str_()), Some(str_()), Some(str_())],
             str_(),
         ),
-        ("rt.Regex_match", 2) => twin("rt.Regex_matchT", vec![Some(str_()), Some(str_())], bool_()),
+        // v0.29.0: a Regex is a compiled value (erased `any`), the subject a
+        // proven string.
+        ("rt.Regex_contains", 2) => twin("rt.Regex_containsT", vec![None, Some(str_())], bool_()),
+        ("rt.Regex_find", 2) => twin("rt.Regex_findT", vec![None, Some(str_())], maybe(str_())),
+        ("rt.Regex_findAll", 2) => twin(
+            "rt.Regex_findAllT",
+            vec![None, Some(str_())],
+            GoTy::Slice(Box::new(str_())),
+        ),
+        ("rt.Regex_split", 2) => twin(
+            "rt.Regex_splitT",
+            vec![None, Some(str_())],
+            GoTy::Slice(Box::new(str_())),
+        ),
+        // `Regex.fromString` over a proven String returns the Go type of
+        // `Result Error Regex` itself: both ADTs are emitted `= rt.SkyADT`
+        // (unsealed stdlib ADTs, `should_seal_prefix`), and
+        // `rt.Regex_fromStringT` returns `rt.SkyResult[rt.SkyADT, rt.SkyADT]`.
+        ("rt.Regex_fromString", 1) => twin(
+            "rt.Regex_fromStringT",
+            vec![Some(str_())],
+            GoTy::Named(
+                "rt.SkyResult".into(),
+                vec![
+                    GoTy::Named("Sky_Core_Error_Error".into(), vec![]),
+                    GoTy::Named(REGEX_GO.into(), vec![]),
+                ],
+            ),
+        ),
+        // v0.29.0 core helpers (runtime-go/rt/core_helpers_test.go checks
+        // each against its erased kernel).
+        ("rt.String_indexes", 2) => twin(
+            "rt.String_indexesT",
+            vec![Some(str_()), Some(str_())],
+            GoTy::Slice(Box::new(int())),
+        ),
+        ("rt.Char_isAlphaNum", 1) => twin(
+            "rt.Char_isAlphaNumT",
+            vec![Some(GoTy::Bare(Prim::Rune))],
+            bool_(),
+        ),
+        ("rt.Char_isSpace", 1) => twin(
+            "rt.Char_isSpaceT",
+            vec![Some(GoTy::Bare(Prim::Rune))],
+            bool_(),
+        ),
         // `Std.Db`'s row readers already return their Go type
         // (runtime-go/rt/db_auth.go), so each is its own twin: a column read
         // narrows nothing (doc 14 R5, lever §5.3).
@@ -10086,12 +10777,52 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
         ),
         ("rt.Encoding_urlEncode", 1) => twin("rt.Encoding_urlEncodeT", vec![Some(str_())], str_()),
         ("rt.Basics_not", 1) => twin("rt.Basics_notT", vec![Some(bool_())], bool_()),
-        // Erased-argument twins that assert the erased result's one Go type
-        // inside the runtime (runtime-go/rt/kernel_twins.go).
-        ("rt.String_left", 2) => twin("rt.String_leftT", vec![None, None], str_()),
-        ("rt.String_right", 2) => twin("rt.String_rightT", vec![None, None], str_()),
-        ("rt.String_dropLeft", 2) => twin("rt.String_dropLeftT", vec![None, None], str_()),
-        ("rt.String_dropRight", 2) => twin("rt.String_dropRightT", vec![None, None], str_()),
+        // v0.29.0 String walking twins (runtime-go/rt/string_fast.go,
+        // string_fast_test.go checks each against the []rune reference): over
+        // a proven Int and String they walk to the index without converting
+        // the whole string. The erased-argument twins below are the
+        // `kernel_typed_return_alt` shape for an erased argument.
+        ("rt.String_left", 2) => twin("rt.String_leftTA", vec![Some(int()), Some(str_())], str_()),
+        ("rt.String_right", 2) => {
+            twin("rt.String_rightTA", vec![Some(int()), Some(str_())], str_())
+        }
+        ("rt.String_dropLeft", 2) => twin(
+            "rt.String_dropLeftTA",
+            vec![Some(int()), Some(str_())],
+            str_(),
+        ),
+        ("rt.String_dropRight", 2) => twin(
+            "rt.String_dropRightTA",
+            vec![Some(int()), Some(str_())],
+            str_(),
+        ),
+        ("rt.String_slice", 3) => twin(
+            "rt.String_sliceT",
+            vec![Some(int()), Some(int()), Some(str_())],
+            str_(),
+        ),
+        // `String.uncons` returns its tuple by value: no `any` box per
+        // character (`SkyMaybe[T2[rune, string]]`).
+        ("rt.String_uncons", 1) => twin(
+            "rt.String_unconsT",
+            vec![Some(str_())],
+            maybe(GoTy::Tuple(vec![GoTy::Bare(Prim::Rune), str_()])),
+        ),
+        ("rt.String_toList", 1) => twin(
+            "rt.String_toListT",
+            vec![Some(str_())],
+            GoTy::Slice(Box::new(GoTy::Bare(Prim::Rune))),
+        ),
+        ("rt.String_fromList", 1) => twin(
+            "rt.String_fromListT",
+            vec![Some(GoTy::Slice(Box::new(GoTy::Bare(Prim::Rune))))],
+            str_(),
+        ),
+        ("rt.String_concat", 1) => twin(
+            "rt.String_concatT",
+            vec![Some(GoTy::Slice(Box::new(str_())))],
+            str_(),
+        ),
         ("rt.JsonEnc_encode", 2) => twin("rt.JsonEnc_encodeT", vec![None, None], str_()),
         ("rt.String_fromFloat", 1) => twin("rt.String_fromFloatAnyT", vec![None], str_()),
         // Typed Math / Basics / List / Regex companions (P8), checked against
@@ -10117,7 +10848,7 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
         ),
         ("rt.Regex_replace", 3) => twin(
             "rt.Regex_replaceT",
-            vec![Some(str_()), Some(str_()), Some(str_())],
+            vec![None, Some(str_()), Some(str_())],
             str_(),
         ),
         // v0.28.0 phase 4: the kernels the Std.Ai training, store and cloud
@@ -10140,6 +10871,88 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
         ("rt.System_getenvOr", 2) => twin("rt.System_getenvOrT", vec![None, None], str_()),
         ("rt.Secret_reveal", 1) => twin("rt.Secret_revealT", vec![None], str_()),
         ("rt.Crypto_sha256", 1) => twin("rt.Crypto_sha256T", vec![None], str_()),
+        // v0.29.0 Std.Xml: a Node is an opaque handle (erased `any`); each
+        // accessor returns its Go type directly (runtime-go/rt
+        // xml_kernels_test.go checks each against its erased kernel).
+        ("rt.Xml_parse", 1) => twin(
+            "rt.Xml_parseT",
+            vec![Some(str_())],
+            GoTy::Named(
+                "rt.SkyResult".into(),
+                vec![
+                    GoTy::Named("Sky_Core_Error_Error".into(), vec![]),
+                    GoTy::Named(XML_NODE_GO.into(), vec![]),
+                ],
+            ),
+        ),
+        ("rt.Xml_name", 1) => twin("rt.Xml_nameT", vec![None], str_()),
+        ("rt.Xml_namespace", 1) => twin("rt.Xml_namespaceT", vec![None], str_()),
+        ("rt.Xml_text", 1) => twin("rt.Xml_textT", vec![None], str_()),
+        ("rt.Xml_attributes", 1) => twin(
+            "rt.Xml_attributesT",
+            vec![None],
+            GoTy::Slice(Box::new(GoTy::Tuple(vec![str_(), str_()]))),
+        ),
+        ("rt.Xml_children", 1) => twin(
+            "rt.Xml_childrenT",
+            vec![None],
+            GoTy::Slice(Box::new(GoTy::Named(XML_NODE_GO.into(), vec![]))),
+        ),
+        ("rt.Xml_elements", 1) => twin(
+            "rt.Xml_elementsT",
+            vec![None],
+            GoTy::Slice(Box::new(GoTy::Named(XML_NODE_GO.into(), vec![]))),
+        ),
+        ("rt.Xml_elementsNamed", 2) => twin(
+            "rt.Xml_elementsNamedT",
+            vec![Some(str_()), None],
+            GoTy::Slice(Box::new(GoTy::Named(XML_NODE_GO.into(), vec![]))),
+        ),
+        ("rt.Xml_attribute", 2) => {
+            twin("rt.Xml_attributeT", vec![Some(str_()), None], maybe(str_()))
+        }
+        ("rt.Xml_encode", 2) => twin("rt.Xml_encodeT", vec![None, None], str_()),
+        ("rt.Xml_document", 2) => twin("rt.Xml_documentT", vec![None, None], str_()),
+        // v0.29.0 Std.Image.Canvas: a Canvas, a Mask and a Font are opaque
+        // handles (erased `any` in, the handle ADT out); each drawing step
+        // returns the Canvas ADT itself (runtime-go/rt/canvas_kernels_test.go
+        // checks each twin against its erased kernel).
+        ("rt.Image_canvasBlank", 3) => twin("rt.Image_canvasBlankT", vec![None; 3], canvas()),
+        ("rt.Image_canvasFromImage", 1) => twin("rt.Image_canvasFromImageT", vec![None], canvas()),
+        ("rt.Image_canvasRect", 7) => twin("rt.Image_canvasRectT", vec![None; 7], canvas()),
+        ("rt.Image_canvasRoundedRect", 8) => {
+            twin("rt.Image_canvasRoundedRectT", vec![None; 8], canvas())
+        }
+        ("rt.Image_canvasEllipse", 7) => twin("rt.Image_canvasEllipseT", vec![None; 7], canvas()),
+        ("rt.Image_canvasArc", 8) => twin("rt.Image_canvasArcT", vec![None; 8], canvas()),
+        ("rt.Image_canvasLine", 7) => twin("rt.Image_canvasLineT", vec![None; 7], canvas()),
+        ("rt.Image_canvasPaste", 6) => twin("rt.Image_canvasPasteT", vec![None; 6], canvas()),
+        ("rt.Image_canvasPasteCanvas", 6) => {
+            twin("rt.Image_canvasPasteCanvasT", vec![None; 6], canvas())
+        }
+        ("rt.Image_canvasBlur", 2) => twin("rt.Image_canvasBlurT", vec![None; 2], canvas()),
+        ("rt.Image_canvasResize", 4) => twin("rt.Image_canvasResizeT", vec![None; 4], canvas()),
+        ("rt.Image_canvasText", 7) => twin("rt.Image_canvasTextT", vec![None; 7], canvas()),
+        ("rt.Image_canvasRoundedMask", 3) => twin(
+            "rt.Image_canvasRoundedMaskT",
+            vec![None; 3],
+            GoTy::Named(CANVAS_MASK_GO.into(), vec![]),
+        ),
+        ("rt.Image_canvasEllipseMask", 2) => twin(
+            "rt.Image_canvasEllipseMaskT",
+            vec![None; 2],
+            GoTy::Named(CANVAS_MASK_GO.into(), vec![]),
+        ),
+        ("rt.Image_canvasAlphaMask", 1) => twin(
+            "rt.Image_canvasAlphaMaskT",
+            vec![None],
+            GoTy::Named(CANVAS_MASK_GO.into(), vec![]),
+        ),
+        ("rt.Image_canvasDefaultFont", 1) => twin(
+            "rt.Image_canvasDefaultFontT",
+            vec![None],
+            GoTy::Named(CANVAS_FONT_GO.into(), vec![]),
+        ),
         _ => None,
     }
 }
@@ -10155,9 +10968,23 @@ fn kernel_typed_return_alt(go: &str, nargs: usize) -> Option<TypedTwin> {
             ret,
         })
     };
+    // Erased-argument twins that assert the erased result's one Go type
+    // inside the runtime (runtime-go/rt/kernel_twins.go): the shape for an
+    // index or a string that is not proven.
+    let erased2 = |symbol: &'static str| {
+        Some(TypedTwin {
+            symbol,
+            params: vec![None, None],
+            ret: GoTy::Bare(Prim::Str),
+        })
+    };
     match (go, nargs) {
         ("rt.Math_min", 2) => twin("rt.Math_minFloatT", float()),
         ("rt.Math_max", 2) => twin("rt.Math_maxFloatT", float()),
+        ("rt.String_left", 2) => erased2("rt.String_leftT"),
+        ("rt.String_right", 2) => erased2("rt.String_rightT"),
+        ("rt.String_dropLeft", 2) => erased2("rt.String_dropLeftT"),
+        ("rt.String_dropRight", 2) => erased2("rt.String_dropRightT"),
         _ => None,
     }
 }
@@ -10323,7 +11150,7 @@ fn render_goty(t: &GoTy) -> String {
                 format!("{n}[{}]", a.join(", "))
             }
             GoTy::Slice(t) => format!("[]{}", render_goty(t)),
-            GoTy::Map(k, v) => format!("map[{}]{}", render_goty(k), render_goty(v)),
+            GoTy::Map(_, v) => format!("rt.SkyDict[{}]", render_goty(v)),
             GoTy::Func(ps, r) => {
                 let a: Vec<String> = ps.iter().map(render_goty).collect();
                 format!("func({}) {}", a.join(", "), render_goty(r))
@@ -10489,6 +11316,7 @@ mod memoised_effect_lint_tests {
         // Reads that go stale when frozen.
         assert!(is_store_read_kernel("Db", "query"));
         assert!(is_store_read_kernel("Db", "queryObjects"));
+        assert!(is_store_read_kernel("Db", "queryObjectGroups"));
         assert!(is_store_read_kernel("Db", "getById"));
         assert!(is_store_read_kernel("Db", "findManyByField"));
         assert!(is_store_read_kernel("Std.Db", "getById")); // fully-qualified alias

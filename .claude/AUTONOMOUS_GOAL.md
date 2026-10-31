@@ -1,69 +1,102 @@
-# Autonomous mandate: Std.Ai full production AI lifecycle (v0.28.0 line)
+# Autonomous mandate: v0.29.0 real-world capabilities, tested and shipped
 
-Started 2026-10-11. Branch `feat/std-ai-lifecycle`. Design: `docs/design/std-ai-lifecycle.md`.
-Private context (cloud project, budget): `.claude/AUTONOMOUS_GOAL.private.md` (gitignored).
-The previous mandates are complete: the single v0.27.0 release (v0.27.0 to v0.27.8 shipped) and the build-speed mandate (shipped in v0.27.9).
+Started 2026-10-28. Branch `feat/realworld-requests` (worktree `../sky-realworld`).
+Private context (request files, app list): `.claude/AUTONOMOUS_GOAL.private.md` (gitignored).
+The previous mandate (Std.Ai lifecycle) is complete: v0.28.0 shipped, then v0.28.1.
 
 ## The user's goal, verbatim
 
-> i want our Ai module to provide the full suite to build/train/eval completely with sky only, so 1 language for everything + production AI application complete development lifecycle
+> we also need some improvements + new stdlibs to cover realworld use cases
 
-> i'd like you to start the full implementation in a branch/worktree for this work.
-> ensure we have example apps (full eval + train + synthetic dataset) for e2e, using with fullstack sky app so users understand how it's done, and for us as testing how it works in practical scenario?
+> please for the remaining items, all in single tag release.
 
-> ok please... in fact all phases implementation e2e + 100% unattended + autonomous + PIV mode please.
-> if you have questions you need answered from me, ask now, otherwise please proceed 100% e2e.
+> ok please manage e2e + testing + validation, 100% fully unattended + autonomous + PIV
+> until 0.29.0 is fully tested + shipped
 >
-> when you stop, it's only when you're genuinely stuck, or e2e fully implemented, tested + ready for me to test
+> migrate all my private apps + then redeploy, except [the app named in the private companion]
 
-Resumed 2026-10-25 after the 2026-10-17 park:
+> for the v0.29.x release, i think all the docs, readme.md need a refresh, many contents are outdated now.
+> we need to also keep sky-lang.org and its doc sites all up to date with stdlib modules, Std.App single entry point.
+> Std.Ai new modules training etc...
+>
+> BUT also, try to make readme.md a bit more simpler as well, now we're getting more mature in releases, i guess some older context: TS/HS compiler can be hidden -- or even removed from latest tag source?
+>
+> focus on bringing what sky CAN achieve, fitting for what workflow + design principles (why it exists and what problems it solves).
+> and a few simple "WOW" factor sample code?
+>
+> i don't know, do some industrial deep dive analysis how to best promote and convert visitors to install sky + try it.
+>
+> apparently visitors are either interested in:
+> - Elm itself, or FP languages
+> - Go perhaps even, zero FFI code!
+> - simplicity, scalable fullstack programming language, dislike npm/java deps/python slowness + exception handling broken production apps... etc.
+> - AI native, AI driven workflow + single compiled binary portable + scalable with plenty of realworld examples
+>
+> we need to SELL sky really well in first 10-30s reading our readme.md
+>
+> that should go together in v0.29
 
-> basically i want a fully working + correct sky.Ai module for e2e Ai training + application, including cloud serving or locally.
-> i want sky lang to become capable of replacing python or node is terms of ai application + basically training e2e.
+> essentially the repo needs some tidying up, keeping only the relevant + required files/scripts for current compiler.
+> and ensure everything is up to date, including nix setup, script, versions, docs etc.
+> so i expect v0.29 will have a very clean repo + folder + files structure going forward.
 
-The park condition still binds: production apps rely on Sky, so the merge must not break an existing app, and every changed behaviour needs a clear migration path. No half-built module ships.
+> also for the claude.md + agents.md whatever related/relevant AI tooling files, we need to do some refresh/update,
+> keep context as much as possible -- but may clean up unnecessary parts/outdated parts or files
 
-## Shipping scope decisions (user, 2026-10-16)
+## Scope (user decisions, 2026-10-28)
 
-- SageMaker is not supported yet in v0.28.0. It stays a typed `InvalidSetting` refusal with a clear message, and it is planned for about a month later. The docs and the testing guide say "not supported yet" in plain words.
-- Device engine: llama.cpp on every target is the accepted default, because it is simple and just works. Experts must be able to configure or swap the engine: the builders expose the engine choice and its settings (model file, quantisation, context, threads or GPU layers, endpoint).
-- llama-server bundle: Sky should build its own. A pinned, hash-checked upstream download is acceptable for v0.28.0 only if building our own is too much for now. After the merge is green, assess the work to build our own llama-server bundles for linux x64/arm64, darwin arm64 and windows x64, reusing `ai-device-bundles.yml`. If the work is moderate, implement it (pinned source, checksums, licence scan, a workflows_parse pin) and switch the pins to our release. If it is large, report the estimate and keep the upstream pins.
-- GCP live run: the user authorised a live GCP and GPU run. The coordinator runs it after the merge is green, not the merge agent.
-
-Added 2026-10-17:
-
-- Draft models and several adapters: both ship in v0.28.0. A local engine takes a draft model for speculative decoding (`withDraft`), provisioned and pinned through the same registry and hash checks as the base. A local engine keeps several LoRA adapters loaded at once, and each call chooses one with a typed setting. An adapter that is not loaded is a typed error, never a silent answer from the base model. Trace records the draft acceptance and the tokens per second. Live tests on a tiny Qwen draft and base, plus offline unit tests, run in the release gate.
-- Bad AI environment values fail loudly. When an operator sets an AI environment variable to a value that does not parse, the app refuses to start, or the AI call fails with a typed `InvalidSetting`, whichever matches when the setting is read. The error names the variable and the form it expects, and never shows a value that could be secret. A bad value is never skipped silently. This applies to every AI setting. Sky.Live's general configuration rule is not changed in this release.
-
-Added 2026-10-25 (on resuming):
-
-- Cloud: GCP now. SageMaker stays the typed "not supported yet" refusal and follows in the next release.
-- Local engine bundles: Sky builds its own pinned llama-server bundles for darwin-arm64 (Metal), linux-x64 CPU, linux-x64 CUDA, linux-arm64 and windows-x64. This replaces the conditional "assess, then maybe" wording above. It also unlocks the device slots on desktop:windows and desktop:linux.
-- Billing: set up the billing export to BigQuery and run the live GCP training and serving tests within the cap in the private goal file. Trace and ledger costs are reconciled against the real bill.
-- Training engine: native and Python-free. The user's words: "my preference is no deps other than what sky requires, we could import C library etc. or tooling widely available on macos or linux". v0.28.0 ships with the native trainer and is held until it replaces the Python driver everywhere, locally and in the GCP trainer image. The engine (MLX through mlx-c, or candle) is chosen by a measured trial.
-- Gap list to close (planning review 2026-10-25): Codec-derived tool schemas and structured output (json_schema), multimodal messages, Parquet and Hugging Face Hub datasets, Durable journals for judge and synthetic runs, `Serve.plan`, `withParallel` and a llama-server serving tier, CLI training on any base (`hf:` / `file:`), the doc 14 items (§5.3 Task and decoder callback twins, R1 `Measured a`, R12 `timed`, R5 float `/`), and the migration guide made complete against v0.27.15.
-
-## The user's binding decisions
-
-- Configuration: NO sky.toml keys for AI. Everything in code via carefully constructed `withX` builders with env-var fallback, so code always holds the local default and QA/production override it with .env files / env vars.
-- Errors: typed. One generic `Domain DomainFailure` variant added to `ErrorDetails`, designed so the global error type never needs touching again; typed per-module views (`Std.Ai.Failure`); generic helpers (`Error.domain`, `Error.isRetryable`, `Error.retryAfter`); every AI failure also sets a sensible existing `ErrorKind`.
-- Base model family: Qwen (Apache-2.0) for dev, CI and examples.
-- Eval judge: a local pinned model by default, switchable by env var.
-- Dev adapter mode: quantised real base.
-- Cloud: live GCP tests allowed, tiny models, hard budget cap (see private file), everything torn down after each test. GCP first.
-- Registry: Std.Db is the source of truth for version records, aliases and eval history (artefacts in local dir / GCS / S3).
-- Fine-tuning: adapters only (LoRA / QLoRA).
-- Delivery: on the branch, no merge, no tag. All gates and the full CI release suite green, plus a test guide for the user.
-
-## Scope (all phases of the design)
-
-P1 Endpoint + Failure + Provider additions + Local (managed llama-server) + Eval core + console panel.
-P2 Dataset (incl. synthetic generation) + Scrub + Registry (Std.Db truth) + Pipeline + promote/rollback/lineage + judge calibration.
-P3 Train local (MLX first, Unsloth built and fixture-tested) + managed Python toolchains + durable training + GGUF export.
-P4 Cloud train (GCP Vertex first) + Serve GPU tier (multi-LoRA) + deployment targets, live-tested under the cap.
-P5 Browser and device bridges.
-Examples: a full-stack Sky app showing synthetic dataset -> train -> eval -> register/promote -> serve end to end, plus per-module examples, used as practical e2e tests.
-
-## Done means
-
-An independent Judge verifies the verbatim goal literally: every phase implemented, every example app works end to end, tests and the full release suite green, and a test guide ready for the user.
+- ONE tag, v0.29.0, from this branch, when the whole batch is green on one SHA in
+  both the Rust CI and the release workflow. No partial tags.
+- Items: sky run args; let mutual recursion; core functions (List.map2/map3 typed,
+  List.unique, String.indexes, Char.isAlphaNum/isSpace); Regex Match API; Process
+  withStdin + runCommand; Native.selection/setSelection; collection performance
+  (cons, Dict D1 + D2 B+-tree with one accepted session reset, Array, String,
+  perf-gate, cost lines); Regex option A (`type Regex`, `Regex.fromString` the only
+  constructor, String forms removed, literal patterns checked at compile time,
+  `"""\s+"""` tested); value-cycle rejection; Server.header case-insensitive; Spa
+  cookie Max-Age; split alias shadowing; persist-exclude API; configurable go build
+  limit; Std.Xml (+ Decode/Encode), Std.Zip, Codec.toXml/fromXml; Std.Office.Xlsx and
+  Std.Office.Docx (read and write); Std.Image.Canvas with WebpLossless (lossless,
+  pure Go); animated GIF in Std.Image (Gif format, Preserve keeps GIF, per composed
+  frame, limits, Image.frames, Image.reduceFrames) plus a pixel limit for still images.
+- Every breaking change has a migration section in docs/migration/v0.29.md.
+- A bug found during the work ships in this release.
+- Docs refresh in v0.29.0: every live doc checked against the current surface;
+  README rewritten short, conversion-first (what Sky achieves, why it exists, a few
+  "wow" samples, an install line in the first screen), guided by a written
+  conversion analysis; the legacy Haskell / TypeScript / Sky-in-Sky compiler trees
+  are removed from the tree (they stay in git history and older tags; CI does not
+  build them); sky-lang.org and the docs site updated to the v0.29 stdlib (Std.App
+  single entry point, Std.Ai training modules, the new modules of this release).
+- Repo tidy in v0.29.0 (user, 2026-10-29): keep only the files and scripts the
+  current Rust compiler, its runtime, stdlib, tests, CI, examples and docs need.
+  Remove dead scripts, stale artefacts, legacy-only tooling and orphaned folders
+  (git history and older tags keep them). Bring the nix setup, scripts, pinned
+  versions (Rust, Go, Node, tools) and docs up to date. Every removal is checked
+  against what CI, the release workflow and the gates reference, so nothing a gate
+  needs is lost. The result is a clean folder structure going forward.
+- After the tag: migrate every private app (list in the private companion) to
+  v0.29.0 and redeploy, except the one named there as excluded.
+- Added 2026-10-29 (user): "some critical and priority issues for sky to fix + work on"
+  from a real app's request file, and the user chose "Everything in v0.29.0":
+  (1) the Sky.Spa bug where typing during a hold RPC rewinds a focused input,
+  fixed as B (never write a focused input's value while its input Msgs are held)
+  plus A where safe (a pure onInput arm whose write-set does not meet the hold's
+  runs at once), with a unit test and a Chromium + WebKit e2e;
+  (2) Std.Db.Store additions, all 13 items, each rendered as ONE set-based SQL
+  statement, portable across SQLite and PostgreSQL, every column checked against
+  the codec before the query runs: grouped aggregates (+ having), join and left
+  join of two Stores, projection + DISTINCT + latestPer, subquery conditions
+  (inQuery, exists, notExists), insertOrIgnore + upsertWith (addExcluded, keepMin,
+  keepMax, setExcluded) + uniqueOn, NOT NULL defaults and indexes in migrate,
+  escaped and case-insensitive text match (eqCi, contains, containsCi,
+  startsWith, endsWith; the current `like` escapes nothing and is
+  case-sensitive on PostgreSQL), expression SET, insert from a query,
+  column-to-column conditions, JSON field access, RETURNING, and the regex item
+  documented as advised against; plus the two doc notes on `like` and `migrate`.
+  User decisions on Store (2026-10-29): Store.migrate and `sky db migrate --gen` follow
+  one rule (Maybe field nullable, otherwise NOT NULL; a declared builder default wins,
+  else the zero value; existing columns are never altered), and the new functions use
+  the requested SQL-style names in Store's current qualified style.
+  User decision (2026-10-30): a later "item 14" in the same request file (counts tables
+  kept by database triggers) is NOT built in v0.29.0; apps keep it in raw SQL.

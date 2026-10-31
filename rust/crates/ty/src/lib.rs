@@ -27,6 +27,7 @@ mod infer;
 pub mod nominal;
 mod obligations;
 pub mod pubsub_topic;
+pub mod re2_syntax;
 pub mod reject_corpus;
 pub mod shared;
 mod sig;

@@ -10,7 +10,7 @@ matter: `fd -e md` passes where `find . -name '*.md'` is the reference.
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
-import Sky.Core.Regex as Regex
+import Sky.Core.Regex as Regex exposing (Regex)
 import Prompt exposing (Os(..), Platform)
 
 -- | A case. `unordered` compares the output's lines as a set (a list of
@@ -115,9 +115,9 @@ normalise unordered out =
             out |> String.lines
                 |> List.map
                        (\l ->
-                           l |> String.trim |> Regex.replace "\\s+" " "
-                               |> Regex.replace "^\\./" ""
-                               |> Regex.replace "/$" "")
+                           l |> String.trim |> Regex.replace spacesRe " "
+                               |> Regex.replace dotSlashRe ""
+                               |> Regex.replace trailingSlashRe "")
                 |> List.filter (\l -> not (String.isEmpty l))
     in
         if unordered then
@@ -125,3 +125,25 @@ normalise unordered out =
 
         else
             lines
+
+
+-- A pattern compiled once. Each literal is checked when the program compiles,
+-- so `Regex.never` is never the value.
+compiled : Result Error Regex -> Regex
+compiled r =
+    Result.withDefault Regex.never r
+
+
+spacesRe : Regex
+spacesRe =
+    compiled (Regex.fromString """\s+""")
+
+
+dotSlashRe : Regex
+dotSlashRe =
+    compiled (Regex.fromString """^\./""")
+
+
+trailingSlashRe : Regex
+trailingSlashRe =
+    compiled (Regex.fromString "/$")

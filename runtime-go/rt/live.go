@@ -1062,6 +1062,9 @@ type liveApp struct {
 	routes        []liveRoute
 	notFound      any
 	guard         any // Maybe (Msg -> Model -> Result String ()) — nil = no guard
+	// persistExclude are the model fields a full page load of an existing
+	// session refreshes from init (App.withPersistExclude, v0.29.0).
+	persistExclude []string
 	// head : Model -> List (Html msg) — optional. When set, the
 	// returned list is rendered to HTML and spliced into <head> on
 	// the initial full-page response, after the baseline meta tags
@@ -1607,6 +1610,11 @@ func unpackResponse(v any) (int, map[string]string, string) {
 				for k, val := range m {
 					headers[k] = fmt.Sprintf("%v", val)
 				}
+			case skyDictAny:
+				m.dictRangeAny(func(k string, val any) bool {
+					headers[k] = fmt.Sprintf("%v", val)
+					return true
+				})
 			default:
 				// Reflect fallback for other map types
 				if f.Kind() == reflect.Map {
@@ -2375,6 +2383,9 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	fromSession := existing && sess != nil && sess.model != nil
 	if fromSession {
 		model = sess.model
+		// App.withPersistExclude: the fields the server owns come from init
+		// on every full page load, never from the session's earlier copy.
+		model = app.refreshPersistExcluded(model, r, sess.stableKey())
 	} else {
 		// v0.16.7 #417 — extend init's `req` with `params : Dict
 		// String String`, keyed by the route pattern's `:name`

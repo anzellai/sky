@@ -6,7 +6,7 @@
 # ---------------
 # Sixteen scripts consume the compiler at `sky-out/sky`. Not one of them checked
 # that it was built from the tree they were about to measure. `sky-out/sky` is
-# installed there by exactly one line — `scripts/build.sh:80`
+# installed there by exactly one line — `scripts/build.sh:75`
 # (`install_binary "$(cargo_bin_path …)" "$ROOT/sky-out/sky"`) — so any workflow
 # that builds with a bare `cargo build --release -p sky` leaves `rust/target/`
 # fresh and `sky-out/` untouched, and every consumer then measures a compiler
@@ -30,7 +30,7 @@
 #   * The QUIET direction is the one that ships. A stale binary that happens to
 #     PASS reports green for source it never compiled, on the repository's most
 #     load-bearing verification, and nothing anywhere would catch it.
-#     `scripts/build.sh:77` already carries a comment about an earlier incident
+#     `scripts/build.sh:70` already carries a comment about an earlier incident
 #     where the build "installed a pre-fix compiler" — so this has bitten
 #     before and was closed by hand rather than by a gate.
 #

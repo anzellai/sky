@@ -53,7 +53,10 @@ fn stage_fixture() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codegen-cons-payload-alias");
     let dir = std::env::temp_dir().join(format!(
         "sky-cons-alias-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

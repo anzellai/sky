@@ -49,10 +49,42 @@ fn a_typed_string_argument_uses_the_string_twin() {
 }
 
 #[test]
-fn an_erased_argument_twin_returns_a_typed_string() {
+fn a_proven_index_and_string_use_the_walking_twin() {
+    // v0.29.0: over a proven Int and String the twin takes both typed (no
+    // box for an index above 255); the erased-argument `String_dropRightT`
+    // is the `kernel_typed_return_alt` shape for an unproven argument.
     let f = func_debug(SRC, "Main_tail2");
-    assert!(f.contains("rt.String_dropRightT"), "{f}");
+    assert!(f.contains("rt.String_dropRightTA"), "{f}");
     assert!(!f.contains("Coerce"), "{f}");
+}
+
+const WALK_SRC: &str = "module Main exposing (main)\n\n\
+                        first : String -> Maybe ( Char, String )\nfirst s =\n    String.uncons s\n\n\
+                        chars : String -> List Char\nchars s =\n    String.toList s\n\n\
+                        back : List Char -> String\nback cs =\n    String.fromList cs\n\n\
+                        glue : List String -> String\nglue xs =\n    String.concat xs\n\n\
+                        mid : Int -> String -> String\nmid i s =\n    String.slice i (i + 1) s\n\n\
+                        main =\n    ( first \"ab\", back (chars \"ab\"), ( glue [ \"a\" ], mid 1 \"abc\" ) )\n";
+
+#[test]
+fn string_uncons_returns_a_typed_tuple_with_no_box() {
+    let f = func_debug(WALK_SRC, "Main_first");
+    assert!(f.contains("rt.String_unconsT"), "{f}");
+    assert!(!f.contains("Coerce"), "{f}");
+}
+
+#[test]
+fn string_list_twins_and_slice_are_typed() {
+    for (name, twin) in [
+        ("Main_chars", "rt.String_toListT"),
+        ("Main_back", "rt.String_fromListT"),
+        ("Main_glue", "rt.String_concatT"),
+        ("Main_mid", "rt.String_sliceT"),
+    ] {
+        let f = func_debug(WALK_SRC, name);
+        assert!(f.contains(twin), "{name} must call {twin}: {f}");
+        assert!(!f.contains("Coerce"), "{name}: {f}");
+    }
 }
 
 #[test]
@@ -116,10 +148,11 @@ fn a_db_column_read_narrows_nothing() {
 }
 
 const STR_SRC: &str = "module Main exposing (main)\n\n\
-                       import Sky.Core.Regex as Regex\n\n\
+                       import Sky.Core.Regex as Regex exposing (Regex)\n\n\
                        size : String -> Int\nsize s =\n    String.length s\n\n\
                        tidy : String -> String\ntidy s =\n    String.replace \"a\" \"b\" (String.trim s)\n\n\
-                       digits : String -> Bool\ndigits s =\n    Regex.match \"^[0-9]+$\" s\n\n\
+                       number : Regex\nnumber =\n    Regex.fromString \"^[0-9]+$\" |> Result.withDefault Regex.never\n\n\
+                       digits : String -> Bool\ndigits s =\n    Regex.contains number s\n\n\
                        main =\n    ( size \"x\", tidy \" a \", digits \"12\" )\n";
 
 #[test]
@@ -128,7 +161,7 @@ fn length_trim_replace_and_match_use_their_twins() {
         ("Main_size", "rt.String_lengthT"),
         ("Main_tidy", "rt.String_replaceT"),
         ("Main_tidy", "rt.String_trimT"),
-        ("Main_digits", "rt.Regex_matchT"),
+        ("Main_digits", "rt.Regex_containsT"),
     ] {
         let body = func_debug(STR_SRC, f);
         assert!(body.contains(sym), "{sym}: {body}");
@@ -157,5 +190,31 @@ fn float_division_of_typed_operands_uses_the_float_twin() {
             !f.contains("Coerce"),
             "{name}: no narrowing of the result: {f}"
         );
+    }
+}
+
+// v0.29.0: `Regex.findAll` / `find` / `split` over a proven String use their
+// typed twins (doc 14 R5, lever §5.3), so the call site narrows nothing. The
+// typed build of a compiled Regex itself (`Regex.fromString`, `Regex.never`,
+// `Result.withDefault`) needs the stdlib's `Regex` type and is pinned in
+// `project/tests/regex_typed_emit.rs`.
+const REGEX_SRC: &str = "module Main exposing (main)\n\n\
+                         import Sky.Core.Regex as Regex exposing (Regex)\n\n\
+                         number : Regex\nnumber =\n    Regex.fromString \"^[0-9]+$\" |> Result.withDefault Regex.never\n\n\
+                         words : String -> List String\nwords s =\n    Regex.findAll number s\n\n\
+                         firstWord : String -> Maybe String\nfirstWord s =\n    Regex.find number s\n\n\
+                         parts : String -> List String\nparts s =\n    Regex.split number s\n\n\
+                         main =\n    ( words \"1 2\", firstWord \"1\", parts \"a1b\" )\n";
+
+#[test]
+fn regex_find_all_find_and_split_use_their_twins() {
+    for (f, sym) in [
+        ("Main_words", "rt.Regex_findAllT"),
+        ("Main_firstWord", "rt.Regex_findT"),
+        ("Main_parts", "rt.Regex_splitT"),
+    ] {
+        let body = func_debug(REGEX_SRC, f);
+        assert!(body.contains(sym), "{sym}: {body}");
+        assert!(!body.contains("Coerce"), "{body}");
     }
 }

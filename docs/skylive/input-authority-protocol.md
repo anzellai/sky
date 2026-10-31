@@ -1,8 +1,8 @@
 # Sky.Live input authority protocol
 
 > **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky`)
-> is the primary Sky compiler; the Haskell compiler is preserved under
-> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> is the Sky compiler (the earlier compilers were removed in v0.29.0).
+> Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
 > [`../history/compiler/versions.md`](../history/compiler/versions.md) for the changelog.
 
@@ -300,6 +300,18 @@ else:
 The same filter runs for innerHTML patches targeting ancestors of a focused/dirty input: **an innerHTML patch that would wipe a dirty input is rewritten to a scoped patch that preserves the input's subtree.** Implementation: before applying `innerHTML`, scan the new HTML for sky-ids, diff against existing dirty inputs, and if a dirty input is inside the target, fall back to per-element patching for that subtree (morph-style).
 
 This preserves G1 even when the server sends a "wipe your whole form and rebuild" patch.
+
+### Typing against a slow server (regression gate)
+
+Two independent defences keep a box whole when the server answers more slowly
+than a person types: the server skips a value patch that equals the
+`inputState` the event carried (`clientStateFromRequest`, `live.go`), and the
+client drops value writes to a field with unacked keystrokes (`__skyIsDirty`,
+`live_client_asset.go`). The `spa-typing-hold` stage of
+`scripts/spa-rpc-order-e2e.sh` holds every `/_sky/event` answer 900 ms and
+types a word with 160 ms between keys into a `Std.Ui` input and a `Std.Html`
+input, in Chromium and WebKit; it is red when both defences are switched off
+("bry", caret 2), and green when only the client filter is switched off.
 
 ### The DOM is written only when the render changes (Elm semantics)
 
@@ -722,7 +734,7 @@ Rebuild a downstream app's compiler binary (`cargo build --release -p sky` in sk
 
 ## Backward compatibility
 
-- **Runtime bump:** all Sky.Live apps must recompile to get the new runtime. No opt-out flag; the runtime is embedded via Template Haskell and shipped with the compiler binary.
+- **Runtime bump:** all Sky.Live apps must recompile to get the new runtime. No opt-out flag; the runtime is embedded at build time and shipped with the compiler binary.
 - **Wire format:** additive. New fields are optional; omitting them produces the pre-upgrade behaviour.
 - **Sky-id format:** changes visible in DOM (`sky-id="r.0#div.1#form..."` instead of `sky-id="r.0.1..."`). Tests that assert on sky-id strings must update. Dev tools scripts that query by `[sky-id^="r."]` continue to work.
 - **No CLAUDE.md changes needed.** The public API (`App.run` / `App.web` / `App.app`, `Html.*`, `Server.*`) is unchanged. `Html.keyed` is a new opt-in helper, documented but not required.

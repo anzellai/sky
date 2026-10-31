@@ -1,8 +1,0 @@
-module Main exposing (main)
-
-import Std.Log exposing (println)
-
--- Misspelled `type`: should surface as a [E0001] PARSE ERROR.
-tyep alias Foo = Int
-
-main = println "x"

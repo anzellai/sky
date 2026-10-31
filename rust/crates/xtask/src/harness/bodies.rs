@@ -47,7 +47,7 @@ use std::process::Command;
 /// **214 at the merge of v0.28.0 phase 3** (+3, examples/73-ai-train:
 /// src/Main.sky, src/Support.sky, tests/TrainExampleTest.sky), measured by the
 /// `roundtrip` gate.
-pub const ROUNDTRIP_EXPECTED: u64 = 224; // +5: examples/74-ai-cloud (src/Main.sky, Cloud.sky, Ai.sky, Suites.sky, tests/CloudTest.sky, v0.28.0 phase 4), measured by the `roundtrip` gate on the merged tree; +5: examples/75-ai-everywhere (four src modules and one tests suite, v0.28.0 phase 5); +1: examples/65-metadata-service (v1 B5 load-test app); +1: examples/66-slack-agent (Std.Ai capstone, src/Main.sky); +1: examples/67-durable-counter (App.withDurable demo); +9: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (src/Main.sky, one src module and one tests suite each, v0.28.0 phase 2)
+pub const ROUNDTRIP_EXPECTED: u64 = 222; // -2 in v0.29.0: examples/simple and examples/test_pkg removed (repo tidy);  +5: examples/74-ai-cloud (src/Main.sky, Cloud.sky, Ai.sky, Suites.sky, tests/CloudTest.sky, v0.28.0 phase 4), measured by the `roundtrip` gate on the merged tree; +5: examples/75-ai-everywhere (four src modules and one tests suite, v0.28.0 phase 5); +1: examples/65-metadata-service (v1 B5 load-test app); +1: examples/66-slack-agent (Std.Ai capstone, src/Main.sky); +1: examples/67-durable-counter (App.withDurable demo); +9: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (src/Main.sky, one src module and one tests suite each, v0.28.0 phase 2)
 /// Files in `rust/crates/ty/tests/reject/corpus/`. Measured — and read from the
 /// SINGLE declaration both reject faces share, so the harness cannot pin a
 /// different corpus size than `xtask reject` and `cargo test -p ty --test
@@ -94,7 +94,7 @@ pub const REJECT_EXPECTED: u64 = ty::reject_corpus::EXPECTED_CORPUS_FILES as u64
 /// broken version compiled, type-checked and ran. Seven pin the fix (tag +
 /// display, both halves), five pin what must NOT change outside a paragraph,
 /// since keying on parent context risks flattening every layout in every app.
-pub const CONFORMANCE_EXPECTED: u64 = 1577; // +32 Email (custom headers: Email.header refusals, listUnsubscribe text and sanitising, withHeader replacement) — v0.27.20; +19 CodecConformance + SkyCoreErrorCoverage (the `Domain` error detail: wire round-trip, forward-compatible decode, Error.domain / failureOf / isRetryable / retryAfter) — v0.28.0; +5 List (List.repeat: Elm semantics, n <= 0, a 1M list) +2 SyncFile (File.writeBytes keeps non-UTF-8 bytes) — v0.27.13; +6 Math (toFloat, Elm Basics) +13 Json (Pipeline.optional strict on a present value, Decode.null / nullable / maybe) — v0.27.12; +12 ImageEdit (Std.Image trim, crop, toAlpha, whiteToAlpha: sizes, clamping, padding, the Rgb key, InvalidInput on all-margin, a negative size, a channel above 255 and bytes that are not an image) — v0.27.10; +4 Codec (Codec.inline: flat-record JSON both ways, round-trip, a missing embedded field) +7 Codec (a repeated JSON key fails to decode, names the key, across Codec.inline, encoding unchanged) — build-speed branch; +1 StdDbLifecycle (a SQL NULL column reads as "" through getField, getString and Dict.get) — v0.27.2; +14 Ordering (the derived order of comparable values, C-11) +2 ProcessWatch +4 SyncFile (S1) +2 JwtAuth (verifyToken claims decoded with Json.Decode, S3d) — v0.27.0 final batch; +3 SyncFile (a nullary union printed by name at the top level and nested, a nested pattern over a runtime-built enum ordinal) — v0.27.0 named-int enums; +29 SyncFile (Sky.Core.File stat / lstat / realPath / readLink / chmod / permissions / resolveWithin, Std.Sync Ref / Mutex / Queue, the Sky-syntax toString printer) — v0.27.0 downstream round 3; +14 LanguageShapes (`as` over a nested ctor pattern on the ADT bag, a Task-returning parameter / record field in a free Task slot, let-polymorphism, Module.value.field) — v0.27.0 downstream round 3; +6 CoreHelpers (Result.fromMaybe / Maybe.toResult, kernel path) +4 Json (the same, imported Sky.Core.Result / Sky.Core.Maybe) — v0.27.0 downstream request; +3 Native (Native.scanCode off-client is Unavailable, every CodeFormat, the message) — v0.27.0 native scanner; +9 Json (Decode.decodeValue, the documented Decode.value key order, one document per decodeString) +37 Encoding (RFC 4648 section 10 base32 / base32hex vectors, unpadded form, strict-decode negatives) +5 Noise (the BLAKE2s suite, suite mismatch, protocolName) — v0.27.0 downstream requests; +5 CryptoPrimitives (explicit-nonce ChaCha20-Poly1305 RFC 8439 2.8.2 and XChaCha20-Poly1305 draft A.3.1 vectors, determinism, negatives) — v0.27.0 judge fix; +3 TaskLoop (andThen / onError recursion at two million steps, a 100,000-task sequence) — v0.27.0 phase 7 Task trampoline; +12 UiTextWrap +19 UiCanvas (Std.Ui.text span wrap, Std.Ui.Canvas SVG, Std.Ui.Terminal payloads) — v0.27.0 phase 6C; +10 Native (secure store, biometrics, Std.Bundle builders off-client) — v0.27.0 phase 6B; +24 ProcessWatch — v0.27.0 phase 5B streaming processes and Std.Watch; +25 CryptoPrimitives +11 Noise +10 Cpace +12 Qr — v0.27.0 phase 5A crypto/QR modules; +15 Auth +16 Db +11 Db.Store lifecycle — B1 authdb coverage; +19 Codec.error/Codec.result wire round-trips — v0.24.0 Sky.Spa error/result codecs; +7 TaskLoop (Task.loop/forever) +12 CoreHelpers (Result.toMaybe, Sky.Core.Tuple) +10 Json (Decode.value, Encode.raw, imported Result.toMaybe) — v0.27.0
+pub const CONFORMANCE_EXPECTED: u64 = 2056; // +3 StoreQuery (a v0.28 TEXT column of a nested Maybe Bool / Float keeps v0.28's text and eq matches old and new rows; toSql hides the SQLite column marks; an open JSON value with a nested key named like its column, set to null, is written) +1 Codec (a Json.Value field under Codec.auto reads back any JSON) — v0.29.0; +5 StoreQuery (a Maybe nested in a JSON column: a List (Maybe custom type) round-trips and a JSON null element reads as Nothing, a taggedUnion or enum element its codec does not read is an Err naming the table and column on read and is refused on setValue) +5 Codec (Codec.maybe reads only null as Nothing, at any depth; Codec.error details stay the one lenient Maybe while the message is strict; fieldReadError) — v0.29.0; +32 StoreQuery (value kinds: setValue / setWhen / otherwise / const / updateFields / defaultWith / a declared default of the wrong kind, a name that is not an enum name, JSON the codec does not read, SqlNull into a required column and an Infinity are refused before a statement; select / selectAs / selectColumn / an aggregate key into a Maybe field whose codec would read the source as Nothing are refused; a condition with text that is not an Int, with SqlNull or a Float on an Int column, and adjust on a nullable or text column are refused; an Int into a Float column, SqlNull into a Maybe, an enum name and JSON the codec reads are written; legacy text ints and 0/1 bools read, an unparsable stored value and a selectRaw missing a column are an Err naming the table, column and kind; insertMany and upsert write a defaultWith value; JSON a custom type codec does not read is refused, and a stored value or a projection a Maybe field reads as Nothing is an Err) +4 Codec (schemaFitError, schemaValueError) — v0.29.0; +1 StoreQuery (Just values round-trip through nullable blob columns and a nested Maybe) — v0.29.0; +1 StoreQuery (rule D1: a Maybe list field of a Codec.object codec is nullable, added or created, and Nothing inserts) — v0.29.0; +8 StoreQuery (rule D1, each column's own zero: a Codec.list field beside a taggedUnion field defaults to [] and the old row decodes, the taggedUnion sibling is Err on a table with a row, a Codec.enum field defaults to its first name and a nullary custom type under Codec.auto to the witness's name, both decode, a plain String keeps '') +3 Codec (Codec.fieldZeros: object fields that have a zero, auto blank fields, a nested no-zero object left out and a non-record codec gives none) — v0.29.0; +4 Store (rule D1 for a required JSON column: Codec.auto blank as the DEFAULT with a quote escaped, the old row decodes it, a Codec.object list field defaults to [], a taggedUnion field with no zero is Err on a table with a row) +3 Codec (Codec.zeroJson: auto blank in field order, object field zeros, none for taggedUnion and result) — v0.29.0; +43 StoreQuery batch D (Std.Db.Store writes: insertOrIgnore and two concurrent claims of one key, insertOrIgnoreOn, upsertWith with addExcluded / keepMin / keepMax / setExcluded and the NULL rules, DO NOTHING, updateSet with setCol / setWhen keep and otherwise on int and bool / setValue, copyInto / copyIntoOrIgnore and an aggregate roll-up, insertReturning with a serial id and a defaultNow stamp, updateFieldsReturning claims once and a UNIQUE violation is Err, deleteWhereReturning, every refusal before a statement, pushProject and dumpSchema refuse a builder problem) — v0.29.0; +24 StoreQuery batch C (Std.Db.Store migrate, user decision D1: a required field added NOT NULL with its declared default (B9) else the zero, a Maybe field nullable, defaultNow stamped at the ALTER and at insert, migrate twice is [], a required unique column on a table with rows is Err, index / uniqueOn / uniqueWhere and their refusals, index names that never collide, create makes the index, a String primary key refuses NULL (B8), pushProject checks the primary key, Schema.toProject carries withIndex and keeps a | in a default) — v0.29.0; +58 StoreQuery batch B (Std.Db.Store joins: join / leftJoin toSql and pairs against a hand-written join, Nothing for an unmatched row, whereRight in ON, a nullable right column, a grouped and a self join, quoted camelCase aliases, the refusals; subquery conditions: inQuery / notInQuery with the NULL rules, an ordered limit, exists / notExists / correlateAll against a hand-written NOT EXISTS, nested aliases, a one-statement deleteWhere and updateFields, the refusals) — v0.29.0; +80 StoreQuery (Std.Db.Store query path on SQLite: found bugs B2 to B6, grouped aggregates + having, select / selectColumn / distinct / latestPer, NULL ordering, escaped and case-insensitive text match, column conditions, jsonText; the same file is the store-query-postgres gate) — v0.29.0; +17 ImageGif (Std.Image animated GIF: frames, every operation keeps the frames, Gif and Preserve, the comment dropped, still GIF, reduceFrames, the 1x1x100000 and 5000x5000x50 bombs, a tiny PNG and JPEG claiming 20000 x 20000, WebpLossless) +16 ImageCanvas (Std.Image.Canvas: every format at the canvas size, shapes by pixelDiff, persistence, text and measure, masks and paste, colour_range, canvas_too_large, a 400-megapixel paste, font errors, size_mismatch, an Open Graph card with a QR code) — v0.29.0; +14 OfficeXlsx (Std.Office.Xlsx: read (write x) == x for every Cell kind, the phantom 1900-02-29, sheet features read back, sheetNames, deterministic bytes, an accountant's ledger export, the sheet_name / no_visible_sheet / validation_too_long / range / date_range refusals, read limits, not_zip / not_office) +10 OfficeDocx (Std.Office.Docx: read (write x) == x for every Block kind, deterministic bytes, an invoice with a table and a link, toText, joined runs, unsafe_link, heading_level / list_level, not_office, maxBlocks) — v0.29.0; +23 Xml (Std.Xml parse refusals: DOCTYPE, billion laughs, XXE, depth 10,000, node / size / attribute limits, charset; an Atom feed and a SAML-style assertion by local name, Latin-1, &nbsp; in HtmlEntities, Std.Xml.Decode paths, encode round trip, a sitemap.xml, encodeStrict) +13 Zip (Std.Zip: three CSVs as one download, an EPUB container.xml, deterministic write, unsafe and repeated paths, the entry / total / ratio / count limits, not_zip) +16 CodecXml (Codec.toXml / fromXml for every combinator, attribute fallback, namespaced input, wrong root, the lossy cases, a SOAP-style order, jsonSchema unchanged) — v0.29.0; +8 Regex (Regex.fromString: an invalid pattern is Err InvalidInput with the RE2 text, an interpolated pattern checked at run time, the triple-quoted spellings \s+ \b\w+\b \d{2,4} \\d \{{, the plain "\\s+", Regex.never, Regex.match = contains) — v0.29.0; +12 Array (Sky.Core.Array: fromList / toList, get and set in and out of range, persistence, push across the 32 and 1024 boundaries, initialize / repeat, map / indexedMap / filter, foldl / foldr order, append / slice, toIndexedList / isEmpty, ==, an edit-distance table) — v0.29.0; +14 StringWalk (String.uncons / foldl / foldr, slice / left / right / dropLeft / dropRight by code point with negative and clamped indexes, toList / fromList round trip, a CSV splitter, a character loop over a large string) — v0.29.0; +2 Native (Native.selection / setSelection off a Sky.Spa client are Err Unavailable) — v0.29.0; +11 ProcessRunCommand (Process.runCommand / withStdin: stdin to cat, exit code 3 as a result, stderr kept apart, NotFound / InvalidInput, a 200 kB input, spawn with withStdin) — v0.29.0; +21 RegexMatch (Regex.findMatch / findAllMatches / replaceWith: groups, a group that did not take part, character positions after multi-byte text, match numbers, a log-line parser, a template filler, find of an empty match) — v0.29.0; +27 CoreSmallFunctions (Char.isAlphaNum / isSpace, List.map2 / map3 / unique, String.indexes: Elm semantics, shorter-list stop, first-occurrence order, character indexes) — v0.29.0; +32 Email (custom headers: Email.header refusals, listUnsubscribe text and sanitising, withHeader replacement) — v0.27.20; +19 CodecConformance + SkyCoreErrorCoverage (the `Domain` error detail: wire round-trip, forward-compatible decode, Error.domain / failureOf / isRetryable / retryAfter) — v0.28.0; +5 List (List.repeat: Elm semantics, n <= 0, a 1M list) +2 SyncFile (File.writeBytes keeps non-UTF-8 bytes) — v0.27.13; +6 Math (toFloat, Elm Basics) +13 Json (Pipeline.optional strict on a present value, Decode.null / nullable / maybe) — v0.27.12; +12 ImageEdit (Std.Image trim, crop, toAlpha, whiteToAlpha: sizes, clamping, padding, the Rgb key, InvalidInput on all-margin, a negative size, a channel above 255 and bytes that are not an image) — v0.27.10; +4 Codec (Codec.inline: flat-record JSON both ways, round-trip, a missing embedded field) +7 Codec (a repeated JSON key fails to decode, names the key, across Codec.inline, encoding unchanged) — build-speed branch; +1 StdDbLifecycle (a SQL NULL column reads as "" through getField, getString and Dict.get) — v0.27.2; +14 Ordering (the derived order of comparable values, C-11) +2 ProcessWatch +4 SyncFile (S1) +2 JwtAuth (verifyToken claims decoded with Json.Decode, S3d) — v0.27.0 final batch; +3 SyncFile (a nullary union printed by name at the top level and nested, a nested pattern over a runtime-built enum ordinal) — v0.27.0 named-int enums; +29 SyncFile (Sky.Core.File stat / lstat / realPath / readLink / chmod / permissions / resolveWithin, Std.Sync Ref / Mutex / Queue, the Sky-syntax toString printer) — v0.27.0 downstream round 3; +14 LanguageShapes (`as` over a nested ctor pattern on the ADT bag, a Task-returning parameter / record field in a free Task slot, let-polymorphism, Module.value.field) — v0.27.0 downstream round 3; +6 CoreHelpers (Result.fromMaybe / Maybe.toResult, kernel path) +4 Json (the same, imported Sky.Core.Result / Sky.Core.Maybe) — v0.27.0 downstream request; +3 Native (Native.scanCode off-client is Unavailable, every CodeFormat, the message) — v0.27.0 native scanner; +9 Json (Decode.decodeValue, the documented Decode.value key order, one document per decodeString) +37 Encoding (RFC 4648 section 10 base32 / base32hex vectors, unpadded form, strict-decode negatives) +5 Noise (the BLAKE2s suite, suite mismatch, protocolName) — v0.27.0 downstream requests; +5 CryptoPrimitives (explicit-nonce ChaCha20-Poly1305 RFC 8439 2.8.2 and XChaCha20-Poly1305 draft A.3.1 vectors, determinism, negatives) — v0.27.0 judge fix; +3 TaskLoop (andThen / onError recursion at two million steps, a 100,000-task sequence) — v0.27.0 phase 7 Task trampoline; +12 UiTextWrap +19 UiCanvas (Std.Ui.text span wrap, Std.Ui.Canvas SVG, Std.Ui.Terminal payloads) — v0.27.0 phase 6C; +10 Native (secure store, biometrics, Std.Bundle builders off-client) — v0.27.0 phase 6B; +24 ProcessWatch — v0.27.0 phase 5B streaming processes and Std.Watch; +25 CryptoPrimitives +11 Noise +10 Cpace +12 Qr — v0.27.0 phase 5A crypto/QR modules; +15 Auth +16 Db +11 Db.Store lifecycle — B1 authdb coverage; +19 Codec.error/Codec.result wire round-trips — v0.24.0 Sky.Spa error/result codecs; +7 TaskLoop (Task.loop/forever) +12 CoreHelpers (Result.toMaybe, Sky.Core.Tuple) +10 Json (Decode.value, Encode.raw, imported Result.toMaybe) — v0.27.0
 /// `verify-cli.sh` entries that actually assert something. The 14th entry
 /// (`11-fyne-stopwatch`) is a declared skip and is deliberately NOT counted:
 /// v2's "SKIP counted as pass" defect is closed by making skips invisible to
@@ -422,6 +422,34 @@ pub fn verify_cli(ctx: &GateCtx) -> GateOutcome {
     )
 }
 
+/// The directory `spa-diff-fuzz` generates, builds and runs one fixture in.
+///
+/// It carries the process id. It used to be `<tmp>/sky-spa-diff-fuzz/<fixture>`
+/// for every process of the user, so two runs at once (the baseline in one
+/// worktree, a mutated run or another worktree's gate) wiped and rewrote each
+/// other's harness: a sibling's mutated harness then turned a clean baseline
+/// red (`DIVERGENCE`, or a build of half-written files), and a re-run on its
+/// own was green. Each gate body runs in its own child process, so the pid
+/// makes the directory private to one run (as `sky-dispatch-destructive-<pid>`).
+pub(crate) fn spa_diff_fuzz_out_dir(fixture: &str) -> PathBuf {
+    spa_diff_fuzz_out_dir_for(std::process::id(), fixture)
+}
+
+fn spa_diff_fuzz_out_dir_for(pid: u32, fixture: &str) -> PathBuf {
+    std::env::temp_dir()
+        .join(format!("sky-spa-diff-fuzz-{pid}"))
+        .join(fixture)
+}
+
+/// Removes this run's `spa-diff-fuzz` directory on every return path.
+struct SpaDiffFuzzCleanup(PathBuf);
+
+impl Drop for SpaDiffFuzzCleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Sky.Spa **differential split fuzzer** (docs/design/auto-testing.md mode A).
 ///
 /// For each in-repo auto-split fixture: GENERATE the harness IN-PROCESS (via the
@@ -473,6 +501,12 @@ pub fn spa_diff_fuzz(ctx: &GateCtx) -> GateOutcome {
         "rust/crates/sky/tests/fixtures/spa-async-leaves",
     ];
     let mut assertions = 0u64;
+    let _cleanup = SpaDiffFuzzCleanup(
+        spa_diff_fuzz_out_dir("x")
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default(),
+    );
     for fx in FIXTURES {
         let project_dir = ctx.repo_root.join(fx);
         let name = Path::new(fx)
@@ -482,7 +516,7 @@ pub fn spa_diff_fuzz(ctx: &GateCtx) -> GateOutcome {
         // NOT under `scratch()` (`.skycache/…`): `sky build`'s module discovery
         // skips any path with a dot-directory segment, so a generated project
         // there fails with "no .sky under src/". Use a non-dot temp dir.
-        let out_dir = std::env::temp_dir().join("sky-spa-diff-fuzz").join(name);
+        let out_dir = spa_diff_fuzz_out_dir(name);
         let _ = std::fs::remove_dir_all(&out_dir);
         // GENERATE in-process — reflects emitter / analysis mutations.
         let report = match project::spa_split::generate_diff_fuzz(
@@ -871,7 +905,30 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 ///
 /// **768 at the merge of v0.27.17 into the v0.28.0 line** (744 + the 24
 /// v0.28.0 Std.Ai surface cases).
-pub const CORPUS_EXPECTED: u64 = 768;
+///
+/// **804 since the v0.29.0 `let_mutual_recursion` stratum** (+36, Family L:
+/// 3 `letrec_group` x 3 `letrec_dep` x 4 `letrec_site`). Two local functions
+/// of one `let` that call each other failed `go build`; see
+/// `corpus/lang_shapes.rs`.
+///
+/// **809 since the v0.29.0 Sky.Core.Array Family-S surface** (+5: its
+/// nominal, empty, boundary, unicode and failure cases).
+///
+/// **818 since the v0.29.0 `value_cycle` defect of Family R** (+9: 3
+/// `rposition` x 3 `rimport`, each a rejection `[E1018]` with its twin).
+///
+/// **827 since the v0.29.0 `regex_invalid_literal` defect of Family R** (+9,
+/// each a rejection `[E2014]` with its twin).
+///
+/// **837 since the v0.29.0 Std.Xml and Std.Zip Family-S surfaces** (+10:
+/// the nominal, empty, boundary, unicode and failure cases of each).
+///
+/// **842 since the v0.29.0 Std.Office Family-S surface** (+5: the nominal,
+/// empty, boundary, unicode and failure cases of `office`).
+///
+/// **844 since the v0.29.0 Std.Image.Canvas Family-S surface** (+2: the
+/// nominal and failure cases of `imagecanvas`).
+pub const CORPUS_EXPECTED: u64 = 844;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -954,7 +1011,22 @@ pub const CORPUS_EXPECTED: u64 = 768;
 ///
 /// **622 at the merge of v0.27.17 into the v0.28.0 line** (598 + the 24
 /// v0.28.0 Std.Ai surface cases).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 622;
+///
+/// **658 since the v0.29.0 `let_mutual_recursion` stratum** (+36, all built
+/// and run; the same +36 as `CORPUS_EXPECTED`).
+///
+/// **663 since the v0.29.0 Sky.Core.Array Family-S surface** (+5, every one
+/// built and run; the same +5 as `CORPUS_EXPECTED`).
+///
+/// **673 since the v0.29.0 Std.Xml and Std.Zip Family-S surfaces** (+10,
+/// every one built and run; the same +10 as `CORPUS_EXPECTED`).
+///
+/// **678 since the v0.29.0 Std.Office Family-S surface** (+5, every one
+/// built and run; the same +5 as `CORPUS_EXPECTED`).
+///
+/// **680 since the v0.29.0 Std.Image.Canvas Family-S surface** (+2, both
+/// built and run; the same +2 as `CORPUS_EXPECTED`).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 680;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
@@ -962,7 +1034,13 @@ pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 622;
 /// **270 since the `dict_composite_key` defect** (was 252 / 126 cases): the
 /// `[E2008]` unsupported-`Dict`-key rejection, crossed with the position and
 /// import axes.
-pub const CORPUS_REJECT_EXPECTED: u64 = 270;
+///
+/// **288 since the v0.29.0 `value_cycle` defect** (144 cases): two values
+/// defined in terms of each other, `[E1018]`.
+///
+/// **306 since the v0.29.0 `regex_invalid_literal` defect** (153 cases): a
+/// literal `Regex.fromString` pattern that is not RE2, `[E2014]`.
+pub const CORPUS_REJECT_EXPECTED: u64 = 306;
 /// Family E: one assertion per asserted property across the 10 cases. Measured:
 /// **46** (the two struct-shape properties only apply to the named-alias arm).
 pub const CORPUS_EMIT_SHAPE_EXPECTED: u64 = 46;
@@ -995,7 +1073,7 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// still identical (137 shared, one full-rebuild fallback). This is a tier-only
 /// exact-count ratchet — it drifted undetected because only the release/T1
 /// harness checks the count; see the per-PR-ratchet work (v1 release hardening).
-pub const SHARED_WORLD_EXPECTED: u64 = 166; // 166 at the merge of v0.27.18 into the v0.28.0 branch: 164 + 2 reject files constructor_clash_expression.sky + constructor_clash_pattern.sky ([E1017]); measured 164 by the `shared-world` gate at the merge of v0.28.0 phases 4 and 5: +1 dir examples/74-ai-cloud; measured 163 by the `shared-world` gate in v0.28.0 phase 5: +1 dir examples/75-ai-everywhere; measured 162 by the `shared-world` gate at the merge of v0.28.0 phase 3: +1 dir examples/73-ai-train; measured 161 by the `shared-world` gate in v0.28.0 phase 2 part C: +1 dir examples/72-ai-support-desk, +1 reject file ai_eval_passed_is_opaque.sky; measured 159 by the `shared-world` gate at the merge of the two v0.28.0 phase 2 parts (156 + the 3 dataset examples); +3 dirs: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (v0.28.0 phase 2 part A); +1 dir: examples/71-ai-registry (Std.Ai.Registry, v0.28.0 phase 2 part B, renumbered from 68 at the merge); +5 reject files: value_restriction_*.sky (S3a), bounds_*.sky (S3b), pattern_ctor_too_many_args.sky (S3d) — v0.27.0 final batch; +1 reject file: ffi_kernel_through_another_qualifier.sky (`Webview.kernel` is [E1011], v0.27.0 judge round 2); +1 reject file: ffi_go_type_is_not_an_app_type.sky (a Go FFI type keeps its identity, v0.27.0 round 5); +1 reject file: let_application_not_generalised.sky (the let-generalisation value restriction, v0.27.0 round 3); +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo); +1 reject file: unknown_operator_bang_equals.sky ([E1014], v0.25.17); +1 reject file: dangling_export_value.sky ([E1015], v0.25.19); +4 reject files: ffi_result_*.sky + ffi_sky_ffi_call_is_stdlib_only.sky (v0.27.0 FFI Result enforcement)
+pub const SHARED_WORLD_EXPECTED: u64 = 168; // 168 in v0.29.0 repo tidy: -2 dirs examples/simple and examples/test_pkg (removed);  170 in v0.29.0 batch C: +4 reject files value_cycle_top_level.sky, value_cycle_in_let.sky ([E1018]), regex_invalid_literal.sky ([E2014]), regex_pattern_string_form.sky ([E2001]); 166 at the merge of v0.27.18 into the v0.28.0 branch: 164 + 2 reject files constructor_clash_expression.sky + constructor_clash_pattern.sky ([E1017]); measured 164 by the `shared-world` gate at the merge of v0.28.0 phases 4 and 5: +1 dir examples/74-ai-cloud; measured 163 by the `shared-world` gate in v0.28.0 phase 5: +1 dir examples/75-ai-everywhere; measured 162 by the `shared-world` gate at the merge of v0.28.0 phase 3: +1 dir examples/73-ai-train; measured 161 by the `shared-world` gate in v0.28.0 phase 2 part C: +1 dir examples/72-ai-support-desk, +1 reject file ai_eval_passed_is_opaque.sky; measured 159 by the `shared-world` gate at the merge of the two v0.28.0 phase 2 parts (156 + the 3 dataset examples); +3 dirs: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (v0.28.0 phase 2 part A); +1 dir: examples/71-ai-registry (Std.Ai.Registry, v0.28.0 phase 2 part B, renumbered from 68 at the merge); +5 reject files: value_restriction_*.sky (S3a), bounds_*.sky (S3b), pattern_ctor_too_many_args.sky (S3d) — v0.27.0 final batch; +1 reject file: ffi_kernel_through_another_qualifier.sky (`Webview.kernel` is [E1011], v0.27.0 judge round 2); +1 reject file: ffi_go_type_is_not_an_app_type.sky (a Go FFI type keeps its identity, v0.27.0 round 5); +1 reject file: let_application_not_generalised.sky (the let-generalisation value restriction, v0.27.0 round 3); +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo); +1 reject file: unknown_operator_bang_equals.sky ([E1014], v0.25.17); +1 reject file: dangling_export_value.sky ([E1015], v0.25.19); +4 reject files: ffi_result_*.sky + ffi_sky_ffi_call_is_stdlib_only.sky (v0.27.0 FFI Result enforcement)
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator
@@ -2046,6 +2124,130 @@ pub fn apps_ledger_postgres(ctx: &GateCtx) -> GateOutcome {
                 .to_string(),
         ),
     }
+}
+
+/// Cases in `tests/conformance/tests/StoreQueryConformanceTest.sky`. The SAME
+/// file is the SQLite arm inside `conformance` (scripts/conformance.sh clears
+/// the DSN) and the PostgreSQL arm here. v0.29.0 batch A: 17 found-bug and
+/// dialect cases (B2 to B6), 17 grouped-aggregate, 18 projection / DISTINCT /
+/// latestPer / ordering, 14 text-match, 14 column-condition and jsonText.
+/// Batch B: 26 join and leftJoin, 32 subquery-condition. Batch C: 24 migrate
+/// (D1 added columns, defaultNow, indexes, B8, the Schema bridge). Batch D:
+/// 43 writes (insertOrIgnore, upsertWith, updateSet, copyInto, RETURNING, and
+/// the builder problems that pushProject and dumpSchema now refuse). D1
+/// field zeros: 8 (a list beside a taggedUnion, the union refused, a
+/// Codec.enum and an auto nullary type default to a name, a plain String to ''), and 1 (a Maybe list field
+/// of a Codec.object codec is nullable, added or created), and 1 (Just values
+/// round-trip through nullable blob columns and a nested Maybe). 3 more: a
+/// v0.28 TEXT Bool / Float column keeps v0.28's text and eq matches old and
+/// new rows, toSql hides the SQLite column marks, and an open JSON value with
+/// a nested key named like its column, set to null, is written.
+pub const STORE_QUERY_POSTGRES_EXPECTED: u64 = 255;
+
+/// The case whose name proves which engine ran. The suite names it from the
+/// DSN and asserts a PostgreSQL-only query in it, so a run that silently fell
+/// back to SQLite has no case of this name.
+const STORE_QUERY_DIALECT_CASE: &str = "store-dialect=postgres";
+
+/// `Std.Db.Store` query path on a real PostgreSQL (v0.29.0).
+///
+/// SQLite and PostgreSQL differ where the Store renders SQL: identifier case
+/// folding (an autoCamel column), LIMIT/OFFSET, NULL ordering, LIKE case, JSON
+/// access, aggregate result types. The conformance gate runs this suite on
+/// SQLite only, so before this gate a PostgreSQL-only defect in the Store
+/// shipped green. The DSN is `SKY_TEST_POSTGRES_DSN`, the variable the CI
+/// integration jobs already set. An unset DSN is a FAIL, never a skip, as in
+/// `apps-ledger-postgres`.
+pub fn store_query_postgres(ctx: &GateCtx) -> GateOutcome {
+    let dsn = match std::env::var("SKY_TEST_POSTGRES_DSN") {
+        Ok(d) if !d.trim().is_empty() => d,
+        _ => {
+            return GateOutcome::new(
+                false,
+                0,
+                "SKY_TEST_POSTGRES_DSN is unset — this gate runs the Store query suite on \
+                 PostgreSQL and cannot do so without a server. A gate that cannot run has \
+                 not passed; it is NOT skipped.",
+            )
+        }
+    };
+    let sky = match super::layer2::sky_binary(&ctx.repo_root) {
+        Ok(s) => s,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    let dir = scratch(&ctx.repo_root);
+    let report = dir.join("store-query-postgres.json");
+    let out = dir.join("store-query-postgres-out");
+    let _ = std::fs::remove_file(&report);
+    let status = Command::new(&sky)
+        .args(["test", "tests/StoreQueryConformanceTest.sky", "--out"])
+        .arg(&out)
+        .current_dir(ctx.repo_root.join("tests/conformance"))
+        .env("SKY_TEST_JSON", &report)
+        .env("SKY_TEST_POSTGRES_DSN", &dsn)
+        .status();
+    let code = match status {
+        Ok(s) => s.code(),
+        Err(e) => return GateOutcome::new(false, 0, format!("could not run sky test: {e}")),
+    };
+    let Some(v) = read_json(&report) else {
+        return GateOutcome::new(
+            false,
+            0,
+            format!(
+                "sky test produced no JSON report at {} (exit {code:?}); verdict refused",
+                report.display()
+            ),
+        );
+    };
+    let cases = u(&v, "total");
+    let failed = u(&v, "failed");
+    let empty = Vec::new();
+    let list = v.get("cases").and_then(|c| c.as_array()).unwrap_or(&empty);
+    let dialect_ok = list.iter().any(|c| {
+        c.get("name").and_then(|n| n.as_str()) == Some(STORE_QUERY_DIALECT_CASE)
+            && c.get("outcome").and_then(|o| o.as_str()) == Some("pass")
+    });
+    let red: Vec<&str> = list
+        .iter()
+        .filter(|c| c.get("outcome").and_then(|o| o.as_str()) != Some("pass"))
+        .filter_map(|c| c.get("name").and_then(|n| n.as_str()))
+        .collect();
+    if cases != STORE_QUERY_POSTGRES_EXPECTED {
+        return GateOutcome::new(
+            false,
+            cases,
+            format!(
+                "expected EXACTLY {STORE_QUERY_POSTGRES_EXPECTED} cases, got {cases}. If cases \
+                 were added or removed on purpose, update STORE_QUERY_POSTGRES_EXPECTED and \
+                 CONFORMANCE_EXPECTED in the same commit."
+            ),
+        );
+    }
+    if !dialect_ok {
+        return GateOutcome::new(
+            false,
+            cases,
+            format!(
+                "no passing `{STORE_QUERY_DIALECT_CASE}` case: the suite did not run on PostgreSQL"
+            ),
+        );
+    }
+    if failed > 0 || code != Some(0) {
+        return GateOutcome::new(
+            false,
+            cases,
+            format!(
+                "{failed} failing case(s) (exit {code:?}): {}",
+                preview(&red)
+            ),
+        );
+    }
+    GateOutcome::new(
+        true,
+        cases,
+        format!("{cases} Store query cases green on PostgreSQL"),
+    )
 }
 
 /// Member E: Fleet — Ledger run as a multi-replica topology.
@@ -3364,7 +3566,10 @@ pub fn sky_suites(ctx: &GateCtx) -> GateOutcome {
 
 /// The EXACT number of editor-parity cases: 17 single-fixture symbol-class
 /// cases (`scripts/lsp-test-nvim.lua`) + 32 corpus cases across the
-/// `multimodule` / `diagnostics` / `realapp` groups (`lsp-corpus-nvim.lua`).
+/// `multimodule` / `diagnostics` / `realapp` groups (`lsp-corpus-nvim.lua`) +
+/// 3 `realffi` cases on `examples/13-skyshop`'s Stripe FFI surface
+/// (`lsp-test-skyshop.lua`, wired in v0.29.0: before then the driver existed
+/// and `docs/tooling/lsp.md` said this suite ran it, but nothing did).
 ///
 /// `lsp_gate`'s CLI face deliberately does NOT assert a total — the script
 /// cross-checks each corpus group against the count that group declares, and a
@@ -3372,7 +3577,7 @@ pub fn sky_suites(ctx: &GateCtx) -> GateOutcome {
 /// REGISTRY needs one anyway: `expected` is how the harness distinguishes "the
 /// suite ran and passed" from "the suite ran three cases and passed", and a
 /// gate reporting 0 assertions is a FAIL (vacuous), never a pass.
-pub const LSP_EXPECTED: u64 = 49;
+pub const LSP_EXPECTED: u64 = 52;
 
 /// The Neovim editor-parity suite.
 ///
@@ -3541,7 +3746,7 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
     GateOutcome::new(
         true,
         total,
-        format!("{total} Neovim editor-parity cases (17 symbol-class + 32 corpus)"),
+        format!("{total} Neovim editor-parity cases (17 symbol-class + 32 corpus + 3 realffi)"),
     )
 }
 
@@ -3686,7 +3891,20 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// `stdlib.Std.Ai.Cloud.Google`, covered by `tests/Std/Ai/ServeTest.sky`,
 /// `tests/Std/Ai/TrainCloudTest.sky` and the `aiserve` and `aigooglecloud`
 /// corpus surfaces.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 199;
+/// 199 -> 200 in v0.29.0: `stdlib.Sky.Core.Array`, covered by
+/// `tests/conformance/tests/ArrayConformanceTest.sky` (the `conformance` gate)
+/// and `runtime-go/rt/array_trie_test.go`. 200 -> 204 in v0.29.0: `stdlib.Std.Xml`,
+/// `stdlib.Std.Xml.Decode`, `stdlib.Std.Xml.Encode` and `stdlib.Std.Zip`, covered by
+/// the Xml, Zip and CodecXml conformance suites, the `xml` and `zip` Family-S
+/// surfaces and `runtime-go/rt/xml_kernels_test.go` / `zip_kernels_test.go`.
+/// 204 -> 206 in v0.29.0: `stdlib.Std.Office.Xlsx` and `stdlib.Std.Office.Docx`,
+/// covered by the OfficeXlsx and OfficeDocx conformance suites, the `office`
+/// Family-S surface and `runtime-go/rt/office_xlsx_test.go` /
+/// `office_docx_test.go`.
+/// 206 -> 207 in v0.29.0: `stdlib.Std.Image.Canvas`, covered by the ImageCanvas
+/// conformance suite, the `imagecanvas` Family-S surface and
+/// `runtime-go/rt/canvas_kernels_test.go`.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 207;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///
@@ -3745,8 +3963,13 @@ pub const KERNEL_MEMBERS_EXPECTED: u64 = 116;
 
 /// One assertion per tracked `.sky` file under `sky-stdlib/`, `sky-bundled/`,
 /// `apps/`, `examples/` and `templates/`. EXACT: it moves when such a file is
-/// added or removed, measured by running the gate.
-pub const FMT_CLEAN_EXPECTED: u64 = 395;
+/// added or removed, measured by running the gate. 395 -> 396 in v0.29.0:
+/// `sky-stdlib/Sky/Core/Array.sky`. 396 -> 400: `sky-stdlib/Std/Xml.sky`,
+/// `Std/Xml/Decode.sky`, `Std/Xml/Encode.sky` and `Std/Zip.sky`. 400 -> 402:
+/// `sky-stdlib/Std/Office/Xlsx.sky` and `Std/Office/Docx.sky`. 402 -> 403:
+/// `sky-stdlib/Std/Image/Canvas.sky`. 403 -> 401: `examples/simple` and
+/// `examples/test_pkg` removed in the v0.29.0 repo tidy.
+pub const FMT_CLEAN_EXPECTED: u64 = 401;
 
 /// Every tracked `.sky` file in scope is already `sky fmt`-clean.
 pub fn fmt_clean(ctx: &GateCtx) -> GateOutcome {
@@ -4123,6 +4346,25 @@ pub fn ai_stream_pieces(ctx: &GateCtx) -> GateOutcome {
         "./rt/",
         "TestAiStreamPieceByPiece",
         AI_STREAM_PIECES_EXPECTED,
+    )
+}
+
+/// `TestWasmClientLinksNoServerOnlyPackage` (wasm_client_deps_test.go): a
+/// js/wasm program that references every Xml_, Zip_ and Office_ kernel links
+/// none of the 23 server-only packages, neither in its import graph (23) nor
+/// among the wasm's function names (23); the native build still imports the
+/// five the kernels use (5); and the wasm names the probed kernels (3). 38 -> 54
+/// in v0.29.0: the golang.org/x/image packages of Std.Image and
+/// Std.Image.Canvas (draw, webp, sfnt, opentype, vector, gofont) and
+/// compress/lzw (the GIF writer) joined the list.
+pub const SPA_WASM_SERVER_ONLY_EXPECTED: u64 = 54;
+
+pub fn spa_wasm_server_only(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestWasmClientLinksNoServerOnlyPackage",
+        SPA_WASM_SERVER_ONLY_EXPECTED,
     )
 }
 
@@ -4532,4 +4774,23 @@ pub const STDLIB_BODIES_EXPECTED: u64 = crate::stdlib_bodies_gate::EXPECTED_MODU
 pub fn stdlib_bodies(ctx: &GateCtx) -> GateOutcome {
     let (passed, assertions, detail) = crate::stdlib_bodies_gate::check_body(&ctx.repo_root);
     GateOutcome::new(passed, assertions, detail)
+}
+
+#[cfg(test)]
+mod spa_diff_fuzz_dir {
+    use super::*;
+
+    // Two processes running the gate at once must not share a directory: the
+    // shared `<tmp>/sky-spa-diff-fuzz/<fixture>` let one run wipe and rewrite
+    // the other's harness (a clean baseline went red once, then green alone).
+    #[test]
+    fn two_processes_never_share_a_fuzz_directory() {
+        let a = spa_diff_fuzz_out_dir_for(100, "fixture");
+        let b = spa_diff_fuzz_out_dir_for(101, "fixture");
+        assert_ne!(a, b);
+        assert_ne!(a.parent(), b.parent());
+        assert!(spa_diff_fuzz_out_dir("fixture")
+            .to_string_lossy()
+            .contains(&std::process::id().to_string()));
+    }
 }

@@ -19,7 +19,7 @@ import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.String as String
 import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe exposing (Maybe(..))
-import Sky.Core.Regex as Regex
+import Sky.Core.Regex as Regex exposing (Regex)
 import Sky.Core.Crypto as Crypto
 import Sky.Core.File as File
 import Sky.Core.Http as Http
@@ -263,7 +263,7 @@ fill command =
     else
         let
             filled =
-                replaceAll (Regex.findAll "\\{\\{[^}]*\\}\\}" command) command
+                replaceAll (Regex.findAll placeholderRe command) command
         in
             -- A nested placeholder (`{{path/to/{a,b}}}`) is left out.
             if String.contains "{{" filled || String.contains "}}" filled then
@@ -382,3 +382,11 @@ request description =
                 text
     in
         String.toLower (String.left 1 trimmed) ++ String.dropLeft 1 trimmed
+
+
+-- A `{{placeholder}}`, compiled once. In a triple-quoted string `{{` opens
+-- an interpolation, so the braces are escaped for RE2 (`\{`); the literal is
+-- checked when the program compiles.
+placeholderRe : Regex
+placeholderRe =
+    Regex.fromString """\{\{[^}]*\}\}""" |> Result.withDefault Regex.never

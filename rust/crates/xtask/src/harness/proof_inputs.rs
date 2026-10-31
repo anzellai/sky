@@ -76,9 +76,6 @@ const TOOLCHAIN_ROOTS: &[&str] = &[
     "docs",
     ".github",
     "node_modules",
-    "legacy-haskell-compiler",
-    "legacy-sky-compiler",
-    "legacy-ts-compiler",
 ];
 
 /// Is `rel` inside a toolchain tree? Test fixtures under a crate's `tests/`
@@ -98,8 +95,8 @@ fn is_crate_test_fixture(rel: &str) -> bool {
 }
 
 /// A directory a Rust literal may name without dragging in the compiler: the
-/// crate sources (`rust`, `rust/crates`, `rust/crates/<c>`, `…/<c>/src/…`) and
-/// the legacy compilers are refused as DIRECTORIES; a named FILE is kept.
+/// crate sources (`rust`, `rust/crates`, `rust/crates/<c>`, `…/<c>/src/…`) are
+/// refused as DIRECTORIES; a named FILE is kept.
 fn rust_literal_allowed(tracked: &Tracked, rel: &str) -> bool {
     let is_dir = !tracked.files.contains(rel);
     if !is_dir || is_crate_test_fixture(rel) {
@@ -108,10 +105,7 @@ fn rust_literal_allowed(tracked: &Tracked, rel: &str) -> bool {
     let parts: Vec<&str> = rel.split('/').collect();
     let compiler_tree = parts[0] == "rust"
         && (parts.len() <= 3 || (parts.len() >= 4 && parts[1] == "crates" && parts[3] == "src"));
-    !(compiler_tree
-        || parts[0].starts_with("legacy-")
-        || parts[0] == "node_modules"
-        || parts[0] == ".github")
+    !(compiler_tree || parts[0] == "node_modules" || parts[0] == ".github")
 }
 
 const REGISTRY_SOURCE: &str = "rust/crates/xtask/src/harness/registry.rs";

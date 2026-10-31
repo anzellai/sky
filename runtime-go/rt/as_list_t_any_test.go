@@ -9,7 +9,7 @@ import (
 // `Std_Ui_Attribute`) returned nil, silently dropping every Sky.Live
 // event attribute. The fix widens via reflect when T=any.
 //
-// User-facing symptom pre-fix: mini-notion and 19-skyforum rendered
+// User-facing symptom pre-fix: a downstream app and 19-skyforum rendered
 // `<button>` elements with NO `sky-click=` / `sky-input=` attrs at
 // all — the entire interactive surface was dead.
 //
@@ -41,7 +41,7 @@ func TestAsListTAny_WidensTypedSliceToAny(t *testing.T) {
 }
 
 func TestAsListTAny_TypedSkyADTSlice(t *testing.T) {
-	// Mirrors the exact mini-notion / skyforum trigger: a typed
+	// Mirrors the exact downstream-app / skyforum trigger: a typed
 	// `[]SkyADT` slice (the alias the typed-codegen emits for
 	// `Std_Ui_Attribute = SkyADT`) coerced to `[]any`.
 	src := []SkyADT{

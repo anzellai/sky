@@ -119,6 +119,10 @@ const RUST_ENUMERATORS: &[(&str, &str)] = &[
         "ci_excluded::is_ci_excluded",
     ),
     (
+        "rust/crates/xtask/tests/readme_samples_are_built.rs",
+        "ci_excluded::is_ci_excluded",
+    ),
+    (
         "rust/crates/ty/src/infer_readback_tests.rs",
         "76-ai-shell-command",
     ),

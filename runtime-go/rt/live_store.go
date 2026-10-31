@@ -215,6 +215,15 @@ func walkGobSeen(v reflect.Value, seenRefs map[uintptr]bool, depth int) {
 				gobRegistered[t] = true
 			}
 		}
+		// A Dict or a Set encodes itself (GobEncode); what gob needs
+		// registered are the values it holds.
+		if d, ok := reflectDictOf(v); ok {
+			d.dictRangeAny(func(_ string, x any) bool {
+				walkGobSeen(reflect.ValueOf(x), seenRefs, depth+1)
+				return true
+			})
+			return
+		}
 		if !gobTypeHoldsInterface(t) {
 			return
 		}
@@ -1859,6 +1868,15 @@ func walkValidateGob(v reflect.Value, path string, seen map[uintptr]bool) error 
 			return fmt.Errorf("session value at %s is a Secret — not session-safe "+
 				"(a secret would be stored in clear); keep secrets out of the model", path)
 		}
+		// A Dict or a Set: validate each value it holds, under its key.
+		if d, ok := reflectDictOf(v); ok {
+			var err error
+			d.dictRangeAny(func(k string, x any) bool {
+				err = walkValidateGob(reflect.ValueOf(x), path+"["+detagDisplayKey(k)+"]", seen)
+				return err == nil
+			})
+			return err
+		}
 		// A type that encodes itself (JsonValue, decimal.Decimal) decides
 		// what gob writes; its unexported internals are not ours to walk
 		// (reading them through reflect panics).
@@ -1909,7 +1927,7 @@ func walkValidateGob(v reflect.Value, path string, seen map[uintptr]bool) error 
 func decodeSession(blob []byte) (*liveSession, error) {
 	var st storableSession
 	if err := gob.NewDecoder(bytes.NewReader(blob)).Decode(&st); err != nil {
-		return nil, err
+		return nil, sessionDecodeError(err)
 	}
 	sess := &liveSession{
 		model:         st.Model,
@@ -2311,4 +2329,21 @@ func generateSkySessionID() string {
 		return fmt.Sprintf("sid-%d", time.Now().UnixNano())
 	}
 	return urlBase64(b)
+}
+
+// sessionDecodeError explains a stored session this binary cannot read. The
+// caller logs it and serves a NEW session (the old one is dropped whole: no
+// half-decoded model is ever used). The common cause is the v0.29.0 upgrade:
+// a Dict (and a Set) is now the persistent SkyDict, stored in a new form, so a
+// session saved by an older Sky whose model holds a Dict does not decode
+// (docs/migration/v0.29.md, "Sky.Live sessions start fresh").
+func sessionDecodeError(err error) error {
+	msg := err.Error()
+	if strings.Contains(msg, "wrong type") || strings.Contains(msg, "type mismatch") ||
+		strings.Contains(msg, "SkyDict") || strings.Contains(msg, "SkySet") {
+		return fmt.Errorf("the stored session was written by an older Sky and holds a Dict or a Set, "+
+			"whose stored form changed in v0.29.0; it is dropped and the visitor starts a new session "+
+			"(docs/migration/v0.29.md): %w", err)
+	}
+	return fmt.Errorf("the stored session cannot be decoded; it is dropped and the visitor starts a new session: %w", err)
 }

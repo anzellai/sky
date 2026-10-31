@@ -55,6 +55,7 @@ pub fn is_nullary_kernel_value(module: &str, func: &str) -> bool {
         (module, func),
         ("Dict", "empty")
             | ("Set", "empty")
+            | ("Array", "empty")
             | ("Cmd", "none")
             | ("Sub", "none")
             | ("Uuid", "v4")
@@ -69,6 +70,8 @@ pub fn is_nullary_kernel_value(module: &str, func: &str) -> bool {
             // starts from the real empty map, not an uncalled `func() any`.
             | ("Config", "default")
             | ("Math", "pi" | "e" | "phi" | "sqrt2" | "inf" | "nan")
+            // `Regex.never : Regex` (v0.29.0), `func Regex_never() any`.
+            | ("Regex", "never")
     )
 }
 
@@ -149,6 +152,10 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("String", "isEmpty", "rt.String_isEmpty"),
     ("String", "replace", "rt.String_replace"),
     ("String", "slice", "rt.String_slice"),
+    ("String", "indexes", "rt.String_indexes"),
+    ("String", "uncons", "rt.String_uncons"),
+    ("String", "foldl", "rt.String_foldl"),
+    ("String", "foldr", "rt.String_foldr"),
     ("String", "left", "rt.String_left"),
     ("String", "right", "rt.String_right"),
     ("String", "dropLeft", "rt.String_dropLeft"),
@@ -225,6 +232,9 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("List", "range", "rt.List_range"),
     ("List", "repeat", "rt.List_repeat"),
     ("List", "zip", "rt.List_zip"),
+    ("List", "map2", "rt.List_map2"),
+    ("List", "map3", "rt.List_map3"),
+    ("List", "unique", "rt.List_unique"),
     ("List", "filterMap", "rt.List_filterMap"),
     ("Dict", "empty", "rt.Dict_empty"),
     ("Dict", "insert", "rt.Dict_insert"),
@@ -313,6 +323,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Random", "seededChoice", "rt.Random_seededChoice"),
     ("Process", "run", "rt.Process_run"),
     ("Subprocess", "spawn", "rt.Subprocess_spawn"),
+    ("Subprocess", "runCommand", "rt.Subprocess_runCommand"),
     ("Subprocess", "readFrom", "rt.Subprocess_readFrom"),
     ("Subprocess", "readWithin", "rt.Subprocess_readWithin"),
     ("Subprocess", "write", "rt.Subprocess_write"),
@@ -328,6 +339,25 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Watch", "next", "rt.Watch_next"),
     ("Watch", "close", "rt.Watch_close"),
     ("Watch", "changes", "rt.Watch_changes"),
+    // v0.29.0 Sky.Core.Array (runtime-go/rt/array_trie.go).
+    ("Array", "empty", "rt.Array_empty"),
+    ("Array", "initialize", "rt.Array_initialize"),
+    ("Array", "repeat", "rt.Array_repeat"),
+    ("Array", "fromList", "rt.Array_fromList"),
+    ("Array", "isEmpty", "rt.Array_isEmpty"),
+    ("Array", "length", "rt.Array_length"),
+    ("Array", "get", "rt.Array_get"),
+    ("Array", "set", "rt.Array_set"),
+    ("Array", "push", "rt.Array_push"),
+    ("Array", "toList", "rt.Array_toList"),
+    ("Array", "toIndexedList", "rt.Array_toIndexedList"),
+    ("Array", "map", "rt.Array_map"),
+    ("Array", "indexedMap", "rt.Array_indexedMap"),
+    ("Array", "foldl", "rt.Array_foldl"),
+    ("Array", "foldr", "rt.Array_foldr"),
+    ("Array", "filter", "rt.Array_filter"),
+    ("Array", "append", "rt.Array_append"),
+    ("Array", "slice", "rt.Array_slice"),
     ("Sync", "newRef", "rt.Sync_newRef"),
     ("Sync", "get", "rt.Sync_get"),
     ("Sync", "set", "rt.Sync_set"),
@@ -552,15 +582,23 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Encoding", "urlDecode", "rt.Encoding_urlDecode"),
     ("Encoding", "hexEncode", "rt.Encoding_hexEncode"),
     ("Encoding", "hexDecode", "rt.Encoding_hexDecode"),
-    ("Regex", "match", "rt.Regex_match"),
+    ("Regex", "fromString", "rt.Regex_fromString"),
+    ("Regex", "never", "rt.Regex_never"),
+    ("Regex", "contains", "rt.Regex_contains"),
+    ("Regex", "match", "rt.Regex_contains"),
     ("Regex", "find", "rt.Regex_find"),
     ("Regex", "findAll", "rt.Regex_findAll"),
+    ("Regex", "findMatch", "rt.Regex_findMatch"),
+    ("Regex", "findAllMatches", "rt.Regex_findAllMatches"),
+    ("Regex", "replaceWith", "rt.Regex_replaceWith"),
     ("Regex", "replace", "rt.Regex_replace"),
     ("Regex", "split", "rt.Regex_split"),
     ("Char", "isUpper", "rt.Char_isUpper"),
     ("Char", "isLower", "rt.Char_isLower"),
     ("Char", "isDigit", "rt.Char_isDigit"),
     ("Char", "isAlpha", "rt.Char_isAlpha"),
+    ("Char", "isAlphaNum", "rt.Char_isAlphaNum"),
+    ("Char", "isSpace", "rt.Char_isSpace"),
     ("Char", "toUpper", "rt.Char_toUpper"),
     ("Char", "toLower", "rt.Char_toLower"),
     ("Char", "toCode", "rt.Char_toCode"),

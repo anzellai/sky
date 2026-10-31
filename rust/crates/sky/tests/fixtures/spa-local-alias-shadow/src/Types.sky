@@ -1,0 +1,18 @@
+module Types exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+type alias Plan =
+    { id : String
+    , title : String
+    }
+
+type alias Model =
+    { joined : Int
+    , plan : Maybe Plan
+    , note : String
+    }
+
+type Msg
+    = Join
+    | Saved (Result Error Plan)

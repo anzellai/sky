@@ -1,0 +1,63 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Ui as Ui exposing (Element)
+import Types exposing (Model, Msg(..))
+import Other
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { joined = 1, plan = Nothing, note = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Join ->
+            ( { model | joined = model.joined + 1 }
+            , Cmd.perform (Other.save model.joined) Saved
+            )
+
+        Saved (Ok p) ->
+            ( { model | plan = Just p }, Cmd.none )
+
+        Saved (Err _) ->
+            ( { model | note = "error" }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text
+              ("total "
+                  ++ String.fromInt
+                         (Other.summary { rows = [ "a" ], joined = model.joined }))
+        , Ui.text (Maybe.withDefault "" (Maybe.map .title model.plan))
+        , Ui.button [] { onPress = Just Join, label = Ui.text "join" }
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound (\_ -> Ui.text "not found")
+
+
+main : Task Error ()
+main =
+    App.run app

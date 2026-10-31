@@ -1,12 +1,10 @@
 # Development
 
 > **Compiler**: Sky's compiler is written in **Rust** (cargo workspace
-> at `rust/`, crate `sky` builds the `sky` binary). The retired
-> Haskell compiler lives under `legacy-haskell-compiler/` for
-> historical reference. Type-directed lowering, Go generics on
-> parametric record aliases, Layer-3 stdlib, and whole-program DCE all
-> carry over; runtime verification runs across ~50 examples. See
-> [`history/compiler/versions.md`](history/compiler/versions.md) for the changelog.
+> at `rust/`, crate `sky` builds the `sky` binary). Runtime verification
+> runs across the 73 projects in `examples/`. The earlier Haskell,
+> TypeScript and Sky-in-Sky compilers were removed from the tree in
+> v0.29.0; see [`history/legacy-compilers.md`](history/legacy-compilers.md).
 
 
 Building Sky from source — for contributors, language-tooling work,
@@ -17,7 +15,7 @@ or anyone who wants to run the compiler before a release lands.
 - **Rust toolchain** — installed via [rustup](https://rustup.rs/);
   the exact version is pinned by `rust/rust-toolchain.toml`, so
   `rustup` auto-selects it when you build inside the workspace.
-- **Go 1.21+** — required both to build `sky-ffi-inspect` and at
+- **Go 1.25+** — required both to build `sky-ffi-inspect` and at
   runtime (Sky compiles to Go and invokes `go build`).
 
 Verify:
@@ -25,7 +23,7 @@ Verify:
 ```bash
 rustc --version           # matches rust/rust-toolchain.toml
 cargo --version
-go    version             # 1.21+
+go    version             # 1.25+
 ```
 
 ## Local build (one shot)
@@ -46,7 +44,6 @@ Flags:
 | Flag | Effect |
 |------|--------|
 | `--clean` | `rm -rf rust/target/ sky-out/ bin/` first |
-| `--self-tests` | Run `sky build` across every fixture in `test-files/` |
 | `--sweep` | Clean-build every project under `examples/` |
 
 ## Quick rebuild (while hacking)
@@ -70,7 +67,7 @@ iteration.
 
 ## Running tests
 
-Four matrices, all must pass before a push:
+Three matrices, all must pass before a push:
 
 ```bash
 # 1. Cargo workspace suite — lexer, parser, name resolution, type
@@ -78,9 +75,10 @@ Four matrices, all must pass before a push:
 #    integration tests. Run from the workspace root.
 (cd rust && cargo test --workspace)
 
-# 2. xtask gate suite — end-to-end differential + regression gates.
+# 2. xtask gate suite — end-to-end regression gates.
 #    Gates: roundtrip, resolve, infer, reject, fuzz, coerce-floor,
-#    repro, build-run (48 build-verified examples), golden.
+#    repro, build-run (the examples corpus), golden.
+#    scripts/gates-for-change.sh --dry-run prints the gates a change needs.
 (cd rust && cargo run -p xtask -- build-run)   # one gate; repeat per gate
 #   … or run each of: roundtrip resolve infer reject fuzz \
 #     coerce-floor repro build-run golden
@@ -88,16 +86,6 @@ Four matrices, all must pass before a push:
 # 3. Runtime Go tests — rt helpers, ADT shape, coercion, typed FFI,
 #    security (CSRF, rate limit, auth secrets), session round-trip.
 (cd runtime-go && go test ./rt/)
-
-# 4. Self-tests — every fixture in test-files/ must build clean.
-pass=0; fail=0
-for f in test-files/*.sky; do
-    rm -rf .skycache
-    ./sky-out/sky build "$f" >/dev/null 2>&1 \
-        && pass=$((pass+1)) \
-        || fail=$((fail+1))
-done
-echo "self-tests: $pass passed, $fail failed"
 ```
 
 ## Nix
@@ -131,7 +119,7 @@ wins, and the package puts its own Go 1.26 after it as a fallback.
 
 The version is `[workspace.package] version` in `rust/Cargo.toml`,
 the one version source, and `sky --version` prints it. A flake build
-adds the commit (`sky v0.27.5 (1a2b3c4)`); `nix-build` has no git
+adds the commit (`sky v0.29.0 (1a2b3c4)`); `nix-build` has no git
 information and prints the plain version.
 
 ### Reproducible shell
@@ -140,12 +128,12 @@ information and prints the plain version.
 nix-shell -A shell     # stable Nix
 nix develop            # flakes
 # Either gives cargo, rustc, rustfmt, clippy, rust-analyzer, go 1.26,
-# pkg-config, make, curl, jq and git.
+# node 22, pkg-config, make, curl, jq and git.
 ./scripts/build.sh --clean
 ```
 
-The shell sets `SKY_RUNTIME_DIR` to the repo's `runtime-go/` so
-in-tree builds resolve the runtime without the embedded fallback.
+The shell also carries Node 22 for the Playwright e2e verifiers
+(`scripts/*-e2e.sh`; run `npm ci` once for the pinned Playwright).
 
 Entering the shell writes nothing to disk: it sets stdenv's
 `noDumpEnvVars`, which stops `dumpVars` copying the whole environment
@@ -218,7 +206,7 @@ cached helpers — no manual cleanup required.
 > `grep -rn 'SKY_FFI_INSPECTOR\|bin/sky-ffi-inspect' rust/crates --include='*.rs'`
 > returns nothing.
 >
-> The practical consequence is the one that wasted time: `scripts/build.sh:88`
+> The practical consequence is the one that wasted time: `scripts/build.sh:83`
 > still writes `bin/sky-ffi-inspect`, and **nothing consumes it**. The old
 > instruction to "rebuild the `bin/` copy so your dev workflow picks the change
 > up" had no effect. If you edit `tools/sky-ffi-inspect/`, the content hash
@@ -237,7 +225,7 @@ Before tagging:
    (forbidden-pattern gate, build, run, HTTP probe).
 4. Tag + push.
 
-See [`compiler/runtime-verification.md`](compiler/runtime-verification.md)
+See [`history/compiler/runtime-verification.md`](history/compiler/runtime-verification.md)
 for the full gate matrix.
 
 ## Troubleshooting

@@ -572,9 +572,16 @@ pub static GATES: &[Gate] = &[
                 // (+4 cases, 676 → 680), and the v0.27.14
                 // lambda_record_param stratum (+32 cases, 680 → 712), and the
                 // v0.27.16 generic_alias_slot stratum (+32 cases, 712 → 744), and the
-                // v0.28.0 Std.Ai surfaces (+24 cases, 744 → 768).
-                from: "n_min = 768",
-                to: "n_min = 769",
+                // v0.28.0 Std.Ai surfaces (+24 cases, 744 → 768), and the
+                // v0.29.0 let_mutual_recursion stratum (+36 cases, 768 → 804),
+                // and the v0.29.0 Sky.Core.Array surface (+5 cases, 804 → 809), and the
+                // v0.29.0 Family R defects value_cycle and regex_invalid_literal
+                // (+18 cases, 809 → 827), and the v0.29.0 Std.Xml and
+                // Std.Zip surfaces (+10 cases, 827 → 837), and the v0.29.0
+                // Std.Office surface (+5 cases, 837 → 842), and the v0.29.0
+                // Std.Image.Canvas surface (+2 cases, 842 → 844).
+                from: "n_min = 844",
+                to: "n_min = 845",
             },
         }]),
         body: bodies::corpus_manifest,
@@ -949,6 +956,28 @@ pub static GATES: &[Gate] = &[
             },
         }]),
         body: bodies::apps_ledger_postgres,
+    },
+    Gate {
+        name: "store-query-postgres",
+        tier: Tier::T3,
+        platforms: UNIX,
+        // One `sky test` build (cold Go cache) plus 80 cases on PostgreSQL.
+        budget_s: 900,
+        expected: bodies::STORE_QUERY_POSTGRES_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "Std.Db.Store query path (aggregates, select, latestPer, text match, jsonText) on PostgreSQL",
+        mutations: Mutations::new(&[Mutation {
+            id: "store-query-postgres.drop-rows-err",
+            description: "revert B1: drop the rows.Err() check after the dbQueryRows loop. \
+                          pgx then loses the error a malformed JSON row raises after row 1, \
+                          and the jsonText `a malformed JSON row is Err` case must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/db_auth.go",
+                from: "\t\t\tif err := rows.Err(); err != nil {\n\t\t\t\treturn Err[any, any](ErrIo(\"db.query: \" + err.Error()))\n\t\t\t}\n\t\t\treturn Ok[any, any](out)",
+                to: "\t\t\treturn Ok[any, any](out)",
+            },
+        }]),
+        body: bodies::store_query_postgres,
     },
     Gate {
         name: "apps-dispatch",
@@ -1456,6 +1485,27 @@ pub static GATES: &[Gate] = &[
         body: bodies::ai_stream_pieces,
     },
     Gate {
+        name: "spa-wasm-server-only",
+        tier: Tier::T1,
+        platforms: UNIX,
+        budget_s: 180,
+        expected: bodies::SPA_WASM_SERVER_ONLY_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a Sky.Spa wasm client links no server-only package (encoding/xml, archive/zip, database drivers, ...)",
+        mutations: Mutations::new(&[Mutation {
+            id: "spa-wasm-server-only.import-archive-zip-on-the-client",
+            description: "import archive/zip from zip_safe.go, which has no build tag and so \
+                          is compiled into every wasm client; the import-graph and \
+                          function-name assertions for archive/zip must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/zip_safe.go",
+                from: "import (\n\t\"path\"\n",
+                to: "import (\n\t_ \"archive/zip\"\n\t\"path\"\n",
+            },
+        }]),
+        body: bodies::spa_wasm_server_only,
+    },
+    Gate {
         name: "ai-device-blob-allowlist",
         tier: Tier::T1,
         platforms: UNIX,
@@ -1657,8 +1707,10 @@ pub static GATES: &[Gate] = &[
         platforms: UNIX,
         // Measured 2026-08-12 on a debug `sky`: ~250 s for 49 cases (17 legacy
         // at ~8.5 s each, 32 corpus at ~1.6 s each — the corpus groups share one
-        // LSP session). 900 leaves room for a cold session on a slow runner
-        // without turning a hang into a 15-minute wait.
+        // LSP session). The 3 realffi cases (v0.29.0) share one session on
+        // 13-skyshop and add the time to index its Stripe surface. 900 leaves
+        // room for a cold session on a slow runner without turning a hang into
+        // a 15-minute wait.
         budget_s: 900,
         expected: bodies::LSP_EXPECTED,
         expect: Expect::Falsifiable,
@@ -1674,17 +1726,34 @@ pub static GATES: &[Gate] = &[
         // (`type alias Model = …`, read from the type's home module) differs from
         // the source token (`Model`), so rendering the bare name instead is a
         // one-token change with no side effects on any other path.
-        mutations: Mutations::new(&[Mutation {
-            id: "lsp.hover-echoes-the-token",
-            description: "make hover on a TYPE return the bare identifier instead \
-                          of its declaration; the two type-hover cases must go red \
-                          (they did not, before their needles were strengthened)",
-            kind: MutationKind::ReplaceOnce {
-                path: "rust/crates/sky-lsp/src/lib.rs",
-                from: "format!(\"```sky\\n{decl_src}\\n```\")",
-                to: "format!(\"```sky\\n{name}\\n```\")",
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "lsp.hover-echoes-the-token",
+                description: "make hover on a TYPE return the bare identifier instead \
+                              of its declaration; the two type-hover cases must go red \
+                              (they did not, before their needles were strengthened)",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/sky-lsp/src/lib.rs",
+                    from: "format!(\"```sky\\n{decl_src}\\n```\")",
+                    to: "format!(\"```sky\\n{name}\\n```\")",
+                },
             },
-        }]),
+            // The `realffi` group (examples/13-skyshop's Stripe surface) is the
+            // only part of the suite that hovers a Go-FFI binding. Dropping the
+            // FFI signature from hover is the defect it exists to catch: both
+            // of its hover cases must go red.
+            Mutation {
+                id: "lsp.ffi-hover-drops-the-signature",
+                description: "make hover on a Go-FFI binding render no signature; the \
+                              realffi hover cases on 13-skyshop's Stripe surface must \
+                              go red",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/sky-lsp/src/lib.rs",
+                    from: ".map(|f| f.sky_type.clone())",
+                    to: ".map(|_| String::new())",
+                },
+            },
+        ]),
         body: bodies::lsp,
     },
     Gate {

@@ -76,6 +76,8 @@ module Std.App exposing
     , withDurableId
     , withEmbedded
     , withSessionTransport
+    , withSessionLifetime
+    , withPersistExclude
     , withName
     , DurableWiring
     , baseDefaults
@@ -92,6 +94,7 @@ module Std.App exposing
     , runLiveWindow
     , runSpa
     , applyServerConfig
+    , applySessionLifetime
     , runTui
     , runCli
     , runWebview
@@ -196,6 +199,8 @@ type Config
 -- (default `False`) is set by [`withEmbedded`]; it maps to `Live.withEmbedded`.
 -- `sessionTransport` (default `CookieSession`) is set by
 -- [`withSessionTransport`]; it maps to `Live.withSessionTransport`.
+-- `persistExclude` (default `Nothing`) is set by [`withPersistExclude`]; it
+-- maps to `Live.withRefreshOnLoad`.
 type alias WebOpts =
     { port : Int
     , store : Maybe String
@@ -210,6 +215,7 @@ type alias WebOpts =
     , embedded : Bool
     , sessionTransport : SessionTransport
     , name : Maybe String
+    , persistExclude : Maybe (List String)
     }
 
 -- | How a Sky.Live session id travels between the browser and the server.
@@ -240,6 +246,7 @@ webDefaults =
     , embedded = False
     , sessionTransport = CookieSession
     , name = Nothing
+    , persistExclude = Nothing
     }
 
 -- | Tablet-target config — same Live-backed shape as [`WebOpts`].
@@ -1018,6 +1025,106 @@ withSessionTransport transport (App a) =
         }
 
 
+-- | How long a sign-in lasts on a client target (`web:app` and the other
+-- Sky.Spa targets), in seconds:
+--
+--     appDef |> App.withSessionLifetime (14 * 24 * 60 * 60)
+--
+-- It is the lifetime of the signed session token and the `Max-Age` of the
+-- `sky_spa` cookie that carries it, so the cookie and the token end together.
+-- The default is 30 days. The operator variable `SKY_SPA_SESSION_LIFETIME` (a
+-- Go duration such as `336h`, or whole seconds) overrides the builder.
+--
+-- The build reads the argument and sets it in the generated backend at boot,
+-- so the argument must be a value the backend can compute (a literal or a
+-- top-level constant). Sky.Live (`web`, `tablet`) keeps its session on the
+-- server and sets its length with the session TTL (`Live.withTtl` /
+-- `SKY_LIVE_TTL`); it ignores this builder.
+withSessionLifetime : Int -> App fallback seed page model msg key -> App fallback seed page model msg key
+withSessionLifetime _ appVal =
+    appVal
+
+
+-- | Model fields that are never kept from an earlier page: on every full
+-- page load they come from `init` (and `withRequest`), never from a saved
+-- copy. Use it for values the server owns, such as site settings, a feature
+-- flag or the server clock:
+--
+--     appDef |> App.withPersistExclude [ "siteConfig", "serverNow" ]
+--
+-- On a client target (`web:app` and the other Sky.Spa targets) the fields are
+-- left out of the model the browser keeps in localStorage and are taken from
+-- the server-rendered seed on a reload (a session field is never left out:
+-- the sign-out check reads it). On Sky.Live (`web`, `tablet`) the session
+-- keeps the model on the server, and a full page load of an existing session
+-- refreshes the fields from `init`. Every other field keeps its value.
+-- Names are the model's field names; a name the model does not have does
+-- nothing.
+withPersistExclude : List String -> App fallback seed page model msg key -> App fallback seed page model msg key
+withPersistExclude fields (App a) =
+    -- Appended to the config list like withName, and read by
+    -- persistExcludeIn_ (the last call wins). Not a field of the App record:
+    -- every `(App a)` unwrap of that stdlib ADT narrows each of its fields,
+    -- so a field there cost a list narrowing per builder in every app.
+    App
+        { a
+            | configs =
+                a.configs
+                    ++ [ WebConfig
+                             { webDefaults | persistExclude = Just fields }
+                       ]
+        }
+
+
+-- | The fields set by the last [`withPersistExclude`] in the config list,
+-- else none.
+persistExcludeIn_ : List Config -> List String
+persistExcludeIn_ configs =
+    case lastExcludeIn_ Nothing configs of
+
+        Just fields ->
+            fields
+
+        Nothing ->
+            []
+
+
+lastExcludeIn_ : Maybe (List String) -> List Config -> Maybe (List String)
+lastExcludeIn_ found configs =
+    case configs of
+
+        [] ->
+            found
+
+        (WebConfig o) :: rest ->
+            lastExcludeIn_ (newerExclude_ o found) rest
+
+        (TabletConfig o) :: rest ->
+            lastExcludeIn_ (newerExclude_ o found) rest
+
+        _ :: rest ->
+            lastExcludeIn_ found rest
+
+
+newerExclude_ : WebOpts -> Maybe (List String) -> Maybe (List String)
+newerExclude_ o found =
+    case o.persistExclude of
+
+        Just fields ->
+            Just fields
+
+        Nothing ->
+            found
+
+
+-- | The client build's boot step for [`withSessionLifetime`]: the lifetime
+-- becomes the `SPA_SESSION_LIFETIME` server setting (operator env still
+-- wins). Called by the generated backend; app code does not need it.
+applySessionLifetime : Int -> Task Error ()
+applySessionLifetime seconds =
+    applyServerSettings_ [ ( "SPA_SESSION_LIFETIME", String.fromInt seconds ) ]
+
+
 -- | True when any web / tablet config in the list asks for the header
 -- session transport.
 headerSessionIn_ : List Config -> Bool
@@ -1569,8 +1676,15 @@ liveConfig_ (App a) =
 
                         Nothing ->
                             withTransport_
+                exclude_ = persistExcludeIn_ a.configs
+                withExclude_ =
+                    if List.isEmpty exclude_ then
+                        withName_
+
+                    else
+                        Live.withRefreshOnLoad exclude_ withName_
             in
-                Just withName_
+                Just withExclude_
 
         Nothing ->
             Nothing

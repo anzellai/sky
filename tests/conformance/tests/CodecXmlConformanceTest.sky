@@ -1,0 +1,537 @@
+module CodecXmlConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for Codec.toXml / Codec.fromXml (v0.29.0): a round
+-- trip for every combinator (record, nested record, list, Maybe, enum,
+-- taggedUnion, result, dict, Codec.error, map, inline, auto, autoWith), the
+-- pinned XML form, the attribute fallback, a namespaced input, a wrong root,
+-- the documented lossy cases, an order in a SOAP-style body, and the
+-- jsonSchema output of the codecs whose description gained a node (unchanged:
+-- still the open schema `{}`, not exact).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Dict as Dict exposing (Dict)
+import Sky.Core.Json.Encode as JsonE
+import Std.Codec as Codec exposing (Codec)
+import Sky.Test as Test exposing (Test)
+
+
+codeOf : Result Error a -> String
+codeOf r =
+    case r of
+
+        Ok _ ->
+            "ok"
+
+        Err e ->
+            case Error.failureOf e of
+
+                Just f ->
+                    Error.failureDomain f ++ "/" ++ Error.failureCode f
+
+                Nothing ->
+                    "no-domain"
+
+
+roundTrip : Codec a -> a -> Result Error a
+roundTrip c v =
+    Codec.fromXml "v" c (Codec.toXml "v" c v)
+
+type Colour
+    = Red
+    | Green
+
+
+colourCodec : Codec Colour
+colourCodec =
+    Codec.enum [ ( Red, "red" ), ( Green, "green" ) ]
+
+type Shape
+    = Dot
+    | Circle Float
+    | Rect Int Int
+    | Tagged String (Maybe Int) Colour
+
+
+shapeCodec : Codec Shape
+shapeCodec =
+    Codec.taggedUnion
+        (\s ->
+            case s of
+
+                Dot ->
+                    ( "Dot", [] )
+
+                Circle r ->
+                    ( "Circle", [ Codec.toValue Codec.float r ] )
+
+                Rect w h ->
+                    ( "Rect"
+                    , [ Codec.toValue Codec.int w, Codec.toValue Codec.int h ]
+                    )
+
+                Tagged n m c ->
+                    ( "Tagged"
+                    , [ Codec.toValue Codec.string n
+                      , Codec.toValue (Codec.maybe Codec.int) m
+                      , Codec.toValue colourCodec c
+                      ]
+                    ))
+        [ Codec.var0 "Dot" Dot
+        , Codec.var1 "Circle" Circle Codec.float
+        , Codec.var2 "Rect" Rect Codec.int Codec.int
+        , Codec.var3
+              "Tagged"
+              Tagged
+              Codec.string
+              (Codec.maybe Codec.int)
+              colourCodec
+        ]
+
+type alias Point =
+    { x : Int
+    , y : Int
+    }
+
+
+pointFields : Codec.ObjectCodec Point Point
+pointFields =
+    Codec.object Point |> Codec.field "x" .x Codec.int
+        |> Codec.field "y" .y Codec.int
+
+
+pointCodec : Codec Point
+pointCodec =
+    Codec.buildObject pointFields
+
+type alias Pin =
+    { at : Point
+    , label : String
+    }
+
+
+pinCodec : Codec Pin
+pinCodec =
+    Codec.object Pin |> Codec.inline .at pointFields
+        |> Codec.field "label" .label Codec.string
+        |> Codec.buildObject
+
+type alias Everything =
+    { name : String
+    , count : Int
+    , ratio : Float
+    , on : Bool
+    , nick : Maybe String
+    , tags : List String
+    , grid : List (List Int)
+    , origin : Point
+    , path : List Point
+    , colour : Colour
+    , shapes : List Shape
+    , outcome : Result String Int
+    , scores : Dict String Int
+    , cents : Int
+    }
+
+type Cents
+    = Cents Int
+
+
+everythingCodec : Codec Everything
+everythingCodec =
+    Codec.object Everything |> Codec.field "name" .name Codec.string
+        |> Codec.field "count" .count Codec.int
+        |> Codec.field "ratio" .ratio Codec.float
+        |> Codec.field "on" .on Codec.bool
+        |> Codec.field "nick" .nick (Codec.maybe Codec.string)
+        |> Codec.field "tags" .tags (Codec.list Codec.string)
+        |> Codec.field "grid" .grid (Codec.list (Codec.list Codec.int))
+        |> Codec.field "origin" .origin pointCodec
+        |> Codec.field "path" .path (Codec.list pointCodec)
+        |> Codec.field "colour" .colour colourCodec
+        |> Codec.field "shapes" .shapes (Codec.list shapeCodec)
+        |> Codec.field "outcome" .outcome (Codec.result Codec.string Codec.int)
+        |> Codec.field "scores" .scores (Codec.dict Codec.string Codec.int)
+        |> Codec.field
+               "cents"
+               .cents
+               (Codec.map Cents (\(Cents c) -> c) Codec.int
+                   |> Codec.map (\(Cents c) -> c) Cents)
+        |> Codec.buildObject
+
+
+everything : Everything
+everything =
+    { name = "a & <b>  "
+    , count = -3
+    , ratio = 0.1
+    , on = True
+    , nick = Nothing
+    , tags = [ "x", "y" ]
+    , grid = [ [ 1, 2 ], [], [ 3 ] ]
+    , origin = { x = 0, y = 1 }
+    , path = [ { x = 1, y = 2 }, { x = 3, y = 4 } ]
+    , colour = Green
+    , shapes =
+        [ Dot
+        , Circle 1.5
+        , Rect 2 3
+        , Tagged "t" Nothing Red
+        , Tagged "u" (Just 4) Green
+        ]
+    , outcome = Err "boom"
+    , scores = Dict.fromList [ ( "a", 1 ), ( "b", 2 ) ]
+    , cents = 250
+    }
+
+type alias Product =
+    { productId : String
+    , priceMinor : Int
+    , active : Bool
+    , note : Maybe String
+    , sizes : List Int
+    }
+
+
+productBlank : Product
+productBlank =
+    { productId = ""
+    , priceMinor = 0
+    , active = False
+    , note = Nothing
+    , sizes = []
+    }
+
+
+intBool : Codec Bool
+intBool =
+    Codec.map
+        (\i -> i /= 0)
+        (\b ->
+            if b then
+                1
+
+            else
+                0)
+        Codec.int
+
+type alias Line =
+    { sku : String
+    , qty : Int
+    }
+
+type alias Order =
+    { id : String
+    , customer : String
+    , lines : List Line
+    , paid : Bool
+    }
+
+
+lineCodec : Codec Line
+lineCodec =
+    Codec.object Line |> Codec.field "sku" .sku Codec.string
+        |> Codec.field "qty" .qty Codec.int
+        |> Codec.buildObject
+
+
+orderCodec : Codec Order
+orderCodec =
+    Codec.object Order |> Codec.field "id" .id Codec.string
+        |> Codec.field "customer" .customer Codec.string
+        |> Codec.field "lines" .lines (Codec.list lineCodec)
+        |> Codec.field "paid" .paid Codec.bool
+        |> Codec.buildObject
+
+
+order : Order
+order =
+    { id = "A-1"
+    , customer = "Ada"
+    , lines = [ { sku = "x", qty = 2 }, { sku = "y", qty = 1 } ]
+    , paid = False
+    }
+
+
+soapEnvelope : String -> String
+soapEnvelope body =
+    "<soap:Envelope xmlns:soap=\"http://www.w3.org/2003/05/soap-envelope\"><soap:Body>"
+        ++ body
+        ++ "</soap:Body></soap:Envelope>"
+
+
+-- The order element out of a SOAP body, as a document of its own.
+soapOrder : String -> String
+soapOrder envelope =
+    case String.indexes "<order" envelope of
+
+        start :: _ ->
+            case String.indexes "</order>" envelope of
+
+                end :: _ ->
+                    String.slice start (end + 8) envelope
+
+                [] ->
+                    ""
+
+        [] ->
+            ""
+
+
+schemaText : Codec a -> ( String, Bool )
+schemaText c =
+    let
+        js = Codec.jsonSchema c
+    in
+        ( JsonE.encode 0 js.schema, js.exact )
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "a record writes one element per field, in order"
+          (\_ ->
+              Test.equal
+                  "<line><sku>x&amp;y</sku><qty>2</qty></line>"
+                  (Codec.toXml "line" lineCodec { sku = "x&y", qty = 2 }))
+    , Test.test
+          "scalars, Maybe, lists and enums have their pinned form"
+          (\_ ->
+              Test.equal
+                  "<v><name>a</name><count>1</count><ratio>0.5</ratio><on>false</on><tags>p</tags><tags>q</tags><grid><item>1</item></grid><grid/><origin><x>0</x><y>0</y></origin><colour>red</colour><shapes><Dot/></shapes><shapes><Rect><arg>1</arg><arg>2</arg></Rect></shapes><outcome><Ok>3</Ok></outcome><scores><entry><key>k</key><value>9</value></entry></scores><cents>5</cents></v>"
+                  (Codec.toXml
+                      "v"
+                      everythingCodec
+                      { everything
+                          | name = "a"
+                          , count = 1
+                          , ratio = 0.5
+                          , on = False
+                          , tags = [ "p", "q" ]
+                          , grid = [ [ 1 ], [] ]
+                          , origin = { x = 0, y = 0 }
+                          , path = []
+                          , colour = Red
+                          , shapes = [ Dot, Rect 1 2 ]
+                          , outcome = Ok 3
+                          , scores = Dict.fromList [ ( "k", 9 ) ]
+                          , cents = 5
+                      }))
+    , Test.test
+          "every combinator round-trips in one record"
+          (\_ ->
+              Test.equal (Ok everything) (roundTrip everythingCodec everything))
+    , Test.test
+          "a Just field and Ok result round-trip"
+          (\_ ->
+              let
+                  v = { everything | nick = Just "", outcome = Ok 7 }
+              in
+                  Test.equal (Ok v) (roundTrip everythingCodec v))
+    , Test.test
+          "top-level scalars, lists, Maybe and unions"
+          (\_ ->
+              Test.equal
+                  ( ( Ok 5, Ok [ 1, 2 ], Ok [ Just 1, Nothing ] )
+                  , ( Ok Nothing
+                    , Ok (Tagged "z" Nothing Green)
+                    , Ok [ [ "a" ], [] ]
+                    )
+                  )
+                  ( ( roundTrip Codec.int 5
+                    , roundTrip (Codec.list Codec.int) [ 1, 2 ]
+                    , roundTrip
+                          (Codec.list (Codec.maybe Codec.int))
+                          [ Just 1, Nothing ]
+                    )
+                  , ( roundTrip (Codec.maybe Codec.int) Nothing
+                    , roundTrip shapeCodec (Tagged "z" Nothing Green)
+                    , roundTrip
+                          (Codec.list (Codec.list Codec.string))
+                          [ [ "a" ], [] ]
+                    )
+                  ))
+    , Test.test
+          "Codec.error round-trips"
+          (\_ ->
+              let
+                  e1 = Error.invalidInput "bad"
+                  e2 =
+                      Error.failure "billing" "CardDeclined"
+                          |> Error.withRetryable True
+                          |> Error.withAttr "reason" "funds"
+                          |> Error.fromDomain Error.Conflict "declined"
+              in
+                  Test.equal
+                      ( Ok e1, Ok e2 )
+                      ( roundTrip Codec.error e1, roundTrip Codec.error e2 ))
+    , Test.test
+          "inline and map round-trip"
+          (\_ ->
+              Test.equal
+                  ( Ok { at = { x = 1, y = 2 }, label = "p" }
+                  , "<pin><x>1</x><y>2</y><label>p</label></pin>"
+                  )
+                  ( roundTrip pinCodec { at = { x = 1, y = 2 }, label = "p" }
+                  , Codec.toXml
+                        "pin"
+                        pinCodec
+                        { at = { x = 1, y = 2 }, label = "p" }
+                  ))
+    , Test.test
+          "auto and autoWith round-trip"
+          (\_ ->
+              let
+                  p =
+                      { productId = "p1"
+                      , priceMinor = 999
+                      , active = True
+                      , note = Just "n"
+                      , sizes = [ 1, 2 ]
+                      }
+              in
+                  Test.equal
+                      ( Ok p
+                      , Ok p
+                      , "<product><product_id>p1</product_id><price_minor>999</price_minor><active>1</active><note>n</note><sizes>1</sizes><sizes>2</sizes></product>"
+                      )
+                      ( roundTrip (Codec.auto productBlank) p
+                      , roundTrip
+                            (Codec.autoWith
+                                [ ( "active", intBool ) ]
+                                productBlank)
+                            p
+                      , Codec.toXml
+                            "product"
+                            (Codec.autoWith
+                                [ ( "active", intBool ) ]
+                                productBlank)
+                            p
+                      ))
+    , Test.test
+          "a field may be an attribute"
+          (\_ ->
+              Test.equal
+                  (Ok { sku = "x", qty = 2 })
+                  (Codec.fromXml
+                      "line"
+                      lineCodec
+                      "<line sku=\"x\"><qty> 2 </qty></line>"))
+    , Test.test
+          "a namespaced input reads by local name, unknown elements ignored"
+          (\_ ->
+              Test.equal
+                  (Ok { sku = "x", qty = 2 })
+                  (Codec.fromXml
+                      "line"
+                      lineCodec
+                      "<p:line xmlns:p=\"urn:shop\"><p:sku>x</p:sku><p:extra/><p:qty>2</p:qty></p:line>"))
+    , Test.test
+          "a wrong root is an Err"
+          (\_ ->
+              Test.equal
+                  "xml/decode"
+                  (codeOf (Codec.fromXml "line" lineCodec "<order/>")))
+    , Test.test
+          "bad text, a missing field and two elements for one field"
+          (\_ ->
+              Test.equal
+                  [ "xml/decode", "xml/decode", "xml/decode", "xml/doctype" ]
+                  [ codeOf
+                        (Codec.fromXml
+                            "line"
+                            lineCodec
+                            "<line><sku>x</sku><qty>two</qty></line>")
+                  , codeOf
+                        (Codec.fromXml
+                            "line"
+                            lineCodec
+                            "<line><sku>x</sku></line>")
+                  , codeOf
+                        (Codec.fromXml
+                            "line"
+                            lineCodec
+                            "<line><sku>x</sku><sku>y</sku><qty>1</qty></line>")
+                  , codeOf
+                        (Codec.fromXml "line" lineCodec "<!DOCTYPE line><line/>")
+                  ])
+    , Test.test
+          "a nullary variant may be text"
+          (\_ ->
+              Test.equal (Ok Dot) (Codec.fromXml "v" shapeCodec "<v> Dot </v>"))
+    , Test.test
+          "the lossy cases are as documented"
+          (\_ ->
+              -- Maybe (Maybe a) collapses exactly as it does in JSON.
+              Test.equal
+                  ( Ok Nothing
+                  , Codec.fromJson
+                        (Codec.maybe (Codec.maybe Codec.int))
+                        (Codec.toJson
+                            (Codec.maybe (Codec.maybe Codec.int))
+                            Nothing)
+                  )
+                  ( Codec.fromXml
+                        "v"
+                        (Codec.object identity
+                            |> Codec.field
+                                   "xs"
+                                   identity
+                                   (Codec.maybe (Codec.list Codec.int))
+                            |> Codec.buildObject)
+                        (Codec.toXml
+                            "v"
+                            (Codec.object identity
+                                |> Codec.field
+                                       "xs"
+                                       identity
+                                       (Codec.maybe (Codec.list Codec.int))
+                                |> Codec.buildObject)
+                            (Just []))
+                  , roundTrip (Codec.maybe (Codec.maybe Codec.int)) Nothing
+                  ))
+    , Test.test
+          "an order in a SOAP-style body and back"
+          (\_ ->
+              let
+                  envelope =
+                      soapEnvelope (Codec.toXml "order" orderCodec order)
+              in
+                  Test.equal
+                      ( Ok order, Ok order )
+                      ( Codec.fromXml "order" orderCodec (soapOrder envelope)
+                      , Codec.fromXml
+                            "order"
+                            orderCodec
+                            "<o:order xmlns:o=\"urn:o\"><o:id>A-1</o:id><o:customer>Ada</o:customer><o:lines sku=\"x\"><o:qty>2</o:qty></o:lines><o:lines><o:sku>y</o:sku><o:qty>1</o:qty></o:lines><o:paid>0</o:paid></o:order>"
+                      ))
+    , Test.test
+          "jsonSchema of a union, result, dict and error is unchanged"
+          (\_ ->
+              Test.equal
+                  [ ( "{}", False )
+                  , ( "{}", False )
+                  , ( "{}", False )
+                  , ( "{}", False )
+                  , ( "{\"type\":\"object\",\"properties\":{\"r\":{}},\"required\":[\"r\"],\"additionalProperties\":false}"
+                    , False
+                    )
+                  ]
+                  [ schemaText shapeCodec
+                  , schemaText (Codec.result Codec.string Codec.int)
+                  , schemaText (Codec.dict Codec.string Codec.int)
+                  , schemaText Codec.error
+                  , schemaText
+                        (Codec.object identity
+                            |> Codec.field
+                                   "r"
+                                   identity
+                                   (Codec.result Codec.string Codec.int)
+                            |> Codec.buildObject)
+                  ])
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

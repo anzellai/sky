@@ -1,0 +1,5 @@
+[project]
+name = "spa-local-alias-shadow"
+
+[app]
+target = "web:app"

@@ -1,8 +1,8 @@
 # FFI boundary philosophy
 
 > **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky`)
-> is the primary Sky compiler; the Haskell compiler is preserved under
-> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> is the Sky compiler (the earlier compilers were removed in v0.29.0).
+> Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
 > [`../history/compiler/versions.md`](../history/compiler/versions.md) for the changelog.
 
@@ -267,6 +267,25 @@ receiver. A method call on an expired/closed/never-initialised
 opaque returns `Err(ErrFfi "nil receiver: Type.Method")` instead of
 panicking. The Result wrapping makes this visible at the type level —
 you can't accidentally `.method()` on a nil and crash the process.
+
+### Go code must never change a slice it was given
+
+A Sky `List` crosses into Go as a Go slice, without a copy. Since v0.29.0 a
+list built with `::` shares its backing array with every older list it was
+built on (the cons blocks of `runtime-go/rt/list_block.go`): `xs` is a suffix
+of `x :: xs`. So a Go function that changes a slice argument in place, for
+example `sort.Strings(names)` or `names[0] = "x"`, also changes every other
+Sky list that shares that memory, and those lists are immutable values to
+the rest of the program.
+
+**Rule: a Go function called from Sky must treat every slice argument as
+read-only.** To sort or edit it, copy it first (`slices.Clone`, then sort the
+copy) and return the copy. `append` onto an argument is safe: a cons-block
+list has `len == cap`, so `append` always allocates. The Sky runtime keeps
+the same rule: `List.sort`, `sortBy` and `sortWith` copy before they sort
+(`runtime-go/rt/list_block_test.go`,
+`TestRuntimeNeverChangesAListArgument`, which also checks that this section
+states the rule).
 
 ## When to add to Sky's stdlib instead of telling users to FFI
 

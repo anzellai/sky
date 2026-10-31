@@ -44,7 +44,10 @@ fn go_on_path() -> bool {
 fn scratch_project() -> PathBuf {
     let uniq = format!(
         "sky-revocation-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -68,6 +71,9 @@ const APP_SRC: &str = r#"module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
+import Sky.Core.Error as Error
+import Sky.Core.System as System
+import Std.Log exposing (println)
 import Std.Html exposing (..)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -84,8 +90,12 @@ conn =
         Ok c ->
             c
 
-        Err _ ->
-            conn
+        Err e ->
+            let
+                _ =
+                    println ("cannot open the database: " ++ Error.toString e)
+            in
+                System.exit 1
 
 
 type alias Model =

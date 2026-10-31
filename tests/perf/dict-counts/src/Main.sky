@@ -1,0 +1,45 @@
+module Main exposing (main)
+
+-- Perf gate program 2: fold n Ints into a Dict of counts with n/10
+-- distinct keys (1e6 elements and 1e5 keys at 4n).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict exposing (Dict)
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import System
+import Std.Log exposing (println)
+
+
+bump : Int -> Int -> Dict Int Int -> Dict Int Int
+bump distinct i acc =
+    let
+        k = modBy distinct i
+    in
+        Dict.insert k (Maybe.withDefault 0 (Dict.get k acc) + 1) acc
+
+
+work : Int -> String
+work n =
+    let
+        distinct = max 1 (n // 10)
+        counts = List.foldl (bump distinct) Dict.empty (List.range 1 n)
+        total = Dict.foldl (\_ v s -> s + v) 0 counts
+    in
+        String.fromInt (Dict.size counts) ++ " " ++ String.fromInt total
+
+
+main =
+    let
+        _ =
+            System.getArg 1
+                |> Task.map
+                       (\m ->
+                           m |> Maybe.andThen String.toInt
+                               |> Maybe.withDefault 1000)
+                |> Task.andThen (\n -> println (work n))
+                |> Task.run
+    in
+        ()

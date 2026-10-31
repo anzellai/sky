@@ -103,8 +103,7 @@ ok(`auth tier emitted ${authHits} logs`);
 
 // ─── 4. Console reachable post-login ────────────────────────────
 // Playwright's ctx.request auto-stores cookies for subsequent
-// ctx.request calls (per the docs). Same pattern as the working
-// console-click-test.mjs.
+// ctx.request calls (per the docs).
 const loginResp = await ctx.request.post(`${BASE}/_sky/console/_login`, {
     form: { token: TOKEN },
     maxRedirects: 0,

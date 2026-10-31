@@ -166,7 +166,10 @@ fn scratch() -> PathBuf {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let uniq = format!(
         "sky-spasplit-{}-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -5443,8 +5446,9 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
         "the establishing (login) branch must sign a Set-Cookie:\n{backend}"
     );
     assert!(
-        backend.contains(r#"Server.withCookie "sky_spa" tok "Path=/; HttpOnly; SameSite=Lax""#),
-        "signedResponse_ must set an httpOnly sky_spa cookie:\n{backend}"
+        backend.contains(r#"Server.withCookie "sky_spa" tok (spaSessionCookieAttrs_ ())"#)
+            && backend.contains(r#"Ffi.kernel "Spa_sessionCookieAttrs""#),
+        "signedResponse_ must set sky_spa with the runtime's attributes (httpOnly + Max-Age):\n{backend}"
     );
     // A-2b / E-3 / A-6 (generator half; the runtime is S2's): the token is read
     // through the runtime (legacy `sky_sid` converted once), every answer moves
@@ -5519,10 +5523,13 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     // non-admin / no-session paths (`( model, … )`): without it the server would
     // rebuild `note` as the empty-Model default and clobber the client's value
     // (soundness bug #1). The forged `session` is still overridden server-side.
+    // It is a well-formed `Session` (`Codec.auto` keys are snake_case): since
+    // v0.29 `Codec.maybe` reads only `null` as `Nothing`, so a malformed one is
+    // a 400 before the handler, and only a valid forgery tests the override.
     let forged = curl_post_full(
         port,
         "/_rpc/SaveAdmin",
-        r#"{"session":{"userId":"x","role":"admin"},"content":"pwned","note":"keep"}"#,
+        r#"{"session":{"user_id":"x","role":"admin"},"content":"pwned","note":"keep"}"#,
         None,
     );
     let admin_after_forge =
@@ -5704,6 +5711,116 @@ fn curl_set_cookies(
         }
     }
     (status, cookies)
+}
+
+/// v0.29.0: the `sky_spa` session cookie carries a `Max-Age`. Without one it
+/// was a browser-session cookie: a browser that clears session cookies on quit
+/// dropped a sign-in whose token had weeks to run. `App.withSessionLifetime`
+/// sets the lifetime in code (carried into the backend's boot task), the
+/// sign-in cookie's Max-Age is that lifetime, and the sign-out write still
+/// carries `Max-Age=0`. The same build carries `App.withPersistExclude` to the
+/// client config.
+#[test]
+#[cfg(unix)]
+fn spa_session_cookie_has_the_session_lifetime() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-identity-slot");
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&fixture, &proj);
+    let main = proj.join("src/Main.sky");
+    let src = std::fs::read_to_string(&main).unwrap();
+    let src = src.replace(
+        "        |> App.withNotFound \"home\"\n",
+        "        |> App.withNotFound \"home\"\n        |> App.withSessionLifetime 3600\n        |> App.withPersistExclude [ \"note\" ]\n",
+    );
+    assert!(
+        src.contains("withSessionLifetime 3600"),
+        "the fixture changed shape"
+    );
+    std::fs::write(&main, src).unwrap();
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "the fixture must build:\n{log}");
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let backend = std::fs::read_to_string(backend_dir.join("src/Main.sky")).unwrap();
+    assert!(
+        backend.contains("applySessionLifetime (3600)"),
+        "the lifetime must reach the backend's boot task:\n{backend}"
+    );
+    // App.withPersistExclude reaches the client config (the wasm frontend
+    // built, so the builder type-checks and links there).
+    let frontend =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky")).unwrap();
+    assert!(
+        frontend.contains("|> Spa.withPersistExcludeFields spaPersistExclude_"),
+        "withPersistExclude must reach the client config:\n{frontend}"
+    );
+    let port = 19653u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = ChildGroup::spawn(
+        Command::new(backend_dir.join("sky-out/app"))
+            .current_dir(&proj)
+            .env("PORT", port.to_string())
+            .env(
+                "SKY_SPA_SESSION_SECRET",
+                "0123456789abcdef0123456789abcdef0123456789",
+            )
+            .env_remove("SKY_SPA_SESSION_LIFETIME")
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled backend");
+    if !wait_for_spa_backend(&log_path, 80) {
+        let _ = child.kill();
+        let server_log = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("backend never reported listening on :{port}:\n{server_log}");
+    }
+    let sign_in = r#"{"session":null,"kind":"practitioner","uid":"u1"}"#;
+    let (_, login) = curl_set_cookies(port, "POST", "/_rpc/SignIn", Some(sign_in), "");
+    let spa = login
+        .iter()
+        .find(|c| c.starts_with("sky_spa=") && !c.starts_with("sky_spa=;"))
+        .cloned();
+    let token = spa
+        .as_deref()
+        .and_then(|c| c.split(';').next())
+        .map(str::to_string);
+    let (_, out) = token
+        .as_deref()
+        .map(|t| curl_set_cookies(port, "POST", "/_rpc/__spaSignOut", Some("{}"), t))
+        .unwrap_or_default();
+    child.kill();
+    let server_log = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&proj);
+    let spa = spa.unwrap_or_else(|| panic!("sign-in set no sky_spa: {login:?}\n{server_log}"));
+    assert!(
+        spa.contains("Max-Age=3600") && spa.contains("HttpOnly"),
+        "the sign-in sky_spa cookie must carry the lifetime: {spa}"
+    );
+    let cleared = out
+        .iter()
+        .find(|c| c.starts_with("sky_spa="))
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        cleared.contains("Max-Age=0"),
+        "the sign-out write must still expire sky_spa: {out:?}"
+    );
 }
 
 /// RC R-2 (v0.27.0 real-app run). A request that carries the Spa session only
@@ -12075,6 +12192,102 @@ fn a_pure_helper_keeps_the_server_module_import_its_constructor_needs() {
     assert!(
         main.contains("import Std.Db as Db exposing (SqlValue(..))"),
         "the client entry keeps the import its view uses:\n{main}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A local `type alias Plan` that shadows the `Plan` its module imports with
+/// `exposing (..)`, in a server-tainted module whose pure `summary` the split
+/// copies to the client, while the imported `Types.Plan` is a wire type. The
+/// type-copy seed was BARE (`Plan`), so it also seeded the module's own
+/// `Plan`: the split moved that alias into `Shared` (twice declared) and
+/// stripped it from the module's client copy, where `summary : Plan -> Int`
+/// then resolved to `Types.Plan` ("record is missing field(s): joined"). The
+/// seed now carries each type's owning module (spa_split.rs
+/// `seed_for_module`), so the local alias stays where it is declared.
+#[test]
+#[cfg(unix)]
+fn split_keeps_a_local_alias_that_shadows_an_exposing_all_name() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-local-alias-shadow"),
+        &proj,
+    );
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let split = proj.join(".skyapp/web-app/.split");
+    let other = std::fs::read_to_string(split.join("frontend/src/Other.sky")).unwrap_or_default();
+    let shared = std::fs::read_to_string(split.join("frontend/src/Shared.sky")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(output.status.success(), "web:app build failed:\n{log}");
+    assert!(
+        other.contains("type alias Plan =\n    { rows : List String"),
+        "the client copy of Other must keep its own Plan:\n{other}"
+    );
+    assert_eq!(
+        shared.matches("type alias Plan =").count(),
+        1,
+        "Shared must declare the wire type Plan once (Types.Plan only):\n{shared}"
+    );
+    assert!(
+        !shared.contains("rows : List String"),
+        "Other's Plan is not a wire type and must not move into Shared:\n{shared}"
+    );
+}
+
+/// v0.29.0: the auto-split's hold-free table reaches the client config, and
+/// the wasm client builds with it. In the `spa-typing-hold` fixture `SetNote`
+/// writes only `note`, so it may run during either hold; `SetQuery` writes
+/// `query`, which `subscriptions` reads together with `searchedFor`, which
+/// `RunSearch` writes, so it waits behind `RunSearch` but not behind
+/// `SaveNote` (the analysis: rust/crates/project/tests/spa_typing_hold.rs).
+#[test]
+#[cfg(unix)]
+fn spa_hold_free_table_reaches_the_client() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-typing-hold");
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&fixture, &proj);
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "the fixture must build:\n{log}");
+    let frontend =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky")).unwrap();
+    assert!(
+        frontend.contains(
+            "|> Spa.withHoldFree [ \"RunLookup SetNote\", \"RunSearch SetNote\", \"SaveNote SetCode\", \"SaveNote SetNote\", \"SaveNote SetQuery\" ]"
+        ),
+        "the client config must carry the hold-free table:\n{frontend}"
+    );
+    assert!(
+        frontend.contains("Spa.rpcHold runSearchReqCodec")
+            && frontend.contains("Spa.rpcHold saveNoteReqCodec"),
+        "RunSearch and SaveNote write server data: both hold:\n{frontend}"
     );
     let _ = std::fs::remove_dir_all(&proj);
 }

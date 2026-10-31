@@ -77,7 +77,7 @@ directive), the goal as the user worded it is the ONLY authority on
 "done".
 
 This rule applies to ALL autonomous mandates — current and future,
-v0.17 / v0.18 / every compiler-cycle close, every product mandate,
+every compiler-cycle close, every product mandate,
 every session resumed after compaction. It is **structural**: it
 survives compaction, new sessions, and any redefinition I might
 attempt under pressure.
@@ -253,11 +253,11 @@ The slow-progress pattern: edit → full cargo test suite → schedule
 #### Rules
 
 1. **During implementation work, use the narrowest gate that
-   proves the change is correct.** Targeted spec match (`--match
-   "FooBar"`), single-example build, incremental build. Run these
+   proves the change is correct.** A single test (`cargo test -p
+   <crate> <testname>`), a single-example build, an incremental build. Run these
    in seconds, not minutes.
 
-2. **Full cabal test suite + full example sweep + verify scripts
+2. **Full `cargo test --workspace` + full example sweep + verify scripts
    run ONLY at milestone boundaries.** A milestone is the same
    definition as 0.1 above. Not "I made a change". Not "I want to
    be safe".
@@ -265,7 +265,7 @@ The slow-progress pattern: edit → full cargo test suite → schedule
 3. **ScheduleWakeup is a SAFETY NET, not a pacing mechanism.** Its
    purpose is recovering from a genuinely stuck workflow / external
    event we cannot directly observe. It is NEVER used to "wait for
-   cabal-test to finish" — `timeout N cabal-test` with `Bash`
+   a test run to finish" — a time-bounded `cargo test` in `Bash`
    returns when done; no wakeup needed.
 
 4. **Architecture + planning happen UP FRONT.** I do not edit
@@ -288,7 +288,7 @@ Forbidden patterns:
   * "Iter N shipped → run full suite → wake up in 30min for iter
     N+1" (a) iter N isn't a milestone, (b) full suite isn't
     justified, (c) wakeup wastes 30min.
-  * "Wait for cabal-test for 25min via ScheduleWakeup" — use
+  * "Wait for `cargo test` for 25min via ScheduleWakeup" — use
     `run_in_background` instead.
   * Re-running the example sweep more than once per milestone.
 
@@ -419,11 +419,10 @@ and judge verdicts.
    carries the runtime-narrowing origin catalogue (`R1`–`R11`,
    each a `lower.rs` / `goty.rs` / `live.go` site), the levers,
    and the floor — derived from the Rust compiler's own emission
-   sites, not translated from the Haskell table. Its §6 maps the
-   legacy §6 numbers onto the new ones, because prior commits and
-   transcripts cite the old numbers.
+   sites. Its §6 maps the legacy §6 numbers onto the new ones,
+   because prior commits and transcripts cite the old numbers.
 
-   `docs/architecture/sky-compiler-architecture.md` documents the
+   `docs/history/compiler/sky-compiler-architecture.md` documents the
    **retired Haskell pipeline** and is kept for historical
    context ONLY. Its §6/§7/§8 cite `Compile.hs` line numbers and
    describe a compiler that no longer ships. **Do not cite it to
@@ -431,40 +430,9 @@ and judge verdicts.
    how the monomorphisation claim produced the same wrong
    conclusion three times (doc 14 §0).
 
-   **Criterion #3 deletion-target wording (locked 2026-06-24).**
-   Earlier framings of `.claude/AUTONOMOUS_GOAL.md` criterion #3
-   read "`globalCgEnv` + `globalGoSigMap` IORefs DELETED". That
-   wording UNDER-SPECIFIED the bridge IORefs (`scopeStateRef`)
-   and the successor CAFs (`getCgEnvFromScope`, env-CAFs) that
-   surfaced during the iter 17 / 37 / 42 / Class-A swap attempts.
-   The locked wording is:
-
-   > Criterion #3 = `{globalCgEnv, globalGoSigMap, scopeStateRef,
-   > env-CAFs}` DELETED **AND** any residual IORef in `Compile.hs`
-   > carries a machine-verified single-writer / single-reader
-   > monotonic contract (see
-   > `docs/history/v0.17-roadmap/phase-A-iter-0-anonrecords-contract.md`
-   > for the `globalAnonRecords` precedent and the
-   > `Sky.Build.AnonRecordWriterAuditSpec` verification gate).
-
-   **This is NOT a relaxation** — it is a precise specification
-   of the substantive purity guarantee. The original "DELETE"
-   wording is satisfied by deleting the named IORefs; the
-   "machine-verified contract" clause closes the loophole that
-   would otherwise let an unnamed bridge IORef survive under a
-   "load-bearing-but-pure" reframe (forbidden per §0 hard rule
-   3). The contract has TWO parts:
-   - Source-level contract docstring naming the writer site +
-     reader sites + monotonic invariant (e.g. "register-on-
-     first-mention; never overwrites; end-of-module barrier").
-   - Spec gate (cabal-test) that builds a multi-module fixture
-     and asserts the invariant programmatically — a write that
-     overwrites OR reads a stale value MUST fail the gate.
-
-   Any "close" claim against criterion #3 cites BOTH the named-
-   IORef deletions AND the surviving-IORef contract+spec
-   pair. Judge verdicts that PASS without the second citation
-   are rejected.
+   The Haskell-era criterion #3 wording (`Compile.hs` IORefs) and the
+   v0.17 authorisations moved to `docs/history/claude-md-haskell-era.md`
+   in v0.29.0, with the Haskell compiler.
 
 2. **Tactical vs strategic feasibility.** Agents claim TACTICAL
    feasibility ("can I implement this change in N hours / one
@@ -511,13 +479,9 @@ and judge verdicts.
    R3/R4, the runtime wire decoders, the TEA `sky_call`
    boundary, or the stdlib-ADT `rt.SkyADT` representation that
    `should_seal_prefix` excludes from sealing) MUST escalate to
-   the user before spending iterations.
-   **AUTHORIZED 2026-06-23**: user has explicitly authorised
-   floor-touching tactics for v0.17 close (literal-zero
-   rt.Coerce via runtime rewrite — see
-   `docs/history/v0.17-roadmap/literal-zero-close-plan.md`).
-   That authorisation is scoped to the v0.17 close and does not
-   carry to a new floor-touching tactic.
+   the user before spending iterations. No standing authorisation
+   exists: the v0.17 one was scoped to that close and does not carry
+   to a new tactic (`docs/history/claude-md-haskell-era.md`).
 
 #### Workflow Phase-0 template (mandatory entry phase)
 
@@ -535,7 +499,7 @@ For the proposed tactic <X>:
      authorisation for floor-touching tactics is present.
   4. Name the gate that goes red if the tactic regresses.
 Cite file:line for every claim. If a claim rests on
-docs/architecture/sky-compiler-architecture.md (the retired
+docs/history/compiler/sky-compiler-architecture.md (the retired
 Haskell compiler) rather than on Rust source, mark it UNVERIFIED
 rather than carrying it over.
 If you cannot make all four citations, return cannotJustify=true
@@ -558,7 +522,7 @@ if (archRef.inFloor && !userAuthorizedFloor) {
 * Judge verdicts: "VERDICT: 100% ACHIEVED" without listing the
   doc 14 §3 origins closed + §5 levers activated + §4 floor
   sites documented.
-* **Citing `docs/architecture/sky-compiler-architecture.md`
+* **Citing `docs/history/compiler/sky-compiler-architecture.md`
   §6/§7/§8 to establish floor.** That is the retired Haskell
   compiler. Cite doc 14.
 * **Quoting a number no script produced** — a rt.Coerce census
@@ -585,7 +549,7 @@ if (archRef.inFloor && !userAuthorizedFloor) {
 - `docs/rust-rewrite/` — primary Rust-compiler architecture
   reference: pipeline (Parse → Canon → Type → Lower → Emit),
   workspace + crate layout, verbatim-goal verdict.
-- `docs/architecture/sky-compiler-architecture.md` — legacy
+- `docs/history/compiler/sky-compiler-architecture.md` — legacy
   Haskell-pipeline reference, historical context ONLY. Not a
   floor authority; see rule 1.
 - `docs/architecture/sky-stdlib-correctness.md` — Sky.Core
@@ -615,8 +579,9 @@ the in-memory model, not prior session context, not optimistic
 
 The patterns below are the durable approach used on every non-trivial
 work item. They are LOAD-BEARING — sessions that skipped them
-historically produced cascade regressions (iter 17 / 37 / 42 /
-Class-A swap attempts). Future sessions follow these by default.
+historically produced cascade regressions (the history is in
+`docs/history/claude-md-haskell-era.md`). Future sessions follow
+these by default.
 
 #### Phase pattern (decide → plan → execute → verify)
 
@@ -633,14 +598,11 @@ Class-A swap attempts). Future sessions follow these by default.
 4. **Verify** at every phase boundary. Per CLAUDE.md §0 — Judge
    agent verification at the close, fresh-context, adversarial.
 
-This is the pattern that shipped v0.17.0 (typed-emit fix +
-documented rt.Coerce surface + scopeStateRef contract + panic-class
-gate locks) in additive phases with zero regression.
-
 #### Agent + grilling pattern (for non-trivial work)
 
 For any work where solo execution carries cascade risk
-(Compile.hs surgery, multi-system changes, broad audits), the
+(`hir` / `ty` / `lower` / `codegen` surgery, multi-system changes,
+broad audits), the
 DEFAULT pattern is:
 
 1. **Architecture-Consult agent** (Phase 0) — fresh-context agent
@@ -677,20 +639,20 @@ verified by THREE independent legs, not one:
 1. **Runtime classification leg** — Go-side tests (e.g.
    `runtime-go/rt/panic_recover_test.go`) proving the panic
    surface is correctly classified.
-2. **Emission-time leg** — Sky.Build specs (e.g.
-   `Sky.Build.PanicClassGateSpec`) proving the lowering does NOT
-   emit raw panic-prone Go ops AND the safety net is wired.
+2. **Emission-time leg** — the xtask gates (`build-run`, `repro`,
+   `coerce-floor`; the coverage ledger's `runtime.panic-classes`
+   surface) proving the lowering does NOT emit raw panic-prone Go
+   ops AND the safety net is wired.
 3. **Real-world e2e leg** — example sweep + verify-cli + Playwright
-   + fuzzer (`Sky.Build.WellTypedFuzzerSpec` 10k iter) proving
-   real-world + random programs do not panic.
+   + the generators (`xtask welltyped`, `xtask erasure-fuzz`,
+   `sky fuzz`) proving real-world + random programs do not panic.
 
 A single-leg "proof" is NOT a proof; ship all three legs.
 
 #### N-strikes circuit-breaker (per CLAUDE.md §0.2, reinforced)
 
-3 consecutive failures on the same architectural lever (iter
-17 / 37 / 42 / Class-A swap pattern) FORBIDS a 4th attempt without
-re-classification. Re-classification means:
+3 consecutive failures on the same architectural lever FORBIDS a
+4th attempt without re-classification. Re-classification means:
 
 1. Re-read `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md`
    §3/§4/§5.
@@ -710,8 +672,8 @@ Without re-classification, a 4th attempt counts as drift per CLAUDE.md
 
 #### Reframed vs literal goal handling
 
-When the user reframes a goal mid-mandate (e.g. v0.17 "100% fully
-typed" → "rock solid + ~100% sound with documented surface"):
+When the user reframes a goal mid-mandate (e.g. "100% fully typed"
+→ "rock solid + ~100% sound with documented surface"):
 
 - The verbatim goal at `.claude/AUTONOMOUS_GOAL.md` REMAINS the
   literal anchor. Don't overwrite it without user direction.
@@ -739,14 +701,11 @@ milestone is one of:
 Per-commit pushes burn CI minutes, fail-spam branch status, and
 obscure real progress. The pattern that worked: ship 3-5
 related commits LOCALLY, run a milestone Judge verification,
-then push once. v0.17.0 closure shipped this way (5 commits in
-2 pushes vs the 6 individual pushes that preceded the
-correction).
+then push once.
 
 #### Context discipline (the underlying constraint)
 
-Per `docs/session-protocol.md` (folded here): Claude has a
-finite context window. On this codebase, two patterns burn it
+Claude has a finite context window. On this codebase, two patterns burn it
 fast: (1) task-list reminders compound after every Bash call,
 (2) reactive grep-read-edit cycles produce dozens of small
 operations.
@@ -754,14 +713,14 @@ operations.
 Mitigations:
 
 - **Read with `offset` + `limit`**, never naked Read on files >
-  1000 lines. For `Compile.hs` (23k lines), know the line number
-  before reading.
+  1000 lines. For `rust/crates/sky/src/main.rs` (over 20k lines),
+  know the line number before reading.
 - **Delegate exploration to agents.** Audit-style questions go
   to `Explore` subagents whose context isolates the burn.
 - **Batch Bash calls** when independent. Chained `&&` beats
   three separate invocations.
-- **Scripts over individual invocations.** `scripts/cabal-test.sh`
-  encapsulates timeouts + resource guards; raw `cabal test` does
+- **Scripts over individual invocations.** `scripts/gates-for-change.sh`
+  encapsulates timeouts + resource guards; a raw gate invocation does
   not.
 - **Don't use TaskCreate / TaskUpdate / TaskGet** unless the user
   explicitly asks. The task list (~400 entries deep) is appended
@@ -774,7 +733,7 @@ Mitigations:
   >200 lines without a clear delegation strategy is a flag —
   delegate to a focused agent or stop and checkpoint.
 - **"I can't finish this in this session" is a valid outcome**
-  with a checkpoint file (e.g. `docs/history/v0.17/session-N-checkpoint.md`).
+  with a checkpoint file (a dated note the next session reads first).
   "I'll keep trying" without a path forward is not.
 - **3 attempts on the same approach → halt and reclassify**, not
   a 4th retry. Per N-strikes above.
@@ -806,6 +765,37 @@ item in a month.
    names: "ecommerce production webapp", "clinical management production
    platform", "mobile + ipad QA networking app".
 
+### 0.6 Public docs sync — README, docs site and sky-lang.org stay current (INVIOLABLE)
+
+A change that a user can see is not done until every public surface that
+describes it says so. This sits on top of AGENTS.md's "Template + doc sync"
+rule (which covers `AGENTS.md`, `templates/` and `docs/*`) and adds the three
+surfaces a visitor reads first.
+
+1. **`README.md`, in the same commit.** When a change adds, removes or renames
+   a stdlib module, a CLI verb, an app target or a headline capability, or
+   changes the install steps or the minimum Go version, update `README.md` in
+   the same commit. Keep it short and conversion-first: the pitch, install,
+   the visitor router, a few samples, what you get. Detail goes in `docs/` and
+   is linked, never pasted in. Every Sky sample in the README must be a copy of
+   a file that CI builds (an `examples/` member or a `doc-examples.sh` doc), so
+   a README sample cannot rot. Numbers in it (example count, module count) come
+   from a script or a `ls`, never from memory.
+2. **The docs site (GitHub Pages, `.github/workflows/docs-site.yml`).** The API
+   pages are generated from `sky-stdlib/`, so they follow the source. The prose
+   and the navigation are not: a new module or a removed one updates the docs
+   index (`docs/README.md`) and its deep-dive page in the same commit. Check
+   that the docs-site workflow ran green after a merge to `main`.
+3. **sky-lang.org (a separate repo, deployed after a release).** Every release
+   checks the landing page, the docs and learn pages and the examples gallery
+   against the release notes: new modules, removed APIs, `Std.App` as the one
+   entry point, counts, the current version. Update the site and redeploy it as
+   part of the release rollout, not later.
+4. **At release prep**, read `README.md` top to bottom against the CHANGELOG
+   heading being released. Anything stale (a version banner, a removed API, a
+   count, a superseded caveat) is fixed before the tag. A stale README is a
+   release defect, under §0.2.2.
+
 ### 1. Memory safety — `scripts/mem-guard.sh` MUST run during dev
 
 A runaway `sky` / `cargo` / `rustc` / `rust-analyzer` process
@@ -820,8 +810,7 @@ disown                                # survives shell exit
 Defaults (16 GB Mac): per-process kill at 6 GB RSS for compiler
 tooling and Python (`sky` / `cargo` / `rustc` / `rust-analyzer` / `cc1` /
 `ld` / `go` / `gopls` / `sky-ffi-inspect` / `python` / `python3` /
-`python3.N` / Xcode's `Python`; legacy `cabal` / `ghc`
-/ `ghc-iserv` / `haskell-language-server` still covered); 10 GB
+`python3.N` / Xcode's `Python`); 10 GB
 panic tier for the dev-session host
 (`claude` / `node` / `ghostty`); system-pressure floor kicks in
 when free + inactive + speculative memory drops below 1.2 GB (2.4 GB

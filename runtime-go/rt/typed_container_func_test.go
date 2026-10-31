@@ -91,11 +91,11 @@ func TestNarrow_DictOfTypedFuncs_AsMapT(t *testing.T) {
 	}
 
 	out := AsMapT[func(int) int](src)
-	if len(out) != 2 {
-		t.Fatalf("expected 2 entries, got %d", len(out))
+	if out.Len() != 2 {
+		t.Fatalf("expected 2 entries, got %d", out.Len())
 	}
 
-	incFn, ok := out["inc"]
+	incFn, ok := out.Lookup("inc")
 	if !ok || incFn == nil {
 		t.Fatal("'inc' missing or nil — narrow failed")
 	}
@@ -103,7 +103,7 @@ func TestNarrow_DictOfTypedFuncs_AsMapT(t *testing.T) {
 		t.Errorf("inc(5): want 6, got %d", got)
 	}
 
-	dblFn, ok := out["dbl"]
+	dblFn, ok := out.Lookup("dbl")
 	if !ok || dblFn == nil {
 		t.Fatal("'dbl' missing or nil — narrow failed")
 	}

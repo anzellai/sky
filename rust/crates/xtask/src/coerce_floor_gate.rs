@@ -1472,7 +1472,7 @@ fn dir_for_key(root: &Path, key: &str) -> PathBuf {
 /// member with Sky source.
 ///
 /// Layer-2 members are read from `apps/manifest.toml`, the declared membership
-/// authority (`docs/ci-layer2-members.md` Decision 2) — **not** by `read_dir` on
+/// authority (`docs/history/ci-redesign-2026-08/ci-layer2-members.md` Decision 2) — **not** by `read_dir` on
 /// `apps/`, because discovery-by-listing is how `39-hub-demo` became invisible
 /// to six gates at once.
 /// Projects discovered on disk that are deliberately OUTSIDE the floor, each
@@ -1481,8 +1481,8 @@ fn dir_for_key(root: &Path, key: &str) -> PathBuf {
 /// The list is empty, and that is the intended state: an exclusion is a hole in
 /// the ratchet, so the bar is a project that genuinely cannot carry a floor.
 /// `examples/simple` and `examples/test_pkg` were excluded here in an earlier
-/// draft as "unnumbered scratch from v0.10.0" — they are not scratch, they emit
-/// like any other project, and a row costs nothing. They are in the golden.
+/// draft as "unnumbered scratch from v0.10.0". They were given golden rows
+/// instead, and were deleted from the tree in v0.29.0 with their rows.
 ///
 /// A key listed here that does NOT exist on disk fails the gate: stale
 /// accounting is how an exclusion outlives the thing it excused.
@@ -2103,8 +2103,6 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
             "examples/39-hub-demo/billing-app",
             "examples/39-hub-demo/frontend-app",
             "apps/fieldbook/probe",
-            "simple",
-            "test_pkg",
             "00-standard-libs",
             "apps/ledger",
             "sky-bundled/console",

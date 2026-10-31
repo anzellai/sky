@@ -15,8 +15,8 @@
 #
 # Suite components:
 #
-#   1. Everything in scripts/test-ci.sh (cabal test + example sweep
-#      with SKY_RUN_FULL_VERIFY=1).
+#   1. Everything in scripts/test-ci.sh (cargo workspace + xtask gates
+#      + example sweep with SKY_RUN_FULL_VERIFY=1).
 #   2. scripts/verify-all-web.sh — Playwright over Sky.Live +
 #      Sky.Http.Server scenarios. Real browser, real SSE, real DOM
 #      patches.
@@ -24,8 +24,8 @@
 #      runtime drive (sequential per-category due to TTY contention).
 #   4. scripts/verify-ui-showcase.sh — visual regression on
 #      examples/26-ui-showcase.
-#   5. (deferred) Hub UI Playwright via examples/39-hub-demo —
-#      ships when #493 lands.
+#   5. xtask welltyped — generated well-typed programs must all
+#      type-check.
 #
 # Concurrency: as test-ci.sh — every parallel step reads MAX_WORKERS
 # from scripts/lib/concurrency.sh.
@@ -44,7 +44,7 @@ cd "$ROOT"
 # shellcheck source=lib/concurrency.sh
 source "$ROOT/scripts/lib/concurrency.sh"
 
-export SKY_TIMINGS_FILE="${SKY_TIMINGS_FILE:-/tmp/sky-cabal-timings.csv}"
+export SKY_TIMINGS_FILE="${SKY_TIMINGS_FILE:-/tmp/sky-test-timings.csv}"
 
 echo "=== Sky test-local =========================================="
 echo "  $(date '+%Y-%m-%d %H:%M:%S')"
@@ -139,14 +139,13 @@ phase_ui_showcase() {
     return $rc
 }
 
-phase_release_parity() {
+phase_welltyped() {
     echo
-    echo "--- phase 6/6: well-typed differential fuzzer (Rust ⇄ Haskell oracle) ---"
+    echo "--- phase 6/6: well-typed generator (every program must type-check) ---"
     # Generates bounded, deterministic well-typed Sky programs and asserts the
-    # Rust compiler and the Haskell oracle AGREE (accept/reject) on every one —
-    # the WellTypedFuzzerSpec analog, inference parity on inputs beyond the fixed
-    # corpus. Needs the oracle (NOT available in CI); the gate self-skips (exit 0)
-    # when the oracle binary is absent, so this phase is safe everywhere.
+    # Rust compiler ACCEPTS every one: inference completeness on inputs beyond
+    # the fixed corpus. Until v0.29.0 this was a differential against the legacy
+    # Haskell compiler, which was removed from the tree then.
     local t0; t0=$(date +%s)
     ( cd "$ROOT/rust" && with_timeout 900 cargo run -q -p xtask -- welltyped )
     local rc=$?
@@ -164,7 +163,7 @@ main() {
     phase_web_verify || any_fail=1
     phase_cli_verify || any_fail=1
     phase_ui_showcase || any_fail=1
-    phase_release_parity || any_fail=1
+    phase_welltyped  || any_fail=1
 
     local t_end; t_end=$(date +%s)
     echo

@@ -19,14 +19,37 @@ pub struct SchemaColumn {
     /// UNIQUE constraint (Store.unique).
     #[serde(default, skip_serializing_if = "is_false")]
     pub unique: bool,
-    /// Column DEFAULT (Store.defaultNow / defaultText / defaultInt / defaultBool),
-    /// carried as the `{int|text|bool|now}` shape the runtime renderer expects.
+    /// Column DEFAULT (Store.defaultNow / defaultText / defaultInt / defaultBool /
+    /// defaultFloat), carried as the `{int|text|bool|float|now}` shape the
+    /// runtime renderer expects.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
+    /// A required column's own field zero (`Codec.fieldZeros`), as a
+    /// `{"text": …}` default, when it is not the zero of the column's kind: the
+    /// JSON of a JSON (blob) field's zero, or an enum (TEXT) field's zero name
+    /// (the first name of a `Codec.enum`, the witness's name under
+    /// `Codec.auto`). Rule D1: it is the DEFAULT of the column when it is added
+    /// to an existing table (never in CREATE TABLE).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zero: Option<Value>,
 }
 
 fn is_false(b: &bool) -> bool {
     !*b
+}
+
+/// A declared index (Store.index / uniqueOn / uniqueWhere, Std.Db.Schema
+/// withIndex). The dump writes the resolved name, so the diff compares by name.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct SchemaIndex {
+    pub name: String,
+    #[serde(default)]
+    pub columns: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unique: bool,
+    /// A partial-index predicate, rendered from constants only.
+    #[serde(default, rename = "where", skip_serializing_if = "String::is_empty")]
+    pub predicate: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -36,6 +59,8 @@ pub struct SchemaTable {
     pub pk: String,
     #[serde(default)]
     pub columns: Vec<SchemaColumn>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub indexes: Vec<SchemaIndex>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -72,16 +97,116 @@ impl Diff {
     }
 }
 
-/// A safe zero DEFAULT for a required new column on an existing table, so the
-/// migration backfills existing rows (non-interactive gen). `None` → add the
-/// column nullable instead (blob columns can't have a simple default).
+/// The zero DEFAULT of a required new column on an existing table, so the
+/// migration backfills existing rows (non-interactive gen): the zero of its
+/// kind. A blob has none, and an enum's text zero `''` is not one of its
+/// names: their zero is the field's own (`SchemaColumn::zero`), read first.
 fn zero_default(kind: &str) -> Option<Value> {
     match kind {
         "int" | "bigint" | "real" => Some(json!({ "int": 0 })),
         "text" => Some(json!({ "text": "" })),
         "bool" => Some(json!({ "bool": false })),
-        _ => None, // blob → nullable
+        _ => None,
     }
+}
+
+/// The name of a Store index: `ix_<table>_<h>` / `ux_<table>_<h>`, where `<h>`
+/// is 8 hex digits of FNV-1a 32 over `table|cols joined by ,|1 or 0|predicate`.
+/// The runtime's `codecIndexName` (runtime-go/rt/db_migrate_ops.go) computes the
+/// same name; `runtime-go/rt/testdata/migrate_parity.json` pins both.
+pub fn index_name(table: &str, cols: &[String], unique: bool, predicate: &str) -> String {
+    let key = format!(
+        "{table}|{}|{}|{predicate}",
+        cols.join(","),
+        if unique { "1" } else { "0" }
+    );
+    let mut h: u32 = 0x811c_9dc5;
+    for b in key.as_bytes() {
+        h ^= u32::from(*b);
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    let t = if table.len() > 51 {
+        &table[..51]
+    } else {
+        table
+    };
+    let prefix = if unique { "ux_" } else { "ix_" };
+    format!("{prefix}{t}_{h:08x}")
+}
+
+fn add_index_op(table: &str, ix: &SchemaIndex) -> Value {
+    let mut op = json!({
+        "kind": "addIndex", "table": table,
+        "name": ix.name, "indexColumns": ix.columns,
+    });
+    let m = op.as_object_mut().unwrap();
+    if ix.unique {
+        m.insert("unique".into(), json!(true));
+    }
+    if !ix.predicate.is_empty() {
+        m.insert("where".into(), json!(ix.predicate));
+    }
+    op
+}
+
+/// The ops that add column `c` to the existing table `table` (user decision
+/// D1, the same rule as the runtime's `renderAddColumn`): a nullable column
+/// keeps its declared default; a required column is NOT NULL with its declared
+/// default, else its zero value (the field's own `zero` for a blob or an
+/// enum column, else the zero of its kind); a required column with no zero value is
+/// NOT NULL with no default, which only an empty table takes, so `--gen`
+/// warns; a `defaultNow` column carries `{"nowAtApply": true}` (SQLite stamps
+/// the apply time, PostgreSQL renders `now()`); a unique column gets its own
+/// `addIndex` (SQLite refuses UNIQUE in ADD COLUMN).
+fn add_column_ops(table: &str, c: &SchemaColumn, warnings: &mut Vec<String>) -> Vec<Value> {
+    let mut op = json!({
+        "kind": "addColumn", "table": table,
+        "column": c.name, "type": c.kind,
+    });
+    let m = op.as_object_mut().unwrap();
+    let declared = c.default.as_ref().map(|d| {
+        if d.get("now").and_then(Value::as_bool) == Some(true) {
+            json!({ "nowAtApply": true })
+        } else {
+            d.clone()
+        }
+    });
+    if c.nullable {
+        m.insert("nullable".into(), json!(true));
+        if let Some(d) = declared {
+            m.insert("default".into(), d);
+        }
+    } else if let Some(d) = declared
+        .or_else(|| c.zero.clone())
+        .or_else(|| zero_default(&c.kind))
+    {
+        m.insert("nullable".into(), json!(false));
+        m.insert("default".into(), d);
+    } else {
+        m.insert("nullable".into(), json!(false));
+        warnings.push(format!(
+            "column {}.{} is required and its field's codec has no zero value (a taggedUnion, \
+             a result, Codec.error, or an object holding one): it is added NOT NULL with no \
+             default, which a table with rows refuses. Make the field a Maybe, derive the record \
+             codec with Codec.auto or Codec.autoWith (the blank record's value for the field \
+             gives the default), or add a data step",
+            table, c.name
+        ));
+    }
+    let mut ops = vec![op];
+    if c.unique {
+        let cols = vec![c.name.clone()];
+        ops.push(add_index_op(
+            table,
+            &SchemaIndex {
+                name: index_name(table, &cols, true, ""),
+                columns: cols,
+                unique: true,
+                predicate: String::new(),
+            },
+        ));
+    }
+    ops
 }
 
 /// The prefix of the tables the Sky runtime keeps in the app's own database
@@ -151,33 +276,19 @@ pub fn diff(target: &Schema, snapshot: &Schema) -> Diff {
                         jc
                     })
                     .collect();
-                ops.push(json!({ "kind": "createTable", "table": t.name, "columns": columns }));
+                ops.push(json!({
+                    "kind": "createTable",
+                    "table": t.name, "columns": columns,
+                }));
+                for ix in &t.indexes {
+                    ops.push(add_index_op(&t.name, ix));
+                }
             }
             Some(prev) => {
                 // New columns.
                 for c in &t.columns {
                     match prev.column(&c.name) {
-                        None => {
-                            let mut op = json!({
-                                "kind": "addColumn", "table": t.name,
-                                "column": c.name, "type": c.kind,
-                            });
-                            let m = op.as_object_mut().unwrap();
-                            if c.nullable {
-                                m.insert("nullable".into(), json!(true));
-                            } else if let Some(d) = zero_default(&c.kind) {
-                                m.insert("nullable".into(), json!(false));
-                                m.insert("default".into(), d);
-                            } else {
-                                // required blob → can't default → add nullable + warn
-                                m.insert("nullable".into(), json!(true));
-                                warnings.push(format!(
-                                    "column {}.{} is a required non-scalar — added NULLABLE (no default possible)",
-                                    t.name, c.name
-                                ));
-                            }
-                            ops.push(op);
-                        }
+                        None => ops.extend(add_column_ops(&t.name, c, &mut warnings)),
                         Some(pc) if pc.kind != c.kind => {
                             // Type change → destructive.
                             destructive.push(json!({
@@ -190,6 +301,21 @@ pub fn diff(target: &Schema, snapshot: &Schema) -> Diff {
                             ));
                         }
                         Some(_) => {}
+                    }
+                }
+                // Indexes, by name. A removed or changed index is dropped (no
+                // data is lost), then the new definition is added.
+                for pi in &prev.indexes {
+                    if !t.indexes.contains(pi) {
+                        ops.push(json!({
+                            "kind": "dropIndex",
+                            "table": t.name, "name": pi.name,
+                        }));
+                    }
+                }
+                for ix in &t.indexes {
+                    if !prev.indexes.contains(ix) {
+                        ops.push(add_index_op(&t.name, ix));
                     }
                 }
                 // Dropped columns (in snapshot, not in target) → destructive.
@@ -357,6 +483,10 @@ fn render_default_display(d: &Value) -> String {
         format!("\"{v}\"")
     } else if let Some(v) = d.get("bool") {
         v.to_string()
+    } else if let Some(v) = d.get("float") {
+        v.to_string()
+    } else if d.get("nowAtApply").is_some() || d.get("now").is_some() {
+        "now".to_string()
     } else {
         String::new()
     }
@@ -377,7 +507,12 @@ pub fn parse_default(kind: &str, input: &str) -> Option<Value> {
             _ => None,
         },
         "text" => Some(json!({ "text": input })),
-        // real has no dedicated default key in the runtime renderer — keep the zero.
+        "real" => input
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|f| f.is_finite())
+            .map(|f| json!({ "float": f })),
         _ => None,
     }
 }
@@ -402,6 +537,7 @@ mod tests {
         let table = |name: &str| SchemaTable {
             name: name.to_string(),
             pk: "id".to_string(),
+            indexes: vec![],
             columns: vec![SchemaColumn {
                 name: "id".to_string(),
                 kind: "text".to_string(),
@@ -409,6 +545,7 @@ mod tests {
                 autoinc: false,
                 unique: false,
                 default: None,
+                zero: None,
             }],
         };
         let target = Schema {
@@ -439,6 +576,7 @@ mod tests {
             autoinc: false,
             unique: false,
             default: None,
+            zero: None,
         }
     }
 
@@ -457,6 +595,7 @@ mod tests {
             autoinc,
             unique,
             default,
+            zero: None,
         }
     }
 
@@ -466,6 +605,7 @@ mod tests {
             tables: vec![SchemaTable {
                 name: "users".into(),
                 pk: "id".into(),
+                indexes: vec![],
                 columns: vec![col("id", "text", false)],
             }],
         };
@@ -474,6 +614,7 @@ mod tests {
                 SchemaTable {
                     name: "users".into(),
                     pk: "id".into(),
+                    indexes: vec![],
                     columns: vec![
                         col("id", "text", false),
                         col("age", "int", false),
@@ -483,6 +624,7 @@ mod tests {
                 SchemaTable {
                     name: "orders".into(),
                     pk: "id".into(),
+                    indexes: vec![],
                     columns: vec![col("id", "text", false)],
                 },
             ],
@@ -503,6 +645,7 @@ mod tests {
             tables: vec![SchemaTable {
                 name: "users".into(),
                 pk: "id".into(),
+                indexes: vec![],
                 columns: vec![col("id", "text", false), col("slug", "text", false)],
             }],
         };
@@ -510,6 +653,7 @@ mod tests {
             tables: vec![SchemaTable {
                 name: "users".into(),
                 pk: "id".into(),
+                indexes: vec![],
                 columns: vec![col("id", "text", false)],
             }],
         };
@@ -527,6 +671,7 @@ mod tests {
             tables: vec![SchemaTable {
                 name: "users".into(),
                 pk: "id".into(),
+                indexes: vec![],
                 columns: vec![col("id", "text", false), col("slug", "text", false)],
             }],
         };
@@ -534,6 +679,7 @@ mod tests {
             tables: vec![SchemaTable {
                 name: "users".into(),
                 pk: "id".into(),
+                indexes: vec![],
                 columns: vec![col("id", "text", false), col("handle", "text", false)],
             }],
         };
@@ -564,6 +710,7 @@ mod tests {
             tables: vec![SchemaTable {
                 name: "users".into(),
                 pk: "id".into(),
+                indexes: vec![],
                 columns: vec![col("id", "text", false), col("legacy", "text", true)],
             }],
         };
@@ -571,6 +718,7 @@ mod tests {
             tables: vec![SchemaTable {
                 name: "users".into(),
                 pk: "id".into(),
+                indexes: vec![],
                 columns: vec![col("id", "text", false)],
             }],
         };
@@ -590,6 +738,7 @@ mod tests {
             tables: vec![SchemaTable {
                 name: "users".into(),
                 pk: "id".into(),
+                indexes: vec![],
                 columns: vec![col("id", "text", false)],
             }],
         };
@@ -597,6 +746,7 @@ mod tests {
             tables: vec![SchemaTable {
                 name: "users".into(),
                 pk: "id".into(),
+                indexes: vec![],
                 columns: vec![col("id", "text", false), col("role", "text", false)],
             }],
         };
@@ -616,6 +766,7 @@ mod tests {
             tables: vec![SchemaTable {
                 name: "users".into(),
                 pk: "id".into(),
+                indexes: vec![],
                 columns: vec![
                     col_full("id", "int", false, true, false, None),
                     col_full("email", "text", false, false, true, None),
@@ -675,10 +826,290 @@ mod tests {
             tables: vec![SchemaTable {
                 name: "users".into(),
                 pk: "id".into(),
+                indexes: vec![],
                 columns: vec![col("id", "text", false)],
             }],
         };
         let d = diff(&s, &s.clone());
         assert!(d.is_empty());
+    }
+
+    /// Gap A (D1): a required JSON (blob) column is NOT NULL. With the codec's
+    /// blank value (`zero`, from the schema dump) it takes that value as its
+    /// DEFAULT, so the rows that exist read it. With no zero value it is NOT
+    /// NULL with no default (only an empty table takes it), and `--gen` warns.
+    /// Before, both were added NULLABLE.
+    #[test]
+    fn required_blob_is_not_null() {
+        let before = || SchemaTable {
+            name: "orders".into(),
+            pk: "id".into(),
+            indexes: vec![],
+            columns: vec![col("id", "text", false)],
+        };
+        let parse = |v: Value| -> SchemaColumn { serde_json::from_value(v).unwrap() };
+        let mut target = before();
+        target.columns.push(parse(json!({
+            "name": "tags", "kind": "blob", "nullable": false, "zero": { "text": "[]" }
+        })));
+        target.columns.push(parse(
+            json!({ "name": "doc", "kind": "blob", "nullable": false }),
+        ));
+        let d = diff(
+            &Schema {
+                tables: vec![target],
+            },
+            &Schema {
+                tables: vec![before()],
+            },
+        );
+        assert_eq!(
+            d.ops,
+            vec![
+                json!({ "kind": "addColumn", "table": "orders", "column": "tags",
+                        "type": "blob", "nullable": false, "default": { "text": "[]" } }),
+                json!({ "kind": "addColumn", "table": "orders", "column": "doc",
+                        "type": "blob", "nullable": false }),
+            ]
+        );
+        assert!(
+            d.warnings
+                .iter()
+                .any(|w| w.contains("orders.doc") && w.contains("no zero value")),
+            "{:?}",
+            d.warnings
+        );
+        assert!(
+            !d.warnings.iter().any(|w| w.contains("orders.tags")),
+            "{:?}",
+            d.warnings
+        );
+    }
+
+    /// D1, each column's own zero. The schema dump carries a `zero` for a
+    /// list column whose sibling taggedUnion column has none, and for an enum
+    /// (TEXT) column: the enum's first name, because the text zero `''` is not
+    /// one of its names. `--gen` makes each the DEFAULT. A plain String column
+    /// has no `zero` and keeps the text zero `''`. The no-zero sibling is NOT
+    /// NULL with no default and warns.
+    #[test]
+    fn each_column_takes_its_own_zero() {
+        let before = || SchemaTable {
+            name: "orders".into(),
+            pk: "id".into(),
+            indexes: vec![],
+            columns: vec![col("id", "text", false)],
+        };
+        let parse = |v: Value| -> SchemaColumn { serde_json::from_value(v).unwrap() };
+        let mut target = before();
+        target.columns.push(parse(
+            json!({ "name": "shade", "kind": "blob", "nullable": false }),
+        ));
+        target.columns.push(parse(json!({
+            "name": "tags", "kind": "blob", "nullable": false, "zero": { "text": "[]" }
+        })));
+        target.columns.push(parse(json!({
+            "name": "stage", "kind": "text", "nullable": false, "zero": { "text": "draft" }
+        })));
+        target.columns.push(parse(
+            json!({ "name": "label", "kind": "text", "nullable": false }),
+        ));
+        let d = diff(
+            &Schema {
+                tables: vec![target],
+            },
+            &Schema {
+                tables: vec![before()],
+            },
+        );
+        assert_eq!(
+            d.ops,
+            vec![
+                json!({ "kind": "addColumn", "table": "orders", "column": "shade",
+                        "type": "blob", "nullable": false }),
+                json!({ "kind": "addColumn", "table": "orders", "column": "tags",
+                        "type": "blob", "nullable": false, "default": { "text": "[]" } }),
+                json!({ "kind": "addColumn", "table": "orders", "column": "stage",
+                        "type": "text", "nullable": false, "default": { "text": "draft" } }),
+                json!({ "kind": "addColumn", "table": "orders", "column": "label",
+                        "type": "text", "nullable": false, "default": { "text": "" } }),
+            ]
+        );
+        assert_eq!(
+            d.warnings
+                .iter()
+                .filter(|w| w.contains("no zero value"))
+                .map(|w| w.contains("orders.shade"))
+                .collect::<Vec<_>>(),
+            vec![true],
+            "{:?}",
+            d.warnings
+        );
+    }
+
+    /// B9 / D1: a declared default is kept when a column is added. Before
+    /// v0.29.0 `--gen` wrote the zero value (`{"int":0}`) for a required
+    /// column and dropped the default of a nullable one.
+    #[test]
+    fn added_column_keeps_its_declared_default() {
+        let before = || SchemaTable {
+            name: "orders".into(),
+            pk: "id".into(),
+            indexes: vec![],
+            columns: vec![col("id", "text", false)],
+        };
+        let mut target = before();
+        target.columns.push(col_full(
+            "rank",
+            "int",
+            false,
+            false,
+            false,
+            Some(json!({ "int": 7 })),
+        ));
+        target.columns.push(col_full(
+            "flagged",
+            "bool",
+            true,
+            false,
+            false,
+            Some(json!({ "bool": true })),
+        ));
+        let d = diff(
+            &Schema {
+                tables: vec![target],
+            },
+            &Schema {
+                tables: vec![before()],
+            },
+        );
+        assert_eq!(d.ops.len(), 2, "{:?}", d.ops);
+        assert_eq!(d.ops[0]["default"], json!({ "int": 7 }), "{:?}", d.ops[0]);
+        assert_eq!(d.ops[0]["nullable"], json!(false));
+        assert_eq!(
+            d.ops[1]["default"],
+            json!({ "bool": true }),
+            "{:?}",
+            d.ops[1]
+        );
+        assert_eq!(d.ops[1]["nullable"], json!(true));
+    }
+
+    /// The parity fixture (D1): the diff of each fixture column gives exactly
+    /// the fixture's ops. The Go side checks that the runtime's
+    /// `Store.migrate` runs the same SQL as `renderMigOp` of these ops.
+    #[test]
+    fn migrate_parity_fixture_ops() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../runtime-go/rt/testdata/migrate_parity.json");
+        let fixture: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("read fixture"))
+                .expect("fixture is JSON");
+        let table = fixture["table"].as_str().unwrap().to_string();
+        let pk = fixture["pk"].as_str().unwrap().to_string();
+        let existing: Vec<SchemaColumn> = fixture["existing"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| col(p[0].as_str().unwrap(), p[1].as_str().unwrap(), false))
+            .collect();
+        let snapshot = Schema {
+            tables: vec![SchemaTable {
+                name: table.clone(),
+                pk: pk.clone(),
+                columns: existing.clone(),
+                indexes: vec![],
+            }],
+        };
+        for c in fixture["columns"].as_array().unwrap() {
+            let added: SchemaColumn = serde_json::from_value(c["schema"].clone()).unwrap();
+            let mut columns = existing.clone();
+            columns.push(added);
+            let target = Schema {
+                tables: vec![SchemaTable {
+                    name: table.clone(),
+                    pk: pk.clone(),
+                    columns,
+                    indexes: vec![],
+                }],
+            };
+            let d = diff(&target, &snapshot);
+            assert_eq!(
+                Value::Array(d.ops.clone()),
+                c["ops"],
+                "column {}",
+                c["colspec"]
+            );
+        }
+    }
+
+    /// Store indexes: a new table gets its indexes as addIndex ops, an
+    /// existing table gets the missing ones, and a removed or changed index is
+    /// dropped (no data is lost). The names never collide across tables.
+    #[test]
+    fn indexes_are_diffed_by_name() {
+        let ix = |t: &str, cols: &[&str], unique: bool, pred: &str| {
+            let cols: Vec<String> = cols.iter().map(|c| c.to_string()).collect();
+            SchemaIndex {
+                name: index_name(t, &cols, unique, pred),
+                columns: cols,
+                unique,
+                predicate: pred.into(),
+            }
+        };
+        assert_ne!(
+            index_name("a_b", &["c".into()], false, ""),
+            index_name("a", &["b".into(), "c".into()], false, "")
+        );
+        assert_eq!(
+            index_name("orders", &["email".into()], true, "").len(),
+            "ux_orders_".len() + 8
+        );
+        let long = "t".repeat(63);
+        assert!(index_name(&long, &["c".into()], false, "").len() <= 63);
+        let table = |indexes: Vec<SchemaIndex>| SchemaTable {
+            name: "orders".into(),
+            pk: "id".into(),
+            columns: vec![col("id", "text", false), col("slug", "text", false)],
+            indexes,
+        };
+        let fresh = diff(
+            &Schema {
+                tables: vec![table(vec![ix("orders", &["slug"], false, "")])],
+            },
+            &Schema::default(),
+        );
+        assert_eq!(fresh.ops.len(), 2, "{:?}", fresh.ops);
+        assert!(
+            fresh.ops.iter().all(|op| op.get("v").is_none()),
+            "{:?}",
+            fresh.ops
+        );
+        assert_eq!(fresh.ops[1]["kind"], json!("addIndex"));
+        let partial = ix("orders", &["slug"], true, "slug <> ''");
+        let changed = diff(
+            &Schema {
+                tables: vec![table(vec![partial.clone()])],
+            },
+            &Schema {
+                tables: vec![table(vec![ix("orders", &["slug"], false, "")])],
+            },
+        );
+        let kinds: Vec<&str> = changed
+            .ops
+            .iter()
+            .map(|o| o["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, vec!["dropIndex", "addIndex"], "{:?}", changed.ops);
+        assert_eq!(changed.ops[1]["where"], json!("slug <> ''"));
+        let same = diff(
+            &Schema {
+                tables: vec![table(vec![partial.clone()])],
+            },
+            &Schema {
+                tables: vec![table(vec![partial])],
+            },
+        );
+        assert!(same.is_empty());
     }
 }

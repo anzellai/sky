@@ -27,7 +27,7 @@ import (
 // `Ok "<provider>-<hex>"`: the mail arrived, correct in every other respect,
 // with the attachment simply absent and nothing for the caller to branch on.
 //
-// (The in-tree note at `docs/ci-layer2-members.md` recorded this for SMTP alone
+// (The in-tree note at `docs/history/ci-redesign-2026-08/ci-layer2-members.md` recorded this for SMTP alone
 // and said the HTTP providers were fine. Only Resend was, and it dropped the
 // attachment's MIME TYPE.)
 //

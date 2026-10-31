@@ -11,9 +11,9 @@
 #   --no-clean        keep existing sky-out/ .skycache/ (faster iteration)
 #   --workdir DIR     copy examples/* into DIR/examples/ and run there
 #                     instead of mutating the in-tree examples/. Fixes
-#                     bug #381: cabal-test ExampleSweep racing TypedFfi
-#                     by rm -rf'ing the in-tree sky-out/ + .skycache/go
-#                     directories TypedFfi reads from. Cleaned up on
+#                     bug #381: a sweep racing other readers by rm -rf'ing
+#                     the in-tree sky-out/ + .skycache/go directories they
+#                     read from. Cleaned up on
 #                     exit via trap.
 #   --jobs N          override parallel worker count. Default: read from
 #                     scripts/lib/concurrency.sh (CPU/mem-aware). Set 1
@@ -116,8 +116,6 @@ if [[ $LIST_ONLY -eq 0 ]]; then
     require_fresh_compiler "$SKY" "$ROOT"
 fi
 
-export SKY_RUNTIME_DIR="$ROOT/runtime-go"
-
 # The shared build cache. Hash the compiler ONCE here, in the parent, so the
 # xargs workers inherit the digest instead of each re-hashing a 100+ MB binary.
 GATE_CACHE_LIB="$ROOT/scripts/lib/gate-build-cache.sh"
@@ -127,26 +125,19 @@ if [[ $LIST_ONLY -eq 0 ]]; then
 fi
 
 # Workdir mode (bug #381): copy examples/* into $WORKDIR/examples/ and
-# point EXAMPLES_ROOT at the copies. Stops cabal-test ExampleSweep from
-# rm -rf'ing the in-tree sky-out/ + .skycache/go directories that
-# TypedFfi / UnreachableGate specs read from while the sweep is mid-
-# flight.
+# point EXAMPLES_ROOT at the copies. Stops the sweep from rm -rf'ing the
+# in-tree sky-out/ + .skycache/go directories that other readers use
+# while the sweep is mid-flight.
 #
-# Preserves $ROOT for SKY_RUNTIME_DIR (the runtime + stdlib live there
-# and are NEVER mutated by the sweep). Only example dirs get copied.
+# The runtime + stdlib are embedded in the compiler and are NEVER
+# mutated by the sweep. Only example dirs get copied.
 #
 # After a successful sweep we MIRROR THE WORKDIR BACK to the in-tree
 # examples/. Two reasons:
-#   1. Consumer specs (Sky.Build.TypedFfi, Sky.Build.UnreachableGate,
-#      Sky.Build.SkyshopCompiles) read in-tree paths. Without the
-#      mirror, a fresh checkout that runs `cabal test` would have
-#      empty `examples/*/sky-out/` and the consumer specs would
-#      cascade-fail.
+#   1. Later local steps read the in-tree examples/*/sky-out/ paths.
 #   2. Standalone `sky verify`/CI users expect the sweep to leave
 #      the in-tree examples/ in a built state.
-# The mirror is END-OF-SWEEP atomic from the consumer specs' point of
-# view (sequential hspec ordering: ExampleSweep `it` block completes,
-# THEN TypedFfi `it` block starts). No race possible.
+# The mirror runs once, at the end of the sweep.
 #
 # Cleanup: trap on EXIT removes $WORKDIR/examples — caller's wider
 # workdir tree (if any) is left intact.
@@ -572,7 +563,7 @@ run_example() {
 
 # Worker entry — invoked via xargs -P. Single arg: colon-encoded entry
 # from $EXAMPLES (name:kind[:port[:path]]). We re-source the script's
-# globals via env — RESULTS_DIR, EXAMPLES_ROOT, SKY, SKY_RUNTIME_DIR,
+# globals via env — RESULTS_DIR, EXAMPLES_ROOT, SKY,
 # CLEAN, BUILD_ONLY — all already exported in the parent shell.
 sweep_worker() {
     local entry="$1"
@@ -587,7 +578,7 @@ sweep_worker() {
 # unbounded, or (before this shim existed) reported a pass for not running it.
 export -f run_example sweep_worker with_timeout _sky_with_timeout_resolve _sky_with_timeout_which
 export _SKY_WITH_TIMEOUT_PERL_PROG SKY_WITH_TIMEOUT_KILL_AFTER
-export EXAMPLES_ROOT SKY SKY_RUNTIME_DIR CLEAN BUILD_ONLY GATE_CACHE_LIB
+export EXAMPLES_ROOT SKY CLEAN BUILD_ONLY GATE_CACHE_LIB
 export RESULTS_DIR SKIP_GUI_LINUX
 
 # Display banner + parallel summary.

@@ -270,7 +270,7 @@ newPassword attrs cfg =
 -- back to a single-line text input, so routing through `inputBase
 -- "textarea"` (which builds a `Ui.input` element) silently broke
 -- multi-line editing in the browser. Pre-fix symptom: the
--- `<textarea>` mini-notion needs (page body editor, multi-paragraph
+-- `<textarea>` a downstream app needs (page body editor, multi-paragraph
 -- forms) rendered as a one-line field that swallowed every Enter
 -- keystroke into form submit. TUI was unaffected (it inspects the
 -- `type` attr directly and has its own textarea editor).

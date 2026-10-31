@@ -1,0 +1,27 @@
+-- gate: reject
+-- defect: two top-level values defined in terms of each other
+-- rust: reject [E1018] bad recursion, the cycle named at the first value
+--
+-- Found 2026-10-28. `a = b + 1` and `b = a * 2` passed `sky check` and
+-- `go build`; the program deadlocked on the first read of `a`, because a
+-- top-level value is computed once and waits for itself. Now `[E1018]` names
+-- the cycle `a -> b -> a`. The accepted twins (recursive functions, a
+-- reference under a lambda, a function named but not called) are in
+-- `hir/tests/value_cycle.rs`.
+module Main exposing (main)
+
+import Std.Log exposing (println)
+
+
+a : Int
+a =
+    b + 1
+
+
+b : Int
+b =
+    a * 2
+
+
+main =
+    println (String.fromInt a)

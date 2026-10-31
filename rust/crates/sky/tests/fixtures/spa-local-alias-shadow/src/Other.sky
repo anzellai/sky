@@ -1,0 +1,26 @@
+module Other exposing (..)
+
+-- A local type alias `Plan` that shadows the `Plan` this module imports with
+-- `exposing (..)` (`Types.Plan`, a wire type). `summary` is pure, so the
+-- split copies it to the client; `save` reaches a server effect. The module's
+-- own `Plan` must win in the client copy too.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Types exposing (..)
+
+type alias Plan =
+    { rows : List String
+    , joined : Int
+    }
+
+
+summary : Plan -> Int
+summary p =
+    p.joined + List.length p.rows
+
+
+save : Int -> Task Error Types.Plan
+save n =
+    Task.succeed { id = System.getenvOr "SPA_SHADOW_ID" "p1", title = "saved" }

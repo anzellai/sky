@@ -1,7 +1,11 @@
-# Pin the Rust toolchain so local builds match CI (dtolnay/rust-toolchain@stable)
-# and the reproducibility gates (repro, coerce-floor, golden) are deterministic
-# across machines. The workspace is edition 2021 and uses no nightly features.
+# Pin the Rust toolchain so local builds match CI and the reproducibility gates
+# (repro, coerce-floor, golden) are deterministic across machines. 1.99.1 is the
+# stable release the CI runners use (dtolnay/rust-toolchain installs stable,
+# and rustup then honours this file for every cargo call under rust/). Raise it
+# here, in one place, when CI moves. The workspace is edition 2021 and uses no
+# nightly features. The Nix dev shell (default.nix) uses the rustc of its
+# pinned nixpkgs channel instead, because Nix does not read this file.
 [toolchain]
-channel = "stable"
+channel = "1.99.1"
 components = ["rustfmt", "clippy", "rust-analyzer"]
 profile = "minimal"

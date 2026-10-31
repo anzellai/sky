@@ -123,7 +123,7 @@ func TestParity_DictGet_Maybe(t *testing.T) {
 	if !isMaybeShape(Dict_get("missing", d)) {
 		t.Errorf("Dict_get(miss): kernel says Maybe v")
 	}
-	tOut := Dict_getT[string]("k", map[string]string{"k": "v"})
+	tOut := Dict_getT[string]("k", SkyDict[string]{}.Insert("k", "v"))
 	if !isMaybeShape(tOut) {
 		t.Errorf("Dict_getT: kernel says Maybe v, got %T", tOut)
 	}

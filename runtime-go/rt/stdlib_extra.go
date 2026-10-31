@@ -27,32 +27,42 @@ import (
 )
 
 // ═══════════════════════════════════════════════════════════
-// Sky.Core.Set — backed by map[any]struct{}
+// Sky.Core.Set — backed by the persistent SkyDict
 // ═══════════════════════════════════════════════════════════
 
 // SkySet is `Sky.Core.Set`'s backing store: element IDENTITY → the ORIGINAL
-// element. `toList` returns the values, never the keys, so a Set — unlike a
-// `Dict` — never has to decode its key back. What it does need is that the key
-// be INJECTIVE, and `fmt.Sprintf("%v", element)` is not: the tuples
-// `( "a b", "c" )` and `( "a", "b c" )` both render `{a b c}`, so the second
-// silently overwrote the first and `Set.fromList` returned a one-element set.
-// See `identity_key.go` for the encoding that closes it, and for why this is a
-// runtime fix rather than a `Dict`-style `[E2008]` check-time rejection.
+// element, held in the persistent SkyDict (dict_persistent.go), so insert and
+// remove are O(log n) and never copy the Set. `toList` returns the values,
+// never the keys, so a Set — unlike a `Dict` — never has to decode its key
+// back. What it does need is that the key be INJECTIVE, and
+// `fmt.Sprintf("%v", element)` is not: the tuples `( "a b", "c" )` and
+// `( "a", "b c" )` both render `{a b c}`, so the second silently overwrote the
+// first and `Set.fromList` returned a one-element set. See `identity_key.go`
+// for the encoding that closes it, and for why this is a runtime fix rather
+// than a `Dict`-style `[E2008]` check-time rejection.
 type SkySet struct {
-	items map[string]any
+	items SkyDict[any]
 }
 
+// GobEncode / GobDecode keep a Set inside a Sky.Live model (its unexported
+// field is otherwise invisible to gob).
+func (s SkySet) GobEncode() ([]byte, error) { return s.items.GobEncode() }
+
+func (s *SkySet) GobDecode(b []byte) error { return s.items.GobDecode(b) }
+
 func Set_empty() any {
-	return SkySet{items: map[string]any{}}
+	return SkySet{}
 }
 
 func Set_fromList(list any) any {
-	s := SkySet{items: map[string]any{}}
-	for _, v := range asList(list) {
-		k := identityKey(v)
-		s.items[k] = v
+	xs := asList(list)
+	keys := make([]string, 0, len(xs))
+	vals := make([]any, 0, len(xs))
+	for _, v := range xs {
+		keys = append(keys, identityKey(v))
+		vals = append(vals, v)
 	}
-	return s
+	return SkySet{items: dictBuild(dictDedupe(keys, vals))}
 }
 
 // toSkySet accepts a SkySet, a typed-codegen slice (`[]A`), or a
@@ -75,19 +85,17 @@ func toSkySet(v any) SkySet {
 	if v != nil {
 		rv := reflect.ValueOf(v)
 		if rv.IsValid() && rv.Kind() == reflect.Map {
-			items := map[string]any{}
+			keys := make([]string, 0, rv.Len())
+			vals := make([]any, 0, rv.Len())
 			for _, k := range rv.MapKeys() {
 				key := k.Interface()
-				items[identityKey(key)] = key
+				keys = append(keys, identityKey(key))
+				vals = append(vals, key)
 			}
-			return SkySet{items: items}
+			return SkySet{items: dictBuild(dictDedupe(keys, vals))}
 		}
 	}
-	items := map[string]any{}
-	for _, x := range asList(v) {
-		items[identityKey(x)] = x
-	}
-	return SkySet{items: items}
+	return Set_fromList(v).(SkySet)
 }
 
 // skySetToMap converts a SkySet to a typed Sky-Set map by iterating
@@ -121,67 +129,55 @@ func skySetToMap(v any, targetTy reflect.Type) (reflect.Value, bool) {
 	if keyTy.Kind() != reflect.Interface {
 		return reflect.Value{}, false
 	}
-	out := reflect.MakeMapWithSize(targetTy, len(s.items))
+	out := reflect.MakeMapWithSize(targetTy, s.items.Len())
 	zeroV := reflect.Zero(valTy)
 	// For bool-valued maps, "present" is true rather than zero.
 	presentV := zeroV
 	if valTy.Kind() == reflect.Bool {
 		presentV = reflect.ValueOf(true).Convert(valTy)
 	}
-	for _, val := range s.items {
+	s.items.Range(func(_ string, val any) bool {
 		if val == nil {
-			continue
+			return true
 		}
 		kv := reflect.ValueOf(val)
 		if !kv.IsValid() {
-			continue
+			return true
 		}
 		// Wrap in interface{} since keyTy is interface.
 		keyV := reflect.New(keyTy).Elem()
 		keyV.Set(kv)
 		out.SetMapIndex(keyV, presentV)
-	}
+		return true
+	})
 	return out, true
 }
 
 func Set_insert(v any, set any) any {
 	s := toSkySet(set)
-	out := SkySet{items: map[string]any{}}
-	for k, v2 := range s.items {
-		out.items[k] = v2
-	}
-	out.items[identityKey(v)] = v
-	return out
+	return SkySet{items: s.items.Insert(identityKey(v), v)}
 }
 
 func Set_remove(v any, set any) any {
 	s := toSkySet(set)
-	out := SkySet{items: map[string]any{}}
-	k := identityKey(v)
-	for k2, v2 := range s.items {
-		if k2 != k {
-			out.items[k2] = v2
-		}
-	}
-	return out
+	return SkySet{items: s.items.Remove(identityKey(v))}
 }
 
 func Set_member(v any, set any) any {
-	s := toSkySet(set)
-	_, ok := s.items[identityKey(v)]
-	return ok
+	return toSkySet(set).items.Has(identityKey(v))
 }
 
 func Set_toList(set any) any {
 	s := toSkySet(set)
-	out := make([]any, 0, len(s.items))
-	for _, v := range s.items {
+	out := make([]any, 0, s.items.Len())
+	s.items.Range(func(_ string, v any) bool {
 		out = append(out, v)
-	}
-	// A Go map iterates in randomised order, so Set.toList — and union /
-	// intersect / diff / fromList, all observed THROUGH toList — returned a
-	// non-deterministic order run-to-run. Elm's Set is ordered; sort by the
-	// element's natural order via the shared comparator.
+		return true
+	})
+	// The store iterates in no particular order, so Set.toList — and union
+	// / intersect / diff / fromList, all observed THROUGH toList — would
+	// return a non-deterministic order run-to-run. Elm's Set is ordered;
+	// sort by the element's natural order via the shared comparator.
 	//
 	// `skyLessThan`, not `cmp`. The comment that used to sit here claimed "Set
 	// keys are `comparable` by Sky's type system, so cmp never hits its
@@ -200,40 +196,51 @@ func Set_toList(set any) any {
 }
 
 func Set_size(set any) any {
-	return len(toSkySet(set).items)
+	return toSkySet(set).items.Len()
 }
 
+// Set_union inserts the smaller Set into the larger: O(m log n).
 func Set_union(a any, b any) any {
-	out := SkySet{items: map[string]any{}}
-	for k, v := range toSkySet(a).items {
-		out.items[k] = v
+	sa, sb := toSkySet(a), toSkySet(b)
+	if sa.items.Len() < sb.items.Len() {
+		sa, sb = sb, sa
 	}
-	for k, v := range toSkySet(b).items {
-		out.items[k] = v
-	}
-	return out
+	out := sa.items
+	sb.items.Range(func(k string, v any) bool {
+		if !out.Has(k) {
+			out = out.Insert(k, v)
+		}
+		return true
+	})
+	return SkySet{items: out}
 }
 
 func Set_intersect(a any, b any) any {
-	out := SkySet{items: map[string]any{}}
 	bi := toSkySet(b).items
-	for k, v := range toSkySet(a).items {
-		if _, ok := bi[k]; ok {
-			out.items[k] = v
+	var keys []string
+	var vals []any
+	toSkySet(a).items.Range(func(k string, v any) bool {
+		if bi.Has(k) {
+			keys = append(keys, k)
+			vals = append(vals, v)
 		}
-	}
-	return out
+		return true
+	})
+	return SkySet{items: dictBuild(keys, vals, false)}
 }
 
 func Set_diff(a any, b any) any {
-	out := SkySet{items: map[string]any{}}
 	bi := toSkySet(b).items
-	for k, v := range toSkySet(a).items {
-		if _, ok := bi[k]; !ok {
-			out.items[k] = v
+	var keys []string
+	var vals []any
+	toSkySet(a).items.Range(func(k string, v any) bool {
+		if !bi.Has(k) {
+			keys = append(keys, k)
+			vals = append(vals, v)
 		}
-	}
-	return out
+		return true
+	})
+	return SkySet{items: dictBuild(keys, vals, false)}
 }
 
 // P8/Set typed companions — operate on []A slices directly. Sky's
@@ -1502,7 +1509,7 @@ func Path_safeJoin(root any, rel any) any {
 type HttpResponse struct {
 	Status  int
 	Body    string
-	Headers map[string]string
+	Headers SkyDict[string]
 }
 
 // The net/http outbound client (skyHTTPClient, newSkyHttpClient,

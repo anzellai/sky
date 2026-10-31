@@ -45,14 +45,14 @@ of mistake worth designing out.
 
 ```bash
 # Passive observation. Read-only; safe against a live instance.
-scripts/skylive-observe-remote.sh \
+tools/perf/skylive-observe-remote.sh \
     --project <id> --instance sky-lang-org --zone us-central1-a
-INTERVAL=20 DURATION=2700 scripts/skylive-observe-remote.sh --project <id>
+INTERVAL=20 DURATION=2700 tools/perf/skylive-observe-remote.sh --project <id>
 
 # Remote load. Defaults to preflight; --load is required to send anything,
 # and production hosts are refused even then. Point at a THROWAWAY.
-scripts/skylive-load-remote.sh --url http://<bench-ip>:8000
-scripts/skylive-load-remote.sh --url http://<bench-ip>:8000 --load \
+tools/perf/skylive-load-remote.sh --url http://<bench-ip>:8000
+tools/perf/skylive-load-remote.sh --url http://<bench-ip>:8000 --load \
     --project <id> --instance sky-lang-bench --zone us-central1-a
 ```
 
@@ -104,7 +104,7 @@ Two consequences, and they are the reason this document is shaped the
 way it is:
 
 1. **RSS must come from `/proc/<pid>/status` over SSH.** That is what
-   `scripts/skylive-observe-remote.sh` does.
+   `tools/perf/skylive-observe-remote.sh` does.
 2. **A session count cannot be obtained at all**, remotely or locally,
    except by counting held SSE connections — and that is a *lower bound*,
    not an equality, because a `memory`-store session outlives its SSE
@@ -215,7 +215,7 @@ So:
 - **The observation window did not contain enough activity to mean
   anything for per-session memory.** With zero interactions and a
   concurrent-connection span of 1, there is no x-axis to regress RSS
-  against. `scripts/skylive-observe-remote.sh` detects exactly this and
+  against. `tools/perf/skylive-observe-remote.sh` detects exactly this and
   refuses to print a per-session slope, reporting `INSUFFICIENT
   ACTIVITY` instead of dividing by a number it does not have.
 - **This neither confirms nor falsifies ~1.1 MB/session.** An idle
@@ -265,7 +265,7 @@ exactly what a person does while debugging a failed run. Three gates:
    inattention about *which host* is the failure being guarded against.
    `-assume-yes` skips the prompt for scripted runs.
 
-`scripts/skylive-load-remote.sh` defaults to **preflight**: it identifies
+`tools/perf/skylive-load-remote.sh` defaults to **preflight**: it identifies
 the target via the two unauthenticated endpoints and sends no load.
 `--load` is required to do anything else.
 
@@ -278,14 +278,14 @@ and both were **verified by mutation** rather than assumed:
 | Gate 1 never fires | 4 tests fail |
 
 The end-to-end refusal was also exercised against the real host:
-`scripts/skylive-load-remote.sh --url https://sky-lang.org --load
+`tools/perf/skylive-load-remote.sh --url https://sky-lang.org --load
 --assume-yes` builds the generator, reaches the first level, and exits
 with `REFUSING TO LOAD A PRODUCTION TARGET` — **nothing was sent**.
 
 `tools/skyliveload` is a standalone Go module outside the cargo
 workspace, so **no CI job compiles or tests it** — the guards would
 otherwise be a safety mechanism nothing ever exercised. Until a CI job
-covers it, `scripts/skylive-load-remote.sh` runs `go test ./...` in that
+covers it, `tools/perf/skylive-load-remote.sh` runs `go test ./...` in that
 module before it builds the generator, and refuses to proceed if the
 guards are not green. That puts the check at the moment it matters, but
 it is a weaker place than CI: a broken guard is caught by the next person
@@ -302,7 +302,7 @@ anywhere near it.
 
 ### Provisioning a bench instance safely
 
-`scripts/skylive-bench-gcp.sh` creates and destroys throwaway instances.
+`tools/perf/skylive-bench-gcp.sh` creates and destroys throwaway instances.
 Its design problem is not creation but **guaranteed** destruction: an
 orphaned instance bills forever, and the process that created it is
 exactly the one that cannot be relied on to clean it up. Three
@@ -320,23 +320,22 @@ independent layers, in decreasing order of trustworthiness:
 Every instance is named `sky-bench-*`, and the script **refuses to
 create or delete anything that is not**. That prefix check runs before
 every mutating call, so production instances reachable with the same
-credentials — `sky-lang-org`, `shop-app-vm`, `partner-app-vm-1`,
-`settleby-caddy`, `sky-pro-user-*`, `skydeploy-cp-dev` — cannot be named
+credentials — `sky-lang-org` and the other application VMs — cannot be named
 by this script even deliberately. Verified:
 
 ```
-$ scripts/skylive-bench-gcp.sh down --project <id> --name sky-lang-org
+$ tools/perf/skylive-bench-gcp.sh down --project <id> --name sky-lang-org
 REFUSING to act on 'sky-lang-org' -- name does not start with 'sky-bench-'.
 ```
 
 ```bash
-scripts/skylive-bench-gcp.sh up --project <id> \
+tools/perf/skylive-bench-gcp.sh up --project <id> \
     --name sky-bench-micro --machine-type e2-micro --ttl 3h
-scripts/skylive-bench-gcp.sh up --project <id> \
+tools/perf/skylive-bench-gcp.sh up --project <id> \
     --name sky-bench-gen --machine-type e2-standard-2 --ttl 4h
 # ... run the sweep ...
-scripts/skylive-bench-gcp.sh down   --project <id>
-scripts/skylive-bench-gcp.sh verify --project <id>
+tools/perf/skylive-bench-gcp.sh down   --project <id>
+tools/perf/skylive-bench-gcp.sh verify --project <id>
 ```
 
 **The generator belongs in the same zone as the target.** Driving load
@@ -374,7 +373,7 @@ deploy/deploy.sh \
 Then, from this repo:
 
 ```bash
-scripts/skylive-load-remote.sh \
+tools/perf/skylive-load-remote.sh \
     --url http://<bench-ip>:8000 \
     --load --assume-yes \
     --project <id> --instance sky-lang-bench --zone us-central1-a \
@@ -537,7 +536,7 @@ per-session figure those capacity numbers rest on is not.
 |---|---|
 | Observed | `sky-lang-org`, `us-central1-a`, e2-micro (project recorded in the run's `env.txt`) |
 | Window | 45 min at 20 s sampling, plus targeted probes |
-| Harness | `scripts/skylive-observe-remote.sh`, landed in `f1de081c` |
+| Harness | `tools/perf/skylive-observe-remote.sh`, landed in `f1de081c` |
 | `env.txt` `commit` field | `c0535659` — the branch HEAD when the run *started*. The harness was still uncommitted at that moment and landed minutes later, byte-identical to what ran. Recorded here rather than quietly reconciled. |
 | Observer host | macOS arm64 (transport only — no measurement runs here) |
 | Mode | **passive, read-only**; no load was applied to any instance |
@@ -591,7 +590,7 @@ exhausted the whole machine instead.
 
 ### Method: why each level restarts the app
 
-`scripts/skylive-load-remote.sh` sweeps 1…500 continuously and sleeps 15 s
+`tools/perf/skylive-load-remote.sh` sweeps 1…500 continuously and sleeps 15 s
 between levels "so sessions drain". **They do not drain.** The memory
 store holds a session until the TTL sweep reaps it and the default TTL is
 30 minutes (`runtime-go/rt/live_store.go:16`, `:489`); the SSE stream

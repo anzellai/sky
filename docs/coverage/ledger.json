@@ -51,15 +51,15 @@
     "database_drivers": {
       "sqlite": 15
     },
-    "paths_with_sky_toml": 66,
+    "paths_with_sky_toml": 64,
     "sections": {
-      "[\"go.dependencies\"]": 11,
+      "[\"go.dependencies\"]": 9,
       "[analytics]": 1,
       "[app]": 5,
       "[database]": 15,
       "[dependencies]": 1,
       "[live]": 2,
-      "[source]": 62
+      "[source]": 61
     }
   },
   "gates": {
@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1577,
+      "expected_assertions": 2056,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -433,7 +433,7 @@
       "tier": "T1"
     },
     "corpus-1": {
-      "expected_assertions": 156,
+      "expected_assertions": 170,
       "falsifier_mutation": "corpus-1.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 0 of 4: each case built + run; values compared against the generator's own",
@@ -471,7 +471,7 @@
       "tier": "T2"
     },
     "corpus-2": {
-      "expected_assertions": 156,
+      "expected_assertions": 170,
       "falsifier_mutation": "corpus-2.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 1 of 4: each case built + run; values compared against the generator's own",
@@ -509,7 +509,7 @@
       "tier": "T2"
     },
     "corpus-3": {
-      "expected_assertions": 155,
+      "expected_assertions": 170,
       "falsifier_mutation": "corpus-3.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 2 of 4: each case built + run; values compared against the generator's own",
@@ -547,7 +547,7 @@
       "tier": "T2"
     },
     "corpus-4": {
-      "expected_assertions": 155,
+      "expected_assertions": 170,
       "falsifier_mutation": "corpus-4.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 3 of 4: each case built + run; values compared against the generator's own",
@@ -607,7 +607,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 768,
+      "expected_assertions": 844,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -617,7 +617,7 @@
       "tier": "T1"
     },
     "corpus-reject": {
-      "expected_assertions": 270,
+      "expected_assertions": 306,
       "falsifier_mutation": "corpus-reject.repair-the-defect",
       "falsifier_proven": true,
       "summary": "reject matrix: rejection by DIAGNOSTIC CODE, each with an accepted twin",
@@ -640,7 +640,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 199,
+      "expected_assertions": 207,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -660,7 +660,7 @@
       "tier": "T1"
     },
     "fmt-clean": {
-      "expected_assertions": 395,
+      "expected_assertions": 401,
       "falsifier_mutation": "fmt-clean.unformat-a-tracked-file",
       "falsifier_proven": true,
       "summary": "every tracked .sky file in sky-stdlib/, sky-bundled/, apps/, examples/ and templates/ is already `sky fmt`-clean",
@@ -701,7 +701,7 @@
       "tier": "T1"
     },
     "lsp": {
-      "expected_assertions": 49,
+      "expected_assertions": 52,
       "falsifier_mutation": "lsp.hover-echoes-the-token",
       "falsifier_proven": true,
       "summary": "the editor answers hover / goto-def / completion / diagnostics through a REAL Neovim LSP client, on fixtures and a real app",
@@ -721,7 +721,7 @@
       "tier": "T1"
     },
     "reject": {
-      "expected_assertions": 92,
+      "expected_assertions": 96,
       "falsifier_mutation": "reject.neutralise-axis",
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
@@ -732,7 +732,7 @@
       "tier": "T1"
     },
     "roundtrip": {
-      "expected_assertions": 224,
+      "expected_assertions": 222,
       "falsifier_mutation": "roundtrip.error-node",
       "falsifier_proven": true,
       "summary": "byte-exact reprint + zero ERROR nodes over every corpus .sky file",
@@ -743,7 +743,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 166,
+      "expected_assertions": 168,
       "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
@@ -794,8 +794,18 @@
       ],
       "tier": "T2"
     },
+    "spa-wasm-server-only": {
+      "expected_assertions": 54,
+      "falsifier_mutation": "spa-wasm-server-only.import-archive-zip-on-the-client",
+      "falsifier_proven": true,
+      "summary": "a Sky.Spa wasm client links no server-only package (encoding/xml, archive/zip, database drivers, ...)",
+      "surfaces": [
+        "stdlib.Std.Spa"
+      ],
+      "tier": "T1"
+    },
     "stdlib-bodies": {
-      "expected_assertions": 127,
+      "expected_assertions": 135,
       "falsifier_mutation": "stdlib-bodies.record-missing-field",
       "falsifier_proven": true,
       "summary": "every sky-stdlib module body type-checks (a build trusts stdlib signatures)",
@@ -804,6 +814,18 @@
         "compiler.reject"
       ],
       "tier": "T1"
+    },
+    "store-query-postgres": {
+      "expected_assertions": 255,
+      "falsifier_mutation": "store-query-postgres.drop-rows-err",
+      "falsifier_proven": true,
+      "summary": "Std.Db.Store query path (aggregates, select, latestPer, text match, jsonText) on PostgreSQL",
+      "surfaces": [
+        "db.postgres",
+        "db.codec-store",
+        "stdlib.Std.Db.Store"
+      ],
+      "tier": "T3"
     },
     "verify-cli": {
       "expected_assertions": 13,
@@ -870,10 +892,10 @@
       "Std.Ui.Transition": "examples/26-ui-showcase"
     },
     "stdlib_modules_repo_wide": {
-      "Sky.Core.Char": {
-        "path": "tests/Core",
+      "Sky.Core.Array": {
+        "path": "tests/conformance",
         "units": [
-          "tests/Core"
+          "tests/conformance"
         ]
       },
       "Sky.Core.Set": {
@@ -912,6 +934,12 @@
           "tests/conformance"
         ]
       },
+      "Std.Image.Canvas": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
       "Std.Jobs": {
         "path": "apps/dispatch",
         "units": [
@@ -922,6 +950,18 @@
         "path": "apps/dispatch",
         "units": [
           "apps:dispatch"
+        ]
+      },
+      "Std.Office.Docx": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
+      "Std.Office.Xlsx": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
         ]
       },
       "Std.Qr": {
@@ -935,6 +975,30 @@
         "units": [
           "apps:relay"
         ]
+      },
+      "Std.Xml": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
+      "Std.Xml.Decode": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
+      "Std.Xml.Encode": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
+      "Std.Zip": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
       }
     }
   },
@@ -946,23 +1010,23 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2962,
-    "stdlib_modules": 127,
-    "surfaces_covered": 185,
-    "surfaces_covered_pct": 94.9,
+    "stdlib_entries": 3232,
+    "stdlib_modules": 135,
+    "surfaces_covered": 193,
+    "surfaces_covered_pct": 95.1,
     "surfaces_equal": 15,
-    "surfaces_stronger": 180,
-    "surfaces_total": 195,
+    "surfaces_stronger": 188,
+    "surfaces_total": 203,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
-      "Example": 72,
+      "Example": 70,
       "FlowTest": 61,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 152
+    "units_total": 150
   },
   "surfaces": [
     {
@@ -2159,6 +2223,11 @@
             "strength": 4
           },
           {
+            "by": "gate `store-query-postgres`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": ".github/workflows/rust-ci.yml: scripts/conformance.sh (`script:scripts/conformance.sh` is not harness-registered — no proven falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -2241,6 +2310,11 @@
           },
           {
             "by": "gate `apps-ledger-postgres`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `store-query-postgres`",
             "class": "Falsified",
             "strength": 4
           }
@@ -3139,6 +3213,34 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Sky.Core.Array public API",
+      "id": "stdlib.Sky.Core.Array",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
             "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
@@ -3204,6 +3306,11 @@
             "strength": 4
           },
           {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
@@ -3212,15 +3319,20 @@
         "strength": 4
       },
       "cover_today": {
-        "class": "None",
+        "class": "Asserted",
         "evidence": [
           {
             "by": "tests/Core — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
+          },
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
-        "strength": 0
+        "strength": 3
       },
       "description": "the Sky.Core.Char public API",
       "id": "stdlib.Sky.Core.Char",
@@ -6381,6 +6493,11 @@
             "strength": 4
           },
           {
+            "by": "corpus:layer1 (gate `corpus`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
@@ -7974,6 +8091,11 @@
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -8070,6 +8192,11 @@
             "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
+          },
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
         "strength": 3
@@ -8372,11 +8499,6 @@
             "by": "examples/75-ai-everywhere (retained; tests/ suite run by gate `sky-verify`)",
             "class": "Asserted",
             "strength": 3
-          },
-          {
-            "by": "examples/simple (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
           },
           {
             "by": "flow:ai_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
@@ -8758,11 +8880,6 @@
             "by": "examples/75-ai-everywhere (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
-          },
-          {
-            "by": "examples/simple (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
           },
           {
             "by": "tests/Core — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
@@ -13856,6 +13973,11 @@
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "gate `store-query-postgres`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -14216,6 +14338,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -14459,6 +14586,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -14522,6 +14654,11 @@
             "by": "examples/34-multi-tier-console (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
         "strength": 4
@@ -14617,6 +14754,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -14680,6 +14822,11 @@
             "by": "examples/34-multi-tier-console (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
         "strength": 4
@@ -14785,6 +14932,34 @@
       },
       "description": "the Std.Image public API",
       "id": "stdlib.Std.Image",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Image.Canvas public API",
+      "id": "stdlib.Std.Image.Canvas",
       "verdict": "stronger"
     },
     {
@@ -15228,16 +15403,6 @@
             "strength": 3
           },
           {
-            "by": "examples/simple (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
-            "by": "examples/test_pkg (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
             "by": "flow:ai_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -15639,16 +15804,6 @@
             "strength": 3
           },
           {
-            "by": "examples/simple (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
-            "by": "examples/test_pkg (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
             "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
             "class": "Asserted",
             "strength": 3
@@ -15896,6 +16051,62 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Office.Docx public API",
+      "id": "stdlib.Std.Office.Docx",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Office.Xlsx public API",
+      "id": "stdlib.Std.Office.Xlsx",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
             "by": "apps:relay (gate `apps-relay`)",
             "class": "Falsified",
             "strength": 4
@@ -15988,6 +16199,11 @@
           },
           {
             "by": "gate `spa-diff-fuzz`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `spa-wasm-server-only`",
             "class": "Falsified",
             "strength": 4
           }
@@ -18551,6 +18767,118 @@
       "verdict": "equal"
     },
     {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Xml public API",
+      "id": "stdlib.Std.Xml",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Xml.Decode public API",
+      "id": "stdlib.Std.Xml.Decode",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Xml.Encode public API",
+      "id": "stdlib.Std.Xml.Encode",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Zip public API",
+      "id": "stdlib.Std.Zip",
+      "verdict": "stronger"
+    },
+    {
       "category": "ui",
       "cover_new": {
         "class": "Falsified",
@@ -18669,14 +18997,12 @@
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 6.3
+      "pct_of_denominator": 5.9
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
-      "count": 1,
-      "modules": [
-        "Sky.Core.Char"
-      ]
+      "count": 0,
+      "modules": []
     },
     "surfaces_with_zero_new_cover": {
       "count": 9,
@@ -18732,9 +19058,8 @@
           ]
         },
         "Sky.Core.Char": {
-          "count": 7,
+          "count": 6,
           "symbols": [
-            "fromCode",
             "isAlpha",
             "isDigit",
             "isLower",
@@ -18783,6 +19108,12 @@
           "count": 1,
           "symbols": [
             "requiredAt"
+          ]
+        },
+        "Sky.Core.List": {
+          "count": 1,
+          "symbols": [
+            "sortWith"
           ]
         },
         "Sky.Core.Maybe": {
@@ -18844,8 +19175,12 @@
           ]
         },
         "Sky.Core.String": {
-          "count": 2,
+          "count": 6,
           "symbols": [
+            "casefold",
+            "equalFold",
+            "isEmail",
+            "isUrl",
             "normalize",
             "normalizeNFD"
           ]
@@ -19252,7 +19587,7 @@
           ]
         },
         "Std.App": {
-          "count": 18,
+          "count": 21,
           "symbols": [
             "BaseConfig",
             "DesktopOpts",
@@ -19263,6 +19598,7 @@
             "WebOpts",
             "apiServerRoute",
             "applyServerConfig",
+            "applySessionLifetime",
             "baseDefaults",
             "desktopDefaults",
             "mobileDefaults",
@@ -19271,7 +19607,9 @@
             "tabletDefaults",
             "terminalDefaults",
             "withAppUrl",
-            "withBase"
+            "withBase",
+            "withPersistExclude",
+            "withSessionLifetime"
           ]
         },
         "Std.Bundle": {
@@ -19313,19 +19651,27 @@
           ]
         },
         "Std.Codec": {
-          "count": 5,
+          "count": 3,
           "symbols": [
             "ColType",
             "JsonSchema",
-            "Variant",
-            "dict",
-            "var3"
+            "Variant"
           ]
         },
         "Std.Crypto.Kdf": {
           "count": 1,
           "symbols": [
             "expand"
+          ]
+        },
+        "Std.Crypto.Kx": {
+          "count": 5,
+          "symbols": [
+            "publicKeyFromBase64",
+            "publicKeyToBase64",
+            "secretKeyFromBase64",
+            "secretKeyToBase64",
+            "secretKeyToBytes"
           ]
         },
         "Std.Crypto.Noise": {
@@ -19465,6 +19811,19 @@
           "symbols": [
             "createSchema",
             "createTable"
+          ]
+        },
+        "Std.Db.Store": {
+          "count": 8,
+          "symbols": [
+            "Agg",
+            "Correlate",
+            "IndexSpec",
+            "JoinOn",
+            "Otherwise",
+            "SetExpr",
+            "countDistinctAs",
+            "orderRightDesc"
           ]
         },
         "Std.Db.Table": {
@@ -19622,12 +19981,19 @@
           ]
         },
         "Std.Image": {
-          "count": 4,
+          "count": 2,
           "symbols": [
             "Format",
-            "Rgb",
-            "resizeToFit",
-            "thumbnail"
+            "Rgb"
+          ]
+        },
+        "Std.Image.Canvas": {
+          "count": 4,
+          "symbols": [
+            "Filter",
+            "Font",
+            "Mask",
+            "TextStyle"
           ]
         },
         "Std.Jobs": {
@@ -19637,7 +20003,7 @@
           ]
         },
         "Std.Live": {
-          "count": 31,
+          "count": 32,
           "symbols": [
             "AppConfig",
             "Route",
@@ -19662,6 +20028,7 @@
             "withMaxBodyBytes",
             "withOnNavigate",
             "withPort",
+            "withRefreshOnLoad",
             "withRevocation",
             "withSessionTransport",
             "withStatic",
@@ -19711,12 +20078,33 @@
           ]
         },
         "Std.Native": {
-          "count": 4,
+          "count": 5,
           "symbols": [
             "CodeFormat",
             "ScanOptions",
             "ScannedCode",
+            "Selection",
             "ShareContent"
+          ]
+        },
+        "Std.Office.Docx": {
+          "count": 1,
+          "symbols": [
+            "Limits"
+          ]
+        },
+        "Std.Office.Xlsx": {
+          "count": 9,
+          "symbols": [
+            "CellSpec",
+            "Limits",
+            "Range",
+            "Workbook",
+            "bool",
+            "failure",
+            "fontSize",
+            "italic",
+            "wrap"
           ]
         },
         "Std.Qr": {
@@ -19726,7 +20114,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 22,
+          "count": 24,
           "symbols": [
             "AppConfig",
             "Route",
@@ -19742,11 +20130,13 @@
             "withClientCrypto",
             "withGuard",
             "withHead",
+            "withHoldFree",
             "withModelDecoder",
             "withModelEncoder",
             "withNotFound",
             "withOnNavigate",
             "withPersistDecoder",
+            "withPersistExcludeFields",
             "withPersistProtectedFields",
             "withPersistSeedFields",
             "withRoutes"
@@ -19990,10 +20380,48 @@
             "withSize",
             "withTitle"
           ]
+        },
+        "Std.Xml": {
+          "count": 5,
+          "symbols": [
+            "Limits",
+            "Mode",
+            "Node",
+            "attribute",
+            "elements"
+          ]
+        },
+        "Std.Xml.Decode": {
+          "count": 7,
+          "symbols": [
+            "decodeNode",
+            "map",
+            "map4",
+            "map5",
+            "namespaceUri",
+            "node",
+            "succeed"
+          ]
+        },
+        "Std.Xml.Encode": {
+          "count": 3,
+          "symbols": [
+            "Attribute",
+            "Xml",
+            "xmlnsPrefix"
+          ]
+        },
+        "Std.Zip": {
+          "count": 3,
+          "symbols": [
+            "EntryInfo",
+            "Limits",
+            "Method"
+          ]
         }
       },
-      "count": 822,
-      "pct_of_denominator": 27.8
+      "count": 874,
+      "pct_of_denominator": 27.0
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -20018,6 +20446,12 @@
             "withTelemetrySynchronousCommit"
           ]
         },
+        "Sky.Core.Array": {
+          "count": 1,
+          "symbols": [
+            "Array"
+          ]
+        },
         "Sky.Core.Basics": {
           "count": 7,
           "symbols": [
@@ -20037,9 +20471,8 @@
           ]
         },
         "Sky.Core.Char": {
-          "count": 7,
+          "count": 6,
           "symbols": [
-            "fromCode",
             "isAlpha",
             "isDigit",
             "isLower",
@@ -20100,6 +20533,12 @@
             "requiredAt"
           ]
         },
+        "Sky.Core.List": {
+          "count": 1,
+          "symbols": [
+            "sortWith"
+          ]
+        },
         "Sky.Core.Maybe": {
           "count": 8,
           "symbols": [
@@ -20154,6 +20593,13 @@
             "weighted"
           ]
         },
+        "Sky.Core.Regex": {
+          "count": 2,
+          "symbols": [
+            "Match",
+            "Regex"
+          ]
+        },
         "Sky.Core.Result": {
           "count": 3,
           "symbols": [
@@ -20169,8 +20615,12 @@
           ]
         },
         "Sky.Core.String": {
-          "count": 2,
+          "count": 6,
           "symbols": [
+            "casefold",
+            "equalFold",
+            "isEmail",
+            "isUrl",
             "normalize",
             "normalizeNFD"
           ]
@@ -20603,7 +21053,7 @@
           ]
         },
         "Std.App": {
-          "count": 21,
+          "count": 24,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -20617,6 +21067,7 @@
             "WebOpts",
             "apiServerRoute",
             "applyServerConfig",
+            "applySessionLifetime",
             "baseDefaults",
             "desktopDefaults",
             "mobileDefaults",
@@ -20625,7 +21076,9 @@
             "tabletDefaults",
             "terminalDefaults",
             "withAppUrl",
-            "withBase"
+            "withBase",
+            "withPersistExclude",
+            "withSessionLifetime"
           ]
         },
         "Std.Bundle": {
@@ -20668,19 +21121,27 @@
           ]
         },
         "Std.Codec": {
-          "count": 5,
+          "count": 3,
           "symbols": [
             "ColType",
             "JsonSchema",
-            "Variant",
-            "dict",
-            "var3"
+            "Variant"
           ]
         },
         "Std.Crypto.Kdf": {
           "count": 1,
           "symbols": [
             "expand"
+          ]
+        },
+        "Std.Crypto.Kx": {
+          "count": 5,
+          "symbols": [
+            "publicKeyFromBase64",
+            "publicKeyToBase64",
+            "secretKeyFromBase64",
+            "secretKeyToBase64",
+            "secretKeyToBytes"
           ]
         },
         "Std.Crypto.Noise": {
@@ -20830,6 +21291,19 @@
           "symbols": [
             "createSchema",
             "createTable"
+          ]
+        },
+        "Std.Db.Store": {
+          "count": 8,
+          "symbols": [
+            "Agg",
+            "Correlate",
+            "IndexSpec",
+            "JoinOn",
+            "Otherwise",
+            "SetExpr",
+            "countDistinctAs",
+            "orderRightDesc"
           ]
         },
         "Std.Db.Table": {
@@ -21030,12 +21504,21 @@
           ]
         },
         "Std.Image": {
-          "count": 4,
+          "count": 2,
           "symbols": [
             "Format",
-            "Rgb",
-            "resizeToFit",
-            "thumbnail"
+            "Rgb"
+          ]
+        },
+        "Std.Image.Canvas": {
+          "count": 6,
+          "symbols": [
+            "Canvas",
+            "Filter",
+            "Font",
+            "Mask",
+            "Paint",
+            "TextStyle"
           ]
         },
         "Std.Jobs": {
@@ -21045,7 +21528,7 @@
           ]
         },
         "Std.Live": {
-          "count": 34,
+          "count": 35,
           "symbols": [
             "AppConfig",
             "Route",
@@ -21073,6 +21556,7 @@
             "withMaxBodyBytes",
             "withOnNavigate",
             "withPort",
+            "withRefreshOnLoad",
             "withRevocation",
             "withSessionTransport",
             "withStatic",
@@ -21122,13 +21606,40 @@
           ]
         },
         "Std.Native": {
-          "count": 5,
+          "count": 6,
           "symbols": [
             "CodeFormat",
             "Coords",
             "ScanOptions",
             "ScannedCode",
+            "Selection",
             "ShareContent"
+          ]
+        },
+        "Std.Office.Docx": {
+          "count": 4,
+          "symbols": [
+            "Block",
+            "Limits",
+            "ListKind",
+            "Run"
+          ]
+        },
+        "Std.Office.Xlsx": {
+          "count": 12,
+          "symbols": [
+            "Cell",
+            "CellSpec",
+            "Limits",
+            "Range",
+            "Validation",
+            "Visibility",
+            "Workbook",
+            "bool",
+            "failure",
+            "fontSize",
+            "italic",
+            "wrap"
           ]
         },
         "Std.Qr": {
@@ -21138,7 +21649,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 22,
+          "count": 24,
           "symbols": [
             "AppConfig",
             "Route",
@@ -21154,11 +21665,13 @@
             "withClientCrypto",
             "withGuard",
             "withHead",
+            "withHoldFree",
             "withModelDecoder",
             "withModelEncoder",
             "withNotFound",
             "withOnNavigate",
             "withPersistDecoder",
+            "withPersistExcludeFields",
             "withPersistProtectedFields",
             "withPersistSeedFields",
             "withRoutes"
@@ -21422,10 +21935,48 @@
             "withSize",
             "withTitle"
           ]
+        },
+        "Std.Xml": {
+          "count": 5,
+          "symbols": [
+            "Limits",
+            "Mode",
+            "Node",
+            "attribute",
+            "elements"
+          ]
+        },
+        "Std.Xml.Decode": {
+          "count": 7,
+          "symbols": [
+            "decodeNode",
+            "map",
+            "map4",
+            "map5",
+            "namespaceUri",
+            "node",
+            "succeed"
+          ]
+        },
+        "Std.Xml.Encode": {
+          "count": 3,
+          "symbols": [
+            "Attribute",
+            "Xml",
+            "xmlnsPrefix"
+          ]
+        },
+        "Std.Zip": {
+          "count": 3,
+          "symbols": [
+            "EntryInfo",
+            "Limits",
+            "Method"
+          ]
         }
       },
-      "count": 926,
-      "pct_of_denominator": 31.3
+      "count": 989,
+      "pct_of_denominator": 30.6
     }
   },
   "units": [
@@ -21552,10 +22103,10 @@
       "db_drivers": [],
       "gate": "corpus",
       "id": "corpus:layer1",
-      "modules_imported": 8,
+      "modules_imported": 9,
       "path": "corpus:layer1",
-      "refs_generous": 102,
-      "refs_qualified": 101,
+      "refs_generous": 56,
+      "refs_qualified": 49,
       "role": "Layer1",
       "sky_files": 12,
       "sky_toml_sections": []
@@ -21720,12 +22271,12 @@
       "db_drivers": [],
       "gate": null,
       "id": "e2e:scripts/spa-rpc-order-e2e.sh",
-      "modules_imported": 17,
+      "modules_imported": 20,
       "path": "scripts/spa-rpc-order-e2e.sh",
-      "refs_generous": 51,
-      "refs_qualified": 50,
+      "refs_generous": 59,
+      "refs_qualified": 58,
       "role": "FlowTest",
-      "sky_files": 4,
+      "sky_files": 5,
       "sky_toml_sections": []
     },
     {
@@ -22315,8 +22866,8 @@
       "id": "examples/35-composite-generics",
       "modules_imported": 19,
       "path": "examples/35-composite-generics",
-      "refs_generous": 99,
-      "refs_qualified": 95,
+      "refs_generous": 102,
+      "refs_qualified": 97,
       "role": "Example",
       "sky_files": 6,
       "sky_toml_sections": [
@@ -22817,35 +23368,6 @@
     {
       "db_drivers": [],
       "gate": null,
-      "id": "examples/simple",
-      "modules_imported": 2,
-      "path": "examples/simple",
-      "refs_generous": 5,
-      "refs_qualified": 4,
-      "role": "Example",
-      "sky_files": 1,
-      "sky_toml_sections": [
-        "[\"go.dependencies\"]"
-      ]
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "examples/test_pkg",
-      "modules_imported": 1,
-      "path": "examples/test_pkg",
-      "refs_generous": 1,
-      "refs_qualified": 0,
-      "role": "Example",
-      "sky_files": 1,
-      "sky_toml_sections": [
-        "[\"go.dependencies\"]",
-        "[source]"
-      ]
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
       "id": "flow:ai_cli_flow",
       "modules_imported": 10,
       "path": "rust/crates/sky/tests/ai_cli_flow.rs",
@@ -23291,12 +23813,12 @@
       "db_drivers": [],
       "gate": null,
       "id": "flow:spa_split_flow",
-      "modules_imported": 41,
+      "modules_imported": 43,
       "path": "rust/crates/sky/tests/spa_split_flow.rs",
-      "refs_generous": 172,
-      "refs_qualified": 164,
+      "refs_generous": 179,
+      "refs_qualified": 171,
       "role": "FlowTest",
-      "sky_files": 136,
+      "sky_files": 140,
       "sky_toml_sections": []
     },
     {
@@ -23447,12 +23969,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 56,
+      "modules_imported": 66,
       "path": "tests/conformance",
-      "refs_generous": 772,
-      "refs_qualified": 755,
+      "refs_generous": 1022,
+      "refs_qualified": 994,
       "role": "Conformance",
-      "sky_files": 45,
+      "sky_files": 58,
       "sky_toml_sections": []
     }
   ]

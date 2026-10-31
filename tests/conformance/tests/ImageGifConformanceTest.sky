@@ -1,0 +1,339 @@
+module ImageGifConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for Std.Image v0.29.0 through the Sky API: an
+-- animated GIF kept as a GIF (Preserve, Gif) by every operation, frames,
+-- reduceFrames, the dropped comment, the Gif and WebpLossless formats, and
+-- the decode limits (a 1x1 GIF of 100,000 frames, a 5000x5000 GIF of 50
+-- frames, a tiny PNG and a tiny JPEG that claim 20000 x 20000).
+--
+-- The fixtures are base64 in this file:
+--
+--   * anim3 — an 8x6 GIF of 3 frames (a red bar on white moving right,
+--     delays 10, 20, 30) with a comment extension that says "hidden";
+--   * still — an 8x6 GIF of one frame;
+--   * the bombs are built here from a header and one frame repeated.
+--
+-- The composition, timing and limits arithmetic are checked frame by frame
+-- in runtime-go/rt/image_gif_test.go; this suite checks the Sky surface.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Encoding as Encoding
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
+import Sky.Core.Task as Task
+import Std.Image as Image
+import Sky.Test as Test exposing (Test)
+
+
+bytesOf : String -> String
+bytesOf b64 =
+    Result.withDefault "" (Encoding.base64Decode b64)
+
+
+anim3 : String
+anim3 =
+    bytesOf
+        "R0lGODlhCAAGAAAAACH+BmhpZGRlbgAh/wtORVRTQ0FQRTIuMAMBAAAAIfkEBQoAAAAsAAAAAAgABgCBAAAA/wAAAAD/////AgrMjmN5y54gkqcAACH5BAUUAAAALAAAAAAIAAYAgQAAAP8AAAAA/////wIK3GJpqNv+WJOmAAAh+QQFHgAAACwAAAAACAAGAIEAAAD/AAAAAP////8CCpwXp6nG/VZzpwAAOw=="
+
+
+still : String
+still =
+    bytesOf
+        "R0lGODlhCAAGAIEAAAAAAP8AAAAA/////yH5BAEAAAAALAAAAAAIAAYAAAIKjGZ4yesKW3ypAAA7"
+
+
+-- A GIF of `n` frames on a `head` screen: the header, the frame repeated,
+-- the trailer. A few bytes a frame, however large the frame claims to be.
+bomb : String -> String -> Int -> String
+bomb head frame n =
+    bytesOf head ++ String.repeat n (bytesOf frame) ++ ";"
+
+
+bomb1x1 : String
+bomb1x1 =
+    bomb
+        "R0lGODlhAQABAIAAAAAAAP///w=="
+        "IfkEAAIAAAAsAAAAAAEAAQAAAgJMAQA="
+        100000
+
+
+bomb5000 : String
+bomb5000 =
+    bomb "R0lGODlhiBOIE4AAAAAAAP///w==" "IfkEAAIAAAAsAAAAAIgTiBMAAgJMAQA=" 50
+
+
+hugePng : String
+hugePng =
+    bytesOf
+        "iVBORw0KGgoAAAANSUhEUgAATiAAAE4gCAYAAADjcEY5AAAAEUlEQVR4nGJiYGBgAAQAAP//AA8AA/6P688AAAAASUVORK5CYII="
+
+
+hugeJpeg : String
+hugeJpeg =
+    bytesOf
+        "/9j/2wCEAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDIBCQkJDAsMGA0NGDIhHCEyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMv/AABEITiBOIAMBIgACEQEDEQH/xAGiAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgsQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+gEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoLEQACAQIEBAMEBwUEBAABAncAAQIDEQQFITEGEkFRB2FxEyIygQgUQpGhscEJIzNS8BVictEKFiQ04SXxFxgZGiYnKCkqNTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqCg4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2dri4+Tl5ufo6ery8/T19vf4+fr/2gAMAwEAAhEDEQA/APn+iiigD//Z"
+
+
+-- "image/<code>" for a refusal in the image domain, "ok" for a success.
+codeOf : Task Error a -> String
+codeOf t =
+    case Task.run t of
+
+        Ok _ ->
+            "ok"
+
+        Err e ->
+            case Error.failureOf e of
+
+                Just f ->
+                    Error.failureDomain f ++ "/" ++ Error.failureCode f
+
+                Nothing ->
+                    "no-domain"
+
+
+-- The frame count and size of an output, as "N WxH".
+shape : Task Error String -> String
+shape t =
+    case Task.run
+             (t
+                 |> Task.andThen
+                        (\out ->
+                            Image.frames out
+                                |> Task.andThen
+                                       (\n ->
+                                           Image.dimensions out
+                                               |> Task.map
+                                                      (\d ->
+                                                          String.fromInt n
+                                                              ++ " "
+                                                              ++ String.fromInt
+                                                                     d.width
+                                                              ++ "x"
+                                                              ++ String.fromInt
+                                                                     d.height)))) of
+
+        Ok s ->
+            s
+
+        Err _ ->
+            "err"
+
+
+-- The first `n` bytes of an output.
+magic : Int -> Task Error String -> String
+magic n t =
+    case Task.run t of
+
+        Ok out ->
+            String.left n out
+
+        Err _ ->
+            "err"
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "frames counts an animated GIF and a still image"
+          (\_ ->
+              Test.equal
+                  ( Ok 3, Ok 1 )
+                  ( Task.run (Image.frames anim3)
+                  , Task.run (Image.frames still)
+                  ))
+    , Test.test
+          "resizeToFit Preserve keeps a GIF animated at the new size"
+          (\_ ->
+              Test.equal
+                  "3 4x3"
+                  (shape (Image.resizeToFit Image.Preserve 4 4 anim3)))
+    , Test.test
+          "Gif keeps every frame too and writes GIF89a"
+          (\_ ->
+              Test.equal
+                  ( "3 8x6", "GIF89a" )
+                  ( shape (Image.resizeToFit Image.Gif 100 100 anim3)
+                  , magic 6 (Image.resizeToFit Image.Gif 100 100 anim3)
+                  ))
+    , Test.test
+          "thumbnail, crop, trim and toAlpha keep every frame"
+          (\_ ->
+              Test.equal
+                  [ "3 4x3", "3 4x2", "3 5x6", "3 8x6" ]
+                  [ shape (Image.thumbnail Image.Preserve 4 anim3)
+                  , shape (Image.crop Image.Gif 2 2 4 2 anim3)
+                  , shape (Image.trim Image.Preserve 245 0 anim3)
+                  , shape
+                        (Image.toAlpha
+                            { red = 255, green = 255, blue = 255 }
+                            anim3)
+                  ])
+    , Test.test
+          "the comment extension is dropped"
+          (\_ ->
+              Test.equal
+                  ( True, False )
+                  ( String.contains "hidden" anim3
+                  , case Task.run (Image.resizeToFit Image.Preserve 8 8 anim3) of
+
+                        Ok out ->
+                            String.contains "hidden" out
+
+                        Err _ ->
+                            True
+                  ))
+    , Test.test
+          "Png and Jpeg of an animated GIF write its first frame"
+          (\_ ->
+              Test.equal
+                  ( "1 8x6", "1 8x6" )
+                  ( shape (Image.resizeToFit Image.Png 100 100 anim3)
+                  , shape (Image.resizeToFit (Image.Jpeg 90) 100 100 anim3)
+                  ))
+    , Test.test
+          "a still GIF stays a GIF of one frame under Preserve, and Png writes a PNG"
+          (\_ ->
+              Test.equal
+                  ( "1 8x6", "GIF8", "PNG" )
+                  ( shape (Image.resizeToFit Image.Preserve 100 100 still)
+                  , magic 4 (Image.resizeToFit Image.Preserve 100 100 still)
+                  , String.dropLeft
+                        1
+                        (magic 4 (Image.resizeToFit Image.Png 100 100 still))
+                  ))
+    , Test.test
+          "reduceFrames keeps 1 frame in n"
+          (\_ ->
+              Test.equal
+                  [ "2 8x6", "1 8x6", "3 8x6" ]
+                  [ shape (Image.reduceFrames 2 anim3)
+                  , shape (Image.reduceFrames 3 anim3)
+                  , shape (Image.reduceFrames 1 anim3)
+                  ])
+    , Test.test
+          "reduceFrames below 1 is InvalidInput"
+          (\_ ->
+              Test.expectErrorKind
+                  InvalidInput
+                  (Task.run (Image.reduceFrames 0 anim3)))
+    , Test.test
+          "reduceFrames gives an image that is not a GIF back unchanged"
+          (\_ ->
+              let
+                  png =
+                      Result.withDefault
+                          ""
+                          (Task.run (Image.resizeToFit Image.Png 100 100 still))
+              in
+                  Test.equal
+                      (Ok True)
+                      (Task.run
+                          (Image.reduceFrames 2 png
+                              |> Task.map (\out -> out == png))))
+    , Test.test
+          "a 1x1 GIF of 100,000 frames is refused with too_many_frames"
+          (\_ ->
+              Test.equal
+                  [ "image/too_many_frames"
+                  , "image/too_many_frames"
+                  , "image/too_many_frames"
+                  ]
+                  [ codeOf (Image.resizeToFit Image.Preserve 10 10 bomb1x1)
+                  , codeOf
+                        (Image.toAlpha { red = 0, green = 0, blue = 0 } bomb1x1)
+                  , codeOf (Image.reduceFrames 2 bomb1x1)
+                  ])
+    , Test.test
+          "frames still counts the 100,000 frames (a scan, no decode)"
+          (\_ -> Test.equal (Ok 100000) (Task.run (Image.frames bomb1x1)))
+    , Test.test
+          "a 5000x5000 GIF of 50 frames is refused with too_many_frame_pixels"
+          (\_ ->
+              Test.equal
+                  [ "image/too_many_frame_pixels"
+                  , "image/too_many_frame_pixels"
+                  ]
+                  [ codeOf (Image.thumbnail Image.Gif 100 bomb5000)
+                  , codeOf (Image.crop Image.Preserve 0 0 10 10 bomb5000)
+                  ])
+    , Test.test
+          "a tiny PNG and a tiny JPEG that claim 20000 x 20000 are refused with too_many_pixels"
+          (\_ ->
+              Test.equal
+                  [ "image/too_many_pixels"
+                  , "image/too_many_pixels"
+                  , "image/too_many_pixels"
+                  , "image/too_many_pixels"
+                  ]
+                  [ codeOf (Image.resizeToFit Image.Png 100 100 hugePng)
+                  , codeOf (Image.trim Image.Png 245 0 hugePng)
+                  , codeOf (Image.thumbnail (Image.Jpeg 80) 100 hugeJpeg)
+                  , codeOf (Image.whiteToAlpha hugeJpeg)
+                  ])
+    , Test.test
+          "the limit refusal is InvalidInput and dimensions still reads the header"
+          (\_ ->
+              Test.equal
+                  ( Ok { width = 20000, height = 20000 }, "refused" )
+                  ( Task.run (Image.dimensions hugePng)
+                  , case Task.run (Image.resizeToFit Image.Png 100 100 hugePng) of
+
+                        Err (Error.Error k _) ->
+                            if k == InvalidInput then
+                                "refused"
+
+                            else
+                                "other kind"
+
+                        Ok _ ->
+                            "ok"
+                  ))
+    , Test.test
+          "Gif of a still image writes a GIF of one frame"
+          (\_ ->
+              Test.equal
+                  ( "1 8x6", "GIF89a" )
+                  ( shape
+                        (Image.resizeToFit
+                            Image.Gif
+                            100
+                            100
+                            (Result.withDefault
+                                ""
+                                (Task.run
+                                    (Image.resizeToFit Image.Png 100 100 still))))
+                  , magic
+                        6
+                        (Image.resizeToFit
+                            Image.Gif
+                            100
+                            100
+                            (Result.withDefault
+                                ""
+                                (Task.run
+                                    (Image.resizeToFit Image.Png 100 100 still))))
+                  ))
+    , Test.test
+          "WebpLossless writes a lossless WebP that reads back, and Preserve keeps it WebP"
+          (\_ ->
+              let
+                  webp =
+                      Result.withDefault
+                          ""
+                          (Task.run
+                              (Image.resizeToFit Image.WebpLossless 100 100 still))
+              in
+                  Test.equal
+                      ( "RIFF", "WEBPVP8L", "1 4x3", "WEBPVP8L" )
+                      ( String.left 4 webp
+                      , String.slice 8 16 webp
+                      , shape (Image.thumbnail Image.Png 4 webp)
+                      , magic 16 (Image.thumbnail Image.Preserve 4 webp)
+                            |> String.dropLeft 8
+                      ))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

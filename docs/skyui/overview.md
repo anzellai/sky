@@ -1,15 +1,15 @@
 # Std.Ui overview
 
 > **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky`)
-> is the primary Sky compiler; the Haskell compiler is preserved under
-> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> is the Sky compiler (the earlier compilers were removed in v0.29.0).
+> Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
 > [`../history/compiler/journey.md`](../history/compiler/journey.md) for the changelog.
 
 
 **A typed, no-CSS layout DSL for Sky.Live.** Build a UI from typed primitives (`el`, `row`, `column`, `paragraph`, `textColumn`) and typed attributes (`Background.color`, `Border.rounded`, `Font.size`, `Region.heading`) — Std.Ui renders to inline-styled HTML on the server side and Sky.Live's wire ferries diffs to the browser. No CSS files. No template languages. No client framework.
 
-> Std.Ui's API surface adopts conventions from prior typed-layout DSLs in the Elm community. Implementation, runtime, and code generator are independent Sky / Haskell work — see [NOTICE.md](../../NOTICE.md) for full attribution.
+> Std.Ui's API surface adopts conventions from prior typed-layout DSLs in the Elm community. Implementation, runtime, and code generator are independent Sky / Rust / Go work — see [NOTICE.md](../../NOTICE.md) for full attribution.
 
 ```elm
 module Main exposing (main)

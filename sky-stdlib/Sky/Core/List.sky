@@ -1,25 +1,38 @@
 -- | Sky.Core.List — list combinators.
 --
--- Sky lists are Go `[]any` slices (see `runtime-go/rt`), so `::`-cons
--- (`rt.List_cons`) is an O(n) immutable prepend — it copies the whole
--- accumulator on every step. That means a pure-Sky CPS/accumulator loop
--- that conses per element (the v0.17 rewrite shape) is O(n) in stack but
--- O(n²) in TIME (conformance finding L1). So every list-BUILDING op is an
--- `Ffi.kernel "List_<name>"` alias backed by an O(n) Go loop that grows the
--- result slice with `append` in forward order (NO per-element cons). This
--- keeps the `[]any` representation (so all FFI / interop / `rt.AsListT`
--- typed-widening is unchanged), stays constant Go stack (a plain loop), and
--- drops the ops to O(n). The runtime bodies live in `runtime-go/rt/rt.go`
--- (`List_*` helpers). Explicit HM signatures are load-bearing on every
--- kernel alias — `Ffi.kernel` has no body for HM to walk, so the signature
--- is the sole type source (same shape as `Sky.Core.Dict`'s HOF kernels,
--- e.g. `Dict.map : (k -> v -> w) -> Dict k v -> Dict k w`).
+-- Sky lists are Go slices (`[]T` typed, `[]any` erased; see
+-- `runtime-go/rt`). Since v0.29.0 `x :: xs` is AMORTISED O(1): a typed
+-- `::` lowers to `rt.List_consT[T]`, which writes into free room in
+-- front of the list's backing block (`runtime-go/rt/list_block.go`).
+-- The accumulator loop `go (x :: acc) rest` is therefore O(n), and so
+-- is `String.concat (List.reverse pieces)` after it. Three shapes stay
+-- O(n) per cons, by design:
+--
+--   * replacing a head (`case xs of y :: rest -> z :: rest`): `y`
+--     still owns the slot in front of `rest`, so `z :: rest` copies;
+--   * two lists consed onto ONE shared tail: the second cons copies;
+--   * the first cons onto a list that is not a cons block (a literal,
+--     `List.map`, JSON, a database row, FFI, `List.take`) copies once;
+--     the conses after it are O(1).
+--
+-- A short list (under 32 elements) is copied exactly, so short lists
+-- cost what they always did. The price of O(1) cons is SPACE: an old
+-- list keeps its whole block alive, and so every element of every
+-- newer list built on that block. A long-lived short suffix of a large
+-- accumulator (kept in a Sky.Live model, say) holds the large block.
+--
+-- Every list-BUILDING op is an `Ffi.kernel "List_<name>"` alias backed
+-- by an O(n) Go loop that grows the result in forward order. Explicit
+-- HM signatures are load-bearing on every kernel alias — `Ffi.kernel`
+-- has no body for HM to walk, so the signature is the sole type source
+-- (same shape as `Sky.Core.Dict`'s HOF kernels, e.g.
+-- `Dict.map : (k -> v -> w) -> Dict k v -> Dict k w`).
 --
 -- The SCALAR-accumulating ops (`foldl` / `length` / `member` / `any` /
--- `all` / `find` / `isEmpty`) stay pure Sky: they are already O(n) — the
--- accumulator is a scalar, not a growing list — and are auto-TCO'd by
--- `Sky.Build.TailCallOpt` to a `for { ... continue }` loop, so they run in
--- constant Go stack. `head` / `tail` / `cons` are O(1) pure Sky.
+-- `all` / `find` / `isEmpty`) stay pure Sky: they are O(n) and are
+-- compiled to a Go `for` loop, so they run in constant Go stack.
+-- `head` and `tail` are O(1) (`tail` shares the list's memory), and
+-- `drop k` is O(1) on a typed list.
 module Sky.Core.List exposing
     ( isEmpty
     , length
@@ -35,6 +48,9 @@ module Sky.Core.List exposing
     , range
     , repeat
     , zip
+    , map2
+    , map3
+    , unique
     , map
     , filter
     , filterMap
@@ -55,12 +71,16 @@ import Sky.Ffi as Ffi
 
 -- ─── List-building ops (O(n) Go kernels) ───────────────────────────
 -- | `map fn list` — apply `fn` to each element.
+--
+-- Cost: O(n).
 map : (a -> b) -> List a -> List b
 map =
     Ffi.kernel "List_map"
 
 
 -- | `filter pred list` — keep only elements satisfying `pred`.
+--
+-- Cost: O(n).
 filter : (a -> Bool) -> List a -> List a
 filter =
     Ffi.kernel "List_filter"
@@ -68,6 +88,8 @@ filter =
 
 -- | `filterMap fn list` — map each element and keep only the `Just` results
 -- (`fn` returning `Nothing` drops the element).
+--
+-- Cost: O(n).
 filterMap : (a -> Maybe b) -> List a -> List b
 filterMap =
     Ffi.kernel "List_filterMap"
@@ -78,6 +100,8 @@ filterMap =
 -- tuple of comparables, a closed record of comparables, or a custom type whose
 -- constructors hold only comparables (ordered by constructor declaration
 -- order, then payload).
+--
+-- Cost: O(n log n); a stable sort into a new list.
 sort : List comparable -> List comparable
 sort =
     Ffi.kernel "List_sort"
@@ -85,6 +109,8 @@ sort =
 
 -- | `sortBy keyFn list` — stable sort by the key `keyFn elem`, which must be
 -- comparable (see `sort`).
+--
+-- Cost: O(n log n); a stable sort into a new list.
 sortBy : (a -> comparable) -> List a -> List a
 sortBy =
     Ffi.kernel "List_sortBy"
@@ -93,12 +119,16 @@ sortBy =
 -- | `sortWith cmp list` — stable sort by a custom comparator. `cmp a b`
 -- returns a negative `Int` when `a` precedes `b`, positive when it follows,
 -- `0` when equal (same contract as `Basics.compare` rendered to an `Int`).
+--
+-- Cost: O(n log n); a stable sort into a new list.
 sortWith : (a -> a -> Int) -> List a -> List a
 sortWith =
     Ffi.kernel "List_sortWith"
 
 
 -- | `foldr fn acc list` — right fold: `fn a0 (fn a1 (… (fn aN acc)))`.
+--
+-- Cost: O(n).
 foldr : (a -> b -> b) -> b -> List a -> b
 foldr =
     Ffi.kernel "List_foldr"
@@ -106,6 +136,8 @@ foldr =
 
 -- | `concatMap fn list` — map each element to a list and flatten
 -- (left-to-right).
+--
+-- Cost: O(n + total length of the results).
 concatMap : (a -> List b) -> List a -> List b
 concatMap =
     Ffi.kernel "List_concatMap"
@@ -113,12 +145,16 @@ concatMap =
 
 -- | `indexedMap fn list` — apply `fn` to each zero-based `(index, element)`
 -- pair.
+--
+-- Cost: O(n).
 indexedMap : (Int -> a -> b) -> List a -> List b
 indexedMap =
     Ffi.kernel "List_indexedMap"
 
 
 -- | `reverse list` — the list in reverse order.
+--
+-- Cost: O(n).
 reverse : List a -> List a
 reverse =
     Ffi.kernel "List_reverse"
@@ -126,6 +162,8 @@ reverse =
 
 -- | `take n list` — first `n` elements (or fewer when `list` is shorter).
 -- `take 0` and `take <negative>` return `[]`.
+--
+-- Cost: O(1) on a typed list (a re-slice); O(n) when the list reaches it erased.
 take : Int -> List a -> List a
 take =
     Ffi.kernel "List_take"
@@ -133,24 +171,32 @@ take =
 
 -- | `drop n list` — `list` without its first `n` elements. `drop 0` and
 -- `drop <negative>` return `list`; `drop n` for `n >= length` returns `[]`.
+--
+-- Cost: O(1) on a typed list (a re-slice); O(n) when the list reaches it erased.
 drop : Int -> List a -> List a
 drop =
     Ffi.kernel "List_drop"
 
 
 -- | `append xs ys` — concatenate two lists.
+--
+-- Cost: O(length a + length b). The typed `a ++ b` operator is O(length a) when `b` was built by cons.
 append : List a -> List a -> List a
 append =
     Ffi.kernel "List_append"
 
 
 -- | `concat lists` — flatten a list of lists.
+--
+-- Cost: O(total length).
 concat : List (List a) -> List a
 concat =
     Ffi.kernel "List_concat"
 
 
 -- | `range lo hi` — `[lo, lo + 1, …, hi]` (inclusive). `lo > hi` gives `[]`.
+--
+-- Cost: O(n) in the length of the range.
 range : Int -> Int -> List Int
 range =
     Ffi.kernel "List_range"
@@ -160,19 +206,62 @@ range =
 -- gives `[]`.
 --
 --     List.repeat 3 "a" == [ "a", "a", "a" ]
+--
+-- Cost: O(n).
 repeat : Int -> a -> List a
 repeat =
     Ffi.kernel "List_repeat"
 
 
 -- | `zip xs ys` — pair-wise zip, truncated to the shorter list's length.
+--
+-- Cost: O(min (length a) (length b)).
 zip : List a -> List b -> List ( a, b )
 zip =
     Ffi.kernel "List_zip"
 
 
+-- | `map2 f xs ys` — `f` applied to the elements of `xs` and `ys` pair by
+-- pair, stopping at the end of the shorter list (Elm semantics).
+-- Runs anywhere (pure). Cost: O(min(n, m)) time, one allocation of the
+-- result; no intermediate list of tuples, so it is cheaper than
+-- `List.map (\( a, b ) -> f a b) (List.zip xs ys)`.
+--
+--     List.map2 (\a b -> a + b) [ 1, 2, 3 ] [ 10, 20 ] == [ 11, 22 ]
+--     List.map2 Tuple.pair xs ys == List.zip xs ys
+map2 : (a -> b -> c) -> List a -> List b -> List c
+map2 =
+    Ffi.kernel "List_map2"
+
+
+-- | `map3 f xs ys zs` — like `map2` over three lists, stopping at the end
+-- of the shortest. Runs anywhere (pure). Cost: O(min(n, m, k)) time, one
+-- allocation of the result.
+--
+--     List.map3 (\a b c -> a + b + c) [ 1, 2 ] [ 10, 20 ] [ 100, 200, 300 ] == [ 111, 222 ]
+map3 : (a -> b -> c -> d) -> List a -> List b -> List c -> List d
+map3 =
+    Ffi.kernel "List_map3"
+
+
+-- | `unique xs` — `xs` with every value kept only at its FIRST occurrence,
+-- in the original order. Two values are the same when `==` says so; the
+-- check uses the identity key `Set` uses, so the element type must be
+-- `comparable` (Int, Float, String, Char, and tuples and lists of them).
+-- Runs anywhere (pure). Cost: O(n) expected time (plus the size of each
+-- element's key) and O(n) extra memory. Use `Set.fromList` when the order
+-- does not matter and you want a set.
+--
+--     List.unique [ 3, 1, 3, 2, 1 ] == [ 3, 1, 2 ]
+unique : List comparable -> List comparable
+unique =
+    Ffi.kernel "List_unique"
+
+
 -- ─── Scalar-accumulating / O(1) ops (pure Sky, auto-TCO'd) ──────────
 -- | `any pred list` — True iff `pred` holds for at least one element.
+--
+-- Cost: O(n), stops at the first match.
 any : (a -> Bool) -> List a -> Bool
 any pred list =
     case list of
@@ -188,6 +277,9 @@ any pred list =
                 any pred rest
 
 
+-- | `all pred xs` — `True` when every element passes `pred` (`True` for `[]`).
+--
+-- Cost: O(n), stops at the first failure.
 all pred list =
     case list of
 
@@ -202,6 +294,9 @@ all pred list =
                 False
 
 
+-- | `find pred xs` — the first element that passes `pred`, or `Nothing`.
+--
+-- Cost: O(n), stops at the first match.
 find pred list =
     case list of
 
@@ -224,6 +319,8 @@ find pred list =
 -- (`fn : t4 -> t1 -> t14` against `acc : t1`) — the recursive occurrence does
 -- not feed its own result type back into the accumulator — so the declared
 -- `b -> b` is the only place the two are identified.
+--
+-- Cost: O(n).
 foldl : (a -> b -> b) -> b -> List a -> b
 foldl fn acc list =
     case list of
@@ -236,17 +333,24 @@ foldl fn acc list =
 
 
 -- | `isEmpty list` — True iff the list has no elements.
+--
+-- Cost: O(1).
 isEmpty : List a -> Bool
 isEmpty =
     Ffi.kernel "List_isEmpty"
 
 
 -- | `length list` — number of elements (O(1) on the slice representation).
+--
+-- Cost: O(1).
 length : List a -> Int
 length =
     Ffi.kernel "List_length"
 
 
+-- | `head xs` — the first element, or `Nothing` for `[]`.
+--
+-- Cost: O(1).
 head list =
     case list of
 
@@ -257,6 +361,9 @@ head list =
             Just x
 
 
+-- | `tail xs` — every element but the first, or `Nothing` for `[]`.
+--
+-- Cost: O(1); the tail shares the list's memory.
 tail list =
     case list of
 
@@ -268,11 +375,17 @@ tail list =
 
 
 -- | `cons x list` — prepend `x` (the `::` operator as a named function).
+--
+-- Cost: amortised O(1); see the module header for the three shapes that
+-- copy (O(n)).
 cons : a -> List a -> List a
 cons x list =
     x :: list
 
 
+-- | `member x xs` — `True` when `x` is an element of `xs`.
+--
+-- Cost: O(n).
 member x list =
     case list of
 

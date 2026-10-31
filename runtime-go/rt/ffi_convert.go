@@ -431,6 +431,12 @@ func ffiToGo(v any, t reflect.Type) reflect.Value {
 		}
 		return out
 	case reflect.Map:
+		// A Sky Dict is the persistent SkyDict: the Go map it stands for.
+		if rv.CanInterface() {
+			if d, ok := rv.Interface().(skyDictAny); ok {
+				rv = reflect.ValueOf(dictToMapAny(d))
+			}
+		}
 		if rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
 			ffiFail("expected a Dict for %s, got %s", t, rv.Type())
 		}

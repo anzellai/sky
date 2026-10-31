@@ -31,12 +31,19 @@ module Std.Codec exposing
     , Shape(..)
     , ObjectCodec
     , shape
+    , zeroJson
+    , fieldZeros
+    , fieldReadError
     , JsonSchema
+    , schemaFitError
+    , schemaValueError
     , jsonSchema
     , toValue
     , toJson
     , fromJson
     , fromJsonSafe
+    , toXml
+    , fromXml
     , string
     , int
     , float
@@ -70,6 +77,8 @@ import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.Dict as Dict exposing (Dict)
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Std.Xml as Xml exposing (Node)
+import Std.Xml.Encode as XE
 
 -- | The column type a codec maps to on the DB side.
 type ColType
@@ -100,6 +109,9 @@ type alias CodecPayload a =
     , dec : Decoder a
     , shp : Shape
     , sch : SchemaNode
+    , zro : () -> Maybe Value
+    , fzr : () -> List ( String, Value )
+    , fck : () -> List ( String, Value -> Maybe String )
     }
 
 -- | The JSON Schema of the JSON a codec reads and writes. `exact` is `True`
@@ -122,6 +134,9 @@ type SchemaNode
     | SnObject (List ( String, SchemaNode ))
     | SnAuto (() -> String) (List ( String, SchemaNode ))
     | SnOpen
+    | SnUnion (List ( String, List SchemaNode ))
+    | SnResult SchemaNode SchemaNode
+    | SnDict SchemaNode SchemaNode
 
 
 -- ── Introspection / run ──────────────────────────────────────────────────────
@@ -179,13 +194,13 @@ renderSchema node =
             { schema =
                 E.object
                     [ ( "type", E.string "string" )
-                    , ( "enum", E.list E.string (names ()) )
+                    , ( "enum", E.list identity (stringValues (names ())) )
                     ]
             , exact = True
             }
 
         SnObject fields ->
-            objectSchema (List.map (\( n, f ) -> ( n, renderSchema f )) fields)
+            objectSchema (renderFields fields)
 
         SnAuto fieldsJson overrides ->
             autoSchema (fieldsJson ()) overrides
@@ -193,21 +208,88 @@ renderSchema node =
         SnOpen ->
             { schema = E.object [], exact = False }
 
+        -- A union, a result and a dict are JSON arrays a schema cannot pin
+        -- down: open, as before they had nodes of their own (the nodes exist
+        -- for `toXml` / `fromXml`).
+        SnUnion _ ->
+            { schema = E.object [], exact = False }
 
--- A closed object: every field required, no other key.
+        SnResult _ _ ->
+            { schema = E.object [], exact = False }
+
+        SnDict _ _ ->
+            { schema = E.object [], exact = False }
+
+
+-- A closed object: every field required, no other key. The lists are
+-- walked by typed recursion, not by `List.map` over a lambda, so a read of a
+-- field pays no runtime narrowing (doc 14 §4.5).
 objectSchema : List ( String, JsonSchema ) -> JsonSchema
 objectSchema fields =
     { schema =
         E.object
             [ ( "type", E.string "object" )
-            , ( "properties"
-              , E.object (List.map (\( n, js ) -> ( n, js.schema )) fields)
-              )
-            , ( "required", E.list (\( n, _ ) -> E.string n) fields )
+            , ( "properties", E.object (fieldSchemaValues fields) )
+            , ( "required", E.list identity (fieldNameValues fields) )
             , ( "additionalProperties", E.bool False )
             ]
-    , exact = List.all (\( _, js ) -> js.exact) fields
+    , exact = allExact fields
     }
+
+
+renderFields : List ( String, SchemaNode ) -> List ( String, JsonSchema )
+renderFields fields =
+    case fields of
+
+        [] ->
+            []
+
+        ( n, f ) :: rest ->
+            ( n, renderSchema f ) :: renderFields rest
+
+
+fieldSchemaValues : List ( String, JsonSchema ) -> List ( String, Value )
+fieldSchemaValues fields =
+    case fields of
+
+        [] ->
+            []
+
+        ( n, js ) :: rest ->
+            ( n, js.schema ) :: fieldSchemaValues rest
+
+
+fieldNameValues : List ( String, JsonSchema ) -> List Value
+fieldNameValues fields =
+    case fields of
+
+        [] ->
+            []
+
+        ( n, _ ) :: rest ->
+            E.string n :: fieldNameValues rest
+
+
+allExact : List ( String, JsonSchema ) -> Bool
+allExact fields =
+    case fields of
+
+        [] ->
+            True
+
+        ( _, js ) :: rest ->
+            js.exact && allExact rest
+
+
+stringValues : List String -> List Value
+stringValues names =
+    case names of
+
+        [] ->
+            []
+
+        n :: rest ->
+            E.string n :: stringValues rest
 
 type alias AutoField =
     { name : String
@@ -274,6 +356,176 @@ shape (Codec c) =
     c.shp
 
 
+-- | The JSON of the codec's zero value, when the codec knows one. For an
+-- `auto` / `autoCamel` / `autoWith` codec it is the encoded blank record (the
+-- witness). For a `buildObject` codec it is an object of every field's zero:
+-- `""`, `0`, `false`, `null` for `maybe`, `[]` for `list` and `dict`, and the
+-- first name of an `enum`. A `taggedUnion`, a `result` and `error` know none,
+-- and nor does an object with such a field: a partial object would not
+-- decode. This is the zero of the WHOLE value, as a nested field needs it.
+-- For the zero of each column of a record codec, use `fieldZeros`.
+--
+--     Codec.zeroJson (Codec.auto { id = "", tags = [ "new" ] })
+--     -- Just {"id":"","tags":["new"]}
+zeroJson : Codec a -> Maybe Value
+zeroJson (Codec c) =
+    c.zro ()
+
+
+-- | The zero of each field of a record codec, keyed by its JSON key (the
+-- column name), in field order. For a `buildObject` codec it is each field
+-- whose own codec has a zero (see `zeroJson`). A field with no zero (a
+-- `taggedUnion`, a `result`, `error`, or an object holding one) is left out,
+-- and the other fields keep theirs. For an `auto` / `autoCamel` / `autoWith`
+-- codec it is each field of the encoded blank record (the witness). Any other
+-- codec gives `[]`. `Std.Db.Store.migrate` and `sky db migrate --gen` use it
+-- for the DEFAULT of a required JSON (blob) or enum column added to a table
+-- with rows, so the rows that exist decode.
+--
+--     Codec.fieldZeros
+--         (Codec.object Item
+--             |> Codec.field "kind" .kind kindUnion
+--             |> Codec.field "tags" .tags (Codec.list Codec.string)
+--             |> Codec.buildObject)
+--     -- [ ( "tags", [] ) ]   (the taggedUnion field "kind" has no zero)
+fieldZeros : Codec a -> List ( String, Value )
+fieldZeros (Codec c) =
+    c.fzr ()
+
+
+-- | The first field of the JSON object `text` that its field's codec does
+-- not read, with the reason, or `Nothing`. Only the keys the object has are
+-- read, in the codec's field order. A `buildObject` codec runs each field's
+-- own decoder. An `auto` / `autoCamel` / `autoWith` codec decodes its blank
+-- record (the witness) with the object's value in place of that field.
+-- `Nothing` too when the codec cannot tell (a codec that is not a record).
+-- `Std.Db.Store` uses it to name the column a stored row fails on, and to
+-- check JSON written into one column.
+--
+--     Codec.fieldReadError itemCodec "{\"tags\":[1]}"
+--     -- Just ( "tags", "Decode: at [0]: expected String, got Number" )
+fieldReadError : Codec a -> String -> Maybe ( String, String )
+fieldReadError codec text =
+    let
+        c = payloadOf codec
+    in
+        case c.fck () of
+
+            [] ->
+                swapFields c.dec text (c.fzr ()) (c.fzr ())
+
+            checks ->
+                checkFields text checks
+
+
+-- The first field in `checks` that the object has and that its check
+-- refuses. Every read goes through `decodeWith`.
+checkFields : String -> List ( String, Value -> Maybe String ) -> Maybe ( String, String )
+checkFields text checks =
+    case checks of
+
+        [] ->
+            Nothing
+
+        ( name, check ) :: rest ->
+            case decodeWith (D.field name D.value) text of
+
+                Err _ ->
+                    checkFields text rest
+
+                Ok v ->
+                    case check v of
+
+                        Just why ->
+                            Just ( name, why )
+
+                        Nothing ->
+                            checkFields text rest
+
+
+-- `checkFields` for a codec with no field decoders: each key of `zeros` that
+-- the object has, swapped into the zeros (`swapError`).
+swapFields : Decoder a -> String -> List ( String, Value ) -> List ( String, Value ) -> Maybe ( String, String )
+swapFields dec text zeros keys =
+    case keys of
+
+        [] ->
+            Nothing
+
+        ( name, _ ) :: rest ->
+            case decodeWith (D.field name D.value) text of
+
+                Err _ ->
+                    swapFields dec text zeros rest
+
+                Ok v ->
+                    case swapError dec name v zeros of
+
+                        Just why ->
+                            Just ( name, why )
+
+                        Nothing ->
+                            swapFields dec text zeros rest
+
+
+-- The reason a decoder does not read a value, or `Nothing`.
+decodeCheck : Decoder f -> Value -> Maybe String
+decodeCheck dec v =
+    case decodeWith dec (E.encode 0 v) of
+
+        Ok _ ->
+            Nothing
+
+        Err e ->
+            Just (Error.toString e)
+
+
+-- The zeros of a record with `v` in field `name`, decoded: the reason when
+-- the zeros decode and the record with `v` does not. A field the zeros do not
+-- hold, or zeros that do not decode, cannot be told apart from a bad `v`.
+swapError : Decoder a -> String -> Value -> List ( String, Value ) -> Maybe String
+swapError dec name v zeros =
+    if not (holdsKey name zeros) then
+        Nothing
+
+    else
+        -- One decode site (`decodeCheck`) for both reads: the kernel's
+        -- result is narrowed once (doc 14, R5).
+        case decodeCheck dec (E.object zeros) of
+
+            Just _ ->
+                Nothing
+
+            Nothing ->
+                decodeCheck dec (E.object (swapKey name v zeros))
+
+
+holdsKey : String -> List ( String, Value ) -> Bool
+holdsKey name pairs =
+    case pairs of
+
+        [] ->
+            False
+
+        ( k, _ ) :: rest ->
+            k == name || holdsKey name rest
+
+
+swapKey : String -> Value -> List ( String, Value ) -> List ( String, Value )
+swapKey name v pairs =
+    case pairs of
+
+        [] ->
+            []
+
+        ( k, old ) :: rest ->
+            if k == name then
+                ( k, v ) :: rest
+
+            else
+                ( k, old ) :: swapKey name v rest
+
+
 -- | The codec's encoder as a plain function `a -> Value` (a JSON `Value`, the DB
 -- backend's write side). Use `toJson` for a JSON string.
 toValue : Codec a -> a -> Value
@@ -289,8 +541,23 @@ toJson (Codec c) x =
 
 -- | Decode from a JSON string.
 fromJson : Codec a -> String -> Result Error a
-fromJson (Codec c) s =
-    D.decodeString c.dec s
+fromJson codec s =
+    decodeWith (payloadOf codec).dec s
+
+
+-- A codec's payload. `fromJson` and `fieldReadError` read it here, so the
+-- erased payload is narrowed at one site (docs/rust-rewrite/14, R5).
+payloadOf : Codec a -> CodecPayload a
+payloadOf (Codec c) =
+    c
+
+
+-- The one `D.decodeString` of a codec's decoder: `fromJson`, `fromJsonSafe`
+-- and `decodeCheck` share it, so the kernel's result is narrowed at one site
+-- (docs/rust-rewrite/14-runtime-narrowing-taxonomy.md, R5).
+decodeWith : Decoder a -> String -> Result Error a
+decodeWith dec s =
+    D.decodeString dec s
 
 
 -- | Decode from JSON, rejecting input longer than `maxChars` BEFORE parsing —
@@ -304,7 +571,7 @@ fromJsonSafe maxChars (Codec c) s =
         Err (Error.invalidInput "Codec.fromJsonSafe: input exceeds size limit")
 
     else
-        D.decodeString c.dec s
+        decodeWith c.dec s
 
 
 -- ── Primitives ───────────────────────────────────────────────────────────────
@@ -316,6 +583,9 @@ string =
         , dec = D.string
         , shp = SScalar CText
         , sch = SnType "string"
+        , zro = \_ -> Just (E.string "")
+        , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
@@ -323,7 +593,14 @@ string =
 int : Codec Int
 int =
     Codec
-        { enc = E.int, dec = D.int, shp = SScalar CInt, sch = SnType "integer" }
+        { enc = E.int
+        , dec = D.int
+        , shp = SScalar CInt
+        , sch = SnType "integer"
+        , zro = \_ -> Just (E.int 0)
+        , fzr = \_ -> []
+        , fck = \_ -> []
+        }
 
 
 -- | Codec for a `Float` — JSON number; REAL column.
@@ -334,6 +611,9 @@ float =
         , dec = D.float
         , shp = SScalar CReal
         , sch = SnType "number"
+        , zro = \_ -> Just (E.float 0.0)
+        , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
@@ -346,15 +626,32 @@ bool =
         , dec = D.bool
         , shp = SScalar CBool
         , sch = SnType "boolean"
+        , zro = \_ -> Just (E.bool False)
+        , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
 -- ── Combinators ──────────────────────────────────────────────────────────────
--- | Optional value. `Nothing` encodes as JSON `null`; a `null` or type-mismatch
--- on decode yields `Nothing`. A `Maybe scalar` stays a (nullable) scalar column;
--- anything deeper becomes a blob.
+-- | Optional value. `Nothing` encodes as JSON `null`, and only `null` decodes
+-- as `Nothing`. Any other value must decode as the inner value: one that does
+-- not is an `Err` naming where it failed (`"x"` for a `Maybe Int`, a name
+-- that is not one of an enum's), never a silent `Nothing`. This holds at any
+-- depth, so a `List (Maybe a)` with a bad element fails as a whole. A field
+-- of a `buildObject` codec must be present in the JSON object even when it is
+-- a `maybe` (`null` for `Nothing`). A `Maybe scalar` stays a (nullable) scalar column;
+-- anything deeper becomes a nullable blob column, so `Nothing` stores as NULL.
+-- A `Maybe (Maybe a)` is the same one nullable column as `Maybe a`: JSON has
+-- one `null`, so `Just Nothing` reads back as `Nothing`.
 maybe : Codec a -> Codec (Maybe a)
-maybe (Codec c) =
+maybe c =
+    maybeWith False c
+
+
+-- `maybe`, and with `lenient` the `Error` details' decoder (`detailsCodec`):
+-- there, and only there, a value the inner codec does not read is `Nothing`.
+maybeWith : Bool -> Codec a -> Codec (Maybe a)
+maybeWith lenient (Codec c) =
     Codec
         { enc =
             \m ->
@@ -365,16 +662,27 @@ maybe (Codec c) =
 
                     Nothing ->
                         E.null
-        , dec = D.oneOf [ D.map Just c.dec, D.succeed Nothing ]
+        , dec =
+            if lenient then
+                D.oneOf [ D.nullable c.dec, D.succeed Nothing ]
+
+            else
+                D.nullable c.dec
         , shp =
             case c.shp of
+
+                SScalar (CNull t) ->
+                    SScalar (CNull t)
 
                 SScalar t ->
                     SScalar (CNull t)
 
                 _ ->
-                    SBlob
+                    SScalar (CNull CBlob)
         , sch = SnNullable c.sch
+        , zro = \_ -> Just E.null
+        , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
@@ -387,6 +695,9 @@ list (Codec c) =
         , dec = D.list c.dec
         , shp = SBlob
         , sch = SnArray c.sch
+        , zro = \_ -> Just (E.list identity [])
+        , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
@@ -417,7 +728,10 @@ result (Codec ce) (Codec ca) =
                         D.map Err (D.index 1 ce.dec))
                 (D.index 0 D.string)
         , shp = SBlob
-        , sch = SnOpen
+        , sch = SnResult ce.sch ca.sch
+        , zro = \_ -> Nothing
+        , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
@@ -443,7 +757,10 @@ dict (Codec ck) (Codec cv) =
                         (D.index 0 ck.dec)
                         (D.index 1 cv.dec)))
         , shp = SBlob
-        , sch = SnOpen
+        , sch = SnDict ck.sch cv.sch
+        , zro = \_ -> Just (E.list identity [])
+        , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
@@ -492,8 +809,18 @@ errorKindCodec =
 errorInfoCodec : Codec Error.ErrorInfo
 errorInfoCodec =
     object Error.ErrorInfo |> field "message" .message string
-        |> field "details" .details (maybe errorDetailsCodec)
+        |> field "details" .details detailsCodec
         |> buildObject
+
+
+-- The `details` of an `Error` on the wire, the one place a value `maybe` does
+-- not read is `Nothing` on purpose: details are a diagnostic attachment, and
+-- a variant a later release adds (or a payload this release cannot read)
+-- reads as no details, so an `Error` from a newer peer keeps its kind and
+-- message, which stay strict.
+detailsCodec : Codec (Maybe Error.ErrorDetails)
+detailsCodec =
+    maybeWith True errorDetailsCodec
 
 
 panicInfoCodec : Codec Error.PanicInfo
@@ -595,6 +922,9 @@ domainFailureCodec =
                     ])
         , shp = SBlob
         , sch = SnOpen
+        , zro = \_ -> Nothing
+        , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
@@ -623,17 +953,29 @@ map to from (Codec c) =
         , dec = D.map to c.dec
         , shp = c.shp
         , sch = c.sch
+        , zro = c.zro
+        , fzr = c.fzr
+        , fck = c.fck
         }
 
 -- ── Records (object builder) ─────────────────────────────────────────────────
 -- | Intermediate builder for a record codec. `a` is the record type; `b` is the
 -- constructor still awaiting fields.
+--
+-- The payload is a named record, so a function that matches an
+-- `ObjectCodec` reads it with one runtime narrowing instead of one per field
+-- (doc 14 §4.5, R6), as `CodecPayload` does.
 type ObjectCodec a b
-    = ObjectCodec { encFields : a -> List ( String, Value )
-, decValue : Decoder b
-, cols : List ( String, ColType )
-, schs : List ( String, SchemaNode )
-}
+    = ObjectCodec (ObjectPayload a b)
+
+type alias ObjectPayload a b =
+    { encFields : a -> List ( String, Value )
+    , decValue : Decoder b
+    , cols : List ( String, ColType )
+    , schs : List ( String, SchemaNode )
+    , zros : List ( String, () -> Maybe Value )
+    , fcks : List ( String, Value -> Maybe String )
+    }
 
 
 -- | Start a record codec from its constructor.
@@ -644,6 +986,8 @@ object ctor =
         , decValue = D.succeed ctor
         , cols = []
         , schs = []
+        , zros = []
+        , fcks = []
         }
 
 
@@ -656,6 +1000,8 @@ field name getter (Codec fc) (ObjectCodec o) =
         , decValue = codecAndMap (D.field name fc.dec) o.decValue
         , cols = o.cols ++ [ ( name, colTypeOf fc.shp ) ]
         , schs = o.schs ++ [ ( name, fc.sch ) ]
+        , zros = o.zros ++ [ ( name, fc.zro ) ]
+        , fcks = o.fcks ++ [ ( name, decodeCheck fc.dec ) ]
         }
 
 
@@ -686,6 +1032,8 @@ inline getter (ObjectCodec inner) (ObjectCodec o) =
         , decValue = codecAndMap inner.decValue o.decValue
         , cols = o.cols ++ inner.cols
         , schs = o.schs ++ inner.schs
+        , zros = o.zros ++ inner.zros
+        , fcks = o.fcks ++ inner.fcks
         }
 
 
@@ -702,7 +1050,67 @@ buildObject (ObjectCodec o) =
         , dec = objectDecoder o.cols o.decValue
         , shp = SRecord o.cols
         , sch = SnObject o.schs
+        , zro = \_ -> Maybe.map E.object (allZeros o.zros)
+        , fzr = \_ -> presentZeros o.zros
+        , fck = \_ -> o.fcks
         }
+
+
+-- Every field's zero value, or `Nothing` when one field has none. A partial
+-- object would not decode (`D.field` is strict), so it is never a zero.
+allZeros : List ( String, () -> Maybe Value ) -> Maybe (List ( String, Value ))
+allZeros zros =
+    case zros of
+
+        [] ->
+            Just []
+
+        ( name, z ) :: rest ->
+            case z () of
+
+                Just v ->
+                    Maybe.map (\vs -> ( name, v ) :: vs) (allZeros rest)
+
+                Nothing ->
+                    Nothing
+
+
+-- The zero of each field that has one, in field order. A field with no zero
+-- is left out: unlike `allZeros`, one such field does not hide the others.
+presentZeros : List ( String, () -> Maybe Value ) -> List ( String, Value )
+presentZeros zros =
+    case zros of
+
+        [] ->
+            []
+
+        ( name, z ) :: rest ->
+            case z () of
+
+                Just v ->
+                    ( name, v ) :: presentZeros rest
+
+                Nothing ->
+                    presentZeros rest
+
+
+-- Each column's value in the encoded witness of an `auto` codec, in column
+-- order. A column the witness does not hold is left out.
+witnessZeros : List ( String, String ) -> Value -> List ( String, Value )
+witnessZeros cols witness =
+    case cols of
+
+        [] ->
+            []
+
+        ( name, _ ) :: rest ->
+            case D.decodeValue (D.field name D.value) witness of
+
+                Ok v ->
+                    ( name, v ) :: witnessZeros rest witness
+
+                Err _ ->
+                    witnessZeros rest witness
 
 
 -- | A record codec's decoder: `dec`, or a decoder that always fails when two
@@ -767,6 +1175,11 @@ keyCount key cols n =
 -- lists, and nullary enums (stored as their readable name). Data-carrying ADTs
 -- are NOT derivable — give those an explicit `taggedUnion` codec.
 --
+-- A `Json.Value` field carries any JSON. The blank marks it: give the field a
+-- JSON value (`data = Json.Encode.null`), and a `Maybe Json.Value` field a
+-- `Just` one (`more = Just Json.Encode.null`). A field the blank does not
+-- mark this way does not decode.
+--
 -- Columns / JSON keys are **snake_case** (the DB convention): a record field
 -- `priceMinor` maps to column `price_minor` with no hand-written codec. For a
 -- custom per-column name (camelCase, an abbreviation, a legacy column) use an
@@ -789,16 +1202,21 @@ autoCamel witness =
 
 autoBase : Bool -> a -> Codec a
 autoBase snake witness =
-    Codec
-        { enc = \r -> autoEncK snake r
-        , dec = autoDecoderK snake witness
-        , shp =
-            SRecord
-                (List.map
-                    (\( n, k ) -> ( n, kindToColType k ))
-                    (autoColsK snake witness))
-        , sch = SnAuto (\_ -> autoSchemaK snake witness) []
-        }
+    let
+        -- Read once: `shp` and `fzr` share the witness's columns, so the
+        -- kernel's result is narrowed at one site.
+        cols = autoColsK snake witness
+    in
+        Codec
+            { enc = \r -> autoEncK snake r
+            , dec = autoDecoderK snake witness
+            , shp =
+                SRecord (List.map (\( n, k ) -> ( n, kindToColType k )) cols)
+            , sch = SnAuto (\_ -> autoSchemaK snake witness) []
+            , zro = \_ -> Just (autoEncK snake witness)
+            , fzr = \_ -> witnessZeros cols (autoEncK snake witness)
+            , fck = \_ -> []
+            }
 
 
 -- | Like `auto`, but OVERRIDE the codec for named columns — auto-derive everything
@@ -817,19 +1235,21 @@ autoWith overrides witness =
         encs = List.map (\( col, Codec c ) -> ( col, c.enc )) overrides
         decs = List.map (\( col, Codec c ) -> ( col, c.dec )) overrides
         shps = List.map (\( col, Codec c ) -> ( col, c.shp )) overrides
+        cols = autoColsWith True shps witness
     in
         Codec
             { enc = \r -> autoEncOverridesK True encs r
             , dec = autoDecoderOverridesK True decs witness
             , shp =
-                SRecord
-                    (List.map
-                        (\( n, k ) -> ( n, kindToColType k ))
-                        (autoColsWith True shps witness))
+                SRecord (List.map (\( n, k ) -> ( n, kindToColType k )) cols)
             , sch =
                 SnAuto
                     (\_ -> autoSchemaK True witness)
                     (List.map (\( col, Codec c ) -> ( col, c.sch )) overrides)
+            , zro = \_ -> Just (autoEncOverridesK True encs witness)
+            , fzr =
+                \_ -> witnessZeros cols (autoEncOverridesK True encs witness)
+            , fck = \_ -> []
             }
 
 
@@ -955,34 +1375,53 @@ kindToColType k =
 
 -- ── ADTs / custom types (tagged unions) ─────────────────────────────────────
 -- | A decode arm for one variant of a custom type.
+--
+-- The payload is a named record (its tag, the schemas of its arguments for
+-- `toXml` / `fromXml`, and its decoder), so a function that matches a
+-- `Variant` reads it with one runtime narrowing instead of one per field
+-- (doc 14 §4.5, R6).
 type Variant v
-    = Variant String (Decoder v)
+    = Variant (VariantPayload v)
+
+type alias VariantPayload v =
+    { tag : String
+    , args : List SchemaNode
+    , dec : Decoder v
+    }
 
 
 -- | A variant with no arguments.
 var0 : String -> v -> Variant v
 var0 name ctor =
-    Variant name (D.succeed ctor)
+    Variant { tag = name, args = [], dec = D.succeed ctor }
 
 
 -- | A variant with one argument.
 var1 : String -> (a -> v) -> Codec a -> Variant v
 var1 name ctor (Codec c1) =
-    Variant name (D.map ctor (D.index 1 c1.dec))
+    Variant
+        { tag = name, args = [ c1.sch ], dec = D.map ctor (D.index 1 c1.dec) }
 
 
 -- | A variant with two arguments.
 var2 : String -> (a -> b2 -> v) -> Codec a -> Codec b2 -> Variant v
 var2 name ctor (Codec c1) (Codec c2) =
-    Variant name (D.map2 ctor (D.index 1 c1.dec) (D.index 2 c2.dec))
+    Variant
+        { tag = name
+        , args = [ c1.sch, c2.sch ]
+        , dec = D.map2 ctor (D.index 1 c1.dec) (D.index 2 c2.dec)
+        }
 
 
 -- | A variant with three arguments.
 var3 : String -> (a -> b2 -> c2 -> v) -> Codec a -> Codec b2 -> Codec c2 -> Variant v
 var3 name ctor (Codec c1) (Codec c2) (Codec c3) =
     Variant
-        name
-        (D.map3 ctor (D.index 1 c1.dec) (D.index 2 c2.dec) (D.index 3 c3.dec))
+        { tag = name
+        , args = [ c1.sch, c2.sch, c3.sch ]
+        , dec =
+            D.map3 ctor (D.index 1 c1.dec) (D.index 2 c2.dec) (D.index 3 c3.dec)
+        }
 
 
 -- | Codec for a custom type (tagged union). The first argument maps a value to
@@ -1002,33 +1441,66 @@ var3 name ctor (Codec c1) (Codec c2) (Codec c3) =
 --             ]
 taggedUnion : (v -> ( String, List Value )) -> List (Variant v) -> Codec v
 taggedUnion toTagged variants =
-    Codec
-        { enc =
-            \v ->
-                let
-                    ( tag, args ) = toTagged v
-                in
-                    E.list identity (E.string tag :: args)
-        , dec =
-            D.andThen (\tag -> pickVariant tag variants) (D.index 0 D.string)
-        , shp = SBlob
-        , sch = SnOpen
-        }
+    let
+        arms = variantPayloads variants
+    in
+        Codec
+            { enc =
+                \v ->
+                    let
+                        ( tag, args ) = toTagged v
+                    in
+                        E.list identity (E.string tag :: args)
+            , dec =
+                D.andThen (\tag -> pickVariant tag arms) (D.index 0 D.string)
+            , shp = SBlob
+            , sch = SnUnion (variantSchemas arms)
+            , zro = \_ -> Nothing
+            , fzr = \_ -> []
+            , fck = \_ -> []
+            }
 
 
-pickVariant : String -> List (Variant v) -> Decoder v
-pickVariant tag variants =
+-- The variants' payloads, unwrapped once when the codec is built: the
+-- decoder and the XML description then read typed records, so a union codec
+-- pays one runtime narrowing per variant in all (doc 14 §4.5, R6), not one
+-- per read.
+variantPayloads : List (Variant v) -> List (VariantPayload v)
+variantPayloads variants =
     case variants of
+
+        [] ->
+            []
+
+        (Variant p) :: rest ->
+            p :: variantPayloads rest
+
+
+pickVariant : String -> List (VariantPayload v) -> Decoder v
+pickVariant tag arms =
+    case arms of
 
         [] ->
             D.fail ("Codec: unknown variant tag: " ++ tag)
 
-        (Variant name d) :: rest ->
-            if name == tag then
-                d
+        p :: rest ->
+            if p.tag == tag then
+                p.dec
 
             else
                 pickVariant tag rest
+
+
+-- Each variant's tag and argument schemas, for `toXml` / `fromXml`.
+variantSchemas : List (VariantPayload v) -> List ( String, List SchemaNode )
+variantSchemas arms =
+    case arms of
+
+        [] ->
+            []
+
+        p :: rest ->
+            ( p.tag, p.args ) :: variantSchemas rest
 
 
 -- | A nullary enum stored as a readable TEXT name, via `(value, name)` pairs:
@@ -1042,6 +1514,17 @@ enum pairs =
         , dec = D.andThen (\name -> enumValueFor name pairs) D.string
         , shp = SScalar CText
         , sch = SnEnum (\_ -> List.map (\( _, n ) -> n) pairs)
+        , zro =
+            \_ ->
+                case pairs of
+
+                    ( _, n ) :: _ ->
+                        Just (E.string n)
+
+                    [] ->
+                        Nothing
+        , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
@@ -1092,3 +1575,1277 @@ colTypeOf s =
 
         _ ->
             CBlob
+
+
+-- ── XML ──────────────────────────────────────────────────────────────────────
+-- | Write a value as XML: one root element named `root`, then the codec's value
+-- inside it. Total (see `Std.Xml.Encode.encode` for the characters XML cannot
+-- carry; a field name or tag is written as it is in the codec).
+--
+--     Codec.toXml "order" orderCodec order
+--     -- <order><id>A-1</id><lines><sku>x</sku><qty>2</qty></lines>…</order>
+--
+-- The mapping:
+--
+-- * a record — one child element per field, in field order;
+-- * a list — one element per item, named after the field (an empty list
+--   writes nothing); a list that is not a field (the root, an item of a list,
+--   a variant argument) writes each item as `<item>`;
+-- * `Nothing` — a field is left out; elsewhere (a list item, a variant
+--   argument, the root) it is the element with `nil="true"`;
+-- * a scalar — its text (`true` / `false`, a number in its shortest JSON
+--   form); an `enum` — its name;
+-- * a `taggedUnion` variant — `<field><Tag><arg>…</arg>…</Tag></field>`, a
+--   variant with no arguments `<field><Tag/></field>`;
+-- * a `result` — `<field><Ok>…</Ok></field>` or `<field><Err>…</Err></field>`;
+-- * a `dict` — `<field><entry><key>…</key><value>…</value></entry>…</field>`;
+-- * a `Json.Value` field (and any part a codec cannot describe) — compact JSON
+--   text, so the round trip stays exact.
+--
+-- Two shapes do not round-trip: `Maybe (List a)` with `Just []` reads back as
+-- `Nothing`, and `Maybe (Maybe a)` collapses (as it does in JSON). Runs on the
+-- server: a Sky.Spa app calls it in its backend. Cost: O(size of the value).
+toXml : String -> Codec a -> a -> String
+toXml root (Codec c) x =
+    XE.encode 0 (xmlElem root c.sch (c.enc x))
+
+
+-- | Read a value written as XML: the reverse of `toXml`, from a document whose
+-- root element has the local name `root` (an `Err` otherwise).
+--
+-- * A field is the child element with the field's local name or, when there
+--   is none, the attribute with that name (`<line sku="x"><qty>2</qty></line>`).
+-- * `Int`, `Float` and `Bool` (`true` / `false` / `1` / `0`) are read from
+--   trimmed text; a `String` keeps its text exactly.
+-- * A list is 0 to n repeated elements; `Maybe` is `Nothing` when the element
+--   is absent (`<x/>` is `Just ""` for a `Maybe String`).
+-- * A variant is the one child element named by its tag; text equal to the
+--   tag of a variant with no arguments is accepted too.
+-- * A field that is not a list with two or more elements is an `Err`
+--   ("expected one"), and elements the codec does not name are ignored, as
+--   unknown JSON keys are.
+--
+-- Names are local names, so a namespaced document (a SOAP body, an Atom feed)
+-- reads by the names in the codec. The document is parsed by `Std.Xml.parse`
+-- (no DOCTYPE, bounded). A failure names the path: `/order/lines[2]/qty`.
+-- The codec's own decoder then runs on the value read, unchanged.
+fromXml : String -> Codec a -> String -> Result Error a
+fromXml root (Codec c) src =
+    case Xml.parse src of
+
+        Err e ->
+            Err e
+
+        Ok n ->
+            if Xml.name n /= root then
+                Err
+                    (xmlFailAt
+                        ("/" ++ Xml.name n)
+                        ("expected the root element <" ++ root ++ ">, got <"
+                            ++ Xml.name n
+                            ++ ">"))
+
+            else
+                case xmlRead ("/" ++ root) c.sch n of
+
+                    Ok v ->
+                        D.decodeValue c.dec v
+
+                    Err e ->
+                        Err e
+
+
+xmlFailAt : String -> String -> Error
+xmlFailAt path msg =
+    Error.failure "xml" "decode" |> Error.withAttr "path" path
+        |> Error.fromDomain
+               Error.Decode
+               ("Codec.fromXml: " ++ msg ++ " at " ++ path)
+
+
+-- Writing: the element `name` that holds `v`, as `sch` describes it.
+xmlElem : String -> SchemaNode -> Value -> XE.Xml
+xmlElem name sch v =
+    case sch of
+
+        SnNullable inner ->
+            if valueIsNull v then
+                XE.element name [ XE.attribute "nil" "true" ] []
+
+            else
+                xmlElem name inner v
+
+        SnArray inner ->
+            XE.element
+                name
+                []
+                (List.map (\item -> xmlElem "item" inner item) (valueList v))
+
+        SnObject fields ->
+            XE.element name [] (xmlFields fields v)
+
+        SnAuto fieldsJson overrides ->
+            xmlElem name (autoNode (fieldsJson ()) overrides) v
+
+        SnUnion variants ->
+            XE.element name [] [ xmlVariant variants v ]
+
+        SnResult se sa ->
+            if valueTag v == "Ok" then
+                XE.element name [] [ xmlElem "Ok" sa (valueAt 1 v) ]
+
+            else
+                XE.element name [] [ xmlElem "Err" se (valueAt 1 v) ]
+
+        SnDict sk sv ->
+            XE.element
+                name
+                []
+                (List.map
+                    (\pair ->
+                        XE.element
+                            "entry"
+                            []
+                            [ xmlElem "key" sk (valueAt 0 pair)
+                            , xmlElem "value" sv (valueAt 1 pair)
+                            ])
+                    (valueList v))
+
+        SnOpen ->
+            XE.element name [] [ XE.text (E.encode 0 v) ]
+
+        SnType _ ->
+            XE.element name [] [ XE.text (scalarText v) ]
+
+        SnEnum _ ->
+            XE.element name [] [ XE.text (scalarText v) ]
+
+
+-- A record's fields, in order.
+xmlFields : List ( String, SchemaNode ) -> Value -> List XE.Xml
+xmlFields fields v =
+    List.concatMap (\( n, s ) -> xmlField n s (valueField n v)) fields
+
+
+-- One field: no element for `Nothing`, one element per item for a list.
+xmlField : String -> SchemaNode -> Value -> List XE.Xml
+xmlField name sch v =
+    case sch of
+
+        SnNullable inner ->
+            if valueIsNull v then
+                []
+
+            else
+                xmlField name inner v
+
+        SnArray inner ->
+            List.map (\item -> xmlElem name inner item) (valueList v)
+
+        SnAuto fieldsJson overrides ->
+            xmlField name (autoNode (fieldsJson ()) overrides) v
+
+        _ ->
+            [ xmlElem name sch v ]
+
+
+xmlVariant : List ( String, List SchemaNode ) -> Value -> XE.Xml
+xmlVariant variants v =
+    let
+        tag = valueTag v
+        args = List.drop 1 (valueList v)
+    in
+        XE.element tag [] (xmlArgs (variantArgs tag variants) args)
+
+
+xmlArgs : List SchemaNode -> List Value -> List XE.Xml
+xmlArgs schemas args =
+    case args of
+
+        [] ->
+            []
+
+        a :: rest ->
+            case schemas of
+
+                s :: more ->
+                    xmlElem "arg" s a :: xmlArgs more rest
+
+                [] ->
+                    xmlElem "arg" SnOpen a :: xmlArgs [] rest
+
+
+variantArgs : String -> List ( String, List SchemaNode ) -> List SchemaNode
+variantArgs tag variants =
+    case variants of
+
+        [] ->
+            []
+
+        ( t, args ) :: rest ->
+            if t == tag then
+                args
+
+            else
+                variantArgs tag rest
+
+
+scalarText : Value -> String
+scalarText v =
+    case D.decodeValue D.string v of
+
+        Ok s ->
+            s
+
+        Err _ ->
+            case D.decodeValue D.bool v of
+
+                Ok b ->
+                    if b then
+                        "true"
+
+                    else
+                        "false"
+
+                Err _ ->
+                    E.encode 0 v
+
+
+valueIsNull : Value -> Bool
+valueIsNull v =
+    case D.decodeValue (D.null True) v of
+
+        Ok _ ->
+            True
+
+        Err _ ->
+            False
+
+
+valueList : Value -> List Value
+valueList v =
+    case D.decodeValue (D.list D.value) v of
+
+        Ok items ->
+            items
+
+        Err _ ->
+            []
+
+
+valueAt : Int -> Value -> Value
+valueAt i v =
+    case D.decodeValue (D.index i D.value) v of
+
+        Ok x ->
+            x
+
+        Err _ ->
+            E.null
+
+
+valueField : String -> Value -> Value
+valueField name v =
+    case D.decodeValue (D.field name D.value) v of
+
+        Ok x ->
+            x
+
+        Err _ ->
+            E.null
+
+
+valueTag : Value -> String
+valueTag v =
+    case D.decodeValue (D.index 0 D.string) v of
+
+        Ok t ->
+            t
+
+        Err _ ->
+            ""
+
+
+-- An auto codec's description as a node: the witness's fields (their JSON
+-- Schema read back into nodes), each replaced by its `autoWith` override.
+autoNode : String -> List ( String, SchemaNode ) -> SchemaNode
+autoNode fieldsJson overrides =
+    let
+        fieldDecoder =
+            D.map2
+                (\n s -> ( n, s ))
+                (D.field "name" D.string)
+                (D.field "schema" D.value)
+    in
+        case D.decodeString
+                 (D.field "fields" (D.nullable (D.list fieldDecoder)))
+                 fieldsJson of
+
+            Ok (Just fields) ->
+                SnObject
+                    (List.map
+                        (\( n, s ) ->
+                            case lookupSchema n overrides of
+
+                                Just o ->
+                                    ( n, o )
+
+                                Nothing ->
+                                    ( n, nodeOfJsonSchema s ))
+                        fields)
+
+            _ ->
+                SnOpen
+
+
+-- A JSON Schema (as `Codec_autoSchema` writes it) read back into a node:
+-- `type`, `anyOf` with null, `items`, `properties` in `required` order and
+-- `enum`. Anything else is open.
+nodeOfJsonSchema : Value -> SchemaNode
+nodeOfJsonSchema v =
+    case D.decodeValue (D.field "anyOf" (D.list D.value)) v of
+
+        Ok (first :: _) ->
+            SnNullable (nodeOfJsonSchema first)
+
+        _ ->
+            case D.decodeValue (D.field "enum" (D.list D.string)) v of
+
+                Ok names ->
+                    SnEnum (\_ -> names)
+
+                Err _ ->
+                    nodeOfJsonType (D.decodeValue (D.field "type" D.string) v) v
+
+
+nodeOfJsonType : Result Error String -> Value -> SchemaNode
+nodeOfJsonType t v =
+    case t of
+
+        Ok "array" ->
+            SnArray (nodeOfJsonSchema (valueField "items" v))
+
+        Ok "object" ->
+            case D.decodeValue (D.field "required" (D.list D.string)) v of
+
+                Ok names ->
+                    SnObject
+                        (List.map
+                            (\n ->
+                                ( n
+                                , nodeOfJsonSchema
+                                      (valueField n (valueField "properties" v))
+                                ))
+                            names)
+
+                Err _ ->
+                    SnOpen
+
+        Ok other ->
+            SnType other
+
+        Err _ ->
+            SnOpen
+
+
+-- Reading: the JSON value the element `n` holds, as `sch` describes it.
+xmlRead : String -> SchemaNode -> Node -> Result Error Value
+xmlRead path sch n =
+    case sch of
+
+        SnType t ->
+            xmlScalar path t (Xml.text n)
+
+        SnEnum _ ->
+            Ok (E.string (String.trim (Xml.text n)))
+
+        SnNullable inner ->
+            if Xml.attribute "nil" n == Just "true" then
+                Ok E.null
+
+            else
+                xmlRead path inner n
+
+        SnArray inner ->
+            xmlReadList
+                (path ++ "/item")
+                inner
+                1
+                (Xml.elementsNamed "item" n)
+                []
+
+        SnObject fields ->
+            xmlReadFields path fields n []
+
+        SnAuto fieldsJson overrides ->
+            xmlRead path (autoNode (fieldsJson ()) overrides) n
+
+        SnUnion variants ->
+            xmlReadVariant path variants n
+
+        SnResult se sa ->
+            case Xml.elementsNamed "Ok" n of
+
+                [ ok ] ->
+                    xmlTagged "Ok" [ xmlRead (path ++ "/Ok") sa ok ]
+
+                _ ->
+                    case Xml.elementsNamed "Err" n of
+
+                        [ err ] ->
+                            xmlTagged "Err" [ xmlRead (path ++ "/Err") se err ]
+
+                        _ ->
+                            Err
+                                (xmlFailAt
+                                    path
+                                    "expected one <Ok> or <Err> element")
+
+        SnDict sk sv ->
+            xmlReadEntries
+                (path ++ "/entry")
+                sk
+                sv
+                1
+                (Xml.elementsNamed "entry" n)
+                []
+
+        SnOpen ->
+            case E.raw (Xml.text n) of
+
+                Ok v ->
+                    Ok v
+
+                Err _ ->
+                    Err (xmlFailAt path "expected JSON text")
+
+
+-- A value read from text (an element's or an attribute's).
+xmlScalar : String -> String -> String -> Result Error Value
+xmlScalar path t raw =
+    let
+        trimmed = String.trim raw
+    in
+        if t == "integer" then
+            case String.toInt trimmed of
+
+                Just i ->
+                    Ok (E.int i)
+
+                Nothing ->
+                    Err
+                        (xmlFailAt
+                            path
+                            ("expected an Int, got \"" ++ trimmed ++ "\""))
+
+        else if t == "number" then
+            case String.toFloat trimmed of
+
+                Just f ->
+                    Ok (E.float f)
+
+                Nothing ->
+                    Err
+                        (xmlFailAt
+                            path
+                            ("expected a Float, got \"" ++ trimmed ++ "\""))
+
+        else if t == "boolean" then
+            if trimmed == "true" || trimmed == "1" then
+                Ok (E.bool True)
+
+            else if trimmed == "false" || trimmed == "0" then
+                Ok (E.bool False)
+
+            else
+                Err
+                    (xmlFailAt
+                        path
+                        ("expected a Bool, got \"" ++ trimmed ++ "\""))
+
+        else
+            Ok (E.string raw)
+
+
+-- A field read from an attribute: scalars and enums only.
+xmlFromAttribute : String -> SchemaNode -> String -> Result Error Value
+xmlFromAttribute path sch raw =
+    case sch of
+
+        SnType t ->
+            xmlScalar path t raw
+
+        SnEnum _ ->
+            Ok (E.string (String.trim raw))
+
+        SnNullable inner ->
+            xmlFromAttribute path inner raw
+
+        _ ->
+            Err (xmlFailAt path "expected an element, got an attribute")
+
+
+xmlReadFields : String -> List ( String, SchemaNode ) -> Node -> List ( String, Value ) -> Result Error Value
+xmlReadFields path fields n acc =
+    case fields of
+
+        [] ->
+            Ok (E.object (List.reverse acc))
+
+        ( name, sch ) :: rest ->
+            case xmlReadField path n name sch of
+
+                Ok v ->
+                    xmlReadFields path rest n (( name, v ) :: acc)
+
+                Err e ->
+                    Err e
+
+
+-- One field of the element `parent`.
+xmlReadField : String -> Node -> String -> SchemaNode -> Result Error Value
+xmlReadField path parent name sch =
+    let
+        here = path ++ "/" ++ name
+    in
+        case sch of
+
+            SnAuto fieldsJson overrides ->
+                xmlReadField
+                    path
+                    parent
+                    name
+                    (autoNode (fieldsJson ()) overrides)
+
+            SnArray inner ->
+                xmlReadList here inner 1 (Xml.elementsNamed name parent) []
+
+            SnNullable inner ->
+                if isListNode inner then
+                    case Xml.elementsNamed name parent of
+
+                        [] ->
+                            Ok E.null
+
+                        els ->
+                            xmlReadList here (listItem inner) 1 els []
+
+                else
+                    case Xml.elementsNamed name parent of
+
+                        [] ->
+                            case Xml.attribute name parent of
+
+                                Just raw ->
+                                    xmlFromAttribute here inner raw
+
+                                Nothing ->
+                                    Ok E.null
+
+                        [ one ] ->
+                            xmlRead here sch one
+
+                        els ->
+                            Err (xmlExpectedOne here name els)
+
+            _ ->
+                case Xml.elementsNamed name parent of
+
+                    [ one ] ->
+                        xmlRead here sch one
+
+                    [] ->
+                        case Xml.attribute name parent of
+
+                            Just raw ->
+                                xmlFromAttribute here sch raw
+
+                            Nothing ->
+                                Err
+                                    (xmlFailAt
+                                        path
+                                        ("no <" ++ name ++ "> element"))
+
+                    els ->
+                        Err (xmlExpectedOne here name els)
+
+
+xmlExpectedOne : String -> String -> List Node -> Error
+xmlExpectedOne path name els =
+    xmlFailAt
+        path
+        ("expected one <" ++ name ++ "> element, got "
+            ++ String.fromInt (List.length els))
+
+
+isListNode : SchemaNode -> Bool
+isListNode sch =
+    case sch of
+
+        SnArray _ ->
+            True
+
+        _ ->
+            False
+
+
+listItem : SchemaNode -> SchemaNode
+listItem sch =
+    case sch of
+
+        SnArray inner ->
+            inner
+
+        _ ->
+            sch
+
+
+xmlReadList : String -> SchemaNode -> Int -> List Node -> List Value -> Result Error Value
+xmlReadList base sch i els acc =
+    case els of
+
+        [] ->
+            Ok (E.list identity (List.reverse acc))
+
+        el :: rest ->
+            case xmlRead (base ++ "[" ++ String.fromInt i ++ "]") sch el of
+
+                Ok v ->
+                    xmlReadList base sch (i + 1) rest (v :: acc)
+
+                Err e ->
+                    Err e
+
+
+xmlReadEntries : String -> SchemaNode -> SchemaNode -> Int -> List Node -> List Value -> Result Error Value
+xmlReadEntries base sk sv i els acc =
+    case els of
+
+        [] ->
+            Ok (E.list identity (List.reverse acc))
+
+        el :: rest ->
+            let
+                here = base ++ "[" ++ String.fromInt i ++ "]"
+            in
+                case xmlReadField here el "key" sk of
+
+                    Ok k ->
+                        case xmlReadField here el "value" sv of
+
+                            Ok v ->
+                                xmlReadEntries
+                                    base
+                                    sk
+                                    sv
+                                    (i + 1)
+                                    rest
+                                    (E.list identity [ k, v ] :: acc)
+
+                            Err e ->
+                                Err e
+
+                    Err e ->
+                        Err e
+
+
+-- `["Tag", arg, …]`, the JSON a `taggedUnion` / `result` decoder reads.
+xmlTagged : String -> List (Result Error Value) -> Result Error Value
+xmlTagged tag args =
+    case xmlAll args [] of
+
+        Ok vs ->
+            Ok (E.list identity (E.string tag :: vs))
+
+        Err e ->
+            Err e
+
+
+xmlAll : List (Result Error Value) -> List Value -> Result Error (List Value)
+xmlAll rs acc =
+    case rs of
+
+        [] ->
+            Ok (List.reverse acc)
+
+        (Ok v) :: rest ->
+            xmlAll rest (v :: acc)
+
+        (Err e) :: _ ->
+            Err e
+
+
+xmlReadVariant : String -> List ( String, List SchemaNode ) -> Node -> Result Error Value
+xmlReadVariant path variants n =
+    case Xml.elements n of
+
+        [ el ] ->
+            if isTag (Xml.name el) variants then
+                xmlTagged
+                    (Xml.name el)
+                    (xmlReadArgs
+                        (path ++ "/" ++ Xml.name el ++ "/arg")
+                        1
+                        (variantArgs (Xml.name el) variants)
+                        (Xml.elementsNamed "arg" el))
+
+            else
+                Err
+                    (xmlFailAt
+                        path
+                        ("<" ++ Xml.name el ++ "> is not a variant of this type"))
+
+        [] ->
+            let
+                t = String.trim (Xml.text n)
+            in
+                if isNullaryTag t variants then
+                    Ok (E.list identity [ E.string t ])
+
+                else
+                    Err
+                        (xmlFailAt
+                            path
+                            ("expected a variant, got \"" ++ t ++ "\""))
+
+        _ ->
+            Err (xmlFailAt path "expected one variant element")
+
+
+xmlReadArgs : String -> Int -> List SchemaNode -> List Node -> List (Result Error Value)
+xmlReadArgs base i schemas els =
+    case schemas of
+
+        [] ->
+            []
+
+        s :: more ->
+            let
+                here = base ++ "[" ++ String.fromInt i ++ "]"
+            in
+                case els of
+
+                    el :: rest ->
+                        xmlRead here s el :: xmlReadArgs base (i + 1) more rest
+
+                    [] ->
+                        if isNullable s then
+                            Ok E.null :: xmlReadArgs base (i + 1) more []
+
+                        else
+                            [ Err (xmlFailAt here "missing <arg> element") ]
+
+
+isNullable : SchemaNode -> Bool
+isNullable sch =
+    case sch of
+
+        SnNullable _ ->
+            True
+
+        _ ->
+            False
+
+
+isTag : String -> List ( String, List SchemaNode ) -> Bool
+isTag tag variants =
+    case variants of
+
+        [] ->
+            False
+
+        ( t, _ ) :: rest ->
+            t == tag || isTag tag rest
+
+
+isNullaryTag : String -> List ( String, List SchemaNode ) -> Bool
+isNullaryTag tag variants =
+    case variants of
+
+        [] ->
+            False
+
+        ( t, args ) :: rest ->
+            (t == tag && List.isEmpty args) || isNullaryTag tag rest
+
+
+-- ── Comparing schemas and checking values ────────────────────────────────────
+-- | `Nothing` when every JSON value the JSON Schema `source` describes reads,
+-- through a codec whose `jsonSchema` is `target`, as that same value, so a
+-- projection is refused before any statement instead of failing on a row (a
+-- `Codec.maybe` decoder reads only `null` as `Nothing`, and any other value
+-- it cannot decode is an `Err`). `Just` the reason otherwise.
+-- Both are schemas as `jsonSchema` writes them (its `schema` field, or a part
+-- of one). The rule:
+--
+-- * a `Maybe x` target reads a source `x` or `Maybe x`, and a nullable source
+--   needs a `Maybe` target;
+-- * `String` reads `String` or an enum, `Float` reads `Float` or `Int`, and
+--   `Int` and `Bool` read only themselves;
+-- * an enum reads an enum whose names are all its own names;
+-- * a list compares its items, a record each of its fields (every target
+--   field must be in the source), a `Dict` under `auto` its values;
+-- * a part the schema leaves open (`{}`: a `taggedUnion`, a `result`, a
+--   `dict`, a `Json.Value` field, `Codec.error`) reads anything, except under
+--   a `Maybe`: there it reads only an open part.
+--
+--     Codec.schemaFitError
+--         (Codec.jsonSchema (Codec.maybe (Codec.list Codec.string))).schema
+--         (Codec.jsonSchema (Codec.list Codec.int)).schema
+--     -- Just "a list item: an Int does not read as a String"
+schemaFitError : Value -> Value -> Maybe String
+schemaFitError target source =
+    fitSchema False target source
+
+
+fitSchema : Bool -> Value -> Value -> Maybe String
+fitSchema under t s =
+    let
+        tk = schemaKind t
+        sk = schemaKind s
+    in
+        if tk == "nullable" then
+            if sk == "nullable" then
+                fitSchema True (nullableInner t) (nullableInner s)
+
+            else
+                fitSchema True (nullableInner t) s
+
+        else if tk == "open" then
+            if sk == "open" || not under then
+                Nothing
+
+            else
+                Just
+                    ("a Maybe of a part no schema describes reads only such a part, not "
+                        ++ describeSchema s)
+
+        else if sk == "nullable" then
+            Just
+                ("the source is " ++ describeSchema s ++ ", so "
+                    ++ describeSchema t
+                    ++ " needs a Maybe")
+
+        else if sk == "open" then
+            if under then
+                Just
+                    ("the source is a part no schema describes, and a Maybe of "
+                        ++ describeSchema t
+                        ++ " may not read it")
+
+            else
+                Nothing
+
+        else if tk == "string" && sk == "enum" then
+            Nothing
+
+        else if tk == "number" && sk == "integer" then
+            Nothing
+
+        else if tk /= sk then
+            Just (describeSchema s ++ " does not read as " ++ describeSchema t)
+
+        else if tk == "enum" then
+            case missingName (schemaNames t) (schemaNames s) of
+
+                "" ->
+                    Nothing
+
+                n ->
+                    Just
+                        ("the source name \"" ++ n
+                            ++ "\" is not one of the target enum's names")
+
+        else if tk == "array" then
+            within
+                "a list item"
+                (fitSchema under (schemaPart "items" t) (schemaPart "items" s))
+
+        else if tk == "map" then
+            within
+                "a Dict value"
+                (fitSchema
+                    under
+                    (schemaPart "additionalProperties" t)
+                    (schemaPart "additionalProperties" s))
+
+        else if tk == "object" then
+            fieldsFit under t s (schemaNames (schemaPart "required" t))
+
+        else
+            Nothing
+
+
+-- Every target field is in the source, and reads its values.
+fieldsFit : Bool -> Value -> Value -> List String -> Maybe String
+fieldsFit under t s names =
+    case names of
+
+        [] ->
+            Nothing
+
+        n :: rest ->
+            case jsonField n (schemaPart "properties" s) of
+
+                Nothing ->
+                    Just ("the field \"" ++ n ++ "\" is not in the source")
+
+                Just src ->
+                    orElse
+                        (within
+                            ("the field \"" ++ n ++ "\"")
+                            (fitSchema
+                                under
+                                (schemaPart n (schemaPart "properties" t))
+                                src))
+                        (fieldsFit under t s rest)
+
+
+-- | `Nothing` when the JSON value is one the JSON Schema (as `jsonSchema`
+-- writes it) reads: the right JSON type, an enum name that is one of the
+-- names, a `null` only for a `Maybe`, every list item, every record field (a
+-- missing field only for a `Maybe` one). A part the schema leaves open (`{}`)
+-- takes any value: its codec's decoder checks it. `Just` the reason otherwise.
+--
+--     Codec.schemaValueError (Codec.jsonSchema (Codec.list Codec.int)).schema
+--         (Encode.list Encode.string [ "a" ])
+--     -- Just "expected an Int, got \"a\""
+schemaValueError : Value -> Value -> Maybe String
+schemaValueError schema v =
+    let
+        kind = schemaKind schema
+        text = E.encode 0 v
+    in
+        if kind == "nullable" then
+            if text == "null" then
+                Nothing
+
+            else
+                schemaValueError (nullableInner schema) v
+
+        else if kind == "open" then
+            Nothing
+
+        else if kind == "enum" then
+            case jsonText v of
+
+                Just n ->
+                    if memberOf n (schemaNames schema) then
+                        Nothing
+
+                    else
+                        Just
+                            ("\"" ++ n ++ "\" is not one of the names "
+                                ++ String.join ", " (schemaNames schema))
+
+                Nothing ->
+                    expectedSchema schema text
+
+        else if kind == "array" then
+            case jsonItems v of
+
+                Just items ->
+                    itemsError (schemaPart "items" schema) items
+
+                Nothing ->
+                    expectedSchema schema text
+
+        else if kind == "object" || kind == "map" then
+            if not (String.startsWith "{" text) then
+                expectedSchema schema text
+
+            else if kind == "object" then
+                objectValueError
+                    schema
+                    (schemaNames (schemaPart "required" schema))
+                    v
+
+            else
+                Nothing
+
+        else if scalarIs kind text then
+            Nothing
+
+        else
+            expectedSchema schema text
+
+
+-- The kind of a JSON Schema as `jsonSchema` writes it: "nullable" (anyOf
+-- with null), "enum", "array", "object" (a record: `required` lists its
+-- fields), "map" (an object with `additionalProperties` only), a scalar type
+-- ("string", "integer", "number", "boolean") or "open" (`{}`).
+schemaKind : Value -> String
+schemaKind s =
+    case jsonField "anyOf" s of
+
+        Just _ ->
+            "nullable"
+
+        Nothing ->
+            case jsonField "enum" s of
+
+                Just _ ->
+                    "enum"
+
+                Nothing ->
+                    case jsonField "type" s of
+
+                        Just tv ->
+                            case jsonText tv of
+
+                                Just "object" ->
+                                    case jsonField "required" s of
+
+                                        Just _ ->
+                                            "object"
+
+                                        Nothing ->
+                                            "map"
+
+                                Just t ->
+                                    t
+
+                                Nothing ->
+                                    "open"
+
+                        Nothing ->
+                            "open"
+
+
+-- The part of a schema under a key (`{}`, open, when there is none).
+schemaPart : String -> Value -> Value
+schemaPart key s =
+    case jsonField key s of
+
+        Just part ->
+            part
+
+        Nothing ->
+            E.object []
+
+
+-- The non-null side of a nullable schema.
+nullableInner : Value -> Value
+nullableInner s =
+    case jsonItems (schemaPart "anyOf" s) of
+
+        Just (first :: _) ->
+            first
+
+        _ ->
+            E.object []
+
+
+-- An enum's names, or the names of `required`.
+schemaNames : Value -> List String
+schemaNames s =
+    case jsonItems (schemaPart "enum" s) of
+
+        Just items ->
+            textsOf items
+
+        Nothing ->
+            case jsonItems s of
+
+                Just items ->
+                    textsOf items
+
+                Nothing ->
+                    []
+
+
+textsOf : List Value -> List String
+textsOf items =
+    case items of
+
+        [] ->
+            []
+
+        x :: rest ->
+            case jsonText x of
+
+                Just t ->
+                    t :: textsOf rest
+
+                Nothing ->
+                    textsOf rest
+
+
+-- The first source name the target names do not have, or "".
+missingName : List String -> List String -> String
+missingName target source =
+    case source of
+
+        [] ->
+            ""
+
+        n :: rest ->
+            if memberOf n target then
+                missingName target rest
+
+            else
+                n
+
+
+memberOf : String -> List String -> Bool
+memberOf n names =
+    case names of
+
+        [] ->
+            False
+
+        x :: rest ->
+            x == n || memberOf n rest
+
+
+orElse : Maybe String -> Maybe String -> Maybe String
+orElse first second =
+    case first of
+
+        Just msg ->
+            Just msg
+
+        Nothing ->
+            second
+
+
+within : String -> Maybe String -> Maybe String
+within part r =
+    case r of
+
+        Just msg ->
+            Just (part ++ ": " ++ msg)
+
+        Nothing ->
+            Nothing
+
+
+-- Whether the compact JSON text is a scalar of the JSON Schema type `kind`.
+scalarIs : String -> String -> Bool
+scalarIs kind text =
+    if kind == "string" then
+        String.startsWith "\"" text
+
+    else if kind == "integer" then
+        case String.toInt text of
+
+            Just _ ->
+                True
+
+            Nothing ->
+                False
+
+    else if kind == "number" then
+        case String.toFloat text of
+
+            Just _ ->
+                True
+
+            Nothing ->
+                False
+
+    else if kind == "boolean" then
+        text == "true" || text == "false"
+
+    else
+        True
+
+
+-- The items of a JSON array.
+jsonItems : Value -> Maybe (List Value)
+jsonItems v =
+    Result.toMaybe (D.decodeValue (D.list D.value) v)
+
+
+-- The content of a JSON string.
+jsonText : Value -> Maybe String
+jsonText v =
+    Result.toMaybe (D.decodeValue D.string v)
+
+
+-- The value of an object's field.
+jsonField : String -> Value -> Maybe Value
+jsonField name v =
+    Result.toMaybe (D.decodeValue (D.field name D.value) v)
+
+
+itemsError : Value -> List Value -> Maybe String
+itemsError item values =
+    case values of
+
+        [] ->
+            Nothing
+
+        x :: rest ->
+            orElse (schemaValueError item x) (itemsError item rest)
+
+
+objectValueError : Value -> List String -> Value -> Maybe String
+objectValueError schema names v =
+    case names of
+
+        [] ->
+            Nothing
+
+        n :: rest ->
+            let
+                field = schemaPart n (schemaPart "properties" schema)
+            in
+                case jsonField n v of
+
+                    Just x ->
+                        orElse
+                            (within
+                                ("the field \"" ++ n ++ "\"")
+                                (schemaValueError field x))
+                            (objectValueError schema rest v)
+
+                    Nothing ->
+                        if schemaKind field == "nullable" then
+                            objectValueError schema rest v
+
+                        else
+                            Just ("the field \"" ++ n ++ "\" is missing")
+
+
+expectedSchema : Value -> String -> Maybe String
+expectedSchema schema text =
+    Just
+        ("expected " ++ describeSchema schema ++ ", got " ++ String.left 60 text)
+
+
+-- A description of a schema for an error message.
+describeSchema : Value -> String
+describeSchema s =
+    let
+        kind = schemaKind s
+    in
+        if kind == "string" then
+            "a String"
+
+        else if kind == "integer" then
+            "an Int"
+
+        else if kind == "number" then
+            "a Float"
+
+        else if kind == "boolean" then
+            "a Bool"
+
+        else if kind == "nullable" then
+            "a Maybe of " ++ describeSchema (nullableInner s)
+
+        else if kind == "array" then
+            "a list of " ++ describeSchema (schemaPart "items" s)
+
+        else if kind == "enum" then
+            "an enum (" ++ String.join ", " (schemaNames s) ++ ")"
+
+        else if kind == "object" then
+            "a record"
+
+        else if kind == "map" then
+            "a Dict"
+
+        else
+            "a part no schema describes"

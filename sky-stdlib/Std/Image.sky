@@ -4,6 +4,8 @@ module Std.Image exposing
     , resizeToFit
     , thumbnail
     , dimensions
+    , frames
+    , reduceFrames
     , trim
     , crop
     , toAlpha
@@ -20,11 +22,31 @@ photo and the app serves a capped image plus a small thumbnail with no client-si
 image code.
 
 The output `Format` is the caller's choice: `Jpeg quality` (best for photos),
-`Png` (lossless; keeps transparency, for logos/stickers), or `Preserve` (keep the
-source format — a JPEG stays a JPEG at quality 85, a PNG/GIF becomes a PNG). When
+`Png` (lossless; keeps transparency, for logos/stickers), `Gif` (keeps an
+animation), `WebpLossless` (lossless WebP), or `Preserve` (keep the source
+format: a JPEG stays a JPEG at quality 85, a GIF stays a GIF with every frame,
+a WebP becomes a lossless WebP, anything else becomes a PNG). When
 you choose an explicit format you also know the file extension to save it under.
 Resizing preserves the aspect ratio and NEVER upscales. A non-image or corrupt
-input fails with a classified `Error`.
+input fails with a classified `Error`. JPEG, PNG, GIF and WebP (lossy or
+lossless) are read.
+
+**Animated GIF.** Written as `Gif` or `Preserve`, a GIF keeps every frame:
+each operation runs on every frame as it is shown (the frame drawn over what
+the earlier frames left), and each frame keeps its delay and the loop count.
+Comments and other extensions are dropped. Written as `Jpeg`, `Png` or
+`WebpLossless`, a GIF gives its first frame. `frames` counts the frames and
+`reduceFrames` drops some to make the file smaller.
+
+**Limits (decompression bombs).** A small file can claim a huge image. Every
+function that decodes reads the header first and refuses, before it decodes
+anything, an image over 100 megapixels (width x height), an animated GIF of more
+than 1,000 frames, or one of more than 250 million pixels in all its frames
+(width x height x frames). The refusal is an `InvalidInput` `Error` in the
+domain `"image"` (`Error.domain`) with the code `too_many_pixels`,
+`too_many_frames` or `too_many_frame_pixels` and the attributes `limit` and
+`value`. `dimensions` and `frames` read the header only and never refuse, so
+an app can check an upload first.
 
 To clean up a logo on a white square: `trim` cuts the white margin, `whiteToAlpha`
 makes the white transparent (keeping soft edges smooth), and `resizeToFit Png`
@@ -56,12 +78,20 @@ import Sky.Core.Error exposing (Error)
   - `Jpeg quality` — JPEG at `quality` (1..100; a value outside that range uses
     85). Best for photographs; smallest bytes.
   - `Png` — lossless PNG; preserves transparency (logos, stickers).
-  - `Preserve` — keep the source format (JPEG stays JPEG at quality 85; PNG and
-    GIF become PNG).
+  - `Gif` — GIF. An animated GIF keeps every frame, its delays and its loop
+    count; any other image becomes a GIF of one frame. A GIF holds 256 colours
+    a frame, so a photograph is dithered, and its transparency is on or off.
+  - `WebpLossless` — lossless WebP: every pixel is kept exactly, transparency
+    included. Smaller than PNG for most graphics; larger than `Jpeg` for photos.
+  - `Preserve` — keep the source format (JPEG stays JPEG at quality 85; GIF
+    stays GIF with every frame; WebP becomes lossless WebP; PNG and anything
+    else become PNG).
 -}
 type Format
     = Jpeg Int
     | Png
+    | Gif
+    | WebpLossless
     | Preserve
 
 
@@ -88,6 +118,29 @@ dimensions : String -> Task Error { width : Int, height : Int }
 dimensions =
     Ffi.kernel "Image_dimensions"
 
+
+{-| The number of frames: the frame count of a GIF, 1 for any other image. It
+reads the GIF's block structure only (no decode, no limit), so an app can show
+"a GIF of N frames" or refuse one before any work. A non-image input is an
+`Err`. Cost: O(bytes). -}
+frames : String -> Task Error Int
+frames =
+    Ffi.kernel "Image_frames"
+
+
+{-| Keep 1 frame in `n` of an animated GIF (frames 1, 1 + n, 1 + 2n, ...) and
+add the delays of the dropped frames to the frame kept before them, so the
+animation keeps its length. It is the main way to make a GIF smaller for an
+email. The output is a GIF; every kept frame is written whole. An image that
+is not a GIF comes back unchanged. `n` below 1 fails with `InvalidInput`.
+
+    Image.reduceFrames 2 upload
+        |> Task.andThen (Image.resizeToFit Image.Preserve 300 300)
+-}
+reduceFrames : Int -> String -> Task Error String
+reduceFrames =
+    Ffi.kernel "Image_reduceFrames"
+
 {-| A colour as red, green and blue, each 0..255. -}
 type alias Rgb =
     { red : Int
@@ -102,7 +155,8 @@ when it is fully transparent, or when its red, green and blue are each at least
 `threshold` (0..255; 245 treats near-white as white). An image with no margin
 keeps its size. An image that is all margin fails with `InvalidInput` ("nothing
 left to trim to"). The output is written in the chosen `Format`; `Png` keeps
-transparency. -}
+transparency. Every frame of an animated GIF is cut to one box, the one that
+holds what is left of every frame. -}
 trim : Format -> Int -> Int -> String -> Task Error String
 trim fmt threshold padding bytes =
     trim_ (formatName fmt) (formatQuality fmt) threshold padding bytes
@@ -120,15 +174,15 @@ crop fmt x y width height bytes =
 {-| Make one background colour transparent ("colour to alpha"). Each pixel
 keeps its own colour and gets the coverage that, laid back over the background
 colour, gives the original pixel, so soft and anti-aliased edges stay smooth.
-The background colour itself becomes fully transparent. The output is always
-PNG. A channel outside 0..255 fails with `InvalidInput`. -}
+The background colour itself becomes fully transparent. The output is PNG; an animated GIF
+stays an animated GIF (every frame keyed, with on-or-off transparency). A channel outside 0..255 fails with `InvalidInput`. -}
 toAlpha : Rgb -> String -> Task Error String
 toAlpha colour bytes =
     toAlpha_ colour.red colour.green colour.blue bytes
 
 
 {-| `toAlpha` with white as the background: makes a white background
-transparent. The output is always PNG. -}
+transparent. The output is PNG (an animated GIF stays an animated GIF). -}
 whiteToAlpha : String -> Task Error String
 whiteToAlpha bytes =
     toAlpha { red = 255, green = 255, blue = 255 } bytes
@@ -169,6 +223,12 @@ formatName fmt =
         Png ->
             "png"
 
+        Gif ->
+            "gif"
+
+        WebpLossless ->
+            "webp"
+
         Preserve ->
             "preserve"
 
@@ -181,6 +241,12 @@ formatQuality fmt =
             q
 
         Png ->
+            0
+
+        Gif ->
+            0
+
+        WebpLossless ->
             0
 
         Preserve ->

@@ -22,6 +22,33 @@ isAlpha =
     Ffi.kernel "Char_isAlpha"
 
 
+-- | `isAlphaNum c` — `isAlpha c || isDigit c`: a Unicode letter or a
+-- Unicode decimal digit (Sky's `isAlpha` and `isDigit` are Unicode, where
+-- Elm's are ASCII). Runs anywhere (pure). Cost: O(1).
+--
+--     Char.isAlphaNum 'a' == True
+--     Char.isAlphaNum '7' == True
+--     Char.isAlphaNum '_' == False
+isAlphaNum : Char -> Bool
+isAlphaNum =
+    Ffi.kernel "Char_isAlphaNum"
+
+
+-- | `isSpace c` — True for a Unicode white-space character (the Unicode
+-- White_Space property). In Latin-1 that is tab, newline, vertical tab,
+-- form feed, carriage return, space, U+0085 (next line) and U+00A0
+-- (no-break space); beyond it, the Unicode space separators such as
+-- U+2003 (em space) and U+3000 (ideographic space). It is the set
+-- `String.trim` removes. Runs anywhere (pure). Cost: O(1).
+--
+--     Char.isSpace ' ' == True
+--     Char.isSpace '\t' == True
+--     Char.isSpace 'x' == False
+isSpace : Char -> Bool
+isSpace =
+    Ffi.kernel "Char_isSpace"
+
+
 isDigit : Char -> Bool
 isDigit =
     Ffi.kernel "Char_isDigit"

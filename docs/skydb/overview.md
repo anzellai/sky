@@ -1,13 +1,13 @@
 # Std.Db overview
 
 > **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky`)
-> is the primary Sky compiler; the Haskell compiler is preserved under
-> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> is the Sky compiler (the earlier compilers were removed in v0.29.0).
+> Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
 > [`../history/compiler/journey.md`](../history/compiler/journey.md) for the changelog.
 
 
-**One database API, two backends.** `Std.Db` works identically against SQLite and PostgreSQL — pick the driver in `sky.toml`, never touch it again in your code. For record-shaped tables the **recommended default is `Std.Db.Store` + `Std.Codec`**: write one codec per type and let the Store drive the schema, the reads, and the writes — no hand-written SQL, no row mappers. Drop down to raw `Db.exec` / `Db.query` only for JOINs, aggregates, or SQL the Store can't express (the [escape hatch](#dropping-to-raw-sql) shown later).
+**One database API, two backends.** `Std.Db` works identically against SQLite and PostgreSQL — pick the driver in `sky.toml`, never touch it again in your code. For record-shaped tables the **recommended default is `Std.Db.Store` + `Std.Codec`**: write one codec per type and let the Store drive the schema, the reads, and the writes — no hand-written SQL, no row mappers. A Store query also joins two stores (`join` / `leftJoin`), groups and aggregates (`groupBy` / `aggregate` / `having`), projects (`select`), filters on a subquery (`inQuery` / `exists`), and upserts (`upsert` / `upsertWith`). Drop down to raw `Db.exec` / `Db.query` only for what it cannot express: a join of three or more tables, a window function, a CTE, a regular-expression match, or a trigger (such as a counter column the database maintains on each insert) (the [escape hatch](#dropping-to-raw-sql) shown later).
 
 ```elm
 module Main exposing (main)
@@ -90,11 +90,67 @@ column (a typo fails fast with the column list):
 | `Store.primaryKey "id"` | mark the PK (String/UUID key you provide) |
 | `Store.serial "id"` | auto-increment PK (`INTEGER … AUTOINCREMENT` / `BIGSERIAL`) |
 | `Store.unique "email"` | `UNIQUE` constraint |
-| `Store.defaultNow "created_at"` | `DEFAULT now()`/`datetime('now')`, DB-stamped on insert |
+| `Store.defaultNow "created_at"` | a text column: `DEFAULT now()`/`datetime('now')`, stamped on insert (on SQLite `insert`/`insertMany`/`upsert` bind the app clock) |
 | `Store.touchOnUpdate "updated_at"` | stamped on insert **and auto-bumped to `now()` on every `update`** — no raw SQL |
-| `Store.defaultText/defaultInt/defaultBool "col" v` | literal column `DEFAULT` (`defaultBool` → `TRUE`/`FALSE` on Postgres, `1`/`0` on SQLite) |
+| `Store.defaultText/defaultInt/defaultBool/defaultFloat "col" v` | literal column `DEFAULT` (`defaultBool` → `TRUE`/`FALSE` on Postgres, `1`/`0` on SQLite; `defaultFloat` refuses NaN and Infinity) |
+| `Store.index [ "customer_id", "created_at" ]` | `CREATE INDEX` named `ix_<table>_<h>` |
+| `Store.uniqueOn [ "customer_id", "code" ]` | a unique index, `ux_<table>_<h>`; every column must be required (NULLs never conflict) |
+| `Store.uniqueWhere [ "slug" ] (Store.neq "slug" (SqlString ""))` | a partial unique index; the condition is written as constants (`eq`/`neq`/`gt`/…, `isNull`/`notNull`, `inList`, `eqCol`…, `and_`/`or_`/`not_`) |
 | `Store.defaultWith "id" (\_ -> SqlValue)` | **app-side** computed default at insert (e.g. a UUID PK via the unit-arg `Task.run` idiom) |
 | `Store.generated [ "id", "created_at" ]` | columns `insert`/`update` OMIT so the DB fills them |
+
+`<h>` is 8 hex digits of a hash of the table, the columns, the unique flag
+and the predicate, so every definition has its own name, and a changed
+`uniqueWhere` condition gives a new index. `create` and `migrate` create the
+declared indexes.
+
+**`Store.migrate` and `sky db migrate --gen` follow one rule** (user decision
+D1): "A `Maybe` field gives a nullable column, any other field gives NOT NULL.
+A declared builder default wins (`defaultInt` / `defaultText` / `defaultBool` /
+`defaultNow`, plus a new `defaultFloat`), else the zero value of the type.
+Existing columns are never altered. No builder makes a required field's column
+nullable." Both paths render an added column through one runtime function, so
+the DDL is the same per dialect:
+
+| Field and builder | Added column (SQLite / PostgreSQL) |
+|---|---|
+| `Maybe`, no default | `ADD COLUMN c <type>` (nullable) |
+| `Maybe` + a declared default | nullable, `DEFAULT <d>` |
+| required + `defaultInt/Text/Bool/Float` | `NOT NULL DEFAULT <d>` |
+| required, no builder | `NOT NULL DEFAULT 0` / `''` / false |
+| required enum field (a `Codec.enum` field, or a nullary custom type under `Codec.auto`) | `NOT NULL DEFAULT '<name>'`: the first name of the `Codec.enum`, or the witness's constructor name under `Codec.auto` (`''` is not one of its names, so it would not decode) |
+| required JSON (blob) field | `NOT NULL DEFAULT '<json>'`, where `<json>` is that field's own zero (`Codec.fieldZeros`): its value in the blank record of `Codec.auto`, or its codec's zero in a `Codec.object` codec (`[]` / `""` / `0` / `null`, an object of its fields' zeros). A sibling field with no zero does not take it away |
+| required JSON field with no zero (a `taggedUnion`, `result` or `Codec.error` field of a `Codec.object` codec, an object field holding one, a `Schema.blob` column) | `NOT NULL` with no default: an empty table takes it, a table with 1 or more rows is `Err` (a `sky db migrate` file fails at the same count, with the same advice) |
+| `defaultNow` (text) | PostgreSQL `NOT NULL DEFAULT now()`; SQLite `NOT NULL DEFAULT '<time of the ALTER>'` |
+| `unique` | added, then a unique index; a required unique column on a table with 2 or more rows is `Err` (the same count as a `sky db migrate` file) |
+
+Notes: `migrate` adds and creates only, it never drops, renames or retypes,
+and it never makes an existing nullable column NOT NULL. Run it from one
+process: two replicas that migrate at once can race on `ADD COLUMN`. On
+PostgreSQL, `CREATE INDEX` locks writes to the table while it runs, and from
+PostgreSQL 11 `ADD COLUMN … NOT NULL DEFAULT <constant or now()>` needs no
+rewrite (`now()` stamps the rows that exist with the time of the ALTER). A
+plain String column keeps the zero `''`. A `Codec.map` wrapper over a string
+with its own rule cannot tell `''` is wrong: declare a default for such a
+field.
+
+A required `unique` column in a `--gen` migration file is an `addColumn` op
+(`NOT NULL DEFAULT <d>`) and then an `addIndex` op. On a table with 2 or more
+rows every row takes the same default, so the index cannot be built: `sky db
+migrate` rolls the migration back and names the table, the column and the fix.
+Give each row its own value in a data step, a `{"kind": "raw", "sql": "UPDATE t
+SET c = …"}` op between the two ops, or make the field a `Maybe`.
+
+The `_sky_migrations` ledger checks a `--gen` migration file by a checksum of
+its **ops** (a canonical form of the op list, the same on every dialect), not
+by the SQL they render to. A later change to how an op renders never makes an
+applied file look edited; an edit to the file is still a `checksum mismatch`.
+A ledger that v0.28 wrote is upgraded on the first `sky db migrate`, with no
+configuration (see `docs/migration/v0.29.md`).
+
+`pushProject` and `dumpSchema` (so `sky db migrate --gen` and `sky db push`)
+refuse a store whose builders recorded a problem (for example an unknown column
+in `unique`, `index` or `uniqueOn`), naming the column, before any DDL.
 
 ### Writes
 
@@ -117,6 +173,139 @@ Store.setFields conn orders (SqlString orderId)
 Store.adjust conn products (Store.eq "id" (SqlString pid)) [ ( "stock", -qty ) ]
 ```
 
+**Conflict rules, expression SET, copy and RETURNING (v0.29.0).** Each renders
+ONE statement, checks every column against the codec first, and binds every
+value as a parameter. They need SQLite 3.35+ (the bundled engine is 3.46) or
+PostgreSQL 9.5+.
+
+| Verb | Statement | Returns |
+|---|---|---|
+| `insertOrIgnore conn s row` | `INSERT … ON CONFLICT DO NOTHING` (any unique key) | 1 written, 0 already there |
+| `insertOrIgnoreOn [ "dedupe_key" ] conn s row` | `… ON CONFLICT (dedupe_key) DO NOTHING` | 1 or 0 |
+| `upsertWith conn s row { conflictOn, onConflict }` | `… ON CONFLICT (cols) DO UPDATE SET …` | rows affected |
+| `updateSet conn s cond [ setCol / setValue / setWhen ]` | `UPDATE … SET c = other_col, d = CASE WHEN … END` | rows affected |
+| `copyInto` / `copyIntoOrIgnore conn target query [ ( col, from / const ) ]` | `INSERT … SELECT …` | rows inserted |
+| `insertReturning conn s row` | `INSERT … RETURNING …` | the stored row |
+| `updateFieldsReturning conn s cond sets` | `UPDATE … RETURNING …` | the updated rows |
+| `deleteWhereReturning conn s cond` | `DELETE … RETURNING …` | the deleted rows |
+
+```elm
+-- claim once: of two concurrent calls with one key, exactly one gets 1
+Store.insertOrIgnore conn sentEmails { key = "welcome:" ++ userId, sentAt = now }
+
+-- a counter row per day, customer and event, in one atomic statement
+Store.upsertWith conn dailyCounts row
+    { conflictOn = [ "day", "customer_id", "event" ]
+    , onConflict =
+        [ Store.addExcluded "count"      -- count = daily_counts.count + excluded.count
+        , Store.keepMin "first_at"       -- the smaller; a NULL side gives the other
+        , Store.keepMax "last_at"
+        , Store.setExcluded "source"     -- source = excluded.source
+        ]
+    }
+
+-- set columns from expressions, every row from its own values
+Store.updateSet conn orderLines (Store.eq "wanted_at" (SqlInt 0))
+    [ Store.setCol "wanted_at" "status_at"
+    , Store.setWhen "status" (Store.eq "status" (SqlString "ai")) (SqlString "open") Store.keep
+    ]
+
+-- a copy or a roll-up from any query (after select / aggregate, a result field)
+Store.copyInto conn enquiries
+    (Store.query supportRequests |> Store.where_ (Store.gt "created_at" (SqlInt cutoff)))
+    [ ( "id", Store.from "id" ), ( "kind", Store.const (SqlString "support") ), ( "customer_id", Store.from "customer_id" ) ]
+
+-- the read-after-write of a claim, in one statement
+Store.updateFieldsReturning conn jobs
+    (Store.and_ [ Store.eq "id" (SqlString jobId), Store.isNull "owner" ])
+    [ ( "owner", SqlString me ) ]     -- [ job ] for the one caller that won, [] for the others
+```
+
+The rules, all checked before any statement:
+
+- `conflictOn` (and `insertOrIgnoreOn`) is the primary key, a `unique` column
+  or a `uniqueOn` set (not a `uniqueWhere`), of required columns: both engines
+  treat NULLs as distinct, so a nullable key never conflicts.
+- A conflict rule never names the primary key, a `conflictOn` column, or a
+  generated column (`serial`, `defaultNow`, `defaultWith`, `generated`), and a
+  column has one rule. `addExcluded` needs a required `Int` / `Float` column.
+  `keepMin` / `keepMax` refuse a bool or JSON column. An empty rule list is
+  `DO NOTHING`. `touchOnUpdate` columns take the clock on the update.
+- `upsertWith` returns rows affected; `upsert` returns the primary key for an
+  Int-keyed store (see Writes above).
+- `updateSet`: a target is a codec column, not the primary key or a generated
+  column, set once. `setCol` copies a column of the same kind (a nullable source
+  needs a nullable target). `setWhen target cond value Store.keep` leaves the
+  other rows as they are; `Store.otherwise v` sets `v` on them. Each CASE
+  parameter is cast to the column type, so it works on PostgreSQL for `Int` and
+  `Bool` columns. Every `setValue`, `setWhen` and `otherwise` value follows the
+  value rule below. An empty list runs nothing and returns 0.
+- `copyInto`: the source is any query, read as a subquery. `from` names a column
+  of its rows (after `select` / `aggregate`, a result field), `const` binds one
+  value for every row. A `from` column fits its target as a `select` source
+  fits its field (kinds and codecs, see Projection below), a `const` value
+  follows the value rule below, every required target column without a default
+  is mapped, and so is every
+  `defaultWith` column (the copy does not compute it). A `serial` column is never
+  mapped. A join source needs `select` first. `copyIntoOrIgnore` skips a row that
+  breaks a unique key.
+- RETURNING decodes each row through the codec. `insertReturning` gives the row
+  with its `serial` id and `defaultNow` stamp, and fails if no row comes back.
+  A write that the database refuses (a UNIQUE violation in `UPDATE … RETURNING`)
+  is an `Err`, never an empty list. An empty `updateFieldsReturning` set list is
+  an `Err`. Inside a GET server-side render every one of these writes is
+  suppressed, as `Db.exec` is.
+
+**Value kinds.** A `SqlValue` never reaches the database to be converted:
+SQLite's `CAST('abc' AS BIGINT)` is 0, and a `2.7` in an integer column
+truncates on SQLite and rounds on PostgreSQL. So one rule, the same on both
+dialects, is checked before any statement:
+
+| Column | Takes |
+|---|---|
+| text (`String`, an enum) | `SqlString` |
+| int (`Int`) | `SqlInt` |
+| real (`Float`) | `SqlFloat` (finite) or `SqlInt` |
+| bool (`Bool`) | `SqlBool` |
+| JSON (a list, record or custom type field) | `SqlString` holding JSON |
+
+`SqlBytes`, `SqlTime`, `SqlDecimal` and `SqlMoney` fit no Store column (bind
+the text, `SqlString (Decimal.toString d)`), and NaN and Infinity fit none
+(SQLite stores NaN as NULL).
+
+- **A written value** (`updateFields`, `setFields`, `setValue`, `setWhen`,
+  `otherwise`, `const`, a `defaultWith` result) is also checked against the
+  field's codec: `SqlNull` only into a `Maybe` field, an enum column takes one
+  of its names, and a JSON column takes JSON its codec reads
+  (`SqlString "[\"a\"]"` into a `List Int` field is refused). A JSON column
+  whose JSON Schema leaves a part open (a custom type, a `Result`, a `Dict`)
+  is checked by the store's codec reading the value, so JSON of another
+  custom type is refused too.
+- **A compared value** (`eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `inList`,
+  `findBy`, `delete`, a `uniqueWhere` predicate) follows the table, but a
+  `SqlString` compared with an int, real or bool column is read as the
+  column's kind (`"42"`, `"1.5"`, `"true"`), so an id taken from a URL compares
+  the same way on both dialects. Text that is not a value of the kind is an
+  `Err`. `SqlNull` is refused: `col = NULL` is never true, so use `isNull` or
+  `notNull`.
+- **A declared default** fits its column: `defaultText` a text column (an
+  enum's default is one of its names) or a JSON column (JSON its codec reads),
+  `defaultInt` an `Int` or `Float` column, `defaultFloat` a `Float` column,
+  `defaultBool` a `Bool` column. `migrate` writes the default into the rows
+  that exist, so a default that does not fit would give every old row a value
+  that does not read back. A `Schema.Table` default follows the same rule
+  (`createTable`, `createSchema` and `toProject` refuse it), and so does an
+  `addColumn` op in a migration file.
+- `adjust` adds to a required `Int` or `Float` column: NULL plus a delta stays
+  NULL.
+
+A codec's own encoding is checked too: a value whose JSON is not of the
+column's kind (an encoder and a shape that disagree) is an `Err` naming the
+column, never `0`, `false` or the value's Go text.
+
+Counters that the database keeps by itself (an aggregate table kept current by
+triggers) stay raw SQL: write the trigger in a migration.
+
 ### Reads — query builder
 
 Composable, injection-safe `Cond` values; you never touch a SQL string:
@@ -124,31 +313,250 @@ Composable, injection-safe `Cond` values; you never touch a SQL string:
 ```elm
 Store.query users
     |> Store.where_ (Store.eq "verified" (SqlInt 1))
-    |> Store.where_ (Store.or_ [ Store.like "email" "%@work.io", Store.gt "createdAt" (SqlString cutoff) ])
+    |> Store.where_ (Store.or_ [ Store.endsWith "email" "@work.io", Store.gt "createdAt" (SqlString cutoff) ])
     |> Store.orderDesc "createdAt"
     |> Store.limit 20
-    |> Store.toList conn        -- terminals: toList / toMaybe / count
+    |> Store.toList conn        -- terminals: toList / toRows / toMaybe / count
 ```
 
 Leaves (`eq`/`neq`/`gt`/`gte`/`lt`/`lte`/`like`/`isNull`/`notNull`/`inList "col" v`)
 combine with `and_`/`or_`/`not_`; multiple `where_` clauses AND together (so OR /
 nesting is first-class). `Store.sqlOf codec value` filters by a **typed** value
 (enum / `Money` / `Time` / a `Codec.map` wrapper) via its codec. Whole-table /
-single-row shortcuts: `all` / `findBy`.
+single-row shortcuts: `all` / `findBy` (its text is read as the column's
+kind: `Store.findBy conn notes "id" "42"` on an `Int` key). `Store.toSql conn q` returns the SQL text
+(with `?`) and the parameters a query renders on that connection's dialect, or
+the `Err` it would fail with.
 
-### JOINs and aggregates → `Store.selectRaw`
+**Every name is checked before any statement runs.** A column argument is a
+codec column (the record field or its snake name) or a `jsonText` reference. A
+table, column, alias or JSON key must match `[A-Za-z_][A-Za-z0-9_]*` and be at
+most 63 bytes, the primary key must be a codec column, and a builder that names
+an unknown column (`Store.unique "emial"`) makes the first verb fail with that
+name. `findBy` and `delete` follow the same rule. A negative `limit` or `offset`
+is an `Err`; `offset` without `limit` works on both dialects. There is no
+reserved-word list: a column named `order` or `user` stays a driver error on the
+dialect that refuses it. **Never build a column argument from user input:** a
+`jsonText` reference can read any key of a JSON column.
 
-A single-table Store can't express a JOIN or `GROUP BY` — so `selectRaw` runs
-**any** SQL and decodes each row into a typed **projection** record via a codec
-(the sqlx split: you own the SQL, the codec owns the mapping — no ORM, no
-relations, no N+1):
+**Text matching.** `like` uses its pattern as given: `%` and `_` are wildcards,
+it does not escape `%`, `_` or `\`, and it is case-sensitive on PostgreSQL but
+ignores ASCII case on SQLite. `Store.like "email" ("%" ++ domain)` matches wrong
+addresses when `domain` holds `_`. For text a user typed, use the escaped forms, which match the
+same way on both dialects:
+
+| Condition | Matches |
+|---|---|
+| `Store.contains "name" "50%"` | the text contains the needle; `%`, `_`, `!` are literal; case-sensitive |
+| `Store.startsWith "name" "Ab"` / `Store.endsWith "email" "@work.io"` | a prefix / suffix, case-sensitive |
+| `Store.eqCi "name" "ada"` | equal, ignoring case (`LOWER(col) = LOWER(?)`) |
+| `Store.containsCi "email" "WORK"` | contains, ignoring case |
+
+An empty needle matches every non-NULL row. The column must be a text column.
+SQLite's `LOWER` folds ASCII letters only; PostgreSQL folds all letters. To
+escape a `like` pattern by hand, prefix `!`, `%` and `_` with `!` and use raw
+SQL with `ESCAPE '!'`.
+
+**Regular expressions: not offered, on purpose.** SQLite has no built-in
+`REGEXP` (a portable form would need a function registered on every
+connection), so `Std.Db.Store` has no regex condition. Store a normalised
+column (lower case, punctuation removed) when you write the row, and match it
+with `contains` / `startsWith` / `endsWith` / `eqCi` / `containsCi`. A regex
+that must run in the database stays raw SQL for the one dialect you run.
+
+**Column against column.** `eqCol`, `neqCol`, `gtCol`, `gteCol`, `ltCol` and
+`lteCol` compare two columns of the same kind:
+`Store.where_ (Store.gtCol "last_staff_at" "customer_read_at")`.
+
+**Inside a JSON column.** `Store.jsonText "props" "source"` names one key of a
+JSON text column and works wherever a column name does (a condition,
+`groupBy`, `keyAs`, `selectAs`, an order term). It reads the key's text, or
+NULL when the key is missing. A JSON `true` reads `"true"` on both dialects. A
+number reads as its text, which can differ (`1e2` reads `100.0` on SQLite and
+`100` on PostgreSQL), and an object differs in spacing. The column must be a
+text or blob column, and a compared value must be `SqlString`. A row with
+malformed JSON makes the query `Err`, never a short list.
+
+### Grouped aggregates
+
+`groupBy` + `aggregate` give one row per group, decoded by a result codec.
+Each field of the result codec is covered by exactly one `Agg`:
 
 ```elm
-type alias Tally = { ideaId : String, votes : Int }
+type alias Tally = { customerId : String, sent : Int, opened : Int, lastSentAt : Int }
 
-Store.selectRaw conn (Codec.auto { ideaId = "", votes = 0 })
-    "SELECT idea_id, COUNT(*) AS votes FROM votes GROUP BY idea_id"
-    []                                             -- : Task Error (List Tally)
+Store.query invoices
+    |> Store.where_ (Store.gt "sent_at" (SqlInt since))
+    |> Store.groupBy [ "customer_id" ]
+    |> Store.aggregate (Codec.auto { customerId = "", sent = 0, opened = 0, lastSentAt = 0 })
+        [ Store.key "customer_id"
+        , Store.countAs "sent"
+        , Store.countIfAs "opened" (Store.gt "opened_at" (SqlInt 0))
+        , Store.maxAs "last_sent_at" "sent_at"
+        ]
+    |> Store.having (Store.gte "sent" (SqlInt 2))
+    |> Store.orderDesc "sent"
+    |> Store.toRows conn                           -- : Task Error (List Tally)
+```
+
+| `Agg` | Renders | Result field |
+|---|---|---|
+| `key "col"` / `keyAs "field" "col"` | the group column (it must be in `groupBy`) | the column's kind; `Maybe` if the column is nullable |
+| `countAs "field"` | `COUNT(*)` | `Int` |
+| `countIfAs "field" cond` | rows of the group that match `cond` (0 when none) | `Int` |
+| `countDistinctAs "field" "col"` | `COUNT(DISTINCT col)` | `Int` |
+| `sumAs "field" "col"` | the sum of an `Int` / `Float` column, 0 when empty | the column's kind |
+| `minAs` / `maxAs "field" "col"` | the smallest / largest value (not a `Bool` column) | the column's kind; `Maybe` when the column is nullable or there is no `groupBy` |
+
+`having` and the order terms after `aggregate` name result fields. Without
+`groupBy` the result is one row over the selection: an empty table gives zero
+counts and sums and `Nothing` for `minAs` / `maxAs`. A wrong kind, an unknown
+column or field, a `key` that is not grouped, or a field with no `Agg` is an
+`Err` before any statement runs. Text compares by the database collation
+(SQLite `BINARY`, PostgreSQL the database collation), so `minAs` / `maxAs`, `gt`
+and `ORDER BY` on text can differ between the dialects.
+
+### Projection, DISTINCT, newest row per key
+
+```elm
+Store.query orders |> Store.select summaryCodec |> Store.toList conn
+    -- each field of summaryCodec reads the column of the same name
+
+Store.query orders |> Store.selectColumn "customer_id" Codec.string |> Store.distinct |> Store.toList conn
+    -- : Task Error (List String)
+
+Store.query events
+    |> Store.selectAs sourcedCodec [ ( "source", Store.jsonText "props" "source" ) ]
+
+Store.query orders
+    |> Store.where_ (Store.eq "status" (SqlString "open"))
+    |> Store.latestPer [ "customer_id" ] "created_at"   -- the newest open order per customer
+    |> Store.toList conn
+```
+
+A nullable column needs a `Maybe` field. A field's codec must read every value
+its source column holds, so a projection that could fail on a row is refused
+before it runs: a `Maybe x` field reads a source `x` or `Maybe x`, a
+`String` field reads a `String` or an enum, a `Float` field an `Int`, an enum
+field an enum whose names it all has, and a list, record or custom type is
+compared part by part. A `List Int` column into a `Maybe (List String)` field,
+or a `String` column into a `Maybe` enum field, is an `Err` before any
+statement. The same rule holds for `selectAs`, `selectColumn`, a `key`,
+`minAs` or `maxAs` result, a `copyInto` `from` column and `setCol`. With `distinct` and a projection,
+every order column must be a selected column. `latestPer` never picks a NULL as
+the newest, breaks a tie by the larger primary key, and does not combine with
+`distinct`, `groupBy` or `aggregate`. `count` counts the rows such a query
+returns.
+
+**What a read refuses.** Each stored value is read by its column's kind. SQL
+NULL is `Nothing`. A value that does not read as the kind (`'abc'` in an
+integer column, text that is not JSON in a JSON column, `2` in a bool column)
+is an `Err` naming the table, the column and the kind, never `Nothing`. The
+shapes earlier versions wrote still read: an integer stored as text (`'5'`, a
+v0.28 nested `Maybe (Maybe Int)`), an integral number in a float form, a bool
+stored as `1` / `0` on SQLite or `true` / `false` on PostgreSQL, and a
+`defaultNow` timestamp, which is text. The TEXT column v0.28 made for a
+nested `Maybe` scalar stays TEXT and takes v0.29 writes on both dialects, but
+it sorts as text (the v0.29 migration guide has the one-time fix). A column whose value its field's codec
+does not read, at any depth (JSON of another custom type, an element of a
+`List (Maybe Shade)` that is not a `Shade`), is an `Err` naming the table and
+the column too: `Codec.maybe` reads only `null` as `Nothing`, so a JSON `null`
+element is `Nothing` and any other bad value fails. `setValue` and a declared
+default of such JSON are refused before the statement. A `selectRaw` result
+must hold every codec column (write `NULL AS col` for a `Maybe` field it
+leaves out).
+
+**NULL ordering.** An order term on a nullable column sorts NULLs first
+ascending and last descending, on both dialects (SQLite's own default, now
+explicit for PostgreSQL). A term on a required column renders as before.
+
+### Joins of two stores
+
+```elm
+Store.join invoices customers
+        (Store.onAll [ ( "region_id", "region_id" ), ( "customer_id", "id" ) ])
+    |> Store.whereLeft (Store.eq "region_id" (SqlString regionId))
+    |> Store.whereRight (Store.eq "archived" (SqlBool False))
+    |> Store.orderLeftDesc "sent_at"
+    |> Store.limit 50
+    |> Store.toPairs conn                  -- Task Error (List ( Invoice, Customer ))
+
+Store.leftJoin invoices customers (Store.on "customer_id" "id")
+    |> Store.toPairsMaybe conn             -- Task Error (List ( Invoice, Maybe Customer ))
+```
+
+One statement. In SQL the left store is `a` and the right store is `b`, and
+each result column has a quoted alias (`a.sent_at AS "a__sent_at"`), so two
+tables with the same column names never clash and PostgreSQL keeps a camelCase
+name. Each side decodes through its own codec.
+
+- **Names.** `whereLeft` / `whereRight` and `orderLeftAsc` / `orderLeftDesc` /
+  `orderRightAsc` / `orderRightDesc` read one side. In `where_`, `orderAsc`,
+  `select`, `groupBy` and an `Agg`, a bare name reads the store that has it;
+  a name both stores have must be written `"a.col"` or `"b.col"`, else the
+  query is an `Err`. ON columns must be of one kind. Every name is checked
+  against its own codec before the query runs.
+- **LEFT join.** `whereRight` goes into the ON clause, so it picks the right
+  row and never drops a left row (a `where_` on a right column filters rows as
+  usual). A right column can be NULL in any row, so `select` and an `Agg` need
+  a `Maybe` field for it.
+- **Reshape a join.** `select` / `selectAs`, `groupBy` + `aggregate` and
+  `count` take a join: `Store.join bills clients (Store.on "client_id" "id")
+  |> Store.groupBy [ "b.name" ] |> Store.aggregate totalCodec [ Store.keyAs
+  "name" "b.name", Store.sumAs "total" "a.amount" ]`.
+- **Limits.** A join reads two stores: a join of three tables is not
+  expressible (use `selectRaw`). `latestPer` does not take a join.
+  `whereLeft` / `whereRight` / `orderLeft*` / `orderRight*` on a query that is
+  not a join are an `Err` when it runs (the type cannot tell).
+
+### Subquery conditions
+
+```elm
+-- Delete the rows of old batches in ONE statement: rows added meanwhile are seen.
+Store.deleteWhere conn importRows
+    (Store.inQuery "batch_id"
+        (Store.query importBatches
+            |> Store.where_ (Store.lt "created_at" (SqlInt cutoff))
+            |> Store.column "id"))
+
+-- Customers with no invoice sent since a date.
+Store.query customers
+    |> Store.where_
+        (Store.notExists invoices
+            (Store.correlate "customer_id" "id")
+            (Store.gt "sent_at" (SqlInt since)))
+```
+
+`column "id" q` names one column of a query (a `Subquery`), checked against the
+inner store's codec. `inQuery` / `notInQuery` compare an outer column with it
+(the two of one kind). `exists` / `notExists` take a store, the `correlate inner
+outer` pairs that tie it to the outer row (`correlateAll` for several), and a
+condition on the inner store (`Store.and_ []` for none). They work in `where_`,
+in a join, and in the writes that take a `Cond` (`deleteWhere`, `updateWhere`,
+`updateFields`, `adjust`). The inner query is `sq1` (`sq2` inside it), and it
+takes `where_`, `orderAsc` / `orderDesc`, `limit` and `offset` only (a `limit`
+or `offset` needs an order); a `select`, `aggregate`, `distinct`, `latestPer` or
+join there is an `Err`. Subquery conditions do not apply in `having`.
+
+**NULL rules.** The subquery leaves out its NULLs (`… AND sq1.id IS NOT NULL`),
+so an outer NULL never matches `inQuery`, and `notInQuery` (or `not_ (inQuery
+…)`) keeps an outer value that is not in the set even when the inner column
+holds NULL. An outer NULL is left out by `notInQuery` when the inner set has
+rows, and kept when it is empty (`NULL NOT IN ()` is true on both engines).
+
+### `Store.selectRaw` — the last escape hatch
+
+`selectRaw` runs **any** SQL and decodes each row into a typed **projection**
+record via a codec (the sqlx split: you own the SQL, the codec owns the mapping
+— no ORM, no relations, no N+1). Use it for a shape the builders do not model
+(a join of three tables, a window function, a CTE):
+
+```elm
+type alias Pair = { ideaId : String, author : String }
+
+Store.selectRaw conn (Codec.auto { ideaId = "", author = "" })
+    "SELECT i.id AS idea_id, u.name AS author FROM ideas i JOIN users u ON u.id = i.author_id"
+    []                                             -- : Task Error (List Pair)
 ```
 
 Raw `Std.Db` (`query`/`exec`/`withTransaction`) remains the escape hatch for
@@ -233,13 +641,13 @@ db : Store.Project
 db = Schema.toProject allTables
 ```
 
-Table name, primary key, `UNIQUE`, `NOT NULL`, `DEFAULT` and autoincrement all
-carry through, so `sky db push` creates/updates the columns and `migrate --gen`
-diffs them. Secondary **INDEXES do not** cross the bridge (the `Store.Project`
-schema-dump models tables + columns only) — keep creating them via
-`createSchema`/`createTable` (which render `withIndex`) at app boot, or as raw
-`CREATE INDEX IF NOT EXISTS`. Ints widen to `BIGINT` under the codec pipeline
-(safe; no millis overflow).
+Table name, primary key, `UNIQUE`, `NOT NULL`, `DEFAULT`, autoincrement and
+the `withIndex` / `withUniqueIndex` indexes (with their own names) carry
+through, so `sky db push` creates the columns and missing indexes and
+`migrate --gen` diffs them (`addIndex` / `dropIndex`). A column added to an
+existing table follows the `Store.migrate` rule above. `defaultNow` on a
+`timestamp` / `bigInt` / `int` column is epoch milliseconds. Ints widen to
+`BIGINT` under the codec pipeline (safe; no millis overflow).
 
 > **Naming tip.** `Schema.text` collides with `Std.Html`/`Std.Ui`'s `text` if
 > both are exposed unqualified. In a module that already does
@@ -503,8 +911,9 @@ atomic `SET col = col + delta` (counters, stock levels) — see
 
 ### Dropping to raw SQL
 
-When you need SQL the Store can't express — a JOIN, a `GROUP BY`, a hand-tuned
-query — drop to raw `Db.exec` / `Db.execRaw` / `Db.queryDecode` with a
+When you need SQL the Store can't express (a join of three or more tables, a
+window function, a CTE, a regular-expression match, a trigger such as a counter
+column the database maintains, a hand-tuned query), drop to raw `Db.exec` / `Db.execRaw` / `Db.queryDecode` with a
 hand-written row decoder. The row shape from the runtime is `Dict String String`
 — every column lands stringified, and the typed accessors (`Db.getInt` /
 `Db.getString` / `Db.getBool`) parse on read with a default-supplied fallback.
@@ -711,8 +1120,8 @@ main =
 How it works:
 
 - A `_sky_migrations` table (created automatically) records the
-  `name`, a `checksum` of the SQL, and `applied_at` of every
-  applied migration.
+  `name`, a `checksum` of the SQL, `applied_at` and `kind` (`sql` here,
+  `ops` for a `sky db migrate` file) of every applied migration.
 - On each `migrate` call, migrations whose `name` is not yet
   recorded run **in list order, each in its own transaction**, and
   are recorded. Already-recorded migrations are skipped.

@@ -7,7 +7,7 @@
 
 ## 1. The problem
 
-Sky.Live apps (sky-diagram, mini-notion, and every downstream tenant)
+Sky.Live apps (sky-diagram, a downstream app, and every downstream tenant)
 lose requests under concurrent write load because the current Std.Db
 runtime folds every driver-side error into `ErrIo("db.exec: …")`:
 

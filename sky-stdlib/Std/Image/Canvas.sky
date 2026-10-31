@@ -1,0 +1,468 @@
+-- | Std.Image.Canvas — draw an image on the server: shapes, text, pasted
+-- images, masks, blur and resize, written as PNG, JPEG, GIF or lossless WebP.
+--
+-- A `Canvas` is a list of drawing steps. Each function below adds one step in
+-- O(1) and touches no pixel, so a long pipeline is cheap and one canvas can be
+-- the base of many (draw a card template once, then write a name on each
+-- copy). `encode` draws every step once and writes the file.
+--
+--     import Std.Image as Image
+--     import Std.Image.Canvas as Canvas exposing (Paint(..))
+--
+--     badge : String -> Task Error String
+--     badge name =
+--         Canvas.blank 400 120 (Canvas.rgba 255 255 255 255)
+--             |> Canvas.roundedRect 0 0 400 120 24 (Fill (Canvas.rgba 30 60 160 255))
+--             |> Canvas.text
+--                 { font = Canvas.defaultFont, size = 40.0, colour = Canvas.rgba 255 255 255 255 }
+--                 24
+--                 36
+--                 name
+--             |> Canvas.encode Image.Png
+--
+-- **Coordinates.** Pixels, with (0, 0) at the top left and y going down. A
+-- rectangle `x y w h` covers the pixels from `x` to `x + w - 1`. Shapes are
+-- anti-aliased. A `Stroke width colour` is drawn inside the shape's box, as
+-- an outline that is `width` pixels wide.
+--
+-- **Errors.** Drawing functions cannot fail. What depends on the input fails
+-- when `encode` runs, as its `Err`: an `Rgba` channel outside 0..255 (code
+-- `colour_range`), a canvas over 16384 pixels on a side (`canvas_too_large`)
+-- or over 100 megapixels (`too_many_pixels`), and a pasted image that does
+-- not decode or is over the limits of `Std.Image`. Codes are in the error
+-- domain `"image"` (`Error.domain`).
+--
+-- **Text.** Fonts are TrueType or OpenType files (a `.ttc` collection by
+-- index). A size is in pixels. `defaultFont` (Go Regular) needs no file. There
+-- is no hinting and no complex shaping (Arabic joining, Indic reordering):
+-- pair kerning from the font's `kern` table is applied.
+--
+-- **Where it runs.** On the server (and in a CLI). A Sky.Spa app draws in its
+-- backend.
+--
+-- **Cost.** A drawing step is O(1). `encode` is O(width x height) plus, per
+-- step, the pixels it covers (a blur and a resize are O(width x height)).
+module Std.Image.Canvas exposing
+    ( Canvas
+    , Rgba
+    , rgba
+    , Paint(..)
+    , blank
+    , fromImage
+    , rect
+    , roundedRect
+    , ellipse
+    , arc
+    , line
+    , Mask
+    , roundedMask
+    , ellipseMask
+    , alphaMask
+    , paste
+    , pasteCanvas
+    , blur
+    , Filter(..)
+    , resize
+    , Font
+    , loadFont
+    , fontFromBytes
+    , defaultFont
+    , TextStyle
+    , text
+    , measure
+    , encode
+    , pixelDiff
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Std.Image as Image
+
+-- | A drawing: a base (a blank canvas or an image) and the steps drawn on it.
+-- Opaque, read only, made by `blank` and `fromImage`. A `Canvas` is not data:
+-- it cannot be stored in a session or encoded with a Codec.
+type Canvas
+    = Canvas__Internal Int
+
+-- | A colour with transparency: red, green, blue and alpha, each 0..255
+-- (alpha 0 is transparent, 255 opaque). A channel outside 0..255 makes
+-- `encode` fail.
+type alias Rgba =
+    { red : Int
+    , green : Int
+    , blue : Int
+    , alpha : Int
+    }
+
+
+-- | `rgba red green blue alpha`.
+rgba : Int -> Int -> Int -> Int -> Rgba
+rgba r g b a =
+    { red = r, green = g, blue = b, alpha = a }
+
+-- | How a shape is drawn: filled, or as an outline of a width in pixels.
+type Paint
+    = Fill Rgba
+    | Stroke Int Rgba
+
+
+-- | A blank canvas of `width` x `height` in one colour (`rgba 0 0 0 0` for a
+-- transparent one).
+blank : Int -> Int -> Rgba -> Canvas
+blank width height colour =
+    blank_ width height (packRgba colour)
+
+
+-- | A canvas that starts as an image (JPEG, PNG, GIF, WebP), the size of the
+-- image. The image is decoded when `encode` runs; a GIF gives its first frame.
+fromImage : String -> Canvas
+fromImage =
+    Ffi.kernel "Image_canvasFromImage"
+
+
+-- | A rectangle: `rect x y width height paint`.
+rect : Int -> Int -> Int -> Int -> Paint -> Canvas -> Canvas
+rect x y w h paint canvas =
+    rect_ x y w h (paintWidth paint) (packRgba (paintColour paint)) canvas
+
+
+-- | A rectangle with round corners of `radius` pixels:
+-- `roundedRect x y width height radius paint`. The radius is at most half the
+-- shorter side.
+roundedRect : Int -> Int -> Int -> Int -> Int -> Paint -> Canvas -> Canvas
+roundedRect x y w h radius paint canvas =
+    roundedRect_
+        x
+        y
+        w
+        h
+        radius
+        (paintWidth paint)
+        (packRgba (paintColour paint))
+        canvas
+
+
+-- | The ellipse inside a box: `ellipse x y width height paint`. A square box
+-- gives a circle.
+ellipse : Int -> Int -> Int -> Int -> Paint -> Canvas -> Canvas
+ellipse x y w h paint canvas =
+    ellipse_ x y w h (paintWidth paint) (packRgba (paintColour paint)) canvas
+
+
+-- | Part of a circle: `arc centreX centreY radius startDegrees endDegrees
+-- paint`. Angles are in degrees, clockwise from 3 o'clock (as Pillow draws
+-- them). `Fill` gives a pie slice; `Stroke width` a curved band `width`
+-- pixels wide inside the radius (a progress ring).
+arc : Int -> Int -> Int -> Float -> Float -> Paint -> Canvas -> Canvas
+arc cx cy radius start end paint canvas =
+    arc_
+        cx
+        cy
+        radius
+        start
+        end
+        (paintWidth paint)
+        (packRgba (paintColour paint))
+        canvas
+
+
+-- | A straight line between two pixels: `line x1 y1 x2 y2 width colour`.
+line : Int -> Int -> Int -> Int -> Int -> Rgba -> Canvas -> Canvas
+line x1 y1 x2 y2 width colour canvas =
+    line_ x1 y1 x2 y2 width (packRgba colour) canvas
+
+-- | The shape that a pasted image shows through. Opaque.
+type Mask
+    = Mask__Internal Int
+
+
+-- | A rectangle of `width` x `height` with round corners of `radius` (an
+-- avatar or a screenshot with round corners).
+roundedMask : Int -> Int -> Int -> Mask
+roundedMask =
+    Ffi.kernel "Image_canvasRoundedMask"
+
+
+-- | The ellipse inside `width` x `height` (a round avatar).
+ellipseMask : Int -> Int -> Mask
+ellipseMask =
+    Ffi.kernel "Image_canvasEllipseMask"
+
+
+-- | A mask from an image: its alpha channel when it has transparency, else
+-- its brightness (white shows the pasted image, black hides it).
+alphaMask : String -> Mask
+alphaMask =
+    Ffi.kernel "Image_canvasAlphaMask"
+
+
+-- | Paste an image (its bytes) with its top-left corner at `x`, `y`, over
+-- what is there (its transparency is kept), through a mask when one is given.
+-- The mask's top-left corner is at `x`, `y` too.
+paste : Int -> Int -> Maybe Mask -> String -> Canvas -> Canvas
+paste x y mask bytes canvas =
+    case mask of
+
+        Just m ->
+            paste_ x y True m bytes canvas
+
+        Nothing ->
+            paste_ x y False noMask bytes canvas
+
+
+-- | Paste another canvas, as `paste` does.
+pasteCanvas : Int -> Int -> Maybe Mask -> Canvas -> Canvas -> Canvas
+pasteCanvas x y mask source canvas =
+    case mask of
+
+        Just m ->
+            pasteCanvas_ x y True m source canvas
+
+        Nothing ->
+            pasteCanvas_ x y False noMask source canvas
+
+
+-- | Blur the whole canvas: a Gaussian blur of `sigma` pixels (three box
+-- passes, so the cost does not grow with sigma). A sigma of 0 or less does
+-- nothing.
+blur : Float -> Canvas -> Canvas
+blur =
+    Ffi.kernel "Image_canvasBlur"
+
+-- | The resampling filter of `resize`, from the fastest to the sharpest.
+-- `Nearest` keeps hard pixel edges (pixel art).
+type Filter
+    = Nearest
+    | Bilinear
+    | CatmullRom
+    | Lanczos
+
+
+-- | Scale the canvas to exactly `width` x `height` (the steps after it draw
+-- on the new size). To keep the aspect ratio, compute the size first.
+resize : Filter -> Int -> Int -> Canvas -> Canvas
+resize filter w h canvas =
+    resize_ (filterCode filter) w h canvas
+
+-- | A parsed font. Opaque.
+type Font
+    = Font__Internal Int
+
+
+-- | Read a TrueType or OpenType font file. `index` picks a font in a `.ttc`
+-- collection; use 0 for a single font. A missing file is `NotFound`; a file
+-- that is not a font fails with `InvalidInput` code `font_parse`, and an index
+-- the file does not have with code `font_index`.
+loadFont : String -> Int -> Task Error Font
+loadFont =
+    Ffi.kernel "Image_canvasLoadFont"
+
+
+-- | A font from its bytes (`index` as for `loadFont`).
+fontFromBytes : String -> Int -> Result Error Font
+fontFromBytes =
+    Ffi.kernel "Image_canvasFontFromBytes"
+
+
+-- | Go Regular, a sans-serif font built into Sky (BSD licence). It needs no
+-- file and covers Latin, Greek and Cyrillic.
+defaultFont : Font
+defaultFont =
+    defaultFont_ ()
+
+-- | How `text` draws: the font, the size in pixels and the colour.
+type alias TextStyle =
+    { font : Font
+    , size : Float
+    , colour : Rgba
+    }
+
+
+-- | Write text with the left edge of its first line at `x` and the top of
+-- its ascent at `y` (Pillow's anchor "la"). A line break ("\n") starts a new
+-- line one line height down.
+text : TextStyle -> Int -> Int -> String -> Canvas -> Canvas
+text style x y str canvas =
+    text_ style.font style.size (packRgba style.colour) x y str canvas
+
+
+-- | The size of a text in whole pixels (rounded up): the widest line's
+-- `width`, the font's `ascent` and `descent`, and the `height` from the top of
+-- the first line's ascent to the bottom of the last line's descent. Use it to
+-- centre a text or to fit it in a box.
+measure : Font -> Float -> String -> { width : Int, height : Int, ascent : Int, descent : Int }
+measure =
+    Ffi.kernel "Image_canvasMeasure"
+
+
+-- | Draw every step and write the image in a `Std.Image.Format`. `Preserve`
+-- writes PNG. A `Gif` has 256 colours, so a photograph is dithered;
+-- `WebpLossless` and `Png` keep every pixel.
+encode : Image.Format -> Canvas -> Task Error String
+encode fmt canvas =
+    encode_ (formatName fmt) (formatQuality fmt) canvas
+
+
+-- | The number of pixels where two images differ: a pixel counts when its
+-- red, green, blue or alpha differs by more than `tolerance` (0..255). Use it
+-- to compare a drawing against a reference image in a test. Images of
+-- different sizes fail with `InvalidInput` code `size_mismatch`.
+pixelDiff : Int -> String -> String -> Task Error Int
+pixelDiff =
+    Ffi.kernel "Image_canvasPixelDiff"
+
+
+-- The primitive kernels. An `Rgba` crosses as one Int (0xRRGGBBAA, or -1 when
+-- a channel is outside 0..255, so `encode` can report it) and a `Paint` as a
+-- stroke width (0 fills) and a colour.
+packRgba : Rgba -> Int
+packRgba c =
+    if inByte c.red && inByte c.green && inByte c.blue && inByte c.alpha then
+        ((c.red * 256 + c.green) * 256 + c.blue) * 256 + c.alpha
+
+    else
+        -1
+
+
+inByte : Int -> Bool
+inByte n =
+    n >= 0 && n <= 255
+
+
+paintWidth : Paint -> Int
+paintWidth paint =
+    case paint of
+
+        Fill _ ->
+            0
+
+        Stroke w _ ->
+            if w < 1 then
+                1
+
+            else
+                w
+
+
+paintColour : Paint -> Rgba
+paintColour paint =
+    case paint of
+
+        Fill c ->
+            c
+
+        Stroke _ c ->
+            c
+
+
+filterCode : Filter -> Int
+filterCode filter =
+    case filter of
+
+        Nearest ->
+            0
+
+        Bilinear ->
+            1
+
+        CatmullRom ->
+            2
+
+        Lanczos ->
+            3
+
+
+formatName : Image.Format -> String
+formatName fmt =
+    case fmt of
+
+        Image.Jpeg _ ->
+            "jpeg"
+
+        Image.Png ->
+            "png"
+
+        Image.Gif ->
+            "gif"
+
+        Image.WebpLossless ->
+            "webp"
+
+        Image.Preserve ->
+            "png"
+
+
+formatQuality : Image.Format -> Int
+formatQuality fmt =
+    case fmt of
+
+        Image.Jpeg q ->
+            q
+
+        _ ->
+            0
+
+
+noMask : Mask
+noMask =
+    ellipseMask 1 1
+
+
+blank_ : Int -> Int -> Int -> Canvas
+blank_ =
+    Ffi.kernel "Image_canvasBlank"
+
+
+rect_ : Int -> Int -> Int -> Int -> Int -> Int -> Canvas -> Canvas
+rect_ =
+    Ffi.kernel "Image_canvasRect"
+
+
+roundedRect_ : Int -> Int -> Int -> Int -> Int -> Int -> Int -> Canvas -> Canvas
+roundedRect_ =
+    Ffi.kernel "Image_canvasRoundedRect"
+
+
+ellipse_ : Int -> Int -> Int -> Int -> Int -> Int -> Canvas -> Canvas
+ellipse_ =
+    Ffi.kernel "Image_canvasEllipse"
+
+
+arc_ : Int -> Int -> Int -> Float -> Float -> Int -> Int -> Canvas -> Canvas
+arc_ =
+    Ffi.kernel "Image_canvasArc"
+
+
+line_ : Int -> Int -> Int -> Int -> Int -> Int -> Canvas -> Canvas
+line_ =
+    Ffi.kernel "Image_canvasLine"
+
+
+paste_ : Int -> Int -> Bool -> Mask -> String -> Canvas -> Canvas
+paste_ =
+    Ffi.kernel "Image_canvasPaste"
+
+
+pasteCanvas_ : Int -> Int -> Bool -> Mask -> Canvas -> Canvas -> Canvas
+pasteCanvas_ =
+    Ffi.kernel "Image_canvasPasteCanvas"
+
+
+resize_ : Int -> Int -> Int -> Canvas -> Canvas
+resize_ =
+    Ffi.kernel "Image_canvasResize"
+
+
+text_ : Font -> Float -> Int -> Int -> Int -> String -> Canvas -> Canvas
+text_ =
+    Ffi.kernel "Image_canvasText"
+
+
+defaultFont_ : () -> Font
+defaultFont_ =
+    Ffi.kernel "Image_canvasDefaultFont"
+
+
+encode_ : String -> Int -> Canvas -> Task Error String
+encode_ =
+    Ffi.kernel "Image_canvasEncode"

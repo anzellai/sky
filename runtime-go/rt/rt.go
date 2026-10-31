@@ -539,6 +539,16 @@ func coerceInnerSlow(v any, z any) any {
 	if tv, ok := z.(skyTaskValue); ok {
 		return tv.skyTaskWith(taskNodeFor(v))
 	}
+	// A Dict slot, or a Dict bound for a map / record slot: the same rules
+	// narrowReflectValue applies.
+	if zt := reflect.TypeOf(z); zt != nil {
+		_, srcDict := v.(skyDictAny)
+		if isSkyDictType(zt) || srcDict {
+			if n := narrowReflectValue(reflect.ValueOf(v), zt); n.IsValid() {
+				return n.Interface()
+			}
+		}
+	}
 	// Belt-and-suspenders (conformance finding C1): a bare string can
 	// never soundly narrow to an ADT. This arises when a decode path
 	// yields an Err carrying a raw string (rather than a proper Error
@@ -883,6 +893,15 @@ func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
 	}
 	if src.Type().AssignableTo(target) {
 		return src
+	}
+	// A Dict slot (`SkyDict[V]`): any Dict-shaped source, rebuilt with each
+	// value narrowed. A Dict bound for a Go map or a record: the map it
+	// stands for, then the map rules below.
+	if isSkyDictType(target) {
+		return narrowToSkyDict(src, target)
+	}
+	if src.Kind() == reflect.Struct && src.CanInterface() && isSkyDictType(src.Type()) {
+		return narrowReflectValue(reflect.ValueOf(dictToMapAny(src.Interface().(skyDictAny))), target)
 	}
 	// A Task slot (record field, list element, callback result, …): one
 	// conversion rule for every source — a SkyTask of another
@@ -1610,6 +1629,17 @@ func logAttrsToMap(attrs any) map[string]any {
 	if m, ok := attrs.(map[string]any); ok {
 		return m
 	}
+	if d, ok := attrs.(skyDictAny); ok {
+		if d.dictLen() == 0 {
+			return nil
+		}
+		m := make(map[string]any, d.dictLen())
+		d.dictRangeAny(func(k string, v any) bool {
+			m[detagDisplayKey(k)] = v
+			return true
+		})
+		return m
+	}
 	rv := reflect.ValueOf(attrs)
 	switch rv.Kind() {
 	case reflect.Map:
@@ -1680,12 +1710,7 @@ func String_fromFloat(f any) any {
 // String.length returns the number of Unicode *code points* (runes), not bytes.
 // So "世界" has length 2, not 6.
 func String_length(s any) any {
-	str := fmt.Sprintf("%v", s)
-	n := 0
-	for range str {
-		n++
-	}
-	return n
+	return utf8.RuneCountInString(skyStr(s))
 }
 
 func String_isEmpty(s any) any {
@@ -2005,6 +2030,11 @@ func derefPointer(v any) any {
 	if v == nil {
 		return v
 	}
+	// Not a pointer (nearly every value): return it as is, without the
+	// reflect round trip that re-boxed it.
+	if reflect.TypeOf(v).Kind() != reflect.Ptr {
+		return v
+	}
 	rv := reflect.ValueOf(v)
 	for rv.Kind() == reflect.Ptr {
 		if rv.IsNil() {
@@ -2177,13 +2207,13 @@ func List_cons(head, tail any) any {
 		return []any{head}
 	}
 	if xs, ok := tail.([]any); ok {
-		out := make([]any, 0, len(xs)+1)
-		out = append(out, head)
-		out = append(out, xs...)
-		return out
+		// Amortised O(1): the cons blocks of list_block.go.
+		return List_consT[any](head, xs)
 	}
 	// Typed-slice fallback: widen via AsList (handles any Go slice
-	// kind via reflect) and then prepend.
+	// kind via reflect) and then prepend. O(n) per cons; a typed `::`
+	// lowers to List_consT instead (perf_hook.go counts this path).
+	noteErasedTypedCons()
 	xs := AsList(tail)
 	out := make([]any, 0, len(xs)+1)
 	out = append(out, head)
@@ -2505,6 +2535,9 @@ func AsMapAny(v any) map[string]any {
 	if already, ok := v.(map[string]any); ok {
 		return already
 	}
+	if d, ok := v.(skyDictAny); ok {
+		return dictToMapAny(d)
+	}
 	if v == nil {
 		return nil
 	}
@@ -2580,7 +2613,7 @@ func AsListT[T any](v any) []T {
 			// `[]rt.SkyAttribute` (`= []any`).  The button/event attrs
 			// vanished from rendered HTML — observable as Sky.Live
 			// `sky-click=` markers missing entirely on Std.Ui apps
-			// (mini-notion, skyforum) post-v0.13.0.
+			// (a downstream app, skyforum) post-v0.13.0.
 			for i := 0; i < n; i++ {
 				out[i] = rv.Index(i).Interface().(T)
 			}
@@ -2612,103 +2645,57 @@ func AsListT[T any](v any) []T {
 	return nil
 }
 
-// AsMapT: typed counterpart to AsMapString. Converts map[string]any
-// to map[string]V, element-by-element. Used where a record's field
-// type is `map[string]V` but the source value is `map[string]any`.
-func AsMapT[V any](v any) map[string]V {
-	if already, ok := v.(map[string]V); ok {
-		return already
+// AsMapT narrows a Sky-side value to the typed Dict `SkyDict[V]` (the Go
+// type of a typed `Dict k v` slot). A `SkyDict[V]` passes through in O(1),
+// which is the common case: the erased kernels keep a Dict's value type. A
+// Dict of another value type, or a Go string-keyed map from FFI / Std.Db /
+// JSON, is rebuilt with each value narrowed to V; a value that cannot become V
+// panics with a classified CoerceFailure (an entry used to be DROPPED: the
+// Dict came back short with no error, C-5). nil is the empty Dict.
+func AsMapT[V any](v any) SkyDict[V] {
+	if d, ok := v.(SkyDict[V]); ok {
+		return d
 	}
-	if m, ok := v.(map[string]any); ok {
-		out := make(map[string]V, len(m))
-		var zero V
-		zeroTy := reflect.TypeOf(zero)
-		isString := zeroTy != nil && zeroTy.Kind() == reflect.String
-		for k, x := range m {
-			if cast, ok := x.(V); ok {
-				out[k] = cast
-				continue
+	if v == nil {
+		return SkyDict[V]{}
+	}
+	src, ok := v.(skyDictAny)
+	if !ok {
+		rv := reflect.ValueOf(v)
+		switch {
+		case rv.Kind() == reflect.Map && rv.Type().Key().Kind() == reflect.String:
+			if rv.IsNil() {
+				return SkyDict[V]{}
 			}
-			// Widen for string-valued targets so mixed-type SQL/Firestore
-			// rows (int verified, int64 id, []byte hash) become a
-			// homogeneous map[string]string. Without this, non-string
-			// columns are silently dropped and getField looks like it
-			// returned "".
-			if isString {
-				out[k] = reflect.ValueOf(fmt.Sprintf("%v", x)).Interface().(V)
-				continue
-			}
-			// v0.13 Stage 1 — narrow via reflect for typed targets
-			// (func / SkyMaybe[T] / SkyResult[E, A] / typed structs).
-			// Without this, `Dict.fromList [("k", \x -> ...)]` typed
-			// as `Dict String (Int -> Int)` silently drops every
-			// function value (target V doesn't directly assign from
-			// the any-boxed `func(any) any` source).
-			if zeroTy != nil && x != nil {
-				sv := reflect.ValueOf(x)
-				narrowed := narrowReflectValue(sv, zeroTy)
-				if narrowed.IsValid() {
-					out[k] = narrowed.Interface().(V)
-					continue
-				}
-			}
-			if x != nil {
-				// An entry that cannot become V used to be DROPPED: the Dict
-				// came back short with no error (C-5).
-				asMapTFail[V](x, "value of key "+strconv.Quote(k))
-			}
+			src = asSkyDict(v)
+		case rv.Kind() == reflect.Map && rv.IsNil():
+			return SkyDict[V]{}
+		case isSkyContainer(v):
+			return AsMapT[V](unwrapAny(v))
+		default:
+			// Not a Dict at all: a Go map with a non-string key (map[int]string
+			// from an FFI return) used to come back as an EMPTY Dict with no
+			// error (C-5). The FFI wrapper converts such keys
+			// (rt.encodeDictKey); this is the backstop.
+			asMapTFail[V](v, "Dict")
+			return SkyDict[V]{}
 		}
-		return out
-	}
-	// Reflect fallback for other typed maps (map[string]Foo_R, …):
-	// walk via reflect and narrow each value to V where assignable.
-	rv := reflect.ValueOf(v)
-	if rv.IsValid() && rv.Kind() == reflect.Map && rv.Type().Key().Kind() == reflect.String {
-		out := make(map[string]V, rv.Len())
-		var zero V
-		valTy := reflect.TypeOf(zero)
-		for _, k := range rv.MapKeys() {
-			ev := rv.MapIndex(k)
-			iv := ev.Interface()
-			if cast, ok := iv.(V); ok {
-				out[k.String()] = cast
-				continue
-			}
-			if valTy != nil && valTy.Kind() == reflect.String {
-				out[k.String()] = reflect.ValueOf(fmt.Sprintf("%v", iv)).Interface().(V)
-				continue
-			}
-			// Narrow via reflect for typed targets (typed slices / structs /
-			// SkyMaybe[T] / …) — mirrors the `map[string]any` branch above.
-			// Without this, a source map whose VALUES need a reflect narrow
-			// (`map[string][]struct{…}` → `map[string][]Record`, or
-			// `map[string][]any` → `map[string][]Record`) silently DROPPED
-			// every entry, so an annotated `Dict k (List Record)` return came
-			// back as an EMPTY Dict while the identical unannotated body (which
-			// returns the raw `any` dict, no AsMapT) worked (#173).
-			if valTy != nil && iv != nil {
-				sv := reflect.ValueOf(iv)
-				narrowed := narrowReflectValue(sv, valTy)
-				if narrowed.IsValid() {
-					out[k.String()] = narrowed.Interface().(V)
-					continue
-				}
-			}
-			if iv != nil {
-				asMapTFail[V](iv, "value of key "+strconv.Quote(k.String()))
-			}
+		if d, ok := src.(SkyDict[V]); ok {
+			return d
 		}
-		return out
 	}
-	// nil is the empty Dict. Anything else is not a Dict at all: a Go map
-	// with a non-string key (map[int]string from an FFI return) used to come
-	// back as nil, an EMPTY Dict, with no error (C-5). The FFI wrapper
-	// converts such keys (rt.encodeDictKey); this is the backstop.
-	if v == nil || (rv.IsValid() && rv.Kind() == reflect.Map && rv.IsNil()) {
-		return nil
+	keys := make([]string, 0, src.dictLen())
+	vals := make([]any, 0, src.dictLen())
+	src.dictRangeAny(func(k string, x any) bool {
+		keys = append(keys, k)
+		vals = append(vals, x)
+		return true
+	})
+	out, err := SkyDict[V]{}.dictFromEntries(keys, vals, src.dictForeign())
+	if err != nil {
+		panic(err.Error())
 	}
-	asMapTFail[V](v, "Dict")
-	return nil
+	return out.(SkyDict[V])
 }
 
 // asMapTFail panics with a classified CoerceFailure for a value AsMapT cannot
@@ -3043,6 +3030,25 @@ func structHasUnexportedField(t reflect.Type) bool {
 func deepEq(a, b any) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
+	}
+	if x, ok := a.(SkyArray); ok {
+		if y, ok := b.(SkyArray); ok {
+			return arraysEqual(x.t, y.t)
+		}
+	}
+	// Two Dicts are equal when they hold the same keys with equal values:
+	// the structure (flat or trie, entry order) is not part of the value.
+	if x, ok := a.(skyDictAny); ok {
+		if y, ok := b.(skyDictAny); ok {
+			return dictsEqual(x, y)
+		}
+		if bm, ok := b.(map[string]any); ok {
+			return dictsEqual(x, dictFromAnyMap(bm))
+		}
+	} else if y, ok := b.(skyDictAny); ok {
+		if am, ok := a.(map[string]any); ok {
+			return dictsEqual(dictFromAnyMap(am), y)
+		}
 	}
 	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
 	if ra.Kind() != rb.Kind() {
@@ -3648,7 +3654,7 @@ func List_takeAnyT(n int, xs []any) []any {
 }
 
 func List_consAnyT(x any, xs []any) []any {
-	return append([]any{x}, xs...)
+	return List_consT[any](x, xs)
 }
 
 func List_foldlAnyT(fn any, seed any, xs []any) any {
@@ -3907,7 +3913,9 @@ func List_takeT[A any](n int, xs []A) []A {
 	if n < 0 {
 		n = 0
 	}
-	return xs[:n]
+	// Capped at n: a Go `append` onto the prefix reallocates instead of
+	// writing over the source list's element n.
+	return xs[:n:n]
 }
 
 func List_isEmptyT[A any](xs []A) bool { return len(xs) == 0 }
@@ -3940,11 +3948,11 @@ func List_dropT[A any](n int, xs []A) []A {
 // The result is non-nil even when both operands are empty, matching what
 // `rt.AsListT` hands the rest of the emitted program (`nil` and `[]T{}` marshal
 // as JSON `null` and `[]` respectively, so the two are not interchangeable).
+// List_appendT is the typed `a ++ b`. It never writes into a slot another
+// list can see: the result is fresh memory, or room in front of b that b's
+// block had not given to any list yet (list_block.go, O(|a|)).
 func List_appendT[A any](a, b []A) []A {
-	out := make([]A, 0, len(a)+len(b))
-	out = append(out, a...)
-	out = append(out, b...)
-	return out
+	return listAppendBlock(a, b)
 }
 
 func List_range(lo any, hi any) any {
@@ -3980,17 +3988,11 @@ func List_repeat(n any, x any) any {
 // ═══════════════════════════════════════════════════════════
 
 func String_join(sep any, list any) any {
-	s := fmt.Sprintf("%v", sep)
-	// AsList — not a hard `.([]any)` assertion: v0.13 typed codegen
-	// can hand this kernel a typed `[]string` (e.g. from a typed
-	// `List.map renderProp props` in Sky-source Std.Css). A hard
-	// assertion panics on those; AsList boxes any Go slice.
-	items := AsList(list)
-	parts := make([]string, len(items))
-	for i, item := range items {
-		parts[i] = fmt.Sprintf("%v", item)
-	}
-	return strings.Join(parts, s)
+	// joinErased takes a typed `[]string` directly (v0.13 typed codegen
+	// hands this kernel one, e.g. from a typed `List.map renderProp
+	// props` in Sky-source Std.Css) and any other list through AsList,
+	// with one sized copy (string_fast.go).
+	return joinErased(skyStr(sep), list)
 }
 
 func String_split(sep any, s any) any {
@@ -4057,24 +4059,7 @@ func String_splitT(sep, s string) []string           { return strings.Split(s, s
 func String_joinT(sep string, parts []string) string { return strings.Join(parts, sep) }
 func String_replaceT(old, new_, s string) string     { return strings.ReplaceAll(s, old, new_) }
 func String_sliceT(start, end int, s string) string {
-	runes := []rune(s)
-	total := len(runes)
-	if start < 0 {
-		start += total
-	}
-	if end < 0 {
-		end += total
-	}
-	if start < 0 {
-		start = 0
-	}
-	if end > total {
-		end = total
-	}
-	if start > end {
-		return ""
-	}
-	return string(runes[start:end])
+	return stringSlice(start, end, s)
 }
 func String_fromIntT(n int) string       { return strconv.Itoa(n) }
 func String_fromFloatT(f float64) string { return strconv.FormatFloat(f, 'g', -1, 64) }
@@ -4697,6 +4682,12 @@ func errorKindAdt(tag int, name string) any {
 }
 
 func makeError(kindTag int, kindName, msg string) any {
+	return makeErrorT(kindTag, kindName, msg)
+}
+
+// makeErrorT is makeError typed as the Sky Error ADT (`skyErrorAdt`, which is
+// `SkyADT`), for a typed runtime twin that returns `SkyResult[SkyADT, …]`.
+func makeErrorT(kindTag int, kindName, msg string) skyErrorAdt {
 	info := skyErrorInfo{Message: msg, Details: skyMaybeNothing()}
 	return skyErrorAdt{
 		Tag:     0,
@@ -5350,24 +5341,35 @@ func Maybe_traverse(fn, items any) any {
 // Dict operations
 // ═══════════════════════════════════════════════════════════
 
-func Dict_empty() any { return map[string]any{} }
+// Every Dict kernel works on the persistent SkyDict (dict_persistent.go):
+// insert / remove / update are O(log n) and never copy the Dict. The erased
+// kernels take the Dict as `any` and keep its value type (a `SkyDict[int]`
+// stays a `SkyDict[int]`), so the typed slot that receives the result
+// (`rt.AsMapT[V]`) takes it in O(1).
+
+func Dict_empty() any { return SkyDict[any]{} }
 
 func Dict_insert(key any, val any, dict any) any {
-	m := AsDict(unwrapAny(dict))
-	new := make(map[string]any, len(m)+1)
-	for k, v := range m {
-		new[k] = v
+	// The erased kernels' own Dict type: no interface dispatch.
+	if d, ok := dict.(SkyDict[any]); ok {
+		return d.Insert(dictProbeT(d, key), val)
 	}
-	// dictProbeKey, not encodeDictKey: inserting an Int key into a map that
+	d := asSkyDict(dict)
+	// dictProbe, not encodeDictKey: inserting an Int key into a Dict that
 	// came from FFI/Std.Db with bare "10" keys must REPLACE that entry, not
 	// add a second one alongside it. See the typed-key section below.
-	new[dictProbeKey(m, key)] = val
-	return new
+	return d.dictInsertAny(dictProbe(d, key), val)
 }
 
 func Dict_get(key any, dict any) any {
-	m := AsDict(unwrapAny(dict))
-	v, ok := m[dictProbeKey(m, key)]
+	if d, ok := dict.(SkyDict[any]); ok {
+		if v, ok := d.Lookup(dictProbeT(d, key)); ok {
+			return Just[any](derefPointer(v))
+		}
+		return Nothing[any]()
+	}
+	d := asSkyDict(dict)
+	v, ok := d.dictLookupAny(dictProbe(d, key))
 	if ok {
 		return Just[any](derefPointer(v))
 	}
@@ -5375,77 +5377,47 @@ func Dict_get(key any, dict any) any {
 }
 
 func Dict_remove(key any, dict any) any {
-	m := AsDict(unwrapAny(dict))
-	new := make(map[string]any, len(m))
-	k := dictProbeKey(m, key)
-	for kk, v := range m {
-		if kk != k {
-			new[kk] = v
-		}
+	if d, ok := dict.(SkyDict[any]); ok {
+		return d.Remove(dictProbeT(d, key))
 	}
-	return new
+	d := asSkyDict(dict)
+	return d.dictRemoveAny(dictProbe(d, key))
 }
 
 func Dict_member(key any, dict any) any {
-	m := AsDict(unwrapAny(dict))
-	_, ok := m[dictProbeKey(m, key)]
+	if d, ok := dict.(SkyDict[any]); ok {
+		return d.Has(dictProbeT(d, key))
+	}
+	d := asSkyDict(dict)
+	_, ok := d.dictLookupAny(dictProbe(d, key))
 	return ok
 }
 
 func Dict_size(dict any) any {
-	return len(AsDict(unwrapAny(dict)))
+	return asSkyDict(dict).dictLen()
 }
 
 func Dict_isEmpty(dict any) any {
-	return len(AsDict(unwrapAny(dict))) == 0
-}
-
-// sortedDictKeys returns the map's string keys in ascending lexical order.
-// Sky's Dict is Elm-shaped: enumeration (keys/values/toList/foldl) is defined
-// to visit entries in sorted-key order, which also makes output deterministic
-// across runs (Go map iteration is randomised).
-func sortedDictKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
+	return asSkyDict(dict).dictLen() == 0
 }
 
 func Dict_keys(dict any) any { return dictKeysKeyed(dict, dictKeyString) }
 
 func Dict_values(dict any) any { return dictValuesKeyed(dict, dictKeyString) }
 
-// AsDict coerces a Sky-side any to map[string]any. Sky Dict is
-// always map[string]any at runtime; auto-unwraps SkyResult/SkyMaybe.
+// AsDict materialises any Dict-shaped value as a fresh map[string]any keyed
+// by the encoded keys (auto-unwraps SkyResult/SkyMaybe). O(n): for a kernel
+// that hands the Dict to Go, never for a Dict operation.
 func AsDict(v any) map[string]any {
-	v = unwrapAny(v)
-	if m, ok := v.(map[string]any); ok {
-		return m
-	}
-	// Typed codegen sometimes passes a narrower map (map[string]string,
-	// map[string]int, map[string]V_R, …) via AsMapT[V]. Reflect across
-	// string-keyed maps so Dict.get / Dict.member / Dict.toList all
-	// keep working on the typed variants — without this, every lookup
-	// returns Nothing and user code silently receives empty strings
-	// from getField, breaking auth/verify/etc.
-	rv := reflect.ValueOf(v)
-	if rv.IsValid() && rv.Kind() == reflect.Map && rv.Type().Key().Kind() == reflect.String {
-		out := make(map[string]any, rv.Len())
-		for _, k := range rv.MapKeys() {
-			out[k.String()] = rv.MapIndex(k).Interface()
-		}
-		return out
-	}
-	return map[string]any{}
+	return dictToMapAny(asSkyDict(v))
 }
 
 func Dict_toList(dict any) any { return dictToListKeyed(dict, dictKeyString) }
 
 func Dict_fromList(list any) any {
 	items := asList(list)
-	result := make(map[string]any, len(items))
+	keys := make([]string, 0, len(items))
+	vals := make([]any, 0, len(items))
 	for _, item := range items {
 		// Typed-tuple codegen (v0.17+) can pass a distinct nominal
 		// `T2[string, V]` here; `item.(SkyTuple2)` would hard-panic.
@@ -5453,9 +5425,10 @@ func Dict_fromList(list any) any {
 		// Dict.fromList's Sky type is `List (comparable, v)`, so AsTuple2
 		// always receives a tuple.
 		t := AsTuple2(item)
-		result[encodeDictKey(t.V0)] = t.V1
+		keys = append(keys, encodeDictKey(t.V0))
+		vals = append(vals, t.V1)
 	}
-	return result
+	return dictBuild(dictDedupe(keys, vals))
 }
 
 // Dict_map — the un-routed entry point. The key type is recovered from the
@@ -5469,159 +5442,150 @@ func Dict_map(fn any, dict any) any {
 	return dictMapKeyed(fn, dict, dictKeyKindForFn(fn))
 }
 
-// P8/Dict typed companions — generic over value type V.
-func Dict_emptyT[V any]() map[string]V { return map[string]V{} }
+// P8/Dict typed companions — generic over value type V. The Rust compiler
+// emits the probe twins and the size twins below; the rest are retained for
+// the legacy oracle's ABI (`key string` — a `Dict String v` key, verbatim).
+func Dict_emptyT[V any]() SkyDict[V] { return SkyDict[V]{} }
 
-func Dict_insertT[V any](key string, val V, d map[string]V) map[string]V {
-	out := make(map[string]V, len(d)+1)
-	for k, v := range d {
-		out[k] = v
-	}
-	out[key] = val
-	return out
+func Dict_insertT[V any](key string, val V, d SkyDict[V]) SkyDict[V] {
+	return d.Insert(key, val)
 }
 
-// Dict_getAnyT: delegates to the any/any Dict_get. The typed Dict_getT
-// below requires HM element flow; AnyT fires whenever dispatch needs
-// Sky's any-boxed shape.
+// Dict_getAnyT: delegates to the any/any Dict_get.
 func Dict_getAnyT(key any, dict any) any {
 	return Dict_get(key, dict)
 }
 
-func Dict_getT[V any](key string, d map[string]V) SkyMaybe[V] {
-	if v, ok := d[key]; ok {
+func Dict_getT[V any](key string, d SkyDict[V]) SkyMaybe[V] {
+	if v, ok := d.Lookup(key); ok {
 		return Just[V](v)
 	}
 	return Nothing[V]()
 }
 
-func Dict_removeT[V any](key string, d map[string]V) map[string]V {
-	out := make(map[string]V, len(d))
-	for k, v := range d {
-		if k != key {
-			out[k] = v
+func Dict_removeT[V any](key string, d SkyDict[V]) SkyDict[V] {
+	return d.Remove(key)
+}
+
+func Dict_memberT[V any](key string, d SkyDict[V]) bool {
+	return d.Has(key)
+}
+
+// Dict_getProbeT / Dict_memberProbeT — `Dict.get` / `Dict.member` over a
+// typed `SkyDict[V]` (lower.rs routes a call whose dict lowers to one): the
+// probe of dictProbeT on the typed Dict itself, no erased boxing of the Dict.
+func Dict_getProbeT[V any](key any, d SkyDict[V]) SkyMaybe[V] {
+	v, ok := d.Lookup(dictProbeT(d, key))
+	if !ok {
+		return Nothing[V]()
+	}
+	// Dict_get dereferences a stored pointer; keep that for an erased V (only
+	// an erased value can be a pointer the Sky value stands behind).
+	if _, erased := any((*V)(nil)).(*any); erased {
+		if dv, ok := derefPointer(v).(V); ok {
+			return Just[V](dv)
 		}
 	}
-	return out
+	return Just[V](v)
 }
 
-func Dict_memberT[V any](key string, d map[string]V) bool {
-	_, ok := d[key]
-	return ok
-}
+// Dict_sizeT / Dict_isEmptyT — `Dict.size` / `Dict.isEmpty` over a typed
+// Dict: O(1).
+func Dict_sizeT[V any](d SkyDict[V]) int     { return d.n }
+func Dict_isEmptyT[V any](d SkyDict[V]) bool { return d.n == 0 }
 
-// The `Dict_*T` family below takes and returns the runtime map's key as a bare
-// Go `string`. The Rust compiler does not emit any of them — `kernel.rs` maps
-// every `Sky.Core.Dict` entry to the `any` kernel above (plus the routed
-// `…IntKey` / `…CharKey` / … variants), so nothing here sees an encoded key from
-// a Sky program. They are retained for the legacy oracle's ABI, where the
-// `key string` parameter means the compiler only ever routed them for a
-// `Dict String v` — the one key type `encodeDictKey` leaves verbatim, so they
-// keep agreeing with it. `Dict_keysT` is the one exception worth hardening: it
-// hands keys OUT, so it decodes a tag if it finds one.
+func Dict_memberProbeT[V any](key any, d SkyDict[V]) bool {
+	return d.Has(dictProbeT(d, key))
+}
 
 // Return []any so Sky's List runtime shape ([]any) is preserved and
 // downstream List.* typed companions unify cleanly (e.g. List_lengthT).
-// Strings are boxed through `any(k)` so V=any inference works when
-// the caller's dict is map[string]V for any V.
-func Dict_keysT[V any](d map[string]V) []any {
-	sk := sortedDictKeys(d)
-	keys := make([]any, 0, len(d))
-	for _, k := range sk {
-		if dk, _, ok := decodeTaggedDictKey(k); ok {
-			keys = append(keys, dk)
-			continue
-		}
-		keys = append(keys, any(k))
+// Keys come out in ascending decoded order (dictEntries).
+func Dict_keysT[V any](d SkyDict[V]) []any {
+	ents := dictEntries(d, dictKeyString)
+	keys := make([]any, 0, len(ents))
+	for _, e := range ents {
+		keys = append(keys, e.key)
 	}
 	return keys
 }
 
-func Dict_valuesT[V any](d map[string]V) []any {
-	sk := sortedDictKeys(d)
-	vals := make([]any, 0, len(d))
-	for _, k := range sk {
-		vals = append(vals, any(d[k]))
+func Dict_valuesT[V any](d SkyDict[V]) []any {
+	ents := dictEntries(d, dictKeyString)
+	vals := make([]any, 0, len(ents))
+	for _, e := range ents {
+		vals = append(vals, e.val)
 	}
 	return vals
 }
 
-func Dict_mapT[V, W any](fn func(V) W, d map[string]V) map[string]W {
-	out := make(map[string]W, len(d))
-	for k, v := range d {
-		out[k] = fn(v)
-	}
-	return out
+func Dict_mapT[V, W any](fn func(V) W, d SkyDict[V]) SkyDict[W] {
+	keys := make([]string, 0, d.n)
+	vals := make([]W, 0, d.n)
+	d.Range(func(k string, v V) bool {
+		keys = append(keys, k)
+		vals = append(vals, fn(v))
+		return true
+	})
+	return dictBuild(keys, vals, d.foreign)
 }
 
 // Dict_map2T: Sky's Dict.map signature is `(K -> V -> W) -> Dict K V -> Dict K W`
-// (curried 2-arg fn). The single-arg Dict_mapT (above) is the runtime
-// counterpart for the elided-key variant where the user writes `\_ v -> ...`,
-// but the natural Sky shape passes the key too. This variant accepts an
-// any-typed curried fn (the shape Sky lambdas always lower to) and calls
-// it as fn(k)(v), matching the lowered curry pattern. Used by typed
-// routing when the lambda input/output types are concrete.
-func Dict_map2T[V, W any](fn any, d map[string]V) map[string]W {
-	out := make(map[string]W, len(d))
-	for k, v := range d {
-		// fn is `func(K) func(V) W` shape (Sky-curried 2-arg). Call once
-		// with k to get the inner closure, then with v to get the result.
-		// Both SkyCall and direct invocation are tried for robustness.
+// (curried 2-arg fn), called as fn(k)(v).
+func Dict_map2T[V, W any](fn any, d SkyDict[V]) SkyDict[W] {
+	keys := make([]string, 0, d.n)
+	vals := make([]W, 0, d.n)
+	d.Range(func(k string, v V) bool {
 		step := SkyCall(fn, k)
 		result := SkyCall(step, v)
+		keys = append(keys, k)
 		if cast, ok := result.(W); ok {
-			out[k] = cast
+			vals = append(vals, cast)
 		} else {
-			out[k] = Coerce[W](result)
+			vals = append(vals, Coerce[W](result))
 		}
-	}
-	return out
+		return true
+	})
+	return dictBuild(keys, vals, d.foreign)
 }
 
-// Dict_fromListT: build a typed Dict from a list of (String, V) tuples.
-// Mirrors Dict_fromList but with concrete value type V — emitted when the
-// HM-inferred value type is concrete, avoiding the per-element any boxing
-// of the legacy path.
-func Dict_fromListT[V any](list []any) map[string]V {
-	out := make(map[string]V, len(list))
+// Dict_fromListT: build a typed Dict from a list of (k, V) tuples. Mirrors
+// Dict_fromList but with concrete value type V.
+func Dict_fromListT[V any](list []any) SkyDict[V] {
+	keys := make([]string, 0, len(list))
+	vals := make([]V, 0, len(list))
 	for _, item := range list {
 		// AsTuple2 fast-paths SkyTuple2 and reflect-reboxes a typed
 		// `T2[string, V]` (v0.17+ typed-tuple codegen). A genuine
 		// non-tuple yields a zero SkyTuple2 with V0==nil; a real Dict
 		// key is never nil, so the `if t.V0 == nil` guard preserves the
-		// prior `default:` silent-skip semantics.
+		// prior silent-skip semantics.
 		t := AsTuple2(item)
 		if t.V0 == nil {
-			// Unexpected shape — leave key absent. Matches Dict_fromList's
-			// silent-on-bad-pair behaviour (would panic in the type assert).
 			continue
 		}
-		key := encodeDictKey(t.V0)
+		keys = append(keys, encodeDictKey(t.V0))
 		if v, ok := t.V1.(V); ok {
-			out[key] = v
+			vals = append(vals, v)
 		} else {
-			// Fall back via reflect coerce for heterogeneous slices
-			out[key] = Coerce[V](t.V1)
+			vals = append(vals, Coerce[V](t.V1))
 		}
 	}
-	return out
+	return dictBuild(dictDedupe(keys, vals))
 }
 
-// Dict_fromListTA: typed-input list version that delegates to the any
-// variant when the value type cannot be specialised. Kept for symmetry
-// with the List_*TA family even though Dict_fromList's any-output is
-// the trivial fallback.
+// Dict_fromListTA: typed-input list version of the any-output Dict_fromList.
 func Dict_fromListTA(list []any) any {
-	out := make(map[string]any, len(list))
+	keys := make([]string, 0, len(list))
+	vals := make([]any, 0, len(list))
 	for _, item := range list {
-		// AsTuple2 fast-paths SkyTuple2 and reflect-reboxes a typed T2;
-		// a non-tuple yields V0==nil, preserving the prior `ok` skip.
 		t := AsTuple2(item)
 		if t.V0 != nil {
-			out[encodeDictKey(t.V0)] = t.V1
+			keys = append(keys, encodeDictKey(t.V0))
+			vals = append(vals, t.V1)
 		}
 	}
-	return out
+	return dictBuild(dictDedupe(keys, vals))
 }
 
 // ── Typed-key Dict variants ────────────────────────────────────────
@@ -5762,6 +5726,19 @@ func encodeDictKey(k any) string {
 	if s, ok := k.(string); ok && (len(s) == 0 || s[0] != dictKeyTagByte) {
 		return s
 	}
+	// Fast paths for the other common key types: the bytes are exactly the
+	// `%v` payload below ("\x01i" + decimal, "\x01c" + the code point), built
+	// in one allocation without fmt or reflect.
+	switch n := k.(type) {
+	case int:
+		var buf [24]byte
+		b := append(buf[:0], dictKeyTagByte, 'i')
+		return string(strconv.AppendInt(b, int64(n), 10))
+	case rune:
+		var buf [16]byte
+		b := append(buf[:0], dictKeyTagByte, 'c')
+		return string(strconv.AppendInt(b, int64(n), 10))
+	}
 	k = derefPointer(unwrapAny(k))
 	kind, ok := dictKeyKindOf(k)
 	if !ok {
@@ -5803,33 +5780,6 @@ func decodeTaggedDictKey(s string) (any, dictKeyKind, bool) {
 	// An unknown tag letter is not ours — treat the whole thing as a String
 	// key rather than silently dropping the entry.
 	return nil, dictKeyString, false
-}
-
-// dictProbeKey is the lookup counterpart of encodeDictKey: it returns the key
-// under which `key` is actually stored in `m`.
-//
-// The encoded form is tried first. The bare `%v` form is the fallback, and it is
-// what keeps a map that was NOT built by these kernels working: an FFI or
-// `Std.Db` `map[string]any` typed as a `Dict Int v` holds "10", not "\x01i10",
-// and `Dict.get 10` on it must still find the entry. Insertion uses the same
-// resolution, so inserting into such a map overwrites the existing entry rather
-// than adding a second, logically-equal key.
-func dictProbeKey(m map[string]any, key any) string {
-	enc := encodeDictKey(key)
-	if len(enc) < 2 || enc[0] != dictKeyTagByte {
-		// Untagged: the encoded form IS the plain form, so there is no second
-		// place to look. This is every `Dict String v` probe, and it costs one
-		// map lookup exactly as it did before.
-		return enc
-	}
-	if _, ok := m[enc]; ok {
-		return enc
-	}
-	plain := fmt.Sprintf("%v", derefPointer(unwrapAny(key)))
-	if _, ok := m[plain]; ok {
-		return plain
-	}
-	return enc
 }
 
 // decodeDictKey inverts the `fmt.Sprintf("%v", key)` that put the key into the
@@ -5899,15 +5849,16 @@ type dictEntry struct {
 // into an FFI-supplied `map[string]any`, so the ordering below is total across
 // kinds rather than assuming one.
 func dictEntries(dict any, kind dictKeyKind) []dictEntry {
-	m := AsDict(unwrapAny(dict))
-	ents := make([]dictEntry, 0, len(m))
-	for k, v := range m {
+	d := asSkyDict(dict)
+	ents := make([]dictEntry, 0, d.dictLen())
+	d.dictRangeAny(func(k string, v any) bool {
 		if dk, dkind, ok := decodeTaggedDictKey(k); ok {
 			ents = append(ents, dictEntry{raw: k, key: dk, kind: dkind, val: v})
-			continue
+			return true
 		}
 		ents = append(ents, dictEntry{raw: k, key: decodeDictKey(kind, k), kind: kind, val: v})
-	}
+		return true
+	})
 	sort.SliceStable(ents, func(i, j int) bool { return dictEntryLess(ents[i], ents[j]) })
 	return ents
 }
@@ -6074,13 +6025,15 @@ func dictFoldlKeyed(fn any, acc any, dict any, kind dictKeyKind) any {
 // the values change, so the result is keyed exactly as the input was.
 func dictMapKeyed(fn any, dict any, kind dictKeyKind) any {
 	ents := dictEntries(dict, kind)
-	result := make(map[string]any, len(ents))
-	for _, e := range ents {
+	keys := make([]string, len(ents))
+	vals := make([]any, len(ents))
+	for i, e := range ents {
 		requireDecodableDictKey("Dict.map", fn, e.key)
 		step := SkyCall(fn, e.key)
-		result[e.raw] = SkyCall(step, e.val)
+		keys[i] = e.raw
+		vals[i] = SkyCall(step, e.val)
 	}
-	return result
+	return dictBuild(keys, vals, asSkyDict(dict).dictForeign())
 }
 
 // ── Compiler-routed entry points ───────────────────────────────────
@@ -6132,16 +6085,37 @@ func Dict_foldl(fn any, acc any, dict any) any {
 }
 
 func Dict_union(a any, b any) any {
-	ma := AsDict(unwrapAny(a))
-	mb := AsDict(unwrapAny(b))
-	result := make(map[string]any, len(ma)+len(mb))
-	for k, v := range mb {
-		result[k] = v
+	// Elm's union prefers the LEFT Dict on a shared key: insert the
+	// smaller side into the larger, O(m log n).
+	da, db := asSkyDict(a), asSkyDict(b)
+	if da.dictLen() == 0 {
+		return db
 	}
-	for k, v := range ma {
-		result[k] = v
+	if db.dictLen() == 0 {
+		return da
 	}
-	return result
+	if da.dictLen() >= db.dictLen() {
+		out := da
+		db.dictRangeAny(func(k string, v any) bool {
+			if _, ok := out.dictLookupAny(k); !ok {
+				out = out.dictInsertAny(k, v)
+			}
+			return true
+		})
+		if db.dictForeign() {
+			out = out.dictMarkForeign()
+		}
+		return out
+	}
+	out := db
+	da.dictRangeAny(func(k string, v any) bool {
+		out = out.dictInsertAny(k, v)
+		return true
+	})
+	if da.dictForeign() {
+		out = out.dictMarkForeign()
+	}
+	return out
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -6434,6 +6408,24 @@ func coerceTail(v any, z any, exact reflect.Type) (any, coerceStep) {
 	}
 	rv := reflect.ValueOf(v)
 	targetTy := reflect.TypeOf(z)
+
+	// A Dict slot (`SkyDict[V]`): narrow any Dict-shaped source into it.
+	if isSkyDictType(exact) {
+		if n := narrowToSkyDict(rv, exact); n.IsValid() {
+			return n.Interface(), coerceDone
+		}
+		if rv.IsValid() && rv.Kind() == reflect.Map && rv.IsNil() {
+			return nil, coerceZero
+		}
+		panic(fmt.Sprintf("rt.Coerce: expected %v, got %T", exact, v))
+	}
+	// A Dict handed to a Go map or a record slot (an FFI parameter typed
+	// `map[string]string`, a Db row narrowed to a record): the map it
+	// stands for, then the map rules below.
+	if d, ok := v.(skyDictAny); ok && targetTy != nil && !isSkyDictType(targetTy) {
+		v = dictToMapAny(d)
+		rv = reflect.ValueOf(v)
+	}
 
 	if rv.IsValid() && targetTy != nil {
 		// Numeric-widening (safe subset).
@@ -7690,9 +7682,9 @@ func File_readFile(path any) any {
 }
 
 // File.readFileLimit : String -> Int -> Task String String
-// Reads up to `limit` bytes. Returns Err if the file exceeds that size, or
-// if the contents are not valid UTF-8 (callers should use readFileBytes for
-// binary data).
+// Reads up to `limit` bytes. Returns Err if the file exceeds that size. The
+// bytes are returned as they are (a Sky.Core.Bytes String): nothing checks or
+// decodes UTF-8, so a binary file reads unchanged.
 func File_readFileLimit(path any, limit any) any {
 	return func() any {
 		return WithFileSpan("readFile", fmt.Sprintf("%v", path), func() any {
@@ -8220,99 +8212,7 @@ func Encoding_hexDecodeT(s string) SkyResult[string, string] {
 	return Ok[string, string](string(data))
 }
 
-// ═══════════════════════════════════════════════════════════
-// Regex
-// ═══════════════════════════════════════════════════════════
-
-func Regex_match(pattern any, s any) any {
-	matched, _ := regexp.MatchString(fmt.Sprintf("%v", pattern), fmt.Sprintf("%v", s))
-	return matched
-}
-
-func Regex_find(pattern any, s any) any {
-	re, err := regexp.Compile(fmt.Sprintf("%v", pattern))
-	if err != nil {
-		return Nothing[any]()
-	}
-	match := re.FindString(fmt.Sprintf("%v", s))
-	if match == "" {
-		return Nothing[any]()
-	}
-	return Just[any](match)
-}
-
-func Regex_findAll(pattern any, s any) any {
-	re, err := regexp.Compile(fmt.Sprintf("%v", pattern))
-	if err != nil {
-		return []any{}
-	}
-	matches := re.FindAllString(fmt.Sprintf("%v", s), -1)
-	result := make([]any, len(matches))
-	for i, m := range matches {
-		result[i] = m
-	}
-	return result
-}
-
-func Regex_replace(pattern any, replacement any, s any) any {
-	re, err := regexp.Compile(fmt.Sprintf("%v", pattern))
-	if err != nil {
-		return s
-	}
-	return re.ReplaceAllString(fmt.Sprintf("%v", s), fmt.Sprintf("%v", replacement))
-}
-
-func Regex_split(pattern any, s any) any {
-	re, err := regexp.Compile(fmt.Sprintf("%v", pattern))
-	if err != nil {
-		return []any{s}
-	}
-	parts := re.Split(fmt.Sprintf("%v", s), -1)
-	result := make([]any, len(parts))
-	for i, p := range parts {
-		result[i] = p
-	}
-	return result
-}
-
-// P8/Regex typed companions — direct string in/out, SkyMaybe[string]
-// for `find`, []string for list-returning operations.
-func Regex_matchT(pattern, s string) bool {
-	matched, _ := regexp.MatchString(pattern, s)
-	return matched
-}
-func Regex_findT(pattern, s string) SkyMaybe[string] {
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return Nothing[string]()
-	}
-	m := re.FindString(s)
-	if m == "" {
-		return Nothing[string]()
-	}
-	return Just[string](m)
-}
-func Regex_findAllT(pattern, s string) []string {
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return []string{}
-	}
-	return re.FindAllString(s, -1)
-}
-func Regex_replaceT(pattern, replacement, s string) string {
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return s
-	}
-	return re.ReplaceAllString(s, replacement)
-}
-func Regex_splitT(pattern, s string) []string {
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return []string{s}
-	}
-	return re.Split(s, -1)
-}
+// Regex: see regex_match.go (Sky.Core.Regex, a compiled RE2 value).
 
 // ═══════════════════════════════════════════════════════════
 // Char
@@ -8473,7 +8373,7 @@ func Math_isNaNT(x float64) bool           { return math.IsNaN(x) }
 // boxed as a Go rune so downstream Char_* helpers (firstRune) keep
 // the typed fast path.
 func String_toList(s any) any {
-	str := fmt.Sprintf("%v", s)
+	str := skyStr(s)
 	out := make([]any, 0, runeCount(str))
 	for _, r := range str {
 		out = append(out, r)
@@ -8486,6 +8386,9 @@ func String_toList(s any) any {
 // Accepts any-slice or typed slice; AsList unwraps the latter
 // element-wise so Sky-source `[ 'a', 'b' ]` literals round-trip.
 func String_fromList(chars any) any {
+	if cs, ok := chars.([]rune); ok {
+		return string(cs)
+	}
 	xs := AsList(chars)
 	var b strings.Builder
 	b.Grow(len(xs))
@@ -8510,12 +8413,7 @@ func String_fromList(chars any) any {
 // the typed-codegen path can flow through without `rt.SkyCall` per
 // element.
 func String_concat(parts any) any {
-	xs := AsList(parts)
-	var b strings.Builder
-	for _, p := range xs {
-		b.WriteString(fmt.Sprintf("%v", p))
-	}
-	return b.String()
+	return joinErased("", parts)
 }
 
 func String_lines(s any) any {
@@ -8574,78 +8472,46 @@ func padChar(ch any) string {
 	}
 }
 
-func String_padLeft(n any, ch any, s any) any {
-	str := fmt.Sprintf("%v", s)
-	pad := padChar(ch)
-	target := AsInt(n)
-	for runeCount(str) < target {
-		str = pad + str
+// padCount is how many pad characters bring str to target runes. The
+// loop this replaces recounted and re-copied the string once per pad
+// character: O(target²).
+func padCount(str string, target int) int {
+	if k := target - utf8.RuneCountInString(str); k > 0 {
+		return k
 	}
-	return str
+	return 0
+}
+
+func String_padLeft(n any, ch any, s any) any {
+	str := skyStr(s)
+	return strings.Repeat(padChar(ch), padCount(str, AsInt(n))) + str
 }
 
 func String_padRight(n any, ch any, s any) any {
-	str := fmt.Sprintf("%v", s)
-	pad := padChar(ch)
-	target := AsInt(n)
-	for runeCount(str) < target {
-		str = str + pad
-	}
-	return str
+	str := skyStr(s)
+	return str + strings.Repeat(padChar(ch), padCount(str, AsInt(n)))
 }
 
 func String_left(n any, s any) any {
-	runes := []rune(fmt.Sprintf("%v", s))
-	nn := AsInt(n)
-	if nn > len(runes) {
-		nn = len(runes)
-	}
-	if nn < 0 {
-		nn = 0
-	}
-	return string(runes[:nn])
+	return stringLeft(AsInt(n), skyStr(s))
 }
 
 func String_right(n any, s any) any {
-	runes := []rune(fmt.Sprintf("%v", s))
-	nn := AsInt(n)
-	if nn > len(runes) {
-		nn = len(runes)
-	}
-	if nn < 0 {
-		nn = 0
-	}
-	return string(runes[len(runes)-nn:])
+	return stringRight(AsInt(n), skyStr(s))
 }
 
 // String_dropLeft drops the first n characters (runes) of s. Elm
 // String.dropLeft semantics: negative n returns s unchanged; n
 // >= length returns "".
 func String_dropLeft(n any, s any) any {
-	runes := []rune(fmt.Sprintf("%v", s))
-	nn := AsInt(n)
-	if nn <= 0 {
-		return string(runes)
-	}
-	if nn >= len(runes) {
-		return ""
-	}
-	return string(runes[nn:])
+	return stringDropLeft(AsInt(n), skyStr(s))
 }
 
 // String_dropRight drops the last n characters (runes) of s. Elm
 // String.dropRight semantics: negative n returns s unchanged; n
 // >= length returns "".
 func String_dropRight(n any, s any) any {
-	runes := []rune(fmt.Sprintf("%v", s))
-	nn := AsInt(n)
-	if nn <= 0 {
-		return string(runes)
-	}
-	if nn >= len(runes) {
-		return ""
-	}
-	return string(runes[:len(runes)-nn])
+	return stringDropRight(AsInt(n), skyStr(s))
 }
 
 func String_replace(old any, new_ any, s any) any {
@@ -8654,26 +8520,7 @@ func String_replace(old any, new_ any, s any) any {
 
 // String.slice is rune-based. Negative indices count from the end.
 func String_slice(start any, end any, s any) any {
-	runes := []rune(fmt.Sprintf("%v", s))
-	total := len(runes)
-	st := AsInt(start)
-	en := AsInt(end)
-	if st < 0 {
-		st = total + st
-	}
-	if en < 0 {
-		en = total + en
-	}
-	if st < 0 {
-		st = 0
-	}
-	if en > total {
-		en = total
-	}
-	if st > en {
-		return ""
-	}
-	return string(runes[st:en])
+	return stringSlice(AsInt(start), AsInt(end), skyStr(s))
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -9201,7 +9048,7 @@ func asSkyResponse(src any) (SkyResponse, bool) {
 		out.ContentType = f.String()
 		matched = true
 	}
-	if f := rv.FieldByName("Headers"); f.IsValid() {
+	if f := dictFieldAsMap(rv.FieldByName("Headers")); f.IsValid() {
 		switch f.Kind() {
 		case reflect.Map:
 			out.Headers = coerceHeadersToStringMap(f)
@@ -9322,23 +9169,23 @@ func asSkyRequest(src any) (SkyRequest, bool) {
 		out.Host = f.String()
 		matched = true
 	}
-	if f := rv.FieldByName("Headers"); f.IsValid() && f.Kind() == reflect.Map {
+	if f := dictFieldAsMap(rv.FieldByName("Headers")); f.IsValid() && f.Kind() == reflect.Map {
 		out.Headers = mapToAnyValueMap(f)
 		matched = true
 	}
-	if f := rv.FieldByName("Params"); f.IsValid() && f.Kind() == reflect.Map {
+	if f := dictFieldAsMap(rv.FieldByName("Params")); f.IsValid() && f.Kind() == reflect.Map {
 		out.Params = mapToAnyValueMap(f)
 		matched = true
 	}
-	if f := rv.FieldByName("Query"); f.IsValid() && f.Kind() == reflect.Map {
+	if f := dictFieldAsMap(rv.FieldByName("Query")); f.IsValid() && f.Kind() == reflect.Map {
 		out.Query = mapToAnyValueMap(f)
 		matched = true
 	}
-	if f := rv.FieldByName("Cookies"); f.IsValid() && f.Kind() == reflect.Map {
+	if f := dictFieldAsMap(rv.FieldByName("Cookies")); f.IsValid() && f.Kind() == reflect.Map {
 		out.Cookies = mapToStringMap(f)
 		matched = true
 	}
-	if f := rv.FieldByName("Form"); f.IsValid() && f.Kind() == reflect.Map {
+	if f := dictFieldAsMap(rv.FieldByName("Form")); f.IsValid() && f.Kind() == reflect.Map {
 		out.Form = mapToStringMap(f)
 		matched = true
 	}
@@ -9611,11 +9458,30 @@ func Server_header(name any, req any) any {
 	if !ok {
 		return Nothing[any]()
 	}
-	v, found := r.Headers[fmt.Sprintf("%v", name)]
-	if found {
+	if v, found := requestHeaderLookup(r.Headers, fmt.Sprintf("%v", name)); found {
 		return Just[any](v)
 	}
 	return Nothing[any]()
+}
+
+// requestHeaderLookup finds a request header by name, ignoring case: HTTP
+// header names are case-insensitive (RFC 9110 section 5.1). The request map
+// holds Go's canonical spelling (`Content-Type`), so the canonical form is
+// tried first (one map read), then the exact name, then a case-insensitive
+// scan for a key set in another spelling (a hand-built request).
+func requestHeaderLookup(headers map[string]any, name string) (any, bool) {
+	if v, ok := headers[textproto.CanonicalMIMEHeaderKey(name)]; ok {
+		return v, true
+	}
+	if v, ok := headers[name]; ok {
+		return v, true
+	}
+	for k, v := range headers {
+		if strings.EqualFold(k, name) {
+			return v, true
+		}
+	}
+	return nil, false
 }
 
 // ═══════════════════════════════════════════════════════════

@@ -97,3 +97,51 @@ func TestCodecAutoCarriesAJsonValueField(t *testing.T) {
 		t.Fatalf("Json.Value field did not decode: %s", errorMessage(r.ErrValue))
 	}
 }
+
+// A `Json.Value` record field lowers to `any` with the declared type `any`
+// (goty erases the kernel `Value` handle), not to `JsonValue`. Codec.auto
+// decodes it as JSON when the blank holds a JSON value there, and refuses an
+// `any` slot whose blank holds anything else (a key type erased to `any` is
+// never built from JSON).
+type bkAnyJSONRec struct {
+	Id   string        `sky:"id,string"`
+	Data any           `sky:"data,any"`
+	More SkyMaybe[any] `sky:"more,rt.SkyMaybe[any]"`
+	In   bkAnyJSONIn   `sky:"in,bkAnyJSONIn"`
+}
+
+type bkAnyJSONIn struct {
+	V any `sky:"v,any"`
+}
+
+func TestCodecAutoDecodesAnErasedJsonValueField(t *testing.T) {
+	blank := bkAnyJSONRec{
+		Data: JsonValue{raw: nil},
+		More: Just[any](JsonValue{raw: nil}),
+		In:   bkAnyJSONIn{V: JsonValue{raw: nil}},
+	}
+	text := `{"id":"h1","data":{"data":null,"tag":"X","errors":[]},"more":[1],"in":{"v":"s"}}`
+	r := decodeInto(t, blank, text)
+	if r.Tag != 0 {
+		t.Fatalf("an erased Json.Value field did not decode: %s", errorMessage(r.ErrValue))
+	}
+	back := r.OkValue.(bkAnyJSONRec)
+	b, err := json.Marshal(Codec_autoEnc(false, back).(JsonValue).raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The decoded object is a Go map, so the keys come back sorted.
+	if string(b) != `{"id":"h1","data":{"data":null,"errors":[],"tag":"X"},"more":[1],"in":{"v":"s"}}` {
+		t.Fatalf("round trip = %s", b)
+	}
+	if r := decodeInto(t, blank, `{"id":"h2","data":null,"more":null,"in":{"v":null}}`); r.Tag != 0 {
+		t.Fatalf("JSON null in a Json.Value field did not decode: %s", errorMessage(r.ErrValue))
+	}
+	// An `any` slot whose blank is not a JSON value stays refused.
+	if r := decodeInto(t, bkKeyRec{Key: Just[any](KxSecretKey{k: "x"})}, `{"key":{"k":"y"}}`); r.Tag == 0 {
+		t.Fatalf("a key slot erased to any was built from JSON: %#v", r.OkValue)
+	}
+	if r := decodeInto(t, bkAnyJSONIn{V: 0}, `{"v":{"a":1}}`); r.Tag == 0 {
+		t.Fatalf("an any slot whose blank is not JSON was built from JSON: %#v", r.OkValue)
+	}
+}

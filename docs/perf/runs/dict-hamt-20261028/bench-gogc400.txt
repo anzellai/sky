@@ -1,0 +1,145 @@
+# GOGC=400, go test -bench . -benchmem -benchtime=300ms -count=1 (all variants incl. compact)
+goos: darwin
+goarch: arm64
+pkg: hamtproto
+cpu: Apple M1
+BenchmarkSmallInsertNew/map/n=1-8         	 3336374	       108.8 ns/op	     256 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/map/n=4-8         	 2517831	       142.3 ns/op	     256 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/map/n=8-8         	 1558290	       227.0 ns/op	     504 B/op	       4 allocs/op
+BenchmarkSmallInsertNew/map/n=16-8        	  741153	       413.6 ns/op	     984 B/op	       4 allocs/op
+BenchmarkSmallInsertNew/map/n=64-8        	  250281	      1378 ns/op	    3544 B/op	       4 allocs/op
+BenchmarkSmallInsertNew/flat/n=1-8        	 7343241	        41.33 ns/op	      72 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/flat/n=4-8        	 6252198	        58.66 ns/op	     152 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/flat/n=8-8        	 4330893	        81.13 ns/op	     248 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/flat/n=16-8       	 3539524	        96.59 ns/op	     440 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/flat/n=64-8       	 1389866	       264.7 ns/op	    1816 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/ptr32/n=1-8       	 5398447	        61.90 ns/op	     112 B/op	       3 allocs/op
+BenchmarkSmallInsertNew/ptr32/n=4-8       	 5571633	        64.46 ns/op	     176 B/op	       3 allocs/op
+BenchmarkSmallInsertNew/ptr32/n=8-8       	 4479854	        80.45 ns/op	     272 B/op	       3 allocs/op
+BenchmarkSmallInsertNew/ptr32/n=16-8      	 3508120	        98.83 ns/op	     528 B/op	       3 allocs/op
+BenchmarkSmallInsertNew/ptr32/n=64-8      	 2229636	       166.4 ns/op	    1232 B/op	       5 allocs/op
+BenchmarkSmallInsertNew/inline32/n=1-8    	 5155108	        68.89 ns/op	     192 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/inline32/n=4-8    	 4290033	        84.04 ns/op	     304 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/inline32/n=8-8    	 3733114	        96.41 ns/op	     496 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/inline32/n=16-8   	 2937787	       122.6 ns/op	     976 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/inline32/n=64-8   	 1572376	       218.8 ns/op	    2096 B/op	       3 allocs/op
+BenchmarkSmallInsertNew/inline16/n=1-8    	 5237578	        69.13 ns/op	     192 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/inline16/n=4-8    	 4291461	        83.79 ns/op	     304 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/inline16/n=8-8    	 2907332	       124.1 ns/op	     544 B/op	       3 allocs/op
+BenchmarkSmallInsertNew/inline16/n=16-8   	 3124921	       121.2 ns/op	     848 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/inline16/n=64-8   	 1909272	       187.9 ns/op	    1456 B/op	       3 allocs/op
+BenchmarkSmallInsertNew/compact32/n=1-8   	 5971836	        60.21 ns/op	     144 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/compact32/n=4-8   	 4858968	        74.20 ns/op	     224 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/compact32/n=8-8   	 4257963	        83.89 ns/op	     352 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/compact32/n=16-8  	 3554893	        99.05 ns/op	     704 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/compact32/n=64-8  	 2081415	       173.2 ns/op	    1376 B/op	       3 allocs/op
+BenchmarkSmallInsertNew/compact16/n=1-8   	 5953815	        60.41 ns/op	     144 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/compact16/n=4-8   	 4884678	        73.70 ns/op	     224 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/compact16/n=8-8   	 3197322	       113.6 ns/op	     384 B/op	       3 allocs/op
+BenchmarkSmallInsertNew/compact16/n=16-8  	 3915910	        90.44 ns/op	     640 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/compact16/n=64-8  	 2373913	       153.8 ns/op	    1008 B/op	       3 allocs/op
+BenchmarkSmallInsertNew/compact8/n=1-8    	 5986003	        60.24 ns/op	     144 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/compact8/n=4-8    	 4724721	        73.55 ns/op	     224 B/op	       2 allocs/op
+BenchmarkSmallInsertNew/compact8/n=8-8    	 3210358	       114.0 ns/op	     384 B/op	       3 allocs/op
+BenchmarkSmallInsertNew/compact8/n=16-8   	 3110953	       114.1 ns/op	     512 B/op	       3 allocs/op
+BenchmarkSmallInsertNew/compact8/n=64-8   	 2317156	       155.7 ns/op	     624 B/op	       4 allocs/op
+BenchmarkSmallInsertUpd/map/n=1-8         	 3331676	       107.1 ns/op	     256 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/map/n=4-8         	 2505010	       144.3 ns/op	     256 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/map/n=8-8         	 1554421	       230.0 ns/op	     504 B/op	       4 allocs/op
+BenchmarkSmallInsertUpd/map/n=16-8        	  764607	       417.6 ns/op	     984 B/op	       4 allocs/op
+BenchmarkSmallInsertUpd/map/n=64-8        	  252574	      1391 ns/op	    3544 B/op	       4 allocs/op
+BenchmarkSmallInsertUpd/flat/n=1-8        	 9767048	        35.96 ns/op	      48 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/flat/n=4-8        	 6426939	        54.84 ns/op	     120 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/flat/n=8-8        	 4925330	        66.75 ns/op	     216 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/flat/n=16-8       	 3890720	        91.59 ns/op	     408 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/flat/n=64-8       	 1719276	       196.3 ns/op	    1816 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/ptr32/n=1-8       	 5965437	        59.30 ns/op	      80 B/op	       3 allocs/op
+BenchmarkSmallInsertUpd/ptr32/n=4-8       	 5049085	        71.07 ns/op	     144 B/op	       3 allocs/op
+BenchmarkSmallInsertUpd/ptr32/n=8-8       	 4753939	        71.55 ns/op	     240 B/op	       3 allocs/op
+BenchmarkSmallInsertUpd/ptr32/n=16-8      	 3916155	        91.38 ns/op	     496 B/op	       3 allocs/op
+BenchmarkSmallInsertUpd/ptr32/n=64-8      	 2189834	       165.1 ns/op	    1168 B/op	       5 allocs/op
+BenchmarkSmallInsertUpd/inline32/n=1-8    	 5635988	        63.74 ns/op	     144 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/inline32/n=4-8    	 4435058	        83.10 ns/op	     256 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/inline32/n=8-8    	 3910510	        91.31 ns/op	     432 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/inline32/n=16-8   	 2949829	       121.6 ns/op	     976 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/inline32/n=64-8   	 1775703	       204.2 ns/op	    1984 B/op	       3 allocs/op
+BenchmarkSmallInsertUpd/inline16/n=1-8    	 5644604	        64.49 ns/op	     144 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/inline16/n=4-8    	 4265602	        80.33 ns/op	     256 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/inline16/n=8-8    	 3838678	        91.77 ns/op	     432 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/inline16/n=16-8   	 2535034	       141.8 ns/op	     896 B/op	       3 allocs/op
+BenchmarkSmallInsertUpd/inline16/n=64-8   	 2029142	       177.8 ns/op	    1280 B/op	       3 allocs/op
+BenchmarkSmallInsertUpd/compact32/n=1-8   	 6256162	        60.29 ns/op	     112 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/compact32/n=4-8   	 5699978	        63.16 ns/op	     192 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/compact32/n=8-8   	 4354552	        84.52 ns/op	     304 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/compact32/n=16-8  	 3933458	        92.33 ns/op	     640 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/compact32/n=64-8  	 2271576	       162.1 ns/op	    1296 B/op	       3 allocs/op
+BenchmarkSmallInsertUpd/compact16/n=1-8   	 5767274	        59.22 ns/op	     112 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/compact16/n=4-8   	 5609646	        65.38 ns/op	     192 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/compact16/n=8-8   	 4351404	        82.65 ns/op	     304 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/compact16/n=16-8  	 2852133	       127.5 ns/op	     624 B/op	       3 allocs/op
+BenchmarkSmallInsertUpd/compact16/n=64-8  	 2725614	       133.4 ns/op	     896 B/op	       3 allocs/op
+BenchmarkSmallInsertUpd/compact8/n=1-8    	 5974028	        57.25 ns/op	     112 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/compact8/n=4-8    	 5709628	        62.62 ns/op	     192 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/compact8/n=8-8    	 4378836	        82.42 ns/op	     304 B/op	       2 allocs/op
+BenchmarkSmallInsertUpd/compact8/n=16-8   	 3217214	       113.1 ns/op	     464 B/op	       3 allocs/op
+BenchmarkSmallInsertUpd/compact8/n=64-8   	 2191200	       169.0 ns/op	     704 B/op	       4 allocs/op
+BenchmarkSmallGet/map/n=1-8               	44889178	         7.952 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/map/n=4-8               	41316579	         8.756 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/map/n=8-8               	38854683	         9.364 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/map/n=16-8              	31666677	        11.22 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/map/n=64-8              	31921378	        10.43 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/flat/n=1-8              	92052964	         4.004 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/flat/n=4-8              	41768593	         8.616 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/flat/n=8-8              	27340213	        13.35 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/flat/n=16-8             	21044683	        17.18 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/flat/n=64-8             	 5317298	        68.56 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/ptr32/n=1-8             	38292950	         9.397 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/ptr32/n=4-8             	31913596	        11.12 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/ptr32/n=8-8             	33636082	        10.81 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/ptr32/n=16-8            	30697406	        12.12 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/ptr32/n=64-8            	24908754	        14.58 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/inline32/n=1-8          	30917650	        11.36 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/inline32/n=4-8          	28452874	        12.93 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/inline32/n=8-8          	28279838	        12.63 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/inline32/n=16-8         	25315936	        14.03 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/inline32/n=64-8         	21187894	        17.29 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/inline16/n=1-8          	31380183	        11.45 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/inline16/n=4-8          	27662606	        12.82 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/inline16/n=8-8          	28447908	        12.83 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/inline16/n=16-8         	25974962	        13.96 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/inline16/n=64-8         	19717788	        18.42 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/compact32/n=1-8         	33082660	        10.86 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/compact32/n=4-8         	30181298	        11.92 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/compact32/n=8-8         	30247545	        12.06 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/compact32/n=16-8        	26998986	        13.52 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/compact32/n=64-8        	21921978	        16.40 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/compact16/n=1-8         	33687756	        10.79 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/compact16/n=4-8         	29423683	        11.90 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/compact16/n=8-8         	29973981	        12.04 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/compact16/n=16-8        	28316912	        12.96 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/compact16/n=64-8        	19987646	        17.93 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/compact8/n=1-8          	33400210	        10.93 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/compact8/n=4-8          	25404067	        14.41 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/compact8/n=8-8          	24555219	        13.26 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/compact8/n=16-8         	24626329	        14.06 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSmallGet/compact8/n=64-8         	15527252	        24.10 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRandInsert1e5/ptr32-8            	       5	  68430100 ns/op	       684.3 ns/insert	326533947 B/op	  845402 allocs/op
+BenchmarkRandInsert1e5/inline32-8         	       3	 101341500 ns/op	      1013 ns/insert	561232272 B/op	  472704 allocs/op
+BenchmarkRandInsert1e5/inline16-8         	       5	  71318992 ns/op	       713.2 ns/insert	365989859 B/op	  549597 allocs/op
+BenchmarkRandInsert1e5/compact32-8        	       5	  67740525 ns/op	       677.4 ns/insert	390404966 B/op	  472703 allocs/op
+BenchmarkRandInsert1e5/compact16-8        	       6	  54870076 ns/op	       548.7 ns/insert	253873906 B/op	  549598 allocs/op
+BenchmarkRandInsert1e5/compact8-8         	       6	  53021452 ns/op	       530.2 ns/insert	165832757 B/op	  684009 allocs/op
+BenchmarkCounts/ptr32-8                   	       1	 950906750 ns/op	       950.9 ns/update	3588314896 B/op	 9034259 allocs/op
+BenchmarkCounts/inline32-8                	       1	1231488083 ns/op	      1231 ns/update	6180172640 B/op	 5017141 allocs/op
+BenchmarkCounts/inline16-8                	       1	 921950709 ns/op	       921.9 ns/update	4012241216 B/op	 5843455 allocs/op
+BenchmarkCounts/compact32-8               	       1	 836641500 ns/op	       836.6 ns/update	4296642992 B/op	 5017139 allocs/op
+BenchmarkCounts/compact16-8               	       1	 716043625 ns/op	       716.0 ns/update	2779451968 B/op	 5843455 allocs/op
+BenchmarkCounts/compact8-8                	       1	 684758250 ns/op	       684.8 ns/update	1797724144 B/op	 7278545 allocs/op
+BenchmarkGet1e6/ptr32-8                   	 5934130	        61.17 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGet1e6/inline32-8                	 6118416	        58.13 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGet1e6/inline16-8                	 5114104	        71.42 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGet1e6/compact32-8               	 6449156	        54.68 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGet1e6/compact16-8               	 5355734	        67.01 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGet1e6/compact8-8                	 4244458	        84.01 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	hamtproto	95.468s

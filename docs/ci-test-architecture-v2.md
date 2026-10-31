@@ -1,7 +1,7 @@
 # Sky CI/CD + Test Architecture — v2 (reconciled)
 
-> **Status:** design v2. **Supersedes** `docs/ci-test-architecture.md` (topology)
-> and `docs/ci-corpus-proposal.md` (corpus). Those two documents remain readable
+> **Status:** design v2. **Supersedes** `docs/history/ci-redesign-2026-08/ci-test-architecture.md` (topology)
+> and `docs/history/ci-redesign-2026-08/ci-corpus-proposal.md` (corpus). Those two documents remain readable
 > for their evidence; where they conflict with this one, **this one wins**.
 > **Mandate:** `.claude/AUTONOMOUS_GOAL.md` — verbatim user goal + the 2026-08-09
 > two-layer REFINEMENT. **Branch:** `feat/ci-test-overhaul`.
@@ -28,7 +28,7 @@ the design:
 | **C5** | Layer 1 = ~1,500 static cases (topology) *or* ~7,000 assertions in ~62 units (corpus) | Incompatible units, and **T1 does not close if both land**. §3 defines ONE mechanism and ONE cost formula with three terms | §3 |
 | **C6** | Batch many cases per compilation unit | **Not semantics-preserving** for the exact families the corpus exists to catch (`lower.rs:246-266`, `goty.rs:186-196`). Four families are forbidden from batching | §3.2 — a new, budget-visible cost term |
 | **C7** | Case counts are ~1,500 growing to ~5,000 | Counts are **DERIVED** from a measured per-case cost, with an explicit abort branch | §2 |
-| **C8** | `examples/` drops to `sky check` — cheap, no `go build` | **False**: `sky check` ≡ `sky build`, both run `go build` (`sky/src/main.rs`, and `ci-corpus-proposal.md:66-68`). The change drops *run*, not *build* — an unledgered coverage removal | §9.3 |
+| **C8** | `examples/` drops to `sky check` — cheap, no `go build` | **False**: `sky check` ≡ `sky build`, both run `go build` (`sky/src/main.rs`, and `history/ci-redesign-2026-08/ci-corpus-proposal.md:66-68`). The change drops *run*, not *build* — an unledgered coverage removal | §9.3 |
 | **C9** | Falsifying mutation per gate | Gate-granular mutation over aggregate stdout **survives the one-byte golden**. Falsifiability is **per item** | §4 |
 | **C10** | `timeout-minutes` = 1.5× the tier budget enforces the tier | It does not (13.5 × 2 jobs = 26 min passes a 9-min tier). Per-job timeout = 1.5× *that job's* estimate, plus an explicit elapsed assertion in `ci-green` | §8.2 |
 | **C11** | T1 = 9 min | **`setup` was absent from the arithmetic** and is on the critical path. T1 = `setup + max(jobs)` | §8.1 |
@@ -110,7 +110,7 @@ off by ~400× — because it builds no world at all.
 is dropped. X survives because its **structure** is verified: the two-point model
 predicted a third gate within 3.7 %, and per-case cost is independent of item
 size (a 27-line fixture and a 1,911-line app cost within 50 % of each other,
-`ci-corpus-proposal.md:71-78`). A per-case cost that does not scale with the case
+`history/ci-redesign-2026-08/ci-corpus-proposal.md:71-78`). A per-case cost that does not scale with the case
 is by definition fixed overhead, and the profile says exactly which overhead.
 
 Cited sites, verified on this branch:
@@ -437,7 +437,7 @@ whole-compilation state.
 | `N_iso` | cases in a forbidden-from-batching family — **one compilation unit each** | the term **both v1 documents missed** |
 | `N_b` | batchable behavioural assertions | corpus's ~7,000 lives here |
 | `K` | assertions per compilation unit | corpus's ~62 units ⇒ K ≈ 110 |
-| `c_u` | per-compilation-unit cost (build + run), **warm**, on the runner class | host-measured 0.83 s warm / 4.53 s cold (`ci-corpus-proposal.md:82-86`); runner value **unknown** |
+| `c_u` | per-compilation-unit cost (build + run), **warm**, on the runner class | host-measured 0.83 s warm / 4.53 s cold (`history/ci-redesign-2026-08/ci-corpus-proposal.md:82-86`); runner value **unknown** |
 | `P` | achieved in-job parallelism | measured, not `nproc` |
 
 **`N_iso` is the term that can break the budget**, and it is therefore **capped by
@@ -1176,7 +1176,7 @@ These survive from v1 and are **not** re-opened:
 Stated explicitly, per the mandate. Each row names the phase it gates.
 
 > **U1 is RESOLVED and three premises in §1.3/§1.4 proved wrong when this design
-> met the compiler.** See [`ci-test-phase-2-3-results.md`](ci-test-phase-2-3-results.md)
+> met the compiler.** See [`history/ci-redesign-2026-08/ci-test-phase-2-3-results.md`](history/ci-redesign-2026-08/ci-test-phase-2-3-results.md)
 > before acting on §1.3, §1.4(a), or the "why C-2 is not optional" argument in
 > §1.2. In brief: C-1's invalidation obligation is wider than "drop that entry";
 > §1.4(a)'s `corpus.defid-disjoint` gate is unsatisfiable as worded and asserts

@@ -48,6 +48,15 @@ func TestNativeInsertAtCursorInWasm(t *testing.T) {
 	if n := strings.Count(string(out), "    --- PASS: TestWasmInsertAtCursor/"); n != 7 {
 		t.Fatalf("want 7 passing subtests, got %d:\n%s", n, out)
 	}
+	// Std.Native.selection / setSelection (native_selection_wasm.go), in the
+	// same build: the focused and the remembered selection, character
+	// positions over UTF-16, clamping, and the three error kinds.
+	if !strings.Contains(string(out), "--- PASS: TestWasmSelection") {
+		t.Fatalf("TestWasmSelection did not pass:\n%s", out)
+	}
+	if n := strings.Count(string(out), "    --- PASS: TestWasmSelection/"); n != 8 {
+		t.Fatalf("want 8 passing selection subtests, got %d:\n%s", n, out)
+	}
 }
 
 // Off the client (a server, a CLI, a terminal UI, and Sky.Live, whose update
@@ -66,5 +75,29 @@ func TestNativeInsertAtCursorIsUnavailableOffClient(t *testing.T) {
 	}
 	if kind := errorKindName(res.ErrValue); kind != "Unavailable" {
 		t.Errorf("want Err Unavailable, got %q", kind)
+	}
+}
+
+// Native.selection / setSelection off the client: Err Unavailable, never a
+// panic, like insertAtCursor.
+func TestNativeSelectionIsUnavailableOffClient(t *testing.T) {
+	for name, task := range map[string]any{
+		"selection":    Native_selection("body"),
+		"setSelection": Native_setSelection("body", 0, 1),
+	} {
+		thunk, ok := task.(func() any)
+		if !ok {
+			t.Fatalf("%s must return a Task thunk", name)
+		}
+		res, ok := thunk().(SkyResult[any, any])
+		if !ok || res.Tag != 1 {
+			t.Fatalf("off-client %s must be Err, got %#v", name, thunk())
+		}
+		if msg := extractErrMsg(res); !strings.Contains(msg, "client-only") {
+			t.Errorf("%s: the Err must say it is client-only, got %q", name, msg)
+		}
+		if kind := errorKindName(res.ErrValue); kind != "Unavailable" {
+			t.Errorf("%s: want Err Unavailable, got %q", name, kind)
+		}
 	}
 }

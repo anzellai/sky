@@ -80,8 +80,8 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 
 -- `Attachment.content` carries arbitrary bytes; we type it as
--- `String` so callers can pass `File.readFileBytes` output
--- directly.  Sky.Core.Bytes is an alias over String anyway.
+-- `String` so callers can pass `File.readFile` output (a file's
+-- bytes as they are, binary included) directly.  Sky.Core.Bytes is an alias over String anyway.
 -- | A single email message.
 --
 -- Build with `defaultMessage { from, to, subject }` + `with*`
@@ -421,7 +421,7 @@ mailtoUri addr =
 
 -- | `defaultAttachment "report.pdf"` — Attachment named with empty
 -- mime type + empty content.  Pair with `withMimeType` + `withContent`
--- (or pass `File.readFileBytes` output directly to `withContent`).
+-- (or pass `File.readFile` output directly to `withContent`).
 defaultAttachment : String -> Attachment
 defaultAttachment filename =
     { filename = filename, mimeType = "", content = "" }

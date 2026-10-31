@@ -1,7 +1,7 @@
 # Sky stdlib — Canonical correctness reference
 
 Pairs with `docs/rust-rewrite/` (the primary compiler reference; the
-Haskell-era `docs/architecture/sky-compiler-architecture.md` is historical
+Haskell-era `docs/history/compiler/sky-compiler-architecture.md` is historical
 context only). The compiler docs explain HOW Sky source becomes Go; this doc
 explains WHAT the stdlib surfaces guarantee.
 
@@ -23,7 +23,7 @@ HEAD). Each binding is one of:
 1. **Pure Sky** — recursive / case-of / accumulator implementation.
    `List.foldl`, `Maybe.map`, `Result.combine`, every Std.Ui combinator.
 2. **`Ffi.kernel "Name"` alias** — Sky-source typed declaration whose
-   call sites the compiler routes to the Haskell-side kernel dispatch,
+   call sites the compiler routes to the kernel dispatch,
    which then calls a Go runtime function in `runtime-go/rt/`. Zero
    runtime cost over a direct call; `sky doc` surfaces the entry.
 
@@ -198,8 +198,18 @@ test suite (`cargo test`, error-shape gates).
 **File**: `sky-stdlib/Sky/Core/List.sky` (543 lines, the largest core
 algebraic module).
 
-**Type**: builtin `List a` (compiler ADT, not Sky-source declared —
-the Sky type is `[a]` syntactic sugar over a cons cell).
+**Type**: builtin `List a`. At run time a list is a Go slice (`[]T` under
+typed emission, `[]any` erased), not a cons cell.
+
+**Costs (v0.29.0)**: `x :: xs` is amortised O(1): a typed `::` lowers to
+`rt.List_consT[T]`, which writes into free room in front of the list's
+backing block, claimed with one compare-and-swap so no other list sees the
+slot (`runtime-go/rt/list_block.go`). Three shapes still copy, O(n): replacing
+a head, a second cons onto a shared tail, and the first cons onto a list that
+is not a cons block. `head`, `tail`, `length`, `isEmpty` and (typed) `take` /
+`drop` are O(1); `reverse`, `map`, `filter`, `++` are O(n). An old list keeps
+its whole block alive (the space cost). Go code must not change a list it is
+given (`docs/ffi/boundary-philosophy.md`).
 
 **Surface (key entries)**:
 
@@ -266,14 +276,31 @@ the law itself). Law-by-inspection for the algebraic content.
 
 **Files**: `Dict.sky` (127 lines), `Set.sky` (92 lines). Both are
 `Ffi.kernel` aliases — implementations live in Go runtime
-(`runtime-go/rt/rt.go` — there are no `dict.go` / `set.go` files; the `Dict_*` / `Set_*` kernels live in `rt.go` and `stdlib_extra.go`).
+(`runtime-go/rt/rt.go` and `stdlib_extra.go` hold the `Dict_*` / `Set_*` kernels;
+`runtime-go/rt/dict_persistent.go` holds the persistent store both sit on).
 
 **Types**:
 ```elm
-type Dict k v  -- opaque; runtime is sync.Map for typed-key dicts,
-               -- plain map[K]V for monomorphic specialisations
-type Set a     -- opaque; sorted slice or hashset depending on a
+type Dict k v  -- runtime: rt.SkyDict[V], a persistent map; the key is
+               -- encoded to a tagged string (encodeDictKey, rt.go)
+type Set a     -- runtime: SkySet{items SkyDict[any]} keyed by
+               -- identityKey (stdlib_extra.go); typed code may hold a []A
 ```
+
+**Costs (v0.29.0, measured)**: a Dict is a persistent value
+(`runtime-go/rt/dict_persistent.go`): a flat array of up to 16 entries, then a
+16-way hash array mapped trie over the encoded keys, with a seeded 64-bit hash.
+`get` / `member` are O(log n) (a scan of at most 16 entries while small);
+`insert` / `remove` copy one root-to-leaf path, O(log n), and share the rest,
+so a fold of n inserts is O(n log n); `size` / `isEmpty` are O(1). Over a typed
+dict the compiler calls typed twins (`rt.Dict_getIntT[V]`,
+`rt.Dict_insertStrT[V]`, `…ProbeT` for other keys), and an erased kernel keeps
+the dict's value type, so a typed slot takes the result in O(1)
+(`rt.AsMapT`). Enumeration (`toList`, `keys`, `values`, `foldl`, `map`) sorts
+the decoded keys on every call: O(n log n). Set sits on the same store. The
+design was chosen by measurement (`docs/perf/runs/dict-hamt-20261028/`): at
+sizes 1 to 64 no insert or get is slower than 1.06x the old map, and `xtask
+perf-gate` `dict-counts` (1e6 updates over 1e5 keys) runs in about 0.9 s.
 
 **Surface highlights**:
 
@@ -305,19 +332,19 @@ type Set a     -- opaque; sorted slice or hashset depending on a
   `Set.size (Set.fromList [ A, B ]) == 2` for two distinct nullary
   constructors (v0.27.7; before it, every nullary constructor of a
   sealed type compared and keyed alike).
-* **Persistence**: every operation returns a new value; the runtime
-  has copy-on-write semantics so reads are O(log n) and writes are
-  O(log n) (UNVERIFIED claim — runtime detail; the contract is
-  immutability, not the complexity bound).
+* **Persistence**: every operation returns a new value, and the old one
+  is unchanged. A write copies one path of the trie (O(log n)) and shares
+  the rest; `dict_persistent_test.go` re-checks every kept version of a
+  40,000-step model test. Equality (`==`) compares content, not layout.
 
 **Partial functions**: NONE.
 
 **Invariants**:
-* Iteration order of `Dict.toList` is by sorted key (for
-  `Comparable` keys); for typed-key dicts (since v0.15.45), the
-  order is insertion-order on the runtime side and stable per
-  process. AI-written code must NOT rely on a specific order beyond
-  "stable within a single run".
+* Iteration order of `Dict.toList` / `keys` / `values` / `foldl` is
+  ascending key order, as in Elm, for every key type the runtime can
+  decode (`dictEntries`, rt.go). There is no
+  insertion-order or `sync.Map` path; the earlier text that said so
+  was stale.
 * `Limitation #5` was CLOSED in v0.17: `Dict.toList (Dict.fromList
   [(1,"a")])` now type-checks both inline and let-bound.
 
@@ -326,19 +353,31 @@ union; `examples/00-standard-libs` exercises both modules in the
 120-assertion stdlib smoke test.
 
 **Known gaps**:
-* Iteration order documented above is "by sorted key" for
-  comparable keys but the Go runtime uses Go's map iteration
-  (randomised) — Sky inserts a sort pass at `Dict.toList`. UNVERIFIED
-  whether this sort is stable under custom-Ord types (Sky has no
-  custom Ord; the comparable interface is structural).
+* Enumeration sorts on every call (above).
+* A composite (tuple, list, record, custom type) key is rejected at check
+  time, `[E2008]` (`docs/KNOWN_LIMITATIONS.md`): its string encoding is not
+  injective and cannot be decoded. The persistent store keys on the same
+  encoded strings, so v0.29.0 does not lift this.
 
 ---
 
 ### 2.5 `Sky.Core.String`
 
-**File**: `String.sky` (218 lines). 38 entries. All `Ffi.kernel`
-aliases backed by Go runtime functions that respect Unicode where
-the documentation says they do.
+**File**: `String.sky`. Every entry is an `Ffi.kernel` alias backed by
+a Go runtime function, except `foldl` / `foldr` (Sky over `uncons`).
+
+**The unit** is the Unicode code point (a Go rune): every index and
+length. Not bytes (`Sky.Core.Bytes`), not graphemes (`String.graphemes`).
+
+**Costs (v0.29.0)**: `length` O(n), no allocation; `slice` / `left` /
+`dropLeft` O(k) for index k and `right` / `dropRight` O(k) from the end,
+each returning a substring that shares the input's bytes; a negative
+`slice` index O(n); `uncons` O(1); `foldl` / `foldr` / `toList` /
+`fromList` / `concat` / `join` O(n). `++` is O(|a|+|b|), so `++` in a
+loop is O(n²): cons pieces and `String.concat (List.reverse pieces)`
+once. A per-character `slice` loop over a string of 4 kB or more uses a
+one-entry index cache (`runtime-go/rt/string_fast.go` states its
+limits).
 
 **Key signatures**:
 
@@ -356,6 +395,8 @@ contains/startsWith/endsWith : String -> String -> Bool  -- needle-first
 containsIn/startsWithIn/endsWithIn : String -> String -> Bool  -- haystack-first (v0.15.47+)
 slice          : Int -> Int -> String -> String   -- rune indices, Elm semantics
 dropLeft/dropRight : Int -> String -> String       -- rune-based (v0.16.31)
+uncons         : String -> Maybe ( Char, String )  -- O(1) (v0.29.0)
+foldl/foldr    : (Char -> b -> b) -> b -> String -> b  -- O(n) (v0.29.0)
 casefold/equalFold : ...                            -- Unicode case-folded comparison
 isEmail/isUrl   : String -> Bool                    -- format checks
 words/lines    : String -> List String
@@ -381,10 +422,8 @@ words/lines    : String -> List String
   regardless of UTF-8 byte length.
 * `String.toList : String -> List Char` produces `List Char` where
   `Char` is one Unicode code point — not a grapheme cluster.
-  Grapheme handling is via Sky.Tui's uniseg dependency for cell
-  width; user code that needs grapheme clusters must call the
-  appropriate Unicode primitive (none currently exposed —
-  documented gap).
+  `String.graphemes` counts grapheme clusters; no function splits a
+  string into them (documented gap).
 
 **Verification**: stdlib smoke test (examples/00) hits ~30 of 38
 entries. The compiler test suite's UI-layout specs don't cover
@@ -395,9 +434,8 @@ trim, and contains.
 * `Limitation #462` (CLOSED v0.16.4 region): `String.padLeft /
   padRight` previously emitted the char as decimal codepoint. Now
   fixed.
-* No grapheme-cluster API exposed; would need
-  `String.toGraphemes : String -> List String` for full Unicode
-  Annex #29 segmentation.
+* The walking kernels keep an invalid UTF-8 byte inside a result as it
+  was (the old rune round trip wrote U+FFFD); valid text is unchanged.
 
 ---
 
@@ -1337,6 +1375,94 @@ allowlist rejects characters outside `[A-Za-z0-9_.]`.
   / `insertFields` are validated against `[A-Za-z0-9_.]`. An
   attempted `'; DROP TABLE users; --` column name is rejected
   before SQL generation.
+* **`Std.Db.Store` checks every name before any statement** (v0.29.0).
+  Every verb (`create`, `migrate`, `insert`, `insertMany`, `upsert`,
+  `update`, `updateWhere`, `updateFields`, `setFields`, `adjust`, `all`,
+  `findBy`, `delete`, `deleteWhere`, `toList`, `toRows`, `toMaybe`,
+  `count`, `toSql`, `toPairs`, `toPairsMaybe`, and the v0.29.0 writes
+  `insertOrIgnore`, `insertOrIgnoreOn`, `upsertWith`, `updateSet`,
+  `copyInto`, `copyIntoOrIgnore`, `insertReturning`,
+  `updateFieldsReturning`, `deleteWhereReturning`) runs the store check first
+  (for a join, `exists` or `inQuery`, on every store it reads): the table name matches
+  `^[A-Za-z_][A-Za-z0-9_]*$` and is at most 63 bytes, the primary key is
+  empty or a codec column, and no builder recorded an unknown column.
+  Every column, result field and JSON key a query names is resolved
+  against the codec (field or snake name) and must pass the same rule.
+  A failure is `Err` (InvalidInput) and no statement reaches the driver.
+  In a join each name is checked against its own side's codec (ON pairs,
+  `whereLeft` / `whereRight`, `orderLeft*` / `orderRight*`), and a bare
+  name both sides have is refused. A subquery column, a `correlate`
+  pair and the inner condition are checked against the inner codec, the
+  outer column against the outer one, and the two must be of one kind.
+  Sources: `storeError`, `refOf`, `colRef`, `prepare`, `fromClause`,
+  `subSelect`, `existsSql` in `Std/Db/Store.sky`.
+  `pushProject` and `dumpSchema` run the same check on every `Table`,
+  builder problems included (`Table.problems`), so `sky db push` and
+  `sky db migrate --gen` refuse an unknown index column before any DDL.
+* **Conflict and RETURNING writes are one statement, checked first**
+  (v0.29.0). A conflict target (`upsertWith`, `insertOrIgnoreOn`) is the
+  primary key, a `unique` column or a `uniqueOn` set of required columns;
+  a rule never sets a key or generated column; `keepMin` / `keepMax` spell
+  out the NULL rule in one CASE text for both dialects (LEAST / GREATEST
+  differ). `updateSet` and `copyInto` check every target and source kind
+  and refuse a nullable source into a required target; every parameter in
+  a CASE or SELECT list is `CAST(? AS <type>)`, so PostgreSQL can type it.
+  `copyInto` refuses an unmapped required column without a default and an
+  unmapped `defaultWith` column. RETURNING goes through
+  `Db_writeReturningObjects`, which carries the SSR settle guard of
+  `Db_exec` and decodes through the codec; a refused write is `Err`.
+  Of concurrent `insertOrIgnore` (or `updateFieldsReturning` claim) calls on
+  one key exactly one wins: pinned by `StoreQueryConformanceTest` and the
+  `TestStoreWritePostgres*` Go tests on separate PostgreSQL sessions.
+* **One migrate rule, one renderer** (v0.29.0, user decision D1).
+  `Store.migrate` / `sky db push` (`Db_autoMigrate`) and `sky db migrate`
+  (`renderMigOp` of an `addColumn` op) render an added column through one Go
+  function, `renderAddColumn` (`runtime-go/rt/db_migrate_ops.go`): a
+  `Maybe` field is nullable, any other field `NOT NULL DEFAULT <declared,
+  else zero>`, a required blob nullable with a warning, a unique column an
+  extra unique index. An existing column is never altered. The parity
+  fixture `runtime-go/rt/testdata/migrate_parity.json` is held by a Rust test
+  (the diff gives its ops) and Go tests on both dialects (the runtime runs
+  exactly `renderMigOp` of those ops). Every op file, old or new, renders
+  with this one renderer. The ledger checksum of an op file is
+  `migOpsChecksum`, the sha256 of its ops in a canonical form (sorted keys,
+  numbers as written, a `"v"` key dropped), so a renderer change never
+  changes it; hand-written `Db.migrate` SQL and `Ai_migrate` keep the sha256
+  of the SQL text. `_sky_migrations.kind` (`ops` / `sql`) says which; a row
+  with no kind (written by v0.28) of an op file is re-stamped once with the
+  ops checksum (`migLedgerCheck`, shared by apply and `SKY_DB_OP=status`).
+  The SQLite apply-time stamp of an op file is swapped in at apply
+  (`migApplyText`), never in hand-written SQL. An op file that adds a
+  required unique column to a table with 2 or more rows fails on its unique
+  index; the apply rolls back and names the table, the column and the fix (`migRequiredUniqueHint`).
+  Every literal in index DDL is a constant rendered by Store
+  (`predicateSql`), and every index column is an identifier (B10).
+* **One statement per Store call, joins and subqueries included.** A
+  join is `a INNER|LEFT JOIN b ON …` with every column under a quoted
+  alias (`a.col AS "a__col"`, so PostgreSQL keeps its case); the read
+  kernel `Db_queryObjectGroups` splits the row by prefix and gives the
+  right side as `null` when its first ON column is NULL (LEFT JOIN). A
+  subquery is `IN (SELECT sqN.col … AND sqN.col IS NOT NULL)` or
+  `[NOT] EXISTS (SELECT 1 FROM t sqN WHERE sqN.x = outer.y AND (…))`,
+  so a `deleteWhere` with `inQuery` sees one moment of the inner table.
+* **The only literals in Store SQL text**: LIMIT/OFFSET digits from a
+  Sky `Int` (refused when negative), a JSON key (identifier rule), the
+  fixed tokens of the renderer (`ESCAPE '!'`, `'$.key'`), and the DDL
+  defaults (`schemaDefault`, `'` doubled). Every value binds as a
+  parameter, including a `countIfAs` condition and a text needle. A
+  `defaultText` value is percent-encoded inside the colspec flag (`%`
+  and `|`), so it cannot add a flag (`codecFlagValueDecoder`,
+  `db_codec.go`), and the `touch` flag is matched exactly.
+* **A row error is never a short list**: `dbQueryRows` checks
+  `rows.Err()` after the loop, so an error after row 1 (a malformed
+  JSON value, `SQLITE_BUSY`) is `Err` (v0.29.0, B1).
+* **Same answer on both dialects** for the Store query builders, with
+  the documented exceptions: text collation (`minAs`/`maxAs`/`gt`/ORDER
+  BY on text), the text of a JSON number through `jsonText`, and
+  `LOWER` (ASCII only on SQLite). NULLs order first ascending and last
+  descending on a nullable column on both. Pinned by
+  `StoreQueryConformanceTest` on SQLite (`conformance`) and PostgreSQL
+  (`store-query-postgres`).
 * **`Db.unsafeFindWhere`** is the only escape hatch with raw SQL.
   Its name carries the warning; CLAUDE.md flags it. Callers must
   ensure no untrusted input enters the WHERE clause.

@@ -2004,12 +2004,10 @@ async function buildFixture(fx) {
     mkdirSync(`${dir}/src`, { recursive: true });
     writeFileSync(`${dir}/src/Main.sky`, fx.source);
     writeFileSync(`${dir}/sky.toml`, `name = "${fx.name}"\nversion = "0.0.0"\n`);
-    // Strip SKY_RUNTIME_DIR — the nix shellHook pins it at the
-    // PARENT repo's runtime-go, which masks any worktree-local
-    // runtime-go changes from `sky build`. Without this scrub the
-    // matrix builds the fixture against a stale runtime and our
-    // void-element / pseudo-class assertions (#409) won't reflect
-    // the in-worktree fix.
+    // Strip SKY_RUNTIME_DIR — nix dev shells before v0.29.0 pinned it at
+    // the PARENT repo's runtime-go. The current compiler embeds its
+    // runtime and does not read it; the scrub stays so a shell that
+    // still exports it cannot change what this matrix measures.
     const env = { ...process.env };
     delete env.SKY_RUNTIME_DIR;
     const r = spawnSync(SKY_BIN, ["build", "src/Main.sky"], {

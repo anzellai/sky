@@ -56,12 +56,56 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     "value maybe",
     "value null",
     "value nullable",
+    // v0.29.0: List.map2 / List.map3 (Elm). Maybe, Result, Task, Json.Decode
+    // and Std.Db.Decode already export `map2` / `map3`; Elm has the same
+    // set. A program that exposes List and one of them with `(..)` and uses
+    // the bare name gets `[E1012]`; see the v0.29.0 CHANGELOG.
+    // v0.29.0: Regex.contains and Regex.fromString (Elm's names; a Regex is
+    // a compiled value now). String.contains, and Bytes / Secret / Decimal /
+    // Money `fromString`, already exist; Elm has the same pairs. A program that
+    // exposes Sky.Core.Regex with `(..)` beside one of them and uses the bare
+    // name gets `[E1012]`; see the v0.29.0 CHANGELOG.
+    // v0.29.0: Std.Db.Store.contains (a text condition) joins the same name,
+    // with String.contains and Regex.contains (docs/migration/v0.29.md).
+    "value contains",
+    // v0.29.0: Std.Db.Store query builders, named as SQL names them (user
+    // decision D2, Store's short qualified style). `Store.startsWith` /
+    // `endsWith` meet String's, `Store.select` meets Std.Html's element and
+    // Std.Db.Table's projection. A program that exposes two of them with
+    // `(..)` and uses the bare name gets `[E1012]`; the fix is `Store.select`,
+    // or a narrower exposing list (docs/migration/v0.29.md).
+    "value endsWith",
+    "value select",
+    "value startsWith",
+    // v0.29.0: the Std.Db.Store join and subquery builders (D2 names).
+    // `Store.column` meets Std.Ui / Std.Ui.Keyed's `column`, `Store.exists`
+    // meets File.exists, `Store.join` meets String.join and Path.join, and
+    // `Store.on` meets Std.Html.Events.on. The fix is the qualified name
+    // (`Store.join`) or a narrower exposing list (docs/migration/v0.29.md).
+    "value column",
+    "value exists",
+    "value join",
+    "value on",
+    // v0.29.0: Std.Db.Store.index (D2 name, an index over columns) meets
+    // Json.Decode.index and Std.Db.Table.index. The fix is `Store.index` or a
+    // narrower exposing list (docs/migration/v0.29.md).
+    "value index",
+    "value fromString",
+    // v0.29.0: String.foldl / String.foldr (Elm). List and Dict already
+    // export `foldl` (List `foldr` too); Elm has the same set.
+    "value foldl",
+    "value foldr",
+    "value map2",
+    "value map3",
     // v0.27.13: List.repeat (Elm). String.repeat, Std.Css and Std.Ui.Grid
     // already export `repeat`; Elm has the same pair.
     "value repeat",
     // v0.27.10: `Std.Image.trim` (crop away a uniform margin) shares its name
     // with `String.trim`; see the v0.27.10 CHANGELOG.
     "value trim",
+    // v0.29.0: List.unique (keep the first occurrence of each value).
+    // Std.Db.Schema / Store / Table export the `unique` column modifier.
+    "value unique",
     // v0.27.20: Std.Email.withHeader (#300). Sky.Core.Http, Sky.Http.Server,
     // Std.Csv and the Server kernel already export `withHeader`.
     "value withHeader",
@@ -73,6 +117,24 @@ const EXPECTED_COLLISIONS: &[&str] = &[
 /// qualifies it. Listed so the set is reviewed, and so a rename that would
 /// avoid a clash is considered before the release rather than after.
 const EXPECTED_NEW_MODULE_OVERLAPS: &[&str] = &[
+    // v0.29.0: Sky.Core.Array has Elm's Array API, which shares its names
+    // with List, String, Dict, Set, Bytes and the Std.Sync / Std.Cache
+    // accessors, as in Elm. It is a new module, so no existing program
+    // changes; a program reads it qualified (`import Sky.Core.Array as
+    // Array exposing (Array)`).
+    "value append",
+    "value empty",
+    "value foldl",
+    "value foldr",
+    "value get",
+    "value indexedMap",
+    "value isEmpty",
+    "value length",
+    "value push",
+    "value repeat",
+    "value set",
+    "value slice",
+    "value toList",
     // v0.28.0: Std.Ai.Endpoint and Std.Ai.Local. Each is a builder or verb
     // named for what it does on its own value (`Endpoint.withUrl`,
     // `Local.stop`); a program reads them qualified.
@@ -154,6 +216,62 @@ const EXPECTED_NEW_MODULE_OVERLAPS: &[&str] = &[
     // Sky.Http.Server's), whose internal `call` and `ok` are not exported.
     "value list",
     "value render",
+    // v0.29.0: Std.Xml, Std.Xml.Decode, Std.Xml.Encode and Std.Zip. The
+    // decoder and encoder follow Json.Decode / Json.Encode by design (the
+    // same verbs over XML), and Std.Xml names the parts of a node. Each is a
+    // new module, so no existing program changes; a program reads them
+    // qualified (`import Std.Xml.Decode as XD`, `import Std.Zip as Zip`).
+    "type Attribute",
+    "type Decoder",
+    "type Entry",
+    "value Entry",
+    "value andThen",
+    "value at",
+    "value attribute",
+    "value bool",
+    "value decodeString",
+    "value encode",
+    "value fail",
+    "value float",
+    "value int",
+    "value map2",
+    "value map3",
+    "value map4",
+    "value map5",
+    "value name",
+    "value node",
+    "value oneOf",
+    "value parse",
+    "value string",
+    "value succeed",
+    "value text",
+    "value write",
+    // v0.29.0: Std.Office.Xlsx. The Cell constructors and the cell styles
+    // name what a spreadsheet calls them (`Text`, `Empty`, `bold`, `fill`,
+    // `fontSize`); a sheet's `Visible` / `Hidden` are Excel's states. A new
+    // module, read qualified (`import Std.Office.Xlsx as Xlsx`), so no
+    // existing program changes.
+    "ctor Empty",
+    "ctor Hidden",
+    "ctor Text",
+    "ctor Visible",
+    "value bold",
+    "value failure",
+    "value fill",
+    "value fontSize",
+    "value italic",
+    // v0.29.0: Std.Image.Canvas. Its drawing names are the ones Std.Ui.Canvas
+    // and Std.Ui use for the same ideas (`rect`, `ellipse`, `line`, `rgba`,
+    // `Fill`), plus `measure` (a text size) and `resize` (a canvas size). A
+    // new module, read qualified (`import Std.Image.Canvas as Canvas`), so no
+    // existing program changes.
+    "ctor Fill",
+    "value ellipse",
+    "value line",
+    "value measure",
+    "value rect",
+    "value resize",
+    "value rgba",
 ];
 
 fn repo_root() -> PathBuf {

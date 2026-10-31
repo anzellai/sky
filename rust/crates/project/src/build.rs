@@ -7,12 +7,54 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// Hard ceiling on a single `go build` invocation (CLAUDE.md §3 — every
+/// Default ceiling on a single `go build` invocation (CLAUDE.md §3 — every
 /// long-running command MUST be timeout-bounded). A wedged Go toolchain (stuck
 /// linker, hung module fetch) is killed rather than hanging the CLI. 600 s is
 /// deliberately generous — the Stripe-SDK-scale example (13-skyshop) builds well
-/// under a minute; anything past 10 min is a genuine hang, not a slow build.
-const GO_BUILD_TIMEOUT: Duration = Duration::from_secs(600);
+/// under a minute; anything past 10 min is usually a hang, not a slow build.
+/// A slow machine (a small CI runner, a cold cache on an emulated target) can
+/// raise it with `SKY_GO_BUILD_TIMEOUT` or `sky build --go-build-timeout`.
+pub const DEFAULT_GO_BUILD_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// The override of [`DEFAULT_GO_BUILD_TIMEOUT`]: whole seconds (`900`), or a
+/// number with an `s` / `m` / `h` unit (`15m`). `sky build --go-build-timeout
+/// <value>` sets it for the build and every child build it starts.
+pub const ENV_GO_BUILD_TIMEOUT: &str = "SKY_GO_BUILD_TIMEOUT";
+
+/// Parse a `go build` time limit: whole seconds, or a whole number with an
+/// `s`, `m` or `h` unit. Zero, a negative or a fractional value, and any
+/// other unit, are refused with a message that names the accepted forms.
+pub fn parse_go_build_timeout(raw: &str) -> Result<Duration, String> {
+    let v = raw.trim();
+    let (num, mult) = match v.char_indices().last() {
+        Some((i, 's')) => (&v[..i], 1u64),
+        Some((i, 'm')) => (&v[..i], 60),
+        Some((i, 'h')) => (&v[..i], 3600),
+        _ => (v, 1),
+    };
+    match num.parse::<u64>() {
+        Ok(n) if n >= 1 => n
+            .checked_mul(mult)
+            .map(Duration::from_secs)
+            .ok_or_else(|| format!("the go build time limit `{raw}` is too large")),
+        _ => Err(format!(
+            "the go build time limit `{raw}` is not valid: use whole seconds (`900`) or a whole \
+             number with a unit (`900s`, `15m`, `1h`), at least 1 second"
+        )),
+    }
+}
+
+/// The `go build` time limit for this build: [`ENV_GO_BUILD_TIMEOUT`] when it
+/// is set, else [`DEFAULT_GO_BUILD_TIMEOUT`]. A value that does not parse is
+/// an error, never a silent fall back to the default.
+pub fn go_build_timeout() -> Result<Duration, String> {
+    match std::env::var(ENV_GO_BUILD_TIMEOUT) {
+        Ok(v) if !v.trim().is_empty() => {
+            parse_go_build_timeout(&v).map_err(|e| format!("{ENV_GO_BUILD_TIMEOUT}: {e}"))
+        }
+        _ => Ok(DEFAULT_GO_BUILD_TIMEOUT),
+    }
+}
 
 /// Where a build writes + what to do after emission.
 pub struct BuildOptions {
@@ -1533,13 +1575,14 @@ fn run_wasm_build(out_dir: &Path, jobs: Option<&str>) -> Result<(), String> {
     .command();
     // Hold the cache shared for the whole build: a concurrent clean waits.
     let _cache = crate::go_cache::hold_shared();
-    let out = run_bounded(cmd, GO_BUILD_TIMEOUT)
+    let limit = go_build_timeout()?;
+    let out = run_bounded(cmd, limit)
         .map_err(|e| format!("failed to run `go build` (GOOS=js GOARCH=wasm): {e}"))?;
     crate::go_jobs::record_peaks(out_dir, out.peak_rss);
     if out.timed_out {
         return Err(format!(
-            "go build (GOOS=js GOARCH=wasm) exceeded {}s and was killed — the Go toolchain hung. Partial stderr:\n{}",
-            GO_BUILD_TIMEOUT.as_secs(),
+            "go build (GOOS=js GOARCH=wasm) exceeded {}s and was killed — the Go toolchain hung, or the build needs longer (raise the limit with `--go-build-timeout` or {ENV_GO_BUILD_TIMEOUT}). Partial stderr:\n{}",
+            limit.as_secs(),
             out.stderr.trim_end()
         ));
     }
@@ -1608,7 +1651,7 @@ fn build_awaiting_wasm_name(
         }
     }
     let t = crate::timings::phase("wait for the frontend's wasm name");
-    let delivered = handoff::wait(wait, GO_BUILD_TIMEOUT)?;
+    let delivered = handoff::wait(wait, go_build_timeout()?)?;
     t.end();
     let name = match &delivered {
         Delivered::Name(n) => Some(n.as_str()),
@@ -1717,15 +1760,16 @@ fn run_go_build_once(
     .command();
     // Hold the cache shared for the whole build: a concurrent clean waits.
     let _cache = crate::go_cache::hold_shared();
-    let ran = run_bounded(cmd, GO_BUILD_TIMEOUT);
+    let limit = go_build_timeout()?;
+    let ran = run_bounded(cmd, limit);
     // Each `go build` records its own peak with its own action graph
     // (go_jobs::record_peaks): the cgo retry and a Sky.Spa SSR backend's
     // second build never inherit the first one's.
     crate::go_jobs::record_peaks(out_dir, ran.as_ref().ok().and_then(|b| b.peak_rss));
     match ran {
         Ok(b) if b.timed_out => Err(format!(
-            "go build (CGO_ENABLED={cgo}) exceeded {}s and was killed — the Go toolchain hung (stuck linker / module fetch). Partial stderr:\n{}",
-            GO_BUILD_TIMEOUT.as_secs(),
+            "go build (CGO_ENABLED={cgo}) exceeded {}s and was killed — the Go toolchain hung (stuck linker / module fetch), or the build needs longer (raise the limit with `--go-build-timeout` or {ENV_GO_BUILD_TIMEOUT}). Partial stderr:\n{}",
+            limit.as_secs(),
             b.stderr.trim_end()
         )),
         Ok(b) => Ok(GoBuildAttempt {
@@ -5095,7 +5139,10 @@ mod offline_db_plan_tests {
     fn scratch(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!(
             "sky-offlinedb-{tag}-{}-{}",
-            std::process::id(),
+            (u64::from(std::process::id()) << 32) | {
+                static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -5307,7 +5354,10 @@ mod ffi_trust_tests {
     fn scratch(tag: &str, files: &[(&str, &str)]) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "sky-ffi-trust-{tag}-{}-{}",
-            std::process::id(),
+            (u64::from(std::process::id()) << 32) | {
+                static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -5405,7 +5455,10 @@ mod stdlib_parse_tests {
     fn a_stdlib_module_that_does_not_parse_names_its_file() {
         let root = std::env::temp_dir().join(format!(
             "sky-stdlib-parse-{}-{}",
-            std::process::id(),
+            (u64::from(std::process::id()) << 32) | {
+                static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -5532,5 +5585,36 @@ mod go_build_child_tests {
         crate::build_stamp::write_go_stamp_with(&d, &s, Some("main.0a1b.wasm")).unwrap();
         assert_eq!(kept_spa_wasm_name(&d).as_deref(), Some("main.0a1b.wasm"));
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod go_build_timeout_tests {
+    use super::{parse_go_build_timeout, DEFAULT_GO_BUILD_TIMEOUT};
+    use std::time::Duration;
+
+    #[test]
+    fn the_go_build_limit_parses_seconds_and_units() {
+        assert_eq!(DEFAULT_GO_BUILD_TIMEOUT, Duration::from_secs(600));
+        assert_eq!(
+            parse_go_build_timeout("900").unwrap(),
+            Duration::from_secs(900)
+        );
+        assert_eq!(
+            parse_go_build_timeout(" 45s ").unwrap(),
+            Duration::from_secs(45)
+        );
+        assert_eq!(
+            parse_go_build_timeout("15m").unwrap(),
+            Duration::from_secs(900)
+        );
+        assert_eq!(
+            parse_go_build_timeout("2h").unwrap(),
+            Duration::from_secs(7200)
+        );
+        for bad in ["", "0", "0m", "-5", "1.5m", "ten", "5d", "m"] {
+            let e = parse_go_build_timeout(bad).unwrap_err();
+            assert!(e.contains("15m"), "{bad:?}: {e}");
+        }
     }
 }

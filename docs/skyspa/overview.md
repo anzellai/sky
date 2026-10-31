@@ -259,6 +259,33 @@ the split picks the kind from the arm (`runtime-go/rt/spa_rpcqueue.go`):
   quick `Inc` clicks count to 2, and a draft typed during a `Save` is applied
   after it.
 
+  **Typing during a hold (v0.29.0).** A text box keeps taking letters while
+  its keystroke Msgs wait behind a hold, so for that time the model is behind
+  what the box shows. While a control's own input Msgs wait, the client does
+  not write that control's value (or checked state): the box keeps every
+  letter and its caret, and when the waiting Msgs have run the model equals
+  the box and the render writes nothing. An arm that sets a different value
+  (a trim, a reset) still writes it once the Msgs have run. Before v0.29.0 the
+  render after the answer wrote the model's older text into the focused box
+  and clamped the caret, and a word typed against a slow debounced search lost
+  or swapped letters (a word such as "harbourside" came out scrambled).
+
+  **Hold-free input Msgs (v0.29.0).** An input Msg runs at once during a hold,
+  instead of waiting, when the split proves that running it early gives the
+  same model. The build lists each such `(hold, input)` pair in the client
+  config (`Spa.withHoldFree`). A pair is listed only when the input arm is
+  client code that returns `Cmd.none`; it writes no field the hold's result
+  or its follow-up arms read or write, and reads no field they write;
+  `subscriptions` does not read both a field the input writes and a field the
+  hold writes; and the app has no `App.withGuard` and no `App.withRpcError`.
+  The client also runs it early only when no other Msg waits ahead of it, so
+  it never overtakes a Msg the analysis did not check. `Spa.withHoldFree` is
+  generated-only: a call in hand-written code is refused with `[E1011]`
+  (docs/errors/E1011-not-exposed.md). A note box whose
+  `SetNote` writes only `note` updates at once while a `Save` runs; a search
+  box whose `SetQuery` feeds a debounced search that `subscriptions` reads
+  waits, and the rule above keeps its letters.
+
 What this rules out, and why it matters: before v0.27.0 the client applied Msgs
 during an RPC and then re-ran them on top of the response. A client arm that
 spends a single-use value (a `Noise.encrypt` on the model's transport) failed
@@ -271,7 +298,10 @@ Per-arm guarantees, in one list:
 - a client arm runs once, when its Msg arrives, with its Cmds;
 - an async server arm's own write runs in the client when its Msg arrives; its
   result runs when the response arrives;
-- a hold server arm holds every later Msg until its response has run;
+- a hold server arm holds every later Msg until its response has run, except
+  an input Msg the split lists as hold-free for it (it commutes with the
+  hold); while a control's input Msgs wait, the client leaves that control's
+  value alone;
 - a server arm's continuation whose own arm is client (reaches no server
   effect) runs in the client when the task's result arrives, on the model the
   client holds then, never on the server from a send-time copy;
@@ -662,6 +692,13 @@ NotFound` for an unknown id, `Err InvalidInput` for an element that is not a
 textarea or a text-like input (text, search, url, tel, password). On Sky.Live
 the `update` runs on the server, so there it is `Err Unavailable`, like every
 `Std.Native` capability.
+
+To act on the selected text (a "Link" or "Bold" button) or to move the caret,
+`Native.selection elementId` yields `{ start, end, text }` and
+`Native.setSelection elementId start end` selects a range and focuses the
+control. Positions are characters, the unit of `String.slice`. Both follow the
+same rules: the remembered selection of a blurred control, `Err NotFound` /
+`Err InvalidInput`, and `Err Unavailable` off a Sky.Spa client.
 
 ## Honest limits
 

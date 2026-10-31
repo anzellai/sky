@@ -4,9 +4,11 @@
 
 ## Test plan
 
-- [ ] `cabal test` green
-- [ ] `TMPDIR=/tmp bash scripts/example-sweep.sh` — all examples build
-- [ ] `TMPDIR=/tmp bash scripts/verify-ui-showcase.sh` — Std.Ui regression gates green
+- [ ] `scripts/gates-for-change.sh` green (it runs the narrowest gates for the paths this PR changes; `--dry-run` prints the plan)
+- [ ] `(cd rust && cargo test -p <crate>)` green for every crate this PR touches
+- [ ] Every file touched is formatted (`cargo fmt`, `gofmt -w`, `sky fmt`)
+- [ ] If Std.Ui changed: `scripts/verify-ui-showcase.sh` green
+- [ ] The release workflow's full suite runs in CI before merge to `main`
 
 ## Std.Ui snapshot churn checklist
 

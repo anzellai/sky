@@ -231,7 +231,10 @@ mod tests {
         static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let dir = std::env::temp_dir().join(format!(
             "sky-ai-project-{}-{}-{}",
-            std::process::id(),
+            (u64::from(std::process::id()) << 32) | {
+                static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             N.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

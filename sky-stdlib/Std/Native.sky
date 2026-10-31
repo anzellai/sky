@@ -4,6 +4,9 @@ module Std.Native exposing
     , clipboardWrite
     , clipboardRead
     , insertAtCursor
+    , Selection
+    , selection
+    , setSelection
     , vibrate
     , ShareContent
     , share
@@ -128,6 +131,52 @@ clipboardRead =
 insertAtCursor : String -> String -> Task Error String
 insertAtCursor =
     Ffi.kernel "Native_insertAtCursor"
+
+-- | A text control's selection: `start` and `end` in characters (Unicode
+-- code points, the unit of `String.slice` and `String.length`; the runtime
+-- converts from the browser's UTF-16 units), and the selected `text`. A
+-- caret with nothing selected has `start == end` and `text == ""`.
+type alias Selection =
+    { start : Int
+    , end : Int
+    , text : String
+    }
+
+
+-- | Read the selection of a textarea or a text input, for a toolbar that acts
+-- on the selected text (bold, link, a merge field) or a status line ("12
+-- characters selected"). `selection elementId` yields the focused control's
+-- selection; when focus has moved to a button, it yields the last selection
+-- the person made in that control, the same rule as `insertAtCursor`. A
+-- control the person has not touched reports the end of its text.
+--
+--     MakeLink ->
+--         ( model, Cmd.perform (Native.selection "body") GotSelection )
+--
+--     GotSelection (Ok sel) ->
+--         ( { model | linkText = sel.text }, Cmd.none )
+--
+-- Same errors as `insertAtCursor`: `Err NotFound` for an unknown id, `Err
+-- InvalidInput` for an element that is not a textarea or a text-like input,
+-- `Err Unavailable` off a Sky.Spa client (Sky.Live, a server, a CLI, a TUI).
+-- Cost: O(n) in the length of the control's value (the unit conversion).
+selection : String -> Task Error Selection
+selection =
+    Ffi.kernel "Native_selection"
+
+
+-- | Select a range in a textarea or a text input: `setSelection elementId
+-- start end`, in characters. The range is clamped to the value (a start past
+-- the end is the end, an end before the start is the start), the control is
+-- focused, and the range is remembered as the person's selection, so a later
+-- `insertAtCursor` from a menu button replaces it. Put the caret somewhere
+-- with `start == end`. Same errors as `selection`. Cost: O(n) in the length
+-- of the value.
+--
+--     Native.setSelection "body" 0 0 -- the caret at the start
+setSelection : String -> Int -> Int -> Task Error ()
+setSelection =
+    Ffi.kernel "Native_setSelection"
 
 
 -- | Vibrate the device for `ms` milliseconds — a haptic tap on a phone. On

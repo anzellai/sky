@@ -44,6 +44,9 @@ import Sky.Core.Task as Task
 
 
 -- ─── Read ──────────────────────────────────────────────────────────
+-- | `readFile path` — the file's bytes as they are, as a `Sky.Core.Bytes`
+-- `String` (nothing is decoded or checked, so a binary file such as an
+-- .xlsx, a .zip or an image reads unchanged), up to 100 MB.
 readFile : String -> Task Error String
 readFile =
     Ffi.kernel "File_readFile"
@@ -57,8 +60,9 @@ readFileLimit =
     Ffi.kernel "File_readFileLimit"
 
 
--- | Read raw bytes as a list of Int.  Use for binary content
--- (images, encrypted blobs); use `readFile` for UTF-8 text.
+-- | Read raw bytes as a list of Int (0 to 255), one element a byte. To
+-- pass a file's bytes to `Std.Zip`, `Std.Office`, `Crypto` or an upload,
+-- use `readFile`, which keeps them as a `Bytes` `String`.
 readFileBytes : String -> Task Error (List Int)
 readFileBytes =
     Ffi.kernel "File_readFileBytes"
@@ -74,7 +78,7 @@ writeFile =
 -- | `writeBytes path bytes` — overwrite the file with exactly these bytes.
 -- `bytes` is a `Sky.Core.Bytes` buffer (a `String` whose bytes need not be
 -- UTF-8), e.g. from `Bytes.fromBase64`. Nothing is re-encoded. Read it back
--- with `readFileBytes`.
+-- with `readFile`.
 writeBytes : String -> String -> Task Error ()
 writeBytes =
     Ffi.kernel "File_writeBytes"

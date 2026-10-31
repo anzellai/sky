@@ -8,7 +8,7 @@
 > marked **UNVERIFIED** and NOT carried over. Where a quantity is not measured it
 > says **UNMEASURED** rather than a plausible number.
 >
-> **What this replaces.** `docs/architecture/sky-compiler-architecture.md` §6
+> **What this replaces.** `docs/history/compiler/sky-compiler-architecture.md` §6
 > (rt.Coerce origin catalog), §7 (architectural levers) and §8 (irreducible
 > floor). That document describes the **retired Haskell** pipeline; its §6 table
 > cites `Compile.hs` line numbers. It is retained for historical context only.
@@ -454,7 +454,7 @@ in `runtime-go/rt/kernel_twins_test.go`; the new erased-argument twins
 `runtime-go/rt/kernel_twins.go`) call the erased kernel and assert its one
 result type, so their semantics are the erased kernel's by construction.
 Measured: narrow 14423 -> 12669 over all 80 coerce-floor rows, adapter 0.
-`::` stays untouched, as above.
+(`::` was left untouched at that stage; v0.29.0 routes it, below.)
 
 The table also covers the typed Math companions (`Math_sqrtT` … `Math_roundT`,
 `Math_absT`, `Math_minT` / `Math_maxT`), `Basics_modByT`, `List_rangeT`,
@@ -482,12 +482,82 @@ and that boundary is load-bearing rather than a convenient stopping point:
 strict removal. `rt.List_headT` returns `rt.SkyMaybe[A]` where its consumers take
 `rt.SkyMaybe[any]` — a distinct instantiation needing a reflective
 `rt.MaybeCoerce` rebuild, so it RELOCATES cost, which is the same reason `head`
-is absent from `SKY_LIST_HOF_TWINS`. `rt.List_reverseT` / `takeT` / `dropT` pass
-that test but are O(n) work rather than an O(1) length read, so they are a
-different measurement and are left for a later tranche per §5.5's staged-rollout
-rule. **`::` is deliberately untouched** — it was this stage's negative control,
-and re-pointing it would have destroyed the only evidence that the routing keys
-on proven operand types rather than on operator shape.
+is absent from `SKY_LIST_HOF_TWINS`.
+
+**v0.29.0: `::`, `List.reverse`, `List.take` and `List.drop`.** `::` was this
+stage's negative control. It is now routed, because the erased form was not a
+narrowing cost but a complexity defect: `rt.AsListT[T](rt.List_cons(any(x),
+any(xs)))` reflect-widened the whole tail and narrowed it back on every cons,
+O(n) per cons and O(n²) for the accumulator loop. A `::` whose tail lowers to
+`[]T` (the slot `[]T` or `any`) emits `rt.List_consT[T](x, xs)` typed `[]T`,
+with no widen of the tail and no `AsListT` of the result; the runtime twin is
+amortised O(1) on the cons blocks of `runtime-go/rt/list_block.go`. The head
+is used as it is when it lowers to `T`, widened when `T` is `any`, and
+narrowed by one O(1) element coerce when it is an erased `any` under a
+provable `T`; every other head shape keeps the erased call. The `List.cons`
+value in a typed `func(T, []T) []T` slot goes through `kernel_value_eta` to
+the same twin (§5.1), and stays the bare symbol in an `any` slot. `reverse`,
+`take` and `drop` over a proven slice go to `rt.List_reverseT` / `takeT` /
+`dropT` (one fresh slice / a re-slice). Measured: narrow 17301 -> 16733 over
+all 86 coerce-floor rows, adapter 0; `xtask perf-gate` cons-reverse (1e6
+conses then reverse) 0.032 s and 0.000 mallocs per element, where the erased
+form did not finish 32,000 conses in 13 s.
+
+**v0.29.0: a compiled Regex, and `Result.withDefault`.** `Regex.fromString`
+over a proven String goes to `rt.Regex_fromStringT`, which returns
+`rt.SkyResult[rt.SkyADT, rt.SkyADT]`: the Go type of `Result Error Regex`
+itself, because both stdlib ADTs are emitted `= rt.SkyADT`. The twin is used
+only where the call's own type is exactly that, or `any` (a typed Result
+anywhere else would need a rebuild). `Regex.never` in a `Regex` slot is
+`rt.Regex_neverT()`, and `findAll` / `find` / `split` over a proven String go
+to their typed twins. `Result.withDefault d r` over a proven
+`rt.SkyResult[E, A]` goes to `rt.Result_withDefaultT[E, A]`, on the Prelude
+kernel path and on the `Sky.Core.Result` def path (`SKY_LIST_HOF_TWINS`,
+`result_with_default_plan`); the erased forms narrowed the result (R5 / R12)
+and rebuilt a typed Result as `rt.SkyResult[any, any]`. In the same change
+`App.withPersistExclude` stopped adding a field to the `App` record: each
+`(App a)` unwrap of that unsealed stdlib ADT narrows every payload field (R6,
+§4.5), so the field cost one `rt.AsListT[string]` per builder in every
+`Std.App` program. The list travels in `WebOpts.persistExclude` instead,
+which is narrowed once as a whole. Measured: narrow 16974 -> 16561 over all
+86 coerce-floor rows (golden 16697), adapter 0, no row above its golden.
+
+**v0.29.0: Std.Xml accessors, and the union codec's variants.** A Std.Xml
+`Node` is an opaque handle (the stdlib ADT `Node__Internal` holding the Go
+tree, not a Sky ADT whose payload each read would narrow, R6 §4.5). Its
+accessors (`parse`, `name`, `namespace`, `text`, `attributes`, `children`,
+`elements`, `elementsNamed`, `attribute`) and `Std.Xml.Encode.encode` /
+`document` go to typed twins (`rt.Xml_nameT` and the rest), so a read narrows
+nothing (R5, §5.3; `project/tests/xml_typed_emit.rs`,
+`runtime-go/rt/xml_kernels_test.go`). `Codec.taggedUnion` gained the variants'
+argument schemas for `Codec.toXml` / `fromXml`; the `Variant` payload is now a
+named record unwrapped once when the codec is built (`variantPayloads`), so the
+decoder and the XML description read typed records. Reading the schemas
+through a second `Variant` match measured +1 narrow in three rows
+(`73-ai-train`, `74-ai-cloud`, `sky-bundled/ai-train`); unwrapping once brings
+the total back. Measured: narrow 16561 over all 86 coerce-floor rows (golden
+16561), adapter 0, no row above its golden.
+
+**v0.29.0: Std.Image.Canvas handles.** A `Canvas`, a `Mask` and a `Font` are
+opaque handles (stdlib ADTs `Canvas__Internal`, `Mask__Internal`,
+`Font__Internal` holding the Go display list, mask and parsed font, R6 §4.5).
+Every drawing step (`blank`, `fromImage`, `rect`, `roundedRect`, `ellipse`,
+`arc`, `line`, `paste`, `pasteCanvas`, `blur`, `resize`, `text`), the three
+masks and `defaultFont` go to typed twins (`rt.Image_canvasRectT` and the
+rest) that return the handle ADT itself, so a step narrows nothing (R5, §5.3;
+`project/tests/canvas_typed_emit.rs`, red before the twins with
+`rt.Coerce[Std_Image_Canvas_Canvas]` in every wrapper;
+`runtime-go/rt/canvas_kernels_test.go` checks each twin against its erased
+kernel). The `Paint` payload read in the wrappers stays the stdlib-ADT floor
+(R6). No coerce-floor row imports the module.
+
+**The new negative control is `List.head`.** It stays off every twin table for
+the reason given above: `rt.List_headT` returns `rt.SkyMaybe[A]` where its
+consumers take `rt.SkyMaybe[any]`, so routing it relocates the cost into a
+`rt.MaybeCoerce` rebuild instead of removing it. It is the evidence that the
+routing keys on what a twin removes, not on operator or kernel shape. A change
+that routes `head` must measure that it removes cost, and must name a new
+control here.
 
 Three properties of this lever are worth carrying:
 
@@ -1006,5 +1076,5 @@ A verdict that cannot make all four citations is not a verdict.
 * `docs/perf/runs/hof-dispatch-20260815/`, `docs/perf/runs/typed-destructure-20260815/`
 * [`07-lowering-and-ir.md`](07-lowering-and-ir.md) §5.1 — no monomorphiser, and why
 * [`08-go-codegen.md`](08-go-codegen.md) §3 — the runtime ABI
-* `docs/architecture/sky-compiler-architecture.md` — **legacy Haskell reference,
+* `docs/history/compiler/sky-compiler-architecture.md` — **legacy Haskell reference,
   historical context only**

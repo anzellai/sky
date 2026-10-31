@@ -125,9 +125,13 @@ func spaRun(cfg any) any {
 	spaGuard = fieldOrNil(cfg, "Guard")
 	spaSch = newSpaSched(spaRpcNonce())
 	spaSch.onTickNet = spaTicks.network
+	// The input Msgs that may run during a given hold (the split's
+	// commutation table, Spa.withHoldFree). Absent: every Msg waits.
+	spaSch.setHoldFree(spaStringList(fieldOrNil(cfg, "HoldFree")))
 	spaModelEncoder = fieldOrNil(cfg, "ModelEncoder")
 	spaPersistProt = spaStringList(fieldOrNil(cfg, "PersistProtectedFields"))
 	spaPersistSeed = spaStringList(fieldOrNil(cfg, "PersistSeedFields"))
+	spaPersistExclude = spaStringList(fieldOrNil(cfg, "PersistExcludeFields"))
 
 	doc := js.Global().Get("document")
 	spaRoot = doc.Call("getElementById", "app")
@@ -146,7 +150,15 @@ func spaRun(cfg any) any {
 	// first render, so handlers built during render can dispatch. Every Msg
 	// goes through the scheduler, which runs each one once, in arrival order,
 	// and holds the queue while a hold RPC is in flight (spa_rpcqueue.go).
-	spaDispatch = func(msg any) { spaSch.dispatch(msg, step) }
+	// A Msg from a form control's input event carries the control, so the
+	// render leaves its value alone while the Msg waits (spa_typing.go).
+	spaDispatch = func(msg any) {
+		if src := spaTakeEventSrc(); src != nil {
+			spaSch.dispatchFrom(msg, src, step)
+			return
+		}
+		spaSch.dispatch(msg, step)
+	}
 
 	// init : () -> ( model, Cmd msg ) — the flags arg is Sky Unit, which lowers
 	// to Go `struct{}`; the reflect-free Init adapter asserts `a0.(struct{})`,
@@ -789,6 +801,10 @@ func renderCurrent() {
 		spaInstallSelectTracker()
 		NativeInstallCaretTracker()
 		plan := spaPlanRender(spaPrev, &vn, snapshotFocusedInput(), spaCurrentSelect())
+		// While a control's own input Msgs wait behind a hold RPC, the model
+		// is behind what the control shows: leave its value alone until they
+		// have run (spa_typing.go).
+		plan.Apply = spaKeepTyped(plan.Apply, spaTypingIDs())
 		missing := spaApplyPatches(plan.Apply, spaPrev, &vn)
 		spaNoteHeld(plan)
 		spaResyncMissing(missing, *plan.DOM)
@@ -913,6 +929,28 @@ func spaScrollOnNavigate() {
 			w.Call("scrollTo", 0, 0)
 		}
 	}
+}
+
+// spaTypingIDs returns the sky-ids the DOM gives now to the controls whose
+// input Msgs wait in the scheduler queue (nil when none wait).
+func spaTypingIDs() map[string]bool {
+	if spaSch == nil {
+		return nil
+	}
+	var ids map[string]bool
+	for _, src := range spaSch.typingSources() {
+		el, ok := src.(js.Value)
+		if !ok || el.Type() != js.TypeObject {
+			continue
+		}
+		if s := el.Call("getAttribute", "sky-id"); s.Type() == js.TypeString && s.String() != "" {
+			if ids == nil {
+				ids = map[string]bool{}
+			}
+			ids[s.String()] = true
+		}
+	}
+	return ids
 }
 
 // snapshotFocusedInput reports the currently-focused form field's live DOM

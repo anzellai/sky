@@ -1,6 +1,6 @@
 // `sky --version` prints the workspace version (`[workspace.package] version`
 // in rust/Cargo.toml, read with `env!("CARGO_PKG_VERSION")`), followed by the
-// commit when the build knows one: `sky v0.27.5 (1a2b3c4)`. This script bakes
+// commit when the build knows one: `sky v0.29.0 (1a2b3c4)`. This script bakes
 // that commit as `SKY_BUILD_GIT_REV`:
 //
 //   * `SKY_GIT_REV` set in the environment wins, even when empty. Nix sets it

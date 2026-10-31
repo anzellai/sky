@@ -331,8 +331,9 @@ recentEvents n =
 -- | One stored analytics event row. The stdlib-decided ENVELOPE (typed columns
 -- you query directly) plus the OPEN metadata bag: `props` is JSON — whatever keys
 -- your `event`/`trackEvent` put there — and `context` is JSON device / anonymised
--- IP. Extract JSON props with `Store.selectRaw` + `json_extract` (SQLite) / `->>`
--- (Postgres); the envelope columns need no JSON.
+-- IP. Read a JSON prop with `Store.jsonText "props" "plan"` (a condition,
+-- `groupBy`, `keyAs` or `selectAs`, the same on SQLite and Postgres); the
+-- envelope columns need no JSON.
 type alias AnalyticsEvent =
     { id : Int
     , ts : Int
@@ -361,8 +362,8 @@ type alias AnalyticsEvent =
 --         )
 -- ```
 --
--- Aggregates + JSON props go through `Store.selectRaw` (typed projection):
--- `Store.selectRaw conn tally "SELECT event, COUNT(*) c FROM analytics_events GROUP BY event" []`.
+-- Aggregates are builders too:
+-- `Store.query eventsStore |> Store.groupBy [ "event" ] |> Store.aggregate tallyCodec [ Store.key "event", Store.countAs "c" ] |> Store.toRows conn`.
 eventsStore : Store AnalyticsEvent
 eventsStore =
     Store.fromCodec

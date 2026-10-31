@@ -589,6 +589,10 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     ("ai-device-privacy", &["stdlib.Std.Ai.Device"]),
     ("ai-device-csp", &["stdlib.Std.Ai.Device"]),
     ("ai-device-ios-sim", &["stdlib.Std.Ai.Device"]),
+    // v0.29.0: a Sky.Spa wasm client links no server-only package; the import
+    // of encoding/xml and archive/zip lives in `//go:build !js` files
+    // (runtime-go/rt/wasm_client_deps_test.go).
+    ("spa-wasm-server-only", &["stdlib.Std.Spa"]),
     (
         "live-time-every-mutex-survives-a-panic",
         &["runtime.periodic-goroutines", "skylive.session-sse-csrf"],
@@ -742,6 +746,12 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
         ],
     ),
     ("apps-ledger-postgres", &["db.postgres", "db.migrations"]),
+    // v0.29.0: the Std.Db.Store query path on PostgreSQL (aggregates, select,
+    // latestPer, text match, jsonText, B1 to B6).
+    (
+        "store-query-postgres",
+        &["db.postgres", "db.codec-store", "stdlib.Std.Db.Store"],
+    ),
     (
         "apps-fleet",
         &["skylive.multi-replica", "skylive.session-sse-csrf"],
@@ -803,6 +813,10 @@ static CI_SURFACES: &[(&str, &[&str])] = &[
     ("xtask:sky-fmt-check", &["compiler.fmt"]),
     ("xtask:repro", &["compiler.codegen-determinism"]),
     ("xtask:coerce-floor", &["compiler.coerce-floor"]),
+    // The collection performance gate (tests/perf): growth ratio and
+    // allocations per element of List / Dict / String programs. It measures
+    // cost, not behaviour, so it claims no product surface.
+    ("xtask:perf-gate", &[]),
     ("xtask:fuzz", &["compiler.fuzz"]),
     ("xtask:welltyped", &["compiler.fuzz"]),
     // The erasure-boundary soundness fuzzer (type-check ⟹ go build ⟹ no panic
@@ -5016,7 +5030,10 @@ fn t() {
 
         let root = std::env::temp_dir().join(format!(
             "sky-inapplicable-proof-{}-{}",
-            std::process::id(),
+            (u64::from(std::process::id()) << 32) | {
+                static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -5731,7 +5748,10 @@ fn t() {
     fn units_are_a_function_of_tracked_files_only() {
         let root = std::env::temp_dir().join(format!(
             "sky-ledger-tracked-{}-{}",
-            std::process::id(),
+            (u64::from(std::process::id()) << 32) | {
+                static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

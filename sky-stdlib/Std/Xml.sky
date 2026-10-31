@@ -1,0 +1,198 @@
+-- | Std.Xml — read XML safely: parse a document into a tree of nodes.
+--
+-- `parse` reads a whole document into a `Node` tree. Use `Std.Xml.Decode` to
+-- turn a tree into your own types (in the style of `Json.Decode`), and
+-- `Std.Xml.Encode` to write XML. `Codec.toXml` / `Codec.fromXml` read and
+-- write a codec's value as XML with no hand-written decoder.
+--
+--     import Std.Xml as Xml
+--
+--     titleOf : String -> Result Error String
+--     titleOf doc =
+--         Xml.parse doc
+--             |> Result.map Xml.text
+--
+-- **Safe by default.** The input is treated as hostile:
+--
+-- * a `<!DOCTYPE …>` or any other directive is refused (code `doctype`), so
+--   there are no entity definitions: billion-laughs expansion and external
+--   entities (XXE) cannot happen;
+-- * only the five XML entities and numeric references are read in `Strict`
+--   mode; `HtmlEntities` adds the HTML names (`&nbsp;`, `&eacute;`, …), still
+--   with no DTD;
+-- * the encodings read are UTF-8, US-ASCII, ISO-8859-1 and Windows-1252 (a
+--   byte order mark is skipped); another is refused (code `charset`);
+-- * size, element depth, node count and attributes on one element are
+--   bounded (`Limits`) while the tree is built.
+--
+-- A failure is an `Error` of kind `InvalidInput` with the domain `"xml"`
+-- (`Error.domain`) and one of these codes (`Error.failureOf` then
+-- `Error.failureCode`): `too_large`, `too_deep`, `too_many_nodes`,
+-- `too_many_attributes`, `doctype`, `charset`, `malformed`. A `malformed`
+-- failure names the line and column in its message and in the attributes
+-- `line` and `column`.
+--
+-- **Names.** `name` is the local name (`thumbnail` for `<media:thumbnail>`)
+-- and `namespace` the namespace URI the prefix stands for. Code reads by local
+-- name and checks the namespace only where two vocabularies share a name
+-- (`Decode.inNamespace`). Namespace declarations (`xmlns`, `xmlns:p`) are not
+-- in `attributes`.
+--
+-- **Where it runs.** On the server (and in a CLI). A Sky.Spa app parses XML in
+-- its backend: the split sends every `Std.Xml` call to the server.
+--
+-- **Cost.** `parse` is O(n) time in the size of the input and O(nodes)
+-- memory. A `Node` is read only, so one parsed tree may be shared.
+module Std.Xml exposing
+    ( Node
+    , Limits
+    , Mode(..)
+    , defaultLimits
+    , parse
+    , parseWith
+    , name
+    , namespace
+    , attributes
+    , children
+    , text
+    , elements
+    , elementsNamed
+    , attribute
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+-- | One node of a parsed document: an element, or a run of text (a text node
+-- has the name `""`). Opaque: made only by `parse`, read with the functions
+-- below. A `Node` is not data: it cannot be stored in a session or encoded
+-- with a Codec.
+type Node
+    = Node__Internal Int
+
+-- | Bounds for one parse. Each must be positive.
+--
+-- * `maxBytes` — the size of the input in bytes.
+-- * `maxDepth` — how deep elements may nest.
+-- * `maxNodes` — elements and text nodes in all.
+-- * `maxAttributes` — attributes on one element.
+type alias Limits =
+    { maxBytes : Int
+    , maxDepth : Int
+    , maxNodes : Int
+    , maxAttributes : Int
+    }
+
+-- | How entities are read.
+--
+-- * `Strict` — XML 1.0: `&lt;`, `&gt;`, `&amp;`, `&apos;`, `&quot;` and
+--   numeric references (`&#233;`, `&#xE9;`) only.
+-- * `HtmlEntities` — also the HTML named entities (`&nbsp;`, `&copy;`, …),
+--   for feeds written by HTML tools. There is still no DTD.
+type Mode
+    = Strict
+    | HtmlEntities
+
+
+-- | 16 MiB, depth 256, 1,000,000 nodes, 256 attributes on one element.
+defaultLimits : Limits
+defaultLimits =
+    { maxBytes = 16777216
+    , maxDepth = 256
+    , maxNodes = 1000000
+    , maxAttributes = 256
+    }
+
+
+-- | Parse a document in `Strict` mode under `defaultLimits`. The result is
+-- the root element. Cost: O(n) time and memory.
+parse : String -> Result Error Node
+parse =
+    Ffi.kernel "Xml_parse"
+
+
+-- | Parse with a chosen `Mode` and `Limits`. A limit that is not positive is
+-- an `Err` (`InvalidInput`).
+--
+--     Xml.parseWith Xml.HtmlEntities { defaultLimits | maxBytes = 1048576 } feed
+parseWith : Mode -> Limits -> String -> Result Error Node
+parseWith mode limits src =
+    parseWith_
+        (isHtml mode)
+        limits.maxBytes
+        limits.maxDepth
+        limits.maxNodes
+        limits.maxAttributes
+        src
+
+
+-- | The local name of an element (`"entry"` for `<atom:entry>`); `""` for a
+-- text node.
+name : Node -> String
+name =
+    Ffi.kernel "Xml_name"
+
+
+-- | The namespace URI of an element; `""` when it has none, and for a text
+-- node.
+namespace : Node -> String
+namespace =
+    Ffi.kernel "Xml_namespace"
+
+
+-- | The attributes of an element as `( local name, value )` pairs, in
+-- document order. Namespace declarations are left out. `[]` for a text node.
+attributes : Node -> List ( String, String )
+attributes =
+    Ffi.kernel "Xml_attributes"
+
+
+-- | Every child node, elements and text, in document order. White space
+-- between elements is a text node too: use `elements` for the elements only.
+children : Node -> List Node
+children =
+    Ffi.kernel "Xml_children"
+
+
+-- | All the text inside a node and its descendants, concatenated in document
+-- order (CDATA included, comments left out). The text of a text node is
+-- itself.
+text : Node -> String
+text =
+    Ffi.kernel "Xml_text"
+
+
+-- | The child elements of a node (text left out), in document order.
+elements : Node -> List Node
+elements =
+    Ffi.kernel "Xml_elements"
+
+
+-- | The child elements with one local name, in document order. O(children).
+elementsNamed : String -> Node -> List Node
+elementsNamed =
+    Ffi.kernel "Xml_elementsNamed"
+
+
+-- | The value of the attribute with this local name, if the element has one.
+attribute : String -> Node -> Maybe String
+attribute =
+    Ffi.kernel "Xml_attribute"
+
+
+-- The primitive behind parseWith: the Mode as a Bool and the Limits as four
+-- Ints, so the kernel boundary carries no Sky ADT or record.
+parseWith_ : Bool -> Int -> Int -> Int -> Int -> String -> Result Error Node
+parseWith_ =
+    Ffi.kernel "Xml_parseWith"
+
+
+isHtml : Mode -> Bool
+isHtml mode =
+    case mode of
+
+        Strict ->
+            False
+
+        HtmlEntities ->
+            True

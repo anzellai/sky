@@ -41,6 +41,7 @@ module Std.Live exposing
     , withConsoleAuthModel
     , withOnNavigate
     , withGuard
+    , withRefreshOnLoad
     , withStatic
     , withStaticUrl
     , withPort
@@ -211,6 +212,15 @@ withOnNavigate =
 withGuard : (msg -> model -> Result Error ()) -> AppConfig model msg -> AppConfig model msg
 withGuard =
     Ffi.kernel "Live_withGuard"
+
+
+-- | Model fields a full page load of an existing session refreshes from
+-- `init` (v0.29.0): values the server owns (site settings, a feature flag)
+-- are never kept from an earlier page. Every other field keeps the session's
+-- value. `App.withPersistExclude` sets it.
+withRefreshOnLoad : List String -> AppConfig model msg -> AppConfig model msg
+withRefreshOnLoad =
+    Ffi.kernel "Live_withRefreshOnLoad"
 
 
 -- | Serve a static directory at `/static` (override the mount with

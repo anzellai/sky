@@ -1,8 +1,8 @@
 # Language syntax
 
 > **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky`)
-> is the primary Sky compiler; the Haskell compiler is preserved under
-> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> is the Sky compiler (the earlier compilers were removed in v0.29.0).
+> Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
 > [`../history/compiler/versions.md`](../history/compiler/versions.md) for the changelog.
 
@@ -77,6 +77,32 @@ area radius =
 A let-bound function is polymorphic, like a top-level one: `square` above
 could be used at `Int` and at `Float` in the same body. See
 [types.md](types.md) ("Type annotations") for the value restriction.
+
+The bindings of one `let` may refer to each other in any order, and local
+functions may call each other (mutual recursion):
+
+```elm
+parity n =
+    let
+        isEven k =
+            if k == 0 then
+                True
+
+            else
+                isOdd (k - 1)
+
+        isOdd k =
+            if k == 0 then
+                False
+
+            else
+                isEven (k - 1)
+    in
+    isEven n
+```
+
+A cycle through a plain value (`a = f 1` where `f` reads `a`) is not allowed:
+it has no value to start from.
 
 ## Case / of
 

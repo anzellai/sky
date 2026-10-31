@@ -773,6 +773,25 @@ func parsePostmasterPid(text string) (int, bool) {
 	return pid, true
 }
 
+// postmasterShmID reads the System V shared-memory id off line 7 of a
+// `postmaster.pid` ("<key> <shmid>"). A zero key means no segment.
+func postmasterShmID(text string) (int, bool) {
+	lines := strings.Split(text, "\n")
+	if len(lines) < 7 {
+		return 0, false
+	}
+	f := strings.Fields(lines[6])
+	if len(f) != 2 {
+		return 0, false
+	}
+	key, kerr := strconv.ParseUint(f[0], 10, 64)
+	id, ierr := strconv.Atoi(f[1])
+	if kerr != nil || ierr != nil || key == 0 || id < 0 {
+		return 0, false
+	}
+	return id, true
+}
+
 func readPostmasterPid(dataDir string) (int, bool) {
 	b, err := os.ReadFile(filepath.Join(dataDir, "postmaster.pid"))
 	if err != nil {
@@ -884,6 +903,15 @@ func clearStalePidfile(dataDir string) error {
 			"sky --embed: a live PostgreSQL process (pid %d) is already using %s.\n"+
 				"Two postmasters must never open one data directory. Stop the other one first.",
 			pid, dataDir)
+	}
+	// The pid file is the only record of the dead postmaster's shared-memory
+	// segment, and PostgreSQL removes that segment on the next start only by
+	// reading it. Release the segment before the file goes, or every crash
+	// leaks one (macOS allows 32 in all).
+	if body, err := os.ReadFile(pidfile); err == nil {
+		if shmid, ok := postmasterShmID(string(body)); ok && releaseOrphanShm(shmid) {
+			fmt.Fprintf(os.Stderr, "[sky.pg] released shared memory segment %d left by the stale postmaster\n", shmid)
+		}
 	}
 	if err := os.Remove(pidfile); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("sky --embed: cannot clear the stale pid file %s: %w", pidfile, err)

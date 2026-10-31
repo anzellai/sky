@@ -64,7 +64,10 @@ main =
         ++ println (String.split "," "a,b,c") -- ["a","b","c"]
 ```
 
-All 33 entries: `length`, `isEmpty`, `reverse`, `append`, `concat`, `split`, `join`, `replace`, `slice`, `contains`, `startsWith`, `endsWith`, `toInt`, `fromInt`, `toFloat`, `fromFloat`, `toUpper`, `toLower`, `trim`, `trimStart`, `trimEnd`, `repeat`, `padLeft`, `padRight`, `lines`, `words`, `fromChar`, `toList`, `fromList`, `casefold`, `equalFold`, `isEmail`, `isUrl`.
+All 37 entries: `length`, `isEmpty`, `reverse`, `append`, `concat`, `split`, `join`, `replace`, `slice`, `contains`, `startsWith`, `endsWith`, `toInt`, `fromInt`, `toFloat`, `fromFloat`, `toUpper`, `toLower`, `trim`, `trimStart`, `trimEnd`, `repeat`, `padLeft`, `padRight`, `lines`, `words`, `fromChar`, `toList`, `fromList`, `casefold`, `equalFold`, `isEmail`, `isUrl`, `indexes`, `uncons`, `foldl`, `foldr`.
+`String.indexes sub s` gives the start of every non-overlapping occurrence of `sub`, counted in characters (the unit of `slice`), O(n) (v0.29.0).
+
+**The unit is the code point.** Every index and length in `String` counts Unicode code points: not bytes (`Sky.Core.Bytes`) and not graphemes (`String.graphemes`). Since v0.29.0 `slice`, `left`, `dropLeft` (O(k) for index k) and `right`, `dropRight` (O(k) from the end) walk to the index and return a substring that shares the input's bytes, instead of converting the whole string. A negative `slice` index needs the length: O(n). `String.uncons s` gives `Just ( first, rest )` in O(1); `String.foldl` / `foldr` fold over the characters in O(n). To walk a string one character at a time use `uncons`, `foldl` or `toList`. To build a string, cons the pieces onto a list and call `String.concat (List.reverse pieces)` once: `++` in a loop is O(n²). A loop of `slice i (i + 1)` over a string of 4 kB or more uses a one-entry index cache (O(64) per call after the second call), but concurrent loops over different large strings replace each other's entry; prefer `uncons`.
 
 ### `List` — sequences
 
@@ -76,7 +79,8 @@ sum     = List.foldl (\n acc -> n + acc) 0 [ 1, 2, 3 ]    -- 6
 evens   = List.filter (\n -> modBy 2 n == 0) [ 1, 2, 3, 4 ] -- [2, 4]
 ```
 
-`map`, `filter`, `foldl`, `foldr`, `length`, `head`, `tail`, `take`, `drop`, `append`, `concat`, `concatMap`, `reverse`, `member`, `any`, `all`, `range`, `repeat`, `zip`, `isEmpty`, `indexedMap`, `find`, `cons`.
+`map`, `filter`, `foldl`, `foldr`, `length`, `head`, `tail`, `take`, `drop`, `append`, `concat`, `concatMap`, `reverse`, `member`, `any`, `all`, `range`, `repeat`, `zip`, `isEmpty`, `indexedMap`, `find`, `cons`, `map2`, `map3`, `unique`.
+`List.map2 f xs ys` / `map3` apply `f` pairwise and stop at the shorter list (Elm), in one pass with one allocation, so they are cheaper than `List.map` over `List.zip`. `List.unique xs` keeps the first occurrence of each `comparable` value, in order, in O(n) expected time (v0.29.0).
 `List.repeat n x` is `n` copies of `x` (Elm); `n` of 0 or less gives `[]`.
 
 > v0.17 closed Limitation #8 — all 13 list ops in scope now run
@@ -88,6 +92,20 @@ evens   = List.filter (\n -> modBy 2 n == 0) [ 1, 2, 3, 4 ] -- [2, 4]
 > `Result.combine` were CPS-rewritten in v0.17 to delegate
 > through the same constant-stack form. Million-entry lists are
 > safe across the surface.
+
+**Costs (v0.29.0).** `x :: xs` is amortised O(1): a typed `::` writes into free room in front of the list's backing block. Three shapes still copy, O(n): replacing a head (`case xs of y :: rest -> z :: rest`), a second cons onto one shared tail, and the first cons onto a list that is not a cons block (a literal, `List.map`, JSON, a database row). The accumulator loop `go (x :: acc) rest` followed by one `List.reverse` is O(n). `head`, `tail`, `length`, `isEmpty`, `take`, `drop` are O(1) on a typed list; `reverse`, `map`, `filter`, `++` and `member` are O(n); `sort` is O(n log n). An old list keeps its whole block alive (the space cost of O(1) cons), and Go code reached through FFI must treat a list argument as read-only.
+
+### `Array` — indexed sequences (`Sky.Core.Array`, v0.29.0)
+
+```elm
+import Sky.Core.Array as Array exposing (Array)
+
+row  = Array.initialize 4 (\i -> i * i)   -- [0, 1, 4, 9]
+next = Array.set 2 7 row                 -- [0, 1, 7, 9]; row is unchanged
+v    = Array.get 3 next                  -- Just 9
+```
+
+Elm's `Array`: `empty`, `initialize`, `repeat`, `fromList`, `isEmpty`, `length`, `get`, `set`, `push`, `toList`, `toIndexedList`, `map`, `indexedMap`, `foldl`, `foldr`, `filter`, `append`, `slice`. A persistent 32-way trie with a tail: `get` and `set` are O(log32 n) (at most 4 steps for a million elements), `push` is amortised O(1), `length` O(1), the folds and maps O(n), `append a b` O(length b), `slice` O(n). `get` / `set` outside `0 .. length - 1` give `Nothing` / the array unchanged. Pure (client and server). Use it where a list would need an index, such as a dynamic-programming table.
 
 ### `Dict` — key-value maps
 
@@ -105,6 +123,8 @@ theme = Dict.get "theme" prefs   -- Just "dark"
 > The encoded key carries its own type tag, so the decode works with no type information from the call site — a helper written over `Dict k v`, where the compiler has erased the key, hands back Ints from a `Dict Int v` just as a `Dict Int v`-typed call site does. A `Dict String v` is encoded verbatim, so the shape that crosses into JSON objects, `Std.Db` rows and HTTP headers keeps exactly the keys you gave it.
 >
 > Composite keys (tuple, list, record, custom type) do **not** decode — their stringification is not reversible; see [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md).
+
+> **Costs.** `get` and `member` are O(1) on a typed dict. `insert`, `remove` and `update` copy the map: O(n) per write, so a fold of n inserts is O(n²). `toList`, `keys`, `values`, `foldl` and `map` sort the keys: O(n log n). For many writes, build the entries as a list and call `Dict.fromList` once: O(n).
 
 ### `Set` — unique-element collections
 
@@ -170,17 +190,48 @@ The `Tuple` qualifier needs no `import`, as in Elm. An import that binds `Tuple`
 ### `Regex` — pattern matching
 
 ```elm
-import Sky.Core.Regex as Regex
+import Sky.Core.Regex as Regex exposing (Regex)
 
-match : Bool
-match = Regex.match "^[a-z]+$" "hello"   -- True
+lowerWord : Regex
+lowerWord =
+    Regex.fromString "^[a-z]+$" |> Result.withDefault Regex.never
+
+ok : Bool
+ok = Regex.contains lowerWord "hello"   -- True
 ```
 
-`match`, `find`, `findAll`, `replace`, `split`.
+A `Regex` is compiled once by `fromString : String -> Result Error Regex`, the
+only constructor, and every other function takes the compiled value:
+`contains` (also `match`), `find`, `findAll`, `findMatch`, `findAllMatches`,
+`replace`, `replaceWith`, `split`. `never` matches nothing. An invalid pattern
+is the `Err` of `fromString` (kind `InvalidInput`) with the RE2 error text. A
+literal pattern is checked when the program compiles: an invalid one is
+`[E2014]` ([E2014-invalid-regex.md](errors/E2014-invalid-regex.md)). A pattern
+built at run time (an interpolation, a variable) is checked by the Result.
+(v0.29.0; before, every function took the pattern String and an invalid one
+matched nothing. See [the migration guide](migration/v0.29.md#regex-takes-a-compiled-regex).)
+
+Write a pattern as a triple-quoted string: a backslash is kept as it is
+(`"""\d+"""` is `\d+`, where a plain string needs `"\\d+"`). In a triple-quoted
+string `\\` is one backslash (`"""\\d"""` is `\d` too), and `{{` opens an
+interpolation: write a literal `{{` as `\{{`. A single `{` (as in `\d{2,4}`) is
+kept.
+
+`findMatch` / `findAllMatches` return a `Match` (Elm's shape): `{ match : String, index : Int, number : Int, submatches : List (Maybe String) }`. `index` counts characters (the unit of `String.slice`), never bytes; `number` is 1-based; a capture group that did not take part is `Nothing`. `replaceWith re f s` replaces each match with `f match`. All are pure (client and server) and linear in the input (RE2). A `Regex` is not data: it cannot be encoded with a `Codec` or kept in a session.
+
+```elm
+assignment : Regex
+assignment =
+    Regex.fromString "(\\w+) = \"([^\"]*)\"" |> Result.withDefault Regex.never
+
+Regex.findMatch assignment "video = \"abc\"" |> Maybe.map .submatches
+-- Just [ Just "video", Just "abc" ]
+```
 
 ### `Char` — character predicates
 
-`isUpper`, `isLower`, `isDigit`, `isAlpha`, `toUpper`, `toLower`.
+`isUpper`, `isLower`, `isDigit`, `isAlpha`, `isAlphaNum`, `isSpace`, `toUpper`, `toLower`, `toCode`, `fromCode`.
+`isAlphaNum` is `isAlpha || isDigit` (Unicode, like both). `isSpace` is the Unicode White_Space property, the set `String.trim` removes (v0.29.0).
 
 ### `Path` — file path manipulation
 
@@ -1153,6 +1204,39 @@ main =
         |> Task.andThen Log.println
 ```
 
+#### Standard input and a structured result (`Process.runCommand`, v0.29.0)
+
+`runCommand command` runs a command built with `command` and the `with*`
+helpers to completion and returns `{ code : Int, stdout : String, stderr : String }`
+(`Process.Completed`). A non-zero exit is a result in `code`, not an `Err`; the
+only errors are a child that cannot start (`NotFound`, `PermissionDenied`, `Io`)
+and `InvalidInput` for an empty program name or a PTY. `withStdin text` gives the
+child that text on its standard input, then end of file (with `spawn` the runtime
+writes it and closes stdin). A child killed by a signal reports `code = 128 +
+signal`. Server side only. Both outputs are held in memory in full: for a
+long-running or chatty child, use `spawn`.
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Process as Process
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.Log as Log
+
+
+main : Task Error ()
+main =
+    Process.command "sort"
+        |> Process.withStdin "pear\napple\n"
+        |> Process.runCommand
+        |> Task.andThen
+            (\r ->
+                Log.println (String.fromInt r.code ++ ": " ++ r.stdout ++ r.stderr)
+            )
+```
+
 #### Streaming child processes (`Process.spawn`, v0.27.0)
 
 `spawn` starts a long-running child and returns an opaque `Process`. Build the
@@ -1285,7 +1369,9 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
 - **`Std.Codec`** — `Codec.auto blank` reflection-derives from a zero-value witness
   (scalars → columns, `Maybe` → nullable, list/nested/ADT → JSON blob, nullary enum
   → readable name); **snake_case** columns/keys by default (`Codec.autoCamel` keeps
-  camelCase). **`Codec.autoWith [ ("active", intBool) ] blank`** overrides specific
+  camelCase). A `Json.Value` field carries any JSON when the blank gives it a JSON
+  value (`data = Json.Encode.null`; `Just Json.Encode.null` for a `Maybe Json.Value`).
+  **`Codec.autoWith [ ("active", intBool) ] blank`** overrides specific
   fields' codecs while auto-deriving the rest (a Bool stored 0/1, a custom enum
   format) — no full hand-written codec for a one-field tweak. `toJson` / `fromJson`
   / `fromJsonSafe`; explicit `object`/`field`/`taggedUnion`/`enum` for full control.
@@ -1300,19 +1386,66 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   required, `exact` is `False` where a part is open, as in `taggedUnion`).
   `Std.Ai` sends it as a typed tool's parameters and as a structured answer's
   `response_format`.
+  `Codec.zeroJson codec` (v0.29) is the JSON of the codec's zero value, when
+  it knows one: the encoded blank record of `Codec.auto`, or, for a
+  `Codec.object` codec, an object of every field's zero (`""`, `0`,
+  `false`, `null`, `[]`, an enum's first name). `taggedUnion`, `result` and
+  `error` have none, and nor does an object with such a field.
+  `Codec.fieldZeros codec` (v0.29) is the zero of each field of a record
+  codec, keyed by its JSON key: each field of the blank record of
+  `Codec.auto`, or each field of a `Codec.object` codec whose own codec has
+  a zero (a field with none is left out, the others keep theirs); `[]` for
+  any other codec. `Store.migrate` and `sky db migrate --gen` use it as the
+  DEFAULT of a required JSON or enum column added to a table with rows.
+  `Codec.schemaFitError target source` (v0.29) says whether every value the
+  JSON Schema `source` describes reads, through a codec whose `jsonSchema` is
+  `target`, as itself, and
+  `Codec.schemaValueError schema json` whether a JSON value is one the schema
+  reads. `Std.Db.Store` uses them for its kind checks.
+  `Codec.fieldReadError codec objectText` (v0.29) gives the first field of a
+  JSON object that its field's codec does not read, with the reason (the
+  field's own decoder, or, for `Codec.auto`, the blank record with that
+  value in the field); the Store uses it to name the column a row fails on.
+  `Codec.maybe c` reads only JSON `null` as `Nothing` (v0.29): any other
+  value must decode as `c`, at any depth, so a `"x"` in a `Maybe Int` field
+  or a bad element of a `List (Maybe a)` is an `Err` naming where it failed,
+  never a silent `Nothing`. A `Codec.object` field must be present, a
+  `Maybe` included (`null` for `Nothing`).
   `Codec.dict keyCodec valueCodec` (v0.27) encodes a `Dict` as a JSON array of
   `[key, value]` pairs, so any comparable key round-trips. `Codec.fromJson`
   reads exactly one JSON document: text after it is an `Err` (v0.27). A type
   that holds a function, a `Secret`, a key or a runtime handle has no codec and
   is refused at compile time. Pure Sky.
 - **`Std.Db.Store`** — `fromCodec |> primaryKey`/`serial`/`unique`/`defaultNow`/
-  `touchOnUpdate`/`defaultWith`/`generated` (schema), `insert`/`insertMany`/`update`/
+  `touchOnUpdate`/`defaultText`/`defaultInt`/`defaultBool`/`defaultFloat`/`defaultWith`/
+  `generated` and the indexes `index`/`uniqueOn`/`uniqueWhere` (schema); `create` /
+  `migrate` (one rule with `sky db migrate --gen`: a `Maybe` field is nullable, any
+  other field `NOT NULL DEFAULT` its declared default else zero, an existing column
+  is never altered), `insert`/`insertMany`/`update`/
   `updateWhere`/`upsert`/`delete`/`deleteWhere` (writes), **`setFields`/`updateFields`**
   (partial-column PATCH — `SET` only the named columns, by PK or `Cond`) + **`adjust`**
   (atomic `SET col = col + delta` for counters/stock/balances), `all`/`findBy` + the
-  composable query builder (`where_`/`and_`/`or_`/order/limit/`toList`/`count`) +
-  **`selectRaw codec sql params`** for typed JOIN/aggregate reads. Deliberately a
-  single-table mapper, not an ORM.
+  composable query builder (`where_`/`and_`/`or_`/order/limit/`toList`/`count`/`toSql`),
+  **grouped aggregates** (`groupBy` + `aggregate` with `key`/`countAs`/`countIfAs`/
+  `countDistinctAs`/`sumAs`/`minAs`/`maxAs`, `having`, `toRows`), **projections**
+  (`select`/`selectAs`/`selectColumn`/`distinct`, `latestPer`), escaped text match
+  (`contains`/`containsCi`/`startsWith`/`endsWith`/`eqCi`), column conditions
+  (`eqCol`/`gtCol`/…), JSON keys (`jsonText`), **joins of two stores**
+  (`join`/`leftJoin` + `on`/`onAll`, `whereLeft`/`whereRight`, `orderLeft*`/`orderRight*`,
+  `toPairs`/`toPairsMaybe`) and **subquery conditions** (`inQuery`/`notInQuery` with
+  `column`, `exists`/`notExists` with `correlate`/`correlateAll`), **conflict-rule
+  writes** (`insertOrIgnore`/`insertOrIgnoreOn`, `upsertWith` with `addExcluded`/
+  `keepMin`/`keepMax`/`setExcluded`), **expression SET** (`updateSet` with `setCol`/
+  `setValue`/`setWhen` + `keep`/`otherwise`), **insert from a query**
+  (`copyInto`/`copyIntoOrIgnore` with `from`/`const`) and **RETURNING**
+  (`insertReturning`/`updateFieldsReturning`/`deleteWhereReturning`), every name checked
+  before the statement runs (v0.29.0), every `SqlValue` checked against its
+  column's kind and codec and every projection against the source's codec
+  before the statement runs, and a stored value that does not read as its
+  column's kind an `Err` naming the table and column, never `Nothing`
+  (v0.29.0, see "Value kinds" in the Std.Db overview) + **`selectRaw codec sql params`** for any other
+  SQL (a join of three tables, a CTE).
+  Deliberately a single-table mapper, not an ORM.
 
 Full walkthrough: **[Std.Db overview → Std.Db.Store](skydb/overview.md#stddbstore--stdcodec--codec-driven-persistence-recommended-default)**.
 Exact signatures: `sky doc Std.Db.Store` · `sky doc Std.Codec`.
@@ -1567,7 +1700,7 @@ Compression.zstdDecompress encoded  -- Task Error String
 
 `compress/gzip` (stdlib) + `klauspost/compress/zstd`.
 
-### `Std.Image` — backend resize, thumbnail, trim, crop and colour to alpha
+### `Std.Image` — backend resize, thumbnail, trim, crop, colour to alpha and animated GIF
 
 ```elm
 import Std.Image as Image
@@ -1575,25 +1708,266 @@ import Std.Image as Image
 Image.resizeToFit (Image.Jpeg 85) 1600 1600 bytes   -- Task Error Bytes (cap the full image)
 Image.thumbnail (Image.Jpeg 85) 400 bytes            -- Task Error Bytes (a small listing image)
 Image.dimensions bytes                               -- Task Error { width : Int, height : Int }
+Image.frames bytes                                   -- Task Error Int (frames of a GIF, 1 otherwise)
+Image.reduceFrames 2 bytes                           -- keep 1 frame in 2 of a GIF, delays summed
 Image.trim Image.Png 245 4 bytes                     -- cut white or transparent margins, keep 4 px
 Image.crop Image.Png x y width height bytes          -- cut out an area (clamped to the image)
 Image.whiteToAlpha bytes                             -- white background to transparent (PNG)
 Image.toAlpha { red = 0, green = 0, blue = 0 } bytes -- any background colour to transparent (PNG)
 ```
 
-Operates on raw image bytes (`Sky.Core.Bytes`). The output `Format` is `Jpeg
-quality`, `Png` (keeps transparency) or `Preserve` (JPEG stays JPEG at quality
-85, PNG and GIF become PNG). Resizing never upscales. `trim` treats a pixel as
-margin when it is fully transparent or at least `threshold` on red, green and
-blue; an image that is all margin is `Err InvalidInput`. `toAlpha` is "colour to
-alpha": each pixel keeps its own colour and gets the coverage that, laid back
-over the background colour, gives the original, so soft edges stay smooth. To
-clean up a logo on a white square: `trim`, then `whiteToAlpha`, then
-`resizeToFit Png`. Every function is a `Task` — the module is a backend
-capability (Go `image/jpeg` + `image/png` + `golang.org/x/image/draw`), so under
-`--target web:app` it runs on the server, never in the wasm client, and needs no
-outside tools. Decode a data-URL upload with
-`Encoding.base64Decode` first, then resize and `File.writeFile`.
+Operates on raw image bytes (`Sky.Core.Bytes`): JPEG, PNG, GIF and WebP are
+read. The output `Format` is `Jpeg quality`, `Png` (keeps transparency), `Gif`,
+`WebpLossless` (every pixel kept, transparency included) or `Preserve` (JPEG
+stays JPEG at quality 85, GIF stays GIF with every frame, WebP becomes lossless
+WebP, anything else becomes PNG). Resizing never upscales. `trim` treats a
+pixel as margin when it is fully transparent or at least `threshold` on red,
+green and blue; an image that is all margin is `Err InvalidInput`. `toAlpha` is
+"colour to alpha": each pixel keeps its own colour and gets the coverage that,
+laid back over the background colour, gives the original, so soft edges stay
+smooth. To clean up a logo on a white square: `trim`, then `whiteToAlpha`, then
+`resizeToFit Png`.
+
+**Animated GIF.** Written as `Gif` or `Preserve`, an animated GIF keeps every
+frame: each operation runs on every frame as it is shown (drawn over what the
+earlier frames left, with the frame's disposal applied), and each frame keeps
+its delay and disposal and the file its loop count. Comment and other
+application extensions are dropped (only the NETSCAPE loop is written). The
+frames are decoded, processed and written one at a time. `toAlpha` and
+`whiteToAlpha` keep an animated GIF animated. Written as `Jpeg`, `Png` or
+`WebpLossless`, a GIF gives its first frame. `reduceFrames n` keeps frames 1,
+1 + n, 1 + 2n, … and adds the dropped delays to the kept frame, the main way to
+make an email GIF smaller:
+
+```elm
+Image.reduceFrames 2 upload
+    |> Task.andThen (Image.resizeToFit Image.Preserve 300 300)
+```
+
+**Limits.** Every function that decodes reads the header first and refuses,
+before decoding anything, an image over 100 megapixels, an animated GIF of more
+than 1,000 frames, or one of more than 250 million pixels over all its frames.
+The refusal is `InvalidInput` in the domain `"image"` with the code
+`too_many_pixels`, `too_many_frames` or `too_many_frame_pixels` and the
+attributes `limit` and `value`. `dimensions` and `frames` read the header only
+and never refuse, so an app can check an upload first.
+
+Every function is a `Task`: the module is a backend capability (Go `image/*`,
+`golang.org/x/image/draw` and `webp`, an in-tree lossless WebP encoder), so
+under `--target web:app` it runs on the server, never in the wasm client, and
+needs no outside tools. Decode a data-URL upload with `Encoding.base64Decode`
+first, then resize and `File.writeFile`.
+
+### `Std.Image.Canvas` — draw an image on the server
+
+```elm
+import Std.Image as Image
+import Std.Image.Canvas as Canvas exposing (Paint(..))
+
+card : String -> String -> Task Error String
+card name photo =
+    Canvas.blank 1200 630 (Canvas.rgba 250 250 252 255)
+        |> Canvas.rect 0 0 1200 12 (Fill (Canvas.rgba 70 110 220 255))
+        |> Canvas.paste 80 80 (Just (Canvas.ellipseMask 160 160)) photo
+        |> Canvas.text { font = Canvas.defaultFont, size = 64.0, colour = Canvas.rgba 20 20 30 255 } 80 300 name
+        |> Canvas.encode Image.WebpLossless
+```
+
+| Function | Does |
+|---|---|
+| `blank w h colour`, `fromImage bytes` | a base: one colour, or an image |
+| `rect`, `roundedRect`, `ellipse`, `arc`, `line` | anti-aliased shapes; a `Paint` is `Fill colour` or `Stroke width colour` (an outline inside the box) |
+| `roundedMask`, `ellipseMask`, `alphaMask` | shapes a pasted image shows through |
+| `paste x y mask bytes`, `pasteCanvas x y mask canvas` | draw an image or another canvas over what is there |
+| `blur sigma`, `resize filter w h` | Gaussian blur (three box passes); `Nearest` / `Bilinear` / `CatmullRom` / `Lanczos` |
+| `loadFont path index`, `fontFromBytes bytes index`, `defaultFont` | TrueType / OpenType fonts (a `.ttc` by index); Go Regular built in |
+| `text style x y string`, `measure font size string` | text with (x, y) at the left and the top of the ascent; its size in pixels |
+| `encode format canvas` | draw every step and write PNG, JPEG, GIF or lossless WebP (`Task`) |
+| `pixelDiff tolerance a b` | pixels that differ by more than `tolerance` (`Task`), for tests |
+
+A `Canvas` is a list of drawing steps: each function adds one in O(1) and
+touches no pixel, so a long pipeline is cheap and one canvas can be the base of
+many. `encode` draws every step once: O(width x height) plus the pixels each
+step covers. What depends on the input fails there, as the `Err` of `encode`,
+in the domain `"image"`: `colour_range` (an `Rgba` channel outside 0..255),
+`canvas_too_large` (over 16384 on a side), `too_many_pixels` (a canvas or a
+pasted image over 100 megapixels), and a pasted image that does not decode.
+`loadFont` of a missing file is `NotFound`; a bad font is `InvalidInput` with
+`font_parse`, an index the file does not have `font_index`. Text has no hinting
+and no complex shaping; pair kerning from the `kern` table is applied. Server
+only, like `Std.Image`.
+
+### `Std.Xml` — safe XML parsing (with `Std.Xml.Decode` and `Std.Xml.Encode`)
+
+```elm
+import Std.Xml as Xml
+import Std.Xml.Decode as XD
+import Std.Xml.Encode as XE
+
+Xml.parse doc                                   -- Result Error Node (Strict, defaultLimits)
+Xml.parseWith Xml.HtmlEntities Xml.defaultLimits doc
+Xml.name node                                   -- local name ("" for text)
+Xml.namespace node                              -- namespace URI ("" when none)
+Xml.attributes node                             -- List ( String, String )
+Xml.children node                               -- List Node (text nodes included)
+Xml.text node                                   -- all descendant text
+
+type alias Entry = { title : String, href : String, updated : Maybe String }
+
+entry : XD.Decoder Entry
+entry =
+    XD.map3 Entry
+        (XD.element "title" XD.string)
+        (XD.element "link" (XD.attribute "href"))
+        (XD.optionalElement "updated" XD.string)
+
+XD.decodeString (XD.list "entry" entry) atomFeed   -- Result Error (List Entry)
+
+XE.document 2
+    (XE.element "urlset" [ XE.xmlns "http://www.sitemaps.org/schemas/sitemap/0.9" ]
+        [ XE.element "url" [] [ XE.element "loc" [] [ XE.text "https://example.test/" ] ] ])
+```
+
+Safe by default: a `<!DOCTYPE …>` or other directive is refused (no entity
+definitions, so billion-laughs and external entities cannot happen), only the
+XML entities and numeric references are read (`HtmlEntities` adds `&nbsp;` and
+the other HTML names), the encodings read are UTF-8, US-ASCII, ISO-8859-1 and
+Windows-1252, and `Limits` bounds the size (16 MiB), element depth (256), nodes
+(1,000,000) and attributes on one element (256). A failure is `InvalidInput`
+with the domain `"xml"` and a code: `too_large`, `too_deep`, `too_many_nodes`,
+`too_many_attributes`, `doctype`, `charset`, `malformed` (with the line and
+column). Names are local names; `XD.inNamespace` adds a namespace check where
+two vocabularies share a name. A decode failure is kind `Decode`, code `decode`,
+with the path (`/feed/entry[3]`). `XE.encode` is total (a character XML cannot
+carry becomes U+FFFD, a bad name character `_`); `XE.encodeStrict` returns an
+`Err` instead. Runs on the server; under `--target web:app` the split sends it
+to the backend, and the wasm client does not carry the parser (a call that
+reached it would be `Err Unavailable` with the code `server_only`). Cost: `parse` is O(n) time, O(nodes) memory.
+
+### `Codec.toXml` / `Codec.fromXml` — a codec's value as XML
+
+```elm
+Codec.toXml "order" orderCodec order            -- String
+Codec.fromXml "order" orderCodec text           -- Result Error Order
+```
+
+A record is one child element per field, a list repeats the field's element, a
+`Nothing` field is left out, a `taggedUnion` variant is `<f><Tag><arg>…</arg></Tag></f>`,
+a `result` is `<f><Ok>…</Ok></f>`, a `dict` is `<f><entry><key>…</key><value>…</value></entry></f>`,
+and a `Json.Value` field is compact JSON text. Reading takes a field from the
+child element with its local name, else from an attribute with that name;
+unknown elements are ignored. `Maybe (List a)` with `Just []` reads back as
+`Nothing`, and `Maybe (Maybe a)` collapses as it does in JSON. Server side.
+
+### `Std.Zip` — safe ZIP archives
+
+```elm
+import Std.Zip as Zip
+
+Zip.write [ { path = "users.csv", bytes = users }, { path = "orders.csv", bytes = orders } ]
+                                                -- Result Error Bytes (deterministic)
+Zip.read archive                                -- Result Error (List Entry), defaultLimits
+Zip.readEntry Zip.defaultLimits "META-INF/container.xml" epub
+                                                -- Result Error (Maybe Bytes)
+Zip.list archive                                -- Result Error (List EntryInfo), nothing inflated
+Zip.writeWith Zip.Store entries                 -- no compression
+```
+
+`Result`, not `Task`: reading and writing an archive has no outside effect.
+Sizes are counted while entries inflate (a declared size is never trusted) under
+`Limits` (10,000 entries, 50 MiB an entry, 200 MiB in all, a ratio of 200 above
+1 MiB). A name that is absolute, has a `..` segment, a backslash, a drive letter
+or a NUL, or repeats another, is refused, and so are symbolic links, encrypted
+entries and methods other than Store and Deflate. A failure is `InvalidInput`
+with the domain `"zip"` and a code: `not_zip`, `too_many_entries`,
+`entry_too_large`, `total_too_large`, `ratio_exceeded`, `unsafe_path`,
+`duplicate_path`, `encrypted`, `unsupported_method`, `corrupt`. `write` stamps
+every entry 1980-01-01, so the same entries give the same bytes. Server side:
+the wasm client does not carry `archive/zip`, and a call that reached it would
+be `Err Unavailable` with the code `server_only`.
+
+### `Std.Office.Xlsx` — Excel workbooks
+
+```elm
+import Std.Office.Xlsx as Xlsx exposing (Cell(..), Validation(..))
+
+Xlsx.read bytes                                 -- Result Error Workbook (defaultLimits)
+Xlsx.readWith { limits | maxRows = 10000 } bytes
+Xlsx.sheetNames bytes                           -- workbook part only
+
+Xlsx.write
+    [ Xlsx.sheet "Ledger"
+        [ [ Xlsx.bold (Xlsx.text "Date"), Xlsx.bold (Xlsx.text "Amount") ]
+        , [ Xlsx.date day, Xlsx.numberFormat "#,##0.00" (Xlsx.number 1250.5) ]
+        , [ Xlsx.text "Total", Xlsx.formula "SUM(B2:B2)" ]
+        ]
+    ]                                           -- Result Error Bytes (deterministic)
+```
+
+A `Workbook` is `{ sheets, date1904 }`; a `Sheet` is `{ name, visibility,
+rows : List (List Cell), merged, columnWidths, frozen, validations }`. A `Cell`
+is `Empty`, `Text`, `Number`, `Boolean`, `Date DateTime` (zone-less, to the
+millisecond), `Formula text cached` or `Failure "#N/A"`. Rows keep their index
+(a missing row is `[]`, a gap in a row `Empty`). A number is a `Date` when its
+format is a date (built-in formats 14 to 22 and 45 to 47, or a custom format
+with d, m, y, h or s outside quotes and brackets); Excel's phantom 1900-02-29
+reads as that date, and a 1904 workbook counts from 1904-01-01. Shared strings
+and worksheets are streamed, rich text is joined, phonetic runs are skipped, a
+shared formula's followers get their own references. Macros, external links
+and embedded objects are never read.
+
+To write, build `CellSpec`s (`text`, `number`, `int`, `bool`, `date`,
+`formula`, `failure`, `empty`, `fromCell`) and style them (`bold`, `italic`,
+`fontSize`, `fill r g b`, `numberFormat`, `wrap`). A `SheetSpec` from `sheet
+name rows` also takes `visibility`, `columnWidths`, `frozen`, `merged` and
+`validations` (`ListOf range items`, or `ListFromRange range "Lists!$A$1:$A$40"`
+for more than 255 characters). Styles are deduplicated; text goes in the shared
+strings; a date is a serial number with a date format (`yyyy-mm-dd` unless you
+give one); a formula has no cached value and the workbook asks to be computed
+when it opens (LibreOffice computes it, which
+`scripts/office-second-reader-e2e.sh` checks). `read (write (List.map (List.map fromCell) rows))` gives `rows`
+back (a formula's cached value as `Empty`).
+
+`Limits` is `{ zip : Zip.Limits, maxSheets, maxRows, maxCells, maxColumns }`
+(defaults 100, 200,000, 2,000,000, 16,384); the gaps before a cell count as
+cells, so one far cell cannot allocate millions. A failure is `InvalidInput`
+with the domain `"office"` and a code: `sheet_name`, `no_visible_sheet`,
+`too_many_rows`, `too_many_columns`, `too_many_cells`, `too_many_sheets`,
+`validation_too_long`, `validation_item`, `range`, `column_width`,
+`date_range`, `text_too_long`, `formula`, `failure_value`, `number`,
+`not_office`, `corrupt`. A broken archive is a `"zip"` error and a hostile part
+an `"xml"` error. Read the bytes with `File.readFile` or take an upload. Server
+side. Cost: O(cells + shared strings) to read, O(cells) to write.
+
+### `Std.Office.Docx` — Word documents
+
+```elm
+import Std.Office.Docx as Docx exposing (Block(..), ListKind(..))
+
+Docx.read bytes                                 -- Result Error (List Block)
+Docx.toText blocks                              -- String, pure (runs on the client too)
+Docx.write
+    [ Heading 1 [ Docx.run "Invoice 2026-041" ]
+    , Table [ [ [ Paragraph [ Docx.run "Item" ] ], [ Paragraph [ Docx.run "Amount" ] ] ] ]
+    , Paragraph [ { text = "Pay online", bold = False, italic = False, link = Just "https://example.com/pay" } ]
+    ]                                           -- Result Error Bytes (deterministic)
+```
+
+A `Block` is `Heading level runs` (0 is the Title style, 1 to 9 the heading
+levels), `Paragraph runs`, `ListItem Bulleted|Numbered level runs` (level 0 to
+8) or `Table rows` (rows of cells of blocks). A `Run` is `{ text, bold, italic,
+link : Maybe String }`. Reading finds headings by style (also localized style
+ids, by the style's name) and outline level, list items by numbering (the kind
+from `numbering.xml`), and links through the relationships; tracked deletions
+are skipped, insertions kept, content controls flattened, and drawings, text
+boxes and embedded objects never read. Adjacent runs with the same look are
+joined. Writing makes the styles (Title, Heading 1 to 9, List Paragraph,
+Hyperlink, Table Grid) and a bullet and a numbered list; each run of numbered
+items starts at 1. A link must be http, https, mailto or `#anchor`
+(`unsafe_link`); a heading level is 0 to 9 (`heading_level`) and a list level 0
+to 8 (`list_level`). `Limits` is `{ zip, maxBlocks, maxDepth }` (defaults
+1,000,000 blocks, depth 256, `too_many_blocks`). Server side. Cost: O(document
+size).
 
 ### `Std.Csv` — RFC 4180 encode/decode + streaming reader
 
@@ -2063,6 +2437,24 @@ unknown id, `Err InvalidInput` for an element that is not a textarea or a
 text-like input. It runs in a Sky.Spa client only: on Sky.Live (whose `update`
 runs on the server), a server, a CLI or a terminal it is `Err Unavailable`, as
 is every `Std.Native` capability there.
+
+`selection` reads a text control's selection and `setSelection` sets it
+(v0.29.0), for a toolbar that acts on the selected text or puts the caret
+somewhere:
+
+```elm
+-- doc-example: skip  (signatures)
+type alias Selection = { start : Int, end : Int, text : String }
+selection : String -> Task Error Selection          -- element id
+setSelection : String -> Int -> Int -> Task Error () -- element id, start, end
+```
+
+Positions are characters (the unit of `String.slice`); the runtime converts
+from the browser's UTF-16 units. `selection` uses the remembered selection
+when the control is not focused, the same rule as `insertAtCursor`.
+`setSelection` clamps the range to the value, focuses the control and records
+the range, so a later `insertAtCursor` replaces it. Same errors as
+`insertAtCursor`, and the same client-only rule.
 
 `Std.Bundle` declares what the native shells ship with: identity (`withId`,
 `withName`, `withVersion`, `withBuild`, `withIcon`), assets, permissions with

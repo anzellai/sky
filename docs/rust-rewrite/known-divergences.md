@@ -1,6 +1,12 @@
 # Known divergences — the Rust-vs-oracle ledger
 
-The Rust compiler (`rust/`, the primary toolchain) is validated against the
+> **Frozen.** The Haskell oracle was removed from the tree in v0.29.0 (tag
+> `v0.28.1` is the last that has it; see
+> [`../history/legacy-compilers.md`](../history/legacy-compilers.md)). This
+> page and `known-divergences.toml` are the permanent record of the
+> differences found while it existed.
+
+The Rust compiler (`rust/`, the primary toolchain) was validated against the
 **Haskell oracle** (`legacy-haskell-compiler/`, built as `sky-out/sky`) by
 differential testing: same Sky input, compare the emitted Go, the accept/reject
 decision, and the diagnostics. The working assumption is **Rust output ==

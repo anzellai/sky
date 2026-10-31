@@ -257,38 +257,38 @@ type Sky_Core_Http_HttpResponse_R = rt.HttpResponse
 
 func init() { rt.RegisterGobType(Sky_Core_Http_HttpResponse_R{}) }
 
-func Sky_Core_Http_HttpResponse(p0 int, p1 string, p2 map[string]string) Sky_Core_Http_HttpResponse_R {
+func Sky_Core_Http_HttpResponse(p0 int, p1 string, p2 rt.SkyDict[string]) Sky_Core_Http_HttpResponse_R {
 	return Sky_Core_Http_HttpResponse_R{Status: p0, Body: p1, Headers: p2}
 }
 
 type Sky_Http_Server_Request_R struct {
-	Method     string            `sky:"method,string"`
-	Path       string            `sky:"path,string"`
-	Body       string            `sky:"body,string"`
-	Headers    map[string]string `sky:"headers,map[string]string"`
-	Params     map[string]string `sky:"params,map[string]string"`
-	Query      map[string]string `sky:"query,map[string]string"`
-	Cookies    map[string]string `sky:"cookies,map[string]string"`
-	RemoteAddr string            `sky:"remoteAddr,string"`
-	Host       string            `sky:"host,string"`
+	Method     string             `sky:"method,string"`
+	Path       string             `sky:"path,string"`
+	Body       string             `sky:"body,string"`
+	Headers    rt.SkyDict[string] `sky:"headers,rt.SkyDict[string]"`
+	Params     rt.SkyDict[string] `sky:"params,rt.SkyDict[string]"`
+	Query      rt.SkyDict[string] `sky:"query,rt.SkyDict[string]"`
+	Cookies    rt.SkyDict[string] `sky:"cookies,rt.SkyDict[string]"`
+	RemoteAddr string             `sky:"remoteAddr,string"`
+	Host       string             `sky:"host,string"`
 }
 
 func init() { rt.RegisterGobType(Sky_Http_Server_Request_R{}) }
 
-func Sky_Http_Server_Request(p0 string, p1 string, p2 string, p3 map[string]string, p4 map[string]string, p5 map[string]string, p6 map[string]string, p7 string, p8 string) Sky_Http_Server_Request_R {
+func Sky_Http_Server_Request(p0 string, p1 string, p2 string, p3 rt.SkyDict[string], p4 rt.SkyDict[string], p5 rt.SkyDict[string], p6 rt.SkyDict[string], p7 string, p8 string) Sky_Http_Server_Request_R {
 	return Sky_Http_Server_Request_R{Method: p0, Path: p1, Body: p2, Headers: p3, Params: p4, Query: p5, Cookies: p6, RemoteAddr: p7, Host: p8}
 }
 
 type Sky_Http_Server_Response_R struct {
-	Status      int               `sky:"status,int"`
-	Body        string            `sky:"body,string"`
-	Headers     map[string]string `sky:"headers,map[string]string"`
-	ContentType string            `sky:"contentType,string"`
+	Status      int                `sky:"status,int"`
+	Body        string             `sky:"body,string"`
+	Headers     rt.SkyDict[string] `sky:"headers,rt.SkyDict[string]"`
+	ContentType string             `sky:"contentType,string"`
 }
 
 func init() { rt.RegisterGobType(Sky_Http_Server_Response_R{}) }
 
-func Sky_Http_Server_Response(p0 int, p1 string, p2 map[string]string, p3 string) Sky_Http_Server_Response_R {
+func Sky_Http_Server_Response(p0 int, p1 string, p2 rt.SkyDict[string], p3 string) Sky_Http_Server_Response_R {
 	return Sky_Http_Server_Response_R{Status: p0, Body: p1, Headers: p2, ContentType: p3}
 }
 
@@ -617,14 +617,14 @@ func State_EventCount(p0 string, p1 int) State_EventCount_R {
 }
 
 type State_Identity_R struct {
-	Subject string            `sky:"subject,string"`
-	Email   string            `sky:"email,string"`
-	Claims  map[string]string `sky:"claims,map[string]string"`
+	Subject string             `sky:"subject,string"`
+	Email   string             `sky:"email,string"`
+	Claims  rt.SkyDict[string] `sky:"claims,rt.SkyDict[string]"`
 }
 
 func init() { rt.RegisterGobType(State_Identity_R{}) }
 
-func State_Identity(p0 string, p1 string, p2 map[string]string) State_Identity_R {
+func State_Identity(p0 string, p1 string, p2 rt.SkyDict[string]) State_Identity_R {
 	return State_Identity_R{Subject: p0, Email: p1, Claims: p2}
 }
 
@@ -1491,12 +1491,13 @@ type Std_App_WebOpts_R struct {
 	Embedded         bool                                  `sky:"embedded,bool"`
 	SessionTransport Std_App_SessionTransport              `sky:"sessionTransport,Std_App_SessionTransport"`
 	Name             rt.SkyMaybe[string]                   `sky:"name,rt.SkyMaybe[string]"`
+	PersistExclude   rt.SkyMaybe[[]string]                 `sky:"persistExclude,rt.SkyMaybe[[]string]"`
 }
 
 func init() { rt.RegisterGobType(Std_App_WebOpts_R{}) }
 
-func Std_App_WebOpts(p0 int, p1 rt.SkyMaybe[string], p2 rt.SkyMaybe[string], p3 rt.SkyMaybe[string], p4 rt.SkyMaybe[string], p5 rt.SkyMaybe[string], p6 rt.SkyMaybe[int], p7 rt.SkyMaybe[string], p8 rt.SkyMaybe[struct{ PageViews bool }], p9 bool, p10 bool, p11 Std_App_SessionTransport, p12 rt.SkyMaybe[string]) Std_App_WebOpts_R {
-	return Std_App_WebOpts_R{Port: p0, Store: p1, Static: p2, StaticUrl: p3, Ttl: p4, IdleEvict: p5, MaxBodyBytes: p6, InputMode: p7, Analytics: p8, Csrf: p9, Embedded: p10, SessionTransport: p11, Name: p12}
+func Std_App_WebOpts(p0 int, p1 rt.SkyMaybe[string], p2 rt.SkyMaybe[string], p3 rt.SkyMaybe[string], p4 rt.SkyMaybe[string], p5 rt.SkyMaybe[string], p6 rt.SkyMaybe[int], p7 rt.SkyMaybe[string], p8 rt.SkyMaybe[struct{ PageViews bool }], p9 bool, p10 bool, p11 Std_App_SessionTransport, p12 rt.SkyMaybe[string], p13 rt.SkyMaybe[[]string]) Std_App_WebOpts_R {
+	return Std_App_WebOpts_R{Port: p0, Store: p1, Static: p2, StaticUrl: p3, Ttl: p4, IdleEvict: p5, MaxBodyBytes: p6, InputMode: p7, Analytics: p8, Csrf: p9, Embedded: p10, SessionTransport: p11, Name: p12, PersistExclude: p13}
 }
 
 type Std_Html_Attributes_Attribute = rt.SkyADT
@@ -1581,14 +1582,14 @@ func init() {
 }
 
 type Std_Live_Console_Identity_R struct {
-	Subject string            `sky:"subject,string"`
-	Email   string            `sky:"email,string"`
-	Claims  map[string]string `sky:"claims,map[string]string"`
+	Subject string             `sky:"subject,string"`
+	Email   string             `sky:"email,string"`
+	Claims  rt.SkyDict[string] `sky:"claims,rt.SkyDict[string]"`
 }
 
 func init() { rt.RegisterGobType(Std_Live_Console_Identity_R{}) }
 
-func Std_Live_Console_Identity(p0 string, p1 string, p2 map[string]string) Std_Live_Console_Identity_R {
+func Std_Live_Console_Identity(p0 string, p1 string, p2 rt.SkyDict[string]) Std_Live_Console_Identity_R {
 	return Std_Live_Console_Identity_R{Subject: p0, Email: p1, Claims: p2}
 }
 
@@ -2137,6 +2138,17 @@ func init() {
 }
 func (v Std_Ui_VAlign) SkyEnumName() string { return rt.EnumName("Std_Ui_VAlign", int(v)) }
 
+type Std_Xml_Encode_Attribute = rt.SkyADT
+
+func Std_Xml_Encode_Attribute_Attribute__Internal(v0 any) Std_Xml_Encode_Attribute {
+	return Std_Xml_Encode_Attribute{Tag: 0, SkyName: "Attribute__Internal", Fields: []any{v0}}
+}
+
+func init() {
+	rt.RegisterAdtTag("console_app.Std_Xml_Encode_Attribute", "Attribute__Internal", 0)
+	rt.RegisterMsgVariant("Std_Xml_Encode_Attribute", "Attribute__Internal", 0, 1)
+}
+
 // SKY-ORIGIN: entry
 
 var Main_appDef__caf rt.LazyCaf[Std_App_App]
@@ -2498,19 +2510,19 @@ func AiTab_modelRow(v_0 State_AiFilter_R, v_1 State_AiModel_R) Std_Ui_Element {
 			Left   int
 			Right  int
 			Top    int
-		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(AiTab_borderSoft()), Std_Ui_htmlAttribute("data-ai-model", v_1.Name)}, /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12), Std_Ui_width(Std_Ui_fill()), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_AiOpenModel(v_1.Name))}, rt.List_appendT[Std_Ui_Element]([]Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_bold(), Std_Ui_Font_size(13)}, Std_Ui_text(("model " + v_1.Name)))}, rt.List_appendT[Std_Ui_Element](rt.List_mapT[State_AiAlias_R, Std_Ui_Element](AiTab_aliasChip, v_1.Aliases), []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill())}, Std_Ui_text("")), AiTab_muted(v_1.Store), AiTab_muted(func() string {
+		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(AiTab_borderSoft()), Std_Ui_htmlAttribute("data-ai-model", v_1.Name)}, rt.List_consT[Std_Ui_Element](Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12), Std_Ui_width(Std_Ui_fill()), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_AiOpenModel(v_1.Name))}, rt.List_appendT[Std_Ui_Element]([]Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_bold(), Std_Ui_Font_size(13)}, Std_Ui_text(("model " + v_1.Name)))}, rt.List_appendT[Std_Ui_Element](rt.List_mapT[State_AiAlias_R, Std_Ui_Element](AiTab_aliasChip, v_1.Aliases), []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill())}, Std_Ui_text("")), AiTab_muted(v_1.Store), AiTab_muted(func() string {
 			if open_2 {
 				return "hide versions"
 			} else {
 				return "show versions"
 			}
-		}())})))), any(func() []Std_Ui_Element {
+		}())}))), func() []Std_Ui_Element {
 			if open_2 {
-				return /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_concat(any([][]Std_Ui_Element{ /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(AiTab_sectionTitle("versions")), any(rt.List_mapT[State_AiVersion_R, Std_Ui_Element](AiTab_versionRow, v_1.Versions)))) /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(AiTab_sectionTitle("alias log")), any(rt.List_mapT[State_AiAliasEvent_R, Std_Ui_Element](AiTab_eventRow, v_1.Events)))) /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(AiTab_sectionTitle("eval history")), any(rt.List_mapT[State_AiReportLink_R, Std_Ui_Element](AiTab_reportRow, v_1.Reports))))})))
+				return /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_concat(any([][]Std_Ui_Element{rt.List_consT[Std_Ui_Element](AiTab_sectionTitle("versions"), rt.List_mapT[State_AiVersion_R, Std_Ui_Element](AiTab_versionRow, v_1.Versions)), rt.List_consT[Std_Ui_Element](AiTab_sectionTitle("alias log"), rt.List_mapT[State_AiAliasEvent_R, Std_Ui_Element](AiTab_eventRow, v_1.Events)), rt.List_consT[Std_Ui_Element](AiTab_sectionTitle("eval history"), rt.List_mapT[State_AiReportLink_R, Std_Ui_Element](AiTab_reportRow, v_1.Reports))})))
 			} else {
 				return []Std_Ui_Element{}
 			}
-		}()))))
+		}()))
 	}
 }
 
@@ -2609,7 +2621,7 @@ func Std_Ui_spacing(v_0 int) Std_Ui_Attribute {
 }
 
 func Std_Ui_row(v_0 []Std_Ui_Attribute, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_cons(any(Std_Ui_rowMarker()), any(v_0)), v_1)
+	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_consT[Std_Ui_Attribute](Std_Ui_rowMarker(), v_0), v_1)
 }
 
 var Std_Ui_rowMarker__caf rt.LazyCaf[Std_Ui_Attribute]
@@ -2663,7 +2675,7 @@ func AiTab_textSecondary() Std_Ui_Color {
 }
 
 func AiTab_versionRow(v_0 State_AiVersion_R) Std_Ui_Element {
-	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12), Std_Ui_paddingXY(12, 2), Std_Ui_htmlAttribute("data-ai-version", v_0.Label)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(150)), Std_Ui_Font_size(12), Std_Ui_Font_bold()}, Std_Ui_text(v_0.Label)), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(110)), Std_Ui_Font_size(12), Std_Ui_Font_color(AiTab_textMuted())}, Std_Ui_text((v_0.Method + (" · " + v_0.Format)))), AiTab_mono(("sha256:" + rt.String_leftT(any(12), any(v_0.Digest)))), AiTab_muted(("base " + rt.String_leftT(any(12), any(v_0.BaseDigest)))), AiTab_muted(("data " + v_0.Dataset)), func() Std_Ui_Element {
+	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12), Std_Ui_paddingXY(12, 2), Std_Ui_htmlAttribute("data-ai-version", v_0.Label)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(150)), Std_Ui_Font_size(12), Std_Ui_Font_bold()}, Std_Ui_text(v_0.Label)), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(110)), Std_Ui_Font_size(12), Std_Ui_Font_color(AiTab_textMuted())}, Std_Ui_text((v_0.Method + (" · " + v_0.Format)))), AiTab_mono(("sha256:" + rt.String_leftTA(12, v_0.Digest))), AiTab_muted(("base " + rt.String_leftTA(12, v_0.BaseDigest))), AiTab_muted(("data " + v_0.Dataset)), func() Std_Ui_Element {
 		if v_0.Blocked == "" {
 			return Std_Ui_none()
 		} else {
@@ -2802,7 +2814,7 @@ func Std_Ui_borderWidthEach(v_0 int, v_1 int, v_2 int, v_3 int) Std_Ui_Attribute
 }
 
 func Std_Ui_column(v_0 []Std_Ui_Attribute, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_cons(any(Std_Ui_colMarker()), any(v_0)), v_1)
+	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_consT[Std_Ui_Attribute](Std_Ui_colMarker(), v_0), v_1)
 }
 
 var Std_Ui_colMarker__caf rt.LazyCaf[Std_Ui_Attribute]
@@ -2854,7 +2866,7 @@ func Std_Ui_padding(v_0 int) Std_Ui_Attribute {
 }
 
 func AiTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(AiTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(AiTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(AiTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0)))), any(v_1))))
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(AiTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(AiTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, rt.List_consT[Std_Ui_Element](Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(AiTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0))), v_1))
 }
 
 func Std_Ui_Font_letterSpacing(v_0 float64) Std_Ui_Attribute {
@@ -3240,7 +3252,7 @@ func Std_Ui_Chart_withGridLines(v_0 bool, v_1 Std_Ui_Chart_Cfg_R) Std_Ui_Chart_C
 }
 
 func Std_Ui_paragraph(v_0 []Std_Ui_Attribute, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_Element_TaggedNode("p", Std_Ui_Description_DescParagraph(), rt.List_cons(any(Std_Ui_paragraphMarker()), any(v_0)), v_1)
+	return Std_Ui_Element_TaggedNode("p", Std_Ui_Description_DescParagraph(), rt.List_consT[Std_Ui_Attribute](Std_Ui_paragraphMarker(), v_0), v_1)
 }
 
 var Std_Ui_paragraphMarker__caf rt.LazyCaf[Std_Ui_Attribute]
@@ -3361,7 +3373,7 @@ func AiTab_evalRow(v_0 State_AiFilter_R, v_1 State_AiEval_R) Std_Ui_Element {
 			Left   int
 			Right  int
 			Top    int
-		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(AiTab_borderSoft()), Std_Ui_htmlAttribute("data-ai-eval", v_1.Id)}, /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12), Std_Ui_width(Std_Ui_fill()), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_AiOpenEval(v_1.Id))}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_bold(), Std_Ui_Font_size(13)}, Std_Ui_text(("eval " + v_1.Suite))), AiTab_muted(v_1.Model), AiTab_evalSource(v_1.Source), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12)}, Std_Ui_text((AiTab_percent(v_1.PassRate) + " passed"))), AiTab_muted((rt.String_fromIntT(v_1.Passed) + (" passed · " + (rt.String_fromIntT(v_1.Failed) + (" failed · " + (rt.String_fromIntT(v_1.Errors) + (" errors · p95 " + (rt.String_fromIntT(v_1.P95LatencyMs) + " ms")))))))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill())}, Std_Ui_text("")), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(func() Std_Ui_Color {
+		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(AiTab_borderSoft()), Std_Ui_htmlAttribute("data-ai-eval", v_1.Id)}, rt.List_consT[Std_Ui_Element](Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12), Std_Ui_width(Std_Ui_fill()), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_AiOpenEval(v_1.Id))}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_bold(), Std_Ui_Font_size(13)}, Std_Ui_text(("eval " + v_1.Suite))), AiTab_muted(v_1.Model), AiTab_evalSource(v_1.Source), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12)}, Std_Ui_text((AiTab_percent(v_1.PassRate) + " passed"))), AiTab_muted((rt.String_fromIntT(v_1.Passed) + (" passed · " + (rt.String_fromIntT(v_1.Failed) + (" failed · " + (rt.String_fromIntT(v_1.Errors) + (" errors · p95 " + (rt.String_fromIntT(v_1.P95LatencyMs) + " ms")))))))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill())}, Std_Ui_text("")), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(func() Std_Ui_Color {
 			if v_1.Verdict == "passed" {
 				return AiTab_ok()
 			} else {
@@ -3373,13 +3385,13 @@ func AiTab_evalRow(v_0 State_AiFilter_R, v_1 State_AiEval_R) Std_Ui_Element {
 			} else {
 				return "show cases"
 			}
-		}())})), any(func() []Std_Ui_Element {
+		}())}), func() []Std_Ui_Element {
 			if open_2 {
 				return rt.List_appendT[Std_Ui_Element](rt.List_mapT[string, Std_Ui_Element](AiTab_failureLine, v_1.Failures), rt.List_mapT[State_AiEvalCase_R, Std_Ui_Element](AiTab_caseRow, v_1.CaseResults))
 			} else {
 				return []Std_Ui_Element{}
 			}
-		}()))))
+		}()))
 	}
 }
 
@@ -3414,19 +3426,19 @@ func AiTab_evalSource(v_0 string) Std_Ui_Element {
 }
 
 func AiTab_callsPanel(v_0 State_AiFilter_R, v_1 []State_AiCall_R) Std_Ui_Element {
-	return AiTab_panel("Recent model calls" /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8)}, []Std_Ui_Element{AiTab_chip(rt.Basics_notT(v_0.FailedOnly), "All", State_Msg_AiShowFailed(false)), AiTab_chip(v_0.FailedOnly, "Failed", State_Msg_AiShowFailed(true)), func() Std_Ui_Element {
+	return AiTab_panel("Recent model calls", rt.List_consT[Std_Ui_Element](Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8)}, []Std_Ui_Element{AiTab_chip(rt.Basics_notT(v_0.FailedOnly), "All", State_Msg_AiShowFailed(false)), AiTab_chip(v_0.FailedOnly, "Failed", State_Msg_AiShowFailed(true)), func() Std_Ui_Element {
 		if v_0.Slot == "" {
 			return Std_Ui_none()
 		} else {
 			return AiTab_chip(false, "All slots", State_Msg_AiPickSlot(""))
 		}
-	}()})), any(func() []Std_Ui_Element {
+	}()}), func() []Std_Ui_Element {
 		if rt.List_isEmptyT[State_AiCall_R](v_1) {
 			return []Std_Ui_Element{AiTab_emptyState("No model call matches.")}
 		} else {
 			return rt.List_mapT[State_AiCall_R, Std_Ui_Element](AiTab_callRow, v_1)
 		}
-	}()))))
+	}()))
 }
 
 func AiTab_callRow(v_0 State_AiCall_R) Std_Ui_Element {
@@ -3445,7 +3457,7 @@ func AiTab_callRow(v_0 State_AiCall_R) Std_Ui_Element {
 }
 
 func AiTab_clock(v_0 string) string {
-	return rt.String_leftT(any(8), any(rt.String_dropLeftT(any(11), any(v_0))))
+	return rt.String_leftTA(8, rt.String_dropLeftTA(11, v_0))
 }
 
 func AiTab_chip(v_0 bool, v_1 string, v_2 State_Msg) Std_Ui_Element {
@@ -3620,7 +3632,7 @@ func AnalyticsTab_windowLabel(v_0 State_Analytics_R) string {
 }
 
 func AnalyticsTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(AnalyticsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(AnalyticsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(AnalyticsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0)))), any(v_1))))
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(AnalyticsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(AnalyticsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, rt.List_consT[Std_Ui_Element](Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(AnalyticsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0))), v_1))
 }
 
 var AnalyticsTab_border___caf rt.LazyCaf[Std_Ui_Color]
@@ -3797,7 +3809,7 @@ func View_textMuted() Std_Ui_Color {
 }
 
 func View_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(View_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0)))), any(v_1))))
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(View_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, rt.List_consT[Std_Ui_Element](Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0))), v_1))
 }
 
 var View_border___caf rt.LazyCaf[Std_Ui_Color]
@@ -3888,7 +3900,7 @@ func ErrorsTab_textMuted() Std_Ui_Color {
 }
 
 func ErrorsTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(ErrorsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(ErrorsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(ErrorsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0)))), any(v_1))))
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(ErrorsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(ErrorsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, rt.List_consT[Std_Ui_Element](Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(ErrorsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0))), v_1))
 }
 
 var ErrorsTab_border___caf rt.LazyCaf[Std_Ui_Color]
@@ -4051,7 +4063,7 @@ func View_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element {
 		_ = spans_2
 		shortId_3 := func() string {
 			if rt.String_lengthT(v_1) >= 8 {
-				return /* FFI return */ rt.AsString(rt.String_slice(any(0), any(8), any(v_1)))
+				return rt.String_sliceT(0, 8, v_1)
 			} else {
 				return v_1
 			}
@@ -4086,7 +4098,7 @@ func View_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element {
 			Left   int
 			Right  int
 			Top    int
-		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(View_borderSoft())}, /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent()), Std_Ui_Background_color(View_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}, Std_Ui_text(("trace " + shortId_3))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(View_textSecondary())}, Std_Ui_text((rootName_4 + (" · " + (rt.String_fromIntT(rt.List_lengthT[State_TraceRow_R](spans_2)) + " spans")))))})), any(rt.List_mapT[State_TraceRow_R, Std_Ui_Element](func(_p0 State_TraceRow_R) Std_Ui_Element { return View_spanRowView(v_0, _p0) }, spans_2)))))
+		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(View_borderSoft())}, rt.List_consT[Std_Ui_Element](Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent()), Std_Ui_Background_color(View_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}, Std_Ui_text(("trace " + shortId_3))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(View_textSecondary())}, Std_Ui_text((rootName_4 + (" · " + (rt.String_fromIntT(rt.List_lengthT[State_TraceRow_R](spans_2)) + " spans")))))}), rt.List_mapT[State_TraceRow_R, Std_Ui_Element](func(_p0 State_TraceRow_R) Std_Ui_Element { return View_spanRowView(v_0, _p0) }, spans_2)))
 	}
 }
 
@@ -4167,7 +4179,7 @@ func View_compactTime(v_0 string) string {
 			v_2 := rt.SkyElemT(_subj, 1)
 			_ = v_1
 			_ = v_2
-			return rt.String_leftT(any(8), any(v_2))
+			return rt.String_leftTA(8, v_2)
 		}
 		return v_0
 		panic(rt.Unreachable("case"))
@@ -4325,7 +4337,7 @@ func TracesTab_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element
 		_ = spans_2
 		shortId_3 := func() string {
 			if rt.String_lengthT(v_1) >= 8 {
-				return /* FFI return */ rt.AsString(rt.String_slice(any(0), any(8), any(v_1)))
+				return rt.String_sliceT(0, 8, v_1)
 			} else {
 				return v_1
 			}
@@ -4360,7 +4372,7 @@ func TracesTab_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element
 			Left   int
 			Right  int
 			Top    int
-		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(TracesTab_borderSoft())}, /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(TracesTab_accent()), Std_Ui_Background_color(TracesTab_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}, Std_Ui_text(("trace " + shortId_3))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(TracesTab_textSecondary())}, Std_Ui_text((rootName_4 + (" · " + (rt.String_fromIntT(rt.List_lengthT[State_TraceRow_R](spans_2)) + " spans")))))})), any(rt.List_mapT[State_TraceRow_R, Std_Ui_Element](func(_p0 State_TraceRow_R) Std_Ui_Element { return TracesTab_spanRowView(v_0, _p0) }, spans_2)))))
+		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(TracesTab_borderSoft())}, rt.List_consT[Std_Ui_Element](Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(TracesTab_accent()), Std_Ui_Background_color(TracesTab_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}, Std_Ui_text(("trace " + shortId_3))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(TracesTab_textSecondary())}, Std_Ui_text((rootName_4 + (" · " + (rt.String_fromIntT(rt.List_lengthT[State_TraceRow_R](spans_2)) + " spans")))))}), rt.List_mapT[State_TraceRow_R, Std_Ui_Element](func(_p0 State_TraceRow_R) Std_Ui_Element { return TracesTab_spanRowView(v_0, _p0) }, spans_2)))
 	}
 }
 
@@ -4471,7 +4483,7 @@ func TracesTab_compactTime(v_0 string) string {
 			v_2 := rt.SkyElemT(_subj, 1)
 			_ = v_1
 			_ = v_2
-			return rt.String_leftT(any(8), any(v_2))
+			return rt.String_leftTA(8, v_2)
 		}
 		return v_0
 		panic(rt.Unreachable("case"))
@@ -4532,7 +4544,7 @@ func TracesTab_emptyState(v_0 string) Std_Ui_Element {
 }
 
 func TracesTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(TracesTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(TracesTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(TracesTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0)))), any(v_1))))
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(TracesTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(TracesTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, rt.List_consT[Std_Ui_Element](Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(TracesTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0))), v_1))
 }
 
 var TracesTab_border___caf rt.LazyCaf[Std_Ui_Color]
@@ -4656,7 +4668,7 @@ func View_traceBadge(v_0 string) Std_Ui_Element {
 	if v_0 == "" {
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92))}, Std_Ui_text(""))
 	} else {
-		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_PivotToTrace(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_textSecondary())}, Std_Ui_text(("trace " + rt.String_leftT(any(8), any(v_0)))))
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_PivotToTrace(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_textSecondary())}, Std_Ui_text(("trace " + rt.String_leftTA(8, v_0))))
 	}
 }
 
@@ -4664,7 +4676,7 @@ func View_sessionBadge(v_0 string) Std_Ui_Element {
 	if v_0 == "" {
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80))}, Std_Ui_text(""))
 	} else {
-		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_LogFilterPickSession(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent())}, Std_Ui_text(rt.String_leftT(any(8), any(v_0))))
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_LogFilterPickSession(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent())}, Std_Ui_text(rt.String_leftTA(8, v_0)))
 	}
 }
 
@@ -4807,7 +4819,7 @@ func LogsTab_traceBadge(v_0 string) Std_Ui_Element {
 	if v_0 == "" {
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92))}, Std_Ui_text(""))
 	} else {
-		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_PivotToTrace(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_textSecondary())}, Std_Ui_text(("trace " + rt.String_leftT(any(8), any(v_0)))))
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_PivotToTrace(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_textSecondary())}, Std_Ui_text(("trace " + rt.String_leftTA(8, v_0))))
 	}
 }
 
@@ -4835,7 +4847,7 @@ func LogsTab_sessionBadge(v_0 string) Std_Ui_Element {
 	if v_0 == "" {
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80))}, Std_Ui_text(""))
 	} else {
-		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_LogFilterPickSession(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_accent())}, Std_Ui_text(rt.String_leftT(any(8), any(v_0))))
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_LogFilterPickSession(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_accent())}, Std_Ui_text(rt.String_leftTA(8, v_0)))
 	}
 }
 
@@ -4889,7 +4901,7 @@ func LogsTab_compactTime(v_0 string) string {
 			v_2 := rt.SkyElemT(_subj, 1)
 			_ = v_1
 			_ = v_2
-			return rt.String_leftT(any(8), any(v_2))
+			return rt.String_leftTA(8, v_2)
 		}
 		return v_0
 		panic(rt.Unreachable("case"))
@@ -4911,7 +4923,7 @@ func LogsTab_emptyState(v_0 string) Std_Ui_Element {
 }
 
 func LogsTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(LogsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(LogsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0)))), any(v_1))))
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(LogsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, rt.List_consT[Std_Ui_Element](Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(LogsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0))), v_1))
 }
 
 var LogsTab_border___caf rt.LazyCaf[Std_Ui_Color]
@@ -5183,7 +5195,7 @@ func MetricsTab_emptyState(v_0 string) Std_Ui_Element {
 }
 
 func MetricsTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(MetricsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(MetricsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(MetricsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0)))), any(v_1))))
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(MetricsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(MetricsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, rt.List_consT[Std_Ui_Element](Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(MetricsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05), Std_Ui_paddingXY(0, 4)}, Std_Ui_text(rt.String_toUpperT(v_0))), v_1))
 }
 
 var MetricsTab_border___caf rt.LazyCaf[Std_Ui_Color]
@@ -5340,7 +5352,7 @@ func Std_Ui_gridColumns(v_0 int) Std_Ui_Attribute {
 }
 
 func Std_Ui_grid(v_0 []Std_Ui_Attribute, v_1 []Std_Ui_Element) Std_Ui_Element {
-	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_cons(any(Std_Ui_gridMarker()), any(v_0)), v_1)
+	return Std_Ui_Element_Node(Std_Ui_Description_NoDescription(), rt.List_consT[Std_Ui_Attribute](Std_Ui_gridMarker(), v_0), v_1)
 }
 
 var Std_Ui_gridMarker__caf rt.LazyCaf[Std_Ui_Attribute]
@@ -5545,7 +5557,7 @@ func Std_Ui_Chart_maybeCons(v_0 rt.SkyMaybe[Std_Html_Html], v_1 []Std_Html_Html)
 		if _subj.Tag == 0 {
 			v_2 := _subj.JustValue
 			_ = v_2
-			return /* FFI return */ rt.AsListT[Std_Html_Html](rt.List_cons(any(v_2), any( /* primitive join */ rt.AsListT[any](v_1))))
+			return /* primitive join */ rt.AsListT[Std_Html_Html](rt.List_consT[any](any(v_2) /* primitive join */, rt.AsListT[any](v_1)))
 		}
 		panic(rt.Unreachable("case"))
 	}
@@ -6378,11 +6390,11 @@ func View_searchPlaceholder(v_0 State_Tab) string {
 }
 
 func View_serviceRow(v_0 string, v_1 []State_ServiceStat_R) Std_Ui_Element {
-	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(6)} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11), Std_Ui_paddingXY(0, 4), Std_Ui_width(Std_Ui_px(60))}, Std_Ui_text("Service"))), any( /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(View_serviceChip(v_0, "")), any(rt.List_mapT[State_ServiceStat_R, Std_Ui_Element](func(_e0 State_ServiceStat_R) Std_Ui_Element {
+	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(6)}, rt.List_consT[Std_Ui_Element](Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11), Std_Ui_paddingXY(0, 4), Std_Ui_width(Std_Ui_px(60))}, Std_Ui_text("Service")), rt.List_consT[Std_Ui_Element](View_serviceChip(v_0, ""), rt.List_mapT[State_ServiceStat_R, Std_Ui_Element](func(_e0 State_ServiceStat_R) Std_Ui_Element {
 		v_2 := _e0
 		_ = v_2
 		return View_serviceChip(v_0 /* FFI return */, rt.AsString(rt.Field(v_2, "Name")))
-	}, v_1))))))))
+	}, v_1))))
 }
 
 func View_serviceChip(v_0 string, v_1 string) Std_Ui_Element {
@@ -6601,7 +6613,7 @@ func Std_Ui_link(v_0 []Std_Ui_Attribute, v_1 struct {
 	Url   string
 }) Std_Ui_Element {
 	{
-		nodeAttrs_2 := /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrAttribute("href", v_1.Url)), any(v_0)))
+		nodeAttrs_2 := rt.List_consT[Std_Ui_Attribute](Std_Ui_Attribute_AttrAttribute("href", v_1.Url), v_0)
 		_ = nodeAttrs_2
 		return Std_Ui_Element_TaggedNode("a", Std_Ui_Description_NoDescription(), nodeAttrs_2, []Std_Ui_Element{v_1.Label})
 	}
@@ -6651,7 +6663,7 @@ func Std_Ui_layoutWith(v_0 struct {
 		_ = wrapperStyle_4
 		wrapperHtmlAttrs_5 := /* primitive join */ rt.AsListT[Std_Html_Attributes_Attribute](Std_Ui_collectHtmlAttrs(v_0.WrapperAttrs))
 		_ = wrapperHtmlAttrs_5
-		return Std_Html_div( /* FFI return */ rt.AsListT[Std_Html_Attributes_Attribute](rt.List_cons(any(Std_Html_Attributes_style(wrapperStyle_4)), any(wrapperHtmlAttrs_5))), []Std_Html_Html{Std_Html_node("style", []Std_Html_Attributes_Attribute{}, []Std_Html_Html{Std_Html_text("html,body{min-height:100%;margin:0;padding:0}")}) /* FFI return */, rt.Coerce[Std_Html_Html](Std_Ui_renderElement(Std_Ui_LayoutContext_AsColumn, v_0.RootAttrs, v_1))})
+		return Std_Html_div(rt.List_consT[Std_Html_Attributes_Attribute](Std_Html_Attributes_style(wrapperStyle_4), wrapperHtmlAttrs_5), []Std_Html_Html{Std_Html_node("style", []Std_Html_Attributes_Attribute{}, []Std_Html_Html{Std_Html_text("html,body{min-height:100%;margin:0;padding:0}")}) /* FFI return */, rt.Coerce[Std_Html_Html](Std_Ui_renderElement(Std_Ui_LayoutContext_AsColumn, v_0.RootAttrs, v_1))})
 	}
 }
 
@@ -6820,9 +6832,9 @@ func Std_Ui_renderNodeAs(v_0 string, v_1 Std_Ui_Nesting_R, v_2 Std_Ui_LayoutCont
 		_ = tailAttrs_28
 		attrList_29 := func() []Std_Html_Attributes_Attribute {
 			if rt.List_isEmptyT[Std_Html_Attributes_Attribute](keptRole_8) {
-				return /* FFI return */ rt.AsListT[Std_Html_Attributes_Attribute](rt.List_cons(any(Std_Html_Attributes_style(styleStr_17)), any(tailAttrs_28)))
+				return rt.List_consT[Std_Html_Attributes_Attribute](Std_Html_Attributes_style(styleStr_17), tailAttrs_28)
 			} else {
-				return /* FFI return */ rt.AsListT[Std_Html_Attributes_Attribute](rt.List_cons(any(Std_Html_Attributes_style(styleStr_17)), any(rt.List_appendT[Std_Html_Attributes_Attribute](keptRole_8, tailAttrs_28))))
+				return rt.List_consT[Std_Html_Attributes_Attribute](Std_Html_Attributes_style(styleStr_17), rt.List_appendT[Std_Html_Attributes_Attribute](keptRole_8, tailAttrs_28))
 			}
 		}()
 		_ = attrList_29
@@ -8502,28 +8514,28 @@ func Std_Ui_propagateFillToContainer(v_0 Std_Ui_LayoutContext, v_1 []Std_Ui_Attr
 		}
 		if _subj == Std_Ui_LayoutContext_AsRow {
 			if Std_Ui_anyChildMainAxisFill(Std_Ui_LayoutContext_AsRow, v_2) && rt.Basics_notT(Std_Ui_hasExplicitWidth(v_1)) {
-				return /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrWidth(Std_Ui_Length_Fill(1))), any(v_1)))
+				return rt.List_consT[Std_Ui_Attribute](Std_Ui_Attribute_AttrWidth(Std_Ui_Length_Fill(1)), v_1)
 			} else {
 				return v_1
 			}
 		}
 		if _subj == Std_Ui_LayoutContext_AsColumn {
 			if Std_Ui_anyChildMainAxisFill(Std_Ui_LayoutContext_AsColumn, v_2) && rt.Basics_notT(Std_Ui_hasExplicitHeight(v_1)) {
-				return /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1))), any(v_1)))
+				return rt.List_consT[Std_Ui_Attribute](Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1)), v_1)
 			} else {
 				return v_1
 			}
 		}
 		if _subj == Std_Ui_LayoutContext_AsEl {
 			if Std_Ui_anyChildMainAxisFill(Std_Ui_LayoutContext_AsEl, v_2) && rt.Basics_notT(Std_Ui_hasExplicitHeight(v_1)) {
-				return /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1))), any(v_1)))
+				return rt.List_consT[Std_Ui_Attribute](Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1)), v_1)
 			} else {
 				return v_1
 			}
 		}
 		if _subj == Std_Ui_LayoutContext_AsTextColumn {
 			if Std_Ui_anyChildMainAxisFill(Std_Ui_LayoutContext_AsTextColumn, v_2) && rt.Basics_notT(Std_Ui_hasExplicitHeight(v_1)) {
-				return /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1))), any(v_1)))
+				return rt.List_consT[Std_Ui_Attribute](Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1)), v_1)
 			} else {
 				return v_1
 			}
@@ -9096,7 +9108,7 @@ func Main_update(v_0 State_Msg, v_1 State_Model_R) rt.T2[State_Model_R, any] {
 				v_32 := _v46.V0.OkValue
 				_ = v_32
 				{
-					tenant_33 := /* FFI return */ rt.AsString(Sky_Core_Maybe_withDefault("" /* primitive join */, rt.MaybeCoerce[any]( /* FFI return */ rt.MaybeCoerce[string](rt.Dict_get(any("tenant"), any(v_32.Claims))))))
+					tenant_33 := /* FFI return */ rt.AsString(Sky_Core_Maybe_withDefault("" /* primitive join */, rt.MaybeCoerce[any](rt.Dict_getStrT[string]("tenant", v_32.Claims))))
 					_ = tenant_33
 					return rt.T2[State_Model_R, any]{V0: func() State_Model_R {
 						_u := v_1
@@ -9224,9 +9236,9 @@ func Main_refetch(v_0 State_Model_R) rt.T2[State_Model_R, any] {
 
 func Main_fetchForTab(v_0 State_Model_R, v_1 State_Tab) any {
 	if Main_hasStoreSource(v_0) {
-		return rt.Cmd_batch(rt.List_cons(rt.Cmd_perform(any(v_0.Store.ReadOverview(struct{}{})), any(func(_p0 any) any {
+		return rt.Cmd_batch(any(rt.List_consT[any](rt.Cmd_perform(any(v_0.Store.ReadOverview(struct{}{})), any(func(_p0 any) any {
 			return any(State_Msg_GotOverview( /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, State_Overview_R](_p0, func(_v any) State_Overview_R { return rt.Coerce[State_Overview_R](_v) })))
-		})), any(Main_tabFetches(v_0, v_1))))
+		})), Main_tabFetches(v_0, v_1))))
 	} else {
 		return rt.Cmd_none()
 	}
@@ -9358,7 +9370,7 @@ func Main_initWith(v_0 string) rt.T2[State_Model_R, any] {
 		params_4 := /* FFI return */ rt.AsMapT[string](rt.Http_parseQuery(any(v_0)))
 		_ = params_4
 		param_5 := func(v_10 string) string {
-			return /* FFI return */ rt.AsString(Sky_Core_Maybe_withDefault("" /* primitive join */, rt.MaybeCoerce[any]( /* FFI return */ rt.MaybeCoerce[string](rt.Dict_get(any(v_10), any(params_4))))))
+			return /* FFI return */ rt.AsString(Sky_Core_Maybe_withDefault("" /* primitive join */, rt.MaybeCoerce[any](rt.Dict_getStrT[string](v_10, params_4))))
 		}
 		_ = param_5
 		chosenStore_6 := func() State_Store_R {
@@ -9755,7 +9767,7 @@ func Sky_Core_Http_withBearer(v_0 any, v_1 Sky_Core_Http_HttpRequest_R) Sky_Core
 func Sky_Core_Http_withHeader(v_0 string, v_1 string, v_2 Sky_Core_Http_HttpRequest_R) Sky_Core_Http_HttpRequest_R {
 	{
 		_u := v_2
-		_u.Headers = /* FFI return */ rt.AsListT[rt.T2[string, string]](rt.List_cons(any(rt.T2[string, string]{V0: v_0, V1: v_1}), any(v_2.Headers)))
+		_u.Headers = rt.List_consT[rt.T2[string, string]](rt.T2[string, string]{V0: v_0, V1: v_1}, v_2.Headers)
 		return _u
 	}
 }
@@ -10392,7 +10404,7 @@ func Std_App_withNotFound(v_0 any, _t0 Std_App_App) Std_App_App {
 var Std_App_webDefaults__caf rt.LazyCaf[Std_App_WebOpts_R]
 
 func Std_App_webDefaults__cafInit() Std_App_WebOpts_R {
-	return Std_App_WebOpts_R{Port: (0 - 1), Store: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Static: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), StaticUrl: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Ttl: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), IdleEvict: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), MaxBodyBytes: /* primitive join */ rt.MaybeCoerce[int](rt.Nothing[any]()), InputMode: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Analytics: /* primitive join */ rt.MaybeCoerce[struct{ PageViews bool }](rt.Nothing[any]()), Csrf: true, Embedded: false, SessionTransport: Std_App_SessionTransport_CookieSession, Name: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]())}
+	return Std_App_WebOpts_R{Port: (0 - 1), Store: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Static: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), StaticUrl: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Ttl: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), IdleEvict: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), MaxBodyBytes: /* primitive join */ rt.MaybeCoerce[int](rt.Nothing[any]()), InputMode: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Analytics: /* primitive join */ rt.MaybeCoerce[struct{ PageViews bool }](rt.Nothing[any]()), Csrf: true, Embedded: false, SessionTransport: Std_App_SessionTransport_CookieSession, Name: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), PersistExclude: /* primitive join */ rt.MaybeCoerce[[]string](rt.Nothing[any]())}
 }
 
 func Std_App_webDefaults() Std_App_WebOpts_R {
@@ -10528,7 +10540,7 @@ func Std_App_withConfig(v_0 Std_App_Config, _t0 Std_App_App) Std_App_App {
 		ViewImpl      Std_App_ViewImpl
 	} {
 		_u := v_1
-		_u.Configs = /* FFI return */ rt.AsListT[Std_App_Config](rt.List_cons(any(v_0), any(v_1.Configs)))
+		_u.Configs = rt.List_consT[Std_App_Config](v_0, v_1.Configs)
 		return _u
 	}())
 }
@@ -10788,48 +10800,48 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 					Subscriptions any
 					Update        any
 					View          any
-				}{Init: func(v_21 struct {
-					Cookies map[string]string
-					Headers map[string]string
+				}{Init: func(v_23 struct {
+					Cookies rt.SkyDict[string]
+					Headers rt.SkyDict[string]
 					Host    string
 					Method  string
-					Params  map[string]string
+					Params  rt.SkyDict[string]
 					Path    string
 					Query   string
 				}) rt.T2[any, any] {
 					{
 						_t1 := v_0.Init(struct{}{})
 						_ = _t1
-						v_22 := _t1.V0
-						v_23 := _t1.V1
-						_ = v_22
-						_ = v_23
+						v_24 := _t1.V0
+						v_25 := _t1.V1
+						_ = v_24
+						_ = v_25
 						{
 							_subj := v_0.OnRequest
 							if _subj.Tag == 0 {
-								v_24 := _subj.JustValue
-								_ = v_24
+								v_26 := _subj.JustValue
+								_ = v_26
 								{
-									_t2 := v_24(Std_App_requestFromSeed_(v_21), v_22)
+									_t2 := v_26(Std_App_requestFromSeed_(v_23), v_24)
 									_ = _t2
-									v_25 := _t2.V0
-									v_26 := _t2.V1
-									_ = v_25
-									_ = v_26
-									return rt.T2[any, any]{V0: v_25, V1: rt.Cmd_batch(any([]any{v_23, v_26}))}
+									v_27 := _t2.V0
+									v_28 := _t2.V1
+									_ = v_27
+									_ = v_28
+									return rt.T2[any, any]{V0: v_27, V1: rt.Cmd_batch(any([]any{v_25, v_28}))}
 								}
 							}
 							if _subj.Tag == 1 {
-								return rt.T2[any, any]{V0: v_22, V1: v_23}
+								return rt.T2[any, any]{V0: v_24, V1: v_25}
 							}
 							panic(rt.Unreachable("case"))
 						}
 					}
-				}, Update: v_0.Update, View: func(v_27 any) Std_Html_Html {
+				}, Update: v_0.Update, View: func(v_29 any) Std_Html_Html {
 					{
 						_subj := v_0.ViewImpl
 						if _subj.Tag == 0 {
-							v_28 := /* generic erase */ func() func(any) Std_Ui_Element {
+							v_30 := /* generic erase */ func() func(any) Std_Ui_Element {
 								_s := any(_subj.Fields[0])
 								if _f, _ok := _s.(func(any) Std_Ui_Element); _ok {
 									return _f
@@ -10839,11 +10851,11 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 								}
 								return rt.CoerceFuncSlot[func(any) Std_Ui_Element](_s)
 							}()
-							_ = v_28
-							return Std_App_renderUiRoot_(v_28(v_27))
+							_ = v_30
+							return Std_App_renderUiRoot_(v_30(v_29))
 						}
 						if _subj.Tag == 1 {
-							v_29 := /* generic erase */ func() func(any) Std_Html_Html {
+							v_31 := /* generic erase */ func() func(any) Std_Html_Html {
 								_s := any(_subj.Fields[0])
 								if _f, _ok := _s.(func(any) Std_Html_Html); _ok {
 									return _f
@@ -10853,11 +10865,11 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 								}
 								return rt.CoerceFuncSlot[func(any) Std_Html_Html](_s)
 							}()
-							_ = v_29
-							return Std_App_renderHtmlRoot_(v_29(v_27))
+							_ = v_31
+							return Std_App_renderHtmlRoot_(v_31(v_29))
 						}
 						if _subj.Tag == 2 {
-							v_30 := /* generic erase */ func() func(any) string {
+							v_32 := /* generic erase */ func() func(any) string {
 								_s := any(_subj.Fields[0])
 								if _f, _ok := _s.(func(any) string); _ok {
 									return _f
@@ -10867,8 +10879,8 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 								}
 								return rt.CoerceFuncSlot[func(any) string](_s)
 							}()
-							_ = v_30
-							return Std_Html_text(v_30(v_27))
+							_ = v_32
+							return Std_Html_text(v_32(v_29))
 						}
 						panic(rt.Unreachable("case"))
 					}
@@ -10877,9 +10889,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withStore__4 := func() any {
 					_subj := w_2.Store
 					if _subj.Tag == 0 {
-						v_31 := _subj.JustValue
-						_ = v_31
-						return rt.Live_withStore(any(v_31), base_3)
+						v_33 := _subj.JustValue
+						_ = v_33
+						return rt.Live_withStore(any(v_33), base_3)
 					}
 					if _subj.Tag == 1 {
 						return base_3
@@ -10890,9 +10902,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withStatic__5 := func() any {
 					_subj := w_2.Static
 					if _subj.Tag == 0 {
-						v_32 := _subj.JustValue
-						_ = v_32
-						return rt.Live_withStatic(any(v_32), withStore__4)
+						v_34 := _subj.JustValue
+						_ = v_34
+						return rt.Live_withStatic(any(v_34), withStore__4)
 					}
 					if _subj.Tag == 1 {
 						return withStore__4
@@ -10903,9 +10915,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withStaticUrl__6 := func() any {
 					_subj := w_2.StaticUrl
 					if _subj.Tag == 0 {
-						v_33 := _subj.JustValue
-						_ = v_33
-						return rt.Live_withStaticUrl(any(v_33), withStatic__5)
+						v_35 := _subj.JustValue
+						_ = v_35
+						return rt.Live_withStaticUrl(any(v_35), withStatic__5)
 					}
 					if _subj.Tag == 1 {
 						return withStatic__5
@@ -10916,9 +10928,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withTtl__7 := func() any {
 					_subj := w_2.Ttl
 					if _subj.Tag == 0 {
-						v_34 := _subj.JustValue
-						_ = v_34
-						return rt.Live_withTtl(any(v_34), withStaticUrl__6)
+						v_36 := _subj.JustValue
+						_ = v_36
+						return rt.Live_withTtl(any(v_36), withStaticUrl__6)
 					}
 					if _subj.Tag == 1 {
 						return withStaticUrl__6
@@ -10929,9 +10941,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withIdle__8 := func() any {
 					_subj := w_2.IdleEvict
 					if _subj.Tag == 0 {
-						v_35 := _subj.JustValue
-						_ = v_35
-						return rt.Live_withIdleEvict(any(v_35), withTtl__7)
+						v_37 := _subj.JustValue
+						_ = v_37
+						return rt.Live_withIdleEvict(any(v_37), withTtl__7)
 					}
 					if _subj.Tag == 1 {
 						return withTtl__7
@@ -10942,9 +10954,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withMaxBody__9 := func() any {
 					_subj := w_2.MaxBodyBytes
 					if _subj.Tag == 0 {
-						v_36 := _subj.JustValue
-						_ = v_36
-						return rt.Live_withMaxBodyBytes(any(v_36), withIdle__8)
+						v_38 := _subj.JustValue
+						_ = v_38
+						return rt.Live_withMaxBodyBytes(any(v_38), withIdle__8)
 					}
 					if _subj.Tag == 1 {
 						return withIdle__8
@@ -10955,9 +10967,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withInputMode__10 := func() any {
 					_subj := w_2.InputMode
 					if _subj.Tag == 0 {
-						v_37 := _subj.JustValue
-						_ = v_37
-						return rt.Live_withInput(any(v_37), withMaxBody__9)
+						v_39 := _subj.JustValue
+						_ = v_39
+						return rt.Live_withInput(any(v_39), withMaxBody__9)
 					}
 					if _subj.Tag == 1 {
 						return withMaxBody__9
@@ -10976,9 +10988,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withAnalytics__12 := func() any {
 					_subj := w_2.Analytics
 					if _subj.Tag == 0 {
-						v_38 := _subj.JustValue
-						_ = v_38
-						return rt.Live_withAnalytics(any(v_38), withPort__11)
+						v_40 := _subj.JustValue
+						_ = v_40
+						return rt.Live_withAnalytics(any(v_40), withPort__11)
 					}
 					if _subj.Tag == 1 {
 						return withPort__11
@@ -10989,9 +11001,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withHead__13 := func() any {
 					_subj := v_0.Head
 					if _subj.Tag == 0 {
-						v_39 := _subj.JustValue
-						_ = v_39
-						return rt.Live_withHead(any(func(_w4 any) any { return any(v_39(_w4)) }), withAnalytics__12)
+						v_41 := _subj.JustValue
+						_ = v_41
+						return rt.Live_withHead(any(func(_w4 any) any { return any(v_41(_w4)) }), withAnalytics__12)
 					}
 					if _subj.Tag == 1 {
 						return withAnalytics__12
@@ -11002,9 +11014,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withGuard__14 := func() any {
 					_subj := v_0.Guard
 					if _subj.Tag == 0 {
-						v_40 := _subj.JustValue
-						_ = v_40
-						return rt.Live_withGuard(any(func(_w5 any) any { return any(func(_w6 any) any { return any(v_40(_w5, _w6)) }) }), withHead__13)
+						v_42 := _subj.JustValue
+						_ = v_42
+						return rt.Live_withGuard(any(func(_w5 any) any { return any(func(_w6 any) any { return any(v_42(_w5, _w6)) }) }), withHead__13)
 					}
 					if _subj.Tag == 1 {
 						return withHead__13
@@ -11015,9 +11027,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withNav__15 := func() any {
 					_subj := v_0.OnNavigate
 					if _subj.Tag == 0 {
-						v_41 := _subj.JustValue
-						_ = v_41
-						return rt.Live_withOnNavigate(any(v_41), withGuard__14)
+						v_43 := _subj.JustValue
+						_ = v_43
+						return rt.Live_withOnNavigate(any(v_43), withGuard__14)
 					}
 					if _subj.Tag == 1 {
 						return withGuard__14
@@ -11029,11 +11041,11 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 					if v_0.Durable.Enabled {
 						return rt.Live_withDurable(any(Std_App_liveDurable_(func(_e7 any) Sky_Http_Server_Request_R {
 							return Std_App_requestFromSeed_( /* generic erase */ func(_s any) struct {
-								Cookies map[string]string
-								Headers map[string]string
+								Cookies rt.SkyDict[string]
+								Headers rt.SkyDict[string]
 								Host    string
 								Method  string
-								Params  map[string]string
+								Params  rt.SkyDict[string]
 								Path    string
 								Query   string
 							} {
@@ -11047,21 +11059,21 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 									Query   any
 								}); _ok {
 									return struct {
-										Cookies map[string]string
-										Headers map[string]string
+										Cookies rt.SkyDict[string]
+										Headers rt.SkyDict[string]
 										Host    string
 										Method  string
-										Params  map[string]string
+										Params  rt.SkyDict[string]
 										Path    string
 										Query   string
 									}{Cookies: rt.AsMapT[string](_m.Cookies), Headers: rt.AsMapT[string](_m.Headers), Host: rt.AsString(_m.Host), Method: rt.AsString(_m.Method), Params: rt.AsMapT[string](_m.Params), Path: rt.AsString(_m.Path), Query: rt.AsString(_m.Query)}
 								}
 								return rt.Coerce[struct {
-									Cookies map[string]string
-									Headers map[string]string
+									Cookies rt.SkyDict[string]
+									Headers rt.SkyDict[string]
 									Host    string
 									Method  string
-									Params  map[string]string
+									Params  rt.SkyDict[string]
 									Path    string
 									Query   string
 								}](_s)
@@ -11075,10 +11087,10 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withConsole__17 := func() any {
 					_subj := v_0.ConsoleAuth
 					if _subj.Tag == 0 {
-						v_42 := _subj.JustValue
-						_ = v_42
+						v_44 := _subj.JustValue
+						_ = v_44
 						return rt.Live_withConsoleAuthModel(any(func(_w8 any) any {
-							return any(func(_w9 any) any { return any(v_42( /* FFI return */ rt.Coerce[Sky_Http_Server_Request_R](_w8), _w9)) })
+							return any(func(_w9 any) any { return any(v_44( /* FFI return */ rt.Coerce[Sky_Http_Server_Request_R](_w8), _w9)) })
 						}), withDur__16)
 					}
 					if _subj.Tag == 1 {
@@ -11106,9 +11118,9 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withName__20 := func() any {
 					_subj := Std_App_nameIn_(v_0.Configs)
 					if _subj.Tag == 0 {
-						v_43 := _subj.JustValue
-						_ = v_43
-						return rt.Live_withName(any(v_43), withTransport__19)
+						v_45 := _subj.JustValue
+						_ = v_45
+						return rt.Live_withName(any(v_45), withTransport__19)
 					}
 					if _subj.Tag == 1 {
 						return withTransport__19
@@ -11116,11 +11128,92 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 					panic(rt.Unreachable("case"))
 				}()
 				_ = withName__20
-				return rt.Just[any](withName__20)
+				exclude__21 := Std_App_persistExcludeIn_(v_0.Configs)
+				_ = exclude__21
+				withExclude__22 := func() any {
+					if rt.List_isEmptyT[string](exclude__21) {
+						return withName__20
+					} else {
+						return rt.Live_withRefreshOnLoad(any(exclude__21), withName__20)
+					}
+				}()
+				_ = withExclude__22
+				return rt.Just[any](withExclude__22)
 			}
 		}
 		if _subj.Tag == 1 {
 			return rt.Nothing[any]()
+		}
+		panic(rt.Unreachable("case"))
+	}
+}
+
+func Std_App_persistExcludeIn_(v_0 []Std_App_Config) []string {
+	{
+		_subj := Std_App_lastExcludeIn_(rt.Nothing[[]string](), v_0)
+		if _subj.Tag == 0 {
+			v_1 := _subj.JustValue
+			_ = v_1
+			return v_1
+		}
+		if _subj.Tag == 1 {
+			return []string{}
+		}
+		panic(rt.Unreachable("case"))
+	}
+}
+
+func Std_App_lastExcludeIn_(v_0 rt.SkyMaybe[[]string], v_1 []Std_App_Config) rt.SkyMaybe[[]string] {
+	for {
+		_subj0 := v_1
+		if rt.SkyLenT(_subj0) == 0 {
+			return v_0
+		}
+		if (rt.SkyLenT(_subj0) >= 1) && (rt.SkyElemT(_subj0, 0).Tag == 0) {
+			v_2 := /* generic erase */ rt.Coerce[Std_App_WebOpts_R](rt.SkyElemT(_subj0, 0).Fields[0])
+			v_3 := rt.SkyTailSliceT(_subj0)
+			_ = v_2
+			_ = v_3
+			_t1 := Std_App_newerExclude_(v_2, v_0)
+			_t2 := v_3
+			v_0 = _t1
+			v_1 = _t2
+			continue
+		}
+		if (rt.SkyLenT(_subj0) >= 1) && (rt.SkyElemT(_subj0, 0).Tag == 2) {
+			v_4 := /* generic erase */ rt.Coerce[Std_App_WebOpts_R](rt.SkyElemT(_subj0, 0).Fields[0])
+			v_5 := rt.SkyTailSliceT(_subj0)
+			_ = v_4
+			_ = v_5
+			_t3 := Std_App_newerExclude_(v_4, v_0)
+			_t4 := v_5
+			v_0 = _t3
+			v_1 = _t4
+			continue
+		}
+		if rt.SkyLenT(_subj0) >= 1 {
+			v_6 := rt.SkyTailSliceT(_subj0)
+			_ = v_6
+			_t5 := v_0
+			_t6 := v_6
+			v_0 = _t5
+			v_1 = _t6
+			continue
+		}
+		panic(rt.Unreachable("case"))
+	}
+}
+
+func Std_App_newerExclude_(v_0 Std_App_WebOpts_R, v_1 rt.SkyMaybe[[]string]) rt.SkyMaybe[[]string] {
+	{
+		_subj := v_0.PersistExclude
+		if _subj.Tag == 0 {
+			v_2 := _subj.JustValue
+			_ = v_2
+			return /* primitive join */ rt.MaybeCoerce[[]string](rt.Just[any](v_2))
+		}
+		if _subj.Tag == 1 {
+			return v_1
 		}
 		panic(rt.Unreachable("case"))
 	}
@@ -11238,11 +11331,11 @@ func Std_App_embeddedIn_(v_0 []Std_App_Config) bool {
 }
 
 func Std_App_requestFromSeed_(v_0 struct {
-	Cookies map[string]string
-	Headers map[string]string
+	Cookies rt.SkyDict[string]
+	Headers rt.SkyDict[string]
 	Host    string
 	Method  string
-	Params  map[string]string
+	Params  rt.SkyDict[string]
 	Path    string
 	Query   string
 }) Sky_Http_Server_Request_R {

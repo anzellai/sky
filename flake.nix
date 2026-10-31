@@ -34,7 +34,7 @@
         };
 
       # The commit `sky --version` names after the version:
-      # `sky v0.27.5 (1a2b3c4)`, `(1a2b3c4-dirty)` for a dirty tree. The
+      # `sky v0.29.0 (1a2b3c4)`, `(1a2b3c4-dirty)` for a dirty tree. The
       # version itself is rust/Cargo.toml's, read by default.nix.
       gitRev = self.shortRev or self.dirtyShortRev or "";
 

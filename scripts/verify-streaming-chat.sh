@@ -21,11 +21,6 @@ BINARY="$EXAMPLE_DIR/sky-out/app"
 PORT="${SKY_STREAM_PORT:-8128}"
 MOCK_PORT="${SKY_MOCK_PORT:-8765}"
 
-# When running from a worktree, ensure the runtime-go used to build
-# the example matches the worktree (NOT a sibling clone that the
-# probe might pick up first).
-export SKY_RUNTIME_DIR="${SKY_RUNTIME_DIR:-$REPO_ROOT/runtime-go}"
-
 if [ ! -x "$BINARY" ]; then
     echo "FAIL verify-streaming-chat"
     echo "    Sky binary missing: $BINARY"

@@ -114,7 +114,7 @@ fn sky_main() -> ExitCode {
     if timed && args.iter().any(|a| a == "--timings") {
         std::env::set_var("SKY_TIMINGS", "1");
     }
-    // The Go build flags (`--no-trimpath`, `--go-jobs N`) of build / check /
+    // The Go build flags (`--no-trimpath`, `--go-jobs N`, `--go-build-timeout T`) of build / check /
     // run. Like `--timings`, each is carried as an environment variable so
     // every child `sky build` (Sky.Spa legs, a Std.App entry, a desktop
     // shell) builds the same way; they are removed from the arguments here.
@@ -172,6 +172,13 @@ fn take_go_build_flags(
     let mut env = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
+        // Everything after `--` belongs to the program `sky run` starts, so a
+        // `--go-jobs` there is the program's argument, not a build flag.
+        if a == "--" {
+            rest.push(a.clone());
+            rest.extend(it.by_ref().cloned());
+            break;
+        }
         let jobs = if a == "--go-jobs" {
             Some(
                 it.next()
@@ -181,10 +188,25 @@ fn take_go_build_flags(
         } else {
             a.strip_prefix("--go-jobs=").map(str::to_string)
         };
+        let limit = if a == "--go-build-timeout" {
+            Some(
+                it.next()
+                    .ok_or(
+                        "--go-build-timeout needs a value: whole seconds (`900`) or a number \
+                         with a unit (`15m`)",
+                    )?
+                    .clone(),
+            )
+        } else {
+            a.strip_prefix("--go-build-timeout=").map(str::to_string)
+        };
         if let Some(n) = jobs {
             // Checked here, so a bad value fails before any work starts.
             project::go_jobs::parse_user(Some(&n))?;
             env.push((project::go_jobs::ENV_JOBS, n));
+        } else if let Some(t) = limit {
+            project::parse_go_build_timeout(&t)?;
+            env.push((project::ENV_GO_BUILD_TIMEOUT, t));
         } else if a == "--no-trimpath" {
             env.push((project::go_cmd::ENV_TRIMPATH, "0".to_string()));
         } else {
@@ -2319,6 +2341,16 @@ struct AppFields {
     /// the Sky.Live build does (operator env > code > default).
     server_configs: Vec<String>,
     server_base: Option<String>,
+    /// `App.withSessionLifetime <seconds>` (v0.29.0): the signed session's
+    /// lifetime and the `sky_spa` cookie's Max-Age. Carried into the
+    /// `spaServerConfig_` boot task (`App.applySessionLifetime`), so the
+    /// backend sets it before it listens (operator env > code > 30 days).
+    session_lifetime: Option<String>,
+    /// `App.withPersistExclude [ … ]` (v0.29.0): model fields the client never
+    /// stores in localStorage and always takes from the server-rendered seed.
+    /// Carried into a `spaPersistExclude_` binding the client config chain
+    /// passes to `Spa.withPersistExcludeFields`.
+    persist_exclude: Option<String>,
     /// `App.withClientCrypto` — the typed opt-in that keeps end-to-end key
     /// material (Std.Crypto.Noise / Cpace / Kx / Sign / Kdf) in the wasm client.
     /// It takes no argument; the synthesis carries it as
@@ -2358,6 +2390,8 @@ const SPA_CARRIED_BUILDERS: &[&str] = &[
     "withConsoleAuth",
     "withConfig",
     "withBase",
+    "withSessionLifetime",
+    "withPersistExclude",
 ];
 
 /// `Std.App` builders that do not apply to a Sky.Spa client build: terminal /
@@ -2434,6 +2468,8 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
     let mut console_auth = None;
     let mut server_configs: Vec<String> = Vec::new();
     let mut server_base: Option<String> = None;
+    let mut session_lifetime: Option<String> = None;
+    let mut persist_exclude: Option<String> = None;
     let mut client_crypto = false;
     let mut dropped_builders: Vec<String> = Vec::new();
     for step in &value.steps {
@@ -2500,6 +2536,8 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
                 server_configs.push(place(&format!("config{n}"), arg));
             }
             "withBase" => server_base = Some(place("base", arg)),
+            "withSessionLifetime" => session_lifetime = Some(place("sessionLifetime", arg)),
+            "withPersistExclude" => persist_exclude = Some(place("persistExclude", arg)),
             _ => unreachable!("carried builder list and match disagree: {name}"),
         }
     }
@@ -2518,6 +2556,8 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
         console_auth,
         server_configs,
         server_base,
+        session_lifetime,
+        persist_exclude,
         client_crypto,
         dropped_builders,
         hoisted,
@@ -3388,19 +3428,36 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
     // `spaServerConfig_` task the split backend runs at boot, before it
     // listens; it reaches a server-only kernel, so the split keeps it out of
     // the wasm client.
-    let server_config_binding = if fields.server_configs.is_empty() && fields.server_base.is_none()
-    {
-        String::new()
+    // `App.withSessionLifetime` joins the same boot task (v0.29.0): the
+    // lifetime becomes the `SPA_SESSION_LIFETIME` server setting before the
+    // backend listens.
+    let aq = fields.import.qualifier_or_default();
+    let config_task = if fields.server_configs.is_empty() && fields.server_base.is_none() {
+        None
     } else {
-        let aq = fields.import.qualifier_or_default();
-        format!(
-            "spaServerConfig_ =\n    {aq}.applyServerConfig [ {} ] {}\n\n\n",
+        Some(format!(
+            "{aq}.applyServerConfig [ {} ] {}",
             fields.server_configs.join(", "),
             fields
                 .server_base
                 .clone()
                 .unwrap_or_else(|| format!("{aq}.baseDefaults"))
-        )
+        ))
+    };
+    let server_config_binding = match (config_task, &fields.session_lifetime) {
+        (None, None) => String::new(),
+        (Some(t), None) => format!("spaServerConfig_ =\n    {t}\n\n\n"),
+        (t, Some(l)) => format!(
+            "spaServerConfig_ =\n    {}\n        |> Task.andThen (\\_ -> {aq}.applySessionLifetime {l})\n\n\n",
+            t.unwrap_or_else(|| "Task.succeed ()".to_string())
+        ),
+    };
+    let (persist_exclude_binding, persist_exclude_line) = match &fields.persist_exclude {
+        Some(f) => (
+            format!("spaPersistExclude_ =\n    {f}\n\n\n"),
+            "\n            |> Spa.withPersistExcludeFields spaPersistExclude_".to_string(),
+        ),
+        None => (String::new(), String::new()),
     };
     let rpc_error_binding = match &fields.rpc_error {
         Some(f) => format!("spaRpcError_ =\n    ({f})\n\n\n"),
@@ -3480,6 +3537,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
          {rpc_error_binding}\
          {console_auth_binding}\
          {server_config_binding}\
+         {persist_exclude_binding}\
          spaSubscriptions_ model_ =\n    ({subscriptions}) model_\n\n\n\
          spaView_ model_ =\n    \
          {spa_view_body}\n\n\n\
@@ -3491,7 +3549,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
          , update = {update}\n            \
          , view = spaView_\n            \
          , subscriptions = {subscriptions}\n            \
-         }}{routes_line}{not_found_line}{head_line}{on_navigate_line}{client_crypto_line}\n        \
+         }}{routes_line}{not_found_line}{head_line}{on_navigate_line}{persist_exclude_line}{client_crypto_line}\n        \
          )\n",
         hoisted = fields.hoisted,
         canonical_bindings = canonical_bindings,
@@ -3735,6 +3793,7 @@ fn build_std_app(
                     if embed {
                         backend_cmd.arg("--embed");
                     }
+                    backend_cmd.args(run_program_args());
                     match backend_cmd.spawn() {
                         Ok(mut backend_child) => {
                             let shell_status = Command::new(&desktop_shell).status();
@@ -3767,6 +3826,7 @@ fn build_std_app(
                     if embed {
                         proc.arg("--embed");
                     }
+                    proc.args(run_program_args());
                     match proc.status() {
                         Ok(s) if s.success() => ExitCode::SUCCESS,
                         Ok(_) => ExitCode::FAILURE,
@@ -3927,6 +3987,7 @@ fn build_std_app(
     if embed {
         proc.arg("--embed");
     }
+    proc.args(run_program_args());
     match proc.status() {
         Ok(s) if s.success() => ExitCode::SUCCESS,
         Ok(_) => ExitCode::FAILURE,
@@ -11280,7 +11341,49 @@ fn maybe_fetch_sky_deps(repo_root: &Path, project_dir: &Path) {
 
 /// `sky run <file>` — build, then exec the produced binary with inherited
 /// stdio, propagating its exit code.
+/// The arguments `sky run` hands to the program it starts: everything after
+/// the first `--`, as `go run` and `cargo run` do. Set once by `cmd_run`
+/// before any build or run path reads it.
+static RUN_PROGRAM_ARGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// The program arguments of this `sky run` (empty for every other verb).
+fn run_program_args() -> &'static [String] {
+    RUN_PROGRAM_ARGS.get().map(Vec::as_slice).unwrap_or(&[])
+}
+
+/// Split `sky run`'s arguments at the first `--`: the part before is for
+/// `sky run`, the part after is for the program. Pure, so it is unit-tested.
+fn split_program_args(args: &[String]) -> (Vec<String>, Vec<String>) {
+    match args.iter().position(|a| a == "--") {
+        Some(i) => (args[..i].to_vec(), args[i + 1..].to_vec()),
+        None => (args.to_vec(), Vec::new()),
+    }
+}
+
+const RUN_USAGE: &str = "sky run [<file.sky>] [options] [-- <program args>...]\n\n\
+Build the project and run it. The entry defaults to the sky.toml `entry`\n\
+(else src/Main.sky). Everything after `--` is passed to the program\n\
+(System.args), so `sky run src/Main.sky -- a \"b c\"` gives it `a` and `b c`.\n\n\
+OPTIONS:\n\
+\x20 --target <family[:variant]>   the Std.App backend (default: sky.toml [app] target, else web)\n\
+\x20 --open                       open the browser at the app's listening URL\n\
+\x20 --embed                      Sky.Spa / Std.App entry: run with embedded PostgreSQL\n\
+\x20 --db-push | --db-migrate | --db-seed   database steps before the app starts\n\
+\x20 --profile [--profile-dir <dir>] [--profile-timeout <dur>]   write pprof profiles\n\
+\x20 --out <dir>                  the build output directory (default sky-out)\n\
+\x20 --go-jobs <n|auto> | --no-trimpath | --go-build-timeout <secs|15m>   Go build flags\n\
+\x20 -h, --help                   print this help and build nothing";
+
 fn cmd_run(args: &[String]) -> ExitCode {
+    // `sky run --help` prints help and builds nothing. Only a flag BEFORE `--`
+    // counts: `sky run -- --help` passes `--help` to the program.
+    let (args, program_args) = split_program_args(args);
+    if wants_help(&args) {
+        println!("{RUN_USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    let _ = RUN_PROGRAM_ARGS.set(program_args);
+    let args = args.as_slice();
     // Pre-run DB steps (composed by re-invoking this binary's own `db`
     // subcommands, so they reuse the exact migrate/seed logic + env inheritance).
     // Order: db push/migrate, then seed, then serve — the container-entrypoint
@@ -11458,6 +11561,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
             // RUNTIME to bring its own cluster up (mirrors `./sky-out/app --embed`).
             run.arg("--embed");
         }
+        run.args(run_program_args());
         return match run.status() {
             Ok(s) => propagate(s.code()),
             Err(e) => {
@@ -11681,7 +11785,7 @@ fn run_app_open(
     open: bool,
 ) -> std::io::Result<std::process::ExitStatus> {
     if !open {
-        return run_app(out_dir, envs);
+        return project::run_app_with_args(out_dir, envs, run_program_args());
     }
     let project_dir = out_dir.parent().filter(|p| !p.as_os_str().is_empty());
     let bin_name = project_dir
@@ -11691,6 +11795,7 @@ fn run_app_open(
         std::fs::canonicalize(out_dir.join(&bin_name)).unwrap_or_else(|_| out_dir.join(&bin_name));
     let mut cmd = Command::new(&bin_abs);
     cmd.current_dir(project::app_run_cwd(out_dir));
+    cmd.args(run_program_args());
     for (k, v) in envs {
         cmd.env(k, v);
     }
@@ -14017,7 +14122,7 @@ fn bundled_missing(name: &str) -> ExitCode {
 }
 
 /// A filesystem-safe slug of the version string for cache-dir naming
-/// (`sky v0.17.10` → `v0.17.10`, `sky v0.27.5 (1a2b3c4)` → `v0.27.5__1a2b3c4_`).
+/// (`sky v0.17.10` → `v0.17.10`, `sky v0.29.0 (1a2b3c4)` → `v0.29.0__1a2b3c4_`).
 fn version_slug() -> String {
     version_string()
         .trim_start_matches("sky ")
@@ -15812,7 +15917,7 @@ enum Fix {
 
 /// `sky doctor [--fix] [--verbose|-v]` — port of `Sky.Cli.Doctor.runDoctor`.
 /// Runs the tractable subset of the oracle's checks against the nearest project
-/// root: sky.toml present + non-empty, entry file exists, Go toolchain ≥ 1.22,
+/// root: sky.toml present + non-empty, entry file exists, Go toolchain ≥ 1.25,
 /// stdlib/runtime assets resolvable, stale `.skycache`/`sky-out`, missing FFI
 /// bindings for domain-style imports, and the `SKY_AUTH_TOKEN_SECRET` gate when
 /// `[live]`/`[auth]` is configured. Exit 0 = clean, 1 = at least one finding,
@@ -16160,24 +16265,40 @@ fn check_library_sources(root: &Path) -> Vec<Finding> {
     }
 }
 
-/// Go toolchain present + ≥ 1.22 (generics + range-over-func the runtime needs).
+/// The oldest Go the generated projects build with. `runtime-go/go.mod` and
+/// every generated `go.mod` say `go 1.25.0`; an older Go only builds them by
+/// downloading a newer toolchain, which an offline machine cannot do.
+const GO_FLOOR: (u32, u32) = (1, 25);
+
+/// Does Go `maj.minor` meet [`GO_FLOOR`]?
+fn go_meets_floor(maj: u32, minor: u32) -> bool {
+    (maj, minor) >= GO_FLOOR
+}
+
+/// Go toolchain present + at or above [`GO_FLOOR`].
 fn check_go_toolchain() -> Vec<Finding> {
     match Command::new("go").arg("version").output() {
         Err(_) => vec![Finding {
             check: "go-toolchain",
             severity: Severity::Error,
             message: "`go` not found on PATH".into(),
-            hint: "install Go ≥ 1.22 (https://go.dev/dl/) and re-run".into(),
+            hint: format!(
+                "install Go ≥ {}.{} (https://go.dev/dl/) and re-run",
+                GO_FLOOR.0, GO_FLOOR.1
+            ),
             fix: None,
         }],
         Ok(o) if o.status.success() => {
             let out = String::from_utf8_lossy(&o.stdout);
             match parse_go_version(&out) {
-                Some((maj, minor)) if maj > 1 || (maj == 1 && minor >= 22) => Vec::new(),
+                Some((maj, minor)) if go_meets_floor(maj, minor) => Vec::new(),
                 Some((maj, minor)) => vec![Finding {
                     check: "go-toolchain",
                     severity: Severity::Error,
-                    message: format!("Go {maj}.{minor} is too old — Sky's runtime needs ≥ 1.22"),
+                    message: format!(
+                        "Go {maj}.{minor} is too old — Sky's runtime needs ≥ {}.{}",
+                        GO_FLOOR.0, GO_FLOOR.1
+                    ),
                     hint: "upgrade Go: https://go.dev/dl/".into(),
                     fix: None,
                 }],
@@ -16409,11 +16530,11 @@ fn apply_fix(root: &Path, check: &str, fix: &Fix) -> String {
 
 // ---- upgrade-claude ------------------------------------------------------
 
-/// `sky upgrade-claude` — refresh the cwd's `./CLAUDE.md` from the template
-/// (`templates/CLAUDE.md`, from the repo tree in dev or the embedded copy
-/// standalone). Port of `Sky.Cli`'s `runUpgradeClaude` (`app/Main.hs:1848`):
-/// always overwrites, backs any existing file up to `CLAUDE.md.bak`, and prints
-/// the byte delta. Exit 0 on success, 1 if the template can't be located.
+/// `sky upgrade-claude` — refresh the cwd's `./AGENTS.md` and `./CLAUDE.md` from
+/// the templates (`templates/AGENTS.md` and `templates/CLAUDE.md`, from the repo
+/// tree in dev or the embedded copy standalone). Always overwrites, backs any
+/// existing file up to `<name>.bak`, and prints the byte delta. Exit 0 on
+/// success, 1 if a template can't be located.
 fn cmd_upgrade_claude(_args: &[String]) -> ExitCode {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
@@ -17516,7 +17637,8 @@ fn print_help() {
          \x20                   + native backend under .split/ (--out to override)\n\
          \x20 check <file>     type-check + go build (no binary run; --target scopes a backend)\n\
          \x20 run   <file>     build + execute (--target selects the backend; a Sky.Spa entry\n\
-         \x20                   auto-splits, then runs the backend, serving the frontend + /_rpc)\n\
+         \x20                   auto-splits, then runs the backend, serving the frontend + /_rpc;\n\
+         \x20                   args after `--` go to the program: sky run src/Main.sky -- a b)\n\
          \x20 --target <t>     the app target for a Std.App/Sky.Spa entry (optional → web):\n\
          \x20                   web · tablet (Sky.Live) · desktop (Live in a window) ·\n\
          \x20                   terminal:tui|cli · web:app · desktop:mac|windows|linux ·\n\
@@ -17545,7 +17667,7 @@ fn print_help() {
          \x20 install               regen/verify committed FFI surfaces\n\
          \x20 update                bump Go deps + regen surfaces\n\
          \x20 doctor [--fix] [-v]  diagnose project / environment health\n\
-         \x20 upgrade-claude       refresh ./CLAUDE.md from the embedded template\n\
+         \x20 upgrade-claude       refresh ./AGENTS.md + ./CLAUDE.md from the templates\n\
          \x20 verify [target]      build + run each example / the project\n\
          \x20 spa-partition <file>  infer Sky.Spa client/server update split (read-only)\n\
          \x20 spa-split <file> --out <dir> [--build|--target <t>] [--broker <url>]  auto-split: generate (+build) the wasm frontend + native backend\n\
@@ -17754,7 +17876,10 @@ mod tests {
     fn stage_project_runtime_into_backend_copies_env_and_public() {
         let base = std::env::temp_dir().join(format!(
             "sky-stage6-{}-{}",
-            std::process::id(),
+            (u64::from(std::process::id()) << 32) | {
+                static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -17984,6 +18109,37 @@ mod tests {
         assert!(
             !out.contains("|> Spa.withConsoleAuth") && !out.contains("App.withConsoleAuth"),
             "the console gate is server-only and must not be wired onto the client config:\n{out}"
+        );
+    }
+
+    // v0.29.0: `App.withSessionLifetime` joins the backend's boot task (the
+    // `sky_spa` cookie's Max-Age and the token's lifetime), and
+    // `App.withPersistExclude` reaches the client config as
+    // `Spa.withPersistExcludeFields`. Before, both builders failed the client
+    // build as unknown.
+    #[test]
+    fn std_app_session_lifetime_and_persist_exclude_are_carried() {
+        let out = synth_ok(&sa_src(
+            "appDef =\n    App.app { init = init, update = update, view = view, subscriptions = subs }\n        |> App.withNotFound ()\n        |> App.withSessionLifetime 3600\n        |> App.withPersistExclude [ \"siteConfig\" ]\n\n\n\
+             main =\n    App.run appDef\n",
+        ));
+        assert!(
+            out.contains("spaServerConfig_ =\n    Task.succeed ()\n        |> Task.andThen (\\_ -> App.applySessionLifetime (3600))"),
+            "withSessionLifetime must reach the boot task:\n{out}"
+        );
+        assert!(
+            out.contains("spaPersistExclude_ =\n    ([ \"siteConfig\" ])")
+                && out.contains("|> Spa.withPersistExcludeFields spaPersistExclude_"),
+            "withPersistExclude must reach the client config:\n{out}"
+        );
+        // With an App.withConfig too, the lifetime follows the config task.
+        let both = synth_ok(&sa_src(
+            "appDef =\n    App.app { init = init, update = update, view = view, subscriptions = subs }\n        |> App.withNotFound ()\n        |> App.withConfig cfg\n        |> App.withSessionLifetime 60\n\n\n\
+             main =\n    App.run appDef\n",
+        ));
+        assert!(
+            both.contains("App.applyServerConfig [ cfg ] App.baseDefaults\n        |> Task.andThen (\\_ -> App.applySessionLifetime (60))"),
+            "the lifetime must follow the config task:\n{both}"
         );
     }
 
@@ -18474,7 +18630,10 @@ mod tests {
     fn upgrade_installs_only_a_verified_archive() {
         let base = std::env::temp_dir().join(format!(
             "sky-upgrade-test-{}-{}",
-            std::process::id(),
+            (u64::from(std::process::id()) << 32) | {
+                static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -19102,6 +19261,48 @@ echo key > "$ks"
         ] {
             assert!(take_go_build_flags(&v(bad)).is_err(), "{bad:?}");
         }
+        // After `--` every argument is the program's, a bad `--go-jobs` too.
+        let (rest, env) =
+            take_go_build_flags(&v(&["run", "a.sky", "--", "--go-jobs", "x"])).unwrap();
+        assert_eq!(rest, ["run", "a.sky", "--", "--go-jobs", "x"]);
+        assert!(env.is_empty());
+    }
+
+    #[test]
+    fn go_build_timeout_flag_becomes_the_env_override() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (rest, env) =
+            take_go_build_flags(&v(&["build", "--go-build-timeout", "900", "src/Main.sky"]))
+                .unwrap();
+        assert_eq!(rest, ["build", "src/Main.sky"]);
+        assert_eq!(
+            env,
+            vec![(project::ENV_GO_BUILD_TIMEOUT, "900".to_string())]
+        );
+        let (_, env) = take_go_build_flags(&v(&["check", "--go-build-timeout=15m"])).unwrap();
+        assert_eq!(
+            env,
+            vec![(project::ENV_GO_BUILD_TIMEOUT, "15m".to_string())]
+        );
+        for bad in [
+            &["build", "--go-build-timeout"][..],
+            &["build", "--go-build-timeout=0"],
+            &["build", "--go-build-timeout", "ten"],
+            &["build", "--go-build-timeout", "5d"],
+        ] {
+            assert!(take_go_build_flags(&v(bad)).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn run_splits_program_args_at_the_first_double_dash() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (own, prog) = split_program_args(&v(&["src/Main.sky", "--", "a", "b c", "--", "-h"]));
+        assert_eq!(own, ["src/Main.sky"]);
+        assert_eq!(prog, ["a", "b c", "--", "-h"]);
+        let (own, prog) = split_program_args(&v(&["src/Main.sky", "--open"]));
+        assert_eq!(own, ["src/Main.sky", "--open"]);
+        assert!(prog.is_empty());
     }
 
     #[test]
@@ -19185,6 +19386,31 @@ echo key > "$ks"
         );
         assert_eq!(parse_go_version("go version go2.0.1 x"), Some((2, 0)));
         assert_eq!(parse_go_version("garbage"), None);
+    }
+
+    /// The doctor's Go floor is the one `runtime-go/go.mod` declares. It said
+    /// 1.22 while every generated `go.mod` said 1.25.0, so `sky doctor` passed
+    /// a Go that could not build the project offline.
+    #[test]
+    fn go_floor_matches_the_runtime_go_mod() {
+        assert!(!go_meets_floor(1, 22));
+        assert!(!go_meets_floor(1, 24));
+        assert!(go_meets_floor(1, 25));
+        assert!(go_meets_floor(1, 26));
+        assert!(go_meets_floor(2, 0));
+        let go_mod = include_str!("../../../../runtime-go/go.mod");
+        let declared = go_mod
+            .lines()
+            .find_map(|l| l.strip_prefix("go "))
+            .expect("runtime-go/go.mod declares a go version");
+        let mut parts = declared.trim().split('.');
+        let maj: u32 = parts.next().unwrap().parse().unwrap();
+        let minor: u32 = parts.next().unwrap().parse().unwrap();
+        assert_eq!(
+            (maj, minor),
+            GO_FLOOR,
+            "sky doctor's GO_FLOOR must equal the go directive in runtime-go/go.mod"
+        );
     }
 
     #[test]
@@ -19419,7 +19645,10 @@ echo key > "$ks"
         let dir = std::env::temp_dir().join(format!(
             "sky-bundle-{}-{}-{}",
             name,
-            std::process::id(),
+            (u64::from(std::process::id()) << 32) | {
+                static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -19723,7 +19952,10 @@ echo key > "$ks"
         // still named for the app.
         let root = std::env::temp_dir().join(format!(
             "sky-bundle-stdapp-{}-{}",
-            std::process::id(),
+            (u64::from(std::process::id()) << 32) | {
+                static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -19913,7 +20145,10 @@ echo key > "$ks"
     fn stage_web_bundle_content_hashes_the_wasm() {
         let base = std::env::temp_dir().join(format!(
             "sky-stage-{}-{}",
-            std::process::id(),
+            (u64::from(std::process::id()) << 32) | {
+                static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -20003,7 +20238,10 @@ echo key > "$ks"
     fn staged_bundle_scratch(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
         let base = std::env::temp_dir().join(format!(
             "sky-stage-{tag}-{}-{}",
-            std::process::id(),
+            (u64::from(std::process::id()) << 32) | {
+                static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

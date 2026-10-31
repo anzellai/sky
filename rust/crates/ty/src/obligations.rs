@@ -75,6 +75,8 @@ const HANDLES: &[&str] = &[
     "Sky.Core.Http.Stream.StreamId",
     "Sky.Http.Server.Stream.StreamWriter",
     "Std.Cache.Cache",
+    // v0.29.0: a compiled `Regex` (a `*regexp.Regexp`). Store its pattern.
+    "Sky.Core.Regex.Regex",
 ];
 
 /// Secrets, keys and protocol state (B-1): each redacts itself in every JSON

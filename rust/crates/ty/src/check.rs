@@ -403,6 +403,81 @@ fn secret_migration_hint(message: &str) -> Option<String> {
     }
 }
 
+/// The `Try:` line of an `[E2014]`: how a pattern is written in Sky source.
+const REGEX_LITERAL_TIP: &str = "write the pattern in RE2 syntax \
+     (https://github.com/google/re2/wiki/Syntax). In a triple-quoted string a backslash \
+     is kept as it is (`\"\"\"\\d+\"\"\"`) and a literal `{{` is written `\\{{`; in a \
+     plain string write each backslash twice (`\"\\\\d+\"`).";
+
+/// Is `e` a reference to `Sky.Core.Regex.fromString` (through the kernel
+/// qualifier `Regex`, an import alias, or `exposing (fromString)`)?
+fn is_regex_from_string(e: &Expr, sky: &dyn hir::SkyDb) -> bool {
+    match e {
+        Expr::Var(Res::Kernel { module, func }) => {
+            module.as_str() == "Regex" && func.as_str() == "fromString"
+        }
+        Expr::Var(Res::Def(d)) => sky.def_loc(*d).is_some_and(|loc| {
+            loc.name.as_str() == "fromString" && sky.module_name(loc.module) == "Sky.Core.Regex"
+        }),
+        _ => false,
+    }
+}
+
+/// Every literal pattern given to `Regex.fromString` in `body`: the literal's
+/// expression and its value. A plain string and a triple-quoted string with no
+/// interpolation are both `Expr::Str`; an interpolated one is a `++` chain and
+/// is left to the run-time Result. `Regex.fromString "…"`, `"…" |>
+/// Regex.fromString` and `Regex.fromString <| "…"` are all found.
+fn regex_literals(body: &Body, sky: &dyn hir::SkyDb) -> Vec<(ExprId, String)> {
+    let lit = |e: ExprId| match &body.exprs[e] {
+        Expr::Str(s) => Some((e, s.to_string())),
+        _ => None,
+    };
+    let mut out = Vec::new();
+    for (_, expr) in body.exprs.iter() {
+        let found = match expr {
+            Expr::Call(f, args) if is_regex_from_string(&body.exprs[*f], sky) => {
+                args.first().and_then(|a| lit(*a))
+            }
+            Expr::Binop { res, lhs, rhs, .. } => match res {
+                Res::Kernel { func, .. }
+                    if func.as_str() == "apR" && is_regex_from_string(&body.exprs[*rhs], sky) =>
+                {
+                    lit(*lhs)
+                }
+                Res::Kernel { func, .. }
+                    if func.as_str() == "apL" && is_regex_from_string(&body.exprs[*lhs], sky) =>
+                {
+                    lit(*rhs)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        out.extend(found);
+    }
+    out
+}
+
+/// When `Regex.contains` / `find` / … is given a `String` where a `Regex` is
+/// now required, the caller wrote the pre-v0.29 form that took the pattern
+/// itself. Name the migration (rendered as `Try: …`).
+fn regex_migration_hint(message: &str) -> Option<String> {
+    if message.contains("Regex") && message.contains("String") {
+        Some(
+            "Regex functions take a compiled `Regex` since v0.29.0, not the pattern \
+             String. Compile the pattern once with `Regex.fromString`, which returns \
+             `Result Error Regex`: `re = Regex.fromString \"\"\"\\d+\"\"\" |> \
+             Result.withDefault Regex.never` (a literal pattern is checked when the program \
+             compiles), then `Regex.contains re s`. `import Sky.Core.Regex as Regex \
+             exposing (Regex)`. See docs/migration/v0.29.md#regex-takes-a-compiled-regex"
+                .to_string(),
+        )
+    } else {
+        None
+    }
+}
+
 /// When a type error involves a `Result` in a def that calls a Go-FFI binding,
 /// the likeliest cause is code written before v0.27.0, when a Go-FFI call was
 /// not typed and its `Result Error a` could be used as the bare `a`. Say so,
@@ -1045,6 +1120,91 @@ pub fn check_modules_with_world(
             }
         }
 
+        // `[E1011]` — `Spa.withHoldFree` is generated-only (v0.29.0). It lets
+        // the Sky.Spa client run an input Msg while a hold RPC is in flight,
+        // which keeps Sky.Live's order only for the pairs the split proves
+        // commute (`spa_partition::hold_free_pairs`). A hand-written call
+        // could list any pair and bring back the reordering the hold exists to
+        // prevent, so a reference is refused in every module the build did not
+        // grant the split's `Spa_*` plumbing (a project the split generated,
+        // `[spa] generated = true`, or compiler-owned source).
+        if !sky.ffi_member_allowed(&mname, "kernel", Some("Spa_withHoldFree")) {
+            for body in resolved.bodies.values() {
+                for (e, expr) in body.exprs.iter() {
+                    let Expr::Var(Res::Def(d)) = expr else {
+                        continue;
+                    };
+                    let Some(loc) = sky.def_loc(*d) else {
+                        continue;
+                    };
+                    if loc.name.as_str() != "withHoldFree"
+                        || &*sky.module_name(loc.module) != "Std.Spa"
+                    {
+                        continue;
+                    }
+                    out.name_errors += 1;
+                    out.diagnostics.push(Diagnostic {
+                        severity: Severity::Error,
+                        code: Code("E1011".to_string()),
+                        message: "`Spa.withHoldFree` is not exposed to application code. Only the \
+                                  Sky.Spa split writes it: it lets an input Msg run while a hold \
+                                  RPC is in flight, which is safe only for the pairs the split \
+                                  proves commute. A pair listed by hand can run a Msg out of \
+                                  order."
+                            .to_string(),
+                        labels: body
+                            .expr_span(e)
+                            .map(|sp| {
+                                vec![diagnostics::Label {
+                                    span: trim_leading_ws(&module_src, sp),
+                                    message: "generated-only".into(),
+                                }]
+                            })
+                            .unwrap_or_default(),
+                        suggestion: Some(
+                            "remove the call: `sky build --target web:app` derives the pairs from \
+                             `update` and adds them to the generated client. \
+                             see docs/errors/E1011-not-exposed.md"
+                                .to_string(),
+                        ),
+                    });
+                }
+            }
+        }
+
+        // `[E2014]` — a literal `Regex.fromString` pattern that is not valid
+        // RE2. The same parse `regexp.Compile` runs (re2_syntax.rs), so the
+        // program is refused with source context instead of an `Err` at run
+        // time. A pattern built at run time (an interpolation, a variable) is
+        // checked by the Result, not here.
+        for body in resolved.bodies.values() {
+            for (lit, pattern) in regex_literals(body, sky) {
+                let Err(e) = crate::re2_syntax::validate(&pattern) else {
+                    continue;
+                };
+                out.type_errors += 1;
+                out.diagnostics.push(Diagnostic {
+                    severity: Severity::Error,
+                    code: Code("E2014".to_string()),
+                    message: format!(
+                        "This regular expression is not valid RE2, so `Regex.fromString` would \
+                         return `Err` for it every time: {}. See docs/errors/E2014-invalid-regex.md",
+                        e.message()
+                    ),
+                    labels: body
+                        .expr_span(lit)
+                        .map(|sp| {
+                            vec![diagnostics::Label {
+                                span: trim_leading_ws(&module_src, sp),
+                                message: e.code.text().to_string(),
+                            }]
+                        })
+                        .unwrap_or_default(),
+                    suggestion: Some(REGEX_LITERAL_TIP.to_string()),
+                });
+            }
+        }
+
         let module_diag_start = out.diagnostics.len();
         for (def, body) in &resolved.bodies {
             let dname = names.get(def).cloned().unwrap_or_default();
@@ -1091,6 +1251,7 @@ pub fn check_modules_with_world(
                         .unwrap_or_default(),
                     suggestion: builder_cfg_migration_hint(&err.message)
                         .or_else(|| secret_migration_hint(&err.message))
+                        .or_else(|| regex_migration_hint(&err.message))
                         .or_else(|| ffi_format3_hint(&err.message, body, sky))
                         .or_else(|| ffi_result_hint(&err.message, body))
                         .or_else(|| cast_migration_hint(&err.message, body, sky))

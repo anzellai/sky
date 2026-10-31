@@ -415,6 +415,15 @@ func registerWireVal(rv reflect.Value, seenRefs map[uintptr]bool, depth int) {
 		seenRefs[rv.Pointer()] = true
 		registerWireVal(rv.Elem(), seenRefs, depth+1)
 	case reflect.Struct:
+		// A Dict or a Set encodes itself; the values it holds are what
+		// gob needs registered.
+		if d, ok := reflectDictOf(rv); ok {
+			d.dictRangeAny(func(_ string, x any) bool {
+				registerWireVal(reflect.ValueOf(x), seenRefs, depth+1)
+				return true
+			})
+			return
+		}
 		for i := 0; i < rv.NumField(); i++ {
 			registerWireVal(rv.Field(i), seenRefs, depth+1)
 		}

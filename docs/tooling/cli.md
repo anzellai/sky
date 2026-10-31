@@ -1,8 +1,8 @@
 # CLI reference
 
 > **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky`)
-> is the primary Sky compiler; the Haskell compiler is preserved under
-> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> is the Sky compiler (the earlier compilers were removed in v0.29.0).
+> Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
 > [`../history/compiler/versions.md`](../history/compiler/versions.md) for the changelog.
 
@@ -417,6 +417,13 @@ hidden: the split is inferred but always inspectable.
 same-origin; `--embed` and `--target` compose (`sky run --embed src/Main.sky`
 runs the backend with its own bundled PostgreSQL).
 
+**Program arguments.** Everything after `--` goes to the program, as with `go
+run` and `cargo run`: `sky run src/Main.sky -- a "b c"` gives `System.args ()`
+the two arguments `a` and `b c`. A flag after `--` is the program's, so `sky
+run src/Main.sky -- --help` passes `--help` to it. Without `--` the program gets
+no arguments. `sky run --help` (or `-h`) before any `--` prints the `sky run`
+usage and builds nothing.
+
 For a plain (non-Spa) app in development you do not need `--embed` (and `sky run
 --embed` on such an app is refused with a pointer): set `[database] embedded =
 true` in `sky.toml` and `sky run` starts a local cluster, injects the DSN, and
@@ -773,7 +780,7 @@ additions:
 |---|---|---|
 | `entry-missing` | error | the `entry` file (default `src/Main.sky`) exists. A library (`[lib]` in sky.toml) with no `entry` has no entry file and is not asked for one |
 | `library-no-modules` | error | a library has at least one `.sky` module under its source root |
-| `go-toolchain` | error | Go ≥ 1.22 on PATH |
+| `go-toolchain` | error | Go ≥ 1.25 on PATH (the `go` directive of `runtime-go/go.mod`) |
 | `ffi-cache-orphan` | warn | `.skycache/ffi/*.skyi` with no `.skydeps/` source |
 | `missing-lockfile` | info | `.skydeps/` populated but no `sky.lock` |
 | `auth-secret-short` / `auth-secret-missing` | error / warn | `SKY_AUTH_TOKEN_SECRET` ≥ 32 bytes when `[live]` / `[auth]` set |
@@ -865,6 +872,14 @@ cache across all jobs; key protected builds separately there.
 On a runner with little memory, `--go-jobs <n>` (or `SKY_GO_BUILD_JOBS=<n>`)
 caps how many packages `go build` compiles at once, and `SKY_BUILD_SERIAL=1`
 builds a client app's two legs one after the other.
+
+`sky` stops a `go build` that runs longer than 10 minutes, so a wedged Go
+toolchain (a stuck linker, a hung module fetch) cannot hold a build for ever.
+On a slow runner, raise the limit with `--go-build-timeout <value>` (or
+`SKY_GO_BUILD_TIMEOUT=<value>`) on `sky build`, `sky check` and `sky run`. The
+value is whole seconds (`900`) or a whole number with a unit (`900s`, `15m`,
+`1h`). A value that does not parse stops the build with an error, it never
+falls back to the default. *(v0.29.0+)*
 
 When another process (a memory watchdog, `kill`) stops a build, sky says so. A
 child leg or `go build` stopped by a signal ends with a line such as `frontend
@@ -1012,11 +1027,27 @@ types — **no database connection required**:
 sky db init                      # scaffold db/migrations/ + db/schema.json (once)
 sky db migrate --gen init        # first migration: CREATE TABLE for every store
 # …add a field to a record, then:
-sky db migrate --gen add_stock   # → addColumn (required cols get a safe backfill DEFAULT)
+sky db migrate --gen add_stock   # → addColumn (required cols: NOT NULL DEFAULT <declared or zero>)
 sky db status                    # ✓ applied / ○ pending per committed file vs the ledger
 sky db migrate                   # apply the committed db/migrations/*.json to the live DB
 sky db seed                      # run the entry module's seed : Db -> Task Error ()
 ```
+
+`--gen` follows the same rule as `Store.migrate`: a `Maybe` field is a nullable
+column, any other field `NOT NULL DEFAULT <declared default, else zero>`, a
+`unique` column gets an `addIndex`, and declared indexes (`Store.index` /
+`uniqueOn` / `uniqueWhere`, `Schema.withIndex`) become `addIndex` / `dropIndex`
+ops. Every migration file, old or new, renders with this one rule.
+
+The `_sky_migrations` ledger keeps a checksum of each migration file's **ops**
+(a canonical form of the op list, the same on every dialect), not of the SQL
+they render to, and a `kind` column (`ops`, or `sql` for hand-written
+`Db.migrate` SQL). A later change to how an op renders never makes an applied
+file look edited, and an edit to an applied file is still refused (checksum
+mismatch). A ledger written by v0.28 is upgraded on the first migrate, with no
+configuration: the `kind` column is added, and each applied op file is
+re-stamped once with its ops checksum (one log line per file). See
+`docs/migration/v0.29.md`.
 
 `sky db status` compares the committed files against the live `_sky_migrations`
 ledger and **exits non-zero while anything is pending** — a ready-made "is this
@@ -1031,8 +1062,10 @@ sky db push        # create missing tables + add new columns to match your types
 
 The fast prototyping loop (Prisma-style `db push`): syncs the live DB to your
 current `db : Store.Project` with **no migration files** — creates each missing
-table and adds any new (nullable) columns. Additive + idempotent; never drops or
-retypes. Use `sky db migrate --gen` once your schema stabilises and you want
+table, adds any new columns (by the `Store.migrate` rule: a `Maybe` field
+nullable, any other `NOT NULL DEFAULT <declared or zero>`) and creates any
+missing declared index. Additive + idempotent; never drops, retypes or alters
+an existing column. Use `sky db migrate --gen` once your schema stabilises and you want
 reviewable, committed history for production.
 
 ### `sky db reset [table]` · `sky db drop [table]` — destructive resets
@@ -1516,32 +1549,36 @@ background process**, so it never slows a command or blocks on the network. The
 nudge itself prints at most once a day. It stays out of your way entirely when
 output isn't interactive: it's suppressed unless stderr is a TTY (so scripts / CI
 / pipes never see it), for builds from a source checkout (their `sky --version`
-names a commit: `sky v0.27.5 (1a2b3c4)`), and for `lsp` / `fmt` / `--version`. Set
+names a commit: `sky v0.29.0 (1a2b3c4)`), and for `lsp` / `fmt` / `--version`. Set
 `SKY_NO_UPDATE_CHECK=1` to disable it completely.
 
 ### `sky upgrade-claude`
 
-Refreshes the cwd's `CLAUDE.md` from the template embedded in the
-running `sky` binary at build time. Useful after `sky upgrade` —
-the binary's embedded template moves with new releases (new stdlib
-APIs, deprecation notes, current limitations) but a project's
-`CLAUDE.md` is a snapshot taken at `sky init` time and won't auto-
-update.
+Refreshes the cwd's `AGENTS.md` and `CLAUDE.md` from the templates
+embedded in the running `sky` binary at build time. Use it after `sky
+upgrade`. The embedded templates move with new releases (new stdlib
+APIs, deprecation notes, current limitations), but a project's copies
+are a snapshot taken at `sky init` time and do not update by
+themselves. `AGENTS.md` is the agent-agnostic guide. `CLAUDE.md` is
+the Claude Code entry point, and it imports `AGENTS.md`.
 
 Behaviour:
 
-- Always overwrites `./CLAUDE.md` (the file is AI-context, not
-  hand-edited project source).
-- Backs the prior file up to `./CLAUDE.md.bak` so an accidental run
-  on a project that customised the file is recoverable.
-- Prints a one-line summary including the byte-count delta and the
-  `sky` version that produced the new template, so you can see at a
-  glance whether the template actually changed.
+- Always overwrites `./AGENTS.md` and `./CLAUDE.md` (the files are AI
+  context, not hand-edited project source).
+- Backs each prior file up to `<name>.bak`, so an accidental run on a
+  project that customised a file is recoverable.
+- Prints one line per file with the byte-count delta, then the `sky`
+  version that produced the templates, so you can see at a glance
+  whether a template changed.
 
 ```bash
 $ sky upgrade-claude
-Refreshed CLAUDE.md (118432 → 132422 bytes, from sky v0.28.0)
+Refreshed AGENTS.md (61204 → 67701 bytes)
+  previous version saved as AGENTS.md.bak
+Refreshed CLAUDE.md (12918 → 13533 bytes)
   previous version saved as CLAUDE.md.bak
+(from sky v0.29.0 (70969ab3e))
 ```
 
 ## Dev console
@@ -1561,7 +1598,7 @@ sky console --tui          # same UI rendered through Sky.Tui in your terminal
 ```
 
 The source lives in `sky-bundled/console/` (embedded into the sky
-binary via Template Haskell). First invocation builds into
+binary at build time by `rust/crates/ffi/build.rs`). First invocation builds into
 `$XDG_CACHE_HOME/sky/console-<version>/` (~3–10 s); subsequent
 runs are instant. Cache keys include the version string so
 `sky upgrade` auto-invalidates.

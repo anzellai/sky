@@ -1,8 +1,8 @@
 # Sky.Live overview
 
 > **Status**: the Rust compiler (`rust/`, `cargo build --release -p sky`)
-> is the primary Sky compiler; the Haskell compiler is preserved under
-> `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
+> is the Sky compiler (the earlier compilers were removed in v0.29.0).
+> Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
 > [`../history/compiler/journey.md`](../history/compiler/journey.md) for the changelog.
 
@@ -356,7 +356,7 @@ What's affected:
 What's NOT affected:
 - User-supplied env-var names passed to `System.getenv` / `System.getenvOr` etc. — those read raw.
 - Standard non-Sky fallbacks: `DATABASE_URL`, `REDIS_URL`, `PORT` (consulted by Sky.Live's session-store config when the prefixed override is unset).
-- The compile-time-only `SKY_SOLVER_BUDGET` knob, read by the Haskell compiler itself.
+- `SKY_SOLVER_BUDGET`, a compile-time knob of the retired Haskell compiler. The current compiler does not read it.
 
 Backwards-compatible: omit `[env] prefix` and behaviour matches every prior Sky version exactly.
 

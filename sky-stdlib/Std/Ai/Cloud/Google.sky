@@ -91,7 +91,7 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Maybe as Maybe exposing (Maybe(..))
 import Sky.Core.Result as Result
-import Sky.Core.Regex as Regex
+import Sky.Core.Regex as Regex exposing (Regex)
 import Sky.Core.Encoding as Encoding
 import Sky.Core.Secret as Secret exposing (Secret)
 import Sky.Core.System as System
@@ -847,8 +847,7 @@ accelerator machine =
 -- letters, digits, `-` and `_`.
 validLabel : String -> Bool
 validLabel s =
-    String.length s >= 1 && String.length s <= 63
-        && Regex.match "^[a-z0-9_-]*$" s
+    String.length s >= 1 && String.length s <= 63 && Regex.contains labelRe_ s
 
 
 -- Is `path@digest` reachable through `repo` when it is a remote repository?
@@ -2315,3 +2314,10 @@ unitPrice =
                     units ++ "." ++ n)
             (JsonD.oneOf [ JsonD.field "units" JsonD.string, JsonD.succeed "0" ])
             (JsonD.oneOf [ JsonD.field "nanos" JsonD.int, JsonD.succeed 0 ]))
+
+
+-- `validLabel`'s pattern, compiled once (the literal is checked when Sky
+-- compiles).
+labelRe_ : Regex
+labelRe_ =
+    Regex.fromString "^[a-z0-9_-]*$" |> Result.withDefault Regex.never

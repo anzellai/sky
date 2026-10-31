@@ -80,7 +80,7 @@ tests =
     [ Test.suite "Std.Db.Decode surface compiles"
         [ -- The presence of `userDecoder`, `titledDecoder`, and
           -- `countedDecoder` in the type-correct shape is itself the
-          -- assertion.  The cabal-test `cabal test` walk picks this
+          -- assertion.  The Sky test suite (scripts/sky-suites.sh) picks this
           -- module up; if the surface ever regresses (HM mismatch /
           -- kernel registration drop), the module fails to compile
           -- and the test framework reports the breakage.

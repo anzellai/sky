@@ -28,7 +28,8 @@
 #     under `set -uo pipefail`, no `-e`): the compiler build silently did
 #     nothing, the phase returned 0, and every later phase used whatever stale
 #     `sky-out/sky` was lying around.
-#   * `scripts/grill-mutation-matrix.sh` run_suite (`… > log 2>&1 || true`):
+#   * `scripts/grill-mutation-matrix.sh` (removed in v0.29.0) run_suite
+#     (`… > log 2>&1 || true`):
 #     an empty log, from which `grep '^--- FAIL: '` extracts zero failures, so
 #     the mutation matrix concludes the suite is fully green having run
 #     nothing.

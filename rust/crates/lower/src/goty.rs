@@ -954,8 +954,25 @@ fn app_to_go_with(
     // `apps/relay` (which imports `Std.Config` for its typed decoders) caught it
     // as a +15 widening on the `coerce-floor` gate. The bare-name arms further
     // down had always covered this; hoisting them closes the qualified hole too.
+    //
+    // A QUALIFIED name that a Sky module declares as a data-carrying union
+    // (`Adt`) is not a kernel handle: it is that module's own type, and every
+    // other site (a constructor, a pattern) already emits it as the module's
+    // nominal. `Std.Xml.Decode` declares `type Decoder a = Decoder__Internal
+    // (…)` (v0.29.0); erasing its annotation to `any` while its pattern
+    // emitted `Std_Xml_Decode_Decoder` passed `sky check` and failed `go
+    // build`. A phantom (`Std.Config.Decoder`, a nullary iota) keeps the
+    // handle rule.
     if matches!(ty::nominal::base(name), "Decoder" | "Value" | "Cmd" | "Sub") {
-        return GoTy::Any;
+        let declared_adt = name.rsplit_once('.').and_then(|(qual, tail)| {
+            env.nominal_by_module
+                .get(&(qual.to_string(), tail.to_string()))
+                .filter(|n| n.kind == NominalKind::Adt && !n.opaque)
+        });
+        match declared_adt {
+            Some(n) => return GoTy::Named(n.go_name.clone(), vec![]),
+            None => return GoTy::Any,
+        }
     }
     // A Go FFI type (`GoHttp.Client`, keyed `go@Net.Http.Client` by the
     // checker) is Go-opaque: the FFI boundary hands it over as `any`, the same
@@ -1012,13 +1029,14 @@ fn app_to_go_with(
             let a = go_arg(0);
             GoTy::Named("rt.SkyTask".into(), vec![a, go_arg(1)])
         }
-        // A Sky `Dict k v` is ALWAYS stored as `map[string]V` at runtime — keys are
-        // stringified (`rt.Dict_empty() any` returns `map[string]any`; an `Int`-keyed
-        // dict stores key `"0"`). The oracle renders every dict key as `string`
-        // (`bucketsByIndex : Dict Int … → map[string][]…`); narrowing goes through
-        // `rt.AsMapT[V]` which returns `map[string]V`. Rendering the key as `goty(k)`
-        // (e.g. `map[int]V`) never matches that runtime shape and panics under
-        // `rt.Coerce` — so pin the Go key type to `string`.
+        // A Sky `Dict k v` is ALWAYS the runtime's persistent `rt.SkyDict[V]`
+        // (runtime-go/rt/dict_persistent.go), keyed by the runtime's encoded
+        // string key (`rt.encodeDictKey`; an `Int`-keyed dict stores key
+        // "\x01i0"). `GoTy::Map(Str, V)` keeps the key as `string` so every
+        // dict-shaped match below reads the same; codegen renders it
+        // `rt.SkyDict[V]`, and narrowing goes through `rt.AsMapT[V]`, which
+        // returns one (O(1) for a `SkyDict[V]`). Rendering the key as `goty(k)`
+        // would never match that runtime shape, so it stays pinned to `string`.
         ("Dict", 2) => GoTy::Map(Box::new(GoTy::Bare(Prim::Str)), Box::new(go_arg(1))),
         // `Cmd` / `Sub` / `Decoder` / `Value` are handled by the kernel-opaque
         // pre-check at the top of this function, which fires for the qualified

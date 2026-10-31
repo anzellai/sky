@@ -53,7 +53,10 @@ fn repo_root() -> PathBuf {
 fn scratch(tag: &str, main: &str) -> PathBuf {
     let uniq = format!(
         "sky-caflint-{tag}-{}-{}",
-        std::process::id(),
+        (u64::from(std::process::id()) << 32) | {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        },
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -88,7 +91,7 @@ fn warns_about(warnings: &[String], name: &str) -> bool {
 }
 
 /// Shared prelude: a store, a blessed pool CAF, and the helpers the shapes
-/// under test are built from. `Store.all` reaches `Db_queryObjects`, so every
+/// under test are built from. `Store.all` reaches `Db_queryObjectGroups`, so every
 /// def that FORCES it carries `EffectKind::StoreRead`.
 const PRELUDE: &str = r#"module Main exposing (main)
 

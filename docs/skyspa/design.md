@@ -17,7 +17,7 @@
 
 ## 0. Phase-1 grill findings — the two blocking realities (READ FIRST)
 
-The Phase-1 spike (`docs/skyspa/spike/`) proved a *hand-written, reflection-free*
+The Phase-1 spike (`docs/history/skyspa/spike/`) proved a *hand-written, reflection-free*
 Go→wasm TEA loop runs client-side. That was necessary but it **dodged what real
 Sky-emitted code actually is**. An adversarial grill, verified against the code,
 found two walls:
@@ -62,7 +62,7 @@ as first written, and the production-web pillar, are not yet earned.**
 
 ## 0.1 The auto-split measurement — FALSIFIED for real apps
 
-The G1 prototype ran (a reproducible classifier, `spike/spa_classify.py`, over
+The G1 prototype ran (a reproducible classifier, `docs/history/skyspa/spike/spa_classify.py`, over
 **111 `update` branches across 8 real TEA apps**, 5 with real persistence). The
 result kills the *automatic* split as a transparent, no-API-routes mechanism:
 
@@ -373,7 +373,7 @@ compiler-derived split remains the forward path.**
   wasm + a DOM shim). All transitions pass with **zero server**: init→`0`,
   `+1`×3→`3`, `Reset`→`0`, `−1`→`−1`. Proves wasm instantiation, `syscall/js`
   interop, the renderer, and pure `update` + re-render per dispatched `Msg`.
-- The spike (`docs/skyspa/spike/`) is a faithful hand-written mirror of what the
+- The spike (`docs/history/skyspa/spike/`) is a faithful hand-written mirror of what the
   Spa emit path will generate — `Element`/`Model`/`Msg`/pure `update`/`view` +
   the DOM renderer + the TEA driver — so Phase 3 has a concrete generation target.
 - **Pending (needs the Chrome extension connected):** the pixel-level in-browser
