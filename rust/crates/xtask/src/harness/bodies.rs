@@ -4032,7 +4032,12 @@ pub fn config_matrix(ctx: &GateCtx) -> GateOutcome {
 /// three migration-covered entries (+3), so the exact count moves 48 -> 51 —
 /// 9 suffixes + 6 literals covered, 9 builder labels matched, 18 legacy keys
 /// classified.
-pub const CONFIG_MIGRATION_EXPECTED: u64 = 51;
+/// **54 since v0.29.1 (2026-10-31)**: the telemetry redaction work added one
+/// migration-covered suffix (`TELEMETRY_QUERY_KEYS`, with its
+/// `Sky.Config.withTelemetryQueryKeys` builder label). The gate measures +3:
+/// 10 suffixes + 6 literals covered, 10 builder
+/// labels matched, 18 legacy keys classified.
+pub const CONFIG_MIGRATION_EXPECTED: u64 = 54;
 
 /// `xtask config-migration`, run in-process. In-process for the same reason
 /// `config_surface` is: it recomputes the cross-language coverage from THIS

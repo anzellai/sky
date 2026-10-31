@@ -390,7 +390,7 @@
       "tier": "T1"
     },
     "config-migration": {
-      "expected_assertions": 51,
+      "expected_assertions": 54,
       "falsifier_mutation": "config-migration.drop-a-builder-label",
       "falsifier_proven": true,
       "summary": "the legacy→withX migration table covers every Sky.Config env target and every legacy key it names is one the compiler accepts",
@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 2065,
+      "expected_assertions": 2078,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -816,7 +816,7 @@
       "tier": "T1"
     },
     "store-query-postgres": {
-      "expected_assertions": 264,
+      "expected_assertions": 265,
       "falsifier_mutation": "store-query-postgres.drop-rows-err",
       "falsifier_proven": true,
       "summary": "Std.Db.Store query path (aggregates, select, latestPer, text match, jsonText) on PostgreSQL",
@@ -1010,7 +1010,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3232,
+    "stdlib_entries": 3234,
     "stdlib_modules": 135,
     "surfaces_covered": 193,
     "surfaces_covered_pct": 95.1,
@@ -4807,6 +4807,11 @@
             "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -4848,6 +4853,11 @@
             "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
         "strength": 3
@@ -19021,7 +19031,7 @@
     "symbols_unreferenced_generous": {
       "by_module": {
         "Sky.Config": {
-          "count": 14,
+          "count": 15,
           "symbols": [
             "Capacity",
             "JobStore",
@@ -19036,6 +19046,7 @@
             "withTelemetryAggregationWindow",
             "withTelemetryDbCapacity",
             "withTelemetryHistogramWindow",
+            "withTelemetryQueryKeys",
             "withTelemetrySynchronousCommit"
           ]
         },
@@ -20420,13 +20431,13 @@
           ]
         }
       },
-      "count": 874,
-      "pct_of_denominator": 27.0
+      "count": 875,
+      "pct_of_denominator": 27.1
     },
     "symbols_unreferenced_strict": {
       "by_module": {
         "Sky.Config": {
-          "count": 16,
+          "count": 17,
           "symbols": [
             "Capacity",
             "Database",
@@ -20443,6 +20454,7 @@
             "withTelemetryAggregationWindow",
             "withTelemetryDbCapacity",
             "withTelemetryHistogramWindow",
+            "withTelemetryQueryKeys",
             "withTelemetrySynchronousCommit"
           ]
         },
@@ -21975,7 +21987,7 @@
           ]
         }
       },
-      "count": 989,
+      "count": 990,
       "pct_of_denominator": 30.6
     }
   },
@@ -22273,10 +22285,10 @@
       "id": "e2e:scripts/spa-rpc-order-e2e.sh",
       "modules_imported": 20,
       "path": "scripts/spa-rpc-order-e2e.sh",
-      "refs_generous": 59,
-      "refs_qualified": 58,
+      "refs_generous": 65,
+      "refs_qualified": 64,
       "role": "FlowTest",
-      "sky_files": 5,
+      "sky_files": 6,
       "sky_toml_sections": []
     },
     {
@@ -23969,12 +23981,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 66,
+      "modules_imported": 67,
       "path": "tests/conformance",
-      "refs_generous": 1024,
-      "refs_qualified": 996,
+      "refs_generous": 1027,
+      "refs_qualified": 1000,
       "role": "Conformance",
-      "sky_files": 58,
+      "sky_files": 59,
       "sky_toml_sections": []
     }
   ]
