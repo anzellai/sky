@@ -46,6 +46,11 @@
 -- column name follow `[A-Za-z_][A-Za-z0-9_]*` (at most 63 bytes), the primary
 -- key is empty or a codec column, and a builder that named an unknown column
 -- makes the first verb fail with that name. Values always bind as parameters.
+-- Every `SqlValue` is checked against its column's kind (and a written one
+-- against the field's codec) before any statement, every projection against
+-- the source's codec, and a stored value that does not read as its column's
+-- kind is an `Err` naming the table and the column, never `Nothing` (see
+-- `valueKindError` below and "Value kinds" in docs/skydb/overview.md).
 module Std.Db.Store exposing
     ( Store
     , fromCodec
@@ -220,6 +225,7 @@ type alias StoreRec a =
     , computed : List ( String, () -> SqlValue )
     , problems : List String
     , indexes : List IndexSpec
+    , nodes : List ( String, Value )
     }
 
 -- | One declared index (`index`, `uniqueOn`, `uniqueWhere`). `name` is empty
@@ -258,6 +264,7 @@ fromCodec name codec =
             , cols = cols
             , generated = []
             , computed = []
+            , nodes = schemaFields codec cols
             , indexes = []
             , problems =
                 case cols of
@@ -410,24 +417,56 @@ touchOnUpdate name store =
 -- `Store.defaultText "content" ""`. (Does NOT mark the column generated — the
 -- record's value is still written on insert; the DEFAULT only applies when the
 -- column is omitted, e.g. via `Store.generated`.) The value is stored as given,
--- including `|` and `%`.
+-- including `|` and `%`. The column must be text (a `String` field, or an enum
+-- field, whose default must then be one of its names) or JSON (a list, record
+-- or custom type field, whose default must be JSON its codec reads): on any
+-- other column the first verb on the store fails, because `migrate` writes the
+-- default into the rows that exist and they would not read back.
 defaultText : String -> String -> Store a -> Store a
 defaultText name val store =
-    withFlag "defaultText" name ("dtext=" ++ flagValue val) store
+    withDefault
+        "defaultText"
+        name
+        ("dtext=" ++ flagValue val)
+        (\st col k ->
+            if kindBase k == "text" || kindBase k == "blob" then
+                writeCheck st col k (SqlString val)
+
+            else
+                Just
+                    ("the column is " ++ kindBase k
+                        ++ ", and defaultText gives text"))
+        store
 
 
 -- | Give a column a `DEFAULT` integer value in the generated DDL:
--- `Store.defaultInt "verified" 0`.
+-- `Store.defaultInt "verified" 0`. The column must be an `Int` or `Float`
+-- field (a `Bool` field takes `defaultBool`): on any other column the first
+-- verb on the store fails.
 defaultInt : String -> Int -> Store a -> Store a
 defaultInt name val store =
-    withFlag "defaultInt" name ("dint=" ++ String.fromInt val) store
+    withDefault
+        "defaultInt"
+        name
+        ("dint=" ++ String.fromInt val)
+        (\_ _ k ->
+            if kindBase k == "int" || kindBase k == "real" then
+                Nothing
+
+            else
+                Just
+                    ("the column is " ++ kindBase k
+                        ++ ", and defaultInt gives an Int"))
+        store
 
 
 -- | Give a column a `DEFAULT` boolean value in the generated DDL (`TRUE`/`FALSE`
--- on Postgres, `1`/`0` on SQLite): `Store.defaultBool "active" True`.
+-- on Postgres, `1`/`0` on SQLite): `Store.defaultBool "active" True`. The
+-- column must be a `Bool` field: on any other column the first verb on the
+-- store fails.
 defaultBool : String -> Bool -> Store a -> Store a
 defaultBool name val store =
-    withFlag
+    withDefault
         "defaultBool"
         name
         (if val then
@@ -435,16 +474,70 @@ defaultBool name val store =
 
         else
             "dbool=false")
+        (\_ _ k ->
+            if kindBase k == "bool" then
+                Nothing
+
+            else
+                Just
+                    ("the column is " ++ kindBase k
+                        ++ ", and defaultBool gives a Bool"))
         store
 
 
+-- A declared default on one column: the flag, and a problem when the value
+-- does not fit the column (`check` gets the codec descriptions, the column
+-- and its kind).
+withDefault : String -> String -> String -> (StoreRec a -> String -> String -> Maybe String) -> Store a -> Store a
+withDefault verb name flag check store =
+    let
+        s = storeRec store
+        ( col, problems ) = builderCol verb name s.cols s.problems
+        checked =
+            case lookupKind col s.cols of
+
+                Just k ->
+                    case check s col k of
+
+                        Just msg ->
+                            problems
+                                ++ [ "Store." ++ verb ++ " \"" ++ name ++ "\": "
+                                         ++ msg
+                                   ]
+
+                        Nothing ->
+                            problems
+
+                Nothing ->
+                    problems
+    in
+        Store
+            { s
+                | cols = appendKind col ("|" ++ flag) s.cols
+                , problems = checked
+            }
+
+
 -- | Give a column a `DEFAULT` float value in the generated DDL:
--- `Store.defaultFloat "score" 1.5`. NaN and Infinity have no SQL literal: the
--- first verb on the store fails with them.
+-- `Store.defaultFloat "score" 1.5`. The column must be a `Float` field. NaN
+-- and Infinity have no SQL literal: the first verb on the store fails with
+-- them, as it does for any other column.
 defaultFloat : String -> Float -> Store a -> Store a
 defaultFloat name val store =
     if val - val == 0.0 then
-        withFlag "defaultFloat" name ("dfloat=" ++ String.fromFloat val) store
+        withDefault
+            "defaultFloat"
+            name
+            ("dfloat=" ++ String.fromFloat val)
+            (\_ _ k ->
+                if kindBase k == "real" then
+                    Nothing
+
+                else
+                    Just
+                        ("the column is " ++ kindBase k
+                            ++ ", and defaultFloat gives a Float"))
+            store
 
     else
         let
@@ -604,58 +697,74 @@ predicateSql : List ( String, String ) -> Cond -> Result Error String
 predicateSql cols c =
     case c of
 
-        CondOp col op v ->
-            case predicateCol cols col of
+        CondOp l ->
+            let
+                col = l.col
+                op = l.op
+                v = l.value
+            in
+                case predicateCol cols col of
 
-                Err e ->
-                    Err e
+                    Err e ->
+                        Err e
 
-                Ok name ->
-                    if List.member op [ "=", "<>", ">", ">=", "<", "<=" ] then
-                        case sqlLiteral v of
+                    Ok name ->
+                        if List.member op [ "=", "<>", ">", ">=", "<", "<=" ] then
+                            case condValue name (kindOf name cols) v of
 
-                            Ok lit ->
-                                Ok (name ++ " " ++ op ++ " " ++ lit)
+                                Err msg ->
+                                    Err (Error.invalidInput msg)
 
-                            Err e ->
-                                Err e
+                                Ok bound ->
+                                    case sqlLiteral bound of
 
-                    else
-                        Err
-                            (Error.invalidInput
-                                ("the operator " ++ op
-                                    ++ " is not supported in an index predicate"))
+                                        Ok lit ->
+                                            Ok (name ++ " " ++ op ++ " " ++ lit)
 
-        CondNull col wantNull ->
-            case predicateCol cols col of
+                                        Err e ->
+                                            Err e
 
-                Err e ->
-                    Err e
+                        else
+                            Err
+                                (Error.invalidInput
+                                    ("the operator " ++ op
+                                        ++ " is not supported in an index predicate"))
 
-                Ok name ->
-                    if wantNull then
-                        Ok (name ++ " IS NULL")
+        CondNull l ->
+            let
+                col = l.col
+                wantNull = l.flag
+            in
+                case predicateCol cols col of
 
-                    else
-                        Ok (name ++ " IS NOT NULL")
+                    Err e ->
+                        Err e
 
-        CondIn col vs ->
-            case predicateCol cols col of
+                    Ok name ->
+                        if wantNull then
+                            Ok (name ++ " IS NULL")
 
-                Err e ->
-                    Err e
+                        else
+                            Ok (name ++ " IS NOT NULL")
 
-                Ok name ->
-                    case sqlLiterals vs of
+        CondIn l ->
+            let
+                col = l.col
+                vs = l.values
+            in
+                case predicateCol cols col of
 
-                        Err e ->
-                            Err e
+                    Err e ->
+                        Err e
 
-                        Ok [] ->
-                            Ok "1 = 0"
+                    Ok name ->
+                        case condValues name (kindOf name cols) vs of
 
-                        Ok lits ->
-                            Ok (name ++ " IN (" ++ String.join ", " lits ++ ")")
+                            Err msg ->
+                                Err (Error.invalidInput msg)
+
+                            Ok bound ->
+                                predicateIn name bound
 
         CondAnd cs ->
             predicateGroup cols " AND " "1 = 1" cs
@@ -672,30 +781,52 @@ predicateSql cols c =
                 Err e ->
                     Err e
 
-        CondCol op left right ->
-            case predicateCol cols left of
+        CondCol l ->
+            let
+                op = l.op
+                left = l.col
+                right = l.text
+            in
+                case predicateCol cols left of
 
-                Err e ->
-                    Err e
+                    Err e ->
+                        Err e
 
-                Ok l ->
-                    case predicateCol cols right of
+                    Ok l ->
+                        case predicateCol cols right of
 
-                        Err e ->
-                            Err e
+                            Err e ->
+                                Err e
 
-                        Ok r ->
-                            Ok (l ++ " " ++ op ++ " " ++ r)
+                            Ok r ->
+                                Ok (l ++ " " ++ op ++ " " ++ r)
 
-        CondText kind _ _ ->
-            Err
-                (Error.invalidInput
-                    (kind ++ " is not supported in an index predicate"))
+        CondText l ->
+            let
+                kind = l.op
+            in
+                Err
+                    (Error.invalidInput
+                        (kind ++ " is not supported in an index predicate"))
 
         CondNest _ ->
             Err
                 (Error.invalidInput
                     "a subquery or a join condition is not supported in an index predicate")
+
+
+predicateIn : String -> List SqlValue -> Result Error String
+predicateIn name vs =
+    case sqlLiterals vs of
+
+        Err e ->
+            Err e
+
+        Ok [] ->
+            Ok "1 = 0"
+
+        Ok lits ->
+            Ok (name ++ " IN (" ++ String.join ", " lits ++ ")")
 
 
 predicateGroup : List ( String, String ) -> String -> String -> List Cond -> Result Error String
@@ -970,14 +1101,20 @@ insert conn store record =
                 Task.fail e
 
             Nothing ->
-                dbExecObjectWith
-                    conn
-                    s.name
-                    (insertCols s.generated s.cols)
-                    (Codec.toValue s.codec record)
-                    (computedValues s.computed)
-                    s.pk
-                    (kindOf s.pk s.cols)
+                case checkedComputed s of
+
+                    Err e ->
+                        Task.fail e
+
+                    Ok computed ->
+                        dbExecObjectWith
+                            conn
+                            s.name
+                            (insertCols s.generated s.cols)
+                            (Codec.toValue s.codec record)
+                            computed
+                            s.pk
+                            (kindOf s.pk s.cols)
 
 
 computedValues : List ( String, () -> SqlValue ) -> List ( String, SqlValue )
@@ -993,8 +1130,10 @@ computedValues computed =
 
 -- | Bulk-insert many records in ONE multi-row INSERT — for time-series / batch
 -- writes where a per-row `insert` would be N round-trips. Columns marked
--- `generated` are omitted (the DB fills them). `defaultWith` computed columns are
--- NOT applied here — provide those values in the records. Returns rows affected.
+-- `generated` are omitted (the DB fills them). A `defaultWith` column is
+-- computed for each record, as `insert` computes it (before v0.29.0 it was
+-- left out, so the row took the column's database default or NULL). Returns
+-- rows affected.
 insertMany : Db -> Store a -> List a -> Task Error Int
 insertMany conn store records =
     let
@@ -1006,11 +1145,42 @@ insertMany conn store records =
                 Task.fail e
 
             Nothing ->
-                dbExecObjectMany
-                    conn
-                    s.name
-                    (insertCols s.generated s.cols)
-                    (List.map (Codec.toValue s.codec) records)
+                case checkedComputedRows s records of
+
+                    Err e ->
+                        Task.fail e
+
+                    Ok computed ->
+                        dbExecObjectMany
+                            conn
+                            s.name
+                            (insertCols s.generated s.cols)
+                            (List.map (Codec.toValue s.codec) records)
+                            computed
+
+
+-- The `defaultWith` values of each record of `insertMany`, computed per row.
+checkedComputedRows : StoreRec a -> List a -> Result Error (List (List ( String, SqlValue )))
+checkedComputedRows s records =
+    case records of
+
+        [] ->
+            Ok []
+
+        _ :: rest ->
+            case checkedComputed s of
+
+                Err e ->
+                    Err e
+
+                Ok row ->
+                    case checkedComputedRows s rest of
+
+                        Err e ->
+                            Err e
+
+                        Ok more ->
+                            Ok (row :: more)
 
 
 -- | Insert the record, or UPDATE it in place if its primary key already exists
@@ -1020,6 +1190,8 @@ insertMany conn store records =
 -- Returns the row's PK for an Int-keyed store (0 when an `ON CONFLICT DO
 -- NOTHING` wrote nothing), and the affected-row count otherwise — the same
 -- contract as `insert`.
+-- A `defaultWith` column takes its computed value when the row is inserted,
+-- and an update keeps the value the row holds.
 -- To keep some columns, add to a counter, or conflict on a `uniqueOn` set,
 -- use `upsertWith` (it returns rows affected, never the key).
 upsert : Db -> Store a -> a -> Task Error Int
@@ -1033,13 +1205,20 @@ upsert conn store record =
                 Task.fail e
 
             Nothing ->
-                dbUpsertObject
-                    conn
-                    s.name
-                    (insertCols s.generated s.cols)
-                    s.pk
-                    (Codec.toValue s.codec record)
-                    (kindOf s.pk s.cols)
+                case checkedComputed s of
+
+                    Err e ->
+                        Task.fail e
+
+                    Ok computed ->
+                        dbUpsertObject
+                            conn
+                            s.name
+                            (insertCols s.generated s.cols)
+                            s.pk
+                            (Codec.toValue s.codec record)
+                            (kindOf s.pk s.cols)
+                            computed
 
 
 -- | Update the row identified by the record's PRIMARY KEY, setting every column
@@ -1096,6 +1275,7 @@ updateWhere conn store cond record =
 -- `SqlValue` params (injection-safe). Example — mark an order shipped:
 -- `Store.updateFields conn orders (eq "id" (SqlString oid))
 --     [ ( "status", SqlString "shipped" ), ( "tracking", SqlString t ) ]`.
+-- Each value follows the `setValue` rule, checked before the statement.
 updateFields : Db -> Store a -> Cond -> List ( String, SqlValue ) -> Task Error Int
 updateFields conn store cond sets =
     case sets of
@@ -1114,6 +1294,7 @@ updateFields conn store cond sets =
                         s.name
                         s.pk
                         s.cols
+                        (writeCheck s)
                         s.problems
                         cond
                         False
@@ -1127,7 +1308,8 @@ setFields conn store pkValue sets =
     updateFields conn store (eq (storeRec store).pk pkValue) sets
 
 
--- | Atomic relative adjustment of integer columns — `SET col = col + delta` per
+-- | Atomic relative adjustment of a required `Int` or `Float` column (a NULL
+-- plus a delta stays NULL, so a `Maybe` field is refused) — `SET col = col + delta` per
 -- entry, by `Cond`. The one write a value-based update can't express (the value
 -- depends on the column's CURRENT value): a race-free counter/stock/balance
 -- change without reading first. Negative deltas subtract:
@@ -1152,6 +1334,7 @@ adjust conn store cond deltas =
                         s.name
                         s.pk
                         s.cols
+                        (writeCheck s)
                         s.problems
                         cond
                         True
@@ -1175,8 +1358,11 @@ all conn store =
     toList conn (query store)
 
 
--- | The single row where `col = value` (value bound as text), or Nothing.
--- `col` must be a codec column (field or snake name).
+-- | The single row where `col = value`, or Nothing. `col` must be a codec
+-- column (field or snake name). `value` is read as the column's kind: an Int
+-- column takes `"42"`, a Float column `"1.5"`, a Bool column `"true"` or
+-- `"false"`. Text that is not a value of the kind (`"abc"` for an Int column)
+-- is an `Err` naming the column, on both dialects.
 findBy : Db -> Store a -> String -> String -> Task Error (Maybe a)
 findBy conn store col value =
     toMaybe conn (query store |> where_ (eq col (SqlString value)))
@@ -1205,7 +1391,8 @@ selectRaw conn codec sql params =
 
 
 -- | Delete rows where `col = value` (single column). `col` must be a codec
--- column (field or snake name).
+-- column (field or snake name). `value` is read as the column's kind, as
+-- `findBy` reads it.
 delete : Db -> Store a -> String -> String -> Task Error Int
 delete conn store col value =
     deleteWhere conn store (eq col (SqlString value))
@@ -1316,6 +1503,10 @@ setCol target source =
 
 
 -- | Set a value: `Store.setValue "status" (SqlString "open")` renders `status = ?`.
+-- The value must fit the column, checked before the statement (see
+-- `valueKindError`): `SqlInt` into an `Int` column, `SqlFloat` or `SqlInt`
+-- into a `Float` column, an enum name into an enum column, `SqlNull` only
+-- into a `Maybe` field.
 setValue : String -> SqlValue -> SetExpr
 setValue target v =
     SetExpr
@@ -1332,7 +1523,8 @@ setValue target v =
 -- | Set a value on the rows where a condition holds:
 -- `Store.setWhen "status" (Store.eq "status" (SqlString "ai")) (SqlString "open") Store.keep`
 -- renders `status = CASE WHEN (status = ?) THEN CAST(? AS TEXT) ELSE status END`.
--- The condition takes the same leaves as `where_`.
+-- The condition takes the same leaves as `where_`. Both values follow the
+-- `setValue` rule.
 setWhen : String -> Cond -> SqlValue -> Otherwise -> SetExpr
 setWhen target cond v orElse =
     case orElse of
@@ -1368,7 +1560,8 @@ from col =
     CopyFrom True col noValue
 
 
--- | A `copyInto` column set to one value for every copied row.
+-- | A `copyInto` column set to one value for every copied row. The value
+-- follows the `setValue` rule.
 const : SqlValue -> CopyFrom
 const v =
     CopyFrom False "" v
@@ -1486,7 +1679,12 @@ insertReturning conn store record =
     let
         s = storeRec store
     in
-        runReturning conn s.codec s.cols (insertHead (dialectOf conn) s record)
+        runReturning
+            conn
+            s.name
+            s.codec
+            s.cols
+            (insertHead (dialectOf conn) s record)
             |> Task.andThen
                    (\rows ->
                        case rows of
@@ -1518,6 +1716,7 @@ updateFieldsReturning conn store cond sets =
             _ ->
                 runReturning
                     conn
+                    s.name
                     s.codec
                     s.cols
                     (prepareSet
@@ -1525,6 +1724,7 @@ updateFieldsReturning conn store cond sets =
                         s.name
                         s.pk
                         s.cols
+                        (writeCheck s)
                         s.problems
                         cond
                         False
@@ -1539,6 +1739,7 @@ deleteWhereReturning conn store cond =
     in
         runReturning
             conn
+            s.name
             s.codec
             s.cols
             (case writeWhere (dialectOf conn) s.name s.pk s.cols s.problems cond of
@@ -1621,40 +1822,51 @@ insertHead d s record =
             Err e
 
         Nothing ->
-            let
-                plain = colsExcluding s.generated s.cols
-                computed = computedValues s.computed
-                nowCols =
-                    case d of
+            case checkedComputed s of
 
-                        Sqlite ->
-                            colNamesList (nowColsOf s.cols)
+                Err e ->
+                    Err e
 
-                        Postgres ->
-                            []
-                cols = colNamesList plain ++ pairNames computed ++ nowCols
-                marks =
-                    repeatText (List.length plain + List.length computed) "?"
-                        ++ repeatText (List.length nowCols) "datetime('now')"
-            in
-                case cols of
+                Ok computed ->
+                    insertHeadOf d s record computed
 
-                    [] ->
-                        Err
-                            <| storeErr
-                                   ("\"" ++ s.name ++ "\": no column to insert")
 
-                    _ ->
+insertHeadOf : Dialect -> StoreRec a -> a -> List ( String, SqlValue ) -> Result Error ( String, List SqlValue )
+insertHeadOf d s record computed =
+    let
+        plain = colsExcluding s.generated s.cols
+        nowCols =
+            case d of
+
+                Sqlite ->
+                    colNamesList (nowColsOf s.cols)
+
+                Postgres ->
+                    []
+        cols = colNamesList plain ++ pairNames computed ++ nowCols
+        marks =
+            repeatText (List.length plain + List.length computed) "?"
+                ++ repeatText (List.length nowCols) "datetime('now')"
+    in
+        case cols of
+
+            [] ->
+                Err <| storeErr ("\"" ++ s.name ++ "\": no column to insert")
+
+            _ ->
+                case dbObjectSqlValues plain (Codec.toValue s.codec record) of
+
+                    Err e ->
+                        Err e
+
+                    Ok values ->
                         Ok
                             ( "INSERT INTO " ++ s.name ++ " ("
                                   ++ String.join ", " cols
                                   ++ ") VALUES ("
                                   ++ String.join ", " marks
                                   ++ ")"
-                            , dbObjectSqlValues
-                                  plain
-                                  (Codec.toValue s.codec record)
-                                  ++ pairValues computed
+                            , values ++ pairValues computed
                             )
 
 
@@ -2066,7 +2278,12 @@ setExprSql d s target tk e =
                     Err <| unknownColErr e.source s.cols
 
                 Just sk ->
-                    case fitError target tk sk of
+                    case deepFitError
+                             target
+                             tk
+                             sk
+                             (lookupNode target s.nodes)
+                             (lookupNode src s.nodes) of
 
                         Just msg ->
                             Err <| storeErr ("updateSet: " ++ msg)
@@ -2082,32 +2299,65 @@ setExprSql d s target tk e =
                                                ++ "\" is not a valid identifier")
 
     else if e.kind == "value" then
-        Ok ( "?", [ e.value ] )
+        case writeCheck s target tk e.value of
+
+            Just msg ->
+                Err <| storeErr ("updateSet: setValue " ++ msg)
+
+            Nothing ->
+                Ok ( "?", [ e.value ] )
 
     else
-        case renderCond (plainCtx d s.name s.cols) e.cond of
+        case setWhenError s target tk e of
 
-            Err err ->
-                Err err
+            Just msg ->
+                Err <| storeErr ("updateSet: setWhen " ++ msg)
 
-            Ok ( cSql, cParams ) ->
-                if e.keepOld then
-                    Ok
-                        ( "CASE WHEN (" ++ cSql ++ ") THEN " ++ castParam tk
-                              ++ " ELSE "
-                              ++ target
-                              ++ " END"
-                        , cParams ++ [ e.value ]
-                        )
+            Nothing ->
+                setWhenSql d s target tk e
 
-                else
-                    Ok
-                        ( "CASE WHEN (" ++ cSql ++ ") THEN " ++ castParam tk
-                              ++ " ELSE "
-                              ++ castParam tk
-                              ++ " END"
-                        , cParams ++ [ e.value, e.orElse ]
-                        )
+
+-- The THEN value of `setWhen`, and the ELSE value unless it is `keep`.
+setWhenError : StoreRec a -> String -> String -> SetSpec -> Maybe String
+setWhenError s target tk e =
+    case writeCheck s target tk e.value of
+
+        Just msg ->
+            Just msg
+
+        Nothing ->
+            if e.keepOld then
+                Nothing
+
+            else
+                writeCheck s target tk e.orElse
+
+
+setWhenSql : Dialect -> StoreRec a -> String -> String -> SetSpec -> Result Error ( String, List SqlValue )
+setWhenSql d s target tk e =
+    case renderCond (plainCtx d s.name s.cols) e.cond of
+
+        Err err ->
+            Err err
+
+        Ok ( cSql, cParams ) ->
+            if e.keepOld then
+                Ok
+                    ( "CASE WHEN (" ++ cSql ++ ") THEN " ++ castParam tk
+                          ++ " ELSE "
+                          ++ target
+                          ++ " END"
+                    , cParams ++ [ e.value ]
+                    )
+
+            else
+                Ok
+                    ( "CASE WHEN (" ++ cSql ++ ") THEN " ++ castParam tk
+                          ++ " ELSE "
+                          ++ castParam tk
+                          ++ " END"
+                    , cParams ++ [ e.value, e.orElse ]
+                    )
 
 
 -- `INSERT INTO t (…) SELECT … FROM (<the source query>) sky_s`. The source
@@ -2136,7 +2386,7 @@ prepareCopy ignore d s spec mapping =
                     Ok ( srcSql, srcParams ) ->
                         case copyItems
                                  s
-                                 spec.outCols
+                                 ( spec.outCols, spec.outNodes )
                                  (isStar spec.out)
                                  mapping
                                  []
@@ -2194,8 +2444,8 @@ isStar out =
             False
 
 
-copyItems : StoreRec t -> List ( String, String ) -> Bool -> List ( String, CopyFrom ) -> List String -> List String -> List SqlValue -> Result Error ( ( List String, List String ), List SqlValue )
-copyItems s srcCols star mapping cols exprs params =
+copyItems : StoreRec t -> ( List ( String, String ), List ( String, Value ) ) -> Bool -> List ( String, CopyFrom ) -> List String -> List String -> List SqlValue -> Result Error ( ( List String, List String ), List SqlValue )
+copyItems s ( srcCols, srcNodes ) star mapping cols exprs params =
     case mapping of
 
         [] ->
@@ -2243,7 +2493,12 @@ copyItems s srcCols star mapping cols exprs params =
                                                        ++ colNames srcCols)
 
                                     Just sk ->
-                                        case fitError target tk sk of
+                                        case deepFitError
+                                                 target
+                                                 tk
+                                                 sk
+                                                 (lookupNode target s.nodes)
+                                                 (lookupNode src srcNodes) of
 
                                             Just msg ->
                                                 Err
@@ -2253,7 +2508,7 @@ copyItems s srcCols star mapping cols exprs params =
                                             Nothing ->
                                                 copyItems
                                                     s
-                                                    srcCols
+                                                    ( srcCols, srcNodes )
                                                     star
                                                     rest
                                                     (cols ++ [ target ])
@@ -2269,14 +2524,20 @@ copyItems s srcCols star mapping cols exprs params =
                                                     params
 
                         else
-                            copyItems
-                                s
-                                srcCols
-                                star
-                                rest
-                                (cols ++ [ target ])
-                                (exprs ++ [ castParam tk ])
-                                (params ++ [ v ])
+                            case writeCheck s target tk v of
+
+                                Just msg ->
+                                    Err <| storeErr ("copyInto: const " ++ msg)
+
+                                Nothing ->
+                                    copyItems
+                                        s
+                                        ( srcCols, srcNodes )
+                                        star
+                                        rest
+                                        (cols ++ [ target ])
+                                        (exprs ++ [ castParam tk ])
+                                        (params ++ [ v ])
 
 
 -- A target column the mapping leaves out must be nullable, have a declared
@@ -2362,8 +2623,8 @@ unmappedNow cols mapped =
 
 -- The only call site of the RETURNING kernel: the write runs, and each
 -- returned row decodes through the codec.
-runReturning : Db -> Codec a -> List ( String, String ) -> Result Error ( String, List SqlValue ) -> Task Error (List a)
-runReturning conn codec cols prepared =
+runReturning : Db -> String -> Codec a -> List ( String, String ) -> Result Error ( String, List SqlValue ) -> Task Error (List a)
+runReturning conn table codec cols prepared =
     case prepared of
 
         Err e ->
@@ -2374,7 +2635,7 @@ runReturning conn codec cols prepared =
                 conn
                 (sql ++ " RETURNING " ++ colNames cols)
                 params
-                [ ( "", "", cols ) ]
+                [ ( "", markedTable "" table, cols ) ]
                 |> Task.andThen
                        (\rows ->
                            Task.fromResult
@@ -2551,15 +2812,40 @@ dbDropTables =
 -- combine with `and_` / `or_` / `not_`; apply to a query with `where_`. Opaque
 -- (build it with the combinators; don't pattern-match).
 type Cond
-    = CondOp String String SqlValue
-    | CondNull String Bool
-    | CondIn String (List SqlValue)
+    = CondOp Leaf
+    | CondNull Leaf
+    | CondIn Leaf
     | CondAnd (List Cond)
     | CondOr (List Cond)
     | CondNot Cond
-    | CondCol String String String
-    | CondText String String String
+    | CondCol Leaf
+    | CondText Leaf
     | CondNest Nest
+
+-- One condition leaf. A named record, so the walk takes a leaf apart with one
+-- runtime narrowing instead of one per field (doc 14 §4.5, R6). `CondOp`:
+-- `col op value`; `CondNull`: `col`, `flag` (IS NULL); `CondIn`: `col`,
+-- `values`; `CondCol`: `col op text` (a column); `CondText`: `op` (the text
+-- condition), `col`, `text` (the needle).
+type alias Leaf =
+    { col : String
+    , op : String
+    , value : SqlValue
+    , values : List SqlValue
+    , text : String
+    , flag : Bool
+    }
+
+
+leafOf : String -> String -> SqlValue -> List SqlValue -> String -> Bool -> Leaf
+leafOf col op value values text flag =
+    { col = col
+    , op = op
+    , value = value
+    , values = values
+    , text = text
+    , flag = flag
+    }
 
 -- A condition that holds a store or a query: `whereLeft` / `whereRight`
 -- (kind "side"), `inQuery` / `notInQuery` (kind "in"), `exists` /
@@ -2601,7 +2887,16 @@ type Correlate
 -- | One output column of `aggregate`. Build it with `key`, `keyAs`, `countAs`,
 -- `countIfAs`, `countDistinctAs`, `sumAs`, `minAs` or `maxAs`. Opaque.
 type Agg
-    = Agg String String String Cond
+    = Agg AggSpec
+
+-- One `Agg`: its kind, result field, source column and (for `countIfAs`)
+-- condition. A named record, read with one runtime narrowing (doc 14 §4.5).
+type alias AggSpec =
+    { kind : String
+    , field : String
+    , col : String
+    , cond : Cond
+    }
 
 type Output
     = OutStar
@@ -2618,6 +2913,7 @@ type alias Source =
     , pk : String
     , cols : List ( String, String )
     , problems : List String
+    , nodes : List ( String, Value )
     }
 
 type alias QuerySpec =
@@ -2635,6 +2931,7 @@ type alias QuerySpec =
     , groups : List String
     , out : Output
     , outCols : List ( String, String )
+    , outNodes : List ( String, Value )
     , having : List Cond
     , latest : Maybe ( List String, String )
     }
@@ -2675,7 +2972,12 @@ sourceOf store =
     let
         s = storeRec store
     in
-        { table = s.name, pk = s.pk, cols = s.cols, problems = s.problems }
+        { table = s.name
+        , pk = s.pk
+        , cols = s.cols
+        , problems = s.problems
+        , nodes = s.nodes
+        }
 
 
 baseSpec : Source -> QuerySpec
@@ -2694,6 +2996,7 @@ baseSpec src =
     , groups = []
     , out = OutStar
     , outCols = src.cols
+    , outNodes = src.nodes
     , having = []
     , latest = Nothing
     }
@@ -2704,10 +3007,76 @@ rowDecoder codec groups =
     case groups of
 
         j :: _ ->
-            Codec.fromJson codec j
+            decodeRow codec j
 
         [] ->
             Err (Error.decode "Store: a result row had no columns")
+
+
+-- One row's JSON through the codec. A `Codec.maybe` field reads a value it
+-- cannot decode as `Nothing`, so a column that holds a value (not NULL) and
+-- comes back `Nothing` is an `Err` naming the column, never a silent
+-- `Nothing` (a stored value of another shape, a projection of another type).
+decodeRow : Codec r -> String -> Result Error r
+decodeRow codec j =
+    case Codec.fromJson codec j of
+
+        Err e ->
+            Err e
+
+        Ok record ->
+            case nullableCols (codecColumns codec) of
+
+                [] ->
+                    Ok record
+
+                cols ->
+                    case swallowedColumn cols j (Codec.toJson codec record) of
+
+                        "" ->
+                            Ok record
+
+                        col ->
+                            Err
+                                (Error.decode
+                                    ("Store: column \"" ++ col
+                                        ++ "\" holds a value its field's codec reads as Nothing (a stored value of another shape, or a projection into another type): repair the row, or read it into a field of its type"))
+
+
+nullableCols : List ( String, String ) -> List String
+nullableCols cols =
+    case cols of
+
+        [] ->
+            []
+
+        ( c, k ) :: rest ->
+            if kindNullable k then
+                c :: nullableCols rest
+
+            else
+                nullableCols rest
+
+
+-- The first nullable column that is not null in the row but null once the
+-- decoded record is encoded again, or "".
+swallowedColumn : List String -> String -> String -> String
+swallowedColumn cols row back =
+    case cols of
+
+        [] ->
+            ""
+
+        c :: rest ->
+            let
+                nullText = "\"" ++ c ++ "\":null"
+            in
+                if String.contains nullText back
+                    && not (String.contains nullText row) then
+                    c
+
+                else
+                    swallowedColumn rest row back
 
 
 -- | Add a condition. Multiple `where_` calls are AND-combined; use `and_` / `or_`
@@ -2719,40 +3088,43 @@ where_ c q =
 
 
 -- ── Condition leaves (each returns a `Cond`) ─────────────────────────────────
--- | `col = value`.
+-- | `col = value`. The value follows the column's kind, checked before the
+-- statement; a `SqlString` compared with an `Int`, `Float` or `Bool` column
+-- is read as that kind (`"42"`), and `SqlNull` is refused (use `isNull`).
+-- The same holds for `neq`, `gt`, `gte`, `lt`, `lte` and `inList`.
 eq : String -> SqlValue -> Cond
 eq col v =
-    CondOp col "=" v
+    CondOp (leafOf col "=" v [] "" False)
 
 
 -- | `col <> value`.
 neq : String -> SqlValue -> Cond
 neq col v =
-    CondOp col "<>" v
+    CondOp (leafOf col "<>" v [] "" False)
 
 
 -- | `col > value`.
 gt : String -> SqlValue -> Cond
 gt col v =
-    CondOp col ">" v
+    CondOp (leafOf col ">" v [] "" False)
 
 
 -- | `col >= value`.
 gte : String -> SqlValue -> Cond
 gte col v =
-    CondOp col ">=" v
+    CondOp (leafOf col ">=" v [] "" False)
 
 
 -- | `col < value`.
 lt : String -> SqlValue -> Cond
 lt col v =
-    CondOp col "<" v
+    CondOp (leafOf col "<" v [] "" False)
 
 
 -- | `col <= value`.
 lte : String -> SqlValue -> Cond
 lte col v =
-    CondOp col "<=" v
+    CondOp (leafOf col "<=" v [] "" False)
 
 
 -- | `col LIKE pattern`. The pattern is used as given: `%` and `_` are
@@ -2762,79 +3134,79 @@ lte col v =
 -- and match the same way on both dialects.
 like : String -> String -> Cond
 like col pat =
-    CondOp col "LIKE" (SqlString pat)
+    CondOp (leafOf col "LIKE" (SqlString pat) [] "" False)
 
 
 -- | `col` equals `text`, ignoring case (`LOWER(col) = LOWER(?)`). A text column
 -- only. SQLite's `LOWER` folds ASCII letters only; PostgreSQL folds all letters.
 eqCi : String -> String -> Cond
 eqCi col text =
-    CondText "eqCi" col text
+    CondText (leafOf col "eqCi" noValue [] text False)
 
 
 -- | `col` contains `needle`, case-sensitive on both dialects. `%`, `_` and `!`
 -- in the needle are literal. An empty needle matches every non-NULL row.
 contains : String -> String -> Cond
 contains col needle =
-    CondText "contains" col needle
+    CondText (leafOf col "contains" noValue [] needle False)
 
 
 -- | `col` contains `needle`, ignoring case. `%`, `_` and `!` in the needle are
 -- literal. An empty needle matches every non-NULL row.
 containsCi : String -> String -> Cond
 containsCi col needle =
-    CondText "containsCi" col needle
+    CondText (leafOf col "containsCi" noValue [] needle False)
 
 
 -- | `col` starts with `prefix`, case-sensitive on both dialects. An empty
 -- prefix matches every non-NULL row.
 startsWith : String -> String -> Cond
 startsWith col prefix =
-    CondText "startsWith" col prefix
+    CondText (leafOf col "startsWith" noValue [] prefix False)
 
 
 -- | `col` ends with `suffix`, case-sensitive on both dialects:
 -- `Store.endsWith "email" "@work.io"`. An empty suffix matches every non-NULL row.
 endsWith : String -> String -> Cond
 endsWith col suffix =
-    CondText "endsWith" col suffix
+    CondText (leafOf col "endsWith" noValue [] suffix False)
 
 
 -- | `left = right`, two columns of the same kind.
 eqCol : String -> String -> Cond
 eqCol left right =
-    CondCol "=" left right
+    CondCol (leafOf left "=" noValue [] right False)
 
 
 -- | `left <> right`, two columns of the same kind.
 neqCol : String -> String -> Cond
 neqCol left right =
-    CondCol "<>" left right
+    CondCol (leafOf left "<>" noValue [] right False)
 
 
 -- | `left > right`, two columns of the same kind:
 -- `Store.gtCol "last_staff_at" "customer_read_at"`.
 gtCol : String -> String -> Cond
 gtCol left right =
-    CondCol ">" left right
+    CondCol (leafOf left ">" noValue [] right False)
 
 
 -- | `left >= right`, two columns of the same kind.
 gteCol : String -> String -> Cond
 gteCol left right =
-    CondCol ">=" left right
+    CondCol (leafOf left ">=" noValue [] right False)
 
 
 -- | `left < right`, two columns of the same kind.
 ltCol : String -> String -> Cond
 ltCol left right =
-    CondCol "<" left right
+    CondCol (leafOf left "<" noValue [] right False)
 
 
 -- | `left <= right`, two columns of the same kind.
 lteCol : String -> String -> Cond
 lteCol left right =
-    CondCol "<=" left right
+    CondCol (leafOf left "<=" noValue [] right False)
 
 
 -- | A reference to one key of a JSON text column, usable wherever a column name
@@ -2852,19 +3224,19 @@ jsonText col jsonKey =
 -- | `col IS NULL`.
 isNull : String -> Cond
 isNull col =
-    CondNull col True
+    CondNull (leafOf col "" noValue [] "" True)
 
 
 -- | `col IS NOT NULL`.
 notNull : String -> Cond
 notNull col =
-    CondNull col False
+    CondNull (leafOf col "" noValue [] "" False)
 
 
 -- | `col IN (v1, v2, …)`. An empty list matches nothing.
 inList : String -> List SqlValue -> Cond
 inList col vs =
-    CondIn col vs
+    CondIn (leafOf col "" noValue vs "" False)
 
 
 -- ── Condition combinators ────────────────────────────────────────────────────
@@ -3048,7 +3420,11 @@ selectAs codec pairs q =
         spec = specOf q
     in
         Query
-            { spec | out = OutCols pairs, outCols = codecColumns codec }
+            { spec
+                | out = OutCols pairs
+                , outCols = codecColumns codec
+                , outNodes = schemaFields codec (codecColumns codec)
+            }
             (rowDecoder codec)
 
 
@@ -3080,6 +3456,7 @@ selectColumn col codec q =
                 | source = { source | problems = problems }
                 , out = OutCols [ ( "value", col ) ]
                 , outCols = codecColumns wrapped
+                , outNodes = schemaFields wrapped (codecColumns wrapped)
             }
             (rowDecoder wrapped)
 
@@ -3137,7 +3514,11 @@ aggregate codec aggs q =
         spec = specOf q
     in
         Query
-            { spec | out = OutAggs aggs, outCols = codecColumns codec }
+            { spec
+                | out = OutAggs aggs
+                , outCols = codecColumns codec
+                , outNodes = schemaFields codec (codecColumns codec)
+            }
             (rowDecoder codec)
 
 
@@ -3150,39 +3531,39 @@ noCond =
 -- column must be in `groupBy`.
 key : String -> Agg
 key col =
-    Agg "key" col col noCond
+    Agg { kind = "key", field = col, col = col, cond = noCond }
 
 
 -- | A group column (or `jsonText` reference) into the named result field.
 keyAs : String -> String -> Agg
 keyAs field col =
-    Agg "key" field col noCond
+    Agg { kind = "key", field = field, col = col, cond = noCond }
 
 
 -- | `COUNT(*)` into an `Int` field.
 countAs : String -> Agg
 countAs field =
-    Agg "count" field "" noCond
+    Agg { kind = "count", field = field, col = "", cond = noCond }
 
 
 -- | The number of rows in the group that match `cond`, into an `Int` field (0
 -- when none match).
 countIfAs : String -> Cond -> Agg
 countIfAs field cond =
-    Agg "countIf" field "" cond
+    Agg { kind = "countIf", field = field, col = "", cond = cond }
 
 
 -- | `COUNT(DISTINCT col)` into an `Int` field (NULL is not counted).
 countDistinctAs : String -> String -> Agg
 countDistinctAs field col =
-    Agg "countDistinct" field col noCond
+    Agg { kind = "countDistinct", field = field, col = col, cond = noCond }
 
 
 -- | The sum of an `Int` or `Float` column into a field of the same kind (0 for
 -- an empty group).
 sumAs : String -> String -> Agg
 sumAs field col =
-    Agg "sum" field col noCond
+    Agg { kind = "sum", field = field, col = col, cond = noCond }
 
 
 -- | The smallest value of a column (not a `Bool` column). The field needs
@@ -3190,14 +3571,14 @@ sumAs field col =
 -- by the database collation, which can differ between SQLite and PostgreSQL.
 minAs : String -> String -> Agg
 minAs field col =
-    Agg "min" field col noCond
+    Agg { kind = "min", field = field, col = col, cond = noCond }
 
 
 -- | The largest value of a column (not a `Bool` column). The field needs
 -- `Maybe` when the column is nullable or there is no `groupBy`.
 maxAs : String -> String -> Agg
 maxAs field col =
-    Agg "max" field col noCond
+    Agg { kind = "max", field = field, col = col, cond = noCond }
 
 
 -- | A condition on the aggregate results (`HAVING`). Name result fields:
@@ -3300,7 +3681,7 @@ sideNest side c =
 
 emptySource : Source
 emptySource =
-    { table = "", pk = "", cols = [], problems = [] }
+    { table = "", pk = "", cols = [], problems = [], nodes = [] }
 
 
 -- | `ORDER BY` a left column, ascending. Only on a join.
@@ -3368,13 +3749,13 @@ pairDecoder ca cb groups =
     case groups of
 
         [ ja, jb ] ->
-            case Codec.fromJson ca ja of
+            case decodeRow ca ja of
 
                 Err e ->
                     Err e
 
                 Ok a ->
-                    case Codec.fromJson cb jb of
+                    case decodeRow cb jb of
 
                         Err e ->
                             Err e
@@ -3391,7 +3772,7 @@ pairMaybeDecoder ca cb groups =
     case groups of
 
         [ ja, jb ] ->
-            case Codec.fromJson ca ja of
+            case decodeRow ca ja of
 
                 Err e ->
                     Err e
@@ -3401,7 +3782,7 @@ pairMaybeDecoder ca cb groups =
                         Ok ( a, Nothing )
 
                     else
-                        case Codec.fromJson cb jb of
+                        case decodeRow cb jb of
 
                             Err e ->
                                 Err e
@@ -3510,22 +3891,43 @@ groupsOf spec =
 
         OutStar ->
             if spec.joined then
-                [ ( "a__", "", spec.source.cols )
+                [ ( "a__", markedTable "" spec.source.table, spec.source.cols )
                 , ( "b__"
-                  , if spec.leftOuter then
-                        markerOf spec.right.cols spec.onPairs
+                  , markedTable
+                        (if spec.leftOuter then
+                            markerOf spec.right.cols spec.onPairs
 
-                    else
-                        ""
+                        else
+                            "")
+                        spec.right.table
                   , spec.right.cols
                   )
                 ]
 
             else
-                [ ( "", "", spec.outCols ) ]
+                [ ( "", markedTable "" spec.source.table, spec.outCols ) ]
 
         _ ->
-            [ ( "", "", spec.outCols ) ]
+            if spec.joined then
+                [ ( ""
+                  , markedTable
+                        ""
+                        (spec.source.table ++ " JOIN " ++ spec.right.table)
+                  , spec.outCols
+                  )
+                ]
+
+            else
+                [ ( "", markedTable "" spec.source.table, spec.outCols ) ]
+
+
+-- A group's marker column and the table its columns come from, as the read
+-- kernel takes them (`marker|table`): an identifier holds no `|`, so the
+-- kernel splits at the first one and names a column it cannot read as
+-- `table.column`.
+markedTable : String -> String -> String
+markedTable marker table =
+    marker ++ "|" ++ table
 
 
 markerOf : List ( String, String ) -> List ( String, String ) -> String
@@ -3991,7 +4393,7 @@ selectList ctx spec =
             Ok ( "COUNT(*) AS n", [], [] )
 
         OutCols pairs ->
-            case projection ctx spec.outCols pairs of
+            case projection ctx spec.outCols spec.outNodes pairs of
 
                 Err e ->
                     Err e
@@ -4010,7 +4412,7 @@ selectList ctx spec =
                              ctx
                              groupSqls
                              (not (List.isEmpty spec.groups))
-                             spec.outCols
+                             ( spec.outCols, spec.outNodes )
                              aggs
                              []
                              []
@@ -4064,15 +4466,15 @@ prefixedItems q cols acc =
 
 
 -- Each result column, read from the explicit source or the same-named column.
-projection : Ctx -> List ( String, String ) -> List ( String, String ) -> Result Error ( List String, List String )
-projection ctx outCols pairs =
+projection : Ctx -> List ( String, String ) -> List ( String, Value ) -> List ( String, String ) -> Result Error ( List String, List String )
+projection ctx outCols outNodes pairs =
     case pairsError outCols pairs [] of
 
         Just msg ->
             Err <| storeErr msg
 
         Nothing ->
-            projectionItems ctx outCols pairs [] []
+            projectionItems ctx outNodes outCols pairs [] []
 
 
 pairsError : List ( String, String ) -> List ( String, String ) -> List String -> Maybe String
@@ -4103,8 +4505,8 @@ pairsError outCols pairs seen =
                             pairsError outCols rest (rc :: seen)
 
 
-projectionItems : Ctx -> List ( String, String ) -> List ( String, String ) -> List String -> List String -> Result Error ( List String, List String )
-projectionItems ctx outCols pairs items refs =
+projectionItems : Ctx -> List ( String, Value ) -> List ( String, String ) -> List ( String, String ) -> List String -> List String -> Result Error ( List String, List String )
+projectionItems ctx outNodes outCols pairs items refs =
     case outCols of
 
         [] ->
@@ -4120,7 +4522,12 @@ projectionItems ctx outCols pairs items refs =
                         Err e
 
                     Ok ( rSql, _, sk ) ->
-                        case fitError rc rk sk of
+                        case deepFitError
+                                 rc
+                                 rk
+                                 sk
+                                 (lookupNode rc outNodes)
+                                 (nodeOf ctx srcName) of
 
                             Just msg ->
                                 Err <| storeErr ("select: " ++ msg)
@@ -4129,6 +4536,7 @@ projectionItems ctx outCols pairs items refs =
                                 if isIdent rc then
                                     projectionItems
                                         ctx
+                                        outNodes
                                         rest
                                         pairs
                                         ((rSql ++ " AS " ++ quoteAlias rc)
@@ -4201,15 +4609,19 @@ aliasKnown rc aliases =
             a == rc || aliasKnown rc rest
 
 
-aggItems : Ctx -> List String -> Bool -> List ( String, String ) -> List Agg -> List String -> List SqlValue -> List ( String, Ref ) -> Result Error ( List String, List SqlValue, List ( String, Ref ) )
-aggItems ctx groupSqls grouped outCols aggs items params aliases =
+aggItems : Ctx -> List String -> Bool -> ( List ( String, String ), List ( String, Value ) ) -> List Agg -> List String -> List SqlValue -> List ( String, Ref ) -> Result Error ( List String, List SqlValue, List ( String, Ref ) )
+aggItems ctx groupSqls grouped ( outCols, outNodes ) aggs items params aliases =
     case aggs of
 
         [] ->
             Ok ( List.reverse items, params, List.reverse aliases )
 
-        (Agg kind field col cond) :: rest ->
+        (Agg spec) :: rest ->
             let
+                kind = spec.kind
+                field = spec.field
+                col = spec.col
+                cond = spec.cond
                 rc = resolveCol outCols field
             in
                 case lookupKind rc outCols of
@@ -4249,17 +4661,54 @@ aggItems ctx groupSqls grouped outCols aggs items params aliases =
                                     Err e
 
                                 Ok ( expr, exprParams ) ->
-                                    aggItems
-                                        ctx
-                                        groupSqls
-                                        grouped
-                                        outCols
-                                        rest
-                                        ((expr ++ " AS " ++ quoteAlias rc)
-                                            :: items)
-                                        (params ++ exprParams)
-                                        (( rc, ( expr, exprParams, rk ) )
-                                            :: aliases)
+                                    case aggNodeError
+                                             ctx
+                                             kind
+                                             rc
+                                             (lookupNode rc outNodes)
+                                             col of
+
+                                        Just msg ->
+                                            Err
+                                                <| storeErr
+                                                       ("aggregate: " ++ msg)
+
+                                        Nothing ->
+                                            aggItems
+                                                ctx
+                                                groupSqls
+                                                grouped
+                                                ( outCols, outNodes )
+                                                rest
+                                                ((expr ++ " AS " ++ quoteAlias rc)
+                                                    :: items)
+                                                (params ++ exprParams)
+                                                (( rc, ( expr, exprParams, rk ) )
+                                                    :: aliases)
+
+
+-- A `key`, `minAs` or `maxAs` result reads its column's values, so
+-- its field's codec must read them (see `deepFitError`). A count and a sum
+-- are an Int or a Float, which the kind check covers.
+aggNodeError : Ctx -> String -> String -> Maybe Value -> String -> Maybe String
+aggNodeError ctx kind rc tn col =
+    if kind == "key" || kind == "min" || kind == "max" then
+        case ( tn, nodeOf ctx col ) of
+
+            ( Just t, Just src ) ->
+                case Codec.schemaFitError t src of
+
+                    Just msg ->
+                        Just ("field \"" ++ rc ++ "\": " ++ msg)
+
+                    Nothing ->
+                        Nothing
+
+            _ ->
+                Nothing
+
+    else
+        Nothing
 
 
 aggExpr : Ctx -> List String -> Bool -> String -> String -> String -> String -> Cond -> Result Error ( String, List SqlValue )
@@ -4549,7 +4998,7 @@ projectedRefs ctx spec =
     case spec.out of
 
         OutCols pairs ->
-            case projection ctx spec.outCols pairs of
+            case projection ctx spec.outCols spec.outNodes pairs of
 
                 Ok ( _, refs ) ->
                     refs
@@ -4652,6 +5101,8 @@ type alias Ref =
 type alias Ctx =
     { dialect : Dialect
     , cols : List ( String, String )
+    , nodes : List ( String, Value )
+    , rightNodes : List ( String, Value )
     , aliases : List ( String, Ref )
     , having : Bool
     , table : String
@@ -4668,6 +5119,8 @@ plainCtx : Dialect -> String -> List ( String, String ) -> Ctx
 plainCtx d table cols =
     { dialect = d
     , cols = cols
+    , nodes = []
+    , rightNodes = []
     , aliases = []
     , having = False
     , table = table
@@ -4683,12 +5136,14 @@ plainCtx d table cols =
 specCtx : Dialect -> Int -> String -> QuerySpec -> Ctx
 specCtx d depth qual spec =
     let
-        base = plainCtx d spec.source.table spec.source.cols
+        plain = plainCtx d spec.source.table spec.source.cols
+        base = { plain | nodes = spec.source.nodes }
     in
         if spec.joined then
             { base
                 | qual = "a"
                 , right = spec.right.cols
+                , rightNodes = spec.right.nodes
                 , joined = True
                 , rightNull = spec.leftOuter
                 , depth = depth
@@ -4702,60 +5157,91 @@ renderCond : Ctx -> Cond -> Result Error ( String, List SqlValue )
 renderCond ctx c =
     case c of
 
-        CondOp col op v ->
-            case refOf ctx col of
+        CondOp l ->
+            let
+                col = l.col
+                op = l.op
+                v = l.value
+            in
+                case refOf ctx col of
 
-                Err e ->
-                    Err e
+                    Err e ->
+                        Err e
 
-                Ok ( rSql, rParams, _ ) ->
-                    if isJsonRef col && not (isSqlString v) then
-                        Err
-                            <| storeErr
-                                   ("a value compared with jsonText \"" ++ col
-                                       ++ "\" must be SqlString")
+                    Ok ( rSql, rParams, k ) ->
+                        if isJsonRef col && not (isSqlString v) then
+                            Err
+                                <| storeErr
+                                       ("a value compared with jsonText \""
+                                           ++ col
+                                           ++ "\" must be SqlString")
 
-                    else
-                        Ok ( rSql ++ " " ++ op ++ " ?", rParams ++ [ v ] )
+                        else
+                            case condValue col k v of
 
-        CondNull col wantNull ->
-            case refOf ctx col of
+                                Err msg ->
+                                    Err <| storeErr msg
 
-                Err e ->
-                    Err e
+                                Ok bound ->
+                                    Ok
+                                        ( rSql ++ " " ++ op ++ " ?"
+                                        , rParams ++ [ bound ]
+                                        )
 
-                Ok ( rSql, rParams, _ ) ->
-                    if wantNull then
-                        Ok ( rSql ++ " IS NULL", rParams )
+        CondNull l ->
+            let
+                col = l.col
+                wantNull = l.flag
+            in
+                case refOf ctx col of
 
-                    else
-                        Ok ( rSql ++ " IS NOT NULL", rParams )
+                    Err e ->
+                        Err e
 
-        CondIn col vs ->
-            case refOf ctx col of
+                    Ok ( rSql, rParams, _ ) ->
+                        if wantNull then
+                            Ok ( rSql ++ " IS NULL", rParams )
 
-                Err e ->
-                    Err e
+                        else
+                            Ok ( rSql ++ " IS NOT NULL", rParams )
 
-                Ok ( rSql, rParams, _ ) ->
-                    case vs of
+        CondIn l ->
+            let
+                col = l.col
+                vs = l.values
+            in
+                case refOf ctx col of
 
-                        [] ->
-                            Ok ( "1 = 0", [] )
+                    Err e ->
+                        Err e
 
-                        _ ->
-                            if isJsonRef col && not (allSqlString vs) then
-                                Err
-                                    <| storeErr
-                                           ("values compared with jsonText \""
-                                               ++ col
-                                               ++ "\" must be SqlString")
+                    Ok ( rSql, rParams, k ) ->
+                        case vs of
 
-                            else
-                                Ok
-                                    ( rSql ++ " IN (" ++ placeholders vs ++ ")"
-                                    , rParams ++ vs
-                                    )
+                            [] ->
+                                Ok ( "1 = 0", [] )
+
+                            _ ->
+                                if isJsonRef col && not (allSqlString vs) then
+                                    Err
+                                        <| storeErr
+                                               ("values compared with jsonText \""
+                                                   ++ col
+                                                   ++ "\" must be SqlString")
+
+                                else
+                                    case condValues col k vs of
+
+                                        Err msg ->
+                                            Err <| storeErr msg
+
+                                        Ok bound ->
+                                            Ok
+                                                ( rSql ++ " IN ("
+                                                      ++ placeholders bound
+                                                      ++ ")"
+                                                , rParams ++ bound
+                                                )
 
         CondAnd cs ->
             renderGroup ctx "1 = 1" " AND " cs
@@ -4772,52 +5258,63 @@ renderCond ctx c =
                 Ok ( s, p ) ->
                     Ok ( "NOT (" ++ s ++ ")", p )
 
-        CondCol op left right ->
-            case refOf ctx left of
+        CondCol l ->
+            let
+                op = l.op
+                left = l.col
+                right = l.text
+            in
+                case refOf ctx left of
 
-                Err e ->
-                    Err e
+                    Err e ->
+                        Err e
 
-                Ok ( lSql, lParams, lk ) ->
-                    case refOf ctx right of
+                    Ok ( lSql, lParams, lk ) ->
+                        case refOf ctx right of
 
-                        Err e ->
-                            Err e
+                            Err e ->
+                                Err e
 
-                        Ok ( rSql, rParams, rk ) ->
-                            if kindBase lk /= kindBase rk then
-                                Err
-                                    <| storeErr
-                                           ("\"" ++ left ++ "\" is "
-                                               ++ kindBase lk
-                                               ++ " and \""
-                                               ++ right
-                                               ++ "\" is "
-                                               ++ kindBase rk
-                                               ++ ": compare columns of one kind")
+                            Ok ( rSql, rParams, rk ) ->
+                                if kindBase lk /= kindBase rk then
+                                    Err
+                                        <| storeErr
+                                               ("\"" ++ left ++ "\" is "
+                                                   ++ kindBase lk
+                                                   ++ " and \""
+                                                   ++ right
+                                                   ++ "\" is "
+                                                   ++ kindBase rk
+                                                   ++ ": compare columns of one kind")
 
-                            else
-                                Ok
-                                    ( lSql ++ " " ++ op ++ " " ++ rSql
-                                    , lParams ++ rParams
-                                    )
+                                else
+                                    Ok
+                                        ( lSql ++ " " ++ op ++ " " ++ rSql
+                                        , lParams ++ rParams
+                                        )
 
-        CondText kind col needle ->
-            case refOf ctx col of
+        CondText l ->
+            let
+                kind = l.op
+                col = l.col
+                needle = l.text
+            in
+                case refOf ctx col of
 
-                Err e ->
-                    Err e
+                    Err e ->
+                        Err e
 
-                Ok ( rSql, rParams, k ) ->
-                    if kindBase k /= "text" then
-                        Err
-                            <| storeErr
-                                   (kind ++ " \"" ++ col ++ "\": the column is "
-                                       ++ kindBase k
-                                       ++ ", and only text has a case")
+                    Ok ( rSql, rParams, k ) ->
+                        if kindBase k /= "text" then
+                            Err
+                                <| storeErr
+                                       (kind ++ " \"" ++ col
+                                           ++ "\": the column is "
+                                           ++ kindBase k
+                                           ++ ", and only text has a case")
 
-                    else
-                        Ok (textMatch ctx.dialect kind rSql rParams needle)
+                        else
+                            Ok (textMatch ctx.dialect kind rSql rParams needle)
 
         CondNest n ->
             if ctx.having then
@@ -5436,15 +5933,15 @@ writeWhere d name pk cols problems cond =
 
 
 -- `UPDATE t SET c = ? …` (or `c = c + ?` for `adjust`) `WHERE …`.
-prepareSet : Dialect -> String -> String -> List ( String, String ) -> List String -> Cond -> Bool -> List ( String, SqlValue ) -> Result Error ( String, List SqlValue )
-prepareSet d name pk cols problems cond relative sets =
+prepareSet : Dialect -> String -> String -> List ( String, String ) -> (String -> String -> SqlValue -> Maybe String) -> List String -> Cond -> Bool -> List ( String, SqlValue ) -> Result Error ( String, List SqlValue )
+prepareSet d name pk cols check problems cond relative sets =
     case writeWhere d name pk cols problems cond of
 
         Err e ->
             Err e
 
         Ok ( whereSql, whereParams ) ->
-            case setItems cols relative sets [] [] of
+            case setItems cols check relative sets [] [] of
 
                 Err e ->
                     Err e
@@ -5458,8 +5955,8 @@ prepareSet d name pk cols problems cond relative sets =
                         )
 
 
-setItems : List ( String, String ) -> Bool -> List ( String, SqlValue ) -> List String -> List SqlValue -> Result Error ( List String, List SqlValue )
-setItems cols relative sets items params =
+setItems : List ( String, String ) -> (String -> String -> SqlValue -> Maybe String) -> Bool -> List ( String, SqlValue ) -> List String -> List SqlValue -> Result Error ( List String, List SqlValue )
+setItems cols check relative sets items params =
     case sets of
 
         [] ->
@@ -5474,16 +5971,33 @@ setItems cols relative sets items params =
                     Nothing ->
                         Err <| unknownColErr field cols
 
-                    Just _ ->
+                    Just k ->
                         if not (isIdent col) then
                             Err
                                 <| storeErr
                                        ("column \"" ++ col
                                            ++ "\" is not a valid identifier")
 
+                        else if relative && adjustError col k /= Nothing then
+                            Err
+                                <| storeErr
+                                       ("adjust: "
+                                           ++ Maybe.withDefault
+                                                  ""
+                                                  (adjustError col k))
+
+                        else if not relative && check col k v /= Nothing then
+                            Err
+                                <| storeErr
+                                       ("updateFields: "
+                                           ++ Maybe.withDefault
+                                                  ""
+                                                  (check col k v))
+
                         else if relative then
                             setItems
                                 cols
+                                check
                                 relative
                                 rest
                                 ((col ++ " = " ++ col ++ " + ?") :: items)
@@ -5492,10 +6006,592 @@ setItems cols relative sets items params =
                         else
                             setItems
                                 cols
+                                check
                                 relative
                                 rest
                                 ((col ++ " = ?") :: items)
                                 (v :: params)
+
+
+-- ── Value kinds ──────────────────────────────────────────────────────────────
+-- The one rule for a `SqlValue` and a column, the same on both dialects, so a
+-- value of the wrong kind never reaches the database to be converted (SQLite's
+-- `CAST('abc' AS BIGINT)` is 0, a REAL in an INTEGER column truncates on one
+-- engine and rounds on the other):
+--
+-- * a text column takes `SqlString`;
+-- * an int column takes `SqlInt`;
+-- * a real column takes `SqlFloat` (finite) or `SqlInt`;
+-- * a bool column takes `SqlBool`;
+-- * a JSON (blob) column takes `SqlString`;
+-- * `SqlBytes`, `SqlTime`, `SqlDecimal` and `SqlMoney` fit no Store column
+--   (bind the text: `SqlString (Decimal.toString d)`);
+-- * NaN and Infinity fit no column.
+--
+-- A value WRITTEN into a column (`updateFields`, `setValue`, `setWhen`,
+-- `otherwise`, `const`, a `defaultWith` result, a declared default) is also
+-- checked against the field's codec: `SqlNull` only for a `Maybe` field, an
+-- enum column takes one of its names, and a JSON column takes JSON its codec
+-- reads. A value COMPARED with a column (`eq`, `neq`, `gt`, `gte`, `lt`,
+-- `lte`, `inList`, `findBy`, `delete`, an index predicate) follows the kind
+-- rule, except that a `SqlString` is read as an int, real or bool column's
+-- kind (`condValue`), and `SqlNull` is refused there: `col = NULL` is never
+-- true, so use `isNull` / `notNull`.
+valueKindError : String -> String -> SqlValue -> Maybe String
+valueKindError col kind v =
+    let
+        base = kindBase kind
+        ( tag, text ) = valueInfo v
+        fits =
+            if tag == "SqlString" then
+                base == "text" || base == "blob"
+
+            else if tag == "SqlInt" then
+                base == "int" || base == "real"
+
+            else if tag == "SqlFloat" then
+                base == "real"
+
+            else if tag == "SqlBool" then
+                base == "bool"
+
+            else
+                tag == "SqlNull"
+    in
+        if not fits then
+            Just
+                ("column \"" ++ col ++ "\" is " ++ base ++ ", and "
+                    ++ showValue v
+                    ++ " does not fit it ("
+                    ++ fitsText base
+                    ++ ")")
+
+        else if tag == "SqlFloat"
+            && (String.contains "Inf" text || String.contains "NaN" text) then
+            Just
+                ("column \"" ++ col
+                    ++ "\": NaN and Infinity fit no column (SQLite stores NaN as NULL)")
+
+        else
+            Nothing
+
+
+-- What a column of one base kind takes, for an error message.
+fitsText : String -> String
+fitsText base =
+    if base == "int" then
+        "an int column takes SqlInt"
+
+    else if base == "real" then
+        "a real column takes SqlFloat or SqlInt"
+
+    else if base == "bool" then
+        "a bool column takes SqlBool"
+
+    else if base == "blob" then
+        "a JSON column takes SqlString holding JSON"
+
+    else
+        "a text column takes SqlString"
+
+
+-- A value compared with a column (a condition leaf, an index predicate),
+-- as the value bound. A `SqlString` compared with an int, real or bool column
+-- is read as the column's kind, as `findBy` reads its text (`"42"`, `"1.5"`,
+-- `"true"` / `"false"`), so an id taken from a URL compares the same way on
+-- both dialects; text that is not a value of the kind is refused (SQLite
+-- would compare it and match nothing, PostgreSQL would fail).
+condValue : String -> String -> SqlValue -> Result String SqlValue
+condValue col kind v =
+    let
+        ( tag, text ) = valueInfo v
+        base = kindBase kind
+    in
+        if tag == "SqlNull" then
+            Err
+                ("column \"" ++ col
+                    ++ "\" is compared with SqlNull, and a comparison with NULL is never true: use isNull or notNull")
+
+        else if tag /= "SqlString" then
+            checkedCond col kind v
+
+        else if base == "int" then
+            case String.toInt text of
+
+                Just n ->
+                    Ok (SqlInt n)
+
+                Nothing ->
+                    Err (textNotKind col "int" text)
+
+        else if base == "real" then
+            case String.toFloat text of
+
+                Just f ->
+                    checkedCond col kind (SqlFloat f)
+
+                Nothing ->
+                    Err (textNotKind col "real" text)
+
+        else if base == "bool" then
+            if text == "true" then
+                Ok (SqlBool True)
+
+            else if text == "false" then
+                Ok (SqlBool False)
+
+            else
+                Err (textNotKind col "bool" text)
+
+        else
+            checkedCond col kind v
+
+
+checkedCond : String -> String -> SqlValue -> Result String SqlValue
+checkedCond col kind v =
+    case valueKindError col kind v of
+
+        Just msg ->
+            Err msg
+
+        Nothing ->
+            Ok v
+
+
+textNotKind : String -> String -> String -> String
+textNotKind col kind text =
+    "column \"" ++ col ++ "\" is " ++ kind ++ ", and the text "
+        ++ showValue (SqlString text)
+        ++ " is not a value of that kind"
+
+
+condValues : String -> String -> List SqlValue -> Result String (List SqlValue)
+condValues col kind vs =
+    case vs of
+
+        [] ->
+            Ok []
+
+        v :: rest ->
+            case condValue col kind v of
+
+                Err msg ->
+                    Err msg
+
+                Ok one ->
+                    case condValues col kind rest of
+
+                        Err msg ->
+                            Err msg
+
+                        Ok more ->
+                            Ok (one :: more)
+
+
+-- A value written into a column: the kind rule, `SqlNull` only into a
+-- nullable column, and the content the field's codec reads (an enum name,
+-- JSON of the right shape).
+-- The write check of one store: `writeValueError`, then, for JSON text
+-- written into a column whose schema leaves a part open (`{}`: a
+-- `taggedUnion`, a `result`, a `dict`, a `Json.Value` field), the store's own
+-- codec reads it (`openPartError`).
+writeCheck : StoreRec a -> String -> String -> SqlValue -> Maybe String
+writeCheck s col kind v =
+    let
+        ( tag, text ) = valueInfo v
+    in
+        case writeValueError s.nodes col kind v of
+
+            Just msg ->
+                Just msg
+
+            Nothing ->
+                if tag == "SqlString" && kindBase kind == "blob"
+                    && hasOpenPart col s.nodes then
+                    case JD.decodeString JD.value text of
+
+                        Ok json ->
+                            openPartError s col json
+
+                        Err _ ->
+                            Nothing
+
+                else
+                    Nothing
+
+
+-- Whether the column's schema leaves a part open (`{}`).
+hasOpenPart : String -> List ( String, Value ) -> Bool
+hasOpenPart col nodes =
+    case lookupNode col nodes of
+
+        Just schema ->
+            String.contains "{}" (JE.encode 0 schema)
+
+        Nothing ->
+            False
+
+
+-- A record of every field's zero with `json` in column `col`, read by the
+-- store's codec: an `Err` when the codec does not read it, or when it reads
+-- it as `Nothing`. When a sibling field has no zero the record cannot be
+-- built, and the read check (`decodeRow`) stays the guard.
+openPartError : StoreRec a -> String -> Value -> Maybe String
+openPartError s col json =
+    case zerosWith col json s.cols (Codec.fieldZeros s.codec) of
+
+        Nothing ->
+            Nothing
+
+        Just pairs ->
+            case Codec.fromJson s.codec (JE.encode 0 (JE.object pairs)) of
+
+                Err e ->
+                    Just
+                        ("column \"" ++ col
+                            ++ "\": its codec does not read the value: "
+                            ++ Error.toString e)
+
+                Ok record ->
+                    if JE.encode 0 json /= "null"
+                        && fieldIsNull col (Codec.toJson s.codec record) then
+                        Just
+                            ("column \"" ++ col
+                                ++ "\": its codec reads the value as Nothing")
+
+                    else
+                        Nothing
+
+
+zerosWith : String -> Value -> List ( String, String ) -> List ( String, Value ) -> Maybe (List ( String, Value ))
+zerosWith col json cols zeros =
+    case cols of
+
+        [] ->
+            Just []
+
+        ( c, k ) :: rest ->
+            case zeroOf col json c k zeros of
+
+                Nothing ->
+                    Nothing
+
+                Just z ->
+                    case zerosWith col json rest zeros of
+
+                        Nothing ->
+                            Nothing
+
+                        Just more ->
+                            Just (( c, z ) :: more)
+
+
+zeroOf : String -> Value -> String -> String -> List ( String, Value ) -> Maybe Value
+zeroOf col json c k zeros =
+    if c == col then
+        Just json
+
+    else
+        case lookupZero c zeros of
+
+            Just z ->
+                Just z
+
+            Nothing ->
+                if kindNullable k then
+                    Just JE.null
+
+                else
+                    Nothing
+
+
+fieldIsNull : String -> String -> Bool
+fieldIsNull col json =
+    String.contains ("\"" ++ col ++ "\":null") json
+
+
+writeValueError : List ( String, Value ) -> String -> String -> SqlValue -> Maybe String
+writeValueError nodes col kind v =
+    let
+        ( tag, text ) = valueInfo v
+    in
+        case valueKindError col kind v of
+
+            Just msg ->
+                Just msg
+
+            Nothing ->
+                if tag == "SqlNull" then
+                    if kindNullable kind then
+                        Nothing
+
+                    else
+                        Just
+                            ("column \"" ++ col ++ "\" is a required "
+                                ++ kindBase kind
+                                ++ " column (not a Maybe field), so it takes no SqlNull")
+
+                else if tag == "SqlString" then
+                    textContentError nodes col kind text
+
+                else
+                    Nothing
+
+
+-- The text of a `SqlString` written into a text or JSON column, checked
+-- against the field's codec: an enum column takes one of its names, a JSON
+-- column takes JSON that its codec reads.
+textContentError : List ( String, Value ) -> String -> String -> String -> Maybe String
+textContentError nodes col kind text =
+    if kindBase kind == "blob" then
+        case JD.decodeString JD.value text of
+
+            Err _ ->
+                Just
+                    ("column \"" ++ col ++ "\" is JSON, and "
+                        ++ showValue (SqlString text)
+                        ++ " is not JSON")
+
+            Ok json ->
+                nodeValueError nodes col json
+
+    else
+        nodeValueError nodes col (JE.string text)
+
+
+nodeValueError : List ( String, Value ) -> String -> Value -> Maybe String
+nodeValueError nodes col json =
+    case lookupNode col nodes of
+
+        Just node ->
+            case Codec.schemaValueError node json of
+
+                Just msg ->
+                    Just
+                        ("column \"" ++ col
+                            ++ "\": its codec does not read the value: "
+                            ++ msg)
+
+                Nothing ->
+                    Nothing
+
+        Nothing ->
+            Nothing
+
+
+-- The JSON Schema of each column of a record codec (its field's part of
+-- `Codec.jsonSchema`), read once when the store or the projection is built.
+schemaFields : Codec a -> List ( String, String ) -> List ( String, Value )
+schemaFields codec cols =
+    let
+        js = Codec.jsonSchema codec
+    in
+        schemaFieldsOf js.schema cols
+
+
+schemaFieldsOf : Value -> List ( String, String ) -> List ( String, Value )
+schemaFieldsOf schema cols =
+    case cols of
+
+        [] ->
+            []
+
+        ( c, _ ) :: rest ->
+            case JD.decodeValue (JD.at [ "properties", c ] JD.value) schema of
+
+                Ok part ->
+                    ( c, part ) :: schemaFieldsOf schema rest
+
+                Err _ ->
+                    schemaFieldsOf schema rest
+
+
+-- The JSON Schema of column `col`, when the store has one.
+lookupNode : String -> List ( String, Value ) -> Maybe Value
+lookupNode col nodes =
+    case nodes of
+
+        [] ->
+            Nothing
+
+        ( c, n ) :: rest ->
+            if c == col then
+                Just n
+
+            else
+                lookupNode col rest
+
+
+-- Each ( column, value ) written into a store, checked (see `writeValueError`).
+writesError : List ( String, String ) -> (String -> String -> SqlValue -> Maybe String) -> List ( String, SqlValue ) -> Maybe String
+writesError cols check writes =
+    case writes of
+
+        [] ->
+            Nothing
+
+        ( c, v ) :: rest ->
+            let
+                col = resolveCol cols c
+            in
+                case lookupKind col cols of
+
+                    Just k ->
+                        case check col k v of
+
+                            Just msg ->
+                                Just msg
+
+                            Nothing ->
+                                writesError cols check rest
+
+                    Nothing ->
+                        writesError cols check rest
+
+
+-- The `defaultWith` values of one insert, each checked against its column.
+checkedComputed : StoreRec a -> Result Error (List ( String, SqlValue ))
+checkedComputed s =
+    let
+        values = computedValues s.computed
+    in
+        case writesError s.cols (writeCheck s) values of
+
+            Just msg ->
+                Err <| storeErr ("defaultWith: " ++ msg)
+
+            Nothing ->
+                Ok values
+
+
+-- A SqlValue as Sky source, for an error message.
+showValue : SqlValue -> String
+showValue v =
+    let
+        ( tag, text ) = valueInfo v
+    in
+        if tag == "SqlString" then
+            "SqlString \"" ++ String.left 40 text
+                ++ (if String.length text > 40 then
+                       "…\""
+
+                   else
+                       "\"")
+
+        else if text == "" then
+            tag
+
+        else
+            tag ++ " " ++ text
+
+
+-- A SqlValue's constructor and, for the two whose value a check reads (a
+-- `SqlString`'s text, a `SqlFloat` for NaN and Infinity), its value as text,
+-- read here once, so the checks above read a typed pair instead of each
+-- matching the payload (doc 14 §4.5).
+valueInfo : SqlValue -> ( String, String )
+valueInfo v =
+    case v of
+
+        SqlString t ->
+            ( "SqlString", t )
+
+        SqlFloat f ->
+            ( "SqlFloat", String.fromFloat f )
+
+        SqlInt _ ->
+            ( "SqlInt", "" )
+
+        SqlBool _ ->
+            ( "SqlBool", "" )
+
+        SqlBytes _ ->
+            ( "SqlBytes", "" )
+
+        SqlDecimal _ ->
+            ( "SqlDecimal", "" )
+
+        SqlTime _ ->
+            ( "SqlTime", "" )
+
+        SqlMoney _ ->
+            ( "SqlMoney", "" )
+
+        SqlNull _ ->
+            ( "SqlNull", "" )
+
+
+-- A source read into a result field: the kinds (`fitError`), then the
+-- codecs, so a `Maybe` field never reads a value it cannot decode as Nothing.
+deepFitError : String -> String -> String -> Maybe Value -> Maybe Value -> Maybe String
+deepFitError rc rk sk tn sn =
+    case fitError rc rk sk of
+
+        Just msg ->
+            Just msg
+
+        Nothing ->
+            case ( tn, sn ) of
+
+                ( Just t, Just src ) ->
+                    case Codec.schemaFitError t src of
+
+                        Just msg ->
+                            Just ("field \"" ++ rc ++ "\": " ++ msg)
+
+                        Nothing ->
+                            Nothing
+
+                _ ->
+                    Nothing
+
+
+-- The codec description of a query reference (see `colRef`): a column of
+-- the store or of a join side, or a `jsonText` reference (text).
+nodeOf : Ctx -> String -> Maybe Value
+nodeOf ctx name =
+    if isJsonRef name then
+        Just (Codec.jsonSchema Codec.string).schema
+
+    else if not ctx.joined then
+        lookupNode (resolveCol ctx.cols name) ctx.nodes
+
+    else
+        case String.split "." name of
+
+            [ q, bare ] ->
+                if q == "b" then
+                    lookupNode (resolveCol ctx.right bare) ctx.rightNodes
+
+                else
+                    lookupNode (resolveCol ctx.cols bare) ctx.nodes
+
+            _ ->
+                if ctx.side == "right"
+                    || (ctx.side /= "left" && hasCol name ctx.right
+                           && not (hasCol name ctx.cols)) then
+                    lookupNode (resolveCol ctx.right name) ctx.rightNodes
+
+                else
+                    lookupNode (resolveCol ctx.cols name) ctx.nodes
+
+
+-- `adjust` adds to a required Int or Float column: a NULL plus a delta is
+-- NULL, so a nullable column would stay NULL with the row counted as changed.
+adjustError : String -> String -> Maybe String
+adjustError col kind =
+    if kindBase kind /= "int" && kindBase kind /= "real" then
+        Just
+            ("column \"" ++ col ++ "\" is " ++ kindBase kind
+                ++ ", and adjust adds to an Int or Float column")
+
+    else if kindNullable kind then
+        Just
+            ("column \"" ++ col
+                ++ "\" is nullable, and NULL plus a delta stays NULL: adjust needs a required Int or Float column")
+
+    else
+        Nothing
 
 
 -- ── Names ────────────────────────────────────────────────────────────────────
@@ -5903,12 +6999,12 @@ dbAutoMigrate =
     Ffi.kernel "Db_autoMigrate"
 
 
-dbExecObjectMany : Db -> String -> List ( String, String ) -> List Value -> Task Error Int
+dbExecObjectMany : Db -> String -> List ( String, String ) -> List Value -> List (List ( String, SqlValue )) -> Task Error Int
 dbExecObjectMany =
     Ffi.kernel "Db_execObjectMany"
 
 
-dbUpsertObject : Db -> String -> List ( String, String ) -> String -> Value -> String -> Task Error Int
+dbUpsertObject : Db -> String -> List ( String, String ) -> String -> Value -> String -> List ( String, SqlValue ) -> Task Error Int
 dbUpsertObject =
     Ffi.kernel "Db_upsertObject"
 
@@ -5933,7 +7029,7 @@ dbDialect =
     Ffi.kernel "Db_dialect"
 
 
-dbObjectSqlValues : List ( String, String ) -> Value -> List SqlValue
+dbObjectSqlValues : List ( String, String ) -> Value -> Result Error (List SqlValue)
 dbObjectSqlValues =
     Ffi.kernel "Db_objectSqlValues"
 

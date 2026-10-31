@@ -238,11 +238,14 @@ The rules, all checked before any statement:
   needs a nullable target). `setWhen target cond value Store.keep` leaves the
   other rows as they are; `Store.otherwise v` sets `v` on them. Each CASE
   parameter is cast to the column type, so it works on PostgreSQL for `Int` and
-  `Bool` columns. An empty list runs nothing and returns 0.
+  `Bool` columns. Every `setValue`, `setWhen` and `otherwise` value follows the
+  value rule below. An empty list runs nothing and returns 0.
 - `copyInto`: the source is any query, read as a subquery. `from` names a column
   of its rows (after `select` / `aggregate`, a result field), `const` binds one
-  value for every row. Kinds match, a nullable source needs a nullable target,
-  every required target column without a default is mapped, and so is every
+  value for every row. A `from` column fits its target as a `select` source
+  fits its field (kinds and codecs, see Projection below), a `const` value
+  follows the value rule below, every required target column without a default
+  is mapped, and so is every
   `defaultWith` column (the copy does not compute it). A `serial` column is never
   mapped. A join source needs `select` first. `copyIntoOrIgnore` skips a row that
   breaks a unique key.
@@ -252,6 +255,53 @@ The rules, all checked before any statement:
   is an `Err`, never an empty list. An empty `updateFieldsReturning` set list is
   an `Err`. Inside a GET server-side render every one of these writes is
   suppressed, as `Db.exec` is.
+
+**Value kinds.** A `SqlValue` never reaches the database to be converted:
+SQLite's `CAST('abc' AS BIGINT)` is 0, and a `2.7` in an integer column
+truncates on SQLite and rounds on PostgreSQL. So one rule, the same on both
+dialects, is checked before any statement:
+
+| Column | Takes |
+|---|---|
+| text (`String`, an enum) | `SqlString` |
+| int (`Int`) | `SqlInt` |
+| real (`Float`) | `SqlFloat` (finite) or `SqlInt` |
+| bool (`Bool`) | `SqlBool` |
+| JSON (a list, record or custom type field) | `SqlString` holding JSON |
+
+`SqlBytes`, `SqlTime`, `SqlDecimal` and `SqlMoney` fit no Store column (bind
+the text, `SqlString (Decimal.toString d)`), and NaN and Infinity fit none
+(SQLite stores NaN as NULL).
+
+- **A written value** (`updateFields`, `setFields`, `setValue`, `setWhen`,
+  `otherwise`, `const`, a `defaultWith` result) is also checked against the
+  field's codec: `SqlNull` only into a `Maybe` field, an enum column takes one
+  of its names, and a JSON column takes JSON its codec reads
+  (`SqlString "[\"a\"]"` into a `List Int` field is refused). A JSON column
+  whose JSON Schema leaves a part open (a custom type, a `Result`, a `Dict`)
+  is checked by the store's codec reading the value, so JSON of another
+  custom type is refused too.
+- **A compared value** (`eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `inList`,
+  `findBy`, `delete`, a `uniqueWhere` predicate) follows the table, but a
+  `SqlString` compared with an int, real or bool column is read as the
+  column's kind (`"42"`, `"1.5"`, `"true"`), so an id taken from a URL compares
+  the same way on both dialects. Text that is not a value of the kind is an
+  `Err`. `SqlNull` is refused: `col = NULL` is never true, so use `isNull` or
+  `notNull`.
+- **A declared default** fits its column: `defaultText` a text column (an
+  enum's default is one of its names) or a JSON column (JSON its codec reads),
+  `defaultInt` an `Int` or `Float` column, `defaultFloat` a `Float` column,
+  `defaultBool` a `Bool` column. `migrate` writes the default into the rows
+  that exist, so a default that does not fit would give every old row a value
+  that does not read back. A `Schema.Table` default follows the same rule
+  (`createTable`, `createSchema` and `toProject` refuse it), and so does an
+  `addColumn` op in a migration file.
+- `adjust` adds to a required `Int` or `Float` column: NULL plus a delta stays
+  NULL.
+
+A codec's own encoding is checked too: a value whose JSON is not of the
+column's kind (an encoder and a shape that disagree) is an `Err` naming the
+column, never `0`, `false` or the value's Go text.
 
 Counters that the database keeps by itself (an aggregate table kept current by
 triggers) stay raw SQL: write the trigger in a migration.
@@ -273,7 +323,8 @@ Leaves (`eq`/`neq`/`gt`/`gte`/`lt`/`lte`/`like`/`isNull`/`notNull`/`inList "col"
 combine with `and_`/`or_`/`not_`; multiple `where_` clauses AND together (so OR /
 nesting is first-class). `Store.sqlOf codec value` filters by a **typed** value
 (enum / `Money` / `Time` / a `Codec.map` wrapper) via its codec. Whole-table /
-single-row shortcuts: `all` / `findBy`. `Store.toSql conn q` returns the SQL text
+single-row shortcuts: `all` / `findBy` (its text is read as the column's
+kind: `Store.findBy conn notes "id" "42"` on an `Int` key). `Store.toSql conn q` returns the SQL text
 (with `?`) and the parameters a query renders on that connection's dialect, or
 the `Err` it would fail with.
 
@@ -383,11 +434,32 @@ Store.query orders
     |> Store.toList conn
 ```
 
-A nullable column needs a `Maybe` field. With `distinct` and a projection,
+A nullable column needs a `Maybe` field. A field's codec must read every value
+its source column holds, because a `Codec.maybe` field reads a value it cannot
+decode as `Nothing`: a `Maybe x` field reads a source `x` or `Maybe x`, a
+`String` field reads a `String` or an enum, a `Float` field an `Int`, an enum
+field an enum whose names it all has, and a list, record or custom type is
+compared part by part. A `List Int` column into a `Maybe (List String)` field,
+or a `String` column into a `Maybe` enum field, is an `Err` before any
+statement. The same rule holds for `selectAs`, `selectColumn`, a `key`,
+`minAs` or `maxAs` result, a `copyInto` `from` column and `setCol`. With `distinct` and a projection,
 every order column must be a selected column. `latestPer` never picks a NULL as
 the newest, breaks a tie by the larger primary key, and does not combine with
 `distinct`, `groupBy` or `aggregate`. `count` counts the rows such a query
 returns.
+
+**What a read refuses.** Each stored value is read by its column's kind. SQL
+NULL is `Nothing`. A value that does not read as the kind (`'abc'` in an
+integer column, text that is not JSON in a JSON column, `2` in a bool column)
+is an `Err` naming the table, the column and the kind, never `Nothing`. The
+shapes earlier versions wrote still read: an integer stored as text (`'5'`, a
+v0.28 nested `Maybe (Maybe Int)`), an integral number in a float form, a bool
+stored as `1` / `0` on SQLite or `true` / `false` on PostgreSQL, and a
+`defaultNow` timestamp, which is text. A column that holds a value (not NULL)
+which its `Maybe` field's codec reads as `Nothing` (JSON of another custom
+type, for example) is an `Err` naming the column too. A `selectRaw` result
+must hold every codec column (write `NULL AS col` for a `Maybe` field it
+leaves out).
 
 **NULL ordering.** An order term on a nullable column sorts NULLs first
 ascending and last descending, on both dialects (SQLite's own default, now

@@ -509,33 +509,89 @@ func jsonObjFields(v any) (map[string]any, bool) {
 	return m, true
 }
 
-// rawToSqlArg converts a JSON raw value to a driver arg per column kind.
-func rawToSqlArg(raw any, kind string) any {
+// rawToSqlArg converts a JSON raw value (a codec's encoding of one field) to
+// a driver arg per column kind. The value must be of the kind: an int column
+// takes an integral number, a real column a number, a bool column a bool, a
+// text column a string, and a JSON (blob) column any JSON value. Anything
+// else is an error naming the column, never a converted value: this used to
+// write 0 for a non-number into an int column, false for a non-bool, and the
+// Go `%v` text of a non-string into a text column, all with no error. A
+// codec's encoder writes the kind its shape declares, so the error means a
+// codec whose encoder and shape disagree.
+func rawToSqlArg(raw any, kind, col string) (any, error) {
 	if raw == nil {
-		return nil
+		return nil, nil
+	}
+	refuse := func() (any, error) {
+		return nil, fmt.Errorf("column %q is %s, and the codec encoded %s, which is not a value of that kind",
+			col, kind, codecShortJSON(raw))
 	}
 	switch kind {
 	case "blob":
 		b, err := json.Marshal(raw)
 		if err != nil {
-			return ""
+			return nil, fmt.Errorf("column %q is JSON, and the value does not encode as JSON: %v", col, err)
 		}
-		return string(b)
+		return string(b), nil
 	case "int":
-		return int64(AsIntOrZero(raw))
+		switch n := raw.(type) {
+		case int:
+			return int64(n), nil
+		case int64:
+			return n, nil
+		}
+		if n, err := jsonDecodeInt(raw); err == nil {
+			return n, nil
+		}
+		return refuse()
 	case "real":
-		return AsFloatOrZero(raw)
+		switch n := raw.(type) {
+		case int:
+			return float64(n), nil
+		case int64:
+			return float64(n), nil
+		}
+		if f, ok := jsonDecodeFloat(raw); ok {
+			return f, nil
+		}
+		return refuse()
 	case "bool":
 		if b, ok := raw.(bool); ok {
-			return b
+			return b, nil
 		}
-		return AsIntOrZero(raw) != 0
+		return refuse()
 	default: // text
 		if s, ok := raw.(string); ok {
-			return s
+			return s, nil
 		}
-		return fmt.Sprintf("%v", raw)
+		return refuse()
 	}
+}
+
+// codecShortJSON is a value for an error message: its JSON, cut at 40 bytes.
+func codecShortJSON(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%T", v)
+	}
+	return codecShortText(string(b))
+}
+
+func codecShortText(s string) string {
+	if len(s) > 40 {
+		return s[:40] + "…"
+	}
+	return s
+}
+
+// codecRecordArgs is rawToSqlArg over the named columns of one record, with
+// the verb that reports an error.
+func codecRecordArg(verb string, fields map[string]any, name, base string) (any, error) {
+	v, err := rawToSqlArg(fields[name], base, name)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", verb, err)
+	}
+	return v, nil
 }
 
 // storeWriteResult runs an insert-shaped statement and produces the Int the
@@ -634,8 +690,12 @@ func Db_execObject(connArg, tableArg, colspecArg, objArg, pkArg, pkKindArg any) 
 			t := AsTuple2(cs)
 			name := AsString(t.V0)
 			base, _ := codecSplitKind(AsString(t.V1))
+			arg, err := codecRecordArg("Store.insert", fields, name, base)
+			if err != nil {
+				return Err[any, any](ErrInvalidInput(err.Error()))
+			}
 			cols = append(cols, name)
-			params = append(params, rawToSqlArg(fields[name], base))
+			params = append(params, arg)
 		}
 		ph := make([]string, len(cols))
 		for i := range ph {
@@ -662,7 +722,10 @@ func Db_execObjectWith(connArg, tableArg, colspecArg, objArg, extraArg, pkArg, p
 		if !ok {
 			return Err[any, any](ErrInvalidInput("Store.insert: value is not a record"))
 		}
-		cols, params := codecInsertColumns(d.driver, colspecArg, fields)
+		cols, params, err := codecInsertColumns("Store.insert", d.driver, colspecArg, fields)
+		if err != nil {
+			return Err[any, any](ErrInvalidInput(err.Error()))
+		}
 		for _, ex := range AsList(extraArg) {
 			t := AsTuple2(ex)
 			cols = append(cols, AsString(t.V0))
@@ -690,7 +753,11 @@ func Db_execObjectWith(connArg, tableArg, colspecArg, objArg, extraArg, pkArg, p
 // Shares Store.insert's return contract via storeWriteResult: an integer PK
 // yields the row's key, anything else yields rows affected. A DO NOTHING that
 // did nothing returns 0.
-func Db_upsertObject(connArg, tableArg, colspecArg, pkArg, objArg, pkKindArg any) any {
+//
+// extraArg is the `defaultWith` columns, ( column, SqlValue ) pairs computed
+// in Sky: they are INSERT columns, as for Db_execObjectWith, and an update
+// keeps the value the row holds (a computed value is a default, not a field).
+func Db_upsertObject(connArg, tableArg, colspecArg, pkArg, objArg, pkKindArg, extraArg any) any {
 	return func() any {
 		d, isDb := connArg.(*SkyDb)
 		if !isDb {
@@ -701,7 +768,15 @@ func Db_upsertObject(connArg, tableArg, colspecArg, pkArg, objArg, pkKindArg any
 			return Err[any, any](ErrInvalidInput("Store.upsert: value is not a record"))
 		}
 		pk := AsString(pkArg)
-		cols, params := codecInsertColumns(d.driver, colspecArg, fields)
+		cols, params, err := codecInsertColumns("Store.upsert", d.driver, colspecArg, fields)
+		if err != nil {
+			return Err[any, any](ErrInvalidInput(err.Error()))
+		}
+		for _, ex := range AsList(extraArg) {
+			t := AsTuple2(ex)
+			cols = append(cols, AsString(t.V0))
+			params = append(params, t.V1) // a Sky SqlValue ADT — Db_exec binds it
+		}
 		// A stamped `dnow` column is an INSERT column only: an update keeps
 		// the stamp the row was created with.
 		setParts := []string{}
@@ -731,23 +806,37 @@ func Db_upsertObject(connArg, tableArg, colspecArg, pkArg, objArg, pkKindArg any
 
 // Db_execObjectMany bulk-inserts many records in ONE multi-row INSERT (for
 // time-series / batch writes) — `Store.insertMany`. All rows share the colspec;
-// each row's values bind positionally. Empty list is a no-op.
-func Db_execObjectMany(connArg, tableArg, colspecArg, objsArg any) any {
+// each row's values bind positionally. Empty list is a no-op. extrasArg holds
+// one list of `defaultWith` ( column, SqlValue ) pairs per record, computed in
+// Sky for that row, appended as Db_execObjectWith appends them.
+func Db_execObjectMany(connArg, tableArg, colspecArg, objsArg, extrasArg any) any {
 	return func() any {
 		objs := AsList(objsArg)
 		if len(objs) == 0 {
 			return Ok[any, any](0)
 		}
+		extras := AsList(extrasArg)
+		if len(extras) != len(objs) {
+			return Err[any, any](ErrInvalidInput("Store.insertMany: one defaultWith list per record is needed"))
+		}
 		driver := dbDriverOf(connArg)
 		var cols []string
 		rowPh := make([]string, 0, len(objs))
 		params := []any{}
-		for _, obj := range objs {
+		for i, obj := range objs {
 			fields, ok := jsonObjFields(obj)
 			if !ok {
 				return Err[any, any](ErrInvalidInput("Store.insertMany: a value is not a record"))
 			}
-			rowCols, rowParams := codecInsertColumns(driver, colspecArg, fields)
+			rowCols, rowParams, err := codecInsertColumns("Store.insertMany", driver, colspecArg, fields)
+			if err != nil {
+				return Err[any, any](ErrInvalidInput(err.Error()))
+			}
+			for _, ex := range AsList(extras[i]) {
+				t := AsTuple2(ex)
+				rowCols = append(rowCols, AsString(t.V0))
+				rowParams = append(rowParams, t.V1)
+			}
 			cols = rowCols
 			rowPh = append(rowPh, "("+strings.TrimSuffix(strings.Repeat("?, ", len(rowCols)), ", ")+")")
 			params = append(params, rowParams...)
@@ -765,7 +854,7 @@ func Db_execObjectMany(connArg, tableArg, colspecArg, objsArg any) any {
 // `dnow` column (Store.defaultNow / touchOnUpdate) takes the app clock on
 // SQLite and is left out on PostgreSQL (see codecNowValue). Every other
 // column binds the record's value.
-func codecInsertColumns(driver string, colspecArg any, fields map[string]any) ([]string, []any) {
+func codecInsertColumns(verb, driver string, colspecArg any, fields map[string]any) ([]string, []any, error) {
 	cols := []string{}
 	params := []any{}
 	for _, cs := range AsList(colspecArg) {
@@ -780,43 +869,98 @@ func codecInsertColumns(driver string, colspecArg any, fields map[string]any) ([
 			continue
 		}
 		base, _ := codecSplitKind(rawKind)
+		arg, err := codecRecordArg(verb, fields, name, base)
+		if err != nil {
+			return nil, nil, err
+		}
 		cols = append(cols, name)
-		params = append(params, rawToSqlArg(fields[name], base))
+		params = append(params, arg)
 	}
-	return cols, params
+	return cols, params, nil
+}
+
+// codecRowIsNull reports whether a row value is SQL NULL (or absent).
+func codecRowIsNull(raw any, present bool) bool {
+	if !present || raw == nil {
+		return true
+	}
+	tag, _ := anyMaybeView(raw) // NULL comes back as a Sky Nothing
+	return tag == 1
 }
 
 // rowValToJsonRaw converts a DB row value to a JSON raw value per column kind.
-func rowValToJsonRaw(raw any, present bool, kind string) any {
-	if !present || raw == nil {
-		return nil
+// SQL NULL is JSON null. A value that does not read as the kind is an error
+// naming the column (`col`, the result name: Std.Db.Store puts the table in
+// front of it), never JSON null: a `Codec.maybe` decoder reads null as
+// Nothing, so a stored value it could not parse used to read back as Nothing
+// with no error. A column missing from the result row is an error too (a
+// `selectRaw` query must return every codec column).
+//
+// What each kind reads, including the shapes earlier Sky versions wrote:
+//
+//   - int: an integer, or an integral number in any float form ("5.0",
+//     "1e+06"), which is how an int written as text by a v0.28 nested
+//     `Maybe (Maybe Int)` column, or an integral float, reads back;
+//   - real: any number (an integer included);
+//   - bool: true/false (PostgreSQL), 1/0 (SQLite), and t/f, TRUE/FALSE;
+//   - blob: valid JSON;
+//   - text: any value, as its text.
+func rowValToJsonRaw(raw any, present bool, kind, col string) (any, error) {
+	if !present {
+		return nil, fmt.Errorf(
+			"Store: column %q is not in the query result: every codec column is read by name "+
+				"(in selectRaw, select it, or write NULL AS %s for a Maybe field)", col, col)
 	}
-	if tag, _ := anyMaybeView(raw); tag == 1 { // NULL comes back as a Sky Nothing
-		return nil
+	if codecRowIsNull(raw, present) {
+		return nil, nil
 	}
 	s := dbRawToString(raw)
 	switch kind {
 	case "int":
 		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-			return n
+			return n, nil
 		}
-		return nil
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			if n, err := floatToStrictInt(f); err == nil {
+				return n, nil
+			}
+		}
 	case "real":
 		if f, err := strconv.ParseFloat(s, 64); err == nil {
-			return f
+			return f, nil
 		}
-		return nil
 	case "bool":
-		return dbTruthy(s)
+		switch s {
+		case "1", "true", "TRUE", "True", "t", "T":
+			return true, nil
+		case "0", "false", "FALSE", "False", "f", "F":
+			return false, nil
+		}
 	case "blob":
 		var v any
 		if json.Unmarshal([]byte(s), &v) == nil {
-			return v
+			return v, nil
 		}
-		return nil
 	default: // text
-		return s
+		return s, nil
 	}
+	return nil, fmt.Errorf("Store: column %q is %s, and the database holds %q, which does not read as %s",
+		col, codecKindNoun(kind), codecShortText(s), codecKindNoun(kind))
+}
+
+// codecKindNoun names a column kind in an error message.
+func codecKindNoun(kind string) string {
+	switch kind {
+	case "int":
+		return "an Int"
+	case "real":
+		return "a Float"
+	case "bool":
+		return "a Bool"
+	case "blob":
+		return "JSON"
+	}
+	return "text"
 }
 
 // Db_queryObjects runs a query and reassembles each row into a JSON string
@@ -841,8 +985,12 @@ func Db_queryObjects(connArg, sqlArg, paramsArg, colspecArg any) any {
 				name := AsString(t.V0)
 				base, _ := codecSplitKind(AsString(t.V1))
 				raw, present := codecRowValue(driver, m, name)
+				val, err := rowValToJsonRaw(raw, present, base, name)
+				if err != nil {
+					return Err[any, any](ErrDecode(err.Error()))
+				}
 				obj.keys = append(obj.keys, name)
-				obj.vals = append(obj.vals, rowValToJsonRaw(raw, present, base))
+				obj.vals = append(obj.vals, val)
 			}
 			b, err := json.Marshal(obj)
 			if err != nil {
@@ -863,7 +1011,9 @@ func Db_queryObjects(connArg, sqlArg, paramsArg, colspecArg any) any {
 // object holds every colspec column, read from the result column
 // `prefix ++ name` and keyed by `name` (the prefix is stripped). A plain query
 // has one group with an empty prefix. A join has two, `a__` and `b__`, so two
-// tables with the same column names never clash. When `marker` is not empty and
+// tables with the same column names never clash. The second element is
+// `marker|table`: the table names a column the kernel cannot read in its
+// error (`orders.qty`). When `marker` is not empty and
 // the result column `prefix ++ marker` is NULL, the group is the JSON text
 // `null`: that is the missing right side of a LEFT JOIN (the marker is a right
 // ON column, and an equality never matches NULL).
@@ -876,13 +1026,16 @@ func Db_queryObjectGroups(connArg, sqlArg, paramsArg, groupsArg any) any {
 		}
 		driver := dbDriverOf(connArg)
 		type group struct {
-			prefix, marker string
-			names, kinds   []string
+			prefix, marker, table string
+			names, kinds          []string
 		}
 		var groups []group
 		for _, g := range AsList(groupsArg) {
 			t := AsTuple3(g)
-			gr := group{prefix: AsString(t.V0), marker: AsString(t.V1)}
+			// The marker slot is `marker|table` (Std.Db.Store's markedTable):
+			// an identifier holds no `|`. A bare marker names no table.
+			marker, table, _ := strings.Cut(AsString(t.V1), "|")
+			gr := group{prefix: AsString(t.V0), marker: marker, table: table}
 			for _, cs := range AsList(t.V2) {
 				c := AsTuple2(cs)
 				base, _ := codecSplitKind(AsString(c.V1))
@@ -901,7 +1054,7 @@ func Db_queryObjectGroups(connArg, sqlArg, paramsArg, groupsArg any) any {
 			for _, g := range groups {
 				if g.marker != "" {
 					raw, present := codecRowValue(driver, m, g.prefix+g.marker)
-					if rowValToJsonRaw(raw, present, "text") == nil {
+					if codecRowIsNull(raw, present) {
 						texts = append(texts, "null")
 						continue
 					}
@@ -909,8 +1062,16 @@ func Db_queryObjectGroups(connArg, sqlArg, paramsArg, groupsArg any) any {
 				obj := jsonOrderedObject{}
 				for i, name := range g.names {
 					raw, present := codecRowValue(driver, m, g.prefix+name)
+					col := g.prefix + name
+					if g.table != "" {
+						col = g.table + "." + name
+					}
+					val, err := rowValToJsonRaw(raw, present, g.kinds[i], col)
+					if err != nil {
+						return Err[any, any](ErrDecode(err.Error()))
+					}
 					obj.keys = append(obj.keys, name)
-					obj.vals = append(obj.vals, rowValToJsonRaw(raw, present, g.kinds[i]))
+					obj.vals = append(obj.vals, val)
 				}
 				b, err := json.Marshal(obj)
 				if err != nil {
@@ -999,13 +1160,20 @@ func Db_updateByPk(connArg, tableArg, setColspecArg, pkColArg, pkKindArg, objArg
 		if !ok {
 			return Err[any, any](ErrInvalidInput("Store.update: value is not a record"))
 		}
-		setCols, params := codecSetClause(dbDriverOf(connArg), setColspecArg, fields)
+		setCols, params, err := codecSetClause("Store.update", dbDriverOf(connArg), setColspecArg, fields)
+		if err != nil {
+			return Err[any, any](ErrInvalidInput(err.Error()))
+		}
 		if len(setCols) == 0 {
 			return Ok[any, any](0)
 		}
 		pkCol := AsString(pkColArg)
 		pkBase, _ := codecSplitKind(AsString(pkKindArg))
-		params = append(params, rawToSqlArg(fields[pkCol], pkBase))
+		pkArg, err := codecRecordArg("Store.update", fields, pkCol, pkBase)
+		if err != nil {
+			return Err[any, any](ErrInvalidInput(err.Error()))
+		}
+		params = append(params, pkArg)
 		sql := fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?",
 			AsString(tableArg), strings.Join(setCols, ", "), pkCol)
 		return AnyTaskRun(Db_exec(connArg, sql, params))
@@ -1021,7 +1189,10 @@ func Db_updateWhere(connArg, tableArg, setColspecArg, objArg, whereSqlArg, where
 		if !ok {
 			return Err[any, any](ErrInvalidInput("Store.updateWhere: value is not a record"))
 		}
-		setCols, params := codecSetClause(dbDriverOf(connArg), setColspecArg, fields)
+		setCols, params, err := codecSetClause("Store.updateWhere", dbDriverOf(connArg), setColspecArg, fields)
+		if err != nil {
+			return Err[any, any](ErrInvalidInput(err.Error()))
+		}
 		if len(setCols) == 0 {
 			return Ok[any, any](0)
 		}
@@ -1047,7 +1218,7 @@ func dbDriverOf(connArg any) string {
 // pulling each value from the codec-encoded record fields. A `touch`-flagged
 // column (Store.touchOnUpdate) is set to the current timestamp via a SQL
 // expression (no bound param), so `updated_at` bumps on every UPDATE.
-func codecSetClause(driver string, setColspecArg any, fields map[string]any) ([]string, []any) {
+func codecSetClause(verb, driver string, setColspecArg any, fields map[string]any) ([]string, []any, error) {
 	setCols := []string{}
 	params := []any{}
 	for _, cs := range AsList(setColspecArg) {
@@ -1059,10 +1230,14 @@ func codecSetClause(driver string, setColspecArg any, fields map[string]any) ([]
 			continue
 		}
 		base, _ := codecSplitKind(rawKind)
+		arg, err := codecRecordArg(verb, fields, name, base)
+		if err != nil {
+			return nil, nil, err
+		}
 		setCols = append(setCols, name+" = ?")
-		params = append(params, rawToSqlArg(fields[name], base))
+		params = append(params, arg)
 	}
-	return setCols, params
+	return setCols, params, nil
 }
 
 // Db_sqlOfValue converts a JSON Encode Value (produced by a codec's encoder) into
@@ -1095,7 +1270,7 @@ func Db_sqlOfValue(valueArg any) any {
 	}
 }
 
-// Db_objectSqlValues : List ( String, String ) -> Value -> List SqlValue
+// Db_objectSqlValues : List ( String, String ) -> Value -> Result Error (List SqlValue)
 //
 // The values of one record, one SqlValue per colspec column, in colspec
 // order (v0.29.0). Std.Db.Store renders the INSERT text of insertOrIgnore,
@@ -1111,9 +1286,13 @@ func Db_objectSqlValues(colspecArg, objArg any) any {
 	for _, cs := range AsList(colspecArg) {
 		t := AsTuple2(cs)
 		base, _ := codecSplitKind(AsString(t.V1))
-		out = append(out, codecSqlValueOf(rawToSqlArg(fields[AsString(t.V0)], base)))
+		arg, err := codecRecordArg("Store", fields, AsString(t.V0), base)
+		if err != nil {
+			return Err[any, any](ErrInvalidInput(err.Error()))
+		}
+		out = append(out, codecSqlValueOf(arg))
 	}
-	return out
+	return Ok[any, any](out)
 }
 
 // codecSqlValueOf wraps a driver value from rawToSqlArg as a Std.Db.SqlValue.

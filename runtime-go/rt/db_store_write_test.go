@@ -22,7 +22,7 @@ func TestStoreWriteObjectSqlValuesFollowTheColspec(t *testing.T) {
 	rec := storeWriteRecord(
 		[]string{"tags", "note", "ok", "price", "n", "id"},
 		[]any{[]any{"a", "b"}, nil, true, 1.5, 7, "x'1"})
-	got := AsList(Db_objectSqlValues(cs, rec))
+	got := AsList(storeWriteOk(t, Db_objectSqlValues(cs, rec)))
 	want := []string{"SqlString x'1", "SqlInt 7", "SqlFloat 1.5", "SqlBool true", "SqlNull", "SqlString [\"a\",\"b\"]"}
 	if len(got) != len(want) {
 		t.Fatalf("got %d values, want %d", len(got), len(want))
@@ -37,6 +37,16 @@ func TestStoreWriteObjectSqlValuesFollowTheColspec(t *testing.T) {
 			t.Fatalf("value %d: got %q, want %q", i, s, want[i])
 		}
 	}
+}
+
+// storeWriteOk unwraps an Ok, failing the test on an Err.
+func storeWriteOk(t *testing.T, v any) any {
+	t.Helper()
+	r, ok := v.(SkyResult[any, any])
+	if !ok || r.Tag != 0 {
+		t.Fatalf("want Ok, got %+v", v)
+	}
+	return r.OkValue
 }
 
 // storeWriteExec runs a statement through Db_exec (the Store's runExec) and
@@ -83,7 +93,8 @@ func storeWriteCounterValues(cs []any, n int, first, last any, source string) []
 	rec := storeWriteRecord(
 		[]string{"day", "customer_id", "event", "count", "first_at", "last_at", "source"},
 		[]any{"2026-10-30", "c1", "open", n, first, last, source})
-	return AsList(Db_objectSqlValues(cs, rec))
+	r := Db_objectSqlValues(cs, rec).(SkyResult[any, any])
+	return AsList(r.OkValue)
 }
 
 func assertCounterUpsertRules(t *testing.T, d *SkyDb, table string) {

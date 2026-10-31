@@ -4024,6 +4024,783 @@ missingEnquiriesGen =
     Store.fromCodec "sqc_missing" enquiryCodec |> Store.primaryKey "id"
         |> Store.defaultWith "id" (\_ -> SqlString "gen")
 
+-- ── Value kinds (v0.29.0): a value of the wrong kind never reaches the
+-- database or the decoder with no Err ─────────────────────────────────────────
+type Mood
+    = Calm
+    | Busy
+
+
+moodCodec : Codec Mood
+moodCodec =
+    Codec.enum [ ( Calm, "calm" ), ( Busy, "busy" ) ]
+
+type alias Gauge =
+    { id : String
+    , n : Maybe Int
+    , mood : Mood
+    , mmood : Maybe Mood
+    , tags : List Int
+    , mtags : Maybe (List String)
+    , score : Float
+    , label : String
+    }
+
+
+gaugeCodec : Codec Gauge
+gaugeCodec =
+    Codec.object Gauge |> Codec.field "id" .id Codec.string
+        |> Codec.field "n" .n (Codec.maybe Codec.int)
+        |> Codec.field "mood" .mood moodCodec
+        |> Codec.field "mmood" .mmood (Codec.maybe moodCodec)
+        |> Codec.field "tags" .tags (Codec.list Codec.int)
+        |> Codec.field "mtags" .mtags (Codec.maybe (Codec.list Codec.string))
+        |> Codec.field "score" .score Codec.float
+        |> Codec.field "label" .label Codec.string
+        |> Codec.buildObject
+
+
+gauges : Store Gauge
+gauges =
+    Store.fromCodec "sqc_gauges" gaugeCodec |> Store.primaryKey "id"
+
+
+missingGauges : Store Gauge
+missingGauges =
+    Store.fromCodec "sqc_missing" gaugeCodec |> Store.primaryKey "id"
+
+
+gauge : String -> Gauge
+gauge id =
+    { id = id
+    , n = Just 1
+    , mood = Calm
+    , mmood = Nothing
+    , tags = [ 1, 2 ]
+    , mtags = Nothing
+    , score = 0.5
+    , label = "calm"
+    }
+
+type alias TagsAsStrings =
+    { id : String
+    , tags : Maybe (List String)
+    }
+
+
+tagsAsStringsCodec : Codec TagsAsStrings
+tagsAsStringsCodec =
+    Codec.object TagsAsStrings |> Codec.field "id" .id Codec.string
+        |> Codec.field "tags" .tags (Codec.maybe (Codec.list Codec.string))
+        |> Codec.buildObject
+
+type alias MaybeMood =
+    { id : String
+    , mmood : Maybe Mood
+    }
+
+
+maybeMoodCodec : Codec MaybeMood
+maybeMoodCodec =
+    Codec.object MaybeMood |> Codec.field "id" .id Codec.string
+        |> Codec.field "mmood" .mmood (Codec.maybe moodCodec)
+        |> Codec.buildObject
+
+type alias MoodText =
+    { id : String
+    , mood : String
+    }
+
+
+moodTextCodec : Codec MoodText
+moodTextCodec =
+    Codec.object MoodText |> Codec.field "id" .id Codec.string
+        |> Codec.field "mood" .mood Codec.string
+        |> Codec.buildObject
+
+type alias LegacyN =
+    { id : String
+    , n : Maybe Int
+    }
+
+
+legacyNCodec : Codec LegacyN
+legacyNCodec =
+    Codec.auto { id = "", n = Nothing }
+
+
+legacyN : Store LegacyN
+legacyN =
+    Store.fromCodec "sqc_legacy_n" legacyNCodec |> Store.primaryKey "id"
+
+type alias LegacyFlag =
+    { id : String
+    , ok : Bool
+    }
+
+
+legacyFlag : Store LegacyFlag
+legacyFlag =
+    Store.fromCodec "sqc_legacy_flag" (Codec.auto { id = "", ok = False })
+        |> Store.primaryKey "id"
+
+type alias LegacyTags =
+    { id : String
+    , tags : Maybe (List Int)
+    }
+
+
+legacyTags : Store LegacyTags
+legacyTags =
+    Store.fromCodec
+        "sqc_legacy_tags"
+        (Codec.object LegacyTags |> Codec.field "id" .id Codec.string
+            |> Codec.field "tags" .tags (Codec.maybe (Codec.list Codec.int))
+            |> Codec.buildObject)
+        |> Store.primaryKey "id"
+
+
+generatedEnquiries : Store Enquiry
+generatedEnquiries =
+    Store.fromCodec "sqc_gen_enquiries" enquiryCodec |> Store.primaryKey "id"
+        |> Store.defaultWith "kind" (\_ -> SqlString "gen")
+
+
+badGenEnquiries : Store Enquiry
+badGenEnquiries =
+    Store.fromCodec "sqc_missing" enquiryCodec |> Store.primaryKey "id"
+        |> Store.defaultWith "kind" (\_ -> SqlInt 7)
+
+type Shape
+    = Dot
+    | Box Int
+
+
+shapeCodec : Codec Shape
+shapeCodec =
+    Codec.taggedUnion
+        (\v ->
+            case v of
+
+                Dot ->
+                    ( "Dot", [] )
+
+                Box n ->
+                    ( "Box", [ Codec.toValue Codec.int n ] ))
+        [ Codec.var0 "Dot" Dot, Codec.var1 "Box" Box Codec.int ]
+
+type Mark
+    = Pin
+    | Flag
+
+
+markCodec : Codec Mark
+markCodec =
+    Codec.taggedUnion
+        (\v ->
+            case v of
+
+                Pin ->
+                    ( "Pin", [] )
+
+                Flag ->
+                    ( "Flag", [] ))
+        [ Codec.var0 "Pin" Pin, Codec.var0 "Flag" Flag ]
+
+type alias Kit =
+    { id : String
+    , shape : Maybe Shape
+    }
+
+
+kitCodec : Codec Kit
+kitCodec =
+    Codec.object Kit |> Codec.field "id" .id Codec.string
+        |> Codec.field "shape" .shape (Codec.maybe shapeCodec)
+        |> Codec.buildObject
+
+
+kits : Store Kit
+kits =
+    Store.fromCodec "sqc_kits" kitCodec |> Store.primaryKey "id"
+
+type alias KitMark =
+    { id : String
+    , shape : Maybe Mark
+    }
+
+
+kitMarkCodec : Codec KitMark
+kitMarkCodec =
+    Codec.object KitMark |> Codec.field "id" .id Codec.string
+        |> Codec.field "shape" .shape (Codec.maybe markCodec)
+        |> Codec.buildObject
+
+
+kindTests : Db -> List Test
+kindTests db =
+    [ Test.test
+          "kinds: setValue SqlString \"abc\" into an Int column is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.updateSet
+                          db
+                          missingLines
+                          (Store.eq "id" (SqlString "l1"))
+                          [ Store.setValue "qty" (SqlString "abc") ])))
+    , Test.test
+          "kinds: setWhen SqlFloat 2.7 into an Int column is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.updateSet
+                          db
+                          missingLines
+                          (Store.eq "id" (SqlString "l1"))
+                          [ Store.setWhen
+                                "qty"
+                                (Store.eq "id" (SqlString "l1"))
+                                (SqlFloat 2.7)
+                                Store.keep
+                          ])))
+    , Test.test
+          "kinds: setValue SqlString \"abc\" into a Maybe Int column is refused, naming the column"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "column \"n\" is int"
+                      (Task.run
+                          (Store.updateSet
+                              db
+                              missingGauges
+                              (Store.eq "id" (SqlString "g1"))
+                              [ Store.setValue "n" (SqlString "abc") ]))))
+    , Test.test
+          "kinds: otherwise with a value of the wrong kind is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.updateSet
+                          db
+                          missingGauges
+                          (Store.eq "id" (SqlString "g1"))
+                          [ Store.setWhen
+                                "n"
+                                (Store.eq "id" (SqlString "g1"))
+                                (SqlInt 2)
+                                (Store.otherwise (SqlString "abc"))
+                          ])))
+    , Test.test
+          "kinds: setValue of a name that is not an enum name is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.updateSet
+                          db
+                          missingGauges
+                          (Store.eq "id" (SqlString "g1"))
+                          [ Store.setValue "mood" (SqlString "angry") ])))
+    , Test.test
+          "kinds: setValue of text that is not JSON, or JSON the codec does not read, into a JSON column is refused"
+          (\_ ->
+              Test.equal
+                  ( "refused by the Store", "refused by the Store" )
+                  ( refusal
+                        (Task.run
+                            (Store.updateSet
+                                db
+                                missingGauges
+                                (Store.eq "id" (SqlString "g1"))
+                                [ Store.setValue "tags" (SqlString "not json") ]))
+                  , refusal
+                        (Task.run
+                            (Store.updateSet
+                                db
+                                missingGauges
+                                (Store.eq "id" (SqlString "g1"))
+                                [ Store.setValue "tags" (SqlString "[\"a\"]") ]))
+                  ))
+    , Test.test
+          "kinds: SqlNull into a required column is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.updateSet
+                          db
+                          missingGauges
+                          (Store.eq "id" (SqlString "g1"))
+                          [ Store.setValue "label" (SqlNull (SqlString "")) ])))
+    , Test.test
+          "kinds: copyInto const of the wrong kind is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.copyInto
+                          db
+                          missingLines
+                          (Store.query lines)
+                          [ ( "id", Store.from "id" )
+                          , ( "status", Store.from "status" )
+                          , ( "statusAt", Store.const (SqlString "abc") )
+                          , ( "wantedAt", Store.from "wantedAt" )
+                          , ( "qty", Store.from "qty" )
+                          , ( "flag", Store.from "flag" )
+                          ])))
+    , Test.test
+          "kinds: updateFields with a value of the wrong kind is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.updateFields
+                          db
+                          missingGauges
+                          (Store.eq "id" (SqlString "g1"))
+                          [ ( "n", SqlString "abc" ) ])))
+    , Test.test
+          "kinds: a defaultWith value of the wrong kind is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.insert
+                          db
+                          badGenEnquiries
+                          { id = "e1", kind = "", customerId = "c" })))
+    , Test.test
+          "kinds: an Infinity is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.updateSet
+                          db
+                          missingGauges
+                          (Store.eq "id" (SqlString "g1"))
+                          [ Store.setValue "score" (SqlFloat (1.0e308 * 10.0)) ])))
+    , Test.test
+          "kinds: an Int into a Float column, SqlNull into a Maybe column, an enum name and JSON the codec reads are written"
+          (\_ ->
+              Test.equal
+                  ( Ok 1, Ok [ ( 3.0, Nothing, ( Busy, Just [ "x" ] ) ) ] )
+                  ( Task.run
+                        (Task.sequence
+                            [ drop db "sqc_gauges"
+                            , unit (Store.migrate db gauges)
+                            , unit (Store.insert db gauges (gauge "g1"))
+                            ]
+                            |> Task.andThen
+                                   (\_ ->
+                                       Store.updateSet
+                                           db
+                                           gauges
+                                           (Store.eq "id" (SqlString "g1"))
+                                           [ Store.setValue "score" (SqlInt 3)
+                                           , Store.setValue
+                                                 "n"
+                                                 (SqlNull (SqlInt 0))
+                                           , Store.setValue
+                                                 "mood"
+                                                 (SqlString "busy")
+                                           , Store.setValue
+                                                 "mtags"
+                                                 (SqlString "[\"x\"]")
+                                           ]))
+                  , Task.run (Store.all db gauges)
+                        |> Result.map
+                               (List.map
+                                   (\g -> ( g.score, g.n, ( g.mood, g.mtags ) )))
+                  ))
+    , Test.test
+          "kinds: select of a List Int column into a Maybe (List String) field is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query missingGauges
+                              |> Store.select tagsAsStringsCodec))))
+    , Test.test
+          "kinds: selectAs of a String column into a Maybe enum field is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query missingGauges
+                              |> Store.selectAs
+                                     maybeMoodCodec
+                                     [ ( "mmood", "label" ) ]))))
+    , Test.test
+          "kinds: selectColumn of a String column with a Maybe enum codec is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query missingGauges
+                              |> Store.selectColumn
+                                     "label"
+                                     (Codec.maybe moodCodec)))))
+    , Test.test
+          "kinds: aggregate key of a String column into a Maybe enum field is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.toList
+                          db
+                          (Store.query missingGauges
+                              |> Store.groupBy [ "id", "label" ]
+                              |> Store.aggregate
+                                     maybeMoodCodec
+                                     [ Store.key "id"
+                                     , Store.keyAs "mmood" "label"
+                                     ]))))
+    , Test.test
+          "kinds: an enum column reads into a Maybe of the enum and into a String"
+          (\_ ->
+              Test.equal
+                  ( Ok [ { id = "g1", mmood = Just Busy } ]
+                  , Ok [ { id = "g1", mood = "busy" } ]
+                  )
+                  ( Task.run
+                        (Store.toList
+                            db
+                            (Store.query gauges
+                                |> Store.selectAs
+                                       maybeMoodCodec
+                                       [ ( "mmood", "mood" ) ]))
+                  , Task.run
+                        (Store.toList
+                            db
+                            (Store.query gauges |> Store.select moodTextCodec))
+                  ))
+    , Test.test
+          "kinds: defaultText \"abc\" on a Maybe Int column makes the first verb fail"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "Store.defaultText \"n\": the column is int"
+                      (Task.run
+                          (Store.migrate
+                              db
+                              (missingGauges |> Store.defaultText "n" "abc")))))
+    , Test.test
+          "kinds: defaultText of a name that is not an enum name, or of JSON the codec does not read, makes the first verb fail"
+          (\_ ->
+              Test.equal
+                  ( True, True, Ok 0 )
+                  ( isErr
+                        (Task.run
+                            (Store.migrate
+                                db
+                                (missingGauges
+                                    |> Store.defaultText "mood" "angry")))
+                  , isErr
+                        (Task.run
+                            (Store.migrate
+                                db
+                                (missingGauges
+                                    |> Store.defaultText "tags" "[\"a\"]")))
+                  , Task.run
+                        (Store.dumpSchema
+                            (Store.project
+                                [ Store.toTable
+                                      (missingGauges
+                                          |> Store.defaultText "mood" "calm"
+                                          |> Store.defaultText "tags" "[1]"
+                                          |> Store.defaultInt "score" 2)
+                                ]))
+                        |> Result.map (\_ -> 0)
+                  ))
+    , Test.test
+          "kinds: defaultInt on a String column and defaultFloat on an Int column make the first verb fail"
+          (\_ ->
+              Test.equal
+                  ( True, True )
+                  ( isErr
+                        (Task.run
+                            (Store.migrate
+                                db
+                                (missingGauges |> Store.defaultInt "label" 1)))
+                  , isErr
+                        (Task.run
+                            (Store.migrate
+                                db
+                                (missingLines |> Store.defaultFloat "qty" 1.5)))
+                  ))
+    , Test.test
+          "kinds: a Schema text default on an int column is refused by pushProject"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "column \"n\" is int, and a text default does not fit it"
+                      (Task.run
+                          (Store.pushProject
+                              db
+                              (Schema.toProject
+                                  [ Schema.table
+                                        "sqc_missing"
+                                        [ Schema.id "id"
+                                        , Schema.int "n"
+                                              |> Schema.defaultText "abc"
+                                        ]
+                                  ])))))
+    , Test.test
+          "kinds: eq with text that is not an Int, with SqlNull, or inList with a Float on an Int column is refused before running"
+          (\_ ->
+              Test.equal
+                  ( "refused by the Store"
+                  , "refused by the Store"
+                  , "refused by the Store"
+                  )
+                  ( refusal
+                        (Task.run
+                            (Store.toList
+                                db
+                                (Store.query missingGauges
+                                    |> Store.where_
+                                           (Store.eq "n" (SqlString "5x")))))
+                  , refusal
+                        (Task.run
+                            (Store.toList
+                                db
+                                (Store.query missingGauges
+                                    |> Store.where_
+                                           (Store.eq
+                                               "label"
+                                               (SqlNull (SqlString ""))))))
+                  , refusal
+                        (Task.run
+                            (Store.toList
+                                db
+                                (Store.query missingGauges
+                                    |> Store.where_
+                                           (Store.inList
+                                               "n"
+                                               [ SqlInt 1, SqlFloat 1.5 ]))))
+                  ))
+    , Test.test
+          "kinds: findBy reads its text as the column's kind; text that is not an Int is an Err"
+          (\_ ->
+              Test.equal
+                  ( Ok (Just "g2"), True )
+                  ( Task.run
+                        (Store.insert db gauges (gauge "g2")
+                            |> Task.andThen
+                                   (\_ -> Store.findBy db gauges "n" "1"))
+                        |> Result.map (Maybe.map .id)
+                  , errHas
+                        "column \"n\" is int, and the text SqlString \"abc\" is not a value of that kind"
+                        (Task.run (Store.findBy db gauges "n" "abc"))
+                  ))
+    , Test.test
+          "kinds: adjust on a nullable or a text column is refused before running"
+          (\_ ->
+              Test.equal
+                  ( "refused by the Store", "refused by the Store" )
+                  ( refusal
+                        (Task.run
+                            (Store.adjust
+                                db
+                                missingGauges
+                                (Store.eq "id" (SqlString "g1"))
+                                [ ( "n", 1 ) ]))
+                  , refusal
+                        (Task.run
+                            (Store.adjust
+                                db
+                                missingGauges
+                                (Store.eq "id" (SqlString "g1"))
+                                [ ( "label", 1 ) ]))
+                  ))
+    , Test.test
+          "read: an int written as text by an earlier version reads; text that is not an Int is an Err naming the table, column and kind"
+          (\_ ->
+              Test.equal
+                  ( Ok [ { id = "a", n = Just 5 }, { id = "c", n = Nothing } ]
+                  , True
+                  )
+                  ( Task.run
+                        (Task.sequence
+                            [ drop db "sqc_legacy_n"
+                            , unit
+                                  (Db.exec
+                                      db
+                                      "CREATE TABLE sqc_legacy_n (id TEXT PRIMARY KEY, n TEXT)"
+                                      [])
+                            , unit
+                                  (Db.exec
+                                      db
+                                      "INSERT INTO sqc_legacy_n (id, n) VALUES ('a', '5'), ('c', NULL)"
+                                      [])
+                            ]
+                            |> Task.andThen
+                                   (\_ ->
+                                       Store.toList
+                                           db
+                                           (Store.query legacyN
+                                               |> Store.orderAsc "id")))
+                  , errHas
+                        "column \"sqc_legacy_n.n\" is an Int, and the database holds \"abc\""
+                        (Task.run
+                            (Db.exec
+                                db
+                                "INSERT INTO sqc_legacy_n (id, n) VALUES ('b', 'abc')"
+                                []
+                                |> Task.andThen (\_ -> Store.all db legacyN)))
+                  ))
+    , Test.test
+          "read: a bool stored as 1 or 0 reads; any other value is an Err"
+          (\_ ->
+              Test.equal
+                  ( Ok [ ( "a", True ), ( "b", False ) ], True )
+                  ( Task.run
+                        (Task.sequence
+                            [ drop db "sqc_legacy_flag"
+                            , unit
+                                  (Db.exec
+                                      db
+                                      "CREATE TABLE sqc_legacy_flag (id TEXT PRIMARY KEY, ok INTEGER NOT NULL)"
+                                      [])
+                            , unit
+                                  (Db.exec
+                                      db
+                                      "INSERT INTO sqc_legacy_flag (id, ok) VALUES ('a', 1), ('b', 0)"
+                                      [])
+                            ]
+                            |> Task.andThen
+                                   (\_ ->
+                                       Store.toList
+                                           db
+                                           (Store.query legacyFlag
+                                               |> Store.orderAsc "id")))
+                        |> Result.map (List.map (\r -> ( r.id, r.ok )))
+                  , errHas
+                        "column \"sqc_legacy_flag.ok\" is a Bool"
+                        (Task.run
+                            (Db.exec
+                                db
+                                "INSERT INTO sqc_legacy_flag (id, ok) VALUES ('c', 2)"
+                                []
+                                |> Task.andThen (\_ -> Store.all db legacyFlag)))
+                  ))
+    , Test.test
+          "read: text that is not JSON in a JSON column is an Err, not Nothing"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "column \"sqc_legacy_tags.tags\" is JSON"
+                      (Task.run
+                          (Task.sequence
+                              [ drop db "sqc_legacy_tags"
+                              , unit
+                                    (Db.exec
+                                        db
+                                        "CREATE TABLE sqc_legacy_tags (id TEXT PRIMARY KEY, tags TEXT)"
+                                        [])
+                              , unit
+                                    (Db.exec
+                                        db
+                                        "INSERT INTO sqc_legacy_tags (id, tags) VALUES ('a', 'not json')"
+                                        [])
+                              ]
+                              |> Task.andThen (\_ -> Store.all db legacyTags)))))
+    , Test.test
+          "read: a selectRaw that leaves out a codec column is an Err naming it"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "column \"n\" is not in the query result"
+                      (Task.run
+                          (Store.selectRaw
+                              db
+                              legacyNCodec
+                              "SELECT id FROM sqc_legacy_n"
+                              []))))
+    , Test.test
+          "kinds: JSON a custom type's codec does not read, into a Maybe of it, is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.updateSet
+                          db
+                          kits
+                          (Store.eq "id" (SqlString "k1"))
+                          [ Store.setValue "shape" (SqlString "[\"Bogus\"]") ])))
+    , Test.test
+          "read: a stored value a Maybe field's codec reads as Nothing is an Err, not Nothing"
+          (\_ ->
+              Test.equal
+                  ( Ok [ { id = "k1", shape = Just (Box 2) } ], True )
+                  ( Task.run
+                        (Task.sequence
+                            [ drop db "sqc_kits"
+                            , unit (Store.migrate db kits)
+                            , unit
+                                  (Store.insert
+                                      db
+                                      kits
+                                      { id = "k1", shape = Just (Box 2) })
+                            ]
+                            |> Task.andThen (\_ -> Store.all db kits))
+                  , errHas
+                        "column \"shape\" holds a value its field's codec reads as Nothing"
+                        (Task.run
+                            (Db.exec
+                                db
+                                "INSERT INTO sqc_kits (id, shape) VALUES ('k2', '[\"Bogus\"]')"
+                                []
+                                |> Task.andThen (\_ -> Store.all db kits)))
+                  ))
+    , Test.test
+          "read: a projection of a custom type column into a Maybe of another custom type is an Err"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "holds a value its field's codec reads as Nothing"
+                      (Task.run
+                          (Store.toList
+                              db
+                              (Store.query kits
+                                  |> Store.where_
+                                         (Store.eq "id" (SqlString "k1"))
+                                  |> Store.select kitMarkCodec)))))
+    , Test.test
+          "defaultWith: insertMany and upsert write the computed value"
+          (\_ ->
+              Test.equal
+                  (Ok [ ( "e1", "gen" ), ( "e2", "gen" ), ( "e3", "gen" ) ])
+                  (Task.run
+                      (Task.sequence
+                          [ drop db "sqc_gen_enquiries"
+                          , unit (Store.migrate db generatedEnquiries)
+                          , unit
+                                (Store.insertMany
+                                    db
+                                    generatedEnquiries
+                                    [ { id = "e1", kind = "", customerId = "c" }
+                                    , { id = "e2", kind = "", customerId = "c" }
+                                    ])
+                          , unit
+                                (Store.upsert
+                                    db
+                                    generatedEnquiries
+                                    { id = "e3", kind = "", customerId = "c" })
+                          ]
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.toList
+                                         db
+                                         (Store.query generatedEnquiries
+                                             |> Store.orderAsc "id")))
+                      |> Result.map (List.map (\e -> ( e.id, e.kind )))))
+    ]
+
 
 tests : List Test
 tests =
@@ -4044,6 +4821,7 @@ tests =
                 ++ migrateTests db
                 ++ zeroTests db
                 ++ writeTests db
+                ++ kindTests db
 
 
 main =

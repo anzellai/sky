@@ -210,6 +210,13 @@ every update) · `defaultWith "id" (\_ -> SqlValue)` (app-computed default, e.g.
 UUID PK) · `generated [ "id", "created_at" ]` (columns `insert`/`update` omit so
 the DB fills them). `Store.create conn store` emits the dialect-correct DDL;
 `Store.upsert` is INSERT … ON CONFLICT DO UPDATE (idempotent config rows).
+A default must fit its column (`defaultBool` for a `Bool` field, an enum's
+default one of its names), and every `SqlValue` must be of its column's kind:
+a text column takes `SqlString`, an int `SqlInt`, a real `SqlFloat` or
+`SqlInt`, a bool `SqlBool`, a JSON column `SqlString` holding JSON its codec
+reads, `SqlNull` only a `Maybe` field (compare NULL with `isNull`). A
+`SqlString` compared with an int column is read as an Int. Anything else is an
+`Err` before the statement, the same on SQLite and PostgreSQL.
 
 **Aggregates and projections** are builders: `groupBy` + `aggregate` with
 `key` / `countAs` / `countIfAs` / `sumAs` / `minAs` / `maxAs` (+ `having`),

@@ -1395,6 +1395,11 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   a zero (a field with none is left out, the others keep theirs); `[]` for
   any other codec. `Store.migrate` and `sky db migrate --gen` use it as the
   DEFAULT of a required JSON or enum column added to a table with rows.
+  `Codec.schemaFitError target source` (v0.29) says whether every value the
+  JSON Schema `source` describes reads, through a codec whose `jsonSchema` is
+  `target`, as itself (a `Maybe` never turning a mismatch into `Nothing`), and
+  `Codec.schemaValueError schema json` whether a JSON value is one the schema
+  reads. `Std.Db.Store` uses them for its kind checks.
   `Codec.dict keyCodec valueCodec` (v0.27) encodes a `Dict` as a JSON array of
   `[key, value]` pairs, so any comparable key round-trips. `Codec.fromJson`
   reads exactly one JSON document: text after it is an `Err` (v0.27). A type
@@ -1423,7 +1428,11 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   `setValue`/`setWhen` + `keep`/`otherwise`), **insert from a query**
   (`copyInto`/`copyIntoOrIgnore` with `from`/`const`) and **RETURNING**
   (`insertReturning`/`updateFieldsReturning`/`deleteWhereReturning`), every name checked
-  before the statement runs (v0.29.0) + **`selectRaw codec sql params`** for any other
+  before the statement runs (v0.29.0), every `SqlValue` checked against its
+  column's kind and codec and every projection against the source's codec
+  before the statement runs, and a stored value that does not read as its
+  column's kind an `Err` naming the table and column, never `Nothing`
+  (v0.29.0, see "Value kinds" in the Std.Db overview) + **`selectRaw codec sql params`** for any other
   SQL (a join of three tables, a CTE).
   Deliberately a single-table mapper, not an ORM.
 

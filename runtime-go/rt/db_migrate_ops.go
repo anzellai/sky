@@ -267,6 +267,9 @@ func renderAddColumn(driver, table string, c migColumn, nowAt string, rows int) 
 	if !codecValidIdent(c.Name) {
 		return nil, fmt.Errorf("invalid column identifier %q", c.Name)
 	}
+	if err := migDefaultFits(table, c); err != nil {
+		return nil, err
+	}
 	kind := codecColKindToSchema(c.Type)
 	s := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, c.Name, schemaTypeName(driver, kind))
 	d := migAddedDefault(c)
@@ -294,6 +297,51 @@ func renderAddColumn(driver, table string, c migColumn, nowAt string, rows int) 
 		stmts = append(stmts, renderIndexDDL(table, codecIndexName(table, cols, true, ""), cols, true, ""))
 	}
 	return stmts, nil
+}
+
+// migDefaultFits refuses a declared default that does not read back as the
+// column's kind. An added column's DEFAULT is written into every row the table
+// holds, so `DEFAULT 'abc'` on an integer column would give each old row a
+// value SQLite stores as text and Sky cannot read as an Int (PostgreSQL
+// refuses it). Std.Db.Store and Std.Db.Schema refuse such a default when the
+// builder runs; this is the same rule for a hand-edited migration op. A text
+// default fits a text or JSON column (JSON must parse), an int default an
+// integer or real column, a float default a real column, a bool default a
+// bool column, and a `now` default a text or integer column (epoch
+// milliseconds). A column type this function does not know is not checked.
+func migDefaultFits(table string, c migColumn) error {
+	d := c.Default
+	if d == nil {
+		return nil
+	}
+	base, _ := codecSplitKind(c.Type)
+	intLike := base == "int" || base == "bigint" || base == "timestamp"
+	textLike := base == "text" || base == "blob" || base == "json"
+	known := intLike || textLike || base == "real" || base == "bool"
+	if !known {
+		return nil
+	}
+	ok := true
+	switch migDefKind(d) {
+	case "int":
+		ok = intLike || base == "real"
+	case "float":
+		ok = base == "real"
+	case "bool":
+		ok = base == "bool"
+	case "now":
+		ok = intLike || base == "text"
+	case "text":
+		ok = textLike
+		if ok && base != "text" && !json.Valid([]byte(*d.Text)) {
+			return fmt.Errorf("column %s.%s is JSON, and its default %q is not JSON", table, c.Name, *d.Text)
+		}
+	}
+	if !ok {
+		return fmt.Errorf("column %s.%s is %s, and its %s default %q does not fit it",
+			table, c.Name, base, migDefKind(d), migDefVal(d))
+	}
+	return nil
 }
 
 // migAddedDefault is the DEFAULT of an added column under rule D1: the

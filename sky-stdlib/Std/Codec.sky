@@ -34,6 +34,8 @@ module Std.Codec exposing
     , zeroJson
     , fieldZeros
     , JsonSchema
+    , schemaFitError
+    , schemaValueError
     , jsonSchema
     , toValue
     , toJson
@@ -190,13 +192,13 @@ renderSchema node =
             { schema =
                 E.object
                     [ ( "type", E.string "string" )
-                    , ( "enum", E.list E.string (names ()) )
+                    , ( "enum", E.list identity (stringValues (names ())) )
                     ]
             , exact = True
             }
 
         SnObject fields ->
-            objectSchema (List.map (\( n, f ) -> ( n, renderSchema f )) fields)
+            objectSchema (renderFields fields)
 
         SnAuto fieldsJson overrides ->
             autoSchema (fieldsJson ()) overrides
@@ -217,20 +219,75 @@ renderSchema node =
             { schema = E.object [], exact = False }
 
 
--- A closed object: every field required, no other key.
+-- A closed object: every field required, no other key. The lists are
+-- walked by typed recursion, not by `List.map` over a lambda, so a read of a
+-- field pays no runtime narrowing (doc 14 §4.5).
 objectSchema : List ( String, JsonSchema ) -> JsonSchema
 objectSchema fields =
     { schema =
         E.object
             [ ( "type", E.string "object" )
-            , ( "properties"
-              , E.object (List.map (\( n, js ) -> ( n, js.schema )) fields)
-              )
-            , ( "required", E.list (\( n, _ ) -> E.string n) fields )
+            , ( "properties", E.object (fieldSchemaValues fields) )
+            , ( "required", E.list identity (fieldNameValues fields) )
             , ( "additionalProperties", E.bool False )
             ]
-    , exact = List.all (\( _, js ) -> js.exact) fields
+    , exact = allExact fields
     }
+
+
+renderFields : List ( String, SchemaNode ) -> List ( String, JsonSchema )
+renderFields fields =
+    case fields of
+
+        [] ->
+            []
+
+        ( n, f ) :: rest ->
+            ( n, renderSchema f ) :: renderFields rest
+
+
+fieldSchemaValues : List ( String, JsonSchema ) -> List ( String, Value )
+fieldSchemaValues fields =
+    case fields of
+
+        [] ->
+            []
+
+        ( n, js ) :: rest ->
+            ( n, js.schema ) :: fieldSchemaValues rest
+
+
+fieldNameValues : List ( String, JsonSchema ) -> List Value
+fieldNameValues fields =
+    case fields of
+
+        [] ->
+            []
+
+        ( n, _ ) :: rest ->
+            E.string n :: fieldNameValues rest
+
+
+allExact : List ( String, JsonSchema ) -> Bool
+allExact fields =
+    case fields of
+
+        [] ->
+            True
+
+        ( _, js ) :: rest ->
+            js.exact && allExact rest
+
+
+stringValues : List String -> List Value
+stringValues names =
+    case names of
+
+        [] ->
+            []
+
+        n :: rest ->
+            E.string n :: stringValues rest
 
 type alias AutoField =
     { name : String
@@ -423,7 +480,10 @@ bool =
 
 -- ── Combinators ──────────────────────────────────────────────────────────────
 -- | Optional value. `Nothing` encodes as JSON `null`; a `null` or type-mismatch
--- on decode yields `Nothing`. A `Maybe scalar` stays a (nullable) scalar column;
+-- on decode yields `Nothing` (`Std.Db.Store` never hands it a value it cannot
+-- read: a stored value that does not read as its column's kind is an `Err`,
+-- and a projection whose codec would read its source as `Nothing` is refused,
+-- see `schemaFitError`). A `Maybe scalar` stays a (nullable) scalar column;
 -- anything deeper becomes a nullable blob column, so `Nothing` stores as NULL.
 -- A `Maybe (Maybe a)` is the same one nullable column as `Maybe a`: JSON has
 -- one `null`, so `Just Nothing` reads back as `Nothing`.
@@ -2109,3 +2169,484 @@ isNullaryTag tag variants =
 
         ( t, args ) :: rest ->
             (t == tag && List.isEmpty args) || isNullaryTag tag rest
+
+
+-- ── Comparing schemas and checking values ────────────────────────────────────
+-- | `Nothing` when every JSON value the JSON Schema `source` describes reads,
+-- through a codec whose `jsonSchema` is `target`, as that same value, so a
+-- `Maybe` never turns a mismatch into `Nothing` (a `Codec.maybe` decoder
+-- reads a value it cannot decode as `Nothing`). `Just` the reason otherwise.
+-- Both are schemas as `jsonSchema` writes them (its `schema` field, or a part
+-- of one). The rule:
+--
+-- * a `Maybe x` target reads a source `x` or `Maybe x`, and a nullable source
+--   needs a `Maybe` target;
+-- * `String` reads `String` or an enum, `Float` reads `Float` or `Int`, and
+--   `Int` and `Bool` read only themselves;
+-- * an enum reads an enum whose names are all its own names;
+-- * a list compares its items, a record each of its fields (every target
+--   field must be in the source), a `Dict` under `auto` its values;
+-- * a part the schema leaves open (`{}`: a `taggedUnion`, a `result`, a
+--   `dict`, a `Json.Value` field, `Codec.error`) reads anything, except under
+--   a `Maybe`: there it reads only an open part.
+--
+--     Codec.schemaFitError
+--         (Codec.jsonSchema (Codec.maybe (Codec.list Codec.string))).schema
+--         (Codec.jsonSchema (Codec.list Codec.int)).schema
+--     -- Just "a list item: an Int does not read as a String"
+schemaFitError : Value -> Value -> Maybe String
+schemaFitError target source =
+    fitSchema False target source
+
+
+fitSchema : Bool -> Value -> Value -> Maybe String
+fitSchema under t s =
+    let
+        tk = schemaKind t
+        sk = schemaKind s
+    in
+        if tk == "nullable" then
+            if sk == "nullable" then
+                fitSchema True (nullableInner t) (nullableInner s)
+
+            else
+                fitSchema True (nullableInner t) s
+
+        else if tk == "open" then
+            if sk == "open" || not under then
+                Nothing
+
+            else
+                Just
+                    ("a Maybe of a part no schema describes reads only such a part, not "
+                        ++ describeSchema s)
+
+        else if sk == "nullable" then
+            Just
+                ("the source is " ++ describeSchema s ++ ", so "
+                    ++ describeSchema t
+                    ++ " needs a Maybe")
+
+        else if sk == "open" then
+            if under then
+                Just
+                    ("the source is a part no schema describes, and a Maybe of "
+                        ++ describeSchema t
+                        ++ " would read a value it cannot decode as Nothing")
+
+            else
+                Nothing
+
+        else if tk == "string" && sk == "enum" then
+            Nothing
+
+        else if tk == "number" && sk == "integer" then
+            Nothing
+
+        else if tk /= sk then
+            Just (describeSchema s ++ " does not read as " ++ describeSchema t)
+
+        else if tk == "enum" then
+            case missingName (schemaNames t) (schemaNames s) of
+
+                "" ->
+                    Nothing
+
+                n ->
+                    Just
+                        ("the source name \"" ++ n
+                            ++ "\" is not one of the target enum's names")
+
+        else if tk == "array" then
+            within
+                "a list item"
+                (fitSchema under (schemaPart "items" t) (schemaPart "items" s))
+
+        else if tk == "map" then
+            within
+                "a Dict value"
+                (fitSchema
+                    under
+                    (schemaPart "additionalProperties" t)
+                    (schemaPart "additionalProperties" s))
+
+        else if tk == "object" then
+            fieldsFit under t s (schemaNames (schemaPart "required" t))
+
+        else
+            Nothing
+
+
+-- Every target field is in the source, and reads its values.
+fieldsFit : Bool -> Value -> Value -> List String -> Maybe String
+fieldsFit under t s names =
+    case names of
+
+        [] ->
+            Nothing
+
+        n :: rest ->
+            case jsonField n (schemaPart "properties" s) of
+
+                Nothing ->
+                    Just ("the field \"" ++ n ++ "\" is not in the source")
+
+                Just src ->
+                    orElse
+                        (within
+                            ("the field \"" ++ n ++ "\"")
+                            (fitSchema
+                                under
+                                (schemaPart n (schemaPart "properties" t))
+                                src))
+                        (fieldsFit under t s rest)
+
+
+-- | `Nothing` when the JSON value is one the JSON Schema (as `jsonSchema`
+-- writes it) reads: the right JSON type, an enum name that is one of the
+-- names, a `null` only for a `Maybe`, every list item, every record field (a
+-- missing field only for a `Maybe` one). A part the schema leaves open (`{}`)
+-- takes any value: its codec's decoder checks it. `Just` the reason otherwise.
+--
+--     Codec.schemaValueError (Codec.jsonSchema (Codec.list Codec.int)).schema
+--         (Encode.list Encode.string [ "a" ])
+--     -- Just "expected an Int, got \"a\""
+schemaValueError : Value -> Value -> Maybe String
+schemaValueError schema v =
+    let
+        kind = schemaKind schema
+        text = E.encode 0 v
+    in
+        if kind == "nullable" then
+            if text == "null" then
+                Nothing
+
+            else
+                schemaValueError (nullableInner schema) v
+
+        else if kind == "open" then
+            Nothing
+
+        else if kind == "enum" then
+            case jsonText v of
+
+                Just n ->
+                    if memberOf n (schemaNames schema) then
+                        Nothing
+
+                    else
+                        Just
+                            ("\"" ++ n ++ "\" is not one of the names "
+                                ++ String.join ", " (schemaNames schema))
+
+                Nothing ->
+                    expectedSchema schema text
+
+        else if kind == "array" then
+            case jsonItems v of
+
+                Just items ->
+                    itemsError (schemaPart "items" schema) items
+
+                Nothing ->
+                    expectedSchema schema text
+
+        else if kind == "object" || kind == "map" then
+            if not (String.startsWith "{" text) then
+                expectedSchema schema text
+
+            else if kind == "object" then
+                objectValueError
+                    schema
+                    (schemaNames (schemaPart "required" schema))
+                    v
+
+            else
+                Nothing
+
+        else if scalarIs kind text then
+            Nothing
+
+        else
+            expectedSchema schema text
+
+
+-- The kind of a JSON Schema as `jsonSchema` writes it: "nullable" (anyOf
+-- with null), "enum", "array", "object" (a record: `required` lists its
+-- fields), "map" (an object with `additionalProperties` only), a scalar type
+-- ("string", "integer", "number", "boolean") or "open" (`{}`).
+schemaKind : Value -> String
+schemaKind s =
+    case jsonField "anyOf" s of
+
+        Just _ ->
+            "nullable"
+
+        Nothing ->
+            case jsonField "enum" s of
+
+                Just _ ->
+                    "enum"
+
+                Nothing ->
+                    case jsonField "type" s of
+
+                        Just tv ->
+                            case jsonText tv of
+
+                                Just "object" ->
+                                    case jsonField "required" s of
+
+                                        Just _ ->
+                                            "object"
+
+                                        Nothing ->
+                                            "map"
+
+                                Just t ->
+                                    t
+
+                                Nothing ->
+                                    "open"
+
+                        Nothing ->
+                            "open"
+
+
+-- The part of a schema under a key (`{}`, open, when there is none).
+schemaPart : String -> Value -> Value
+schemaPart key s =
+    case jsonField key s of
+
+        Just part ->
+            part
+
+        Nothing ->
+            E.object []
+
+
+-- The non-null side of a nullable schema.
+nullableInner : Value -> Value
+nullableInner s =
+    case jsonItems (schemaPart "anyOf" s) of
+
+        Just (first :: _) ->
+            first
+
+        _ ->
+            E.object []
+
+
+-- An enum's names, or the names of `required`.
+schemaNames : Value -> List String
+schemaNames s =
+    case jsonItems (schemaPart "enum" s) of
+
+        Just items ->
+            textsOf items
+
+        Nothing ->
+            case jsonItems s of
+
+                Just items ->
+                    textsOf items
+
+                Nothing ->
+                    []
+
+
+textsOf : List Value -> List String
+textsOf items =
+    case items of
+
+        [] ->
+            []
+
+        x :: rest ->
+            case jsonText x of
+
+                Just t ->
+                    t :: textsOf rest
+
+                Nothing ->
+                    textsOf rest
+
+
+-- The first source name the target names do not have, or "".
+missingName : List String -> List String -> String
+missingName target source =
+    case source of
+
+        [] ->
+            ""
+
+        n :: rest ->
+            if memberOf n target then
+                missingName target rest
+
+            else
+                n
+
+
+memberOf : String -> List String -> Bool
+memberOf n names =
+    case names of
+
+        [] ->
+            False
+
+        x :: rest ->
+            x == n || memberOf n rest
+
+
+orElse : Maybe String -> Maybe String -> Maybe String
+orElse first second =
+    case first of
+
+        Just msg ->
+            Just msg
+
+        Nothing ->
+            second
+
+
+within : String -> Maybe String -> Maybe String
+within part r =
+    case r of
+
+        Just msg ->
+            Just (part ++ ": " ++ msg)
+
+        Nothing ->
+            Nothing
+
+
+-- Whether the compact JSON text is a scalar of the JSON Schema type `kind`.
+scalarIs : String -> String -> Bool
+scalarIs kind text =
+    if kind == "string" then
+        String.startsWith "\"" text
+
+    else if kind == "integer" then
+        case String.toInt text of
+
+            Just _ ->
+                True
+
+            Nothing ->
+                False
+
+    else if kind == "number" then
+        case String.toFloat text of
+
+            Just _ ->
+                True
+
+            Nothing ->
+                False
+
+    else if kind == "boolean" then
+        text == "true" || text == "false"
+
+    else
+        True
+
+
+-- The items of a JSON array.
+jsonItems : Value -> Maybe (List Value)
+jsonItems v =
+    Result.toMaybe (D.decodeValue (D.list D.value) v)
+
+
+-- The content of a JSON string.
+jsonText : Value -> Maybe String
+jsonText v =
+    Result.toMaybe (D.decodeValue D.string v)
+
+
+-- The value of an object's field.
+jsonField : String -> Value -> Maybe Value
+jsonField name v =
+    Result.toMaybe (D.decodeValue (D.field name D.value) v)
+
+
+itemsError : Value -> List Value -> Maybe String
+itemsError item values =
+    case values of
+
+        [] ->
+            Nothing
+
+        x :: rest ->
+            orElse (schemaValueError item x) (itemsError item rest)
+
+
+objectValueError : Value -> List String -> Value -> Maybe String
+objectValueError schema names v =
+    case names of
+
+        [] ->
+            Nothing
+
+        n :: rest ->
+            let
+                field = schemaPart n (schemaPart "properties" schema)
+            in
+                case jsonField n v of
+
+                    Just x ->
+                        orElse
+                            (within
+                                ("the field \"" ++ n ++ "\"")
+                                (schemaValueError field x))
+                            (objectValueError schema rest v)
+
+                    Nothing ->
+                        if schemaKind field == "nullable" then
+                            objectValueError schema rest v
+
+                        else
+                            Just ("the field \"" ++ n ++ "\" is missing")
+
+
+expectedSchema : Value -> String -> Maybe String
+expectedSchema schema text =
+    Just
+        ("expected " ++ describeSchema schema ++ ", got " ++ String.left 60 text)
+
+
+-- A description of a schema for an error message.
+describeSchema : Value -> String
+describeSchema s =
+    let
+        kind = schemaKind s
+    in
+        if kind == "string" then
+            "a String"
+
+        else if kind == "integer" then
+            "an Int"
+
+        else if kind == "number" then
+            "a Float"
+
+        else if kind == "boolean" then
+            "a Bool"
+
+        else if kind == "nullable" then
+            "a Maybe of " ++ describeSchema (nullableInner s)
+
+        else if kind == "array" then
+            "a list of " ++ describeSchema (schemaPart "items" s)
+
+        else if kind == "enum" then
+            "an enum (" ++ String.join ", " (schemaNames s) ++ ")"
+
+        else if kind == "object" then
+            "a record"
+
+        else if kind == "map" then
+            "a Dict"
+
+        else
+            "a part no schema describes"

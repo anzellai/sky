@@ -308,6 +308,17 @@ categoryCodec =
 
 -- ── Helpers ──────────────────────────────────────────────────────────────────
 
+fits : Codec t -> Codec s -> Bool
+fits target source =
+    Codec.schemaFitError (Codec.jsonSchema target).schema (Codec.jsonSchema source).schema
+        == Nothing
+
+
+valueFits : Codec a -> Encode.Value -> Bool
+valueFits codec v =
+    Codec.schemaValueError (Codec.jsonSchema codec).schema v == Nothing
+
+
 -- Round-trip a value through its codec and assert structural identity.
 roundTrip : Codec a -> a -> Test.TestResult
 roundTrip codec x =
@@ -687,6 +698,53 @@ tests =
                 ( "{\"xs\":[]}", 0 )
                 ( Encode.encode 0 (Encode.object (Codec.fieldZeros zeroOuter))
                 , List.length (Codec.fieldZeros (Codec.list Codec.int))
+                ))
+    -- ── schemaFitError / schemaValueError (Std.Db.Store's codec checks) ──
+    , Test.test "schemaFitError: a Maybe reads its own kind, and refuses a value it would read as Nothing"
+        (\_ ->
+            Test.equal
+                ( [ True, True, True, True, True ], [ False, False, False, False ] )
+                ( [ fits (Codec.maybe Codec.int) Codec.int
+                  , fits (Codec.maybe Codec.int) (Codec.maybe Codec.int)
+                  , fits Codec.string categoryCodec
+                  , fits Codec.float Codec.int
+                  , fits (Codec.maybe categoryCodec) categoryCodec
+                  ]
+                , [ fits (Codec.maybe (Codec.list Codec.string)) (Codec.list Codec.int)
+                  , fits (Codec.maybe categoryCodec) Codec.string
+                  , fits Codec.int (Codec.maybe Codec.int)
+                  , fits (Codec.list (Codec.maybe Codec.int)) (Codec.list Codec.string)
+                  ]
+                ))
+    , Test.test "schemaFitError: a Maybe of an open part (a custom type) reads only an open part"
+        (\_ ->
+            Test.equal
+                ( True, False, True )
+                ( fits (Codec.maybe shipmentCodec) shipmentCodec
+                , fits (Codec.maybe shipmentCodec) (Codec.list Codec.int)
+                , fits shipmentCodec (Codec.list Codec.int)
+                ))
+    , Test.test "schemaValueError: a value the codec reads passes, any other names the reason"
+        (\_ ->
+            Test.equal
+                ( [ True, True, True, True ], [ False, False, False, False ] )
+                ( [ valueFits (Codec.list Codec.int) (Encode.list Encode.int [ 1, 2 ])
+                  , valueFits categoryCodec (Encode.string "prints")
+                  , valueFits (Codec.maybe Codec.int) Encode.null
+                  , valueFits shipmentCodec (Encode.list Encode.int [ 1 ])
+                  ]
+                , [ valueFits (Codec.list Codec.int) (Encode.list Encode.string [ "a" ])
+                  , valueFits categoryCodec (Encode.string "posters")
+                  , valueFits Codec.int Encode.null
+                  , valueFits (Codec.auto { id = 0, name = "" }) (Encode.object [ ( "id", Encode.int 1 ) ])
+                  ]
+                ))
+    , Test.test "schemaFitError: a record reads a source record that has every one of its fields"
+        (\_ ->
+            Test.equal
+                ( True, False )
+                ( fits (Codec.auto { id = 0 }) (Codec.auto { id = 0, name = "" })
+                , fits (Codec.auto { id = 0, name = "" }) (Codec.auto { id = 0 })
                 ))
     ]
 

@@ -528,6 +528,44 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
 
 ### Fixed
 
+- **`Std.Db.Store` never stores or reads a value of the wrong kind with no
+  error.** A `SqlValue` reached the database to be converted: SQLite's
+  `CAST('abc' AS BIGINT)` is 0, so `setWhen` / `otherwise` wrote 0 with
+  `Ok 1`, a `2.7` in an integer column truncated on SQLite and rounded on
+  PostgreSQL, and `SqlString "abc"` into a `Maybe Int` column stored `'abc'`
+  and read back `Nothing`. One rule, the same on both dialects, is now checked
+  before any statement (`docs/skydb/overview.md`, "Value kinds"): a written
+  value (`updateFields`, `setFields`, `setValue`, `setWhen`, `otherwise`,
+  `const`, a `defaultWith` result) must be of the column's kind, `SqlNull`
+  only into a `Maybe` field, an enum column takes one of its names and a JSON
+  column JSON its codec reads. A compared value follows the kind rule, a
+  `SqlString` on an int, real or bool column is read as the column's kind
+  (text that is not a value of it is an `Err`), and `SqlNull` is refused (it
+  never matched). A declared default (`defaultText` / `defaultInt` /
+  `defaultBool` / `defaultFloat`, a `Schema.Table` default, an `addColumn` op)
+  must fit its column, because `migrate` writes it into the rows that exist.
+  `adjust` needs a required `Int` or `Float` column.
+- **A projection never reads a source its codec decodes as `Nothing`.** The
+  `select` / `selectAs` / `selectColumn` / `Agg` / `copyInto` / `setCol` fit
+  checks compared base kinds and nullability only, so a `List Int` column
+  into a `Maybe (List String)` field, or a `String` column into a `Maybe` enum
+  field, read `Nothing` in every row. They now compare the codecs
+  (`Codec.schemaFitError`, new): a `Maybe x` field reads a source `x` or
+  `Maybe x`, and a list, record or custom type is compared part by part.
+- **A stored value that does not read as its column's kind is an `Err`, not
+  `Nothing`.** The read kernel turned it into JSON null, which a
+  `Codec.maybe` decoder reads as `Nothing`; now the `Err` names the table, the
+  column and the kind. SQL NULL is still `Nothing`, and the shapes earlier
+  versions wrote still read (an integer stored as text, an integral float,
+  `1` / `0` bools, timestamps as text). A column that holds a value its
+  `Maybe` field's codec reads as `Nothing` (JSON of another custom type, a
+  projection into another type) is an `Err` naming the column, and so is JSON
+  of another custom type written into such a column. A `selectRaw` result
+  that leaves out a codec column is an `Err` naming it. On the write side, a codec value whose
+  JSON is not of the column's kind is an `Err` naming the column, where the
+  kernel wrote 0, false or the value's Go `%v` text.
+- **`insertMany` and `upsert` compute a `defaultWith` column.** They left it
+  out of the INSERT, so the row took the column's database default or NULL.
 - **`Codec.maybe` over a list, a record or a union gives a nullable column.**
   In a `Codec.object` codec such a field was a NOT NULL blob column, so
   `Store.insert` of `Nothing` failed with a NOT NULL violation (a new table,

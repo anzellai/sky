@@ -58,9 +58,11 @@ module Std.Db.Schema exposing
     )
 
 import Sky.Ffi as Ffi
-import Sky.Core.Error exposing (Error)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Task as Task
 import Sky.Core.String as String
 import Sky.Core.List as List
+import Sky.Core.Json.Decode as JD
 import Std.Db.Store as Store
 
 -- | A column definition. Build with the typed constructors + pipe the
@@ -274,15 +276,42 @@ withUniqueIndex nm cols t =
 
 -- ── Run ────────────────────────────────────────────────────────────────────
 -- | Create the table (+ its indexes) using the DIALECT-CORRECT DDL for the
--- connection's backend. Idempotent (CREATE TABLE / INDEX IF NOT EXISTS).
+-- connection's backend. Idempotent (CREATE TABLE / INDEX IF NOT EXISTS). A
+-- declared default that does not fit its column (a text default on an int
+-- column, say) is an `Err` before any statement.
 createTable : Db -> Table -> Task Error ()
-createTable =
+createTable conn t =
+    case List.filterMap (defaultProblem t.name) t.columns of
+
+        msg :: _ ->
+            Task.fail (Error.invalidInput msg)
+
+        [] ->
+            kernelCreateTable conn t
+
+
+-- | Create a whole schema (a list of tables, in order). A declared default
+-- that does not fit its column fails before any table is created.
+createSchema : Db -> List Table -> Task Error ()
+createSchema conn tables =
+    case List.concatMap
+             (\t -> List.filterMap (defaultProblem t.name) t.columns)
+             tables of
+
+        msg :: _ ->
+            Task.fail (Error.invalidInput msg)
+
+        [] ->
+            kernelCreateSchema conn tables
+
+
+kernelCreateTable : Db -> Table -> Task Error ()
+kernelCreateTable =
     Ffi.kernel "Schema_createTable"
 
 
--- | Create a whole schema (a list of tables, in order).
-createSchema : Db -> List Table -> Task Error ()
-createSchema =
+kernelCreateSchema : Db -> List Table -> Task Error ()
+kernelCreateSchema =
     Ffi.kernel "Schema_createSchema"
 
 
@@ -316,8 +345,72 @@ toStoreTable t =
     , pk = pkOf t.columns
     , cols = List.map storeColOf t.columns
     , indexes = List.map storeIndexOf t.indexes
-    , problems = []
+    , problems = List.filterMap (defaultProblem t.name) t.columns
     }
+
+
+-- A declared default that does not fit its column: `migrate` and `sky db
+-- push` write the default into the rows that exist, so it must read back as
+-- the column's kind. A text default fits a text or JSON column (JSON must
+-- parse), an int default an int, bigint, real or timestamp column, a bool
+-- default a bool column, and `defaultNow` a text column or an integer one
+-- (`int`, `bigint`, `timestamp`: epoch milliseconds).
+defaultProblem : String -> Column -> Maybe String
+defaultProblem table c =
+    let
+        base =
+            String.replace "!" "" (String.replace "?" "" (storeKindBase c))
+        refuse what =
+            Just
+                ("Schema \"" ++ table ++ "\": column \"" ++ c.name ++ "\" is "
+                    ++ c.kind
+                    ++ ", and "
+                    ++ what
+                    ++ " does not fit it")
+    in
+        case c.defaultKind of
+
+            "text" ->
+                if base == "text" then
+                    Nothing
+
+                else if base == "blob" then
+                    case JD.decodeString JD.value c.defaultVal of
+
+                        Ok _ ->
+                            Nothing
+
+                        Err _ ->
+                            refuse
+                                ("the text default \"" ++ c.defaultVal
+                                    ++ "\" (not JSON)")
+
+                else
+                    refuse "a text default"
+
+            "int" ->
+                if base == "int" || base == "real" then
+                    Nothing
+
+                else
+                    refuse "an int default"
+
+            "bool" ->
+                if base == "bool" then
+                    Nothing
+
+                else
+                    refuse "a bool default"
+
+            "now" ->
+                if base == "text" || base == "int" then
+                    Nothing
+
+                else
+                    refuse "defaultNow"
+
+            _ ->
+                Nothing
 
 
 storeIndexOf : Index -> Store.IndexSpec
