@@ -50,6 +50,86 @@ const go = new Go();
     document.documentElement.removeAttribute("data-sky-hydrating");
   }, 12000);
 })();
+// Hold a form submitted while the client hydrates (v0.29.1). Before the wasm
+// client is live, Enter, a keyboard "Go" key or a password manager submits the
+// server-rendered form natively: a POST of the fields to the page's own URL.
+// While <html data-sky-hydrating> is set, a submit of a form the app handles
+// (it has a sky-submit attribute) is held here instead, with the field values
+// typed so far. Hydration sets each field to the model's value, so typed text
+// is recorded too. Once the client is live it calls __skyHydrated (once), which
+// puts the typed values back, sends them as input and change events, so the
+// app's handlers see them, and submits the held form through the app. Clicks
+// before hydration are not replayed: the overlay takes them, and the target
+// is not known.
+(function () {
+  var root = document.documentElement;
+  var edits = {};
+  var order = [];
+  var held = null;
+  function hydrating() {
+    return root.hasAttribute("data-sky-hydrating");
+  }
+  function idOf(el) {
+    return el && el.getAttribute ? el.getAttribute("sky-id") : null;
+  }
+  var notTyped = { submit: 1, button: 1, reset: 1, image: 1, hidden: 1, file: 1 };
+  function record(el) {
+    var id = idOf(el);
+    if (!id || typeof el.value !== "string" || notTyped[el.type]) return;
+    if (!(id in edits)) order.push(id);
+    edits[id] = { value: el.value, checked: !!el.checked };
+  }
+  function onEdit(ev) {
+    if (hydrating()) record(ev.target);
+  }
+  document.addEventListener("input", onEdit, true);
+  document.addEventListener("change", onEdit, true);
+  document.addEventListener("submit", function (ev) {
+    var form = ev.target;
+    if (!hydrating() || !form || !form.hasAttribute || !form.hasAttribute("sky-submit")) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    if (held) return;
+    for (var i = 0; i < form.elements.length; i++) record(form.elements[i]);
+    held = { form: idOf(form), by: idOf(ev.submitter) };
+  }, true);
+  function byIdNow() {
+    var map = {};
+    var all = document.querySelectorAll("[sky-id]");
+    for (var i = 0; i < all.length; i++) map[all[i].getAttribute("sky-id")] = all[i];
+    return map;
+  }
+  globalThis.__skyHydrated = function () {
+    globalThis.__skyHydrated = function () {};
+    var byId = byIdNow();
+    for (var j = 0; j < order.length; j++) {
+      var el = byId[order[j]];
+      var e = edits[order[j]];
+      if (!el || typeof el.value !== "string" || notTyped[el.type]) continue;
+      if (el.type === "checkbox" || el.type === "radio") {
+        el.checked = e.checked;
+      } else if (el.value !== e.value) {
+        el.value = e.value;
+      }
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    var spec = held;
+    held = null;
+    // The events above may have re-rendered: look the form up again.
+    byId = byIdNow();
+    var form = spec && spec.form ? byId[spec.form] : null;
+    if (!form || form.tagName !== "FORM") return;
+    var by = spec.by ? byId[spec.by] : null;
+    if (typeof form.requestSubmit !== "function") {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    } else if (by && by.form === form) {
+      form.requestSubmit(by);
+    } else {
+      form.requestSubmit();
+    }
+  };
+})();
 `
 
 // SpaBootPath is the loader's root-absolute URL in the frontend dist.

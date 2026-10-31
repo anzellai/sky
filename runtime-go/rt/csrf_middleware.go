@@ -60,6 +60,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 )
 
@@ -225,7 +226,32 @@ func IsCsrfEnabled() bool {
 //   - State-mutating method (POST/PUT/DELETE/PATCH) → require
 //     `X-Sky-Csrf` header matching `__sky_csrf` cookie. Both
 //     present + equal → pass. Missing or mismatch → 403.
+//
+// The Sky.Http.Server and Sky.Live listeners use csrfMiddlewareWithPages, so
+// a native form POST to one of their pages that fails the check answers 303
+// to the same URL instead of the JSON 403.
 func CSRFMiddleware(next http.Handler) http.Handler {
+	return csrfMiddlewareWithPages(next, nil)
+}
+
+// csrfMiddlewareWithPages is CSRFMiddleware with the page-route test the
+// rejection consults. `isPage` reports whether the request's path is a page
+// of a TEA app, where no handler takes a native form POST. When a request
+// fails the check AND it is a native form POST (isNativeFormPost) to such a
+// page, the answer is pagePostRedirect (303 to the same URL), not the 403
+// JSON page. A browser shows that JSON as the whole page, and a person who
+// pressed "Go" on a phone before the client was live lost the form and the
+// app (v0.29.1). The 303 is safe: no handler runs, the body is not read
+// further, and the browser only makes a same-origin GET of the page it is on.
+// A nil isPage keeps the 403 for every failure.
+func csrfMiddlewareWithPages(next http.Handler, isPage func(*http.Request) bool) http.Handler {
+	reject := func(w http.ResponseWriter, r *http.Request, status, reason string) {
+		if isPage != nil && isNativeFormPost(r) && isPage(r) {
+			pagePostRedirect(w, r)
+			return
+		}
+		csrfReject(w, status, reason)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !csrfEnabled.Load() {
 			next.ServeHTTP(w, r)
@@ -371,14 +397,14 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 			submitted = tok
 		}
 		if submitted == "" || cookieToken == "" {
-			csrfReject(w, "csrf_missing", "missing X-Sky-Csrf header / __sky_csrf form field, or __sky_csrf cookie")
+			reject(w, r, "csrf_missing", "missing X-Sky-Csrf header / __sky_csrf form field, or __sky_csrf cookie")
 			return
 		}
 		// crypto/subtle.ConstantTimeCompare returns 1 on equal,
 		// 0 on different OR different-length. Defeats timing-attack
 		// token discovery.
 		if subtle.ConstantTimeCompare([]byte(submitted), []byte(cookieToken)) != 1 {
-			csrfReject(w, "csrf_invalid", "submitted CSRF token does not match cookie")
+			reject(w, r, "csrf_invalid", "submitted CSRF token does not match cookie")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -751,4 +777,140 @@ func CurrentCsrfTokenForRequest(r *http.Request) string {
 		return c.Value
 	}
 	return ""
+}
+
+// ─── Native form POST to a page route ─────────────────────────
+
+// isNativeFormPost reports whether r is what a browser sends when it submits
+// an HTML form by itself: a POST with a form content type and no X-Sky-Csrf
+// header. Every Sky client request (Sky.Live's event POST, a Sky.Spa RPC)
+// sends JSON or the header, so none of them matches.
+func isNativeFormPost(r *http.Request) bool {
+	if r.Method != http.MethodPost || r.Header.Get(SkyCsrfHeaderName) != "" {
+		return false
+	}
+	ct := strings.ToLower(r.Header.Get("Content-Type"))
+	return strings.HasPrefix(ct, "application/x-www-form-urlencoded") ||
+		strings.HasPrefix(ct, "multipart/form-data")
+}
+
+// pagePostRedirect answers a native form POST to a page route: 303 See Other
+// to the same URL, query included, so the browser GETs the page it is on.
+// It never reads the body (a password in it goes nowhere) and the answer is
+// never cached. The location is always a path on this origin
+// (sameOriginLocation): a request line such as `POST //evil.example/x` must
+// not become a redirect to another host.
+func pagePostRedirect(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Location", sameOriginLocation(r.URL.RequestURI()))
+	w.WriteHeader(http.StatusSeeOther)
+}
+
+// sameOriginLocation turns a request URI into a Location that stays on this
+// origin. A browser reads `//host/x` and `/\host/x` as a link to another
+// host, so leading slashes and backslashes collapse to one `/`. Anything that
+// is not a path (an absolute URI on the request line) becomes `/`.
+func sameOriginLocation(uri string) string {
+	if uri == "" || (uri[0] != '/' && uri[0] != '\\') {
+		return "/"
+	}
+	i := 0
+	for i < len(uri) && (uri[i] == '/' || uri[i] == '\\') {
+		i++
+	}
+	return "/" + uri[i:]
+}
+
+// spaPageSet is the set of Sky.Spa page patterns of ONE Server.listen route
+// list whose POST answers 303 (pagePostRedirect). serverRouteMux fills it for
+// each Spa_pageRoute route that owns its path's POST, and for a
+// `Server.staticNotFound` catch-all (spaNotFoundPagePattern). The listener's
+// CSRF middleware (serverListenerHandler) reads the set of its own mux, so a
+// failed native form POST to one of its pages answers the same 303. It is per
+// mux, not process-wide: a second server in the process, or a plain
+// CSRFMiddleware, keeps the 403.
+type spaPageSet struct {
+	mu       sync.Mutex
+	patterns []string
+}
+
+// spaPageSets maps a *http.ServeMux made by serverRouteMux to its spaPageSet.
+var spaPageSets sync.Map
+
+func (s *spaPageSet) add(pattern string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range s.patterns {
+		if p == pattern {
+			return
+		}
+	}
+	s.patterns = append(s.patterns, pattern)
+}
+
+// spaNotFoundPagePattern is added by a `Server.staticNotFound` route (the
+// Sky.Spa split's `/` catch-all), which renders the NotFound page for any path
+// no other route takes. Every path but the runtime's own (`/_sky/`, `/_rpc/`)
+// is then a page. Such a POST reaches the reject only when it is not an api or
+// rpc route (those are exempt and pass first).
+const spaNotFoundPagePattern = "/{notfound...}"
+
+// matches reports whether r's path is one of the set's pages.
+func (s *spaPageSet) matches(r *http.Request) bool {
+	path := r.URL.Path
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range s.patterns {
+		if p == spaNotFoundPagePattern {
+			if strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "//") &&
+				!strings.HasPrefix(path, "/_sky/") && !strings.HasPrefix(path, "/_rpc/") {
+				return true
+			}
+			continue
+		}
+		if pagePatternMatch(p, path) {
+			return true
+		}
+	}
+	return false
+}
+
+// spaPagesOf returns the page test for a mux made by serverRouteMux, or nil
+// (no page answers 303) for any other handler.
+func spaPagesOf(mux *http.ServeMux) func(*http.Request) bool {
+	if v, ok := spaPageSets.Load(mux); ok {
+		return v.(*spaPageSet).matches
+	}
+	return nil
+}
+
+// pagePatternMatch reports whether path matches a page route pattern as the
+// Go mux registers it: `/{$}` is the root only, a `:name` or `{name}` segment
+// matches one non-empty segment, and anything else matches exactly. Empty
+// segments are kept, so `//` never matches `/`.
+func pagePatternMatch(pat, path string) bool {
+	if pat == "/{$}" {
+		return path == "/"
+	}
+	if pat == path {
+		return true
+	}
+	ps := strings.Split(pat, "/")
+	rs := strings.Split(path, "/")
+	if len(ps) != len(rs) {
+		return false
+	}
+	for i := range ps {
+		seg := ps[i]
+		if strings.HasPrefix(seg, ":") || (strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}")) {
+			if rs[i] == "" {
+				return false
+			}
+			continue
+		}
+		if seg != rs[i] {
+			return false
+		}
+	}
+	return true
 }

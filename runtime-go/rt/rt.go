@@ -8873,6 +8873,13 @@ type SkyRoute struct {
 	// The route is exempt from the double-submit CSRF token, which the
 	// guard replaces.
 	Rpc bool
+
+	// SpaPage — true for a Sky.Spa SSR page route (Spa_pageRoute). It is a
+	// GET route that renders the page, and serverRouteMux also makes it the
+	// answer to a native form POST on its path, unless another route on the
+	// same path takes POST: the POST answers 303 to the same URL
+	// (pagePostRedirect) and its body is never read.
+	SpaPage bool
 }
 
 // SkyRequest wraps an HTTP request

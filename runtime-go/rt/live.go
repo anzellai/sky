@@ -1438,7 +1438,39 @@ func (app *liveApp) dispatchRoot(w http.ResponseWriter, r *http.Request) {
 		app.handleInitial(w, r)
 		return
 	}
+	if r.Method == http.MethodPost {
+		// A form submitted before the client script runs (or with no
+		// JavaScript) is a native POST to the page's own URL. No page takes a
+		// POST, so it answers 303 to the same URL and the browser GETs the
+		// page again; the body is not read (pagePostRedirect).
+		pagePostRedirect(w, r)
+		return
+	}
 	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+}
+
+// isNativePagePost reports whether r reaches this app's page dispatcher
+// (dispatchRoot, mounted at "/" on mux) as a POST that no api route takes.
+// The app's CSRF middleware (liveListenerHandlerFor) answers such a native
+// form POST that fails the check with the same 303 dispatchRoot gives, not
+// with the JSON 403. A path the mux gives to another handler (a mounted
+// sub-app, the static files, a /_sky/ endpoint) is not a page.
+func (app *liveApp) isNativePagePost(mux *http.ServeMux, r *http.Request) bool {
+	if _, pattern := mux.Handler(r); pattern != "/" {
+		return false
+	}
+	if strings.HasPrefix(r.URL.Path, "/_sky/") {
+		return false
+	}
+	for _, ar := range app.api {
+		if ar.method != "" && !strings.EqualFold(ar.method, http.MethodPost) {
+			continue
+		}
+		if _, ok := matchRoute(ar.pattern, r.URL.Path); ok {
+			return false
+		}
+	}
+	return true
 }
 
 // collectLiveRoutes splits a `Live.app` cfg's routes into page routes and api
@@ -2044,7 +2076,15 @@ func liveListenerHandlerFor(app *liveApp, mux *http.ServeMux, bindHost string) h
 	if app != nil && app.headerSessions {
 		// Header session transport: the X-Sky-Session header is the CSRF
 		// defence (live_session_header.go). No double-submit cookie.
-		csrfed = headerSessionCSRF(skyAssetGuard(mux, nil))
+		csrfed = headerSessionCSRFWithPages(skyAssetGuard(mux, nil), func(r *http.Request) bool {
+			return app.isNativePagePost(mux, r)
+		})
+	} else if app != nil {
+		// A failed native form POST to one of the app's pages answers 303,
+		// as dispatchRoot does for one that passes (isNativePagePost).
+		csrfed = csrfMiddlewareWithPages(skyAssetGuard(mux, nil), func(r *http.Request) bool {
+			return app.isNativePagePost(mux, r)
+		})
 	} else {
 		csrfed = CSRFMiddleware(skyAssetGuard(mux, nil))
 	}
@@ -2645,6 +2685,11 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// behind a prefix-stripping proxy (SKY_LIVE_BASE_PATH) reads the name the
 	// middleware set.
 	csrfToken := CurrentCsrfTokenForRequest(r)
+	if csrfToken != "" {
+		// The page carries this visitor's token (the inline config) and the
+		// response sets the matching cookie: no shared cache may keep it.
+		markPerVisitorPage(w.Header())
+	}
 	// devBanner is "" in production; injected as a sibling of sky-root
 	// so it survives every diff/patch cycle (root replacement won't
 	// blow it away) and stays pinned bottom-right via position:fixed.

@@ -9881,6 +9881,13 @@ fn gen_backend(
              spaSsrRenderBody : any -> String\n\
              spaSsrRenderBody =\n\
              \x20   Ffi.kernel \"Spa_ssrRenderBody\"\n\n\n\
+             -- A page route (runtime-go/rt/spa_ssr_notjs.go, Spa_pageRoute): a GET\n\
+             -- that takes the CSRF middleware, so the page's POST forms carry the\n\
+             -- `__sky_csrf` field, and a native form POST to the page answers 303\n\
+             -- to the same URL instead of a 403.\n\
+             spaPageRoute_ : String -> (Server.Request -> Task Error Server.Response) -> Server.Route\n\
+             spaPageRoute_ =\n\
+             \x20   Ffi.kernel \"Spa_pageRoute\"\n\n\n\
              -- The page kernel also stamps `data-sky-settled` on #app: the two\n\
              -- Bools say whether init's command and the route's onNavigate command\n\
              -- ran to the end here, so the client skips exactly those (SPA-10).\n\
@@ -10199,7 +10206,14 @@ fn gen_backend(
         // `GET /{$}` (Go 1.22). Each literal pattern is a more-specific mux entry
         // than `Server.static "/"`, so app routes reach the SSR handler while
         // asset GETs (main.wasm, wasm_exec.js) fall through to the file server.
-        routes.push("        , Server.api \"GET /{$}\" ssrHandler".to_string());
+        //
+        // A page is mounted with `spaPageRoute_` (`Spa_pageRoute`), not
+        // `Server.api "GET …"`: an api route skips the CSRF middleware, so the
+        // page got no CSRF cookie and its forms no `__sky_csrf` field, and a
+        // form submitted before hydration ended on a 403 JSON page (v0.29.1).
+        // The runtime also answers a native POST to the page with 303, and
+        // leaves the POST to any app route on the same path (serverRouteMux).
+        routes.push("        , spaPageRoute_ \"/{$}\" ssrHandler".to_string());
         if has_synth_routes {
             // Per-route SSR registration. The patterns are collected by the
             // caller across EVERY project module (spa_split::generate), so a
@@ -10211,7 +10225,7 @@ fn gen_backend(
             // segment is translated to Go's `{param}` by the runtime's
             // `colonToMuxPattern`, so a `routeParam "/blog/:slug"` resolves.
             for pat in ssr_route_patterns {
-                routes.push(format!("        , Server.api \"GET {pat}\" ssrHandler"));
+                routes.push(format!("        , spaPageRoute_ \"{pat}\" ssrHandler"));
             }
         }
     }

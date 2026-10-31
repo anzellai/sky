@@ -3029,7 +3029,7 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
     // the SSR route + render kernels are still exactly what P1 asserted.
     for needle in [
         "ssrHandler",
-        "Server.api \"GET /{$}\" ssrHandler",
+        "spaPageRoute_ \"/{$}\" ssrHandler",
         "spaSsrPage",
         "spaSsrRenderBody (spaView_ resolved)",
         "spaSsrRenderHead spaHead_ resolved",
@@ -3040,6 +3040,20 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
             "SSR-P1: the generated backend must carry the SSR route piece `{needle}`:\n{backend}"
         );
     }
+    // v0.29.1: a page is a CSRF-checked GET (`Spa_pageRoute`), never an api
+    // route. `Server.api "GET …"` skipped the CSRF middleware, so the page got
+    // no `__sky_csrf` form field, and a form submitted before hydration ended
+    // on a 403 JSON page. The kernel also answers a native POST with 303.
+    assert!(
+        backend.contains("spaPageRoute_ =\n    Ffi.kernel \"Spa_pageRoute\""),
+        "the backend must alias the page-route kernel:\n{backend}"
+    );
+    assert!(
+        !backend
+            .lines()
+            .any(|l| l.contains("Server.api \"GET") && l.contains("ssrHandler")),
+        "no SSR page may be mounted with Server.api (it skips CSRF):\n{backend}"
+    );
     // v0.25.20: the build gives the backend the frontend's wasm name, so the SSR
     // page names it without reading ../frontend/dist at run time. Since
     // v0.27.9 the name is linked into the backend's small `skybuildinfo`
@@ -3067,7 +3081,7 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
     );
     // The SSR route must be registered BEFORE the static fallthrough so asset
     // GETs (main.<hash>.wasm, wasm_exec.js) still reach the file server.
-    let ssr_at = backend.find("Server.api \"GET /{$}\" ssrHandler");
+    let ssr_at = backend.find("spaPageRoute_ \"/{$}\" ssrHandler");
     let static_at = backend.find("Server.static \"/\"");
     assert!(
         ssr_at.is_some() && static_at.is_some() && ssr_at < static_at,
@@ -3982,8 +3996,8 @@ fn spa_ssr_p3_resolves_real_per_route_data_for_a_get_safe_init() {
     for needle in [
         // per-route resolver + registrations
         "spaSsrResolveModel spaRoutes_ spaNotFound_ model0 req.path",
-        "Server.api \"GET /{$}\" ssrHandler",
-        "Server.api \"GET /items\" ssrHandler",
+        "spaPageRoute_ \"/{$}\" ssrHandler",
+        "spaPageRoute_ \"/items\" ssrHandler",
         // data-resolved settle (init IS get-safe)
         "spaSsrSettleFull routed cmd0 update",
         "( initSettled_, initDone_ ) =\n            spaSsrSettleFull routed cmd0 update",
@@ -3996,7 +4010,7 @@ fn spa_ssr_p3_resolves_real_per_route_data_for_a_get_safe_init() {
     // Per-route SSR routes must precede the static fallthrough. Fix 6: the
     // catch-all is `Server.staticNotFound … ssrHandler`, so a cold unmatched path
     // SSRs the NotFound page instead of a bare file-server 404.
-    let items_at = backend.find("Server.api \"GET /items\" ssrHandler");
+    let items_at = backend.find("spaPageRoute_ \"/items\" ssrHandler");
     let static_at = backend.find("Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler");
     assert!(
         items_at.is_some() && static_at.is_some() && items_at < static_at,
@@ -4129,7 +4143,7 @@ fn spa_deep_link_ssr_references_root_absolute_assets() {
     let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
         .expect("generated backend entry must exist");
     assert!(
-        backend.contains("Server.api \"GET /blog/:slug\" ssrHandler"),
+        backend.contains("spaPageRoute_ \"/blog/:slug\" ssrHandler"),
         "the /blog/:slug route must be a per-route SSR GET:\n{backend}"
     );
 
@@ -4425,7 +4439,7 @@ main =
     // Per-route resolution STILL happens (routes are unaffected by the allowlist).
     assert!(
         backend.contains("spaSsrResolveModel spaRoutes_ spaNotFound_ model0 req.path")
-            && backend.contains("Server.api \"GET /stamp\" ssrHandler"),
+            && backend.contains("spaPageRoute_ \"/stamp\" ssrHandler"),
         "SSR-P3 fail-closed: per-route SSR must still be emitted:\n{backend}"
     );
     // …but NO data-resolve settle for a Time.now init (fail-closed → chrome-only).
@@ -4696,7 +4710,7 @@ fn splits_mixed_page_and_api_routes() {
     );
 
     // ── GAP-1 page routes still SSR, ahead of the static NotFound fallback. ──
-    let items_at = backend.find("Server.api \"GET /items\" ssrHandler");
+    let items_at = backend.find("spaPageRoute_ \"/items\" ssrHandler");
     let static_at = backend.find("Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler");
     assert!(
         items_at.is_some() && static_at.is_some() && items_at < static_at,
@@ -4748,7 +4762,7 @@ fn dup_route_fixture_dir() -> PathBuf {
 /// FINDING A. A path that is BOTH an `App.route` PAGE route (`/admin/login`) AND
 /// an `App.api "GET /admin/login"` server endpoint (the sky-lang.org OAuth-entry
 /// shape). The App→Spa synthesis mounts the page route as a per-route SSR
-/// `Server.api "GET /admin/login" ssrHandler` AND the api endpoint via
+/// `spaPageRoute_ "/admin/login" ssrHandler` (a GET) AND the api endpoint via
 /// `App.apiServerRoute spaApiRoutes_`; both register `GET /admin/login` on Go's
 /// mux, which PANICS at boot on the duplicate pattern (`http.ServeMux`),
 /// crash-looping the backend. The api endpoint must WIN — the SSR page mount for
@@ -4777,7 +4791,7 @@ fn mixed_page_and_get_api_route_on_same_path_does_not_double_register() {
         std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
             .unwrap_or_else(|_| panic!("generated backend Main.sky must exist:\n{log}"));
     // Strip `--` comments: the fixture's own doc comment is copied verbatim into
-    // the backend and mentions `Server.api "GET /admin/login" ssrHandler` in
+    // the backend and mentions the page mount of `/admin/login` in
     // prose — a `.contains` on the raw source would match THAT, not a real
     // registration. Assert against the code only.
     let backend = strip_line_comments(&backend_raw);
@@ -4793,7 +4807,7 @@ fn mixed_page_and_get_api_route_on_same_path_does_not_double_register() {
     // `GET /admin/login` exactly once (from the api side), so the backend boots.
     // Before the fix the SSR block ALSO emitted this line → duplicate → panic. ──
     assert!(
-        !backend.contains("Server.api \"GET /admin/login\" ssrHandler"),
+        !backend.contains("spaPageRoute_ \"/admin/login\" ssrHandler"),
         "FINDING A: the SSR page mount for `/admin/login` must be suppressed \
          (it collides with `App.api \"GET /admin/login\"`), else the mux \
          double-registers and boot-panics:\n{backend}"
@@ -4802,8 +4816,8 @@ fn mixed_page_and_get_api_route_on_same_path_does_not_double_register() {
     // ── Non-colliding page routes STILL SSR-mount (the dedupe is scoped to the
     // exact method+path collision, not a blanket suppression). ──
     assert!(
-        backend.contains("Server.api \"GET /items\" ssrHandler")
-            && backend.contains("Server.api \"GET /{$}\" ssrHandler"),
+        backend.contains("spaPageRoute_ \"/items\" ssrHandler")
+            && backend.contains("spaPageRoute_ \"/{$}\" ssrHandler"),
         "FINDING A: non-colliding page routes must keep their SSR GET mounts:\n{backend}"
     );
 
@@ -4835,11 +4849,34 @@ fn mixed_page_and_get_api_route_on_same_path_does_not_double_register() {
     // listen loop) time to run, then check the process is still alive.
     std::thread::sleep(std::time::Duration::from_millis(1500));
     let status = child.child().try_wait().expect("poll the backend process");
+    // v0.29.1: a native form POST to a page answers 303 to the same URL, but
+    // `/items` also has `App.api "POST /items"`, which keeps its POST.
+    let form_post = |path: &str| {
+        raw_http(
+            8973,
+            &format!(
+                "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:8973\r\n\
+                 Content-Type: application/x-www-form-urlencoded\r\n\
+                 Content-Length: 5\r\nConnection: close\r\n\r\nq=one"
+            ),
+        )
+    };
+    let items_post = form_post("/items");
+    let page_post = form_post("/?from=form");
     let mut boot = String::new();
     use std::io::Read as _;
     let _ = std::fs::File::open(&boot_log).and_then(|mut f| f.read_to_string(&mut boot));
     child.kill();
     let _ = std::fs::remove_dir_all(&proj);
+    assert!(
+        items_post.starts_with("HTTP/1.1 200") && items_post.contains("items-posted:q=one"),
+        "an App.api POST on a page path keeps its POST:\n{items_post}\nboot log:\n{boot}"
+    );
+    assert!(
+        page_post.starts_with("HTTP/1.1 303")
+            && page_post.contains("\r\nLocation: /?from=form\r\n"),
+        "a native form POST to a page answers 303 to the same URL:\n{page_post}\nboot log:\n{boot}"
+    );
 
     assert!(
         status.is_none(),
@@ -4850,6 +4887,23 @@ fn mixed_page_and_get_api_route_on_same_path_does_not_double_register() {
         !boot.contains("multiple registrations") && !boot.contains("panic:"),
         "FINDING A: the backend logged a mux/panic error at boot:\n{boot}"
     );
+}
+
+/// Send one raw HTTP/1.1 request to 127.0.0.1:`port` and return the whole
+/// answer (status line, headers, body). An empty string when the server does
+/// not answer.
+fn raw_http(port: u16, request: &str) -> String {
+    use std::io::{Read as _, Write as _};
+    let Ok(mut stream) = std::net::TcpStream::connect(("127.0.0.1", port)) else {
+        return String::new();
+    };
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(10)));
+    if stream.write_all(request.as_bytes()).is_err() {
+        return String::new();
+    }
+    let mut out = String::new();
+    let _ = stream.read_to_string(&mut out);
+    out
 }
 
 fn static_assets_fixture_dir() -> PathBuf {
@@ -6396,10 +6450,10 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
         "GAP-B: `init` (in the sibling `Data`) must be resolved GET-safe → a data-resolve settle:\n{backend}"
     );
     assert!(
-        backend.contains("Server.api \"GET /items\" ssrHandler"),
+        backend.contains("spaPageRoute_ \"/items\" ssrHandler"),
         "GAP-C: the `/items` route (literal in the sibling `Routes`) must be SSR-registered:\n{backend}"
     );
-    let items_at = backend.find("Server.api \"GET /items\" ssrHandler");
+    let items_at = backend.find("spaPageRoute_ \"/items\" ssrHandler");
     let static_at = backend.find("Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler");
     assert!(
         items_at.is_some() && static_at.is_some() && items_at < static_at,

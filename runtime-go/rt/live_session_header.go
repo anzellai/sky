@@ -408,6 +408,14 @@ func (app *liveApp) handleSSETicket(w http.ResponseWriter, r *http.Request) {
 // a CSRF exemption) AND passes sameOriginGuard; every other one is refused.
 // SKY_CSRF=off turns the check off, as it does in cookie mode.
 func headerSessionCSRF(next http.Handler) http.Handler {
+	return headerSessionCSRFWithPages(next, nil)
+}
+
+// headerSessionCSRFWithPages is headerSessionCSRF where a native form POST to
+// one of the app's pages (isPage) that carries no X-Sky-Session header answers
+// 303 to the same URL (pagePostRedirect), as in cookie mode
+// (csrfMiddlewareWithPages): a form submitted before the client script runs.
+func headerSessionCSRFWithPages(next http.Handler, isPage func(*http.Request) bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !csrfEnabled.Load() || isBuiltinCsrfExempt(r.Method, r.URL.Path) {
 			next.ServeHTTP(w, r)
@@ -432,6 +440,10 @@ func headerSessionCSRF(next http.Handler) http.Handler {
 			return
 		}
 		if r.Header.Get(skySessionHeader) == "" {
+			if isPage != nil && isNativeFormPost(r) && isPage(r) {
+				pagePostRedirect(w, r)
+				return
+			}
 			csrfReject(w, "csrf_missing", "header session transport: a state-changing request must carry the X-Sky-Session header")
 			return
 		}

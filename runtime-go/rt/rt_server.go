@@ -249,7 +249,11 @@ func dispatchSkyHandler(w http.ResponseWriter, req *http.Request, handler any, p
 		if strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") {
 			tok := CurrentCsrfToken(req)
 			if tok != "" {
-				body = injectCsrfIntoForms(body, tok)
+				injected := injectCsrfIntoForms(body, tok)
+				if injected != body {
+					markPerVisitorPage(w.Header())
+				}
+				body = injected
 			}
 			// Dev-only "🔍 Console" floating link. Injected
 			// just before </body> so it lives outside any
@@ -268,6 +272,56 @@ func dispatchSkyHandler(w http.ResponseWriter, req *http.Request, handler any, p
 		w.WriteHeader(500)
 		fmt.Fprint(w, "Internal Server Error")
 	}
+}
+
+// markPerVisitorPage marks a page that carries one visitor's CSRF token (a
+// form got the `__sky_csrf` field) so a shared cache never serves it to
+// another visitor. The response also sets that visitor's CSRF cookie. A
+// shared cache that stored both would give every later visitor the same
+// cookie and the same token, and the token would no longer be a secret.
+// `Cache-Control: private` keeps a shared cache from storing the page (an app
+// Cache-Control keeps its other directives, less `public` and `s-maxage`),
+// and `Vary: Cookie` keys any cache that does store it by the cookie.
+func markPerVisitorPage(h http.Header) {
+	if !headerHasToken(h.Values("Vary"), "Cookie") && !headerHasToken(h.Values("Vary"), "*") {
+		h.Add("Vary", "Cookie")
+	}
+	h.Set("Cache-Control", privateCacheControl(h.Get("Cache-Control")))
+}
+
+// privateCacheControl returns cc with `private` in force: unchanged when it
+// already says `private` or `no-store`, else `private` plus every directive
+// but `public` and `s-maxage` (which only a shared cache reads).
+func privateCacheControl(cc string) string {
+	if cc == "" {
+		return "private"
+	}
+	keep := []string{"private"}
+	for _, part := range strings.Split(cc, ",") {
+		p := strings.TrimSpace(part)
+		l := strings.ToLower(p)
+		switch {
+		case l == "private" || l == "no-store":
+			return cc
+		case l == "" || l == "public" || strings.HasPrefix(l, "s-maxage"):
+			continue
+		}
+		keep = append(keep, p)
+	}
+	return strings.Join(keep, ", ")
+}
+
+// headerHasToken reports whether a comma-separated header (all its values)
+// lists tok, ignoring case.
+func headerHasToken(values []string, tok string) bool {
+	for _, v := range values {
+		for _, part := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), tok) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // spaNotFoundInterceptWriter wraps a ResponseWriter for a static file server so a
@@ -308,6 +362,13 @@ func (w *spaNotFoundInterceptWriter) Unwrap() http.ResponseWriter { return w.Res
 // unmatched app paths SSR NotFound, real files still serve.
 func spaStaticFallbackHandler(fileHandler http.Handler, notFound any) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPost {
+			// A form on the NotFound page (or any page the fallback serves)
+			// submitted before the client is live: 303 to the same URL, as
+			// for a page route (Spa_pageRoute). Never a file or a 403.
+			pagePostRedirect(w, req)
+			return
+		}
 		iw := &spaNotFoundInterceptWriter{ResponseWriter: w}
 		fileHandler.ServeHTTP(iw, req)
 		if !iw.swallowed404 {
@@ -327,6 +388,8 @@ func spaStaticFallbackHandler(fileHandler http.Handler, notFound any) http.Handl
 // file server of the `/` static mount (nil without one), for skyAssetGuard.
 func serverRouteMux(routeList []any) (mux *http.ServeMux, rootFiles http.Handler) {
 	mux = http.NewServeMux()
+	pages := &spaPageSet{}
+	spaPageSets.Store(mux, pages)
 	// The Sky.Spa boot loader, from memory (runtime_assets.go). A Sky-owned,
 	// content-hashed name: the backend serves it itself, so the page boots
 	// whether or not the frontend dist is reachable from its directory.
@@ -348,10 +411,23 @@ func serverRouteMux(routeList []any) (mux *http.ServeMux, rootFiles http.Handler
 	// "any method on this path"). Preserves the same-path-different-
 	// method coexistence that #466 unlocked without breaking the
 	// console mount.
+	//
+	// Paths are counted by muxPathKey, which ignores wildcard names:
+	// `/post/:slug` and `/post/:id` are one mux path. Counted by their text,
+	// each was registered method-less and Go's mux panicked at start (v0.29.1:
+	// a page `/post/:slug` next to `App.api "POST /post/:id"`).
 	pathRouteCount := make(map[string]int, len(routeList))
+	// postClaimed: a path where a route other than a Sky.Spa page takes POST
+	// (an explicit POST route, or a method-less / "*" route). A page on that
+	// path leaves POST to it (Spa_pageRoute).
+	postClaimed := make(map[string]bool, len(routeList))
 	for _, r := range routeList {
 		if rt, ok := r.(SkyRoute); ok && rt.StaticDir == "" {
-			pathRouteCount[rt.Path]++
+			key := muxPathKey(rt.Path)
+			pathRouteCount[key]++
+			if m := strings.ToUpper(rt.Method); !rt.SpaPage && (m == "" || m == "*" || m == http.MethodPost) {
+				postClaimed[key] = true
+			}
 		}
 	}
 
@@ -398,6 +474,9 @@ func serverRouteMux(routeList []any) (mux *http.ServeMux, rootFiles http.Handler
 				rootFiles = fileHandler
 			}
 			if route.NotFound != nil {
+				// The fallback renders a page for every path no other route
+				// takes, so a failed native form POST there answers 303 too.
+				pages.add(spaNotFoundPagePattern)
 				mux.Handle(pattern, spaStaticFallbackHandler(fileHandler, route.NotFound))
 			} else {
 				mux.Handle(pattern, fileHandler)
@@ -417,8 +496,36 @@ func serverRouteMux(routeList []any) (mux *http.ServeMux, rootFiles http.Handler
 		// req.PathValue read-back inside the handler below.
 		translated, paramNames := colonToMuxPattern(pattern)
 		muxPattern := translated
-		if pathRouteCount[pattern] > 1 && route.Method != "" && route.Method != "*" {
+		if pathRouteCount[muxPathKey(pattern)] > 1 && route.Method != "" && route.Method != "*" {
 			muxPattern = route.Method + " " + translated
+		}
+		if route.SpaPage {
+			// A Sky.Spa SSR page (Spa_pageRoute). A browser that submits a
+			// form on the page before the wasm client is live (or with no
+			// JavaScript) POSTs it to the page's own URL. No handler takes
+			// that POST, so it answers 303 to the same URL and the browser
+			// GETs the page again (pagePostRedirect). Registered path-only,
+			// this one handler sees the POST itself; registered method-keyed
+			// (another route shares the path), a POST entry is added unless
+			// that other route takes POST. The pattern is then known to the
+			// CSRF middleware, which answers a failed native POST to it with
+			// the same 303 instead of the JSON 403.
+			page := handler
+			names := paramNames
+			mux.HandleFunc(muxPattern, func(w http.ResponseWriter, req *http.Request) {
+				if req.Method == http.MethodPost {
+					pagePostRedirect(w, req)
+					return
+				}
+				dispatchSkyHandler(w, req, page, names)
+			})
+			if muxPattern == translated {
+				pages.add(pattern)
+			} else if !postClaimed[muxPathKey(pattern)] &&
+				muxHandleOrSkip(mux, http.MethodPost+" "+translated, http.HandlerFunc(pagePostRedirect)) {
+				pages.add(pattern)
+			}
+			continue
 		}
 		if route.Rpc {
 			// Server.rpc: the origin / content-type guard runs BEFORE the
@@ -438,6 +545,43 @@ func serverRouteMux(routeList []any) (mux *http.ServeMux, rootFiles http.Handler
 	}
 	registerSharedPathPreflights(mux, routeList, pathRouteCount)
 	return mux, rootFiles
+}
+
+// muxPathKey is a route path as Go's mux compares it: the `:name` and
+// `{name}` wildcards lose their names, so `/post/:slug` and `/post/{id}` are
+// the same key. Two routes with one key share a mux path and must be
+// registered method-keyed, or the mux panics on the second one.
+func muxPathKey(path string) string {
+	translated, _ := colonToMuxPattern(path)
+	segs := strings.Split(translated, "/")
+	for i, seg := range segs {
+		if strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}") && seg != "{$}" {
+			if strings.HasSuffix(seg, "...}") {
+				segs[i] = "{...}"
+			} else {
+				segs[i] = "{}"
+			}
+		}
+	}
+	return strings.Join(segs, "/")
+}
+
+// muxHandleOrSkip registers an OPTIONAL route: the 303 answer for a native
+// POST to a Sky.Spa page. Go's mux panics when a pattern conflicts with one
+// already registered (two wildcard patterns that match the same requests).
+// An app route always wins over this optional one, so a conflict skips it
+// with a log line and the server still starts. It reports whether the route
+// was registered. The mux checks for a conflict before it changes anything,
+// so a recovered panic leaves it as it was.
+func muxHandleOrSkip(mux *http.ServeMux, pattern string, h http.Handler) (ok bool) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			fmt.Fprintf(os.Stderr, "[sky.http] %s: not registered, another route conflicts: %v\n", pattern, rec)
+			ok = false
+		}
+	}()
+	mux.Handle(pattern, h)
+	return true
 }
 
 // registerSharedPathPreflights answers OPTIONS on a path that 2+ routes share.
@@ -460,16 +604,18 @@ func registerSharedPathPreflights(mux *http.ServeMux, routeList []any, pathRoute
 	var order []string
 	for _, r := range routeList {
 		rt, ok := r.(SkyRoute)
-		if !ok || rt.StaticDir != "" || pathRouteCount[rt.Path] < 2 {
+		if !ok || rt.StaticDir != "" || pathRouteCount[muxPathKey(rt.Path)] < 2 {
 			continue
 		}
-		if _, seen := byPath[rt.Path]; !seen {
-			order = append(order, rt.Path)
+		key := muxPathKey(rt.Path)
+		if _, seen := byPath[key]; !seen {
+			order = append(order, key)
 		}
-		byPath[rt.Path] = append(byPath[rt.Path], rt)
+		byPath[key] = append(byPath[key], rt)
 	}
-	for _, path := range order {
-		routes := byPath[path]
+	for _, key := range order {
+		routes := byPath[key]
+		path := routes[0].Path
 		takesOptions := false
 		for _, rt := range routes {
 			m := strings.ToUpper(rt.Method)
@@ -501,7 +647,16 @@ func registerSharedPathPreflights(mux *http.ServeMux, routeList []any, pathRoute
 			}
 			for _, rt := range routes {
 				if want != "" && strings.ToUpper(rt.Method) == want && !rt.Rpc {
-					dispatchSkyHandler(w, req, rt.Handler, paramNames)
+					// The OPTIONS entry carries the first route's wildcard
+					// names. A route that names its segments differently
+					// reads them under its own names.
+					_, own := colonToMuxPattern(rt.Path)
+					for i, name := range own {
+						if i < len(paramNames) && name != paramNames[i] {
+							req.SetPathValue(name, req.PathValue(paramNames[i]))
+						}
+					}
+					dispatchSkyHandler(w, req, rt.Handler, own)
 					return
 				}
 			}
@@ -924,6 +1079,6 @@ func Server_csrfIssue(resp any) any {
 // so a request with a foreign Host reaches no route at all — the dev console
 // included.
 func serverListenerHandler(mux *http.ServeMux, rootFiles http.Handler, bindHost string) http.Handler {
-	csrfed := CSRFMiddleware(spaRpcDedupeMiddleware(skyAssetGuard(mux, rootFiles)))
+	csrfed := csrfMiddlewareWithPages(spaRpcDedupeMiddleware(skyAssetGuard(mux, rootFiles)), spaPagesOf(mux))
 	return hostGuardMiddleware(bindHost, ObservabilityMiddleware(csrfed))
 }

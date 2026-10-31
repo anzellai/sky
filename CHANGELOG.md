@@ -144,6 +144,40 @@ header lookup find a header whatever the case of its name.
     (`anonymised`, `full`) are the overrides. `docs/observability.md` has the
     rules, and `docs/migration/v0.29.md` lists what dashboards see now.
   - Std.Ai download errors no longer repeat the download URL with its query.
+- **A form submitted before a page is live no longer ends on a 403 JSON
+  page.** On a `web:app` (Sky.Spa) page, Enter, a phone's "Go" key or a
+  password manager could submit a form before the wasm client hydrated. The
+  browser then POSTed the form to the page's URL, and the server answered
+  `{"status":"csrf_missing",…}` in place of the app. Sky.Live did the same
+  before its client script ran. Now:
+  - The Sky.Spa boot loader holds a submit of a form the app handles
+    (`Ui.onSubmit`) while the page hydrates, with the text typed so far. Once
+    the client is live it puts the text back and submits the form through the
+    app, so `update` runs once. Text typed before hydration is no longer lost.
+    Clicks before hydration are still not replayed.
+  - The split mounted its server-rendered pages with `Server.api "GET …"`,
+    which skips the CSRF middleware, so the page had no CSRF cookie and its
+    forms no `__sky_csrf` field. A page is now a CSRF-checked GET
+    (`Spa_pageRoute`), and its POST forms carry the field from the first
+    visit.
+  - A native form POST to a page (Sky.Spa or Sky.Live, also with no
+    JavaScript or a lost cookie) answers `303 See Other` to the same URL.
+    The body is not read, and the `Location` never leaves the origin. An
+    `App.api "POST /path"` route, `/_rpc` and the Sky.Live event endpoint
+    are unchanged.
+  - A page that carries a CSRF token is sent with `Vary: Cookie` and
+    `Cache-Control: private`, so a shared cache does not give one visitor's
+    token to another.
+- **Two routes whose path differs only in a parameter name no longer stop
+  the server at start.** A page `/post/:slug` next to
+  `App.api "POST /post/:id"` (or two `Server` routes like that) made Go's
+  router panic, and the backend did not start. Such routes now share the path,
+  and each reads its own parameter.
+- **A `web:app` build no longer hangs now and then on macOS.** The split
+  builds its frontend and backend legs in parallel. On macOS a child process
+  could keep the other leg's output pipe open, so the build waited for good
+  (the backend leg waited for the frontend's wasm name, which comes only when
+  that pipe ends). The two legs now start one at a time, then build together.
 
 ## v0.29.0 — Real-world capabilities (2026-10-29)
 
