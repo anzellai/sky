@@ -1175,6 +1175,11 @@ keyCount key cols n =
 -- lists, and nullary enums (stored as their readable name). Data-carrying ADTs
 -- are NOT derivable — give those an explicit `taggedUnion` codec.
 --
+-- A `Json.Value` field carries any JSON. The blank marks it: give the field a
+-- JSON value (`data = Json.Encode.null`), and a `Maybe Json.Value` field a
+-- `Just` one (`more = Just Json.Encode.null`). A field the blank does not
+-- mark this way does not decode.
+--
 -- Columns / JSON keys are **snake_case** (the DB convention): a record field
 -- `priceMinor` maps to column `price_minor` with no hand-written codec. For a
 -- custom per-column name (camelCase, an abbreviation, a legacy column) use an

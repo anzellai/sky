@@ -13,7 +13,7 @@
     "explicit_exposing": {
       "entries": 3054,
       "modules": 132,
-      "unfiltered_entries": 4859
+      "unfiltered_entries": 4871
     },
     "exposing_all": {
       "_note": "modules whose header is `exposing (..)`: no public-API curation exists, so their filtered count IS their unfiltered count — every top-level declaration, including helpers never intended as API. Migrating these to explicit `exposing` lists is a tracked task.",
@@ -29,20 +29,20 @@
     "types": 428,
     "unfiltered": {
       "_note": "every top-level declaration, ignoring `exposing` lists. NEVER average these with the filtered counts — they answer a different question.",
-      "entries": 5037,
-      "hidden_by_exposing": 1805,
+      "entries": 5049,
+      "hidden_by_exposing": 1817,
       "types": 592,
-      "values": 4445
+      "values": 4457
     },
     "values": 2804
   },
   "tests": {
     "_note": "a CASE is one `Test.test` leaf. An ASSERTION is one call to Test.{equal,notEqual,ok,err,expectErrorKind,isTrue,isFalse,fail}. `Test.pass` is VACUOUS and excluded from `assertions`; `assertion_calls_incl_pass` is the looser reading, reported so the two are never confused.",
     "conformance": {
-      "assertion_calls_incl_pass": 1991,
-      "assertions": 1984,
+      "assertion_calls_incl_pass": 1995,
+      "assertions": 1988,
       "by_assertion_fn": {
-        "equal": 1538,
+        "equal": 1542,
         "err": 136,
         "expectErrorKind": 58,
         "fail": 53,
@@ -51,7 +51,7 @@
         "notEqual": 24,
         "ok": 16
       },
-      "cases": 2058,
+      "cases": 2062,
       "vacuous_pass": 7
     },
     "examples": {

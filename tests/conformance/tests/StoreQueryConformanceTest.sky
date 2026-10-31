@@ -17,6 +17,8 @@ import Std.Db as Db exposing (SqlValue(..))
 import Std.Db.Store as Store exposing (Store)
 import Std.Db.Schema as Schema
 import Std.Codec as Codec exposing (Codec)
+import Sky.Core.Json.Encode as JE
+import Sky.Core.Dict as Dict
 import Sky.Test as Test exposing (Test)
 
 type alias Order =
@@ -4286,6 +4288,54 @@ insertPalette db id xs tones =
                 ++ "')")
             [])
 
+-- An open JSON column (`Json.Value`) whose value has a key with the column's
+-- own name, set to null (a GraphQL-style payload).
+type alias Hook =
+    { id : String
+    , data : JE.Value
+    }
+
+
+hookCodec : Codec Hook
+hookCodec =
+    Codec.auto { id = "", data = JE.null }
+
+
+hooks : Store Hook
+hooks =
+    Store.fromCodec "sqc_hooks" hookCodec |> Store.primaryKey "id"
+
+-- A v0.28 table: the column of a nested `Codec.maybe` Bool or Float was made
+-- TEXT and holds v0.28's text (`true`, `7`). v0.29 writes the same text there
+-- and a condition matches the old rows and the new ones.
+type alias OldFlag =
+    { id : String
+    , flag : Maybe (Maybe Bool)
+    , score : Maybe (Maybe Float)
+    }
+
+
+oldFlags : Store OldFlag
+oldFlags =
+    Store.fromCodec
+        "sqc_legacy_flags"
+        (Codec.object OldFlag |> Codec.field "id" .id Codec.string
+            |> Codec.field "flag" .flag (Codec.maybe (Codec.maybe Codec.bool))
+            |> Codec.field
+                   "score"
+                   .score
+                   (Codec.maybe (Codec.maybe Codec.float))
+            |> Codec.buildObject)
+        |> Store.primaryKey "id"
+
+
+oldFlagIds : Db -> Store.Cond -> Task Error (List String)
+oldFlagIds db cond =
+    Store.toList
+        db
+        (Store.query oldFlags |> Store.where_ cond |> Store.orderAsc "id")
+        |> Task.map (List.map .id)
+
 
 nestedMaybeTests : Db -> List Test
 nestedMaybeTests db =
@@ -4382,6 +4432,128 @@ nestedMaybeTests db =
                           palettes
                           (Store.eq "id" (SqlString "p1"))
                           [ Store.setValue "tones" (SqlString "[\"hot\"]") ])))
+    , Test.test
+          "nested Maybe: a v0.28 TEXT Bool / Float column keeps v0.28's text, and eq matches old and new rows"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      ( ( [ "a", "c" ], [ "a", "c" ] )
+                      , ( [ "a", "b", "c" ]
+                        , [ ( "true", "7" )
+                          , ( "true", "2.5" )
+                          , ( "true", "7" )
+                          ]
+                        )
+                      ))
+                  (Task.run
+                      (Task.sequence
+                          [ drop db "sqc_legacy_flags"
+                          , unit
+                                (Db.exec
+                                    db
+                                    "CREATE TABLE sqc_legacy_flags (id TEXT PRIMARY KEY NOT NULL, flag TEXT, score TEXT)"
+                                    [])
+                          , unit
+                                (Db.exec
+                                    db
+                                    "INSERT INTO sqc_legacy_flags (id, flag, score) VALUES ('a', 'true', '7'), ('b', 'false', '2.5')"
+                                    [])
+                          , unit (Store.migrate db oldFlags)
+                          , unit
+                                (Store.insert
+                                    db
+                                    oldFlags
+                                    { id = "c"
+                                    , flag = Just (Just True)
+                                    , score = Just (Just 7.0)
+                                    })
+                          ]
+                          |> Task.andThen
+                                 (\_ ->
+                                     Task.map2
+                                         (\x y -> ( x, y ))
+                                         (oldFlagIds
+                                             db
+                                             (Store.eq "flag" (SqlBool True)))
+                                         (oldFlagIds
+                                             db
+                                             (Store.eq "score" (SqlFloat 7.0))))
+                          |> Task.andThen
+                                 (\found ->
+                                     Store.updateSet
+                                         db
+                                         oldFlags
+                                         (Store.eq "id" (SqlString "b"))
+                                         [ Store.setValue "flag" (SqlBool True)
+                                         ]
+                                         |> Task.andThen
+                                                (\_ ->
+                                                    Task.map2
+                                                        (\x y -> ( x, y ))
+                                                        (oldFlagIds
+                                                            db
+                                                            (Store.eq
+                                                                "flag"
+                                                                (SqlBool True)))
+                                                        (Db.query
+                                                            db
+                                                            "SELECT flag, score FROM sqc_legacy_flags ORDER BY id"
+                                                            []
+                                                            |> Task.map
+                                                                   (List.map
+                                                                       (\row ->
+                                                                           ( Maybe.withDefault
+                                                                                 ""
+                                                                                 (Dict.get
+                                                                                     "flag"
+                                                                                     row)
+                                                                           , Maybe.withDefault
+                                                                                 ""
+                                                                                 (Dict.get
+                                                                                     "score"
+                                                                                     row)
+                                                                           )))))
+                                         |> Task.map
+                                                (\after -> ( found, after ))))))
+    , Test.test
+          "nested Maybe: toSql shows the SQL without the runtime's column marks"
+          (\_ ->
+              Test.equal
+                  (Ok False)
+                  (Store.toSql
+                      db
+                      (Store.query oldFlags
+                          |> Store.where_ (Store.eq "flag" (SqlBool True)))
+                      |> Result.map (\( sql, _ ) -> String.contains "/*" sql)))
+    , Test.test
+          "open JSON: a value with a nested key named like its column, set to null, is written"
+          (\_ ->
+              Test.equal
+                  ( Ok 1, Ok [ "{\"data\":null,\"errors\":[]}" ] )
+                  ( Task.run
+                        (Task.sequence
+                            [ drop db "sqc_hooks"
+                            , unit (Store.migrate db hooks)
+                            , unit
+                                  (Store.insert
+                                      db
+                                      hooks
+                                      { id = "h1", data = JE.object [] })
+                            ]
+                            |> Task.andThen
+                                   (\_ ->
+                                       Store.updateFields
+                                           db
+                                           hooks
+                                           (Store.eq "id" (SqlString "h1"))
+                                           [ ( "data"
+                                             , SqlString
+                                                   "{\"data\":null,\"errors\":[]}"
+                                             )
+                                           ]))
+                  , Task.run (Store.all db hooks)
+                        |> Result.map (List.map (\h -> JE.encode 0 h.data))
+                  ))
     ]
 
 

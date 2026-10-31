@@ -1846,7 +1846,10 @@ insertHeadOf d s record computed =
                     []
         cols = colNamesList plain ++ pairNames computed ++ nowCols
         marks =
-            repeatText (List.length plain + List.length computed) "?"
+            List.map (\( c, k ) -> paramOf d s.name c k) plain
+                ++ List.map
+                       (\c -> paramOf d s.name c (kindOf c s.cols))
+                       (pairNames computed)
                 ++ repeatText (List.length nowCols) "datetime('now')"
     in
         case cols of
@@ -2168,6 +2171,78 @@ castParam k =
     "CAST(? AS " ++ sqlTypeOf k ++ ")"
 
 
+-- The placeholder of a value written to, or compared with, column `col` of
+-- `table`. On SQLite a nullable Float or Bool column can be a TEXT column:
+-- v0.28 created the column of a nested `Codec.maybe` (`Maybe (Maybe Bool)`)
+-- as TEXT and wrote its value as text (`true`, `7`, `7.5`). The comment names
+-- the column, and the runtime binds that same text when the column is TEXT,
+-- and the value as it is otherwise (runtime-go/rt/db_sqlite_legacy.go), so
+-- the column keeps one spelling and an `eq` matches old and new rows. An Int
+-- needs no mark: SQLite stores an integer bound into TEXT as its decimal,
+-- the text v0.28 wrote. PostgreSQL binds the text form itself
+-- (db_pgx_args.go). `toSql` shows the SQL without the marks.
+paramOf : Dialect -> String -> String -> String -> String
+paramOf d table col kind =
+    case d of
+
+        Sqlite ->
+            if kindNullable kind
+                && (kindBase kind == "real" || kindBase kind == "bool")
+                && isIdent table
+                && isIdent col then
+                "?" ++ legacyMarkOpen ++ table ++ "|" ++ col ++ "*/"
+
+            else
+                "?"
+
+        Postgres ->
+            "?"
+
+
+legacyMarkOpen : String
+legacyMarkOpen =
+    "/*sky:"
+
+
+-- `castParam` for column `col` of `table`: a marked placeholder is bound
+-- uncast (a CAST would turn the text back into a number), and SQLite needs
+-- no CAST for a CASE value or a SELECT expression: the column's affinity
+-- converts it.
+castParamOf : Dialect -> String -> String -> String -> String
+castParamOf d table col kind =
+    let
+        p = paramOf d table col kind
+    in
+        if p == "?" then
+            castParam kind
+
+        else
+            p
+
+
+-- SQL without the column marks `paramOf` adds, as `toSql` shows it.
+withoutMarks : String -> String
+withoutMarks sql =
+    case String.split legacyMarkOpen sql of
+
+        first :: rest ->
+            first ++ String.join "" (List.map afterMark rest)
+
+        [] ->
+            sql
+
+
+afterMark : String -> String
+afterMark part =
+    case String.split "*/" part of
+
+        _ :: after ->
+            String.join "*/" after
+
+        [] ->
+            part
+
+
 sqlTypeOf : String -> String
 sqlTypeOf k =
     let
@@ -2306,7 +2381,7 @@ setExprSql d s target tk e =
                 Err <| storeErr ("updateSet: setValue " ++ msg)
 
             Nothing ->
-                Ok ( "?", [ e.value ] )
+                Ok ( paramOf d s.name target tk, [ e.value ] )
 
     else
         case setWhenError s target tk e of
@@ -2344,7 +2419,8 @@ setWhenSql d s target tk e =
         Ok ( cSql, cParams ) ->
             if e.keepOld then
                 Ok
-                    ( "CASE WHEN (" ++ cSql ++ ") THEN " ++ castParam tk
+                    ( "CASE WHEN (" ++ cSql ++ ") THEN "
+                          ++ castParamOf d s.name target tk
                           ++ " ELSE "
                           ++ target
                           ++ " END"
@@ -2353,9 +2429,10 @@ setWhenSql d s target tk e =
 
             else
                 Ok
-                    ( "CASE WHEN (" ++ cSql ++ ") THEN " ++ castParam tk
+                    ( "CASE WHEN (" ++ cSql ++ ") THEN "
+                          ++ castParamOf d s.name target tk
                           ++ " ELSE "
-                          ++ castParam tk
+                          ++ castParamOf d s.name target tk
                           ++ " END"
                     , cParams ++ [ e.value, e.orElse ]
                     )
@@ -2386,6 +2463,7 @@ prepareCopy ignore d s spec mapping =
 
                     Ok ( srcSql, srcParams ) ->
                         case copyItems
+                                 d
                                  s
                                  ( spec.outCols, spec.outNodes )
                                  (isStar spec.out)
@@ -2445,8 +2523,8 @@ isStar out =
             False
 
 
-copyItems : StoreRec t -> ( List ( String, String ), List ( String, Value ) ) -> Bool -> List ( String, CopyFrom ) -> List String -> List String -> List SqlValue -> Result Error ( ( List String, List String ), List SqlValue )
-copyItems s ( srcCols, srcNodes ) star mapping cols exprs params =
+copyItems : Dialect -> StoreRec t -> ( List ( String, String ), List ( String, Value ) ) -> Bool -> List ( String, CopyFrom ) -> List String -> List String -> List SqlValue -> Result Error ( ( List String, List String ), List SqlValue )
+copyItems d s ( srcCols, srcNodes ) star mapping cols exprs params =
     case mapping of
 
         [] ->
@@ -2508,6 +2586,7 @@ copyItems s ( srcCols, srcNodes ) star mapping cols exprs params =
 
                                             Nothing ->
                                                 copyItems
+                                                    d
                                                     s
                                                     ( srcCols, srcNodes )
                                                     star
@@ -2532,12 +2611,15 @@ copyItems s ( srcCols, srcNodes ) star mapping cols exprs params =
 
                                 Nothing ->
                                     copyItems
+                                        d
                                         s
                                         ( srcCols, srcNodes )
                                         star
                                         rest
                                         (cols ++ [ target ])
-                                        (exprs ++ [ castParam tk ])
+                                        (exprs
+                                            ++ [ castParamOf d s.name target tk
+                                               ])
                                         (params ++ [ v ])
 
 
@@ -3137,9 +3219,19 @@ nullableCols cols =
 
 
 -- The first nullable column that is not null in the row but null once the
--- decoded record is encoded again, or "".
+-- decoded record is encoded again, or "". Each test reads the record's own
+-- key (`fieldIsNull`), never a substring of the text: a JSON column whose
+-- value has a key named like a column is not that column. Both texts are
+-- compact JSON, so a null top-level key is always in the text: a text without
+-- `"c":null` holds a value there, and only a text that has it is parsed (once
+-- per row, `backValue` and `rowValue` carry the parse).
 swallowedColumn : List String -> String -> String -> String
 swallowedColumn cols row back =
+    swallowedIn cols row Nothing back Nothing
+
+
+swallowedIn : List String -> String -> Maybe Value -> String -> Maybe Value -> String
+swallowedIn cols row rowValue back backValue =
     case cols of
 
         [] ->
@@ -3149,12 +3241,53 @@ swallowedColumn cols row back =
             let
                 nullText = "\"" ++ c ++ "\":null"
             in
-                if String.contains nullText back
-                    && not (String.contains nullText row) then
-                    c
+                if not (String.contains nullText back) then
+                    swallowedIn rest row rowValue back backValue
 
                 else
-                    swallowedColumn rest row back
+                    let
+                        backV = parsedOnce backValue back
+                    in
+                        if not (nullIn c backV) then
+                            swallowedIn rest row rowValue back backV
+
+                        else if not (String.contains nullText row) then
+                            c
+
+                        else
+                            let
+                                rowV = parsedOnce rowValue row
+                            in
+                                if nullIn c rowV then
+                                    swallowedIn rest row rowV back backV
+
+                                else
+                                    c
+
+
+-- `text` as a value, parsed only when no earlier parse is at hand.
+parsedOnce : Maybe Value -> String -> Maybe Value
+parsedOnce known text =
+    case known of
+
+        Just v ->
+            Just v
+
+        Nothing ->
+            jsonOf text
+
+
+-- Whether the parsed record's own key `col` is null (text that is not JSON
+-- has no such key).
+nullIn : String -> Maybe Value -> Bool
+nullIn col parsed =
+    case parsed of
+
+        Just v ->
+            fieldIsNull col v
+
+        Nothing ->
+            False
 
 
 -- | Add a condition. Multiple `where_` calls are AND-combined; use `and_` / `or_`
@@ -3921,7 +4054,13 @@ count conn q =
 -- `Err` the query would fail with. For tests and logs.
 toSql : Db -> Query r -> Result Error ( String, List SqlValue )
 toSql conn q =
-    prepare (dialectOf conn) (specOf q)
+    case prepare (dialectOf conn) (specOf q) of
+
+        Ok ( sql, params ) ->
+            Ok ( withoutMarks sql, params )
+
+        Err e ->
+            Err e
 
 
 -- | Run a callback inside a DB transaction — Store operations compose by taking
@@ -5186,6 +5325,7 @@ type alias Ctx =
     , table : String
     , qual : String
     , right : List ( String, String )
+    , rightTable : String
     , joined : Bool
     , rightNull : Bool
     , side : String
@@ -5204,6 +5344,7 @@ plainCtx d table cols =
     , table = table
     , qual = ""
     , right = []
+    , rightTable = ""
     , joined = False
     , rightNull = False
     , side = ""
@@ -5221,6 +5362,7 @@ specCtx d depth qual spec =
             { base
                 | qual = "a"
                 , right = spec.right.cols
+                , rightTable = spec.right.table
                 , rightNodes = spec.right.nodes
                 , joined = True
                 , rightNull = spec.leftOuter
@@ -5262,7 +5404,8 @@ renderCond ctx c =
 
                                 Ok bound ->
                                     Ok
-                                        ( rSql ++ " " ++ op ++ " ?"
+                                        ( rSql ++ " " ++ op ++ " "
+                                              ++ condParam ctx col k
                                         , rParams ++ [ bound ]
                                         )
 
@@ -5316,7 +5459,9 @@ renderCond ctx c =
                                         Ok bound ->
                                             Ok
                                                 ( rSql ++ " IN ("
-                                                      ++ placeholders bound
+                                                      ++ markedPlaceholders
+                                                             (condParam ctx col k)
+                                                             bound
                                                       ++ ")"
                                                 , rParams ++ bound
                                                 )
@@ -5743,6 +5888,69 @@ renderConds ctx cs parts params =
                     renderConds ctx rest (s :: parts) (params ++ p)
 
 
+-- `placeholders` with each `?` as `param` (a marked placeholder, `paramOf`).
+markedPlaceholders : String -> List SqlValue -> String
+markedPlaceholders param vs =
+    case vs of
+
+        [] ->
+            ""
+
+        [ _ ] ->
+            param
+
+        _ :: rest ->
+            param ++ ", " ++ markedPlaceholders param rest
+
+
+-- The placeholder of a value compared with column `name` in `ctx`: marked
+-- (`paramOf`) when `name` is a plain column of a table, else `?`.
+condParam : Ctx -> String -> String -> String
+condParam ctx name kind =
+    if ctx.having || isJsonRef name then
+        "?"
+
+    else
+        case condTarget ctx name of
+
+            Just ( table, col ) ->
+                paramOf ctx.dialect table col kind
+
+            Nothing ->
+                "?"
+
+
+-- The table and column a resolved condition name reads (`colRef` has
+-- already accepted it): the left store, or in a join the side it names.
+condTarget : Ctx -> String -> Maybe ( String, String )
+condTarget ctx name =
+    if not ctx.joined then
+        Just ( ctx.table, resolveCol ctx.cols name )
+
+    else
+        case String.split "." name of
+
+            [ q, bare ] ->
+                if q == "a" then
+                    Just ( ctx.table, resolveCol ctx.cols bare )
+
+                else if q == "b" then
+                    Just ( ctx.rightTable, resolveCol ctx.right bare )
+
+                else
+                    Nothing
+
+            _ ->
+                if ctx.side == "left" then
+                    Just ( ctx.table, resolveCol ctx.cols name )
+
+                else if ctx.side == "right" || hasCol name ctx.right then
+                    Just ( ctx.rightTable, resolveCol ctx.right name )
+
+                else
+                    Just ( ctx.table, resolveCol ctx.cols name )
+
+
 placeholders : List SqlValue -> String
 placeholders vs =
     case vs of
@@ -6019,7 +6227,7 @@ prepareSet d name pk cols check problems cond relative sets =
             Err e
 
         Ok ( whereSql, whereParams ) ->
-            case setItems cols check relative sets [] [] of
+            case setItems d name cols check relative sets [] [] of
 
                 Err e ->
                     Err e
@@ -6033,8 +6241,8 @@ prepareSet d name pk cols check problems cond relative sets =
                         )
 
 
-setItems : List ( String, String ) -> (String -> String -> SqlValue -> Maybe String) -> Bool -> List ( String, SqlValue ) -> List String -> List SqlValue -> Result Error ( List String, List SqlValue )
-setItems cols check relative sets items params =
+setItems : Dialect -> String -> List ( String, String ) -> (String -> String -> SqlValue -> Maybe String) -> Bool -> List ( String, SqlValue ) -> List String -> List SqlValue -> Result Error ( List String, List SqlValue )
+setItems d table cols check relative sets items params =
     case sets of
 
         [] ->
@@ -6074,6 +6282,8 @@ setItems cols check relative sets items params =
 
                         else if relative then
                             setItems
+                                d
+                                table
                                 cols
                                 check
                                 relative
@@ -6083,11 +6293,13 @@ setItems cols check relative sets items params =
 
                         else
                             setItems
+                                d
+                                table
                                 cols
                                 check
                                 relative
                                 rest
-                                ((col ++ " = ?") :: items)
+                                ((col ++ " = " ++ paramOf d table col k) :: items)
                                 (v :: params)
 
 
@@ -6303,16 +6515,51 @@ writeCheck s col kind v =
                     Nothing
 
 
--- Whether the column's schema leaves a part open (`{}`).
+-- Whether the column's schema leaves a part open (`{}`, an empty object).
+-- The text `{}` inside a JSON string (an enum name) is not an open part.
 hasOpenPart : String -> List ( String, Value ) -> Bool
 hasOpenPart col nodes =
     case lookupNode col nodes of
 
         Just schema ->
-            String.contains "{}" (JE.encode 0 schema)
+            hasEmptyObject (String.toList (JE.encode 0 schema)) False False ' '
 
         Nothing ->
             False
+
+
+-- Whether compact JSON text has `{}` outside a string. `inString` and
+-- `escaped` follow the string state, `prev` is the last character outside a
+-- string.
+hasEmptyObject : List Char -> Bool -> Bool -> Char -> Bool
+hasEmptyObject chars inString escaped prev =
+    case chars of
+
+        [] ->
+            False
+
+        c :: rest ->
+            if inString then
+                if escaped then
+                    hasEmptyObject rest True False prev
+
+                else if c == '\\' then
+                    hasEmptyObject rest True True prev
+
+                else if c == '"' then
+                    hasEmptyObject rest False False ' '
+
+                else
+                    hasEmptyObject rest True False prev
+
+            else if c == '"' then
+                hasEmptyObject rest True False ' '
+
+            else if c == '}' && prev == '{' then
+                True
+
+            else
+                hasEmptyObject rest False False c
 
 
 -- The column's own field codec reads `json` (`Codec.fieldReadError`: a
@@ -6354,7 +6601,7 @@ zeroRecordError s col json =
 
                 Ok record ->
                     if JE.encode 0 json /= "null"
-                        && fieldIsNull col (Codec.toJson s.codec record) then
+                        && fieldIsNull col (Codec.toValue s.codec record) then
                         Just
                             ("column \"" ++ col
                                 ++ "\": its codec reads the value as Nothing")
@@ -6405,9 +6652,18 @@ zeroOf col json c k zeros =
                     Nothing
 
 
-fieldIsNull : String -> String -> Bool
-fieldIsNull col json =
-    String.contains ("\"" ++ col ++ "\":null") json
+-- Whether the record's own key `col` is null. Only the top level counts: a
+-- JSON column whose value has a key of the same name (`{"data":null}` in
+-- column `data`) is not the field. An absent key is not null.
+fieldIsNull : String -> Value -> Bool
+fieldIsNull col record =
+    case jsonAt [ col ] record of
+
+        Just v ->
+            JE.encode 0 v == "null"
+
+        Nothing ->
+            False
 
 
 writeValueError : List ( String, Value ) -> String -> String -> SqlValue -> Maybe String

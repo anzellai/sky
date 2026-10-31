@@ -595,6 +595,31 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   or bool argument now binds into a TEXT parameter as its text, and into any
   other parameter exactly as before. The column stays TEXT and sorts as
   text; `docs/migration/v0.29.md` has the one-time conversion.
+- **SQLite writes and compares v0.28's text in a v0.28 TEXT Bool or Float
+  column.** v0.29 bound a Go bool / float64 there, which SQLite stored as `1`
+  / `7.0` beside v0.28's `true` / `7`, and `Store.eq "flag" (SqlBool True)`
+  compared as the text `1`, so it missed every v0.28 row with no error. On
+  SQLite, Std.Db.Store now marks each placeholder of a nullable `Float` or
+  `Bool` column, and the runtime reads the column's declared type (once per
+  connection and table): into a TEXT column it binds the text v0.28 wrote
+  (`true` / `false`, `7`, `7.5`), into any other column the value as before.
+  Every write keeps one spelling, and `eq`, `inList`, `setValue`, `setWhen`,
+  `updateFields`, `insert`, `upsert` and `copyInto` match and write old and
+  new rows alike. `Store.toSql` shows the SQL without the marks.
+- **A JSON value with a key named like its column is written.** The write
+  check of an open JSON column (`Json.Value`, a `taggedUnion`, a `dict`)
+  searched the encoded record for the text `"<col>":null`, so
+  `{"data":null,"errors":[]}` in a column `data` (a GraphQL-style payload)
+  was refused as "reads the value as Nothing". The check, and the read check
+  that a nullable column did not come back `Nothing`, now read the record's
+  own key, not a substring of the text.
+- **`Codec.auto` reads a `Json.Value` field.** The field lowers to Go `any`,
+  and the decoder refused it ("cannot decode kind interface"), so every read
+  of such a record failed. The blank's JSON value marks the field
+  (`Codec.auto { data = Json.Encode.null }`), and the field now reads any
+  JSON. An `any` slot whose blank holds anything else (a key type) is still
+  never built from JSON. A `Maybe Json.Value` field needs a `Just` blank
+  (`more = Just Json.Encode.null`) for the same reason.
 - **`insertMany` and `upsert` compute a `defaultWith` column.** They left it
   out of the INSERT, so the row took the column's database default or NULL.
 - **`Codec.maybe` over a list, a record or a union gives a nullable column.**

@@ -33,6 +33,7 @@ import Sky.Core.Dict as Dict exposing (Dict)
 import Sky.Core.String as String
 import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe
+import Sky.Core.Result as Result
 import Sky.Core.Tuple as Tuple
 import Sky.Core.Json.Encode as Encode
 import Std.Codec as Codec exposing (Codec)
@@ -796,7 +797,28 @@ tests =
             Test.equal
                 (Just "total")
                 (Maybe.map Tuple.first (Codec.fieldReadError (Codec.auto zeroAutoBlank) "{\"total\":\"x\"}")))
+    , Test.test "auto: a Json.Value field reads back any JSON, with a tag key or a key named like the field"
+        (\_ ->
+            let
+                text = "{\"id\":\"h1\",\"data\":{\"data\":null,\"tag\":\"X\",\"v0\":[1]}}"
+            in
+                Test.equal
+                    ( Ok text, Ok "null" )
+                    ( Codec.fromJson hookAuto text |> Result.map (Codec.toJson hookAuto)
+                    , Codec.fromJson hookAuto "{\"id\":\"h2\",\"data\":null}"
+                        |> Result.map (\h -> Encode.encode 0 h.data)
+                    ))
     ]
+
+
+-- A `Json.Value` field under Codec.auto: the blank's JSON value marks it.
+type alias HookAuto =
+    { id : String, data : Encode.Value }
+
+
+hookAuto : Codec HookAuto
+hookAuto =
+    Codec.auto { id = "", data = Encode.null }
 
 
 failed : Result e a -> Bool

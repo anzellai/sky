@@ -298,8 +298,10 @@ func Codec_autoDecoderOverrides(snakeArg, decsArg, witness any) any {
 	snake := AsBool(snakeArg)
 	ov := codecOverrideMap(decsArg)
 	wt := reflect.TypeOf(witness)
+	wv := reflect.ValueOf(witness)
 	for wt != nil && wt.Kind() == reflect.Ptr {
 		wt = wt.Elem()
+		wv = wv.Elem()
 	}
 	return JsonDecoder{run: func(raw any) any {
 		m, ok := raw.(map[string]any)
@@ -336,7 +338,7 @@ func Codec_autoDecoderOverrides(snakeArg, decsArg, witness any) any {
 				if !present && !codecFieldOptional(f) {
 					return Err[any, any](ErrDecode(fmt.Sprintf("Codec.autoWith: missing required field %q", key)))
 				}
-				fv, err := codecAutoDecodeTyped(f.Type, skyTagType(f), val, snake)
+				fv, err := codecAutoDecodeTypedW(f.Type, skyTagType(f), val, snake, codecWitnessField(wv, wt, i))
 				if err != nil {
 					return Err[any, any](ErrDecode(err.Error()))
 				}
@@ -473,7 +475,63 @@ func codecStrictInt(raw any) (int64, error) {
 }
 
 func codecAutoDecodeVal(rt reflect.Type, raw any, snake bool) (reflect.Value, error) {
+	return codecAutoDecodeValW(rt, raw, snake, reflect.Value{})
+}
+
+// codecWitnessIsJSON reports whether the blank's value at this slot is a JSON
+// value. A `Json.Value` record field lowers to `any` with the declared type
+// `any` (goty erases the kernel `Value` handle), and so do other erased types
+// (a crypto key, a Go FFI handle). The blank is the only thing that tells
+// them apart: `Codec.auto { data = Json.Encode.null }` holds a JsonValue in
+// the slot. An `any` slot whose blank holds anything else is never built from
+// JSON.
+func codecWitnessIsJSON(w reflect.Value) bool {
+	for w.IsValid() && w.Kind() == reflect.Interface {
+		if w.IsNil() {
+			return false
+		}
+		w = w.Elem()
+	}
+	return w.IsValid() && w.Type() == reflect.TypeOf(JsonValue{})
+}
+
+// codecWitnessField is field i of the blank `w` of struct type `rt`, or the
+// zero Value when there is no blank.
+func codecWitnessField(w reflect.Value, rt reflect.Type, i int) reflect.Value {
+	for w.IsValid() && w.Kind() == reflect.Interface && !w.IsNil() {
+		w = w.Elem()
+	}
+	if !w.IsValid() || w.Kind() != reflect.Struct || w.Type() != rt {
+		return reflect.Value{}
+	}
+	return w.Field(i)
+}
+
+// codecWitnessJust is the `Just` value of a Maybe blank, or the zero Value.
+func codecWitnessJust(w reflect.Value) reflect.Value {
+	for w.IsValid() && w.Kind() == reflect.Interface && !w.IsNil() {
+		w = w.Elem()
+	}
+	if !w.IsValid() || w.Kind() != reflect.Struct || !isSkyMaybeType(w.Type()) {
+		return reflect.Value{}
+	}
+	if w.FieldByName("Tag").Int() != 0 {
+		return reflect.Value{}
+	}
+	return w.FieldByName("JustValue")
+}
+
+// codecAutoDecodeValW is codecAutoDecodeVal with the blank's value at this
+// slot (`w`, possibly the zero Value), see codecWitnessIsJSON.
+func codecAutoDecodeValW(rt reflect.Type, raw any, snake bool, w reflect.Value) (reflect.Value, error) {
 	switch rt.Kind() {
+	case reflect.Interface:
+		if rt.NumMethod() == 0 && codecWitnessIsJSON(w) {
+			out := reflect.New(rt).Elem()
+			out.Set(reflect.ValueOf(JsonValue{raw: raw}))
+			return out, nil
+		}
+		return reflect.Value{}, fmt.Errorf("Codec.auto: cannot decode kind %s", rt.Kind())
 	case reflect.String:
 		s, ok := raw.(string)
 		if !ok {
@@ -550,7 +608,7 @@ func codecAutoDecodeVal(rt reflect.Type, raw any, snake bool) (reflect.Value, er
 				return out, nil
 			}
 			out.FieldByName("Tag").SetInt(0) // Just
-			inner, err := codecAutoDecodeVal(out.FieldByName("JustValue").Type(), raw, snake)
+			inner, err := codecAutoDecodeValW(out.FieldByName("JustValue").Type(), raw, snake, codecWitnessJust(w))
 			if err != nil {
 				return reflect.Value{}, err
 			}
@@ -560,7 +618,7 @@ func codecAutoDecodeVal(rt reflect.Type, raw any, snake bool) (reflect.Value, er
 		if isSkyAdtType(rt) {
 			return reflect.Value{}, fmt.Errorf("Codec.auto: cannot derive data-carrying ADT %q", rt.Name())
 		}
-		return codecAutoDecodeStruct(rt, raw, snake)
+		return codecAutoDecodeStruct(rt, raw, snake, w)
 	default:
 		return reflect.Value{}, fmt.Errorf("Codec.auto: cannot decode kind %s", rt.Kind())
 	}
@@ -574,7 +632,7 @@ func codecFieldOptional(f reflect.StructField) bool {
 	return isSkyMaybeType(f.Type)
 }
 
-func codecAutoDecodeStruct(rt reflect.Type, raw any, snake bool) (reflect.Value, error) {
+func codecAutoDecodeStruct(rt reflect.Type, raw any, snake bool, w reflect.Value) (reflect.Value, error) {
 	if rt == reflect.TypeOf(JsonValue{}) {
 		return reflect.ValueOf(JsonValue{raw: raw}), nil
 	}
@@ -599,7 +657,7 @@ func codecAutoDecodeStruct(rt reflect.Type, raw any, snake bool) (reflect.Value,
 		if !present && !codecFieldOptional(f) {
 			return reflect.Value{}, fmt.Errorf("Codec.auto: missing required field %q", key)
 		}
-		fv, err := codecAutoDecodeTyped(f.Type, skyTagType(f), val, snake)
+		fv, err := codecAutoDecodeTypedW(f.Type, skyTagType(f), val, snake, codecWitnessField(w, rt, i))
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -611,6 +669,15 @@ func codecAutoDecodeStruct(rt reflect.Type, raw any, snake bool) (reflect.Value,
 // codecAutoDecodeTyped decodes using the declared Sky type (from the field tag):
 // a registered enum decodes its name back to the ordinal; Maybe[T]/[]T unwrap.
 func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any, snake bool) (reflect.Value, error) {
+	return codecAutoDecodeTypedW(gt, declaredType, raw, snake, reflect.Value{})
+}
+
+// codecAutoDecodeTypedW is codecAutoDecodeTyped with the blank's value at
+// this slot (`w`, possibly the zero Value), see codecWitnessIsJSON.
+func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake bool, w reflect.Value) (reflect.Value, error) {
+	if gt.Kind() == reflect.Interface && gt.NumMethod() == 0 && codecWitnessIsJSON(w) {
+		return codecAutoDecodeValW(gt, raw, snake, w)
+	}
 	if codecHandleDeclared(declaredType) {
 		return reflect.Value{}, codecUndecodableError("the runtime handle " + declaredType)
 	}
@@ -634,7 +701,7 @@ func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any, snake b
 				return out, nil
 			}
 			out.FieldByName("Tag").SetInt(0)
-			iv, err := codecAutoDecodeTyped(out.FieldByName("JustValue").Type(), strings.TrimSuffix(inner, "]"), raw, snake)
+			iv, err := codecAutoDecodeTypedW(out.FieldByName("JustValue").Type(), strings.TrimSuffix(inner, "]"), raw, snake, codecWitnessJust(w))
 			if err != nil {
 				return reflect.Value{}, err
 			}
@@ -781,7 +848,7 @@ func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any, snake b
 			}
 		}
 	}
-	return codecAutoDecodeVal(gt, raw, snake)
+	return codecAutoDecodeValW(gt, raw, snake, w)
 }
 
 // Codec_autoDecoder : a -> Decoder a. A JSON decoder that reflection-builds the
@@ -802,8 +869,9 @@ func Codec_autoDecoder(snakeArg, witness any) any {
 		}}
 	}
 	wt := reflect.TypeOf(witness)
+	wv := reflect.ValueOf(witness)
 	return JsonDecoder{run: func(raw any) any {
-		v, err := codecAutoDecodeVal(wt, raw, AsBool(snakeArg))
+		v, err := codecAutoDecodeValW(wt, raw, AsBool(snakeArg), wv)
 		if err != nil {
 			return Err[any, any](ErrDecode(err.Error()))
 		}

@@ -70,7 +70,9 @@ func (d *SkyDb) executor() dbExecutor {
 		// An int, float or bool also binds into a TEXT column (db_pgx_args.go).
 		return pgArgExecutor{inner: ex}
 	}
-	return ex
+	// A nullable Float or Bool written into a v0.28 TEXT column binds the
+	// text v0.28 wrote (db_sqlite_legacy.go).
+	return sqliteArgExecutor{inner: ex, pool: d.conn}
 }
 
 func (d *SkyDb) rawExecutor() dbExecutor {
@@ -1567,6 +1569,9 @@ func dbTransactionAttempt(d *SkyDb, capBody any) (any, bool) {
 	sr, isResult := result.(SkyResult[any, any])
 	if panicked || !isResult || sr.Tag != 0 {
 		tx.Rollback()
+		// The body may have read a column type its own schema change made:
+		// forget what it read (db_sqlite_legacy.go).
+		sqliteDeclCacheReset(d.conn)
 		// A panic is never retried: it is a defect in the body, not a
 		// conflict, and replaying it just panics again.
 		return result, !panicked && txDb.sawRetryableTxError()
@@ -1862,6 +1867,7 @@ func dbMigrateCore(d *SkyDb, entries []migEntry, op string, fail func(msg string
 			return fail("commit '"+name+"': "+err.Error(),
 				Err[any, any](ErrIo("db.migrate: commit '"+name+"': "+err.Error())))
 		}
+		sqliteDeclCacheReset(d.conn)
 		out = append(out, name)
 	}
 

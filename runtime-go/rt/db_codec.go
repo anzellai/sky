@@ -697,10 +697,7 @@ func Db_execObject(connArg, tableArg, colspecArg, objArg, pkArg, pkKindArg any) 
 			cols = append(cols, name)
 			params = append(params, arg)
 		}
-		ph := make([]string, len(cols))
-		for i := range ph {
-			ph[i] = "?"
-		}
+		ph := codecParams(d.driver, AsString(tableArg), colspecArg, cols)
 		sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 			AsString(tableArg), strings.Join(cols, ", "), strings.Join(ph, ", "))
 		return storeWriteResult(d, "Store.insert", sql, params,
@@ -734,10 +731,7 @@ func Db_execObjectWith(connArg, tableArg, colspecArg, objArg, extraArg, pkArg, p
 		if len(cols) == 0 {
 			return Ok[any, any](0)
 		}
-		ph := make([]string, len(cols))
-		for i := range ph {
-			ph[i] = "?"
-		}
+		ph := codecParams(d.driver, AsString(tableArg), colspecArg, cols)
 		sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 			AsString(tableArg), strings.Join(cols, ", "), strings.Join(ph, ", "))
 		return storeWriteResult(d, "Store.insert", sql, params,
@@ -787,10 +781,7 @@ func Db_upsertObject(connArg, tableArg, colspecArg, pkArg, objArg, pkKindArg, ex
 				setParts = append(setParts, name+" = excluded."+name)
 			}
 		}
-		ph := make([]string, len(cols))
-		for i := range ph {
-			ph[i] = "?"
-		}
+		ph := codecParams(d.driver, AsString(tableArg), colspecArg, cols)
 		var conflict string
 		if len(setParts) == 0 {
 			conflict = fmt.Sprintf("ON CONFLICT(%s) DO NOTHING", pk)
@@ -838,7 +829,7 @@ func Db_execObjectMany(connArg, tableArg, colspecArg, objsArg, extrasArg any) an
 				rowParams = append(rowParams, t.V1)
 			}
 			cols = rowCols
-			rowPh = append(rowPh, "("+strings.TrimSuffix(strings.Repeat("?, ", len(rowCols)), ", ")+")")
+			rowPh = append(rowPh, "("+strings.Join(codecParams(driver, AsString(tableArg), colspecArg, rowCols), ", ")+")")
 			params = append(params, rowParams...)
 		}
 		if len(cols) == 0 {
@@ -1160,7 +1151,7 @@ func Db_updateByPk(connArg, tableArg, setColspecArg, pkColArg, pkKindArg, objArg
 		if !ok {
 			return Err[any, any](ErrInvalidInput("Store.update: value is not a record"))
 		}
-		setCols, params, err := codecSetClause("Store.update", dbDriverOf(connArg), setColspecArg, fields)
+		setCols, params, err := codecSetClause("Store.update", dbDriverOf(connArg), AsString(tableArg), setColspecArg, fields)
 		if err != nil {
 			return Err[any, any](ErrInvalidInput(err.Error()))
 		}
@@ -1189,7 +1180,7 @@ func Db_updateWhere(connArg, tableArg, setColspecArg, objArg, whereSqlArg, where
 		if !ok {
 			return Err[any, any](ErrInvalidInput("Store.updateWhere: value is not a record"))
 		}
-		setCols, params, err := codecSetClause("Store.updateWhere", dbDriverOf(connArg), setColspecArg, fields)
+		setCols, params, err := codecSetClause("Store.updateWhere", dbDriverOf(connArg), AsString(tableArg), setColspecArg, fields)
 		if err != nil {
 			return Err[any, any](ErrInvalidInput(err.Error()))
 		}
@@ -1218,7 +1209,7 @@ func dbDriverOf(connArg any) string {
 // pulling each value from the codec-encoded record fields. A `touch`-flagged
 // column (Store.touchOnUpdate) is set to the current timestamp via a SQL
 // expression (no bound param), so `updated_at` bumps on every UPDATE.
-func codecSetClause(verb, driver string, setColspecArg any, fields map[string]any) ([]string, []any, error) {
+func codecSetClause(verb, driver, table string, setColspecArg any, fields map[string]any) ([]string, []any, error) {
 	setCols := []string{}
 	params := []any{}
 	for _, cs := range AsList(setColspecArg) {
@@ -1234,7 +1225,7 @@ func codecSetClause(verb, driver string, setColspecArg any, fields map[string]an
 		if err != nil {
 			return nil, nil, err
 		}
-		setCols = append(setCols, name+" = ?")
+		setCols = append(setCols, name+" = "+codecParam(driver, table, name, rawKind))
 		params = append(params, arg)
 	}
 	return setCols, params, nil
