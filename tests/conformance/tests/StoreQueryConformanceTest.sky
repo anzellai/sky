@@ -4236,6 +4236,154 @@ kitMarkCodec =
         |> Codec.field "shape" .shape (Codec.maybe markCodec)
         |> Codec.buildObject
 
+type Tone
+    = Warm
+    | Cool
+
+
+toneCodec : Codec Tone
+toneCodec =
+    Codec.enum [ ( Warm, "warm" ), ( Cool, "cool" ) ]
+
+-- A `Maybe` nested inside a JSON column: each element is `null` or a value of
+-- the custom type. `kind` is a required taggedUnion, so the record has no
+-- zero and the write check reads the column by its own field's codec.
+type alias Palette =
+    { id : String
+    , kind : Shape
+    , xs : List (Maybe Shape)
+    , tones : List (Maybe Tone)
+    }
+
+
+paletteCodec : Codec Palette
+paletteCodec =
+    Codec.object Palette |> Codec.field "id" .id Codec.string
+        |> Codec.field "kind" .kind shapeCodec
+        |> Codec.field "xs" .xs (Codec.list (Codec.maybe shapeCodec))
+        |> Codec.field "tones" .tones (Codec.list (Codec.maybe toneCodec))
+        |> Codec.buildObject
+
+
+palettes : Store Palette
+palettes =
+    Store.fromCodec "sqc_palettes" paletteCodec |> Store.primaryKey "id"
+
+
+-- A raw INSERT of one palette row, each JSON column given as its text.
+insertPalette : Db -> String -> String -> String -> Task Error ()
+insertPalette db id xs tones =
+    unit
+        (Db.exec
+            db
+            ("INSERT INTO sqc_palettes (id, kind, xs, tones) VALUES ('" ++ id
+                ++ "', '"
+                ++ Codec.toJson shapeCodec Dot
+                ++ "', '"
+                ++ xs
+                ++ "', '"
+                ++ tones
+                ++ "')")
+            [])
+
+
+nestedMaybeTests : Db -> List Test
+nestedMaybeTests db =
+    [ Test.test
+          "nested Maybe: a List (Maybe custom type) round-trips, and JSON null in the list reads as Nothing"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ { id = "p1"
+                        , kind = Box 1
+                        , xs = [ Just (Box 2), Nothing, Just Dot ]
+                        , tones = [ Nothing, Just Cool ]
+                        }
+                      , { id = "p2"
+                        , kind = Dot
+                        , xs = [ Nothing, Just Dot ]
+                        , tones = [ Just Warm, Nothing ]
+                        }
+                      ])
+                  (Task.run
+                      (Task.sequence
+                          [ drop db "sqc_palettes"
+                          , unit (Store.migrate db palettes)
+                          , unit
+                                (Store.insert
+                                    db
+                                    palettes
+                                    { id = "p1"
+                                    , kind = Box 1
+                                    , xs = [ Just (Box 2), Nothing, Just Dot ]
+                                    , tones = [ Nothing, Just Cool ]
+                                    })
+                          , insertPalette
+                                db
+                                "p2"
+                                (Codec.toJson
+                                    (Codec.list (Codec.maybe shapeCodec))
+                                    [ Nothing, Just Dot ])
+                                "[\"warm\",null]"
+                          ]
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.toList
+                                         db
+                                         (Store.query palettes
+                                             |> Store.orderAsc "id")))))
+    , Test.test
+          "nested Maybe: a taggedUnion element its codec does not read, written by raw SQL, is an Err naming the table and column"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "column \"sqc_palettes.xs\" holds a value its field's codec does not read"
+                      (Task.run
+                          (insertPalette db "p3" "[[\"Bogus\"],null]" "[]"
+                              |> Task.andThen
+                                     (\_ ->
+                                         Store.toList
+                                             db
+                                             (Store.query palettes
+                                                 |> Store.where_
+                                                        (Store.eq
+                                                            "id"
+                                                            (SqlString "p3"))))))))
+    , Test.test
+          "nested Maybe: an enum element that is not one of its names, written by raw SQL, is an Err naming the table and column"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "column \"sqc_palettes.tones\" holds a value its field's codec does not read"
+                      (Task.run
+                          (insertPalette db "p4" "[]" "[\"warm\",\"hot\"]"
+                              |> Task.andThen
+                                     (\_ -> Store.findBy db palettes "id" "p4")))))
+    , Test.test
+          "nested Maybe: setValue of a taggedUnion element its codec does not read is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.updateSet
+                          db
+                          palettes
+                          (Store.eq "id" (SqlString "p1"))
+                          [ Store.setValue "xs" (SqlString "[[\"Bogus\"],null]")
+                          ])))
+    , Test.test
+          "nested Maybe: setValue of an enum element that is not one of its names is refused before running"
+          (\_ ->
+              storeRefused
+                  (Task.run
+                      (Store.updateSet
+                          db
+                          palettes
+                          (Store.eq "id" (SqlString "p1"))
+                          [ Store.setValue "tones" (SqlString "[\"hot\"]") ])))
+    ]
+
 
 kindTests : Db -> List Test
 kindTests db =
@@ -4732,7 +4880,7 @@ kindTests db =
                           (Store.eq "id" (SqlString "k1"))
                           [ Store.setValue "shape" (SqlString "[\"Bogus\"]") ])))
     , Test.test
-          "read: a stored value a Maybe field's codec reads as Nothing is an Err, not Nothing"
+          "read: a stored value a Maybe field's codec does not read is an Err naming the table and column, not Nothing"
           (\_ ->
               Test.equal
                   ( Ok [ { id = "k1", shape = Just (Box 2) } ], True )
@@ -4748,7 +4896,7 @@ kindTests db =
                             ]
                             |> Task.andThen (\_ -> Store.all db kits))
                   , errHas
-                        "column \"shape\" holds a value its field's codec reads as Nothing"
+                        "column \"sqc_kits.shape\" holds a value its field's codec does not read"
                         (Task.run
                             (Db.exec
                                 db
@@ -4762,7 +4910,7 @@ kindTests db =
               Test.equal
                   True
                   (errHas
-                      "holds a value its field's codec reads as Nothing"
+                      "column \"sqc_kits.shape\" holds a value its field's codec does not read"
                       (Task.run
                           (Store.toList
                               db
@@ -4822,6 +4970,7 @@ tests =
                 ++ zeroTests db
                 ++ writeTests db
                 ++ kindTests db
+                ++ nestedMaybeTests db
 
 
 main =

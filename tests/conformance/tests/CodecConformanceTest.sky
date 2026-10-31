@@ -652,6 +652,14 @@ tests =
             Test.equal (Ok (Error.unavailable "x"))
                 (Codec.fromJson Codec.error "[\"Error\",\"Unavailable\",{\"message\":\"x\",\"details\":[\"Future\",1]}]")
         )
+    , Test.test "error: a known details variant with a bad payload, or a retryAfterMs that is not an Int, is an Err"
+        (\_ ->
+            Test.equal ( True, True, True )
+                ( failed (Codec.fromJson Codec.error "[\"Error\",\"Network\",{\"message\":\"x\",\"details\":[\"HttpStatus\",\"500\"]}]")
+                , failed (Codec.fromJson Codec.error "[\"Error\",\"Conflict\",{\"message\":\"x\",\"details\":[\"Domain\",{\"domain\":\"db\",\"code\":\"Deadlock\",\"retryAfterMs\":\"soon\"}]}]")
+                , failed (Codec.fromJson Codec.error "[\"Error\",\"Conflict\",{\"message\":\"x\",\"details\":[\"Domain\",{\"domain\":\"db\",\"code\":\"Deadlock\",\"retryable\":\"yes\"}]}]")
+                )
+        )
 
     -- ── Codec.result: Ok / Err over Codec.error round-trip ────────────────
     , Test.test "result: Ok String round-trips"
@@ -746,7 +754,60 @@ tests =
                 ( fits (Codec.auto { id = 0 }) (Codec.auto { id = 0, name = "" })
                 , fits (Codec.auto { id = 0, name = "" }) (Codec.auto { id = 0 })
                 ))
+    -- ── Codec.maybe is strict: only JSON null is Nothing ──
+    , Test.test "maybe: null is Nothing, a value the inner codec does not read is an Err, not Nothing"
+        (\_ ->
+            Test.equal
+                ( ( Ok Nothing, Ok (Just 5) ), ( True, True ), ( Ok Nothing, Ok (Just (Just 5)) ) )
+                ( ( Codec.fromJson (Codec.maybe Codec.int) "null"
+                  , Codec.fromJson (Codec.maybe Codec.int) "5"
+                  )
+                , ( failed (Codec.fromJson (Codec.maybe Codec.int) "\"x\"")
+                  , failed (Codec.fromJson (Codec.maybe categoryCodec) "\"posters\"")
+                  )
+                , ( Codec.fromJson (Codec.maybe (Codec.maybe Codec.int)) "null"
+                  , Codec.fromJson (Codec.maybe (Codec.maybe Codec.int)) "5"
+                  )
+                ))
+    , Test.test "maybe: in a list or a record field, a value the inner codec does not read fails the decode"
+        (\_ ->
+            Test.equal
+                ( Ok [ Just 1, Nothing ], ( True, True, True ) )
+                ( Codec.fromJson (Codec.list (Codec.maybe Codec.int)) "[1,null]"
+                , ( failed (Codec.fromJson (Codec.list (Codec.maybe Codec.int)) "[1,\"x\"]")
+                  , failed (Codec.fromJson (Codec.list (Codec.maybe categoryCodec)) "[\"prints\",\"posters\"]")
+                  , failed (Codec.fromJson zeroRecord "{\"n\":\"a\",\"xs\":[],\"on\":true,\"m\":\"x\"}")
+                  )
+                ))
+    , Test.test "fieldReadError: a field reads its value or names the reason, for object and auto codecs"
+        (\_ ->
+            Test.equal
+                ( ( True, False ), ( True, False ), False )
+                ( ( Codec.fieldReadError zeroRecord "m" (Encode.string "x") /= Nothing
+                  , Codec.fieldReadError zeroRecord "m" Encode.null /= Nothing
+                  )
+                , ( Codec.fieldReadError zeroRecordNoZero "e" (Encode.string "x") /= Nothing
+                  , Codec.fieldReadError (Codec.auto zeroAutoBlank) "note" (Encode.string "fine") /= Nothing
+                  )
+                , Codec.fieldReadError (Codec.list Codec.int) "xs" (Encode.string "x") /= Nothing
+                ))
+    , Test.test "fieldReadError: an auto codec's field reads by its blank's siblings"
+        (\_ ->
+            Test.equal
+                True
+                (Codec.fieldReadError (Codec.auto zeroAutoBlank) "total" (Encode.string "x") /= Nothing))
     ]
+
+
+failed : Result e a -> Bool
+failed r =
+    case r of
+
+        Ok _ ->
+            False
+
+        Err _ ->
+            True
 
 
 type alias ZeroAuto =

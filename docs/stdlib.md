@@ -1397,9 +1397,18 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   DEFAULT of a required JSON or enum column added to a table with rows.
   `Codec.schemaFitError target source` (v0.29) says whether every value the
   JSON Schema `source` describes reads, through a codec whose `jsonSchema` is
-  `target`, as itself (a `Maybe` never turning a mismatch into `Nothing`), and
+  `target`, as itself, and
   `Codec.schemaValueError schema json` whether a JSON value is one the schema
   reads. `Std.Db.Store` uses them for its kind checks.
+  `Codec.fieldReadError codec "col" json` (v0.29) gives the reason field
+  `col` of a record codec does not read `json` (the field's own decoder, or,
+  for `Codec.auto`, the blank record with `json` in that field); the Store
+  uses it to name the column a row fails on.
+  `Codec.maybe c` reads only JSON `null` as `Nothing` (v0.29): any other
+  value must decode as `c`, at any depth, so a `"x"` in a `Maybe Int` field
+  or a bad element of a `List (Maybe a)` is an `Err` naming where it failed,
+  never a silent `Nothing`. A `Codec.object` field must be present, a
+  `Maybe` included (`null` for `Nothing`).
   `Codec.dict keyCodec valueCodec` (v0.27) encodes a `Dict` as a JSON array of
   `[key, value]` pairs, so any comparable key round-trips. `Codec.fromJson`
   reads exactly one JSON document: text after it is an `Err` (v0.27). A type

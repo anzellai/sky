@@ -1387,7 +1387,8 @@ selectRaw : Db -> Codec row -> String -> List SqlValue -> Task Error (List row)
 selectRaw conn codec sql params =
     readRows conn (Ok ( sql, params )) [ ( "", "", codecColumns codec ) ]
         |> Task.andThen
-               (\rows -> Task.fromResult (decodeAll (rowDecoder codec) rows []))
+               (\rows ->
+                   Task.fromResult (decodeAll (rowDecoder "" codec) rows []))
 
 
 -- | Delete rows where `col = value` (single column). `col` must be a codec
@@ -2639,7 +2640,7 @@ runReturning conn table codec cols prepared =
                 |> Task.andThen
                        (\rows ->
                            Task.fromResult
-                               (decodeAll (rowDecoder codec) rows []))
+                               (decodeAll (rowDecoder table codec) rows []))
 
 -- ── Project (schema-dump for file-based migrations) ─────────────────────────
 -- | A table's schema erased of its record type — name, primary key, and
@@ -2964,7 +2965,9 @@ mapSpec f q =
 -- `Store.query products |> Store.where_ (Store.eq "active" (SqlBool True)) |> Store.toList conn`.
 query : Store a -> Query a
 query store =
-    Query (baseSpec (sourceOf store)) (rowDecoder (storeRec store).codec)
+    Query
+        (baseSpec (sourceOf store))
+        (rowDecoder (storeRec store).name (storeRec store).codec)
 
 
 sourceOf : Store a -> Source
@@ -3002,27 +3005,30 @@ baseSpec src =
     }
 
 
-rowDecoder : Codec r -> List String -> Result Error r
-rowDecoder codec groups =
+rowDecoder : String -> Codec r -> List String -> Result Error r
+rowDecoder table codec groups =
     case groups of
 
         j :: _ ->
-            decodeRow codec j
+            decodeRow table codec j
 
         [] ->
             Err (Error.decode "Store: a result row had no columns")
 
 
--- One row's JSON through the codec. A `Codec.maybe` field reads a value it
--- cannot decode as `Nothing`, so a column that holds a value (not NULL) and
--- comes back `Nothing` is an `Err` naming the column, never a silent
--- `Nothing` (a stored value of another shape, a projection of another type).
-decodeRow : Codec r -> String -> Result Error r
-decodeRow codec j =
+-- One row's JSON of `table` ("" for `selectRaw`) through the codec. A value
+-- the codec does not read, at any depth (an element of a `List (Maybe a)`
+-- inside a JSON column included), is an `Err` naming the table and the
+-- column, never a silent `Nothing`: `Codec.maybe` reads only `null` as
+-- `Nothing`. A column that holds a value (not NULL) and still comes back
+-- `Nothing` is an `Err` too (a codec built with `Codec.map` that maps a value
+-- to `Nothing`).
+decodeRow : String -> Codec r -> String -> Result Error r
+decodeRow table codec j =
     case Codec.fromJson codec j of
 
         Err e ->
-            Err e
+            Err (rowReadError table codec j e)
 
         Ok record ->
             case nullableCols (codecColumns codec) of
@@ -3039,8 +3045,77 @@ decodeRow codec j =
                         col ->
                             Err
                                 (Error.decode
-                                    ("Store: column \"" ++ col
+                                    ("Store: column \"" ++ qualifiedCol table col
                                         ++ "\" holds a value its field's codec reads as Nothing (a stored value of another shape, or a projection into another type): repair the row, or read it into a field of its type"))
+
+
+-- A row the codec does not read: the first column whose value its field's
+-- codec does not read (`Codec.fieldReadError`), named with its table, else
+-- the table and the decoder's reason.
+rowReadError : String -> Codec r -> String -> Error -> Error
+rowReadError table codec j e =
+    case badColumn codec j (codecColumns codec) of
+
+        Just ( col, why ) ->
+            Error.decode
+                ("Store: column \"" ++ qualifiedCol table col
+                    ++ "\" holds a value its field's codec does not read ("
+                    ++ why
+                    ++ "): repair the row, or read it into a field of its type")
+
+        Nothing ->
+            Error.decode
+                ("Store: a row of "
+                    ++ (if table == "" then
+                           "the query"
+
+                       else
+                           "table \"" ++ table ++ "\"")
+                    ++ " does not read through its codec: "
+                    ++ Error.toString e)
+
+
+badColumn : Codec r -> String -> List ( String, String ) -> Maybe ( String, String )
+badColumn codec j cols =
+    case cols of
+
+        [] ->
+            Nothing
+
+        ( c, _ ) :: rest ->
+            case JD.decodeString (JD.field c JD.value) j of
+
+                Err _ ->
+                    badColumn codec j rest
+
+                Ok v ->
+                    case Codec.fieldReadError codec c v of
+
+                        Just why ->
+                            Just ( c, why )
+
+                        Nothing ->
+                            badColumn codec j rest
+
+
+-- The table a projection reads, to name in a read error: "" on a join, whose
+-- result columns come from two tables.
+resultTable : QuerySpec -> String
+resultTable spec =
+    if spec.joined then
+        ""
+
+    else
+        spec.source.table
+
+
+qualifiedCol : String -> String -> String
+qualifiedCol table col =
+    if table == "" then
+        col
+
+    else
+        table ++ "." ++ col
 
 
 nullableCols : List ( String, String ) -> List String
@@ -3425,7 +3500,7 @@ selectAs codec pairs q =
                 , outCols = codecColumns codec
                 , outNodes = schemaFields codec (codecColumns codec)
             }
-            (rowDecoder codec)
+            (rowDecoder (resultTable spec) codec)
 
 
 -- | Read one column into a list of plain values:
@@ -3458,7 +3533,7 @@ selectColumn col codec q =
                 , outCols = codecColumns wrapped
                 , outNodes = schemaFields wrapped (codecColumns wrapped)
             }
-            (rowDecoder wrapped)
+            (rowDecoder (resultTable spec) wrapped)
 
 
 -- | `SELECT DISTINCT`: drop duplicate result rows. With `select`, every order
@@ -3519,7 +3594,7 @@ aggregate codec aggs q =
                 , outCols = codecColumns codec
                 , outNodes = schemaFields codec (codecColumns codec)
             }
-            (rowDecoder codec)
+            (rowDecoder (resultTable spec) codec)
 
 
 noCond : Cond
@@ -3616,7 +3691,7 @@ join left right ons =
     in
         Query
             (joinSpec False (sourceOf left) (sourceOf right) (joinPairs ons))
-            (pairDecoder l.codec r.codec)
+            (pairDecoder l.name l.codec r.name r.codec)
 
 
 -- | A left join: every left row, paired with `Just` its matching right row, or
@@ -3636,7 +3711,7 @@ leftJoin left right ons =
     in
         Query
             (joinSpec True (sourceOf left) (sourceOf right) (joinPairs ons))
-            (pairMaybeDecoder l.codec r.codec)
+            (pairMaybeDecoder l.name l.codec r.name r.codec)
 
 
 -- | One ON pair: a left column and a right column that must be equal.
@@ -3744,18 +3819,18 @@ joinSpec isLeft l r pairs =
         { base | joined = True, leftOuter = isLeft, right = r, onPairs = pairs }
 
 
-pairDecoder : Codec a -> Codec b -> List String -> Result Error ( a, b )
-pairDecoder ca cb groups =
+pairDecoder : String -> Codec a -> String -> Codec b -> List String -> Result Error ( a, b )
+pairDecoder ta ca tb cb groups =
     case groups of
 
         [ ja, jb ] ->
-            case decodeRow ca ja of
+            case decodeRow ta ca ja of
 
                 Err e ->
                     Err e
 
                 Ok a ->
-                    case decodeRow cb jb of
+                    case decodeRow tb cb jb of
 
                         Err e ->
                             Err e
@@ -3767,12 +3842,12 @@ pairDecoder ca cb groups =
             Err (Error.decode "Store: a joined row needs two column groups")
 
 
-pairMaybeDecoder : Codec a -> Codec b -> List String -> Result Error ( a, Maybe b )
-pairMaybeDecoder ca cb groups =
+pairMaybeDecoder : String -> Codec a -> String -> Codec b -> List String -> Result Error ( a, Maybe b )
+pairMaybeDecoder ta ca tb cb groups =
     case groups of
 
         [ ja, jb ] ->
-            case decodeRow ca ja of
+            case decodeRow ta ca ja of
 
                 Err e ->
                     Err e
@@ -3782,7 +3857,7 @@ pairMaybeDecoder ca cb groups =
                         Ok ( a, Nothing )
 
                     else
-                        case decodeRow cb jb of
+                        case decodeRow tb cb jb of
 
                             Err e ->
                                 Err e
@@ -6232,12 +6307,27 @@ hasOpenPart col nodes =
             False
 
 
--- A record of every field's zero with `json` in column `col`, read by the
--- store's codec: an `Err` when the codec does not read it, or when it reads
--- it as `Nothing`. When a sibling field has no zero the record cannot be
--- built, and the read check (`decodeRow`) stays the guard.
+-- The column's own field codec reads `json` (`Codec.fieldReadError`: a
+-- `buildObject` field's decoder, so a sibling with no zero does not matter),
+-- at any depth: an element of a `List (Maybe a)` it does not read is an `Err`.
+-- Then a record of every field's zero with `json` in column `col`, read by
+-- the store's codec: an `Err` when the codec reads it as `Nothing` (a
+-- `Codec.map` that maps a value to `Nothing`).
 openPartError : StoreRec a -> String -> Value -> Maybe String
 openPartError s col json =
+    case Codec.fieldReadError s.codec col json of
+
+        Just why ->
+            Just
+                ("column \"" ++ col ++ "\": its codec does not read the value: "
+                    ++ why)
+
+        Nothing ->
+            zeroRecordError s col json
+
+
+zeroRecordError : StoreRec a -> String -> Value -> Maybe String
+zeroRecordError s col json =
     case zerosWith col json s.cols (Codec.fieldZeros s.codec) of
 
         Nothing ->
@@ -6522,7 +6612,8 @@ valueInfo v =
 
 
 -- A source read into a result field: the kinds (`fitError`), then the
--- codecs, so a `Maybe` field never reads a value it cannot decode as Nothing.
+-- codecs, so a field that could not read its source is refused before any
+-- statement instead of failing on a row.
 deepFitError : String -> String -> String -> Maybe Value -> Maybe Value -> Maybe String
 deepFitError rc rk sk tn sn =
     case fitError rc rk sk of

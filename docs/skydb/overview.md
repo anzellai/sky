@@ -435,8 +435,8 @@ Store.query orders
 ```
 
 A nullable column needs a `Maybe` field. A field's codec must read every value
-its source column holds, because a `Codec.maybe` field reads a value it cannot
-decode as `Nothing`: a `Maybe x` field reads a source `x` or `Maybe x`, a
+its source column holds, so a projection that could fail on a row is refused
+before it runs: a `Maybe x` field reads a source `x` or `Maybe x`, a
 `String` field reads a `String` or an enum, a `Float` field an `Int`, an enum
 field an enum whose names it all has, and a list, record or custom type is
 compared part by part. A `List Int` column into a `Maybe (List String)` field,
@@ -455,9 +455,14 @@ is an `Err` naming the table, the column and the kind, never `Nothing`. The
 shapes earlier versions wrote still read: an integer stored as text (`'5'`, a
 v0.28 nested `Maybe (Maybe Int)`), an integral number in a float form, a bool
 stored as `1` / `0` on SQLite or `true` / `false` on PostgreSQL, and a
-`defaultNow` timestamp, which is text. A column that holds a value (not NULL)
-which its `Maybe` field's codec reads as `Nothing` (JSON of another custom
-type, for example) is an `Err` naming the column too. A `selectRaw` result
+`defaultNow` timestamp, which is text. The TEXT column v0.28 made for a
+nested `Maybe` scalar stays TEXT and takes v0.29 writes on both dialects, but
+it sorts as text (the v0.29 migration guide has the one-time fix). A column whose value its field's codec
+does not read, at any depth (JSON of another custom type, an element of a
+`List (Maybe Shade)` that is not a `Shade`), is an `Err` naming the table and
+the column too: `Codec.maybe` reads only `null` as `Nothing`, so a JSON `null`
+element is `Nothing` and any other bad value fails. `setValue` and a declared
+default of such JSON are refused before the statement. A `selectRaw` result
 must hold every codec column (write `NULL AS col` for a `Maybe` field it
 leaves out).
 

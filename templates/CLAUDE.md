@@ -208,6 +208,12 @@ character loop or an accumulator loop is O(n). Rewrite a loop that used
 pieces. Use `Sky.Core.Array` where a list needed an index. Read the `Cost:`
 line in `sky doc` before choosing a collection function.
 
+`Codec.maybe` now reads only `null` as `Nothing`: a value the inner codec does
+not read is an `Err`, at any depth, where it used to be a silent `Nothing`.
+Run `sky test` and exercise each JSON input once. Where a lenient read is
+intended, read that payload with `Decode.maybe`; do not loosen a codec only to
+make a test pass.
+
 ### XML and ZIP input is hostile: use Std.Xml and Std.Zip
 
 Read XML with `Std.Xml.parse` / `Std.Xml.Decode` (or `Codec.fromXml`) and

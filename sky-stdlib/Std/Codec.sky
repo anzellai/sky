@@ -33,6 +33,7 @@ module Std.Codec exposing
     , shape
     , zeroJson
     , fieldZeros
+    , fieldReadError
     , JsonSchema
     , schemaFitError
     , schemaValueError
@@ -110,6 +111,7 @@ type alias CodecPayload a =
     , sch : SchemaNode
     , zro : () -> Maybe Value
     , fzr : () -> List ( String, Value )
+    , fck : () -> List ( String, Value -> Maybe String )
     }
 
 -- | The JSON Schema of the JSON a codec reads and writes. `exact` is `True`
@@ -391,6 +393,98 @@ fieldZeros (Codec c) =
     c.fzr ()
 
 
+-- | Whether field `name` of a record codec reads `v`, the JSON of that one
+-- field: `Just` the reason when it does not, `Nothing` when it does. A
+-- `buildObject` codec runs the field's own decoder. An `auto` / `autoCamel` /
+-- `autoWith` codec decodes its blank record (the witness) with `v` in place of
+-- that field. `Nothing` too when the codec cannot tell: a codec that is not a
+-- record, or a field it does not have. `Std.Db.Store` uses it to name the
+-- column a stored row fails on, and to check JSON written into one column.
+--
+--     Codec.fieldReadError itemCodec "tags" (Encode.list Encode.int [ 1 ])
+--     -- Just "Decode: at [0]: expected String, got Number"
+fieldReadError : Codec a -> String -> Value -> Maybe String
+fieldReadError (Codec c) name v =
+    case lookupCheck name (c.fck ()) of
+
+        Just check ->
+            check v
+
+        Nothing ->
+            swapError c.dec name v (c.fzr ())
+
+
+-- The reason a decoder does not read a value, or `Nothing`.
+decodeCheck : Decoder f -> Value -> Maybe String
+decodeCheck dec v =
+    case D.decodeValue dec v of
+
+        Ok _ ->
+            Nothing
+
+        Err e ->
+            Just (Error.toString e)
+
+
+lookupCheck : String -> List ( String, Value -> Maybe String ) -> Maybe (Value -> Maybe String)
+lookupCheck name checks =
+    case checks of
+
+        [] ->
+            Nothing
+
+        ( k, check ) :: rest ->
+            if k == name then
+                Just check
+
+            else
+                lookupCheck name rest
+
+
+-- The zeros of a record with `v` in field `name`, decoded: the reason when
+-- the zeros decode and the record with `v` does not. A field the zeros do not
+-- hold, or zeros that do not decode, cannot be told apart from a bad `v`.
+swapError : Decoder a -> String -> Value -> List ( String, Value ) -> Maybe String
+swapError dec name v zeros =
+    if not (holdsKey name zeros) then
+        Nothing
+
+    else
+        case D.decodeValue dec (E.object zeros) of
+
+            Err _ ->
+                Nothing
+
+            Ok _ ->
+                decodeCheck dec (E.object (swapKey name v zeros))
+
+
+holdsKey : String -> List ( String, Value ) -> Bool
+holdsKey name pairs =
+    case pairs of
+
+        [] ->
+            False
+
+        ( k, _ ) :: rest ->
+            k == name || holdsKey name rest
+
+
+swapKey : String -> Value -> List ( String, Value ) -> List ( String, Value )
+swapKey name v pairs =
+    case pairs of
+
+        [] ->
+            []
+
+        ( k, old ) :: rest ->
+            if k == name then
+                ( k, v ) :: rest
+
+            else
+                ( k, old ) :: swapKey name v rest
+
+
 -- | The codec's encoder as a plain function `a -> Value` (a JSON `Value`, the DB
 -- backend's write side). Use `toJson` for a JSON string.
 toValue : Codec a -> a -> Value
@@ -435,6 +529,7 @@ string =
         , sch = SnType "string"
         , zro = \_ -> Just (E.string "")
         , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
@@ -448,6 +543,7 @@ int =
         , sch = SnType "integer"
         , zro = \_ -> Just (E.int 0)
         , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
@@ -461,6 +557,7 @@ float =
         , sch = SnType "number"
         , zro = \_ -> Just (E.float 0.0)
         , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
@@ -475,15 +572,18 @@ bool =
         , sch = SnType "boolean"
         , zro = \_ -> Just (E.bool False)
         , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
 -- ── Combinators ──────────────────────────────────────────────────────────────
--- | Optional value. `Nothing` encodes as JSON `null`; a `null` or type-mismatch
--- on decode yields `Nothing` (`Std.Db.Store` never hands it a value it cannot
--- read: a stored value that does not read as its column's kind is an `Err`,
--- and a projection whose codec would read its source as `Nothing` is refused,
--- see `schemaFitError`). A `Maybe scalar` stays a (nullable) scalar column;
+-- | Optional value. `Nothing` encodes as JSON `null`, and only `null` decodes
+-- as `Nothing`. Any other value must decode as the inner value: one that does
+-- not is an `Err` naming where it failed (`"x"` for a `Maybe Int`, a name
+-- that is not one of an enum's), never a silent `Nothing`. This holds at any
+-- depth, so a `List (Maybe a)` with a bad element fails as a whole. A field
+-- of a `buildObject` codec must be present in the JSON object even when it is
+-- a `maybe` (`null` for `Nothing`). A `Maybe scalar` stays a (nullable) scalar column;
 -- anything deeper becomes a nullable blob column, so `Nothing` stores as NULL.
 -- A `Maybe (Maybe a)` is the same one nullable column as `Maybe a`: JSON has
 -- one `null`, so `Just Nothing` reads back as `Nothing`.
@@ -499,7 +599,7 @@ maybe (Codec c) =
 
                     Nothing ->
                         E.null
-        , dec = D.oneOf [ D.map Just c.dec, D.succeed Nothing ]
+        , dec = D.nullable c.dec
         , shp =
             case c.shp of
 
@@ -514,6 +614,7 @@ maybe (Codec c) =
         , sch = SnNullable c.sch
         , zro = \_ -> Just E.null
         , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
@@ -528,6 +629,7 @@ list (Codec c) =
         , sch = SnArray c.sch
         , zro = \_ -> Just (E.list identity [])
         , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
@@ -561,6 +663,7 @@ result (Codec ce) (Codec ca) =
         , sch = SnResult ce.sch ca.sch
         , zro = \_ -> Nothing
         , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
@@ -589,6 +692,7 @@ dict (Codec ck) (Codec cv) =
         , sch = SnDict ck.sch cv.sch
         , zro = \_ -> Just (E.list identity [])
         , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
@@ -637,8 +741,48 @@ errorKindCodec =
 errorInfoCodec : Codec Error.ErrorInfo
 errorInfoCodec =
     object Error.ErrorInfo |> field "message" .message string
-        |> field "details" .details (maybe errorDetailsCodec)
+        |> field "details" .details detailsCodec
         |> buildObject
+
+
+-- The `details` of an `Error` on the wire: `null` is none, a variant this
+-- release knows must decode (a bad payload is an `Err`), and a variant a
+-- later release adds reads as none, so an `Error` from a newer peer keeps its
+-- kind and message.
+detailsCodec : Codec (Maybe Error.ErrorDetails)
+detailsCodec =
+    case maybe errorDetailsCodec of
+
+        Codec m ->
+            Codec
+                { m
+                    | dec =
+                        D.maybe (D.index 0 D.string)
+                            |> D.andThen
+                                   (\tag ->
+                                       case tag of
+
+                                           Just t ->
+                                               if memberOf t detailsTags then
+                                                   m.dec
+
+                                               else
+                                                   D.succeed Nothing
+
+                                           Nothing ->
+                                               m.dec)
+                }
+
+
+detailsTags : List String
+detailsTags =
+    [ "FfiPanic"
+    , "TypeMismatch"
+    , "HttpStatus"
+    , "JsonDecode"
+    , "Custom"
+    , "Domain"
+    ]
 
 
 panicInfoCodec : Codec Error.PanicInfo
@@ -691,7 +835,9 @@ errorDetailsCodec =
 -- `{"domain", "code", "retryable", "retryAfterMs", "attrs": [[k, v], …]}`.
 -- Decoding is forward-compatible: `domain` and `code` are required, a missing
 -- `retryable` is `false`, a missing or null `retryAfterMs` is no delay, a
--- missing `attrs` is none, and keys a later release adds are ignored. Any
+-- missing `attrs` is none, and keys a later release adds are ignored. A key
+-- that is there must hold its type (a `retryAfterMs` of `"soon"` is an `Err`,
+-- not no delay). Any
 -- domain and any code decode, so a failure from a newer peer survives the wire
 -- with its kind, message, code and retry flag.
 domainFailureCodec : Codec Error.DomainFailure
@@ -723,26 +869,39 @@ domainFailureCodec =
                 buildDomainFailure
                 (D.field "domain" D.string)
                 (D.field "code" D.string)
-                (D.oneOf [ D.field "retryable" D.bool, D.succeed False ])
-                (D.oneOf
-                    [ D.map Just (D.field "retryAfterMs" D.int)
-                    , D.succeed Nothing
-                    ])
-                (D.oneOf
-                    [ D.field
-                          "attrs"
-                          (D.list
-                              (D.map2
-                                  (\k v -> ( k, v ))
-                                  (D.index 0 D.string)
-                                  (D.index 1 D.string)))
-                    , D.succeed []
-                    ])
+                (optionalField "retryable" D.bool False)
+                (optionalField "retryAfterMs" (D.nullable D.int) Nothing)
+                (optionalField
+                    "attrs"
+                    (D.list
+                        (D.map2
+                            (\k v -> ( k, v ))
+                            (D.index 0 D.string)
+                            (D.index 1 D.string)))
+                    [])
         , shp = SBlob
         , sch = SnOpen
         , zro = \_ -> Nothing
         , fzr = \_ -> []
+        , fck = \_ -> []
         }
+
+
+-- Field `name` read by `dec` when the object has it, `fallback` when it has
+-- not. A value that is there and that `dec` does not read is an `Err`, never
+-- the fallback.
+optionalField : String -> Decoder a -> a -> Decoder a
+optionalField name dec fallback =
+    D.maybe (D.field name D.value)
+        |> D.andThen
+               (\present ->
+                   case present of
+
+                       Just _ ->
+                           D.field name dec
+
+                       Nothing ->
+                           D.succeed fallback)
 
 
 buildDomainFailure : String -> String -> Bool -> Maybe Int -> List ( String, String ) -> Error.DomainFailure
@@ -772,6 +931,7 @@ map to from (Codec c) =
         , sch = c.sch
         , zro = c.zro
         , fzr = c.fzr
+        , fck = c.fck
         }
 
 -- ── Records (object builder) ─────────────────────────────────────────────────
@@ -790,6 +950,7 @@ type alias ObjectPayload a b =
     , cols : List ( String, ColType )
     , schs : List ( String, SchemaNode )
     , zros : List ( String, () -> Maybe Value )
+    , fcks : List ( String, Value -> Maybe String )
     }
 
 
@@ -802,6 +963,7 @@ object ctor =
         , cols = []
         , schs = []
         , zros = []
+        , fcks = []
         }
 
 
@@ -815,6 +977,7 @@ field name getter (Codec fc) (ObjectCodec o) =
         , cols = o.cols ++ [ ( name, colTypeOf fc.shp ) ]
         , schs = o.schs ++ [ ( name, fc.sch ) ]
         , zros = o.zros ++ [ ( name, fc.zro ) ]
+        , fcks = o.fcks ++ [ ( name, decodeCheck fc.dec ) ]
         }
 
 
@@ -846,6 +1009,7 @@ inline getter (ObjectCodec inner) (ObjectCodec o) =
         , cols = o.cols ++ inner.cols
         , schs = o.schs ++ inner.schs
         , zros = o.zros ++ inner.zros
+        , fcks = o.fcks ++ inner.fcks
         }
 
 
@@ -864,6 +1028,7 @@ buildObject (ObjectCodec o) =
         , sch = SnObject o.schs
         , zro = \_ -> Maybe.map E.object (allZeros o.zros)
         , fzr = \_ -> presentZeros o.zros
+        , fck = \_ -> o.fcks
         }
 
 
@@ -1021,6 +1186,7 @@ autoBase snake witness =
             , sch = SnAuto (\_ -> autoSchemaK snake witness) []
             , zro = \_ -> Just (autoEncK snake witness)
             , fzr = \_ -> witnessZeros cols (autoEncK snake witness)
+            , fck = \_ -> []
             }
 
 
@@ -1054,6 +1220,7 @@ autoWith overrides witness =
             , zro = \_ -> Just (autoEncOverridesK True encs witness)
             , fzr =
                 \_ -> witnessZeros cols (autoEncOverridesK True encs witness)
+            , fck = \_ -> []
             }
 
 
@@ -1261,6 +1428,7 @@ taggedUnion toTagged variants =
             , sch = SnUnion (variantSchemas arms)
             , zro = \_ -> Nothing
             , fzr = \_ -> []
+            , fck = \_ -> []
             }
 
 
@@ -1327,6 +1495,7 @@ enum pairs =
                     [] ->
                         Nothing
         , fzr = \_ -> []
+        , fck = \_ -> []
         }
 
 
@@ -2174,8 +2343,9 @@ isNullaryTag tag variants =
 -- ── Comparing schemas and checking values ────────────────────────────────────
 -- | `Nothing` when every JSON value the JSON Schema `source` describes reads,
 -- through a codec whose `jsonSchema` is `target`, as that same value, so a
--- `Maybe` never turns a mismatch into `Nothing` (a `Codec.maybe` decoder
--- reads a value it cannot decode as `Nothing`). `Just` the reason otherwise.
+-- projection is refused before any statement instead of failing on a row (a
+-- `Codec.maybe` decoder reads only `null` as `Nothing`, and any other value
+-- it cannot decode is an `Err`). `Just` the reason otherwise.
 -- Both are schemas as `jsonSchema` writes them (its `schema` field, or a part
 -- of one). The rule:
 --
@@ -2232,7 +2402,7 @@ fitSchema under t s =
                 Just
                     ("the source is a part no schema describes, and a Maybe of "
                         ++ describeSchema t
-                        ++ " would read a value it cannot decode as Nothing")
+                        ++ " may not read it")
 
             else
                 Nothing

@@ -2834,9 +2834,9 @@ fn build_wire(
         // wasm client. The list is EMPTY when the branch's command ran no server
         // task (a `Cmd.none` leaf, the reject path of a guard helper): Sky.Live
         // dispatches nothing then, and the client maps `[]` to `( model,
-        // Cmd.none )`. A `List`, not a `Maybe`: `Codec.maybe` decodes a value it
-        // cannot read as `Nothing`, which would turn a broken answer into a
-        // silent no-op; a list element that does not decode fails loudly.
+        // Cmd.none )`. A `List`, not a `Maybe`: before v0.29 `Codec.maybe` decoded
+        // a value it could not read as `Nothing`, which turned a broken answer into
+        // a silent no-op. A list element that does not decode fails loudly.
         vec![ModelFieldTy {
             name: "result".to_string(),
             ty_name: String::new(),

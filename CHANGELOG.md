@@ -411,6 +411,19 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 The full list, with old and new code, is `docs/migration/v0.29.md`.
 
+- **`Codec.maybe` reads only `null` as `Nothing`.** Its decoder turned any
+  value the inner codec could not read into `Nothing`, so `"x"` in a
+  `Maybe Int` field, a name that is not one of an enum's, or a bad element of
+  a `List (Maybe a)` vanished with no error, in `Codec.fromJson`, Sky.Spa wire
+  decoding and `Std.Db.Store` reads alike. Now any value other than `null`
+  must decode as the inner value, and one that does not makes the decode an
+  `Err` naming where it failed. Values a codec wrote itself read back as
+  before. A `Codec.fromJson` of third-party JSON that puts a value of another
+  type where the codec expects a `Maybe` (`""` for a missing number) was
+  `Nothing` and is now an `Err`: repair the input, or read that payload with
+  `Sky.Core.Json.Decode` and `Decode.maybe`. `Codec.error` still reads a
+  details variant a later release adds as no details; a known variant with a
+  bad payload, and a domain-failure key with the wrong type, are an `Err`.
 - **`Std.Db.Store` exports `contains`, `startsWith`, `endsWith` and `select`
   (breaking for two `exposing (..)` imports).** `Sky.Core.String` and
   `Sky.Core.Regex` export `contains`, `Sky.Core.String` `startsWith` and
@@ -564,6 +577,24 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   that leaves out a codec column is an `Err` naming it. On the write side, a codec value whose
   JSON is not of the column's kind is an `Err` naming the column, where the
   kernel wrote 0, false or the value's Go `%v` text.
+- **A `Maybe` nested inside a JSON column never reads as `Nothing` by
+  mistake.** The read and write checks above looked at top-level columns
+  only, so an element of a `List (Maybe Shade)` (a taggedUnion or an enum)
+  that was not a `Shade`, or a `Maybe` custom type inside a nested record,
+  read as `Nothing` with no error, and `setValue` of such JSON ran when the
+  record had a field with no zero. With `Codec.maybe` strict, such a row is an
+  `Err` naming the table and the column (`column "palettes.xs" holds a value
+  its field's codec does not read (…)`), and the write check reads the JSON
+  with the column's own field decoder (`Codec.fieldReadError`, new). A JSON
+  `null` element still reads as `Nothing`.
+- **PostgreSQL takes a number into a TEXT column.** v0.28 created the column
+  of a `Codec.maybe (Codec.maybe Codec.int)` field (also `float`, `bool`) as
+  TEXT and wrote its text. v0.29 binds the value as a number, and pgx had no
+  plan for an int64, float64 or bool into a TEXT parameter, so every write to
+  such a table failed on PostgreSQL (SQLite stored the text). An int, float
+  or bool argument now binds into a TEXT parameter as its text, and into any
+  other parameter exactly as before. The column stays TEXT and sorts as
+  text; `docs/migration/v0.29.md` has the one-time conversion.
 - **`insertMany` and `upsert` compute a `defaultWith` column.** They left it
   out of the INSERT, so the row took the column's database default or NULL.
 - **`Codec.maybe` over a list, a record or a union gives a nullable column.**

@@ -65,6 +65,15 @@ type dbExecutor interface {
 // the connection pool. Data ops call d.executor() rather than d.conn directly
 // so they transparently participate in an open transaction.
 func (d *SkyDb) executor() dbExecutor {
+	ex := d.rawExecutor()
+	if d.driver == "pgx" {
+		// An int, float or bool also binds into a TEXT column (db_pgx_args.go).
+		return pgArgExecutor{inner: ex}
+	}
+	return ex
+}
+
+func (d *SkyDb) rawExecutor() dbExecutor {
 	if d.tx != nil {
 		// Retry configured → hand back the wrapper that records a
 		// retryable SQLSTATE while the typed driver error is still in
