@@ -710,10 +710,10 @@ predicateSql cols c =
 
                     Ok name ->
                         if List.member op [ "=", "<>", ">", ">=", "<", "<=" ] then
-                            case condValue name (kindOf name cols) v of
+                            case condValue "" name (kindOf name cols) v of
 
-                                Err msg ->
-                                    Err (Error.invalidInput msg)
+                                Err e ->
+                                    Err e
 
                                 Ok bound ->
                                     case sqlLiteral bound of
@@ -758,10 +758,10 @@ predicateSql cols c =
                         Err e
 
                     Ok name ->
-                        case condValues name (kindOf name cols) vs of
+                        case condValues "" name (kindOf name cols) vs of
 
-                            Err msg ->
-                                Err (Error.invalidInput msg)
+                            Err e ->
+                                Err e
 
                             Ok bound ->
                                 predicateIn name bound
@@ -5255,10 +5255,10 @@ renderCond ctx c =
                                            ++ "\" must be SqlString")
 
                         else
-                            case condValue col k v of
+                            case condValue "Store: " col k v of
 
-                                Err msg ->
-                                    Err <| storeErr msg
+                                Err e ->
+                                    Err e
 
                                 Ok bound ->
                                     Ok
@@ -5308,10 +5308,10 @@ renderCond ctx c =
                                                    ++ "\" must be SqlString")
 
                                 else
-                                    case condValues col k vs of
+                                    case condValues "Store: " col k vs of
 
-                                        Err msg ->
-                                            Err <| storeErr msg
+                                        Err e ->
+                                            Err e
 
                                         Ok bound ->
                                             Ok
@@ -6179,19 +6179,20 @@ fitsText base =
 -- `"true"` / `"false"`), so an id taken from a URL compares the same way on
 -- both dialects; text that is not a value of the kind is refused (SQLite
 -- would compare it and match nothing, PostgreSQL would fail).
-condValue : String -> String -> SqlValue -> Result String SqlValue
-condValue col kind v =
+condValue : String -> String -> String -> SqlValue -> Result Error SqlValue
+condValue prefix col kind v =
     let
         ( tag, text ) = valueInfo v
         base = kindBase kind
     in
         if tag == "SqlNull" then
             Err
-                ("column \"" ++ col
-                    ++ "\" is compared with SqlNull, and a comparison with NULL is never true: use isNull or notNull")
+                <| Error.invalidInput
+                       (prefix ++ "column \"" ++ col
+                           ++ "\" is compared with SqlNull, and a comparison with NULL is never true: use isNull or notNull")
 
         else if tag /= "SqlString" then
-            checkedCond col kind v
+            checkedCond prefix col kind v
 
         else if base == "int" then
             case String.toInt text of
@@ -6200,16 +6201,20 @@ condValue col kind v =
                     Ok (SqlInt n)
 
                 Nothing ->
-                    Err (textNotKind col "int" text)
+                    Err
+                        (Error.invalidInput
+                            (prefix ++ textNotKind col "int" text))
 
         else if base == "real" then
             case String.toFloat text of
 
                 Just f ->
-                    checkedCond col kind (SqlFloat f)
+                    checkedCond prefix col kind (SqlFloat f)
 
                 Nothing ->
-                    Err (textNotKind col "real" text)
+                    Err
+                        (Error.invalidInput
+                            (prefix ++ textNotKind col "real" text))
 
         else if base == "bool" then
             if text == "true" then
@@ -6219,18 +6224,18 @@ condValue col kind v =
                 Ok (SqlBool False)
 
             else
-                Err (textNotKind col "bool" text)
+                Err (Error.invalidInput (prefix ++ textNotKind col "bool" text))
 
         else
-            checkedCond col kind v
+            checkedCond prefix col kind v
 
 
-checkedCond : String -> String -> SqlValue -> Result String SqlValue
-checkedCond col kind v =
+checkedCond : String -> String -> String -> SqlValue -> Result Error SqlValue
+checkedCond prefix col kind v =
     case valueKindError col kind v of
 
         Just msg ->
-            Err msg
+            Err (Error.invalidInput (prefix ++ msg))
 
         Nothing ->
             Ok v
@@ -6243,21 +6248,21 @@ textNotKind col kind text =
         ++ " is not a value of that kind"
 
 
-condValues : String -> String -> List SqlValue -> Result String (List SqlValue)
-condValues col kind vs =
+condValues : String -> String -> String -> List SqlValue -> Result Error (List SqlValue)
+condValues prefix col kind vs =
     case vs of
 
         [] ->
             Ok []
 
         v :: rest ->
-            case condValue col kind v of
+            case condValue prefix col kind v of
 
                 Err msg ->
                     Err msg
 
                 Ok one ->
-                    case condValues col kind rest of
+                    case condValues prefix col kind rest of
 
                         Err msg ->
                             Err msg
