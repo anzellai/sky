@@ -660,12 +660,13 @@ tests =
             Test.equal
                 (Just "{\"n\":\"\",\"xs\":[],\"on\":false,\"m\":null}")
                 (Maybe.map (Encode.encode 0) (Codec.zeroJson zeroRecord)))
-    , Test.test "zeroJson: a taggedUnion and a result have none"
+    , Test.test "zeroJson: a taggedUnion, a result and an object with a field that has none have none"
         (\_ ->
             Test.equal
-                ( Nothing, Nothing )
+                ( Nothing, Nothing, Nothing )
                 ( Maybe.map (Encode.encode 0) (Codec.zeroJson Codec.error)
                 , Maybe.map (Encode.encode 0) (Codec.zeroJson (Codec.result Codec.error Codec.int))
+                , Maybe.map (Encode.encode 0) (Codec.zeroJson zeroRecordNoZero)
                 ))
     ]
 
@@ -680,10 +681,9 @@ zeroAutoBlank =
 
 
 type alias ZeroRecord =
-    { n : String, xs : List Int, on : Bool, m : Maybe Float, e : Error }
+    { n : String, xs : List Int, on : Bool, m : Maybe Float }
 
 
--- A field with no zero (an `Error`, a taggedUnion) is left out of the object.
 zeroRecord : Codec ZeroRecord
 zeroRecord =
     Codec.object ZeroRecord
@@ -691,6 +691,19 @@ zeroRecord =
         |> Codec.field "xs" .xs (Codec.list Codec.int)
         |> Codec.field "on" .on Codec.bool
         |> Codec.field "m" .m (Codec.maybe Codec.float)
+        |> Codec.buildObject
+
+
+type alias ZeroRecordNoZero =
+    { n : String, e : Error }
+
+
+-- A field with no zero (an `Error`, a taggedUnion) leaves the whole object
+-- with none: a partial object would be a DEFAULT no existing row decodes.
+zeroRecordNoZero : Codec ZeroRecordNoZero
+zeroRecordNoZero =
+    Codec.object ZeroRecordNoZero
+        |> Codec.field "n" .n Codec.string
         |> Codec.field "e" .e Codec.error
         |> Codec.buildObject
 

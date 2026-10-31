@@ -297,10 +297,10 @@ shape (Codec c) =
 
 -- | The JSON of the codec's zero value, when the codec knows one. For an
 -- `auto` / `autoCamel` / `autoWith` codec it is the encoded blank record (the
--- witness). For a `buildObject` codec it is an object of each field whose codec
--- knows a zero: `""`, `0`, `false`, `null` for `maybe`, `[]` for `list` and
--- `dict`, and the first name of an `enum`. A `taggedUnion`, a `result` and
--- `error` know none. `Std.Db.Store.migrate` and `sky db migrate --gen` use it
+-- witness). For a `buildObject` codec it is an object of every field's zero:
+-- `""`, `0`, `false`, `null` for `maybe`, `[]` for `list` and `dict`, and the
+-- first name of an `enum`. A `taggedUnion`, a `result` and `error` know none,
+-- and nor does an object with such a field (a partial object would not decode). `Std.Db.Store.migrate` and `sky db migrate --gen` use it
 -- as the DEFAULT of a required JSON (blob) column added to a table with rows,
 -- so the rows that exist decode.
 --
@@ -764,26 +764,27 @@ buildObject (ObjectCodec o) =
         , dec = objectDecoder o.cols o.decValue
         , shp = SRecord o.cols
         , sch = SnObject o.schs
-        , zro = \_ -> Just (E.object (knownZeros o.zros))
+        , zro = \_ -> Maybe.map E.object (allZeros o.zros)
         }
 
 
--- The fields of a record codec whose codec knows a zero value, with it.
-knownZeros : List ( String, () -> Maybe Value ) -> List ( String, Value )
-knownZeros zros =
+-- Every field's zero value, or `Nothing` when one field has none. A partial
+-- object would not decode (`D.field` is strict), so it is never a zero.
+allZeros : List ( String, () -> Maybe Value ) -> Maybe (List ( String, Value ))
+allZeros zros =
     case zros of
 
         [] ->
-            []
+            Just []
 
         ( name, z ) :: rest ->
             case z () of
 
                 Just v ->
-                    ( name, v ) :: knownZeros rest
+                    Maybe.map (\vs -> ( name, v ) :: vs) (allZeros rest)
 
                 Nothing ->
-                    knownZeros rest
+                    Nothing
 
 
 -- | A record codec's decoder: `dec`, or a decoder that always fails when two
