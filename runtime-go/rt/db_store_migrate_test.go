@@ -544,6 +544,96 @@ func TestStoreMigrateD1_SqliteRequiredBlobWithoutZero(t *testing.T) {
 	assertRequiredBlobWithoutZero(t, openStoreQueryDb(t), "docs_nz")
 }
 
+// assertFieldZerosOnRows: rule D1 takes each column's zero from its OWN field
+// (Codec.fieldZeros), so Std.Db.Store sends a `zero=` flag for a list field
+// whose sibling taggedUnion field has none, and for an enum (TEXT) column.
+// Store.migrate and a migration file give one DEFAULT each: `'[]'` and the
+// enum's first name, quoted. The old row reads both, and the no-zero sibling
+// is still refused on a table with a row. Shared by SQLite and PostgreSQL.
+func assertFieldZerosOnRows(t *testing.T, d *SkyDb, table string) {
+	t.Helper()
+	id := "0003_" + table + "_zero"
+	cleanup := func() {
+		_, _ = d.conn.Exec("DROP TABLE IF EXISTS " + table)
+		_, _ = d.conn.Exec("DROP TABLE IF EXISTS " + table + "_f")
+		_, _ = d.conn.Exec("DELETE FROM _sky_migrations WHERE name = '" + id + "'")
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+	if r := autoMigrate(t, d, table, cspec("id", "text", "shade", "blob"), nil); r.Tag != 0 {
+		t.Fatalf("create: %+v", r)
+	}
+	if _, err := d.conn.Exec("INSERT INTO " + table + " (id, shade) VALUES ('o1', '[\"Plain\"]')"); err != nil {
+		t.Fatal(err)
+	}
+	added := []string{"tags", "blob|zero=[]", "stage", "text|zero=draft", "mood", "text|zero=it's"}
+	r := autoMigrate(t, d, table, cspec(append([]string{"id", "text", "shade", "blob"}, added...)...), nil)
+	if r.Tag != 0 {
+		t.Fatalf("migrate: %+v", r)
+	}
+	ran := []string{}
+	for _, s := range AsList(r.OkValue) {
+		ran = append(ran, AsString(s))
+	}
+	want := []string{
+		"ALTER TABLE " + table + " ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
+		"ALTER TABLE " + table + " ADD COLUMN stage TEXT NOT NULL DEFAULT 'draft'",
+		"ALTER TABLE " + table + " ADD COLUMN mood TEXT NOT NULL DEFAULT 'it''s'",
+	}
+	if strings.Join(ran, ";") != strings.Join(want, ";") {
+		t.Fatalf("Store.migrate ran:\n%q\nwant:\n%q", ran, want)
+	}
+	var tags, stage, mood string
+	if err := d.conn.QueryRow("SELECT tags, stage, mood FROM "+table+" WHERE id = 'o1'").Scan(&tags, &stage, &mood); err != nil {
+		t.Fatal(err)
+	}
+	if tags != "[]" || stage != "draft" || mood != "it's" {
+		t.Fatalf("the old row reads tags=%q stage=%q mood=%q", tags, stage, mood)
+	}
+	// The migration file `sky db migrate --gen` writes from the schema dump
+	// gives the same values.
+	if _, err := d.conn.Exec("CREATE TABLE " + table + "_f (id TEXT PRIMARY KEY)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.conn.Exec("INSERT INTO " + table + "_f (id) VALUES ('o1')"); err != nil {
+		t.Fatal(err)
+	}
+	ops := []migOp{}
+	for i := 0; i+1 < len(added); i += 2 {
+		c := codecDumpColumn(added[i], added[i+1])
+		ops = append(ops, migOp{Kind: "addColumn", Table: table + "_f", Column: c.Name,
+			Type: c.Kind, Nullable: false, Default: c.Zero})
+	}
+	if r := migrateOpsJson(t, d, migFilesJson(t, migFile{Id: id, Ops: ops})); r.Tag != 0 {
+		t.Fatalf("sky db migrate: %+v", r)
+	}
+	if err := d.conn.QueryRow("SELECT tags, stage, mood FROM "+table+"_f WHERE id = 'o1'").Scan(&tags, &stage, &mood); err != nil {
+		t.Fatal(err)
+	}
+	if tags != "[]" || stage != "draft" || mood != "it's" {
+		t.Fatalf("the migration file gave tags=%q stage=%q mood=%q", tags, stage, mood)
+	}
+	// The sibling with no zero is still refused on a table with a row.
+	_, _ = d.conn.Exec("DROP TABLE IF EXISTS " + table)
+	if r := autoMigrate(t, d, table, cspec("id", "text", "tags", "blob|zero=[]"), nil); r.Tag != 0 {
+		t.Fatalf("create: %+v", r)
+	}
+	if _, err := d.conn.Exec("INSERT INTO " + table + " (id, tags) VALUES ('o1', '[]')"); err != nil {
+		t.Fatal(err)
+	}
+	r = autoMigrate(t, d, table, cspec("id", "text", "tags", "blob|zero=[]", "shade", "blob"), nil)
+	if r.Tag == 0 {
+		t.Fatalf("a required blob with no zero was added to a table with a row")
+	}
+	if msg := fmt.Sprintf("%v", r.ErrValue); !strings.Contains(msg, table+".shade") || !strings.Contains(msg, "no zero value") {
+		t.Fatalf("the refusal does not name the column:\n%s", msg)
+	}
+}
+
+func TestStoreMigrateD1_SqliteFieldZerosOnRows(t *testing.T) {
+	assertFieldZerosOnRows(t, openStoreQueryDb(t), "zeros_d1")
+}
+
 func TestStoreMigrateD1_SqliteRequiredUniqueOnATableWithRowsIsErr(t *testing.T) {
 	d := openStoreQueryDb(t)
 	_ = autoMigrate(t, d, "accounts", cspec("id", "text"), nil)

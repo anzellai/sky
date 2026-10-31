@@ -32,6 +32,7 @@ module Std.Codec exposing
     , ObjectCodec
     , shape
     , zeroJson
+    , fieldZeros
     , JsonSchema
     , jsonSchema
     , toValue
@@ -106,6 +107,7 @@ type alias CodecPayload a =
     , shp : Shape
     , sch : SchemaNode
     , zro : () -> Maybe Value
+    , fzr : () -> List ( String, Value )
     }
 
 -- | The JSON Schema of the JSON a codec reads and writes. `exact` is `True`
@@ -300,15 +302,36 @@ shape (Codec c) =
 -- witness). For a `buildObject` codec it is an object of every field's zero:
 -- `""`, `0`, `false`, `null` for `maybe`, `[]` for `list` and `dict`, and the
 -- first name of an `enum`. A `taggedUnion`, a `result` and `error` know none,
--- and nor does an object with such a field (a partial object would not decode). `Std.Db.Store.migrate` and `sky db migrate --gen` use it
--- as the DEFAULT of a required JSON (blob) column added to a table with rows,
--- so the rows that exist decode.
+-- and nor does an object with such a field: a partial object would not
+-- decode. This is the zero of the WHOLE value, as a nested field needs it.
+-- For the zero of each column of a record codec, use `fieldZeros`.
 --
 --     Codec.zeroJson (Codec.auto { id = "", tags = [ "new" ] })
 --     -- Just {"id":"","tags":["new"]}
 zeroJson : Codec a -> Maybe Value
 zeroJson (Codec c) =
     c.zro ()
+
+
+-- | The zero of each field of a record codec, keyed by its JSON key (the
+-- column name), in field order. For a `buildObject` codec it is each field
+-- whose own codec has a zero (see `zeroJson`). A field with no zero (a
+-- `taggedUnion`, a `result`, `error`, or an object holding one) is left out,
+-- and the other fields keep theirs. For an `auto` / `autoCamel` / `autoWith`
+-- codec it is each field of the encoded blank record (the witness). Any other
+-- codec gives `[]`. `Std.Db.Store.migrate` and `sky db migrate --gen` use it
+-- for the DEFAULT of a required JSON (blob) or enum column added to a table
+-- with rows, so the rows that exist decode.
+--
+--     Codec.fieldZeros
+--         (Codec.object Item
+--             |> Codec.field "kind" .kind kindUnion
+--             |> Codec.field "tags" .tags (Codec.list Codec.string)
+--             |> Codec.buildObject)
+--     -- [ ( "tags", [] ) ]   (the taggedUnion field "kind" has no zero)
+fieldZeros : Codec a -> List ( String, Value )
+fieldZeros (Codec c) =
+    c.fzr ()
 
 
 -- | The codec's encoder as a plain function `a -> Value` (a JSON `Value`, the DB
@@ -354,6 +377,7 @@ string =
         , shp = SScalar CText
         , sch = SnType "string"
         , zro = \_ -> Just (E.string "")
+        , fzr = \_ -> []
         }
 
 
@@ -366,6 +390,7 @@ int =
         , shp = SScalar CInt
         , sch = SnType "integer"
         , zro = \_ -> Just (E.int 0)
+        , fzr = \_ -> []
         }
 
 
@@ -378,6 +403,7 @@ float =
         , shp = SScalar CReal
         , sch = SnType "number"
         , zro = \_ -> Just (E.float 0.0)
+        , fzr = \_ -> []
         }
 
 
@@ -391,6 +417,7 @@ bool =
         , shp = SScalar CBool
         , sch = SnType "boolean"
         , zro = \_ -> Just (E.bool False)
+        , fzr = \_ -> []
         }
 
 
@@ -421,6 +448,7 @@ maybe (Codec c) =
                     SBlob
         , sch = SnNullable c.sch
         , zro = \_ -> Just E.null
+        , fzr = \_ -> []
         }
 
 
@@ -434,6 +462,7 @@ list (Codec c) =
         , shp = SBlob
         , sch = SnArray c.sch
         , zro = \_ -> Just (E.list identity [])
+        , fzr = \_ -> []
         }
 
 
@@ -466,6 +495,7 @@ result (Codec ce) (Codec ca) =
         , shp = SBlob
         , sch = SnResult ce.sch ca.sch
         , zro = \_ -> Nothing
+        , fzr = \_ -> []
         }
 
 
@@ -493,6 +523,7 @@ dict (Codec ck) (Codec cv) =
         , shp = SBlob
         , sch = SnDict ck.sch cv.sch
         , zro = \_ -> Just (E.list identity [])
+        , fzr = \_ -> []
         }
 
 
@@ -645,6 +676,7 @@ domainFailureCodec =
         , shp = SBlob
         , sch = SnOpen
         , zro = \_ -> Nothing
+        , fzr = \_ -> []
         }
 
 
@@ -674,6 +706,7 @@ map to from (Codec c) =
         , shp = c.shp
         , sch = c.sch
         , zro = c.zro
+        , fzr = c.fzr
         }
 
 -- ── Records (object builder) ─────────────────────────────────────────────────
@@ -765,6 +798,7 @@ buildObject (ObjectCodec o) =
         , shp = SRecord o.cols
         , sch = SnObject o.schs
         , zro = \_ -> Maybe.map E.object (allZeros o.zros)
+        , fzr = \_ -> presentZeros o.zros
         }
 
 
@@ -785,6 +819,44 @@ allZeros zros =
 
                 Nothing ->
                     Nothing
+
+
+-- The zero of each field that has one, in field order. A field with no zero
+-- is left out: unlike `allZeros`, one such field does not hide the others.
+presentZeros : List ( String, () -> Maybe Value ) -> List ( String, Value )
+presentZeros zros =
+    case zros of
+
+        [] ->
+            []
+
+        ( name, z ) :: rest ->
+            case z () of
+
+                Just v ->
+                    ( name, v ) :: presentZeros rest
+
+                Nothing ->
+                    presentZeros rest
+
+
+-- Each column's value in the encoded witness of an `auto` codec, in column
+-- order. A column the witness does not hold is left out.
+witnessZeros : List ( String, String ) -> Value -> List ( String, Value )
+witnessZeros cols witness =
+    case cols of
+
+        [] ->
+            []
+
+        ( name, _ ) :: rest ->
+            case D.decodeValue (D.field name D.value) witness of
+
+                Ok v ->
+                    ( name, v ) :: witnessZeros rest witness
+
+                Err _ ->
+                    witnessZeros rest witness
 
 
 -- | A record codec's decoder: `dec`, or a decoder that always fails when two
@@ -881,6 +953,9 @@ autoBase snake witness =
                     (autoColsK snake witness))
         , sch = SnAuto (\_ -> autoSchemaK snake witness) []
         , zro = \_ -> Just (autoEncK snake witness)
+        , fzr =
+            \_ ->
+                witnessZeros (autoColsK snake witness) (autoEncK snake witness)
         }
 
 
@@ -914,6 +989,11 @@ autoWith overrides witness =
                     (\_ -> autoSchemaK True witness)
                     (List.map (\( col, Codec c ) -> ( col, c.sch )) overrides)
             , zro = \_ -> Just (autoEncOverridesK True encs witness)
+            , fzr =
+                \_ ->
+                    witnessZeros
+                        (autoColsWith True shps witness)
+                        (autoEncOverridesK True encs witness)
             }
 
 
@@ -1120,6 +1200,7 @@ taggedUnion toTagged variants =
             , shp = SBlob
             , sch = SnUnion (variantSchemas arms)
             , zro = \_ -> Nothing
+            , fzr = \_ -> []
             }
 
 
@@ -1185,6 +1266,7 @@ enum pairs =
 
                     [] ->
                         Nothing
+        , fzr = \_ -> []
         }
 
 

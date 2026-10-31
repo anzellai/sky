@@ -87,9 +87,10 @@ type migColumn struct {
 	Autoinc  bool        `json:"autoinc"`
 	Unique   bool        `json:"unique"`
 	Default  *migDefault `json:"default,omitempty"`
-	// Zero is the JSON of a required blob column's value in the codec's zero
-	// value (the `zero=` flag Std.Db.Store adds from Codec.zeroJson), as a
-	// text default. It is used only when a column is added (renderAddColumn),
+	// Zero is a required column's own field zero when it is not the zero of
+	// its kind: the JSON of a blob field's zero, or an enum's zero name (the
+	// `zero=` flag Std.Db.Store adds from Codec.fieldZeros), as a text
+	// default. It is used only when a column is added (renderAddColumn),
 	// never in CREATE TABLE.
 	Zero *migDefault `json:"-"`
 }
@@ -196,7 +197,8 @@ func codecColspecMigColumn(name, rawKind, pk string) migColumn {
 // migZeroDefault is the DEFAULT of a required column added with no declared
 // default: the zero value of its kind. A real column takes `{"int":0}`, so
 // it renders `0`, the same bytes as `sky db migrate --gen` writes. A blob has
-// no zero of its kind: its zero is the codec's (migColumn.Zero), else nil.
+// no zero of its kind, and an enum's text zero `”` is not one of its names:
+// their zero is the field's own (migColumn.Zero, read first), else nil.
 func migZeroDefault(kind string) *migDefault {
 	switch kind {
 	case "int", "bigint", "real":
@@ -238,10 +240,11 @@ func migAddDefault(driver, kind string, d *migDefault, nowAt string) string {
 //     if it has one;
 //   - any other column is added NOT NULL DEFAULT <declared, else the zero
 //     value>, so the rows that exist read a value. The zero of a required
-//     JSON (blob) column is the JSON of its field in the codec's zero value
-//     (Codec.zeroJson, the blank record of an `auto` codec), a text literal;
-//     the zero of any other column is the zero of its kind;
-//   - a required column with no zero value (a blob whose codec knows none) is
+//     JSON (blob) column is the JSON of its own field's zero, and the zero of
+//     a required enum (TEXT) column is the enum's zero name
+//     (Codec.fieldZeros, sent as the `zero=` flag), a text literal; the zero
+//     of any other column is the zero of its kind;
+//   - a required column with no zero value (a blob whose field knows none) is
 //     added NOT NULL with no default. Only an empty table takes it, so with
 //     rows >= 1 it is an error, and the table is not changed;
 //   - a `now` default is `now()` on PostgreSQL and the constant nowAt on
@@ -315,13 +318,17 @@ func migNeedsRowCount(c migColumn) bool {
 
 // migNoZeroAdvice explains a required column with no zero value added to a
 // table with rows. Store.migrate returns it, and dbMigrateCore puts it in the
-// error of a migration file that the database refused.
+// error of a migration file that the database refused. The zero is the
+// column's own field zero (Codec.fieldZeros): a taggedUnion, a result,
+// Codec.error, or an object holding one has none.
 func migNoZeroAdvice(table, col string) string {
 	return fmt.Sprintf(
-		"column %s.%s is required and its codec has no zero value, so it is added NOT NULL "+
-			"with no default, and table %s already has rows that would hold no value. Fix: make "+
-			"the field a Maybe (a nullable column), derive the codec with Codec.auto (its blank "+
-			"record gives the default), or give the rows a value in a data step",
+		"column %s.%s is required and its field's codec has no zero value (a taggedUnion, a "+
+			"result, Codec.error, or an object holding one), so it is added NOT NULL with no "+
+			"default, and table %s already has rows that would hold no value. Fix: make the field "+
+			"a Maybe (a nullable column), derive the record codec with Codec.auto or Codec.autoWith "+
+			"(the blank record's value for the field gives the default), or give the rows a value "+
+			"in a data step",
 		table, col, table)
 }
 

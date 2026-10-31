@@ -65,6 +65,21 @@
       "ops": [{"kind": "addColumn", "table": "orders", "column": "meta", "type": "blob", "nullable": false, "default": {"text": "{\"a\":\"x|y%z\"}"}}]
     },
     {
+      "colspec": ["tags", "blob|zero=[]"],
+      "schema": {"name": "tags", "kind": "blob", "nullable": false, "zero": {"text": "[]"}},
+      "ops": [{"kind": "addColumn", "table": "orders", "column": "tags", "type": "blob", "nullable": false, "default": {"text": "[]"}}]
+    },
+    {
+      "colspec": ["stage", "text|zero=draft"],
+      "schema": {"name": "stage", "kind": "text", "nullable": false, "zero": {"text": "draft"}},
+      "ops": [{"kind": "addColumn", "table": "orders", "column": "stage", "type": "text", "nullable": false, "default": {"text": "draft"}}]
+    },
+    {
+      "colspec": ["mood", "text|zero=it's a%7Cb"],
+      "schema": {"name": "mood", "kind": "text", "nullable": false, "zero": {"text": "it's a|b"}},
+      "ops": [{"kind": "addColumn", "table": "orders", "column": "mood", "type": "text", "nullable": false, "default": {"text": "it's a|b"}}]
+    },
+    {
       "colspec": ["email", "text?|u"],
       "schema": {"name": "email", "kind": "text", "nullable": true, "unique": true},
       "ops": [

@@ -118,8 +118,9 @@ the DDL is the same per dialect:
 | `Maybe` + a declared default | nullable, `DEFAULT <d>` |
 | required + `defaultInt/Text/Bool/Float` | `NOT NULL DEFAULT <d>` |
 | required, no builder | `NOT NULL DEFAULT 0` / `''` / false |
-| required JSON (blob) field | `NOT NULL DEFAULT '<json>'`, where `<json>` is the field's value in the codec's zero value (`Codec.zeroJson`: the blank record of `Codec.auto`, or `[]` / `""` / `0` / `null` per field of a `Codec.object` codec) |
-| required JSON field whose codec has no zero (a `taggedUnion` or `result` field of a `Codec.object` codec, a `Schema.blob` column) | `NOT NULL` with no default: an empty table takes it, a table with 1 or more rows is `Err` (a `sky db migrate` file fails at the same count, with the same advice) |
+| required enum field (a `Codec.enum` field, or a nullary custom type under `Codec.auto`) | `NOT NULL DEFAULT '<name>'`: the first name of the `Codec.enum`, or the witness's constructor name under `Codec.auto` (`''` is not one of its names, so it would not decode) |
+| required JSON (blob) field | `NOT NULL DEFAULT '<json>'`, where `<json>` is that field's own zero (`Codec.fieldZeros`): its value in the blank record of `Codec.auto`, or its codec's zero in a `Codec.object` codec (`[]` / `""` / `0` / `null`, an object of its fields' zeros). A sibling field with no zero does not take it away |
+| required JSON field with no zero (a `taggedUnion`, `result` or `Codec.error` field of a `Codec.object` codec, an object field holding one, a `Schema.blob` column) | `NOT NULL` with no default: an empty table takes it, a table with 1 or more rows is `Err` (a `sky db migrate` file fails at the same count, with the same advice) |
 | `defaultNow` (text) | PostgreSQL `NOT NULL DEFAULT now()`; SQLite `NOT NULL DEFAULT '<time of the ALTER>'` |
 | `unique` | added, then a unique index; a required unique column on a table with 2 or more rows is `Err` (the same count as a `sky db migrate` file) |
 
@@ -128,9 +129,10 @@ and it never makes an existing nullable column NOT NULL. Run it from one
 process: two replicas that migrate at once can race on `ADD COLUMN`. On
 PostgreSQL, `CREATE INDEX` locks writes to the table while it runs, and from
 PostgreSQL 11 `ADD COLUMN … NOT NULL DEFAULT <constant or now()>` needs no
-rewrite (`now()` stamps the rows that exist with the time of the ALTER). A zero
-`''` cannot decode for a nullary enum, a `Codec.map` wrapper or a validated
-string: declare a default for such a field.
+rewrite (`now()` stamps the rows that exist with the time of the ALTER). A
+plain String column keeps the zero `''`. A `Codec.map` wrapper over a string
+with its own rule cannot tell `''` is wrong: declare a default for such a
+field.
 
 A required `unique` column in a `--gen` migration file is an `addColumn` op
 (`NOT NULL DEFAULT <d>`) and then an `addIndex` op. On a table with 2 or more

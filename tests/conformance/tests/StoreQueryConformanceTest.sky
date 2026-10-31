@@ -2823,6 +2823,214 @@ migrateTests db =
                       |> Result.map (List.map .note)))
     ]
 
+-- ── D1: each column takes its own field's zero ───────────────────────────────
+type ZeroShade
+    = ZPlain
+    | ZMixed Int
+
+type ZeroStage
+    = Draft
+    | Live
+
+type alias ZeroId =
+    { id : String }
+
+type alias ZeroShaded =
+    { id : String
+    , shade : ZeroShade
+    }
+
+type alias ZeroMix =
+    { id : String
+    , shade : ZeroShade
+    , tags : List String
+    }
+
+type alias ZeroStaged =
+    { id : String
+    , stage : ZeroStage
+    }
+
+type alias ZeroLabel =
+    { id : String
+    , label : String
+    }
+
+
+zeroShadeCodec : Codec ZeroShade
+zeroShadeCodec =
+    Codec.taggedUnion
+        (\v ->
+            case v of
+
+                ZPlain ->
+                    ( "ZPlain", [] )
+
+                ZMixed n ->
+                    ( "ZMixed", [ Codec.toValue Codec.int n ] ))
+        [ Codec.var0 "ZPlain" ZPlain, Codec.var1 "ZMixed" ZMixed Codec.int ]
+
+
+zeroIds : String -> Store ZeroId
+zeroIds table =
+    Store.fromCodec table (Codec.auto { id = "" }) |> Store.primaryKey "id"
+
+
+-- A `Codec.object` codec whose taggedUnion field has no zero: its whole
+-- record has no zero, but its `list` field still has its own.
+zeroShaded : Store ZeroShaded
+zeroShaded =
+    Store.fromCodec
+        "sqc_zero_mix"
+        (Codec.object ZeroShaded |> Codec.field "id" .id Codec.string
+            |> Codec.field "shade" .shade zeroShadeCodec
+            |> Codec.buildObject)
+        |> Store.primaryKey "id"
+
+
+zeroMixCodec : Codec ZeroMix
+zeroMixCodec =
+    Codec.object ZeroMix |> Codec.field "id" .id Codec.string
+        |> Codec.field "shade" .shade zeroShadeCodec
+        |> Codec.field "tags" .tags (Codec.list Codec.string)
+        |> Codec.buildObject
+
+
+zeroMix : String -> Store ZeroMix
+zeroMix table =
+    Store.fromCodec table zeroMixCodec |> Store.primaryKey "id"
+
+
+zeroStageEnum : Store ZeroStaged
+zeroStageEnum =
+    Store.fromCodec
+        "sqc_zero_enum"
+        (Codec.object ZeroStaged |> Codec.field "id" .id Codec.string
+            |> Codec.field
+                   "stage"
+                   .stage
+                   (Codec.enum [ ( Draft, "draft" ), ( Live, "live" ) ])
+            |> Codec.buildObject)
+        |> Store.primaryKey "id"
+
+
+-- A nullary custom type under `Codec.auto`: the witness's name is the zero.
+zeroStageAuto : Store ZeroStaged
+zeroStageAuto =
+    Store.fromCodec "sqc_zero_enum_auto" (Codec.auto { id = "", stage = Live })
+        |> Store.primaryKey "id"
+
+
+-- A plain String keeps the zero of its type, whatever the witness holds.
+zeroLabelAuto : Store ZeroLabel
+zeroLabelAuto =
+    Store.fromCodec "sqc_zero_label" (Codec.auto { id = "", label = "new" })
+        |> Store.primaryKey "id"
+
+
+-- A table with only an `id` column and one row `old`.
+zeroOldTable : Db -> String -> Result Error Int
+zeroOldTable db table =
+    Task.run
+        (drop db table
+            |> Task.andThen (\_ -> unit (Store.migrate db (zeroIds table)))
+            |> Task.andThen
+                   (\_ -> Store.insert db (zeroIds table) { id = "old" }))
+
+
+-- Run `migrate` on `store` after making `table` the one-row `id` table.
+zeroMigrate : Db -> String -> Store a -> Result Error (List String)
+zeroMigrate db table store =
+    zeroOldTable db table
+        |> Result.andThen (\_ -> Task.run (Store.migrate db store))
+
+
+zeroTests : Db -> List Test
+zeroTests db =
+    [ Test.test
+          "migrate (D1): a list field beside a taggedUnion field defaults to []"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ "ALTER TABLE sqc_zero_mix ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'"
+                      ])
+                  (Task.run
+                      (drop db "sqc_zero_mix"
+                          |> Task.andThen
+                                 (\_ -> unit (Store.migrate db zeroShaded))
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.insert
+                                         db
+                                         zeroShaded
+                                         { id = "old", shade = ZMixed 3 })
+                          |> Task.andThen
+                                 (\_ -> Store.migrate db (zeroMix "sqc_zero_mix")))))
+    , Test.test
+          "migrate (D1): the old row decodes the list field's zero beside the union"
+          (\_ ->
+              Test.equal
+                  (Ok [ { id = "old", shade = ZMixed 3, tags = [] } ])
+                  (Task.run (Store.all db (zeroMix "sqc_zero_mix"))))
+    , Test.test
+          "migrate (D1): a taggedUnion field beside a list field is Err on a table with a row"
+          (\_ ->
+              let
+                  r =
+                      zeroMigrate
+                          db
+                          "sqc_zero_mix_refused"
+                          (zeroMix "sqc_zero_mix_refused")
+              in
+                  Test.equal
+                      ( True, True )
+                      ( errHas "sqc_zero_mix_refused.shade" r
+                      , errHas "no zero value" r
+                      ))
+    , Test.test
+          "migrate (D1): a required Codec.enum field defaults to its first name"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ "ALTER TABLE sqc_zero_enum ADD COLUMN stage TEXT NOT NULL DEFAULT 'draft'"
+                      ])
+                  (zeroMigrate db "sqc_zero_enum" zeroStageEnum))
+    , Test.test
+          "migrate (D1): the old row decodes the enum's first name"
+          (\_ ->
+              Test.equal
+                  (Ok [ { id = "old", stage = Draft } ])
+                  (Task.run (Store.all db zeroStageEnum)))
+    , Test.test
+          "migrate (D1): a nullary custom type under Codec.auto defaults to the witness's name"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ "ALTER TABLE sqc_zero_enum_auto ADD COLUMN stage TEXT NOT NULL DEFAULT 'Live'"
+                      ])
+                  (zeroMigrate db "sqc_zero_enum_auto" zeroStageAuto))
+    , Test.test
+          "migrate (D1): the old row decodes the witness's constructor"
+          (\_ ->
+              Test.equal
+                  (Ok [ { id = "old", stage = Live } ])
+                  (Task.run (Store.all db zeroStageAuto)))
+    , Test.test
+          "migrate (D1): a plain String field defaults to '' whatever the witness holds"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      ( [ "ALTER TABLE sqc_zero_label ADD COLUMN label TEXT NOT NULL DEFAULT ''"
+                        ]
+                      , [ { id = "old", label = "" } ]
+                      ))
+                  (zeroMigrate db "sqc_zero_label" zeroLabelAuto
+                      |> Result.andThen
+                             (\stmts ->
+                                 Task.run (Store.all db zeroLabelAuto)
+                                     |> Result.map (\rows -> ( stmts, rows )))))
+    ]
+
 -- ── Items 5, 8, 9, 12: writes (batch D) ──────────────────────────────────────
 type alias Claim =
     { key : String
@@ -3711,6 +3919,7 @@ tests =
                 ++ joinTests db
                 ++ subqueryTests db
                 ++ migrateTests db
+                ++ zeroTests db
                 ++ writeTests db
 
 

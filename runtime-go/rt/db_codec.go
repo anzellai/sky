@@ -110,8 +110,9 @@ var codecFlagValueDecoder = strings.NewReplacer("%7C", "|", "%25", "%")
 // defaultKind ∈ {none,now,text,int,bool,float} matches schemaDefault. A default
 // value arrives percent-encoded (see codecFlagValueDecoder) and is decoded here.
 // codecColZero reads the `zero=` flag Std.Db.Store adds to a required blob
-// column: the JSON of the column in the codec's zero value (Codec.zeroJson),
-// as a text default for renderAddColumn. nil when there is no flag.
+// or enum column: the column's own field zero (Codec.fieldZeros), the JSON of
+// a blob field's zero or an enum's zero name, as a text default for
+// renderAddColumn. nil when there is no flag.
 func codecColZero(kind string) *migDefault {
 	for _, f := range codecColFlags(kind) {
 		if strings.HasPrefix(f, "zero=") {
@@ -931,7 +932,7 @@ type jcol struct {
 	Autoinc  bool        `json:"autoinc,omitempty"`
 	Unique   bool        `json:"unique,omitempty"`
 	Default  *migDefault `json:"default,omitempty"`
-	// Zero is a required blob column's value in the codec's zero value
+	// Zero is a required blob or enum column's own field zero
 	// (migColumn.Zero). `--gen` makes it the DEFAULT of the addColumn op.
 	Zero *migDefault `json:"zero,omitempty"`
 }

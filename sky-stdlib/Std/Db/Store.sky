@@ -905,12 +905,17 @@ create conn store =
 --   `defaultNow`), else the zero value of the type (`0`, `''`, false), so the
 --   rows that exist read a value;
 -- * a required JSON (blob) field gives `NOT NULL DEFAULT '<json>'`, where
---   `<json>` is the field's value in the codec's zero value
---   (`Codec.zeroJson`: the blank record of `Codec.auto`, or each field's zero
---   in a `Codec.object` codec). A field whose codec has no zero (a
---   `taggedUnion` or `result` field) is `NOT NULL` with no default: an empty
---   table takes it, a table with 1 or more rows is an `Err`, and a
+--   `<json>` is that field's own zero (`Codec.fieldZeros`: its value in the
+--   blank record of `Codec.auto`, or its codec's zero in a `Codec.object`
+--   codec), so a sibling field with no zero does not take it away. A field
+--   with no zero (a `taggedUnion`, `result` or `Codec.error` field, or an
+--   object field holding one) is `NOT NULL` with no default: an empty table
+--   takes it, a table with 1 or more rows is an `Err`, and a
 --   `sky db migrate` file fails there with the same advice;
+-- * a required enum field (a `Codec.enum` field, or a nullary custom type
+--   under `Codec.auto`) gives `NOT NULL DEFAULT '<name>'`: the first name of
+--   the `Codec.enum`, or the witness's constructor name under `Codec.auto`.
+--   A plain String field keeps `''`;
 -- * a `defaultNow` column added on SQLite holds the time of the ALTER in the
 --   rows that exist (SQLite refuses `datetime('now')` in ADD COLUMN);
 -- * a `unique` column is added, then given a unique index. A required unique
@@ -5641,37 +5646,88 @@ resolveCol known col =
                         col
 
 
--- Rule D1 for a required JSON (blob) column: give each one the `zero=` flag,
--- the JSON of its field in the codec's zero value (`Codec.zeroJson`: the blank
--- record of an `auto` codec). `migrate` and `toTable` (so `pushProject` and
--- the `sky db migrate --gen` schema dump) add it; the runtime's
+-- Rule D1 for a required column whose zero is not the zero of its kind: give
+-- it the `zero=` flag, from its OWN field's zero (`Codec.fieldZeros`), never
+-- from the zero of the whole record, so a sibling field with no zero does not
+-- take the zero away. A JSON (blob) column's flag is the JSON of the field's
+-- zero (the blank record's field under `auto`, the field codec's zero under
+-- `object`). An enum column (a `Codec.enum` field, or a nullary custom type
+-- under `auto`) is TEXT, and the text zero `''` is not one of its names, so
+-- its flag is the enum's zero name (the first name of a `Codec.enum`, the
+-- witness's name under `auto`). A plain String column gets no flag: its zero
+-- stays `''`. `migrate` and `toTable` (so `pushProject` and the
+-- `sky db migrate --gen` schema dump) add the flag; the runtime's
 -- renderAddColumn makes it the DEFAULT of the column added to a table with
--- rows. A column whose codec knows no zero gets no flag: it is added NOT NULL
--- with no default, which a table with rows refuses.
+-- rows. A column whose field has no zero gets no flag: a blob is then added
+-- NOT NULL with no default, which a table with rows refuses.
 withZeros : Codec a -> List ( String, String ) -> List ( String, String )
 withZeros codec cols =
-    case Codec.zeroJson codec of
+    let
+        zeros = Codec.fieldZeros codec
+    in
+        List.map (\( c, k ) -> ( c, k ++ zeroFlag codec zeros c k )) cols
 
-        Nothing ->
-            cols
 
-        Just zero ->
-            List.map
-                (\( c, k ) ->
-                    if kindBase k == "blob" && not (kindNullable k) then
-                        case JD.decodeValue (JD.field c JD.value) zero of
+-- The `|zero=` flag of one column (see `withZeros`), or "".
+zeroFlag : Codec a -> List ( String, Value ) -> String -> String -> String
+zeroFlag codec zeros col kind =
+    if kindNullable kind then
+        ""
 
-                            Ok v ->
-                                ( c
-                                , k ++ "|zero=" ++ flagValue (JE.encode 0 v)
-                                )
+    else
+        case ( kindBase kind, lookupZero col zeros ) of
 
-                            Err _ ->
-                                ( c, k )
+            ( "blob", Just v ) ->
+                "|zero=" ++ flagValue (JE.encode 0 v)
 
-                    else
-                        ( c, k ))
-                cols
+            ( "text", Just v ) ->
+                case JD.decodeValue JD.string v of
+
+                    Ok name ->
+                        if isEnumColumn codec col then
+                            "|zero=" ++ flagValue name
+
+                        else
+                            ""
+
+                    Err _ ->
+                        ""
+
+            _ ->
+                ""
+
+
+-- The zero of column `col` in a `Codec.fieldZeros` list.
+lookupZero : String -> List ( String, Value ) -> Maybe Value
+lookupZero col zeros =
+    case zeros of
+
+        [] ->
+            Nothing
+
+        ( c, v ) :: rest ->
+            if c == col then
+                Just v
+
+            else
+                lookupZero col rest
+
+
+-- True when the codec's JSON Schema gives column `col` a list of names: a
+-- `Codec.enum` field, or a nullary custom type under `Codec.auto`.
+isEnumColumn : Codec a -> String -> Bool
+isEnumColumn codec col =
+    let
+        js = Codec.jsonSchema codec
+        names = JD.at [ "properties", col, "enum" ] (JD.list JD.string)
+    in
+        case JD.decodeValue names js.schema of
+
+            Ok _ ->
+                True
+
+            Err _ ->
+                False
 
 
 -- The base kind of a colspec kind: no `|` flags, no `!`, no `?`.

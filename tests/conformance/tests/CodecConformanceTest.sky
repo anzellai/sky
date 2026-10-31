@@ -31,6 +31,7 @@ asserted ACTIVE below.
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict exposing (Dict)
 import Sky.Core.String as String
+import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Json.Encode as Encode
 import Std.Codec as Codec exposing (Codec)
@@ -668,6 +669,25 @@ tests =
                 , Maybe.map (Encode.encode 0) (Codec.zeroJson (Codec.result Codec.error Codec.int))
                 , Maybe.map (Encode.encode 0) (Codec.zeroJson zeroRecordNoZero)
                 ))
+
+    -- ── Codec.fieldZeros: each field's own zero ─────────────────────────────
+    , Test.test "fieldZeros: an object codec keeps the zeros of the fields that have one"
+        (\_ ->
+            Test.equal
+                "{\"n\":\"\"}"
+                (Encode.encode 0 (Encode.object (Codec.fieldZeros zeroRecordNoZero))))
+    , Test.test "fieldZeros: an auto codec gives each field of its blank record"
+        (\_ ->
+            Test.equal
+                "{\"tag_list\":[\"it's\"],\"total\":0,\"note\":null}"
+                (Encode.encode 0 (Encode.object (Codec.fieldZeros (Codec.auto zeroAutoBlank)))))
+    , Test.test "fieldZeros: a nested object with no zero is left out, a non-record codec gives none"
+        (\_ ->
+            Test.equal
+                ( "{\"xs\":[]}", 0 )
+                ( Encode.encode 0 (Encode.object (Codec.fieldZeros zeroOuter))
+                , List.length (Codec.fieldZeros (Codec.list Codec.int))
+                ))
     ]
 
 
@@ -705,6 +725,19 @@ zeroRecordNoZero =
     Codec.object ZeroRecordNoZero
         |> Codec.field "n" .n Codec.string
         |> Codec.field "e" .e Codec.error
+        |> Codec.buildObject
+
+
+type alias ZeroOuter =
+    { inner : ZeroRecordNoZero, xs : List Int }
+
+
+-- The nested object has no zero, so it is left out. The list keeps `[]`.
+zeroOuter : Codec ZeroOuter
+zeroOuter =
+    Codec.object ZeroOuter
+        |> Codec.field "inner" .inner zeroRecordNoZero
+        |> Codec.field "xs" .xs (Codec.list Codec.int)
         |> Codec.buildObject
 
 

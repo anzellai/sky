@@ -78,12 +78,20 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
     on SQLite and PostgreSQL (`Store.migrate` runs exactly the SQL of
     `renderMigOp` of those ops).
   - A required JSON (blob) field is NOT NULL too. Its DEFAULT is the JSON of
-    the field in the codec's zero value (new `Codec.zeroJson`: the blank
-    record of `Codec.auto`, or each field's zero in a `Codec.object` codec),
+    that field's OWN zero (new `Codec.fieldZeros`: its value in the blank
+    record of `Codec.auto`, or its codec's zero in a `Codec.object` codec),
     a SQL string literal with its quotes escaped, the same on both paths and
-    both dialects. The schema dump carries it as the column's `zero`, so
-    `--gen` writes it as the addColumn op's default. A field whose codec has
-    no zero (a `taggedUnion` or `result` field of a `Codec.object` codec) is
+    both dialects. A `Codec.list` field beside a `taggedUnion` field still
+    gets `DEFAULT '[]'`: one field with no zero does not take the others'
+    away (`Codec.zeroJson`, the zero of a whole value, stays `Nothing` for
+    such an object, as a nested field needs). A required enum field (a
+    `Codec.enum` field, or a nullary custom type under `Codec.auto`) is a
+    TEXT column whose DEFAULT is the enum's first name (the witness's name
+    under `Codec.auto`), never `''`, which no enum decodes. A plain String
+    column keeps `''`. The schema dump carries the value as the column's
+    `zero`, so `--gen` writes it as the addColumn op's default. A field with
+    no zero (a `taggedUnion`, `result` or `Codec.error` field of a
+    `Codec.object` codec, or an object field holding one) is
     `NOT NULL` with no default: `Store.migrate` is `Err` on a table with 1 or
     more rows, and a migration file fails and rolls back with the same
     advice. A `unique` column is added, then given a unique index; a

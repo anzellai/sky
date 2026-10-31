@@ -83,6 +83,12 @@ func TestStoreMigratePostgresD1_RequiredBlobWithoutZero(t *testing.T) {
 	assertRequiredBlobWithoutZero(t, openStoreQueryPostgres(t, ""), "docs_nz_pg")
 }
 
+// Each column's own zero: a list beside a no-zero blob, and an enum column
+// (TEXT) whose zero is its first name, on both migrate paths.
+func TestStoreMigratePostgresD1_FieldZerosOnRows(t *testing.T) {
+	assertFieldZerosOnRows(t, openStoreQueryPostgres(t, ""), "zeros_d1_pg")
+}
+
 func TestStoreMigratePostgresIndexes_CreatedOnceAndLookedUpByTable(t *testing.T) {
 	d := openStoreQueryPostgres(t, "")
 	const table = "orders_ixc_pg"

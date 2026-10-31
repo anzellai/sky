@@ -24,10 +24,12 @@ pub struct SchemaColumn {
     /// runtime renderer expects.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
-    /// A required JSON (blob) column's value in the codec's zero value
-    /// (`Codec.zeroJson`, the blank record of a `Codec.auto` codec), as a
-    /// `{"text": …}` default. Rule D1: it is the DEFAULT of the column when it
-    /// is added to an existing table (never in CREATE TABLE).
+    /// A required column's own field zero (`Codec.fieldZeros`), as a
+    /// `{"text": …}` default, when it is not the zero of the column's kind: the
+    /// JSON of a JSON (blob) field's zero, or an enum (TEXT) field's zero name
+    /// (the first name of a `Codec.enum`, the witness's name under
+    /// `Codec.auto`). Rule D1: it is the DEFAULT of the column when it is added
+    /// to an existing table (never in CREATE TABLE).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zero: Option<Value>,
 }
@@ -97,7 +99,8 @@ impl Diff {
 
 /// The zero DEFAULT of a required new column on an existing table, so the
 /// migration backfills existing rows (non-interactive gen): the zero of its
-/// kind. A blob has none; its zero is the codec's (`SchemaColumn::zero`).
+/// kind. A blob has none, and an enum's text zero `''` is not one of its
+/// names: their zero is the field's own (`SchemaColumn::zero`), read first.
 fn zero_default(kind: &str) -> Option<Value> {
     match kind {
         "int" | "bigint" | "real" => Some(json!({ "int": 0 })),
@@ -149,8 +152,8 @@ fn add_index_op(table: &str, ix: &SchemaIndex) -> Value {
 /// The ops that add column `c` to the existing table `table` (user decision
 /// D1, the same rule as the runtime's `renderAddColumn`): a nullable column
 /// keeps its declared default; a required column is NOT NULL with its declared
-/// default, else its zero value (a blob's is the codec's `zero`, any other
-/// column's the zero of its kind); a required column with no zero value is
+/// default, else its zero value (the field's own `zero` for a blob or an
+/// enum column, else the zero of its kind); a required column with no zero value is
 /// NOT NULL with no default, which only an empty table takes, so `--gen`
 /// warns; a `defaultNow` column carries `{"nowAtApply": true}` (SQLite stamps
 /// the apply time, PostgreSQL renders `now()`); a unique column gets its own
@@ -182,9 +185,11 @@ fn add_column_ops(table: &str, c: &SchemaColumn, warnings: &mut Vec<String>) -> 
     } else {
         m.insert("nullable".into(), json!(false));
         warnings.push(format!(
-            "column {}.{} is required and its codec has no zero value: it is added NOT NULL \
-             with no default, which a table with rows refuses. Make the field a Maybe, derive \
-             the codec with Codec.auto (its blank record gives the default), or add a data step",
+            "column {}.{} is required and its field's codec has no zero value (a taggedUnion, \
+             a result, Codec.error, or an object holding one): it is added NOT NULL with no \
+             default, which a table with rows refuses. Make the field a Maybe, derive the record \
+             codec with Codec.auto or Codec.autoWith (the blank record's value for the field \
+             gives the default), or add a data step",
             table, c.name
         ));
     }
@@ -876,6 +881,67 @@ mod tests {
         );
         assert!(
             !d.warnings.iter().any(|w| w.contains("orders.tags")),
+            "{:?}",
+            d.warnings
+        );
+    }
+
+    /// D1, each column's own zero. The schema dump carries a `zero` for a
+    /// list column whose sibling taggedUnion column has none, and for an enum
+    /// (TEXT) column: the enum's first name, because the text zero `''` is not
+    /// one of its names. `--gen` makes each the DEFAULT. A plain String column
+    /// has no `zero` and keeps the text zero `''`. The no-zero sibling is NOT
+    /// NULL with no default and warns.
+    #[test]
+    fn each_column_takes_its_own_zero() {
+        let before = || SchemaTable {
+            name: "orders".into(),
+            pk: "id".into(),
+            indexes: vec![],
+            columns: vec![col("id", "text", false)],
+        };
+        let parse = |v: Value| -> SchemaColumn { serde_json::from_value(v).unwrap() };
+        let mut target = before();
+        target.columns.push(parse(
+            json!({ "name": "shade", "kind": "blob", "nullable": false }),
+        ));
+        target.columns.push(parse(json!({
+            "name": "tags", "kind": "blob", "nullable": false, "zero": { "text": "[]" }
+        })));
+        target.columns.push(parse(json!({
+            "name": "stage", "kind": "text", "nullable": false, "zero": { "text": "draft" }
+        })));
+        target.columns.push(parse(
+            json!({ "name": "label", "kind": "text", "nullable": false }),
+        ));
+        let d = diff(
+            &Schema {
+                tables: vec![target],
+            },
+            &Schema {
+                tables: vec![before()],
+            },
+        );
+        assert_eq!(
+            d.ops,
+            vec![
+                json!({ "kind": "addColumn", "table": "orders", "column": "shade",
+                        "type": "blob", "nullable": false }),
+                json!({ "kind": "addColumn", "table": "orders", "column": "tags",
+                        "type": "blob", "nullable": false, "default": { "text": "[]" } }),
+                json!({ "kind": "addColumn", "table": "orders", "column": "stage",
+                        "type": "text", "nullable": false, "default": { "text": "draft" } }),
+                json!({ "kind": "addColumn", "table": "orders", "column": "label",
+                        "type": "text", "nullable": false, "default": { "text": "" } }),
+            ]
+        );
+        assert_eq!(
+            d.warnings
+                .iter()
+                .filter(|w| w.contains("no zero value"))
+                .map(|w| w.contains("orders.shade"))
+                .collect::<Vec<_>>(),
+            vec![true],
             "{:?}",
             d.warnings
         );
