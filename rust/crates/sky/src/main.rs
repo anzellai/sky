@@ -9,6 +9,7 @@ use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
+mod db_check;
 mod db_cluster;
 mod db_embed;
 mod db_migrate;
@@ -15006,6 +15007,335 @@ printApplied ids =
     }
 }
 
+/// The committed `db/migrations/*.json` files, sorted by name (= by time), as
+/// the one JSON array `sky db migrate` applies and `Migrate.inspect` judges.
+fn db_migration_files_json(project_dir: &Path) -> String {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(project_dir.join("db").join("migrations"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "json").unwrap_or(false))
+        .collect();
+    files.sort();
+    let bodies: Vec<String> = files
+        .iter()
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    format!("[{}]", bodies.join(","))
+}
+
+/// A path as a Sky string literal.
+fn sky_string_literal(p: &Path) -> String {
+    let s = p.to_string_lossy();
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+const DB_CHECK_USAGE: &str = "usage: sky db check [--sql [--write] | --code]\n\
+    \x20 (none)    compare the live database with the tables the code declares, and the\n\
+    \x20           migration ledger; exit 1 on drift, 2 when the check cannot run\n\
+    \x20 --sql     print the SQL that makes the database match the code (never run)\n\
+    \x20 --write   with --sql: save the safe steps as a migration in db/migrations\n\
+    \x20 --code    print what the code needs to read the database safely";
+
+/// `sky db check [--sql [--write] | --code]` — compare the live database with
+/// the project's `db : Store.Project`, read-only (`db_check.rs`).
+///
+/// One helper binary does both halves: run once, it dumps the target schema
+/// (`Store.dumpSchema db`) and the live catalogue (`Migrate.inspect`); run
+/// again with the safe ops in a file, it renders them for the connection's
+/// dialect (`Migrate.renderMigrations`), so `--sql` prints the SQL the
+/// migration renderer would run, not a second rendering of it.
+fn cmd_db_check(args: &[String]) -> ExitCode {
+    let mut sql = false;
+    let mut code = false;
+    let mut write = false;
+    for a in args {
+        match a.as_str() {
+            "--sql" => sql = true,
+            "--code" => code = true,
+            "--write" => write = true,
+            "-h" | "--help" => {
+                println!("{DB_CHECK_USAGE}");
+                return ExitCode::SUCCESS;
+            }
+            other => {
+                eprintln!("sky db check: unknown argument `{other}`\n{DB_CHECK_USAGE}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    if (write && !sql) || (code && sql) {
+        eprintln!(
+            "sky db check: --write goes with --sql, and --code stands alone\n{DB_CHECK_USAGE}"
+        );
+        return ExitCode::from(2);
+    }
+    let file = Path::new("src/Main.sky");
+    let Some((_repo_root, project_dir)) = resolve(file) else {
+        return ExitCode::from(2);
+    };
+    let mig_dir = project_dir.join("db").join("migrations");
+    if write && !mig_dir.is_dir() {
+        eprintln!(
+            "sky db check --write: this project has no db/migrations. Run `sky db init` to use \
+             migration files, or apply the SQL from `sky db check --sql` yourself."
+        );
+        return ExitCode::from(2);
+    }
+
+    // Inputs for the helper binary live in a scratch dir of their own.
+    let inputs = db_scratch_dir("SkyDbCheckIn");
+    if let Err(e) = std::fs::create_dir_all(&inputs) {
+        eprintln!("sky db check: cannot create scratch dir: {e}");
+        return ExitCode::from(2);
+    }
+    let _inputs = DbScratch(inputs.clone());
+    let migrations_path = inputs.join("migrations.json");
+    let render_path = inputs.join("render.json");
+    if let Err(e) = std::fs::write(&migrations_path, db_migration_files_json(&project_dir)) {
+        eprintln!("sky db check: cannot stage migrations: {e}");
+        return ExitCode::from(2);
+    }
+    let entry_module = entry_module_name(file).unwrap_or_else(|| "Main".into());
+    let check_code = format!(
+        r#"module SkyDbCheck exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.File as File
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Db as Db
+import Std.Db.Migrate as Migrate
+import Std.Db.Store as Store
+import Std.Log exposing (println)
+import {entry_module} exposing (db)
+
+
+main : Task Error ()
+main =
+    File.readFile {render}
+        |> Task.map Just
+        |> Task.onError (\_ -> Task.succeed Nothing)
+        |> Task.andThen run
+
+
+run : Maybe String -> Task Error ()
+run render =
+    case render of
+        Just ops ->
+            Db.connect ()
+                |> Task.andThen (\conn -> Migrate.renderMigrations conn ops)
+                |> Task.andThen printRendered
+
+        Nothing ->
+            Store.dumpSchema db
+                |> Task.andThen (\_ -> File.readFile {migrations})
+                |> Task.andThen inspect
+
+
+inspect : String -> Task Error ()
+inspect migrations =
+    Db.connect ()
+        |> Task.andThen (\conn -> Migrate.inspect conn migrations)
+        |> Task.andThen (\report -> emit "SKY_INSPECT_BEGIN" report "SKY_INSPECT_END")
+
+
+printRendered : List ( String, String ) -> Task Error ()
+printRendered pairs =
+    emit "SKY_RENDER_BEGIN" (String.join "\n--SKY-STEP--\n" (List.map (\( _, s ) -> s) pairs)) "SKY_RENDER_END"
+
+
+emit : String -> String -> String -> Task Error ()
+emit begin body end =
+    let
+        _ =
+            println begin
+
+        _ =
+            println body
+
+        _ =
+            println end
+    in
+    Task.succeed ()
+"#,
+        render = sky_string_literal(&render_path),
+        migrations = sky_string_literal(&migrations_path),
+    );
+    let Some((bin, project_dir, _scratch)) = build_temp_db_entry(
+        &format!(
+            "sky db check: build failed — does module {entry_module} `exposing (db)` with `db = Store.project [...]`?\nsky db check"
+        ),
+        "SkyDbCheck",
+        "_skydbcheck.sky",
+        &check_code,
+    ) else {
+        return ExitCode::from(2);
+    };
+    let run = |label: &str| -> Option<String> {
+        match Command::new(&bin).current_dir(&project_dir).output() {
+            Ok(o) => {
+                let out = String::from_utf8_lossy(&o.stdout).into_owned();
+                if !o.status.success() {
+                    eprintln!(
+                        "sky db check: {label} failed (is the database reachable? the DSN comes from \
+                         DATABASE_URL, <PREFIX>_DB_PATH or sky.toml [database], as for the app)\n{}{}",
+                        String::from_utf8_lossy(&o.stderr),
+                        out
+                    );
+                    return None;
+                }
+                Some(out)
+            }
+            Err(e) => {
+                eprintln!("sky db check: {label} failed: {e}");
+                None
+            }
+        }
+    };
+    let Some(stdout) = run("reading the database") else {
+        return ExitCode::from(2);
+    };
+    let target: db_migrate::Schema =
+        match extract_between(&stdout, "SKY_SCHEMA_BEGIN", "SKY_SCHEMA_END")
+            .map(|j| serde_json::from_str(j.trim()))
+        {
+            Some(Ok(s)) => s,
+            _ => {
+                eprintln!("sky db check: no schema from `db` (is `db` a Store.Project?)");
+                return ExitCode::from(2);
+            }
+        };
+    let live: db_check::Inspect =
+        match extract_between(&stdout, "SKY_INSPECT_BEGIN", "SKY_INSPECT_END")
+            .map(|j| serde_json::from_str(j.trim()))
+        {
+            Some(Ok(s)) => s,
+            Some(Err(e)) => {
+                eprintln!("sky db check: bad inspect report: {e}");
+                return ExitCode::from(2);
+            }
+            None => {
+                eprintln!("sky db check: the database gave no report\n{stdout}");
+                return ExitCode::from(2);
+            }
+        };
+    let report = db_check::check(&target, &live);
+    let drift = if report.drift() {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    };
+
+    if code {
+        print!("{}", db_check::render_code(&report));
+        return drift;
+    }
+    if !sql {
+        print!("{}", db_check::render_report(&report, target.tables.len()));
+        return drift;
+    }
+
+    // --sql: the runtime renders each safe op for the dialect.
+    let ops = report.safe_ops();
+    let mut rendered: Vec<String> = Vec::new();
+    if !ops.is_empty() {
+        let files: Vec<serde_json::Value> = ops
+            .iter()
+            .enumerate()
+            .map(|(i, op)| serde_json::json!({ "id": format!("step_{i}"), "ops": [op] }))
+            .collect();
+        if let Err(e) = std::fs::write(
+            &render_path,
+            serde_json::to_string(&files).unwrap_or_default(),
+        ) {
+            eprintln!("sky db check: cannot stage the steps: {e}");
+            return ExitCode::from(2);
+        }
+        let Some(out) = run("rendering the SQL") else {
+            return ExitCode::from(2);
+        };
+        let Some(body) = extract_between(&out, "SKY_RENDER_BEGIN\n", "\nSKY_RENDER_END") else {
+            eprintln!("sky db check: the renderer gave no SQL\n{out}");
+            return ExitCode::from(2);
+        };
+        rendered = body.split("\n--SKY-STEP--\n").map(str::to_string).collect();
+    }
+    print!("{}", db_check::render_sql(&report, &rendered));
+
+    if write {
+        let pending = report.ledger.count("pending");
+        let edited = report.ledger.count("edited");
+        if pending > 0 || edited > 0 {
+            eprintln!(
+                "\nsky db check --write: nothing written. {pending} migration(s) are pending and \
+                 {edited} edited: the database is not at the state the committed files describe, \
+                 so a new file would repeat or fight them. Run `sky db migrate` (and restore an \
+                 edited file) first."
+            );
+            return ExitCode::from(2);
+        }
+        if ops.is_empty() && report.diff.destructive.is_empty() {
+            println!("\n-- sky db check --write: no safe step to save.");
+            return drift;
+        }
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let id = format!("{ts}_db_check");
+        let d = db_migrate::Diff {
+            ops,
+            destructive: report.diff.destructive.clone(),
+            warnings: Vec::new(),
+        };
+        let path = mig_dir.join(format!("{id}.json"));
+        if let Err(e) = std::fs::write(&path, db_migrate::migration_file_json(&id, &d)) {
+            eprintln!("sky db check --write: cannot write {}: {e}", path.display());
+            return ExitCode::from(2);
+        }
+        // The snapshot follows the file, as `--gen` does, so a later `--gen`
+        // does not write the same steps again.
+        let snapshot = project_dir.join("db").join("schema.json");
+        if let Err(e) = std::fs::write(
+            &snapshot,
+            serde_json::to_string_pretty(&target).unwrap_or_default(),
+        ) {
+            eprintln!("sky db check --write: cannot write db/schema.json: {e}");
+            return ExitCode::from(2);
+        }
+        let left: Vec<&str> = report
+            .findings
+            .iter()
+            .filter(|f| f.steps.iter().any(|s| !matches!(s, db_check::Step::Op(_))))
+            .map(|f| f.text.as_str())
+            .collect();
+        println!(
+            "\n-- sky db check --write: wrote db/migrations/{id}.json ({} safe step(s){}) and updated db/schema.json. `sky db migrate` applies it.",
+            d.ops.len(),
+            if d.destructive.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; {} destructive step(s) quarantined in its `destructive` array, inert",
+                    d.destructive.len()
+                )
+            }
+        );
+        if !left.is_empty() {
+            println!(
+                "-- Not in the file (unsafe, or SQL with no dialect-neutral migration op): {}",
+                left.join("; ")
+            );
+        }
+    }
+    drift
+}
+
 /// `sky db seed` — run the entry module's `seed : Db -> Task Error ()` against the
 /// live DB (after `sky db migrate`). The project opts in by defining + exposing
 /// `seed`; absence is a clear build error.
@@ -15589,6 +15919,11 @@ fn cmd_db(args: &[String]) -> ExitCode {
     if args.first().map(String::as_str) == Some("status") && file_based {
         return cmd_db_status(&args[1..]);
     }
+    // `sky db check [--sql [--write] | --code]` — compare the live database with
+    // the code, read-only.
+    if args.first().map(String::as_str) == Some("check") {
+        return cmd_db_check(&args[1..]);
+    }
     // `sky db seed` — run the entry module's `seed : Db -> Task Error ()`.
     if args.first().map(String::as_str) == Some("seed") {
         return cmd_db_seed(&args[1..]);
@@ -15611,6 +15946,7 @@ fn cmd_db(args: &[String]) -> ExitCode {
         _ => {
             eprintln!(
                 "usage: sky db <status|migrate [--gen [name]]|push|seed|reset [table]|drop [table]|init> [file.sky]\n\
+                 \x20      sky db check [--sql [--write] | --code]  compare the live database with the code\n\
                  \x20      sky db <start|stop [--all]|ps [--all]>    local PostgreSQL cluster\n\
                  \x20      sky db provision --embed                  fetch PostgreSQL into ~/.sky\n\
                  \x20      sky db provision --shared [--service]     one shared cluster for this host\n\

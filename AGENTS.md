@@ -526,6 +526,7 @@ sky doc <Module>                 # stdlib docs (--serve / --tui / --list / --exp
 sky doc --diagram <kind>         # audit-grade diagram: journey (behaviour+DFD) | components (C4) | wire (API & call-paths) | telemetry | audit (whole SOC2/ISO pack → --out <dir>); --format puml|md|svg
 sky doc --api openapi            # OpenAPI 3.1 spec of the app's HTTP API, generated from the typed source; --format yaml|json, --no-rpc for declared routes only (proto/grpc/asyncapi planned)
 sky db init | migrate --gen | migrate | seed | status | push   # file-based migrations
+sky db check [--sql [--write] | --code]                      # live DB vs the code (read-only; exit 1 on drift)
 sky db start | stop [--all] | ps [--all]                       # local PostgreSQL cluster
 sky db provision --embed                                       # fetch + pin a PostgreSQL bundle
 sky db provision --shared [--service] [--app <name>]           # one host cluster, role-per-app
