@@ -4744,7 +4744,7 @@ fn build_and_run_fuzz_harness(
     cmd.env("SKY_TEST_CLOCK_MS", "1704067200000");
     // The runtime does not load `.env` in test mode, so a DSN there never
     // reaches the run.
-    if let Some(name) = testrunner::dot_env_dsn(app_project_dir) {
+    for name in testrunner::dot_env_dsns(app_project_dir) {
         eprintln!(
             "sky fuzz: ignoring {name} in .env (sky fuzz never takes a database from \
              .env). The run uses a throwaway database."

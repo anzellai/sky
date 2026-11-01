@@ -22,6 +22,7 @@ finds a header whatever the case of its name.
 
 ### Fixed
 
+- **`sky test` keeps a `.env` database out when the project declares no database.** A project with a `DATABASE_URL` in `.env` but no `[database]` section and no `Sky.Config.withDatabase` stayed out of test mode, so the runtime loaded `.env` and its session store, analytics, jobs and telemetry reached that database during the tests. It now runs in test mode like any other project whose `.env` names a database. `sky fuzz` names every `.env` database name it ignores.
 - **`Store.defaultWith` on a column the codec does not carry works again
   (a v0.29.0 regression).** v0.29.0 refused it with `Store.defaultWith:
   unknown column`, so every verb on the store failed, and an app that showed
