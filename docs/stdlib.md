@@ -1390,9 +1390,9 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   camelCase). A `Json.Value` field carries any JSON when the blank gives it a JSON
   value (`data = Json.Encode.null`; `Just Json.Encode.null` for a `Maybe Json.Value`).
   The blank cannot mark the elements of a `List Json.Value` or a
-  `Dict String Json.Value` field, so reading one is a loud `Err`. Make the field one
-  `Json.Value` that holds the whole array or object, and read its parts with
-  `Json.Decode`.
+  `Dict String Json.Value` field, so reading one is a loud `Err`. Give the field
+  its codec (`Codec.autoWith [ ( "items", Codec.list Codec.value ) ] blank`,
+  v0.29.2), or make it one `Json.Value` that holds the whole array or object.
   **`Codec.autoWith [ ("active", intBool) ] blank`** overrides specific
   fields' codecs while auto-deriving the rest (a Bool stored 0/1, a custom enum
   format) — no full hand-written codec for a one-field tweak. **Decimal and
