@@ -6,7 +6,9 @@ package rt
 // with at least one test case here.
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
@@ -195,3 +197,37 @@ func TestDecimal_BoxUnboxRoundtrip(t *testing.T) {
 }
 
 // Allocate test lives in money_kernel_test.go (same package).
+
+// Decimal.fromString keeps the exponent grammar ("1.5e3" is 1500) but bounds
+// it: "1e2000000000" parsed in microseconds and then took minutes to print or
+// add, because a decimal with exponent e has about |e| digits. Text over
+// 1000 characters, or an exponent past decimalMaxExponent either way, is an
+// Err at once. Every entry point that reads decimal text from outside goes
+// through the same bound.
+func TestDecimalFromStringBoundsTheExponent(t *testing.T) {
+	deadline := time.Now().Add(5 * time.Second)
+	for _, s := range []string{"1e2000000000", "1e-2000000000", "1e10001", "-1e-10001", "9e10001"} {
+		r := invokeDecimal(t, "Decimal_fromString", s)
+		if sr, ok := r.(SkyResult[any, any]); !ok || sr.Tag == 0 {
+			t.Errorf("Decimal.fromString %q is Ok, want an Err (exponent past the bound)", s)
+		}
+	}
+	long := "1" + strings.Repeat("0", 1000)
+	if sr, ok := invokeDecimal(t, "Decimal_fromString", long).(SkyResult[any, any]); !ok || sr.Tag == 0 {
+		t.Errorf("Decimal.fromString of 1001 characters is Ok, want an Err")
+	}
+	// The grammar stays: an exponent inside the bound reads, both ways.
+	for s, want := range map[string]string{"1.5e3": "1500", "25e-2": "0.25", "1e10000": "1" + strings.Repeat("0", 10000)} {
+		d := unwrapOk(t, invokeDecimal(t, "Decimal_fromString", s))
+		if got := decimalUnbox(d).String(); got != want {
+			t.Errorf("Decimal.fromString %q = %.40s, want %.40s", s, got, want)
+		}
+	}
+	// A string reaching a Decimal slot through the lenient unbox is bounded too.
+	if !decimalUnbox("1e2000000000").IsZero() {
+		t.Errorf("decimalUnbox of an unbounded exponent is not zero")
+	}
+	if time.Now().After(deadline) {
+		t.Fatalf("the bounded parse took over 5 s")
+	}
+}

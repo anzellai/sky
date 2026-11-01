@@ -37,6 +37,33 @@ func decimalParseStrict(s string) (decimal.Decimal, error) {
 	return decimal.NewFromString(s)
 }
 
+// decimalMaxExponent bounds the exponent of a decimal read from text by
+// Decimal.fromString (and Money.fromString), which keep the exponent grammar
+// (`"1.5e3"`). A decimal with exponent e prints with about |e| digits, and an
+// addition rescales both operands to the smaller exponent, so the cost of
+// every later operation grows with |e|: `"1e2000000000"` parsed at once and
+// then took minutes to print. At 10000 the longest value prints and adds in
+// well under a millisecond, and no real quantity is near it (10^80 counts the
+// atoms of the observable universe).
+const decimalMaxExponent = 10000
+
+// decimalParseBounded reads `s` under the lenient grammar of Decimal.fromString
+// (an optional exponent), at most decimalStrictMaxLen bytes and an exponent
+// within decimalMaxExponent either way.
+func decimalParseBounded(s string) (decimal.Decimal, error) {
+	if len(s) > decimalStrictMaxLen {
+		return decimal.Zero, fmt.Errorf("a decimal has at most %d characters, and this one has %d", decimalStrictMaxLen, len(s))
+	}
+	d, err := decimal.NewFromString(s)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	if e := int64(d.Exponent()); e > decimalMaxExponent || e < -decimalMaxExponent {
+		return decimal.Zero, fmt.Errorf("%q has an exponent past %d either way, too large to compute with", strictShortText(s), decimalMaxExponent)
+	}
+	return d, nil
+}
+
 // decimalStrictText reports whether `s` matches `-?[0-9]+(\.[0-9]+)?`.
 func decimalStrictText(s string) bool {
 	i := 0

@@ -42,7 +42,7 @@ func decimalUnbox(v any) decimal.Decimal {
 		case decimal.Decimal:
 			return x
 		case string:
-			if d, err := decimal.NewFromString(x); err == nil {
+			if d, err := decimalParseBounded(x); err == nil {
 				return d
 			}
 		case float64:
@@ -57,7 +57,7 @@ func decimalUnbox(v any) decimal.Decimal {
 		return d
 	}
 	if s, ok := v.(string); ok {
-		if d, err := decimal.NewFromString(s); err == nil {
+		if d, err := decimalParseBounded(s); err == nil {
 			return d
 		}
 	}
@@ -72,7 +72,7 @@ func init() {
 			return Err[any, any](ErrDecode("Decimal.fromString: missing arg"))
 		}
 		str := fmt.Sprintf("%v", args[0])
-		d, err := decimal.NewFromString(str)
+		d, err := decimalParseBounded(str)
 		if err != nil {
 			return Err[any, any](ErrDecode("Decimal.fromString: " + err.Error()))
 		}

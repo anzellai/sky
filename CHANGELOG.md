@@ -64,6 +64,12 @@ as they already did for a plain app.
   body made the process write out billions of digits (the test of it ran for
   five minutes). A Money with no `currency` was `CurrencyRaw ""` and is now an
   `Err`; `"gbp"` reads as GBP; an exact JSON number amount reads.
+- **`Decimal.fromString` bounds its exponent.** It keeps the exponent grammar
+  (`"1.5e3"` is 1500), but `"1e2000000000"` parsed at once and then took
+  minutes to print or add (a decimal with exponent e has about |e| digits).
+  Text over 1000 characters, or an exponent past 10000 either way, is now an
+  `Err`. `Money.fromString` and a Decimal that reaches the runtime as text go
+  through the same bound.
 - **The JSON Schema of a `Codec.auto` Decimal or Money field is exact.** It was
   the open `{}`, so `Codec.toXml` wrote the JSON text `"12.34"` into the
   element. It is now a string with the decimal pattern, and the Money object.

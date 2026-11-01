@@ -624,7 +624,7 @@ For money, billing, tax, invoices — anything where exact fractional value matt
 
 | Surface | Signature |
 |---|---|
-| `fromString` / `fromInt` / `fromFloat` | `... -> Result Error Decimal` / `Int -> Decimal` / `Float -> Decimal` |
+| `fromString` / `fromInt` / `fromFloat` | `... -> Result Error Decimal` / `Int -> Decimal` / `Float -> Decimal` (`fromString` takes an exponent, `"1.5e3"`, within 10000 either way and 1000 characters; past that it is an `Err`) |
 | `fromMinor places minor` | `Int -> Int -> Decimal` (cents → dollars: `fromMinor 2 12345` → `123.45`) |
 | `zero` / `one` / `oneHundred` | `Decimal` constants |
 | `add` / `sub` / `mul` | `Decimal -> Decimal -> Decimal` |

@@ -82,6 +82,11 @@ type Decimal
 
 
 -- ─── Construction ──────────────────────────────────────────────────
+-- | Read a decimal from text: `"12.34"`, `"-0.5"`, or with an exponent,
+-- `"1.5e3"` (1500). Text over 1000 characters, or an exponent past 10000
+-- either way (`"1e20000"`), is an `Err`: a decimal with exponent e has about
+-- |e| digits, so a larger one would take minutes to print or add. The strict
+-- decoders (`Codec.decimal`, a decimal column) take no exponent at all.
 fromString : String -> Result Error Decimal
 fromString s =
     Ffi.callPure "Decimal_fromString" [ s ]
