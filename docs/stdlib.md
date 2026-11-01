@@ -653,15 +653,16 @@ ISO 4217 minor-unit awareness (JPY=0dp, USD=2dp, BHD=3dp). `Currency` is a typed
 | `fromMajor c n` / `fromMinor c n` / `fromString c s` | `Currency -> ... -> Money` (string is `Result Error Money`) |
 | `zero c` / `zeroOf c` | `Currency -> Money` |
 | `amount` / `currency` / `currencyCode` | `Money -> Decimal` / `Currency` / `String` |
-| `add` / `sub` | `Money -> Money -> Money` (currency-matched; no-op on mismatch) |
+| `add` / `sub` | `Money -> Money -> Money` (one currency; two currencies fail loudly as the classified `CurrencyMismatch`, v0.29.2) |
+| `addChecked` / `subChecked` | `Money -> Money -> Result Error Money` (`Err` for two currencies) |
 | `mul scalar m` | `Decimal -> Money -> Money` |
 | `neg` / `abs` | `Money -> Money` |
 | `allocate parts m` | `Int -> Money -> List Money` (fair split — `$100/3 → [$33.34, $33.33, $33.33]`, sum-preserving) |
 | `sumOf c xs` | `Currency -> List Money -> Money` |
-| `eq` / `neq` / `lt` / `lte` / `gt` / `gte` / `compare` | `Money -> Money -> Bool` (Int for compare) |
+| `eq` / `neq` / `lt` / `lte` / `gt` / `gte` / `compare` | `Money -> Money -> Bool` (Int for compare); `eq` is `False` across currencies, the orders fail loudly (`CurrencyMismatch`) |
 | `isZero` / `isPositive` / `isNegative` | `Money -> Bool` |
 | `percentOf` / `addPercent` / `subPercent` | `Decimal -> Money -> Money` |
-| `format` / `formatWithCode` | `Money -> String` (`"$108.88"` / `"USD 108.88"`) |
+| `format` / `formatWithCode` | `Money -> String` (`"$108.88"` / `"108.88 USD"`) |
 | `toMinor` | `Money -> Int` |
 | `minorUnits` / `symbol` / `currencyName` | `Currency -> ...` |
 | `knownCurrency` | `Currency -> Bool` (False only for `CurrencyRaw _`) |
@@ -1389,7 +1390,14 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   `Json.Decode`.
   **`Codec.autoWith [ ("active", intBool) ] blank`** overrides specific
   fields' codecs while auto-deriving the rest (a Bool stored 0/1, a custom enum
-  format) — no full hand-written codec for a one-field tweak. `toJson` / `fromJson`
+  format) — no full hand-written codec for a one-field tweak. **Decimal and
+  Money (v0.29.2):** `Codec.decimal` (the canonical string `"12.5"`, a strict
+  grammar with no exponent and at most 1000 characters) and `Codec.moneyIn GBP`
+  (one currency, the amount as a decimal string) map to an exact decimal column
+  (`NUMERIC` on Postgres, `TEXT` on SQLite, ordered, compared and summed exactly
+  by the Store); `Codec.moneyObject` is `{"amount","currency"}` in a JSON column;
+  `Codec.isoCurrency` is the code string. A `Codec.auto` Decimal or Money field
+  keeps its JSON-text column. `toJson` / `fromJson`
   / `fromJsonSafe`; explicit `object`/`field`/`taggedUnion`/`enum` for full control.
   `Codec.inline .inner innerFields` adds an embedded record's object builder
   (`ObjectCodec r r`) to an outer one with its keys written flat beside the

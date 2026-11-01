@@ -705,7 +705,9 @@ the user does not opt in.
 **Synchronous panic gate (v0.15.43)**: every emitted `func main()`
 starts with `defer rt.LogPanicAndExit()`. A panic in synchronous
 Sky (Sky.Cli / batch / non-server `main`) is recovered, classified
-(DivisionByZero / TypeMismatch / CoerceFailure / etc.), logged with
+(DivisionByZero / TypeMismatch / CoerceFailure / CurrencyMismatch / etc.;
+`CurrencyMismatch`, v0.29.2, is `Std.Money` arithmetic or an order across two
+currencies, which has no answer, like a division by zero), logged with
 a 4-byte errId, and the process exits 1. Server handlers have a
 per-request defer/recover. The Cmd.perform goroutine wraps
 `rt.SafeGo`.

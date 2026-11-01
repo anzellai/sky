@@ -12,6 +12,7 @@ module MoneyConformanceTest exposing (main, tests)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
+import Sky.Core.Result as Result
 import Std.Decimal as Dec
 import Std.Money as Money
 import Sky.Test as Test exposing (Test)
@@ -132,10 +133,15 @@ tests =
       --    Doc: "Arithmetic is total within a currency; cross-currency
       --    operations require explicit convert." add/sub GUARD the mismatch
       --    by returning the LEFT operand unchanged (no cross-currency mixing).
-    , Test.test "add USD+EUR does NOT mix currencies (returns left operand)"
-        (\_ -> Test.equal "100.00 USD" (Money.formatWithCode (Money.add (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 50))))
-    , Test.test "sub USD-EUR does NOT mix currencies (returns left operand)"
-        (\_ -> Test.equal "100.00 USD" (Money.formatWithCode (Money.sub (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 50))))
+    -- v0.29.2: two currencies never give a value. `add` / `sub` fail loudly
+    -- with the classified CurrencyMismatch (they used to return the left
+    -- operand in silence); the checked forms return an Err.
+    , Test.test "addChecked USD+EUR -> Err (add no longer returns the left operand)"
+        (\_ -> Test.err (Money.addChecked (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 50)))
+    , Test.test "subChecked USD-EUR -> Err (sub no longer returns the left operand)"
+        (\_ -> Test.err (Money.subChecked (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 50)))
+    , Test.test "addChecked in one currency -> Ok sum"
+        (\_ -> Test.equal (Ok "3.00 GBP") (Money.addChecked (Money.fromMajor Money.GBP 1) (Money.fromMajor Money.GBP 2) |> Result.map Money.formatWithCode))
     , Test.test "add USD+USD is total within currency -> 150.00 USD"
         (\_ -> Test.equal "150.00 USD" (Money.formatWithCode (Money.add (Money.fromMajor Money.USD 100) (Money.fromMajor Money.USD 50))))
     , Test.test "eq is currency-aware: $100 /= €100"

@@ -13,8 +13,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/shopspring/decimal"
 )
 
 // skyTagName returns the Sky field name from a struct field's `sky:"name,type"`
@@ -514,19 +512,34 @@ func currencyCodeOf(cur any) string {
 // on the Sky.Spa wasm client too, and the function is a pure code→ADT switch
 // with no DB dependency. The DB decoder (also !js) calls it from here.
 func sqlCodeToCurrency(code string) SkyADT {
-	switch code {
-	case "USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD", "SEK", "NOK",
-		"DKK", "CNY", "HKD", "SGD", "KRW", "TWD", "INR", "THB", "MYR", "IDR",
-		"PHP", "VND", "BRL", "MXN", "ARS", "CLP", "ZAR", "TRY", "RUB", "UAH",
-		"PLN", "CZK", "HUF", "RON", "BGN", "AED", "SAR", "QAR", "KWD", "BHD",
-		"OMR", "JOD", "ILS", "EGP", "NGN", "KES", "GHS", "MAD", "TND", "DZD",
-		"PKR", "BDT", "LKR", "NPR",
-		"BTC", "ETH", "USDT", "USDC":
-		return SkyADT{Tag: 0, SkyName: code, Fields: []any{}}
-	default:
-		return SkyADT{Tag: 0, SkyName: "CurrencyRaw", Fields: []any{code}}
+	// The Tag is the constructor's index in `Std.Money.Currency`: a Sky
+	// `case` on a Currency matches the Tag. Every named code used to get
+	// Tag 0, so a decoded GBP matched the `USD` arm (and printed as USD).
+	if tag, ok := currencyTags[code]; ok {
+		return SkyADT{Tag: tag, SkyName: code, Fields: []any{}}
 	}
+	return SkyADT{Tag: len(currencyOrder), SkyName: "CurrencyRaw", Fields: []any{code}}
 }
+
+// currencyOrder is the constructor order of `Std.Money.Currency`
+// (sky-stdlib/Std/Money.sky); `CurrencyRaw` follows it.
+var currencyOrder = []string{
+	"USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD", "SEK", "NOK",
+	"DKK", "CNY", "HKD", "SGD", "KRW", "TWD", "INR", "THB", "MYR", "IDR",
+	"PHP", "VND", "BRL", "MXN", "ARS", "CLP", "ZAR", "TRY", "RUB", "UAH",
+	"PLN", "CZK", "HUF", "RON", "BGN", "AED", "SAR", "QAR", "KWD", "BHD",
+	"OMR", "JOD", "ILS", "EGP", "NGN", "KES", "GHS", "MAD", "TND", "DZD",
+	"PKR", "BDT", "LKR", "NPR",
+	"BTC", "ETH", "USDT", "USDC",
+}
+
+var currencyTags = func() map[string]int {
+	m := make(map[string]int, len(currencyOrder))
+	for i, c := range currencyOrder {
+		m[c] = i
+	}
+	return m
+}()
 
 // Codec_autoEnc : a -> Value. Reflects the record into a JSON object Value.
 func Codec_autoEnc(snakeArg, record any) any {
@@ -855,30 +868,24 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 		// Std.Decimal — a JSON string; rebuild via decimalBox (round-trips the
 		// canonical `Decimal.String()` the encoder emitted).
 		if declaredType == "Std_Decimal_Decimal" {
-			s, ok := raw.(string)
-			if !ok {
-				return reflect.Value{}, fmt.Errorf("Codec.auto: expected Decimal string, got %s", jsonValueKind(raw))
-			}
-			d, err := decimal.NewFromString(s)
+			// The strict grammar (decimal_strict.go): no exponent, at most
+			// 1000 characters, so a request body cannot make String() write
+			// out billions of digits.
+			d, err := decimalFromJSONRaw(raw)
 			if err != nil {
-				return reflect.Value{}, fmt.Errorf("Codec.auto: Decimal parse %q: %v", s, err)
+				return reflect.Value{}, fmt.Errorf("Codec.auto: Decimal: %v", err)
 			}
 			return reflect.ValueOf(decimalBox(d)).Convert(gt), nil
 		}
-		// Std.Money — `{"amount":"12.99","currency":"USD"}`; reuse the DB decoder's
-		// currency reconstruction (nullary code → its variant; unknown → CurrencyRaw).
+		// Std.Money — `{"amount":"12.99","currency":"USD"}`. Both keys are
+		// required (a missing currency used to read as `CurrencyRaw ""`), the
+		// code is read in upper case (`gbp` is GBP), and the amount is a strict
+		// decimal string or an exact JSON number.
 		if declaredType == "Std_Money_Money" {
-			m, ok := raw.(map[string]any)
-			if !ok {
-				return reflect.Value{}, fmt.Errorf("Codec.auto: expected Money object, got %s", jsonValueKind(raw))
-			}
-			amtS, _ := m["amount"].(string)
-			curS, _ := m["currency"].(string)
-			amt, err := decimal.NewFromString(amtS)
+			money, err := moneyFromJSONRaw(raw)
 			if err != nil {
-				return reflect.Value{}, fmt.Errorf("Codec.auto: Money amount parse %q: %v", amtS, err)
+				return reflect.Value{}, fmt.Errorf("Codec.auto: %v", err)
 			}
-			money := SkyADT{Tag: 0, SkyName: "Money", Fields: []any{decimalBox(amt), sqlCodeToCurrency(curS)}}
 			return reflect.ValueOf(money).Convert(gt), nil
 		}
 		// A user payload ADT — the tagged `{"tag":<name>,"v0":…}` the encoder

@@ -1146,6 +1146,10 @@ colDecoder col =
         Codec.CBlob ->
             JsonD.map (\_ -> ()) JsonD.value
 
+        -- A decimal (Codec.decimal, Codec.moneyIn) is a JSON string, read as text.
+        Codec.CDecimal ->
+            colDecoder Codec.CText
+
         Codec.CNull inner ->
             JsonD.oneOf [ jsonNull, colDecoder inner ]
 

@@ -141,9 +141,12 @@ func schemaTypeName(driver, kind string) string {
 	switch kind {
 	case "text":
 		return "TEXT"
-	case "int":
-		return "INTEGER"
-	case "bigint", "timestamp":
+	case "int", "bigint", "timestamp":
+		// Schema.int is 64-bit like a Sky Int (v0.29.2). It was INTEGER on
+		// PostgreSQL through Schema.createSchema and BIGINT through
+		// Store.pushProject (Schema.toProject), so one schema gave two
+		// column types. Neither path alters a column: a table that exists
+		// keeps its type, and both read back as int64.
 		// The one that MUST diverge — Postgres INTEGER is 4-byte + overflows on
 		// millis; SQLite INTEGER is 8-byte. Both read back as int64.
 		if pg {
@@ -169,6 +172,16 @@ func schemaTypeName(driver, kind string) string {
 		return "BLOB"
 	case "json":
 		// TEXT on BOTH for read consistency (JSONB is a future opt-in).
+		return "TEXT"
+	case "decimal":
+		// Exact on both: plain NUMERIC on PostgreSQL (NUMERIC(p,s) would
+		// round on insert, in silence), and TEXT holding the canonical
+		// decimal on SQLite (NUMERIC affinity would turn '0.1' into a
+		// REAL). Std.Db.Store orders and compares it through the
+		// sky_decimal collation (db_sqlite_decimal.go).
+		if pg {
+			return "NUMERIC"
+		}
 		return "TEXT"
 	default:
 		return "TEXT"

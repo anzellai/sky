@@ -151,6 +151,7 @@ module Std.Db.Store exposing
     , notNull
     , inList
     , and_
+    , noCond
     , or_
     , not_
     , Subquery
@@ -215,6 +216,7 @@ import Sky.Core.Json.Encode as JE exposing (Value)
 import Sky.Core.Json.Decode as JD
 import Std.Codec as Codec exposing (Codec, ColType(..), Shape(..))
 import Std.Db as Db exposing (SqlValue(..))
+import Std.Decimal as Dec exposing (Decimal)
 
 -- | A table described by one codec. Opaque: build it with `fromCodec` and the
 -- builders below.
@@ -460,9 +462,9 @@ defaultText name val store =
 
 
 -- | Give a column a `DEFAULT` integer value in the generated DDL:
--- `Store.defaultInt "verified" 0`. The column must be an `Int` or `Float`
--- field (a `Bool` field takes `defaultBool`): on any other column the first
--- verb on the store fails.
+-- `Store.defaultInt "verified" 0`. The column must be an `Int`, `Float` or
+-- decimal (`Codec.decimal`, `Codec.moneyIn`) field (a `Bool` field takes
+-- `defaultBool`): on any other column the first verb on the store fails.
 defaultInt : String -> Int -> Store a -> Store a
 defaultInt name val store =
     withDefault
@@ -470,7 +472,8 @@ defaultInt name val store =
         name
         ("dint=" ++ String.fromInt val)
         (\_ _ k ->
-            if kindBase k == "int" || kindBase k == "real" then
+            if kindBase k == "int" || kindBase k == "real"
+                || kindBase k == "decimal" then
                 Nothing
 
             else
@@ -502,6 +505,28 @@ defaultBool name val store =
                 Just
                     ("the column is " ++ kindBase k
                         ++ ", and defaultBool gives a Bool"))
+        store
+
+
+-- | Give a decimal column (`Codec.decimal`, `Codec.moneyIn`) a `DEFAULT`
+-- value in the generated DDL: `Store.defaultDecimal "price" d`. The DDL holds
+-- the canonical text (`'12.5'`), which PostgreSQL reads into `NUMERIC` and
+-- SQLite keeps in its `TEXT` column. On any other column the first verb on
+-- the store fails.
+defaultDecimal : String -> Decimal -> Store a -> Store a
+defaultDecimal name val store =
+    withDefault
+        "defaultDecimal"
+        name
+        ("dtext=" ++ flagValue (Dec.toString val))
+        (\_ _ k ->
+            if kindBase k == "decimal" then
+                Nothing
+
+            else
+                Just
+                    ("the column is " ++ kindBase k
+                        ++ ", and defaultDecimal gives a Decimal"))
         store
 
 
@@ -543,6 +568,9 @@ defaultBase verb =
 
     else if verb == "defaultFloat" then
         "real"
+
+    else if verb == "defaultDecimal" then
+        "decimal"
 
     else
         "text"
@@ -2264,6 +2292,11 @@ conflictRuleError kind col k s target seen =
                 ("addExcluded \"" ++ col
                     ++ "\": the column must be a required Int or Float")
 
+        else if (kind == "min" || kind == "max") && base == "decimal" then
+            Just
+                ("keepMin / keepMax \"" ++ col
+                    ++ "\": a decimal column is not supported by an upsert rule yet; read, compare with Decimal, and update")
+
         else if (kind == "min" || kind == "max") && (base == "bool" || base == "blob") then
             Just
                 ("keepMin / keepMax \"" ++ col ++ "\": a " ++ base
@@ -2359,9 +2392,9 @@ nowSql d =
 
 -- A parameter typed as the column, so PostgreSQL can type a CASE branch or
 -- a SELECT-list value.
-castParam : String -> String
-castParam k =
-    "CAST(? AS " ++ sqlTypeOf k ++ ")"
+castParam : Dialect -> String -> String
+castParam d k =
+    "CAST(? AS " ++ sqlTypeOf d k ++ ")"
 
 
 -- The placeholder of a value written to, or compared with, column `col` of
@@ -2407,7 +2440,7 @@ castParamOf d table col kind =
         p = paramOf d table col kind
     in
         if p == "?" then
-            castParam kind
+            castParam d kind
 
         else
             p
@@ -2436,12 +2469,23 @@ afterMark part =
             part
 
 
-sqlTypeOf : String -> String
-sqlTypeOf k =
+sqlTypeOf : Dialect -> String -> String
+sqlTypeOf d k =
     let
         base = kindBase k
     in
-        if base == "int" then
+        if base == "decimal" then
+            -- Exact on PostgreSQL; on SQLite the column is TEXT holding the
+            -- canonical decimal (a CAST to NUMERIC there would give a REAL).
+            case d of
+
+                Postgres ->
+                    "NUMERIC"
+
+                Sqlite ->
+                    "TEXT"
+
+        else if base == "int" then
             "BIGINT"
 
         else if base == "real" then
@@ -3937,6 +3981,10 @@ aggregate codec aggs q =
             (rowDecoder (resultTable spec) codec)
 
 
+-- | The condition every row meets (`1 = 1`), the same as `and_ []`. Use it
+-- where a verb needs a `Cond` and the code means every row:
+-- `Store.updateFields db store Store.noCond [ ( "seen", SqlBool True ) ]`,
+-- or as the start of a condition built in a fold.
 noCond : Cond
 noCond =
     CondAnd []
@@ -5164,13 +5212,14 @@ aggExpr ctx groupSqls grouped kind rc rk col cond =
                     intResult rc rk ("COUNT(DISTINCT " ++ rSql ++ ")") rParams
 
                 else if kind == "sum" then
-                    if kindBase sk /= "int" && kindBase sk /= "real" then
+                    if kindBase sk /= "int" && kindBase sk /= "real"
+                        && kindBase sk /= "decimal" then
                         Err
                             <| storeErr
                                    ("sumAs \"" ++ rc ++ "\": \"" ++ col
                                        ++ "\" is "
                                        ++ kindBase sk
-                                       ++ ", not Int or Float")
+                                       ++ ", not Int, Float or a decimal")
 
                     else if kindBase rk /= kindBase sk then
                         Err
@@ -5179,6 +5228,26 @@ aggExpr ctx groupSqls grouped kind rc rk col cond =
                                        ++ kindBase rk
                                        ++ " but its source is "
                                        ++ kindBase sk)
+
+                    else if kindBase sk == "decimal" then
+                        -- Exact on both: NUMERIC on PostgreSQL, and on SQLite
+                        -- the sky_decimal_sum aggregate over the TEXT column
+                        -- (runtime-go/rt/db_sqlite_decimal.go), never REAL.
+                        case ctx.dialect of
+
+                            Postgres ->
+                                Ok
+                                    ( "CAST(COALESCE(SUM(" ++ rSql
+                                          ++ "), 0) AS NUMERIC)"
+                                    , rParams
+                                    )
+
+                            Sqlite ->
+                                Ok
+                                    ( "COALESCE(sky_decimal_sum(" ++ rSql
+                                          ++ "), '0')"
+                                    , rParams
+                                    )
 
                     else
                         Ok
@@ -5215,10 +5284,20 @@ aggExpr ctx groupSqls grouped kind rc rk col cond =
                                    ++ "\" needs a Maybe type without groupBy (an empty table gives NULL)")
 
                 else if kind == "min" then
-                    fitted rc rk sk ("MIN(" ++ rSql ++ ")") rParams
+                    fitted
+                        rc
+                        rk
+                        sk
+                        ("MIN(" ++ collated ctx sk rSql ++ ")")
+                        rParams
 
                 else
-                    fitted rc rk sk ("MAX(" ++ rSql ++ ")") rParams
+                    fitted
+                        rc
+                        rk
+                        sk
+                        ("MAX(" ++ collated ctx sk rSql ++ ")")
+                        rParams
 
 
 intResult : String -> String -> String -> List SqlValue -> Result Error ( String, List SqlValue )
@@ -5397,7 +5476,9 @@ orderTerm ctx spec col dir =
                                    ++ colNames spec.outCols)
 
                 Just rk ->
-                    Ok (quoteAlias rc ++ " " ++ dir ++ nullsClause rk dir)
+                    Ok
+                        (collated ctx rk (quoteAlias rc) ++ " " ++ dir
+                            ++ nullsClause rk dir)
 
     else
         case refOf ctx col of
@@ -5413,7 +5494,7 @@ orderTerm ctx spec col dir =
                                    ++ "\" must be a selected column")
 
                 else
-                    Ok (rSql ++ " " ++ dir ++ nullsClause k dir)
+                    Ok (collated ctx k rSql ++ " " ++ dir ++ nullsClause k dir)
 
 
 projectedRefs : Ctx -> QuerySpec -> List String
@@ -5579,6 +5660,25 @@ specCtx d depth qual spec =
             { base | qual = qual, depth = depth }
 
 
+-- A decimal column on SQLite is TEXT holding the canonical decimal, and text
+-- does not order as a number (`10` < `9.5`): a comparison, an ORDER BY and
+-- MIN / MAX read it through the `sky_decimal` collation the runtime registers
+-- (runtime-go/rt/db_sqlite_decimal.go). PostgreSQL's NUMERIC needs none.
+collated : Ctx -> String -> String -> String
+collated ctx kind sql =
+    if kindBase kind == "decimal" then
+        case ctx.dialect of
+
+            Sqlite ->
+                sql ++ " COLLATE sky_decimal"
+
+            Postgres ->
+                sql
+
+    else
+        sql
+
+
 renderCond : Ctx -> Cond -> Result Error ( String, List SqlValue )
 renderCond ctx c =
     case c of
@@ -5610,7 +5710,8 @@ renderCond ctx c =
 
                                 Ok bound ->
                                     Ok
-                                        ( rSql ++ " " ++ op ++ " "
+                                        ( collated ctx k rSql ++ " " ++ op
+                                              ++ " "
                                               ++ condParam ctx col k
                                         , rParams ++ [ bound ]
                                         )
@@ -5664,7 +5765,7 @@ renderCond ctx c =
 
                                         Ok bound ->
                                             Ok
-                                                ( rSql ++ " IN ("
+                                                ( collated ctx k rSql ++ " IN ("
                                                       ++ markedPlaceholders
                                                              (condParam ctx col k)
                                                              bound
@@ -5718,7 +5819,9 @@ renderCond ctx c =
 
                                 else
                                     Ok
-                                        ( lSql ++ " " ++ op ++ " " ++ rSql
+                                        ( collated ctx lk lSql ++ " " ++ op
+                                              ++ " "
+                                              ++ rSql
                                         , lParams ++ rParams
                                         )
 
@@ -6530,8 +6633,12 @@ setItems d table cols check relative sets items params =
 -- * a real column takes `SqlFloat` (finite) or `SqlInt`;
 -- * a bool column takes `SqlBool`;
 -- * a JSON (blob) column takes `SqlString`;
--- * `SqlBytes`, `SqlTime`, `SqlDecimal` and `SqlMoney` fit no Store column
---   (bind the text: `SqlString (Decimal.toString d)`);
+-- * a decimal column (`Codec.decimal`, `Codec.moneyIn`) takes `SqlDecimal`
+--   or `SqlInt`; a `SqlFloat` is refused (it is not exact: bind
+--   `SqlDecimal (Decimal.fromFloat f)`), and so is `SqlMoney` (its currency
+--   would be dropped);
+-- * `SqlBytes`, `SqlTime`, `SqlDecimal` and `SqlMoney` fit no other Store
+--   column (bind the text: `SqlString (Decimal.toString d)`);
 -- * NaN and Infinity fit no column.
 --
 -- A value WRITTEN into a column (`updateFields`, `setValue`, `setWhen`,
@@ -6553,13 +6660,16 @@ valueKindError col kind v =
                 base == "text" || base == "blob"
 
             else if tag == "SqlInt" then
-                base == "int" || base == "real"
+                base == "int" || base == "real" || base == "decimal"
 
             else if tag == "SqlFloat" then
                 base == "real"
 
             else if tag == "SqlBool" then
                 base == "bool"
+
+            else if tag == "SqlDecimal" then
+                base == "decimal"
 
             else
                 tag == "SqlNull"
@@ -6597,6 +6707,9 @@ fitsText base =
     else if base == "blob" then
         "a JSON column takes SqlString holding JSON"
 
+    else if base == "decimal" then
+        "a decimal column takes SqlDecimal or SqlInt; for a Float bind SqlDecimal (Decimal.fromFloat f), and a Money is never bound to it: its currency would be dropped"
+
     else
         "a text column takes SqlString"
 
@@ -6618,6 +6731,9 @@ condValue prefix col kind v =
                 <| Error.invalidInput
                        (prefix ++ "column \"" ++ col
                            ++ "\" is compared with SqlNull, and a comparison with NULL is never true: use isNull or notNull")
+
+        else if base == "decimal" then
+            decimalCond prefix col kind v
 
         else if tag /= "SqlString" then
             checkedCond prefix col kind v
@@ -6656,6 +6772,79 @@ condValue prefix col kind v =
 
         else
             checkedCond prefix col kind v
+
+
+-- A value compared with a decimal column: a `SqlDecimal` (bound as its
+-- canonical text), a `SqlInt`, or a `SqlString` holding a decimal
+-- (`findBy "12.30"` matches 12.3). PostgreSQL reads each into NUMERIC, and
+-- SQLite compares it with the column through sky_decimal, so the answer is
+-- the same on both. Text that is not a decimal and anything else is refused.
+decimalCond : String -> String -> String -> SqlValue -> Result Error SqlValue
+decimalCond prefix col kind v =
+    let
+        ( tag, text ) = valueInfo v
+    in
+        if tag == "SqlDecimal" || tag == "SqlInt" then
+            Ok v
+
+        else if tag == "SqlString" then
+            if isDecimalText text then
+                Ok v
+
+            else
+                Err
+                    (Error.invalidInput
+                        (prefix ++ textNotKind col "decimal" text))
+
+        else
+            checkedCond prefix col kind v
+
+
+-- The strict decimal grammar the runtime reads (`-?[0-9]+(\.[0-9]+)?`, at
+-- most 1000 characters, no exponent: runtime-go/rt/decimal_strict.go).
+isDecimalText : String -> Bool
+isDecimalText text =
+    String.length text <= 1000
+        && (case String.toList text of
+
+               c :: rest ->
+                   if c == '-' then
+                       decimalWhole False rest
+
+                   else
+                       decimalWhole False (c :: rest)
+
+               [] ->
+                   False)
+
+
+-- The integer part: one digit or more, then the end or a `.`. Chars are
+-- compared directly (no `Char.toCode`), so the check adds no runtime
+-- narrowing to an app.
+decimalWhole : Bool -> List Char -> Bool
+decimalWhole seen cs =
+    case cs of
+
+        [] ->
+            seen
+
+        c :: rest ->
+            if c >= '0' && c <= '9' then
+                decimalWhole True rest
+
+            else
+                seen && c == '.' && decimalFrac False rest
+
+
+decimalFrac : Bool -> List Char -> Bool
+decimalFrac seen cs =
+    case cs of
+
+        [] ->
+            seen
+
+        c :: rest ->
+            c >= '0' && c <= '9' && decimalFrac True rest
 
 
 checkedCond : String -> String -> String -> SqlValue -> Result Error SqlValue
@@ -7151,9 +7340,15 @@ nodeOf ctx name =
 
 -- `adjust` adds to a required Int or Float column: a NULL plus a delta is
 -- NULL, so a nullable column would stay NULL with the row counted as changed.
+-- A decimal column is refused: its SQLite TEXT would be added as a REAL.
 adjustError : String -> String -> Maybe String
 adjustError col kind =
-    if kindBase kind /= "int" && kindBase kind /= "real" then
+    if kindBase kind == "decimal" then
+        Just
+            ("column \"" ++ col
+                ++ "\" is a decimal, and adjust does not add to one yet: read the row, add with Decimal.add, and update")
+
+    else if kindBase kind /= "int" && kindBase kind /= "real" then
         Just
             ("column \"" ++ col ++ "\" is " ++ kindBase kind
                 ++ ", and adjust adds to an Int or Float column")
@@ -7613,6 +7808,9 @@ colTypeStr ct =
 
         CBlob ->
             "blob"
+
+        CDecimal ->
+            "decimal"
 
         CNull inner ->
             colTypeStr inner ++ "?"

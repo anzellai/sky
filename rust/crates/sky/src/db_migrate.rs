@@ -112,9 +112,49 @@ fn zero_default(kind: &str) -> Option<Value> {
     match kind {
         "int" | "bigint" | "real" => Some(json!({ "int": 0 })),
         "text" => Some(json!({ "text": "" })),
+        // A decimal column (`Codec.decimal`, `Codec.moneyIn`): `'0'` suits
+        // PostgreSQL NUMERIC and the SQLite TEXT column alike.
+        "decimal" => Some(json!({ "text": "0" })),
         "bool" => Some(json!({ "bool": false })),
         _ => None,
     }
+}
+
+/// The canonical text of a decimal typed at the prompt, under the runtime's
+/// strict grammar `-?[0-9]+(\.[0-9]+)?` (at most 1000 characters, no
+/// exponent), written as `decimalCanonical` writes it: trailing fraction
+/// zeros and leading integer zeros dropped, `-0` as `0`. `None` when the
+/// text is not a decimal.
+pub fn canonical_decimal(input: &str) -> Option<String> {
+    let t = input.trim();
+    if t.is_empty() || t.len() > 1000 {
+        return None;
+    }
+    let (neg, body) = match t.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, t),
+    };
+    let (int, frac) = match body.split_once('.') {
+        Some((i, f)) => (i, Some(f)),
+        None => (body, None),
+    };
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    if !digits(int) || frac.is_some_and(|f| !digits(f)) {
+        return None;
+    }
+    let int = int.trim_start_matches('0');
+    let int = if int.is_empty() { "0" } else { int };
+    let frac = frac.map(|f| f.trim_end_matches('0')).unwrap_or("");
+    let mut out = String::new();
+    if neg && !(int == "0" && frac.is_empty()) {
+        out.push('-');
+    }
+    out.push_str(int);
+    if !frac.is_empty() {
+        out.push('.');
+        out.push_str(frac);
+    }
+    Some(out)
 }
 
 /// The name of a Store index: `ix_<table>_<h>` / `ux_<table>_<h>`, where `<h>`
@@ -542,6 +582,7 @@ pub fn parse_default(kind: &str, input: &str) -> Option<Value> {
             _ => None,
         },
         "text" => Some(json!({ "text": input })),
+        "decimal" => canonical_decimal(input).map(|d| json!({ "text": d })),
         "real" => input
             .trim()
             .parse::<f64>()
@@ -1264,5 +1305,22 @@ mod tests {
         assert!(ext_json.contains("\"external\":true"), "{ext_json}");
         let back: SchemaColumn = serde_json::from_str(&ext_json).unwrap();
         assert!(back.external);
+    }
+
+    #[test]
+    fn decimal_column_zero_and_typed_default() {
+        assert_eq!(zero_default("decimal"), Some(json!({ "text": "0" })));
+        assert_eq!(
+            parse_default("decimal", " 012.500 "),
+            Some(json!({ "text": "12.5" }))
+        );
+        assert_eq!(
+            parse_default("decimal", "-0.0"),
+            Some(json!({ "text": "0" }))
+        );
+        assert_eq!(parse_default("decimal", "1e3"), None);
+        assert_eq!(parse_default("decimal", "abc"), None);
+        assert_eq!(parse_default("decimal", "1."), None);
+        assert_eq!(parse_default("decimal", &"9".repeat(1001)), None);
     }
 }

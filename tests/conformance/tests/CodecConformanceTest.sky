@@ -37,6 +37,7 @@ import Sky.Core.Result as Result
 import Sky.Core.Tuple as Tuple
 import Sky.Core.Json.Encode as Encode
 import Std.Codec as Codec exposing (Codec)
+import Std.Decimal as Decimal exposing (Decimal)
 import Std.Money as Money exposing (Money, Currency(..))
 import Sky.Core.Error as Error exposing (Error, ErrorKind(..), ErrorDetails(..))
 import Sky.Test as Test exposing (Test)
@@ -923,6 +924,94 @@ tests =
                 ( failed (Codec.fromJson hooksAuto "{\"id\":\"h1\",\"items\":[1]}")
                 , failed (Codec.fromJson hookMapAuto "{\"id\":\"h1\",\"items\":{\"a\":1}}")
                 ))
+    -- ── Decimal and Money codecs (v0.29.2) ────────────────────────────────
+    , Test.test "decimal: encodes the canonical string (12.50 is \"12.5\")"
+        (\_ -> Test.equal "\"12.5\"" (Codec.toJson Codec.decimal (dcm "12.50")))
+    , Test.test "decimal: reads a string and an exact JSON number"
+        (\_ ->
+            Test.equal
+                [ Ok "0.1", Ok "7", Ok "-0.000000001" ]
+                (List.map
+                    (\j -> Result.map Decimal.toString (Codec.fromJson Codec.decimal j))
+                    [ "\"0.1\"", "7", "\"-0.000000001\"" ]))
+    , Test.test "decimal: an exponent, NaN, an empty or malformed string and 1001 digits are an Err"
+        (\_ ->
+            Test.equal
+                [ True, True, True, True, True, True, True ]
+                (List.map
+                    (\j -> isErrC (Codec.fromJson Codec.decimal j))
+                    [ "\"1e3\"", "\"1e2000000000\"", "\"NaN\"", "\"\"", "\"1.2.3\"", "true", "\"" ++ String.repeat 1001 "9" ++ "\"" ]))
+    , Test.test "decimal: jsonSchema is a string with the decimal pattern, exact"
+        (\_ ->
+            Test.equal
+                ( "{\"type\":\"string\",\"pattern\":\"^-?[0-9]+(\\\\.[0-9]+)?$\"}", True )
+                (let
+                    js = Codec.jsonSchema Codec.decimal
+                 in
+                    ( Encode.encode 0 js.schema, js.exact )))
+    , Test.test "decimal: a Codec.auto Decimal and Money field have an exact schema"
+        (\_ ->
+            Test.equal
+                ( True, True )
+                ( (Codec.jsonSchema (Codec.auto { qty = Decimal.zero })).exact
+                , (Codec.jsonSchema (Codec.auto { price = Money.zero GBP })).exact
+                ))
+    , Test.test "decimal: toXml writes a Codec.auto Decimal and Money as element text, not JSON"
+        (\_ ->
+            Test.equal
+                "<row><price><amount>12.34</amount><currency>GBP</currency></price><qty>1.5</qty></row>"
+                (Codec.toXml "row" dcmAuto { price = Money.Money (dcm "12.34") GBP, qty = dcm "1.5" }))
+    , Test.test "decimal: fromXml reads the toXml of a Codec.decimal record back"
+        (\_ ->
+            Test.equal
+                (Ok "3.25")
+                (Codec.toXml "row" dcmRecord { qty = dcm "3.25" }
+                    |> Codec.fromXml "row" dcmRecord
+                    |> Result.map (\r -> Decimal.toString r.qty)))
+    , Test.test "moneyIn: a GBP Money is the amount string, and reads back as GBP"
+        (\_ ->
+            Test.equal
+                ( "\"12.34\"", Ok "12.34 GBP" )
+                ( Codec.toJson (Codec.moneyIn GBP) (Money.Money (dcm "12.34") GBP)
+                , Result.map mnyText (Codec.fromJson (Codec.moneyIn GBP) "\"12.34\"")
+                ))
+    , Test.test "moneyIn: reads a Money object in its currency, refuses one in another"
+        (\_ ->
+            Test.equal
+                ( Ok "1.5 GBP", True )
+                ( Result.map mnyText (Codec.fromJson (Codec.moneyIn GBP) "{\"amount\":\"1.5\",\"currency\":\"gbp\"}")
+                , isErrC (Codec.fromJson (Codec.moneyIn GBP) "{\"amount\":\"1.5\",\"currency\":\"USD\"}")
+                ))
+    , Test.test "moneyIn: a Money in another currency encodes as the object, never relabelled"
+        (\_ ->
+            Test.equal
+                "{\"amount\":\"2\",\"currency\":\"USD\"}"
+                (Codec.toJson (Codec.moneyIn GBP) (Money.Money (dcm "2") USD)))
+    , Test.test "moneyObject: round-trips, reads a lower-case code, refuses a missing currency"
+        (\_ ->
+            Test.equal
+                ( Ok "9.99 EUR", Ok "1 GBP", True )
+                ( Codec.toJson Codec.moneyObject (Money.Money (dcm "9.99") EUR)
+                    |> Codec.fromJson Codec.moneyObject
+                    |> Result.map mnyText
+                , Result.map mnyText (Codec.fromJson Codec.moneyObject "{\"amount\":\"1\",\"currency\":\"gbp\"}")
+                , isErrC (Codec.fromJson Codec.moneyObject "{\"amount\":\"1\"}")
+                ))
+    , Test.test "isoCurrency: reads a code in any case, refuses an empty one"
+        (\_ ->
+            Test.equal
+                ( Ok "GBP", "\"EUR\"", True )
+                ( Result.map Money.currencyCode (Codec.fromJson Codec.isoCurrency "\"gbp\"")
+                , Codec.toJson Codec.isoCurrency EUR
+                , isErrC (Codec.fromJson Codec.isoCurrency "\"\"")
+                ))
+    , Test.test "auto Money: a missing currency is an Err, a lower-case code reads"
+        (\_ ->
+            Test.equal
+                ( True, Ok "4 GBP" )
+                ( isErrC (Codec.fromJson dcmMoneyAuto "{\"price\":{\"amount\":\"4\"}}")
+                , Result.map (\r -> mnyText r.price) (Codec.fromJson dcmMoneyAuto "{\"price\":{\"amount\":\"4\",\"currency\":\"gbp\"}}")
+                ))
     ]
 
 
@@ -1016,6 +1105,57 @@ zeroOuter =
         |> Codec.field "inner" .inner zeroRecordNoZero
         |> Codec.field "xs" .xs (Codec.list Codec.int)
         |> Codec.buildObject
+
+
+-- ── Decimal and Money codec helpers (v0.29.2) ──────────────────────────────
+dcm : String -> Decimal
+dcm t =
+    Decimal.fromString t |> Result.withDefault Decimal.zero
+
+
+mnyText : Money -> String
+mnyText m =
+    Decimal.toString (Money.amount m) ++ " " ++ Money.currencyCode (Money.currency m)
+
+
+isErrC : Result e a -> Bool
+isErrC r =
+    case r of
+
+        Ok _ ->
+            False
+
+        Err _ ->
+            True
+
+
+type alias DcmPair =
+    { price : Money, qty : Decimal }
+
+
+dcmAuto : Codec DcmPair
+dcmAuto =
+    Codec.auto { price = Money.zero GBP, qty = Decimal.zero }
+
+
+type alias DcmOne =
+    { qty : Decimal }
+
+
+dcmRecord : Codec DcmOne
+dcmRecord =
+    Codec.object DcmOne
+        |> Codec.field "qty" .qty Codec.decimal
+        |> Codec.buildObject
+
+
+type alias DcmMoney =
+    { price : Money }
+
+
+dcmMoneyAuto : Codec DcmMoney
+dcmMoneyAuto =
+    Codec.auto { price = Money.zero GBP }
 
 
 main =

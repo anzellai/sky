@@ -298,10 +298,39 @@ dialects, is checked before any statement:
 | real (`Float`) | `SqlFloat` (finite) or `SqlInt` |
 | bool (`Bool`) | `SqlBool` |
 | JSON (a list, record or custom type field) | `SqlString` holding JSON |
+| decimal (`Codec.decimal`, `Codec.moneyIn`) | `SqlDecimal` or `SqlInt` (a condition also takes `SqlString` decimal text, so `findBy "12.30"` matches 12.3) |
 
-`SqlBytes`, `SqlTime`, `SqlDecimal` and `SqlMoney` fit no Store column (bind
-the text, `SqlString (Decimal.toString d)`), and NaN and Infinity fit none
-(SQLite stores NaN as NULL).
+`SqlBytes`, `SqlTime`, `SqlDecimal` and `SqlMoney` fit no other Store column
+(bind the text, `SqlString (Decimal.toString d)`). A decimal column refuses
+`SqlFloat` (not exact: bind `SqlDecimal (Decimal.fromFloat f)`) and `SqlMoney`
+(its currency would be dropped). NaN and Infinity fit none (SQLite stores NaN
+as NULL).
+
+**Decimal columns (v0.29.2).** `Codec.decimal` and `Codec.moneyIn GBP` give a
+`decimal` column: plain `NUMERIC` on PostgreSQL (never `NUMERIC(p,s)`, which
+rounds on insert), and `TEXT` holding the canonical decimal (`12.5`) on SQLite,
+where NUMERIC affinity would turn `0.1` into a REAL. The values are exact on
+both:
+
+- On SQLite the Store reads the column through the `sky_decimal` collation in a
+  comparison, an `orderAsc` / `orderDesc` and `minAs` / `maxAs`, and sums it with
+  the `sky_decimal_sum` aggregate (`0.1 + 0.2` is `0.3`). Sky registers both in
+  every SQLite connection it opens. `Store.toSql` shows `COLLATE sky_decimal`,
+  which the `sqlite3` shell does not know, and a range condition with the
+  collation cannot use a plain index. Raw SQL against the column sees text.
+- On PostgreSQL the column is native `NUMERIC`; `sumAs` casts to `NUMERIC`.
+- `Store.defaultDecimal "price" d` gives a `DEFAULT`, `defaultInt` fits too, and
+  a required decimal column added to a table with rows defaults to `'0'`.
+- `adjust`, `addExcluded`, `keepMin` / `keepMax` and the text matches (`like`,
+  `contains`) refuse a decimal column before any statement.
+- `Codec.moneyIn GBP` stores one currency. A Money in another currency is
+  refused before the statement, never converted or relabelled.
+- A `Codec.auto` Decimal or Money field keeps its v0.23 JSON-text column in
+  v0.29 (`"12.34"`, `{"amount":"12.34","currency":"GBP"}`), so no existing
+  table changes. `Codec.decimal` reads that legacy `"12.34"` text too, so a
+  field can move to `Codec.autoWith [ ( "price", Codec.decimal ) ] blank` and
+  read its old rows (on PostgreSQL the column stays `TEXT` until you change
+  it; `migrate` never alters a column).
 
 - **A written value** (`updateFields`, `setFields`, `setValue`, `setWhen`,
   `otherwise`, `const`, a `defaultWith` result) is also checked against the
@@ -351,7 +380,8 @@ Store.query users
 
 Leaves (`eq`/`neq`/`gt`/`gte`/`lt`/`lte`/`like`/`isNull`/`notNull`/`inList "col" v`)
 combine with `and_`/`or_`/`not_`; multiple `where_` clauses AND together (so OR /
-nesting is first-class). `Store.sqlOf codec value` filters by a **typed** value
+nesting is first-class). `Store.noCond` is the condition every row meets (the
+same as `and_ []`), for a verb that takes a `Cond` when the code means every row. `Store.sqlOf codec value` filters by a **typed** value
 (enum / `Money` / `Time` / a `Codec.map` wrapper) via its codec. Whole-table /
 single-row shortcuts: `all` / `findBy` (its text is read as the column's
 kind: `Store.findBy conn notes "id" "42"` on an `Int` key). `Store.toSql conn q` returns the SQL text
@@ -565,7 +595,7 @@ Store.query customers
 inner store's codec. `inQuery` / `notInQuery` compare an outer column with it
 (the two of one kind). `exists` / `notExists` take a store, the `correlate inner
 outer` pairs that tie it to the outer row (`correlateAll` for several), and a
-condition on the inner store (`Store.and_ []` for none). They work in `where_`,
+condition on the inner store (`Store.noCond` for none). They work in `where_`,
 in a join, and in the writes that take a `Cond` (`deleteWhere`, `updateWhere`,
 `updateFields`, `adjust`). The inner query is `sq1` (`sq2` inside it), and it
 takes `where_`, `orderAsc` / `orderDesc`, `limit` and `offset` only (a `limit`
@@ -650,7 +680,7 @@ AUTOINCREMENT` on SQLite, `BIGSERIAL PRIMARY KEY` on Postgres).
 **Type mapping** — each backend's natural column type, with dev==prod
 consistency at the *decoded-value* level (via `Std.Db.Decode`): `bool` →
 `BOOLEAN` on Postgres / `INTEGER` 0/1 on SQLite (a `SqlBool` param binds to
-both, and `Decode.bool` reads both back to a Sky `Bool`); `bigint`/`timestamp`
+both, and `Decode.bool` reads both back to a Sky `Bool`); `int`/`bigint`/`timestamp`
 → `BIGINT` on Postgres / `INTEGER` on SQLite (the overflow-safe one — both read
 as int64); `real`→`DOUBLE PRECISION`, `blob`→`BYTEA` on Postgres; `json`→`TEXT`
 on both. `createTable` is idempotent (`CREATE TABLE / INDEX IF NOT EXISTS`);
@@ -680,8 +710,24 @@ the `withIndex` / `withUniqueIndex` indexes (with their own names) carry
 through, so `sky db push` creates the columns and missing indexes and
 `migrate --gen` diffs them (`addIndex` / `dropIndex`). A column added to an
 existing table follows the `Store.migrate` rule above. `defaultNow` on a
-`timestamp` / `bigInt` / `int` column is epoch milliseconds. Ints widen to
-`BIGINT` under the codec pipeline (safe; no millis overflow).
+`timestamp` / `bigInt` / `int` column is epoch milliseconds.
+
+**One column type on both paths (v0.29.2).** `Schema.int` is 64-bit, like a
+Sky `Int`: `createSchema` / `createTable` and `pushProject (toProject …)` (and
+`sky db push` / `migrate`) all create `BIGINT` on Postgres. Before v0.29.2
+`createSchema` made a 4-byte `INTEGER` and `pushProject` a `BIGINT`, so a
+fresh database differed with the path that made it. BIGINT is the size of a
+Sky `Int` (a Go `int64`): an `INTEGER` column fails with "integer out of range"
+for any value above 2,147,483,647 (epoch milliseconds, large ids, money in
+minor units). Neither path alters a column that exists, and `migrate --gen`
+proposes no change for it: a table made by an older `createSchema` keeps
+`INTEGER`. `Store.migrate` and `pushProject` treat it as a match, and log a
+one-time WARN that names the column, says it holds only 32-bit values and
+gives the statement that widens it (`ALTER TABLE orders ALTER COLUMN day
+TYPE BIGINT`); widening is your choice. SQL that needs a 4-byte integer casts
+(`DATE '1970-01-01' + day::int`).
+`Schema.blob` still differs: `BYTEA` through `createSchema`, a JSON `TEXT`
+column under `toProject` (the Store reads a blob column as JSON).
 
 > **Naming tip.** `Schema.text` collides with `Std.Html`/`Std.Ui`'s `text` if
 > both are exposed unqualified. In a module that already does

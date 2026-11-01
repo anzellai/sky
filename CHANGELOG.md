@@ -54,6 +54,70 @@ as they already did for a plain app.
   Any other expression around `App.run` (for example `Task.map` over it, or a
   `case`) fails the build and names the two forms that carry.
 
+- **A decoded currency matches its own `case` arm.** `Codec.auto` and
+  `Db.Decode.money` built every named currency with the tag of `USD`, so a
+  decoded `GBP` matched the `USD` arm of a `case` and printed as USD. Each
+  currency now carries its own constructor.
+- **`Codec.auto` Decimal and Money decode strictly.** A Decimal (and a Money
+  amount) is read under `-?[0-9]+(\.[0-9]+)?`, at most 1000 characters. An
+  exponent used to reach the decimal library, and `"1e2000000000"` in a request
+  body made the process write out billions of digits (the test of it ran for
+  five minutes). A Money with no `currency` was `CurrencyRaw ""` and is now an
+  `Err`; `"gbp"` reads as GBP; an exact JSON number amount reads.
+- **The JSON Schema of a `Codec.auto` Decimal or Money field is exact.** It was
+  the open `{}`, so `Codec.toXml` wrote the JSON text `"12.34"` into the
+  element. It is now a string with the decimal pattern, and the Money object.
+- **`Db.Decode.money` reads both Money text forms strictly.** It reads
+  `"USD 12.34"` (`SqlMoney`) and `"12.34 USD"` (`Money.formatWithCode`), the
+  code in upper case, the amount under the strict grammar.
+- **`Schema.int` is one column type on both creation paths.** On PostgreSQL
+  `Schema.createSchema` made a 4-byte `INTEGER` and `Store.pushProject
+  (Schema.toProject …)` (and `sky db push`) a `BIGINT`, so a fresh database
+  differed with the path that made it. Both now make `BIGINT`, the size of a
+  Sky `Int`: an `INTEGER` column fails with "integer out of range" above
+  2,147,483,647. Neither path alters a column that exists, and `sky db migrate
+  --gen` proposes no change: a table an older `createSchema` made keeps
+  `INTEGER`. `Store.migrate` and `pushProject` treat it as a match and log a
+  one-time WARN naming the column, with the `ALTER TABLE … ALTER COLUMN … TYPE
+  BIGINT` that widens it. Widening stays your choice.
+
+### Added
+
+- **Exact decimal columns: `Codec.decimal` and `Codec.moneyIn`.** A new column
+  kind, `CDecimal`: plain `NUMERIC` on PostgreSQL, `TEXT` holding the canonical
+  decimal on SQLite. `Std.Db.Store` compares, orders, sums (`sumAs`) and takes
+  `minAs` / `maxAs` of it exactly on both: on SQLite through the `sky_decimal`
+  collation and the `sky_decimal_sum` aggregate the runtime registers. It takes
+  `SqlDecimal` and `SqlInt` (a condition also takes decimal text, so
+  `findBy "12.30"` matches 12.3) and refuses `SqlFloat`, `SqlMoney`, `adjust`,
+  `addExcluded`, `keepMin` / `keepMax` and text matches before any statement.
+  `Store.defaultDecimal` gives a default; a required decimal column added to a
+  table with rows defaults to `'0'` (`Store.migrate` and `sky db migrate
+  --gen` agree). `Codec.moneyIn GBP` stores one currency in such a column (a
+  Money in another currency is refused, never relabelled), `Codec.moneyObject`
+  is the `{"amount","currency"}` JSON in a JSON column, and `Codec.isoCurrency`
+  is the code string. A `Codec.auto` Decimal or Money field keeps its JSON-text
+  column, so no existing table changes; `Codec.decimal` also reads that legacy
+  `"12.34"` text.
+- **`Money.addChecked` and `Money.subChecked`** return an `Err` for two
+  currencies.
+- **`Store.noCond`**, the condition every row meets (the same as `and_ []`),
+  is exposed.
+
+### Migration
+
+- **Money across two currencies fails loudly.** `Money.add` and `Money.sub` of
+  two currencies returned the left operand in silence, and `compare`, `lt`,
+  `lte`, `gt` and `gte` compared the amounts and ignored the currency (so did
+  `sumOf`). They now fail with the classified `CurrencyMismatch`, like a
+  division by zero. Convert one side first (`Money.convert`), or use
+  `Money.addChecked` / `subChecked` for an `Err`. `Money.eq` stays `False`.
+- **`Codec.ColType` has a new constructor, `CDecimal`.** A `case` over a
+  `ColType` in your own code must add the arm (the compiler names it).
+- **`Schema.createSchema` makes `BIGINT` for a new `Schema.int` column on
+  PostgreSQL.** SQL that needs a 4-byte integer (`DATE '1970-01-01' + day`)
+  casts: `day::int`. Existing tables do not change.
+
 ## v0.29.1 — Fixes for v0.29.0 (2026-10-31)
 
 A patch release for v0.29.0. It restores `Std.Db.Store` builders on a column

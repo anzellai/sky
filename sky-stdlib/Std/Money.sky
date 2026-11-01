@@ -10,9 +10,17 @@
 -- the classic "split $1.00 three ways" problem without losing or
 -- inventing cents).
 --
--- Serialise as `"ISO_CODE AMOUNT"` TEXT for DB / wire — `Std.Db.Sql`
--- ships `SqlMoney` + `Db.Decode.money` for round-trip without manual
--- formatting.
+-- Store it with `Std.Codec`: `Codec.moneyIn GBP` keeps one currency in an
+-- exact decimal column a `Std.Db.Store` can sum and order, and
+-- `Codec.moneyObject` (the JSON `Codec.auto` writes) keeps any currency as
+-- `{"amount": "12.34", "currency": "GBP"}`. Raw SQL binds `SqlMoney` as the
+-- text `"GBP 12.34"`, and `Db.Decode.money` reads it back (it also reads
+-- `"12.34 GBP"`, the `formatWithCode` form).
+--
+-- Arithmetic and order across two currencies have no answer: `add`, `sub`,
+-- `compare`, `lt`, `lte`, `gt`, `gte` and `sumOf` fail loudly with the
+-- classified `CurrencyMismatch` (like a division by zero), never a value.
+-- `addChecked` and `subChecked` return an `Err` instead.
 module Std.Money exposing
     ( Money(..)
     , Currency(..)
@@ -26,6 +34,8 @@ module Std.Money exposing
     , currencyCode
     , add
     , sub
+    , addChecked
+    , subChecked
     , mul
     , allocate
     , sumOf
@@ -94,7 +104,7 @@ module Std.Money exposing
 --   Money.convert EUR (Money.fromMajor USD 100)   -- → Ok €92.00
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Error exposing (Error)
+import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.List as List
 import Sky.Ffi as Ffi
 import Std.Decimal as Dec exposing (Decimal)
@@ -613,22 +623,76 @@ parseCurrency code =
 
 
 -- ─── Arithmetic (currency-checked) ────────────────────────────────
+-- | The sum of two Money values in one currency. Two currencies have no sum:
+-- it fails loudly with the classified `CurrencyMismatch` (it used to return
+-- `a` in silence). Use `addChecked` for an `Err`, or `convert` first.
 add : Money -> Money -> Money
 add a b =
     if eqCurrency (currency a) (currency b) then
         Money (Dec.add (amount a) (amount b)) (currency a)
 
     else
-        a
+        mismatch "add" a b
 
 
+-- | `a` minus `b`, in one currency. Two currencies fail loudly, as `add`.
 sub : Money -> Money -> Money
 sub a b =
     if eqCurrency (currency a) (currency b) then
         Money (Dec.sub (amount a) (amount b)) (currency a)
 
     else
+        mismatch "sub" a b
+
+
+-- | `add`, with an `Err` for two currencies instead of a failure.
+addChecked : Money -> Money -> Result Error Money
+addChecked a b =
+    if eqCurrency (currency a) (currency b) then
+        Ok (add a b)
+
+    else
+        Err (mismatchError "addChecked" a b)
+
+
+-- | `sub`, with an `Err` for two currencies instead of a failure.
+subChecked : Money -> Money -> Result Error Money
+subChecked a b =
+    if eqCurrency (currency a) (currency b) then
+        Ok (sub a b)
+
+    else
+        Err (mismatchError "subChecked" a b)
+
+
+mismatchError : String -> Money -> Money -> Error
+mismatchError verb a b =
+    Error.invalidInput
+        ("Money." ++ verb ++ ": " ++ currencyCode (currency a) ++ " and "
+            ++ currencyCode (currency b)
+            ++ " are different currencies")
+
+
+-- Arithmetic or an order across two currencies: the classified
+-- `CurrencyMismatch` failure (runtime-go/rt/decimal_strict.go). The kernel
+-- never returns; `a` only gives the expression its type, so no runtime
+-- narrowing is added at any call site.
+mismatch : String -> Money -> Money -> Money
+mismatch verb a b =
+    let
+        _ =
+            Ffi.toAny
+                (currencyMismatchK
+                    verb
+                    (currencyCode (currency a))
+                    (currencyCode (currency b)))
+    in
         a
+
+
+currencyMismatchK : String -> String -> String -> r
+currencyMismatchK =
+    Ffi.kernel "Money_currencyMismatch"
 
 
 -- | Multiply by a scalar (Decimal). Currency carries through.
@@ -684,9 +748,17 @@ sumOfHelp xs acc =
 
 
 -- ─── Comparison ───────────────────────────────────────────────────
+-- | The order of two amounts in one currency. Two currencies have no order:
+-- `compare`, `lt`, `lte`, `gt` and `gte` fail loudly with the classified
+-- `CurrencyMismatch` (they used to compare the amounts and ignore the
+-- currency). `eq` is `False` for two currencies.
 compare : Money -> Money -> Int
 compare a b =
-    Dec.compare (amount a) (amount b)
+    if eqCurrency (currency a) (currency b) then
+        Dec.compare (amount a) (amount b)
+
+    else
+        Dec.compare (amount (mismatch "compare" a b)) (amount b)
 
 
 eq : Money -> Money -> Bool
@@ -701,22 +773,38 @@ neq a b =
 
 lt : Money -> Money -> Bool
 lt a b =
-    Dec.lt (amount a) (amount b)
+    if eqCurrency (currency a) (currency b) then
+        Dec.lt (amount a) (amount b)
+
+    else
+        Dec.lt (amount (mismatch "lt" a b)) (amount b)
 
 
 lte : Money -> Money -> Bool
 lte a b =
-    Dec.lte (amount a) (amount b)
+    if eqCurrency (currency a) (currency b) then
+        Dec.lte (amount a) (amount b)
+
+    else
+        Dec.lte (amount (mismatch "lte" a b)) (amount b)
 
 
 gt : Money -> Money -> Bool
 gt a b =
-    Dec.gt (amount a) (amount b)
+    if eqCurrency (currency a) (currency b) then
+        Dec.gt (amount a) (amount b)
+
+    else
+        Dec.gt (amount (mismatch "gt" a b)) (amount b)
 
 
 gte : Money -> Money -> Bool
 gte a b =
-    Dec.gte (amount a) (amount b)
+    if eqCurrency (currency a) (currency b) then
+        Dec.gte (amount a) (amount b)
+
+    else
+        Dec.gte (amount (mismatch "gte" a b)) (amount b)
 
 
 eqCurrency : Currency -> Currency -> Bool

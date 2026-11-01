@@ -218,6 +218,10 @@ func migZeroDefault(kind string) *migDefault {
 	case "text":
 		z := ""
 		return &migDefault{Text: &z}
+	case "decimal":
+		// '0' suits both NUMERIC and the SQLite TEXT column.
+		z := "0"
+		return &migDefault{Text: &z}
 	case "bool":
 		f := false
 		return &migDefault{Bool: &f}
@@ -328,14 +332,14 @@ func migDefaultFits(table string, c migColumn) error {
 	base, _ := codecSplitKind(c.Type)
 	intLike := base == "int" || base == "bigint" || base == "timestamp"
 	textLike := base == "text" || base == "blob" || base == "json"
-	known := intLike || textLike || base == "real" || base == "bool"
+	known := intLike || textLike || base == "real" || base == "bool" || base == "decimal"
 	if !known {
 		return nil
 	}
 	ok := true
 	switch migDefKind(d) {
 	case "int":
-		ok = intLike || base == "real"
+		ok = intLike || base == "real" || base == "decimal"
 	case "float":
 		ok = base == "real"
 	case "bool":
@@ -343,6 +347,12 @@ func migDefaultFits(table string, c migColumn) error {
 	case "now":
 		ok = intLike || base == "text"
 	case "text":
+		if base == "decimal" {
+			if _, err := decimalParseStrict(*d.Text); err != nil {
+				return fmt.Errorf("column %s.%s is a decimal, and its default %q is not a decimal", table, c.Name, *d.Text)
+			}
+			return nil
+		}
 		ok = textLike
 		if ok && base != "text" && !json.Valid([]byte(*d.Text)) {
 			return fmt.Errorf("column %s.%s is JSON, and its default %q is not JSON", table, c.Name, *d.Text)

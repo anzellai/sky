@@ -17,6 +17,8 @@ import Std.Db as Db exposing (SqlValue(..))
 import Std.Db.Store as Store exposing (Store)
 import Std.Db.Schema as Schema
 import Std.Codec as Codec exposing (Codec)
+import Std.Decimal as Decimal exposing (Decimal)
+import Std.Money as Money exposing (Money)
 import Sky.Core.Json.Encode as JE
 import Sky.Core.Dict as Dict
 import Sky.Core.Error as Error
@@ -5778,6 +5780,398 @@ timeTests db =
                                              |> Store.orderAsc "id")))))
     ]
 
+-- ── Decimal columns: Codec.decimal and Codec.moneyIn (v0.29.2) ──────────────
+-- A decimal column is NUMERIC on PostgreSQL and TEXT holding the canonical
+-- decimal on SQLite, ordered through the sky_decimal collation and summed by
+-- sky_decimal_sum. Every case runs on both dialects and gets the same answer.
+type alias DecItem =
+    { id : String
+    , price : Decimal
+    , cost : Money
+    , tip : Maybe Decimal
+    }
+
+
+decItemCodec : Codec DecItem
+decItemCodec =
+    Codec.object DecItem |> Codec.field "id" .id Codec.string
+        |> Codec.field "price" .price Codec.decimal
+        |> Codec.field "cost" .cost (Codec.moneyIn Money.GBP)
+        |> Codec.field "tip" .tip (Codec.maybe Codec.decimal)
+        |> Codec.buildObject
+
+
+decItems : Store DecItem
+decItems =
+    Store.fromCodec "sqc_dec_items" decItemCodec |> Store.primaryKey "id"
+
+
+dec : String -> Decimal
+dec s =
+    Decimal.fromString s |> Result.withDefault Decimal.zero
+
+
+decItem : String -> String -> String -> Maybe String -> DecItem
+decItem id price cost tip =
+    { id = id
+    , price = dec price
+    , cost = Money.Money (dec cost) Money.GBP
+    , tip = Maybe.map dec tip
+    }
+
+
+decSetup : Db -> Task Error ()
+decSetup db =
+    Task.sequence
+        [ drop db "sqc_dec_items"
+        , unit (Store.migrate db decItems)
+        , unit (Store.insert db decItems (decItem "a" "10" "1.10" Nothing))
+        , unit
+              (Store.insert db decItems (decItem "b" "9.50" "2.2" (Just "0.25")))
+        , unit (Store.insert db decItems (decItem "c" "-1" "0.1" Nothing))
+        , unit
+              (Store.insert
+                  db
+                  decItems
+                  (decItem "d" "0.25" "0.2" (Just "-0.000000001")))
+        ]
+        |> unit
+
+
+decIds : Db -> (Store.Query DecItem -> Store.Query DecItem) -> Result Error (List String)
+decIds db refine =
+    Task.run
+        (decSetup db
+            |> Task.andThen
+                   (\_ -> Store.toList db (refine (Store.query decItems)))
+            |> Task.map (List.map .id))
+
+
+decText : DecItem -> ( String, String, String, Maybe String )
+decText r =
+    ( r.id
+    , Decimal.toString r.price
+    , moneyText r.cost
+    , Maybe.map Decimal.toString r.tip
+    )
+
+
+moneyText : Money -> String
+moneyText m =
+    Decimal.toString (Money.amount m) ++ " "
+        ++ Money.currencyCode (Money.currency m)
+
+type alias DecTotals =
+    { total : Decimal
+    , costs : Money
+    , lo : Maybe Decimal
+    , hi : Maybe Decimal
+    }
+
+
+decTotalsCodec : Codec DecTotals
+decTotalsCodec =
+    Codec.object DecTotals |> Codec.field "total" .total Codec.decimal
+        |> Codec.field "costs" .costs (Codec.moneyIn Money.GBP)
+        |> Codec.field "lo" .lo (Codec.maybe Codec.decimal)
+        |> Codec.field "hi" .hi (Codec.maybe Codec.decimal)
+        |> Codec.buildObject
+
+type alias DecBase =
+    { id : String }
+
+type alias DecGrown =
+    { id : String
+    , amount : Decimal
+    }
+
+
+decBase : Store DecBase
+decBase =
+    Store.fromCodec "sqc_dec_mig" (Codec.auto { id = "" })
+        |> Store.primaryKey "id"
+
+
+decGrown : Store DecGrown
+decGrown =
+    Store.fromCodec
+        "sqc_dec_mig"
+        (Codec.object DecGrown |> Codec.field "id" .id Codec.string
+            |> Codec.field "amount" .amount Codec.decimal
+            |> Codec.buildObject)
+        |> Store.primaryKey "id"
+
+
+decimalTests : Db -> List Test
+decimalTests db =
+    [ Test.test
+          "decimal: Codec.decimal, Codec.moneyIn and a Maybe decimal round-trip exactly"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ ( "a", "10", "1.1 GBP", Nothing )
+                      , ( "b", "9.5", "2.2 GBP", Just "0.25" )
+                      , ( "c", "-1", "0.1 GBP", Nothing )
+                      , ( "d", "0.25", "0.2 GBP", Just "-0.000000001" )
+                      ])
+                  (Task.run
+                      (decSetup db
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.toList
+                                         db
+                                         (Store.query decItems
+                                             |> Store.orderAsc "id"))
+                          |> Task.map (List.map decText))))
+    , Test.test
+          "decimal: 30 digits with 9 decimal places round-trip with no digit lost"
+          (\_ ->
+              Test.equal
+                  (Ok (Just "123456789012345678901.123456789"))
+                  (Task.run
+                      (decSetup db
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.insert
+                                         db
+                                         decItems
+                                         (decItem
+                                             "e"
+                                             "123456789012345678901.123456789"
+                                             "0"
+                                             Nothing))
+                          |> Task.andThen
+                                 (\_ -> Store.findBy db decItems "id" "e")
+                          |> Task.map
+                                 (Maybe.map (\r -> Decimal.toString r.price)))))
+    , Test.test
+          "decimal: orderAsc orders by value, not by text"
+          (\_ ->
+              Test.equal
+                  (Ok [ "c", "d", "b", "a" ])
+                  (decIds db (\q -> q |> Store.orderAsc "price")))
+    , Test.test
+          "decimal: orderDesc on a Money column orders by amount"
+          (\_ ->
+              Test.equal
+                  (Ok [ "b", "a", "d", "c" ])
+                  (decIds db (\q -> q |> Store.orderDesc "cost")))
+    , Test.test
+          "decimal: gt with SqlDecimal, SqlInt and decimal text compares by value"
+          (\_ ->
+              Test.equal
+                  [ Ok [ "a" ], Ok [ "a", "b", "d" ], Ok [ "a", "b" ] ]
+                  [ decIds
+                        db
+                        (\q ->
+                            q
+                                |> Store.where_
+                                       (Store.gt "price" (SqlDecimal (dec "9.5")))
+                                |> Store.orderAsc "id")
+                  , decIds
+                        db
+                        (\q ->
+                            q |> Store.where_ (Store.gt "price" (SqlInt 0))
+                                |> Store.orderAsc "id")
+                  , decIds
+                        db
+                        (\q ->
+                            q
+                                |> Store.where_
+                                       (Store.gt "price" (SqlString "0.250"))
+                                |> Store.orderAsc "id")
+                  ])
+    , Test.test
+          "decimal: findBy \"9.50\" matches the row that holds 9.5"
+          (\_ ->
+              Test.equal
+                  (Ok (Just "b"))
+                  (Task.run
+                      (decSetup db
+                          |> Task.andThen
+                                 (\_ -> Store.findBy db decItems "price" "9.50")
+                          |> Task.map (Maybe.map .id))))
+    , Test.test
+          "decimal: sumAs is exact (1.1 + 2.2 + 0.1 + 0.2 = 3.6), minAs and maxAs order by value"
+          (\_ ->
+              Test.equal
+                  (Ok [ ( "18.75", "3.6 GBP", ( Just "-1", Just "10" ) ) ])
+                  (Task.run
+                      (decSetup db
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.toRows
+                                         db
+                                         (Store.query decItems
+                                             |> Store.aggregate
+                                                    decTotalsCodec
+                                                    [ Store.sumAs
+                                                          "total"
+                                                          "price"
+                                                    , Store.sumAs "costs" "cost"
+                                                    , Store.minAs "lo" "price"
+                                                    , Store.maxAs "hi" "price"
+                                                    ]))
+                          |> Task.map
+                                 (List.map
+                                     (\t ->
+                                         ( Decimal.toString t.total
+                                         , moneyText t.costs
+                                         , ( Maybe.map Decimal.toString t.lo
+                                           , Maybe.map Decimal.toString t.hi
+                                           )
+                                         ))))))
+    , Test.test
+          "decimal: migrate adds a required decimal column to a table with a row, which reads 0"
+          (\_ ->
+              Test.equal
+                  (Ok [ ( "r1", "0" ) ])
+                  (Task.run
+                      (Task.sequence
+                          [ drop db "sqc_dec_mig"
+                          , unit (Store.migrate db decBase)
+                          , unit (Store.insert db decBase { id = "r1" })
+                          , unit (Store.migrate db decGrown)
+                          ]
+                          |> Task.andThen
+                                 (\_ -> Store.toList db (Store.query decGrown))
+                          |> Task.map
+                                 (List.map
+                                     (\r -> ( r.id, Decimal.toString r.amount ))))))
+    , Test.test
+          "decimal: a Float, a Money, adjust and contains on a decimal column are refused before a statement"
+          (\_ ->
+              Test.equal
+                  [ True, True, True, True, True ]
+                  [ isErr
+                        (decIds
+                            db
+                            (\q ->
+                                q
+                                    |> Store.where_
+                                           (Store.gt "price" (SqlFloat 1.5))))
+                  , isErr
+                        (decIds
+                            db
+                            (\q ->
+                                q
+                                    |> Store.where_
+                                           (Store.eq
+                                               "cost"
+                                               (SqlMoney
+                                                   (Money.Money
+                                                       (dec "1.1")
+                                                       Money.GBP)))))
+                  , isErr
+                        (Task.run
+                            (decSetup db
+                                |> Task.andThen
+                                       (\_ ->
+                                           Store.adjust
+                                               db
+                                               decItems
+                                               (Store.eq "id" (SqlString "a"))
+                                               [ ( "price", 1 ) ])))
+                  , isErr
+                        (decIds
+                            db
+                            (\q -> q |> Store.where_ (Store.contains "price" "1")))
+                  , isErr
+                        (Task.run
+                            (decSetup db
+                                |> Task.andThen
+                                       (\_ ->
+                                           Store.updateFields
+                                               db
+                                               decItems
+                                               (Store.eq "id" (SqlString "a"))
+                                               [ ( "price", SqlFloat 2.5 ) ])))
+                  ])
+    , Test.test
+          "decimal: a Money in another currency is never written to a moneyIn GBP column"
+          (\_ ->
+              Test.equal
+                  ( True, Ok [ "a", "b", "c", "d" ] )
+                  ( isErr
+                        (Task.run
+                            (decSetup db
+                                |> Task.andThen
+                                       (\_ ->
+                                           Store.insert
+                                               db
+                                               decItems
+                                               { id = "x"
+                                               , price = dec "1"
+                                               , cost =
+                                                   Money.Money
+                                                       (dec "1")
+                                                       Money.USD
+                                               , tip = Nothing
+                                               })))
+                  , Task.run
+                        (Store.toList
+                            db
+                            (Store.query decItems |> Store.orderAsc "id"))
+                        |> Result.map (List.map .id)
+                  ))
+    , Test.test
+          "decimal: a v0.23-v0.29.1 Codec.auto Decimal TEXT value (JSON \"12.34\") reads through Codec.decimal"
+          (\_ ->
+              Test.equal
+                  (Ok [ ( "old", "12.34" ) ])
+                  (Task.run
+                      (Task.sequence
+                          [ drop db "sqc_dec_mig"
+                          , unit
+                                (Db.exec
+                                    db
+                                    "CREATE TABLE sqc_dec_mig (id TEXT PRIMARY KEY, amount TEXT NOT NULL)"
+                                    [])
+                          , unit
+                                (Db.exec
+                                    db
+                                    "INSERT INTO sqc_dec_mig VALUES ('old', '\"12.34\"')"
+                                    [])
+                          ]
+                          |> Task.andThen
+                                 (\_ -> Store.toList db (Store.query decGrown))
+                          |> Task.map
+                                 (List.map
+                                     (\r -> ( r.id, Decimal.toString r.amount ))))))
+    , Test.test
+          "noCond: where_ Store.noCond keeps every row, as and_ [] does"
+          (\_ ->
+              Test.equal
+                  [ Ok [ "a", "b", "c", "d" ], Ok [ "a", "b", "c", "d" ] ]
+                  [ decIds
+                        db
+                        (\q ->
+                            q |> Store.where_ Store.noCond
+                                |> Store.orderAsc "id")
+                  , decIds
+                        db
+                        (\q ->
+                            q |> Store.where_ (Store.and_ [])
+                                |> Store.orderAsc "id")
+                  ])
+    , Test.test
+          "decimal: toSql reads the column through sky_decimal on SQLite only"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      (if dialectName == "sqlite" then
+                          "SELECT * FROM sqc_dec_items WHERE (price COLLATE sky_decimal > ?) ORDER BY price COLLATE sky_decimal ASC"
+
+                      else
+                          "SELECT * FROM sqc_dec_items WHERE (price > ?) ORDER BY price ASC"))
+                  (Store.toSql
+                      db
+                      (Store.query decItems
+                          |> Store.where_ (Store.gt "price" (SqlInt 1))
+                          |> Store.orderAsc "price")
+                      |> Result.map (\( sql, _ ) -> sql)))
+    ]
+
 
 tests : List Test
 tests =
@@ -5804,6 +6198,7 @@ tests =
                 ++ maybeFieldTests db
                 ++ generatedTests db
                 ++ timeTests db
+                ++ decimalTests db
 
 
 main =

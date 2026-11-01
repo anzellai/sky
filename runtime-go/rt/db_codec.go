@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -158,6 +159,8 @@ func codecColKindToSchema(kind string) string {
 		return "real"
 	case "bool":
 		return "bool"
+	case "decimal":
+		return "decimal"
 	default: // text, blob
 		return "text"
 	}
@@ -656,6 +659,16 @@ func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 			}
 			return Ok[any, any](applied)
 		}
+		// An Int column an older Schema.createSchema made as INTEGER is a
+		// match (never altered), and gets a one-time notice: it holds only
+		// 32-bit values. Widening stays the operator's choice.
+		if d.driver == "pgx" {
+			if types, err := codecTableColumnTypes(d, table); err == nil {
+				for _, n := range codecNarrowIntNotices(table, colspecArg, types) {
+					codecWarnOnce(n)
+				}
+			}
+		}
 		// existing → add any missing columns
 		pk := AsString(pkArg)
 		for _, cs := range AsList(colspecArg) {
@@ -768,6 +781,20 @@ func rawToSqlArg(raw any, kind, col string) (any, error) {
 			return b, nil
 		}
 		return refuse()
+	case "decimal":
+		// The canonical text on both drivers (pgx sends a string as text,
+		// PostgreSQL reads it into NUMERIC; SQLite keeps it in a TEXT
+		// column). A Float is not exact, and a Money object here is a
+		// Codec.moneyIn value in another currency: both are refused.
+		if _, isObj := jsonObjectMap(raw); isObj {
+			return nil, fmt.Errorf("column %q is a decimal, and the codec encoded %s: a Money in another currency than the column's Codec.moneyIn is never written as this column's",
+				col, codecShortJSON(raw))
+		}
+		d, err := decimalFromJSONRaw(raw)
+		if err != nil {
+			return nil, fmt.Errorf("column %q is a decimal: %v", col, err)
+		}
+		return decimalCanonical(d), nil
 	default: // text
 		if s, ok := raw.(string); ok {
 			return s, nil
@@ -1140,6 +1167,18 @@ func rowValToJsonRaw(raw any, present bool, kind, col string) (any, error) {
 		if json.Unmarshal([]byte(s), &v) == nil {
 			return v, nil
 		}
+	case "decimal":
+		// PostgreSQL NUMERIC text ("12.30"), the canonical text Sky writes
+		// on SQLite ("12.3"), and the JSON spelling a v0.23-v0.29.1
+		// Codec.auto blob column holds ("\"12.3\""), all as the canonical
+		// JSON string a Decimal decoder reads.
+		t := s
+		if len(t) >= 2 && t[0] == '"' && t[len(t)-1] == '"' {
+			t = t[1 : len(t)-1]
+		}
+		if d, err := decimalParseStrict(t); err == nil {
+			return decimalCanonical(d), nil
+		}
 	default: // text
 		return s, nil
 	}
@@ -1158,6 +1197,8 @@ func codecKindNoun(kind string) string {
 		return "a Bool"
 	case "blob":
 		return "JSON"
+	case "decimal":
+		return "a Decimal"
 	}
 	return "text"
 }
@@ -1534,5 +1575,45 @@ func Db_writeReturningObjects(connArg, sqlArg, paramsArg, groupsArg any) any {
 			return r
 		}
 		return AnyTaskRun(Db_queryObjectGroups(connArg, sqlArg, paramsArg, groupsArg))
+	}
+}
+
+// codecNarrowIntNotices names each Int (codec kind `int`) column of `table`
+// that PostgreSQL holds as a 4-byte `integer` (or `smallint`). Before v0.29.2
+// Schema.createSchema made `Schema.int` an INTEGER, while Store.pushProject
+// (Schema.toProject) and Store.migrate make BIGINT. The column is a match
+// (migrate never alters a column), but a Sky Int above 2,147,483,647 fails
+// there with "integer out of range", so the notice gives the statement that
+// widens it. `types` is codecTableColumnTypes.
+func codecNarrowIntNotices(table string, colspecArg any, types map[string]string) []string {
+	var out []string
+	cols, _ := codecSplitExternal(colspecArg)
+	for _, cs := range AsList(cols) {
+		t := AsTuple2(cs)
+		name := AsString(t.V0)
+		base, _ := codecSplitKind(AsString(t.V1))
+		if base != "int" || !codecValidIdent(name) {
+			continue
+		}
+		typ := strings.ToLower(types[strings.ToLower(name)])
+		if typ != "integer" && typ != "smallint" {
+			continue
+		}
+		out = append(out, fmt.Sprintf(
+			"Std.Db.Store: column %s.%s is %s on PostgreSQL and holds only 32-bit values (at most 2147483647), "+
+				"while a Sky Int is 64-bit and a new column is BIGINT; a larger value fails with \"integer out of range\". "+
+				"It is not changed. To widen it: ALTER TABLE %s ALTER COLUMN %s TYPE BIGINT",
+			table, name, strings.ToUpper(typ), table, name))
+	}
+	return out
+}
+
+// codecNoticeSeen keeps each one-time Store notice logged once per process.
+var codecNoticeSeen sync.Map
+
+// codecWarnOnce logs a Store notice at WARN level the first time it is seen.
+func codecWarnOnce(msg string) {
+	if _, seen := codecNoticeSeen.LoadOrStore(msg, true); !seen {
+		rtWarn(msg)
 	}
 }

@@ -48,6 +48,10 @@ module Std.Codec exposing
     , int
     , float
     , bool
+    , decimal
+    , moneyIn
+    , moneyObject
+    , isoCurrency
     , maybe
     , list
     , result
@@ -79,14 +83,19 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Xml as Xml exposing (Node)
 import Std.Xml.Encode as XE
+import Std.Decimal as Dec exposing (Decimal)
+import Std.Money as Mon exposing (Money(..), Currency)
 
--- | The column type a codec maps to on the DB side.
+-- | The column type a codec maps to on the DB side. `CDecimal` (v0.29.2) is
+-- an exact decimal column: `NUMERIC` on PostgreSQL, `TEXT` holding the
+-- canonical decimal on SQLite (see `decimal`).
 type ColType
     = CText
     | CInt
     | CReal
     | CBool
     | CBlob
+    | CDecimal
     | CNull ColType
 
 -- | The structural shape of a codec — a record maps to columns, a scalar to one
@@ -137,6 +146,7 @@ type SchemaNode
     | SnUnion (List ( String, List SchemaNode ))
     | SnResult SchemaNode SchemaNode
     | SnDict SchemaNode SchemaNode
+    | SnDecimal
 
 
 -- ── Introspection / run ──────────────────────────────────────────────────────
@@ -219,6 +229,22 @@ renderSchema node =
 
         SnDict _ _ ->
             { schema = E.object [], exact = False }
+
+        SnDecimal ->
+            { schema =
+                E.object
+                    [ ( "type", E.string "string" )
+                    , ( "pattern", E.string decimalPattern )
+                    ]
+            , exact = True
+            }
+
+
+-- The text a `decimal` reads: digits with an optional `-` and one `.`, no
+-- exponent (at most 1000 characters).
+decimalPattern : String
+decimalPattern =
+    "^-?[0-9]+(\\.[0-9]+)?$"
 
 
 -- A closed object: every field required, no other key. The lists are
@@ -627,6 +653,194 @@ bool =
         , shp = SScalar CBool
         , sch = SnType "boolean"
         , zro = \_ -> Just (E.bool False)
+        , fzr = \_ -> []
+        , fck = \_ -> []
+        }
+
+
+-- | Codec for a `Std.Decimal` (v0.29.2, opt-in) — an exact decimal column.
+--
+-- JSON: the canonical string, `"12.5"` (trailing zeros are dropped, so
+-- `"12.50"` reads back as `"12.5"`). It reads a string or an exact JSON
+-- number under the grammar `-?[0-9]+(\.[0-9]+)?`, at most 1000 characters:
+-- an exponent (`"1e3"`), `NaN`, `Infinity`, an empty string and a Float built
+-- with `Json.Encode.float` (not exact) are an `Err`.
+--
+-- Database: a `CDecimal` column, `NUMERIC` on PostgreSQL and `TEXT` holding
+-- the canonical text on SQLite, where `Std.Db.Store` orders, compares and
+-- sums it exactly (`COLLATE sky_decimal`, `sky_decimal_sum`). Use it through
+-- `autoWith`: `Codec.autoWith [ ( "price", Codec.decimal ) ] blank`. A
+-- `Codec.auto` Decimal field keeps its JSON-text column in v0.29.
+decimal : Codec Decimal
+decimal =
+    Codec
+        { enc = \d -> E.string (Dec.toString d)
+        , dec = decimalDecoder
+        , shp = SScalar CDecimal
+        , sch = SnDecimal
+        , zro = \_ -> Just (E.string "0")
+        , fzr = \_ -> []
+        , fck = \_ -> []
+        }
+
+
+decimalFromJsonK : Value -> Result Error Decimal
+decimalFromJsonK v =
+    Ffi.callPure "Codec_decimalFromJson" [ v ]
+
+
+moneyFromJsonK : Value -> Result Error Money
+moneyFromJsonK v =
+    Ffi.callPure "Codec_moneyFromJson" [ v ]
+
+
+currencyCodeK : String -> Result Error String
+currencyCodeK s =
+    Ffi.callPure "Codec_currencyCode" [ s ]
+
+
+decimalDecoder : Decoder Decimal
+decimalDecoder =
+    D.value
+        |> D.andThen
+               (\v ->
+                   case decimalFromJsonK v of
+
+                       Ok d ->
+                           D.succeed d
+
+                       Err e ->
+                           D.fail (Error.toString e))
+
+
+-- | Codec for a `Money` in ONE currency (v0.29.2, opt-in): a decimal column
+-- that holds the amount, with the currency fixed by the codec.
+--
+-- JSON: the amount as a decimal string, `"12.34"`. It also reads the Money
+-- object `{"amount": "12.34", "currency": "GBP"}` when its currency is this
+-- one. A Money in another currency is never converted, dropped or relabelled:
+-- it encodes as the object, a `Std.Db.Store` write refuses it before the
+-- statement, and decoding it with this codec is an `Err`.
+--
+-- Database: a `CDecimal` column (see `decimal`), so a Store sums, orders and
+-- compares it: `Codec.autoWith [ ( "price", Codec.moneyIn GBP ) ] blank`.
+moneyIn : Currency -> Codec Money
+moneyIn cur =
+    let
+        code = Mon.currencyCode cur
+    in
+        Codec
+            { enc =
+                \m ->
+                    if Mon.currencyCode (Mon.currency m) == code then
+                        E.string (Dec.toString (Mon.amount m))
+
+                    else
+                        moneyObjectValue m
+            , dec = moneyInDecoder cur code
+            , shp = SScalar CDecimal
+            , sch = SnDecimal
+            , zro = \_ -> Just (E.string "0")
+            , fzr = \_ -> []
+            , fck = \_ -> []
+            }
+
+
+moneyInDecoder : Currency -> String -> Decoder Money
+moneyInDecoder cur code =
+    D.value
+        |> D.andThen
+               (\v ->
+                   case D.decodeValue (D.field "currency" D.value) v of
+
+                       Ok _ ->
+                           case moneyFromJsonK v of
+
+                               Ok m ->
+                                   if Mon.currencyCode (Mon.currency m) == code then
+                                       D.succeed m
+
+                                   else
+                                       D.fail
+                                           ("Codec.moneyIn: the value is "
+                                               ++ Mon.currencyCode
+                                                      (Mon.currency m)
+                                               ++ ", and this codec holds "
+                                               ++ code)
+
+                               Err e ->
+                                   D.fail (Error.toString e)
+
+                       Err _ ->
+                           case decimalFromJsonK v of
+
+                               Ok d ->
+                                   D.succeed (Money d cur)
+
+                               Err e ->
+                                   D.fail (Error.toString e))
+
+
+moneyObjectValue : Money -> Value
+moneyObjectValue m =
+    E.object
+        [ ( "amount", E.string (Dec.toString (Mon.amount m)) )
+        , ( "currency", E.string (Mon.currencyCode (Mon.currency m)) )
+        ]
+
+
+-- | Codec for a `Money` in any currency (v0.29.2): the JSON object
+-- `{"amount": "12.34", "currency": "GBP"}`, the same JSON `Codec.auto`
+-- writes for a Money field, in a JSON (blob) column. Both keys are required;
+-- the currency is read in upper case (`"gbp"` is `GBP`) and the amount is a
+-- strict decimal (see `decimal`). The column cannot be summed or ordered: for
+-- that, store one currency with `moneyIn`.
+moneyObject : Codec Money
+moneyObject =
+    Codec
+        { enc = moneyObjectValue
+        , dec =
+            D.value
+                |> D.andThen
+                       (\v ->
+                           case moneyFromJsonK v of
+
+                               Ok m ->
+                                   D.succeed m
+
+                               Err e ->
+                                   D.fail (Error.toString e))
+        , shp = SBlob
+        , sch =
+            SnObject
+                [ ( "amount", SnDecimal ), ( "currency", SnType "string" ) ]
+        , zro = \_ -> Nothing
+        , fzr = \_ -> []
+        , fck = \_ -> []
+        }
+
+
+-- | Codec for a `Currency` (v0.29.2): its ISO code as a JSON string,
+-- `"GBP"`, in a text column. It reads a code of 3 to 10 letters or digits in
+-- any case (`"gbp"` is `GBP`); a code Sky does not name is `CurrencyRaw`.
+isoCurrency : Codec Currency
+isoCurrency =
+    Codec
+        { enc = \c -> E.string (Mon.currencyCode c)
+        , dec =
+            D.string
+                |> D.andThen
+                       (\s ->
+                           case currencyCodeK s of
+
+                               Ok code ->
+                                   D.succeed (Mon.parseCurrency code)
+
+                               Err e ->
+                                   D.fail (Error.toString e))
+        , shp = SScalar CText
+        , sch = SnType "string"
+        , zro = \_ -> Nothing
         , fzr = \_ -> []
         , fck = \_ -> []
         }
@@ -1320,6 +1534,9 @@ colTypeKind ct =
         CBlob ->
             "blob"
 
+        CDecimal ->
+            "decimal"
+
         CNull inner ->
             colTypeKind inner ++ "?"
 
@@ -1373,6 +1590,9 @@ kindToColType k =
 
             "bool" ->
                 CBool
+
+            "decimal" ->
+                CDecimal
 
             _ ->
                 CBlob
@@ -1721,6 +1941,9 @@ xmlElem name sch v =
         SnType _ ->
             XE.element name [] [ XE.text (scalarText v) ]
 
+        SnDecimal ->
+            XE.element name [] [ XE.text (scalarText v) ]
+
         SnEnum _ ->
             XE.element name [] [ XE.text (scalarText v) ]
 
@@ -1960,6 +2183,9 @@ xmlRead path sch n =
         SnType t ->
             xmlScalar path t (Xml.text n)
 
+        SnDecimal ->
+            Ok (E.string (String.trim (Xml.text n)))
+
         SnEnum _ ->
             Ok (E.string (String.trim (Xml.text n)))
 
@@ -2078,6 +2304,9 @@ xmlFromAttribute path sch raw =
 
         SnType t ->
             xmlScalar path t raw
+
+        SnDecimal ->
+            Ok (E.string (String.trim raw))
 
         SnEnum _ ->
             Ok (E.string (String.trim raw))
