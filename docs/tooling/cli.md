@@ -940,7 +940,11 @@ one `test` line per case and a summary with the case counts (see
 `.env.test` file runs in **test mode**: outbound HTTP is mocked from
 `tests/mocks/` fixtures (unmatched requests fail closed), a `[database]` project
 gets an ephemeral offline database, and `SKY_TEST_SEED` / `SKY_TEST_CLOCK_MS`
-make effects deterministic. The mock fixture shape and the multi-outcome patterns
+make effects deterministic. `sky test` never takes a database from `.env`: a
+DSN for the tests comes from `.env.test` or the environment. A project whose
+`.env` names one runs in test mode even without a `.env.test`, on the throwaway
+database, and the run prints one line that names the ignored DSN. Test mode
+never loads `.env` at all. The mock fixture shape and the multi-outcome patterns
 are in [`testing.md`](testing.md#test-mode-offline-effects-and-mock-by-default).
 
 `sky test --scaffold-mocks` writes mock-fixture skeletons for the app's outbound

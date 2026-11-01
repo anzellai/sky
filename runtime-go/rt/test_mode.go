@@ -46,10 +46,15 @@ var (
 	testRng      *mrand.Rand
 )
 
+// testModeValueOn reports whether a SKY_TEST_MODE value turns test mode on:
+// any value but "", "0" and "false".
+func testModeValueOn(v string) bool {
+	return v != "" && v != "0" && v != "false"
+}
+
 func initTestMode() {
 	testModeOnce.Do(func() {
-		v := os.Getenv("SKY_TEST_MODE")
-		if v == "" || v == "0" || v == "false" {
+		if !testModeValueOn(os.Getenv("SKY_TEST_MODE")) {
 			return
 		}
 		testModeOn = true

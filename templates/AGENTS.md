@@ -226,6 +226,11 @@ a text column takes `SqlString`, an int `SqlInt`, a real `SqlFloat` or
 reads, `SqlNull` only a `Maybe` field (compare NULL with `isNull`). A
 `SqlString` compared with an int column is read as an Int. Anything else is an
 `Err` before the statement, the same on SQLite and PostgreSQL.
+A time column read as text (a `String` field, `Db.getField`, no `::text` in
+the SQL) is PostgreSQL's own text on a UTC server, on every host
+(v0.29.1): `timestamptz` as `2026-11-01 02:13:48.987333+00`, `timestamp`
+without the offset, `date` as `2026-11-01`. SQLite gives the same shapes. The
+text writes back unchanged as a parameter.
 
 **Aggregates and projections** are builders: `groupBy` + `aggregate` with
 `key` / `countAs` / `countIfAs` / `sumAs` / `minAs` / `maxAs` (+ `having`),
@@ -385,7 +390,10 @@ Every observable side effect returns `Task Error a` (`File.*`, `Http.*`, `Db.*`,
 `Maybe a` (`String.toInt`, JSON decoders). A discarded `let _ = TaskExpr` is
 auto-forced. Bridge with `Task.fromResult` / `Task.andThenResult` /
 `Task.onError`. Top-level `apiKey = System.getenv "K" |> Task.run |> Result.withDefault ""`
-still needs the explicit `Task.run`.
+still needs the explicit `Task.run`. Every `File.*` failure has its kind
+(v0.29.1): a missing path is `NotFound`, a refused one `PermissionDenied`, a
+path that already exists `Conflict`, anything else `Io`. Match the kind, never
+`Ffi`.
 
 **Go FFI (`sky add`) is the one exception, on purpose: it returns `Result
 Error a`, not a Task.** The Go call runs where the expression is evaluated, and
@@ -737,7 +745,10 @@ non-zero on any failure.
 **Test mode and mocks (offline scenario tests).** A project with a `.env.test`
 file runs `sky test` in test mode: outbound HTTP is mocked, a `[database]`
 project gets an ephemeral offline database, and `SKY_TEST_SEED` /
-`SKY_TEST_CLOCK_MS` make effects deterministic. A mock is one JSON file under
+`SKY_TEST_CLOCK_MS` make effects deterministic. `sky test` never takes a
+database from `.env`, and test mode never loads `.env` (v0.29.1): put a test
+DSN or setting in `.env.test`. A project whose `.env` names a database runs in
+test mode even without a `.env.test`, on the throwaway database. A mock is one JSON file under
 `tests/mocks/`; an unmatched outbound request fails closed (so the app's error
 path runs for free). The shape:
 

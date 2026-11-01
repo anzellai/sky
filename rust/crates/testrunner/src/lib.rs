@@ -259,9 +259,25 @@ pub fn run_test_with(
         // `.env.test.local` (override) into the child env. `.env.test` is the
         // committed non-secret config + mock toggles; `.env.test.local` the
         // gitignored sandbox creds for the opt-in contract-drift tier. A project
-        // with no `.env.test` runs exactly as before. The runtime's default mocks
-        // dir (`tests/mocks/`, cwd-relative) resolves because cwd is the project.
-        if project_dir.join(".env.test").is_file() {
+        // with no `.env.test` runs exactly as before, unless its `.env` names a
+        // database (below). The runtime's default mocks dir (`tests/mocks/`,
+        // cwd-relative) resolves because cwd is the project.
+        // A `.env` DSN is never used: the runtime does not load `.env` in
+        // test mode. A project whose `.env` names one runs in test mode even
+        // without a `.env.test`, unless the environment sets that name, so
+        // its tests get the throwaway database instead of the one `.env`
+        // names (v0.29.1).
+        let ignored_dsn = dot_env_dsn(&project_dir);
+        if let Some(name) = &ignored_dsn {
+            eprintln!(
+                "sky test: ignoring {name} in .env (sky test never takes a database from \
+                 .env). Put a test DSN in .env.test."
+            );
+        }
+        let dot_env_reaches_app = ignored_dsn
+            .as_deref()
+            .is_some_and(|name| std::env::var_os(name).is_none());
+        if project_dir.join(".env.test").is_file() || dot_env_reaches_app {
             // A per-run log-capture file so a scenario can assert on what the app
             // logged (read it back with File.read on the same env var). Removed
             // with the scratch dir at the end of the run.
@@ -309,13 +325,14 @@ pub fn run_test_with(
 /// rejectTempDataDir); a prod --embed app is unaffected.
 ///
 /// What counts as a given DSN, for a Postgres app: `DATABASE_URL` or
-/// `<PREFIX>_DB_PATH` as the app will see it (`.env.test` / `.env.test.local`,
-/// else the environment, else the project's `.env`, which the runtime loads
-/// without overriding), or a sky.toml `[database] path` / `url`, which is
-/// compiled into the app. An explicit DSN wins, as it does for `sky run`: the
-/// runtime refuses an embedded cluster beside one, so starting the cluster
-/// anyway meant no test ran. A blank value is no DSN (`DATABASE_URL=` in
-/// `.env.test` asks for the throwaway cluster).
+/// `<PREFIX>_DB_PATH` from `.env.test` / `.env.test.local`, else the
+/// environment, or a sky.toml `[database] path` / `url`, which is compiled
+/// into the app. An explicit DSN wins, as it does for `sky run`: the runtime
+/// refuses an embedded cluster beside one. A blank value is no DSN
+/// (`DATABASE_URL=` in `.env.test` asks for the throwaway cluster). The
+/// project's `.env` is NEVER a source (v0.29.1): the runtime does not load it
+/// in test mode, because a `.env` that names a shared or production database
+/// made the tests and their seeds write to it ([`dot_env_dsn`]).
 pub fn test_mode_env(project_dir: &Path, scratch: Option<&Path>) -> Vec<(String, String)> {
     test_mode_env_with(project_dir, scratch, &|k| std::env::var(k).ok())
 }
@@ -335,28 +352,17 @@ fn test_mode_env_with(
     let Some(scratch) = scratch else {
         return out;
     };
-    let dot_env: Vec<(String, String)> = std::fs::read_to_string(project_dir.join(".env"))
-        .map(|c| parse_dotenv(&c))
-        .unwrap_or_default();
-    // The value the app will see, and where it comes from. `.env` is read
-    // only when `with_dot_env`: a SQLite app's path is redirected whatever
-    // `.env` says, as before.
-    let effective = |name: &str, with_dot_env: bool| -> Option<(String, &'static str)> {
+    // The value the app will see, and where it comes from. The project's
+    // `.env` is never a source: the runtime does not load it in test mode
+    // (`loadStartupDotEnv`), so a DSN in it can never reach the tests.
+    let effective = |name: &str| -> Option<(String, &'static str)> {
         if let Some((_, v)) = out.iter().rev().find(|(k, _)| k == name) {
             return Some((v.clone(), ".env.test"));
         }
-        if let Some(v) = getenv(name) {
-            return Some((v, "the environment"));
-        }
-        if with_dot_env {
-            if let Some((_, v)) = dot_env.iter().rev().find(|(k, _)| k == name) {
-                return Some((v.clone(), ".env"));
-            }
-        }
-        None
+        getenv(name).map(|v| (v, "the environment"))
     };
-    let given = |name: &str, with_dot_env: bool| -> Option<&'static str> {
-        effective(name, with_dot_env)
+    let given = |name: &str| -> Option<&'static str> {
+        effective(name)
             .filter(|(v, _)| dsn_is_given(Some(v)))
             .map(|(_, from)| from)
     };
@@ -373,7 +379,7 @@ fn test_mode_env_with(
             // counts.
             let explicit = [db_path.as_str(), "DATABASE_URL"]
                 .into_iter()
-                .find_map(|n| given(n, true).map(|from| format!("{n} from {from}")))
+                .find_map(|n| given(n).map(|from| format!("{n} from {from}")))
                 .or_else(|| {
                     ["path", "url"].into_iter().find_map(|k| {
                         project::sky_toml_section_key(project_dir, "database", k)
@@ -398,7 +404,7 @@ fn test_mode_env_with(
             }
         }
         project::OfflineDbPlan::Sqlite { db_path_env } => {
-            if given("DATABASE_URL", false).is_none() {
+            if given("DATABASE_URL").is_none() {
                 out.push((
                     db_path_env.to_string(),
                     scratch.join("test.db").to_string_lossy().into_owned(),
@@ -406,6 +412,65 @@ fn test_mode_env_with(
             }
         }
         project::OfflineDbPlan::None => {}
+    }
+    out
+}
+
+/// The name of the DSN the project's `.env` sets (`<PREFIX>_DB_PATH`, then
+/// `DATABASE_URL`, a non-blank value), when the project has a database. `sky
+/// test` never uses it (the runtime does not load `.env` in test mode), and
+/// says so in one line. A project with such a `.env` runs `sky test` in test
+/// mode even without a `.env.test`, so its tests get the throwaway database
+/// and never reach the database `.env` names.
+pub fn dot_env_dsn(project_dir: &Path) -> Option<String> {
+    let db_path = match project::offline_db_plan(project_dir) {
+        project::OfflineDbPlan::None => return None,
+        project::OfflineDbPlan::Sqlite { db_path_env } => db_path_env,
+        project::OfflineDbPlan::Postgres => {
+            let prefix = project::sky_toml_section_key(project_dir, "env", "prefix")
+                .map(|p| p.trim().trim_end_matches('_').to_string())
+                .filter(|p| !p.is_empty())
+                .unwrap_or_else(|| "SKY".to_string());
+            format!("{prefix}_DB_PATH")
+        }
+    };
+    let dot_env = parse_dotenv(&std::fs::read_to_string(project_dir.join(".env")).ok()?);
+    let found = [db_path.as_str(), "DATABASE_URL"]
+        .into_iter()
+        .find(|name| {
+            // The runtime's loader keeps the first value of a repeated key.
+            dot_env
+                .iter()
+                .find(|(k, _)| k == name)
+                .is_some_and(|(_, v)| dsn_is_given(Some(v)))
+        })
+        .map(str::to_string);
+    found
+}
+
+/// The project's `.env` entries for a test-mode run that keeps the project's
+/// own configuration (`sky ai <verb> --test-mode`): every key that neither
+/// the environment nor `set` (the test-mode environment) already has. The
+/// runtime does not load `.env` in test mode, so the runner passes it, with
+/// the precedence the runtime's own load gave it (the environment and
+/// `.env.test` win).
+pub fn dot_env_fallback(
+    project_dir: &Path,
+    set: &[(String, String)],
+    getenv: &dyn Fn(&str) -> Option<String>,
+) -> Vec<(String, String)> {
+    let Ok(contents) = std::fs::read_to_string(project_dir.join(".env")) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (k, v) in parse_dotenv(&contents) {
+        if getenv(&k).is_some() || set.iter().any(|(s, _)| *s == k) {
+            continue;
+        }
+        // The runtime's loader keeps the first value of a repeated key.
+        if !out.iter().any(|(o, _)| *o == k) {
+            out.push((k, v));
+        }
     }
     out
 }
@@ -488,12 +553,13 @@ mod tests {
         assert!(dsn_is_given(Some("postgres://u@h/db")));
     }
 
-    /// A Postgres project with a DSN in its `.env` (which the runtime loads) or
-    /// in `<PREFIX>_DB_PATH` runs its tests against that database. `sky test`
-    /// used to start the throwaway cluster anyway, and the runtime then
-    /// refused `SKY_EMBED_POSTGRES` beside the DSN, so no test ran.
+    /// `sky test` never takes a DSN from the project's `.env` (v0.29.1): a
+    /// `.env` that names a shared or production database made the tests and
+    /// their seeds write to it. A DSN in `.env.test` or the environment, or
+    /// a sky.toml `[database] path` / `url`, runs the tests against that
+    /// database. Without one the run gets the throwaway cluster.
     #[test]
-    fn a_dsn_in_dot_env_or_db_path_wins_over_the_throwaway_cluster() {
+    fn a_dot_env_dsn_is_ignored_and_other_dsns_win() {
         let dir = std::env::temp_dir().join(format!(
             "sky-testrunner-dotenv-dsn-{}-{}",
             std::process::id(),
@@ -515,30 +581,41 @@ mod tests {
 
         // No DSN anywhere: the throwaway cluster.
         assert!(embeds(&test_mode_env_with(&dir, Some(&scratch), &none)));
+        assert_eq!(dot_env_dsn(&dir), None);
 
-        // A DSN in `.env`: it wins, no cluster.
+        // A DSN in `.env` is ignored: still the throwaway cluster.
         std::fs::write(
             dir.join(".env"),
             "DATABASE_URL=postgres://u@127.0.0.1:1/db\n",
         )
         .unwrap();
+        assert!(embeds(&test_mode_env_with(&dir, Some(&scratch), &none)));
+        assert_eq!(dot_env_dsn(&dir).as_deref(), Some("DATABASE_URL"));
+        // A DSN in `.env.test` wins.
+        std::fs::write(
+            dir.join(".env.test"),
+            "DATABASE_URL=postgres://u@127.0.0.1:2/test\n",
+        )
+        .unwrap();
         assert!(!embeds(&test_mode_env_with(&dir, Some(&scratch), &none)));
-        // `.env.test` clearing it (`DATABASE_URL=`) asks for the cluster again.
+        // `.env.test` clearing it (`DATABASE_URL=`) asks for the cluster.
         std::fs::write(dir.join(".env.test"), "DATABASE_URL=\n").unwrap();
         assert!(embeds(&test_mode_env_with(&dir, Some(&scratch), &none)));
-        // So does an empty value in the environment, which the runtime keeps
-        // over `.env`.
+        // A DSN in the environment wins, an empty one is no DSN.
         std::fs::write(dir.join(".env.test"), "SKY_TEST_SEED=1\n").unwrap();
+        let env_dsn = |k: &str| (k == "DATABASE_URL").then(|| "postgres://u@h/db".to_string());
+        assert!(!embeds(&test_mode_env_with(&dir, Some(&scratch), &env_dsn)));
         let blank = |k: &str| (k == "DATABASE_URL").then(String::new);
         assert!(embeds(&test_mode_env_with(&dir, Some(&scratch), &blank)));
 
-        // `<PREFIX>_DB_PATH`, in `.env` or the environment, is a DSN too.
+        // `<PREFIX>_DB_PATH` in `.env` is ignored too, and named.
         std::fs::write(
             dir.join(".env"),
             "SKY_DB_PATH=postgres://u@127.0.0.1:1/db\n",
         )
         .unwrap();
-        assert!(!embeds(&test_mode_env_with(&dir, Some(&scratch), &none)));
+        assert!(embeds(&test_mode_env_with(&dir, Some(&scratch), &none)));
+        assert_eq!(dot_env_dsn(&dir).as_deref(), Some("SKY_DB_PATH"));
         std::fs::remove_file(dir.join(".env")).unwrap();
         std::fs::write(
             dir.join("sky.toml"),

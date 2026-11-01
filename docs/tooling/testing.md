@@ -174,14 +174,18 @@ A scenario test needs the app's effects to run without a live world — no real
 network, no shared database, a fixed clock. Sky owns its effect boundary, so it
 supplies that world itself. Test mode is **opt-in per project**: a project that
 has a `.env.test` file runs `sky test` in test mode; a project without one runs
-exactly as before.
+exactly as before, unless its `.env` names a database (see
+[Ephemeral database](#ephemeral-database)).
 
 In test mode the runner:
 
 - sets `SKY_TEST_MODE=1`;
 - loads `.env.test`, then `.env.test.local` (override) into the app's
   environment. `.env.test` is the committed, non-secret config and mock toggles;
-  `.env.test.local` is gitignored, for sandbox credentials.
+  `.env.test.local` is gitignored, for sandbox credentials;
+- never loads the project's `.env`. The runtime skips it when `SKY_TEST_MODE`
+  is set, so a developer's own settings, and a database they name, never
+  reach a test. Put what a test needs in `.env.test`.
 
 ### Mock-by-default outbound HTTP
 
@@ -261,16 +265,24 @@ A project that declares a `[database]` but is given no DSN gets an offline
 database for the run, thrown away at the end. The engine decides how: a
 **Postgres** app gets a throwaway embedded cluster; a **SQLite** app has its path
 redirected to a scratch file (it is already offline). So a scenario needs no live
-database. A DSN the app would read opts back out, and the test then targets that
-database. For a Postgres app that is `DATABASE_URL` or `<PREFIX>_DB_PATH` from
-`.env.test` / `.env.test.local`, the environment or the project's `.env` (the
-first that sets it wins), or a sky.toml `[database] path` / `url`. The run
-prints one line that names the source (never the value). An explicit DSN wins
-as it does for `sky run`, because the runtime refuses an embedded cluster
-beside one. For a SQLite app only `DATABASE_URL` from `.env.test` or the
+database. A DSN given for the tests opts back out, and the test then targets
+that database. For a Postgres app that is `DATABASE_URL` or `<PREFIX>_DB_PATH`
+from `.env.test` / `.env.test.local` or the environment (the first that sets it
+wins), or a sky.toml `[database] path` / `url`, which is compiled into the app.
+The run prints one line that names the source (never the value). An explicit
+DSN wins as it does for `sky run`, because the runtime refuses an embedded
+cluster beside one. For a SQLite app only `DATABASE_URL` from `.env.test` or the
 environment opts out. An empty value (`DATABASE_URL=`, the usual way to clear
 one in CI or in `.env.test`) is no DSN: the run still gets its throwaway
 database.
+
+**`sky test` never takes a database from `.env`.** A `.env` often names a
+shared or a production database, and a test and its seeds would write to it.
+So a DSN in `.env` is never used: the run prints one line that names it and
+points at `.env.test` for a test DSN. A project whose `.env` names a database
+runs `sky test` in test mode even without a `.env.test` (unless the environment
+sets that name), so its tests get the throwaway database. `sky fuzz` does the
+same.
 
 ### Training runs (`Std.Ai.Train`)
 
@@ -360,8 +372,8 @@ downloaded. An eval suite is then an ordinary test:
 `Pipeline.evalSuite Ai.pipeline "support" |> Task.run |> Test.ok`
 ([`../ai/pipeline.md`](../ai/pipeline.md)).
 
-The project-mode `sky ai` verbs take `--test-mode`: they load `.env.test` and
-answer model calls from the same fixtures, so CI can run `sky ai eval <suite>
+The project-mode `sky ai` verbs take `--test-mode`: they load `.env.test` (and
+the project's `.env` under it) and answer model calls from the same fixtures, so CI can run `sky ai eval <suite>
 --test-mode` and `sky ai data freeze <dataset> --test-mode` with no engine.
 Unlike `sky test`, a `sky ai` verb keeps the project's own database (it acts on
 the project's data), unless `--db` names another.

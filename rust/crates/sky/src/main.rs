@@ -4742,6 +4742,14 @@ fn build_and_run_fuzz_harness(
     cmd.env("SKY_TEST_MODE", "1");
     cmd.env("SKY_TEST_SEED", seed.to_string());
     cmd.env("SKY_TEST_CLOCK_MS", "1704067200000");
+    // The runtime does not load `.env` in test mode, so a DSN there never
+    // reaches the run.
+    if let Some(name) = testrunner::dot_env_dsn(app_project_dir) {
+        eprintln!(
+            "sky fuzz: ignoring {name} in .env (sky fuzz never takes a database from \
+             .env). The run uses a throwaway database."
+        );
+    }
     // An empty DATABASE_URL is no DSN (testrunner::dsn_is_given).
     if !testrunner::dsn_is_given(std::env::var("DATABASE_URL").ok().as_deref()) {
         match project::offline_db_plan(app_project_dir) {
@@ -4749,15 +4757,13 @@ fn build_and_run_fuzz_harness(
                 cmd.env("SKY_EMBED_POSTGRES", "1");
                 cmd.env("SKY_DATA_DIR", harness_dir.join("pgdata"));
                 // Offline fuzz means "ignore any configured external DB, use an
-                // ephemeral one". A Postgres app often carries its DSN in a
-                // `.env` (DATABASE_URL=...), which the runtime auto-loads — and
-                // an embedded cluster PLUS a DSN is a refused conflict. Setting
-                // DATABASE_URL to empty here suppresses the `.env` value (dotenv
-                // loads with override=false, so an already-set var wins) and the
-                // conflict check skips an empty value, so embed provisions its
-                // own cluster and injects its own DSN.
+                // ephemeral one". The runtime does not load `.env` in test
+                // mode, and an embedded cluster PLUS a DSN is a refused
+                // conflict, so a `<PREFIX>_DB_PATH` (or a blank DATABASE_URL)
+                // in the environment is cleared here. The conflict check skips
+                // an empty value, so embed provisions its own cluster and
+                // injects its own DSN.
                 cmd.env("DATABASE_URL", "");
-                // The same for a `<PREFIX>_DB_PATH` in `.env`: it is a DSN too.
                 cmd.env(db_cluster::dsn_env_name(app_project_dir), "");
             }
             project::OfflineDbPlan::Sqlite { db_path_env } => {
@@ -13913,8 +13919,12 @@ fn run_ai_binary(bin: &Path, args: &[String], cwd: &Path, test_project: Option<&
     cmd.args(args).current_dir(cwd);
     if let Some(project_dir) = test_project {
         // Test mode answers the model calls from tests/mocks/; the verb still
-        // acts on the project's own database (no scratch database).
-        for (k, v) in testrunner::test_mode_env(project_dir, None) {
+        // acts on the project's own database (no scratch database). The
+        // runtime does not load `.env` in test mode, so the project's `.env`
+        // is passed here, under `.env.test` and the environment.
+        let env = testrunner::test_mode_env(project_dir, None);
+        let fallback = testrunner::dot_env_fallback(project_dir, &env, &|k| std::env::var(k).ok());
+        for (k, v) in env.into_iter().chain(fallback) {
             cmd.env(k, v);
         }
     }

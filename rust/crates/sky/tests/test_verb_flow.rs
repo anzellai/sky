@@ -872,58 +872,134 @@ fn a_parse_error_is_reported_in_its_own_file_for_every_module_kind() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// A Postgres project in test mode (it commits a `.env.test`) whose `.env`
-/// names a DSN runs its tests. `sky test` used to start the throwaway
-/// embedded cluster (`SKY_EMBED_POSTGRES`) anyway, the runtime loaded the
-/// `.env` DSN beside it and refused the pair ("Sky will not choose between
-/// them"), and no test ran. An explicit DSN wins, as it does for `sky run`,
-/// and the run says so.
-#[test]
-fn a_dot_env_dsn_wins_over_the_throwaway_cluster() {
-    if !required(Need::Go, have_go()) {
-        return;
-    }
-    let (dir, suite) = project("dotenvdsn", "tests/FooTest.sky", "FooTest");
+/// The DSN in the `.env` of the projects below. Nothing listens on port 1, so
+/// a run that took it would fail to connect.
+const DOT_ENV_DSN: &str = "postgres://nobody@127.0.0.1:1/none?sslmode=disable";
+
+/// A Postgres project whose suite checks the DSN it was given: `want` is a
+/// Sky expression over `dsn` (the `DATABASE_URL` the suite sees) and `embed`
+/// (`SKY_EMBED_POSTGRES`). Its `.env` names [`DOT_ENV_DSN`].
+fn dsn_project(tag: &str, want: &str) -> (PathBuf, PathBuf) {
+    let (dir, _) = project(tag, "tests/FooTest.sky", "FooTest");
     std::fs::write(
         dir.join("sky.toml"),
         "name = \"tverb\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n\n[database]\ndriver = \"postgres\"\n",
     )
     .unwrap();
-    std::fs::write(dir.join(".env.test"), "SKY_TEST_SEED=7\n").unwrap();
+    std::fs::write(dir.join(".env"), format!("DATABASE_URL={DOT_ENV_DSN}\n")).unwrap();
+    let suite = dir.join("tests/DsnTest.sky");
     std::fs::write(
-        dir.join(".env"),
-        "DATABASE_URL=postgres://nobody@127.0.0.1:1/none?sslmode=disable\n",
+        &suite,
+        format!(
+            "module DsnTest exposing (tests)\n\n\
+             import Sky.Core.Prelude exposing (..)\n\
+             import Sky.Core.System as System\n\
+             import Sky.Test as Test exposing (Test)\n\n\n\
+             tests : List Test\n\
+             tests =\n    \
+             let\n        \
+             dsn =\n            System.getenvOr \"DATABASE_URL\" \"\"\n\n        \
+             embed =\n            System.getenvOr \"SKY_EMBED_POSTGRES\" \"\"\n    \
+             in\n    \
+             [ Test.test \"the DSN\" (\\_ -> Test.isTrue ({want}))\n    ]\n"
+        ),
     )
     .unwrap();
-    let report_path = dir.join("report.json");
-    let out = Command::new(SKY)
-        .arg("test")
-        .arg(&suite)
-        .current_dir(&dir)
-        .env("SKY_TEST_JSON", &report_path)
-        .env_remove("DATABASE_URL")
+    std::fs::remove_file(dir.join("tests/FooTest.sky")).unwrap();
+    (dir, suite)
+}
+
+fn run_dsn_test(dir: &Path, suite: &Path, env_dsn: Option<&str>) -> (Option<i32>, String) {
+    let mut cmd = Command::new(SKY);
+    cmd.arg("test")
+        .arg(suite)
+        .current_dir(dir)
         .env_remove("SKY_DB_PATH")
         .env_remove("SKY_EMBED_POSTGRES")
-        .stdin(std::process::Stdio::null())
-        .output()
-        .expect("spawn sky test");
+        .env_remove("SKY_TEST_MODE")
+        .stdin(std::process::Stdio::null());
+    match env_dsn {
+        Some(v) => cmd.env("DATABASE_URL", v),
+        None => cmd.env_remove("DATABASE_URL"),
+    };
+    let out = cmd.output().expect("spawn sky test");
     let mut log = String::from_utf8_lossy(&out.stdout).into_owned();
     log.push_str(&String::from_utf8_lossy(&out.stderr));
+    (out.status.code(), log)
+}
+
+/// `sky test` never takes a database from `.env` (v0.29.1). A project with a
+/// `.env` that names a database and no `.env.test` runs its tests on the
+/// throwaway embedded cluster. Before, the runtime loaded the `.env` DSN, so
+/// the tests and their seeds wrote to whatever database it named (a shared
+/// or a production one). The run says it ignored `.env`.
+#[test]
+fn a_dot_env_dsn_is_never_used() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let (dir, suite) = dsn_project(
+        "dotenvdsn",
+        &format!("dsn /= \"{DOT_ENV_DSN}\" && embed == \"1\""),
+    );
+    let (code, log) = run_dsn_test(&dir, &suite, None);
+    if log.contains("PostgreSQL was found to stand in for one") {
+        let _ = std::fs::remove_dir_all(&dir);
+        required(Need::Postgres, false);
+        return;
+    }
+    if live_gate::gate_if_postgres_cannot_start(&log) {
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
     assert!(
         !log.contains("will not choose between them"),
-        "sky test started an embedded cluster beside the .env DSN:\n{log}"
+        "the runtime loaded the .env DSN beside the throwaway cluster:\n{log}"
     );
     assert_eq!(
-        out.status.code(),
+        code,
         Some(0),
-        "the suite must run and pass:\n{log}"
+        "the suite must run on the throwaway cluster:\n{log}"
     );
     assert!(
-        log.contains("DATABASE_URL from .env names a database"),
-        "the run must say which DSN it uses:\n{log}"
+        log.contains("ignoring DATABASE_URL in .env") && log.contains(".env.test"),
+        "the run must say it ignored .env and name .env.test:\n{log}"
     );
-    let report: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&report_path).unwrap()).unwrap();
-    assert_eq!(report["total"].as_i64(), Some(3), "{report}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A DSN in `.env.test` or in the environment still wins over the throwaway
+/// cluster, and over the `.env` beside it.
+#[test]
+fn a_dot_env_test_or_environment_dsn_wins() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    const TEST_DSN: &str = "postgres://tester@127.0.0.1:2/test?sslmode=disable";
+    let (dir, suite) = dsn_project(
+        "dotenvtestdsn",
+        &format!("dsn == \"{TEST_DSN}\" && embed == \"\""),
+    );
+    std::fs::write(dir.join(".env.test"), format!("DATABASE_URL={TEST_DSN}\n")).unwrap();
+    let (code, log) = run_dsn_test(&dir, &suite, None);
+    assert_eq!(
+        code,
+        Some(0),
+        "the .env.test DSN must reach the suite:\n{log}"
+    );
+    assert!(
+        log.contains("DATABASE_URL from .env.test names a database"),
+        "the run must name the DSN's source:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+
+    const ENV_DSN: &str = "postgres://ci@127.0.0.1:3/ci?sslmode=disable";
+    let (dir, suite) = dsn_project("envdsn", &format!("dsn == \"{ENV_DSN}\" && embed == \"\""));
+    let (code, log) = run_dsn_test(&dir, &suite, Some(ENV_DSN));
+    assert_eq!(
+        code,
+        Some(0),
+        "the environment DSN must reach the suite:\n{log}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -157,3 +157,32 @@ func TestLoadDotEnvFile_NoOverride(t *testing.T) {
 		t.Fatalf("override leaked: got %q, want %q (process env should win)", got, shellValue)
 	}
 }
+
+// A `sky test` run (SKY_TEST_MODE) never loads `.env` (v0.29.1). A `.env` that
+// names a shared or production database made the tests and their seeds write
+// to it. A test configuration goes in `.env.test`, which the runner passes in
+// the environment. Any other run loads `.env` as before.
+func TestStartupDotEnv_SkippedInTestMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	if err := os.WriteFile(path, []byte("SKY_DOTENV_TESTMODE_PROBE=from-dotenv\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const key = "SKY_DOTENV_TESTMODE_PROBE"
+	t.Cleanup(func() { unsetEnvRaw(key) })
+
+	for _, mode := range []string{"1", "true", "yes"} {
+		unsetEnvRaw(key)
+		loadStartupDotEnv(path, func(string) string { return mode })
+		if v, ok := lookupEnvRaw(key); ok {
+			t.Fatalf("SKY_TEST_MODE=%s: .env was loaded (%s=%q)", mode, key, v)
+		}
+	}
+	for _, mode := range []string{"", "0", "false"} {
+		unsetEnvRaw(key)
+		loadStartupDotEnv(path, func(string) string { return mode })
+		if v, _ := lookupEnvRaw(key); v != "from-dotenv" {
+			t.Fatalf("SKY_TEST_MODE=%q: .env was not loaded (%s=%q)", mode, key, v)
+		}
+	}
+}

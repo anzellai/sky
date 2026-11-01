@@ -546,6 +546,12 @@ sky ai provision --device web|ios|android [--from <dir>]   # Std.Ai.Device engin
 sky doctor [--fix] | upgrade | upgrade-claude | clean
 ```
 
+**`sky test` never takes a database from `.env` (v0.29.1).** A test DSN comes
+from `.env.test` or the environment, and test mode never loads `.env`, so a
+`.env` that names a shared or production database cannot reach a test. A
+project whose `.env` names a database runs in test mode even without a
+`.env.test`, on the throwaway database (`docs/tooling/testing.md`).
+
 **Sky.Spa entries auto-split.** `sky build src/Main.sky` on a `Spa.app` app
 derives + builds the wasm frontend + native backend under `.split/` (no manual
 `spa-split`); `sky run src/Main.sky` then runs the backend, which serves the

@@ -214,6 +214,38 @@ Run `sky test` and exercise each JSON input once. Where a lenient read is
 intended, read that payload with `Decode.maybe`; do not loosen a codec only to
 make a test pass.
 
+### After an upgrade to v0.29.1, check these shapes
+
+- `File.*` failures carry their kind: a missing path is `NotFound`, a refused
+  one `PermissionDenied`, a path that already exists `Conflict`, anything else
+  `Io`. A `case` that matched `Ffi` to mean "the file is not there" must match
+  `NotFound`.
+- A database time column read as text (no `::text` in the SQL) is
+  PostgreSQL's own text on a UTC server, on every host: `timestamptz` as
+  `2026-11-01 02:13:48.987333+00`, `timestamp` without the offset, `date` as
+  `2026-11-01`. SQLite gives the same shapes. Code that parsed Go's time text
+  (`+0000 GMT`) must parse this one.
+- Header names match in any case. `req.headers` and `resp.headers` hold
+  canonical names (`X-Api-Key`), so read a header with
+  `Server.header "x-api-key" req` or `Http.header name resp`, never
+  `Dict.get "x-api-key" req.headers`.
+- A native form POST to a page (a form sent before the client is live, or
+  with no JavaScript) answers 303 to the same URL, on Sky.Spa and Sky.Live,
+  never a 403 JSON page. A `Server.post` or `App.api "POST …"` route keeps
+  its POST.
+- Telemetry records route templates, no query string and an anonymised client
+  IP by default. Name the query keys it may keep with
+  `Config.withTelemetryQueryKeys [ "page" ]`. `SKY_TELEMETRY_URL` and
+  `SKY_TELEMETRY_CLIENT_IP` widen it.
+- `Store.defaultWith`, `defaultNow`, `touchOnUpdate`, `default*` and
+  `generated` may name an external column (one the table has and the codec
+  does not carry, such as `created_at`). The Store writes it and never
+  creates, adds or drops it, so a migration must own it. A builder problem
+  fails every verb on the store, is logged at ERROR level and fails
+  `sky verify`.
+- `sky test` never takes a database from `.env`, and test mode never loads
+  `.env`. Put a test DSN or setting in `.env.test`.
+
 ### XML and ZIP input is hostile: use Std.Xml and Std.Zip
 
 Read XML with `Std.Xml.parse` / `Std.Xml.Decode` (or `Codec.fromXml`) and

@@ -181,9 +181,18 @@ finds a header whatever the case of its name.
     `s-maxage`.
   - A native form POST to a page answers the 303 before the CSRF token is
     looked for, so its body is never read. A `Server.staticNotFound`
-    catch-all makes every path no api or rpc route takes a page, and in a
-    Sky.Live app every path that is not an api route or a runtime endpoint
-    is a page.
+    catch-all makes a page of every path under its prefix that no other
+    route takes for that method, and in a Sky.Live app every path that is
+    not an api route or a runtime endpoint is a page.
+  - A `Server.post` or `Server.any` route next to a `Server.staticNotFound`
+    catch-all keeps its POST. A pre-release build of this fix treated every
+    path as a page once a catch-all was mounted, so a hand-written
+    `Server.post "/login"` answered every native form POST with the 303,
+    with the right token too, and its handler never ran. A path is now a
+    page only when the router gives that request (method and path) to a
+    page handler. (`runtime-go/rt/csrf_middleware.go` `spaPageSet.matches`;
+    tests `TestStaticNotFound_OtherRoutesKeepTheirPost`,
+    `TestStaticNotFound_PagesStayUnderItsPrefix`.)
 - **Two routes whose path differs only in a parameter name no longer stop
   the server at start.** A page `/post/:slug` next to
   `App.api "POST /post/:id"` (or two `Server` routes like that) made Go's
@@ -279,16 +288,24 @@ finds a header whatever the case of its name.
   `.skyapp/` and `.split/`) kept a removed module's `require` and local
   `replace` until the next `sky build`. Both verbs now bring every generated
   `go.mod` the project owns in line with `sky.toml`.
-- **`sky test` runs beside a `.env` DSN.** A Postgres project in test mode
-  (it has a `.env.test`) with `DATABASE_URL` in its `.env` stopped with the
-  "embedded cluster and explicit connection string" error, because `sky test`
-  started the throwaway cluster and the runtime then loaded the `.env` DSN. An
-  explicit DSN now wins, as it does for `sky run`: `DATABASE_URL` or
-  `<PREFIX>_DB_PATH` from `.env.test`, the environment or `.env`, or a
-  sky.toml `[database] path` / `url`. The run prints one line naming the
-  source and how to get a throwaway cluster (`DATABASE_URL=` in `.env.test`).
-  `sky fuzz`, which always uses its own throwaway database, now also clears
-  a `<PREFIX>_DB_PATH` from `.env`, as it already cleared `DATABASE_URL`.
+- **`sky test` never takes a database from `.env`.** A Postgres project in
+  test mode (it has a `.env.test`) with `DATABASE_URL` in its `.env` stopped
+  with the "embedded cluster and explicit connection string" error, and a
+  project without a `.env.test` ran its tests against the database its `.env`
+  named. A `.env` often names a shared or a production database, so the tests
+  and their seeds wrote to it. Now the runtime does not load `.env` in test
+  mode (`SKY_TEST_MODE`), and a project whose `.env` names a database runs
+  `sky test` in test mode even without a `.env.test`, on the throwaway
+  database. A DSN for the tests comes from `.env.test` or the environment
+  (or a sky.toml `[database] path` / `url`), and wins, as it does for
+  `sky run`. The run prints one line that names the ignored DSN and points
+  at `.env.test`. `sky fuzz` prints the same line. `sky ai <verb>
+  --test-mode` still passes the project's `.env` under `.env.test`, since it
+  acts on the project's own data. (`runtime-go/rt/dotenv.go`
+  `loadStartupDotEnv`, `rust/crates/testrunner/src/lib.rs` `dot_env_dsn`;
+  tests `TestStartupDotEnv_SkippedInTestMode`,
+  `a_dot_env_dsn_is_ignored_and_other_dsns_win`, `a_dot_env_dsn_is_never_used`,
+  `a_dot_env_test_or_environment_dsn_wins`.)
 - **A static or immutable asset carries no CSRF cookie.** The CSRF
   middleware set its cookie on every GET, also on the hashed Sky.Spa wasm and
   JS, `/_sky/live.<hash>.js`, `spa-boot.<hash>.js`, a static mount and a
