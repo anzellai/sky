@@ -2154,7 +2154,9 @@ pub fn apps_ledger_postgres(ctx: &GateCtx) -> GateOutcome {
 /// +3 (v0.29.1): time columns read as stable text through a Store String
 /// field and Db.query + getField, and the text writes back unchanged.
 /// +13 (v0.29.2): decimal columns on both dialects, and Store.noCond.
-pub const STORE_QUERY_POSTGRES_EXPECTED: u64 = 288;
+/// +2 (v0.29.2): Codec.value through a JSON text column, and a JSON field on
+/// a BYTEA / BLOB column refused by migrate.
+pub const STORE_QUERY_POSTGRES_EXPECTED: u64 = 290;
 
 /// The case whose name proves which engine ran. The suite names it from the
 /// DSN and asserts a PostgreSQL-only query in it, so a run that silently fell
