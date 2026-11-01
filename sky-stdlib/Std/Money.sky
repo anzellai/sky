@@ -89,6 +89,7 @@ module Std.Money exposing
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.List as List
+import Sky.Core.String as String
 import Sky.Core.Result as Result
 import Sky.Ffi as Ffi
 import Std.Decimal as Dec exposing (Decimal)
@@ -404,18 +405,31 @@ currencyName c =
 -- `""`, `" GBP"` and `"GB P"` are `Nothing`.
 currencyFromCode : String -> Maybe Currency
 currencyFromCode code =
-    case currencyCodeK code of
+    let
+        n = String.length code
+    in
+        if n >= 3 && n <= 10 && allCodeChars (String.toList code) then
+            Just (currencyOfCode (String.toUpper code))
 
-        Ok upper ->
-            Just (currencyOfCode upper)
-
-        Err _ ->
+        else
             Nothing
 
 
-currencyCodeK : String -> Result Error String
-currencyCodeK s =
-    Ffi.callPure "Codec_currencyCode" [ s ]
+allCodeChars : List Char -> Bool
+allCodeChars cs =
+    case cs of
+
+        [] ->
+            True
+
+        c :: rest ->
+            isCodeChar c && allCodeChars rest
+
+
+-- An ASCII letter or digit (the strict decoders' code grammar).
+isCodeChar : Char -> Bool
+isCodeChar c =
+    (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
 
 
 -- The variant of an upper-case code that is already valid.
@@ -725,34 +739,41 @@ neq a b =
 -- | `a < b` in one currency; an `Err` for two currencies.
 lt : Money -> Money -> Result Error Bool
 lt a b =
-    orderBy "lt" (\c -> c < 0) a b
+    if eqCurrency (currency a) (currency b) then
+        Ok (Dec.lt (amount a) (amount b))
+
+    else
+        Err (mismatch "lt" a b)
 
 
 -- | `a <= b` in one currency; an `Err` for two currencies.
 lte : Money -> Money -> Result Error Bool
 lte a b =
-    orderBy "lte" (\c -> c <= 0) a b
+    if eqCurrency (currency a) (currency b) then
+        Ok (Dec.lte (amount a) (amount b))
+
+    else
+        Err (mismatch "lte" a b)
 
 
 -- | `a > b` in one currency; an `Err` for two currencies.
 gt : Money -> Money -> Result Error Bool
 gt a b =
-    orderBy "gt" (\c -> c > 0) a b
+    if eqCurrency (currency a) (currency b) then
+        Ok (Dec.gt (amount a) (amount b))
+
+    else
+        Err (mismatch "gt" a b)
 
 
 -- | `a >= b` in one currency; an `Err` for two currencies.
 gte : Money -> Money -> Result Error Bool
 gte a b =
-    orderBy "gte" (\c -> c >= 0) a b
-
-
-orderBy : String -> (Int -> Bool) -> Money -> Money -> Result Error Bool
-orderBy verb test a b =
     if eqCurrency (currency a) (currency b) then
-        Ok (test (Dec.compare (amount a) (amount b)))
+        Ok (Dec.gte (amount a) (amount b))
 
     else
-        Err (mismatch verb a b)
+        Err (mismatch "gte" a b)
 
 
 -- | Two currencies are the same when their codes are.

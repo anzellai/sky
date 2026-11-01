@@ -655,9 +655,13 @@ parseMoney text =
     case String.split " " (String.trim text) of
 
         [ c, amount ] ->
-            Money.currencyFromCode c
-                |> Maybe.andThen
-                       (\cur -> Result.toMaybe (Money.fromString cur amount))
+            case Money.currencyFromCode c of
+
+                Just cur ->
+                    Result.toMaybe (Money.fromString cur amount)
+
+                Nothing ->
+                    Nothing
 
         _ ->
             Nothing

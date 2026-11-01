@@ -94,17 +94,21 @@ assistant text. A book whose two rates are in different currencies is an `Err`
 -}
 forResponse : String -> String -> Provider.PriceBook -> Provider.ChatResponse -> Result Error Trace
 forResponse runId model book response =
-    Provider.cost book response.usage
-        |> Result.map
-               (\money ->
-                   { runId = runId
-                   , model = model
-                   , promptTokens = response.usage.promptTokens
-                   , completionTokens = response.usage.completionTokens
-                   , costMinor = Decimal.toString (Money.amount money)
-                   , currency = Money.currencyCode (Money.currency money)
-                   , output = response.content
-                   })
+    case Provider.cost book response.usage of
+
+        Ok money ->
+            Ok
+                { runId = runId
+                , model = model
+                , promptTokens = response.usage.promptTokens
+                , completionTokens = response.usage.completionTokens
+                , costMinor = Decimal.toString (Money.amount money)
+                , currency = Money.currencyCode (Money.currency money)
+                , output = response.content
+                }
+
+        Err e ->
+            Err e
 
 
 -- ── Tables ──────────────────────────────────────────────────────────
@@ -267,12 +271,10 @@ recordCall db e m =
     case m.result of
 
         Ok r ->
-            Task.fromResult (callRow e m.facts r.usage r.content)
-                |> Task.andThen (insertRow db e)
+            insertCall db e (callRow e m.facts r.usage r.content)
 
         Err _ ->
-            Task.fromResult (callRow e m.facts noUsage "")
-                |> Task.andThen (insertRow db e)
+            insertCall db e (callRow e m.facts noUsage "")
 
 
 {-| Record a measured native tool call (`Provider.measureTools`). -}
@@ -281,12 +283,22 @@ recordToolCall db e m =
     case m.result of
 
         Ok r ->
-            Task.fromResult (callRow e m.facts r.usage r.content)
-                |> Task.andThen (insertRow db e)
+            insertCall db e (callRow e m.facts r.usage r.content)
 
         Err _ ->
-            Task.fromResult (callRow e m.facts noUsage "")
-                |> Task.andThen (insertRow db e)
+            insertCall db e (callRow e m.facts noUsage "")
+
+
+-- Write a call row, or fail with the Err of a book that cannot price it.
+insertCall : Db -> Ledger -> Result Error RowIn -> Task Error ()
+insertCall db e r =
+    case r of
+
+        Ok row ->
+            insertRow db e row
+
+        Err err ->
+            Task.fail err
 
 
 noUsage : Provider.Usage
@@ -299,25 +311,28 @@ noUsage =
 callRow : Ledger -> Provider.CallFacts -> Provider.Usage -> String -> Result Error RowIn
 callRow e facts usage output =
     let
-        priced =
-            case e.book of
-
-                Just book ->
-                    Result.map Just (Provider.cost book usage)
-
-                Nothing ->
-                    Ok Nothing
+        row c =
+            { model = facts.adapter
+            , promptTokens = usage.promptTokens
+            , completionTokens = usage.completionTokens
+            , cost = c
+            , output = output
+            , facts = Just facts
+            }
     in
-        Result.map
-            (\c ->
-                { model = facts.adapter
-                , promptTokens = usage.promptTokens
-                , completionTokens = usage.completionTokens
-                , cost = c
-                , output = output
-                , facts = Just facts
-                })
-            priced
+        case e.book of
+
+            Just book ->
+                case Provider.cost book usage of
+
+                    Ok m ->
+                        Ok (row (Just m))
+
+                    Err err ->
+                        Err err
+
+            Nothing ->
+                Ok (row Nothing)
 
 
 {-| Record a cost that is not a model call: a training run's spend, for

@@ -28,6 +28,18 @@ import Std.Time as Stime
 import Sky.Test as Test exposing (Test)
 
 
+-- A Money result formatted, or a failure naming the Err.
+formatted : Result Error Money -> String -> Test.TestResult
+formatted r want =
+    case r of
+
+        Ok m ->
+            Test.equal want (Money.format m)
+
+        Err e ->
+            Test.fail (Error.toString e)
+
+
 main =
     Test.runMain tests
 
@@ -967,9 +979,7 @@ moneySuite =
                       a = Money.fromMajor Money.USD 10
                       b = Money.fromMajor Money.USD 5
                   in
-                      Test.equal
-                          (Ok "$15.00")
-                          (Money.add a b |> Result.map Money.format))
+                      formatted (Money.add a b) "$15.00")
         , Test.test
               "percentOf 10% of $100 = $10"
               (\_ ->
@@ -988,7 +998,7 @@ moneySuite =
                           Money.allocate 3 (Money.fromMajor Money.USD 100)
                       total = Money.sum Money.USD parts
                   in
-                      Test.equal (Ok "$100.00") (Result.map Money.format total))
+                      formatted total "$100.00")
         , Test.test
               "allocate $100 over 3 yields 3 parts"
               (\_ ->
@@ -1013,15 +1023,11 @@ moneySuite =
               "currencyFromCode \"XYZ\" is CurrencyRaw \"XYZ\""
               (\_ ->
                   Test.equal
-                      (Just "XYZ")
-                      (Money.currencyFromCode "XYZ"
-                          |> Maybe.map Money.currencyCode))
+                      (Just (Money.CurrencyRaw "XYZ"))
+                      (Money.currencyFromCode "XYZ"))
         , Test.test
               "currencyFromCode \"USD\" is USD"
-              (\_ ->
-                  Test.equal
-                      (Just "$")
-                      (Money.currencyFromCode "USD" |> Maybe.map Money.symbol))
+              (\_ -> Test.equal (Just Money.USD) (Money.currencyFromCode "USD"))
         , Test.test
               "currencyFromCode \"U S\" is Nothing"
               (\_ -> Test.equal Nothing (Money.currencyFromCode "U S"))

@@ -4605,7 +4605,7 @@ planCloudWith job shape =
                        ( minutes, estimate, timeout ) =
                            cloudEstimate job cs shape.parameters
                    in
-                       if Money.gt estimate cs.budget |> Result.withDefault True then
+                       if orTrue (Money.gt estimate cs.budget) then
                            Task.fail
                                (Failure.toError
                                    (BudgetExceeded
@@ -5549,21 +5549,68 @@ cloudRelaunch ctx job cs p store key attempt relaunched spentMinor =
                                           spentMinor))
 
 
+-- An order that could not be taken (two currencies) is True: a budget that
+-- cannot be checked stops the spend (fail closed).
+orTrue : Result Error Bool -> Bool
+orTrue r =
+    case r of
+
+        Ok b ->
+            b
+
+        Err _ ->
+            True
+
+
+-- The Money, or `fallback` for an Err.
+orMoney : Money -> Result Error Money -> Money
+orMoney fallback r =
+    case r of
+
+        Ok m ->
+            m
+
+        Err _ ->
+            fallback
+
+
 -- `spent + more` reaches the budget. A cloud job's budget and rate are in one
 -- currency (cloudSettings refuses two); were they not, the spend could not be
 -- compared, and the answer is True: a budget that cannot be checked stops the
 -- spend (fail closed).
 spendReaches : Money -> Money -> Money -> Bool
 spendReaches spent more budget =
-    Money.add spent more |> Result.andThen (\total -> Money.gte total budget)
-        |> Result.withDefault True
+    case Money.add spent more of
+
+        Ok total ->
+            case Money.gte total budget of
+
+                Ok over ->
+                    over
+
+                Err _ ->
+                    True
+
+        Err _ ->
+            True
 
 
 -- `spent + more` is over the budget, failing closed as `spendReaches`.
 spendExceeds : Money -> Money -> Money -> Bool
 spendExceeds spent more budget =
-    Money.add spent more |> Result.andThen (\total -> Money.gt total budget)
-        |> Result.withDefault True
+    case Money.add spent more of
+
+        Ok total ->
+            case Money.gt total budget of
+
+                Ok over ->
+                    over
+
+                Err _ ->
+                    True
+
+        Err _ ->
+            True
 
 
 -- The seconds of machine time the rest of the budget buys.
@@ -5574,7 +5621,7 @@ affordableSeconds cs spentMinor =
             Money.sub
                 cs.budget
                 (Money.fromMinor (Money.currency cs.budget) spentMinor)
-                |> Result.withDefault (Money.zero (Money.currency cs.budget))
+                |> orMoney (Money.zero (Money.currency cs.budget))
     in
         case Decimal.div (Money.amount left) (Money.amount cs.perHour) of
 
@@ -5594,7 +5641,7 @@ budgetLeft job cs attempt spentMinor =
     let
         spent = Money.fromMinor (Money.currency cs.budget) spentMinor
         more = perMinutes cs.perHour 15
-        next = Money.add spent more |> Result.withDefault spent
+        next = orMoney spent (Money.add spent more)
     in
         if attempt > 0 && spendExceeds spent more cs.budget then
             Task.fail
@@ -5970,8 +6017,7 @@ cloudWatchLoop ctx job cs p store key attempt name n segment relaunched spentBef
                                    ended ()
 
                                _ ->
-                                   if Money.gte spent cs.budget
-                                       |> Result.withDefault True then
+                                   if orTrue (Money.gte spent cs.budget) then
                                        Durable.step
                                            ctx
                                            Codec.int

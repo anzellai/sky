@@ -838,7 +838,13 @@ overBudget budget spent =
         ( Just ( _, limit ), Just s ) ->
             -- `run` refuses a budget in another currency before the first
             -- call, so an Err here cannot happen; it would stop the run.
-            Money.gte s limit |> Result.withDefault True
+            case Money.gte s limit of
+
+                Ok over ->
+                    over
+
+                Err _ ->
+                    True
 
         _ ->
             False
@@ -873,12 +879,25 @@ loop (Generator g) requests st =
                                            case ( g.budget, report.cost ) of
 
                                                ( Just ( book, _ ), Just spent ) ->
-                                                   Provider.cost
-                                                       book
-                                                       response.usage
-                                                       |> Result.andThen
-                                                              (Money.add spent)
-                                                       |> Result.map Just
+                                                   case Provider.cost
+                                                            book
+                                                            response.usage of
+
+                                                       Ok call ->
+                                                           case Money.add
+                                                                    spent
+                                                                    call of
+
+                                                               Ok total ->
+                                                                   Ok
+                                                                       (Just
+                                                                           total)
+
+                                                               Err e ->
+                                                                   Err e
+
+                                                       Err e ->
+                                                           Err e
 
                                                _ ->
                                                    Ok report.cost

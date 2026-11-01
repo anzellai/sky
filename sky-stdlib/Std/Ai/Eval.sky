@@ -618,6 +618,18 @@ type alias TraceTo =
 -- A price book prices a call in one currency: two rates in different
 -- currencies have no single cost, so the run is refused before the first
 -- call, as an InvalidSetting naming both.
+-- `setup`, after a check that refuses the run before any call.
+checkedSetup : Result Error () -> Db -> Task Error ()
+checkedSetup check db =
+    case check of
+
+        Ok _ ->
+            setup db
+
+        Err e ->
+            Task.fail e
+
+
 oneCurrencyBooks : Maybe PriceBook -> Maybe PriceBook -> Result Error ()
 oneCurrencyBooks book judgeBook =
     case ( mixedBook book, mixedBook judgeBook ) of
@@ -669,8 +681,7 @@ runAs candidate db p (Suite s) =
         j = judgeFor (Suite s)
         rubric = List.any (\c -> hasRubric c.expect) s.cases
     in
-        Task.fromResult (oneCurrencyBooks s.priceBook s.judgePriceBook)
-            |> Task.andThen (\_ -> setup db)
+        checkedSetup (oneCurrencyBooks s.priceBook s.judgePriceBook) db
             |> Task.andThen
                    (\_ ->
                        if rubric then
@@ -901,27 +912,25 @@ traceWith ctx book kind write =
 okResult : Maybe PriceBook -> CaseInfo -> Int -> Output -> Int -> ( List ( String, Float ), Score ) -> CaseResult
 okResult priceBook c sample out latency ( parts, sc ) =
     let
-        priced =
+        ( cost, failure, priced ) =
             case priceBook of
 
                 Just book ->
-                    Result.map Just (Provider.cost book out.usage)
+                    case Provider.cost book out.usage of
+
+                        Ok m ->
+                            ( Just m, Nothing, True )
+
+                        Err e ->
+                            ( Nothing, Just (Error.toString e), False )
 
                 Nothing ->
-                    Ok Nothing
-        ( cost, failure ) =
-            case priced of
-
-                Ok m ->
-                    ( m, Nothing )
-
-                Err e ->
-                    ( Nothing, Just (Error.toString e) )
+                    ( Nothing, Nothing, True )
     in
         { id = c.id
         , sample = sample
         , tags = c.tags
-        , passed = sc.passed && failure == Nothing
+        , passed = sc.passed && priced
         , score = sc.value
         , scores = parts
         , reason = sc.reason
@@ -2009,14 +2018,18 @@ moneyDecoder =
             case String.split " " (String.trim text) of
 
                 [ c, amount ] ->
-                    case Maybe.map
-                             (\cur -> Money.fromString cur amount)
-                             (Money.currencyFromCode c) of
+                    case Money.currencyFromCode c of
 
-                        Just (Ok m) ->
-                            JsonD.succeed m
+                        Just cur ->
+                            case Money.fromString cur amount of
 
-                        _ ->
+                                Ok m ->
+                                    JsonD.succeed m
+
+                                Err _ ->
+                                    JsonD.fail ("not an amount: " ++ text)
+
+                        Nothing ->
                             JsonD.fail ("not an amount: " ++ text)
 
                 _ ->
