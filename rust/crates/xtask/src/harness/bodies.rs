@@ -3348,7 +3348,13 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 /// 1293 + 7 = 1300 with the native trainer: `Std/Ai/TrainTest` gains 7 cases
 /// (17 -> 24: memory settings with env fallback, the calibrated estimate,
 /// chunked loss, eval loss and peak memory per step).
-pub const SKY_SUITES_EXPECTED: u64 = 1300;
+///
+/// 1300 + 4 = 1304 with the v0.29.2 Std.Money redesign: `Std/Ai/EvalTest`
+/// +2 (a cost budget in another currency fails the gate, a price book in two
+/// currencies is an InvalidSetting), `Std/Ai/SyntheticTest` +1 (a budget in
+/// another currency than its book), `Std/Ai/TraceTest` +1 (Provider.cost of a
+/// mixed book is an Err).
+pub const SKY_SUITES_EXPECTED: u64 = 1304;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.
