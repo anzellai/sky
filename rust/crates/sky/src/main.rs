@@ -2995,6 +2995,35 @@ fn references_word(hay: &str, word: &str) -> bool {
     false
 }
 
+/// `t`'s lines re-indented so its leftmost line starts at column `base` and
+/// every other line keeps its column relative to it (the layout is kept).
+fn reindent_arg_text(t: &project::app_entry::ArgText, base: usize) -> String {
+    let lines: Vec<&str> = t.text.lines().collect();
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    let left = lines
+        .iter()
+        .skip(1)
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| indent(l))
+        .min()
+        .unwrap_or(t.col)
+        .min(t.col);
+    let mut out = Vec::new();
+    for (i, l) in lines.iter().enumerate() {
+        if l.trim().is_empty() {
+            out.push(String::new());
+            continue;
+        }
+        let col = if i == 0 { t.col } else { indent(l) };
+        out.push(format!(
+            "{}{}",
+            " ".repeat(base + col - left),
+            l.trim_start()
+        ));
+    }
+    out.join("\n")
+}
+
 /// Capture the boot-setup `let`-prefix of the app's `main`. A real app runs
 /// boot-time server setup before it starts the app:
 ///
@@ -3279,6 +3308,21 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
     // leave the client entry referencing an undefined name. In that case the
     // boot setup is NOT carried (today's behaviour) and a warning is printed, so
     // the drop is never silent.
+    // A `main` that CHAINS its setup before the app
+    // (`setup |> Task.andThen (\_ -> App.run app)`) runs that setup too: it is
+    // carried as the terminal of the same binding. Any other expression around
+    // `App.run` is refused (main_run_chain_setup), never dropped.
+    let chain_setup = project::app_entry::main_run_chain_setup(src)?;
+    let chain_body = |indent: usize| -> String {
+        match &chain_setup {
+            Some(setup) => format!(
+                "{pad}Task.map (\\_ -> ())\n{pad}    (\n{body}\n{pad}    )\n",
+                pad = " ".repeat(indent),
+                body = reindent_arg_text(setup, indent + 8),
+            ),
+            None => format!("{}Task.succeed ()\n", " ".repeat(indent)),
+        }
+    };
     let boot_setup_binding = match capture_main_boot_setup(src) {
         Some(block) => {
             let names = let_block_bound_names(&block);
@@ -3311,8 +3355,23 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
                 format!(
                     "spaBootSetup_ : Task Error ()\n\
                      spaBootSetup_ =\n    \
-                     let\n{block}\n    in\n    Task.succeed ()\n\n\n"
+                     let\n{block}\n    in\n{body}\n\n",
+                    body = chain_body(4),
                 )
+            } else if chain_setup.is_some() {
+                // The chained setup may use the `let` names, so it cannot be
+                // carried without them: refuse rather than drop it.
+                return Err(format!(
+                    "the app `main` runs a setup Task before the app, but its `let` binds \
+                     name(s) the app config also references ({names}), so the client build \
+                     cannot carry the setup into the backend. Move that setup into a \
+                     top-level `Task` the config does not depend on.",
+                    names = unsafe_names
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ));
             } else {
                 eprintln!(
                     "sky build --target <spa>: warning: the app `main`'s boot-setup \
@@ -3328,6 +3387,15 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
                 );
                 String::new()
             }
+        }
+        None if chain_setup.is_some() => {
+            if !out.contains("import Sky.Core.Task as Task") {
+                out = ensure_import(&out, "import Sky.Core.Task as Task");
+            }
+            format!(
+                "spaBootSetup_ : Task Error ()\nspaBootSetup_ =\n{body}\n\n",
+                body = chain_body(4),
+            )
         }
         None => String::new(),
     };

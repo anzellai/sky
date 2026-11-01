@@ -1368,6 +1368,197 @@ pub fn read_app_value(src: &str, needs_args: &dyn Fn(&str) -> bool) -> Result<Ap
     })
 }
 
+// ---- the setup a Task-chained `main` runs before the app -------------------
+
+/// The setup Task a `main` runs BEFORE `App.run app` when it chains the two:
+///
+/// ```text
+/// main = setup |> Task.andThen (\_ -> App.run app)
+/// main = Task.andThen (\_ -> App.run app) setup
+/// main = Task.andThen (\_ -> App.run app) <| setup
+/// ```
+///
+/// (each optionally under a `let … in`, whose bindings the caller carries
+/// itself). A client (Sky.Spa) build drops `main` and generates the backend's
+/// own, so a setup it did not carry would never run on the server.
+///
+/// `Ok(None)` when `main`'s body (after any `let`) IS the `App.run` call, or
+/// when `main` does not call `App.run` itself. `Ok(Some(setup))` for a chain
+/// above, with the setup expression's verbatim text. `Err` for any other
+/// expression around `App.run` (a `case`, an `if`, `Task.map`, a named
+/// continuation): the build cannot tell what runs before the app, and it never
+/// drops it silently.
+pub fn main_run_chain_setup(src: &str) -> Result<Option<ArgText>, String> {
+    let file = parse(src);
+    let imp = app_import(src);
+    let q = imp.qualifier_or_default();
+    let Some(main) = file.decls().find_map(|d| match d {
+        ast::Decl::Value(v) if v.name().map(|n| n.text() == "main").unwrap_or(false) => Some(v),
+        _ => None,
+    }) else {
+        return Ok(None);
+    };
+    let Some(mut body) = main.body() else {
+        return Ok(None);
+    };
+    let range = main.syntax().text_range();
+    let Some(r) = run_refs(src).into_iter().find(|r| {
+        let at = syntax::TextSize::from(r.start as u32);
+        range.contains(at)
+    }) else {
+        return Ok(None);
+    };
+    body = strip_parens(body);
+    if let Expr::Let(l) = &body {
+        match l.body() {
+            Some(b) => body = strip_parens(b),
+            None => return Ok(None),
+        }
+    }
+    // The `App.run …` call node: the reference, its parentheses, then the
+    // application (`App.run x`, `x |> App.run`, `App.run <| x`).
+    let root = file.syntax().clone();
+    let Some(node) = root
+        .token_at_offset(syntax::TextSize::from(r.start as u32))
+        .right_biased()
+        .and_then(|t| {
+            t.parent_ancestors()
+                .find(|n| matches!(n.kind(), SyntaxKind::QualRefExpr | SyntaxKind::RefExpr))
+        })
+    else {
+        return Ok(None);
+    };
+    let mut cur = node;
+    while let Some(p) = cur.parent() {
+        if p.kind() == SyntaxKind::ParenExpr {
+            cur = p;
+        } else {
+            break;
+        }
+    }
+    let call = match cur.parent() {
+        Some(p) if matches!(p.kind(), SyntaxKind::CallExpr | SyntaxKind::BinExpr) => p,
+        _ => return Ok(None),
+    };
+    let Some(call_expr) = Expr::cast(call) else {
+        return Ok(None);
+    };
+    let call_inner = strip_parens(call_expr);
+    if body.syntax() == call_inner.syntax() {
+        return Ok(None);
+    }
+    // The `Sky.Core.Task` qualifiers in scope, and whether `andThen` is bare.
+    let mut task_quals: Vec<String> = Vec::new();
+    let mut bare_and_then = false;
+    for i in file.imports() {
+        if i.name().map(|n| n.text()).as_deref() != Some("Sky.Core.Task") {
+            continue;
+        }
+        task_quals.push("Sky.Core.Task".to_string());
+        if let Some(a) = i.alias() {
+            task_quals.push(a.text().to_string());
+        }
+        if let Some(exp) = i.exposing() {
+            let t = exp.syntax().text().to_string();
+            if t.contains("..") || references_ident(&t, "andThen") {
+                bare_and_then = true;
+            }
+        }
+    }
+    let is_and_then = |e: &Expr| -> bool {
+        let t = qual_text(&strip_parens(e.clone()));
+        match t.rsplit_once('.') {
+            Some((m, n)) => n == "andThen" && task_quals.iter().any(|q| q == m),
+            None => t == "andThen" && bare_and_then,
+        }
+    };
+    // `\_ -> App.run app` (a `_`, `()` or unused parameter) whose body is the
+    // run call.
+    let is_run_continuation = |e: &Expr| -> bool {
+        let Expr::Lambda(l) = strip_parens(e.clone()) else {
+            return false;
+        };
+        let Some(b) = l.body() else {
+            return false;
+        };
+        if strip_parens(b).syntax() != call_inner.syntax() {
+            return false;
+        }
+        let Some(pl) = l.params() else {
+            return false;
+        };
+        let params: Vec<ast::Pattern> = pl.params().collect();
+        if params.len() != 1 {
+            return false;
+        }
+        let run_text = call_inner.syntax().text().to_string();
+        params[0]
+            .syntax()
+            .descendants()
+            .all(|d| d.kind() != SyntaxKind::PatVar || !references_ident(&run_text, &node_text(&d)))
+    };
+    // `Task.andThen (\_ -> App.run app)`, as a partial application.
+    let is_and_then_run = |e: &Expr| -> bool {
+        let Expr::Call(c) = strip_parens(e.clone()) else {
+            return false;
+        };
+        let parts = c.parts();
+        parts.len() == 2 && is_and_then(&parts[0]) && is_run_continuation(&parts[1])
+    };
+    let setup: Option<Expr> = match &body {
+        Expr::Bin(b) => {
+            let op = b.op().map(|t| t.text().to_string()).unwrap_or_default();
+            match (op.as_str(), b.lhs(), b.rhs()) {
+                ("|>", Some(l), Some(rr)) if is_and_then_run(&rr) => Some(l),
+                ("<|", Some(l), Some(rr)) if is_and_then_run(&l) => Some(rr),
+                _ => None,
+            }
+        }
+        Expr::Call(c) => {
+            let parts = c.parts();
+            if parts.len() == 3 && is_and_then(&parts[0]) && is_run_continuation(&parts[1]) {
+                Some(parts[2].clone())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+    let Some(setup) = setup else {
+        return Err(format!(
+            "`main` runs `{q}.run` inside an expression a client (Sky.Spa) build cannot \
+             carry: the build generates the backend's own `main`, so the work `main` does \
+             around the app would never run on the server. Run the setup first and the app \
+             last, in one of these forms:\n    \
+             main = setup |> Task.andThen (\\_ -> {q}.run app)\n    \
+             main = let _ = setup in {q}.run app"
+        ));
+    };
+    let off = content_start(setup.syntax());
+    let end = usize::from(setup.syntax().text_range().end());
+    let line_start = src[..off].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    Ok(Some(ArgText {
+        text: src[off..end].trim_end().to_string(),
+        col: off - line_start,
+    }))
+}
+
+/// True when `ident` occurs in `hay` as a whole identifier.
+fn references_ident(hay: &str, ident: &str) -> bool {
+    let bytes = hay.as_bytes();
+    let is_id = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut from = 0;
+    while let Some(rel) = hay[from..].find(ident) {
+        let at = from + rel;
+        let after = at + ident.len();
+        if (at == 0 || !is_id(bytes[at - 1])) && (after >= bytes.len() || !is_id(bytes[after])) {
+            return true;
+        }
+        from = at + 1;
+    }
+    false
+}
+
 // ---- static builder arguments ---------------------------------------------
 
 /// The value of the LAST `builder` step's single argument, evaluated

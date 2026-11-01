@@ -8043,6 +8043,187 @@ main =
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+/// A `Std.App` entry with `update` client-local and the given `main`.
+fn chained_main_app(main_src: &str) -> String {
+    format!(
+        r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Log exposing (println)
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+
+
+type alias Model =
+    {{ count : Int }}
+
+
+type Msg
+    = Increment
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( {{ count = 0 }}, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Increment ->
+            ( {{ model | count = model.count + 1 }}, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.button [] {{ onPress = Just Increment, label = Ui.text "inc" }}
+
+
+app =
+    App.app {{ init = init, update = update, view = view, subscriptions = \_ -> Sub.none }}
+        |> App.withNotFound ()
+
+
+{main_src}"#
+    )
+}
+
+/// BOOT-SETUP through a Task chain (v0.29.2). `main` written as
+/// `setup |> Task.andThen (\_ -> App.run app)` lost its setup under
+/// `--target web:app`: the synthesis carried only a `let _ = …` prefix, so the
+/// chained setup (a schema, a seed) never ran on the server, in silence. The
+/// chain's setup is now carried into `spaBootSetup_` with the `let` prefix,
+/// and the built backend runs both, in order, before it listens.
+#[test]
+fn web_app_chained_main_setup_runs_in_backend() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch_std_app(
+        "boot-chain",
+        &chained_main_app(
+            r#"main =
+    let
+        _ =
+            println "BOOT-LET-RAN"
+    in
+    println "BOOT-CHAIN-RAN"
+        |> Task.andThen (\_ -> println "BOOT-CHAIN-TWO")
+        |> Task.andThen (\_ -> App.run app)
+"#,
+        ),
+    );
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let back = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .unwrap_or_else(|e| panic!("generated backend entry must exist ({e}):\n{log}"));
+    assert!(
+        back.contains("BOOT-LET-RAN")
+            && back.contains("BOOT-CHAIN-RAN")
+            && back.contains("BOOT-CHAIN-TWO"),
+        "the backend must carry the let prefix AND the chained setup:\n{back}"
+    );
+    let front = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .expect("generated frontend entry must exist");
+    assert!(
+        !front.contains("BOOT-CHAIN-RAN"),
+        "the chained setup must stay out of the wasm frontend:\n{front}"
+    );
+    if required(Need::Go, have_go()) {
+        assert!(
+            output.status.success(),
+            "a chained-main app must build under web:app:\n{log}"
+        );
+        let backend = proj.join(".skyapp/web-app/.split/backend");
+        let mut child = Command::new(backend.join("sky-out/app"))
+            .current_dir(&backend)
+            .env("PORT", "0")
+            .env("SKY_LIVE_PORT", "0")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start the backend");
+        let mut out = child.stdout.take().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = [0u8; 4096];
+            let mut seen = String::new();
+            while let Ok(n) = out.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                seen.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if seen.contains("BOOT-CHAIN-TWO") {
+                    let _ = tx.send(seen.clone());
+                    return;
+                }
+            }
+            let _ = tx.send(seen);
+        });
+        let seen = rx
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .unwrap_or_default();
+        let _ = child.kill();
+        let _ = child.wait();
+        let (a, b, c) = (
+            seen.find("BOOT-LET-RAN"),
+            seen.find("BOOT-CHAIN-RAN"),
+            seen.find("BOOT-CHAIN-TWO"),
+        );
+        assert!(
+            matches!((a, b, c), (Some(a), Some(b), Some(c)) if a < b && b < c),
+            "the backend must run the let prefix, then the chain, in order:\n{seen}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A `main` whose `App.run` sits inside an expression the build cannot split
+/// (here a `Task.map` around it) is REFUSED under `--target web:app`, naming
+/// the forms that carry, never built with the surrounding work dropped.
+#[test]
+fn web_app_uncarriable_main_around_run_is_refused() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch_std_app(
+        "boot-refuse",
+        &chained_main_app(
+            r#"main =
+    println "BOOT-SETUP"
+        |> Task.andThen (\_ -> App.run app |> Task.map (\_ -> ()))
+"#,
+        ),
+    );
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !output.status.success(),
+        "an uncarriable main must fail the web:app build:\n{log}"
+    );
+    assert!(
+        log.contains("Task.andThen (\\_ -> App.run app)"),
+        "the refusal must name the form that carries:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 fn sub_auth_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-sub-auth")
 }

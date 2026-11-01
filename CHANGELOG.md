@@ -46,6 +46,13 @@ as they already did for a plain app.
   assets and dropped the `let _ = <task>` prefix of `main` in silence, so a
   schema creation or a seed there never ran. The backend now keeps that boot
   setup and runs it before it listens.
+- **`--target web:app` runs a setup chained before `App.run`.** A `main`
+  written as `setup |> Task.andThen (\_ -> App.run app)` (or
+  `Task.andThen (\_ -> App.run app) setup`) lost `setup` in the generated
+  backend, in silence: only a `let _ = <task>` prefix was carried. The chained
+  setup now runs in the backend after the `let` prefix and before it listens.
+  Any other expression around `App.run` (for example `Task.map` over it, or a
+  `case`) fails the build and names the two forms that carry.
 
 ## v0.29.1 — Fixes for v0.29.0 (2026-10-31)
 
