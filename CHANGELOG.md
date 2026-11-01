@@ -144,6 +144,30 @@ as they already did for a plain app.
   `Codec.auto` such a field is still an `Err` on read.
 - **`Store.noCond`**, the condition every row meets (the same as `and_ []`),
   is exposed.
+- **`sky db check`: does the live database match the code?** A read-only
+  check on any DSN the app uses (a local cluster, `DATABASE_URL`,
+  `<PREFIX>_DB_PATH`, a remote database), on PostgreSQL and SQLite. It
+  compares every table of `db : Store.Project` (stores and `Std.Db.Schema`
+  tables) with the database: tables, columns, types, `NOT NULL`, defaults,
+  `UNIQUE`, the serial key, and indexes (partial and unique ones included).
+  It reports each `db/migrations` file as applied, pending or edited. It
+  prints a plain-words report and exits 1 on drift, for CI and pre-deploy
+  gates. The live schema is read into the model `sky db migrate --gen`
+  diffs, through the same diff, so the two cannot disagree.
+  - `--sql` prints the SQL that makes the database match the code, and runs
+    nothing. Safe steps are plain, rendered by the migration renderer. A type
+    change, `NOT NULL` on existing rows and every drop are commented out with
+    the reason. A PostgreSQL `INTEGER` column for an `Int` is accepted, with
+    a notice and a commented `ALTER … TYPE BIGINT`.
+  - `--sql --write` saves the safe steps as a migration file in
+    `db/migrations` (the `--gen` format and ops) and updates
+    `db/schema.json`. It refuses while a migration is pending or edited.
+  - `--code` lists the columns the code has no field for or reads as
+    another type, and prints a record type alias, a `Codec` and a `Store`
+    for each table the code has no Store for.
+- **`Std.Db.Migrate.inspect`**, the read-only report behind `sky db check`:
+  the live tables, columns and indexes, and each migration's state against
+  the ledger, as JSON. It never creates the ledger.
 
 ### Migration
 

@@ -98,7 +98,7 @@ const KERNEL_SURFACE: &[(&str, &[&str])] = &[
     ),
     (
         "sky-stdlib/Std/Db/Migrate.sky",
-        &["migrateOps", "renderMigrations"],
+        &["migrateOps", "renderMigrations", "inspect"],
     ),
 ];
 

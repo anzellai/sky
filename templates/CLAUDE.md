@@ -74,6 +74,16 @@ database wants durable storage, so it fits a VM or a container-with-a-volume, no
 a stateless function. On an unsupported host use `sky db start` with a system
 PostgreSQL, or a `DATABASE_URL`. Full matrix: `docs/skydb/embedded-postgres.md`.
 
+### `sky db check` is read-only; `--write` is the one flag that writes
+
+`sky db check` reads the live database and compares it with the code (tables,
+columns, types, `NOT NULL`, defaults, indexes, and the migration ledger). It
+never runs SQL and never edits code, so run it freely, before a deploy or when
+a read fails. It exits 1 on drift. `--sql` prints the SQL that would make the
+database match, with the unsafe steps commented out: show it to the user, do
+not run it yourself. `--write` saves the safe steps as a new file in
+`db/migrations`: it changes the project, so use it only when the user asks.
+
 ### Embedded PostgreSQL and an explicit DSN together are an error
 
 The app never knows which tier it is in — it consumes a DSN, and only the

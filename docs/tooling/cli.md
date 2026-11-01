@@ -1070,6 +1070,59 @@ ledger and **exits non-zero while anything is pending** — a ready-made "is thi
 DB up to date?" deploy gate. `sky db seed` runs the `seed` binding your entry
 module exposes (`module Main exposing (main, db, seed)`), against the live DB.
 
+### `sky db check` — does the live database match the code?
+
+```bash
+sky db check                 # report; exit 0 when it matches, 1 on drift, 2 when it cannot run
+sky db check --sql           # print the SQL that makes the database match the code (never run)
+sky db check --sql --write   # also save the safe steps as a migration in db/migrations
+sky db check --code          # what the code needs to read the database safely
+```
+
+`sky db check` reads the live database and changes nothing. It connects the way
+the app does (`DATABASE_URL`, `<PREFIX>_DB_PATH`, `SKY_DB_PATH` or `sky.toml
+[database]`), so it works on a local cluster, a CI database or a remote one, on
+PostgreSQL and SQLite. It compares every table of the project's `db :
+Store.Project` (the `Std.Db.Store` stores, and the `Std.Db.Schema` tables that
+`Schema.toProject` adds) with the database: tables, columns, types, `NOT NULL`,
+defaults, the serial key, `UNIQUE`, and indexes with their columns, uniqueness
+and partial-index predicate. It also reports the migration ledger: each
+`db/migrations` file is applied, pending or **edited** (its checksum changed
+after it was applied), by the same rule `sky db migrate` uses. It exits 1 on any
+difference and on a pending or edited migration, so it is a CI and pre-deploy
+gate.
+
+The comparison is the `sky db migrate --gen` diff. The live database is read
+into the same model as `db/schema.json`, so `check` and `--gen` find the same
+missing tables, columns and indexes and the same type changes. `check` also sees
+what only a live database holds (`NOT NULL`, defaults, `UNIQUE`, the serial
+key). The tables the Sky runtime keeps (`sky_*`, `_sky_*`, `analytics_events`,
+`telemetry_*`) are not the app's, and are never reported. An `Int` column that
+PostgreSQL holds as `INTEGER` (an older `Schema.createSchema` made it) is
+accepted, with a notice: a Sky Int is 64-bit, and a value above 2147483647 fails
+there.
+
+`--sql` prints each step under a comment that names the difference. A step that
+loses nothing is plain SQL, rendered by the same renderer as `sky db migrate`
+(create a table, add a column, add an index). A step that loses data or can fail
+on existing rows is commented out, with the reason: a type change, `NOT NULL` on
+a column that can hold `NULL`, a dropped column, table or index, and on SQLite
+any change that needs a table rebuild. The `INTEGER` → `BIGINT` widening is a
+commented step with its notice. `--write` saves the safe steps as a normal
+migration file (`db/migrations/<time>_db_check.json`, the same format and the
+same ops `--gen` writes), puts a dropped column or table in its inert
+`destructive` array, and updates `db/schema.json` as `--gen` does. It refuses
+while a migration is pending or edited, and in a project with no
+`db/migrations` (run `sky db init` first).
+
+`--code` lists, for the tables the code declares, the columns the code has no
+field for (and whether an insert then fails), the columns a field reads as
+another type, and the nullable columns a required field reads. For each table
+the code declares nothing for, it prints a Sky record type alias, a `Codec`
+(`Codec.auto`, with `Codec.decimal` for a `NUMERIC` column) and a `Store`, ready
+to copy into a module. `sky db check` never edits your code, never runs SQL, and
+never writes a file without `--write`.
+
 ### `sky db push` — no-migration-files dev sync
 
 ```bash

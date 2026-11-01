@@ -110,6 +110,9 @@ fn internal_runtime_bases(module: &str) -> &'static [&'static str] {
             "execObject",
             "execObjectMany",
             "execObjectWith",
+            // v0.29.2: Std.Db.Migrate.inspect, the read-only schema and ledger
+            // report `sky db check` reads.
+            "inspect",
             // v0.29.0: Std.Db.Migrate.migrateOps renders and applies op files
             // through the ledger with the ops checksum.
             "migrateOps",

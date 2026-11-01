@@ -153,3 +153,10 @@ db_verb_isolation!(
 );
 db_verb_isolation!(db_reset_does_not_clobber_sky_out, "reset", "reset");
 db_verb_isolation!(db_drop_does_not_clobber_sky_out, "drop", "drop");
+db_verb_isolation!(db_check_does_not_clobber_sky_out, "check", "check");
+db_verb_isolation!(
+    db_check_sql_does_not_clobber_sky_out,
+    "checksql",
+    "check",
+    "--sql"
+);

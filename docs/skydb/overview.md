@@ -1308,6 +1308,34 @@ There is no `sky db migrate <file>`: migrations are an ordered,
 checksum-tracked set — `migrate` always means "apply every pending
 one, in order."
 
+### Checking a live database against the code — `sky db check`
+
+`sky db status` compares the migration files with the ledger. `sky db
+check` compares the database itself with the code: every table of `db :
+Store.Project` (stores, and the `Std.Db.Schema` tables `Schema.toProject`
+adds) against the live tables, columns, types, `NOT NULL`, defaults,
+`UNIQUE`, serial keys and indexes (partial and unique ones included). It
+also reports each `db/migrations` file as applied, pending or edited. It
+reads only, on any DSN the app would use, PostgreSQL or SQLite, and it
+exits 1 on drift:
+
+```bash
+sky db check                 # plain-words report; exit 1 on drift
+sky db check --sql           # the SQL that makes the database match the code, not run
+sky db check --sql --write   # save the safe steps as a migration file
+sky db check --code          # what the code needs to read the database safely
+```
+
+It reads the live schema with `Std.Db.Migrate.inspect` and compares it
+through the same diff as `sky db migrate --gen`, so the two never
+disagree about a missing table, column or index or a type change. In
+`--sql`, a step that cannot lose data is plain SQL; a type change, a
+`NOT NULL` on a column that can hold `NULL`, and any drop are commented
+out with the reason. A PostgreSQL `INTEGER` column for an `Int` is
+accepted with a notice and a commented `ALTER … TYPE BIGINT`. `--code`
+prints a record type alias, a `Codec` and a `Store` for each table the
+code has no Store for. See [`sky db check`](../tooling/cli.md#sky-db-check--does-the-live-database-match-the-code).
+
 ## See also
 
 - [`examples/07-todo-cli`](../../examples/07-todo-cli/) — SQLite CLI todo app, showcases `withTransaction` and `queryDecode`

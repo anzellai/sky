@@ -1,0 +1,2100 @@
+//! `sky db check`: compare the live database with the schema the code declares.
+//!
+//! The live side is the read-only catalogue report of `Std.Db.Migrate.inspect`
+//! (`runtime-go/rt/db_inspect.go`). It is turned into the same
+//! [`db_migrate::Schema`] model that `sky db migrate --gen` reads from
+//! `db/schema.json`, and [`db_migrate::diff`] compares it with the target the
+//! project's `db : Store.Project` dumps. So every difference `--gen` can see
+//! (a missing table or column, a type change, an index, an extra column or
+//! table) is found by the SAME code, and `check` and `--gen` cannot disagree
+//! (`check_diff_equals_gen_diff_*` pin it). The catalogue holds more than a
+//! snapshot does, so `check` adds what only a live database can show: NOT
+//! NULL, defaults, UNIQUE, the serial key, external columns, and the
+//! `Schema.int` INTEGER→BIGINT notice.
+//!
+//! Nothing here writes to the database. `--sql` prints statements, and
+//! `--write` saves a migration file in the existing format
+//! ([`db_migrate::migration_file_json`]).
+
+use crate::db_migrate::{self, Diff, Schema, SchemaColumn, SchemaIndex, SchemaTable};
+use serde::Deserialize;
+use serde_json::{json, Value};
+
+// ---- the inspect report ---------------------------------------------------
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Inspect {
+    pub dialect: String,
+    #[serde(default)]
+    pub tables: Vec<LiveTable>,
+    #[serde(default)]
+    pub ledger: Ledger,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct LiveTable {
+    pub name: String,
+    #[serde(default)]
+    pub columns: Vec<LiveColumn>,
+    #[serde(default)]
+    pub indexes: Vec<LiveIndex>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct LiveColumn {
+    pub name: String,
+    #[serde(rename = "type", default)]
+    pub sql_type: String,
+    #[serde(default)]
+    pub notnull: bool,
+    #[serde(default)]
+    pub default: Option<String>,
+    #[serde(default)]
+    pub pk: bool,
+    #[serde(default)]
+    pub autoinc: bool,
+    #[serde(default)]
+    pub unique: bool,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct LiveIndex {
+    pub name: String,
+    #[serde(default)]
+    pub columns: Vec<String>,
+    #[serde(default)]
+    pub unique: bool,
+    #[serde(rename = "where", default)]
+    pub predicate: String,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct Ledger {
+    #[serde(default)]
+    pub present: bool,
+    #[serde(default)]
+    pub migrations: Vec<LedgerMigration>,
+    #[serde(default)]
+    pub other: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct LedgerMigration {
+    pub name: String,
+    pub state: String,
+    #[serde(rename = "appliedAt", default)]
+    pub applied_at: String,
+}
+
+impl Ledger {
+    pub fn count(&self, state: &str) -> usize {
+        self.migrations.iter().filter(|m| m.state == state).count()
+    }
+}
+
+/// Tables the Sky runtime keeps in the app's database: the `sky_*` tables
+/// (sessions, revocations: the same prefix `--gen` skips), the `_sky_*`
+/// tables (the migration ledger, Std.Durable), the analytics events and the
+/// persisted telemetry (`telemetry_log` / `_metric` / `_span`).
+/// They are never the app's schema, so they are never an "extra table".
+pub fn is_runtime_table(name: &str) -> bool {
+    name.starts_with(db_migrate::RUNTIME_TABLE_PREFIX)
+        || name.starts_with("_sky_")
+        || matches!(
+            name,
+            "analytics_events" | "telemetry_log" | "telemetry_metric" | "telemetry_span"
+        )
+}
+
+// ---- types ------------------------------------------------------------------
+
+fn is_pg(dialect: &str) -> bool {
+    dialect == "postgres"
+}
+
+/// The declared type, lower case, without a `(n)` / `(p,s)` modifier.
+fn base_type(t: &str) -> String {
+    let t = t.trim().to_ascii_lowercase();
+    match t.find('(') {
+        Some(i) => t[..i].trim().to_string(),
+        None => t,
+    }
+}
+
+/// How a live column type fits the type a codec kind needs.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Fit {
+    /// The type the code would create, or one that reads the same values.
+    Same,
+    /// PostgreSQL `integer` / `smallint` for an Int: accepted, with the
+    /// `Schema.int` notice (a Sky Int is 64-bit, a new column is BIGINT).
+    Narrow,
+    Differs,
+}
+
+/// The SQLite type affinity of a declared type (sqlite.org/datatype3.html §3.1).
+fn sqlite_affinity(t: &str) -> &'static str {
+    let t = t.to_ascii_uppercase();
+    if t.contains("INT") {
+        "integer"
+    } else if t.contains("CHAR") || t.contains("CLOB") || t.contains("TEXT") {
+        "text"
+    } else if t.contains("BLOB") || t.trim().is_empty() {
+        "blob"
+    } else if t.contains("REAL") || t.contains("FLOA") || t.contains("DOUB") {
+        "real"
+    } else {
+        "numeric"
+    }
+}
+
+/// Whether a live column of `sql_type` holds a codec kind's values. The
+/// types the code creates are `schemaTypeName` (runtime-go/rt/schema_kernel.go)
+/// over `codecColKindToSchema` (a blob is TEXT): int BIGINT / INTEGER, real
+/// DOUBLE PRECISION / REAL, bool BOOLEAN / INTEGER, decimal NUMERIC / TEXT,
+/// text and blob TEXT.
+pub fn fit(dialect: &str, kind: &str, sql_type: &str) -> Fit {
+    let t = base_type(sql_type);
+    if is_pg(dialect) {
+        let same = match kind {
+            "int" | "bigint" => {
+                if t == "integer" || t == "smallint" || t == "int" || t == "int4" || t == "int2" {
+                    return Fit::Narrow;
+                }
+                t == "bigint" || t == "int8"
+            }
+            "real" => matches!(
+                t.as_str(),
+                "double precision" | "real" | "float8" | "float4"
+            ),
+            "bool" => t == "boolean" || t == "bool",
+            "decimal" => t == "numeric" || t == "decimal",
+            "text" => matches!(
+                t.as_str(),
+                "text" | "character varying" | "varchar" | "character" | "char" | "citext"
+            ),
+            "blob" => matches!(t.as_str(), "text" | "bytea" | "json" | "jsonb"),
+            _ => false,
+        };
+        return if same { Fit::Same } else { Fit::Differs };
+    }
+    let aff = sqlite_affinity(sql_type);
+    let same = match kind {
+        "int" | "bigint" => aff == "integer",
+        // A boolean spelling (`BOOLEAN`, `BOOL`) has NUMERIC affinity, and
+        // SQLite stores TRUE / FALSE in it as 1 / 0, which a Bool reads.
+        "bool" => aff == "integer" || sql_type.to_ascii_uppercase().contains("BOOL"),
+        "real" => aff == "real",
+        // A decimal is TEXT on SQLite: NUMERIC affinity would turn '0.1' into
+        // a REAL.
+        "text" | "decimal" => aff == "text",
+        "blob" => aff == "text" || aff == "blob",
+        _ => false,
+    };
+    if same {
+        Fit::Same
+    } else {
+        Fit::Differs
+    }
+}
+
+/// [`fit`] for one code column. On SQLite a nullable Bool or Float column
+/// that v0.28 created as TEXT also fits: Std.Db.Store reads and writes its
+/// `true` / `7.5` text (runtime-go/rt/db_sqlite_legacy.go).
+pub fn fit_column(dialect: &str, c: &SchemaColumn, sql_type: &str) -> Fit {
+    if !is_pg(dialect)
+        && c.nullable
+        && matches!(c.kind.as_str(), "bool" | "real")
+        && sqlite_affinity(sql_type) == "text"
+    {
+        return Fit::Same;
+    }
+    fit(dialect, &c.kind, sql_type)
+}
+
+/// The codec kind a live type reads as best, for an extra column, a stub, or
+/// the "is X" half of a type-change message.
+pub fn guess_kind(dialect: &str, sql_type: &str) -> &'static str {
+    let t = base_type(sql_type);
+    if is_pg(dialect) {
+        return match t.as_str() {
+            "bigint" | "integer" | "smallint" | "int" | "int2" | "int4" | "int8" => "int",
+            "double precision" | "real" | "float8" | "float4" => "real",
+            "boolean" | "bool" => "bool",
+            "numeric" | "decimal" => "decimal",
+            "bytea" => "blob",
+            _ => "text",
+        };
+    }
+    if t.contains("bool") {
+        return "bool";
+    }
+    match sqlite_affinity(sql_type) {
+        "integer" => "int",
+        "real" | "numeric" => "real",
+        "blob" => "blob",
+        _ => "text",
+    }
+}
+
+/// The SQL type the code creates for a codec kind (`schemaTypeName` over
+/// `codecColKindToSchema`).
+pub fn sql_type_of(dialect: &str, kind: &str) -> &'static str {
+    let pg = is_pg(dialect);
+    match kind {
+        "int" | "bigint" => {
+            if pg {
+                "BIGINT"
+            } else {
+                "INTEGER"
+            }
+        }
+        "real" => {
+            if pg {
+                "DOUBLE PRECISION"
+            } else {
+                "REAL"
+            }
+        }
+        "bool" => {
+            if pg {
+                "BOOLEAN"
+            } else {
+                "INTEGER"
+            }
+        }
+        "decimal" => {
+            if pg {
+                "NUMERIC"
+            } else {
+                "TEXT"
+            }
+        }
+        _ => "TEXT",
+    }
+}
+
+// ---- defaults -----------------------------------------------------------------
+
+/// Strip the parentheses that wrap a whole expression, and PostgreSQL's
+/// `::type` casts, from a catalogue default.
+fn strip_default(raw: &str) -> String {
+    let mut s = raw.trim().to_string();
+    // `::type` casts, outside quotes.
+    let mut out = String::new();
+    let b: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    let mut in_str = false;
+    while i < b.len() {
+        let c = b[i];
+        if in_str {
+            out.push(c);
+            if c == '\'' {
+                if i + 1 < b.len() && b[i + 1] == '\'' {
+                    out.push('\'');
+                    i += 2;
+                    continue;
+                }
+                in_str = false;
+            }
+            i += 1;
+            continue;
+        }
+        if c == '\'' {
+            in_str = true;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if c == ':' && i + 1 < b.len() && b[i + 1] == ':' {
+            i += 2;
+            // A type name: letters, digits, `_`, spaces between words (`double
+            // precision`, `character varying`), and a `(n)` modifier.
+            while i < b.len()
+                && (b[i].is_ascii_alphanumeric() || b[i] == '_' || b[i] == ' ' || b[i] == '"')
+            {
+                if b[i] == ' ' && !(i + 1 < b.len() && b[i + 1].is_ascii_alphabetic()) {
+                    break;
+                }
+                i += 1;
+            }
+            if i < b.len() && b[i] == '(' {
+                while i < b.len() && b[i] != ')' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    s = out.trim().to_string();
+    loop {
+        if s.starts_with('(') && s.ends_with(')') && wraps_whole(&s) {
+            s = s[1..s.len() - 1].trim().to_string();
+        } else {
+            break;
+        }
+    }
+    s
+}
+
+/// `(a) + (b)` starts with `(` and ends with `)` but is not wrapped.
+fn wraps_whole(s: &str) -> bool {
+    let mut depth = 0i32;
+    let mut in_str = false;
+    for (i, c) in s.char_indices() {
+        if in_str {
+            if c == '\'' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            '\'' => in_str = true,
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 && i != s.len() - 1 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+fn unquote(s: &str) -> Option<String> {
+    let s = s.trim();
+    if s.len() >= 2 && s.starts_with('\'') && s.ends_with('\'') {
+        Some(s[1..s.len() - 1].replace("''", "'"))
+    } else {
+        None
+    }
+}
+
+fn canon_number(s: &str) -> Option<String> {
+    let f: f64 = s.trim().parse().ok()?;
+    if !f.is_finite() {
+        return None;
+    }
+    if f.fract() == 0.0 && f.abs() < 1e15 {
+        Some(format!("{}", f as i64))
+    } else {
+        Some(format!("{f}"))
+    }
+}
+
+fn is_now_expr(s: &str) -> bool {
+    let l = s.to_ascii_lowercase();
+    l.contains("now()") || l.contains("'now'") || l.contains("current_timestamp")
+}
+
+/// A default as one comparable text for a column of `kind`: `now`, a number,
+/// `true` / `false`, a canonical decimal, or `'text`. `None` for no default
+/// (or a serial key's sequence, which is the key, not a default).
+pub fn canon_live_default(kind: &str, raw: Option<&str>) -> Option<String> {
+    let raw = raw?;
+    if raw.trim().eq_ignore_ascii_case("null") || raw.trim_start().starts_with("nextval(") {
+        return None;
+    }
+    if is_now_expr(raw) {
+        return Some("now".into());
+    }
+    let s = strip_default(raw);
+    if s.eq_ignore_ascii_case("null") {
+        return None;
+    }
+    let inner = unquote(&s);
+    let text = inner.clone().unwrap_or_else(|| s.clone());
+    match kind {
+        "int" | "bigint" | "real" => canon_number(&text).or(Some(format!("'{text}"))),
+        "bool" => match text.to_ascii_lowercase().as_str() {
+            "true" | "1" | "t" => Some("true".into()),
+            "false" | "0" | "f" => Some("false".into()),
+            _ => Some(format!("'{text}")),
+        },
+        "decimal" => db_migrate::canonical_decimal(&text)
+            .map(|d| format!("'{d}"))
+            .or(Some(format!("'{text}"))),
+        _ => match inner {
+            Some(t) => Some(format!("'{t}")),
+            None => canon_number(&s).or(Some(s)),
+        },
+    }
+}
+
+/// The comparable text of a code-side default (`{int|text|bool|float|now}`).
+pub fn canon_code_default(kind: &str, d: &Value) -> Option<String> {
+    if d.get("now").and_then(Value::as_bool) == Some(true)
+        || d.get("nowAtApply").and_then(Value::as_bool) == Some(true)
+    {
+        return Some("now".into());
+    }
+    if let Some(n) = d.get("int") {
+        let n = n.to_string();
+        return match kind {
+            "bool" => Some(if n == "0" { "false" } else { "true" }.into()),
+            "decimal" => Some(format!("'{n}")),
+            "text" | "blob" => Some(format!("'{n}")),
+            _ => canon_number(&n),
+        };
+    }
+    if let Some(f) = d.get("float") {
+        return canon_number(&f.to_string());
+    }
+    if let Some(b) = d.get("bool").and_then(Value::as_bool) {
+        return Some(b.to_string());
+    }
+    if let Some(t) = d.get("text").and_then(Value::as_str) {
+        return match kind {
+            "decimal" => Some(format!(
+                "'{}",
+                db_migrate::canonical_decimal(t).unwrap_or_else(|| t.to_string())
+            )),
+            "int" | "bigint" | "real" => canon_number(t).or(Some(format!("'{t}"))),
+            _ => Some(format!("'{t}")),
+        };
+    }
+    None
+}
+
+/// The zero a migration writes as the DEFAULT of a required column it adds
+/// to a table with rows (`add_column_ops`): the field's own zero, else the
+/// zero of the kind. A live column may carry it with no declared default.
+fn backfill_zero(c: &SchemaColumn) -> Option<Value> {
+    c.zero.clone().or_else(|| match c.kind.as_str() {
+        "int" | "bigint" | "real" => Some(json!({ "int": 0 })),
+        "text" => Some(json!({ "text": "" })),
+        "decimal" => Some(json!({ "text": "0" })),
+        "bool" => Some(json!({ "bool": false })),
+        _ => None,
+    })
+}
+
+/// A default as SQL for the dialect (`schemaDefault` / `schemaNowDefault`).
+fn default_sql(dialect: &str, kind: &str, d: &Value) -> String {
+    let pg = is_pg(dialect);
+    let int_kind = matches!(kind, "int" | "bigint");
+    if d.get("now").is_some() || d.get("nowAtApply").is_some() {
+        return match (pg, int_kind) {
+            (true, true) => "(CAST(EXTRACT(EPOCH FROM now()) * 1000 AS BIGINT))".into(),
+            (true, false) => "now()".into(),
+            (false, true) => "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))".into(),
+            (false, false) => "(datetime('now'))".into(),
+        };
+    }
+    if let Some(n) = d.get("int") {
+        return n.to_string();
+    }
+    if let Some(f) = d.get("float") {
+        return f.to_string();
+    }
+    if let Some(b) = d.get("bool").and_then(Value::as_bool) {
+        return match (pg, b) {
+            (true, true) => "TRUE".into(),
+            (true, false) => "FALSE".into(),
+            (false, true) => "1".into(),
+            (false, false) => "0".into(),
+        };
+    }
+    if let Some(t) = d.get("text").and_then(Value::as_str) {
+        return format!("'{}'", t.replace('\'', "''"));
+    }
+    "NULL".into()
+}
+
+fn display_default(raw: Option<&str>) -> String {
+    match raw {
+        None => "no default".into(),
+        Some(r) => format!("DEFAULT {}", r.trim()),
+    }
+}
+
+fn display_code_default(d: Option<&Value>) -> String {
+    match d {
+        None => "no default".into(),
+        Some(v) => {
+            if v.get("now").is_some() || v.get("nowAtApply").is_some() {
+                "DEFAULT now".into()
+            } else if let Some(t) = v.get("text").and_then(Value::as_str) {
+                format!("DEFAULT '{t}'")
+            } else {
+                let s = v
+                    .as_object()
+                    .and_then(|m| m.values().next())
+                    .map(|x| x.to_string())
+                    .unwrap_or_default();
+                format!("DEFAULT {s}")
+            }
+        }
+    }
+}
+
+// ---- partial-index predicates ---------------------------------------------
+
+/// A predicate as one comparable text: lower case, no whitespace, no
+/// parentheses, no `::type` casts. PostgreSQL stores `deleted IS NULL` as
+/// `(deleted IS NULL)` and `s = 'a'` as `(s = 'a'::text)`.
+pub fn canon_predicate(p: &str) -> String {
+    let stripped = strip_default(p);
+    let mut out = String::new();
+    let mut in_str = false;
+    for c in stripped.chars() {
+        if in_str {
+            out.push(c);
+            if c == '\'' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            '\'' => {
+                in_str = true;
+                out.push(c);
+            }
+            '(' | ')' => {}
+            c if c.is_whitespace() => {}
+            c => out.push(c.to_ascii_lowercase()),
+        }
+    }
+    out
+}
+
+// ---- the live schema in the --gen model -------------------------------------
+
+/// The live database as the [`Schema`] model `--gen` reads from
+/// `db/schema.json`, read against the `target` so a type that fits a
+/// column's kind takes that kind (and the diff sees no change), and one that
+/// does not takes another (and the diff sees a type change). Runtime tables
+/// are left out. Indexes the database keeps for a column the target marks
+/// UNIQUE are the column's, not declared indexes, so they are left out too.
+pub fn live_schema(target: &Schema, live: &Inspect) -> Schema {
+    let mut tables = Vec::new();
+    for lt in live.tables.iter().filter(|t| !is_runtime_table(&t.name)) {
+        let tt = target.tables.iter().find(|t| t.name == lt.name);
+        let mut columns = Vec::new();
+        for lc in &lt.columns {
+            let tc = tt.and_then(|t| t.columns.iter().find(|c| c.name == lc.name));
+            let kind = match tc {
+                Some(tc) if tc.external => tc.kind.clone(),
+                Some(tc) if fit_column(&live.dialect, tc, &lc.sql_type) != Fit::Differs => {
+                    tc.kind.clone()
+                }
+                Some(tc) => {
+                    let g = guess_kind(&live.dialect, &lc.sql_type);
+                    if g == tc.kind {
+                        base_type(&lc.sql_type)
+                    } else {
+                        g.to_string()
+                    }
+                }
+                None => guess_kind(&live.dialect, &lc.sql_type).to_string(),
+            };
+            columns.push(SchemaColumn {
+                name: lc.name.clone(),
+                kind,
+                nullable: !lc.notnull,
+                autoinc: lc.autoinc,
+                unique: lc.unique,
+                default: None,
+                zero: None,
+                external: tc.is_some_and(|c| c.external),
+            });
+        }
+        let unique_cols: Vec<&str> = tt
+            .map(|t| {
+                t.columns
+                    .iter()
+                    .filter(|c| c.unique)
+                    .map(|c| c.name.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut indexes = Vec::new();
+        for li in &lt.indexes {
+            if li.unique
+                && li.predicate.is_empty()
+                && li.columns.len() == 1
+                && unique_cols.contains(&li.columns[0].as_str())
+                && !tt.is_some_and(|t| t.indexes.iter().any(|ix| ix.name == li.name))
+            {
+                continue;
+            }
+            let declared = tt.and_then(|t| t.indexes.iter().find(|ix| ix.name == li.name));
+            let predicate = match declared {
+                Some(ix)
+                    if ix.columns == li.columns
+                        && ix.unique == li.unique
+                        && canon_predicate(&ix.predicate) == canon_predicate(&li.predicate) =>
+                {
+                    ix.predicate.clone()
+                }
+                _ => li.predicate.clone(),
+            };
+            indexes.push(SchemaIndex {
+                name: li.name.clone(),
+                columns: li.columns.clone(),
+                unique: li.unique,
+                predicate,
+            });
+        }
+        let pk = lt
+            .columns
+            .iter()
+            .find(|c| c.pk)
+            .map(|c| c.name.clone())
+            .unwrap_or_default();
+        tables.push(SchemaTable {
+            name: lt.name.clone(),
+            pk,
+            columns,
+            indexes,
+        });
+    }
+    Schema { tables }
+}
+
+// ---- findings -----------------------------------------------------------------
+
+/// What `--sql` does with a finding.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Step {
+    /// A migration op (`{kind, …}`): the runtime renders it for the dialect
+    /// (`renderMigrations`), and `--write` saves it.
+    Op(Value),
+    /// SQL that loses nothing, but has no dialect-neutral op: printed plain,
+    /// not saved by `--write`.
+    Plain(String),
+    /// SQL printed commented out, with the reason.
+    Unsafe { sql: String, reason: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct Finding {
+    pub table: String,
+    /// Plain-words description of the difference.
+    pub text: String,
+    /// What the code needs to read this table safely, when the finding bears
+    /// on reads or writes from the code (`--code`).
+    pub code: Option<String>,
+    pub steps: Vec<Step>,
+}
+
+pub struct Notice {
+    pub text: String,
+    pub sql: String,
+}
+
+pub struct Check {
+    pub dialect: String,
+    pub diff: Diff,
+    pub findings: Vec<Finding>,
+    pub notices: Vec<Notice>,
+    /// Live tables the code declares no Store or Schema table for.
+    pub extra_tables: Vec<LiveTable>,
+    pub ledger: Ledger,
+}
+
+impl Check {
+    /// Drift: a schema difference, or a migration that is pending or edited.
+    pub fn drift(&self) -> bool {
+        !self.findings.is_empty()
+            || self.ledger.count("pending") > 0
+            || self.ledger.count("edited") > 0
+    }
+
+    /// The ops `--write` saves and `--sql` renders through the runtime.
+    pub fn safe_ops(&self) -> Vec<Value> {
+        self.findings
+            .iter()
+            .flat_map(|f| f.steps.iter())
+            .filter_map(|s| match s {
+                Step::Op(op) => Some(op.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+fn op_str<'a>(op: &'a Value, key: &str) -> &'a str {
+    op.get(key).and_then(Value::as_str).unwrap_or("")
+}
+
+fn rebuild_reason(what: &str) -> String {
+    format!(
+        "SQLite cannot {what} in place: create a new table with the column as the code \
+         declares it, copy the rows, drop the old table and rename the new one \
+         (sqlite.org/lang_altertable.html, \"other kinds of table schema changes\")"
+    )
+}
+
+/// Compare the target (the project's `db`, from `Store.dumpSchema`) with the
+/// live database.
+pub fn check(target: &Schema, live: &Inspect) -> Check {
+    let dialect = live.dialect.clone();
+    let pg = is_pg(&dialect);
+    let live_s = live_schema(target, live);
+    let diff = db_migrate::diff(target, &live_s);
+    let live_table = |n: &str| live.tables.iter().find(|t| t.name == n);
+    let mut findings: Vec<Finding> = Vec::new();
+
+    // 1. Every op the --gen diff produced, in its order.
+    let readded: Vec<(String, String)> = diff
+        .ops
+        .iter()
+        .filter(|o| op_str(o, "kind") == "addIndex")
+        .map(|o| {
+            (
+                op_str(o, "table").to_string(),
+                op_str(o, "name").to_string(),
+            )
+        })
+        .collect();
+    for op in &diff.ops {
+        let table = op_str(op, "table").to_string();
+        match op_str(op, "kind") {
+            "createTable" => findings.push(Finding {
+                text: format!("table {table} is missing: the code declares it, the database has no such table"),
+                code: None,
+                table,
+                steps: vec![Step::Op(op.clone())],
+            }),
+            "addColumn" => {
+                let col = op_str(op, "column");
+                findings.push(Finding {
+                    text: format!(
+                        "column {table}.{col} is missing: the code reads and writes it ({})",
+                        op_str(op, "type")
+                    ),
+                    code: None,
+                    table,
+                    steps: vec![Step::Op(op.clone())],
+                })
+            }
+            "addIndex" => {
+                let name = op_str(op, "name");
+                let cols = op
+                    .get("indexColumns")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default();
+                // An addIndex right after an addColumn of the same column is
+                // that column's UNIQUE: it belongs to the column's finding.
+                if let Some(last) = findings.last_mut() {
+                    if last.table == table
+                        && last.steps.iter().any(|s| {
+                            matches!(s, Step::Op(p) if op_str(p, "kind") == "addColumn"
+                                && op_str(p, "column") == cols)
+                        })
+                    {
+                        last.steps.push(Step::Op(op.clone()));
+                        continue;
+                    }
+                }
+                if let Some(f) = findings.iter_mut().find(|f| {
+                    f.table == table
+                        && f.steps.iter().any(|s| {
+                            matches!(s, Step::Op(p) if op_str(p, "kind") == "dropIndex"
+                                && op_str(p, "name") == name)
+                        })
+                }) {
+                    f.text = format!(
+                        "index {name} on {table} differs: the code declares it on ({cols}){}{}",
+                        if op.get("unique").is_some() { ", unique" } else { "" },
+                        op.get("where")
+                            .and_then(Value::as_str)
+                            .map(|w| format!(", WHERE {w}"))
+                            .unwrap_or_default()
+                    );
+                    f.steps.push(Step::Op(op.clone()));
+                    continue;
+                }
+                let unique = if op.get("unique").is_some() {
+                    "unique "
+                } else {
+                    ""
+                };
+                let partial = op
+                    .get("where")
+                    .and_then(Value::as_str)
+                    .map(|w| format!(" WHERE {w}"))
+                    .unwrap_or_default();
+                findings.push(Finding {
+                    text: format!(
+                        "{unique}index {name} on {table} ({cols}){partial} is missing"
+                    ),
+                    code: None,
+                    table,
+                    steps: vec![Step::Op(op.clone())],
+                });
+            }
+            "dropIndex" => {
+                let name = op_str(op, "name").to_string();
+                if readded.iter().any(|(t, n)| *t == table && *n == name) {
+                    findings.push(Finding {
+                        text: format!("index {name} on {table} differs"),
+                        code: None,
+                        table,
+                        steps: vec![Step::Op(op.clone())],
+                    });
+                } else {
+                    findings.push(Finding {
+                        text: format!(
+                            "index {name} on {table} is in the database, and the code does not declare it"
+                        ),
+                        code: None,
+                        steps: vec![Step::Unsafe {
+                            sql: format!("DROP INDEX IF EXISTS {name}"),
+                            reason: "the code does not declare this index; drop it only if nothing \
+                                     else (a query plan, a hand-written migration) needs it"
+                                .into(),
+                        }],
+                        table,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    for op in &diff.destructive {
+        let table = op_str(op, "table").to_string();
+        match op_str(op, "kind") {
+            "alterColumnType" => {
+                let col = op_str(op, "column");
+                let kind = op_str(op, "type");
+                let live_ty = live_table(&table)
+                    .and_then(|t| t.columns.iter().find(|c| c.name == col))
+                    .map(|c| c.sql_type.clone())
+                    .unwrap_or_default();
+                let want = sql_type_of(&dialect, kind);
+                let step = if pg {
+                    Step::Unsafe {
+                        sql: format!(
+                            "ALTER TABLE {table} ALTER COLUMN {col} TYPE {want} USING {col}::{want}"
+                        ),
+                        reason: "a type change rewrites every row, and a value that does not \
+                                 convert makes it fail"
+                            .into(),
+                    }
+                } else {
+                    Step::Unsafe {
+                        sql: String::new(),
+                        reason: rebuild_reason("change a column's type"),
+                    }
+                };
+                findings.push(Finding {
+                    text: format!(
+                        "column {table}.{col} is {live_ty} in the database; the code reads it as {kind} ({want})"
+                    ),
+                    code: Some(format!(
+                        "column {table}.{col} is {live_ty}: the code's field reads {kind}, so a read \
+                         of a value that is not {kind} fails. Change the field's type to match \
+                         the column, or change the column"
+                    )),
+                    table,
+                    steps: vec![step],
+                });
+            }
+            "dropColumn" => {
+                let col = op_str(op, "column");
+                let lc = live_table(&table).and_then(|t| t.columns.iter().find(|c| c.name == col));
+                let required = lc.is_some_and(|c| c.notnull && c.default.is_none() && !c.autoinc);
+                let ty = lc.map(|c| c.sql_type.clone()).unwrap_or_default();
+                let effect = if required {
+                    " It is NOT NULL with no default, so every insert from the code fails."
+                } else {
+                    ""
+                };
+                findings.push(Finding {
+                    text: format!(
+                        "column {table}.{col} ({ty}) is in the database, and the code has no field for it.{effect}"
+                    ),
+                    code: Some(if required {
+                        format!(
+                            "column {table}.{col} ({ty}, NOT NULL, no default) has no field in the code: \
+                             every insert fails. Add a field for it, or give the column a DEFAULT, \
+                             or make it nullable"
+                        )
+                    } else {
+                        format!(
+                            "column {table}.{col} ({ty}) has no field in the code: reads ignore it, \
+                             inserts leave it {}",
+                            if lc.is_some_and(|c| c.default.is_some()) {
+                                "at its default"
+                            } else {
+                                "NULL"
+                            }
+                        )
+                    }),
+                    steps: vec![Step::Unsafe {
+                        sql: format!("ALTER TABLE {table} DROP COLUMN {col}"),
+                        reason: "dropping a column deletes its data".into(),
+                    }],
+                    table,
+                });
+            }
+            "dropTable" => {
+                findings.push(Finding {
+                    text: format!(
+                        "table {table} is in the database, and the code declares no Store or Schema table for it"
+                    ),
+                    code: None,
+                    steps: vec![Step::Unsafe {
+                        sql: format!("DROP TABLE {table}"),
+                        reason: "dropping a table deletes its data".into(),
+                    }],
+                    table,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    // 2. What only a live database shows, for the columns both sides have.
+    let mut notices = Vec::new();
+    for tt in &target.tables {
+        if tt.name.starts_with(db_migrate::RUNTIME_TABLE_PREFIX) {
+            continue;
+        }
+        let Some(lt) = live_table(&tt.name) else {
+            continue;
+        };
+        for tc in &tt.columns {
+            let lc = lt.columns.iter().find(|c| c.name == tc.name);
+            let Some(lc) = lc else {
+                if tc.external {
+                    findings.push(Finding {
+                        table: tt.name.clone(),
+                        text: format!(
+                            "column {}.{} is missing: it is not a record field, a Store builder \
+                             (defaultWith, defaultNow, touchOnUpdate, a default*) names it, and \
+                             `sky db migrate --gen` never adds it",
+                            tt.name, tc.name
+                        ),
+                        code: None,
+                        steps: vec![Step::Unsafe {
+                            sql: format!(
+                                "ALTER TABLE {} ADD COLUMN {} {}",
+                                tt.name,
+                                tc.name,
+                                sql_type_of(&dialect, &tc.kind)
+                            ),
+                            reason: "an external column belongs to a Std.Db.Schema table or a \
+                                     hand-written migration: add it there, with the type and \
+                                     default it needs"
+                                .into(),
+                        }],
+                    });
+                }
+                continue;
+            };
+            let f = fit_column(&dialect, tc, &lc.sql_type);
+            if f == Fit::Narrow {
+                notices.push(Notice {
+                    text: format!(
+                        "column {}.{} is {} on PostgreSQL and holds only 32-bit values (at most \
+                         2147483647), while a Sky Int is 64-bit and a new column is BIGINT; a \
+                         larger value fails with \"integer out of range\". It is not changed.",
+                        tt.name,
+                        tc.name,
+                        base_type(&lc.sql_type).to_ascii_uppercase()
+                    ),
+                    sql: format!(
+                        "ALTER TABLE {} ALTER COLUMN {} TYPE BIGINT",
+                        tt.name, tc.name
+                    ),
+                });
+            }
+            if tc.external || f == Fit::Differs {
+                continue;
+            }
+            let is_pk = tc.name == tt.pk || lc.pk;
+            // NOT NULL.
+            if !is_pk && !tc.nullable && !lc.notnull {
+                let zero = backfill_zero(tc)
+                    .map(|z| default_sql(&dialect, &tc.kind, &z))
+                    .unwrap_or_else(|| "<a value>".into());
+                findings.push(Finding {
+                    table: tt.name.clone(),
+                    text: format!(
+                        "column {}.{} is nullable in the database; the code declares it required (NOT NULL)",
+                        tt.name, tc.name
+                    ),
+                    code: Some(format!(
+                        "column {}.{} may hold NULL: a read of a NULL into the required field \
+                         fails. Make the field a Maybe, or set the column NOT NULL",
+                        tt.name, tc.name
+                    )),
+                    steps: vec![if pg {
+                        Step::Unsafe {
+                            sql: format!(
+                                "UPDATE {t} SET {c} = {zero} WHERE {c} IS NULL;\n\
+                                 ALTER TABLE {t} ALTER COLUMN {c} SET NOT NULL",
+                                t = tt.name,
+                                c = tc.name
+                            ),
+                            reason: "NOT NULL on existing rows fails while a row holds NULL; \
+                                     choose the value for those rows first"
+                                .into(),
+                        }
+                    } else {
+                        Step::Unsafe {
+                            sql: String::new(),
+                            reason: rebuild_reason("add NOT NULL to a column"),
+                        }
+                    }],
+                });
+            } else if !is_pk && tc.nullable && lc.notnull {
+                findings.push(Finding {
+                    table: tt.name.clone(),
+                    text: format!(
+                        "column {}.{} is NOT NULL in the database; the code declares it nullable (a Maybe)",
+                        tt.name, tc.name
+                    ),
+                    code: Some(format!(
+                        "column {}.{} is NOT NULL: an insert or update that writes Nothing fails",
+                        tt.name, tc.name
+                    )),
+                    steps: vec![if pg {
+                        Step::Plain(format!(
+                            "ALTER TABLE {} ALTER COLUMN {} DROP NOT NULL",
+                            tt.name, tc.name
+                        ))
+                    } else {
+                        Step::Unsafe {
+                            sql: String::new(),
+                            reason: rebuild_reason("drop NOT NULL from a column"),
+                        }
+                    }],
+                });
+            }
+            // DEFAULT.
+            if !(is_pk && (tc.autoinc || lc.autoinc)) {
+                let live_d = canon_live_default(&tc.kind, lc.default.as_deref());
+                let code_d = tc
+                    .default
+                    .as_ref()
+                    .and_then(|d| canon_code_default(&tc.kind, d));
+                let ok = match (&code_d, &live_d) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) if a == b => true,
+                    // SQLite cannot add a column with a `now` default: the
+                    // migration writes the apply time as a constant.
+                    (Some(a), Some(_)) if a == "now" && !pg => true,
+                    // A required column added to a table with rows carries
+                    // its zero as the backfill DEFAULT.
+                    (None, Some(b)) if !tc.nullable => backfill_zero(tc)
+                        .and_then(|z| canon_code_default(&tc.kind, &z))
+                        .is_some_and(|z| &z == b),
+                    _ => false,
+                };
+                if !ok {
+                    let step = if pg {
+                        Step::Plain(match &tc.default {
+                            Some(d) => format!(
+                                "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {}",
+                                tt.name,
+                                tc.name,
+                                default_sql(&dialect, &tc.kind, d)
+                            ),
+                            None => format!(
+                                "ALTER TABLE {} ALTER COLUMN {} DROP DEFAULT",
+                                tt.name, tc.name
+                            ),
+                        })
+                    } else {
+                        Step::Unsafe {
+                            sql: String::new(),
+                            reason: rebuild_reason("change a column's default"),
+                        }
+                    };
+                    findings.push(Finding {
+                        table: tt.name.clone(),
+                        text: format!(
+                            "column {}.{} has {} in the database; the code declares {}",
+                            tt.name,
+                            tc.name,
+                            display_default(lc.default.as_deref()),
+                            display_code_default(tc.default.as_ref())
+                        ),
+                        code: None,
+                        steps: vec![step],
+                    });
+                }
+            }
+            // UNIQUE.
+            let live_unique = lc.unique
+                || lt.indexes.iter().any(|ix| {
+                    ix.unique
+                        && ix.predicate.is_empty()
+                        && ix.columns.len() == 1
+                        && ix.columns[0] == tc.name
+                });
+            if tc.unique && !is_pk && !live_unique {
+                let cols = vec![tc.name.clone()];
+                let name = db_migrate::index_name(&tt.name, &cols, true, "");
+                findings.push(Finding {
+                    table: tt.name.clone(),
+                    text: format!(
+                        "column {}.{} is not UNIQUE in the database; the code declares it unique",
+                        tt.name, tc.name
+                    ),
+                    code: None,
+                    steps: vec![Step::Op(json!({
+                        "kind": "addIndex", "table": tt.name, "name": name,
+                        "indexColumns": cols, "unique": true,
+                    }))],
+                });
+            } else if !tc.unique && !is_pk && lc.unique {
+                findings.push(Finding {
+                    table: tt.name.clone(),
+                    text: format!(
+                        "column {}.{} is UNIQUE in the database; the code does not declare it unique",
+                        tt.name, tc.name
+                    ),
+                    code: Some(format!(
+                        "column {}.{} is UNIQUE: an insert of a value another row holds fails",
+                        tt.name, tc.name
+                    )),
+                    steps: vec![Step::Unsafe {
+                        sql: String::new(),
+                        reason: "drop the UNIQUE constraint only if two rows may hold the same \
+                                 value (PostgreSQL: ALTER TABLE … DROP CONSTRAINT <name>; SQLite: \
+                                 rebuild the table)"
+                            .into(),
+                    }],
+                });
+            }
+            // The serial key.
+            if is_pk && tc.autoinc && !lc.autoinc {
+                findings.push(Finding {
+                    table: tt.name.clone(),
+                    text: format!(
+                        "column {}.{} is the primary key without a sequence in the database; the \
+                         code declares it serial (Store.serial), so inserts leave it out",
+                        tt.name, tc.name
+                    ),
+                    code: Some(format!(
+                        "column {}.{} has no sequence: Store.insert leaves a serial key out, \
+                         and the insert fails",
+                        tt.name, tc.name
+                    )),
+                    steps: vec![Step::Unsafe {
+                        sql: String::new(),
+                        reason: if pg {
+                            "add a sequence (CREATE SEQUENCE, then ALTER COLUMN … SET DEFAULT \
+                             nextval(…) and OWNED BY), or rebuild the table"
+                                .into()
+                        } else {
+                            rebuild_reason("make a key AUTOINCREMENT")
+                        },
+                    }],
+                });
+            }
+        }
+    }
+
+    let extra_tables = live
+        .tables
+        .iter()
+        .filter(|t| !is_runtime_table(&t.name) && !target.tables.iter().any(|x| x.name == t.name))
+        .cloned()
+        .collect();
+    Check {
+        dialect,
+        diff,
+        findings,
+        notices,
+        extra_tables,
+        ledger: live.ledger.clone(),
+    }
+}
+
+// ---- rendering ---------------------------------------------------------------
+
+/// The plain-words report.
+pub fn render_report(c: &Check, target_tables: usize) -> String {
+    let mut s = String::new();
+    let db = if is_pg(&c.dialect) {
+        "PostgreSQL"
+    } else {
+        "SQLite"
+    };
+    s.push_str(&format!(
+        "sky db check: {db} database against {target_tables} table(s) the code declares\n\n"
+    ));
+    if c.findings.is_empty() {
+        s.push_str("schema: the database matches the code.\n");
+    } else {
+        s.push_str(&format!("schema: {} difference(s)\n", c.findings.len()));
+        for f in &c.findings {
+            s.push_str(&format!("  - {}\n", f.text));
+        }
+    }
+    for n in &c.notices {
+        s.push_str(&format!("  notice: {}\n", n.text));
+    }
+    // The --gen warnings that repeat a finding (a drop or a type change, in
+    // --gen words) are left out: the finding says it.
+    for w in c
+        .diff
+        .warnings
+        .iter()
+        .filter(|w| !w.contains("DESTRUCTIVE"))
+    {
+        s.push_str(&format!("  note: {w}\n"));
+    }
+    s.push('\n');
+    s.push_str(&render_ledger(&c.ledger));
+    s.push('\n');
+    if c.drift() {
+        let mut next = Vec::new();
+        if c.ledger.count("pending") > 0 {
+            next.push(
+                "`sky db migrate` applies the pending migrations (the schema differences may be what they change)",
+            );
+        }
+        if c.ledger.count("edited") > 0 {
+            next.push("an applied migration was edited: restore the file as it was applied, and put the change in a new migration");
+        }
+        if !c.findings.is_empty() {
+            next.push("`sky db check --sql` prints the SQL that makes the database match the code; `--write` saves its safe steps as a migration");
+        }
+        s.push_str("drift: the database does not match the code.\n");
+        for n in next {
+            s.push_str(&format!("  next: {n}\n"));
+        }
+    } else {
+        s.push_str("up to date.\n");
+    }
+    s
+}
+
+pub fn render_ledger(l: &Ledger) -> String {
+    let mut s = String::new();
+    if l.migrations.is_empty() {
+        s.push_str("migrations: no files in db/migrations");
+        if !l.other.is_empty() {
+            s.push_str(&format!(
+                "; the ledger records {} migration(s) from elsewhere (a Db.migrate list or a stdlib module)",
+                l.other.len()
+            ));
+        }
+        s.push('\n');
+        return s;
+    }
+    let applied = l.count("applied") + l.count("restamp");
+    s.push_str(&format!(
+        "migrations: {} file(s) — {applied} applied, {} pending, {} edited\n",
+        l.migrations.len(),
+        l.count("pending"),
+        l.count("edited")
+    ));
+    for m in &l.migrations {
+        let line = match m.state.as_str() {
+            "applied" => format!("  applied  {}  ({})", m.name, m.applied_at),
+            "restamp" => format!(
+                "  applied  {}  ({}; a v0.28 checksum, re-stamped by the next `sky db migrate`)",
+                m.name, m.applied_at
+            ),
+            "edited" => format!(
+                "  EDITED   {}  (applied {}, then the file changed: its checksum does not match the ledger)",
+                m.name, m.applied_at
+            ),
+            _ => format!("  PENDING  {}", m.name),
+        };
+        s.push_str(&line);
+        s.push('\n');
+    }
+    if !l.present {
+        s.push_str("  the database has no _sky_migrations ledger: no migration has run on it\n");
+    }
+    if !l.other.is_empty() {
+        s.push_str(&format!(
+            "  the ledger also records {} migration(s) that are not files here (a Db.migrate list or a stdlib module): {}\n",
+            l.other.len(),
+            l.other.join(", ")
+        ));
+    }
+    s
+}
+
+fn comment_block(text: &str) -> String {
+    text.lines()
+        .map(|l| {
+            if l.is_empty() {
+                "--".to_string()
+            } else {
+                format!("-- {l}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The `--sql` output. `rendered` holds the runtime's SQL for each op of
+/// [`Check::safe_ops`], in order.
+pub fn render_sql(c: &Check, rendered: &[String]) -> String {
+    let db = if is_pg(&c.dialect) {
+        "PostgreSQL"
+    } else {
+        "SQLite"
+    };
+    let mut s = format!(
+        "-- sky db check --sql: the SQL that makes this {db} database match the code.\n\
+         -- Nothing here has run. Statements that lose data or can fail on existing rows\n\
+         -- are commented out, each with the reason.\n"
+    );
+    let mut next_op = 0usize;
+    if c.findings.is_empty() && c.notices.is_empty() {
+        s.push_str("\n-- The database matches the code: nothing to change.\n");
+    }
+    for f in &c.findings {
+        s.push('\n');
+        s.push_str(&comment_block(&f.text));
+        s.push('\n');
+        for step in &f.steps {
+            match step {
+                Step::Op(_) => {
+                    if let Some(sql) = rendered.get(next_op) {
+                        for stmt in sql.split(";\n").filter(|x| !x.trim().is_empty()) {
+                            s.push_str(stmt.trim());
+                            s.push_str(";\n");
+                        }
+                    }
+                    next_op += 1;
+                }
+                Step::Plain(sql) => {
+                    s.push_str(sql);
+                    s.push_str(";\n");
+                }
+                Step::Unsafe { sql, reason } => {
+                    s.push_str(&comment_block(&format!("UNSAFE: {reason}")));
+                    s.push('\n');
+                    for line in sql.lines() {
+                        s.push_str(&format!("-- {line}"));
+                        if !line.ends_with(';') {
+                            s.push(';');
+                        }
+                        s.push('\n');
+                    }
+                }
+            }
+        }
+    }
+    for n in &c.notices {
+        s.push('\n');
+        s.push_str(&comment_block(&format!("NOTICE: {}", n.text)));
+        s.push('\n');
+        s.push_str(&format!("-- {};\n", n.sql));
+    }
+    s
+}
+
+// ---- --code -------------------------------------------------------------------
+
+const SKY_KEYWORDS: &[&str] = &[
+    "if",
+    "then",
+    "else",
+    "case",
+    "of",
+    "let",
+    "in",
+    "type",
+    "alias",
+    "module",
+    "import",
+    "exposing",
+    "as",
+    "port",
+    "where",
+    "infix",
+    "effect",
+    "command",
+    "subscription",
+];
+
+fn is_lower_ident(s: &str) -> bool {
+    let mut cs = s.chars();
+    matches!(cs.next(), Some(c) if c.is_ascii_lowercase())
+        && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !SKY_KEYWORDS.contains(&s)
+}
+
+/// `camelToSnake` (runtime-go/rt/codec_auto.go): the column `Codec.auto`
+/// derives from a field name.
+pub fn camel_to_snake(s: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn snake_to_camel(s: &str) -> String {
+    let mut out = String::new();
+    let mut up = false;
+    for c in s.chars() {
+        if c == '_' {
+            up = true;
+        } else if up {
+            out.push(c.to_ascii_uppercase());
+            up = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn pascal(s: &str) -> String {
+    let camel = snake_to_camel(s);
+    let mut cs = camel.chars();
+    match cs.next() {
+        Some(c) => c.to_ascii_uppercase().to_string() + cs.as_str(),
+        None => String::new(),
+    }
+}
+
+/// The Sky type and blank value for a live column.
+fn sky_field_type(dialect: &str, c: &LiveColumn) -> (String, String, bool) {
+    let (ty, zero, decimal) = match guess_kind(dialect, &c.sql_type) {
+        "int" => ("Int", "0", false),
+        "real" => ("Float", "0.0", false),
+        "bool" => ("Bool", "False", false),
+        "decimal" => ("Decimal", "Decimal.zero", true),
+        _ => ("String", "\"\"", false),
+    };
+    if c.notnull || c.pk {
+        (ty.to_string(), zero.to_string(), decimal)
+    } else {
+        (format!("Maybe {ty}"), "Nothing".to_string(), decimal)
+    }
+}
+
+/// A Sky record type alias, its `Codec` and its `Store` for a live table the
+/// code declares nothing for. Returns `(stub, needs Std.Decimal)`.
+pub fn record_stub(dialect: &str, t: &LiveTable) -> (String, bool) {
+    // `Codec.auto` maps a camelCase field to its snake_case column; when every
+    // column round-trips through that, the fields are camelCase. Otherwise
+    // `Codec.autoCamel` keeps each field name equal to its column.
+    let snake_ok = t.columns.iter().all(|c| {
+        let f = snake_to_camel(&c.name);
+        is_lower_ident(&f) && camel_to_snake(&f) == c.name
+    });
+    let ty = pascal(&t.name);
+    let ty = if ty.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+        ty
+    } else {
+        format!("T{ty}")
+    };
+    let lower = {
+        let mut cs = ty.chars();
+        cs.next()
+            .map(|c| c.to_ascii_lowercase().to_string() + cs.as_str())
+            .unwrap_or_default()
+    };
+    let mut fields = Vec::new();
+    let mut blanks = Vec::new();
+    let mut skipped = Vec::new();
+    let mut decimal = false;
+    // A NUMERIC column reads through `Codec.decimal` (`Codec.auto` keeps a
+    // Decimal field in a JSON text column). `Codec.autoWith` overrides share
+    // one type, so when the decimal columns mix NOT NULL and nullable, every
+    // one of them is a `Maybe Decimal`.
+    let is_dec = |c: &LiveColumn| guess_kind(dialect, &c.sql_type) == "decimal";
+    let dec_maybe = t.columns.iter().any(|c| is_dec(c) && !(c.notnull || c.pk));
+    let mut overrides = Vec::new();
+    let mut notes = Vec::new();
+    for c in &t.columns {
+        let fname = if snake_ok {
+            snake_to_camel(&c.name)
+        } else {
+            c.name.clone()
+        };
+        if !is_lower_ident(&fname) {
+            skipped.push(c.name.clone());
+            continue;
+        }
+        let (mut fty, mut zero, dec) = sky_field_type(dialect, c);
+        decimal |= dec;
+        if dec && snake_ok {
+            if dec_maybe {
+                if c.notnull || c.pk {
+                    notes.push(format!(
+                        "-- column {} is NOT NULL: never write Nothing to {fname}\n",
+                        c.name
+                    ));
+                }
+                fty = "Maybe Decimal".into();
+                zero = "Nothing".into();
+                overrides.push(format!("( \"{}\", Codec.maybe Codec.decimal )", c.name));
+            } else {
+                overrides.push(format!("( \"{}\", Codec.decimal )", c.name));
+            }
+        } else if dec {
+            notes.push(format!(
+                "-- column {} is NUMERIC: Codec.autoCamel keeps a Decimal as JSON text, so \
+                 map it with Codec.object and Codec.decimal\n",
+                c.name
+            ));
+        }
+        fields.push(format!("{fname} : {fty}"));
+        blanks.push(format!("{fname} = {zero}"));
+    }
+    let derive = if !snake_ok {
+        "Codec.autoCamel".to_string()
+    } else if overrides.is_empty() {
+        "Codec.auto".to_string()
+    } else {
+        format!("Codec.autoWith [ {} ]", overrides.join(", "))
+    };
+    let mut s = format!("-- Table {} (the code declares no Store for it)\n", t.name);
+    for n in &notes {
+        s.push_str(n);
+    }
+    for c in &skipped {
+        s.push_str(&format!(
+            "-- column {c} is not a Sky field name: map it with Codec.object / Codec.field\n"
+        ));
+    }
+    if fields.is_empty() {
+        s.push_str("-- (no column has a Sky field name)\n");
+        return (s, false);
+    }
+    s.push_str(&format!(
+        "type alias {ty} =\n    {{ {}\n    }}\n\n\n",
+        fields.join("\n    , ")
+    ));
+    s.push_str(&format!(
+        "{lower}Codec : Codec {ty}\n{lower}Codec =\n    {derive} {{ {} }}\n\n\n",
+        blanks.join(", ")
+    ));
+    let pk = t.columns.iter().find(|c| c.pk);
+    let key = match pk {
+        Some(c) if c.autoinc && guess_kind(dialect, &c.sql_type) == "int" => {
+            format!("\n        |> Store.serial \"{}\"", c.name)
+        }
+        Some(c) => format!("\n        |> Store.primaryKey \"{}\"", c.name),
+        None => String::new(),
+    };
+    s.push_str(&format!(
+        "{lower}Store : Store {ty}\n{lower}Store =\n    Store.fromCodec \"{}\" {lower}Codec{key}\n",
+        t.name
+    ));
+    (s, decimal)
+}
+
+/// The `--code` output.
+pub fn render_code(c: &Check) -> String {
+    let mut s = String::from(
+        "sky db check --code: what the code needs to read this database safely.\n\
+         Nothing in your code was changed.\n\n",
+    );
+    let notes: Vec<&String> = c.findings.iter().filter_map(|f| f.code.as_ref()).collect();
+    if notes.is_empty() {
+        s.push_str("Tables the code declares: every column the database holds reads safely.\n");
+    } else {
+        s.push_str("Tables the code declares:\n");
+        for n in notes {
+            s.push_str(&format!("  - {n}\n"));
+        }
+    }
+    if c.extra_tables.is_empty() {
+        s.push_str("\nEvery table in the database has a Store or Schema table in the code.\n");
+        return s;
+    }
+    let stubs: Vec<(String, bool)> = c
+        .extra_tables
+        .iter()
+        .map(|t| record_stub(&c.dialect, t))
+        .collect();
+    let decimal = stubs.iter().any(|(_, d)| *d);
+    s.push_str(&format!(
+        "\n{} table(s) have no Store in the code. A starting point for each, to copy\n\
+         into a module (add each Store to `db = Store.project [ … ]` with Store.toTable):\n\n",
+        stubs.len()
+    ));
+    s.push_str(SKY_STUB_BEGIN);
+    s.push('\n');
+    s.push_str("import Std.Codec as Codec exposing (Codec)\n");
+    if decimal {
+        s.push_str("import Std.Decimal as Decimal exposing (Decimal)\n");
+    }
+    s.push_str("import Std.Db.Store as Store exposing (Store)\n\n\n");
+    let body: Vec<String> = stubs.into_iter().map(|(t, _)| t).collect();
+    s.push_str(&body.join("\n\n"));
+    s.push_str(SKY_STUB_END);
+    s.push('\n');
+    s
+}
+
+/// Markers around the stub block, so a script can cut it out.
+pub const SKY_STUB_BEGIN: &str = "-- ---- begin Sky stubs ----";
+pub const SKY_STUB_END: &str = "-- ---- end Sky stubs ----";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn col(name: &str, kind: &str, nullable: bool) -> SchemaColumn {
+        SchemaColumn {
+            name: name.into(),
+            kind: kind.into(),
+            nullable,
+            autoinc: false,
+            unique: false,
+            default: None,
+            zero: None,
+            external: false,
+        }
+    }
+
+    fn lcol(name: &str, ty: &str, notnull: bool, default: Option<&str>) -> LiveColumn {
+        LiveColumn {
+            name: name.into(),
+            sql_type: ty.into(),
+            notnull,
+            default: default.map(str::to_string),
+            pk: false,
+            autoinc: false,
+            unique: false,
+        }
+    }
+
+    fn table(name: &str, pk: &str, columns: Vec<SchemaColumn>) -> SchemaTable {
+        SchemaTable {
+            name: name.into(),
+            pk: pk.into(),
+            columns,
+            indexes: vec![],
+        }
+    }
+
+    fn inspect(dialect: &str, tables: Vec<LiveTable>) -> Inspect {
+        Inspect {
+            dialect: dialect.into(),
+            tables,
+            ledger: Ledger::default(),
+        }
+    }
+
+    /// The live columns a migration file renders for the target columns
+    /// (`schemaRenderColumn` / `renderAddColumn`): what a database the
+    /// committed snapshot's migrations built holds.
+    fn built(dialect: &str, t: &SchemaTable) -> LiveTable {
+        LiveTable {
+            name: t.name.clone(),
+            columns: t
+                .columns
+                .iter()
+                .filter(|c| !c.external)
+                .map(|c| LiveColumn {
+                    name: c.name.clone(),
+                    sql_type: if c.autoinc && is_pg(dialect) {
+                        "bigint".into()
+                    } else if is_pg(dialect) {
+                        sql_type_of(dialect, &c.kind).to_ascii_lowercase()
+                    } else {
+                        sql_type_of(dialect, &c.kind).into()
+                    },
+                    notnull: !c.nullable || c.name == t.pk,
+                    default: c.default.as_ref().map(|d| default_sql(dialect, &c.kind, d)),
+                    pk: c.name == t.pk,
+                    autoinc: c.autoinc,
+                    unique: c.unique,
+                })
+                .collect(),
+            indexes: t
+                .indexes
+                .iter()
+                .map(|ix| LiveIndex {
+                    name: ix.name.clone(),
+                    columns: ix.columns.clone(),
+                    unique: ix.unique,
+                    predicate: if is_pg(dialect) && !ix.predicate.is_empty() {
+                        format!("({})", ix.predicate)
+                    } else {
+                        ix.predicate.clone()
+                    },
+                })
+                .collect(),
+        }
+    }
+
+    fn fixtures() -> Vec<(Schema, Schema)> {
+        let mut users = table(
+            "users",
+            "id",
+            vec![
+                SchemaColumn {
+                    autoinc: true,
+                    ..col("id", "int", false)
+                },
+                SchemaColumn {
+                    unique: true,
+                    ..col("email", "text", false)
+                },
+                col("nick", "text", true),
+                SchemaColumn {
+                    default: Some(json!({"int": 7})),
+                    ..col("rank", "int", false)
+                },
+                col("price", "decimal", true),
+                col("tags", "blob", false),
+                col("active", "bool", false),
+            ],
+        );
+        users.indexes.push(SchemaIndex {
+            name: db_migrate::index_name("users", &["rank".into()], false, "rank > 0"),
+            columns: vec!["rank".into()],
+            unique: false,
+            predicate: "rank > 0".into(),
+        });
+        let snapshot = Schema {
+            tables: vec![
+                users.clone(),
+                table(
+                    "old",
+                    "id",
+                    vec![col("id", "text", false), col("gone", "int", true)],
+                ),
+            ],
+        };
+        let mut users2 = users.clone();
+        users2.columns.push(col("bio", "text", true));
+        users2.columns.retain(|c| c.name != "nick");
+        users2
+            .columns
+            .iter_mut()
+            .find(|c| c.name == "active")
+            .unwrap()
+            .kind = "text".into();
+        users2.indexes.push(SchemaIndex {
+            name: "ix_users_email".into(),
+            columns: vec!["email".into()],
+            unique: false,
+            predicate: String::new(),
+        });
+        let target = Schema {
+            tables: vec![users2, table("orders", "id", vec![col("id", "int", false)])],
+        };
+        vec![
+            (target.clone(), snapshot.clone()),
+            (snapshot.clone(), snapshot),
+            (target.clone(), target),
+        ]
+    }
+
+    /// `check` and `sky db migrate --gen` cannot disagree: on a database the
+    /// committed snapshot's migrations built, the check diff IS the --gen diff
+    /// (target against the snapshot), op for op, in both dialects.
+    #[test]
+    fn check_diff_equals_gen_diff_on_shared_fixtures() {
+        for dialect in ["sqlite", "postgres"] {
+            for (target, snapshot) in fixtures() {
+                let live = inspect(
+                    dialect,
+                    snapshot.tables.iter().map(|t| built(dialect, t)).collect(),
+                );
+                let gen = db_migrate::diff(&target, &snapshot);
+                let c = check(&target, &live);
+                assert_eq!(c.diff.ops, gen.ops, "{dialect}: ops");
+                assert_eq!(
+                    c.diff.destructive, gen.destructive,
+                    "{dialect}: destructive"
+                );
+                // A database built from the target itself shows nothing.
+                if target.tables.len() == snapshot.tables.len()
+                    && db_migrate::diff(&target, &snapshot).is_empty()
+                {
+                    assert!(c.findings.is_empty(), "{dialect}: {:?}", c.findings);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_built_database_has_no_findings() {
+        for dialect in ["sqlite", "postgres"] {
+            let (_, snapshot) = fixtures().remove(1);
+            let live = inspect(
+                dialect,
+                snapshot.tables.iter().map(|t| built(dialect, t)).collect(),
+            );
+            let c = check(&snapshot, &live);
+            assert!(
+                c.findings.is_empty() && c.notices.is_empty(),
+                "{dialect}: {:?}",
+                c.findings.iter().map(|f| &f.text).collect::<Vec<_>>()
+            );
+            assert!(!c.drift());
+        }
+    }
+
+    /// A SQLite column declared with a boolean spelling has NUMERIC affinity
+    /// and holds 0 / 1 (SQLite stores TRUE / FALSE as 1 / 0), which a Bool
+    /// field reads: it fits the Bool kind, it is not a type difference.
+    #[test]
+    fn a_sqlite_boolean_column_fits_a_bool_field() {
+        for ty in ["BOOLEAN", "BOOL", "boolean", "INTEGER", "TINYINT"] {
+            assert_eq!(fit("sqlite", "bool", ty), Fit::Same, "{ty}");
+        }
+        // A v0.28 TEXT column of a nullable Bool or Float: Std.Db.Store reads
+        // and writes its `true` / `7.5` text (db_sqlite_legacy.go).
+        let nullable = |k: &str| SchemaColumn {
+            nullable: true,
+            ..col("x", k, true)
+        };
+        assert_eq!(fit_column("sqlite", &nullable("bool"), "TEXT"), Fit::Same);
+        assert_eq!(fit_column("sqlite", &nullable("real"), "TEXT"), Fit::Same);
+        assert_eq!(
+            fit_column("sqlite", &col("x", "bool", false), "TEXT"),
+            Fit::Differs
+        );
+        assert_eq!(
+            fit_column("postgres", &nullable("bool"), "text"),
+            Fit::Differs
+        );
+        // Not a Bool spelling: still a difference.
+        assert_eq!(fit("sqlite", "bool", "TEXT"), Fit::Differs);
+        assert_eq!(fit("sqlite", "bool", "NUMERIC"), Fit::Differs);
+        // A boolean column is not an Int column.
+        assert_eq!(fit("sqlite", "int", "BOOLEAN"), Fit::Differs);
+        let target = Schema {
+            tables: vec![table(
+                "t",
+                "id",
+                vec![col("id", "text", false), col("on", "bool", false)],
+            )],
+        };
+        let mut id = lcol("id", "TEXT", true, None);
+        id.pk = true;
+        let lt = LiveTable {
+            name: "t".into(),
+            columns: vec![id, lcol("on", "BOOLEAN", true, None)],
+            indexes: vec![],
+        };
+        let c = check(&target, &inspect("sqlite", vec![lt]));
+        assert!(
+            c.findings.is_empty(),
+            "{:?}",
+            c.findings.iter().map(|f| &f.text).collect::<Vec<_>>()
+        );
+        // --gen compares kinds from the snapshot, never SQL types: the same
+        // target against itself has no diff, and check agrees.
+        assert!(db_migrate::diff(&target, &target).is_empty());
+        assert!(c.diff.is_empty());
+    }
+
+    #[test]
+    fn integer_for_an_int_is_a_notice_not_drift() {
+        let target = Schema {
+            tables: vec![table(
+                "t",
+                "id",
+                vec![col("id", "text", false), col("n", "int", false)],
+            )],
+        };
+        let mut lt = LiveTable {
+            name: "t".into(),
+            columns: vec![
+                lcol("id", "text", true, None),
+                lcol("n", "integer", true, None),
+            ],
+            indexes: vec![],
+        };
+        lt.columns[0].pk = true;
+        let c = check(&target, &inspect("postgres", vec![lt]));
+        assert!(
+            c.findings.is_empty(),
+            "{:?}",
+            c.findings.iter().map(|f| &f.text).collect::<Vec<_>>()
+        );
+        assert_eq!(c.notices.len(), 1);
+        assert!(c.notices[0].sql.contains("TYPE BIGINT"));
+        let sql = render_sql(&c, &[]);
+        assert!(
+            sql.contains("-- ALTER TABLE t ALTER COLUMN n TYPE BIGINT;"),
+            "{sql}"
+        );
+        assert!(sql.contains("integer out of range"), "{sql}");
+    }
+
+    #[test]
+    fn null_default_unique_findings() {
+        let target = Schema {
+            tables: vec![table(
+                "t",
+                "id",
+                vec![
+                    col("id", "text", false),
+                    col("a", "text", false),
+                    SchemaColumn {
+                        default: Some(json!({"int": 3})),
+                        ..col("b", "int", false)
+                    },
+                    SchemaColumn {
+                        unique: true,
+                        ..col("c", "text", true)
+                    },
+                ],
+            )],
+        };
+        let mut id = lcol("id", "TEXT", true, None);
+        id.pk = true;
+        let lt = LiveTable {
+            name: "t".into(),
+            columns: vec![
+                id,
+                lcol("a", "TEXT", false, None),
+                lcol("b", "INTEGER", true, Some("4")),
+                lcol("c", "TEXT", false, None),
+            ],
+            indexes: vec![],
+        };
+        let c = check(&target, &inspect("sqlite", vec![lt.clone()]));
+        let texts: Vec<&str> = c.findings.iter().map(|f| f.text.as_str()).collect();
+        assert_eq!(c.findings.len(), 3, "{texts:?}");
+        assert!(texts[0].contains("t.a is nullable"), "{texts:?}");
+        assert!(texts[1].contains("t.b has DEFAULT 4"), "{texts:?}");
+        assert!(texts[2].contains("t.c is not UNIQUE"), "{texts:?}");
+        // The unique index is a safe op; the SQLite NOT NULL is not.
+        assert_eq!(c.safe_ops().len(), 1);
+        let pgc = check(&target, &inspect("postgres", vec![lt]));
+        let sql = render_sql(
+            &pgc,
+            &["CREATE UNIQUE INDEX IF NOT EXISTS ux ON t (c)".into()],
+        );
+        assert!(
+            sql.contains("-- ALTER TABLE t ALTER COLUMN a SET NOT NULL;"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("\nALTER TABLE t ALTER COLUMN b SET DEFAULT 3;\n"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("\nCREATE UNIQUE INDEX IF NOT EXISTS ux ON t (c);\n"),
+            "{sql}"
+        );
+    }
+
+    #[test]
+    fn live_defaults_canonicalise() {
+        assert_eq!(
+            canon_live_default("text", Some("'a''b'::text")).as_deref(),
+            Some("'a'b")
+        );
+        assert_eq!(
+            canon_live_default("int", Some("'-5'::integer")).as_deref(),
+            Some("-5")
+        );
+        assert_eq!(
+            canon_live_default("int", Some("(-5)")).as_deref(),
+            Some("-5")
+        );
+        assert_eq!(
+            canon_live_default("bool", Some("1")).as_deref(),
+            Some("true")
+        );
+        assert_eq!(
+            canon_live_default("bool", Some("false")).as_deref(),
+            Some("false")
+        );
+        assert_eq!(
+            canon_live_default("decimal", Some("'0'::numeric")).as_deref(),
+            Some("'0")
+        );
+        assert_eq!(
+            canon_live_default("decimal", Some("0")).as_deref(),
+            Some("'0")
+        );
+        assert_eq!(
+            canon_live_default("text", Some("(datetime('now'))")).as_deref(),
+            Some("now")
+        );
+        assert_eq!(
+            canon_live_default(
+                "int",
+                Some("((EXTRACT(epoch FROM now()) * (1000)::numeric))::bigint")
+            )
+            .as_deref(),
+            Some("now")
+        );
+        assert_eq!(
+            canon_live_default("int", Some("nextval('t_id_seq'::regclass)")),
+            None
+        );
+        assert_eq!(
+            canon_code_default("decimal", &json!({"text": "0.50"})).as_deref(),
+            Some("'0.5")
+        );
+        assert_eq!(
+            canon_code_default("real", &json!({"float": 1.0})).as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            canon_predicate("(status = 'a'::text)"),
+            canon_predicate("status = 'a'")
+        );
+    }
+
+    #[test]
+    fn stubs_round_trip_snake_case() {
+        let mut id = lcol("id", "bigint", true, Some("nextval('x')"));
+        id.pk = true;
+        id.autoinc = true;
+        let t = LiveTable {
+            name: "order_items".into(),
+            columns: vec![
+                id,
+                lcol("unit_price", "numeric", false, None),
+                lcol("note", "text", false, None),
+                lcol("qty", "integer", true, None),
+            ],
+            indexes: vec![],
+        };
+        let (s, dec) = record_stub("postgres", &t);
+        assert!(dec);
+        assert!(s.contains("type alias OrderItems ="), "{s}");
+        assert!(s.contains("unitPrice : Maybe Decimal"), "{s}");
+        assert!(
+            s.contains(
+                "Codec.autoWith [ ( \"unit_price\", Codec.maybe Codec.decimal ) ] \
+                 { id = 0, unitPrice = Nothing"
+            ),
+            "{s}"
+        );
+        assert!(s.contains("|> Store.serial \"id\""), "{s}");
+        // A column that does not round-trip: autoCamel keeps the column names.
+        let t2 = LiveTable {
+            name: "x".into(),
+            columns: vec![
+                lcol("addr_2", "TEXT", true, None),
+                lcol("type", "TEXT", true, None),
+            ],
+            indexes: vec![],
+        };
+        let (s2, _) = record_stub("sqlite", &t2);
+        assert!(s2.contains("Codec.autoCamel"), "{s2}");
+        assert!(s2.contains("addr_2 : String"), "{s2}");
+        assert!(s2.contains("column type is not a Sky field name"), "{s2}");
+    }
+}

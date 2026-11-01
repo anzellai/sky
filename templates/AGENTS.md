@@ -303,6 +303,9 @@ record's own, with no nested object) or `Codec.taggedUnion`/`Codec.var0..3`
 sky db init                    # scaffold db/migrations/ + db/schema.json
 sky db migrate --gen add_stock # diff types vs snapshot → a committed migration file
 sky db status                  # ✓ applied / ○ pending vs the live ledger
+sky db check                   # live DB vs the code: tables, columns, types, NULL, defaults, indexes + the ledger (read-only; exit 1 on drift)
+sky db check --sql [--write]   # the SQL to match the code (unsafe steps commented); --write saves the safe ones as a migration
+sky db check --code            # columns the code lacks or reads as another type; record + Codec + Store stubs for unknown tables
 sky db migrate                 # apply committed migrations (dialect-correct, once each)
 sky db seed                    # run the entry module's  seed : Db -> Task Error ()
 sky db reset [table]           # empty data (all declared tables, or one); keeps schema + ledger — prompts / --yes
