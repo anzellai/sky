@@ -3499,7 +3499,7 @@ witness    = "value"
 axes       = { edge = "failure", surface = "money" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "E|F|F|ZZZ|2|$1.00|F"
+stdout     = "E|F|F|ZZZ|2|E|F"
 
 [[case]]
 id         = "stdlib_edge/nominal-csv"

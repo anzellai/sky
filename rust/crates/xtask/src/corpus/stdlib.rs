@@ -5936,13 +5936,13 @@ fn money_battery(edge: &str) -> Vec<Check> {
             // symbol falls back to the code.
             s(&["Money.symbol"], "Money.symbol (CurrencyRaw \"ZZZ\")", "ZZZ"),
             i(&["Money.minorUnits"], "Money.minorUnits (CurrencyRaw \"ZZZ\")", 2),
-            // Currency mismatch on `add` is SILENT and returns the left
-            // operand. That is a sharp edge, it is what the module does, and
-            // pinning it is how a future change to it becomes visible.
-            s(
-                &["Money.add"],
-                "Money.format (Money.add (Money.fromMinor USD 100) (Money.fromMinor EUR 100))",
-                "$1.00",
+            // Two currencies have no sum. `Money.add` used to return the left
+            // operand in silence; since v0.29.2 it fails loudly with the
+            // classified `CurrencyMismatch`, and `addChecked` is the `Err`.
+            rs(
+                &["Money.addChecked"],
+                "Result.map Money.format (Money.addChecked (Money.fromMinor USD 100) (Money.fromMinor EUR 100))",
+                None,
             ),
             bo(
                 &["Money.eq"],
