@@ -388,7 +388,7 @@ func spaStaticFallbackHandler(fileHandler http.Handler, notFound any) http.Handl
 // file server of the `/` static mount (nil without one), for skyAssetGuard.
 func serverRouteMux(routeList []any) (mux *http.ServeMux, rootFiles http.Handler) {
 	mux = http.NewServeMux()
-	pages := &spaPageSet{}
+	pages := newSpaPageSet(mux)
 	spaPageSets.Store(mux, pages)
 	// The Sky.Spa boot loader, from memory (runtime_assets.go). A Sky-owned,
 	// content-hashed name: the backend serves it itself, so the page boots
@@ -474,9 +474,10 @@ func serverRouteMux(routeList []any) (mux *http.ServeMux, rootFiles http.Handler
 				rootFiles = fileHandler
 			}
 			if route.NotFound != nil {
-				// The fallback renders a page for every path no other route
-				// takes, so a failed native form POST there answers 303 too.
-				pages.add(spaNotFoundPagePattern)
+				// The fallback renders a page for every path under its prefix
+				// that no other route takes, so a native form POST the mux
+				// gives to it answers 303 too.
+				pages.add(pattern, spaNotFoundPage)
 				mux.Handle(pattern, spaStaticFallbackHandler(fileHandler, route.NotFound))
 			} else {
 				mux.Handle(pattern, fileHandler)
@@ -520,10 +521,10 @@ func serverRouteMux(routeList []any) (mux *http.ServeMux, rootFiles http.Handler
 				dispatchSkyHandler(w, req, page, names)
 			})
 			if muxPattern == translated {
-				pages.add(pattern)
+				pages.add(translated, spaPageRoute)
 			} else if !postClaimed[muxPathKey(pattern)] &&
 				muxHandleOrSkip(mux, http.MethodPost+" "+translated, http.HandlerFunc(pagePostRedirect)) {
-				pages.add(pattern)
+				pages.add(http.MethodPost+" "+translated, spaPageRoute)
 			}
 			continue
 		}

@@ -565,3 +565,62 @@ func TestCsrfRejectAnswers303ForCatchAllAndLivePages(t *testing.T) {
 		t.Fatalf("Live non-api POST: the 303 read %d body bytes, want 0", body.n)
 	}
 }
+
+// A `Server.staticNotFound` catch-all makes only the paths it serves pages
+// (v0.29.1 regression). A hand-written app with `Server.post "/login"` (or
+// `Server.any`) next to the catch-all answered every native form POST to
+// /login with the 303, even with the right token, so its handler never ran.
+// A path another route takes for the request's method is not a page: the
+// handler runs with the right token, and a missing or wrong token is the
+// normal CSRF 403 JSON. A path no route takes, under the catch-all's prefix,
+// is still a page (303).
+func TestStaticNotFound_OtherRoutesKeepTheirPost(t *testing.T) {
+	builds := map[string]func(dir string) []any{
+		"Server.post": func(dir string) []any {
+			return []any{Server_get("/login", pageHandler(pageFormHTML)),
+				Server_post("/login", textHandler("login:")),
+				Server_staticNotFound("/", dir, pageHandler(pageFormHTML))}
+		},
+		"Server.any": func(dir string) []any {
+			return []any{Server_any("/login", textHandler("login:")),
+				Server_staticNotFound("/", dir, pageHandler(pageFormHTML))}
+		},
+	}
+	for name, build := range builds {
+		dir := t.TempDir()
+		h := pageTestServer(t, func() []any { return build(dir) })
+		get := serve(h, httptest.NewRequest(http.MethodGet, "http://app.example/login", nil))
+		cookie := csrfCookieOf(t, get)
+
+		right := url.Values{"user": {"ada"}, "__sky_csrf": {cookie.Value}}
+		rec := serve(h, formPost("/login", right, cookie))
+		if rec.Code != 200 || !strings.HasPrefix(rec.Body.String(), "login:") {
+			t.Fatalf("%s: POST /login with the right token: %d %q, want the handler's 200",
+				name, rec.Code, rec.Body.String())
+		}
+		for what, form := range map[string]url.Values{
+			"no token":  {"user": {"ada"}},
+			"bad token": {"user": {"ada"}, "__sky_csrf": {strings.Repeat("b", 64)}},
+		} {
+			rec := serve(h, formPost("/login", form, cookie))
+			if rec.Code != http.StatusForbidden || rec.Header().Get("Location") != "" ||
+				!strings.Contains(rec.Header().Get("Content-Type"), "json") {
+				t.Fatalf("%s: POST /login with %s: %d Location %q: want the CSRF 403 JSON",
+					name, what, rec.Code, rec.Header().Get("Location"))
+			}
+		}
+		wantSeeOther(t, name+": an unclaimed path", serve(h, formPost("/no/such/page", right, cookie)), "/no/such/page")
+	}
+}
+
+// A catch-all mounted under a prefix makes pages only under that prefix.
+func TestStaticNotFound_PagesStayUnderItsPrefix(t *testing.T) {
+	dir := t.TempDir()
+	h := pageTestServer(t, func() []any {
+		return []any{Server_staticNotFound("/app/", dir, pageHandler(pageFormHTML))}
+	})
+	wantSeeOther(t, "under the prefix", serve(h, formPost("/app/x", url.Values{})), "/app/x")
+	if rec := serve(h, formPost("/other", url.Values{})); rec.Code != http.StatusForbidden {
+		t.Fatalf("a path outside the prefix answered %d, want 403", rec.Code)
+	}
+}

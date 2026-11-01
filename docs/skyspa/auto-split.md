@@ -1355,7 +1355,11 @@ on the page. The `Location` is always a path on the same origin (`//host` and
 `/\host` collapse to `/host`). A page leaves POST to another route on its path
 (`App.api "POST /path"`, `Server.any`), and a page whose POST entry would
 conflict with another route at start is skipped with a log line, never a
-panic. Sky.Live answers a native POST to a page the same way.
+panic. The `/` catch-all (`Server.staticNotFound`) is a page for a request
+the router gives to it: a path under its prefix that no other route takes for
+that method. A hand-written `Server.post` or `Server.any` route next to it
+keeps its POST, so its handler runs and a failed check is the 403. Sky.Live
+answers a native POST to a page the same way.
 
 A page with the field carries one visitor's token, and its response sets that
 visitor's CSRF cookie. Such a response gets `Vary: Cookie` and

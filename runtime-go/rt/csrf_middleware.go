@@ -238,8 +238,8 @@ func IsCsrfEnabled() bool {
 // a native form POST to one of their pages answers 303 to the same URL, not
 // the JSON 403, and its body is never read. A page is more than an api or rpc
 // route can be (those are exempt and never reach that point): a Sky.Spa page
-// (Spa_pageRoute), every path a `Server.staticNotFound` catch-all serves
-// (spaNotFoundPagePattern), and every path of a Sky.Live app that is not a
+// (Spa_pageRoute), every path under a `Server.staticNotFound` prefix that no
+// other route takes for that method (spaPageSet.matches), and every path of a Sky.Live app that is not a
 // `Live.api` route or a runtime endpoint (liveApp.isNativePagePost). The
 // 403 stays for a JSON POST, a POST with the X-Sky-Csrf header, and any
 // path that is not a page.
@@ -401,11 +401,13 @@ func csrfMiddlewareWithPages(next http.Handler, isPage func(*http.Request) bool)
 			return
 		}
 
-		// A native form POST to a page answers 303 to the same URL before the
+		// A native form POST that the mux gives to a page handler (a
+		// Spa_pageRoute, or a staticNotFound catch-all on a path no other
+		// route takes for that method) answers 303 to the same URL before the
 		// token is looked for, so the body (a password in it) is never read.
-		// A page takes no POST: with or without the right token the answer is
-		// the same 303 (dispatchRoot and Spa_pageRoute give it to one that
-		// passes).
+		// That handler takes no POST: with or without the right token the
+		// answer is the same 303. A path another route takes for the method
+		// is not a page, so it goes on to the token check below.
 		if isPage != nil && isNativeFormPost(r) && isPage(r) {
 			pagePostRedirect(w, r)
 			return
@@ -972,57 +974,73 @@ func sameOriginLocation(uri string) string {
 	return "/" + uri[i:]
 }
 
-// spaPageSet is the set of Sky.Spa page patterns of ONE Server.listen route
-// list whose POST answers 303 (pagePostRedirect). serverRouteMux fills it for
-// each Spa_pageRoute route that owns its path's POST, and for a
-// `Server.staticNotFound` catch-all (spaNotFoundPagePattern). The listener's
-// CSRF middleware (serverListenerHandler) reads the set of its own mux, so a
-// failed native form POST to one of its pages answers the same 303. It is per
-// mux, not process-wide: a second server in the process, or a plain
+// spaPageSet holds the page handlers of ONE Server.listen route list: the mux
+// patterns whose handler answers a POST with 303 (pagePostRedirect).
+// serverRouteMux fills it with each Spa_pageRoute pattern that owns its path's
+// POST, and with the pattern of a `Server.staticNotFound` catch-all. The
+// listener's CSRF middleware (serverListenerHandler) asks it whether the mux
+// gives a request (method and path) to one of those handlers. It is per mux,
+// not process-wide: a second server in the process, or a plain
 // CSRFMiddleware, keeps the 403.
 type spaPageSet struct {
-	mu       sync.Mutex
-	patterns []string
+	mux *http.ServeMux
+	mu  sync.Mutex
+	// pages maps a registered mux pattern to its kind.
+	pages map[string]spaPageKind
 }
+
+type spaPageKind int
+
+const (
+	// spaPageRoute is a Spa_pageRoute pattern.
+	spaPageRoute spaPageKind = iota + 1
+	// spaNotFoundPage is a `Server.staticNotFound` mount. It renders the
+	// NotFound page for every path under its prefix that no other route takes.
+	spaNotFoundPage
+)
 
 // spaPageSets maps a *http.ServeMux made by serverRouteMux to its spaPageSet.
 var spaPageSets sync.Map
 
-func (s *spaPageSet) add(pattern string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, p := range s.patterns {
-		if p == pattern {
-			return
-		}
-	}
-	s.patterns = append(s.patterns, pattern)
+func newSpaPageSet(mux *http.ServeMux) *spaPageSet {
+	return &spaPageSet{mux: mux, pages: map[string]spaPageKind{}}
 }
 
-// spaNotFoundPagePattern is added by a `Server.staticNotFound` route (the
-// Sky.Spa split's `/` catch-all), which renders the NotFound page for any path
-// no other route takes. Every path but the runtime's own (`/_sky/`, `/_rpc/`)
-// is then a page, so a native form POST to ANY such path that no api or rpc
-// route takes (those are exempt and pass first) answers the 303, not only a
-// declared page.
-const spaNotFoundPagePattern = "/{notfound...}"
-
-// matches reports whether r's path is one of the set's pages.
-func (s *spaPageSet) matches(r *http.Request) bool {
-	path := r.URL.Path
+// add records muxPattern, the exact pattern string registered on the mux.
+func (s *spaPageSet) add(muxPattern string, kind spaPageKind) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, p := range s.patterns {
-		if p == spaNotFoundPagePattern {
-			if strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "//") &&
-				!strings.HasPrefix(path, "/_sky/") && !strings.HasPrefix(path, "/_rpc/") {
-				return true
-			}
-			continue
+	s.pages[muxPattern] = kind
+}
+
+// matches reports whether the mux dispatches r (its method and its path) to
+// one of the set's page handlers. A path another route takes for r's method
+// (a `Server.post` or `Server.any` next to a staticNotFound catch-all, an api
+// or rpc route) is not a page, so its handler runs and a failed check is the
+// normal 403. The runtime's own paths (`/_sky/`, `/_rpc/`) and a
+// protocol-relative path are never pages.
+func (s *spaPageSet) matches(r *http.Request) bool {
+	path := r.URL.Path
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") ||
+		strings.HasPrefix(path, "/_sky/") || strings.HasPrefix(path, "/_rpc/") {
+		return false
+	}
+	_, pattern := s.mux.Handler(r)
+	s.mu.Lock()
+	kind := s.pages[pattern]
+	s.mu.Unlock()
+	switch kind {
+	case spaPageRoute:
+		// The mux answers a path it would first clean or redirect with the
+		// pattern it redirects to. Only a path the pattern itself matches is
+		// the page.
+		pat := pattern
+		if i := strings.IndexByte(pat, ' '); i >= 0 {
+			pat = pat[i+1:]
 		}
-		if pagePatternMatch(p, path) {
-			return true
-		}
+		return pagePatternMatch(pat, path)
+	case spaNotFoundPage:
+		return strings.HasPrefix(path, pattern)
 	}
 	return false
 }
