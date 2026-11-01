@@ -650,12 +650,29 @@ mod tests {
         PORTS.lock().unwrap_or_else(|p| p.into_inner())
     }
 
+    /// The lock above orders this process's tests, but the port space is the
+    /// whole machine's. Another process (a sibling build, a Go test, a
+    /// server) can bind the port in the moment after `free_port` drops its
+    /// listener, and `port_in_use` connecting to a just-freed port can also
+    /// meet itself (a TCP self-connect when the kernel picks that port as the
+    /// source). Both made this test fail with "port N was reported free but
+    /// is in use" (seen again 2026-11-01) while `free_port` was correct. So
+    /// the check is the one a caller needs, a bind of the port, and a port
+    /// another process took in between is asked for again, at most five
+    /// times. A `free_port` that returned a held port would fail all five.
     #[test]
     fn free_port_returns_a_port_nothing_holds() {
         let _g = ports();
-        let p = free_port().expect("a free port");
-        assert!(p > 0);
-        assert!(!port_in_use(p), "port {p} was reported free but is in use");
+        let mut last = String::new();
+        for _ in 0..5 {
+            let p = free_port().expect("a free port");
+            assert!(p > 0);
+            match TcpListener::bind(("127.0.0.1", p)) {
+                Ok(_) => return,
+                Err(e) => last = format!("port {p} was reported free but cannot be bound: {e}"),
+            }
+        }
+        panic!("{last}");
     }
 
     #[test]
