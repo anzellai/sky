@@ -15,7 +15,82 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 A patch release for v0.29.1. `sky run` and `sky watch` now start the embedded
 PostgreSQL cluster and pass its address to a `Std.App` app and a Sky.Spa app,
-as they already did for a plain app.
+as they already did for a plain app. `sky db check` compares a live database
+with the code, `Std.Codec` gets exact decimal columns, and `Std.Money` returns
+a `Result` wherever two currencies can differ (see Breaking).
+
+### Added
+
+- **Exact decimal columns: `Codec.decimal` and `Codec.moneyIn`.** A new column
+  kind, `CDecimal`: plain `NUMERIC` on PostgreSQL, `TEXT` holding the canonical
+  decimal on SQLite. `Std.Db.Store` compares, orders, sums (`sumAs`) and takes
+  `minAs` / `maxAs` of it exactly on both: on SQLite through the `sky_decimal`
+  collation and the `sky_decimal_sum` aggregate the runtime registers. It takes
+  `SqlDecimal` and `SqlInt` (a condition also takes decimal text, so
+  `findBy "12.30"` matches 12.3) and refuses `SqlFloat`, `SqlMoney`, `adjust`,
+  `addExcluded`, `keepMin` / `keepMax` and text matches before any statement.
+  `Store.defaultDecimal` gives a default; a required decimal column added to a
+  table with rows defaults to `'0'` (`Store.migrate` and `sky db migrate
+  --gen` agree). `Codec.moneyIn GBP` stores one currency in such a column (a
+  Money in another currency is refused, never relabelled), `Codec.moneyObject`
+  is the `{"amount","currency"}` JSON in a JSON column, and `Codec.isoCurrency`
+  is the code string. A `Codec.auto` Decimal or Money field keeps its JSON-text
+  column, so no existing table changes; `Codec.decimal` also reads that legacy
+  `"12.34"` text.
+- **`Std.Money` follows one rule.** Every operation that combines two Money
+  values by arithmetic or by order returns `Result Error _`: `add`, `sub`,
+  `sum`, `compare`, `lt`, `lte`, `gt` and `gte`. Two different currencies are
+  an `Err` (kind `InvalidInput`) naming both, never a value and never a crash.
+  `eq` / `neq` stay plain `Bool`. Exchange rates are an explicit value:
+  `Money.rates [ ( USD, EUR, r ) ]`, read with `Money.rate`, used by
+  `Money.convert rates to m`. `Money.currencyFromCode : String -> Maybe
+  Currency` reads a code under the strict decoders' grammar. See the Migration
+  section.
+- **`sky check` warns about an unknown Store column name.** A literal column
+  name given to a Store builder (`primaryKey`, `unique`, `index`, `uniqueOn`,
+  `uniqueWhere`, …), to `Store.findBy`, or to `orderAsc` / `orderDesc` / a
+  `where_` condition on a `Store.query` chain, that the store's codec does not
+  have, is a compile-time warning with the column list and a did-you-mean. At
+  run time it makes every verb on the store fail. The lint speaks only when
+  the source shows the codec's columns, and never for a declared external
+  column (docs/skydb/overview.md).
+- **`Canvas.pasteExact` moves pixels exactly.** `Std.Image.Canvas.pasteExact x
+  y bytes canvas` puts an image's pixels in place of the canvas's, with no
+  blending, and keeps each colour byte for byte. `paste` blends in
+  premultiplied 8-bit RGBA, which moves a semi-transparent colour by up to 2
+  from alpha 128 up (more below), so a test of such output could not compare
+  bytes. A step drawn over the pixel later still shows.
+- **`Codec.value`, a codec for a raw `Json.Value`.** The JSON as it is, both
+  ways, in a JSON text column, so `Codec.object` (or an `autoWith` override)
+  carries a `List Json.Value` (`Codec.list Codec.value`) or a
+  `Dict String Json.Value` (`Codec.dict Codec.string Codec.value`). Under
+  `Codec.auto` such a field is still an `Err` on read.
+- **`Store.noCond`**, the condition every row meets (the same as `and_ []`),
+  is exposed.
+- **`sky db check`: does the live database match the code?** A read-only
+  check on any DSN the app uses (a local cluster, `DATABASE_URL`,
+  `<PREFIX>_DB_PATH`, a remote database), on PostgreSQL and SQLite. It
+  compares every table of `db : Store.Project` (stores and `Std.Db.Schema`
+  tables) with the database: tables, columns, types, `NOT NULL`, defaults,
+  `UNIQUE`, the serial key, and indexes (partial and unique ones included).
+  It reports each `db/migrations` file as applied, pending or edited. It
+  prints a plain-words report and exits 1 on drift, for CI and pre-deploy
+  gates. The live schema is read into the model `sky db migrate --gen`
+  diffs, through the same diff, so the two cannot disagree.
+  - `--sql` prints the SQL that makes the database match the code, and runs
+    nothing. Safe steps are plain, rendered by the migration renderer. A type
+    change, `NOT NULL` on existing rows and every drop are commented out with
+    the reason. A PostgreSQL `INTEGER` column for an `Int` is accepted, with
+    a notice and a commented `ALTER … TYPE BIGINT`.
+  - `--sql --write` saves the safe steps as a migration file in
+    `db/migrations` (the `--gen` format and ops) and updates
+    `db/schema.json`. It refuses while a migration is pending or edited.
+  - `--code` lists the columns the code has no field for or reads as
+    another type, and prints a record type alias, a `Codec` and a `Store`
+    for each table the code has no Store for.
+- **`Std.Db.Migrate.inspect`**, the read-only report behind `sky db check`:
+  the live tables, columns and indexes, and each migration's state against
+  the ledger, as JSON. It never creates the ledger.
 
 ### Fixed
 
@@ -96,80 +171,7 @@ as they already did for a plain app.
   one-time WARN naming the column, with the `ALTER TABLE … ALTER COLUMN … TYPE
   BIGINT` that widens it. Widening stays your choice.
 
-### Added
-
-- **Exact decimal columns: `Codec.decimal` and `Codec.moneyIn`.** A new column
-  kind, `CDecimal`: plain `NUMERIC` on PostgreSQL, `TEXT` holding the canonical
-  decimal on SQLite. `Std.Db.Store` compares, orders, sums (`sumAs`) and takes
-  `minAs` / `maxAs` of it exactly on both: on SQLite through the `sky_decimal`
-  collation and the `sky_decimal_sum` aggregate the runtime registers. It takes
-  `SqlDecimal` and `SqlInt` (a condition also takes decimal text, so
-  `findBy "12.30"` matches 12.3) and refuses `SqlFloat`, `SqlMoney`, `adjust`,
-  `addExcluded`, `keepMin` / `keepMax` and text matches before any statement.
-  `Store.defaultDecimal` gives a default; a required decimal column added to a
-  table with rows defaults to `'0'` (`Store.migrate` and `sky db migrate
-  --gen` agree). `Codec.moneyIn GBP` stores one currency in such a column (a
-  Money in another currency is refused, never relabelled), `Codec.moneyObject`
-  is the `{"amount","currency"}` JSON in a JSON column, and `Codec.isoCurrency`
-  is the code string. A `Codec.auto` Decimal or Money field keeps its JSON-text
-  column, so no existing table changes; `Codec.decimal` also reads that legacy
-  `"12.34"` text.
-- **`Std.Money` follows one rule.** Every operation that combines two Money
-  values by arithmetic or by order returns `Result Error _`: `add`, `sub`,
-  `sum`, `compare`, `lt`, `lte`, `gt` and `gte`. Two different currencies are
-  an `Err` (kind `InvalidInput`) naming both, never a value and never a crash.
-  `eq` / `neq` stay plain `Bool`. Exchange rates are an explicit value:
-  `Money.rates [ ( USD, EUR, r ) ]`, read with `Money.rate`, used by
-  `Money.convert rates to m`. `Money.currencyFromCode : String -> Maybe
-  Currency` reads a code under the strict decoders' grammar. See the Migration
-  section.
-- **`sky check` warns about an unknown Store column name.** A literal column
-  name given to a Store builder (`primaryKey`, `unique`, `index`, `uniqueOn`,
-  `uniqueWhere`, …), to `Store.findBy`, or to `orderAsc` / `orderDesc` / a
-  `where_` condition on a `Store.query` chain, that the store's codec does not
-  have, is a compile-time warning with the column list and a did-you-mean. At
-  run time it makes every verb on the store fail. The lint speaks only when
-  the source shows the codec's columns, and never for a declared external
-  column (docs/skydb/overview.md).
-- **`Canvas.pasteExact` moves pixels exactly.** `Std.Image.Canvas.pasteExact x
-  y bytes canvas` puts an image's pixels in place of the canvas's, with no
-  blending, and keeps each colour byte for byte. `paste` blends in
-  premultiplied 8-bit RGBA, which moves a semi-transparent colour by up to 2
-  from alpha 128 up (more below), so a test of such output could not compare
-  bytes. A step drawn over the pixel later still shows.
-- **`Codec.value`, a codec for a raw `Json.Value`.** The JSON as it is, both
-  ways, in a JSON text column, so `Codec.object` (or an `autoWith` override)
-  carries a `List Json.Value` (`Codec.list Codec.value`) or a
-  `Dict String Json.Value` (`Codec.dict Codec.string Codec.value`). Under
-  `Codec.auto` such a field is still an `Err` on read.
-- **`Store.noCond`**, the condition every row meets (the same as `and_ []`),
-  is exposed.
-- **`sky db check`: does the live database match the code?** A read-only
-  check on any DSN the app uses (a local cluster, `DATABASE_URL`,
-  `<PREFIX>_DB_PATH`, a remote database), on PostgreSQL and SQLite. It
-  compares every table of `db : Store.Project` (stores and `Std.Db.Schema`
-  tables) with the database: tables, columns, types, `NOT NULL`, defaults,
-  `UNIQUE`, the serial key, and indexes (partial and unique ones included).
-  It reports each `db/migrations` file as applied, pending or edited. It
-  prints a plain-words report and exits 1 on drift, for CI and pre-deploy
-  gates. The live schema is read into the model `sky db migrate --gen`
-  diffs, through the same diff, so the two cannot disagree.
-  - `--sql` prints the SQL that makes the database match the code, and runs
-    nothing. Safe steps are plain, rendered by the migration renderer. A type
-    change, `NOT NULL` on existing rows and every drop are commented out with
-    the reason. A PostgreSQL `INTEGER` column for an `Int` is accepted, with
-    a notice and a commented `ALTER … TYPE BIGINT`.
-  - `--sql --write` saves the safe steps as a migration file in
-    `db/migrations` (the `--gen` format and ops) and updates
-    `db/schema.json`. It refuses while a migration is pending or edited.
-  - `--code` lists the columns the code has no field for or reads as
-    another type, and prints a record type alias, a `Codec` and a `Store`
-    for each table the code has no Store for.
-- **`Std.Db.Migrate.inspect`**, the read-only report behind `sky db check`:
-  the live tables, columns and indexes, and each migration's state against
-  the ledger, as JSON. It never creates the ledger.
-
-### Migration
+### Breaking
 
 - **⚠ Breaking: the `Std.Money` API is redesigned** (docs/migration/v0.29.md,
   "Money results"). `Money.add` of two currencies returned the left operand in
@@ -191,11 +193,6 @@ as they already did for a plain app.
     ambiguous (`[E1012]`); qualify it.
   - `fromMinor`, `formatWithCode`, `amount`, `eq` and the `Money` type are
     unchanged.
-- **⚠ Breaking: `Std.Codec` exposes `value`** (`Codec.value`). A program that
-  imports `Std.Codec exposing (..)` together with `Json.Decode`,
-  `Std.Html.Attributes` or the `JsonDec` kernel `exposing (..)` and uses a bare
-  `value` gets `[E1012]`: qualify it (`Decode.value`) or narrow one
-  `exposing` list.
   - `Std.Ai`: `Provider.cost` returns `Result Error Money` and
     `Trace.forResponse` returns `Result Error Trace` (pipe it through
     `Task.fromResult` before `Trace.record`). A price book in two currencies,
@@ -203,8 +200,18 @@ as they already did for a plain app.
     before the first call (`InvalidSetting`); an `Eval` cost budget in another
     currency than the suite's costs fails `Eval.check` with that reason. Each
     used to crash the process.
+- **⚠ Breaking: `Std.Codec` exposes `value`** (`Codec.value`). A program that
+  imports `Std.Codec exposing (..)` together with `Json.Decode`,
+  `Std.Html.Attributes` or the `JsonDec` kernel `exposing (..)` and uses a bare
+  `value` gets `[E1012]`: qualify it (`Decode.value`) or narrow one
+  `exposing` list.
 - **`Codec.ColType` has a new constructor, `CDecimal`.** A `case` over a
   `ColType` in your own code must add the arm (the compiler names it).
+
+### Migration
+
+- **Upgrading from v0.29.1:** every Breaking entry above is a compile error
+  that names its replacement (docs/migration/v0.29.md, "Money results").
 - **`Schema.createSchema` makes `BIGINT` for a new `Schema.int` column on
   PostgreSQL.** SQL that needs a 4-byte integer (`DATE '1970-01-01' + day`)
   casts: `day::int`. Existing tables do not change.

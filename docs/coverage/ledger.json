@@ -1010,7 +1010,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3238,
+    "stdlib_entries": 3239,
     "stdlib_modules": 135,
     "surfaces_covered": 193,
     "surfaces_covered_pct": 95.1,
@@ -19810,8 +19810,9 @@
           ]
         },
         "Std.Db.Migrate": {
-          "count": 2,
+          "count": 3,
           "symbols": [
+            "inspect",
             "migrateOps",
             "renderMigrations"
           ]
@@ -20425,8 +20426,8 @@
           ]
         }
       },
-      "count": 869,
-      "pct_of_denominator": 26.8
+      "count": 870,
+      "pct_of_denominator": 26.9
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -21285,8 +21286,9 @@
           ]
         },
         "Std.Db.Migrate": {
-          "count": 2,
+          "count": 3,
           "symbols": [
+            "inspect",
             "migrateOps",
             "renderMigrations"
           ]
@@ -21975,7 +21977,7 @@
           ]
         }
       },
-      "count": 984,
+      "count": 985,
       "pct_of_denominator": 30.4
     }
   },
