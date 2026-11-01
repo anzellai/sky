@@ -5796,6 +5796,16 @@ jsonValues =
             |> Codec.buildObject)
         |> Store.primaryKey "id"
 
+
+binValues : Store JsonValues
+binValues =
+    Store.fromCodec
+        "sqc_bin_values"
+        (Codec.object JsonValues |> Codec.field "id" .id Codec.string
+            |> Codec.field "items" .items (Codec.list Codec.value)
+            |> Codec.buildObject)
+        |> Store.primaryKey "id"
+
 -- ── Decimal columns: Codec.decimal and Codec.moneyIn (v0.29.2) ──────────────
 -- A decimal column is NUMERIC on PostgreSQL and TEXT holding the canonical
 -- decimal on SQLite, ordered through the sky_decimal collation and summed by
@@ -5987,6 +5997,38 @@ decimalTests db =
                                  (Maybe.map
                                      (\r ->
                                          JE.encode 0 (JE.list identity r.items))))))
+    , Test.test
+          "a JSON field on a binary column (Schema.blob through createSchema) is refused by migrate, naming the column"
+          (\_ ->
+              case Task.run
+                       (drop db "sqc_bin_values"
+                           |> Task.andThen
+                                  (\_ ->
+                                      unit
+                                          (Db.exec
+                                              db
+                                              ("CREATE TABLE sqc_bin_values (id TEXT PRIMARY KEY NOT NULL, items "
+                                                  ++ (if dialectName == "postgres" then
+                                                         "BYTEA"
+
+                                                     else
+                                                         "BLOB")
+                                                  ++ " NOT NULL)")
+                                              []))
+                           |> Task.andThen (\_ -> Store.migrate db binValues)) of
+
+                  Err e ->
+                      Test.equal
+                          ( True, True )
+                          ( String.contains
+                                "sqc_bin_values.items"
+                                (Error.toString e)
+                          , String.contains "Schema.json" (Error.toString e)
+                          )
+
+                  Ok _ ->
+                      Test.fail
+                          "migrate accepted a JSON field on a binary column")
     , Test.test
           "decimal: orderAsc orders by value, not by text"
           (\_ ->

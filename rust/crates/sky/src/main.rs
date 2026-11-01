@@ -17344,6 +17344,16 @@ fn run_verify_stores(dir: &Path, failed: &mut Vec<&str>) {
                 .map(|s| s.tables.len())
                 .unwrap_or(0);
             println!("  ✓ stores   ({tables} table(s), no Store builder problem)");
+            // A notice the dump names (a Schema.blob column, which push
+            // makes TEXT and Schema.createSchema makes BYTEA) is shown, not a
+            // failure.
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            for notice in stderr
+                .lines()
+                .filter_map(|l| l.split_once("SKY_STORE_NOTICE ").map(|(_, m)| m.trim()))
+            {
+                println!("  ! stores   {notice}");
+            }
         }
         Ok(o) => {
             let mut text = String::from_utf8_lossy(&o.stderr).into_owned();

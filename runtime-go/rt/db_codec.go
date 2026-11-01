@@ -15,6 +15,7 @@ package rt
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -647,7 +648,12 @@ func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 			return nil
 		}
 		if len(current) == 0 {
-			// table absent → create it, with its indexes
+			// table absent → create it, with its indexes. A Schema.blob
+			// column is made TEXT here (the Store JSON column), while
+			// Schema.createSchema makes it binary: named once.
+			for _, n := range codecBinaryColumnNotices(d.driver, table, colspecArg, map[string]string{}) {
+				codecWarnOnce(n)
+			}
 			stmts := schemaRenderTable(d.driver, codecColspecSchemaMap(table, colspecArg, AsString(pkArg)))
 			for _, ix := range indexes {
 				stmts = append(stmts, ix.ddl(table))
@@ -662,11 +668,20 @@ func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 		// An Int column an older Schema.createSchema made as INTEGER is a
 		// match (never altered), and gets a one-time notice: it holds only
 		// 32-bit values. Widening stays the operator's choice.
-		if d.driver == "pgx" {
-			if types, err := codecTableColumnTypes(d, table); err == nil {
-				for _, n := range codecNarrowIntNotices(table, colspecArg, types) {
-					codecWarnOnce(n)
-				}
+		types, typesErr := codecTableColumnTypes(d, table)
+		if d.driver == "pgx" && typesErr == nil {
+			for _, n := range codecNarrowIntNotices(table, colspecArg, types) {
+				codecWarnOnce(n)
+			}
+		}
+		// A JSON column the table has as binary (Schema.blob through
+		// Schema.createSchema) would be misread: refused, naming the fix.
+		if typesErr == nil {
+			if err := codecBinaryColumnError(d.driver, table, colspecArg, types); err != nil {
+				return Err[any, any](ErrInvalidInput("Store.migrate: " + err.Error()))
+			}
+			for _, n := range codecBinaryColumnNotices(d.driver, table, colspecArg, types) {
+				codecWarnOnce(n)
 			}
 		}
 		// existing → add any missing columns
@@ -1378,6 +1393,11 @@ func Db_dumpProject(tablesArg any) any {
 				tup := AsTuple2(c)
 				jt.Columns = append(jt.Columns, codecDumpColumn(AsString(tup.V0), AsString(tup.V1)))
 			}
+			// A Schema.blob column has two types (TEXT through push, BYTEA
+			// through createSchema): `sky verify` shows this line.
+			for _, n := range codecBinaryColumnNotices("", jt.Name, fieldOrNil(t, "Cols"), map[string]string{}) {
+				fmt.Fprintln(os.Stderr, "SKY_STORE_NOTICE "+n)
+			}
 			ixs, err := codecStoreIndexes(jt.Name, fieldOrNil(t, "Indexes"))
 			if err != nil {
 				return Err[any, any](ErrInvalidInput("dumpProject: " + err.Error()))
@@ -1604,6 +1624,99 @@ func codecNarrowIntNotices(table string, colspecArg any, types map[string]string
 				"while a Sky Int is 64-bit and a new column is BIGINT; a larger value fails with \"integer out of range\". "+
 				"It is not changed. To widen it: ALTER TABLE %s ALTER COLUMN %s TYPE BIGINT",
 			table, name, strings.ToUpper(typ), table, name))
+	}
+	return out
+}
+
+// codecColIsBin reports whether a colspec kind carries the `bin` flag that
+// Schema.toProject sets on a Schema.blob column: a column declared binary.
+func codecColIsBin(kind string) bool {
+	for _, f := range codecColFlags(kind) {
+		if f == "bin" {
+			return true
+		}
+	}
+	return false
+}
+
+// codecColumnType is the declared type of `name` in a codecTableColumnTypes
+// map (PostgreSQL keys are folded to lower case; SQLite names compare in any
+// case), or "" when the table does not have it.
+func codecColumnType(driver string, types map[string]string, name string) string {
+	if t, ok := types[name]; ok {
+		return t
+	}
+	for k, t := range types {
+		if strings.EqualFold(k, name) {
+			return t
+		}
+	}
+	return ""
+}
+
+// codecIsBinaryType reports whether a declared column type holds bytes:
+// BYTEA on PostgreSQL, BLOB on SQLite.
+func codecIsBinaryType(typ string) bool {
+	t := strings.ToUpper(strings.TrimSpace(typ))
+	return t == "BYTEA" || t == "BLOB"
+}
+
+// codecBinaryColumnError refuses a Store JSON column (kind `blob` without the
+// `bin` flag: a list, record, custom type or Json.Value field, or a
+// Schema.json column) that the table has as binary. Schema.blob makes BYTEA
+// (BLOB on SQLite) through Schema.createSchema, and the Store writes JSON text
+// and reads text back: PostgreSQL would read its escapes into the bytes and
+// every row would be misread. The column is never altered.
+func codecBinaryColumnError(driver, table string, colspecArg any, types map[string]string) error {
+	cols, _ := codecSplitExternal(colspecArg)
+	for _, cs := range AsList(cols) {
+		t := AsTuple2(cs)
+		name, kind := AsString(t.V0), AsString(t.V1)
+		base, _ := codecSplitKind(kind)
+		if base != "blob" || codecColIsBin(kind) {
+			continue
+		}
+		typ := codecColumnType(driver, types, name)
+		if !codecIsBinaryType(typ) {
+			continue
+		}
+		fix := "ALTER TABLE " + table + " ALTER COLUMN " + name + " TYPE TEXT USING convert_from(" + name + ", 'UTF8')"
+		if driver != "pgx" {
+			fix = "copy the table into one where " + name + " is TEXT (SQLite cannot change a column type)"
+		}
+		return fmt.Errorf("column %s.%s is %s (binary data, as Schema.blob makes it through Schema.createSchema), "+
+			"and this store reads and writes it as JSON text (a list, record, custom type or Json.Value field). "+
+			"It would misread every row, so the store is refused and the column is not changed. "+
+			"Declare it Schema.json (TEXT) and fix the table once: %s. Or keep binary data out of the store and read it with Db.query",
+			table, name, strings.ToUpper(typ), fix)
+	}
+	return nil
+}
+
+// codecBinaryColumnNotices names a Schema.blob column (the `bin` flag) that is,
+// or is about to be, TEXT: sky db push and Store.pushProject make a
+// Schema.blob column TEXT holding JSON, while Schema.createSchema makes it
+// BYTEA (BLOB on SQLite). The two paths give two types (kept, v0.29.2), so the
+// difference is said once. `types` empty means the table is being created.
+func codecBinaryColumnNotices(driver, table string, colspecArg any, types map[string]string) []string {
+	var out []string
+	cols, _ := codecSplitExternal(colspecArg)
+	for _, cs := range AsList(cols) {
+		t := AsTuple2(cs)
+		name, kind := AsString(t.V0), AsString(t.V1)
+		if !codecColIsBin(kind) {
+			continue
+		}
+		typ := codecColumnType(driver, types, name)
+		if codecIsBinaryType(typ) {
+			continue
+		}
+		out = append(out, fmt.Sprintf(
+			"Std.Db.Schema: column %s.%s is declared Schema.blob (binary), and sky db push / Store.pushProject "+
+				"make it TEXT holding JSON, while Schema.createSchema makes it BYTEA (BLOB on SQLite). "+
+				"Binary bytes written to the TEXT column fail on PostgreSQL. Use Schema.json for JSON, "+
+				"or create this table with Schema.createSchema only (docs/skydb/overview.md, \"Schema.blob\")",
+			table, name))
 	}
 	return out
 }

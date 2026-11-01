@@ -76,6 +76,15 @@ as they already did for a plain app.
 - **`Db.Decode.money` reads both Money text forms strictly.** It reads
   `"USD 12.34"` (`SqlMoney`) and `"12.34 USD"` (`Money.formatWithCode`), the
   code in upper case, the amount under the strict grammar.
+- **A Store JSON field on a binary column is refused, not misread.**
+  `Schema.blob` makes `BYTEA` (`BLOB` on SQLite) through
+  `Schema.createSchema`, and a `Std.Db.Store` reads and writes a JSON field
+  (a list, a record, a custom type, a `Json.Value`) as text. A Store over such
+  a table misread every row. `Store.migrate` and `Store.pushProject` now
+  refuse it with an `Err` naming `table.column` and the fix. Both types stay:
+  a `Schema.blob` column that `sky db push` makes `TEXT` is named once at
+  WARN, and `sky verify`'s stores step names every `Schema.blob` column
+  (docs/skydb/overview.md).
 - **`Schema.int` is one column type on both creation paths.** On PostgreSQL
   `Schema.createSchema` made a 4-byte `INTEGER` and `Store.pushProject
   (Schema.toProject …)` (and `sky db push`) a `BIGINT`, so a fresh database

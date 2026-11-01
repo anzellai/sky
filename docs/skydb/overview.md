@@ -726,8 +726,32 @@ one-time WARN that names the column, says it holds only 32-bit values and
 gives the statement that widens it (`ALTER TABLE orders ALTER COLUMN day
 TYPE BIGINT`); widening is your choice. SQL that needs a 4-byte integer casts
 (`DATE '1970-01-01' + day::int`).
-`Schema.blob` still differs: `BYTEA` through `createSchema`, a JSON `TEXT`
-column under `toProject` (the Store reads a blob column as JSON).
+
+**`Schema.blob` has two types, and the difference is loud (v0.29.2).**
+`createSchema` makes a `Schema.blob` column binary (`BYTEA` on Postgres,
+`BLOB` on SQLite). `toProject` (`sky db push`, `Store.pushProject`) makes the
+same column `TEXT` holding JSON, because a `Std.Db.Store` reads and writes a
+JSON field (a list, a record, a custom type, a `Json.Value`, `Schema.json`)
+as text. Both types are kept, so:
+
+- `Store.migrate` and `Store.pushProject` refuse a Store JSON field whose
+  column the table has as `BYTEA` / `BLOB` (an `Err` naming `table.column`):
+  PostgreSQL would read the JSON's escapes into the bytes and every row would
+  be misread. The column is not changed. Fix it once with
+  `ALTER TABLE t ALTER COLUMN c TYPE TEXT USING convert_from(c, 'UTF8')` on
+  Postgres (on SQLite copy the table into one with a `TEXT` column), and
+  declare the column `Schema.json`; or keep binary data out of the Store and
+  read it with `Db.query`.
+- A `Schema.blob` column that the table has as `TEXT`, or that `push` is
+  about to create as `TEXT`, is named once at WARN: binary bytes written to it
+  with `Db.exec` fail on Postgres. A `Schema.blob` column on `BYTEA` / `BLOB`
+  is a match.
+- `sky verify`'s stores step names every `Schema.blob` column of `db`
+  (`! stores   Std.Db.Schema: column files.data is declared Schema.blob …`).
+  It is a notice, not a failure.
+
+Use `Schema.json` for JSON, and `Schema.blob` only for a table you create with
+`createSchema` and read with `Db.query`.
 
 > **Naming tip.** `Schema.text` collides with `Std.Html`/`Std.Ui`'s `text` if
 > both are exposed unqualified. In a module that already does
