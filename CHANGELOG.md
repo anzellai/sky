@@ -170,6 +170,15 @@ a `Result` wherever two currencies can differ (see Breaking).
   `INTEGER`. `Store.migrate` and `pushProject` treat it as a match and log a
   one-time WARN naming the column, with the `ALTER TABLE … ALTER COLUMN … TYPE
   BIGINT` that widens it. Widening stays your choice.
+- **Contributors: a gate run beside `xtask harness --verify-falsifiers` no
+  longer undoes its mutation.** Every `xtask harness` run replays the mutation
+  journals at start, to recover from a killed falsifier run. It could not tell
+  a live run's journal from a dead one's, so a second run wrote the original
+  file back under the live run (which then measured clean source) and stamped
+  it with the current time, so a Rust source looked newer than `sky-out/sky`
+  and later gates failed `require_fresh_compiler`. A live run now holds a lock
+  on its journal, and the replay skips a locked journal with a warning. A
+  replayed non-Rust file also gets its old mtime back.
 
 ### Breaking
 

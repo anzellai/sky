@@ -104,21 +104,125 @@ pub fn restore_orphans(root: &Path) -> Vec<String> {
         if entry.extension().and_then(|e| e.to_str()) != Some("journal") {
             continue;
         }
-        let Ok(blob) = std::fs::read_to_string(&entry) else {
+        // The run that wrote a journal holds an exclusive lock on it for as long
+        // as its mutation is applied; the kernel drops the lock when that
+        // process dies, however it dies. So a journal we can lock is an orphan,
+        // and one we cannot is a LIVE run's, which reverts the file itself.
+        //
+        // Replaying a live journal is the bug this lock closes: a second
+        // `xtask harness` started beside `--verify-falsifiers` wrote the
+        // original back under the live run's feet. The mutated run then
+        // measured the restored source (a false VACUOUS), and the replay
+        // stamped the file "now", so the mutated Rust source
+        // (`spa_partition.rs`, spa-diff-fuzz's mutation) looked newer than
+        // `sky-out/sky` and every later `require_fresh_compiler` gate refused
+        // a verdict.
+        let Ok(mut f) = std::fs::OpenOptions::new().read(true).open(&entry) else {
             continue;
         };
-        // Format: the relative path, a newline, then the original bytes.
-        let Some((rel, original)) = blob.split_once('\n') else {
+        match f.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => {
+                eprintln!(
+                    "xtask harness: WARNING — a falsifier run in progress in this tree \
+                     holds {}; its mutation is applied, so this run may measure it. \
+                     Run gates after it finishes.",
+                    entry.display()
+                );
+                continue;
+            }
+            // A filesystem with no locks: replay, as before locks existed.
+            Err(std::fs::TryLockError::Error(_)) => {}
+        }
+        let mut blob = String::new();
+        if std::io::Read::read_to_string(&mut f, &mut blob).is_err() {
+            continue;
+        }
+        // Format: a header line, a newline, then the original bytes. The header
+        // is the relative path, optionally followed by a tab and `mtime_ns=`
+        // (a journal written before v0.29.2 has the bare path only, and is
+        // replayed as before).
+        let Some((header, original)) = blob.split_once('\n') else {
             let _ = std::fs::remove_file(&entry);
             continue;
         };
-        let target = root.join(rel);
+        let head = JournalHeader::parse(header);
+        let target = root.join(head.rel);
         if std::fs::write(&target, original).is_ok() {
-            restored.push(rel.to_string());
+            // Put the freshness clock back for a non-Rust input, whose content
+            // is restored byte for byte (an embed root is also checked by its
+            // baked fingerprint). A Rust source keeps "now" on purpose: the
+            // dead run may have compiled the mutation into `xtask` or a
+            // `rust/target` `sky`, and only a source newer than those
+            // artefacts makes cargo rebuild them. The cost is a loud
+            // `require_fresh_compiler` asking for `scripts/build.sh`, never a
+            // stale binary passing.
+            if !head.rel.ends_with(".rs") {
+                if let Some(mt) = head.mtime {
+                    set_mtime(&target, mt);
+                }
+            }
+            restored.push(head.rel.to_string());
         }
         let _ = std::fs::remove_file(&entry);
     }
     restored
+}
+
+/// The first line of a mutation journal.
+#[derive(Debug, PartialEq)]
+struct JournalHeader<'a> {
+    rel: &'a str,
+    /// The target's mtime before the mutation.
+    mtime: Option<std::time::SystemTime>,
+}
+
+impl<'a> JournalHeader<'a> {
+    fn render(rel: &str, mtime: Option<std::time::SystemTime>) -> String {
+        match mtime
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos())
+        {
+            Some(ns) => format!("{rel}\tmtime_ns={ns}"),
+            None => rel.to_string(),
+        }
+    }
+
+    fn parse(line: &'a str) -> JournalHeader<'a> {
+        let mut parts = line.split('\t');
+        let rel = parts.next().unwrap_or("");
+        let mtime = parts
+            .find_map(|p| p.strip_prefix("mtime_ns="))
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(|ns| std::time::UNIX_EPOCH + Duration::from_nanos(ns));
+        JournalHeader { rel, mtime }
+    }
+}
+
+/// Write a mutation journal and return it LOCKED. It is written under a
+/// temporary name, locked, filled, and only then renamed into place, so
+/// [`restore_orphans`] never sees a `.journal` that is not yet locked or not
+/// yet complete. The rename keeps the open handle and its lock.
+fn write_locked_journal(jpath: &Path, contents: &str) -> std::io::Result<std::fs::File> {
+    use std::io::Write;
+    let tmp = jpath.with_extension("journal-tmp");
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&tmp)?;
+    match f.try_lock() {
+        Ok(()) | Err(std::fs::TryLockError::Error(_)) => {}
+        Err(std::fs::TryLockError::WouldBlock) => {
+            return Err(std::io::Error::other(
+                "another falsifier run holds this mutation target's journal",
+            ))
+        }
+    }
+    f.write_all(contents.as_bytes())?;
+    f.sync_all()?;
+    std::fs::rename(&tmp, jpath)?;
+    Ok(f)
 }
 
 /// A textual mutation applied to the working tree, reverted on drop **and**
@@ -138,6 +242,10 @@ struct Patch {
     original_mtime: Option<std::time::SystemTime>,
     applied: bool,
     journal: Option<PathBuf>,
+    /// The open, exclusively locked journal. Held for as long as the mutation
+    /// is applied: it is how [`restore_orphans`] in another process tells this
+    /// live run's journal from a dead run's (see [`write_locked_journal`]).
+    journal_lock: Option<std::fs::File>,
 }
 
 impl Patch {
@@ -169,17 +277,19 @@ impl Patch {
         let jdir = root.join(JOURNAL_DIR);
         let _ = std::fs::create_dir_all(&jdir);
         let jpath = jdir.join(format!("{}.journal", rel.replace(['/', '\\'], "_")));
-        let journal = match std::fs::write(&jpath, format!("{rel}\n{original}")) {
-            Ok(()) => Some(jpath),
-            // A journal we cannot write is a refusal, not a warning: proceeding
-            // would reintroduce the "killed run poisons the tree" class.
-            Err(e) => {
-                return Err(format!(
-                    "cannot journal mutation target {rel} ({e}); refusing to mutate \
+        let header = JournalHeader::render(rel, original_mtime);
+        let (journal, journal_lock) =
+            match write_locked_journal(&jpath, &format!("{header}\n{original}")) {
+                Ok(lock) => (Some(jpath), Some(lock)),
+                // A journal we cannot write is a refusal, not a warning: proceeding
+                // would reintroduce the "killed run poisons the tree" class.
+                Err(e) => {
+                    return Err(format!(
+                        "cannot journal mutation target {rel} ({e}); refusing to mutate \
                      a tree we could not guarantee restoring"
-                ))
-            }
-        };
+                    ))
+                }
+            };
 
         if let Err(e) = std::fs::write(&path, &mutated) {
             if let Some(j) = &journal {
@@ -193,6 +303,7 @@ impl Patch {
             original_mtime,
             applied: true,
             journal,
+            journal_lock,
         })
     }
 
@@ -231,6 +342,8 @@ impl Patch {
         if let Some(j) = self.journal.take() {
             let _ = std::fs::remove_file(j);
         }
+        // The lock goes last: until the journal is gone, it marks this run live.
+        self.journal_lock = None;
     }
 }
 
@@ -923,7 +1036,7 @@ mod tests {
         std::fs::write(root.join("f.txt"), "hello world").unwrap();
 
         let p = Patch::apply(&root, "f.txt", "world", "mutant").unwrap();
-        std::mem::forget(p); // the process was killed: no Drop, no revert
+        kill(p); // the process was killed: no Drop, no revert
         assert_eq!(
             std::fs::read_to_string(root.join("f.txt")).unwrap(),
             "hello mutant",
@@ -945,6 +1058,104 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(root.join("f.txt")).unwrap(),
             "edited since"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Model a signal kill: the kernel releases the journal lock when the
+    /// process dies, and no `Drop` runs.
+    fn kill(mut p: Patch) {
+        p.journal_lock = None;
+        std::mem::forget(p);
+    }
+
+    fn mtime_of(p: &Path) -> std::time::SystemTime {
+        std::fs::metadata(p).unwrap().modified().unwrap()
+    }
+
+    fn an_old_time() -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + Duration::from_secs(1_000_000_000)
+    }
+
+    /// The v0.29.2 report: a second `xtask harness` started beside
+    /// `--verify-falsifiers` called `restore_orphans` at entry, took the LIVE
+    /// run's journal for an orphan and wrote the original back, stamped "now".
+    /// The mutated run then measured clean source, and the Rust source
+    /// (`spa_partition.rs`) looked newer than `sky-out/sky`, so later
+    /// `require_fresh_compiler` gates refused a verdict. A live run's journal
+    /// is locked, and must be left alone; the live run's own revert then puts
+    /// back both the content and the mtime.
+    #[test]
+    fn a_live_runs_journal_is_not_replayed_and_its_revert_keeps_the_mtime() {
+        let root = tmp("live");
+        let f = root.join("src.rs");
+        std::fs::write(&f, "fn x() { a(); }").unwrap();
+        set_mtime(&f, an_old_time());
+
+        let p = Patch::apply(&root, "src.rs", "a()", "b()").unwrap();
+        // Another harness process starting now must not touch the live mutation.
+        assert!(
+            restore_orphans(&root).is_empty(),
+            "a live run's journal was replayed as an orphan"
+        );
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "fn x() { b(); }");
+
+        drop(p);
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "fn x() { a(); }");
+        assert_eq!(
+            mtime_of(&f),
+            an_old_time(),
+            "the revert must put the source's mtime back"
+        );
+        assert!(
+            restore_orphans(&root).is_empty(),
+            "the revert left a journal"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An orphan restore puts a non-Rust input's mtime back (its content is
+    /// byte-identical), and leaves a Rust source "now", so cargo rebuilds any
+    /// `xtask` / `sky` the dead run compiled from the mutation.
+    #[test]
+    fn an_orphan_restore_puts_back_the_mtime_except_for_rust_sources() {
+        let root = tmp("orphan-mtime");
+        let sky = root.join("Main.sky");
+        let rs = root.join("lib.rs");
+        std::fs::write(&sky, "x = 1").unwrap();
+        std::fs::write(&rs, "fn a() {}").unwrap();
+        set_mtime(&sky, an_old_time());
+        set_mtime(&rs, an_old_time());
+
+        kill(Patch::apply(&root, "Main.sky", "1", "2").unwrap());
+        kill(Patch::apply(&root, "lib.rs", "a", "b").unwrap());
+        let mut restored = restore_orphans(&root);
+        restored.sort();
+        assert_eq!(restored, vec!["Main.sky".to_string(), "lib.rs".to_string()]);
+
+        assert_eq!(std::fs::read_to_string(&sky).unwrap(), "x = 1");
+        assert_eq!(std::fs::read_to_string(&rs).unwrap(), "fn a() {}");
+        assert_eq!(mtime_of(&sky), an_old_time());
+        assert!(
+            mtime_of(&rs) > an_old_time(),
+            "a restored Rust source must stay newer than artefacts built from its mutation"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A journal written before v0.29.2 (a bare path line, no lock) is still
+    /// replayed.
+    #[test]
+    fn a_legacy_journal_is_still_replayed() {
+        let root = tmp("legacy");
+        std::fs::write(root.join("f.txt"), "hello mutant").unwrap();
+        let jdir = root.join(JOURNAL_DIR);
+        std::fs::create_dir_all(&jdir).unwrap();
+        std::fs::write(jdir.join("f.txt.journal"), "f.txt\nhello world").unwrap();
+        assert_eq!(restore_orphans(&root), vec!["f.txt".to_string()]);
+        assert_eq!(
+            std::fs::read_to_string(root.join("f.txt")).unwrap(),
+            "hello world"
         );
         let _ = std::fs::remove_dir_all(&root);
     }
