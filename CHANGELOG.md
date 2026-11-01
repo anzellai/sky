@@ -198,6 +198,49 @@ finds a header whatever the case of its name.
     never matches. The warning names the canonical key and `Server.header` /
     `Http.header`.
   - Header names Sky sends are not changed.
+- **Every `Sky.Core.File` function reports a failure with the same error
+  kind.** `File.remove`, `readDir`, `mkdirAll`, `readFile`, `readFileLimit`,
+  `readFileBytes`, `writeFile`, `writeBytes` and `append` wrapped every os
+  error as `Ffi`, so `File.remove "/nonexistent"` gave `Ffi`, while
+  `File.stat` gave `NotFound`. They now use the rule `stat`, `copy` and
+  `rename` use: a missing path is `NotFound`, a refused one
+  `PermissionDenied`, a path that already exists `Conflict`, anything else
+  `Io`. The message starts with the function name (`File.remove: …`). Code
+  that matched `Ffi` on these functions must match the new kind.
+- **The `Std.Image.Canvas` pixel precision is documented.** The canvas keeps
+  premultiplied 8-bit RGBA, so a semi-transparent pixel that goes through
+  `fromImage`, `paste` or `pasteCanvas` can come out of `encode` with its
+  colour moved: by at most 2 from alpha 128 up, 4 at alpha 64, 16 at alpha 16,
+  more near alpha 0. The alpha is exact, an opaque pixel is exact and a
+  transparent pixel stays transparent. A test pins these bounds.
+- **`sky remove` of the last dependency leaves no empty table.** It used to
+  leave an empty `["go.dependencies"]` (or `[dependencies]`) header in
+  `sky.toml`. A table that keeps a comment stays.
+- **`sky remove` and `sky install` refresh the split build's go.mod.** The
+  generated `go.mod` of a Sky.Spa split leg or a Std.App staging (under
+  `.skyapp/` and `.split/`) kept a removed module's `require` and local
+  `replace` until the next `sky build`. Both verbs now bring every generated
+  `go.mod` the project owns in line with `sky.toml`.
+- **`sky test` runs beside a `.env` DSN.** A Postgres project in test mode
+  (it has a `.env.test`) with `DATABASE_URL` in its `.env` stopped with the
+  "embedded cluster and explicit connection string" error, because `sky test`
+  started the throwaway cluster and the runtime then loaded the `.env` DSN. An
+  explicit DSN now wins, as it does for `sky run`: `DATABASE_URL` or
+  `<PREFIX>_DB_PATH` from `.env.test`, the environment or `.env`, or a
+  sky.toml `[database] path` / `url`. The run prints one line naming the
+  source and how to get a throwaway cluster (`DATABASE_URL=` in `.env.test`).
+  `sky fuzz`, which always uses its own throwaway database, now also clears
+  a `<PREFIX>_DB_PATH` from `.env`, as it already cleared `DATABASE_URL`.
+- **A static or immutable asset carries no CSRF cookie.** The CSRF
+  middleware set its cookie on every GET, also on the hashed Sky.Spa wasm and
+  JS, `/_sky/live.<hash>.js`, `spa-boot.<hash>.js`, a static mount and a
+  precompressed `.br` / `.gz` file. A response with `Set-Cookie` is not cached
+  by a CDN, so every Sky.Spa app behind one served its wasm from the origin. A
+  GET or HEAD now gets the cookie only when the response is not an asset: an
+  HTML page always does. A script, wasm, style, image, font, audio, video or
+  opaque-bytes response, one whose Cache-Control says `immutable`, or one
+  whose path has an asset extension never does. A JSON or text route keeps it.
+  A POST response still issues it.
 
 ## v0.29.0 — Real-world capabilities (2026-10-29)
 
