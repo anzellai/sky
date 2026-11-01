@@ -19,6 +19,7 @@ import Std.Db.Schema as Schema
 import Std.Codec as Codec exposing (Codec)
 import Sky.Core.Json.Encode as JE
 import Sky.Core.Dict as Dict
+import Sky.Core.Error as Error
 import Sky.Test as Test exposing (Test)
 
 type alias Order =
@@ -5647,6 +5648,136 @@ generatedTests db =
                              (List.map (\r -> ( r.id, r.label, r.createdAt )))))
     ]
 
+-- ── Time columns read as stable text (v0.29.1) ───────────────────────────────
+-- A timestamptz, timestamp, date or time column read as a `String` (a Store
+-- field, or `Db.query` + `Db.getField` with no `::text`) was Go's time text in
+-- the app process's local zone ("2026-11-01 02:13:48.987333 +0000 GMT"), so
+-- the same stored instant read differently on two hosts. It now reads as
+-- PostgreSQL's own text on a UTC server, and SQLite reads the same shapes.
+type alias TimeRow =
+    { id : String
+    , tz : String
+    , ts : String
+    , d : String
+    , tm : String
+    }
+
+
+timeRows : Store TimeRow
+timeRows =
+    Store.fromCodec
+        "sqc_time_text"
+        (Codec.auto { id = "", tz = "", ts = "", d = "", tm = "" })
+        |> Store.primaryKey "id"
+
+
+timeDdl : String
+timeDdl =
+    if dialectName == "sqlite" then
+        "CREATE TABLE sqc_time_text (id TEXT PRIMARY KEY, tz TIMESTAMP, ts DATETIME, d DATE, tm TIME)"
+
+    else
+        "CREATE TABLE sqc_time_text (id TEXT PRIMARY KEY, tz TIMESTAMPTZ, ts TIMESTAMP, d DATE, tm TIME)"
+
+
+-- PostgreSQL keeps the instant and shows it in UTC with +00. SQLite keeps
+-- the clock and the offset it was written with, as +HH:MM.
+timeExpected : String -> TimeRow
+timeExpected id =
+    { id = id
+    , tz =
+        if dialectName == "sqlite" then
+            "2026-11-01 12:13:48.987333+10:00"
+
+        else
+            "2026-11-01 02:13:48.987333+00"
+    , ts = "2026-11-01 02:13:48.5"
+    , d = "2026-11-01"
+    , tm = "02:13:48"
+    }
+
+
+timeSetup : Db -> Task Error ()
+timeSetup db =
+    Task.sequence
+        [ drop db "sqc_time_text"
+        , unit (Db.exec db timeDdl [])
+        , unit
+              (Db.exec
+                  db
+                  "INSERT INTO sqc_time_text VALUES ('t1', '2026-11-01 12:13:48.987333+10:00', '2026-11-01 02:13:48.5', '2026-11-01', '02:13:48')"
+                  [])
+        ]
+        |> unit
+
+
+timeFields : Dict String String -> TimeRow
+timeFields row =
+    { id = Db.getField "id" row
+    , tz = Db.getField "tz" row
+    , ts = Db.getField "ts" row
+    , d = Db.getField "d" row
+    , tm = Db.getField "tm" row
+    }
+
+
+timeTests : Db -> List Test
+timeTests db =
+    [ Test.test
+          "time columns: a Store String field reads timestamptz, timestamp, date and time as stable text"
+          (\_ ->
+              Test.equal
+                  (Ok [ timeExpected "t1" ])
+                  (Task.run
+                      (timeSetup db
+                          |> Task.andThen
+                                 (\_ -> Store.toList db (Store.query timeRows)))))
+    , Test.test
+          "time columns: Db.query + Db.getField reads the same text with no ::text"
+          (\_ ->
+              Test.equal
+                  (Ok [ timeExpected "t1" ])
+                  (Task.run
+                      (timeSetup db
+                          |> Task.andThen
+                                 (\_ ->
+                                     Db.query
+                                         db
+                                         "SELECT id, tz, ts, d, tm FROM sqc_time_text"
+                                         [])
+                          |> Task.map (List.map timeFields))))
+    , Test.test
+          "time columns: the text read back is written back unchanged by Store.insert"
+          (\_ ->
+              Test.equal
+                  (Ok [ timeExpected "t1", timeExpected "t2" ])
+                  (Task.run
+                      (timeSetup db
+                          |> Task.andThen
+                                 (\_ -> Store.findBy db timeRows "id" "t1")
+                          |> Task.andThen
+                                 (\found ->
+                                     case found of
+
+                                         Just r ->
+                                             unit
+                                                 (Store.insert
+                                                     db
+                                                     timeRows
+                                                     { r | id = "t2" })
+
+                                         Nothing ->
+                                             Task.fail
+                                                 (Error.invalidInput
+                                                     "row t1 is missing"))
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.toList
+                                         db
+                                         (Store.query timeRows
+                                             |> Store.orderAsc "id")))))
+    ]
+
 
 tests : List Test
 tests =
@@ -5672,6 +5803,7 @@ tests =
                 ++ externalTests db
                 ++ maybeFieldTests db
                 ++ generatedTests db
+                ++ timeTests db
 
 
 main =

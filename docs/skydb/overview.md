@@ -952,6 +952,25 @@ hand-written row decoder. The row shape from the runtime is `Dict String String`
 — every column lands stringified, and the typed accessors (`Db.getInt` /
 `Db.getString` / `Db.getBool`) parse on read with a default-supplied fallback.
 
+**Time columns as text.** A time column reads as PostgreSQL's own text on a
+UTC server, whatever the time zone of the app's host. This holds for a raw
+row, a Store or Codec `String` field, `Std.Db.Decode` and `Std.Db.Table`:
+
+| Column | Text |
+|---|---|
+| `timestamptz` | `2026-11-01 02:13:48.987333+00`, always in UTC |
+| `timestamp` | `2026-11-01 02:13:48.987333` |
+| `date` | `2026-11-01` |
+| `time` | `02:13:48.25` |
+
+Trailing zeros of the fraction are dropped, and a BC year ends in ` BC`.
+SQLite returns a `DATE`, `DATETIME` or `TIMESTAMP` column in the same shapes,
+in the clock the app wrote, followed by `+HH:MM` when the written text had a
+non-zero offset. The text is a valid parameter: written back to the same
+column it stores the same value, on both dialects. `SELECT t::text` gives the
+server's own `TimeZone`, so use the plain column when you want UTC. Before
+v0.29.1 these columns read as Go's time text in the host's zone.
+
 ```elm
 import Sky.Core.Error as Error exposing (Error)
 

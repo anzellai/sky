@@ -62,6 +62,25 @@ finds a header whatever the case of its name.
   ones `serial`, `defaultNow`, `touchOnUpdate`, `defaultWith` or an earlier
   `generated` marked, on SQLite and PostgreSQL. No other builder replaced a
   list.
+- **A database time column reads as the same text on every host (a silent
+  wrong answer).** A PostgreSQL `timestamptz`, `timestamp` or `date` column,
+  read as text with no `::text` in the SQL, was Go's time text in the time
+  zone of the app process. `Db.query db "SELECT now() AS t" []` then
+  `Db.getField "t"` gave `2026-11-01 02:13:48.987333 +0000 GMT` on a London
+  host and another text for the same instant on a host in another zone. Text
+  comparison, ordering by the text and parsing broke, and PostgreSQL refused
+  the text as a parameter. A SQLite `DATE`, `DATETIME` or `TIMESTAMP` column
+  had the same Go text. The runtime now renders a time value where it reads
+  the row, so `Db.query`, `Db.getField`, a Store or Codec `String` field,
+  `Std.Db.Decode` and `Std.Db.Table` see one text. It is PostgreSQL's own
+  text on a UTC server: `timestamptz` as `2026-11-01 02:13:48.987333+00`
+  (always UTC), `timestamp` as `2026-11-01 02:13:48.987333`, `date` as
+  `2026-11-01`, and `time` as `02:13:48`. Trailing zeros of the fraction are
+  dropped, and a BC year reads with ` BC`. SQLite keeps the clock the app
+  wrote, in the same shapes, with an offset the text carried as `+HH:MM`.
+  The text writes back unchanged as a parameter on both dialects. An `Int` or
+  `Float` field over a time column is still a decode error. Apps that parsed
+  the old Go text must adapt (see the v0.29 migration guide).
 - **A Store builder problem is loud.** A builder that names an unknown column,
   an invalid table name or a primary key that is not a column fails every
   verb on the store. Each problem is now logged at ERROR level once per table
