@@ -180,7 +180,10 @@ pub fn fit(dialect: &str, kind: &str, sql_type: &str) -> Fit {
     }
     let aff = sqlite_affinity(sql_type);
     let same = match kind {
-        "int" | "bigint" | "bool" => aff == "integer",
+        "int" | "bigint" => aff == "integer",
+        // A boolean spelling (`BOOLEAN`, `BOOL`) has NUMERIC affinity, and
+        // SQLite stores TRUE / FALSE in it as 1 / 0, which a Bool reads.
+        "bool" => aff == "integer" || sql_type.to_ascii_uppercase().contains("BOOL"),
         "real" => aff == "real",
         // A decimal is TEXT on SQLite: NUMERIC affinity would turn '0.1' into
         // a REAL.
@@ -193,6 +196,20 @@ pub fn fit(dialect: &str, kind: &str, sql_type: &str) -> Fit {
     } else {
         Fit::Differs
     }
+}
+
+/// [`fit`] for one code column. On SQLite a nullable Bool or Float column
+/// that v0.28 created as TEXT also fits: Std.Db.Store reads and writes its
+/// `true` / `7.5` text (runtime-go/rt/db_sqlite_legacy.go).
+pub fn fit_column(dialect: &str, c: &SchemaColumn, sql_type: &str) -> Fit {
+    if !is_pg(dialect)
+        && c.nullable
+        && matches!(c.kind.as_str(), "bool" | "real")
+        && sqlite_affinity(sql_type) == "text"
+    {
+        return Fit::Same;
+    }
+    fit(dialect, &c.kind, sql_type)
 }
 
 /// The codec kind a live type reads as best, for an extra column, a stub, or
@@ -563,7 +580,7 @@ pub fn live_schema(target: &Schema, live: &Inspect) -> Schema {
             let tc = tt.and_then(|t| t.columns.iter().find(|c| c.name == lc.name));
             let kind = match tc {
                 Some(tc) if tc.external => tc.kind.clone(),
-                Some(tc) if fit(&live.dialect, &tc.kind, &lc.sql_type) != Fit::Differs => {
+                Some(tc) if fit_column(&live.dialect, tc, &lc.sql_type) != Fit::Differs => {
                     tc.kind.clone()
                 }
                 Some(tc) => {
@@ -979,7 +996,7 @@ pub fn check(target: &Schema, live: &Inspect) -> Check {
                 }
                 continue;
             };
-            let f = fit(&dialect, &tc.kind, &lc.sql_type);
+            let f = fit_column(&dialect, tc, &lc.sql_type);
             if f == Fit::Narrow {
                 notices.push(Notice {
                     text: format!(
@@ -1829,6 +1846,61 @@ mod tests {
             );
             assert!(!c.drift());
         }
+    }
+
+    /// A SQLite column declared with a boolean spelling has NUMERIC affinity
+    /// and holds 0 / 1 (SQLite stores TRUE / FALSE as 1 / 0), which a Bool
+    /// field reads: it fits the Bool kind, it is not a type difference.
+    #[test]
+    fn a_sqlite_boolean_column_fits_a_bool_field() {
+        for ty in ["BOOLEAN", "BOOL", "boolean", "INTEGER", "TINYINT"] {
+            assert_eq!(fit("sqlite", "bool", ty), Fit::Same, "{ty}");
+        }
+        // A v0.28 TEXT column of a nullable Bool or Float: Std.Db.Store reads
+        // and writes its `true` / `7.5` text (db_sqlite_legacy.go).
+        let nullable = |k: &str| SchemaColumn {
+            nullable: true,
+            ..col("x", k, true)
+        };
+        assert_eq!(fit_column("sqlite", &nullable("bool"), "TEXT"), Fit::Same);
+        assert_eq!(fit_column("sqlite", &nullable("real"), "TEXT"), Fit::Same);
+        assert_eq!(
+            fit_column("sqlite", &col("x", "bool", false), "TEXT"),
+            Fit::Differs
+        );
+        assert_eq!(
+            fit_column("postgres", &nullable("bool"), "text"),
+            Fit::Differs
+        );
+        // Not a Bool spelling: still a difference.
+        assert_eq!(fit("sqlite", "bool", "TEXT"), Fit::Differs);
+        assert_eq!(fit("sqlite", "bool", "NUMERIC"), Fit::Differs);
+        // A boolean column is not an Int column.
+        assert_eq!(fit("sqlite", "int", "BOOLEAN"), Fit::Differs);
+        let target = Schema {
+            tables: vec![table(
+                "t",
+                "id",
+                vec![col("id", "text", false), col("on", "bool", false)],
+            )],
+        };
+        let mut id = lcol("id", "TEXT", true, None);
+        id.pk = true;
+        let lt = LiveTable {
+            name: "t".into(),
+            columns: vec![id, lcol("on", "BOOLEAN", true, None)],
+            indexes: vec![],
+        };
+        let c = check(&target, &inspect("sqlite", vec![lt]));
+        assert!(
+            c.findings.is_empty(),
+            "{:?}",
+            c.findings.iter().map(|f| &f.text).collect::<Vec<_>>()
+        );
+        // --gen compares kinds from the snapshot, never SQL types: the same
+        // target against itself has no diff, and check agrees.
+        assert!(db_migrate::diff(&target, &target).is_empty());
+        assert!(c.diff.is_empty());
     }
 
     #[test]

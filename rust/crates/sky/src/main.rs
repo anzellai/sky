@@ -15033,6 +15033,33 @@ fn sky_string_literal(p: &Path) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+/// The error a `sky db check` helper run reported: its WARN / ERROR log lines
+/// without the timestamp, else all of its stderr, else what it printed.
+fn helper_error_text(stderr: &str, stdout: &str) -> String {
+    let strip_ts = |l: &str| -> String {
+        match l.split_once(' ') {
+            Some((ts, rest)) if ts.len() >= 20 && ts.as_bytes()[4] == b'-' && ts.contains('T') => {
+                rest.to_string()
+            }
+            _ => l.to_string(),
+        }
+    };
+    let lines: Vec<String> = stderr
+        .lines()
+        .map(strip_ts)
+        .filter(|l| l.starts_with("ERROR") || l.starts_with("WARN"))
+        .map(|l| format!("  {l}"))
+        .collect();
+    if !lines.is_empty() {
+        return lines.join("\n");
+    }
+    let err = stderr.trim();
+    if !err.is_empty() {
+        return err.to_string();
+    }
+    stdout.trim().to_string()
+}
+
 const DB_CHECK_USAGE: &str = "usage: sky db check [--sql [--write] | --code]\n\
     \x20 (none)    compare the live database with the tables the code declares, and the\n\
     \x20           migration ledger; exit 1 on drift, 2 when the check cannot run\n\
@@ -15176,37 +15203,42 @@ emit begin body end =
     ) else {
         return ExitCode::from(2);
     };
-    let run = |label: &str| -> Option<String> {
+    // One run of the helper: (succeeded, stdout, stderr). A spawn failure is
+    // reported here and is `None`.
+    let run = || -> Option<(bool, String, String)> {
         match Command::new(&bin).current_dir(&project_dir).output() {
-            Ok(o) => {
-                let out = String::from_utf8_lossy(&o.stdout).into_owned();
-                if !o.status.success() {
-                    eprintln!(
-                        "sky db check: {label} failed (is the database reachable? the DSN comes from \
-                         DATABASE_URL, <PREFIX>_DB_PATH or sky.toml [database], as for the app)\n{}{}",
-                        String::from_utf8_lossy(&o.stderr),
-                        out
-                    );
-                    return None;
-                }
-                Some(out)
-            }
+            Ok(o) => Some((
+                o.status.success(),
+                String::from_utf8_lossy(&o.stdout).into_owned(),
+                String::from_utf8_lossy(&o.stderr).into_owned(),
+            )),
             Err(e) => {
-                eprintln!("sky db check: {label} failed: {e}");
+                eprintln!("sky db check: cannot run the check helper: {e}");
                 None
             }
         }
     };
-    let Some(stdout) = run("reading the database") else {
+    let Some((ran_ok, stdout, stderr)) = run() else {
         return ExitCode::from(2);
     };
+    // The helper dumps the code's schema BEFORE it connects. No schema means
+    // the project's `db` itself was refused (a Store builder problem, a bad
+    // table name): no database was read, so the database is not the cause.
     let target: db_migrate::Schema =
         match extract_between(&stdout, "SKY_SCHEMA_BEGIN", "SKY_SCHEMA_END")
             .map(|j| serde_json::from_str(j.trim()))
         {
             Some(Ok(s)) => s,
-            _ => {
-                eprintln!("sky db check: no schema from `db` (is `db` a Store.Project?)");
+            Some(Err(e)) => {
+                eprintln!("sky db check: the schema of `db` is not readable: {e}");
+                return ExitCode::from(2);
+            }
+            None => {
+                eprintln!(
+                    "sky db check: the project's `db` was refused before any database was read. \
+                     Fix the code (`sky verify` reports the same problem):\n{}",
+                    helper_error_text(&stderr, &stdout)
+                );
                 return ExitCode::from(2);
             }
         };
@@ -15214,13 +15246,18 @@ emit begin body end =
         match extract_between(&stdout, "SKY_INSPECT_BEGIN", "SKY_INSPECT_END")
             .map(|j| serde_json::from_str(j.trim()))
         {
-            Some(Ok(s)) => s,
+            Some(Ok(s)) if ran_ok => s,
             Some(Err(e)) => {
                 eprintln!("sky db check: bad inspect report: {e}");
                 return ExitCode::from(2);
             }
-            None => {
-                eprintln!("sky db check: the database gave no report\n{stdout}");
+            _ => {
+                eprintln!(
+                    "sky db check: could not read the database (the connection or a catalogue \
+                     query failed). The DSN comes from DATABASE_URL, <PREFIX>_DB_PATH or sky.toml \
+                     [database], as for the app:\n{}",
+                    helper_error_text(&stderr, &stdout)
+                );
                 return ExitCode::from(2);
             }
         };
@@ -15256,11 +15293,15 @@ emit begin body end =
             eprintln!("sky db check: cannot stage the steps: {e}");
             return ExitCode::from(2);
         }
-        let Some(out) = run("rendering the SQL") else {
+        let Some((ok, out, err)) = run() else {
             return ExitCode::from(2);
         };
-        let Some(body) = extract_between(&out, "SKY_RENDER_BEGIN\n", "\nSKY_RENDER_END") else {
-            eprintln!("sky db check: the renderer gave no SQL\n{out}");
+        let body = extract_between(&out, "SKY_RENDER_BEGIN\n", "\nSKY_RENDER_END");
+        let Some(body) = body.filter(|_| ok) else {
+            eprintln!(
+                "sky db check: could not render the SQL for the database's dialect:\n{}",
+                helper_error_text(&err, &out)
+            );
             return ExitCode::from(2);
         };
         rendered = body.split("\n--SKY-STEP--\n").map(str::to_string).collect();

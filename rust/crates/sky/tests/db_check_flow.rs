@@ -735,3 +735,65 @@ fn postgres_clean_notice_drift_sql_and_code() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A Store builder problem stops the helper before any database is read: the
+/// message names the problem (the builder's own text), and does not blame the
+/// database.
+#[test]
+fn a_store_builder_problem_is_named_not_blamed_on_the_database() {
+    if !required(Need::Go, tool_on_path("go")) {
+        return;
+    }
+    let src = main_src(
+        "",
+        "",
+        "\n        |> Store.unique \"no_such_column\"",
+        "",
+        "",
+    );
+    let dir = project(
+        "sky-dbcheck-problem",
+        "driver = \"sqlite\"\npath = \"app.db\"",
+        &src,
+    );
+    let (code, out, err) = sky(&dir, &["db", "check"], &[]);
+    assert_eq!(code, 2, "{out}\n{err}");
+    assert!(
+        err.contains("the project's `db` was refused") && err.contains("no_such_column"),
+        "the builder problem is not named:\n{err}"
+    );
+    assert!(
+        !err.contains("reachable") && !err.contains("could not read the database"),
+        "a builder problem was blamed on the database:\n{err}"
+    );
+    // Nothing was read, so nothing was created.
+    assert!(
+        !dir.join("app.db").exists() || std::fs::metadata(dir.join("app.db")).unwrap().len() == 0
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A database that cannot be reached is named as that, after the code's
+/// schema was read.
+#[test]
+fn an_unreachable_database_is_named_as_the_cause() {
+    if !required(Need::Go, tool_on_path("go")) {
+        return;
+    }
+    let dir = project("sky-dbcheck-unreachable", "", &base_src());
+    let (code, out, err) = sky(
+        &dir,
+        &["db", "check"],
+        &[(
+            "DATABASE_URL",
+            "postgres://sky@127.0.0.1:1/none?sslmode=disable&connect_timeout=2",
+        )],
+    );
+    assert_eq!(code, 2, "{out}\n{err}");
+    assert!(
+        err.contains("could not read the database"),
+        "a connect failure is not named:\n{err}"
+    );
+    assert!(!err.contains("was refused"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
