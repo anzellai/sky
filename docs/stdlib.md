@@ -1811,6 +1811,7 @@ card name photo =
 | `rect`, `roundedRect`, `ellipse`, `arc`, `line` | anti-aliased shapes; a `Paint` is `Fill colour` or `Stroke width colour` (an outline inside the box) |
 | `roundedMask`, `ellipseMask`, `alphaMask` | shapes a pasted image shows through |
 | `paste x y mask bytes`, `pasteCanvas x y mask canvas` | draw an image or another canvas over what is there |
+| `pasteExact x y bytes` | put an image's pixels in place of the canvas's, with no blending, each colour byte for byte (v0.29.2) |
 | `blur sigma`, `resize filter w h` | Gaussian blur (three box passes); `Nearest` / `Bilinear` / `CatmullRom` / `Lanczos` |
 | `loadFont path index`, `fontFromBytes bytes index`, `defaultFont` | TrueType / OpenType fonts (a `.ttc` by index); Go Regular built in |
 | `text style x y string`, `measure font size string` | text with (x, y) at the left and the top of the ascent; its size in pixels |
@@ -1835,8 +1836,11 @@ can come out of `encode` with its colour channels moved, even where nothing is
 drawn over it. The alpha is exact. The colour moves by at most 2 from alpha 128 up
 (1 at alpha 254), 4 at alpha 64, 16 at alpha 16, and more near alpha 0 (at
 alpha 1 the colour is lost). A fully opaque pixel is copied exactly, and a fully
-transparent pixel stays fully transparent. No paste copies semi-transparent
-pixels exactly, so a test compares such output with `pixelDiff` and a tolerance.
+transparent pixel stays fully transparent. `pasteExact` (v0.29.2) copies
+pixels exactly: it replaces what is under the image (no blending) and keeps
+each colour byte for byte, also at alpha 0, until a later step draws over the
+pixel. Output made only of `blank`, opaque shapes and `pasteExact` can be
+compared byte for byte; anything else with `pixelDiff` and a tolerance.
 
 ### `Std.Xml` — safe XML parsing (with `Std.Xml.Decode` and `Std.Xml.Encode`)
 

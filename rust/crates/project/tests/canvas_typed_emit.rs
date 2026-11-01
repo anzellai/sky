@@ -83,6 +83,7 @@ Canvas.blank 40 30 black\n        \
 |> Canvas.paste 0 0 (Just (Canvas.roundedMask 4 4 1)) photo\n        \
 |> Canvas.paste 0 0 (Just (Canvas.alphaMask photo)) photo\n        \
 |> Canvas.pasteCanvas 0 0 (Just (Canvas.ellipseMask 4 4)) (Canvas.fromImage photo)\n        \
+|> Canvas.pasteExact 1 1 photo\n        \
 |> Canvas.blur 1.0\n        \
 |> Canvas.resize Canvas.Lanczos 20 15\n        \
 |> Canvas.text { font = Canvas.defaultFont, size = 8.0, colour = black } 0 0 \"a\"\n\n\n\
@@ -124,6 +125,7 @@ fn canvas_steps_use_their_typed_twins_and_narrow_nothing() {
         "rt.Image_canvasDefaultFontT(",
         "rt.Image_canvasFromImageT(",
         "rt.Image_canvasBlurT(",
+        "rt.Image_canvasPasteExactT(",
         "rt.Image_canvasRoundedMaskT(",
         "rt.Image_canvasEllipseMaskT(",
         "rt.Image_canvasAlphaMaskT(",

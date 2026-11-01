@@ -11002,6 +11002,9 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
         ("rt.Image_canvasPasteCanvas", 6) => {
             twin("rt.Image_canvasPasteCanvasT", vec![None; 6], canvas())
         }
+        ("rt.Image_canvasPasteExact", 4) => {
+            twin("rt.Image_canvasPasteExactT", vec![None; 4], canvas())
+        }
         ("rt.Image_canvasBlur", 2) => twin("rt.Image_canvasBlurT", vec![None; 2], canvas()),
         ("rt.Image_canvasResize", 4) => twin("rt.Image_canvasResizeT", vec![None; 4], canvas()),
         ("rt.Image_canvasText", 7) => twin("rt.Image_canvasTextT", vec![None; 7], canvas()),

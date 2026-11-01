@@ -114,6 +114,12 @@ as they already did for a plain app.
   `Money.convert rates to m`. `Money.currencyFromCode : String -> Maybe
   Currency` reads a code under the strict decoders' grammar. See the Migration
   section.
+- **`Canvas.pasteExact` moves pixels exactly.** `Std.Image.Canvas.pasteExact x
+  y bytes canvas` puts an image's pixels in place of the canvas's, with no
+  blending, and keeps each colour byte for byte. `paste` blends in
+  premultiplied 8-bit RGBA, which moves a semi-transparent colour by up to 2
+  from alpha 128 up (more below), so a test of such output could not compare
+  bytes. A step drawn over the pixel later still shows.
 - **`Codec.value`, a codec for a raw `Json.Value`.** The JSON as it is, both
   ways, in a JSON text column, so `Codec.object` (or an `autoWith` override)
   carries a `List Json.Value` (`Codec.list Codec.value`) or a

@@ -50,6 +50,7 @@ const (
 	canvasOpBlur
 	canvasOpResize
 	canvasOpText
+	canvasOpPasteExact
 )
 
 // canvasNode is one recorded operation. `prev` is the canvas it draws on
@@ -156,6 +157,13 @@ func Image_canvasPasteCanvas(x, y, hasMask, mask, src, c any) any {
 	return canvasPush(c, n)
 }
 
+// Image_canvasPasteExact is `pasteExact : x y bytes canvas`: the image's
+// pixels replace the canvas's, with no blending, and keep their exact colour
+// (canvas_raster.go, canvasExactLayer).
+func Image_canvasPasteExact(x, y, b, c any) any {
+	return canvasPush(c, &canvasNode{kind: canvasOpPasteExact, ints: [6]int{AsInt(x), AsInt(y)}, bytes: asBytesString(b)})
+}
+
 // Image_canvasBlur is `blur : Float -> Canvas -> Canvas` (Gaussian sigma).
 func Image_canvasBlur(sigma, c any) any {
 	return canvasPush(c, &canvasNode{kind: canvasOpBlur, floats: [2]float64{AsFloat(sigma)}})
@@ -179,11 +187,11 @@ func Image_canvasText(f, size, colour, x, y, s, c any) any {
 func Image_canvasEncode(format, quality, c any) any {
 	return func() any {
 		return imageGuard("canvas.encode", func() any {
-			img, bad := canvasRender("canvas.encode", canvasOf(c), 0)
+			img, exact, bad := canvasRenderExact("canvas.encode", canvasOf(c), 0)
 			if bad != nil {
 				return bad
 			}
-			return encodeImage("canvas.encode", img, AsString(format), "png", AsInt(quality))
+			return encodeImage("canvas.encode", exact.apply(img), AsString(format), "png", AsInt(quality))
 		})
 	}
 }
@@ -227,6 +235,9 @@ func Image_canvasPasteT(x, y, hasMask, mask, b, c any) SkyADT {
 }
 func Image_canvasPasteCanvasT(x, y, hasMask, mask, src, c any) SkyADT {
 	return Image_canvasPasteCanvas(x, y, hasMask, mask, src, c).(SkyADT)
+}
+func Image_canvasPasteExactT(x, y, b, c any) SkyADT {
+	return Image_canvasPasteExact(x, y, b, c).(SkyADT)
 }
 func Image_canvasBlurT(sigma, c any) SkyADT { return Image_canvasBlur(sigma, c).(SkyADT) }
 func Image_canvasResizeT(filter, w, h, c any) SkyADT {
