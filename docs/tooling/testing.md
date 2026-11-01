@@ -280,9 +280,23 @@ database.
 shared or a production database, and a test and its seeds would write to it.
 So a DSN in `.env` is never used: the run prints one line that names it and
 points at `.env.test` for a test DSN. A project whose `.env` names a database
-runs `sky test` in test mode even without a `.env.test` (unless the environment
-sets that name), so its tests get the throwaway database. `sky fuzz` does the
-same.
+runs `sky test` in test mode even without a `.env.test`, so its tests get the
+throwaway database. `sky fuzz` does the same. `System.loadEnv ()` loads nothing
+in test mode, and a file a program names explicitly still loads.
+
+Test mode is the whole of test mode, not only the database. A project whose
+`.env` names a database therefore runs its tests with outbound HTTP mocked: a
+request with no fixture fails closed with an `Http` error. The clock and the
+random seed stay real unless `.env.test` sets `SKY_TEST_CLOCK_MS` or
+`SKY_TEST_SEED` (see [Determinism](#determinism-opt-in-decoupled-from-test-mode)).
+
+The run stays out of test mode only when the environment sets every DSN name
+`.env` sets (`<PREFIX>_DB_PATH` and `DATABASE_URL`) and the project has no
+`.env.test`. One name the environment leaves unset is enough to turn test mode
+on, because the runtime would load that name from `.env`. So to make live HTTP
+calls from a test, set each of those names in the environment for the run (to
+a database you are willing to write to) and keep no `.env.test`. Test mode
+itself has no switch that sends a request to the real network.
 
 ### Training runs (`Std.Ai.Train`)
 

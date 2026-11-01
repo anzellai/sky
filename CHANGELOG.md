@@ -190,7 +190,11 @@ finds a header whatever the case of its name.
     `Server.post "/login"` answered every native form POST with the 303,
     with the right token too, and its handler never ran. A path is now a
     page only when the router gives that request (method and path) to a
-    page handler. (`runtime-go/rt/csrf_middleware.go` `spaPageSet.matches`;
+    page handler. The mount's path without its trailing slash (`/app` for
+    a `Server.staticNotFound "/app/"`) is the mount too, as the router's own
+    redirect to it says, so a native form POST to it answers the 303. The
+    same pre-release build answered it with the 403.
+    (`runtime-go/rt/csrf_middleware.go` `spaPageSet.matches`;
     tests `TestStaticNotFound_OtherRoutesKeepTheirPost`,
     `TestStaticNotFound_PagesStayUnderItsPrefix`.)
 - **Two routes whose path differs only in a parameter name no longer stop
@@ -301,10 +305,28 @@ finds a header whatever the case of its name.
   `sky run`. The run prints one line that names the ignored DSN and points
   at `.env.test`. `sky fuzz` prints the same line. `sky ai <verb>
   --test-mode` still passes the project's `.env` under `.env.test`, since it
-  acts on the project's own data. (`runtime-go/rt/dotenv.go`
-  `loadStartupDotEnv`, `rust/crates/testrunner/src/lib.rs` `dot_env_dsn`;
+  acts on the project's own data.
+  - Every DSN name `.env` sets counts. A `.env` with both `SKY_DB_PATH` (or
+    the prefixed name) and `DATABASE_URL`, run from a shell that set only
+    `SKY_DB_PATH`, left test mode off, so the runtime loaded `.env` and its
+    `DATABASE_URL` reached the session store, analytics, jobs and
+    telemetry. Test mode now turns on when any DSN name in `.env` is not
+    set in the environment.
+  - `System.loadEnv ()` loads nothing in test mode. It means `.env`, and it
+    loaded it in a `sky test` run. A file a program names explicitly still
+    loads.
+  - A project whose `.env` names a database now runs `sky test` in test
+    mode, so its outbound HTTP is mocked and fails closed. See
+    `docs/tooling/testing.md` for the way back to live calls.
+  (`runtime-go/rt/dotenv.go` `loadStartupDotEnv` and `Process_loadEnv`,
+  `rust/crates/testrunner/src/lib.rs` `dot_env_dsns` and
+  `dot_env_reaches_app`, `rust/crates/sky/src/main.rs` `ai_test_mode_env`;
   tests `TestStartupDotEnv_SkippedInTestMode`,
-  `a_dot_env_dsn_is_ignored_and_other_dsns_win`, `a_dot_env_dsn_is_never_used`,
+  `TestProcessLoadEnv_EmptyPathSkipsDotEnvInTestMode`,
+  `a_dot_env_dsn_is_ignored_and_other_dsns_win`,
+  `any_dot_env_dsn_the_environment_does_not_set_turns_test_mode_on`,
+  `ai_test_mode_passes_the_projects_dot_env_dsn`, `a_dot_env_dsn_is_never_used`,
+  `a_second_dot_env_dsn_the_environment_does_not_set_is_never_used`,
   `a_dot_env_test_or_environment_dsn_wins`.)
 - **A static or immutable asset carries no CSRF cookie.** The CSRF
   middleware set its cookie on every GET, also on the hashed Sky.Spa wasm and

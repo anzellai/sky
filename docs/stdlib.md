@@ -1177,7 +1177,7 @@ main =
 | `System.getenvBool` | `String -> Task Error Bool` | Parsed bool env var (`true`/`false`/`1`/`0`) |
 | `System.cwd` | `Task Error String` | Current working directory |
 | `System.exit` | `Int -> a` | **Diverging** — process termination |
-| `System.loadEnv` | `Task Error ()` | Load `.env` file |
+| `System.loadEnv` | `Task Error ()` | Load `.env` file (loads nothing in a `sky test` / `sky fuzz` run) |
 | `System.setenv` | `String -> String -> Task Error ()` | Set a process env var (v0.11.5+) |
 | `System.unsetenv` | `String -> Task Error ()` | Remove a process env var (v0.11.5+, idempotent) |
 

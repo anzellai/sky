@@ -264,19 +264,18 @@ pub fn run_test_with(
         // cwd-relative) resolves because cwd is the project.
         // A `.env` DSN is never used: the runtime does not load `.env` in
         // test mode. A project whose `.env` names one runs in test mode even
-        // without a `.env.test`, unless the environment sets that name, so
-        // its tests get the throwaway database instead of the one `.env`
-        // names (v0.29.1).
-        let ignored_dsn = dot_env_dsn(&project_dir);
-        if let Some(name) = &ignored_dsn {
+        // without a `.env.test`, unless the environment sets EVERY DSN name
+        // `.env` sets, so its tests get the throwaway database instead of the
+        // one `.env` names (v0.29.1). A shell that sets `SKY_DB_PATH` does
+        // not stop a `DATABASE_URL` in `.env` from reaching the app.
+        for name in dot_env_dsns(&project_dir) {
             eprintln!(
                 "sky test: ignoring {name} in .env (sky test never takes a database from \
                  .env). Put a test DSN in .env.test."
             );
         }
-        let dot_env_reaches_app = ignored_dsn
-            .as_deref()
-            .is_some_and(|name| std::env::var_os(name).is_none());
+        let dot_env_reaches_app =
+            dot_env_reaches_app(&project_dir, &|k| std::env::var_os(k).is_some());
         if project_dir.join(".env.test").is_file() || dot_env_reaches_app {
             // A per-run log-capture file so a scenario can assert on what the app
             // logged (read it back with File.read on the same env var). Removed
@@ -423,8 +422,15 @@ fn test_mode_env_with(
 /// mode even without a `.env.test`, so its tests get the throwaway database
 /// and never reach the database `.env` names.
 pub fn dot_env_dsn(project_dir: &Path) -> Option<String> {
+    dot_env_dsns(project_dir).into_iter().next()
+}
+
+/// Every DSN name the project's `.env` sets (`<PREFIX>_DB_PATH`, then
+/// `DATABASE_URL`, each with a non-blank value), when the project has a
+/// database. [`dot_env_dsn`] is the first of them.
+pub fn dot_env_dsns(project_dir: &Path) -> Vec<String> {
     let db_path = match project::offline_db_plan(project_dir) {
-        project::OfflineDbPlan::None => return None,
+        project::OfflineDbPlan::None => return Vec::new(),
         project::OfflineDbPlan::Sqlite { db_path_env } => db_path_env,
         project::OfflineDbPlan::Postgres => {
             let prefix = project::sky_toml_section_key(project_dir, "env", "prefix")
@@ -434,18 +440,32 @@ pub fn dot_env_dsn(project_dir: &Path) -> Option<String> {
             format!("{prefix}_DB_PATH")
         }
     };
-    let dot_env = parse_dotenv(&std::fs::read_to_string(project_dir.join(".env")).ok()?);
-    let found = [db_path.as_str(), "DATABASE_URL"]
+    let Ok(contents) = std::fs::read_to_string(project_dir.join(".env")) else {
+        return Vec::new();
+    };
+    let dot_env = parse_dotenv(&contents);
+    [db_path.as_str(), "DATABASE_URL"]
         .into_iter()
-        .find(|name| {
+        .filter(|name| {
             // The runtime's loader keeps the first value of a repeated key.
             dot_env
                 .iter()
                 .find(|(k, _)| k == name)
                 .is_some_and(|(_, v)| dsn_is_given(Some(v)))
         })
-        .map(str::to_string);
-    found
+        .map(str::to_string)
+        .collect()
+}
+
+/// Whether a `sky test` run without a `.env.test` must turn test mode on so
+/// the runtime does not load the project's `.env`: true when ANY DSN name
+/// `.env` sets is not set in the environment (`is_set`). Outside test mode
+/// the runtime loads `.env` under the environment, so one such name is
+/// enough for a database the environment does not override to reach the
+/// app (its session store, analytics, jobs and telemetry as well as the
+/// tests). A project with a `.env.test` runs in test mode anyway.
+pub fn dot_env_reaches_app(project_dir: &Path, is_set: &dyn Fn(&str) -> bool) -> bool {
+    dot_env_dsns(project_dir).iter().any(|name| !is_set(name))
 }
 
 /// The project's `.env` entries for a test-mode run that keeps the project's
@@ -633,6 +653,58 @@ mod tests {
         )
         .unwrap();
         assert!(!embeds(&test_mode_env_with(&dir, Some(&scratch), &none)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Test mode turns on when ANY DSN name `.env` sets is not set in the
+    /// environment, not only the first (v0.29.1). A shell that sets
+    /// `SKY_DB_PATH` left a `DATABASE_URL` in `.env` free to reach the app.
+    #[test]
+    fn any_dot_env_dsn_the_environment_does_not_set_turns_test_mode_on() {
+        let dir = std::env::temp_dir().join(format!(
+            "sky-testrunner-dotenv-reach-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("sky.toml"),
+            "name = \"x\"\n\n[database]\ndriver = \"postgres\"\n",
+        )
+        .unwrap();
+        let set = |names: &'static [&'static str]| move |k: &str| names.contains(&k);
+
+        // No `.env`: nothing to keep out.
+        assert!(dot_env_dsns(&dir).is_empty());
+        assert!(!dot_env_reaches_app(&dir, &set(&[])));
+
+        std::fs::write(
+            dir.join(".env"),
+            "SKY_DB_PATH=postgres://u@h/a\nDATABASE_URL=postgres://u@h/b\n",
+        )
+        .unwrap();
+        assert_eq!(dot_env_dsns(&dir), vec!["SKY_DB_PATH", "DATABASE_URL"]);
+        assert!(dot_env_reaches_app(&dir, &set(&[])));
+        // The shell sets the first name only: `DATABASE_URL` from `.env`
+        // would still reach the app, so test mode turns on.
+        assert!(dot_env_reaches_app(&dir, &set(&["SKY_DB_PATH"])));
+        assert!(dot_env_reaches_app(&dir, &set(&["DATABASE_URL"])));
+        // The shell sets both: `.env` overrides neither, test mode stays off.
+        assert!(!dot_env_reaches_app(
+            &dir,
+            &set(&["SKY_DB_PATH", "DATABASE_URL"])
+        ));
+        // A blank value in `.env` is no DSN.
+        std::fs::write(
+            dir.join(".env"),
+            "SKY_DB_PATH=postgres://u@h/a\nDATABASE_URL=\n",
+        )
+        .unwrap();
+        assert_eq!(dot_env_dsns(&dir), vec!["SKY_DB_PATH"]);
+        assert!(!dot_env_reaches_app(&dir, &set(&["SKY_DB_PATH"])));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

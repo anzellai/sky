@@ -244,7 +244,9 @@ make a test pass.
   fails every verb on the store, is logged at ERROR level and fails
   `sky verify`.
 - `sky test` never takes a database from `.env`, and test mode never loads
-  `.env`. Put a test DSN or setting in `.env.test`.
+  `.env` (`System.loadEnv ()` loads nothing there). Put a test DSN or setting
+  in `.env.test`. A project whose `.env` names a database runs `sky test` in
+  test mode, so outbound HTTP is mocked and fails closed without a fixture.
 
 ### XML and ZIP input is hostile: use Std.Xml and Std.Zip
 

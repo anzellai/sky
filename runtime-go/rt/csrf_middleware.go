@@ -1040,7 +1040,11 @@ func (s *spaPageSet) matches(r *http.Request) bool {
 		}
 		return pagePatternMatch(pat, path)
 	case spaNotFoundPage:
-		return strings.HasPrefix(path, pattern)
+		// The mux answers the mount's path without its trailing slash
+		// ("/app" for "/app/") with this pattern too, as its redirect to the
+		// mount. That path is the mount, so it is a page as well.
+		return strings.HasPrefix(path, pattern) ||
+			(strings.HasSuffix(pattern, "/") && path == strings.TrimSuffix(pattern, "/"))
 	}
 	return false
 }

@@ -620,7 +620,13 @@ func TestStaticNotFound_PagesStayUnderItsPrefix(t *testing.T) {
 		return []any{Server_staticNotFound("/app/", dir, pageHandler(pageFormHTML))}
 	})
 	wantSeeOther(t, "under the prefix", serve(h, formPost("/app/x", url.Values{})), "/app/x")
-	if rec := serve(h, formPost("/other", url.Values{})); rec.Code != http.StatusForbidden {
-		t.Fatalf("a path outside the prefix answered %d, want 403", rec.Code)
+	// The mux redirects "/app" to the mount "/app/", so "/app" is the mount
+	// too: a native form POST to it answers 303, as it did before v0.29.1
+	// made the catch-all's pages follow the mux.
+	wantSeeOther(t, "the prefix without its slash", serve(h, formPost("/app", url.Values{})), "/app")
+	for _, p := range []string{"/other", "/appx", "/ap"} {
+		if rec := serve(h, formPost(p, url.Values{})); rec.Code != http.StatusForbidden {
+			t.Fatalf("%s, outside the prefix, answered %d, want 403", p, rec.Code)
+		}
 	}
 }

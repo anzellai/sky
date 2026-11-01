@@ -13918,13 +13918,7 @@ fn run_ai_binary(bin: &Path, args: &[String], cwd: &Path, test_project: Option<&
     let mut cmd = Command::new(bin);
     cmd.args(args).current_dir(cwd);
     if let Some(project_dir) = test_project {
-        // Test mode answers the model calls from tests/mocks/; the verb still
-        // acts on the project's own database (no scratch database). The
-        // runtime does not load `.env` in test mode, so the project's `.env`
-        // is passed here, under `.env.test` and the environment.
-        let env = testrunner::test_mode_env(project_dir, None);
-        let fallback = testrunner::dot_env_fallback(project_dir, &env, &|k| std::env::var(k).ok());
-        for (k, v) in env.into_iter().chain(fallback) {
+        for (k, v) in ai_test_mode_env(project_dir, &|k| std::env::var(k).ok()) {
             cmd.env(k, v);
         }
     }
@@ -13945,6 +13939,20 @@ fn run_ai_binary(bin: &Path, args: &[String], cwd: &Path, test_project: Option<&
             }
         }
     }
+}
+
+/// The environment `sky ai <verb> --test-mode` adds for a project program.
+/// Test mode answers the model calls from tests/mocks/. The verb still acts
+/// on the project's own database (no scratch database). The runtime does not
+/// load `.env` in test mode, so the project's `.env` is passed here, under
+/// `.env.test` and the environment (`getenv`), which the program inherits.
+fn ai_test_mode_env(
+    project_dir: &Path,
+    getenv: &dyn Fn(&str) -> Option<String>,
+) -> Vec<(String, String)> {
+    let env = testrunner::test_mode_env(project_dir, None);
+    let fallback = testrunner::dot_env_fallback(project_dir, &env, getenv);
+    env.into_iter().chain(fallback).collect()
 }
 
 /// A bundled verb: build (once per Sky build) and run `sky-bundled/ai`.
@@ -17951,6 +17959,72 @@ fn stage_project_runtime_into_backend(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `sky ai <verb> --test-mode` keeps the project's own database (v0.29.1).
+    /// The runtime does not load `.env` in test mode, so the runner passes the
+    /// project's `.env` itself, under `.env.test` and the environment. Unlike
+    /// `sky test`, no throwaway database replaces the DSN in `.env`.
+    #[test]
+    fn ai_test_mode_passes_the_projects_dot_env_dsn() {
+        let dir = std::env::temp_dir().join(format!(
+            "sky-ai-testmode-dotenv-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("sky.toml"),
+            "name = \"x\"\n\n[database]\ndriver = \"postgres\"\n",
+        )
+        .unwrap();
+        const OWN: &str = "postgres://own@127.0.0.1:5/own";
+        std::fs::write(
+            dir.join(".env"),
+            format!("DATABASE_URL={OWN}\nDATABASE_URL=postgres://second/x\nAI_KEY=from-dotenv\n"),
+        )
+        .unwrap();
+        let get = |env: &[(String, String)], k: &str| {
+            env.iter()
+                .filter(|(n, _)| n == k)
+                .map(|(_, v)| v.clone())
+                .collect::<Vec<_>>()
+        };
+        let none = |_: &str| -> Option<String> { None };
+
+        // The project's own database reaches the verb, once, with the
+        // first value (the runtime's loader keeps the first of a repeat).
+        let env = ai_test_mode_env(&dir, &none);
+        assert_eq!(get(&env, "SKY_TEST_MODE"), vec!["1"]);
+        assert_eq!(get(&env, "DATABASE_URL"), vec![OWN]);
+        assert_eq!(get(&env, "AI_KEY"), vec!["from-dotenv"]);
+        assert!(
+            get(&env, "SKY_EMBED_POSTGRES").is_empty() && get(&env, "SKY_DATA_DIR").is_empty(),
+            "no throwaway database for an ai verb: {env:?}"
+        );
+
+        // The environment wins: the name is left for the program to inherit.
+        let shell = |k: &str| (k == "DATABASE_URL").then(|| "postgres://shell/x".to_string());
+        let env = ai_test_mode_env(&dir, &shell);
+        assert!(get(&env, "DATABASE_URL").is_empty(), "{env:?}");
+        assert_eq!(get(&env, "AI_KEY"), vec!["from-dotenv"]);
+
+        // `.env.test` wins over `.env`.
+        std::fs::write(dir.join(".env.test"), "DATABASE_URL=postgres://t/x\n").unwrap();
+        let env = ai_test_mode_env(&dir, &none);
+        assert_eq!(get(&env, "DATABASE_URL"), vec!["postgres://t/x"]);
+
+        // `dot_env_fallback` itself: skips names already set, first value
+        // of a repeat, nothing without a `.env`.
+        let set = vec![("AI_KEY".to_string(), "x".to_string())];
+        let fb = testrunner::dot_env_fallback(&dir, &set, &none);
+        assert_eq!(fb, vec![("DATABASE_URL".to_string(), OWN.to_string())]);
+        std::fs::remove_file(dir.join(".env")).unwrap();
+        assert!(testrunner::dot_env_fallback(&dir, &[], &none).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     // Regression: a Spa `sky run` spawns the backend from `.split/backend`, whose
     // default data dir (`<cwd>/.skydata`) is inside the wiped build tree. The three

@@ -186,3 +186,49 @@ func TestStartupDotEnv_SkippedInTestMode(t *testing.T) {
 		}
 	}
 }
+
+// `Process.loadEnv ""` means `.env`, and a `sky test` run never loads `.env`
+// (v0.29.1). So in test mode an empty path loads nothing and succeeds. An
+// explicit file name still loads, in test mode as well.
+func TestProcessLoadEnv_EmptyPathSkipsDotEnvInTestMode(t *testing.T) {
+	dir := t.TempDir()
+	const key = "SKY_LOADENV_TESTMODE_PROBE"
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(key+"=from-dotenv\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "named.env"), []byte(key+"=from-named\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	t.Cleanup(func() { unsetEnvRaw(key) })
+
+	run := func(path any) any { return Process_loadEnv(path).(func() any)() }
+	isOk := func(r any) bool {
+		res, ok := r.(SkyResult[any, any])
+		return ok && res.Tag == 0
+	}
+
+	t.Setenv("SKY_TEST_MODE", "1")
+	unsetEnvRaw(key)
+	if r := run(""); !isOk(r) {
+		t.Fatalf("test mode: loadEnv \"\" must succeed, got %#v", r)
+	}
+	if v, ok := lookupEnvRaw(key); ok {
+		t.Fatalf("test mode: loadEnv \"\" loaded .env (%s=%q)", key, v)
+	}
+	if r := run("named.env"); !isOk(r) {
+		t.Fatalf("test mode: loadEnv \"named.env\" must succeed, got %#v", r)
+	}
+	if v, _ := lookupEnvRaw(key); v != "from-named" {
+		t.Fatalf("test mode: an explicit file must still load (%s=%q)", key, v)
+	}
+
+	t.Setenv("SKY_TEST_MODE", "")
+	unsetEnvRaw(key)
+	if r := run(""); !isOk(r) {
+		t.Fatalf("loadEnv \"\" must succeed, got %#v", r)
+	}
+	if v, _ := lookupEnvRaw(key); v != "from-dotenv" {
+		t.Fatalf("outside test mode loadEnv \"\" must load .env (%s=%q)", key, v)
+	}
+}

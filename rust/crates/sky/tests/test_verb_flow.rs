@@ -968,6 +968,48 @@ fn a_dot_env_dsn_is_never_used() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A `.env` that sets two DSN names, where the environment sets only one,
+/// still runs the suite in test mode (v0.29.1). Before, the runner checked
+/// only the first name (`SKY_DB_PATH`): the shell set it, so test mode stayed
+/// off, the runtime loaded `.env`, and its `DATABASE_URL` reached the suite
+/// (and the session store, analytics, jobs and telemetry).
+#[test]
+fn a_second_dot_env_dsn_the_environment_does_not_set_is_never_used() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    const ENV_DSN: &str = "postgres://ci@127.0.0.1:3/ci?sslmode=disable";
+    let (dir, suite) = dsn_project("dotenvtwodsn", "dsn == \"\" && embed == \"\"");
+    std::fs::write(
+        dir.join(".env"),
+        format!("SKY_DB_PATH={DOT_ENV_DSN}\nDATABASE_URL={DOT_ENV_DSN}\n"),
+    )
+    .unwrap();
+    let out = Command::new(SKY)
+        .arg("test")
+        .arg(&suite)
+        .current_dir(&dir)
+        .env("SKY_DB_PATH", ENV_DSN)
+        .env_remove("DATABASE_URL")
+        .env_remove("SKY_EMBED_POSTGRES")
+        .env_remove("SKY_TEST_MODE")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky test");
+    let mut log = String::from_utf8_lossy(&out.stdout).into_owned();
+    log.push_str(&String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "the .env DATABASE_URL must not reach the suite:\n{log}"
+    );
+    assert!(
+        log.contains("ignoring DATABASE_URL in .env"),
+        "the run must say it ignored DATABASE_URL in .env:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A DSN in `.env.test` or in the environment still wins over the throwaway
 /// cluster, and over the `.env` beside it.
 #[test]
