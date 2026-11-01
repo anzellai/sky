@@ -7907,6 +7907,142 @@ fn web_app_boot_setup_runs_in_backend_main_not_frontend() {
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+/// BOOT-SETUP on a fully client-local app (v0.29.2). With no server branch the
+/// split builds a static-only backend, which copied none of the app's decls
+/// and so dropped the `spaBootSetup_` binding in silence: a schema creation or
+/// a seed in `main` never ran under `--target web:app`. The backend now keeps
+/// the boot setup and forces it before it listens, whatever `update` does.
+#[test]
+fn web_app_boot_setup_runs_in_backend_main_when_update_is_client_local() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch_std_app(
+        "boot-local",
+        r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Log exposing (println)
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+
+
+type alias Model =
+    { count : Int }
+
+
+type Msg
+    = Increment
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.button [] { onPress = Just Increment, label = Ui.text "inc" }
+
+
+app =
+    App.app { init = init, update = update, view = view, subscriptions = \_ -> Sub.none }
+        |> App.withNotFound ()
+
+
+main =
+    let
+        _ =
+            println "BOOT-SETUP-RAN"
+    in
+    App.run app
+"#,
+    );
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let back = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .unwrap_or_else(|e| panic!("generated backend entry must exist ({e}):\n{log}"));
+    assert!(
+        back.contains("spaBootSetup_ =") && back.contains("BOOT-SETUP-RAN"),
+        "a client-local app's backend must carry the boot setup:\n{back}"
+    );
+    let boot_at = back.find("_ =\n            spaBootSetup_");
+    let listen_at = back
+        .find("main =")
+        .and_then(|m| back[m..].find("spaListen_").map(|i| m + i));
+    match (boot_at, listen_at) {
+        (Some(b), Some(l)) => assert!(b < l, "boot setup must run before listen:\n{back}"),
+        _ => panic!("backend `main` must force `spaBootSetup_`, then listen:\n{back}"),
+    }
+    let front = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .expect("generated frontend entry must exist");
+    assert!(
+        !front.contains("spaBootSetup_") && !front.contains("BOOT-SETUP-RAN"),
+        "the boot setup must stay out of the wasm frontend:\n{front}"
+    );
+    if required(Need::Go, have_go()) {
+        assert!(
+            output.status.success(),
+            "a client-local app with a boot setup must build under web:app:\n{log}"
+        );
+        // And it runs: the built backend prints the setup's line before it
+        // listens. Port 0 asks for a free port. It stops as soon as the line shows.
+        let backend = proj.join(".skyapp/web-app/.split/backend");
+        let mut child = Command::new(backend.join("sky-out/app"))
+            .current_dir(&backend)
+            .env("PORT", "0")
+            .env("SKY_LIVE_PORT", "0")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start the backend");
+        let mut out = child.stdout.take().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = [0u8; 4096];
+            let mut seen = String::new();
+            while let Ok(n) = out.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                seen.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if seen.contains("BOOT-SETUP-RAN") {
+                    let _ = tx.send(seen.clone());
+                    return;
+                }
+            }
+            let _ = tx.send(seen);
+        });
+        let seen = rx
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .unwrap_or_default();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(
+            seen.contains("BOOT-SETUP-RAN"),
+            "the backend never ran the boot setup:\n{seen}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 fn sub_auth_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-sub-auth")
 }

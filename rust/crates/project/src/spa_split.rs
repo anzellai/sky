@@ -9271,11 +9271,17 @@ fn gen_backend(
     // An app with `App.api` server endpoints (`spaApiRoutes_`) is NOT static-only:
     // the backend must carry the api route binding + its handlers to mount them,
     // so its (synthesised, TEA-safe) decls are copied like any server-bearing app.
+    // The same holds for a synthesised boot setup (`spaBootSetup_`, the app
+    // `main`'s `let _ = <task>` prefix): the backend must run it before it
+    // listens, whether or not `update` has a server branch. A static-only
+    // backend used to drop it in silence, so a schema creation or seed in
+    // `main` never ran under `--target web:app` for a fully client-local app.
     let static_only_backend = server.is_empty()
         && !push_mode
         && !emit_ssr
         && !has_synth_api_routes
-        && !has_synth_console_auth;
+        && !has_synth_console_auth
+        && !has_synth_boot_setup;
     let mut body = String::new();
     if !static_only_backend {
         for d in file.decls() {

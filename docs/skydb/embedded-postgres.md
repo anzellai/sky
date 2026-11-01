@@ -797,6 +797,16 @@ The `--db-push` / `--db-migrate` / `--db-seed` steps run against the same DSN.
 They are separate `sky db …` processes, so the variable is passed to each of
 them explicitly — without that the app would boot onto an unmigrated cluster.
 
+Every `sky run` path starts the app with this same environment: a plain entry,
+a `Std.App` entry (`main = App.run app`, any `--target`) and a Sky.Spa entry
+(its generated backend). One place in the CLI (`RunSetup` in `main.rs`) checks
+the configuration before the build, then starts the cluster, sets the DSN, the
+`--profile` variables and runs the `--db-*` steps after it. Before v0.29.2 the
+`Std.App` and Sky.Spa paths skipped it, so the app stopped with "no path given".
+`sky watch` builds a `Std.App` entry for its `[app] target` (else `web`) and
+hands the spawned app the same DSN. `sky run --embed` on a `Std.App` or Sky.Spa
+entry starts no supervised cluster: that binary brings up its own.
+
 ### The reference count
 
 The registry entry gains two fields, both `#[serde(default)]` so a P2 registry

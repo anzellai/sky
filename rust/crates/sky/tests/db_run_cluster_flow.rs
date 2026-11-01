@@ -171,6 +171,11 @@ struct Fixture {
 
 impl Fixture {
     fn new(tag: &str) -> Option<Fixture> {
+        Fixture::with_source(tag, APP)
+    }
+
+    /// A fixture whose entry is `src` rather than the plain Task program.
+    fn with_source(tag: &str, src: &str) -> Option<Fixture> {
         if !have_go() {
             return None;
         }
@@ -183,7 +188,7 @@ impl Fixture {
              [database]\nembedded = true\n",
         )
         .unwrap();
-        std::fs::write(project.join("src").join("Main.sky"), APP).unwrap();
+        std::fs::write(project.join("src").join("Main.sky"), src).unwrap();
         let logs = std::env::temp_dir().join(unique(&format!("{tag}-logs")));
         std::fs::create_dir_all(&logs).unwrap();
         Some(Fixture {
@@ -309,11 +314,16 @@ impl Fixture {
     /// (`sky run` *and* the app it spawned) with one signal — and, in the
     /// stale-ref test, take down only the `sky run` and leave a real orphan.
     fn spawn_run(&self, name: &str, hold_ms: u64) -> Run {
+        self.spawn_sky(name, hold_ms, &["run", "src/Main.sky"])
+    }
+
+    /// Any `sky` verb, backgrounded the same way as [`Fixture::spawn_run`].
+    fn spawn_sky(&self, name: &str, hold_ms: u64, args: &[&str]) -> Run {
         let log = self.logs.join(format!("{name}.log"));
         let file = std::fs::File::create(&log).unwrap();
         let err = file.try_clone().unwrap();
         let child = ChildGroup::spawn(
-            self.cmd(&["run", "src/Main.sky"])
+            self.cmd(args)
                 .env("SKY_P4_HOLD", hold_ms.to_string())
                 .stdout(Stdio::from(file))
                 .stderr(Stdio::from(err)),
@@ -1032,4 +1042,310 @@ fn a_project_without_the_opt_in_gets_no_cluster_at_all() {
     let _ = std::fs::remove_dir_all(&project);
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&empty);
+}
+
+// ---- every `sky run` path hands the app the same environment ---------------
+//
+// v0.29.1 regression: `sky run` on a dispatched `Std.App` entry (`main =
+// App.run app`) and on a Sky.Spa entry returned from `cmd_run` before the
+// embedded-cluster code ran. The cluster never started, the app was never
+// handed its DSN, and its first database read stopped with "no path given and
+// SKY_DB_PATH / DATABASE_URL are unset". The plain path (a concrete `main`) was
+// the only one that worked. These tests drive each path.
+
+/// A `Std.App` web app whose boot setup reads the database before it serves.
+/// `RUNNER` is replaced by `App.run` (the dispatched entry the build rewrites
+/// per `--target`) or by `App.runLive` (a concrete runner: the plain path).
+///
+/// The boot setup is a `let _ =` prefix of `main`, the form the `web:app`
+/// synthesis carries into the generated backend, so one source serves every
+/// target.
+const STD_APP: &str = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Db as Db
+import Std.Log exposing (println)
+import Std.Sub as Sub
+import Std.System as System
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+
+
+type alias Model =
+    { count : Int }
+
+
+type Msg
+    = Increment
+
+
+init : a -> ( Model, Cmd Msg )
+init _req =
+    ( { count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+
+subscriptions : Model -> Sub.Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text ("COUNT=" ++ String.fromInt model.count)
+        , Ui.button [] { onPress = Just Increment, label = Ui.text "inc" }
+        ]
+
+
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+
+
+main =
+    let
+        _ =
+            System.getenv "SKY_DB_PATH"
+                |> Task.onError (\_ -> Task.succeed "")
+                |> Task.andThen
+                    (\dsn ->
+                        let
+                            _ =
+                                println ("DSN=[" ++ dsn ++ "]")
+                        in
+                        Db.connect ()
+                    )
+                |> Task.andThen (\db -> Db.query db "select 42 as answer" [])
+                |> Task.andThen
+                    (\rows ->
+                        println ("ANSWER=" ++ Maybe.withDefault "?" (Maybe.map (Db.getString "answer") (List.head rows)))
+                    )
+    in
+    RUNNER appDef
+"#;
+
+fn std_app_source(runner: &str) -> String {
+    STD_APP.replace("RUNNER", runner)
+}
+
+/// A free TCP port, so a served app never collides with whatever the developer
+/// has on 8000.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// Run `args` on a `Std.App` fixture whose main uses `runner`, and assert the
+/// app reached the cluster through the DSN `sky run` / `sky watch` injected.
+fn assert_app_gets_the_cluster(tag: &str, runner: &str, args: &[&str]) {
+    let _serial = one_at_a_time();
+    let Some(fx) = Fixture::with_source(tag, &std_app_source(runner)) else {
+        required(Need::Go, have_go());
+        required(Need::Postgres, false);
+        return;
+    };
+    let port = free_port().to_string();
+    let log = fx.logs.join(format!("{tag}.log"));
+    let file = std::fs::File::create(&log).unwrap();
+    let err = file.try_clone().unwrap();
+    let child = ChildGroup::spawn(
+        fx.cmd(args)
+            .env("PORT", &port)
+            .env("SKY_LIVE_PORT", &port)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(file))
+            .stderr(Stdio::from(err)),
+    )
+    .expect("failed to spawn sky");
+    let mut run = Run { child, log };
+    let what = format!("`sky {}` ({runner})", args.join(" "));
+    // A cold `go build` (and, for web:app, a wasm build) comes first.
+    let deadline = Instant::now() + BUILD_LIMIT;
+    loop {
+        let out = run.output();
+        // The database read, then the server: a run that started some other
+        // backend (`App.run`'s placeholder body is the terminal runner) never
+        // prints a `listening on` line.
+        if out.contains("ANSWER=42") && out.contains(" listening on ") {
+            break;
+        }
+        if gate_if_postgres_cannot_start(&out) {
+            return;
+        }
+        // The v0.29.1 symptom: the app started with no DSN at all. It then
+        // serves without its database, so fail now rather than at the deadline.
+        assert!(
+            !out.contains("DSN=[]"),
+            "{what}: the app was started without the cluster's DSN. Output:\n{out}"
+        );
+        if !run.is_running() {
+            panic!("{what} exited before the app reached its database. Output:\n{out}");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{what}: the app never reached its database. Output:\n{out}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let out = run.output();
+    assert!(
+        out.contains("embedded PostgreSQL"),
+        "{what} never announced the cluster:\n{out}"
+    );
+    let socket_dir = fx.entry()["socket_dir"].as_str().unwrap().to_string();
+    assert!(
+        out.contains(&format!("DSN=[postgresql:///postgres?host={socket_dir}]")),
+        "{what}: the app was not handed the cluster's DSN:\n{out}"
+    );
+    assert_eq!(
+        fx.entry()["refs"].as_array().map(Vec::len),
+        Some(1),
+        "{what} did not hold a reference on the cluster while the app ran"
+    );
+    run.kill_group();
+}
+
+/// The control: a concrete `App.runLive` entry takes the plain path, which
+/// always handed the app its DSN.
+#[test]
+#[ignore = "heavy real-DB e2e supervisor leg; runs nightly (--ignored). Kernel leg: crates/sky/src/db_cluster.rs unit tests + db_cluster_flow.rs"]
+fn sky_run_on_a_concrete_live_runner_hands_the_app_the_cluster() {
+    assert_app_gets_the_cluster("p4-live", "App.runLive", &["run", "src/Main.sky"]);
+}
+
+/// The regression: a dispatched `Std.App` entry (`App.run`) on the default
+/// `web` target.
+#[test]
+#[ignore = "heavy real-DB e2e supervisor leg; runs nightly (--ignored). Kernel leg: crates/sky/src/db_cluster.rs unit tests + db_cluster_flow.rs"]
+fn sky_run_on_a_std_app_entry_hands_the_app_the_cluster() {
+    assert_app_gets_the_cluster("p4-stdapp", "App.run", &["run", "src/Main.sky"]);
+}
+
+/// The regression on the client target: `--target web:app` runs the generated
+/// Sky.Spa backend, which must get the same DSN.
+#[test]
+#[ignore = "heavy real-DB e2e supervisor leg; runs nightly (--ignored). Kernel leg: crates/sky/src/db_cluster.rs unit tests + db_cluster_flow.rs"]
+fn sky_run_on_a_std_app_web_app_target_hands_the_backend_the_cluster() {
+    assert_app_gets_the_cluster(
+        "p4-stdapp-spa",
+        "App.run",
+        &["run", "src/Main.sky", "--target", "web:app"],
+    );
+}
+
+/// `sky watch` on a dispatched `Std.App` entry: the app it spawns gets the
+/// cluster too (and is the `web` backend, not the placeholder runner).
+#[test]
+#[ignore = "heavy real-DB e2e supervisor leg; runs nightly (--ignored). Kernel leg: crates/sky/src/db_cluster.rs unit tests + db_cluster_flow.rs"]
+fn sky_watch_on_a_std_app_entry_hands_the_app_the_cluster() {
+    assert_app_gets_the_cluster("p4-stdapp-watch", "App.run", &["watch", "src/Main.sky"]);
+}
+
+/// The configuration check runs on every `sky run` path, before any build: a
+/// `Std.App` entry (both targets) and a Sky.Spa entry refuse an explicit DSN
+/// alongside `embedded = true` exactly as a plain entry does. Before the fix
+/// these paths never looked at `embedded` at all, so they built and ran the app
+/// against the shell's DSN. No PostgreSQL is needed: the refusal comes first.
+#[test]
+fn every_run_path_refuses_an_explicit_dsn_alongside_embedded() {
+    let spa_src =
+        "module Main exposing (main)\n\nimport Std.Spa as Spa\n\nmain =\n    Spa.app {}\n";
+    let cases: [(&str, String, &[&str]); 3] = [
+        (
+            "std-app-web",
+            std_app_source("App.run"),
+            &["run", "src/Main.sky"],
+        ),
+        (
+            "std-app-web-app",
+            std_app_source("App.run"),
+            &["run", "src/Main.sky", "--target", "web:app"],
+        ),
+        ("spa", spa_src.to_string(), &["run", "src/Main.sky"]),
+    ];
+    for (tag, src, args) in cases {
+        let project = std::env::temp_dir().join(unique(&format!("p4-amb-{tag}")));
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        std::fs::write(
+            project.join("sky.toml"),
+            "name = \"p4-amb\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n\
+             [database]\nembedded = true\n",
+        )
+        .unwrap();
+        std::fs::write(project.join("src").join("Main.sky"), &src).unwrap();
+        let home = std::env::temp_dir().join(unique(&format!("p4-amb-{tag}-home")));
+        let mut child = ChildGroup::spawn(
+            Command::new(SKY)
+                .args(args)
+                .current_dir(&project)
+                .env("SKY_HOME", &home)
+                .env("SKY_DB_PATH", "postgres://from-the-shell/app")
+                .env_remove("DATABASE_URL")
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )
+        .expect("failed to spawn sky");
+        // Bounded: before the fix the run built and served, and never exited.
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let status = loop {
+            if let Some(s) = child.child().try_wait().unwrap() {
+                break Some(s);
+            }
+            if Instant::now() >= deadline {
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let built = project.join("sky-out").exists()
+            || project.join(".skyapp").exists()
+            || project.join(".split").exists();
+        let mut err = String::new();
+        if status.is_some() {
+            use std::io::Read;
+            if let Some(mut e) = child.child().stderr.take() {
+                let _ = e.read_to_string(&mut err);
+            }
+        }
+        child.kill();
+        let _ = std::fs::remove_dir_all(&project);
+        let _ = std::fs::remove_dir_all(&home);
+
+        let status = status.unwrap_or_else(|| {
+            panic!(
+                "{tag}: `sky {}` did not refuse; it was still running",
+                args.join(" ")
+            )
+        });
+        assert!(
+            !status.success(),
+            "{tag}: an ambiguous configuration ran anyway"
+        );
+        assert!(
+            err.contains("SKY_DB_PATH = postgres://from-the-shell/app"),
+            "{tag}: no refusal naming the DSN:\n{err}"
+        );
+        assert!(!built, "{tag}: the project was built before the refusal");
+    }
 }

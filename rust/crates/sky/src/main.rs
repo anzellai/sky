@@ -3629,6 +3629,13 @@ fn ensure_import(src: &str, import_line: &str) -> String {
 /// entry has a `main` and references exactly one runner, it takes the normal
 /// build path and DCE prunes the other backends (so a `terminal:cli` binary
 /// never links Webview/Spa).
+/// `sky run` on a `Std.App` entry: what to start the built app with.
+struct StdAppRun<'a> {
+    setup: &'a RunSetup,
+    /// `--open`: open the browser at the app's `listening` URL.
+    open: bool,
+}
+
 fn build_std_app(
     repo_root: &Path,
     project_dir: &Path,
@@ -3636,7 +3643,7 @@ fn build_std_app(
     tgt: target::Target,
     embed: bool,
     out_override: Option<&str>,
-    run: bool,
+    run: Option<StdAppRun<'_>>,
     compress_level: precompress::Level,
 ) -> ExitCode {
     let user_module = match entry_module_name(entry_file) {
@@ -3711,7 +3718,7 @@ fn build_std_app(
             if let Err(e) = native_preflight(project_dir, shell, url.as_ref()) {
                 eprintln!(
                     "sky {} --target {}: {e}",
-                    if run { "run" } else { "build" },
+                    if run.is_some() { "run" } else { "build" },
                     tgt.canonical()
                 );
                 return ExitCode::FAILURE;
@@ -3788,9 +3795,16 @@ fn build_std_app(
                     tgt.canonical(),
                     backend.display()
                 );
-                if !run {
+                let Some(run) = run else {
                     return ExitCode::SUCCESS;
-                }
+                };
+                // The same environment a plain `sky run` hands its app: the
+                // embedded cluster's DSN, the profile variables, the `--db-*`
+                // steps. Held until the backend exits.
+                let run_env = match run.setup.start("sky run:") {
+                    Ok(e) => e,
+                    Err(code) => return code,
+                };
                 println!("== running ({}) ==", tgt.canonical());
                 // Bug #6: the generated backend runs from `backend/` (it serves
                 // `../frontend/dist` by a RELATIVE path), so the project's own
@@ -3816,6 +3830,7 @@ fn build_std_app(
                     let mut backend_cmd = Command::new(&backend);
                     backend_cmd.current_dir(od.join("backend"));
                     apply_spa_data_dir(&mut backend_cmd, project_dir);
+                    run_env.apply(&mut backend_cmd);
                     if embed {
                         backend_cmd.arg("--embed");
                     }
@@ -3849,11 +3864,12 @@ fn build_std_app(
                     // its own dir, so run it from there.
                     proc.current_dir(od.join("backend"));
                     apply_spa_data_dir(&mut proc, project_dir);
+                    run_env.apply(&mut proc);
                     if embed {
                         proc.arg("--embed");
                     }
                     proc.args(run_program_args());
-                    match proc.status() {
+                    match status_opening_when_listening(proc, run.open) {
                         Ok(s) if s.success() => ExitCode::SUCCESS,
                         Ok(_) => ExitCode::FAILURE,
                         Err(e) => {
@@ -4003,18 +4019,25 @@ fn build_std_app(
         let _ = std::fs::remove_file(&std_bin);
         let _ = std::fs::copy(&binary, &std_bin);
     }
-    if !run {
+    let Some(run) = run else {
         return ExitCode::SUCCESS;
-    }
+    };
     // `sky run` — exec the freshly built binary, inheriting stdio (a terminal
-    // target needs the real TTY). `--embed` carries through to the process.
+    // target needs the real TTY). `--embed` carries through to the process, and
+    // the app gets the same environment a plain `sky run` hands its app (the
+    // embedded cluster's DSN, the profile variables, the `--db-*` steps).
+    let run_env = match run.setup.start("sky run:") {
+        Ok(e) => e,
+        Err(code) => return code,
+    };
     println!("== running ({}) ==", tgt.canonical());
     let mut proc = Command::new(&binary);
+    run_env.apply(&mut proc);
     if embed {
         proc.arg("--embed");
     }
     proc.args(run_program_args());
-    match proc.status() {
+    match status_opening_when_listening(proc, run.open) {
         Ok(s) if s.success() => ExitCode::SUCCESS,
         Ok(_) => ExitCode::FAILURE,
         Err(e) => {
@@ -5381,7 +5404,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
             tgt,
             embed,
             out_override.as_deref(),
-            false,
+            None,
             precompress_level,
         );
     }
@@ -11408,6 +11431,136 @@ OPTIONS:\n\
 \x20 --go-jobs <n|auto> | --no-trimpath | --go-build-timeout <secs|15m>   Go build flags\n\
 \x20 -h, --help                   print this help and build nothing";
 
+/// What `sky run` and `sky watch` hand to the app process they start, the same
+/// on EVERY run path: a plain entry, a dispatched `Std.App` entry (`App.run`,
+/// every `--target`) and a Sky.Spa entry (its generated backend).
+///
+/// v0.29.1 regression: the `Std.App` and Sky.Spa paths returned from `cmd_run`
+/// before the embedded-cluster code ran, so a project with `[database]
+/// embedded = true` got no cluster and no DSN there, and its first database
+/// read stopped with "no path given". Each path now takes its environment from
+/// this one place: the configuration is judged by [`RunSetup::prepare`] before
+/// any build, and the cluster is started by [`RunSetup::start`] after the build
+/// succeeds, so a project that does not compile does not cycle a PostgreSQL.
+struct RunSetup {
+    project_dir: PathBuf,
+    /// `[database] embedded = true`, checked against any explicit DSN. False
+    /// under `--embed`: that binary brings up its own cluster at run time.
+    embedded: bool,
+    profile: Option<ProfileOpts>,
+    /// `push` / `migrate` / `seed`, in that order, run before the app starts.
+    db_steps: Vec<&'static str>,
+}
+
+/// The environment the app is started with, and the cluster lease that must
+/// outlive it. Dropping it releases this run's reference on the cluster.
+struct RunEnv {
+    envs: Vec<(String, String)>,
+    _cluster: Option<db_cluster::RunLease>,
+}
+
+impl RunSetup {
+    /// Judge the configuration, before any build. `embed` is the run's
+    /// `--embed` flag: the binary then provisions its own cluster, and a
+    /// supervised one alongside it would be a second cluster on the same data.
+    fn prepare(
+        project_dir: &Path,
+        verb: &str,
+        embed: bool,
+        profile: Option<ProfileOpts>,
+        db_steps: Vec<&'static str>,
+    ) -> Result<RunSetup, String> {
+        let embedded = if embed {
+            false
+        } else {
+            db_cluster::check_run_config(project_dir, verb)?
+        };
+        Ok(RunSetup {
+            project_dir: project_dir.to_path_buf(),
+            embedded,
+            profile,
+            db_steps,
+        })
+    }
+
+    /// Start what the app needs, after a successful build: the embedded
+    /// cluster (its DSN goes into the environment), the `--profile` variables,
+    /// and the `--db-*` steps against the same database the app will use.
+    fn start(&self, banner_prefix: &str) -> Result<RunEnv, ExitCode> {
+        let mut envs: Vec<(String, String)> = Vec::new();
+        let cluster = if self.embedded {
+            match db_cluster::acquire_for_run(&self.project_dir) {
+                Ok(c) => {
+                    println!("{}", c.banner(banner_prefix));
+                    envs.extend(c.envs());
+                    Some(c)
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    return Err(ExitCode::FAILURE);
+                }
+            }
+        } else {
+            None
+        };
+        if let Some(p) = &self.profile {
+            // A relative dir resolves against the app's cwd → profiles land in
+            // `<project>/profile/` by default on the plain path.
+            let dir = p.dir.clone().unwrap_or_else(|| "profile".to_string());
+            envs.push(("SKY_PROFILE_DIR".to_string(), dir.clone()));
+            if let Some(t) = &p.timeout {
+                envs.push(("SKY_PROFILE_TIMEOUT".to_string(), t.clone()));
+            }
+            println!(
+                "Profiling enabled — writing to {dir}/ (cpu.pprof, heap.pprof, goroutines.txt, REPORT.md){}.",
+                p.timeout
+                    .as_ref()
+                    .map(|t| format!("; hang dump after {t}"))
+                    .unwrap_or_default()
+            );
+        }
+        // Each DB step re-invokes this binary's own `sky db <op>` in the project
+        // dir; a failure aborts the run. The steps talk to the SAME database the
+        // app is about to, so they get the cluster's DSN too. Without it they
+        // would fall back to what `sky.toml` declares, which under `embedded =
+        // true` is nothing, and the app would boot onto an unmigrated cluster.
+        for op in &self.db_steps {
+            let exe = match std::env::current_exe() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("sky run --db-{op}: could not locate sky binary: {e}");
+                    return Err(ExitCode::FAILURE);
+                }
+            };
+            let mut step = Command::new(&exe);
+            step.arg("db").arg(op).current_dir(&self.project_dir);
+            if let Some(c) = &cluster {
+                for (k, v) in c.envs() {
+                    step.env(k, v);
+                }
+            }
+            let ok = step.status().map(|s| s.success()).unwrap_or(false);
+            if !ok {
+                eprintln!("sky run --db-{op}: DB step failed — not starting the app.");
+                return Err(ExitCode::FAILURE);
+            }
+        }
+        Ok(RunEnv {
+            envs,
+            _cluster: cluster,
+        })
+    }
+}
+
+impl RunEnv {
+    /// Put this environment on a command that starts the app.
+    fn apply(&self, cmd: &mut Command) {
+        for (k, v) in &self.envs {
+            cmd.env(k, v);
+        }
+    }
+}
+
 fn cmd_run(args: &[String]) -> ExitCode {
     // `sky run --help` prints help and builds nothing. Only a flag BEFORE `--`
     // counts: `sky run -- --help` passes `--help` to the program.
@@ -11496,6 +11649,27 @@ fn cmd_run(args: &[String]) -> ExitCode {
     // build. Gated on the cheap ".skydeps absent while deps are declared" check,
     // so a project whose deps are already fetched pays no per-run cost.
     maybe_fetch_sky_deps(&repo_root, &project_dir);
+    // What the app process is started with, judged ONCE here for every path
+    // below (Std.App, Sky.Spa, plain), before any build: a project whose
+    // `embedded = true` contradicts an explicit DSN is misconfigured, and making
+    // the user sit through a compile to be told so is a worse way to learn it.
+    // The cluster itself is started after the build (`RunSetup::start`).
+    let embed = args.iter().any(|a| a == "--embed");
+    let db_steps: Vec<&'static str> = [
+        (db_push, "push"),
+        (db_migrate, "migrate"),
+        (db_seed, "seed"),
+    ]
+    .into_iter()
+    .filter_map(|(on, op)| on.then_some(op))
+    .collect();
+    let setup = match RunSetup::prepare(&project_dir, "sky run", embed, profile, db_steps) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
     // Std.App dispatched entry: build the derived per-target entry and run it.
     // `--target` selects the backend (required); the build is the same derived
     // entry `sky build` produces, then the binary is exec'd with the real TTY.
@@ -11527,7 +11701,6 @@ fn cmd_run(args: &[String]) -> ExitCode {
                 None => target::Target::Web,
             },
         };
-        let embed = args.iter().any(|a| a == "--embed");
         return build_std_app(
             &repo_root,
             &project_dir,
@@ -11535,20 +11708,23 @@ fn cmd_run(args: &[String]) -> ExitCode {
             tgt,
             embed,
             out_override.as_deref(),
-            true,
+            Some(StdAppRun {
+                setup: &setup,
+                open,
+            }),
             precompress::Level::Off,
         );
     }
 
     // Sky.Spa entry: auto-split, build both, then run the native BACKEND (it serves
     // the wasm frontend + /_rpc same-origin — one binary). The split builds via
-    // `sky build`, never `sky run`, so this does not recurse; the embedded-cluster /
-    // profile machinery below is for direct Live/Cli/Server apps and is skipped.
+    // `sky build`, never `sky run`, so this does not recurse. The backend gets the
+    // same environment as a plain app (`RunSetup`): the embedded cluster's DSN,
+    // the profile variables and the `--db-*` steps.
     if is_spa_app_entry(file) && !is_generated_split_project(&project_dir) {
         let out_dir = project_dir.join(out_override.as_deref().unwrap_or(".split"));
         // --embed → the backend bundles PostgreSQL; --target → the frontend shell
         // (default web). Both COMPOSE with the split, same as `sky build`.
-        let embed = args.iter().any(|a| a == "--embed");
         let fe_target = args
             .iter()
             .position(|a| a == "--target")
@@ -11576,6 +11752,10 @@ fn cmd_run(args: &[String]) -> ExitCode {
         };
         let backend = od.join("backend");
         let app = backend.join("sky-out").join("app");
+        let run_env = match setup.start("sky run:") {
+            Ok(e) => e,
+            Err(code) => return code,
+        };
         // The generated backend reads PORT (default 8951) — mirror that in the hint,
         // with the same parse the native shells' default address uses.
         let port = app_url::parse_port(std::env::var("PORT").ok().as_deref());
@@ -11590,6 +11770,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
         let mut run = Command::new(&app);
         run.current_dir(&backend);
         apply_spa_data_dir(&mut run, &project_dir);
+        run_env.apply(&mut run);
         if embed {
             // An --embed backend bakes PostgreSQL in but still needs `--embed` at
             // RUNTIME to bring its own cluster up (mirrors `./sky-out/app --embed`).
@@ -11607,18 +11788,6 @@ fn cmd_run(args: &[String]) -> ExitCode {
             }
         };
     }
-    // The configuration is judged BEFORE the build: a project whose
-    // `embedded = true` contradicts an explicit DSN is misconfigured, and making
-    // the user sit through a compile to be told so is a worse way to learn it.
-    // The cluster itself is started AFTER, so a project that does not compile
-    // does not cycle a PostgreSQL up and down on every attempt.
-    let embedded = match db_cluster::check_run_config(&project_dir, "sky run") {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("{e}");
-            return ExitCode::FAILURE;
-        }
-    };
     let out_dir_name = out_override.unwrap_or_else(|| "sky-out".to_string());
     let opts = BuildOptions {
         repo_root,
@@ -11665,77 +11834,17 @@ fn cmd_run(args: &[String]) -> ExitCode {
     if let Some(note) = &report.cgo_note {
         eprintln!("sky run: go build {note}");
     }
-    let mut envs: Vec<(String, String)> = Vec::new();
-    // The lease lives for the rest of this function — dropping it releases this
-    // run's reference and, if nothing else holds one, stops the cluster.
-    let cluster = if embedded {
-        match db_cluster::acquire_for_run(&project_dir) {
-            Ok(c) => {
-                println!("{}", c.banner("sky run:"));
-                envs.extend(c.envs());
-                Some(c)
-            }
-            Err(e) => {
-                eprintln!("{e}");
-                return ExitCode::FAILURE;
-            }
-        }
-    } else {
-        None
+    // The cluster starts AFTER the build, so a project that does not compile
+    // does not cycle a PostgreSQL up and down on every attempt. `run_env` holds
+    // the lease for the rest of this function: dropping it releases this run's
+    // reference and, if nothing else holds one, stops the cluster.
+    let run_env = match setup.start("sky run:") {
+        Ok(e) => e,
+        Err(code) => return code,
     };
-    if let Some(p) = &profile {
-        // A relative dir resolves against the app's cwd (the project root, where
-        // `run_app` runs it) → profiles land in `<project>/profile/` by default.
-        let dir = p.dir.clone().unwrap_or_else(|| "profile".to_string());
-        envs.push(("SKY_PROFILE_DIR".to_string(), dir.clone()));
-        if let Some(t) = &p.timeout {
-            envs.push(("SKY_PROFILE_TIMEOUT".to_string(), t.clone()));
-        }
-        println!(
-            "Profiling enabled — writing to {dir}/ (cpu.pprof, heap.pprof, goroutines.txt, REPORT.md){}.",
-            p.timeout
-                .as_ref()
-                .map(|t| format!("; hang dump after {t}"))
-                .unwrap_or_default()
-        );
-    }
-    // Run the requested DB steps before serving. Each re-invokes this binary's
-    // own `sky db <op>` in the project dir; a failure aborts the run.
-    for (flag, op) in [
-        (db_push, "push"),
-        (db_migrate, "migrate"),
-        (db_seed, "seed"),
-    ] {
-        if !flag {
-            continue;
-        }
-        let exe = match std::env::current_exe() {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("sky run --db-{op}: could not locate sky binary: {e}");
-                return ExitCode::FAILURE;
-            }
-        };
-        let mut step = Command::new(&exe);
-        step.arg("db").arg(op).current_dir(&project_dir);
-        // The migrate/seed steps talk to the SAME database the app is about to,
-        // so they need the cluster's DSN too. Without this they would fall back
-        // to whatever `sky.toml` declares — which, under `embedded = true`, is
-        // nothing — and the app would boot onto an unmigrated cluster.
-        if let Some(c) = &cluster {
-            for (k, v) in c.envs() {
-                step.env(k, v);
-            }
-        }
-        let ok = step.status().map(|s| s.success()).unwrap_or(false);
-        if !ok {
-            eprintln!("sky run --db-{op}: DB step failed — not starting the app.");
-            return ExitCode::FAILURE;
-        }
-    }
     println!("Build complete, running...");
     let out_dir = project_dir.join(&out_dir_name);
-    match run_app_open(&out_dir, &envs, open) {
+    match run_app_open(&out_dir, &run_env.envs, open) {
         Ok(status) => ExitCode::from(status.code().unwrap_or(1) as u8),
         Err(e) => {
             eprintln!("sky run: could not launch binary: {e}");
@@ -11832,6 +11941,20 @@ fn run_app_open(
     cmd.args(run_program_args());
     for (k, v) in envs {
         cmd.env(k, v);
+    }
+    status_opening_when_listening(cmd, true)
+}
+
+/// Run `cmd` to completion. With `open`, its stdout is teed through this
+/// process and the platform browser opens at the first `listening` line's
+/// port. Without it, stdio is inherited untouched (a terminal app needs the
+/// real TTY).
+fn status_opening_when_listening(
+    mut cmd: Command,
+    open: bool,
+) -> std::io::Result<std::process::ExitStatus> {
+    if !open {
+        return cmd.status();
     }
     // Pipe stdout so we can watch for the listening line; stderr stays inherited.
     cmd.stdout(std::process::Stdio::piped());
@@ -15768,6 +15891,13 @@ fn watch_build_and_spawn(
         embed_bundle: None,
         wasm: false,
     };
+    // A dispatched `Std.App` entry (`main = App.run app`) is built the way
+    // `sky run` builds it: the derived per-target entry, for the sky.toml
+    // `[app] target` (else `web`). Building the entry directly would compile
+    // `App.run`'s placeholder body, which is not the web backend.
+    if is_std_app_dispatched_entry(file) {
+        return watch_build_and_spawn_std_app(repo_root, project_dir, file, no_run, app_envs);
+    }
     let report = build_example(&opts);
     for w in &report.warnings {
         eprintln!("[watch] warning: {w}");
@@ -15814,6 +15944,80 @@ fn watch_build_and_spawn(
     }
 }
 
+/// [`watch_build_and_spawn`] for a dispatched `Std.App` entry: build the
+/// derived entry for the project's target, then spawn the binary that target
+/// runs (the direct binary from the project folder, or the generated Sky.Spa
+/// backend from its own folder), with the same environment as any watched app.
+fn watch_build_and_spawn_std_app(
+    repo_root: &Path,
+    project_dir: &Path,
+    file: &Path,
+    no_run: bool,
+    app_envs: &[(String, String)],
+) -> Option<std::process::Child> {
+    let tgt = match sky_toml_app_target(project_dir) {
+        Some(t) => match target::Target::parse(&t) {
+            Ok(x) => x,
+            Err(msg) => {
+                eprintln!("[watch] sky.toml [app] target = \"{t}\": {msg}");
+                return None;
+            }
+        },
+        None => target::Target::Web,
+    };
+    let code = build_std_app(
+        repo_root,
+        project_dir,
+        file,
+        tgt,
+        false,
+        None,
+        None,
+        precompress::Level::Off,
+    );
+    if code != ExitCode::SUCCESS {
+        eprintln!("[watch] build failed (keeping previous binary)");
+        return None;
+    }
+    println!("[watch] build ok");
+    if no_run {
+        return None;
+    }
+    let target_root = project_dir
+        .join(".skyapp")
+        .join(tgt.canonical().replace(':', "-"));
+    let (bin, cwd, spa) = match std_app_runner(tgt).1 {
+        StdAppBuild::Spa => {
+            let backend = target_root.join(".split").join("backend");
+            (backend.join("sky-out").join("app"), backend, true)
+        }
+        _ => (
+            target_root.join("sky-out").join("app"),
+            project_dir.to_path_buf(),
+            false,
+        ),
+    };
+    let mut cmd = Command::new(std::fs::canonicalize(&bin).unwrap_or(bin));
+    if spa {
+        // As `sky run --target web:app` does: the backend serves
+        // `../frontend/dist` relative to its folder, and the project's `.env` /
+        // `public/` are staged next to it.
+        stage_project_runtime_into_backend(project_dir, &cwd);
+        apply_spa_data_dir(&mut cmd, project_dir);
+    }
+    cmd.current_dir(&cwd);
+    for (k, v) in app_envs {
+        cmd.env(k, v);
+    }
+    match cmd.spawn() {
+        Ok(child) => Some(child),
+        Err(e) => {
+            eprintln!("[watch] could not launch binary: {e}");
+            None
+        }
+    }
+}
+
 /// True when a changed path is a source file the watcher cares about: a `.sky`
 /// file or `sky.toml`, and not inside a generated / VCS directory.
 fn is_watched_change(path: &Path) -> bool {
@@ -15822,6 +16026,11 @@ fn is_watched_change(path: &Path) -> bool {
             c.as_os_str().to_str(),
             Some("sky-out")
                 | Some("sky-out-rust")
+                // The Std.App derived entry and the Sky.Spa split are staged
+                // copies of the sources: a rebuild writes them, and watching
+                // them would rebuild forever.
+                | Some(".skyapp")
+                | Some(".split")
                 | Some(".skycache")
                 | Some(".skydeps")
                 | Some("dist-newstyle")
@@ -19909,6 +20118,10 @@ echo key > "$ks"
             ".vscode/x.sky",
             ".idea/x.sky",
             "project/sky-out/nested/App.sky",
+            // `sky watch` on a Std.App entry stages copies here on every build.
+            ".skyapp/web/src/Main.sky",
+            ".skyapp/web-app/.split/backend/src/Main.sky",
+            ".split/frontend/src/Main.sky",
         ] {
             assert!(!is_watched_change(Path::new(p)), "should exclude {p}");
         }

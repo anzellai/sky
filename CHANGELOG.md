@@ -11,6 +11,42 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.2 — `sky run` hands every app its embedded database (2026-11-01)
+
+A patch release for v0.29.1. `sky run` and `sky watch` now start the embedded
+PostgreSQL cluster and pass its address to a `Std.App` app and a Sky.Spa app,
+as they already did for a plain app.
+
+### Fixed
+
+- **`sky run` passes the embedded database address to a `Std.App` app.** On a
+  project with `[database] embedded = true`, `sky run` on a `Std.App` entry
+  (`main = App.run app`) did not start the cluster and did not set
+  `SKY_DB_PATH` (or `<PREFIX>_DB_PATH`). The app stopped at its first database
+  read with "no path given and SKY_DB_PATH / DATABASE_URL are unset". The same
+  was true for `--target web:app` and for a Sky.Spa entry (their generated
+  backend). Every `sky run` path now starts the app with the same environment:
+  - the configuration check before the build (an explicit DSN alongside
+    `embedded = true` is refused on every path),
+  - the cluster and its DSN after the build,
+  - the `--profile` variables and the `--db-push` / `--db-migrate` /
+    `--db-seed` steps, which the `Std.App` and Sky.Spa paths ignored,
+  - `--open` on a `Std.App` entry.
+
+  `sky run --embed` on a `Std.App` or Sky.Spa entry starts no supervised
+  cluster, because that binary brings up its own.
+- **`sky watch` on a `Std.App` entry runs the right backend.** It compiled the
+  entry directly, so `App.run` ran its placeholder body and not the web
+  backend. It now builds the entry for the sky.toml `[app] target` (else
+  `web`), as `sky run` does, and the spawned app gets the cluster's DSN on
+  every restart. The staged copies under `.skyapp/` and `.split/` no longer
+  trigger a rebuild.
+- **`--target web:app` runs the boot setup of a fully client-local app.** When
+  `update` had no server branch, the generated backend only served static
+  assets and dropped the `let _ = <task>` prefix of `main` in silence, so a
+  schema creation or a seed there never ran. The backend now keeps that boot
+  setup and runs it before it listens.
+
 ## v0.29.1 — Fixes for v0.29.0 (2026-10-31)
 
 A patch release for v0.29.0. It restores `Std.Db.Store` builders on a column

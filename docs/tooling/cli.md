@@ -582,8 +582,13 @@ halves compile can report the same warning once per half.
 File-watch-driven hot rebuild + restart. Watched scope is a strict
 allowlist: `sky.toml` + the entry-point's directory (recursive `.sky`
 walk) + `tests/` at the project root if present. Generated dirs
-(`sky-out/`, `.skycache/`, `.skydeps/`, `node_modules/`, `.git/`) are
-excluded.
+(`sky-out/`, `.skycache/`, `.skydeps/`, `.skyapp/`, `.split/`,
+`node_modules/`, `.git/`) are excluded.
+
+A `Std.App` entry (`main = App.run app`) is built for the sky.toml `[app]
+target`, else `web`, as `sky run` builds it. With `[database] embedded = true`
+the spawned app gets the embedded cluster's DSN on every restart, on every
+target.
 
 ```bash
 sky watch                           # entry: src/Main.sky
