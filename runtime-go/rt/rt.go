@@ -7698,20 +7698,20 @@ func File_readFileLimit(path any, limit any) any {
 			}
 			f, err := os.Open(p)
 			if err != nil {
-				return Err[any, any](ErrFfi(err.Error()))
+				return Err[any, any](fileError("File.readFile", err))
 			}
 			defer f.Close()
 			// Stat first so we can early-reject oversize files without reading them.
 			st, err := f.Stat()
 			if err != nil {
-				return Err[any, any](ErrFfi(err.Error()))
+				return Err[any, any](fileError("File.readFile", err))
 			}
 			if st.Size() > n {
 				return Err[any, any](ErrIo(fmt.Sprintf("file exceeds %d-byte limit (actual: %d)", n, st.Size())))
 			}
 			data, err := io.ReadAll(io.LimitReader(f, n))
 			if err != nil {
-				return Err[any, any](ErrFfi(err.Error()))
+				return Err[any, any](fileError("File.readFile", err))
 			}
 			return Ok[any, any](string(data))
 		})
@@ -7725,12 +7725,12 @@ func File_readFileBytes(path any) any {
 	return func() any {
 		f, err := os.Open(fmt.Sprintf("%v", path))
 		if err != nil {
-			return Err[any, any](ErrFfi(err.Error()))
+			return Err[any, any](fileError("File.readFileBytes", err))
 		}
 		defer f.Close()
 		data, err := io.ReadAll(io.LimitReader(f, defaultFileReadLimit))
 		if err != nil {
-			return Err[any, any](ErrFfi(err.Error()))
+			return Err[any, any](fileError("File.readFileBytes", err))
 		}
 		out := make([]any, len(data))
 		for i, b := range data {
@@ -7748,7 +7748,7 @@ func File_writeFile(path any, content any) any {
 		return WithFileSpan("writeFile", fmt.Sprintf("%v", path), func() any {
 			err := os.WriteFile(fmt.Sprintf("%v", path), []byte(fmt.Sprintf("%v", content)), 0644)
 			if err != nil {
-				return Err[any, any](ErrFfi(err.Error()))
+				return Err[any, any](fileError("File.writeFile", err))
 			}
 			return Ok[any, any](struct{}{})
 		})
@@ -7764,7 +7764,7 @@ func File_writeBytes(path any, content any) any {
 		}
 		return WithFileSpan("writeBytes", fmt.Sprintf("%v", path), func() any {
 			if err := os.WriteFile(fmt.Sprintf("%v", path), readBytes(content), 0644); err != nil {
-				return Err[any, any](ErrFfi(err.Error()))
+				return Err[any, any](fileError("File.writeBytes", err))
 			}
 			return Ok[any, any](struct{}{})
 		})
@@ -7779,12 +7779,12 @@ func File_append(path any, content any) any {
 		return WithFileSpan("append", fmt.Sprintf("%v", path), func() any {
 			f, err := os.OpenFile(fmt.Sprintf("%v", path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
-				return Err[any, any](ErrFfi(err.Error()))
+				return Err[any, any](fileError("File.append", err))
 			}
 			defer f.Close()
 			_, err = f.WriteString(fmt.Sprintf("%v", content))
 			if err != nil {
-				return Err[any, any](ErrFfi(err.Error()))
+				return Err[any, any](fileError("File.append", err))
 			}
 			return Ok[any, any](struct{}{})
 		})
@@ -7805,7 +7805,7 @@ func File_remove(path any) any {
 		}
 		err := os.Remove(fmt.Sprintf("%v", path))
 		if err != nil {
-			return Err[any, any](ErrFfi(err.Error()))
+			return Err[any, any](fileError("File.remove", err))
 		}
 		return Ok[any, any](struct{}{})
 	}
@@ -7818,7 +7818,7 @@ func File_mkdirAll(path any) any {
 		}
 		err := os.MkdirAll(fmt.Sprintf("%v", path), 0755)
 		if err != nil {
-			return Err[any, any](ErrFfi(err.Error()))
+			return Err[any, any](fileError("File.mkdirAll", err))
 		}
 		return Ok[any, any](struct{}{})
 	}
@@ -7828,7 +7828,7 @@ func File_readDir(path any) any {
 	return func() any {
 		entries, err := os.ReadDir(fmt.Sprintf("%v", path))
 		if err != nil {
-			return Err[any, any](ErrFfi(err.Error()))
+			return Err[any, any](fileError("File.readDir", err))
 		}
 		result := make([]any, len(entries))
 		for i, e := range entries {

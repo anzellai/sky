@@ -1105,7 +1105,7 @@ readme =
 
 `readFile`, `readFileLimit`, `readFileBytes`, `writeFile`, `writeBytes`, `append`, `mkdirAll`, `readDir`, `exists`, `remove`, `isDir`, `tempFile`, `tempDir`, `copy`, `rename`, `stat`, `lstat`, `realPath`, `readLink`, `chmod`, `permissions`, `resolveWithin`.
 
-`exists` / `isDir` return `Task Error Bool` (effects — the disk could be unmounted between successive calls).  `tempFile` / `tempDir` create uniquely-named entries in the system temp dir and return the absolute path; caller is responsible for `remove`-ing when done. Every function is a Task: nothing touches the disk until the Task runs. A missing path fails with `NotFound`, a refused one with `PermissionDenied`, anything else with `Io`.
+`exists` / `isDir` return `Task Error Bool` (effects — the disk could be unmounted between successive calls).  `tempFile` / `tempDir` create uniquely-named entries in the system temp dir and return the absolute path; caller is responsible for `remove`-ing when done. Every function is a Task: nothing touches the disk until the Task runs. Every function maps a failure the same way: a missing path fails with `NotFound`, a refused one with `PermissionDenied`, a path that already exists with `Conflict`, anything else with `Io`.
 
 #### Metadata, links and confinement (v0.27.0)
 
@@ -1812,6 +1812,15 @@ pasted image over 100 megapixels), and a pasted image that does not decode.
 `font_parse`, an index the file does not have `font_index`. Text has no hinting
 and no complex shaping; pair kerning from the `kern` table is applied. Server
 only, like `Std.Image`.
+
+Pixel precision: the canvas stores premultiplied 8-bit RGBA, so a
+semi-transparent pixel that goes through `fromImage`, `paste` or `pasteCanvas`
+can come out of `encode` with its colour channels moved, even where nothing is
+drawn over it. The alpha is exact. The colour moves by at most 2 from alpha 128 up
+(1 at alpha 254), 4 at alpha 64, 16 at alpha 16, and more near alpha 0 (at
+alpha 1 the colour is lost). A fully opaque pixel is copied exactly, and a fully
+transparent pixel stays fully transparent. No paste copies semi-transparent
+pixels exactly, so a test compares such output with `pixelDiff` and a tolerance.
 
 ### `Std.Xml` — safe XML parsing (with `Std.Xml.Decode` and `Std.Xml.Encode`)
 
@@ -2685,6 +2694,9 @@ Every `Server.listen` server wraps its routes in CSRF protection
 cookie-session browser form works automatically — the runtime issues
 a `__sky_csrf` cookie and Sky.Live's JS echoes it in an `X-Sky-Csrf`
 header (HTML forms get a hidden `__sky_csrf` field auto-injected).
+The cookie is issued on HTML pages and on other GET routes, never on a static
+or immutable asset (a script, wasm, style, image or font, a file from a static
+mount, or a response marked `immutable`), so a CDN can cache assets.
 
 A **machine / API client** that has no CSRF token gets a `403` with a
 JSON body naming the escape hatches. Three ways to call a mutating
