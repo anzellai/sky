@@ -327,6 +327,109 @@ pub fn drop_go_path_dep(go_dir: &Path, module: &str) -> Result<(), String> {
     }
 }
 
+/// The modules `go_dir`'s `go.mod` replaces with a local directory (a
+/// `replace <mod> => <dir>` with no version), as [`apply_go_path_deps`] writes
+/// them. Empty when there is no `go.mod` or it cannot be read.
+fn local_replaces(go_dir: &Path) -> Vec<String> {
+    if !go_dir.join("go.mod").is_file() {
+        return Vec::new();
+    }
+    let Ok(out) = Command::new("go")
+        .args(["mod", "edit", "-json"])
+        .current_dir(go_dir)
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    let Ok(json) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else {
+        return Vec::new();
+    };
+    json.get("Replace")
+        .and_then(|r| r.as_array())
+        .map(|rs| {
+            rs.iter()
+                .filter(|r| {
+                    r.pointer("/New/Version")
+                        .and_then(|v| v.as_str())
+                        .is_none_or(str::is_empty)
+                })
+                .filter_map(|r| r.pointer("/Old/Path").and_then(|p| p.as_str()))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Rebuild the path-dependency wiring from `sky.toml` (`sky install`): a Go
+/// module that `sky.toml` no longer lists as a path dependency is dropped from
+/// `sky-out/go.mod` (its `require` and its local `replace`), and its generated
+/// surface (`sky-ffi/<slug>.{kernel.json,skyi,pathsig}` and
+/// `sky-ffi/go/<slug>_bindings.go`) is removed. A hand edit of `sky.toml`
+/// (or a branch switch) then leaves nothing for `go get` to trip on: it used
+/// to fail reading the old directory's go.mod. Only path dependencies are
+/// pruned: a surface with no `.pathsig` belongs to a registry dependency.
+/// Returns one line per change.
+pub fn prune_removed_go_path_deps(project_dir: &Path) -> Vec<String> {
+    let declared: Vec<String> =
+        read_path_dependencies_of(&project_dir.join("sky.toml"), PathDepKind::Go)
+            .into_iter()
+            .map(|d| d.key)
+            .collect();
+    let mut notes = Vec::new();
+    let sky_out = project_dir.join("sky-out");
+    for module in local_replaces(&sky_out) {
+        if declared.contains(&module) {
+            continue;
+        }
+        match drop_go_path_dep(&sky_out, &module) {
+            Ok(()) => notes.push(format!(
+                "  dropped {module} from sky-out/go.mod (no longer a path dependency in sky.toml)"
+            )),
+            Err(e) => notes.push(format!("  note: sky-out/go.mod: {e}")),
+        }
+    }
+    let declared_slugs: Vec<String> = declared
+        .iter()
+        .filter_map(|k| crate::ffi_ops::slug_for_package(project_dir, k))
+        .collect();
+    let ffi_dir = project_dir.join("sky-ffi");
+    let mut sigs: Vec<String> = std::fs::read_dir(&ffi_dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    e.file_name()
+                        .to_str()
+                        .and_then(|n| n.strip_suffix(".pathsig"))
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    sigs.sort();
+    for slug in sigs {
+        if declared_slugs.contains(&slug) {
+            continue;
+        }
+        for rel in [
+            format!("sky-ffi/{slug}.kernel.json"),
+            format!("sky-ffi/{slug}.skyi"),
+            format!("sky-ffi/go/{slug}_bindings.go"),
+            format!("sky-ffi/{slug}.pathsig"),
+        ] {
+            let p = project_dir.join(&rel);
+            if p.exists() && std::fs::remove_file(&p).is_ok() {
+                notes.push(format!(
+                    "  removed {rel} (no longer a path dependency in sky.toml)"
+                ));
+            }
+        }
+    }
+    notes
+}
+
 /// A declared path dependency whose directory is missing — the build stops on
 /// it, as it stops on a declared but unfetched Sky package.
 pub fn missing(project_dir: &Path) -> Vec<(PathDep, PathBuf)> {

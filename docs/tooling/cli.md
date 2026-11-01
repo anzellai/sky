@@ -1526,6 +1526,13 @@ as such, and `sky build` warns about it until `sky install` runs. Unchanged
 surfaces are left untouched (`verified`). For each `[dependencies]` entry it clones any Sky package that is
 absent or whose pinned ref drifted. Idempotent.
 
+The path-dependency wiring is rebuilt from `sky.toml` each time. A Go path
+dependency that `sky.toml` no longer lists (removed by hand, or by a branch
+switch) is dropped from `sky-out/go.mod`, and its generated surface
+(`sky-ffi/<slug>.*` and `sky-ffi/go/<slug>_bindings.go`) is removed, so
+`go get` never reads the old directory. `sky remove` does the same for one
+module.
+
 ### `sky update`
 
 Re-floats `latest`/branch-pinned `[go.dependencies]` to their newest versions and

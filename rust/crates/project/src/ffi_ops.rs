@@ -796,6 +796,12 @@ pub fn install(project_dir: &Path, repo_root: &Path) -> FfiReport {
     let deps = read_go_dependencies(&sky_toml);
     let sky_deps = read_sky_dependencies(&sky_toml);
     let path_deps = crate::path_deps::read_path_dependencies(&sky_toml);
+    // Rebuild the path-dependency wiring from sky.toml first: a module it no
+    // longer lists leaves sky-out/go.mod and sky-ffi/ before anything runs
+    // `go get` (which failed on the old directory).
+    for note in crate::path_deps::prune_removed_go_path_deps(project_dir) {
+        r.say(note);
+    }
     if deps.is_empty() && sky_deps.is_empty() && path_deps.is_empty() {
         r.say(
             "sky install: no [\"go.dependencies\"] or [dependencies] in sky.toml — nothing to do.",

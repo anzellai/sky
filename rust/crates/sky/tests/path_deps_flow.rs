@@ -576,3 +576,89 @@ main =\n    println ((Greet.hello \"sky\" |> Result.withDefault \"err\") ++ \" \
     assert!(ok && out.contains("hello sky"), "{out}");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A Go path dependency dropped from `sky.toml` by hand (with its directory
+/// gone, as after a branch switch) broke `sky install`: `sky-out/go.mod` kept
+/// its `require` and `replace` lines, so `go get` failed reading the old
+/// directory's go.mod, and its generated bindings stayed in `sky-ffi/`. Only
+/// `sky remove` or a clean `sky-out` worked. `sky install` now rebuilds the
+/// path-dependency wiring from `sky.toml`: what sky.toml no longer lists is
+/// dropped from `sky-out/go.mod` and its generated surface is removed.
+#[test]
+fn install_drops_a_path_dependency_removed_from_sky_toml() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let (base, _greet, app) = go_fixture("installdrop");
+    let media = base.join("media");
+    write(
+        &media.join("go.mod"),
+        "module example.com/media\n\ngo 1.22\n",
+    );
+    write(
+        &media.join("media.go"),
+        "package media\n\n// Kind names a media kind.\nfunc Kind(ext string) string {\n\treturn \"media:\" + ext\n}\n",
+    );
+    write(&app.join("src/Main.sky"), MAIN_HELLO);
+    let (ok, log) = run(&app, SKY, &["add", "../greet"]);
+    assert!(ok, "sky add ../greet:\n{log}");
+    let (ok, log) = run(&app, SKY, &["add", "../media"]);
+    assert!(ok, "sky add ../media:\n{log}");
+    assert!(app.join("sky-ffi/go/media_bindings.go").is_file());
+    let go_mod = std::fs::read_to_string(app.join("sky-out/go.mod")).unwrap();
+    assert!(go_mod.contains("example.com/media"), "{go_mod}");
+
+    // The hand edit: sky.toml loses the dependency and its directory goes.
+    let toml = std::fs::read_to_string(app.join("sky.toml")).unwrap();
+    let toml: String = toml
+        .lines()
+        .filter(|l| !l.contains("example.com/media"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    write(&app.join("sky.toml"), &toml);
+    std::fs::remove_dir_all(&media).unwrap();
+
+    let (ok, log) = run(&app, SKY, &["install"]);
+    assert!(
+        ok,
+        "sky install after a path dependency left sky.toml:\n{log}"
+    );
+    let go_mod = std::fs::read_to_string(app.join("sky-out/go.mod")).unwrap();
+    assert!(
+        !go_mod.contains("example.com/media"),
+        "sky-out/go.mod still wires the dropped module:\n{go_mod}"
+    );
+    assert!(
+        go_mod.contains("example.com/greet"),
+        "the declared module stays wired:\n{go_mod}"
+    );
+    for rel in [
+        "sky-ffi/media.kernel.json",
+        "sky-ffi/media.skyi",
+        "sky-ffi/go/media_bindings.go",
+        "sky-ffi/media.pathsig",
+    ] {
+        assert!(!app.join(rel).exists(), "{rel} is left behind:\n{log}");
+    }
+    assert!(app.join("sky-ffi/go/greet_bindings.go").is_file());
+    let (ok, log) = run(&app, SKY, &["build", "src/Main.sky"]);
+    assert!(ok, "build after install:\n{log}");
+    let (ok, out) = run(&app, app.join("sky-out/app").to_str().unwrap(), &[]);
+    assert!(ok && out.contains("hello sky"), "{out}");
+
+    // With no path dependency left, install still drops the last one.
+    let toml: String = std::fs::read_to_string(app.join("sky.toml"))
+        .unwrap()
+        .lines()
+        .filter(|l| !l.contains("example.com/greet"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    write(&app.join("sky.toml"), &toml);
+    std::fs::remove_dir_all(base.join("greet")).unwrap();
+    let (ok, log) = run(&app, SKY, &["install"]);
+    assert!(ok, "sky install with no path dependency left:\n{log}");
+    let go_mod = std::fs::read_to_string(app.join("sky-out/go.mod")).unwrap();
+    assert!(!go_mod.contains("example.com/greet"), "{go_mod}");
+    assert!(!app.join("sky-ffi/go/greet_bindings.go").exists());
+    let _ = std::fs::remove_dir_all(&base);
+}

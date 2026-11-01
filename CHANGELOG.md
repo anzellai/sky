@@ -49,6 +49,12 @@ finds a header whatever the case of its name.
     the text with no error and PostgreSQL failed at the first update.
     `Store.migrate` and `Store.create` now refuse such a column on both
     dialects, with an `Err` naming the column, its type and the builder.
+- **`sky install` drops a Go path dependency removed from `sky.toml` by
+  hand.** `sky-out/go.mod` kept its `require` and `replace` lines, so `go get`
+  failed reading the old directory's go.mod, and its bindings stayed in
+  `sky-ffi/`. Only `sky remove` or a clean `sky-out` worked. `sky install` now
+  rebuilds the path-dependency wiring from `sky.toml`: a module it no longer
+  lists leaves `sky-out/go.mod`, and its generated surface is removed.
 - **`Store.generated` adds to the generated columns (a silent wrong
   answer).** It replaced the list, so `Store.serial "id" |> Store.generated
   [ "created_at" ]` dropped the serial column. The first insert wrote id 0
