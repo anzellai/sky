@@ -465,7 +465,14 @@ pass its path) and it runs, in order, stopping non-zero on the first failure:
    `sky fmt`-clean.
 2. **check** — type-checks + `go build`s and emits the production binary
    (`sky check` ≡ `sky build` minus the artefact, so this one build covers both).
-3. **test** — every `tests/*.sky` suite passes.
+3. **stores** — when the entry module exposes `db` (a `Store.Project`),
+   a scratch build runs `Store.dumpSchema db` and fails on a Store builder
+   problem: a builder that names an unknown column, an invalid table name or
+   a primary key that is not a column. That problem makes every verb on the
+   store fail at run time, so the gate stops it before a deploy. A `db` that
+   is not a `Store.Project` is skipped with a note. Any other failure of the
+   scratch build fails the step with the build error.
+4. **test** — every `tests/*.sky` suite passes.
 
 ```sh
 sky verify           # gate the current project
@@ -933,7 +940,11 @@ one `test` line per case and a summary with the case counts (see
 `.env.test` file runs in **test mode**: outbound HTTP is mocked from
 `tests/mocks/` fixtures (unmatched requests fail closed), a `[database]` project
 gets an ephemeral offline database, and `SKY_TEST_SEED` / `SKY_TEST_CLOCK_MS`
-make effects deterministic. The mock fixture shape and the multi-outcome patterns
+make effects deterministic. `sky test` never takes a database from `.env`: a
+DSN for the tests comes from `.env.test` or the environment. A project whose
+`.env` names one runs in test mode even without a `.env.test`, on the throwaway
+database, and the run prints one line that names the ignored DSN. Test mode
+never loads `.env` at all. The mock fixture shape and the multi-outcome patterns
 are in [`testing.md`](testing.md#test-mode-offline-effects-and-mock-by-default).
 
 `sky test --scaffold-mocks` writes mock-fixture skeletons for the app's outbound
@@ -1497,6 +1508,13 @@ removes the line, the generated `sky-ffi/<slug>.*` surface, and the `go.mod`
 require (`go mod tidy`). The routing is a local section lookup — no probe.
 `--go` / `--sky` force one path.
 
+When the last entry of a section goes, the empty table header goes with it (a
+table that keeps a comment stays). `sky remove` and `sky install` also bring
+the generated `go.mod` files under `.skyapp/` and `.split/` (the Std.App
+staging and the Sky.Spa split legs) in line with `sky.toml`: a module it no
+longer lists loses its `require` and its local `replace` there too, without
+waiting for the next build.
+
 A `["go.dependencies"]` entry that leaves `sky.toml` some other way (a git
 branch switch, a hand edit) keeps its `sky-ffi/` files. The build uses only
 the surfaces `sky.toml` declares: it ignores the others, prints one line that
@@ -1518,6 +1536,13 @@ surface written by a sky with another format (or none) is refreshed and named
 as such, and `sky build` warns about it until `sky install` runs. Unchanged
 surfaces are left untouched (`verified`). For each `[dependencies]` entry it clones any Sky package that is
 absent or whose pinned ref drifted. Idempotent.
+
+The path-dependency wiring is rebuilt from `sky.toml` each time. A Go path
+dependency that `sky.toml` no longer lists (removed by hand, or by a branch
+switch) is dropped from `sky-out/go.mod`, and its generated surface
+(`sky-ffi/<slug>.*` and `sky-ffi/go/<slug>_bindings.go`) is removed, so
+`go get` never reads the old directory. `sky remove` does the same for one
+module.
 
 ### `sky update`
 

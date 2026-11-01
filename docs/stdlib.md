@@ -905,7 +905,18 @@ fetchData =
         (Http.request req)
 ```
 
-`get`, `post`, `request` (custom method/headers/timeout).
+**Response headers.** `resp.headers` holds each header name in canonical
+form (`Content-Type`, `Etag`, `X-Request-Id`), whatever case the server or a
+proxy sent, on the server and in a Sky.Spa client. `Http.header name resp`
+(v0.29.1) reads one in any case:
+
+```elm
+requestId : HttpResponse -> Maybe String
+requestId resp =
+    Http.header "x-request-id" resp
+```
+
+`get`, `post`, `request` (custom method/headers/timeout), `header`.
 `parseQuery` parses a URL query string into a `Dict String String`
 (pure — backed by Go's `net/url`, proper percent-decoding).
 
@@ -1094,7 +1105,7 @@ readme =
 
 `readFile`, `readFileLimit`, `readFileBytes`, `writeFile`, `writeBytes`, `append`, `mkdirAll`, `readDir`, `exists`, `remove`, `isDir`, `tempFile`, `tempDir`, `copy`, `rename`, `stat`, `lstat`, `realPath`, `readLink`, `chmod`, `permissions`, `resolveWithin`.
 
-`exists` / `isDir` return `Task Error Bool` (effects — the disk could be unmounted between successive calls).  `tempFile` / `tempDir` create uniquely-named entries in the system temp dir and return the absolute path; caller is responsible for `remove`-ing when done. Every function is a Task: nothing touches the disk until the Task runs. A missing path fails with `NotFound`, a refused one with `PermissionDenied`, anything else with `Io`.
+`exists` / `isDir` return `Task Error Bool` (effects — the disk could be unmounted between successive calls).  `tempFile` / `tempDir` create uniquely-named entries in the system temp dir and return the absolute path; caller is responsible for `remove`-ing when done. Every function is a Task: nothing touches the disk until the Task runs. Every function maps a failure the same way: a missing path fails with `NotFound`, a refused one with `PermissionDenied`, a path that already exists with `Conflict`, anything else with `Io`.
 
 #### Metadata, links and confinement (v0.27.0)
 
@@ -1166,7 +1177,7 @@ main =
 | `System.getenvBool` | `String -> Task Error Bool` | Parsed bool env var (`true`/`false`/`1`/`0`) |
 | `System.cwd` | `Task Error String` | Current working directory |
 | `System.exit` | `Int -> a` | **Diverging** — process termination |
-| `System.loadEnv` | `Task Error ()` | Load `.env` file |
+| `System.loadEnv` | `Task Error ()` | Load `.env` file (loads nothing in a `sky test` / `sky fuzz` run) |
 | `System.setenv` | `String -> String -> Task Error ()` | Set a process env var (v0.11.5+) |
 | `System.unsetenv` | `String -> Task Error ()` | Remove a process env var (v0.11.5+, idempotent) |
 
@@ -1367,10 +1378,15 @@ The **recommended default** for record-shaped tables: write ONE `Codec` per type
 hand-written SQL, no row mappers. The same codec also serves JSON.
 
 - **`Std.Codec`** — `Codec.auto blank` reflection-derives from a zero-value witness
-  (scalars → columns, `Maybe` → nullable, list/nested/ADT → JSON blob, nullary enum
-  → readable name); **snake_case** columns/keys by default (`Codec.autoCamel` keeps
+  (scalars → columns, `Maybe` → nullable, list/nested record → JSON blob, nullary
+  enum → readable name); a data-carrying custom type is not derivable (reading it is
+  an `Err`), so give that field a `taggedUnion` codec through `Codec.autoWith`; **snake_case** columns/keys by default (`Codec.autoCamel` keeps
   camelCase). A `Json.Value` field carries any JSON when the blank gives it a JSON
   value (`data = Json.Encode.null`; `Just Json.Encode.null` for a `Maybe Json.Value`).
+  The blank cannot mark the elements of a `List Json.Value` or a
+  `Dict String Json.Value` field, so reading one is a loud `Err`. Make the field one
+  `Json.Value` that holds the whole array or object, and read its parts with
+  `Json.Decode`.
   **`Codec.autoWith [ ("active", intBool) ] blank`** overrides specific
   fields' codecs while auto-deriving the rest (a Bool stored 0/1, a custom enum
   format) — no full hand-written codec for a one-field tweak. `toJson` / `fromJson`
@@ -1796,6 +1812,15 @@ pasted image over 100 megapixels), and a pasted image that does not decode.
 `font_parse`, an index the file does not have `font_index`. Text has no hinting
 and no complex shaping; pair kerning from the `kern` table is applied. Server
 only, like `Std.Image`.
+
+Pixel precision: the canvas stores premultiplied 8-bit RGBA, so a
+semi-transparent pixel that goes through `fromImage`, `paste` or `pasteCanvas`
+can come out of `encode` with its colour channels moved, even where nothing is
+drawn over it. The alpha is exact. The colour moves by at most 2 from alpha 128 up
+(1 at alpha 254), 4 at alpha 64, 16 at alpha 16, and more near alpha 0 (at
+alpha 1 the colour is lost). A fully opaque pixel is copied exactly, and a fully
+transparent pixel stays fully transparent. No paste copies semi-transparent
+pixels exactly, so a test compares such output with `pixelDiff` and a tolerance.
 
 ### `Std.Xml` — safe XML parsing (with `Std.Xml.Decode` and `Std.Xml.Encode`)
 
@@ -2225,6 +2250,19 @@ Sky.Webview static mounts.
 Extractors (Layer 3 Sky source — `Sky.Http.Server.sky`): `param`
 (path `:id`), `queryParam`, `header`, `getCookie`. Kernel-side
 extras: `formValue`, `body`, `path`, `method`.
+
+**Header names in any case.** HTTP header names are case-insensitive, and
+HTTP/2 sends them in lower case. `Server.header name req` ignores case:
+`"x-sky-api-key"`, `"X-Sky-Api-Key"` and `"X-SKY-API-KEY"` find the same
+header. `req.headers` holds each name in canonical form (`X-Sky-Api-Key`,
+`X-Real-Ip`), whatever case the client sent, on a `Sky.Http.Server` route, a
+Sky.Spa `/_rpc` call, a Sky.Live `App.api` route, the `App.withRequest` hook
+and the console request. So `Dict.get "X-Sky-Api-Key" req.headers` works,
+and `Dict.get "x-sky-api-key" req.headers` never matches (`sky check` warns
+about it). A request a test builds by hand keeps the keys it was given:
+prefer `Server.header`, which finds them in any case. The middlewares
+(`withCors`, `withBasicAuth`, `withRateLimit`, `withCsrf`) also read their
+headers in any case.
 
 `Request` fields: `method`, `path`, `body`, `headers`, `params`, `query`,
 `cookies`, `remoteAddr` and `host` (v0.27.13). `host` is the name the client
@@ -2656,6 +2694,9 @@ Every `Server.listen` server wraps its routes in CSRF protection
 cookie-session browser form works automatically — the runtime issues
 a `__sky_csrf` cookie and Sky.Live's JS echoes it in an `X-Sky-Csrf`
 header (HTML forms get a hidden `__sky_csrf` field auto-injected).
+The cookie is issued on HTML pages and on other GET routes, never on a static
+or immutable asset (a script, wasm, style, image or font, a file from a static
+mount, or a response marked `immutable`), so a CDN can cache assets.
 
 A **machine / API client** that has no CSRF token gets a `403` with a
 JSON body naming the escape hatches. Three ways to call a mutating

@@ -446,3 +446,47 @@ func TestCanvas_TypedTwinsMatchErasedKernels(t *testing.T) {
 		}
 	}
 }
+
+// The documented pixel precision of a paste (Std.Image.Canvas "Pixel
+// precision", docs/stdlib.md): the canvas stores premultiplied 8-bit RGBA, so
+// a semi-transparent pixel's colour moves by a bounded amount, its alpha is
+// exact, an opaque pixel is exact and a transparent one stays transparent.
+func TestCanvas_PastePixelPrecisionIsAsDocumented(t *testing.T) {
+	alphas := []int{0, 1, 16, 64, 128, 200, 254, 255}
+	bound := map[int]int{1: 255, 16: 16, 64: 4, 128: 2, 200: 2, 254: 1, 255: 0}
+	src := image.NewNRGBA(image.Rect(0, 0, 256, len(alphas)))
+	for y, a := range alphas {
+		for x := 0; x < 256; x++ {
+			src.SetNRGBA(x, y, color.NRGBA{uint8(x), uint8(255 - x), uint8(x / 2), uint8(a)})
+		}
+	}
+	c := Image_canvasBlank(256, len(alphas), pack(0, 0, 0, 0))
+	c = Image_canvasPaste(0, 0, false, nil, encPNG(t, src), c)
+	img := canvasPNG(t, c)
+	abs := func(d int) int {
+		if d < 0 {
+			return -d
+		}
+		return d
+	}
+	for y, a := range alphas {
+		worst := 0
+		for x := 0; x < 256; x++ {
+			got, want := nrgbaAt(img, x, y), src.NRGBAAt(x, y)
+			if int(got.A) != a {
+				t.Fatalf("alpha %d moved to %d at x=%d", a, got.A, x)
+			}
+			if a == 0 {
+				continue
+			}
+			for _, d := range []int{abs(int(got.R) - int(want.R)), abs(int(got.G) - int(want.G)), abs(int(got.B) - int(want.B))} {
+				if d > worst {
+					worst = d
+				}
+			}
+		}
+		if worst > bound[a] {
+			t.Errorf("alpha %d: colour moved by %d, the docs say at most %d", a, worst, bound[a])
+		}
+	}
+}

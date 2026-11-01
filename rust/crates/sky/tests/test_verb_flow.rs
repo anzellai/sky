@@ -443,6 +443,232 @@ fn verify_checks_a_library_package_and_runs_its_tests() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `sky verify` reports Store builder problems (v0.29.1). A builder that names
+/// an unknown column fails every verb on that store at run time, and an app
+/// that shows the Err as an empty list showed an empty page with no cause. The
+/// stores step builds `Store.dumpSchema db` and fails the gate on it. An
+/// external column (`defaultWith` on a column the codec does not carry) is
+/// not a problem.
+#[test]
+fn verify_reports_a_store_builder_problem() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = scratch("verifystores");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"stores\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    )
+    .unwrap();
+    let main = |builder: &str| {
+        format!(
+            "module Main exposing (db, main)\n\n\
+             import Sky.Core.Prelude exposing (..)\n\
+             import Std.Codec as Codec exposing (Codec)\n\
+             import Std.Db exposing (SqlValue(..))\n\
+             import Std.Db.Store as Store exposing (Store)\n\
+             import Std.Log exposing (println)\n\n\
+             type alias Lead =\n    {{ id : String\n    , email : String\n    }}\n\n\n\
+             leadCodec : Codec Lead\nleadCodec =\n    Codec.auto {{ id = \"\", email = \"\" }}\n\n\n\
+             leads : Store Lead\nleads =\n    Store.fromCodec \"leads\" leadCodec\n        |> Store.primaryKey \"id\"\n        |> {builder}\n\n\n\
+             db : Store.Project\ndb =\n    Store.project [ Store.toTable leads ]\n\n\n\
+             main =\n    println \"ok\"\n"
+        )
+    };
+    let write_fmt = |src: String| {
+        std::fs::write(dir.join("src/Main.sky"), src).unwrap();
+        let fmt = Command::new(SKY)
+            .args(["fmt", "src/Main.sky"])
+            .current_dir(&dir)
+            .output()
+            .expect("spawn sky fmt");
+        assert!(fmt.status.success(), "{fmt:?}");
+    };
+
+    write_fmt(main("Store.unique \"emial\""));
+    let (code, out) = run_verify(&dir);
+    assert_ne!(code, 0, "a Store builder problem fails verify:\n{out}");
+    assert!(out.contains("✗ stores"), "{out}");
+    assert!(
+        out.contains("Store.unique: unknown column \\\"emial\\\"")
+            || out.contains("Store.unique: unknown column \"emial\""),
+        "the problem is named:\n{out}"
+    );
+    assert!(out.contains("verify failed: stores"), "{out}");
+
+    // An external column is not a problem: the step passes.
+    write_fmt(main("Store.defaultWith \"created_at\" (\\_ -> SqlInt 0)"));
+    let (code, out) = run_verify(&dir);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("✓ stores   (1 table(s)"), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `sky verify`'s stores step skips with a note only when `db` is not a
+/// `Store.Project` (the type error is in the step's own entry). Any other
+/// failure of the scratch build fails the step with the build error. Before,
+/// every build failure printed the note and passed.
+#[test]
+fn verify_stores_fails_on_a_scratch_build_failure() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = scratch("verifystoresbuild");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"storesb\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    )
+    .unwrap();
+    let main = |db: &str| {
+        format!(
+            "module Main exposing (db, main)\n\n\
+             import Sky.Core.Prelude exposing (..)\n\
+             import Std.Codec as Codec exposing (Codec)\n\
+             import Std.Db.Store as Store exposing (Store)\n\
+             import Std.Log exposing (println)\n\n\
+             type alias Lead =\n    {{ id : String\n    , email : String\n    }}\n\n\n\
+             leadCodec : Codec Lead\nleadCodec =\n    Codec.auto {{ id = \"\", email = \"\" }}\n\n\n\
+             leads : Store Lead\nleads =\n    Store.fromCodec \"leads\" leadCodec\n        |> Store.primaryKey \"id\"\n\n\n\
+             {db}\n\n\n\
+             main =\n    println \"ok\"\n"
+        )
+    };
+    let write_fmt = |file: &str, src: String| {
+        std::fs::write(dir.join(file), src).unwrap();
+        let fmt = Command::new(SKY)
+            .args(["fmt", file])
+            .current_dir(&dir)
+            .output()
+            .expect("spawn sky fmt");
+        assert!(fmt.status.success(), "{fmt:?}");
+    };
+
+    // `db` is not a Store.Project: the step skips with the note and passes.
+    write_fmt("src/Main.sky", main("db : Int\ndb =\n    1"));
+    let (code, out) = run_verify(&dir);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("– stores   (`db` is not a Store.Project)"),
+        "{out}"
+    );
+
+    // `db` is a Store.Project, and the scratch build fails for another
+    // reason: its scratch directory cannot be made (TMPDIR is under a
+    // file, while Go keeps a working GOTMPDIR, so the check step builds).
+    // The step fails with the error, not the note.
+    write_fmt(
+        "src/Main.sky",
+        main("db : Store.Project\ndb =\n    Store.project [ Store.toTable leads ]"),
+    );
+    let blocker = dir.join("not-a-dir");
+    std::fs::write(&blocker, "").unwrap();
+    let gotmp = dir.join("gotmp");
+    std::fs::create_dir_all(&gotmp).unwrap();
+    let o = Command::new(SKY)
+        .arg("verify")
+        .current_dir(&dir)
+        .env("TMPDIR", blocker.join("tmp"))
+        .env("GOTMPDIR", &gotmp)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky verify");
+    let mut out = String::from_utf8_lossy(&o.stdout).into_owned();
+    out.push_str(&String::from_utf8_lossy(&o.stderr));
+    assert!(out.contains("✓ check"), "the check step builds:\n{out}");
+    assert_ne!(
+        o.status.code(),
+        Some(0),
+        "a failed scratch build fails verify:\n{out}"
+    );
+    assert!(out.contains("✗ stores"), "{out}");
+    assert!(
+        out.contains("cannot create scratch dir"),
+        "the step shows the build error:\n{out}"
+    );
+    assert!(
+        !out.contains("is not a Store.Project"),
+        "the note is only for a db that is not a Store.Project:\n{out}"
+    );
+    assert!(out.contains("verify failed: stores"), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An unknown column in a query condition, an order or a set is an `Err`
+/// (v0.29.0). An app that turned that Err into an empty list showed an empty
+/// page with no trace. It is now loud like a builder problem (v0.29.1): one
+/// ERROR line per table and problem, whatever the app does with the Err. The
+/// Err itself is unchanged.
+#[test]
+fn an_unknown_query_column_is_logged_once() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = scratch("loudquery");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"loudq\"\nversion = \"0.1.0\"\n\n[source]\nroot = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/Placeholder.sky"),
+        "module Placeholder exposing (x)\n\nimport Sky.Core.Prelude exposing (..)\n\n\nx : Int\nx =\n    1\n",
+    )
+    .unwrap();
+    let suite = dir.join("tests/LoudTest.sky");
+    std::fs::write(
+        &suite,
+        "module LoudTest exposing (tests)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.Task as Task\n\
+         import Std.Codec as Codec exposing (Codec)\n\
+         import Std.Db as Db exposing (Db, SqlValue(..))\n\
+         import Std.Db.Store as Store exposing (Store)\n\
+         import Sky.Test as Test exposing (Test)\n\n\n\
+         type alias Lead =\n    { id : String, email : String }\n\n\n\
+         leadCodec : Codec Lead\nleadCodec =\n    Codec.auto { id = \"\", email = \"\" }\n\n\n\
+         leads : Store Lead\nleads =\n    Store.fromCodec \"loud_leads\" leadCodec |> Store.primaryKey \"id\"\n\n\n\
+         refusedOnce : () -> Test.TestResult\n\
+         refusedOnce _ =\n    \
+         case Task.run (Db.open \"sqlite\" \":memory:\") of\n        \
+         Err _ ->\n            Test.fail \"open\"\n\n        \
+         Ok conn ->\n            \
+         Test.err (Store.toSql conn (Store.query leads |> Store.where_ (Store.eq \"nope_col\" (SqlString \"x\"))))\n\n\n\
+         tests : List Test\n\
+         tests =\n    \
+         [ Test.test \"one\" refusedOnce\n    \
+         , Test.test \"two\" refusedOnce\n    \
+         , Test.test \"three\" refusedOnce\n    \
+         ]\n",
+    )
+    .unwrap();
+    let fmt = Command::new(SKY)
+        .args(["fmt", "tests/LoudTest.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("spawn sky fmt");
+    assert!(fmt.status.success(), "{fmt:?}");
+    let (code, out, _) = run_test(&dir, &suite);
+    assert_eq!(code, 0, "the three refusals pass as Err:\n{out}");
+    let lines: Vec<&str> = out
+        .lines()
+        .filter(|l| l.contains("unknown column") && l.contains("nope_col"))
+        .collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "one ERROR line for three refusals of one unknown column:\n{out}"
+    );
+    assert!(
+        lines[0].contains("loud_leads"),
+        "the line names the table:\n{out}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `sky test` printed a failing `Test.equal`'s values as Go structs
 /// (`expected {0 a <nil>} but got {0 b <nil>}`; a downstream project reported
 /// it). They print as Sky values, with the printer `Debug.toString` uses. A
@@ -644,4 +870,178 @@ fn a_parse_error_is_reported_in_its_own_file_for_every_module_kind() {
         "the path dependency's type error must name its file:\n{out}"
     );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The DSN in the `.env` of the projects below. Nothing listens on port 1, so
+/// a run that took it would fail to connect.
+const DOT_ENV_DSN: &str = "postgres://nobody@127.0.0.1:1/none?sslmode=disable";
+
+/// A Postgres project whose suite checks the DSN it was given: `want` is a
+/// Sky expression over `dsn` (the `DATABASE_URL` the suite sees) and `embed`
+/// (`SKY_EMBED_POSTGRES`). Its `.env` names [`DOT_ENV_DSN`].
+fn dsn_project(tag: &str, want: &str) -> (PathBuf, PathBuf) {
+    let (dir, _) = project(tag, "tests/FooTest.sky", "FooTest");
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"tverb\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n\n[database]\ndriver = \"postgres\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join(".env"), format!("DATABASE_URL={DOT_ENV_DSN}\n")).unwrap();
+    let suite = dir.join("tests/DsnTest.sky");
+    std::fs::write(
+        &suite,
+        format!(
+            "module DsnTest exposing (tests)\n\n\
+             import Sky.Core.Prelude exposing (..)\n\
+             import Sky.Core.System as System\n\
+             import Sky.Test as Test exposing (Test)\n\n\n\
+             tests : List Test\n\
+             tests =\n    \
+             let\n        \
+             dsn =\n            System.getenvOr \"DATABASE_URL\" \"\"\n\n        \
+             embed =\n            System.getenvOr \"SKY_EMBED_POSTGRES\" \"\"\n    \
+             in\n    \
+             [ Test.test \"the DSN\" (\\_ -> Test.isTrue ({want}))\n    ]\n"
+        ),
+    )
+    .unwrap();
+    std::fs::remove_file(dir.join("tests/FooTest.sky")).unwrap();
+    (dir, suite)
+}
+
+fn run_dsn_test(dir: &Path, suite: &Path, env_dsn: Option<&str>) -> (Option<i32>, String) {
+    let mut cmd = Command::new(SKY);
+    cmd.arg("test")
+        .arg(suite)
+        .current_dir(dir)
+        .env_remove("SKY_DB_PATH")
+        .env_remove("SKY_EMBED_POSTGRES")
+        .env_remove("SKY_TEST_MODE")
+        .stdin(std::process::Stdio::null());
+    match env_dsn {
+        Some(v) => cmd.env("DATABASE_URL", v),
+        None => cmd.env_remove("DATABASE_URL"),
+    };
+    let out = cmd.output().expect("spawn sky test");
+    let mut log = String::from_utf8_lossy(&out.stdout).into_owned();
+    log.push_str(&String::from_utf8_lossy(&out.stderr));
+    (out.status.code(), log)
+}
+
+/// `sky test` never takes a database from `.env` (v0.29.1). A project with a
+/// `.env` that names a database and no `.env.test` runs its tests on the
+/// throwaway embedded cluster. Before, the runtime loaded the `.env` DSN, so
+/// the tests and their seeds wrote to whatever database it named (a shared
+/// or a production one). The run says it ignored `.env`.
+#[test]
+fn a_dot_env_dsn_is_never_used() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let (dir, suite) = dsn_project(
+        "dotenvdsn",
+        &format!("dsn /= \"{DOT_ENV_DSN}\" && embed == \"1\""),
+    );
+    let (code, log) = run_dsn_test(&dir, &suite, None);
+    if log.contains("PostgreSQL was found to stand in for one") {
+        let _ = std::fs::remove_dir_all(&dir);
+        required(Need::Postgres, false);
+        return;
+    }
+    if live_gate::gate_if_postgres_cannot_start(&log) {
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    assert!(
+        !log.contains("will not choose between them"),
+        "the runtime loaded the .env DSN beside the throwaway cluster:\n{log}"
+    );
+    assert_eq!(
+        code,
+        Some(0),
+        "the suite must run on the throwaway cluster:\n{log}"
+    );
+    assert!(
+        log.contains("ignoring DATABASE_URL in .env") && log.contains(".env.test"),
+        "the run must say it ignored .env and name .env.test:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A `.env` that sets two DSN names, where the environment sets only one,
+/// still runs the suite in test mode (v0.29.1). Before, the runner checked
+/// only the first name (`SKY_DB_PATH`): the shell set it, so test mode stayed
+/// off, the runtime loaded `.env`, and its `DATABASE_URL` reached the suite
+/// (and the session store, analytics, jobs and telemetry).
+#[test]
+fn a_second_dot_env_dsn_the_environment_does_not_set_is_never_used() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    const ENV_DSN: &str = "postgres://ci@127.0.0.1:3/ci?sslmode=disable";
+    let (dir, suite) = dsn_project("dotenvtwodsn", "dsn == \"\" && embed == \"\"");
+    std::fs::write(
+        dir.join(".env"),
+        format!("SKY_DB_PATH={DOT_ENV_DSN}\nDATABASE_URL={DOT_ENV_DSN}\n"),
+    )
+    .unwrap();
+    let out = Command::new(SKY)
+        .arg("test")
+        .arg(&suite)
+        .current_dir(&dir)
+        .env("SKY_DB_PATH", ENV_DSN)
+        .env_remove("DATABASE_URL")
+        .env_remove("SKY_EMBED_POSTGRES")
+        .env_remove("SKY_TEST_MODE")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky test");
+    let mut log = String::from_utf8_lossy(&out.stdout).into_owned();
+    log.push_str(&String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "the .env DATABASE_URL must not reach the suite:\n{log}"
+    );
+    assert!(
+        log.contains("ignoring DATABASE_URL in .env"),
+        "the run must say it ignored DATABASE_URL in .env:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A DSN in `.env.test` or in the environment still wins over the throwaway
+/// cluster, and over the `.env` beside it.
+#[test]
+fn a_dot_env_test_or_environment_dsn_wins() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    const TEST_DSN: &str = "postgres://tester@127.0.0.1:2/test?sslmode=disable";
+    let (dir, suite) = dsn_project(
+        "dotenvtestdsn",
+        &format!("dsn == \"{TEST_DSN}\" && embed == \"\""),
+    );
+    std::fs::write(dir.join(".env.test"), format!("DATABASE_URL={TEST_DSN}\n")).unwrap();
+    let (code, log) = run_dsn_test(&dir, &suite, None);
+    assert_eq!(
+        code,
+        Some(0),
+        "the .env.test DSN must reach the suite:\n{log}"
+    );
+    assert!(
+        log.contains("DATABASE_URL from .env.test names a database"),
+        "the run must name the DSN's source:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+
+    const ENV_DSN: &str = "postgres://ci@127.0.0.1:3/ci?sslmode=disable";
+    let (dir, suite) = dsn_project("envdsn", &format!("dsn == \"{ENV_DSN}\" && embed == \"\""));
+    let (code, log) = run_dsn_test(&dir, &suite, Some(ENV_DSN));
+    assert_eq!(
+        code,
+        Some(0),
+        "the environment DSN must reach the suite:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -867,27 +867,9 @@ func Db_insertFieldsReturning(db any, table any, setFields any, projection any, 
 			}
 			defer rows.Close()
 
-			cols, err := rows.Columns()
-			if err != nil {
-				return Err[any, any](ErrIo(
-					"db.insertFieldsReturning columns: " + err.Error()))
-			}
-			var rowDicts []map[string]any
-			for rows.Next() {
-				raw := make([]any, len(cols))
-				ptrs := make([]any, len(cols))
-				for i := range raw {
-					ptrs[i] = &raw[i]
-				}
-				if err := rows.Scan(ptrs...); err != nil {
-					return Err[any, any](ErrIo(
-						"db.insertFieldsReturning scan: " + err.Error()))
-				}
-				rowDict := map[string]any{}
-				for i, c := range cols {
-					rowDict[c] = normaliseSqlValue(raw[i])
-				}
-				rowDicts = append(rowDicts, rowDict)
+			rowDicts, scanErr := dbScanRowDicts(rows, d.driver, "db.insertFieldsReturning")
+			if scanErr != nil {
+				return scanErr
 			}
 			if err := rows.Err(); err != nil {
 				return Err[any, any](ErrIo(
@@ -1071,24 +1053,12 @@ func dbQueryRows(db any, query any, args any) any {
 			}
 			defer rows.Close()
 
-			cols, err := rows.Columns()
-			if err != nil {
-				return Err[any, any](ErrIo("db.query columns: " + err.Error()))
+			rowDicts, scanErr := dbScanRowDicts(rows, d.driver, "db.query")
+			if scanErr != nil {
+				return scanErr
 			}
 			var out []any
-			for rows.Next() {
-				raw := make([]any, len(cols))
-				ptrs := make([]any, len(cols))
-				for i := range raw {
-					ptrs[i] = &raw[i]
-				}
-				if err := rows.Scan(ptrs...); err != nil {
-					return Err[any, any](ErrIo("db.query scan: " + err.Error()))
-				}
-				rowDict := map[string]any{}
-				for i, c := range cols {
-					rowDict[c] = normaliseSqlValue(raw[i])
-				}
+			for _, rowDict := range rowDicts {
 				out = append(out, rowDict)
 			}
 			// An error that surfaces after the first row ends the loop with
@@ -1854,6 +1824,23 @@ func dbMigrateCore(d *SkyDb, entries []migEntry, op string, fail func(msg string
 			return fail("migration '"+name+"': "+err.Error(),
 				Err[any, any](ErrIo("db.migrate: migration '"+name+"': "+err.Error())))
 		}
+		// A partial index that compares a v0.28 TEXT column with a number
+		// or TRUE / FALSE is refused, and the migration rolls back. The
+		// check reads the schema inside the transaction, after the whole
+		// file ran, so a file that converts the column first passes.
+		if d.driver != "pgx" {
+			for _, op := range e.partial {
+				if err := sqliteIndexPredicateLegacyErr(tx, op.Table, op.Name, op.Where); err != nil {
+					tx.Rollback()
+					sqliteDeclCacheReset(d.conn)
+					msg := "migration '" + name + "': " + err.Error()
+					if _, refused := err.(sqliteLegacyIndexError); refused {
+						return fail(msg, Err[any, any](ErrInvalidInput("db.migrate: "+msg)))
+					}
+					return fail(msg, Err[any, any](ErrIo("db.migrate: "+msg)))
+				}
+			}
+		}
 		if _, err := tx.Exec(
 			"INSERT INTO _sky_migrations (name, checksum, applied_at, kind) VALUES ("+
 				d.placeholder(1)+", "+d.placeholder(2)+", "+d.placeholder(3)+", "+d.placeholder(4)+")",
@@ -1951,6 +1938,10 @@ func sqlValueAsRowString(v any) string {
 			return ""
 		}
 		return sqlValueAsRowString(x.JustValue)
+	case time.Time:
+		// dbScanRowDicts already renders a scanned time column. This
+		// keeps any other time value off the host-zone time.String().
+		return dbTimeText(x, "")
 	default:
 		return fmt.Sprintf("%v", v)
 	}

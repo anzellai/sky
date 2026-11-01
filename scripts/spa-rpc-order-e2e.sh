@@ -54,6 +54,16 @@
 # (v0.29.0); on Sky.Spa an input Msg the split lists as hold-free
 # (Spa.withHoldFree) shows at once while a hold runs.
 #
+# A sixth stage builds rust/crates/sky/tests/fixtures/spa-early-submit twice,
+# --target web:app (Sky.Spa) and --target web (Sky.Live), and checks
+# (scripts/spa-early-submit-verify.mjs) that a form submitted before the page
+# is live never ends on the CSRF 403 JSON page (v0.29.1): the Spa SSR page
+# carries the `__sky_csrf` field from the first visit; with the wasm held,
+# typed text and Enter are held and replayed once hydrated (update runs once);
+# with no JavaScript, or the CSRF cookie gone, a native POST answers 303 to the
+# same URL; an App.api form POST is reached and a form POST to /_rpc is still
+# refused. On Sky.Live an early Enter answers 303 and ends on the page.
+#
 # Browsers: SKY_E2E_BROWSERS (default "chromium,webkit"); SKY_E2E_CHANNEL=chrome
 # uses Google Chrome; SKY_E2E_HEADED=1 runs them headed.
 #
@@ -155,10 +165,27 @@ echo "==> driving typing against slow event answers in a browser (Sky.Live)"
 SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
   with_timeout 300 node "$ROOT/scripts/spa-typing-hold-verify.mjs" "$TYPING_LIVE" --port "${TYPING_HOLD_PORT:-9389}" --target live
 
+mkdir -p "$TMP/early"
+cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/spa-early-submit/." "$TMP/early/"
+echo "==> building fixture spa-early-submit (--target web:app)"
+(cd "$TMP/early" && with_timeout 1200 "$SKY" build --target web:app src/Main.sky) >"$TMP/build-early.log" 2>&1 \
+  || { cat "$TMP/build-early.log" >&2; echo "spa-rpc-order-e2e: spa-early-submit build failed" >&2; exit 1; }
+echo "==> building fixture spa-early-submit (Sky.Live, --target web)"
+(cd "$TMP/early" && with_timeout 1200 "$SKY" build --target web src/Main.sky) >"$TMP/build-early-live.log" 2>&1 \
+  || { cat "$TMP/build-early-live.log" >&2; echo "spa-rpc-order-e2e: spa-early-submit web build failed" >&2; exit 1; }
+EARLY="$TMP/early/.skyapp/web-app/.split/backend/sky-out/app"
+EARLY_LIVE="$TMP/early/.skyapp/web/sky-out/app"
+[ -x "$EARLY" ] || { echo "spa-rpc-order-e2e: backend not built at $EARLY" >&2; exit 1; }
+[ -x "$EARLY_LIVE" ] || { echo "spa-rpc-order-e2e: Live app not built at $EARLY_LIVE" >&2; exit 1; }
+echo "==> driving a form submitted before the page is live in a browser (Sky.Spa and Sky.Live)"
+SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
+  with_timeout 300 node "$ROOT/scripts/spa-early-submit-verify.mjs" "$EARLY" "$EARLY_LIVE" --port "${EARLY_SUBMIT_PORT:-9393}"
+
 echo "spa-rpc-order-e2e: PASS — web:app runs each Msg once, in order, with its Cmds, as Sky.Live does;"
 echo "  every RPC names its wire schema, a mismatch reloads once and says the action was not sent;"
 echo "  a handled client Err logs nothing, an unhandled RPC failure logs once;"
 echo "  one click runs one Msg, server paths are full navigations, analytics are per visitor;"
 echo "  an async arm shows its write while its server call runs;"
-echo "  typing against a slow server keeps every letter and the caret (Sky.Spa and Sky.Live)."
+echo "  typing against a slow server keeps every letter and the caret (Sky.Spa and Sky.Live);"
+echo "  a form submitted before the page is live is held or answers 303, never a 403 JSON page."
 rm -rf "$TMP"

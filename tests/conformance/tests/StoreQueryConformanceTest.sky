@@ -19,6 +19,7 @@ import Std.Db.Schema as Schema
 import Std.Codec as Codec exposing (Codec)
 import Sky.Core.Json.Encode as JE
 import Sky.Core.Dict as Dict
+import Sky.Core.Error as Error
 import Sky.Test as Test exposing (Test)
 
 type alias Order =
@@ -4315,18 +4316,26 @@ type alias OldFlag =
     }
 
 
+oldFlagCodec : Codec OldFlag
+oldFlagCodec =
+    Codec.object OldFlag |> Codec.field "id" .id Codec.string
+        |> Codec.field "flag" .flag (Codec.maybe (Codec.maybe Codec.bool))
+        |> Codec.field "score" .score (Codec.maybe (Codec.maybe Codec.float))
+        |> Codec.buildObject
+
+
 oldFlags : Store OldFlag
 oldFlags =
-    Store.fromCodec
-        "sqc_legacy_flags"
-        (Codec.object OldFlag |> Codec.field "id" .id Codec.string
-            |> Codec.field "flag" .flag (Codec.maybe (Codec.maybe Codec.bool))
-            |> Codec.field
-                   "score"
-                   .score
-                   (Codec.maybe (Codec.maybe Codec.float))
-            |> Codec.buildObject)
-        |> Store.primaryKey "id"
+    Store.fromCodec "sqc_legacy_flags" oldFlagCodec |> Store.primaryKey "id"
+
+
+-- A partial unique index on the v0.28 TEXT column. SQLite would compare
+-- `flag = TRUE` as text and miss every `true` row, so migrate refuses it and
+-- names the column. PostgreSQL refuses `text = boolean` itself.
+oldFlagsTrueIndex : Store OldFlag
+oldFlagsTrueIndex =
+    Store.fromCodec "sqc_legacy_ix" oldFlagCodec |> Store.primaryKey "id"
+        |> Store.uniqueWhere [ "id" ] (Store.eq "flag" (SqlBool True))
 
 
 oldFlagIds : Db -> Store.Cond -> Task Error (List String)
@@ -4525,6 +4534,32 @@ nestedMaybeTests db =
                       (Store.query oldFlags
                           |> Store.where_ (Store.eq "flag" (SqlBool True)))
                       |> Result.map (\( sql, _ ) -> String.contains "/*" sql)))
+    , Test.test
+          "nested Maybe: migrate refuses a partial index comparing a v0.28 TEXT Bool column with TRUE, naming the column"
+          (\_ ->
+              let
+                  result =
+                      Task.run
+                          (Task.sequence
+                              [ drop db "sqc_legacy_ix"
+                              , unit
+                                    (Db.exec
+                                        db
+                                        "CREATE TABLE sqc_legacy_ix (id TEXT PRIMARY KEY NOT NULL, flag TEXT, score TEXT)"
+                                        [])
+                              ]
+                              |> Task.andThen
+                                     (\_ -> Store.migrate db oldFlagsTrueIndex))
+              in
+                  Test.equal
+                      True
+                      (if dialectName == "sqlite" then
+                          errHas
+                              "column \"flag\" of sqc_legacy_ix is TEXT"
+                              result
+
+                      else
+                          isErr result))
     , Test.test
           "open JSON: a value with a nested key named like its column, set to null, is written"
           (\_ ->
@@ -5121,6 +5156,628 @@ kindTests db =
                       |> Result.map (List.map (\e -> ( e.id, e.kind )))))
     ]
 
+-- ── External columns (v0.29.1) ───────────────────────────────────────────────
+-- A column the table has and the codec does not carry. v0.29.0 refused
+-- `defaultWith` on it ("unknown column"), so every verb on the store failed
+-- and an app that turned the Err into [] showed an empty page. The table is
+-- made by hand here, as a Std.Db.Schema table or a migration would make it.
+type alias Lead =
+    { id : String
+    , name : String
+    }
+
+
+leadCodec : Codec Lead
+leadCodec =
+    Codec.auto { id = "", name = "" }
+
+
+leadStamp : Int
+leadStamp =
+    1700000000000
+
+
+-- The production shape: `Codec.auto` with no createdAt, a `created_at` column.
+extLeads : Store Lead
+extLeads =
+    Store.fromCodec "sqc_ext_leads" leadCodec |> Store.primaryKey "id"
+        |> Store.defaultWith "created_at" (\_ -> SqlInt leadStamp)
+
+
+extNowLeads : Store Lead
+extNowLeads =
+    Store.fromCodec "sqc_ext_now" leadCodec |> Store.primaryKey "id"
+        |> Store.defaultNow "stamp"
+        |> Store.touchOnUpdate "touched"
+
+
+extDefaultLeads : Store Lead
+extDefaultLeads =
+    Store.fromCodec "sqc_ext_default" leadCodec |> Store.primaryKey "id"
+        |> Store.defaultInt "score" 7
+        |> Store.generated [ "score" ]
+
+
+extTypoLeads : Store Lead
+extTypoLeads =
+    Store.fromCodec "sqc_ext_leads" leadCodec |> Store.primaryKey "id"
+        |> Store.defaultWith "created_at" (\_ -> SqlInt leadStamp)
+        |> Store.unique "emial"
+
+
+extSpaceLeads : Store Lead
+extSpaceLeads =
+    Store.fromCodec "sqc_ext_leads" leadCodec |> Store.primaryKey "id"
+        |> Store.defaultWith "created at" (\_ -> SqlInt leadStamp)
+
+
+lead : String -> String -> Lead
+lead id name =
+    { id = id, name = name }
+
+
+-- Drop the table and make it with `ddl`, as a migration would.
+remake : Db -> String -> String -> Task Error ()
+remake db table ddl =
+    drop db table |> Task.andThen (\_ -> unit (Db.exec db ddl []))
+
+
+-- The text of one column of each row, ordered by id.
+columnTexts : Db -> String -> String -> Task Error (List String)
+columnTexts db table col =
+    Db.query db ("SELECT " ++ col ++ " FROM " ++ table ++ " ORDER BY id") []
+        |> Task.map (List.map (\row -> Maybe.withDefault "" (Dict.get col row)))
+
+
+leadsTable : String
+leadsTable =
+    "CREATE TABLE sqc_ext_leads (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at BIGINT NOT NULL)"
+
+
+externalTests : Db -> List Test
+externalTests db =
+    [ Test.test
+          "external column: defaultWith on a column the codec does not carry, insert, all and findBy succeed and the column is stamped"
+          (\_ ->
+              Test.equal
+                  (Ok ( ( [ "e1" ], Just "e1" ), [ String.fromInt leadStamp ] ))
+                  (Task.run
+                      (remake db "sqc_ext_leads" leadsTable
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.insert db extLeads (lead "e1" "Ada"))
+                          |> Task.andThen
+                                 (\_ ->
+                                     Task.map2
+                                         (\all found ->
+                                             ( List.map .id all
+                                             , Maybe.map .id found
+                                             ))
+                                         (Store.all db extLeads)
+                                         (Store.findBy db extLeads "id" "e1"))
+                          |> Task.andThen
+                                 (\got ->
+                                     Task.map
+                                         (\stamps -> ( got, stamps ))
+                                         (columnTexts
+                                             db
+                                             "sqc_ext_leads"
+                                             "created_at")))))
+    , Test.test
+          "external column: insertMany and upsert write the defaultWith value, and an upsert that updates keeps it"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ String.fromInt leadStamp
+                      , String.fromInt leadStamp
+                      , String.fromInt leadStamp
+                      ])
+                  (Task.run
+                      (Task.sequence
+                          [ remake db "sqc_ext_leads" leadsTable
+                          , unit
+                                (Store.insertMany
+                                    db
+                                    extLeads
+                                    [ lead "e1" "Ada", lead "e2" "Bo" ])
+                          , unit (Store.upsert db extLeads (lead "e3" "Cy"))
+                          , unit (Store.upsert db extLeads (lead "e1" "Ada L"))
+                          ]
+                          |> Task.andThen
+                                 (\_ ->
+                                     columnTexts db "sqc_ext_leads" "created_at"))))
+    , Test.test
+          "external column: defaultNow stamps it on insert and touchOnUpdate bumps it on update"
+          (\_ ->
+              Test.equal
+                  (Ok ( ( True, True ), ( True, "Ada L" ) ))
+                  (Task.run
+                      (Task.sequence
+                          [ remake
+                                db
+                                "sqc_ext_now"
+                                "CREATE TABLE sqc_ext_now (id TEXT PRIMARY KEY, name TEXT NOT NULL, stamp TEXT DEFAULT CURRENT_TIMESTAMP, touched TEXT DEFAULT CURRENT_TIMESTAMP)"
+                          , unit (Store.insert db extNowLeads (lead "n1" "Ada"))
+                          , unit
+                                (Db.exec
+                                    db
+                                    "UPDATE sqc_ext_now SET touched = '2000-01-01 00:00:00'"
+                                    [])
+                          , unit
+                                (Store.update db extNowLeads (lead "n1" "Ada L"))
+                          ]
+                          |> Task.andThen
+                                 (\_ ->
+                                     Task.map3
+                                         (\stamps touched names ->
+                                             ( ( stamps /= [ "" ]
+                                               , stamps /= []
+                                               )
+                                             , ( touched
+                                                     /= [ "2000-01-01 00:00:00"
+                                                        ]
+                                                     && touched /= [ "" ]
+                                               , String.join "," names
+                                               )
+                                             ))
+                                         (columnTexts db "sqc_ext_now" "stamp")
+                                         (columnTexts db "sqc_ext_now" "touched")
+                                         (columnTexts db "sqc_ext_now" "name")))))
+    , Test.test
+          "external column: defaultInt and generated are accepted, and the database default applies"
+          (\_ ->
+              Test.equal
+                  (Ok [ "7" ])
+                  (Task.run
+                      (remake
+                          db
+                          "sqc_ext_default"
+                          "CREATE TABLE sqc_ext_default (id TEXT PRIMARY KEY, name TEXT NOT NULL, score BIGINT NOT NULL DEFAULT 7)"
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.insert
+                                         db
+                                         extDefaultLeads
+                                         (lead "d1" "Ada"))
+                          |> Task.andThen
+                                 (\_ -> columnTexts db "sqc_ext_default" "score"))))
+    , Test.test
+          "external column: migrate of a table without it is an Err naming the column and the builder, and adds nothing"
+          (\_ ->
+              Test.equal
+                  ( True, True )
+                  ( errHas
+                        "has no column created_at, which Store.defaultWith names"
+                        (Task.run
+                            (remake
+                                db
+                                "sqc_ext_leads"
+                                "CREATE TABLE sqc_ext_leads (id TEXT PRIMARY KEY, name TEXT NOT NULL)"
+                                |> Task.andThen
+                                       (\_ -> Store.migrate db extLeads)))
+                  , isErr
+                        (Task.run
+                            (Db.query
+                                db
+                                "SELECT created_at FROM sqc_ext_leads"
+                                []))
+                  ))
+    , Test.test
+          "external column: create of a new table is an Err naming the column, and creates nothing"
+          (\_ ->
+              Test.equal
+                  ( True, True )
+                  ( errHas
+                        "does not exist, and Store.defaultWith names created_at"
+                        (Task.run
+                            (drop db "sqc_ext_leads"
+                                |> Task.andThen (\_ -> Store.create db extLeads)))
+                  , isErr
+                        (Task.run (Db.query db "SELECT * FROM sqc_ext_leads" []))
+                  ))
+    , Test.test
+          "external column: pushProject checks it and never adds it"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "has no column created_at, which Store.defaultWith names"
+                      (Task.run
+                          (remake
+                              db
+                              "sqc_ext_leads"
+                              "CREATE TABLE sqc_ext_leads (id TEXT PRIMARY KEY, name TEXT NOT NULL)"
+                              |> Task.andThen
+                                     (\_ ->
+                                         Store.pushProject
+                                             db
+                                             (Store.project
+                                                 [ Store.toTable extLeads ]))))))
+    , Test.test
+          "external column: unique on a name the codec does not carry is still refused"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "Store.unique: unknown column \"emial\""
+                      (Task.run (Store.all db extTypoLeads))))
+    , Test.test
+          "external column: defaultWith on a name that is not a column name is still refused"
+          (\_ ->
+              Test.equal
+                  True
+                  (errHas
+                      "Store.defaultWith: unknown column \"created at\""
+                      (Task.run (Store.all db extSpaceLeads))))
+    ]
+
+-- v0.29.1: a Maybe field of every kind, read and written through Store with
+-- a `Nothing` blank. `autoWith` overrides of 1, 2 and 3 Maybe Int fields at
+-- different positions. Before the fix an override read 3000 as `Just 0` and
+-- NULL as `Just 0`, with no error.
+type alias NulPt =
+    { x : Int }
+
+type alias Nul =
+    { id : String
+    , a : Maybe Int
+    , name : String
+    , b : Maybe Float
+    , c : Maybe Bool
+    , g : Maybe Int
+    , d : Maybe String
+    , e : Maybe NulPt
+    , f : Maybe (Maybe Int)
+    , h : Maybe Int
+    }
+
+
+nulBlank : Nul
+nulBlank =
+    { id = ""
+    , a = Nothing
+    , name = ""
+    , b = Nothing
+    , c = Nothing
+    , g = Nothing
+    , d = Nothing
+    , e = Nothing
+    , f = Nothing
+    , h = Nothing
+    }
+
+
+nulAuto : Codec Nul
+nulAuto =
+    Codec.auto nulBlank
+
+
+nulWith1 : Codec Nul
+nulWith1 =
+    Codec.autoWith [ ( "a", Codec.maybe Codec.int ) ] nulBlank
+
+
+nulWith2 : Codec Nul
+nulWith2 =
+    Codec.autoWith
+        [ ( "a", Codec.maybe Codec.int ), ( "h", Codec.maybe Codec.int ) ]
+        nulBlank
+
+
+nulWith3 : Codec Nul
+nulWith3 =
+    Codec.autoWith
+        [ ( "a", Codec.maybe Codec.int )
+        , ( "g", Codec.maybe Codec.int )
+        , ( "h", Codec.maybe Codec.int )
+        ]
+        nulBlank
+
+
+-- Values that are the zero of their kind sit next to NULL, so a NULL read as
+-- a zero (or a zero read as NULL) fails the case.
+nulValues : Nul
+nulValues =
+    { id = "v"
+    , a = Just 3000
+    , name = "values"
+    , b = Just 2.5
+    , c = Just False
+    , g = Just 0
+    , d = Just ""
+    , e = Just { x = 7 }
+    , f = Just (Just 5)
+    , h = Just (-1)
+    }
+
+
+nulNulls : Nul
+nulNulls =
+    { nulBlank | id = "w", name = "nulls" }
+
+
+nulRoundTrip : Db -> String -> Codec Nul -> Result Error (List Nul)
+nulRoundTrip db table codec =
+    let
+        st = Store.fromCodec table codec |> Store.primaryKey "id"
+    in
+        Task.run
+            (Task.sequence
+                [ drop db table
+                , unit (Store.migrate db st)
+                , unit (Store.insert db st nulValues)
+                , unit (Store.insert db st nulNulls)
+                ]
+                |> Task.andThen
+                       (\_ ->
+                           Store.toList
+                               db
+                               (Store.query st |> Store.orderAsc "id")))
+
+
+-- The same table read after raw SQL wrote 3000 and NULL (the report's shape).
+nulRawRead : Db -> Codec Nul -> Result Error (List ( Maybe Int, Maybe Int, Maybe Int ))
+nulRawRead db codec =
+    let
+        st = Store.fromCodec "sqc_nul_raw" codec |> Store.primaryKey "id"
+    in
+        Task.run
+            (Task.sequence
+                [ drop db "sqc_nul_raw"
+                , unit (Store.migrate db st)
+                , unit
+                      (Db.exec
+                          db
+                          "INSERT INTO sqc_nul_raw (id, a, name, g, h) VALUES ('r1', 3000, 'x', NULL, 0)"
+                          [])
+                , unit
+                      (Db.exec
+                          db
+                          "INSERT INTO sqc_nul_raw (id, a, name, g, h) VALUES ('r2', NULL, 'y', 12, NULL)"
+                          [])
+                ]
+                |> Task.andThen
+                       (\_ ->
+                           Store.toList
+                               db
+                               (Store.query st |> Store.orderAsc "id"))
+                |> Task.map (List.map (\r -> ( r.a, r.g, r.h ))))
+
+
+maybeFieldTests : Db -> List Test
+maybeFieldTests db =
+    [ Test.test
+          "Maybe fields: Codec.auto with a Nothing blank round-trips a value and NULL of every Maybe kind"
+          (\_ ->
+              Test.equal
+                  (Ok [ nulValues, nulNulls ])
+                  (nulRoundTrip db "sqc_nul_auto" nulAuto))
+    , Test.test
+          "Maybe fields: autoWith with one Maybe Int override round-trips a value and NULL"
+          (\_ ->
+              Test.equal
+                  (Ok [ nulValues, nulNulls ])
+                  (nulRoundTrip db "sqc_nul_with1" nulWith1))
+    , Test.test
+          "Maybe fields: autoWith with two Maybe Int overrides round-trips a value and NULL"
+          (\_ ->
+              Test.equal
+                  (Ok [ nulValues, nulNulls ])
+                  (nulRoundTrip db "sqc_nul_with2" nulWith2))
+    , Test.test
+          "Maybe fields: autoWith with three Maybe Int overrides round-trips a value and NULL"
+          (\_ ->
+              Test.equal
+                  (Ok [ nulValues, nulNulls ])
+                  (nulRoundTrip db "sqc_nul_with3" nulWith3))
+    , Test.test
+          "Maybe fields: autoWith with two overrides reads 3000, 0 and NULL written by raw SQL"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ ( Just 3000, Nothing, Just 0 )
+                      , ( Nothing, Just 12, Nothing )
+                      ])
+                  (nulRawRead db nulWith2))
+    , Test.test
+          "Maybe fields: Codec.auto with a Nothing blank reads 3000, 0 and NULL written by raw SQL"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      [ ( Just 3000, Nothing, Just 0 )
+                      , ( Nothing, Just 12, Nothing )
+                      ])
+                  (nulRawRead db nulAuto))
+    ]
+
+-- ── Store.generated adds to the generated list (v0.29.1) ─────────────────────
+-- `Store.generated` replaced the list, so a `serial` id named before it was
+-- written again: the first insert wrote id 0 and the second failed on the
+-- primary key. It now adds its columns to the list.
+type alias SerialGen =
+    { id : Int
+    , label : String
+    , createdAt : Maybe String
+    }
+
+
+serialGen : Store SerialGen
+serialGen =
+    Store.fromCodec
+        "sqc_serial_gen"
+        (Codec.auto { id = 0, label = "", createdAt = Just "" })
+        |> Store.serial "id"
+        |> Store.generated [ "created_at" ]
+
+
+generatedTests : Db -> List Test
+generatedTests db =
+    [ Test.test
+          "generated after serial keeps the serial id: two inserts get ids 1 and 2, and created_at is not written"
+          (\_ ->
+              Test.equal
+                  (Ok [ ( 1, "a", Nothing ), ( 2, "b", Nothing ) ])
+                  (Task.run
+                      (Task.sequence
+                          [ drop db "sqc_serial_gen"
+                          , unit (Store.migrate db serialGen)
+                          , unit
+                                (Store.insert
+                                    db
+                                    serialGen
+                                    { id = 0
+                                    , label = "a"
+                                    , createdAt = Just "x"
+                                    })
+                          , unit
+                                (Store.insert
+                                    db
+                                    serialGen
+                                    { id = 0
+                                    , label = "b"
+                                    , createdAt = Just "y"
+                                    })
+                          ]
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.toList
+                                         db
+                                         (Store.query serialGen
+                                             |> Store.orderAsc "id")))
+                      |> Result.map
+                             (List.map (\r -> ( r.id, r.label, r.createdAt )))))
+    ]
+
+-- ── Time columns read as stable text (v0.29.1) ───────────────────────────────
+-- A timestamptz, timestamp, date or time column read as a `String` (a Store
+-- field, or `Db.query` + `Db.getField` with no `::text`) was Go's time text in
+-- the app process's local zone ("2026-11-01 02:13:48.987333 +0000 GMT"), so
+-- the same stored instant read differently on two hosts. It now reads as
+-- PostgreSQL's own text on a UTC server, and SQLite reads the same shapes.
+type alias TimeRow =
+    { id : String
+    , tz : String
+    , ts : String
+    , d : String
+    , tm : String
+    }
+
+
+timeRows : Store TimeRow
+timeRows =
+    Store.fromCodec
+        "sqc_time_text"
+        (Codec.auto { id = "", tz = "", ts = "", d = "", tm = "" })
+        |> Store.primaryKey "id"
+
+
+timeDdl : String
+timeDdl =
+    if dialectName == "sqlite" then
+        "CREATE TABLE sqc_time_text (id TEXT PRIMARY KEY, tz TIMESTAMP, ts DATETIME, d DATE, tm TIME)"
+
+    else
+        "CREATE TABLE sqc_time_text (id TEXT PRIMARY KEY, tz TIMESTAMPTZ, ts TIMESTAMP, d DATE, tm TIME)"
+
+
+-- PostgreSQL keeps the instant and shows it in UTC with +00. SQLite keeps
+-- the clock and the offset it was written with, as +HH:MM.
+timeExpected : String -> TimeRow
+timeExpected id =
+    { id = id
+    , tz =
+        if dialectName == "sqlite" then
+            "2026-11-01 12:13:48.987333+10:00"
+
+        else
+            "2026-11-01 02:13:48.987333+00"
+    , ts = "2026-11-01 02:13:48.5"
+    , d = "2026-11-01"
+    , tm = "02:13:48"
+    }
+
+
+timeSetup : Db -> Task Error ()
+timeSetup db =
+    Task.sequence
+        [ drop db "sqc_time_text"
+        , unit (Db.exec db timeDdl [])
+        , unit
+              (Db.exec
+                  db
+                  "INSERT INTO sqc_time_text VALUES ('t1', '2026-11-01 12:13:48.987333+10:00', '2026-11-01 02:13:48.5', '2026-11-01', '02:13:48')"
+                  [])
+        ]
+        |> unit
+
+
+timeFields : Dict String String -> TimeRow
+timeFields row =
+    { id = Db.getField "id" row
+    , tz = Db.getField "tz" row
+    , ts = Db.getField "ts" row
+    , d = Db.getField "d" row
+    , tm = Db.getField "tm" row
+    }
+
+
+timeTests : Db -> List Test
+timeTests db =
+    [ Test.test
+          "time columns: a Store String field reads timestamptz, timestamp, date and time as stable text"
+          (\_ ->
+              Test.equal
+                  (Ok [ timeExpected "t1" ])
+                  (Task.run
+                      (timeSetup db
+                          |> Task.andThen
+                                 (\_ -> Store.toList db (Store.query timeRows)))))
+    , Test.test
+          "time columns: Db.query + Db.getField reads the same text with no ::text"
+          (\_ ->
+              Test.equal
+                  (Ok [ timeExpected "t1" ])
+                  (Task.run
+                      (timeSetup db
+                          |> Task.andThen
+                                 (\_ ->
+                                     Db.query
+                                         db
+                                         "SELECT id, tz, ts, d, tm FROM sqc_time_text"
+                                         [])
+                          |> Task.map (List.map timeFields))))
+    , Test.test
+          "time columns: the text read back is written back unchanged by Store.insert"
+          (\_ ->
+              Test.equal
+                  (Ok [ timeExpected "t1", timeExpected "t2" ])
+                  (Task.run
+                      (timeSetup db
+                          |> Task.andThen
+                                 (\_ -> Store.findBy db timeRows "id" "t1")
+                          |> Task.andThen
+                                 (\found ->
+                                     case found of
+
+                                         Just r ->
+                                             unit
+                                                 (Store.insert
+                                                     db
+                                                     timeRows
+                                                     { r | id = "t2" })
+
+                                         Nothing ->
+                                             Task.fail
+                                                 (Error.invalidInput
+                                                     "row t1 is missing"))
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.toList
+                                         db
+                                         (Store.query timeRows
+                                             |> Store.orderAsc "id")))))
+    ]
+
 
 tests : List Test
 tests =
@@ -5143,6 +5800,10 @@ tests =
                 ++ writeTests db
                 ++ kindTests db
                 ++ nestedMaybeTests db
+                ++ externalTests db
+                ++ maybeFieldTests db
+                ++ generatedTests db
+                ++ timeTests db
 
 
 main =

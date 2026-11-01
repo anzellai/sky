@@ -1,0 +1,159 @@
+module Main exposing (main)
+
+-- A form submitted before the page is live must not end on a 403 JSON page
+-- (v0.29.1). scripts/spa-early-submit-verify.mjs drives it, run by
+-- scripts/spa-rpc-order-e2e.sh, built for --target web:app (Sky.Spa) and
+-- --target web (Sky.Live).
+--
+--   /form  a Std.Ui form with a typed record and a field bound to `onInput`.
+--          Sky.Spa: a submit made while the wasm client hydrates is held and
+--          replayed once the client is live, with the typed text. With no
+--          JavaScript, the native POST answers 303 to the same URL.
+--   /unsub an App.api route that takes a form body. It is still reached.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Sky.Http.Server as Server
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type Page
+    = Home
+    | FormPage
+    | Missing
+
+type alias Entry =
+    { name : String }
+
+type alias Model =
+    { page : Page
+    , draft : String
+    , saved : String
+    , saves : Int
+    , stamp : String
+    }
+
+type Msg
+    = Draft String
+    | Save Entry
+    | Stamp
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Home, draft = "", saved = "", saves = 0, stamp = "-" }
+    , Cmd.none
+    )
+
+
+-- A server-only value: the `Stamp` arm runs on the server, so the backend
+-- renders the first paint (SSR).
+serverStamp : String -> String
+serverStamp label =
+    label
+        ++ Result.withDefault
+               "?"
+               (Task.run (Time.sleep 1 |> Task.map (\_ -> "@server")))
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Draft text ->
+            ( { model | draft = text }, Cmd.none )
+
+        Save entry ->
+            ( { model | saved = entry.name, saves = model.saves + 1 }
+            , Cmd.none
+            )
+
+        Stamp ->
+            ( { model | stamp = serverStamp "stamp" }, Cmd.none )
+
+
+testId : String -> Ui.Attribute msg
+testId name =
+    Ui.htmlAttribute "data-testid" name
+
+
+formPage : Model -> Element Msg
+formPage model =
+    Ui.column
+        [ Ui.spacing 12 ]
+        [ Ui.form
+              [ testId "form", Ui.onSubmit Save ]
+              [ Ui.input
+                    [ testId "name"
+                    , Ui.name "name"
+                    , Ui.htmlAttribute "value" model.draft
+                    , Ui.onInput Draft
+                    ]
+              , Ui.input
+                    [ testId "go"
+                    , Ui.htmlAttribute "type" "submit"
+                    , Ui.htmlAttribute "value" "Save"
+                    ]
+              ]
+        , Ui.el
+              [ testId "saves" ]
+              (Ui.text ("saves:" ++ String.fromInt model.saves))
+        , Ui.el [ testId "saved" ] (Ui.text ("saved:" ++ model.saved))
+        , Ui.el [ testId "draft" ] (Ui.text ("draft:" ++ model.draft))
+        ]
+
+
+view : Model -> Element Msg
+view model =
+    case model.page of
+
+        Home ->
+            Ui.column
+                []
+                [ Ui.text "Home page"
+                , Ui.button
+                      [ testId "stamp" ]
+                      { onPress = Just Stamp, label = Ui.text model.stamp }
+                ]
+
+        FormPage ->
+            formPage model
+
+        Missing ->
+            Ui.text "Not found"
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+-- A one-click unsubscribe POST (List-Unsubscribe-Post) sends a form body.
+unsubscribe : Server.Request -> Task Error Server.Response
+unsubscribe req =
+    Task.succeed (Server.text ("unsubscribed:" ++ req.body))
+
+
+routes : List (App.Route Page)
+routes =
+    [ App.route "/" Home
+    , App.route "/form" FormPage
+    , App.api "POST /unsub" unsubscribe
+    ]
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes routes
+        |> App.withNotFound Missing
+
+
+main =
+    App.run app

@@ -52,14 +52,17 @@ package rt
 //     loaded SPA, not an external link.
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 )
 
@@ -225,7 +228,43 @@ func IsCsrfEnabled() bool {
 //   - State-mutating method (POST/PUT/DELETE/PATCH) → require
 //     `X-Sky-Csrf` header matching `__sky_csrf` cookie. Both
 //     present + equal → pass. Missing or mismatch → 403.
+//
+// Every response that sets the CSRF cookie goes out private: a mutating
+// request through csrfPrivateWriter, a GET or HEAD through
+// csrfCookieWriter.decide. A GET or HEAD for a static or immutable asset
+// gets no cookie (csrfIssuesOn) and keeps its own Cache-Control.
+//
+// The Sky.Http.Server and Sky.Live listeners use csrfMiddlewareWithPages:
+// a native form POST to one of their pages answers 303 to the same URL, not
+// the JSON 403, and its body is never read. A page is more than an api or rpc
+// route can be (those are exempt and never reach that point): a Sky.Spa page
+// (Spa_pageRoute), every path under a `Server.staticNotFound` prefix that no
+// other route takes for that method (spaPageSet.matches), and every path of a Sky.Live app that is not a
+// `Live.api` route or a runtime endpoint (liveApp.isNativePagePost). The
+// 403 stays for a JSON POST, a POST with the X-Sky-Csrf header, and any
+// path that is not a page.
 func CSRFMiddleware(next http.Handler) http.Handler {
+	return csrfMiddlewareWithPages(next, nil)
+}
+
+// csrfMiddlewareWithPages is CSRFMiddleware with the page-route test the
+// rejection consults. `isPage` reports whether the request's path is a page
+// of a TEA app, where no handler takes a native form POST. When a request
+// fails the check AND it is a native form POST (isNativeFormPost) to such a
+// page, the answer is pagePostRedirect (303 to the same URL), not the 403
+// JSON page. A browser shows that JSON as the whole page, and a person who
+// pressed "Go" on a phone before the client was live lost the form and the
+// app (v0.29.1). The 303 is safe: no handler runs, the body is not read
+// further, and the browser only makes a same-origin GET of the page it is on.
+// A nil isPage keeps the 403 for every failure.
+func csrfMiddlewareWithPages(next http.Handler, isPage func(*http.Request) bool) http.Handler {
+	reject := func(w http.ResponseWriter, r *http.Request, status, reason string) {
+		if isPage != nil && isNativeFormPost(r) && isPage(r) {
+			pagePostRedirect(w, r)
+			return
+		}
+		csrfReject(w, status, reason)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !csrfEnabled.Load() {
 			next.ServeHTTP(w, r)
@@ -311,7 +350,7 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 		if crossOriginIframeMode() {
 			sameSite = http.SameSiteNoneMode
 		}
-		http.SetCookie(w, &http.Cookie{
+		csrfCookie := &http.Cookie{
 			Name:     cookieName,
 			Value:    cookieToken,
 			Path:     "/",
@@ -319,7 +358,26 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 			MaxAge:   csrfCookieMaxAgeSeconds(),
 			SameSite: sameSite,
 			Secure:   cookieSecureFor(r, cookieName, sameSite),
-		})
+		}
+		if method == http.MethodGet || method == http.MethodHead {
+			// A read: the cookie goes out only when the response is not a
+			// static or immutable asset (csrfIssuesOn), decided when the
+			// handler writes its headers. An asset response that carried
+			// Set-Cookie could not be cached by a CDN (the hashed Sky.Spa
+			// wasm and JS, /_sky/live.<hash>.js, a static mount). When the
+			// cookie does go out, decide marks the response private too.
+			w = &csrfCookieWriter{ResponseWriter: w, r: r, cookie: csrfCookie}
+		} else {
+			http.SetCookie(w, csrfCookie)
+			// The response now sets this visitor's CSRF cookie, so a shared
+			// cache must never store it: whatever the handler writes, and
+			// when, it goes out with `Vary: Cookie` and `Cache-Control:
+			// private` (markPerVisitorPage, which keeps an app's own
+			// directives less `public` and `s-maxage`).
+			pw := &csrfPrivateWriter{ResponseWriter: w}
+			w = pw
+			defer pw.mark()
+		}
 		if newlyIssued {
 			// Stash the freshly-generated token on the request so downstream
 			// handlers calling `CurrentCsrfToken(r)` (in particular Sky.Live's
@@ -335,6 +393,23 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 
 		if !isMutating {
 			next.ServeHTTP(w, r)
+			// A handler that wrote nothing: the headers go out after it
+			// returns, so the cookie can still be decided here.
+			if cw, ok := w.(*csrfCookieWriter); ok {
+				cw.decide(nil)
+			}
+			return
+		}
+
+		// A native form POST that the mux gives to a page handler (a
+		// Spa_pageRoute, or a staticNotFound catch-all on a path no other
+		// route takes for that method) answers 303 to the same URL before the
+		// token is looked for, so the body (a password in it) is never read.
+		// That handler takes no POST: with or without the right token the
+		// answer is the same 303. A path another route takes for the method
+		// is not a page, so it goes on to the token check below.
+		if isPage != nil && isNativeFormPost(r) && isPage(r) {
+			pagePostRedirect(w, r)
 			return
 		}
 
@@ -371,18 +446,122 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 			submitted = tok
 		}
 		if submitted == "" || cookieToken == "" {
-			csrfReject(w, "csrf_missing", "missing X-Sky-Csrf header / __sky_csrf form field, or __sky_csrf cookie")
+			reject(w, r, "csrf_missing", "missing X-Sky-Csrf header / __sky_csrf form field, or __sky_csrf cookie")
 			return
 		}
 		// crypto/subtle.ConstantTimeCompare returns 1 on equal,
 		// 0 on different OR different-length. Defeats timing-attack
 		// token discovery.
 		if subtle.ConstantTimeCompare([]byte(submitted), []byte(cookieToken)) != 1 {
-			csrfReject(w, "csrf_invalid", "submitted CSRF token does not match cookie")
+			reject(w, r, "csrf_invalid", "submitted CSRF token does not match cookie")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// csrfCookieWriter holds the CSRF cookie of a GET or HEAD until the handler
+// writes its headers, then sets it only when csrfIssuesOn says the response
+// is not a static or immutable asset.
+type csrfCookieWriter struct {
+	http.ResponseWriter
+	r       *http.Request
+	cookie  *http.Cookie
+	decided bool
+}
+
+func (w *csrfCookieWriter) decide(sniff []byte) {
+	if w.decided {
+		return
+	}
+	w.decided = true
+	if csrfIssuesOn(w.r.URL.Path, w.Header(), sniff) {
+		http.SetCookie(w.ResponseWriter, w.cookie)
+		// This visitor's cookie goes out, so a shared cache must never
+		// store the response: `Vary: Cookie` and `Cache-Control: private`,
+		// keeping the app's own directives less `public` and `s-maxage`.
+		// An asset that gets no cookie keeps its own Cache-Control.
+		markPerVisitorPage(w.ResponseWriter.Header())
+	}
+}
+
+func (w *csrfCookieWriter) WriteHeader(code int) {
+	w.decide(nil)
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *csrfCookieWriter) Write(b []byte) (int, error) {
+	w.decide(b)
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *csrfCookieWriter) Flush() {
+	w.decide(nil)
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap exposes the wrapped writer to http.ResponseController.
+func (w *csrfCookieWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Hijack hands the connection over (a WebSocket upgrade). No response
+// headers follow, so no cookie is set.
+func (w *csrfCookieWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.decided = true
+	if h, ok := w.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errHijackNotSupported
+}
+
+// csrfAssetExts are the file extensions of a static asset. A path that ends
+// in one of them, answered with anything but HTML, gets no CSRF cookie.
+var csrfAssetExts = map[string]bool{
+	".js": true, ".mjs": true, ".css": true, ".wasm": true, ".map": true,
+	".br": true, ".gz": true, ".zst": true, ".json": true, ".webmanifest": true,
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true,
+	".avif": true, ".svg": true, ".ico": true, ".bmp": true,
+	".woff": true, ".woff2": true, ".ttf": true, ".otf": true, ".eot": true,
+	".mp3": true, ".mp4": true, ".webm": true, ".ogg": true, ".wav": true,
+	".pdf": true, ".txt": true, ".xml": true, ".zip": true,
+}
+
+// csrfIssuesOn reports whether a GET/HEAD response gets the CSRF cookie.
+// An HTML response always does: the page embeds the token, so the cookie
+// must come with it. A static or immutable asset never does: a response
+// whose Cache-Control says `immutable`, whose type is a script, wasm, style,
+// image, font, audio, video or opaque bytes, or whose path has an asset
+// extension. Anything else (a JSON or text route) keeps the cookie, as
+// before, so a client that starts with such a GET gets a token. `sniff` is
+// the first body bytes when the handler set no Content-Type (net/http then
+// sniffs the same way).
+func csrfIssuesOn(path string, h http.Header, sniff []byte) bool {
+	ct := strings.ToLower(h.Get("Content-Type"))
+	if ct == "" && len(sniff) > 0 {
+		ct = strings.ToLower(http.DetectContentType(sniff))
+	}
+	if strings.HasPrefix(ct, "text/html") {
+		return true
+	}
+	if strings.Contains(strings.ToLower(h.Get("Cache-Control")), "immutable") {
+		return false
+	}
+	for _, p := range []string{
+		"text/javascript", "application/javascript", "application/x-javascript",
+		"application/wasm", "text/css", "image/", "font/", "audio/", "video/",
+		"application/font", "application/octet-stream", "application/x-gzip",
+		"application/gzip", "application/manifest+json",
+	} {
+		if strings.HasPrefix(ct, p) {
+			return false
+		}
+	}
+	base := path[strings.LastIndex(path, "/")+1:]
+	if i := strings.LastIndex(base, "."); i > 0 && csrfAssetExts[strings.ToLower(base[i:])] {
+		return false
+	}
+	return true
 }
 
 // csrfBodyPeekMax bounds how much of a request body the middleware will
@@ -752,3 +931,209 @@ func CurrentCsrfTokenForRequest(r *http.Request) string {
 	}
 	return ""
 }
+
+// ─── Native form POST to a page route ─────────────────────────
+
+// isNativeFormPost reports whether r is what a browser sends when it submits
+// an HTML form by itself: a POST with a form content type and no X-Sky-Csrf
+// header. Every Sky client request (Sky.Live's event POST, a Sky.Spa RPC)
+// sends JSON or the header, so none of them matches.
+func isNativeFormPost(r *http.Request) bool {
+	if r.Method != http.MethodPost || r.Header.Get(SkyCsrfHeaderName) != "" {
+		return false
+	}
+	ct := strings.ToLower(r.Header.Get("Content-Type"))
+	return strings.HasPrefix(ct, "application/x-www-form-urlencoded") ||
+		strings.HasPrefix(ct, "multipart/form-data")
+}
+
+// pagePostRedirect answers a native form POST to a page route: 303 See Other
+// to the same URL, query included, so the browser GETs the page it is on.
+// It never reads the body (a password in it goes nowhere) and the answer is
+// never cached. The location is always a path on this origin
+// (sameOriginLocation): a request line such as `POST //evil.example/x` must
+// not become a redirect to another host.
+func pagePostRedirect(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Location", sameOriginLocation(r.URL.RequestURI()))
+	w.WriteHeader(http.StatusSeeOther)
+}
+
+// sameOriginLocation turns a request URI into a Location that stays on this
+// origin. A browser reads `//host/x` and `/\host/x` as a link to another
+// host, so leading slashes and backslashes collapse to one `/`. Anything that
+// is not a path (an absolute URI on the request line) becomes `/`.
+func sameOriginLocation(uri string) string {
+	if uri == "" || (uri[0] != '/' && uri[0] != '\\') {
+		return "/"
+	}
+	i := 0
+	for i < len(uri) && (uri[i] == '/' || uri[i] == '\\') {
+		i++
+	}
+	return "/" + uri[i:]
+}
+
+// spaPageSet holds the page handlers of ONE Server.listen route list: the mux
+// patterns whose handler answers a POST with 303 (pagePostRedirect).
+// serverRouteMux fills it with each Spa_pageRoute pattern that owns its path's
+// POST, and with the pattern of a `Server.staticNotFound` catch-all. The
+// listener's CSRF middleware (serverListenerHandler) asks it whether the mux
+// gives a request (method and path) to one of those handlers. It is per mux,
+// not process-wide: a second server in the process, or a plain
+// CSRFMiddleware, keeps the 403.
+type spaPageSet struct {
+	mux *http.ServeMux
+	mu  sync.Mutex
+	// pages maps a registered mux pattern to its kind.
+	pages map[string]spaPageKind
+}
+
+type spaPageKind int
+
+const (
+	// spaPageRoute is a Spa_pageRoute pattern.
+	spaPageRoute spaPageKind = iota + 1
+	// spaNotFoundPage is a `Server.staticNotFound` mount. It renders the
+	// NotFound page for every path under its prefix that no other route takes.
+	spaNotFoundPage
+)
+
+// spaPageSets maps a *http.ServeMux made by serverRouteMux to its spaPageSet.
+var spaPageSets sync.Map
+
+func newSpaPageSet(mux *http.ServeMux) *spaPageSet {
+	return &spaPageSet{mux: mux, pages: map[string]spaPageKind{}}
+}
+
+// add records muxPattern, the exact pattern string registered on the mux.
+func (s *spaPageSet) add(muxPattern string, kind spaPageKind) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pages[muxPattern] = kind
+}
+
+// matches reports whether the mux dispatches r (its method and its path) to
+// one of the set's page handlers. A path another route takes for r's method
+// (a `Server.post` or `Server.any` next to a staticNotFound catch-all, an api
+// or rpc route) is not a page, so its handler runs and a failed check is the
+// normal 403. The runtime's own paths (`/_sky/`, `/_rpc/`) and a
+// protocol-relative path are never pages.
+func (s *spaPageSet) matches(r *http.Request) bool {
+	path := r.URL.Path
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") ||
+		strings.HasPrefix(path, "/_sky/") || strings.HasPrefix(path, "/_rpc/") {
+		return false
+	}
+	_, pattern := s.mux.Handler(r)
+	s.mu.Lock()
+	kind := s.pages[pattern]
+	s.mu.Unlock()
+	switch kind {
+	case spaPageRoute:
+		// The mux answers a path it would first clean or redirect with the
+		// pattern it redirects to. Only a path the pattern itself matches is
+		// the page.
+		pat := pattern
+		if i := strings.IndexByte(pat, ' '); i >= 0 {
+			pat = pat[i+1:]
+		}
+		return pagePatternMatch(pat, path)
+	case spaNotFoundPage:
+		// The mux answers the mount's path without its trailing slash
+		// ("/app" for "/app/") with this pattern too, as its redirect to the
+		// mount. That path is the mount, so it is a page as well.
+		return strings.HasPrefix(path, pattern) ||
+			(strings.HasSuffix(pattern, "/") && path == strings.TrimSuffix(pattern, "/"))
+	}
+	return false
+}
+
+// spaPagesOf returns the page test for a mux made by serverRouteMux, or nil
+// (no page answers 303) for any other handler.
+func spaPagesOf(mux *http.ServeMux) func(*http.Request) bool {
+	if v, ok := spaPageSets.Load(mux); ok {
+		return v.(*spaPageSet).matches
+	}
+	return nil
+}
+
+// pagePatternMatch reports whether path matches a page route pattern as the
+// Go mux registers it: `/{$}` is the root only, a `:name` or `{name}` segment
+// matches one non-empty segment, and anything else matches exactly. Empty
+// segments are kept, so `//` never matches `/`.
+func pagePatternMatch(pat, path string) bool {
+	if pat == "/{$}" {
+		return path == "/"
+	}
+	if pat == path {
+		return true
+	}
+	ps := strings.Split(pat, "/")
+	rs := strings.Split(path, "/")
+	if len(ps) != len(rs) {
+		return false
+	}
+	for i := range ps {
+		seg := ps[i]
+		if strings.HasPrefix(seg, ":") || (strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}")) {
+			if rs[i] == "" {
+				return false
+			}
+			continue
+		}
+		if seg != rs[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// csrfPrivateWriter marks a mutating response that sets the CSRF cookie as
+// private (markPerVisitorPage) when its header goes out: at the first
+// WriteHeader, Write or Flush, or after the handler returns when it wrote
+// nothing. The handler may set its own Cache-Control first; `public` and
+// `s-maxage` are dropped from it and every other directive is kept. A GET or
+// HEAD is marked by csrfCookieWriter.decide instead, and only when it gets
+// the cookie.
+type csrfPrivateWriter struct {
+	http.ResponseWriter
+	marked bool
+}
+
+func (c *csrfPrivateWriter) mark() {
+	if !c.marked {
+		c.marked = true
+		markPerVisitorPage(c.ResponseWriter.Header())
+	}
+}
+
+func (c *csrfPrivateWriter) WriteHeader(code int) {
+	c.mark()
+	c.ResponseWriter.WriteHeader(code)
+}
+
+func (c *csrfPrivateWriter) Write(b []byte) (int, error) {
+	c.mark()
+	return c.ResponseWriter.Write(b)
+}
+
+// Flush keeps http.Flusher for the SSE handlers behind the middleware.
+func (c *csrfPrivateWriter) Flush() {
+	c.mark()
+	if f, ok := c.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack keeps http.Hijacker for a WebSocket upgrade behind the middleware.
+func (c *csrfPrivateWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	c.marked = true
+	if h, ok := c.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errHijackNotSupported
+}
+
+// Unwrap exposes the wrapped writer to http.ResponseController.
+func (c *csrfPrivateWriter) Unwrap() http.ResponseWriter { return c.ResponseWriter }

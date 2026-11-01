@@ -60,6 +60,14 @@ import Sky.Core.Error exposing (Error)
 -- when the client sent one, e.g. `"a.example.com"` or
 -- `"a.localhost:8000"`. It is also in `headers` under `"Host"`. An app
 -- that serves several domains reads it to tell them apart.
+--
+-- Header names are case-insensitive. `headers` holds each name in
+-- canonical form (`Content-Type`, `X-Sky-Api-Key`, `X-Real-Ip`) whatever
+-- case the client or a proxy sent (HTTP/2 sends them in lower case), so
+-- `Dict.get "X-Sky-Api-Key" req.headers` finds `x-sky-api-key`. A key in
+-- another case (`"x-sky-api-key"`, `"X-Real-IP"`) never matches, and
+-- `sky check` warns about it. [`header`] ignores case, also on a request a
+-- test builds by hand: prefer it.
 type alias Request =
     { method : String
     , path : String
@@ -271,7 +279,9 @@ queryParam =
     Ffi.kernel "Server_queryParam"
 
 
--- | `header name req` — read a request header (case-insensitive).
+-- | `header name req` — read a request header, ignoring the case of its
+-- name: `"x-sky-api-key"`, `"X-Sky-Api-Key"` and `"X-SKY-API-KEY"` all find
+-- it. Prefer it to `Dict.get` on `req.headers`.
 header : String -> Request -> Maybe String
 header =
     Ffi.kernel "Server_header"

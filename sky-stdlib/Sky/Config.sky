@@ -66,6 +66,7 @@ module Sky.Config exposing
     , withTelemetryHistogramWindow
     , withTelemetryDbCapacity
     , withTelemetrySynchronousCommit
+    , withTelemetryQueryKeys
     , withLiveBroker
     )
 
@@ -257,6 +258,21 @@ withTelemetryDbCapacity capacity cfg =
 withTelemetrySynchronousCommit : Bool -> Config -> Config
 withTelemetrySynchronousCommit durable cfg =
     setTelemetrySynchronousCommit (onOff durable) cfg
+
+
+-- | The query keys that telemetry may record with their values
+-- (`SKY_TELEMETRY_QUERY_KEYS`). Spans, the access log and page views drop a
+-- request's query string by default, because a query can carry a token or
+-- personal data. Name only keys whose values are safe to keep, such as
+-- `page` or `sort`:
+--
+--     Config.default |> Config.withTelemetryQueryKeys [ "page", "sort" ]
+--
+-- The same list applies to outbound `Http` client spans. Operator env still
+-- wins. See `docs/observability.md`, "What is captured".
+withTelemetryQueryKeys : List String -> Config -> Config
+withTelemetryQueryKeys keys cfg =
+    setTelemetryQueryKeys keys cfg
 
 
 -- | Set the Sky.Live cross-instance pub/sub broker URL — e.g.
@@ -487,3 +503,8 @@ telemetryEndpoint telemetry =
 
         Otlp endpoint ->
             endpoint
+
+
+setTelemetryQueryKeys : List String -> Config -> Config
+setTelemetryQueryKeys =
+    Ffi.kernel "Config_withTelemetryQueryKeys"

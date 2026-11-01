@@ -5,6 +5,7 @@
 //   - only reads `.env` in the current working directory (no recursive search)
 //   - never overrides an already-set env var (precedence: shell > .env)
 //   - silently no-ops if `.env` doesn't exist
+//   - skips `.env` in a `sky test` / `sky fuzz` run (SKY_TEST_MODE)
 //   - tolerant parser (KEY=VALUE, strips matching quote pairs, ignores blank
 //     lines and `#` comments)
 //
@@ -90,7 +91,22 @@ func unsetEnvRaw(name string) {
 
 func init() {
 	// Best-effort load of .env; failures are silent.
-	_ = loadDotEnvFile(".env", false)
+	loadStartupDotEnv(".env", os.Getenv)
+}
+
+// loadStartupDotEnv is the start-up load of `.env`, skipped in a `sky test` or
+// `sky fuzz` run (SKY_TEST_MODE). A `.env` holds the developer's own settings,
+// and one that names a shared or production database made the tests and their
+// seeds write to it (v0.29.1). A run in test mode takes its configuration
+// from the environment the runner gives it (`.env.test`), and its database
+// from there or from a throwaway one. `Process.loadEnv` still loads a file a
+// program names, but `Process.loadEnv ""` (which means `.env`) loads nothing
+// in test mode.
+func loadStartupDotEnv(path string, getenv func(string) string) {
+	if testModeValueOn(getenv("SKY_TEST_MODE")) {
+		return
+	}
+	_ = loadDotEnvFile(path, false)
 }
 
 // Process_loadEnv: explicit loader. Task-shaped per the
@@ -113,6 +129,12 @@ func Process_loadEnv(path any) any {
 			p = s
 		}
 		if p == "" {
+			// An empty path means `.env`, which a `sky test` / `sky fuzz`
+			// run never loads (v0.29.1, see loadStartupDotEnv). An explicit
+			// file name still loads in test mode.
+			if testModeValueOn(os.Getenv("SKY_TEST_MODE")) {
+				return Ok[any, any](nil)
+			}
 			p = ".env"
 		}
 		if err := loadDotEnvFile(p, false); err != nil {

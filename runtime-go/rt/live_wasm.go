@@ -307,6 +307,9 @@ func spaRun(cfg any) any {
 			spaFireOnNavigate() // initial-mount navigation hook (mirrors Sky.Live)
 		}
 	}
+	// The client is live: hand back what the boot loader held while it
+	// hydrated (spa_boot.go), the typed field values and a submitted form.
+	spaReplayHeldInput()
 
 	select {} // keep the Go runtime alive to service events
 }
@@ -819,6 +822,25 @@ func renderCurrent() {
 	spaInstallSelectTracker()
 	NativeInstallCaretTracker()
 	spaPrev = &vn
+}
+
+// spaReplayHeldInput calls the boot loader's `__skyHydrated` (spa_boot.go)
+// once the client has hydrated and every handler is attached. The loader held
+// a form submitted during hydration and recorded the text typed into fields;
+// `__skyHydrated` puts the text back, sends it as input and change events to
+// the app's handlers, and submits the held form through the app. A page
+// without the loader (no such function) is a no-op.
+func spaReplayHeldInput() {
+	fn := js.Global().Get("__skyHydrated")
+	if fn.Type() != js.TypeFunction {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			spaReportPanic("replay held input", r)
+		}
+	}()
+	fn.Invoke()
 }
 
 // spaClearHydratingMarker removes the `data-sky-hydrating` attribute the SSR page

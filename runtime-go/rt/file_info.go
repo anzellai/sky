@@ -36,7 +36,9 @@ const (
 const resolveMaxLinks = 40
 
 // fileError maps a Go file-system error to a Sky Error: NotFound,
-// PermissionDenied, or Io, its message prefixed with the operation.
+// PermissionDenied, Conflict (the path already exists), InvalidInput, or Io,
+// its message prefixed with the operation. Every Sky.Core.File kernel uses it,
+// so one os error is one Sky error kind whichever function met it.
 func fileError(op string, err error) any {
 	msg := op + ": " + err.Error()
 	switch {
@@ -44,6 +46,8 @@ func fileError(op string, err error) any {
 		return makeError(5, "NotFound", msg)
 	case errors.Is(err, fs.ErrPermission):
 		return ErrPermissionDenied(msg)
+	case errors.Is(err, fs.ErrExist):
+		return ErrConflict(msg)
 	case errors.Is(err, fs.ErrInvalid):
 		return ErrInvalidInput(msg)
 	}

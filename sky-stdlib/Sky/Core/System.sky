@@ -85,9 +85,11 @@ getcwd =
 
 
 -- ─── .env loading ──────────────────────────────────────────────────
--- | Load environment variables from a `.env`-formatted file at the
--- given path.  Already-set vars take precedence (standard godotenv
--- semantics).
+-- | Load environment variables from the `.env` file in the current
+-- directory.  Already-set vars take precedence (standard godotenv
+-- semantics).  A missing file is no error.  In a `sky test` or
+-- `sky fuzz` run (test mode) it loads nothing: test mode never
+-- reads `.env`, so a database it names cannot reach the tests.
 loadEnv : () -> Task Error ()
 loadEnv =
     Ffi.kernel "System_loadEnv"

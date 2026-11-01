@@ -51,7 +51,10 @@ start (port in use) is the Task's `Err`, and `Task.spawn` drops it unless you
 handle it. See `sky doc Std.App`.
 
 A handler's `req.host` is the name the client used (port included, also in
-`req.headers` under `"Host"`), so one app can serve several domains.
+`req.headers` under `"Host"`), so one app can serve several domains. Read a
+header with `Server.header "x-api-key" req` (and a client response's with
+`Http.header name resp`): both ignore case. `req.headers` holds canonical names
+(`X-Api-Key`), so `Dict.get "x-api-key" req.headers` never matches.
 `Server.bytes "image/png" png` answers binary data byte for byte, and
 `File.writeBytes path bytes` saves it (`png` from `Bytes.fromBase64`, for
 example).
@@ -208,7 +211,13 @@ snake column): `serial "id"` (auto-increment PK) · `unique "email"` ·
 `touchOnUpdate "updated_at"` (DB-stamped on insert AND auto-bumped to `now()` on
 every update) · `defaultWith "id" (\_ -> SqlValue)` (app-computed default, e.g. a
 UUID PK) · `generated [ "id", "created_at" ]` (columns `insert`/`update` omit so
-the DB fills them). `Store.create conn store` emits the dialect-correct DDL;
+the DB fills them). `defaultWith`, `defaultNow`, `touchOnUpdate`, `default*` and
+`generated` may also name a column the table has and the codec does not carry
+(an external column, such as a `created_at` the record leaves out): the name is
+used as written, the Store writes it as the builder says, and it never creates,
+adds or drops it, so a migration or a `Std.Db.Schema` table must own it. A
+builder problem (an unknown column in `unique` / `index` / `primaryKey`) fails
+every verb on the store; it is logged at ERROR level and `sky verify` reports it. `Store.create conn store` emits the dialect-correct DDL;
 `Store.upsert` is INSERT … ON CONFLICT DO UPDATE (idempotent config rows).
 A default must fit its column (`defaultBool` for a `Bool` field, an enum's
 default one of its names), and every `SqlValue` must be of its column's kind:
@@ -217,6 +226,11 @@ a text column takes `SqlString`, an int `SqlInt`, a real `SqlFloat` or
 reads, `SqlNull` only a `Maybe` field (compare NULL with `isNull`). A
 `SqlString` compared with an int column is read as an Int. Anything else is an
 `Err` before the statement, the same on SQLite and PostgreSQL.
+A time column read as text (a `String` field, `Db.getField`, no `::text` in
+the SQL) is PostgreSQL's own text on a UTC server, on every host
+(v0.29.1): `timestamptz` as `2026-11-01 02:13:48.987333+00`, `timestamp`
+without the offset, `date` as `2026-11-01`. SQLite gives the same shapes. The
+text writes back unchanged as a parameter.
 
 **Aggregates and projections** are builders: `groupBy` + `aggregate` with
 `key` / `countAs` / `countIfAs` / `sumAs` / `minAs` / `maxAs` (+ `having`),
@@ -376,7 +390,10 @@ Every observable side effect returns `Task Error a` (`File.*`, `Http.*`, `Db.*`,
 `Maybe a` (`String.toInt`, JSON decoders). A discarded `let _ = TaskExpr` is
 auto-forced. Bridge with `Task.fromResult` / `Task.andThenResult` /
 `Task.onError`. Top-level `apiKey = System.getenv "K" |> Task.run |> Result.withDefault ""`
-still needs the explicit `Task.run`.
+still needs the explicit `Task.run`. Every `File.*` failure has its kind
+(v0.29.1): a missing path is `NotFound`, a refused one `PermissionDenied`, a
+path that already exists `Conflict`, anything else `Io`. Match the kind, never
+`Ffi`.
 
 **Go FFI (`sky add`) is the one exception, on purpose: it returns `Result
 Error a`, not a Task.** The Go call runs where the expression is evaluated, and
@@ -609,7 +626,7 @@ sky build src/Main.sky       # compile → sky-out/app
 sky run src/Main.sky [-- args] # build + run; args after -- reach System.args (--profile for runtime CPU/mem/hang profiling)
 sky check src/Main.sky       # type-check + go build (keeps no binary — but DOES compile)
 sky check --format json src/Main.sky   # NDJSON diagnostics on stdout, for CI and tools (also build / test / fmt --check)
-sky verify                   # one-shot project gate: fmt + check + build + tests
+sky verify                   # one-shot project gate: fmt + check + build + stores + tests
 sky test tests/MyTest.sky    # Sky.Test runner (SKY_TEST_JSON=<path> also writes a per-case JSON report)
 sky fuzz src/Main.sky [--target web:app]   # no-panic model fuzz of update; a Sky.Spa target adds the differential split oracle
 sky fmt src/Main.sky         # format (always run after editing .sky)
@@ -687,6 +704,12 @@ refuses to start with no store and an unwritable data dir. A link to a path with
 no client route (or a `Spa.serverRoute` path) is a full page load. A handled
 client `Err` is never logged as an RPC failure; call `Spa.reportRpcFailure` for a
 real unhandled one. A `Dict k v` field crosses the wire through `Codec.dict`.
+A form submitted while the client hydrates (Enter, a phone's "Go" key, a
+password manager) is held, with the text typed so far, and the client submits
+it once it is live (clicks before then are not replayed). A server-rendered
+page's POST forms carry the `__sky_csrf` field, and a native form POST to a
+page (no JavaScript, or a lost cookie) answers 303 to the same URL, on Sky.Spa
+and Sky.Live, never a 403 JSON page.
 
 **Serving a Sky.Spa build — precompress the wasm.** A Go→wasm client is multi-MB
 raw (~2.5 MB brotli), so it MUST be served compressed or the first paint drags on
@@ -715,13 +738,17 @@ does NOT cache it by default; add a cache rule for `*.wasm`), or the origin
 re-sends it every visit.
 
 Run `sky verify` before you consider a change done — it runs fmt-clean +
-type-check + production build + every `tests/*.sky` suite, and exits non-zero on
-any failure.
+type-check + production build + a Store check (when the entry exposes `db`, no
+Store builder names an unknown column) + every `tests/*.sky` suite, and exits
+non-zero on any failure.
 
 **Test mode and mocks (offline scenario tests).** A project with a `.env.test`
 file runs `sky test` in test mode: outbound HTTP is mocked, a `[database]`
 project gets an ephemeral offline database, and `SKY_TEST_SEED` /
-`SKY_TEST_CLOCK_MS` make effects deterministic. A mock is one JSON file under
+`SKY_TEST_CLOCK_MS` make effects deterministic. `sky test` never takes a
+database from `.env`, and test mode never loads `.env` (v0.29.1): put a test
+DSN or setting in `.env.test`. A project whose `.env` names a database runs in
+test mode even without a `.env.test`, on the throwaway database. A mock is one JSON file under
 `tests/mocks/`; an unmatched outbound request fails closed (so the app's error
 path runs for free). The shape:
 
@@ -801,7 +828,10 @@ typed front door — a top-level `config` binding built with **`Sky.Config`**
 resolving through the SAME precedence (operator env still wins). It includes
 telemetry **storage** tuning — `withTelemetryAggregationWindow` /
 `withTelemetryHistogramWindow` (coalesce metric rows to cut DB growth) and
-`withTelemetryDbCapacity` (the size-report "near full" flag). Run
+`withTelemetryDbCapacity` (the size-report "near full" flag), and
+`withTelemetryQueryKeys [ "page" ]` (query keys telemetry may keep: spans and
+logs record route templates, no query string and an anonymised client IP by
+default; `SKY_TELEMETRY_URL` / `SKY_TELEMETRY_CLIENT_IP` widen it). Run
 `sky doc Sky.Config` for the full set; each builder names its `SKY_TELEMETRY_*`
 env override.
 

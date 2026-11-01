@@ -1151,7 +1151,7 @@ its tabs reload, and the old session cookie is never adopted again.
 | `req.query`   | `String`              | Raw query string (use `Sky.Core.Http.parseQuery`) |
 | `req.params`  | `Dict String String`  | Matched `:name` route segments |
 | `req.method`  | `String`              | "GET" / "POST" / ... |
-| `req.headers` | `Dict String String`  | Canonical-case |
+| `req.headers` | `Dict String String`  | Canonical names (`X-Sky-Api-Key`) on every request path, whatever case the client sent; `Server.header` ignores case |
 | `req.cookies` | `Dict String String`  | Parsed |
 
 Adding ANY of these fields to a user `req` access pattern is

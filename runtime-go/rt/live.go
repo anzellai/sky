@@ -1425,15 +1425,52 @@ func (app *liveApp) dispatchRoot(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if params, ok := matchRoute(ar.pattern, r.URL.Path); ok {
+			// Telemetry records the route template, never the raw path
+			// (telemetry_url.go). An api pattern is matched against the
+			// full path, so it already carries any base path.
+			noteTelemetryRoute(r, ar.pattern)
 			app.serveAPI(ar, params, w, r)
 			return
 		}
 	}
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		noteTelemetryRoute(r, app.telemetryPageTemplate(r.URL.Path))
 		app.handleInitial(w, r)
 		return
 	}
+	if r.Method == http.MethodPost {
+		// A form submitted before the client script runs (or with no
+		// JavaScript) is a native POST to the page's own URL. No page takes a
+		// POST, so it answers 303 to the same URL and the browser GETs the
+		// page again; the body is not read (pagePostRedirect).
+		pagePostRedirect(w, r)
+		return
+	}
 	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+}
+
+// isNativePagePost reports whether r reaches this app's page dispatcher
+// (dispatchRoot, mounted at "/" on mux) as a POST that no api route takes.
+// The app's CSRF middleware (liveListenerHandlerFor) answers such a native
+// form POST that fails the check with the same 303 dispatchRoot gives, not
+// with the JSON 403. A path the mux gives to another handler (a mounted
+// sub-app, the static files, a /_sky/ endpoint) is not a page.
+func (app *liveApp) isNativePagePost(mux *http.ServeMux, r *http.Request) bool {
+	if _, pattern := mux.Handler(r); pattern != "/" {
+		return false
+	}
+	if strings.HasPrefix(r.URL.Path, "/_sky/") {
+		return false
+	}
+	for _, ar := range app.api {
+		if ar.method != "" && !strings.EqualFold(ar.method, http.MethodPost) {
+			continue
+		}
+		if _, ok := matchRoute(ar.pattern, r.URL.Path); ok {
+			return false
+		}
+	}
+	return true
 }
 
 // collectLiveRoutes splits a `Live.app` cfg's routes into page routes and api
@@ -1488,12 +1525,7 @@ func (app *liveApp) serveAPI(ar apiRoute, params []string, w http.ResponseWriter
 		RemoteAddr: r.RemoteAddr,
 		Host:       r.Host,
 	}
-	for k, v := range r.Header {
-		if len(v) > 0 {
-			skyReq.Headers[k] = v[0]
-		}
-	}
-	requestHostHeader(skyReq.Headers, r.Host)
+	skyReq.Headers = canonicalRequestHeaders(r.Header, r.Host)
 	for _, ck := range r.Cookies() {
 		skyReq.Cookies[ck.Name] = ck.Value
 	}
@@ -1627,7 +1659,13 @@ func unpackResponse(v any) (int, map[string]string, string) {
 		// Fall back to ContentType field when Headers doesn't set it.
 		// SkyResponse uses ContentType as a convenience field set by
 		// Server.html / Server.json / Server.text.
-		if _, hasCT := headers["Content-Type"]; !hasCT {
+		hasCT := false
+		for k := range headers {
+			if strings.EqualFold(k, "Content-Type") {
+				hasCT = true
+			}
+		}
+		if !hasCT {
 			if f := rv.FieldByName("ContentType"); f.IsValid() {
 				if s, ok := f.Interface().(string); ok && s != "" {
 					headers["Content-Type"] = s
@@ -1733,31 +1771,17 @@ func buildRouteParamsDict(pattern string, values []string) any {
 	return d
 }
 
-// v0.16.8 #423 — headersToDict folds an http.Header (case-canonicalised
-// by Go's net/http stack already) into a Sky `Dict String String`.  We
-// take the first value for each key — Sky-side iteration over multi-
-// valued headers is exotic enough that callers who need it can hit
-// `Live.api` or look at raw request shape from Sky.Http.Server.
-// Empty Header → empty Dict.
-func headersToDict(h http.Header) any {
-	d := Dict_empty()
-	for k, vs := range h {
-		if len(vs) == 0 {
-			continue
-		}
-		d = Dict_insert(k, vs[0], d)
-	}
-	return d
-}
-
-// requestHeadersToDict is headersToDict over a request's headers plus its
-// Host, which net/http keeps in r.Host rather than r.Header. Without it
-// `Dict.get "Host" req.headers` was always Nothing in an init / withRequest
-// seed.
+// requestHeadersToDict folds a request's headers (the first value of each)
+// into a Sky `Dict String String`, plus its Host, which net/http keeps in
+// r.Host rather than r.Header. Without it `Dict.get "Host" req.headers` was
+// always Nothing in an init / withRequest seed.
+//
+// The keys are canonical (`X-Sky-Api-Key`) whatever case the client sent, the
+// same rule as every other request (canonicalRequestHeaders).
 func requestHeadersToDict(r *http.Request) any {
-	d := headersToDict(r.Header)
-	if r.Host != "" && len(r.Header.Values("Host")) == 0 {
-		d = Dict_insert("Host", r.Host, d)
+	d := Dict_empty()
+	for k, v := range canonicalRequestHeaders(r.Header, r.Host) {
+		d = Dict_insert(k, v, d)
 	}
 	return d
 }
@@ -2052,7 +2076,15 @@ func liveListenerHandlerFor(app *liveApp, mux *http.ServeMux, bindHost string) h
 	if app != nil && app.headerSessions {
 		// Header session transport: the X-Sky-Session header is the CSRF
 		// defence (live_session_header.go). No double-submit cookie.
-		csrfed = headerSessionCSRF(skyAssetGuard(mux, nil))
+		csrfed = headerSessionCSRFWithPages(skyAssetGuard(mux, nil), func(r *http.Request) bool {
+			return app.isNativePagePost(mux, r)
+		})
+	} else if app != nil {
+		// A failed native form POST to one of the app's pages answers 303,
+		// as dispatchRoot does for one that passes (isNativePagePost).
+		csrfed = csrfMiddlewareWithPages(skyAssetGuard(mux, nil), func(r *http.Request) bool {
+			return app.isNativePagePost(mux, r)
+		})
 	} else {
 		csrfed = CSRFMiddleware(skyAssetGuard(mux, nil))
 	}
@@ -2070,6 +2102,10 @@ func liveListenerHandlerFor(app *liveApp, mux *http.ServeMux, bindHost string) h
 	}
 	observed := ObservabilityMiddleware(authSlid)
 	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The telemetry route slot goes on here, outside the panic
+		// recovery, so a panic report names the route template the app
+		// found (telemetry_url.go). ObservabilityMiddleware reuses it.
+		r = withTelemetryRouteSlot(r)
 		defer func() {
 			rec := recover()
 			if rec == nil {
@@ -2088,7 +2124,7 @@ func liveListenerHandlerFor(app *liveApp, mux *http.ServeMux, bindHost string) h
 			// Real panic — log to stderr so `go run` / tailing the
 			// server surfaces the cause. Client still gets a
 			// generic 500.
-			LogRecoveredPanic("sky.live", r.Method+" "+r.URL.Path, rec)
+			LogRecoveredPanic("sky.live", r.Method+" "+telemetryPath(r), rec)
 			w.WriteHeader(500)
 			fmt.Fprint(w, "Internal Server Error")
 		}()
@@ -2518,12 +2554,12 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		// the session is stamped above, so this one call captures all navigations,
 		// consent-gated + session-scoped. Referer gives the previous page.
 		if app.analyticsPageViews {
-			analyticsSetContext(r.Header.Get("User-Agent"), r.RemoteAddr)
+			analyticsSetContextFor(r)
 			// Attribute an already-authenticated session BEFORE the page-view, so even
 			// the first render carries the user (the returning-visitor case a manual
 			// `identify` in an update handler can't reach).
 			analyticsApplyIdentity(app.analyticsIdentify, model)
-			analyticsTrackPageView(r.URL.Path, r.Header.Get("Referer"))
+			analyticsTrackPageViewFor(r)
 		}
 		// v0.16.7 #418 — onNavigate Msg dispatch after every URL-driven
 		// route update.  No-op when cfg.onNavigate is nil (the default).
@@ -2649,6 +2685,11 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// behind a prefix-stripping proxy (SKY_LIVE_BASE_PATH) reads the name the
 	// middleware set.
 	csrfToken := CurrentCsrfTokenForRequest(r)
+	if csrfToken != "" {
+		// The page carries this visitor's token (the inline config) and the
+		// response sets the matching cookie: no shared cache may keep it.
+		markPerVisitorPage(w.Header())
+	}
 	// devBanner is "" in production; injected as a sibling of sky-root
 	// so it survives every diff/patch cycle (root replacement won't
 	// blow it away) and stays pinned bottom-right via position:fixed.

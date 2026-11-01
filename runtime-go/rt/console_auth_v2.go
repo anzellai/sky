@@ -908,7 +908,7 @@ func invokeConsoleAuthCallback(cb any, r *http.Request) (ConsoleIdentity, bool) 
 			"class", "ConsoleAuthTimeout",
 			"reason", "too many consoleAuth checks still running",
 			"limit", consoleAuthCallbackMaxInFlight,
-			"path", r.URL.Path)
+			"path", consoleAuditPath(r))
 		return ConsoleIdentity{}, false
 	}
 	req := buildConsoleAuthRequest(r)
@@ -933,7 +933,7 @@ func invokeConsoleAuthCallback(cb any, r *http.Request) (ConsoleIdentity, bool) 
 			"event", "console.auth.timeout",
 			"class", "ConsoleAuthTimeout",
 			"timeout", bound.String(),
-			"path", r.URL.Path,
+			"path", consoleAuditPath(r),
 			"remote", r.RemoteAddr)
 		return ConsoleIdentity{}, false
 	}
@@ -999,12 +999,7 @@ func buildConsoleAuthRequest(r *http.Request) SkyRequest {
 		RemoteAddr: r.RemoteAddr,
 		Host:       r.Host,
 	}
-	for k, v := range r.Header {
-		if len(v) > 0 {
-			req.Headers[k] = v[0]
-		}
-	}
-	requestHostHeader(req.Headers, r.Host)
+	req.Headers = canonicalRequestHeaders(r.Header, r.Host)
 	for _, c := range r.Cookies() {
 		req.Cookies[c.Name] = c.Value
 	}
@@ -1080,7 +1075,7 @@ func recordConsoleAuthEvent(r *http.Request, verdict, subject string) {
 	}
 	fields := []any{
 		"event", "console.auth." + verdict,
-		"path", r.URL.Path,
+		"path", consoleAuditPath(r),
 		"remote", r.RemoteAddr,
 	}
 	if subject != "" {
@@ -1368,3 +1363,20 @@ var (
 	_ = ResetConsoleAuthStateForTesting
 	_ = consoleAuthMode(0)
 )
+
+// consoleAuditOtherPath is the path the console auth audit log records for
+// a request whose path is not under /_sky/.
+const consoleAuditOtherPath = "/_sky/:not-console"
+
+// consoleAuditPath is the request path the console auth audit log records.
+// The gate guards the Sky Console, so the path is a fixed /_sky/ console
+// route and carries no data. Any other path (the gate never sees one today)
+// records consoleAuditOtherPath, so a raw app path can never reach this log.
+// The full client address is kept on purpose: see docs/observability.md,
+// "The Sky Console auth audit log".
+func consoleAuditPath(r *http.Request) string {
+	if p := r.URL.Path; strings.HasPrefix(p, "/_sky/") {
+		return p
+	}
+	return consoleAuditOtherPath
+}

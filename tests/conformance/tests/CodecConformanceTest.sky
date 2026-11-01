@@ -345,9 +345,117 @@ mkErr kind msg details =
     Error.Error kind { message = msg, details = details }
 
 
+-- v0.29.1: Maybe fields of every kind with a `Nothing` blank, and `autoWith`
+-- overrides of 1, 2 and 3 Maybe Int fields. Before the fix an override read
+-- 3000 as `Just 0` and null as `Just 0`, with no error.
+type alias MbPt =
+    { x : Int }
+
+
+type alias Mb =
+    { id : String
+    , a : Maybe Int
+    , name : String
+    , b : Maybe Float
+    , c : Maybe Bool
+    , g : Maybe Int
+    , d : Maybe String
+    , e : Maybe MbPt
+    , f : Maybe (Maybe Int)
+    , h : Maybe Int
+    }
+
+
+mbBlank : Mb
+mbBlank =
+    { id = ""
+    , a = Nothing
+    , name = ""
+    , b = Nothing
+    , c = Nothing
+    , g = Nothing
+    , d = Nothing
+    , e = Nothing
+    , f = Nothing
+    , h = Nothing
+    }
+
+
+mbAuto : Codec Mb
+mbAuto =
+    Codec.auto mbBlank
+
+
+mbWith1 : Codec Mb
+mbWith1 =
+    Codec.autoWith [ ( "a", Codec.maybe Codec.int ) ] mbBlank
+
+
+mbWith2 : Codec Mb
+mbWith2 =
+    Codec.autoWith
+        [ ( "a", Codec.maybe Codec.int ), ( "h", Codec.maybe Codec.int ) ]
+        mbBlank
+
+
+mbWith3 : Codec Mb
+mbWith3 =
+    Codec.autoWith
+        [ ( "a", Codec.maybe Codec.int )
+        , ( "g", Codec.maybe Codec.int )
+        , ( "h", Codec.maybe Codec.int )
+        ]
+        mbBlank
+
+
+mbValues : Mb
+mbValues =
+    { id = "v"
+    , a = Just 3000
+    , name = "values"
+    , b = Just 2.5
+    , c = Just False
+    , g = Just 0
+    , d = Just ""
+    , e = Just { x = 7 }
+    , f = Just (Just 5)
+    , h = Just -1
+    }
+
+
+mbNulls : Mb
+mbNulls =
+    { mbBlank | id = "w", name = "nulls" }
+
+
+mbBoth : Codec Mb -> ( Result Error Mb, Result Error Mb )
+mbBoth codec =
+    ( Codec.fromJson codec (Codec.toJson codec mbValues)
+    , Codec.fromJson codec (Codec.toJson codec mbNulls)
+    )
+
+
 tests : List Test
 tests =
-    [ -- ── Codec.inline: flat JSON, the same bytes as one flat record ────────
+    [
+      -- ── Maybe fields with a Nothing blank, and autoWith overrides ────────
+      Test.test "Maybe fields: Codec.auto with a Nothing blank round-trips a value and null of every Maybe kind"
+        (\_ -> Test.equal ( Ok mbValues, Ok mbNulls ) (mbBoth mbAuto))
+    , Test.test "Maybe fields: autoWith with one Maybe Int override round-trips a value and null"
+        (\_ -> Test.equal ( Ok mbValues, Ok mbNulls ) (mbBoth mbWith1))
+    , Test.test "Maybe fields: autoWith with two Maybe Int overrides round-trips a value and null"
+        (\_ -> Test.equal ( Ok mbValues, Ok mbNulls ) (mbBoth mbWith2))
+    , Test.test "Maybe fields: autoWith with three Maybe Int overrides round-trips a value and null"
+        (\_ -> Test.equal ( Ok mbValues, Ok mbNulls ) (mbBoth mbWith3))
+    , Test.test "Maybe fields: autoWith with two overrides reads 3000, 0 and null from JSON text"
+        (\_ ->
+            Test.equal
+                (Ok ( Just 3000, Nothing, Just 0 ))
+                (Codec.fromJson mbWith2 "{\"id\":\"t\",\"a\":3000,\"name\":\"n\",\"g\":null,\"h\":0}"
+                    |> Result.map (\m -> ( m.a, m.g, m.h ))
+                )
+        )
+    , -- ── Codec.inline: flat JSON, the same bytes as one flat record ────────
       Test.test "inline: writes the same JSON as the flat record"
         (\_ -> Test.equal (Codec.toJson primFlatCodec primFlat) (Codec.toJson primTaggedCodec primTagged))
     , Test.test "inline: reads the flat record's JSON into the embedded record"
@@ -808,7 +916,35 @@ tests =
                     , Codec.fromJson hookAuto "{\"id\":\"h2\",\"data\":null}"
                         |> Result.map (\h -> Encode.encode 0 h.data)
                     ))
+    , Test.test "auto: a List or Dict of Json.Value cannot be marked by the blank, so reading one is an Err"
+        (\_ ->
+            Test.equal
+                ( True, True )
+                ( failed (Codec.fromJson hooksAuto "{\"id\":\"h1\",\"items\":[1]}")
+                , failed (Codec.fromJson hookMapAuto "{\"id\":\"h1\",\"items\":{\"a\":1}}")
+                ))
     ]
+
+
+-- A `List Json.Value` or `Dict String Json.Value` field under Codec.auto: the
+-- blank cannot mark the elements, so a read is a loud Err. One `Json.Value`
+-- field holding the whole array (hookAuto above) reads.
+type alias HooksAuto =
+    { id : String, items : List Encode.Value }
+
+
+hooksAuto : Codec HooksAuto
+hooksAuto =
+    Codec.auto { id = "", items = [ Encode.null ] }
+
+
+type alias HookMapAuto =
+    { id : String, items : Dict String Encode.Value }
+
+
+hookMapAuto : Codec HookMapAuto
+hookMapAuto =
+    Codec.auto { id = "", items = Dict.fromList [ ( "a", Encode.null ) ] }
 
 
 -- A `Json.Value` field under Codec.auto: the blank's JSON value marks it.

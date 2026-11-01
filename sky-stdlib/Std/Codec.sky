@@ -1173,12 +1173,16 @@ keyCount key cols n =
 -- pipeline. The argument is a zero-value witness (a `blank` record) that hands
 -- the runtime the type. Handles scalars, `Maybe` (↔ null), nested records,
 -- lists, and nullary enums (stored as their readable name). Data-carrying ADTs
--- are NOT derivable — give those an explicit `taggedUnion` codec.
+-- are NOT derivable: reading one is an `Err`. Give that field an explicit
+-- `taggedUnion` codec through `autoWith [ ( "shape", shapeCodec ) ] blank`.
 --
 -- A `Json.Value` field carries any JSON. The blank marks it: give the field a
 -- JSON value (`data = Json.Encode.null`), and a `Maybe Json.Value` field a
 -- `Just` one (`more = Just Json.Encode.null`). A field the blank does not
--- mark this way does not decode.
+-- mark this way does not decode. The blank cannot mark the elements of a
+-- `List Json.Value` or a `Dict String Json.Value` field, so reading one is a
+-- loud `Err`: make the field one `Json.Value` that holds the whole array or
+-- object, and read its parts with `Json.Decode`.
 --
 -- Columns / JSON keys are **snake_case** (the DB convention): a record field
 -- `priceMinor` maps to column `price_minor` with no hand-written codec. For a

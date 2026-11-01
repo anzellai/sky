@@ -139,14 +139,14 @@ func aiDownload(ctx context.Context, url, dest, want string) (string, error) {
 		}
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
-			return "", aiFailf(aiInvalidSetting, "bad download URL %q: %v", url, err).with("setting", "url")
+			return "", aiFailf(aiInvalidSetting, "bad download URL %q: %v", aiRedactURL(url), aiStripURL(err)).with("setting", "url")
 		}
 		if have > 0 {
 			req.Header.Set("Range", "bytes="+strconv.FormatInt(have, 10)+"-")
 		}
 		resp, err := aiHTTPClient.Do(req)
 		if err != nil {
-			return "", aiFailf(aiUnreachable, "download %s: %v", url, err).with("target", aiRedactURL(url))
+			return "", aiFailf(aiUnreachable, "download %s: %v", aiRedactURL(url), aiStripURL(err)).with("target", aiRedactURL(url))
 		}
 		flags := os.O_CREATE | os.O_WRONLY
 		switch {
@@ -162,7 +162,7 @@ func aiDownload(ctx context.Context, url, dest, want string) (string, error) {
 		default:
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 			resp.Body.Close()
-			return "", aiFailf(aiUnreachable, "download %s: HTTP %d %s", url, resp.StatusCode, strings.TrimSpace(string(body))).with("target", aiRedactURL(url))
+			return "", aiFailf(aiUnreachable, "download %s: HTTP %d %s", aiRedactURL(url), resp.StatusCode, strings.TrimSpace(string(body))).with("target", aiRedactURL(url))
 		}
 		if flags != 0 {
 			f, err := os.OpenFile(partial, flags, 0o644)
@@ -176,7 +176,7 @@ func aiDownload(ctx context.Context, url, dest, want string) (string, error) {
 				cerr = err
 			}
 			if cerr != nil {
-				return "", aiFailf(aiUnreachable, "download %s interrupted: %v (it resumes on the next attempt)", url, cerr).with("target", aiRedactURL(url))
+				return "", aiFailf(aiUnreachable, "download %s interrupted: %v (it resumes on the next attempt)", aiRedactURL(url), cerr).with("target", aiRedactURL(url))
 			}
 		}
 		got, err := aiFileSha256(partial)

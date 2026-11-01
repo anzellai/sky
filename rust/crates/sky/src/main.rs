@@ -225,6 +225,32 @@ fn take_spa_await_flag(args: &[String]) -> (Vec<String>, bool) {
     (args.iter().filter(|a| *a != flag).cloned().collect(), found)
 }
 
+/// Held around each child spawn of the split's two parallel legs.
+///
+/// On macOS the standard library makes a child's pipe and marks it
+/// close-on-exec in two steps. When the frontend and backend legs spawn from
+/// two threads at once, one child can be forked between those steps and keep
+/// the other child's pipe open. The backend leg then held the write end of the
+/// frontend's output pipe while it waited for the wasm name on its stdin, and
+/// the name is sent only after that pipe ends: the build hung for good
+/// (v0.29.1, seen in `spa_split_flow`). One spawn at a time closes the window.
+static LEG_SPAWN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// `c.spawn()` under [`LEG_SPAWN_LOCK`].
+fn spawn_leg(c: &mut Command) -> std::io::Result<std::process::Child> {
+    let _one_at_a_time = LEG_SPAWN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    c.spawn()
+}
+
+/// `c.output()` with the spawn under [`LEG_SPAWN_LOCK`]: stdin is null and
+/// stdout and stderr are captured, as `Command::output` does.
+fn leg_output(c: &mut Command) -> std::io::Result<std::process::Output> {
+    c.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    spawn_leg(c)?.wait_with_output()
+}
+
 /// Run a Sky.Spa SSR backend leg with its wasm-name handoff on its stdin
 /// (project::spa_wasm_handoff): spawn it with [`project::spa_wasm_handoff::FLAG`]
 /// and a piped stdin, hand the pipe to `tx` (which writes a delivery already
@@ -237,7 +263,7 @@ fn run_with_handoff(
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let mut child = c.spawn()?;
+    let mut child = spawn_leg(&mut c)?;
     if let Some(stdin) = child.stdin.take() {
         if let Err(e) = tx.attach(stdin) {
             eprintln!("sky build: could not hand the frontend's wasm name to the backend leg: {e}");
@@ -4312,7 +4338,7 @@ fn spa_split_and_build(
         c.arg("src/Main.sky").current_dir(&backend_dir);
         let out = match tx {
             Some(tx) => run_with_handoff(c, tx),
-            None => c.output(),
+            None => leg_output(&mut c),
         };
         t.end();
         out
@@ -4345,7 +4371,7 @@ fn spa_split_and_build(
         if let Some(n) = leg_go_jobs {
             c.env(project::go_jobs::ENV_JOBS, n.to_string());
         }
-        let out = c.current_dir(&frontend_dir).output();
+        let out = leg_output(c.current_dir(&frontend_dir));
         t.end();
         out
     };
@@ -4716,6 +4742,14 @@ fn build_and_run_fuzz_harness(
     cmd.env("SKY_TEST_MODE", "1");
     cmd.env("SKY_TEST_SEED", seed.to_string());
     cmd.env("SKY_TEST_CLOCK_MS", "1704067200000");
+    // The runtime does not load `.env` in test mode, so a DSN there never
+    // reaches the run.
+    for name in testrunner::dot_env_dsns(app_project_dir) {
+        eprintln!(
+            "sky fuzz: ignoring {name} in .env (sky fuzz never takes a database from \
+             .env). The run uses a throwaway database."
+        );
+    }
     // An empty DATABASE_URL is no DSN (testrunner::dsn_is_given).
     if !testrunner::dsn_is_given(std::env::var("DATABASE_URL").ok().as_deref()) {
         match project::offline_db_plan(app_project_dir) {
@@ -4723,14 +4757,14 @@ fn build_and_run_fuzz_harness(
                 cmd.env("SKY_EMBED_POSTGRES", "1");
                 cmd.env("SKY_DATA_DIR", harness_dir.join("pgdata"));
                 // Offline fuzz means "ignore any configured external DB, use an
-                // ephemeral one". A Postgres app often carries its DSN in a
-                // `.env` (DATABASE_URL=...), which the runtime auto-loads — and
-                // an embedded cluster PLUS a DSN is a refused conflict. Setting
-                // DATABASE_URL to empty here suppresses the `.env` value (dotenv
-                // loads with override=false, so an already-set var wins) and the
-                // conflict check skips an empty value, so embed provisions its
-                // own cluster and injects its own DSN.
+                // ephemeral one". The runtime does not load `.env` in test
+                // mode, and an embedded cluster PLUS a DSN is a refused
+                // conflict, so a `<PREFIX>_DB_PATH` (or a blank DATABASE_URL)
+                // in the environment is cleared here. The conflict check skips
+                // an empty value, so embed provisions its own cluster and
+                // injects its own DSN.
                 cmd.env("DATABASE_URL", "");
+                cmd.env(db_cluster::dsn_env_name(app_project_dir), "");
             }
             project::OfflineDbPlan::Sqlite { db_path_env } => {
                 cmd.env(db_path_env, harness_dir.join("fuzz.db"));
@@ -13884,9 +13918,7 @@ fn run_ai_binary(bin: &Path, args: &[String], cwd: &Path, test_project: Option<&
     let mut cmd = Command::new(bin);
     cmd.args(args).current_dir(cwd);
     if let Some(project_dir) = test_project {
-        // Test mode answers the model calls from tests/mocks/; the verb still
-        // acts on the project's own database (no scratch database).
-        for (k, v) in testrunner::test_mode_env(project_dir, None) {
+        for (k, v) in ai_test_mode_env(project_dir, &|k| std::env::var(k).ok()) {
             cmd.env(k, v);
         }
     }
@@ -13907,6 +13939,20 @@ fn run_ai_binary(bin: &Path, args: &[String], cwd: &Path, test_project: Option<&
             }
         }
     }
+}
+
+/// The environment `sky ai <verb> --test-mode` adds for a project program.
+/// Test mode answers the model calls from tests/mocks/. The verb still acts
+/// on the project's own database (no scratch database). The runtime does not
+/// load `.env` in test mode, so the project's `.env` is passed here, under
+/// `.env.test` and the environment (`getenv`), which the program inherits.
+fn ai_test_mode_env(
+    project_dir: &Path,
+    getenv: &dyn Fn(&str) -> Option<String>,
+) -> Vec<(String, String)> {
+    let env = testrunner::test_mode_env(project_dir, None);
+    let fallback = testrunner::dot_env_fallback(project_dir, &env, getenv);
+    env.into_iter().chain(fallback).collect()
 }
 
 /// A bundled verb: build (once per Sky build) and run `sky-bundled/ai`.
@@ -14543,22 +14589,82 @@ fn build_temp_db_entry(
     filename: &str,
     code: &str,
 ) -> Option<(PathBuf, PathBuf, DbScratch)> {
-    let file = Path::new("src/Main.sky");
-    let (repo_root, project_dir) = resolve(file)?;
+    build_temp_db_entry_at(
+        Path::new("src/Main.sky"),
+        label,
+        module,
+        filename,
+        code,
+        false,
+    )
+}
+
+/// [`build_temp_db_entry`] for the project of `file` (its entry module).
+/// With `quiet`, a failed build prints nothing: the caller reports it.
+fn build_temp_db_entry_at(
+    file: &Path,
+    label: &str,
+    module: &str,
+    filename: &str,
+    code: &str,
+    quiet: bool,
+) -> Option<(PathBuf, PathBuf, DbScratch)> {
+    match build_temp_db_entry_checked(file, label, module, filename, code) {
+        Ok(built) => Some(built),
+        Err(e) => {
+            if !quiet || !e.build {
+                eprintln!("{}", e.message);
+            }
+            None
+        }
+    }
+}
+
+/// Why [`build_temp_db_entry_checked`] produced no binary.
+struct TempEntryFailure {
+    /// The error text, prefixed with the caller's label.
+    message: String,
+    /// The failure is the build itself (not the scratch setup).
+    build: bool,
+    /// Every error is a type error inside the synthesised entry: the code the
+    /// caller wrote does not type-check against the project (for example
+    /// `Store.dumpSchema db` on a `db` that is not a `Store.Project`).
+    entry_type_error: bool,
+}
+
+/// [`build_temp_db_entry_at`] that returns the failure, so a caller can tell
+/// a type error in its own synthesised entry from any other failure.
+fn build_temp_db_entry_checked(
+    file: &Path,
+    label: &str,
+    module: &str,
+    filename: &str,
+    code: &str,
+) -> Result<(PathBuf, PathBuf, DbScratch), TempEntryFailure> {
+    let setup = |message: String| TempEntryFailure {
+        message,
+        build: false,
+        entry_type_error: false,
+    };
+    let Some((repo_root, project_dir)) = resolve(file) else {
+        return Err(setup(format!(
+            "{label}: cannot resolve the project of {}",
+            file.display()
+        )));
+    };
     if is_compiler_repo_root(&project_dir) {
-        eprintln!("{label}: refusing to run from the Sky compiler repo root");
-        return None;
+        return Err(setup(format!(
+            "{label}: refusing to run from the Sky compiler repo root"
+        )));
     }
     let scratch = db_scratch_dir(module);
     if let Err(e) = std::fs::create_dir_all(&scratch) {
-        eprintln!("{label}: cannot create scratch dir: {e}");
-        return None;
+        return Err(setup(format!("{label}: cannot create scratch dir: {e}")));
     }
     let src = scratch.join(filename);
     if let Err(e) = std::fs::write(&src, code) {
-        eprintln!("{label}: cannot write temp entry: {e}");
         let _ = std::fs::remove_dir_all(&scratch);
-        return None;
+        return Err(setup(format!("{label}: cannot write temp entry: {e}")));
     }
     let out_dir = scratch.join("sky-out");
     let opts = BuildOptions {
@@ -14575,15 +14681,26 @@ fn build_temp_db_entry(
     };
     let report = build_project(&opts, &[scratch.clone()], Some(module));
     if !(report.emitted && report.go_build_ok) {
-        eprintln!(
-            "{label}: build failed\n{}\n{}",
-            report.note, report.go_build_stderr
-        );
+        let entry_type_error = !report.emitted
+            && !report.errors.is_empty()
+            && report.errors.iter().all(|e| {
+                e.code.as_deref().is_some_and(|c| c.starts_with("E2"))
+                    && e.file
+                        .as_deref()
+                        .is_some_and(|f| Path::new(f).file_name() == Some(filename.as_ref()))
+            });
         let _ = std::fs::remove_dir_all(&scratch);
-        return None;
+        return Err(TempEntryFailure {
+            message: format!(
+                "{label}: build failed\n{}\n{}",
+                report.note, report.go_build_stderr
+            ),
+            build: true,
+            entry_type_error,
+        });
     }
     let bin = out_dir.join(project::configured_bin_name(&project_dir));
-    Some((bin, project_dir, DbScratch(scratch)))
+    Ok((bin, project_dir, DbScratch(scratch)))
 }
 
 /// `sky db status` (file-based) — list committed `db/migrations/*.json` and mark
@@ -16629,7 +16746,8 @@ fn cmd_verify(args: &[String]) -> ExitCode {
              In a project (a dir with sky.toml), run the full pre-release gate:\n  \
              1. fmt     — every .sky file is already `sky fmt`-clean\n  \
              2. check   — type-checks + `go build`s (the production build)\n  \
-             3. test    — every tests/*.sky suite passes\n\n\
+             3. stores  — when the entry exposes `db`, no Store builder problem\n  \
+             4. test    — every tests/*.sky suite passes\n\n\
              In the compiler repo, build AND run every example.\n\
              Non-zero exit if any phase fails."
         );
@@ -16761,7 +16879,7 @@ fn verify_project_gate(dir: &Path, out_override: Option<String>) -> ExitCode {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("project");
-    println!("Verifying {name} — fmt, type-check, build, tests\n");
+    println!("Verifying {name} — fmt, type-check, build, stores, tests\n");
 
     let Some(repo_root) = assets_root_for(dir) else {
         eprintln!("  ✗ could not locate the Sky stdlib + runtime");
@@ -16835,10 +16953,142 @@ fn verify_project_gate(dir: &Path, out_override: Option<String>) -> ExitCode {
         failed.push("build");
     }
 
-    // 3. tests — run every tests/*.sky suite (only when a build succeeded, so a
+    // 3. stores — a Store builder problem fails every verb on that store at
+    //    run time (an app that shows the Err as [] shows an empty page), so
+    //    it fails the gate here, before a deploy.
+    run_verify_stores(dir, &mut failed);
+
+    // 4. tests — run every tests/*.sky suite (only when a build succeeded, so a
     //    type error isn't reported twice).
     run_verify_tests(dir, &out_dir_name, &mut failed);
     verify_verdict(&failed)
+}
+
+/// Whether the module header of `src` exposes `name`: listed in its
+/// `exposing ( … )`, or `exposing (..)` with a top-level `name` declaration.
+fn module_exposes(src: &str, name: &str) -> bool {
+    let Some(start) = src.find("module ") else {
+        return false;
+    };
+    let header = &src[start..];
+    let Some(open) = header.find("exposing") else {
+        return false;
+    };
+    let rest = &header[open + "exposing".len()..];
+    let Some(lp) = rest.find('(') else {
+        return false;
+    };
+    let mut depth = 0usize;
+    let mut end = None;
+    for (i, c) in rest[lp..].char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(lp + i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(end) = end else {
+        return false;
+    };
+    let list = &rest[lp + 1..end];
+    if list.trim() == ".." {
+        return src.lines().any(|l| {
+            l.strip_prefix(name)
+                .map(|r| r.starts_with(" :") || r.starts_with(" ="))
+                .unwrap_or(false)
+        });
+    }
+    list.split(',').any(|item| item.trim() == name)
+}
+
+/// `sky verify`'s stores step. When the entry module exposes `db`, a DB-free
+/// entry runs `Store.dumpSchema db`, which refuses a store with a builder
+/// problem (a builder naming an unknown column, an invalid table name, a
+/// primary key that is not a column), the same check every Store verb runs
+/// first. A `db` that is not a `Store.Project` is skipped with a note. Any
+/// other failure of the scratch build fails the step with its error.
+fn run_verify_stores(dir: &Path, failed: &mut Vec<&str>) {
+    let entry = dir.join(toml_entry(dir).unwrap_or_else(|| "src/Main.sky".into()));
+    let Ok(src) = std::fs::read_to_string(&entry) else {
+        println!("  – stores   (no entry module)");
+        return;
+    };
+    if !module_exposes(&src, "db") {
+        println!("  – stores   (the entry module does not expose `db`)");
+        return;
+    }
+    if failed.contains(&"check") || failed.contains(&"build") {
+        println!("  – stores   (skipped — fix the check failure first)");
+        return;
+    }
+    let module = entry_module_name(&entry).unwrap_or_else(|| "Main".into());
+    let code = format!(
+        "module SkyVerifyStores exposing (main)\n\nimport {module} exposing (db)\nimport Std.Db.Store as Store\n\nmain =\n    Store.dumpSchema db\n"
+    );
+    // Only a type error in the step's own entry means `db` is not a
+    // Store.Project: the check step passed, and that entry is one call on
+    // `db`. Any other failure fails the step with its error.
+    let (bin, project_dir, _scratch) = match build_temp_db_entry_checked(
+        &entry,
+        "sky verify: stores",
+        "SkyVerifyStores",
+        "_skyverifystores.sky",
+        &code,
+    ) {
+        Ok(built) => built,
+        Err(e) if e.entry_type_error => {
+            println!("  – stores   (`db` is not a Store.Project)");
+            return;
+        }
+        Err(e) => {
+            println!("  ✗ stores   the schema dump did not build");
+            for line in e.message.lines().filter(|l| !l.trim().is_empty()) {
+                println!("             {line}");
+            }
+            failed.push("stores");
+            return;
+        }
+    };
+    let out = Command::new(&bin)
+        .current_dir(&project_dir)
+        .stdin(std::process::Stdio::null())
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            let tables = extract_between(&stdout, "SKY_SCHEMA_BEGIN", "SKY_SCHEMA_END")
+                .and_then(|j| serde_json::from_str::<db_migrate::Schema>(j.trim()).ok())
+                .map(|s| s.tables.len())
+                .unwrap_or(0);
+            println!("  ✓ stores   ({tables} table(s), no Store builder problem)");
+        }
+        Ok(o) => {
+            let mut text = String::from_utf8_lossy(&o.stderr).into_owned();
+            text.push_str(&String::from_utf8_lossy(&o.stdout));
+            // The failed Task's Err line (`… ERROR InvalidInput: Store "t": …`),
+            // else the first line naming a Store.
+            let problem = text
+                .lines()
+                .find_map(|l| l.split_once("InvalidInput: ").map(|(_, m)| m))
+                .or_else(|| text.lines().find(|l| l.contains("Store")))
+                .unwrap_or("the schema dump failed")
+                .trim()
+                .to_string();
+            println!("  ✗ stores   {problem}");
+            println!("             every verb on that store fails at run time until it is fixed");
+            failed.push("stores");
+        }
+        Err(e) => {
+            println!("  ✗ stores   could not run the schema dump: {e}");
+            failed.push("stores");
+        }
+    }
 }
 
 /// `sky verify`'s test phase: every `tests/*.sky` suite, skipped when the
@@ -17709,6 +17959,72 @@ fn stage_project_runtime_into_backend(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `sky ai <verb> --test-mode` keeps the project's own database (v0.29.1).
+    /// The runtime does not load `.env` in test mode, so the runner passes the
+    /// project's `.env` itself, under `.env.test` and the environment. Unlike
+    /// `sky test`, no throwaway database replaces the DSN in `.env`.
+    #[test]
+    fn ai_test_mode_passes_the_projects_dot_env_dsn() {
+        let dir = std::env::temp_dir().join(format!(
+            "sky-ai-testmode-dotenv-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("sky.toml"),
+            "name = \"x\"\n\n[database]\ndriver = \"postgres\"\n",
+        )
+        .unwrap();
+        const OWN: &str = "postgres://own@127.0.0.1:5/own";
+        std::fs::write(
+            dir.join(".env"),
+            format!("DATABASE_URL={OWN}\nDATABASE_URL=postgres://second/x\nAI_KEY=from-dotenv\n"),
+        )
+        .unwrap();
+        let get = |env: &[(String, String)], k: &str| {
+            env.iter()
+                .filter(|(n, _)| n == k)
+                .map(|(_, v)| v.clone())
+                .collect::<Vec<_>>()
+        };
+        let none = |_: &str| -> Option<String> { None };
+
+        // The project's own database reaches the verb, once, with the
+        // first value (the runtime's loader keeps the first of a repeat).
+        let env = ai_test_mode_env(&dir, &none);
+        assert_eq!(get(&env, "SKY_TEST_MODE"), vec!["1"]);
+        assert_eq!(get(&env, "DATABASE_URL"), vec![OWN]);
+        assert_eq!(get(&env, "AI_KEY"), vec!["from-dotenv"]);
+        assert!(
+            get(&env, "SKY_EMBED_POSTGRES").is_empty() && get(&env, "SKY_DATA_DIR").is_empty(),
+            "no throwaway database for an ai verb: {env:?}"
+        );
+
+        // The environment wins: the name is left for the program to inherit.
+        let shell = |k: &str| (k == "DATABASE_URL").then(|| "postgres://shell/x".to_string());
+        let env = ai_test_mode_env(&dir, &shell);
+        assert!(get(&env, "DATABASE_URL").is_empty(), "{env:?}");
+        assert_eq!(get(&env, "AI_KEY"), vec!["from-dotenv"]);
+
+        // `.env.test` wins over `.env`.
+        std::fs::write(dir.join(".env.test"), "DATABASE_URL=postgres://t/x\n").unwrap();
+        let env = ai_test_mode_env(&dir, &none);
+        assert_eq!(get(&env, "DATABASE_URL"), vec!["postgres://t/x"]);
+
+        // `dot_env_fallback` itself: skips names already set, first value
+        // of a repeat, nothing without a `.env`.
+        let set = vec![("AI_KEY".to_string(), "x".to_string())];
+        let fb = testrunner::dot_env_fallback(&dir, &set, &none);
+        assert_eq!(fb, vec![("DATABASE_URL".to_string(), OWN.to_string())]);
+        std::fs::remove_file(dir.join(".env")).unwrap();
+        assert!(testrunner::dot_env_fallback(&dir, &[], &none).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     // Regression: a Spa `sky run` spawns the backend from `.split/backend`, whose
     // default data dir (`<cwd>/.skydata`) is inside the wiped build tree. The three
@@ -20099,6 +20415,51 @@ echo key > "$ks"
         let slug = bundled_cache_slug();
         assert!(slug.starts_with(&version_slug()), "{slug}");
         assert!(slug.ends_with(&hex[..12]), "{slug} lacks {}", &hex[..12]);
+    }
+
+    /// The split's two legs spawn from two threads, and the backend leg waits
+    /// on its stdin for a name the parent sends only once the frontend leg's
+    /// output has ended. A backend child that kept the frontend's pipe open
+    /// (forked between the pipe's creation and its close-on-exec mark) hung
+    /// the build. The model here: leg A waits on its stdin, leg B prints and
+    /// exits, and B's output must end without A having ended.
+    #[test]
+    #[cfg(unix)]
+    fn parallel_leg_spawns_do_not_keep_each_others_pipes() {
+        use std::io::Write as _;
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let start = std::sync::Barrier::new(2);
+            for _ in 0..3000 {
+                std::thread::scope(|s| {
+                    let waiter = s.spawn(|| {
+                        start.wait();
+                        let mut c = Command::new("/bin/sh");
+                        c.args(["-c", "read x; echo \"$x\""])
+                            .stdin(std::process::Stdio::piped())
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::piped());
+                        spawn_leg(&mut c).expect("spawn the waiting leg")
+                    });
+                    let printer = s.spawn(|| {
+                        start.wait();
+                        let mut c = Command::new("/bin/sh");
+                        c.args(["-c", "echo done"]);
+                        leg_output(&mut c).expect("run the printing leg")
+                    });
+                    let out = printer.join().unwrap();
+                    assert_eq!(String::from_utf8_lossy(&out.stdout), "done\n");
+                    let mut waiter = waiter.join().unwrap();
+                    waiter.stdin.take().unwrap().write_all(b"name\n").unwrap();
+                    let w = waiter.wait_with_output().unwrap();
+                    assert_eq!(String::from_utf8_lossy(&w.stdout), "name\n");
+                });
+            }
+            let _ = done_tx.send(());
+        });
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(120))
+            .expect("a leg kept the other leg's output pipe open: the spawns deadlocked");
     }
 
     /// The dist loader and the runtime's `SpaBootJS` must be the same bytes:

@@ -5,6 +5,7 @@ package rt
 import (
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
@@ -91,6 +92,9 @@ func dbColString(row map[string]any, name string) (string, bool) {
 	}
 	if s, ok := v.(string); ok {
 		return s, true
+	}
+	if t, ok := v.(time.Time); ok {
+		return dbTimeText(t, ""), true // never the host-zone time.String()
 	}
 	// Numeric/bool round-trip via fmt — the SQL driver may have
 	// already widened the cell.

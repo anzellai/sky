@@ -73,8 +73,10 @@ users =
 ```
 
 **`Codec.auto blank`** reflection-derives the codec from a zero-value witness:
-scalars → typed columns, `Maybe` → nullable, list / nested-record / data-ADT →
-JSON TEXT blob, nullary enum → readable name. Columns + JSON keys are
+scalars → typed columns, `Maybe` → nullable, list / nested-record → JSON TEXT
+blob, nullary enum → readable name. A data-carrying custom type is not
+derivable: reading it is an `Err`. Give that field a `taggedUnion` codec through
+`Codec.autoWith [ ( "shape", shapeCodec ) ] blank`. Columns + JSON keys are
 **snake_case** by default (`priceMinor` → `price_minor`); **`Codec.autoCamel`**
 keeps camelCase; **`Codec.autoWith [ ("active", intBool) ] blank`** overrides one
 field's codec (a Bool stored 0/1, a custom enum) while auto-deriving the rest; a
@@ -97,12 +99,39 @@ column (a typo fails fast with the column list):
 | `Store.uniqueOn [ "customer_id", "code" ]` | a unique index, `ux_<table>_<h>`; every column must be required (NULLs never conflict) |
 | `Store.uniqueWhere [ "slug" ] (Store.neq "slug" (SqlString ""))` | a partial unique index; the condition is written as constants (`eq`/`neq`/`gt`/…, `isNull`/`notNull`, `inList`, `eqCol`…, `and_`/`or_`/`not_`) |
 | `Store.defaultWith "id" (\_ -> SqlValue)` | **app-side** computed default at insert (e.g. a UUID PK via the unit-arg `Task.run` idiom) |
-| `Store.generated [ "id", "created_at" ]` | columns `insert`/`update` OMIT so the DB fills them |
+| `Store.generated [ "id", "created_at" ]` | columns `insert`/`update` OMIT so the DB fills them, added to the ones `serial` and the other builders marked |
 
 `<h>` is 8 hex digits of a hash of the table, the columns, the unique flag
 and the predicate, so every definition has its own name, and a changed
 `uniqueWhere` condition gives a new index. `create` and `migrate` create the
 declared indexes.
+
+**External columns.** `defaultWith`, `defaultNow`, `touchOnUpdate`, the
+`default*` builders and `generated` may also name a column the table has and
+the codec does not carry, such as a `created_at` the record leaves out:
+
+```elm
+leads : Store Lead
+leads =
+    Store.fromCodec "leads" leadCodec
+        |> Store.primaryKey "id"
+        |> Store.defaultWith "created_at" (\_ -> SqlInt (nowMs ()))
+```
+
+- The name is used as written, with no snake_case mapping. On PostgreSQL write
+  it in lower case, because an unquoted name folds to lower case.
+- `defaultWith` writes the computed value on every insert (`copyInto` leaves
+  the column to the database default). `defaultNow` stamps
+  it on insert, and `touchOnUpdate` also bumps it on `update`. A `default*`
+  builder and `generated` declare it only: the database default applies.
+- Nothing reads it back into the record.
+- The Store never creates, adds or drops it. A `Std.Db.Schema` table or a
+  migration owns it. `migrate` and `sky db push` check that the table has it,
+  and a missing table or column is an `Err` naming the column and the
+  builder. `create` of a table that does not exist is an `Err`. `sky db
+  migrate --gen` never writes an op for it.
+- `primaryKey`, `serial`, `unique`, `index`, `uniqueOn` and `uniqueWhere` take
+  codec columns only, so a typo in them stays an error.
 
 **`Store.migrate` and `sky db migrate --gen` follow one rule** (user decision
 D1): "A `Maybe` field gives a nullable column, any other field gives NOT NULL.
@@ -150,7 +179,8 @@ configuration (see `docs/migration/v0.29.md`).
 
 `pushProject` and `dumpSchema` (so `sky db migrate --gen` and `sky db push`)
 refuse a store whose builders recorded a problem (for example an unknown column
-in `unique`, `index` or `uniqueOn`), naming the column, before any DDL.
+in `unique`, `index` or `uniqueOn`), naming the column, before any DDL. So
+does the `stores` step of `sky verify`, when the entry module exposes `db`.
 
 ### Writes
 
@@ -332,8 +362,12 @@ the `Err` it would fail with.
 codec column (the record field or its snake name) or a `jsonText` reference. A
 table, column, alias or JSON key must match `[A-Za-z_][A-Za-z0-9_]*` and be at
 most 63 bytes, the primary key must be a codec column, and a builder that names
-an unknown column (`Store.unique "emial"`) makes the first verb fail with that
-name. `findBy` and `delete` follow the same rule. A negative `limit` or `offset`
+an unknown column (`Store.unique "emial"`) makes every verb fail with that
+name. The problem is loud even when the app shows the `Err` as an empty list:
+it is logged at ERROR level once per table and problem, shown in the Sky
+Console, and counted in the metric `sky_store_problems_total{table}`. An
+unknown column in a query condition, an order, a set or a conflict rule is an
+`Err` that is loud the same way. `findBy` and `delete` follow the same rule. A negative `limit` or `offset`
 is an `Err`; `offset` without `limit` works on both dialects. There is no
 reserved-word list: a column named `order` or `user` stays a driver error on the
 dialect that refuses it. **Never build a column argument from user input:** a
@@ -917,6 +951,25 @@ column the database maintains, a hand-tuned query), drop to raw `Db.exec` / `Db.
 hand-written row decoder. The row shape from the runtime is `Dict String String`
 — every column lands stringified, and the typed accessors (`Db.getInt` /
 `Db.getString` / `Db.getBool`) parse on read with a default-supplied fallback.
+
+**Time columns as text.** A time column reads as PostgreSQL's own text on a
+UTC server, whatever the time zone of the app's host. This holds for a raw
+row, a Store or Codec `String` field, `Std.Db.Decode` and `Std.Db.Table`:
+
+| Column | Text |
+|---|---|
+| `timestamptz` | `2026-11-01 02:13:48.987333+00`, always in UTC |
+| `timestamp` | `2026-11-01 02:13:48.987333` |
+| `date` | `2026-11-01` |
+| `time` | `02:13:48.25` |
+
+Trailing zeros of the fraction are dropped, and a BC year ends in ` BC`.
+SQLite returns a `DATE`, `DATETIME` or `TIMESTAMP` column in the same shapes,
+in the clock the app wrote, followed by `+HH:MM` when the written text had a
+non-zero offset. The text is a valid parameter: written back to the same
+column it stores the same value, on both dialects. `SELECT t::text` gives the
+server's own `TimeZone`, so use the plain column when you want UTC. Before
+v0.29.1 these columns read as Go's time text in the host's zone.
 
 ```elm
 import Sky.Core.Error as Error exposing (Error)

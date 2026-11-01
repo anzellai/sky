@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"sky-app/rt/procenv"
 	"sort"
+	"strings"
 )
 
 // ── The opaque Sky.Config value ────────────────────────────────────────────
@@ -181,6 +182,31 @@ func Config_withLiveBroker(url, cfg any) any {
 	return configSetStr(cfg, "LiveBroker", url)
 }
 
+// Config_withTelemetryQueryKeys sets the query allow-list (the
+// `<PREFIX>_TELEMETRY_QUERY_KEYS` suffix). Backs
+// `Sky.Config.withTelemetryQueryKeys`. An operator's own variable still wins.
+func Config_withTelemetryQueryKeys(keys, cfg any) any {
+	var names []string
+	if ks, ok := keys.([]string); ok {
+		names = append(names, ks...)
+	} else {
+		for _, k := range asList(keys) {
+			names = append(names, AsString(k))
+		}
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" || strings.ContainsRune(n, ',') || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	return configSetStr(cfg, "TelemetryQueryKeys", strings.Join(out, ","))
+}
+
 // ── Application into the env namespace ──────────────────────────────────────
 
 // configKeyToEnvSuffix maps a Sky.Config map key to the internal env SUFFIX the
@@ -204,6 +230,10 @@ var configKeyToEnvSuffix = map[string]string{
 	// skyGetenv, so ApplyConfig must resolve it through skyEnvName like the
 	// others (not a verbatim configKeyToLiteralEnv name).
 	"LiveBroker": "LIVE_BROKER_URL",
+	// TELEMETRY_QUERY_KEYS, like LIVE_BROKER_URL, has no sky.toml key and is
+	// read through skyGetenv (telemetry_url.go): the query keys telemetry may
+	// keep with their values.
+	"TelemetryQueryKeys": "TELEMETRY_QUERY_KEYS",
 }
 
 // configKeyToLiteralEnv maps a Sky.Config map key to a LITERAL env var name
@@ -233,15 +263,16 @@ var configKeyToLiteralEnv = map[string]string{
 // asserts this map's keys are EXACTLY configKeyToEnvSuffix's, so a new builder
 // cannot add a suffix without naming its builder here.
 var configKeyToBuilder = map[string]string{
-	"LogFormat":     "Sky.Config.withLog",
-	"LogLevel":      "Sky.Config.withLog",
-	"DbPath":        "Sky.Config.withDatabase",
-	"LiveStore":     "Sky.Config.withSessions",
-	"LiveStorePath": "Sky.Config.withSessions",
-	"JobsStore":     "Sky.Config.withJobs",
-	"JobsStorePath": "Sky.Config.withJobs",
-	"Csrf":          "Sky.Config.withCsrf",
-	"LiveBroker":    "Sky.Config.withLiveBroker",
+	"LogFormat":          "Sky.Config.withLog",
+	"LogLevel":           "Sky.Config.withLog",
+	"DbPath":             "Sky.Config.withDatabase",
+	"LiveStore":          "Sky.Config.withSessions",
+	"LiveStorePath":      "Sky.Config.withSessions",
+	"JobsStore":          "Sky.Config.withJobs",
+	"JobsStorePath":      "Sky.Config.withJobs",
+	"Csrf":               "Sky.Config.withCsrf",
+	"LiveBroker":         "Sky.Config.withLiveBroker",
+	"TelemetryQueryKeys": "Sky.Config.withTelemetryQueryKeys",
 }
 
 // legacyMigrationNotices lists the legacy `sky.toml` runtime settings that

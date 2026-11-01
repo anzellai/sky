@@ -38,13 +38,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"sky-app/rt/telemetry"
@@ -108,7 +109,7 @@ func ObservabilityMiddleware(next http.Handler) http.Handler {
 	// (the common case).
 	next = WithSubAppNamespace(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/_sky/") {
+		if isSkyInternalRequest(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -119,11 +120,19 @@ func ObservabilityMiddleware(next http.Handler) http.Handler {
 
 		start := time.Now()
 
+		// The route slot the app writes its route template into during
+		// dispatch (telemetry_url.go). It goes on the context BEFORE the
+		// span, so the span context, the goroutine trace context and every
+		// copy of the request carry the same slot.
+		r = withTelemetryRouteSlot(r)
+
 		// Step 7 — OTel server span. Created FIRST so the request-id
 		// can be unified with the trace-id (below). Honours inbound
 		// traceparent so distributed traces chain correctly
 		// (browser → CDN → API gateway → Sky → DB shows as one trace).
-		spanCtx, span := StartHTTPServerSpan(r, routeLabelFor(r))
+		// Before dispatch only the fallback route is known; the span is
+		// renamed with the template after dispatch (FinishHTTPServerSpanRoute).
+		spanCtx, span := StartHTTPServerSpan(r, telemetryRoute(r))
 
 		// Unify the request-id with the OTEL trace-id. Before this,
 		// logs carried a standalone reqID and spans carried a
@@ -162,10 +171,12 @@ func ObservabilityMiddleware(next http.Handler) http.Handler {
 		// Wrap ResponseWriter to capture status + bytes-written.
 		sw := newStatusCapture(w)
 		next.ServeHTTP(sw, r)
+		route := telemetryRoute(r)
+		target := telemetryTarget(r)
+		FinishHTTPServerSpanRoute(span, r.Method, route, target, telemetryPath(r))
 		EndHTTPServerSpan(span, sw.status, sw.bytesWritten)
 
 		elapsed := time.Since(start).Seconds()
-		route := routeLabelFor(r)
 		status := strconv.Itoa(sw.status)
 		// RecordCounter / RecordHistogram dual-write to local store
 		// + push to parent when running as a sub-app, so sub-app
@@ -212,12 +223,11 @@ func ObservabilityMiddleware(next http.Handler) http.Handler {
 			ReqID:        reqID,
 			Method:       r.Method,
 			Route:        route,
-			Path:         r.URL.Path,
+			Path:         target,
 			Status:       sw.status,
 			LatencyMS:    elapsed * 1000,
 			BytesWritten: sw.bytesWritten,
 			UserAgent:    r.Header.Get("User-Agent"),
-			RemoteAddr:   clientIP(r),
 		})
 	})
 }
@@ -241,77 +251,6 @@ func generateRequestID() string {
 		return fmt.Sprintf("ts-%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b[:])
-}
-
-// ─── Route label normalisation ────────────────────────────────
-
-// routeLabelFor returns the cardinality-bounded route label for
-// metrics. Priority:
-//
-//  1. Go 1.22+ r.Pattern (the registered ServeMux pattern,
-//     including any {wildcard} placeholders) when non-empty AND
-//     non-"/" (the bare "/" pattern means "catch-all" and would
-//     collapse every dynamic URL into one label).
-//  2. The FIRST path segment, and only when it matches a known-safe
-//     route shape (safeRouteSegment).
-//  3. The "/:dynamic" sentinel.
-//
-// This used to take the first TWO raw segments, which put raw path
-// IDs into label values: /users/12345 minted a fresh series per
-// user, so 10k unique IDs exhausted the per-name series cap in 10k
-// requests and froze the request metrics for the process lifetime
-// (first-N-win, no eviction). And r.Pattern is EMPTY in the common
-// case — Sky.Live registers "/" and routes internally — so the
-// fallback is the path every real app takes.
-//
-// The first segment is still requester-chosen for unrouted paths,
-// which is why the series cap remains per-name with a global
-// backstop (telemetry/store.go) — this label merely stops handing
-// the requester a fresh series per URL. Users wanting true route
-// templates register explicit patterns (e.g.
-// `mux.HandleFunc("/users/{id}", ...)`) which path 1 picks up
-// cleanly.
-func routeLabelFor(r *http.Request) string {
-	if p := r.Pattern; p != "" && p != "/" {
-		return p
-	}
-	path := r.URL.Path
-	if path == "" || path == "/" {
-		return "/"
-	}
-	seg := strings.TrimPrefix(path, "/")
-	if i := strings.IndexByte(seg, '/'); i >= 0 {
-		seg = seg[:i]
-	}
-	if safeRouteSegment(seg) {
-		return "/" + seg
-	}
-	return "/:dynamic"
-}
-
-// safeRouteSegment reports whether a path segment looks like a
-// hand-registered route name rather than data: starts with a
-// letter, continues with letters / digits / '_' / '-' / '.', and
-// stays within 64 bytes. IDs ("12345"), encodings ("%41"), and
-// junk collapse to the sentinel instead of becoming label values.
-func safeRouteSegment(s string) bool {
-	if len(s) == 0 || len(s) > 64 {
-		return false
-	}
-	c := s[0]
-	if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
-		return false
-	}
-	for i := 1; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z',
-			c >= '0' && c <= '9', c == '_', c == '-', c == '.':
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 // ─── Status capture ───────────────────────────────────────────
@@ -398,7 +337,22 @@ type accessLogEntry struct {
 	LatencyMS    float64
 	BytesWritten int64
 	UserAgent    string
-	RemoteAddr   string
+}
+
+// accessLogLine is the serverless access-log line. It is built with
+// json.Marshal so a `"` or `\` in a path (in `path` or `full` mode) cannot
+// break the line. Field order is the order of the struct.
+type accessLogLine struct {
+	TS        string  `json:"ts"`
+	Level     string  `json:"level"`
+	Msg       string  `json:"msg"`
+	ReqID     string  `json:"req_id"`
+	Method    string  `json:"method"`
+	Route     string  `json:"route"`
+	Path      string  `json:"path"`
+	Status    int     `json:"status"`
+	LatencyMS float64 `json:"latency_ms"`
+	Bytes     int64   `json:"bytes"`
 }
 
 // emitAccessLog routes the entry to the right sink:
@@ -412,13 +366,23 @@ type accessLogEntry struct {
 func emitAccessLog(e accessLogEntry) {
 	if IsServerless() {
 		// Single structured line per request → Cloud Run / Lambda
-		// stderr capture. Minimal allocation; no JSON encoder
-		// roundtrip for the hot path.
-		fmt.Fprintf(os.Stderr,
-			`{"ts":"%s","level":"info","msg":"http_request","req_id":"%s","method":"%s","route":"%s","path":"%s","status":%d,"latency_ms":%.2f,"bytes":%d}`+"\n",
-			time.Now().UTC().Format(time.RFC3339Nano),
-			e.ReqID, e.Method, e.Route, e.Path,
-			e.Status, e.LatencyMS, e.BytesWritten)
+		// stderr capture. json.Marshal escapes every value: the old
+		// Fprintf line broke on a `"` in the path.
+		line, err := json.Marshal(accessLogLine{
+			TS:        time.Now().UTC().Format(time.RFC3339Nano),
+			Level:     "info",
+			Msg:       "http_request",
+			ReqID:     e.ReqID,
+			Method:    e.Method,
+			Route:     e.Route,
+			Path:      e.Path,
+			Status:    e.Status,
+			LatencyMS: math.Round(e.LatencyMS*100) / 100,
+			Bytes:     e.BytesWritten,
+		})
+		if err == nil {
+			os.Stderr.Write(append(line, '\n'))
+		}
 		return
 	}
 	// Bake the request shape into the visible Message so the
@@ -449,22 +413,4 @@ func emitAccessLog(e accessLogEntry) {
 			"bytes":  strconv.FormatInt(e.BytesWritten, 10),
 		},
 	})
-}
-
-// clientIP best-effort extracts the client IP. Honours
-// X-Forwarded-For (first IP — the original client; subsequent
-// IPs are proxies) and X-Real-IP, falling back to r.RemoteAddr.
-// Not trying to be cryptographically authoritative — for access
-// logs only.
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i >= 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
-	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-	return r.RemoteAddr
 }

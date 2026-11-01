@@ -11,6 +11,337 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.1 — Fixes for v0.29.0 (2026-10-31)
+
+A patch release for v0.29.0. It restores `Std.Db.Store` builders on a column
+the codec does not carry and makes a Store builder problem loud. It closes the
+SQLite and Store findings deferred from v0.29.0. A form submitted before a
+Sky.Spa or Sky.Live page is live no longer ends on a 403 page. Telemetry no
+longer records a secret from a URL or a full client IP. Every header lookup
+finds a header whatever the case of its name.
+
+### Fixed
+
+- **`sky test` keeps a `.env` database out when the project declares no database.** A project with a `DATABASE_URL` in `.env` but no `[database]` section and no `Sky.Config.withDatabase` stayed out of test mode, so the runtime loaded `.env` and its session store, analytics, jobs and telemetry reached that database during the tests. It now runs in test mode like any other project whose `.env` names a database. `sky fuzz` names every `.env` database name it ignores.
+- **`Store.defaultWith` on a column the codec does not carry works again
+  (a v0.29.0 regression).** v0.29.0 refused it with `Store.defaultWith:
+  unknown column`, so every verb on the store failed, and an app that showed
+  the `Err` as an empty list showed an empty page. In v0.28 the builder wrote
+  the column on every insert. Such a column is now an external column: one
+  the table has and the codec does not carry, such as a `created_at` the
+  record leaves out.
+  - `defaultWith` writes it on `insert`, `insertMany`, `upsert` and
+    `insertReturning`. `defaultNow` stamps it on insert, and `touchOnUpdate`
+    also bumps it on `update` and `updateWhere`. `defaultText`,
+    `defaultInt`, `defaultBool`, `defaultFloat` and `generated` accept it
+    and leave it to the database default.
+  - The name is used as written (no snake_case mapping) and must be a column
+    name. On PostgreSQL write it in lower case.
+  - The Store never creates, adds or drops an external column. `Store.migrate`
+    and `sky db push` check that the table has it, and a missing table or
+    column is an `Err` naming the column and the builder. `Store.create` of a
+    table that does not exist is an `Err`. `sky db migrate --gen` writes no
+    op for it: the schema dump marks it `"external": true`.
+  - `primaryKey`, `serial`, `unique`, `index`, `uniqueOn` and `uniqueWhere`
+    still take codec columns only, so a typo in them stays an error.
+  - An external `defaultNow` or `touchOnUpdate` column must be a text or a
+    timestamp column. The Store writes the current time there as text on
+    SQLite and as `now()` on PostgreSQL. On an `INTEGER` column SQLite stored
+    the text with no error and PostgreSQL failed at the first update.
+    `Store.migrate` and `Store.create` now refuse such a column on both
+    dialects, with an `Err` naming the column, its type and the builder.
+- **`sky install` drops a Go path dependency removed from `sky.toml` by
+  hand.** `sky-out/go.mod` kept its `require` and `replace` lines, so `go get`
+  failed reading the old directory's go.mod, and its bindings stayed in
+  `sky-ffi/`. Only `sky remove` or a clean `sky-out` worked. `sky install` now
+  rebuilds the path-dependency wiring from `sky.toml`: a module it no longer
+  lists leaves `sky-out/go.mod`, and its generated surface is removed.
+- **`Store.generated` adds to the generated columns (a silent wrong
+  answer).** It replaced the list, so `Store.serial "id" |> Store.generated
+  [ "created_at" ]` dropped the serial column. The first insert wrote id 0
+  and the second failed on the primary key. It now adds its columns to the
+  ones `serial`, `defaultNow`, `touchOnUpdate`, `defaultWith` or an earlier
+  `generated` marked, on SQLite and PostgreSQL. No other builder replaced a
+  list.
+- **A database time column reads as the same text on every host (a silent
+  wrong answer).** A PostgreSQL `timestamptz`, `timestamp` or `date` column,
+  read as text with no `::text` in the SQL, was Go's time text in the time
+  zone of the app process. `Db.query db "SELECT now() AS t" []` then
+  `Db.getField "t"` gave `2026-11-01 02:13:48.987333 +0000 GMT` on a London
+  host and another text for the same instant on a host in another zone. Text
+  comparison, ordering by the text and parsing broke, and PostgreSQL refused
+  the text as a parameter. A SQLite `DATE`, `DATETIME` or `TIMESTAMP` column
+  had the same Go text. The runtime now renders a time value where it reads
+  the row, so `Db.query`, `Db.getField`, a Store or Codec `String` field,
+  `Std.Db.Decode` and `Std.Db.Table` see one text. It is PostgreSQL's own
+  text on a UTC server: `timestamptz` as `2026-11-01 02:13:48.987333+00`
+  (always UTC), `timestamp` as `2026-11-01 02:13:48.987333`, `date` as
+  `2026-11-01`, and `time` as `02:13:48`. Trailing zeros of the fraction are
+  dropped, and a BC year reads with ` BC`. SQLite keeps the clock the app
+  wrote, in the same shapes, with an offset the text carried as `+HH:MM`.
+  The text writes back unchanged as a parameter on both dialects. An `Int` or
+  `Float` field over a time column is still a decode error. Apps that parsed
+  the old Go text must adapt (see the v0.29 migration guide).
+- **A Store builder problem is loud.** A builder that names an unknown column,
+  an invalid table name or a primary key that is not a column fails every
+  verb on the store. Each problem is now logged at ERROR level once per table
+  and problem, shown in the Sky Console's logs, and counted in the metric
+  `sky_store_problems_total{table}` on every refused verb. An unknown column
+  in a query condition, an order, a set or a conflict rule is loud the same
+  way, and its `Err` is unchanged. At most 1000 distinct problems are logged,
+  so a column name built from input cannot flood the log. The counter still
+  counts every refusal.
+- **`sky verify` has a `stores` step.** When the entry module exposes `db`
+  (a `Store.Project`), it runs `Store.dumpSchema db` in a scratch build and
+  fails on a Store builder problem, before a deploy. It skips with a note
+  only when `db` is not a `Store.Project`. Any other failure of the scratch
+  build fails the step with the build error.
+- **`Codec.autoWith` reads a `Maybe` override correctly (a silent wrong
+  answer).** An override such as `( "published_at", Codec.maybe Codec.int )`
+  decodes to an erased `Maybe`, and the record field is a typed `Maybe Int`.
+  The decoder only assigned or converted the value, which Go refuses between
+  the two, and then kept the field's zero value with no error. So 3000 read as
+  `Just 0` and NULL read as `Just 0`, through `Codec.fromJson` and through
+  every `Std.Db.Store` read on SQLite and PostgreSQL, with one override or
+  more. The decoder now rebuilds the value as the field's type, the `Just`
+  value too. An override whose value does not fit the field is an `Err` that
+  names the column. An override encoder that returns no JSON value now fails
+  loud (a classified `JsonEncodeFailure`), where it wrote `null`.
+  `Codec.auto` with a `Nothing` blank was not affected: a `Maybe Int`,
+  `Float`, `Bool`, `String`, a record and a nested `Maybe` each round-trip a
+  value and NULL, as the new cases show. An unannotated codec whose `Maybe`
+  blank is `Nothing` is still refused at check time (`[E2009]`). That message
+  now names the `Nothing` blank and suggests a `Just` blank or `Codec.maybe`,
+  where it talked about an empty list.
+- **`sky db migrate --gen` describes an external column of a new table
+  correctly.** Its warning said every insert fails until a migration adds
+  the column. That holds for `defaultWith`, `defaultNow` and `touchOnUpdate`,
+  which write it. A column with only a `default*` builder is never written,
+  so inserts work, and the warning now says so.
+- `docs/migration/v0.29.md` said a `defaultWith` on an unknown column "was
+  ignored" in v0.28. It was not: it wrote the column. The page now says so,
+  and has an "External columns (v0.29.1)" section.
+- **A partial index on a v0.28 TEXT Bool or Float column is refused on
+  SQLite.** The condition of a partial index is DDL with constants, so the
+  v0.29.0 column marks cannot reach it. `Store.uniqueWhere [ "id" ]
+  (Store.eq "active" (SqlBool True))` on such a column compared `active` with
+  `1` as text: the index left out every `'true'` row, with no error, and a
+  unique one let duplicates in. `Store.migrate`, `Store.create` and a
+  migration file's `addIndex` now refuse a partial index whose condition
+  compares a TEXT column with a number or `TRUE` / `FALSE`, before any
+  statement runs (a migration file rolls back). The error names the column and
+  points to the conversion in `docs/migration/v0.29.md`.
+- **The SQLite runtime sees a converted column without a restart.** v0.29.0
+  read a table's declared column types once per connection pool and table.
+  A column converted by another process, or by another pool on the same file,
+  kept its old type until the app restarted, so a marked write still bound
+  v0.28's text into the new BOOLEAN or REAL column. The cache is now keyed on
+  `PRAGMA schema_version`, which every schema change raises. Each marked
+  statement reads it on its own connection, and a changed version reloads
+  the types, inside a transaction too.
+- **A hand-written column mark runs no PRAGMA.** A `?/*sky:table|col*/` mark
+  in a `Db.query` whose table or column is not an identifier is now skipped,
+  and the arguments are bound as passed. Before, the table name was spliced
+  into a `PRAGMA table_info` statement.
+- Docs: `Codec.auto` cannot derive a data-carrying custom type (reading one
+  is an `Err`). `docs/skydb/overview.md` and `docs/stdlib.md` said it became a
+  JSON blob. They now say to give that field a `taggedUnion` codec through
+  `Codec.autoWith`. A `List Json.Value` or `Dict String Json.Value` field
+  under `Codec.auto` cannot be marked by the blank, so reading one is an
+  `Err`: use one `Json.Value` field for the whole array or object
+  (`Std.Codec.auto`, `docs/stdlib.md`). `docs/migration/v0.29.md` now covers
+  `Store.eqCol` and a join `on` between a v0.28 TEXT Bool or Float column and
+  a BOOLEAN or REAL column (`'true'` never matches on SQLite, an error on
+  PostgreSQL), and notes that ordering on such a column compares text until
+  it is converted (`sky db check --sql` writes the conversion from v0.29.2).
+- **A form submitted before a page is live no longer ends on a 403 JSON
+  page.** On a `web:app` (Sky.Spa) page, Enter, a phone's "Go" key or a
+  password manager could submit a form before the wasm client hydrated. The
+  browser then POSTed the form to the page's URL, and the server answered
+  `{"status":"csrf_missing",…}` in place of the app. Sky.Live did the same
+  before its client script ran. Now:
+  - The Sky.Spa boot loader holds a submit of a form the app handles
+    (`Ui.onSubmit`) while the page hydrates, with the text typed so far. Once
+    the client is live it puts the text back and submits the form through the
+    app, so `update` runs once. Text typed before hydration is no longer lost.
+    Clicks before hydration are still not replayed.
+  - The split mounted its server-rendered pages with `Server.api "GET …"`,
+    which skips the CSRF middleware, so the page had no CSRF cookie and its
+    forms no `__sky_csrf` field. A page is now a CSRF-checked GET
+    (`Spa_pageRoute`), and its POST forms carry the field from the first
+    visit.
+  - A native form POST to a page (Sky.Spa or Sky.Live, also with no
+    JavaScript or a lost cookie) answers `303 See Other` to the same URL.
+    The body is not read, and the `Location` never leaves the origin. An
+    `App.api "POST /path"` route, `/_rpc` and the Sky.Live event endpoint
+    are unchanged.
+  - Every response that sets the CSRF cookie is sent with `Vary: Cookie`
+    and `Cache-Control: private`, a page with no form too, so a shared cache
+    does not give one visitor's cookie or token to another. An app's own
+    `Cache-Control` keeps its other directives, less `public` and
+    `s-maxage`.
+  - A native form POST to a page answers the 303 before the CSRF token is
+    looked for, so its body is never read. A `Server.staticNotFound`
+    catch-all makes a page of every path under its prefix that no other
+    route takes for that method, and in a Sky.Live app every path that is
+    not an api route or a runtime endpoint is a page.
+  - A `Server.post` or `Server.any` route next to a `Server.staticNotFound`
+    catch-all keeps its POST. A pre-release build of this fix treated every
+    path as a page once a catch-all was mounted, so a hand-written
+    `Server.post "/login"` answered every native form POST with the 303,
+    with the right token too, and its handler never ran. A path is now a
+    page only when the router gives that request (method and path) to a
+    page handler. The mount's path without its trailing slash (`/app` for
+    a `Server.staticNotFound "/app/"`) is the mount too, as the router's own
+    redirect to it says, so a native form POST to it answers the 303. The
+    same pre-release build answered it with the 403.
+    (`runtime-go/rt/csrf_middleware.go` `spaPageSet.matches`;
+    tests `TestStaticNotFound_OtherRoutesKeepTheirPost`,
+    `TestStaticNotFound_PagesStayUnderItsPrefix`.)
+- **Two routes whose path differs only in a parameter name no longer stop
+  the server at start.** A page `/post/:slug` next to
+  `App.api "POST /post/:id"` (or two `Server` routes like that) made Go's
+  router panic, and the backend did not start. Such routes now share the path,
+  and each reads its own parameter.
+- **A `web:app` build no longer hangs now and then on macOS.** The split
+  builds its frontend and backend legs in parallel. On macOS a child process
+  could keep the other leg's output pipe open, so the build waited for good
+  (the backend leg waited for the frontend's wasm name, which comes only when
+  that pipe ends). The two legs now start one at a time, then build together.
+- **Telemetry never records a secret or personal data from a URL.** An
+  outbound `Http.get` span recorded the whole URL in `http.url`, so an API key
+  in a query string (`?key=…`) left the process with every exported span.
+  Server spans, the access log, panic reports, `Middleware.withLogging` and
+  Std.Analytics page views recorded the raw request path.
+  - Outbound spans record `url.full` (and `http.url`) as scheme, host, port
+    and the path, with no query string, userinfo or fragment, plus
+    `server.address` and `url.path`. `Http.request` now has a client span.
+  - The text of an outbound transport error carries the same redacted URL.
+    Go's error text held the full URL, so the key also reached the Sky
+    `Error` and the app's logs.
+  - Request paths are recorded as the route template (a Sky.Live route such
+    as `/reset/:token`, a `Server` pattern such as `/blog/{slug}`), else with
+    each segment that can hold data replaced by `:redacted`. Query strings
+    are dropped. In-process sub-apps record their own templates.
+  - With no template, the span name, `http.route` and the metric `route`
+    label take the first path segment by the same rule. A requester-chosen
+    segment such as `/Abc123Token` on a 404 was kept there, and is now
+    `/:redacted`. The label stays bounded.
+  - The Sky Console auth audit log keeps the full client address on
+    purpose, and its `path` is now only ever a `/_sky/` console path
+    (`docs/observability.md`).
+  - The serverless access-log line is built with `json.Marshal`. A `"` in a
+    path broke the line.
+  - The client IP in spans (`net.peer.ip`, the new `client.address`) is
+    anonymised by the Std.Analytics rule: the last IPv4 octet and the last 80
+    bits of an IPv6 address are zeroed.
+  - `SKY_TELEMETRY_URL` (`redacted`, `path`, `full`),
+    `SKY_TELEMETRY_QUERY_KEYS` (and the builder
+    `Sky.Config.withTelemetryQueryKeys`) and `SKY_TELEMETRY_CLIENT_IP`
+    (`anonymised`, `full`) are the overrides. `docs/observability.md` has the
+    rules, and `docs/migration/v0.29.md` lists what dashboards see now.
+  - Std.Ai download errors no longer repeat the download URL with its query.
+- **A header is found whatever the case of its name.** HTTP header names are
+  case-insensitive (RFC 9110). HTTP/2 sends them in lower case and a proxy may
+  send any case. One rule now holds on every path:
+  - A request's `headers` Dict holds each name in canonical form
+    (`X-Sky-Api-Key`, `X-Real-Ip`, `Content-Type`), whatever case the client
+    sent. This holds for a `Sky.Http.Server` route, a Sky.Spa `/_rpc` call, a
+    Sky.Live `App.api` route, the `App.withRequest` hook and the console's
+    `App.withConsoleAuth` request. Go's server already canonicalised a name it
+    parsed. The runtime no longer relies on that, so a header map built
+    another way (a handler wrapper) follows the rule too. So
+    `Dict.get "X-Sky-Api-Key" req.headers` finds `x-sky-api-key`.
+  - An HTTP client response's `headers` Dict holds canonical names too. In a
+    Sky.Spa client it was always empty. It now carries the response's headers
+    (the browser gives them in lower case, the Dict holds the canonical name).
+  - New `Http.header name resp : Maybe String` reads a response header in any
+    case. It is the response twin of `Server.header`, which already ignored
+    case (v0.29.0).
+  - The middlewares read their headers in any case: `Middleware.withCors`
+    (`Origin`), `withBasicAuth` (`Authorization`), `withRateLimit`
+    (`X-Forwarded-For`, `X-Real-Ip`) and `withCsrf` (`X-Csrf-Token`). Before,
+    a request a test built by hand with `"authorization"` was refused.
+  - A response record that names `content-type` in lower case keeps its own
+    value on a Sky.Live `App.api` route. Before, the default content type
+    could replace it, depending on map order.
+  - `sky check` warns about `Dict.get "x-sky-api-key" req.headers` (and
+    `Dict.member`, and the piped form): a literal name that is not canonical
+    never matches. The warning names the canonical key and `Server.header` /
+    `Http.header`.
+  - Header names Sky sends are not changed.
+- **Every `Sky.Core.File` function reports a failure with the same error
+  kind.** `File.remove`, `readDir`, `mkdirAll`, `readFile`, `readFileLimit`,
+  `readFileBytes`, `writeFile`, `writeBytes` and `append` wrapped every os
+  error as `Ffi`, so `File.remove "/nonexistent"` gave `Ffi`, while
+  `File.stat` gave `NotFound`. They now use the rule `stat`, `copy` and
+  `rename` use: a missing path is `NotFound`, a refused one
+  `PermissionDenied`, a path that already exists `Conflict`, anything else
+  `Io`. The message starts with the function name (`File.remove: …`). Code
+  that matched `Ffi` on these functions must match the new kind.
+- **The `Std.Image.Canvas` pixel precision is documented.** The canvas keeps
+  premultiplied 8-bit RGBA, so a semi-transparent pixel that goes through
+  `fromImage`, `paste` or `pasteCanvas` can come out of `encode` with its
+  colour moved: by at most 2 from alpha 128 up, 4 at alpha 64, 16 at alpha 16,
+  more near alpha 0. The alpha is exact, an opaque pixel is exact and a
+  transparent pixel stays transparent. A test pins these bounds.
+- **`sky remove` of the last dependency leaves no empty table.** It used to
+  leave an empty `["go.dependencies"]` (or `[dependencies]`) header in
+  `sky.toml`. A table that keeps a comment stays.
+- **`sky remove` and `sky install` refresh the split build's go.mod.** The
+  generated `go.mod` of a Sky.Spa split leg or a Std.App staging (under
+  `.skyapp/` and `.split/`) kept a removed module's `require` and local
+  `replace` until the next `sky build`. Both verbs now bring every generated
+  `go.mod` the project owns in line with `sky.toml`.
+- **`sky test` never takes a database from `.env`.** A Postgres project in
+  test mode (it has a `.env.test`) with `DATABASE_URL` in its `.env` stopped
+  with the "embedded cluster and explicit connection string" error, and a
+  project without a `.env.test` ran its tests against the database its `.env`
+  named. A `.env` often names a shared or a production database, so the tests
+  and their seeds wrote to it. Now the runtime does not load `.env` in test
+  mode (`SKY_TEST_MODE`), and a project whose `.env` names a database runs
+  `sky test` in test mode even without a `.env.test`, on the throwaway
+  database. A DSN for the tests comes from `.env.test` or the environment
+  (or a sky.toml `[database] path` / `url`), and wins, as it does for
+  `sky run`. The run prints one line that names the ignored DSN and points
+  at `.env.test`. `sky fuzz` prints the same line. `sky ai <verb>
+  --test-mode` still passes the project's `.env` under `.env.test`, since it
+  acts on the project's own data.
+  - Every DSN name `.env` sets counts. A `.env` with both `SKY_DB_PATH` (or
+    the prefixed name) and `DATABASE_URL`, run from a shell that set only
+    `SKY_DB_PATH`, left test mode off, so the runtime loaded `.env` and its
+    `DATABASE_URL` reached the session store, analytics, jobs and
+    telemetry. Test mode now turns on when any DSN name in `.env` is not
+    set in the environment.
+  - `System.loadEnv ()` loads nothing in test mode. It means `.env`, and it
+    loaded it in a `sky test` run. A file a program names explicitly still
+    loads.
+  - A project whose `.env` names a database now runs `sky test` in test
+    mode, so its outbound HTTP is mocked and fails closed. See
+    `docs/tooling/testing.md` for the way back to live calls.
+  (`runtime-go/rt/dotenv.go` `loadStartupDotEnv` and `Process_loadEnv`,
+  `rust/crates/testrunner/src/lib.rs` `dot_env_dsns` and
+  `dot_env_reaches_app`, `rust/crates/sky/src/main.rs` `ai_test_mode_env`;
+  tests `TestStartupDotEnv_SkippedInTestMode`,
+  `TestProcessLoadEnv_EmptyPathSkipsDotEnvInTestMode`,
+  `a_dot_env_dsn_is_ignored_and_other_dsns_win`,
+  `any_dot_env_dsn_the_environment_does_not_set_turns_test_mode_on`,
+  `ai_test_mode_passes_the_projects_dot_env_dsn`, `a_dot_env_dsn_is_never_used`,
+  `a_second_dot_env_dsn_the_environment_does_not_set_is_never_used`,
+  `a_dot_env_test_or_environment_dsn_wins`.)
+- **A static or immutable asset carries no CSRF cookie.** The CSRF
+  middleware set its cookie on every GET, also on the hashed Sky.Spa wasm and
+  JS, `/_sky/live.<hash>.js`, `spa-boot.<hash>.js`, a static mount and a
+  precompressed `.br` / `.gz` file. A response with `Set-Cookie` is not cached
+  by a CDN, so every Sky.Spa app behind one served its wasm from the origin. A
+  GET or HEAD now gets the cookie only when the response is not an asset: an
+  HTML page always does. A script, wasm, style, image, font, audio, video or
+  opaque-bytes response, one whose Cache-Control says `immutable`, or one
+  whose path has an asset extension never does. A JSON or text route keeps it.
+  A POST response still issues it. Only a response that sets the cookie is
+  marked `Vary: Cookie` and `Cache-Control: private`, so an asset keeps its
+  own `Cache-Control` (`public, max-age=31536000, immutable` stays as sent).
+
 ## v0.29.0 — Real-world capabilities (2026-10-29)
 
 ### Added
@@ -601,7 +932,7 @@ The full list, with old and new code, is `docs/migration/v0.29.md`.
   compared as the text `1`, so it missed every v0.28 row with no error. On
   SQLite, Std.Db.Store now marks each placeholder of a nullable `Float` or
   `Bool` column, and the runtime reads the column's declared type (once per
-  connection and table): into a TEXT column it binds the text v0.28 wrote
+  connection pool and table): into a TEXT column it binds the text v0.28 wrote
   (`true` / `false`, `7`, `7.5`), into any other column the value as before.
   Every write keeps one spelling, and `eq`, `inList`, `setValue`, `setWhen`,
   `updateFields`, `insert`, `upsert` and `copyInto` match and write old and

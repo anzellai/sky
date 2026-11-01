@@ -287,6 +287,16 @@ pub const MIGRATIONS: &[MigrationEntry] = &[
         detail: "|> Sky.Config.withLiveBroker \"redis://host:6379\"  (or `sky spa-split --broker <url>` for the auto-split backend)",
         kind: MigrationKind::BornInCode,
     },
+    // Born in code (v0.29.1): the query keys telemetry may keep with their
+    // values. No sky.toml key; a prefixed suffix read through skyGetenv
+    // (runtime-go/rt/telemetry_url.go), like LIVE_BROKER_URL.
+    MigrationEntry {
+        from: None,
+        env: "TELEMETRY_QUERY_KEYS",
+        builder: "Sky.Config.withTelemetryQueryKeys",
+        detail: "|> Sky.Config.withTelemetryQueryKeys [ \"page\", \"sort\" ]",
+        kind: MigrationKind::BornInCode,
+    },
 ];
 
 /// Look up the migration row for a legacy `(section, key)`, if any.

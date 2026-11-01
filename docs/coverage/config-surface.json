@@ -61,7 +61,7 @@
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1657 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:16165 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:16282 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:151 (toml_value)"
@@ -84,7 +84,7 @@
     "env.prefix": [
       "rust/crates/sky/src/db_cluster.rs:1666 (sky_toml_section_key)",
       "rust/crates/sky/src/db_pool_sizing.rs:161 (toml_value)",
-      "rust/crates/sky/src/main.rs:16040 (sky_toml_section_key)"
+      "rust/crates/sky/src/main.rs:16157 (sky_toml_section_key)"
     ],
     "go.dependencies": [
       "structural: rust/crates/project/src/ffi_ops.rs fn read_dependencies — same reader, same verbs; materialises the go.mod pins a build needs before it can start."
@@ -96,17 +96,17 @@
       "structural: rust/crates/sky/src/main.rs fn check_auth_secret — `sky doctor` tests for the `[live]` / `[auth]` section HEADERS inline, with no key read at all, to decide whether to check for an auth secret. Neither section is a key the scan can see."
     ],
     "name": [
-      "rust/crates/sky/src/main.rs:12834 (sky_toml_project_key)",
-      "rust/crates/sky/src/main.rs:12954 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:12868 (sky_toml_project_key)",
+      "rust/crates/sky/src/main.rs:12988 (sky_toml_project_key)"
     ],
     "root": [
       "rust/crates/project/src/build.rs:2744 (sky_toml_project_key)"
     ],
     "spa.wire": [
-      "rust/crates/sky/src/main.rs:5857 (sky_toml_section_key)"
+      "rust/crates/sky/src/main.rs:5891 (sky_toml_section_key)"
     ],
     "version": [
-      "rust/crates/sky/src/main.rs:12841 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:12875 (sky_toml_project_key)"
     ]
   },
   "read_without_doc": [
@@ -256,7 +256,10 @@
     "OBSERVABILITY_DISABLED",
     "PUBLIC_URL",
     "SPA_SESSION_LIFETIME",
-    "STATIC_DIR"
+    "STATIC_DIR",
+    "TELEMETRY_CLIENT_IP",
+    "TELEMETRY_QUERY_KEYS",
+    "TELEMETRY_URL"
   ],
   "seeded_suffixes": [
     "ANALYTICS_DB_PATH",
@@ -283,12 +286,12 @@
   "seeded_without_reader": [],
   "summary": {
     "accepted_sky_toml_keys": 27,
-    "documented_names": 180,
+    "documented_names": 183,
     "documented_without_reader": 19,
     "pre_binary_surfaces": 17,
     "read_without_doc": 25,
     "runtime_read_literal_sky_names": 47,
-    "runtime_read_suffixes": 71,
+    "runtime_read_suffixes": 74,
     "seeded_suffixes": 20,
     "seeded_without_reader": 0,
     "unclassified_keys": 0,

@@ -198,7 +198,7 @@ func TestMiddleware_SkipsObservabilityEndpoints(t *testing.T) {
 // the per-name series cap in 10k requests, permanently freezing the
 // request metrics (first-10k-win, no eviction). The fallback is now
 // the FIRST segment only, and only when it matches a known-safe
-// route shape; anything else collapses to the "/:dynamic" sentinel.
+// route shape; anything else becomes "/:redacted" (the telemetryPath segment rule).
 func TestRouteLabelFor_LowCardinalityFallback(t *testing.T) {
 	cases := map[string]string{
 		"/":                           "/",
@@ -210,11 +210,11 @@ func TestRouteLabelFor_LowCardinalityFallback(t *testing.T) {
 		"/static":                     "/static",
 		"/index.html":                 "/index.html",
 		// Unsafe first segments — IDs, encodings, junk — collapse.
-		"/12345":                      "/:dynamic",
-		"/123abc":                     "/:dynamic",
-		"/%41%42":                     "/:dynamic",
-		"/a b":                        "/:dynamic",
-		"/" + strings.Repeat("s", 65): "/:dynamic",
+		"/12345":                      "/:redacted",
+		"/123abc":                     "/:redacted",
+		"/%41%42":                     "/:redacted",
+		"/a b":                        "/:redacted",
+		"/" + strings.Repeat("s", 65): "/:redacted",
 	}
 	for path, want := range cases {
 		// Built directly rather than via httptest.NewRequest, which
@@ -418,5 +418,29 @@ func TestMiddleware_ClearsGoroutineRequestIDOnExit(t *testing.T) {
 	// the middleware should be cleared.
 	if got := CurrentRequestID(); got != "" {
 		t.Errorf("expected goroutine stamp cleared after handler; got %q", got)
+	}
+}
+
+// With no template, the route label (the span name, http.route and the
+// metrics `route` label) uses telemetryPath's segment rule: a requester-chosen
+// first segment that looks like data (a token on a 404) is never recorded.
+// The label stays bounded: every such path lands on one value.
+func TestRouteLabelFor_RedactsADataLookingFirstSegment(t *testing.T) {
+	for path, want := range map[string]string{
+		"/Abc123Token":                "/:redacted",
+		"/Abc123Token/more":           "/:redacted",
+		"/reset3f9a77c2":              "/:redacted",
+		"/ada@example.com":            "/:redacted",
+		"/users":                      "/users",
+		"/v1":                         "/v1",
+		"/" + strings.Repeat("s", 33): "/:redacted",
+	} {
+		req := &http.Request{Method: http.MethodGet, URL: &url.URL{Path: path}}
+		if got := routeLabelFor(req); got != want {
+			t.Errorf("routeLabelFor(%q) = %q, want %q", path, got, want)
+		}
+		if got := redactPathSegments(path); !strings.HasPrefix(got, want) {
+			t.Errorf("redactPathSegments(%q) = %q, want the same first segment as the route label %q", path, got, want)
+		}
 	}
 }

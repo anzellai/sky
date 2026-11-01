@@ -7698,20 +7698,20 @@ func File_readFileLimit(path any, limit any) any {
 			}
 			f, err := os.Open(p)
 			if err != nil {
-				return Err[any, any](ErrFfi(err.Error()))
+				return Err[any, any](fileError("File.readFile", err))
 			}
 			defer f.Close()
 			// Stat first so we can early-reject oversize files without reading them.
 			st, err := f.Stat()
 			if err != nil {
-				return Err[any, any](ErrFfi(err.Error()))
+				return Err[any, any](fileError("File.readFile", err))
 			}
 			if st.Size() > n {
 				return Err[any, any](ErrIo(fmt.Sprintf("file exceeds %d-byte limit (actual: %d)", n, st.Size())))
 			}
 			data, err := io.ReadAll(io.LimitReader(f, n))
 			if err != nil {
-				return Err[any, any](ErrFfi(err.Error()))
+				return Err[any, any](fileError("File.readFile", err))
 			}
 			return Ok[any, any](string(data))
 		})
@@ -7725,12 +7725,12 @@ func File_readFileBytes(path any) any {
 	return func() any {
 		f, err := os.Open(fmt.Sprintf("%v", path))
 		if err != nil {
-			return Err[any, any](ErrFfi(err.Error()))
+			return Err[any, any](fileError("File.readFileBytes", err))
 		}
 		defer f.Close()
 		data, err := io.ReadAll(io.LimitReader(f, defaultFileReadLimit))
 		if err != nil {
-			return Err[any, any](ErrFfi(err.Error()))
+			return Err[any, any](fileError("File.readFileBytes", err))
 		}
 		out := make([]any, len(data))
 		for i, b := range data {
@@ -7748,7 +7748,7 @@ func File_writeFile(path any, content any) any {
 		return WithFileSpan("writeFile", fmt.Sprintf("%v", path), func() any {
 			err := os.WriteFile(fmt.Sprintf("%v", path), []byte(fmt.Sprintf("%v", content)), 0644)
 			if err != nil {
-				return Err[any, any](ErrFfi(err.Error()))
+				return Err[any, any](fileError("File.writeFile", err))
 			}
 			return Ok[any, any](struct{}{})
 		})
@@ -7764,7 +7764,7 @@ func File_writeBytes(path any, content any) any {
 		}
 		return WithFileSpan("writeBytes", fmt.Sprintf("%v", path), func() any {
 			if err := os.WriteFile(fmt.Sprintf("%v", path), readBytes(content), 0644); err != nil {
-				return Err[any, any](ErrFfi(err.Error()))
+				return Err[any, any](fileError("File.writeBytes", err))
 			}
 			return Ok[any, any](struct{}{})
 		})
@@ -7779,12 +7779,12 @@ func File_append(path any, content any) any {
 		return WithFileSpan("append", fmt.Sprintf("%v", path), func() any {
 			f, err := os.OpenFile(fmt.Sprintf("%v", path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
-				return Err[any, any](ErrFfi(err.Error()))
+				return Err[any, any](fileError("File.append", err))
 			}
 			defer f.Close()
 			_, err = f.WriteString(fmt.Sprintf("%v", content))
 			if err != nil {
-				return Err[any, any](ErrFfi(err.Error()))
+				return Err[any, any](fileError("File.append", err))
 			}
 			return Ok[any, any](struct{}{})
 		})
@@ -7805,7 +7805,7 @@ func File_remove(path any) any {
 		}
 		err := os.Remove(fmt.Sprintf("%v", path))
 		if err != nil {
-			return Err[any, any](ErrFfi(err.Error()))
+			return Err[any, any](fileError("File.remove", err))
 		}
 		return Ok[any, any](struct{}{})
 	}
@@ -7818,7 +7818,7 @@ func File_mkdirAll(path any) any {
 		}
 		err := os.MkdirAll(fmt.Sprintf("%v", path), 0755)
 		if err != nil {
-			return Err[any, any](ErrFfi(err.Error()))
+			return Err[any, any](fileError("File.mkdirAll", err))
 		}
 		return Ok[any, any](struct{}{})
 	}
@@ -7828,7 +7828,7 @@ func File_readDir(path any) any {
 	return func() any {
 		entries, err := os.ReadDir(fmt.Sprintf("%v", path))
 		if err != nil {
-			return Err[any, any](ErrFfi(err.Error()))
+			return Err[any, any](fileError("File.readDir", err))
 		}
 		result := make([]any, len(entries))
 		for i, e := range entries {
@@ -8873,6 +8873,13 @@ type SkyRoute struct {
 	// The route is exempt from the double-submit CSRF token, which the
 	// guard replaces.
 	Rpc bool
+
+	// SpaPage — true for a Sky.Spa SSR page route (Spa_pageRoute). It is a
+	// GET route that renders the page, and serverRouteMux also makes it the
+	// answer to a native form POST on its path, unless another route on the
+	// same path takes POST: the POST answers 303 to the same URL
+	// (pagePostRedirect) and its body is never read.
+	SpaPage bool
 }
 
 // SkyRequest wraps an HTTP request
@@ -9484,6 +9491,42 @@ func requestHeaderLookup(headers map[string]any, name string) (any, bool) {
 	return nil, false
 }
 
+// canonicalHeaderMap is the one rule for the header names a Sky program sees,
+// on a request (`req.headers`) and on an HTTP client response
+// (`resp.headers`): each name is stored in canonical form (`Content-Type`,
+// `X-Sky-Api-Key`), whatever case the client, the server or a proxy sent.
+// HTTP header names are case-insensitive (RFC 9110 section 5.1), and HTTP/2
+// and the browser's fetch give them in lower case. So `Dict.get
+// "X-Sky-Api-Key" req.headers` finds `x-sky-api-key`. When two spellings of
+// one name are present, the canonical spelling wins, then the first in sorted
+// order, so the result never depends on map order.
+func canonicalHeaderMap(names, values []string) map[string]string {
+	out := make(map[string]string, len(names))
+	var other []int
+	for i, k := range names {
+		if textproto.CanonicalMIMEHeaderKey(k) == k {
+			out[k] = values[i]
+		} else {
+			other = append(other, i)
+		}
+	}
+	sort.Slice(other, func(a, b int) bool { return names[other[a]] < names[other[b]] })
+	for _, i := range other {
+		ck := textproto.CanonicalMIMEHeaderKey(names[i])
+		if _, taken := out[ck]; !taken {
+			out[ck] = values[i]
+		}
+	}
+	return out
+}
+
+// canonicalHeaderDict is the `headers` Dict of an HTTP client response
+// (canonicalHeaderMap). The host build gets names from Go's client, the
+// Sky.Spa client from the browser's fetch.
+func canonicalHeaderDict(names, values []string) SkyDict[string] {
+	return dictFromTypedMap(canonicalHeaderMap(names, values))
+}
+
 // ═══════════════════════════════════════════════════════════
 // Sky.Http.Middleware — handler → handler transformations
 // ═══════════════════════════════════════════════════════════
@@ -9613,7 +9656,7 @@ func Middleware_withCors(origins any, handler any) any {
 		return func() any {
 			r, _ := asSkyRequest(req)
 			origin := ""
-			if o, ok := r.Headers["Origin"]; ok {
+			if o, ok := requestHeaderLookup(r.Headers, "Origin"); ok {
 				origin = fmt.Sprintf("%v", o)
 			}
 			allow := ""
@@ -9682,7 +9725,7 @@ func Middleware_withLogging(handler any) any {
 					dur := time.Since(start).Milliseconds()
 					ctx := map[string]any{
 						"method": r.Method,
-						"path":   r.Path,
+						"path":   telemetrySkyPath(r.Path),
 						"status": status,
 						"ms":     dur,
 					}
@@ -9693,7 +9736,7 @@ func Middleware_withLogging(handler any) any {
 			dur := time.Since(start).Milliseconds()
 			ctx := map[string]any{
 				"method": r.Method,
-				"path":   r.Path,
+				"path":   telemetrySkyPath(r.Path),
 				"status": status,
 				"ms":     dur,
 			}
@@ -9713,7 +9756,8 @@ func Middleware_withBasicAuth(expectedUser any, expectedPass any, handler any) a
 	return func(req any) any {
 		return func() any {
 			r, _ := asSkyRequest(req)
-			authHeader, _ := r.Headers["Authorization"].(string)
+			authValue, _ := requestHeaderLookup(r.Headers, "Authorization")
+			authHeader, _ := authValue.(string)
 			const prefix = "Basic "
 			if !strings.HasPrefix(authHeader, prefix) {
 				return Ok[any, any](SkyResponse{
@@ -9754,7 +9798,8 @@ func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler 
 			r, _ := asSkyRequest(req)
 			ip := ""
 			// Try X-Forwarded-For first (behind reverse proxy), then Remote.
-			if v, ok := r.Headers["X-Forwarded-For"].(string); ok && v != "" {
+			if xff, _ := requestHeaderLookup(r.Headers, "X-Forwarded-For"); xff != nil && AsString(xff) != "" {
+				v := AsString(xff)
 				if idx := strings.Index(v, ","); idx > 0 {
 					ip = strings.TrimSpace(v[:idx])
 				} else {
@@ -9762,8 +9807,8 @@ func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler 
 				}
 			}
 			if ip == "" {
-				if v, ok := r.Headers["X-Real-Ip"].(string); ok {
-					ip = v
+				if v, ok := requestHeaderLookup(r.Headers, "X-Real-Ip"); ok {
+					ip = AsString(v)
 				}
 			}
 			if ip == "" {
