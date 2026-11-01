@@ -662,3 +662,68 @@ fn install_drops_a_path_dependency_removed_from_sky_toml() {
     assert!(!app.join("sky-ffi/go/greet_bindings.go").exists());
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// The generated go.mod of a split leg, as a `--target web:app` build writes
+/// it: the runtime's module plus the path dependency's `require` + `replace`.
+fn write_split_go_mod(app: &Path, leg: &str, greet: &Path) -> PathBuf {
+    let dir = app.join(".skyapp/web-app/.split").join(leg).join("sky-out");
+    write(
+        &dir.join("go.mod"),
+        &format!(
+            "module sky-app\n\ngo 1.25.0\n\nrequire example.com/greet v0.0.0\n\nreplace example.com/greet => {}\n",
+            greet.canonicalize().unwrap().display()
+        ),
+    );
+    dir.join("go.mod")
+}
+
+/// `sky remove` of the last Go dependency leaves no empty
+/// `["go.dependencies"]` table, and it refreshes every generated go.mod the
+/// project owns: the Sky.Spa split legs under `.skyapp/<target>/.split/` kept
+/// the removed module's `require` + `replace` until the next build.
+#[test]
+fn remove_of_the_last_go_dependency_drops_the_table_and_refreshes_split_go_mods() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let (base, greet, app) = go_fixture("rmlast");
+    write(&app.join("src/Main.sky"), MAIN_HELLO);
+    let (ok, log) = run(&app, SKY, &["add", "../greet"]);
+    assert!(ok, "sky add ../greet:\n{log}");
+    let backend = write_split_go_mod(&app, "backend", &greet);
+    let frontend = write_split_go_mod(&app, "frontend", &greet);
+
+    let (ok, log) = run(&app, SKY, &["remove", "example.com/greet"]);
+    assert!(ok, "sky remove:\n{log}");
+    let toml = std::fs::read_to_string(app.join("sky.toml")).unwrap();
+    assert!(
+        !toml.contains("go.dependencies"),
+        "an empty [\"go.dependencies\"] table must go with its last entry:\n{toml}"
+    );
+    assert!(toml.contains("name = \"pathdep\""), "{toml}");
+    for go_mod in [&backend, &frontend] {
+        let text = std::fs::read_to_string(go_mod).unwrap();
+        assert!(
+            !text.contains("example.com/greet"),
+            "{} keeps the removed module:\n{text}",
+            go_mod.display()
+        );
+    }
+
+    // `sky install` after a hand edit refreshes the split legs too.
+    let (ok, log) = run(&app, SKY, &["add", "../greet"]);
+    assert!(ok, "sky add ../greet:\n{log}");
+    let backend = write_split_go_mod(&app, "backend", &greet);
+    write(
+        &app.join("sky.toml"),
+        "name = \"pathdep\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n",
+    );
+    let (ok, log) = run(&app, SKY, &["install"]);
+    assert!(ok, "sky install:\n{log}");
+    let text = std::fs::read_to_string(&backend).unwrap();
+    assert!(
+        !text.contains("example.com/greet"),
+        "sky install keeps a module sky.toml no longer lists:\n{text}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}

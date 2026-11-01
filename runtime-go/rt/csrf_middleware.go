@@ -229,8 +229,10 @@ func IsCsrfEnabled() bool {
 //     `X-Sky-Csrf` header matching `__sky_csrf` cookie. Both
 //     present + equal → pass. Missing or mismatch → 403.
 //
-// Every response that passes through sets the CSRF cookie, so it goes out
-// private (csrfPrivateWriter).
+// Every response that sets the CSRF cookie goes out private: a mutating
+// request through csrfPrivateWriter, a GET or HEAD through
+// csrfCookieWriter.decide. A GET or HEAD for a static or immutable asset
+// gets no cookie (csrfIssuesOn) and keeps its own Cache-Control.
 //
 // The Sky.Http.Server and Sky.Live listeners use csrfMiddlewareWithPages:
 // a native form POST to one of their pages answers 303 to the same URL, not
@@ -348,7 +350,7 @@ func csrfMiddlewareWithPages(next http.Handler, isPage func(*http.Request) bool)
 		if crossOriginIframeMode() {
 			sameSite = http.SameSiteNoneMode
 		}
-		http.SetCookie(w, &http.Cookie{
+		csrfCookie := &http.Cookie{
 			Name:     cookieName,
 			Value:    cookieToken,
 			Path:     "/",
@@ -356,16 +358,26 @@ func csrfMiddlewareWithPages(next http.Handler, isPage func(*http.Request) bool)
 			MaxAge:   csrfCookieMaxAgeSeconds(),
 			SameSite: sameSite,
 			Secure:   cookieSecureFor(r, cookieName, sameSite),
-		})
-		// The response now sets this visitor's CSRF cookie, so a shared cache
-		// must never store it: whatever the handler writes, and when, it goes
-		// out with `Vary: Cookie` and `Cache-Control: private`
-		// (markPerVisitorPage, which keeps an app's own directives less
-		// `public` and `s-maxage`). Before, only a page that got a form field
-		// was marked, and a page with no form set the cookie unmarked.
-		pw := &csrfPrivateWriter{ResponseWriter: w}
-		w = pw
-		defer pw.mark()
+		}
+		if method == http.MethodGet || method == http.MethodHead {
+			// A read: the cookie goes out only when the response is not a
+			// static or immutable asset (csrfIssuesOn), decided when the
+			// handler writes its headers. An asset response that carried
+			// Set-Cookie could not be cached by a CDN (the hashed Sky.Spa
+			// wasm and JS, /_sky/live.<hash>.js, a static mount). When the
+			// cookie does go out, decide marks the response private too.
+			w = &csrfCookieWriter{ResponseWriter: w, r: r, cookie: csrfCookie}
+		} else {
+			http.SetCookie(w, csrfCookie)
+			// The response now sets this visitor's CSRF cookie, so a shared
+			// cache must never store it: whatever the handler writes, and
+			// when, it goes out with `Vary: Cookie` and `Cache-Control:
+			// private` (markPerVisitorPage, which keeps an app's own
+			// directives less `public` and `s-maxage`).
+			pw := &csrfPrivateWriter{ResponseWriter: w}
+			w = pw
+			defer pw.mark()
+		}
 		if newlyIssued {
 			// Stash the freshly-generated token on the request so downstream
 			// handlers calling `CurrentCsrfToken(r)` (in particular Sky.Live's
@@ -381,6 +393,11 @@ func csrfMiddlewareWithPages(next http.Handler, isPage func(*http.Request) bool)
 
 		if !isMutating {
 			next.ServeHTTP(w, r)
+			// A handler that wrote nothing: the headers go out after it
+			// returns, so the cookie can still be decided here.
+			if cw, ok := w.(*csrfCookieWriter); ok {
+				cw.decide(nil)
+			}
 			return
 		}
 
@@ -439,6 +456,110 @@ func csrfMiddlewareWithPages(next http.Handler, isPage func(*http.Request) bool)
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// csrfCookieWriter holds the CSRF cookie of a GET or HEAD until the handler
+// writes its headers, then sets it only when csrfIssuesOn says the response
+// is not a static or immutable asset.
+type csrfCookieWriter struct {
+	http.ResponseWriter
+	r       *http.Request
+	cookie  *http.Cookie
+	decided bool
+}
+
+func (w *csrfCookieWriter) decide(sniff []byte) {
+	if w.decided {
+		return
+	}
+	w.decided = true
+	if csrfIssuesOn(w.r.URL.Path, w.Header(), sniff) {
+		http.SetCookie(w.ResponseWriter, w.cookie)
+		// This visitor's cookie goes out, so a shared cache must never
+		// store the response: `Vary: Cookie` and `Cache-Control: private`,
+		// keeping the app's own directives less `public` and `s-maxage`.
+		// An asset that gets no cookie keeps its own Cache-Control.
+		markPerVisitorPage(w.ResponseWriter.Header())
+	}
+}
+
+func (w *csrfCookieWriter) WriteHeader(code int) {
+	w.decide(nil)
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *csrfCookieWriter) Write(b []byte) (int, error) {
+	w.decide(b)
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *csrfCookieWriter) Flush() {
+	w.decide(nil)
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap exposes the wrapped writer to http.ResponseController.
+func (w *csrfCookieWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Hijack hands the connection over (a WebSocket upgrade). No response
+// headers follow, so no cookie is set.
+func (w *csrfCookieWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.decided = true
+	if h, ok := w.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errHijackNotSupported
+}
+
+// csrfAssetExts are the file extensions of a static asset. A path that ends
+// in one of them, answered with anything but HTML, gets no CSRF cookie.
+var csrfAssetExts = map[string]bool{
+	".js": true, ".mjs": true, ".css": true, ".wasm": true, ".map": true,
+	".br": true, ".gz": true, ".zst": true, ".json": true, ".webmanifest": true,
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true,
+	".avif": true, ".svg": true, ".ico": true, ".bmp": true,
+	".woff": true, ".woff2": true, ".ttf": true, ".otf": true, ".eot": true,
+	".mp3": true, ".mp4": true, ".webm": true, ".ogg": true, ".wav": true,
+	".pdf": true, ".txt": true, ".xml": true, ".zip": true,
+}
+
+// csrfIssuesOn reports whether a GET/HEAD response gets the CSRF cookie.
+// An HTML response always does: the page embeds the token, so the cookie
+// must come with it. A static or immutable asset never does: a response
+// whose Cache-Control says `immutable`, whose type is a script, wasm, style,
+// image, font, audio, video or opaque bytes, or whose path has an asset
+// extension. Anything else (a JSON or text route) keeps the cookie, as
+// before, so a client that starts with such a GET gets a token. `sniff` is
+// the first body bytes when the handler set no Content-Type (net/http then
+// sniffs the same way).
+func csrfIssuesOn(path string, h http.Header, sniff []byte) bool {
+	ct := strings.ToLower(h.Get("Content-Type"))
+	if ct == "" && len(sniff) > 0 {
+		ct = strings.ToLower(http.DetectContentType(sniff))
+	}
+	if strings.HasPrefix(ct, "text/html") {
+		return true
+	}
+	if strings.Contains(strings.ToLower(h.Get("Cache-Control")), "immutable") {
+		return false
+	}
+	for _, p := range []string{
+		"text/javascript", "application/javascript", "application/x-javascript",
+		"application/wasm", "text/css", "image/", "font/", "audio/", "video/",
+		"application/font", "application/octet-stream", "application/x-gzip",
+		"application/gzip", "application/manifest+json",
+	} {
+		if strings.HasPrefix(ct, p) {
+			return false
+		}
+	}
+	base := path[strings.LastIndex(path, "/")+1:]
+	if i := strings.LastIndex(base, "."); i > 0 && csrfAssetExts[strings.ToLower(base[i:])] {
+		return false
+	}
+	return true
 }
 
 // csrfBodyPeekMax bounds how much of a request body the middleware will
@@ -946,11 +1067,13 @@ func pagePatternMatch(pat, path string) bool {
 	return true
 }
 
-// csrfPrivateWriter marks a response that sets the CSRF cookie as private
-// (markPerVisitorPage) when its header goes out: at the first WriteHeader,
-// Write or Flush, or after the handler returns when it wrote nothing. The
-// handler may set its own Cache-Control first; `public` and `s-maxage` are
-// dropped from it and every other directive is kept.
+// csrfPrivateWriter marks a mutating response that sets the CSRF cookie as
+// private (markPerVisitorPage) when its header goes out: at the first
+// WriteHeader, Write or Flush, or after the handler returns when it wrote
+// nothing. The handler may set its own Cache-Control first; `public` and
+// `s-maxage` are dropped from it and every other directive is kept. A GET or
+// HEAD is marked by csrfCookieWriter.decide instead, and only when it gets
+// the cookie.
 type csrfPrivateWriter struct {
 	http.ResponseWriter
 	marked bool

@@ -1,8 +1,9 @@
 -- | Sky.Core.File — filesystem I/O (Layer 3 Sky source).
 --
 -- Every function is effectful (touches the disk) so the return is
--- always `Task Error _`. A missing path fails with `NotFound`, a refused
--- one with `PermissionDenied`, anything else with `Io`.
+-- always `Task Error _`. Every function maps a failure the same way: a
+-- missing path fails with `NotFound`, a refused one with `PermissionDenied`,
+-- a path that already exists with `Conflict`, anything else with `Io`.
 --
 -- Symlinks. `stat` follows a symlink and describes its target; `lstat`
 -- describes the link itself (kind `Symlink`). `readLink` returns a link's

@@ -674,6 +674,130 @@ pub fn absolutize_manifest(text: &str, project_dir: &Path) -> String {
     s
 }
 
+/// The `sky-out/` directories of the generated projects a build writes under
+/// the project: the Std.App staging (`.skyapp/<target>/sky-out`), the Sky.Spa
+/// split legs (`.split/{backend,frontend}/sky-out`, also under
+/// `.skyapp/<target>/`). Each holds its own `go.mod`. The project's own
+/// `sky-out/` is not listed. Symlinks are not followed and the walk stops at
+/// depth 5, so a large or looping tree costs little.
+pub fn generated_go_dirs(project_dir: &Path) -> Vec<PathBuf> {
+    fn walk(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut subdirs: Vec<PathBuf> = rd
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .map(|e| e.path())
+            .collect();
+        subdirs.sort();
+        for sub in subdirs {
+            let name = sub.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name == "sky-out" {
+                if sub.join("go.mod").is_file() {
+                    out.push(sub);
+                }
+                continue;
+            }
+            if depth > 0 && !matches!(name, "node_modules" | ".skydeps" | ".skycache" | "src") {
+                walk(&sub, depth - 1, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for root in [".skyapp", ".split"] {
+        walk(&project_dir.join(root), 4, &mut out);
+    }
+    out
+}
+
+/// The modules a `go.mod` text replaces with a local directory: a
+/// `replace <mod> => <dir>` whose right side is one path with no version, the
+/// shape [`apply_go_path_deps`] writes. Both the one-line and the block form.
+fn local_replaced_modules(go_mod: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_block = false;
+    for raw in go_mod.lines() {
+        let line = raw.split("//").next().unwrap_or("").trim();
+        let body = if in_block {
+            if line == ")" {
+                in_block = false;
+                continue;
+            }
+            line
+        } else if let Some(rest) = line.strip_prefix("replace") {
+            let rest = rest.trim();
+            if rest == "(" {
+                in_block = true;
+                continue;
+            }
+            rest
+        } else {
+            continue;
+        };
+        let Some((lhs, rhs)) = body.split_once("=>") else {
+            continue;
+        };
+        let (Some(module), 1) = (
+            lhs.split_whitespace().next(),
+            rhs.split_whitespace().count(),
+        ) else {
+            continue;
+        };
+        out.push(module.to_string());
+    }
+    out
+}
+
+/// Bring every generated `go.mod` the project owns ([`generated_go_dirs`]) in
+/// line with `sky.toml` (`sky remove`, `sky install`): a module a generated
+/// go.mod replaces with a local directory that `sky.toml` no longer lists as a
+/// Go path dependency loses its `require` and `replace`, and `also_drop` (a
+/// registry module just removed) loses its `require`. The next build rewrites
+/// these files from `sky.toml` anyway; this keeps them right in between, so a
+/// `go` command run there does not read a directory that was removed. Returns
+/// one line per change.
+pub fn refresh_generated_go_mods(project_dir: &Path, also_drop: Option<&str>) -> Vec<String> {
+    let declared: Vec<String> =
+        read_path_dependencies_of(&project_dir.join("sky.toml"), PathDepKind::Go)
+            .into_iter()
+            .map(|d| d.key)
+            .collect();
+    let mut notes = Vec::new();
+    for dir in generated_go_dirs(project_dir) {
+        let Ok(text) = std::fs::read_to_string(dir.join("go.mod")) else {
+            continue;
+        };
+        let rel = dir
+            .strip_prefix(project_dir)
+            .unwrap_or(&dir)
+            .join("go.mod")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let mut stale: Vec<String> = local_replaced_modules(&text)
+            .into_iter()
+            .filter(|m| !declared.contains(m))
+            .collect();
+        if let Some(m) = also_drop {
+            let required = text.lines().any(|l| {
+                let l = l.trim();
+                let l = l.strip_prefix("require").map_or(l, str::trim);
+                l.split_whitespace().next() == Some(m)
+            });
+            if required && !stale.iter().any(|s| s == m) {
+                stale.push(m.to_string());
+            }
+        }
+        for module in stale {
+            match drop_go_path_dep(&dir, &module) {
+                Ok(()) => notes.push(format!("  dropped {module} from {rel}")),
+                Err(e) => notes.push(format!("  note: {rel}: {e}")),
+            }
+        }
+    }
+    notes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -734,6 +858,47 @@ mod tests {
                 .iter()
                 .all(|d| d.key != "example.com/greet"),
             "a renamed module must not be listed for re-inspection"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn local_replaced_modules_reads_a_local_replace_only() {
+        let go_mod = "module sky-app\n\nreplace example.com/a => /abs/a\n\nreplace (\n\texample.com/b => ../b // local\n\texample.com/c => example.com/c2 v1.2.0\n)\n";
+        assert_eq!(
+            local_replaced_modules(go_mod),
+            vec!["example.com/a".to_string(), "example.com/b".to_string()]
+        );
+    }
+
+    #[test]
+    fn generated_go_dirs_finds_split_and_staging_legs() {
+        let dir = scratch("gendirs");
+        for leg in [
+            ".skyapp/web-app/.split/backend/sky-out",
+            ".skyapp/web-app/sky-out",
+            ".split/frontend/sky-out",
+            "sky-out",
+        ] {
+            std::fs::create_dir_all(dir.join(leg)).unwrap();
+            std::fs::write(dir.join(leg).join("go.mod"), "module sky-app\n").unwrap();
+        }
+        let found: Vec<String> = generated_go_dirs(&dir)
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                ".skyapp/web-app/.split/backend/sky-out",
+                ".skyapp/web-app/sky-out",
+                ".split/frontend/sky-out",
+            ]
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

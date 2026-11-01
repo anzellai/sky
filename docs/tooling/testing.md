@@ -261,9 +261,16 @@ A project that declares a `[database]` but is given no DSN gets an offline
 database for the run, thrown away at the end. The engine decides how: a
 **Postgres** app gets a throwaway embedded cluster; a **SQLite** app has its path
 redirected to a scratch file (it is already offline). So a scenario needs no live
-database. A DSN in the environment (`DATABASE_URL`) opts back out — the test then
-targets that database. An empty `DATABASE_URL` (`DATABASE_URL=`, the usual way to
-clear one in CI) is no DSN: the run still gets its throwaway database.
+database. A DSN the app would read opts back out, and the test then targets that
+database. For a Postgres app that is `DATABASE_URL` or `<PREFIX>_DB_PATH` from
+`.env.test` / `.env.test.local`, the environment or the project's `.env` (the
+first that sets it wins), or a sky.toml `[database] path` / `url`. The run
+prints one line that names the source (never the value). An explicit DSN wins
+as it does for `sky run`, because the runtime refuses an embedded cluster
+beside one. For a SQLite app only `DATABASE_URL` from `.env.test` or the
+environment opts out. An empty value (`DATABASE_URL=`, the usual way to clear
+one in CI or in `.env.test`) is no DSN: the run still gets its throwaway
+database.
 
 ### Training runs (`Std.Ai.Train`)
 

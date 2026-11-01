@@ -178,6 +178,9 @@ pub fn remove(project_dir: &Path, pkg: &str) -> FfiReport {
         Ok(false) => {}
         Err(e) => r.say(format!("  warn: sky.toml update: {e}")),
     }
+    for note in crate::path_deps::refresh_generated_go_mods(project_dir, Some(pkg)) {
+        r.say(note);
+    }
     r.say(format!("Removed {pkg}."));
     r
 }
@@ -550,6 +553,9 @@ fn remove_path_dep(project_dir: &Path, arg: &str) -> Option<FfiReport> {
         Ok(false) => {}
         Err(e) => r.say(format!("  warn: sky.toml update: {e}")),
     }
+    for note in crate::path_deps::refresh_generated_go_mods(project_dir, None) {
+        r.say(note);
+    }
     r.say(format!("Removed {} (local path {}).", dep.key, dep.path));
     Some(r)
 }
@@ -792,6 +798,11 @@ fn go_resolves(sky_out: &Path, pkg: &str, spec: &str) -> bool {
 /// matching surface.
 pub fn install(project_dir: &Path, repo_root: &Path) -> FfiReport {
     let mut r = FfiReport::new();
+    // The generated go.mod of every split leg and Std.App staging follows
+    // sky.toml: a module it no longer lists leaves them.
+    for note in crate::path_deps::refresh_generated_go_mods(project_dir, None) {
+        r.say(note);
+    }
     let sky_toml = project_dir.join("sky.toml");
     let deps = read_go_dependencies(&sky_toml);
     let sky_deps = read_sky_dependencies(&sky_toml);
@@ -1693,10 +1704,36 @@ fn remove_dependency(sky_toml: &Path, section: &str, pkg: &str) -> Result<bool, 
     if !removed {
         return Ok(false);
     }
+    drop_empty_section(&mut kept, section);
     let mut out = kept.join("\n");
     out.push('\n');
     std::fs::write(sky_toml, out).map_err(|e| format!("write sky.toml: {e}"))?;
     Ok(true)
+}
+
+/// Drop the `[<section>]` header when the table holds nothing but blank lines
+/// (its last entry was just removed), with those blank lines, so `sky remove`
+/// of the last dependency leaves no empty table behind. A table that keeps a
+/// comment or any other line stays. Trailing blank lines are trimmed.
+fn drop_empty_section(lines: &mut Vec<&str>, section: &str) {
+    if let Some(h) = lines
+        .iter()
+        .position(|l| section_matches(l.trim(), section))
+    {
+        let end = lines[h + 1..]
+            .iter()
+            .position(|l| {
+                let t = l.trim();
+                t.starts_with('[') && t.ends_with(']')
+            })
+            .map_or(lines.len(), |i| h + 1 + i);
+        if lines[h + 1..end].iter().all(|l| l.trim().is_empty()) {
+            lines.drain(h..end);
+        }
+    }
+    while lines.last().is_some_and(|l| l.trim().is_empty()) {
+        lines.pop();
+    }
 }
 
 /// Remove from `["go.dependencies"]`. Thin wrapper over [`remove_dependency`].
@@ -2003,6 +2040,40 @@ mod tests {
         assert!(r.ok);
         assert!(read_go_dependencies(&toml).is_empty(), "go dep removed");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn removing_the_last_entry_drops_the_empty_table() {
+        let dir = std::env::temp_dir().join(format!("sky-rm-last-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let toml = dir.join("sky.toml");
+        std::fs::write(
+            &toml,
+            "name = \"x\"\n\n[\"go.dependencies\"]\n\"github.com/google/uuid\" = \"v1.6.0\"\n\n[dependencies]\n\"a/b\" = \"latest\"\n\n[live]\nport = 8000\n",
+        )
+        .unwrap();
+        assert!(remove_go_dependency(&toml, "github.com/google/uuid").unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&toml).unwrap(),
+            "name = \"x\"\n\n[dependencies]\n\"a/b\" = \"latest\"\n\n[live]\nport = 8000\n"
+        );
+        assert!(remove_sky_dependency(&toml, "a/b").unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&toml).unwrap(),
+            "name = \"x\"\n\n[live]\nport = 8000\n"
+        );
+        // A table that keeps a comment is the user's: it stays.
+        std::fs::write(
+            &toml,
+            "name = \"x\"\n\n[\"go.dependencies\"]\n# pinned for the reports\n\"github.com/google/uuid\" = \"v1.6.0\"\n",
+        )
+        .unwrap();
+        assert!(remove_go_dependency(&toml, "github.com/google/uuid").unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&toml).unwrap(),
+            "name = \"x\"\n\n[\"go.dependencies\"]\n# pinned for the reports\n"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

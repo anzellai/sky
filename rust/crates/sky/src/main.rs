@@ -4757,6 +4757,8 @@ fn build_and_run_fuzz_harness(
                 // conflict check skips an empty value, so embed provisions its
                 // own cluster and injects its own DSN.
                 cmd.env("DATABASE_URL", "");
+                // The same for a `<PREFIX>_DB_PATH` in `.env`: it is a DSN too.
+                cmd.env(db_cluster::dsn_env_name(app_project_dir), "");
             }
             project::OfflineDbPlan::Sqlite { db_path_env } => {
                 cmd.env(db_path_env, harness_dir.join("fuzz.db"));

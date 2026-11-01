@@ -269,6 +269,14 @@ tests =
                 (fixture (\dir -> File.readFileLimit (dir ++ "/root/sub/f.txt") -1)))
     , Test.test "stat of a missing path is NotFound"
         (\_ -> Test.expectErrorKind Error.NotFound (kindOf "/nope" File.stat))
+    , Test.test "remove of a missing path is NotFound, not Ffi"
+        (\_ -> Test.expectErrorKind Error.NotFound (fixture (\dir -> File.remove (dir ++ "/nope"))))
+    , Test.test "readDir of a missing path is NotFound, not Ffi"
+        (\_ -> Test.expectErrorKind Error.NotFound (fixture (\dir -> File.readDir (dir ++ "/nope"))))
+    , Test.test "readFile of a missing path is NotFound, not Ffi"
+        (\_ -> Test.expectErrorKind Error.NotFound (fixture (\dir -> File.readFile (dir ++ "/nope"))))
+    , Test.test "mkdirAll under a regular file is Io, not Ffi"
+        (\_ -> Test.expectErrorKind Error.Io (fixture (\dir -> File.mkdirAll (dir ++ "/root/sub/f.txt/x"))))
     , Test.test "resolveWithin: a path inside the root"
         (\_ -> Test.equal (Ok "/root/sub/f.txt") (withinRel "sub/f.txt"))
     , Test.test "resolveWithin: a link inside the root is followed"

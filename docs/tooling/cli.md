@@ -1504,6 +1504,13 @@ removes the line, the generated `sky-ffi/<slug>.*` surface, and the `go.mod`
 require (`go mod tidy`). The routing is a local section lookup — no probe.
 `--go` / `--sky` force one path.
 
+When the last entry of a section goes, the empty table header goes with it (a
+table that keeps a comment stays). `sky remove` and `sky install` also bring
+the generated `go.mod` files under `.skyapp/` and `.split/` (the Std.App
+staging and the Sky.Spa split legs) in line with `sky.toml`: a module it no
+longer lists loses its `require` and its local `replace` there too, without
+waiting for the next build.
+
 A `["go.dependencies"]` entry that leaves `sky.toml` some other way (a git
 branch switch, a hand edit) keeps its `sky-ffi/` files. The build uses only
 the surfaces `sky.toml` declares: it ignores the others, prints one line that

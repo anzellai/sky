@@ -37,6 +37,18 @@
 -- is no hinting and no complex shaping (Arabic joining, Indic reordering):
 -- pair kerning from the font's `kern` table is applied.
 --
+-- **Pixel precision.** The canvas keeps each pixel as premultiplied 8-bit
+-- RGBA (each colour channel is stored already multiplied by the alpha). So a
+-- semi-transparent pixel that goes through `fromImage`, `paste` or
+-- `pasteCanvas` and back out of `encode` can come back with its red, green or
+-- blue moved, even where nothing is drawn over it. The alpha is kept exactly.
+-- The colour moves by at most 2 from alpha 128 up (1 at alpha 254), 4 at
+-- alpha 64, 16 at alpha 16, and more near alpha 0 (at alpha 1 the colour is
+-- lost). A fully opaque pixel (alpha 255) is copied exactly, and a fully
+-- transparent pixel (alpha 0) stays fully transparent. There is no paste that
+-- copies semi-transparent pixels exactly, so compare such output with
+-- `pixelDiff` and a tolerance, not byte for byte.
+--
 -- **Where it runs.** On the server (and in a CLI). A Sky.Spa app draws in its
 -- backend.
 --

@@ -871,3 +871,59 @@ fn a_parse_error_is_reported_in_its_own_file_for_every_module_kind() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A Postgres project in test mode (it commits a `.env.test`) whose `.env`
+/// names a DSN runs its tests. `sky test` used to start the throwaway
+/// embedded cluster (`SKY_EMBED_POSTGRES`) anyway, the runtime loaded the
+/// `.env` DSN beside it and refused the pair ("Sky will not choose between
+/// them"), and no test ran. An explicit DSN wins, as it does for `sky run`,
+/// and the run says so.
+#[test]
+fn a_dot_env_dsn_wins_over_the_throwaway_cluster() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let (dir, suite) = project("dotenvdsn", "tests/FooTest.sky", "FooTest");
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"tverb\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n\n[database]\ndriver = \"postgres\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join(".env.test"), "SKY_TEST_SEED=7\n").unwrap();
+    std::fs::write(
+        dir.join(".env"),
+        "DATABASE_URL=postgres://nobody@127.0.0.1:1/none?sslmode=disable\n",
+    )
+    .unwrap();
+    let report_path = dir.join("report.json");
+    let out = Command::new(SKY)
+        .arg("test")
+        .arg(&suite)
+        .current_dir(&dir)
+        .env("SKY_TEST_JSON", &report_path)
+        .env_remove("DATABASE_URL")
+        .env_remove("SKY_DB_PATH")
+        .env_remove("SKY_EMBED_POSTGRES")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky test");
+    let mut log = String::from_utf8_lossy(&out.stdout).into_owned();
+    log.push_str(&String::from_utf8_lossy(&out.stderr));
+    assert!(
+        !log.contains("will not choose between them"),
+        "sky test started an embedded cluster beside the .env DSN:\n{log}"
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "the suite must run and pass:\n{log}"
+    );
+    assert!(
+        log.contains("DATABASE_URL from .env names a database"),
+        "the run must say which DSN it uses:\n{log}"
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).unwrap()).unwrap();
+    assert_eq!(report["total"].as_i64(), Some(3), "{report}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
