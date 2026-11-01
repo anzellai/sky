@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 )
 
 // ── Table spec access (the map[string]any the .sky builders produce) ─────────
@@ -318,6 +319,9 @@ func dbRawToString(v any) string {
 	}
 	if b, ok := v.([]byte); ok {
 		return string(b)
+	}
+	if t, ok := v.(time.Time); ok {
+		return dbTimeText(t, "") // never the host-zone time.String()
 	}
 	return fmt.Sprintf("%v", v)
 }
