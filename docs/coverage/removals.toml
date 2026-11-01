@@ -810,3 +810,75 @@ name as a user's own variable (SKY_AUTH_TOKEN_TTL via System.getenvOr). No \
 setting stopped working."""
 owner  = "anzel"
 commit = "36312519d"
+
+[[removal]]
+symbol = "Std.Money.addChecked"
+reason = "v0.29.2 Std.Money redesign (user decision): Money.add itself returns Result Error Money, an Err for two currencies, so the *Checked form is redundant. The compiler names Money.add (stdlib_history REMOVED_STDLIB_NAMES); MoneyConformanceTest pins add's Err and Ok."
+owner  = "anzel"
+commit = "fix/v0.29.2"
+
+[[removal]]
+symbol = "Std.Money.subChecked"
+reason = "v0.29.2 Std.Money redesign (user decision): Money.sub returns Result Error Money. The compiler names Money.sub; MoneyConformanceTest pins sub's Err and Ok."
+owner  = "anzel"
+commit = "fix/v0.29.2"
+
+[[removal]]
+symbol = "Std.Money.sumOf"
+reason = "v0.29.2 Std.Money redesign (user decision): superseded by Money.sum : Currency -> List Money -> Result Error Money, which refuses a value in another currency instead of failing or ignoring it. The compiler names Money.sum; MoneyConformanceTest and the corpus money battery pin it."
+owner  = "anzel"
+commit = "fix/v0.29.2"
+
+[[removal]]
+symbol = "Std.Money.zeroOf"
+reason = "v0.29.2 Std.Money redesign (user decision): zeroOf m is Money.zero (Money.currency m); the compiler names the replacement."
+owner  = "anzel"
+commit = "fix/v0.29.2"
+
+[[removal]]
+symbol = "Std.Money.setRate"
+reason = "v0.29.2 Std.Money redesign (user decision): the process-global FX table is replaced by an explicit Rates value (Money.rates / Money.rate) passed to Money.convert, so a rate is never shared state and a Sky.Spa client sees the same value as the server. MoneyConformanceTest pins rates, rate (with the inverse) and convert."
+owner  = "anzel"
+commit = "fix/v0.29.2"
+
+[[removal]]
+symbol = "Std.Money.getRate"
+reason = "v0.29.2 Std.Money redesign: superseded by Money.rate from to rates : Maybe Decimal over an explicit Rates value."
+owner  = "anzel"
+commit = "fix/v0.29.2"
+
+[[removal]]
+symbol = "Std.Money.hasRate"
+reason = "v0.29.2 Std.Money redesign: superseded by Money.rate ... /= Nothing over an explicit Rates value."
+owner  = "anzel"
+commit = "fix/v0.29.2"
+
+[[removal]]
+symbol = "Std.Money.clearRates"
+reason = "v0.29.2 Std.Money redesign: there is no global table to clear; a new Money.rates value replaces it."
+owner  = "anzel"
+commit = "fix/v0.29.2"
+
+[[removal]]
+symbol = "Std.Money.parseCurrency"
+reason = "v0.29.2 Std.Money redesign (user decision): superseded by Money.currencyFromCode : String -> Maybe Currency, strict under the decoders' grammar (parseCurrency turned any text, an empty string included, into a CurrencyRaw)."
+owner  = "anzel"
+commit = "fix/v0.29.2"
+
+[[removal]]
+symbol = "Std.Money.isKnownCode"
+reason = "v0.29.2 Std.Money redesign: superseded by Money.currencyFromCode and a match on CurrencyRaw _."
+owner  = "anzel"
+commit = "fix/v0.29.2"
+
+[[removal]]
+symbol = "Std.Money.knownCurrency"
+reason = "v0.29.2 Std.Money redesign: a match on CurrencyRaw _ says the same."
+owner  = "anzel"
+commit = "fix/v0.29.2"
+
+[[removal]]
+symbol = "tests/conformance/tests/MoneyConformanceTest.sky (FX cases)"
+reason = "v0.29.2: the seven FX cases drove the removed global table through nested case expressions, each with two or three Test.fail branches for setRate / clearRates failing. With the explicit Rates value each case is one Test.equal over a Result, so the counted assertion calls fall by 5 while the cases (and what they pin: forward, round trip, inverse, refused zero and negative rate, missing rate, later rate wins) stay or grow (69 -> 71 cases)."
+owner  = "anzel"
+commit = "fix/v0.29.2"

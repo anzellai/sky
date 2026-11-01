@@ -1010,7 +1010,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3241,
+    "stdlib_entries": 3238,
     "stdlib_modules": 135,
     "surfaces_covered": 193,
     "surfaces_covered_pct": 95.1,
@@ -20077,16 +20077,10 @@
           ]
         },
         "Std.Money": {
-          "count": 8,
+          "count": 2,
           "symbols": [
-            "compare",
-            "currencyName",
-            "gt",
-            "gte",
-            "lt",
-            "neq",
-            "sub",
-            "zeroOf"
+            "Rates",
+            "currencyName"
           ]
         },
         "Std.Native": {
@@ -20432,8 +20426,8 @@
           ]
         }
       },
-      "count": 876,
-      "pct_of_denominator": 27.0
+      "count": 870,
+      "pct_of_denominator": 26.9
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -21607,16 +21601,10 @@
           ]
         },
         "Std.Money": {
-          "count": 8,
+          "count": 2,
           "symbols": [
-            "compare",
-            "currencyName",
-            "gt",
-            "gte",
-            "lt",
-            "neq",
-            "sub",
-            "zeroOf"
+            "Rates",
+            "currencyName"
           ]
         },
         "Std.Native": {
@@ -21989,8 +21977,8 @@
           ]
         }
       },
-      "count": 991,
-      "pct_of_denominator": 30.6
+      "count": 985,
+      "pct_of_denominator": 30.4
     }
   },
   "units": [
@@ -22371,8 +22359,8 @@
       "id": "examples/00-standard-libs",
       "modules_imported": 19,
       "path": "examples/00-standard-libs",
-      "refs_generous": 152,
-      "refs_qualified": 147,
+      "refs_generous": 151,
+      "refs_qualified": 146,
       "role": "Example",
       "sky_files": 2,
       "sky_toml_sections": [
@@ -23240,8 +23228,8 @@
       "id": "examples/66-slack-agent",
       "modules_imported": 16,
       "path": "examples/66-slack-agent",
-      "refs_generous": 62,
-      "refs_qualified": 53,
+      "refs_generous": 63,
+      "refs_qualified": 54,
       "role": "Example",
       "sky_files": 1,
       "sky_toml_sections": [
@@ -23505,8 +23493,8 @@
       "id": "flow:ai_trace_flow",
       "modules_imported": 9,
       "path": "rust/crates/sky/tests/ai_trace_flow.rs",
-      "refs_generous": 22,
-      "refs_qualified": 20,
+      "refs_generous": 23,
+      "refs_qualified": 21,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []
@@ -23805,8 +23793,8 @@
       "id": "flow:slack_agent_flow",
       "modules_imported": 16,
       "path": "rust/crates/sky/tests/slack_agent_flow.rs",
-      "refs_generous": 54,
-      "refs_qualified": 47,
+      "refs_generous": 55,
+      "refs_qualified": 48,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []
@@ -23973,8 +23961,8 @@
       "id": "tests/Std",
       "modules_imported": 52,
       "path": "tests/Std",
-      "refs_generous": 703,
-      "refs_qualified": 677,
+      "refs_generous": 704,
+      "refs_qualified": 678,
       "role": "SkySuite",
       "sky_files": 25,
       "sky_toml_sections": []
@@ -23985,8 +23973,8 @@
       "id": "tests/conformance",
       "modules_imported": 67,
       "path": "tests/conformance",
-      "refs_generous": 1036,
-      "refs_qualified": 1009,
+      "refs_generous": 1041,
+      "refs_qualified": 1014,
       "role": "Conformance",
       "sky_files": 59,
       "sky_toml_sections": []

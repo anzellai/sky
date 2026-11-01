@@ -59,11 +59,9 @@ mismatchNames a b r =
     case r of
 
         Err e ->
-            if String.contains a (Error.toString e) && String.contains b (Error.toString e) then
-                Test.pass
-
-            else
-                Test.fail ("the Err does not name " ++ a ++ " and " ++ b ++ ": " ++ Error.toString e)
+            Test.equal
+                ( True, True )
+                ( String.contains a (Error.toString e), String.contains b (Error.toString e) )
 
         Ok _ ->
             Test.fail "expected an Err for two currencies"
