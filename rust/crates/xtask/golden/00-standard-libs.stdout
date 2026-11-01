@@ -111,10 +111,10 @@ ok    String > trim outer space
   ok    Std.Money > allocate $100 over 3 yields 3 parts
   ok    Std.Money > symbol lookup USD
   ok    Std.Money > symbol lookup EUR
-  ok    Std.Money > knownCurrency USD ctor is True
-  ok    Std.Money > knownCurrency (CurrencyRaw "XYZ") is False
-  ok    Std.Money > isKnownCode "USD" (raw-string check)
-  ok    Std.Money > isKnownCode "XYZ" rejects unknown code
+  ok    Std.Money > add across two currencies is an Err
+  ok    Std.Money > currencyFromCode "XYZ" is CurrencyRaw "XYZ"
+  ok    Std.Money > currencyFromCode "USD" is USD
+  ok    Std.Money > currencyFromCode "U S" is Nothing
   ok    Std.Money > currencyCode JPY
   ok    Std.Money > isZero on zero USD
   ok    Std.Time > isLeapYear 2024

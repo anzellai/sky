@@ -85,21 +85,26 @@ type alias Trace =
 
 {-| Build a trace row from a chat response and a price book: the token counts come
 from the response's usage, the cost from `Provider.cost`, the output is the
-assistant text.
+assistant text. A book whose two rates are in different currencies is an `Err`
+(`Provider.cost`).
+
+    Trace.forResponse runId model book response
+        |> Task.fromResult
+        |> Task.andThen (Trace.record db)
 -}
-forResponse : String -> String -> Provider.PriceBook -> Provider.ChatResponse -> Trace
+forResponse : String -> String -> Provider.PriceBook -> Provider.ChatResponse -> Result Error Trace
 forResponse runId model book response =
-    let
-        money = Provider.cost book response.usage
-    in
-        { runId = runId
-        , model = model
-        , promptTokens = response.usage.promptTokens
-        , completionTokens = response.usage.completionTokens
-        , costMinor = Decimal.toString (Money.amount money)
-        , currency = Money.currencyCode (Money.currency money)
-        , output = response.content
-        }
+    Provider.cost book response.usage
+        |> Result.map
+               (\money ->
+                   { runId = runId
+                   , model = model
+                   , promptTokens = response.usage.promptTokens
+                   , completionTokens = response.usage.completionTokens
+                   , costMinor = Decimal.toString (Money.amount money)
+                   , currency = Money.currencyCode (Money.currency money)
+                   , output = response.content
+                   })
 
 
 -- ── Tables ──────────────────────────────────────────────────────────
@@ -262,10 +267,12 @@ recordCall db e m =
     case m.result of
 
         Ok r ->
-            insertRow db e (callRow e m.facts r.usage r.content)
+            Task.fromResult (callRow e m.facts r.usage r.content)
+                |> Task.andThen (insertRow db e)
 
         Err _ ->
-            insertRow db e (callRow e m.facts noUsage "")
+            Task.fromResult (callRow e m.facts noUsage "")
+                |> Task.andThen (insertRow db e)
 
 
 {-| Record a measured native tool call (`Provider.measureTools`). -}
@@ -274,10 +281,12 @@ recordToolCall db e m =
     case m.result of
 
         Ok r ->
-            insertRow db e (callRow e m.facts r.usage r.content)
+            Task.fromResult (callRow e m.facts r.usage r.content)
+                |> Task.andThen (insertRow db e)
 
         Err _ ->
-            insertRow db e (callRow e m.facts noUsage "")
+            Task.fromResult (callRow e m.facts noUsage "")
+                |> Task.andThen (insertRow db e)
 
 
 noUsage : Provider.Usage
@@ -285,22 +294,30 @@ noUsage =
     { promptTokens = 0, completionTokens = 0, totalTokens = 0 }
 
 
-callRow : Ledger -> Provider.CallFacts -> Provider.Usage -> String -> RowIn
+-- A book whose two rates are in different currencies prices nothing: the row
+-- is not written and the call's record is that `Err` (Provider.cost).
+callRow : Ledger -> Provider.CallFacts -> Provider.Usage -> String -> Result Error RowIn
 callRow e facts usage output =
-    { model = facts.adapter
-    , promptTokens = usage.promptTokens
-    , completionTokens = usage.completionTokens
-    , cost =
-        case e.book of
+    let
+        priced =
+            case e.book of
 
-            Just book ->
-                Just (Provider.cost book usage)
+                Just book ->
+                    Result.map Just (Provider.cost book usage)
 
-            Nothing ->
-                Nothing
-    , output = output
-    , facts = Just facts
-    }
+                Nothing ->
+                    Ok Nothing
+    in
+        Result.map
+            (\c ->
+                { model = facts.adapter
+                , promptTokens = usage.promptTokens
+                , completionTokens = usage.completionTokens
+                , cost = c
+                , output = output
+                , facts = Just facts
+                })
+            priced
 
 
 {-| Record a cost that is not a model call: a training run's spend, for

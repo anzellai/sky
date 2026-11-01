@@ -506,7 +506,7 @@ func currencyCodeOf(cur any) string {
 // sqlCodeToCurrency builds the Sky-side Currency ADT for a 3-letter ISO code.
 // Named variants (USD/EUR/.../USDC) get a dedicated ADT with that SkyName;
 // unknown codes fall through to `CurrencyRaw String`. Matches
-// Std.Money.parseCurrency's semantics but lives at the runtime layer so the
+// Std.Money.currencyFromCode's variants but lives at the runtime layer so the
 // decoder doesn't reflect-call into Sky kernel code. It lives HERE (not in the
 // `//go:build !js` db_decoder.go) because Codec.auto's Money JSON decode runs
 // on the Sky.Spa wasm client too, and the function is a pure code→ADT switch

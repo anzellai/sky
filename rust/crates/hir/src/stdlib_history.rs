@@ -92,6 +92,79 @@ pub fn is_new_import_member(path: &str, name: &str) -> bool {
         .is_some_and(|(_, k)| is_new_since_previous(&format!("kernel:{k}"), name))
 }
 
+/// Stdlib values a release removed, with what to write instead:
+/// `(module, name, migration sentence)`. A use of one is an `[E1001]` /
+/// `[E1011]` that carries the sentence, so the error names the new API.
+pub const REMOVED_STDLIB_NAMES: &[(&str, &str, &str)] = &[
+    (
+        "Std.Money",
+        "addChecked",
+        "`Money.add` returns `Result Error Money` since v0.29.2; use it in place of `addChecked`",
+    ),
+    (
+        "Std.Money",
+        "subChecked",
+        "`Money.sub` returns `Result Error Money` since v0.29.2; use it in place of `subChecked`",
+    ),
+    (
+        "Std.Money",
+        "sumOf",
+        "`sumOf` is `Money.sum : Currency -> List Money -> Result Error Money` since v0.29.2",
+    ),
+    (
+        "Std.Money",
+        "zeroOf",
+        "`zeroOf m` is `Money.zero (Money.currency m)` since v0.29.2",
+    ),
+    (
+        "Std.Money",
+        "setRate",
+        "exchange rates are an explicit value since v0.29.2: build one with \
+         `Money.rates [ ( from, to, rate ) ]` and pass it to `Money.convert rates to m`",
+    ),
+    (
+        "Std.Money",
+        "getRate",
+        "`getRate from to` is `Money.rate from to rates` (a `Maybe Decimal`) since v0.29.2, \
+         reading an explicit `Money.rates` value",
+    ),
+    (
+        "Std.Money",
+        "hasRate",
+        "use `Money.rate from to rates /= Nothing` since v0.29.2 (rates are an explicit \
+         `Money.rates` value)",
+    ),
+    (
+        "Std.Money",
+        "clearRates",
+        "there is no global rate table since v0.29.2: build a new `Money.rates` value",
+    ),
+    (
+        "Std.Money",
+        "parseCurrency",
+        "`parseCurrency` is `Money.currencyFromCode : String -> Maybe Currency` since v0.29.2",
+    ),
+    (
+        "Std.Money",
+        "isKnownCode",
+        "use `Money.currencyFromCode code` (a `Maybe Currency`; `CurrencyRaw` for a code Sky \
+         does not name) since v0.29.2",
+    ),
+    (
+        "Std.Money",
+        "knownCurrency",
+        "match on `CurrencyRaw _` (a code Sky does not name) since v0.29.2",
+    ),
+];
+
+/// The migration sentence for a stdlib value a release removed, or `None`.
+pub fn removed_name_hint(module: &str, name: &str) -> Option<String> {
+    REMOVED_STDLIB_NAMES
+        .iter()
+        .find(|(m, n, _)| *m == module && *n == name)
+        .map(|(_, _, h)| format!("{h} (see docs/migration/v0.29.md#money-results)"))
+}
+
 /// The stdlib handle types whose constructors v0.27.0 stopped exporting
 /// (audit A-1b): `(module, constructor)`. Each id is now random and owned by
 /// the session that opened it, so a program may keep and pass the value but

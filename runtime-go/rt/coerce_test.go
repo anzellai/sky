@@ -163,7 +163,7 @@ func TestCoerceToUnitNeverPanics(t *testing.T) {
 	// a non-nil, non-struct{} value
 	_ = Coerce[struct{}](42)
 	_ = Coerce[struct{}]("x")
-	// the exact ResultCoerceOk path Std.Money.setRate emits (E is the
+	// the exact ResultCoerceOk path a `Result Error ()` kernel emits (E is the
 	// Sky_Core_Error_Error codegen alias = SkyADT; `any` stands in here).
 	res := SkyResult[any, any]{Tag: 0, OkValue: nil}
 	out := ResultCoerceOk[any, struct{}](res, func(v any) struct{} {

@@ -106,7 +106,7 @@ func decimalFromJSONRaw(raw any) (decimal.Decimal, error) {
 }
 
 // currencyCodeStrict reads a currency code: 3 to 10 ASCII letters or digits,
-// read in upper case (`gbp` is GBP, as Money.parseCurrency reads it). An
+// read in upper case (`gbp` is GBP, as Money.currencyFromCode reads it). An
 // empty or missing code is an error, never `CurrencyRaw ""`.
 func currencyCodeStrict(code string) (string, error) {
 	if len(code) < 3 || len(code) > 10 {
@@ -248,14 +248,4 @@ func strictShortText(s string) string {
 		return s[:40] + "…"
 	}
 	return s
-}
-
-// Money_currencyMismatch : String -> String -> String -> a
-// Arithmetic or an order across two currencies has no answer: it fails loudly
-// as the classified `CurrencyMismatch` (panic_recover.go), never a silent
-// value (Money.add used to return the left operand, Money.compare ignored the
-// currency). It is an `Ffi.kernel`, not a `callPure`, so no FFI recovery turns
-// the failure into a value.
-func Money_currencyMismatch(verb, a, b any) any {
-	panic(fmt.Sprintf("rt.Money: currency mismatch: Money.%s of %s and %s", AsString(verb), AsString(a), AsString(b)))
 }

@@ -363,10 +363,9 @@ const MIXED_KERNELS: &[(&str, &[&str])] = &[
             "encodeWithDelimiter",
         ],
     ),
-    // `Std.Money`: formatting and allocation are pure. The FX-rate table
-    // (`setRate`, `getRate`, `hasRate`, `clearRates`, and `convert` through
-    // `getRate`) is process state the server registers at startup; the client
-    // would read an empty table of its own.
+    // `Std.Money`: formatting and allocation are pure. Exchange rates are an
+    // explicit `Money.Rates` value (v0.29.2), so no Money kernel holds
+    // process state.
     (
         "Money",
         &[
@@ -374,7 +373,6 @@ const MIXED_KERNELS: &[(&str, &[&str])] = &[
             "currencyName",
             "format",
             "formatWithCode",
-            "isKnownCurrency",
             "minorUnits",
             "symbol",
         ],
@@ -824,7 +822,7 @@ fn collect(body: &Body, e: ExprId, acc: &mut Refs, ctx: &CollectCtx) {
                     // symbol string's prefix (`Db_`, `Http_`, `System_`, …).
                     // `Ffi.callPure "<Symbol>" [ args ]` / `Ffi.call` name a
                     // runtime symbol the same way; before v0.27.0 they were not
-                    // read, so `Money.getRate` (process state) ran in the client.
+                    // read, so a process-state kernel ran in the client.
                     if m == "Ffi"
                         && matches!(func.as_str(), "kernel" | "callPure" | "call" | "callTask")
                     {
@@ -8263,16 +8261,12 @@ mod tests {
         }
         for sym in [
             "Csv_parseStreamFromFile",
-            "Money_setRate",
-            "Money_getRate",
             "Config_loadFromFile",
             "Config_apply",
             "Table_insert",
             "Schema_createTable",
             "Cache_get",
             "Std_App_livePort",
-            "Money_hasRate",
-            "Money_clearRates",
             "Time_now",
             "Time_sleep",
             // v0.29.0: Std.Xml (parse, the accessors, Encode) and Std.Zip

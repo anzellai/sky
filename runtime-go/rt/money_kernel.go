@@ -16,7 +16,6 @@ package rt
 import (
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/shopspring/decimal"
 )
@@ -112,56 +111,6 @@ func lookupCurrency(code string) currencyInfo {
 	return currencyInfo{Minor: 2, Symbol: c, Name: c}
 }
 
-// ── FX rate registry ─────────────────────────────────────────────
-//
-// Pluggable: users register rates at startup (Money.setRate),
-// either statically (compiled in / config) or after fetching from
-// an FX provider (e.g. on app boot, refreshed on a schedule via
-// Sub.every). The registry is process-local — multi-instance
-// deployments need a shared source (DB, cache) for consistency.
-//
-// Rates are stored as decimal.Decimal so they compose with Money
-// arithmetic without precision loss.
-
-type ratePair struct {
-	From string
-	To   string
-}
-
-var (
-	fxRatesMu sync.RWMutex
-	fxRates   = map[ratePair]decimal.Decimal{}
-)
-
-func setRate(from, to string, rate decimal.Decimal) {
-	from = strings.ToUpper(from)
-	to = strings.ToUpper(to)
-	fxRatesMu.Lock()
-	fxRates[ratePair{from, to}] = rate
-	// Auto-register inverse so users don't have to set both
-	// directions for the common case. Skipped if rate is zero
-	// (avoid divide-by-zero); users supplying their own inverse
-	// later override this.
-	if !rate.IsZero() {
-		fxRates[ratePair{to, from}] = decimal.NewFromInt(1).Div(rate)
-	}
-	fxRatesMu.Unlock()
-}
-
-func getRate(from, to string) (decimal.Decimal, bool) {
-	from = strings.ToUpper(from)
-	to = strings.ToUpper(to)
-	if from == to {
-		return decimal.NewFromInt(1), true
-	}
-	fxRatesMu.RLock()
-	defer fxRatesMu.RUnlock()
-	if r, ok := fxRates[ratePair{from, to}]; ok {
-		return r, true
-	}
-	return decimal.Zero, false
-}
-
 func init() {
 	// ── Currency property lookups ───────────────────────────────
 
@@ -188,16 +137,6 @@ func init() {
 			return ""
 		}
 		return lookupCurrency(fmt.Sprintf("%v", args[0])).Name
-	})
-
-	// isKnownCurrency : String -> Bool
-	RegisterPure("Money_isKnownCurrency", func(args []any) any {
-		if len(args) < 1 {
-			return false
-		}
-		code := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", args[0])))
-		_, ok := currencyTable[code]
-		return ok
 	})
 
 	// ── Fair-split allocation ───────────────────────────────────
@@ -287,57 +226,5 @@ func init() {
 		info := lookupCurrency(code)
 		d := decimalUnbox(args[1])
 		return d.StringFixed(int32(info.Minor)) + " " + code
-	})
-
-	// ── FX rate registry ────────────────────────────────────────
-
-	// setRate : String -> String -> Decimal -> Result Error ()
-	// Register a rate from→to. Inverse auto-registered.
-	RegisterPure("Money_setRate", func(args []any) any {
-		if len(args) < 3 {
-			return Err[any, any](ErrInvalidInput("Money.setRate: missing args"))
-		}
-		from := fmt.Sprintf("%v", args[0])
-		to := fmt.Sprintf("%v", args[1])
-		rate := decimalUnbox(args[2])
-		if rate.IsNegative() || rate.IsZero() {
-			return Err[any, any](ErrInvalidInput("Money.setRate: rate must be positive"))
-		}
-		setRate(from, to, rate)
-		return Ok[any, any](nil)
-	})
-
-	// getRate : String -> String -> Result Error Decimal
-	RegisterPure("Money_getRate", func(args []any) any {
-		if len(args) < 2 {
-			return Err[any, any](ErrInvalidInput("Money.getRate: missing args"))
-		}
-		from := fmt.Sprintf("%v", args[0])
-		to := fmt.Sprintf("%v", args[1])
-		rate, ok := getRate(from, to)
-		if !ok {
-			return Err[any, any](ErrInvalidInput(
-				"Money.getRate: no rate registered for " + from + "→" + to))
-		}
-		return Ok[any, any](decimalBox(rate))
-	})
-
-	// hasRate : String -> String -> Bool
-	RegisterPure("Money_hasRate", func(args []any) any {
-		if len(args) < 2 {
-			return false
-		}
-		from := fmt.Sprintf("%v", args[0])
-		to := fmt.Sprintf("%v", args[1])
-		_, ok := getRate(from, to)
-		return ok
-	})
-
-	// clearRates : () -> Result Error ()  — test/admin only
-	RegisterPure("Money_clearRates", func(args []any) any {
-		fxRatesMu.Lock()
-		fxRates = map[ratePair]decimal.Decimal{}
-		fxRatesMu.Unlock()
-		return Ok[any, any](nil)
 	})
 }

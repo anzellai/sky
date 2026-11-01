@@ -136,13 +136,15 @@ botBody ctx mention =
                                           ctx
                                           Codec.string
                                           "trace"
-                                          (Trace.record
-                                              (Durable.conn ctx)
-                                              (Trace.forResponse
-                                                  (Durable.runId ctx)
-                                                  modelName
-                                                  priceBook
-                                                  resp)
+                                          (Trace.forResponse
+                                              (Durable.runId ctx)
+                                              modelName
+                                              priceBook
+                                              resp
+                                              |> Task.fromResult
+                                              |> Task.andThen
+                                                     (Trace.record
+                                                         (Durable.conn ctx))
                                               |> Task.map (\_ -> "ok"))
                                           |> Task.map
                                                  (\_ ->

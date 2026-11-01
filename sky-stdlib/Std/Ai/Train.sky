@@ -3952,7 +3952,7 @@ cancelled job step =
 -- TrainingFailed naming the ceiling (`withMaxRuntimeMinutes`).
 ceilingReached : Job -> CloudSettings -> CloudPlan -> Money -> Int -> Error
 ceilingReached job cs p spent step =
-    if Money.gte (Money.add spent (perMinutes cs.perHour 1)) cs.budget then
+    if spendReaches spent (perMinutes cs.perHour 1) cs.budget then
         Failure.toError
             (BudgetExceeded { budget = cs.budget, estimate = spent })
 
@@ -4256,11 +4256,16 @@ parseMoney text =
     case String.split " " (String.trim text) of
 
         [ c, amount ] ->
-            if Money.isKnownCode c then
-                Result.toMaybe (Money.fromString (Money.parseCurrency c) amount)
+            case Money.currencyFromCode c of
 
-            else
-                Nothing
+                Just (Money.CurrencyRaw _) ->
+                    Nothing
+
+                Just cur ->
+                    Result.toMaybe (Money.fromString cur amount)
+
+                Nothing ->
+                    Nothing
 
         _ ->
             Nothing
@@ -4570,7 +4575,7 @@ perMillis rate ms =
             Money.mul hours rate
 
         Err _ ->
-            Money.zeroOf rate
+            Money.zero (Money.currency rate)
 
 
 -- | Plan a `Vertex` job: its settings, the estimate against the budget
@@ -4600,7 +4605,7 @@ planCloudWith job shape =
                        ( minutes, estimate, timeout ) =
                            cloudEstimate job cs shape.parameters
                    in
-                       if Money.gt estimate cs.budget then
+                       if Money.gt estimate cs.budget |> Result.withDefault True then
                            Task.fail
                                (Failure.toError
                                    (BudgetExceeded
@@ -5544,6 +5549,23 @@ cloudRelaunch ctx job cs p store key attempt relaunched spentMinor =
                                           spentMinor))
 
 
+-- `spent + more` reaches the budget. A cloud job's budget and rate are in one
+-- currency (cloudSettings refuses two); were they not, the spend could not be
+-- compared, and the answer is True: a budget that cannot be checked stops the
+-- spend (fail closed).
+spendReaches : Money -> Money -> Money -> Bool
+spendReaches spent more budget =
+    Money.add spent more |> Result.andThen (\total -> Money.gte total budget)
+        |> Result.withDefault True
+
+
+-- `spent + more` is over the budget, failing closed as `spendReaches`.
+spendExceeds : Money -> Money -> Money -> Bool
+spendExceeds spent more budget =
+    Money.add spent more |> Result.andThen (\total -> Money.gt total budget)
+        |> Result.withDefault True
+
+
 -- The seconds of machine time the rest of the budget buys.
 affordableSeconds : CloudSettings -> Int -> Int
 affordableSeconds cs spentMinor =
@@ -5552,6 +5574,7 @@ affordableSeconds cs spentMinor =
             Money.sub
                 cs.budget
                 (Money.fromMinor (Money.currency cs.budget) spentMinor)
+                |> Result.withDefault (Money.zero (Money.currency cs.budget))
     in
         case Decimal.div (Money.amount left) (Money.amount cs.perHour) of
 
@@ -5570,9 +5593,10 @@ budgetLeft : Job -> CloudSettings -> Int -> Int -> Task Error ()
 budgetLeft job cs attempt spentMinor =
     let
         spent = Money.fromMinor (Money.currency cs.budget) spentMinor
-        next = Money.add spent (perMinutes cs.perHour 15)
+        more = perMinutes cs.perHour 15
+        next = Money.add spent more |> Result.withDefault spent
     in
-        if attempt > 0 && Money.gt next cs.budget then
+        if attempt > 0 && spendExceeds spent more cs.budget then
             Task.fail
                 (Failure.toError
                     (BudgetExceeded { budget = cs.budget, estimate = next }))
@@ -5832,10 +5856,9 @@ cloudWatchLoop ctx job cs p store key attempt name n segment relaunched spentBef
                                        Task.fail e
 
                                    Nothing ->
-                                       if Money.gte
-                                           (Money.add
-                                               spent
-                                               (perMinutes cs.perHour 1))
+                                       if spendReaches
+                                           spent
+                                           (perMinutes cs.perHour 1)
                                            cs.budget then
                                            Task.fail
                                                (Failure.toError
@@ -5947,7 +5970,8 @@ cloudWatchLoop ctx job cs p store key attempt name n segment relaunched spentBef
                                    ended ()
 
                                _ ->
-                                   if Money.gte spent cs.budget then
+                                   if Money.gte spent cs.budget
+                                       |> Result.withDefault True then
                                        Durable.step
                                            ctx
                                            Codec.int

@@ -95,6 +95,7 @@ import Std.Codec as Codec exposing (Codec)
 import Std.Money as Money exposing (Money)
 import Std.Ai.Provider as Provider exposing (Provider, Message, PriceBook)
 import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Failure as Failure exposing (Failure(..))
 import Std.Ai.Local as Local
 import Std.Ai.Eval as Eval
 import Std.Ai.Dataset as Dataset exposing (Dataset)
@@ -738,7 +739,8 @@ type alias State row =
 -- | Run the plan until the target, the call limit or the budget stops it.
 run : Generator row -> Task Error (Generated row)
 run (Generator g) =
-    setupJournal g.journal
+    Task.fromResult (budgetCurrency g.budget)
+        |> Task.andThen (\_ -> setupJournal g.journal)
         |> Task.andThen (\_ -> teacherLabel g.endpoint g.teacherName)
         |> Task.andThen
                (\label ->
@@ -793,12 +795,50 @@ teacherLabel endpoint name =
             Task.succeed name
 
 
+-- A cost budget in another currency than its price book cannot stop the run:
+-- refused before the first call, as an InvalidSetting naming both.
+budgetCurrency : Maybe ( PriceBook, Money ) -> Result Error ()
+budgetCurrency budget =
+    case budget of
+
+        Just ( book, limit ) ->
+            let
+                want = Money.currencyCode (Money.currency limit)
+                bad =
+                    List.filter
+                        (\m -> Money.currencyCode (Money.currency m) /= want)
+                        [ book.inputPer1k, book.outputPer1k ]
+            in
+                case bad of
+
+                    m :: _ ->
+                        Err
+                            (Failure.toError
+                                (InvalidSetting
+                                    { setting = "withCostBudget"
+                                    , reason =
+                                        "the budget is in " ++ want
+                                            ++ " and the price book is in "
+                                            ++ Money.currencyCode
+                                                   (Money.currency m)
+                                            ++ "; give them one currency"
+                                    }))
+
+                    [] ->
+                        Ok ()
+
+        Nothing ->
+            Ok ()
+
+
 overBudget : Maybe ( PriceBook, Money ) -> Maybe Money -> Bool
 overBudget budget spent =
     case ( budget, spent ) of
 
         ( Just ( _, limit ), Just s ) ->
-            Money.gte s limit
+            -- `run` refuses a budget in another currency before the first
+            -- call, so an Err here cannot happen; it would stop the run.
+            Money.gte s limit |> Result.withDefault True
 
         _ ->
             False
@@ -829,19 +869,19 @@ loop (Generator g) requests st =
                                        response = Tuple.first answered
                                        ( parsed, bad ) =
                                            parseRows g.codec response.content
-                                       priced =
+                                       pricedR =
                                            case ( g.budget, report.cost ) of
 
                                                ( Just ( book, _ ), Just spent ) ->
-                                                   Just
-                                                       (Money.add
-                                                           spent
-                                                           (Provider.cost
-                                                               book
-                                                               response.usage))
+                                                   Provider.cost
+                                                       book
+                                                       response.usage
+                                                       |> Result.andThen
+                                                              (Money.add spent)
+                                                       |> Result.map Just
 
                                                _ ->
-                                                   report.cost
+                                                   Ok report.cost
                                        counted =
                                            { report
                                                | calls = report.calls + 1
@@ -862,14 +902,23 @@ loop (Generator g) requests st =
                                                , completionTokens =
                                                    report.completionTokens
                                                        + response.usage.completionTokens
-                                               , cost = priced
+                                               , cost =
+                                                   Result.withDefault
+                                                       report.cost
+                                                       pricedR
                                            }
                                    in
-                                       admitAll
-                                           (Generator g)
-                                           req
-                                           parsed
-                                           { st | report = counted })
+                                       case pricedR of
+
+                                           Err e ->
+                                               Task.fail e
+
+                                           Ok _ ->
+                                               admitAll
+                                                   (Generator g)
+                                                   req
+                                                   parsed
+                                                   { st | report = counted })
                         |> Task.andThen (loop (Generator g) rest)
 
 

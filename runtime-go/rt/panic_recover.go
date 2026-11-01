@@ -112,9 +112,6 @@ func classifyPanic(msg string) (kind, hint string) {
 		strings.Contains(msg, "rt.Div: division by zero"):
 		return "DivisionByZero",
 			"Integer or float division by zero. Guard the divisor with `if d == 0 then Err … else Ok (n // d)` before the operation."
-	case strings.Contains(msg, "rt.Money: currency mismatch"):
-		return "CurrencyMismatch",
-			"Money arithmetic or an order across two currencies (Money.add, sub, compare, lt, ...) has no answer. Convert one side first (Money.convert), or use Money.addChecked / subChecked, which return an Err."
 	case strings.Contains(msg, "rt.AsInt: expected numeric"),
 		strings.Contains(msg, "rt.AsFloat: expected numeric"),
 		strings.Contains(msg, "rt.AsBool: expected bool"),

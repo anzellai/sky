@@ -4392,7 +4392,7 @@ func runWithRecover(name string, args []any, fn func([]any) any) (result any) {
 	}()
 	raw := fn(args)
 	// Handlers that already return a Sky Result (Decimal.fromString,
-	// Money.setRate, Time.inZone, …) shouldn't get double-wrapped —
+	// Time.inZone, …) shouldn't get double-wrapped —
 	// detect via SkyResult type-assertion and pass through. Plain
 	// return values (htmlRender → String) get the existing Ok-wrap.
 	if _, ok := raw.(SkyResult[any, any]); ok {
@@ -6340,7 +6340,7 @@ func coerceHead(v any, z any) (any, coerceStep) {
 	}
 	// Unit (`struct{}`) is the zero-information type — coercing ANY value to it
 	// is trivially valid, there is nothing to narrow. In particular a
-	// `Result Error ()` FFI return (e.g. `Std.Money.setRate`) lowers through
+	// `Result Error ()` FFI return (e.g. a `Result Error ()` kernel) lowers through
 	// ResultCoerceOk to `Coerce[struct{}](okPayload)`, and that payload is `nil`
 	// (Unit carries no value) — so without this the Unit case would panic on
 	// well-typed Sky code. Return the unit value.

@@ -1822,7 +1822,13 @@ impl<'a> Resolver<'a> {
                                      `{v}` in its `exposing` clause, but does not define it."
                                 )
                             } else {
-                                format!("module `{module_name}` does not expose `{v}`")
+                                match crate::stdlib_history::removed_name_hint(&module_name, v) {
+                                    Some(h) => format!(
+                                        "module `{module_name}` does not expose `{v}`: it was \
+                                         removed, {h}."
+                                    ),
+                                    None => format!("module `{module_name}` does not expose `{v}`"),
+                                }
                             };
                             let mut diag = Diagnostic::error("E1011", msg);
                             if let Some(sp) = span {
@@ -3707,12 +3713,15 @@ impl<'a> Resolver<'a> {
                     );
                     Res::Error
                 } else {
-                    self.track_class_a(
+                    let dep_name = self.db.module_name(dep).to_string();
+                    self.track_class_a_detail(
                         Some(qual.to_string()),
                         name,
                         RefKind::Value,
                         "name not exported by module",
                         span,
+                        crate::stdlib_history::removed_name_hint(&dep_name, name)
+                            .map(|h| format!("name was removed from `{dep_name}`: {h}")),
                     );
                     Res::Error
                 }

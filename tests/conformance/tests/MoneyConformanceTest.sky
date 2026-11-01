@@ -4,7 +4,7 @@ module MoneyConformanceTest exposing (main, tests)
 -- Std.Decimal. These assertions drive the SKY-SOURCE Money API (through the
 -- compiled binary), NOT the Go kernel directly. Inputs are ADVERSARIAL:
 -- fair-split residue exactness, minor-unit boundaries across 0/2/3/8/18-dp
--- currencies, cross-currency safety, FX round-trips, and negative amounts.
+-- currencies, cross-currency Results, explicit exchange-rate round-trips, and negative amounts.
 --
 -- Every expectation below is anchored to a DOCUMENTED behaviour (the `-- |`
 -- doc comments in sky-stdlib/Std/Money.sky and the kernel contract in
@@ -13,6 +13,9 @@ module MoneyConformanceTest exposing (main, tests)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.Result as Result
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+import Sky.Core.Error as Error exposing (Error)
 import Std.Decimal as Dec
 import Std.Money as Money
 import Sky.Test as Test exposing (Test)
@@ -41,7 +44,40 @@ headFmt xs =
 -- Does a Money list sum EXACTLY to `target` (currency + amount)?
 sumsTo : Money.Currency -> List Money.Money -> Money.Money -> Bool
 sumsTo c xs target =
-    Money.eq (Money.sumOf c xs) target
+    case Money.sum c xs of
+
+        Ok total ->
+            Money.eq total target
+
+        Err _ ->
+            False
+
+
+-- An Err whose message names both currency codes.
+mismatchNames : String -> String -> Result Error a -> Test.TestResult
+mismatchNames a b r =
+    case r of
+
+        Err e ->
+            if String.contains a (Error.toString e) && String.contains b (Error.toString e) then
+                Test.pass
+
+            else
+                Test.fail ("the Err does not name " ++ a ++ " and " ++ b ++ ": " ++ Error.toString e)
+
+        Ok _ ->
+            Test.fail "expected an Err for two currencies"
+
+
+isErr : Result e a -> Bool
+isErr r =
+    case r of
+
+        Err _ ->
+            True
+
+        Ok _ ->
+            False
 
 
 tests : List Test
@@ -129,134 +165,65 @@ tests =
     , Test.test "negative toMinor: -12.34 USD -> -1234"
         (\_ -> Test.equal -1234 (Money.toMinor (Money.neg (Money.fromMinor Money.USD 1234))))
 
-      -- ── Currency-typed safety: mismatched-currency arithmetic ──
-      --    Doc: "Arithmetic is total within a currency; cross-currency
-      --    operations require explicit convert." add/sub GUARD the mismatch
-      --    by returning the LEFT operand unchanged (no cross-currency mixing).
-    -- v0.29.2: two currencies never give a value. `add` / `sub` fail loudly
-    -- with the classified CurrencyMismatch (they used to return the left
-    -- operand in silence); the checked forms return an Err.
-    , Test.test "addChecked USD+EUR -> Err (add no longer returns the left operand)"
-        (\_ -> Test.err (Money.addChecked (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 50)))
-    , Test.test "subChecked USD-EUR -> Err (sub no longer returns the left operand)"
-        (\_ -> Test.err (Money.subChecked (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 50)))
-    , Test.test "addChecked in one currency -> Ok sum"
-        (\_ -> Test.equal (Ok "3.00 GBP") (Money.addChecked (Money.fromMajor Money.GBP 1) (Money.fromMajor Money.GBP 2) |> Result.map Money.formatWithCode))
-    , Test.test "add USD+USD is total within currency -> 150.00 USD"
-        (\_ -> Test.equal "150.00 USD" (Money.formatWithCode (Money.add (Money.fromMajor Money.USD 100) (Money.fromMajor Money.USD 50))))
-    , Test.test "eq is currency-aware: $100 /= €100"
-        (\_ -> Test.equal False (Money.eq (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 100)))
+      -- ── One rule (v0.29.2): every operation that combines two Money
+      --    values by arithmetic or order is a Result, an Err (InvalidInput,
+      --    naming both currencies) for two currencies. eq / neq stay Bool.
+    , Test.test "add USD+EUR -> Err naming both currencies"
+        (\_ -> mismatchNames "USD" "EUR" (Money.add (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 50)))
+    , Test.test "sub USD-EUR -> Err naming both currencies"
+        (\_ -> mismatchNames "USD" "EUR" (Money.sub (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 50)))
+    , Test.test "add in one currency -> Ok sum"
+        (\_ -> Test.equal (Ok "3.00 GBP") (Money.add (Money.fromMajor Money.GBP 1) (Money.fromMajor Money.GBP 2) |> Result.map Money.formatWithCode))
+    , Test.test "sub in one currency -> Ok difference"
+        (\_ -> Test.equal (Ok "50.00 USD") (Money.sub (Money.fromMajor Money.USD 100) (Money.fromMajor Money.USD 50) |> Result.map Money.formatWithCode))
+    , Test.test "compare USD EUR -> Err"
+        (\_ -> mismatchNames "USD" "EUR" (Money.compare (Money.fromMajor Money.USD 1) (Money.fromMajor Money.EUR 2)))
+    , Test.test "compare in one currency -> Ok -1"
+        (\_ -> Test.equal (Ok -1) (Money.compare (Money.fromMajor Money.USD 1) (Money.fromMajor Money.USD 2)))
+    , Test.test "lt / lte / gt / gte across two currencies -> Err each"
+        (\_ ->
+            Test.equal
+                [ True, True, True, True ]
+                (List.map
+                    (\f -> isErr (f (Money.fromMajor Money.USD 1) (Money.fromMajor Money.EUR 1)))
+                    [ Money.lt, Money.lte, Money.gt, Money.gte ]))
+    , Test.test "lt / lte / gt / gte in one currency -> Ok answers"
+        (\_ ->
+            Test.equal
+                [ Ok True, Ok True, Ok False, Ok False ]
+                (List.map
+                    (\f -> f (Money.fromMajor Money.USD 1) (Money.fromMajor Money.USD 2))
+                    [ Money.lt, Money.lte, Money.gt, Money.gte ]))
+    , Test.test "sum with a value in another currency -> Err"
+        (\_ -> mismatchNames "USD" "EUR" (Money.sum Money.USD [ Money.fromMajor Money.USD 1, Money.fromMajor Money.EUR 2 ]))
+    , Test.test "eq is currency-aware and total: $100 /= €100"
+        (\_ -> Test.equal ( False, True ) ( Money.eq (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 100), Money.neq (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 100) ))
     , Test.test "eq same currency + amount -> True"
         (\_ -> Test.equal True (Money.eq (Money.fromMajor Money.USD 100) (Money.fromMajor Money.USD 100)))
 
-      -- ── FX / conversion round-trips (registry is process-local; each
-      --    test clears + sets its own rate in-thunk for determinism) ──
+      -- ── Exchange rates: an explicit Rates value, no global table ──
     , Test.test "convert same currency is identity (no rate needed)"
-        (\_ ->
-            case Money.convert Money.USD (Money.fromMajor Money.USD 100) of
-
-                Ok m ->
-                    Test.equal "100.00 USD" (Money.formatWithCode m)
-
-                Err _ ->
-                    Test.fail "same-currency convert should always succeed"
-        )
+        (\_ -> Test.equal (Ok "100.00 USD") (Money.convert (Money.rates []) Money.USD (Money.fromMajor Money.USD 100) |> Result.map Money.formatWithCode))
     , Test.test "convert forward @0.92: $100 USD -> €92.00"
+        (\_ -> Test.equal (Ok "92.00 EUR") (Money.convert (Money.rates [ ( Money.USD, Money.EUR, dec "0.92" ) ]) Money.EUR (Money.fromMajor Money.USD 100) |> Result.map Money.formatWithCode))
+    , Test.test "convert round-trip @2: USD->EUR->USD == $100.00 (inverse from the table)"
         (\_ ->
-            case Money.clearRates () of
-
-                Err _ ->
-                    Test.fail "clearRates failed"
-
-                Ok _ ->
-                    case Money.setRate Money.USD Money.EUR (dec "0.92") of
-
-                        Err _ ->
-                            Test.fail "setRate failed"
-
-                        Ok _ ->
-                            case Money.convert Money.EUR (Money.fromMajor Money.USD 100) of
-
-                                Ok m ->
-                                    Test.equal "92.00 EUR" (Money.formatWithCode m)
-
-                                Err _ ->
-                                    Test.fail "convert forward failed"
-        )
-    , Test.test "convert round-trip @clean rate 2.0: USD->EUR->USD == $100.00"
-        (\_ ->
-            case Money.clearRates () of
-
-                Err _ ->
-                    Test.fail "clearRates failed"
-
-                Ok _ ->
-                    case Money.setRate Money.USD Money.EUR (dec "2") of
-
-                        Err _ ->
-                            Test.fail "setRate failed"
-
-                        Ok _ ->
-                            case Money.convert Money.EUR (Money.fromMajor Money.USD 100) of
-
-                                Err _ ->
-                                    Test.fail "convert forward failed"
-
-                                Ok eur ->
-                                    case Money.convert Money.USD eur of
-
-                                        Ok back ->
-                                            Test.equal "100.00 USD" (Money.formatWithCode back)
-
-                                        Err _ ->
-                                            Test.fail "convert back failed (inverse not auto-registered?)"
-        )
-    , Test.test "setRate auto-registers the inverse (getRate EUR->USD == 0.5)"
-        (\_ ->
-            case Money.clearRates () of
-
-                Err _ ->
-                    Test.fail "clearRates failed"
-
-                Ok _ ->
-                    case Money.setRate Money.USD Money.EUR (dec "2") of
-
-                        Err _ ->
-                            Test.fail "setRate failed"
-
-                        Ok _ ->
-                            case Money.getRate Money.EUR Money.USD of
-
-                                Ok r ->
-                                    Test.equal "0.5" (Dec.toString r)
-
-                                Err _ ->
-                                    Test.fail "inverse rate not registered"
-        )
-    , Test.test "setRate rejects a ZERO rate -> Err"
-        (\_ -> Test.err (Money.setRate Money.USD Money.EUR (dec "0")))
-    , Test.test "setRate rejects a NEGATIVE rate -> Err"
-        (\_ -> Test.err (Money.setRate Money.USD Money.EUR (dec "-1.5")))
-    , Test.test "convert with NO registered rate -> Err (never panic)"
-        (\_ ->
-            case Money.clearRates () of
-
-                Err _ ->
-                    Test.fail "clearRates failed"
-
-                Ok _ ->
-                    Test.err (Money.convert Money.JPY (Money.fromMajor Money.USD 100))
-        )
-    , Test.test "hasRate is False after clearRates for an unset pair"
-        (\_ ->
-            case Money.clearRates () of
-
-                Err _ ->
-                    Test.fail "clearRates failed"
-
-                Ok _ ->
-                    Test.equal False (Money.hasRate Money.USD Money.GBP)
-        )
+            let
+                fx = Money.rates [ ( Money.USD, Money.EUR, dec "2" ) ]
+            in
+                Test.equal
+                    (Ok "100.00 USD")
+                    (Money.convert fx Money.EUR (Money.fromMajor Money.USD 100)
+                        |> Result.andThen (Money.convert fx Money.USD)
+                        |> Result.map Money.formatWithCode))
+    , Test.test "rate reads the inverse: EUR->USD == 0.5"
+        (\_ -> Test.equal (Just "0.5") (Money.rate Money.EUR Money.USD (Money.rates [ ( Money.USD, Money.EUR, dec "2" ) ]) |> Maybe.map Dec.toString))
+    , Test.test "a zero or negative rate is left out: no rate"
+        (\_ -> Test.equal ( Nothing, Nothing ) ( Money.rate Money.USD Money.EUR (Money.rates [ ( Money.USD, Money.EUR, dec "0" ) ]), Money.rate Money.USD Money.EUR (Money.rates [ ( Money.USD, Money.EUR, dec "-1.5" ) ]) ))
+    , Test.test "convert with no rate -> Err naming both currencies (never panic)"
+        (\_ -> mismatchNames "USD" "JPY" (Money.convert (Money.rates []) Money.JPY (Money.fromMajor Money.USD 100)))
+    , Test.test "a later rate for the same pair wins"
+        (\_ -> Test.equal (Just "3") (Money.rate Money.USD Money.EUR (Money.rates [ ( Money.USD, Money.EUR, dec "2" ), ( Money.USD, Money.EUR, dec "3" ) ]) |> Maybe.map Dec.toString))
 
       -- ── Percent helpers (percentOf pct m ; addPercent pct m) ──
     , Test.test "percentOf 10% of $200 -> $20.00"
@@ -289,10 +256,10 @@ tests =
         (\_ -> Test.equal True (Money.isZero (Money.zero Money.USD)))
     , Test.test "isZero $5 -> False"
         (\_ -> Test.equal False (Money.isZero (Money.fromMajor Money.USD 5)))
-    , Test.test "sumOf empty list -> zero of currency"
-        (\_ -> Test.equal True (Money.eq (Money.sumOf Money.USD []) (Money.zero Money.USD)))
-    , Test.test "sumOf [10,20,30] USD -> $60.00"
-        (\_ -> Test.equal "60.00 USD" (Money.formatWithCode (Money.sumOf Money.USD [ Money.fromMajor Money.USD 10, Money.fromMajor Money.USD 20, Money.fromMajor Money.USD 30 ])))
+    , Test.test "sum of an empty list -> zero of currency"
+        (\_ -> Test.equal (Ok "0.00 USD") (Money.sum Money.USD [] |> Result.map Money.formatWithCode))
+    , Test.test "sum [10,20,30] USD -> $60.00"
+        (\_ -> Test.equal (Ok "60.00 USD") (Money.sum Money.USD [ Money.fromMajor Money.USD 10, Money.fromMajor Money.USD 20, Money.fromMajor Money.USD 30 ] |> Result.map Money.formatWithCode))
 
       -- ── Parse / construction round-trips ──
     , Test.test "fromString USD \"12.34\" -> Ok, formats 12.34 USD"
@@ -307,18 +274,14 @@ tests =
         )
     , Test.test "fromString USD \"abc\" -> Err (malformed)"
         (\_ -> Test.err (Money.fromString Money.USD "abc"))
-    , Test.test "parseCurrency case-insensitive + trims: \"  eur \" -> EUR"
-        (\_ -> Test.equal "EUR" (Money.currencyCode (Money.parseCurrency "  eur ")))
-    , Test.test "parseCurrency unknown -> CurrencyRaw (upper-cased)"
-        (\_ -> Test.equal "ZZZ" (Money.currencyCode (Money.parseCurrency "zzz")))
-    , Test.test "knownCurrency USD -> True"
-        (\_ -> Test.equal True (Money.knownCurrency Money.USD))
-    , Test.test "knownCurrency (CurrencyRaw) -> False"
-        (\_ -> Test.equal False (Money.knownCurrency (Money.CurrencyRaw "ZZZ")))
-    , Test.test "isKnownCode \"USD\" -> True"
-        (\_ -> Test.equal True (Money.isKnownCode "USD"))
-    , Test.test "isKnownCode \"XYZ\" -> False"
-        (\_ -> Test.equal False (Money.isKnownCode "XYZ"))
+    , Test.test "currencyFromCode reads a code in any case: \"eur\" -> EUR"
+        (\_ -> Test.equal (Just "EUR") (Money.currencyFromCode "eur" |> Maybe.map Money.currencyCode))
+    , Test.test "currencyFromCode of a code Sky does not name -> CurrencyRaw"
+        (\_ -> Test.equal (Just "ZZZ") (Money.currencyFromCode "zzz" |> Maybe.map Money.currencyCode))
+    , Test.test "currencyFromCode is strict: empty, spaces, punctuation, too long -> Nothing"
+        (\_ -> Test.equal [ Nothing, Nothing, Nothing, Nothing, Nothing ] (List.map Money.currencyFromCode [ "", " EUR", "GB P", "E$R", "ABCDEFGHIJK" ]))
+    , Test.test "currencyFromCode of a named code -> its variant (eqCurrency USD)"
+        (\_ -> Test.equal (Just True) (Money.currencyFromCode "USD" |> Maybe.map (Money.eqCurrency Money.USD)))
     ]
 
 

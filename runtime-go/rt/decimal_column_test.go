@@ -11,8 +11,7 @@ import (
 )
 
 // The decimal column kind (Codec.decimal, Codec.moneyIn): DDL, write, read,
-// the SQLite collation and sum, the migrate defaults, and the classified
-// CurrencyMismatch.
+// the SQLite collation and sum, and the migrate defaults.
 
 func TestDecimalColumnDDLPerDialect(t *testing.T) {
 	if got := schemaTypeName("pgx", codecColKindToSchema("decimal")); got != "NUMERIC" {
@@ -136,17 +135,4 @@ func TestDecimalMigrateDefaults(t *testing.T) {
 	if err != nil || len(stmts) == 0 || !strings.Contains(stmts[0], "NUMERIC NOT NULL DEFAULT '0'") {
 		t.Errorf("PostgreSQL add decimal = %v, %v", stmts, err)
 	}
-}
-
-func TestMoneyCurrencyMismatchIsClassified(t *testing.T) {
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("Money_currencyMismatch must fail loudly")
-		}
-		if kind, _ := classifyPanic(r.(string)); kind != "CurrencyMismatch" {
-			t.Errorf("classified as %s, want CurrencyMismatch", kind)
-		}
-	}()
-	Money_currencyMismatch("add", "GBP", "USD")
 }

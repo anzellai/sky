@@ -99,19 +99,47 @@ as they already did for a plain app.
   is the code string. A `Codec.auto` Decimal or Money field keeps its JSON-text
   column, so no existing table changes; `Codec.decimal` also reads that legacy
   `"12.34"` text.
-- **`Money.addChecked` and `Money.subChecked`** return an `Err` for two
-  currencies.
+- **`Std.Money` follows one rule.** Every operation that combines two Money
+  values by arithmetic or by order returns `Result Error _`: `add`, `sub`,
+  `sum`, `compare`, `lt`, `lte`, `gt` and `gte`. Two different currencies are
+  an `Err` (kind `InvalidInput`) naming both, never a value and never a crash.
+  `eq` / `neq` stay plain `Bool`. Exchange rates are an explicit value:
+  `Money.rates [ ( USD, EUR, r ) ]`, read with `Money.rate`, used by
+  `Money.convert rates to m`. `Money.currencyFromCode : String -> Maybe
+  Currency` reads a code under the strict decoders' grammar. See the Migration
+  section.
 - **`Store.noCond`**, the condition every row meets (the same as `and_ []`),
   is exposed.
 
 ### Migration
 
-- **Money across two currencies fails loudly.** `Money.add` and `Money.sub` of
-  two currencies returned the left operand in silence, and `compare`, `lt`,
-  `lte`, `gt` and `gte` compared the amounts and ignored the currency (so did
-  `sumOf`). They now fail with the classified `CurrencyMismatch`, like a
-  division by zero. Convert one side first (`Money.convert`), or use
-  `Money.addChecked` / `subChecked` for an `Err`. `Money.eq` stays `False`.
+- **⚠ Breaking: the `Std.Money` API is redesigned** (docs/migration/v0.29.md,
+  "Money results"). `Money.add` of two currencies returned the left operand in
+  silence, and `compare`, `lt`, `lte`, `gt`, `gte` and `sumOf` ignored the
+  currency. Now:
+  - `add`, `sub : Money -> Money -> Result Error Money`;
+    `sum : Currency -> List Money -> Result Error Money` replaces `sumOf`;
+    `compare : … -> Result Error Int`; `lt`, `lte`, `gt`, `gte : … -> Result
+    Error Bool`. An `Err` names both currencies.
+  - `zeroOf m` is `Money.zero (Money.currency m)`.
+  - The global rate table (`setRate`, `getRate`, `hasRate`, `clearRates`) is
+    removed: `convert : Rates -> Currency -> Money -> Result Error Money` with
+    `Money.rates [ ( from, to, rate ) ]`, and `Money.rate from to rates : Maybe
+    Decimal`.
+  - `parseCurrency`, `isKnownCode` and `knownCurrency` are replaced by
+    `currencyFromCode : String -> Maybe Currency`.
+  - Each removed name is a compile error that names its replacement.
+    `Money.sum` and `Decimal.sum` both exposed with `(..)` make a bare `sum`
+    ambiguous (`[E1012]`); qualify it.
+  - `fromMinor`, `formatWithCode`, `amount`, `eq` and the `Money` type are
+    unchanged.
+  - `Std.Ai`: `Provider.cost` returns `Result Error Money` and
+    `Trace.forResponse` returns `Result Error Trace` (pipe it through
+    `Task.fromResult` before `Trace.record`). A price book in two currencies,
+    or a `Synthetic` budget in another currency than its book, is refused
+    before the first call (`InvalidSetting`); an `Eval` cost budget in another
+    currency than the suite's costs fails `Eval.check` with that reason. Each
+    used to crash the process.
 - **`Codec.ColType` has a new constructor, `CDecimal`.** A `case` over a
   `ColType` in your own code must add the arm (the compiler names it).
 - **`Schema.createSchema` makes `BIGINT` for a new `Schema.int` column on

@@ -29,14 +29,12 @@ allocationTests =
           "the parts sum back to the whole"
           (\_ -> Test.equal 100 (Amounts.sumInts (Amounts.allocateParts 3 100)))
     , Test.test
-          "Money.sumOf of the parts equals the original Money"
+          "Money.sum of the parts equals the original Money"
           (\_ ->
-              Test.isTrue
-                  (Money.eq
-                      (Money.sumOf
-                          Amounts.book
-                          (Money.allocate 3 (Amounts.money 100)))
-                      (Amounts.money 100)))
+              Test.equal
+                  (Ok (Money.formatWithCode (Amounts.money 100)))
+                  (Money.sum Amounts.book (Money.allocate 3 (Amounts.money 100))
+                      |> Result.map Money.formatWithCode))
     , Test.test
           "invoiceSplitCheck reports exact"
           (\_ -> Test.isTrue (Amounts.invoiceSplitCheck ()).exact)

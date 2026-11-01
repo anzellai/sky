@@ -646,30 +646,35 @@ For money, billing, tax, invoices — anything where exact fractional value matt
 import Std.Money as Money exposing (Money, Currency)
 ```
 
-ISO 4217 minor-unit awareness (JPY=0dp, USD=2dp, BHD=3dp). `Currency` is a typed enum of 50+ codes (USD, EUR, GBP, JPY, CHF, AUD, CAD, …, BTC, ETH, USDT, USDC) plus `CurrencyRaw String` for the long tail. All arithmetic enforces currency match.
+ISO 4217 minor-unit awareness (JPY=0dp, USD=2dp, BHD=3dp). `Currency` is a typed enum of 50+ codes (USD, EUR, GBP, JPY, CHF, AUD, CAD, …, BTC, ETH, USDT, USDC) plus `CurrencyRaw String` for the long tail.
+
+**The one rule (v0.29.2).** Every operation that combines two Money values by arithmetic or by order returns `Result Error _`: `add`, `sub`, `sum`, `compare`, `lt`, `lte`, `gt`, `gte`. Two different currencies are an `Err` (kind `InvalidInput`) that names both currencies. The one exception is equality: `eq` / `neq` are plain `Bool`, because two amounts in different currencies are not equal. Scaling one value stays total.
 
 | Surface | Signature |
 |---|---|
 | `fromMajor c n` / `fromMinor c n` / `fromString c s` | `Currency -> ... -> Money` (string is `Result Error Money`) |
-| `zero c` / `zeroOf c` | `Currency -> Money` |
+| `zero c` | `Currency -> Money` (for the zero of `m`'s currency: `zero (currency m)`) |
 | `amount` / `currency` / `currencyCode` | `Money -> Decimal` / `Currency` / `String` |
-| `add` / `sub` | `Money -> Money -> Money` (one currency; two currencies fail loudly as the classified `CurrencyMismatch`, v0.29.2) |
-| `addChecked` / `subChecked` | `Money -> Money -> Result Error Money` (`Err` for two currencies) |
+| `add` / `sub` | `Money -> Money -> Result Error Money` (`Err` for two currencies) |
+| `sum c xs` | `Currency -> List Money -> Result Error Money` (`Ok (zero c)` for `[]`) |
+| `compare` | `Money -> Money -> Result Error Int` |
+| `lt` / `lte` / `gt` / `gte` | `Money -> Money -> Result Error Bool` |
+| `eq` / `neq` | `Money -> Money -> Bool` (total; `False` / `True` across currencies) |
+| `eqCurrency` | `Currency -> Currency -> Bool` |
 | `mul scalar m` | `Decimal -> Money -> Money` |
 | `neg` / `abs` | `Money -> Money` |
 | `allocate parts m` | `Int -> Money -> List Money` (fair split — `$100/3 → [$33.34, $33.33, $33.33]`, sum-preserving) |
-| `sumOf c xs` | `Currency -> List Money -> Money` |
-| `eq` / `neq` / `lt` / `lte` / `gt` / `gte` / `compare` | `Money -> Money -> Bool` (Int for compare); `eq` is `False` across currencies, the orders fail loudly (`CurrencyMismatch`) |
 | `isZero` / `isPositive` / `isNegative` | `Money -> Bool` |
 | `percentOf` / `addPercent` / `subPercent` | `Decimal -> Money -> Money` |
 | `format` / `formatWithCode` | `Money -> String` (`"$108.88"` / `"108.88 USD"`) |
 | `toMinor` | `Money -> Int` |
 | `minorUnits` / `symbol` / `currencyName` | `Currency -> ...` |
-| `knownCurrency` | `Currency -> Bool` (False only for `CurrencyRaw _`) |
-| `isKnownCode` | `String -> Bool` (raw ISO code predicate — use for form input) |
-| `parseCurrency` | `String -> Currency` (falls back to `CurrencyRaw` on unknown) |
-| `setRate from to rate` / `getRate` / `hasRate` / `clearRates` | FX rate registry (process-local) |
-| `convert to m` | `Currency -> Money -> Result Error Money` |
+| `currencyFromCode` | `String -> Maybe Currency` (3 to 10 ASCII letters or digits, read in upper case; `CurrencyRaw` for a code Sky does not name; `Nothing` for anything else) |
+| `Rates` / `rates triples` | an explicit exchange-rate table: `List ( Currency, Currency, Decimal ) -> Rates` (a rate at or below zero is left out) |
+| `rate from to fx` | `Currency -> Currency -> Rates -> Maybe Decimal` (`Just 1` for one currency; the inverse of the other direction when only that is given) |
+| `convert fx to m` | `Rates -> Currency -> Money -> Result Error Money` (`Err` naming both currencies when there is no rate) |
+
+There is no global rate table: build `Rates` where the rates come from (config, a feed) and pass it where you convert. A Sky.Spa client and the server see the same value.
 
 ### `Std.Time` — IANA-zone helpers complementing kernel `Time`
 

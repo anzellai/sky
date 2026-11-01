@@ -969,6 +969,39 @@ tests =
                       allYes
                       (five |> Eval.withCostBudget (Money.fromMinor USD 10))))
     , Test.test
+          "a cost budget in another currency fails the gate with a clear reason, not a crash"
+          (\_ ->
+              onReport
+                  (\r ->
+                      hasText
+                          "the cost budget is in EUR and the suite's costs are in USD"
+                          (gateReason (Eval.check Eval.thresholds r)))
+                  (runOn
+                      allYes
+                      (five |> Eval.withCostBudget (Money.fromMinor EUR 10))))
+    , Test.test
+          "a price book in two currencies is an InvalidSetting before any call, not a crash"
+          (\_ ->
+              case runOn
+                       allYes
+                       (five
+                           |> Eval.withPriceBook
+                                  { inputPer1k = Money.fromMinor USD 10
+                                  , outputPer1k = Money.fromMinor EUR 20
+                                  }) of
+
+                  Err e ->
+                      case Failure.fromError e of
+
+                          Just (InvalidSetting x) ->
+                              hasText "USD" (x.setting ++ ": " ++ x.reason)
+
+                          _ ->
+                              Test.fail (Error.toString e)
+
+                  Ok _ ->
+                      Test.fail "the run was not refused")
+    , Test.test
           "compare counts regressions and improvements"
           (\_ ->
               case both of

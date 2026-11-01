@@ -834,7 +834,14 @@ isoCurrency =
                            case currencyCodeK s of
 
                                Ok code ->
-                                   D.succeed (Mon.parseCurrency code)
+                                   case Mon.currencyFromCode code of
+
+                                       Just c ->
+                                           D.succeed c
+
+                                       Nothing ->
+                                           D.fail
+                                               ("not a currency code: " ++ code)
 
                                Err e ->
                                    D.fail (Error.toString e))

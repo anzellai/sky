@@ -967,7 +967,9 @@ moneySuite =
                       a = Money.fromMajor Money.USD 10
                       b = Money.fromMajor Money.USD 5
                   in
-                      Test.equal "$15.00" (Money.format (Money.add a b)))
+                      Test.equal
+                          (Ok "$15.00")
+                          (Money.add a b |> Result.map Money.format))
         , Test.test
               "percentOf 10% of $100 = $10"
               (\_ ->
@@ -984,9 +986,9 @@ moneySuite =
                   let
                       parts =
                           Money.allocate 3 (Money.fromMajor Money.USD 100)
-                      total = Money.sumOf Money.USD parts
+                      total = Money.sum Money.USD parts
                   in
-                      Test.equal "$100.00" (Money.format total))
+                      Test.equal (Ok "$100.00") (Result.map Money.format total))
         , Test.test
               "allocate $100 over 3 yields 3 parts"
               (\_ ->
@@ -1001,17 +1003,28 @@ moneySuite =
               "symbol lookup EUR"
               (\_ -> Test.equal "€" (Money.symbol Money.EUR))
         , Test.test
-              "knownCurrency USD ctor is True"
-              (\_ -> Test.isTrue (Money.knownCurrency Money.USD))
+              "add across two currencies is an Err"
+              (\_ ->
+                  Test.err
+                      (Money.add
+                          (Money.fromMajor Money.USD 1)
+                          (Money.fromMajor Money.EUR 1)))
         , Test.test
-              "knownCurrency (CurrencyRaw \"XYZ\") is False"
-              (\_ -> Test.isFalse (Money.knownCurrency (Money.CurrencyRaw "XYZ")))
+              "currencyFromCode \"XYZ\" is CurrencyRaw \"XYZ\""
+              (\_ ->
+                  Test.equal
+                      (Just "XYZ")
+                      (Money.currencyFromCode "XYZ"
+                          |> Maybe.map Money.currencyCode))
         , Test.test
-              "isKnownCode \"USD\" (raw-string check)"
-              (\_ -> Test.isTrue (Money.isKnownCode "USD"))
+              "currencyFromCode \"USD\" is USD"
+              (\_ ->
+                  Test.equal
+                      (Just "$")
+                      (Money.currencyFromCode "USD" |> Maybe.map Money.symbol))
         , Test.test
-              "isKnownCode \"XYZ\" rejects unknown code"
-              (\_ -> Test.isFalse (Money.isKnownCode "XYZ"))
+              "currencyFromCode \"U S\" is Nothing"
+              (\_ -> Test.equal Nothing (Money.currencyFromCode "U S"))
         , Test.test
               "currencyCode JPY"
               (\_ -> Test.equal "JPY" (Money.currencyCode Money.JPY))

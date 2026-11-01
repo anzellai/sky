@@ -733,12 +733,14 @@ moneyFromText s =
     case String.split " " (String.trim s) of
 
         [ c, amount ] ->
-            case Money.fromString (Money.parseCurrency c) amount of
+            case Maybe.map
+                     (\cur -> Money.fromString cur amount)
+                     (Money.currencyFromCode c) of
 
-                Ok m ->
+                Just (Ok m) ->
                     Just (canonical m)
 
-                Err _ ->
+                _ ->
                     Nothing
 
         _ ->
