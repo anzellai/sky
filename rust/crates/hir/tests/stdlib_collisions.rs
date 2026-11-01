@@ -42,6 +42,12 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     // with `(..)` and uses the bare name gets `[E1012]`. Breaking line in the
     // v0.29.2 CHANGELOG.
     "value sum",
+    // v0.29.2: Std.Codec.value, the codec for a raw Json.Value (the name the
+    // request asked for, beside Codec.string / Codec.int). Json.Decode, the
+    // JsonDec kernel and Std.Html.Attributes already export `value`; a program
+    // that exposes Std.Codec and one of them with `(..)` and uses the bare
+    // name gets `[E1012]`. Breaking line in the v0.29.2 CHANGELOG.
+    "value value",
     // v0.28.0 (against v0.27.8). `Std.Ai.Provider` gains `Options`,
     // `defaultOptions` and `embed`, the names the lifecycle design gives them
     // (docs/design/std-ai-lifecycle.md §8.3). `Std.Watch` has its own

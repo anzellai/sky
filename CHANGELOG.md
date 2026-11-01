@@ -114,6 +114,11 @@ as they already did for a plain app.
   `Money.convert rates to m`. `Money.currencyFromCode : String -> Maybe
   Currency` reads a code under the strict decoders' grammar. See the Migration
   section.
+- **`Codec.value`, a codec for a raw `Json.Value`.** The JSON as it is, both
+  ways, in a JSON text column, so `Codec.object` (or an `autoWith` override)
+  carries a `List Json.Value` (`Codec.list Codec.value`) or a
+  `Dict String Json.Value` (`Codec.dict Codec.string Codec.value`). Under
+  `Codec.auto` such a field is still an `Err` on read.
 - **`Store.noCond`**, the condition every row meets (the same as `and_ []`),
   is exposed.
 
@@ -139,6 +144,11 @@ as they already did for a plain app.
     ambiguous (`[E1012]`); qualify it.
   - `fromMinor`, `formatWithCode`, `amount`, `eq` and the `Money` type are
     unchanged.
+- **⚠ Breaking: `Std.Codec` exposes `value`** (`Codec.value`). A program that
+  imports `Std.Codec exposing (..)` together with `Json.Decode`,
+  `Std.Html.Attributes` or the `JsonDec` kernel `exposing (..)` and uses a bare
+  `value` gets `[E1012]`: qualify it (`Decode.value`) or narrow one
+  `exposing` list.
   - `Std.Ai`: `Provider.cost` returns `Result Error Money` and
     `Trace.forResponse` returns `Result Error Trace` (pipe it through
     `Task.fromResult` before `Trace.record`). A price book in two currencies,

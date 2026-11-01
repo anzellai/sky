@@ -52,6 +52,7 @@ module Std.Codec exposing
     , moneyIn
     , moneyObject
     , isoCurrency
+    , value
     , maybe
     , list
     , result
@@ -848,6 +849,25 @@ isoCurrency =
         , shp = SScalar CText
         , sch = SnType "string"
         , zro = \_ -> Nothing
+        , fzr = \_ -> []
+        , fck = \_ -> []
+        }
+
+
+-- | Codec for a raw `Json.Value` (v0.29.2): the JSON as it is, both ways, so
+-- a field of `List Json.Value` or `Dict String Json.Value` (which
+-- `Codec.auto` cannot read) has a codec: `Codec.list Codec.value`,
+-- `Codec.dict Codec.string Codec.value`, or an `autoWith` override. Any JSON
+-- reads; the value written is the value read. Database: a JSON TEXT column.
+-- Its JSON Schema is the open `{}` (not exact). Its zero is `null`.
+value : Codec Value
+value =
+    Codec
+        { enc = \v -> v
+        , dec = D.value
+        , shp = SBlob
+        , sch = SnOpen
+        , zro = \_ -> Just E.null
         , fzr = \_ -> []
         , fck = \_ -> []
         }

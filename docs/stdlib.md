@@ -1441,7 +1441,10 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   never a silent `Nothing`. A `Codec.object` field must be present, a
   `Maybe` included (`null` for `Nothing`).
   `Codec.dict keyCodec valueCodec` (v0.27) encodes a `Dict` as a JSON array of
-  `[key, value]` pairs, so any comparable key round-trips. `Codec.fromJson`
+  `[key, value]` pairs, so any comparable key round-trips. `Codec.value`
+  (v0.29.2) is a raw `Json.Value`, as it is both ways (a JSON text column, the
+  open schema `{}`): `Codec.list Codec.value` carries a `List Json.Value`
+  field, which `Codec.auto` cannot read. `Codec.fromJson`
   reads exactly one JSON document: text after it is an `Err` (v0.27). A type
   that holds a function, a `Secret`, a key or a runtime handle has no codec and
   is refused at compile time. Pure Sky.

@@ -924,6 +924,29 @@ tests =
                 ( failed (Codec.fromJson hooksAuto "{\"id\":\"h1\",\"items\":[1]}")
                 , failed (Codec.fromJson hookMapAuto "{\"id\":\"h1\",\"items\":{\"a\":1}}")
                 ))
+    -- ── Codec.value: a raw Json.Value (v0.29.2) ───────────────────────────
+    , Test.test "value: an object field of List Json.Value round-trips exactly"
+        (\_ ->
+            let
+                text = "{\"id\":\"h1\",\"items\":[1,{\"a\":null},\"x\",[true,2.5]]}"
+            in
+                Test.equal (Ok text) (Codec.fromJson hooksObject text |> Result.map (Codec.toJson hooksObject)))
+    , Test.test "value: a Dict String Json.Value round-trips exactly"
+        (\_ ->
+            let
+                text = "{\"id\":\"h1\",\"items\":[[\"a\",{\"n\":1}],[\"b\",null]]}"
+            in
+                Test.equal (Ok text) (Codec.fromJson hookMapObject text |> Result.map (Codec.toJson hookMapObject)))
+    , Test.test "value: autoWith gives a List Json.Value field its codec, so the read Codec.auto refuses works"
+        (\_ ->
+            let
+                text = "{\"id\":\"h1\",\"items\":[1,\"two\"]}"
+            in
+                Test.equal (Ok text) (Codec.fromJson hooksAutoWith text |> Result.map (Codec.toJson hooksAutoWith)))
+    , Test.test "value: its JSON Schema is the open schema, not exact"
+        (\_ -> Test.equal ( "{}", False ) ( Encode.encode 0 (Codec.jsonSchema Codec.value).schema, (Codec.jsonSchema Codec.value).exact ))
+    , Test.test "value: a record field is one JSON text column"
+        (\_ -> Test.equal (Codec.SRecord [ ( "id", Codec.CText ), ( "items", Codec.CBlob ) ]) (Codec.shape hooksObject))
     -- ── Decimal and Money codecs (v0.29.2) ────────────────────────────────
     , Test.test "decimal: encodes the canonical string (12.50 is \"12.5\")"
         (\_ -> Test.equal "\"12.5\"" (Codec.toJson Codec.decimal (dcm "12.50")))
@@ -1034,6 +1057,29 @@ type alias HookMapAuto =
 hookMapAuto : Codec HookMapAuto
 hookMapAuto =
     Codec.auto { id = "", items = Dict.fromList [ ( "a", Encode.null ) ] }
+
+
+-- The same records through Codec.value (v0.29.2): an explicit codec for a
+-- raw Json.Value, so a List or Dict of them reads.
+hooksObject : Codec HooksAuto
+hooksObject =
+    Codec.object HooksAuto
+        |> Codec.field "id" .id Codec.string
+        |> Codec.field "items" .items (Codec.list Codec.value)
+        |> Codec.buildObject
+
+
+hookMapObject : Codec HookMapAuto
+hookMapObject =
+    Codec.object HookMapAuto
+        |> Codec.field "id" .id Codec.string
+        |> Codec.field "items" .items (Codec.dict Codec.string Codec.value)
+        |> Codec.buildObject
+
+
+hooksAutoWith : Codec HooksAuto
+hooksAutoWith =
+    Codec.autoWith [ ( "items", Codec.list Codec.value ) ] { id = "", items = [ Encode.null ] }
 
 
 -- A `Json.Value` field under Codec.auto: the blank's JSON value marks it.

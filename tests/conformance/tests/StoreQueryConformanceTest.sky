@@ -5780,6 +5780,22 @@ timeTests db =
                                              |> Store.orderAsc "id")))))
     ]
 
+-- ── Codec.value (v0.29.2): a raw Json.Value in a JSON text column ─────────
+type alias JsonValues =
+    { id : String
+    , items : List JE.Value
+    }
+
+
+jsonValues : Store JsonValues
+jsonValues =
+    Store.fromCodec
+        "sqc_json_values"
+        (Codec.object JsonValues |> Codec.field "id" .id Codec.string
+            |> Codec.field "items" .items (Codec.list Codec.value)
+            |> Codec.buildObject)
+        |> Store.primaryKey "id"
+
 -- ── Decimal columns: Codec.decimal and Codec.moneyIn (v0.29.2) ──────────────
 -- A decimal column is NUMERIC on PostgreSQL and TEXT holding the canonical
 -- decimal on SQLite, ordered through the sky_decimal collation and summed by
@@ -5944,6 +5960,33 @@ decimalTests db =
                                  (\_ -> Store.findBy db decItems "id" "e")
                           |> Task.map
                                  (Maybe.map (\r -> Decimal.toString r.price)))))
+    , Test.test
+          "Codec.value: a List Json.Value field round-trips through its JSON text column"
+          (\_ ->
+              Test.equal
+                  (Ok (Just "[1,{\"a\":null},\"x\"]"))
+                  (Task.run
+                      (drop db "sqc_json_values"
+                          |> Task.andThen
+                                 (\_ -> unit (Store.migrate db jsonValues))
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.insert
+                                         db
+                                         jsonValues
+                                         { id = "j"
+                                         , items =
+                                             [ JE.int 1
+                                             , JE.object [ ( "a", JE.null ) ]
+                                             , JE.string "x"
+                                             ]
+                                         })
+                          |> Task.andThen
+                                 (\_ -> Store.findBy db jsonValues "id" "j")
+                          |> Task.map
+                                 (Maybe.map
+                                     (\r ->
+                                         JE.encode 0 (JE.list identity r.items))))))
     , Test.test
           "decimal: orderAsc orders by value, not by text"
           (\_ ->
