@@ -2820,6 +2820,7 @@ impl<'a> Ctx<'a> {
         };
         let root = self.body.root;
         self.lint_header_dict_lookups();
+        self.lint_store_builder_columns();
         let mut body = param_destructure;
         // When the return type is otherwise `any`, recover it from the body's own
         // lowered actual type. An unannotated def whose body is e.g. a `case`
@@ -7959,6 +7960,32 @@ impl<'a> Ctx<'a> {
                  use `Server.header \"{name}\" req` (a request) or `Http.header \"{name}\" resp` \
                  (a response), which ignore case. Ignore this if `headers` is your own Dict."
             ));
+            self.cur_span = prev;
+        }
+    }
+
+    /// Store builder lint (v0.29.2, `store_lint.rs`): a literal column name a
+    /// `Std.Db.Store` builder, `findBy` or a query builder names that the
+    /// store's codec does not have. The stdlib's own bodies are not linted.
+    fn lint_store_builder_columns(&mut self) {
+        if self.cur_module.starts_with("Std.") || self.cur_module.starts_with("Sky.") {
+            return;
+        }
+        struct Defs<'d>(&'d BTreeMap<DefId, DefEntry>);
+        impl crate::store_lint::DefLookup for Defs<'_> {
+            fn lookup(&self, d: DefId) -> Option<(&str, &str, &Body)> {
+                self.0
+                    .get(&d)
+                    .map(|e| (e.module_name.as_str(), e.name.as_str(), &e.body))
+            }
+        }
+        let findings = crate::store_lint::lint(self.body, &Defs(self.defs));
+        for f in findings {
+            let prev = self.cur_span;
+            if let Some(sp) = self.body.expr_span(f.at) {
+                self.cur_span = Some(sp);
+            }
+            self.warn(f.message);
             self.cur_span = prev;
         }
     }

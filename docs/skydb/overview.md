@@ -182,6 +182,19 @@ refuse a store whose builders recorded a problem (for example an unknown column
 in `unique`, `index` or `uniqueOn`), naming the column, before any DDL. So
 does the `stores` step of `sky verify`, when the entry module exposes `db`.
 
+`sky check` (and `sky build`) warns first, at compile time (v0.29.2): a literal
+column name given to a Store builder (`primaryKey`, `serial`, `unique`,
+`index`, `uniqueOn`, `uniqueWhere`), to `Store.findBy`, or to `orderAsc` /
+`orderDesc` / a `where_` condition on a `Store.query` chain, that the store's
+codec does not have. The warning lists the columns and a did-you-mean. It
+speaks only when the source shows the columns (a `Codec.auto` / `autoCamel` /
+`autoWith` over a record literal, or a `Codec.object` chain of literal names,
+through top-level definitions). A name the chain declares outside the codec
+(`defaultWith`, `defaultNow`, `touchOnUpdate`, the `default*` builders,
+`generated`) is a column. Those builders take any column the table has, so
+they warn only for a name that is a codec column spelled with another case or
+`_` (`"Created_At"` for `created_at`).
+
 ### Writes
 
 `insert` · **`insertMany`** (one multi-row INSERT — bulk / time-series) · `update`

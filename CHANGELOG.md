@@ -123,6 +123,14 @@ as they already did for a plain app.
   `Money.convert rates to m`. `Money.currencyFromCode : String -> Maybe
   Currency` reads a code under the strict decoders' grammar. See the Migration
   section.
+- **`sky check` warns about an unknown Store column name.** A literal column
+  name given to a Store builder (`primaryKey`, `unique`, `index`, `uniqueOn`,
+  `uniqueWhere`, …), to `Store.findBy`, or to `orderAsc` / `orderDesc` / a
+  `where_` condition on a `Store.query` chain, that the store's codec does not
+  have, is a compile-time warning with the column list and a did-you-mean. At
+  run time it makes every verb on the store fail. The lint speaks only when
+  the source shows the codec's columns, and never for a declared external
+  column (docs/skydb/overview.md).
 - **`Canvas.pasteExact` moves pixels exactly.** `Std.Image.Canvas.pasteExact x
   y bytes canvas` puts an image's pixels in place of the canvas's, with no
   blending, and keeps each colour byte for byte. `paste` blends in

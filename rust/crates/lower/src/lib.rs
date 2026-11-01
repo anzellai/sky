@@ -12,6 +12,7 @@ pub mod ir;
 pub mod kernel;
 mod lower;
 pub mod shape;
+mod store_lint;
 
 pub use ir::{GoTy, Prim};
 pub use lower::{
