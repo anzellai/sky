@@ -1,7 +1,7 @@
 //go:build !js
 
 // Package rt — the read-only schema and ledger inspection behind
-// `sky db check` (Std.Db.Migrate.inspect).
+// `sky db check` (Std.Db.Migrate.inspectSchema).
 //
 // Db_inspect reads the live database's catalogue (tables, columns, types,
 // NULL, defaults, primary keys, indexes with their predicate) and judges each

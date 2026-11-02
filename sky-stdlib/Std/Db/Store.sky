@@ -68,6 +68,7 @@ module Std.Db.Store exposing
     , defaultInt
     , defaultBool
     , defaultFloat
+    , defaultDecimal
     , defaultWith
     , generated
     , IndexSpec
@@ -7388,6 +7389,12 @@ storeProblemText name pk cols problems =
             ("Store: invalid table name \"" ++ name
                 ++ "\": use letters, digits and _, not starting with a digit, at most 63 bytes")
 
+    else if isSqlKeyword name then
+        Just
+            ("Store: table name \"" ++ name
+                ++ "\" is an SQL keyword on both SQLite and PostgreSQL, so every statement on it fails. "
+                ++ keywordAdvice)
+
     else if pk /= "" && not (isColumn pk cols) then
         Just
             ("Store \"" ++ name ++ "\": primaryKey \"" ++ pk
@@ -7395,13 +7402,98 @@ storeProblemText name pk cols problems =
                 ++ colNames cols)
 
     else
-        case problems of
+        case ( List.filter (\( c, _ ) -> isSqlKeyword c) cols, problems ) of
 
-            p :: _ ->
+            ( ( c, _ ) :: _, _ ) ->
+                Just
+                    ("Store \"" ++ name ++ "\": column \"" ++ c
+                        ++ "\" is an SQL keyword on both SQLite and PostgreSQL, so every statement on it fails. "
+                        ++ keywordAdvice)
+
+            ( [], p :: _ ) ->
                 Just ("Store \"" ++ name ++ "\": " ++ p)
 
-            [] ->
+            ( [], [] ) ->
                 Nothing
+
+
+keywordAdvice : String
+keywordAdvice =
+    "The Store writes names unquoted (quoting would change how PostgreSQL folds an existing camelCase column), so give it another column name: Codec.field \"sort_order\" .order Codec.int in a Codec.object, or rename the field"
+
+
+-- The names that fail unquoted on BOTH SQLite and PostgreSQL as a column or
+-- table name (checked against both engines, v0.29.2). They never worked, so
+-- refusing them breaks nothing. A name reserved on one engine only (`user`
+-- on PostgreSQL, `index` on SQLite) is refused by `migrate` on that engine
+-- (runtime-go/rt/db_codec.go, codecReservedName).
+isSqlKeyword : String -> Bool
+isSqlKeyword s =
+    isOneOf (String.toLower s) sqlKeywords
+
+
+-- `List.member` on a `List String`, typed (the polymorphic `member` narrows
+-- the list at run time).
+isOneOf : String -> List String -> Bool
+isOneOf s words =
+    case words of
+
+        [] ->
+            False
+
+        w :: rest ->
+            w == s || isOneOf s rest
+
+
+sqlKeywords : List String
+sqlKeywords =
+    [ "all"
+    , "and"
+    , "as"
+    , "case"
+    , "cast"
+    , "check"
+    , "collate"
+    , "constraint"
+    , "create"
+    , "current_date"
+    , "current_time"
+    , "current_timestamp"
+    , "default"
+    , "deferrable"
+    , "distinct"
+    , "else"
+    , "except"
+    , "foreign"
+    , "from"
+    , "group"
+    , "having"
+    , "in"
+    , "intersect"
+    , "into"
+    , "is"
+    , "isnull"
+    , "join"
+    , "limit"
+    , "not"
+    , "notnull"
+    , "null"
+    , "on"
+    , "or"
+    , "order"
+    , "primary"
+    , "references"
+    , "returning"
+    , "select"
+    , "table"
+    , "then"
+    , "to"
+    , "union"
+    , "unique"
+    , "using"
+    , "when"
+    , "where"
+    ]
 
 
 -- Whether `col` is one of `cols`. A pattern match, not `== Nothing`: the
@@ -7425,8 +7517,8 @@ storeProblem =
 
 
 -- `^[A-Za-z_][A-Za-z0-9_]*$`, at most 63 bytes (PostgreSQL's identifier
--- limit). No reserved-word list: a column named `user` works on SQLite, and a
--- reserved word stays a driver error.
+-- limit). A keyword of both engines is refused by `isSqlKeyword`; one of a
+-- single engine (`user` works on SQLite) by `migrate` on that engine.
 isIdent : String -> Bool
 isIdent s =
     case String.toList s of

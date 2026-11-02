@@ -78,6 +78,11 @@ isErr r =
             False
 
 
+
+halfRates : Money.Rates
+halfRates =
+    Money.rates [ ( Money.USD, Money.EUR, dec "0.5" ) ]
+
 tests : List Test
 tests =
     [ -- ── allocate: fair-split EXACTNESS (doc: "sum of returned parts
@@ -220,6 +225,10 @@ tests =
         (\_ -> Test.equal ( Nothing, Nothing ) ( Money.rate Money.USD Money.EUR (Money.rates [ ( Money.USD, Money.EUR, dec "0" ) ]), Money.rate Money.USD Money.EUR (Money.rates [ ( Money.USD, Money.EUR, dec "-1.5" ) ]) ))
     , Test.test "convert with no rate -> Err naming both currencies (never panic)"
         (\_ -> mismatchNames "USD" "JPY" (Money.convert (Money.rates []) Money.JPY (Money.fromMajor Money.USD 100)))
+    , Test.test "eqCurrency compares codes: GBP = GBP, GBP /= USD, a raw code equals its named currency"
+        (\_ -> Test.equal [ True, False, True ] [ Money.eqCurrency Money.GBP Money.GBP, Money.eqCurrency Money.GBP Money.USD, Money.eqCurrency (Money.CurrencyRaw "GBP") Money.GBP ])
+    , Test.test "a Rates value is a typed value to pass around"
+        (\_ -> Test.equal (Ok "46.00 EUR") (Money.convert halfRates Money.EUR (Money.fromMajor Money.USD 92) |> Result.map Money.formatWithCode))
     , Test.test "a later rate for the same pair wins"
         (\_ -> Test.equal (Just "3") (Money.rate Money.USD Money.EUR (Money.rates [ ( Money.USD, Money.EUR, dec "2" ), ( Money.USD, Money.EUR, dec "3" ) ]) |> Maybe.map Dec.toString))
 

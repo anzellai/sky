@@ -5927,6 +5927,106 @@ decGrown =
             |> Codec.buildObject)
         |> Store.primaryKey "id"
 
+-- A v0.23-v0.29.1 Codec.auto Decimal / Money field (JSON text) moved to
+-- Codec.decimal / Codec.moneyIn (the Judge's p3 shape, v0.29.2): migrate
+-- refuses the store, naming the conversion, until the column is converted.
+type alias DecLegacy =
+    { id : String
+    , price : Decimal
+    , cost : Money
+    , tip : Maybe Decimal
+    }
+
+
+decLegacyOld : Store DecLegacy
+decLegacyOld =
+    Store.fromCodec
+        "sqc_dec_legacy"
+        (Codec.auto
+            { id = ""
+            , price = Decimal.zero
+            , cost = Money.zero Money.GBP
+            , tip = Just Decimal.zero
+            })
+        |> Store.primaryKey "id"
+
+
+decLegacyNew : Store DecLegacy
+decLegacyNew =
+    Store.fromCodec
+        "sqc_dec_legacy"
+        (Codec.object DecLegacy |> Codec.field "id" .id Codec.string
+            |> Codec.field "price" .price Codec.decimal
+            |> Codec.field "cost" .cost (Codec.moneyIn Money.GBP)
+            |> Codec.field "tip" .tip (Codec.maybe Codec.decimal)
+            |> Codec.buildObject)
+        |> Store.primaryKey "id"
+
+
+decLegacyRow : String -> String -> Maybe String -> DecLegacy
+decLegacyRow id price tip =
+    { id = id
+    , price = dec price
+    , cost = Money.Money (dec price) Money.GBP
+    , tip = Maybe.map dec tip
+    }
+
+
+-- The statement a migrate refusal names: the text after its last "): ".
+namedFix : Error -> Maybe String
+namedFix e =
+    String.split "): " (Error.toString e) |> List.reverse |> List.head
+
+
+-- Migrate; on a refusal, run the conversion it names, then try again (one
+-- refusal per column), and give back the column each refusal named.
+convertLegacy : Db -> Int -> List String -> Task Error (List String)
+convertLegacy db budget named =
+    Store.migrate db decLegacyNew |> Task.map (\_ -> List.reverse named)
+        |> Task.onError
+               (\e ->
+                   case namedFix e of
+
+                       Just sql ->
+                           if budget <= 0 then
+                               Task.fail e
+
+                           else
+                               Db.exec db sql []
+                                   |> Task.andThen
+                                          (\_ ->
+                                              convertLegacy
+                                                  db
+                                                  (budget - 1)
+                                                  ((if String.contains
+                                                      "sqc_dec_legacy.price"
+                                                      (Error.toString e) then
+                                                      "price"
+
+                                                  else if String.contains
+                                                      "sqc_dec_legacy.cost"
+                                                      (Error.toString e) then
+                                                      "cost"
+
+                                                  else
+                                                      "tip")
+                                                      :: named))
+
+                       Nothing ->
+                           Task.fail e)
+
+
+-- A column named with a keyword of both engines (v0.29.2): a builder problem.
+kwRows : Store { id : String, order : Int }
+kwRows =
+    Store.fromCodec "sqc_kw_rows" (Codec.auto { id = "", order = 0 })
+        |> Store.primaryKey "id"
+
+
+decDefaulted : Store DecGrown
+decDefaulted =
+    decGrown |> Store.defaultDecimal "amount" (dec "1.50")
+
 
 decimalTests : Db -> List Test
 decimalTests db =
@@ -6255,6 +6355,168 @@ decimalTests db =
                           |> Store.where_ (Store.gt "price" (SqlInt 1))
                           |> Store.orderAsc "price")
                       |> Result.map (\( sql, _ ) -> sql)))
+    , Test.test
+          "decimal: migrate refuses Codec.decimal / moneyIn on a Codec.auto JSON text column, naming the conversion"
+          (\_ ->
+              Test.equal
+                  ( True, True )
+                  (case Task.run
+                           (Task.sequence
+                               [ drop db "sqc_dec_legacy"
+                               , unit (Store.migrate db decLegacyOld)
+                               , unit
+                                     (Store.insert
+                                         db
+                                         decLegacyOld
+                                         (decLegacyRow "a" "9.5" Nothing))
+                               ]
+                               |> Task.andThen
+                                      (\_ -> Store.migrate db decLegacyNew)) of
+
+                      Err e ->
+                          ( String.contains
+                                "sqc_dec_legacy.price"
+                                (Error.toString e)
+                          , String.contains
+                                (if dialectName == "postgres" then
+                                    "ALTER TABLE sqc_dec_legacy ALTER COLUMN price TYPE NUMERIC"
+
+                                else
+                                    "UPDATE sqc_dec_legacy SET price")
+                                (Error.toString e)
+                          )
+
+                      Ok _ ->
+                          ( False, False )))
+    , Test.test
+          "decimal: after the named conversion a legacy column orders, compares and reads by value (NULL stays NULL)"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      ( ( [ "price", "cost", "tip" ]
+                        , [ "n", "a", "b", "e", "c" ]
+                        )
+                      , ( [ "b", "c", "e" ]
+                        , [ "a=9.5/9.5 GBP/0.25", "n=1/1 GBP/-" ]
+                        )
+                      ))
+                  (Task.run
+                      (Task.sequence
+                          [ drop db "sqc_dec_legacy"
+                          , unit (Store.migrate db decLegacyOld)
+                          , unit
+                                (Store.insert
+                                    db
+                                    decLegacyOld
+                                    (decLegacyRow "a" "9.5" (Just "0.25")))
+                          , unit
+                                (Store.insert
+                                    db
+                                    decLegacyOld
+                                    (decLegacyRow "b" "10" Nothing))
+                          , unit
+                                (Store.insert
+                                    db
+                                    decLegacyOld
+                                    (decLegacyRow "c" "100" (Just "-1")))
+                          , unit
+                                (Store.insert
+                                    db
+                                    decLegacyOld
+                                    (decLegacyRow "n" "1" Nothing))
+                          ]
+                          |> Task.andThen (\_ -> convertLegacy db 3 [])
+                          |> Task.andThen
+                                 (\named ->
+                                     Store.insert
+                                         db
+                                         decLegacyNew
+                                         (decLegacyRow "e" "20" Nothing)
+                                         |> Task.andThen
+                                                (\_ ->
+                                                    Store.toList
+                                                        db
+                                                        (Store.query decLegacyNew
+                                                            |> Store.orderAsc
+                                                                   "price"))
+                                         |> Task.map
+                                                (\rs ->
+                                                    ( named, List.map .id rs )))
+                          |> Task.andThen
+                                 (\first ->
+                                     Task.map2
+                                         (\gt picked ->
+                                             ( first
+                                             , ( List.map .id gt, picked )
+                                             ))
+                                         (Store.toList
+                                             db
+                                             (Store.query decLegacyNew
+                                                 |> Store.where_
+                                                        (Store.gt
+                                                            "price"
+                                                            (SqlDecimal
+                                                                (dec "9.6")))
+                                                 |> Store.orderAsc "id"))
+                                         (Store.toList
+                                             db
+                                             (Store.query decLegacyNew
+                                                 |> Store.where_
+                                                        (Store.inList
+                                                            "id"
+                                                            [ SqlString "a"
+                                                            , SqlString "n"
+                                                            ])
+                                                 |> Store.orderAsc "id")
+                                             |> Task.map
+                                                    (List.map
+                                                        (\r ->
+                                                            r.id ++ "="
+                                                                ++ Decimal.toString
+                                                                       r.price
+                                                                ++ "/"
+                                                                ++ moneyText
+                                                                       r.cost
+                                                                ++ "/"
+                                                                ++ (Maybe.map
+                                                                       Decimal.toString
+                                                                       r.tip
+                                                                       |> Maybe.withDefault
+                                                                              "-"))))))))
+    , Test.test
+          "names: a column named with a keyword of both engines (order) is a Store builder problem, not a syntax error"
+          (\_ ->
+              case Task.run (Store.migrate db kwRows) of
+
+                  Err e ->
+                      Test.equal
+                          ( True, False )
+                          ( String.contains
+                                "column \"order\" is an SQL keyword"
+                                (Error.toString e)
+                          , String.contains "syntax error" (Error.toString e)
+                          )
+
+                  Ok _ ->
+                      Test.fail "migrate accepted a column named order")
+    , Test.test
+          "decimal: Store.defaultDecimal fills the rows a migrate adds the column to"
+          (\_ ->
+              Test.equal
+                  (Ok [ ( "r1", "1.5" ) ])
+                  (Task.run
+                      (Task.sequence
+                          [ drop db "sqc_dec_mig"
+                          , unit (Store.migrate db decBase)
+                          , unit (Store.insert db decBase { id = "r1" })
+                          , unit (Store.migrate db decDefaulted)
+                          ]
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.toList db (Store.query decDefaulted))
+                          |> Task.map
+                                 (List.map
+                                     (\r -> ( r.id, Decimal.toString r.amount ))))))
     ]
 
 

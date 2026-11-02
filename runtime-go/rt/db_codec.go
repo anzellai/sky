@@ -386,6 +386,9 @@ func Db_createCols(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 			return Err[any, any](ErrInvalidInput("Store.create: " + err.Error()))
 		}
 		own, ext := codecSplitExternal(colspecArg)
+		if err := codecReservedNameError(d.driver, table, own); err != nil {
+			return Err[any, any](ErrInvalidInput("Store.create: " + err.Error()))
+		}
 		if len(ext) > 0 {
 			if !codecValidIdent(table) {
 				return Err[any, any](ErrInvalidInput("Store.create: invalid table name"))
@@ -625,6 +628,9 @@ func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 		// An external column (Store.defaultWith & co. on a column the codec
 		// does not carry) is checked, never created or added.
 		colspecArg, ext := codecSplitExternal(colspecArg)
+		if err := codecReservedNameError(d.driver, table, colspecArg); err != nil {
+			return Err[any, any](ErrInvalidInput("Store.migrate: " + err.Error()))
+		}
 		if err := codecCheckExternal(d.driver, table, current, ext); err != nil {
 			return Err[any, any](ErrInvalidInput("Store.migrate: " + err.Error()))
 		}
@@ -682,6 +688,12 @@ func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 			}
 			for _, n := range codecBinaryColumnNotices(d.driver, table, colspecArg, types) {
 				codecWarnOnce(n)
+			}
+			// A decimal field (Codec.decimal, Codec.moneyIn) on a column a
+			// Codec.auto field made (JSON text) would compare as text and
+			// mix two spellings: refused, naming the conversion.
+			if err := codecLegacyDecimalColumnError(d, table, colspecArg, types); err != nil {
+				return Err[any, any](ErrInvalidInput("Store.migrate: " + err.Error()))
 			}
 		}
 		// existing → add any missing columns
@@ -1689,6 +1701,147 @@ func codecBinaryColumnError(driver, table string, colspecArg any, types map[stri
 			"It would misread every row, so the store is refused and the column is not changed. "+
 			"Declare it Schema.json (TEXT) and fix the table once: %s. Or keep binary data out of the store and read it with Db.query",
 			table, name, strings.ToUpper(typ), fix)
+	}
+	return nil
+}
+
+// Names that fail unquoted as a column or table name on one engine only
+// (checked against SQLite and PostgreSQL, v0.29.2). The Store writes names
+// unquoted: quoting would make PostgreSQL keep the case of a camelCase column
+// that existing tables hold folded. A keyword of both engines is a Store
+// builder problem (Std.Db.Store isSqlKeyword); these are refused by migrate
+// and create on the engine that rejects them, with the reason, instead of a
+// syntax error at the first statement.
+var codecReservedSqlite = map[string]bool{
+	"add": true, "alter": true, "autoincrement": true, "between": true, "delete": true,
+	"drop": true, "escape": true, "exists": true, "index": true, "insert": true,
+	"nothing": true, "raise": true, "set": true, "transaction": true, "update": true,
+	"values": true,
+}
+
+var codecReservedPostgres = map[string]bool{
+	"analyse": true, "analyze": true, "any": true, "array": true, "asc": true,
+	"asymmetric": true, "both": true, "column": true, "current_catalog": true,
+	"current_role": true, "current_user": true, "desc": true, "do": true, "end": true,
+	"false": true, "fetch": true, "for": true, "grant": true, "initially": true,
+	"lateral": true, "leading": true, "localtime": true, "localtimestamp": true,
+	"offset": true, "only": true, "placing": true, "session_user": true, "some": true,
+	"symmetric": true, "trailing": true, "true": true, "user": true, "variadic": true,
+	"window": true, "with": true, "authorization": true, "binary": true, "collation": true,
+	"concurrently": true, "cross": true, "current_schema": true, "freeze": true,
+	"full": true, "ilike": true, "inner": true, "left": true, "like": true,
+	"natural": true, "outer": true, "overlaps": true, "right": true, "similar": true,
+	"tablesample": true, "verbose": true,
+}
+
+// codecReservedName reports whether `name` fails unquoted on the driver's
+// engine only.
+func codecReservedName(driver, name string) bool {
+	n := strings.ToLower(name)
+	if driver == "pgx" {
+		return codecReservedPostgres[n]
+	}
+	return codecReservedSqlite[n]
+}
+
+func codecEngineName(driver string) string {
+	if driver == "pgx" {
+		return "PostgreSQL"
+	}
+	return "SQLite"
+}
+
+// codecReservedNameError refuses a table or column name the engine reserves.
+func codecReservedNameError(driver, table string, cols any) error {
+	advice := "The Store writes names unquoted (quoting would change how PostgreSQL folds an existing camelCase column), " +
+		"so give it another column name: Codec.field \"sort_order\" .order Codec.int in a Codec.object, or rename the field"
+	if codecReservedName(driver, table) {
+		return fmt.Errorf("table name %q is an SQL keyword on %s, so every statement on it fails. %s",
+			table, codecEngineName(driver), advice)
+	}
+	for _, cs := range AsList(cols) {
+		name := AsString(AsTuple2(cs).V0)
+		if codecReservedName(driver, name) {
+			return fmt.Errorf("column %s.%s is an SQL keyword on %s, so every statement on it fails. %s",
+				table, name, codecEngineName(driver), advice)
+		}
+	}
+	return nil
+}
+
+// codecIsNumericType reports whether a PostgreSQL column type holds a decimal
+// natively (NUMERIC, DECIMAL, with or without a precision).
+func codecIsNumericType(typ string) bool {
+	t := strings.ToLower(strings.TrimSpace(typ))
+	if i := strings.IndexByte(t, '('); i >= 0 {
+		t = strings.TrimSpace(t[:i])
+	}
+	return t == "numeric" || t == "decimal"
+}
+
+// codecLegacyDecimalFix is the conversion of a column a Codec.auto Decimal or
+// Money field made (JSON text: `"9.5"`, `{"amount":"9.5","currency":"GBP"}`)
+// into the column a decimal field reads. NULL stays NULL.
+func codecLegacyDecimalFix(driver, table, col string) string {
+	if driver == "pgx" {
+		return "ALTER TABLE " + table + " ALTER COLUMN " + col + " TYPE NUMERIC USING (CASE WHEN " + col +
+			" LIKE '{%' THEN " + col + "::json->>'amount' ELSE trim(both '\"' from " + col + ") END)::numeric"
+	}
+	return "UPDATE " + table + " SET " + col + " = CASE WHEN " + col + " LIKE '{%' THEN json_extract(" + col +
+		", '$.amount') ELSE substr(" + col + ", 2, length(" + col + ") - 2) END WHERE " + col +
+		" LIKE '\"%\"' OR " + col + " LIKE '{%'"
+}
+
+// codecLegacyDecimalColumnError refuses a decimal field (Codec.decimal,
+// Codec.moneyIn) on a column that still holds the JSON text a Codec.auto
+// Decimal or Money field writes. On PostgreSQL that is any column that is not
+// NUMERIC: TEXT compares `"10"` before `"9.5"`, so orderAsc and gt give wrong
+// rows, and new writes (`20`) mix with the old spelling (`"9.5"`). On SQLite
+// the column is TEXT either way, so a row holding the quoted or object
+// spelling is the sign: the Store reads a quoted decimal, but a unique index
+// sees `"9.5"` and `9.5` as two values, and a Money object does not read as a
+// decimal. The column is never changed; the error names the statement that
+// converts it.
+func codecLegacyDecimalColumnError(d *SkyDb, table string, colspecArg any, types map[string]string) error {
+	cols, _ := codecSplitExternal(colspecArg)
+	for _, cs := range AsList(cols) {
+		t := AsTuple2(cs)
+		name, kind := AsString(t.V0), AsString(t.V1)
+		base, _ := codecSplitKind(kind)
+		if base != "decimal" || !codecValidIdent(name) {
+			continue
+		}
+		typ := codecColumnType(d.driver, types, name)
+		if typ == "" {
+			continue // a missing column: migrate adds it as NUMERIC / TEXT
+		}
+		if d.driver == "pgx" {
+			if codecIsNumericType(typ) {
+				continue
+			}
+			return fmt.Errorf("column %s.%s is %s, and the store reads it as a decimal (Codec.decimal or Codec.moneyIn). "+
+				"A %s column compares as text (\"10\" before \"9.5\"), so orderAsc, gt and the other comparisons would give wrong rows, "+
+				"and new values would be written in another spelling than the old ones. The store is refused and the column is not changed. "+
+				"Convert it once (NULL stays NULL; drop a DEFAULT first and set it again after): %s",
+				table, name, strings.ToUpper(typ), strings.ToUpper(typ), codecLegacyDecimalFix(d.driver, table, name))
+		}
+		if !sqliteTextAffinity(typ) {
+			continue
+		}
+		probe := "SELECT 1 FROM " + table + " WHERE " + name + " LIKE '\"%' OR " + name + " LIKE '{%' LIMIT 1"
+		resp := AnyTaskRun(dbQueryRows(d, probe, []any{}))
+		r, ok := resp.(SkyResult[any, any])
+		if !ok || r.Tag != 0 {
+			return fmt.Errorf("could not read column %s.%s to check that it holds decimals", table, name)
+		}
+		if len(AsList(r.OkValue)) == 0 {
+			continue
+		}
+		return fmt.Errorf("column %s.%s holds the JSON text a Codec.auto Decimal or Money field writes (\"9.5\", {\"amount\":...}), "+
+			"and the store reads it as a decimal (Codec.decimal or Codec.moneyIn), which writes 9.5. "+
+			"The two spellings would mix in one column, so the store is refused and the column is not changed. "+
+			"Convert the rows once (NULL stays NULL): %s",
+			table, name, codecLegacyDecimalFix(d.driver, table, name))
 	}
 	return nil
 }

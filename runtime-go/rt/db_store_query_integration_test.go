@@ -128,3 +128,29 @@ func TestStoreQueryPostgresB7_MigrateIgnoresOtherSchemas(t *testing.T) {
 func TestStoreQueryPostgresJoinGroups_StripsPrefixesAndNullsTheMissingSide(t *testing.T) {
 	assertJoinGroups(t, openStoreQueryPostgres(t, ""), "_pg")
 }
+
+// A Codec.auto Decimal / Money TEXT column under a Codec.decimal /
+// Codec.moneyIn field compared as text on PostgreSQL (v0.29.2 Judge gap):
+// migrate refuses it with the ALTER that converts it, and the ALTER works.
+func TestStoreQueryPostgresLegacyDecimalColumnRefused(t *testing.T) {
+	d := openStoreQueryPostgres(t, "")
+	assertLegacyDecimalColumnRefused(t, d, "legacy_dec_pg",
+		`ALTER TABLE legacy_dec_pg ALTER COLUMN price TYPE NUMERIC USING (CASE WHEN price LIKE '{%' THEN price::json->>'amount' ELSE trim(both '"' from price) END)::numeric`,
+		`ALTER TABLE legacy_dec_pg ALTER COLUMN cost TYPE NUMERIC USING (CASE WHEN cost LIKE '{%' THEN cost::json->>'amount' ELSE trim(both '"' from cost) END)::numeric`,
+		"price IS NULL, price")
+}
+
+// `user` is reserved on PostgreSQL: migrate refuses it with the reason
+// instead of "syntax error at or near user".
+func TestStoreQueryPostgresReservedColumnNameRefused(t *testing.T) {
+	d := openStoreQueryPostgres(t, "")
+	_, _ = d.conn.Exec("DROP TABLE IF EXISTS kw_users_pg")
+	cs := []any{T2[any, any]{V0: "id", V1: "text"}, T2[any, any]{V0: "user", V1: "text"}}
+	res, ok := AnyTaskRun(Db_autoMigrate(d, "kw_users_pg", cs, "id", []any{})).(SkyResult[any, any])
+	if !ok || res.Tag == 0 {
+		t.Fatalf("a column named user was accepted on PostgreSQL: %v", res)
+	}
+	if msg := errorMessage(res.ErrValue); !strings.Contains(msg, "kw_users_pg.user") || strings.Contains(msg, "syntax error") {
+		t.Fatalf("the Err does not name the column: %s", msg)
+	}
+}

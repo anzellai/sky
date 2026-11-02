@@ -301,7 +301,18 @@ fn sqlite_ledger_states_and_write_matches_gen() {
     assert_eq!(code, 1, "{out}");
     assert!(out.contains("EDITED"), "{out}");
     assert!(out.contains("1 edited"), "{out}");
+    // `sky db status` reads the same ledger check: EDITED, exit 1 (it said
+    // "applied" and "up to date." before v0.29.2).
+    let (code, out, err) = sky(&a, &["db", "status"], &[]);
+    assert_eq!(code, 1, "{out}\n{err}");
+    assert!(out.contains("EDITED"), "{out}");
+    assert!(!out.contains("up to date."), "{out}");
     std::fs::write(&init, &original).unwrap();
+    let out = ok(&a, &["db", "status"], &[]);
+    assert!(
+        out.contains("applied") && out.contains("up to date."),
+        "{out}"
+    );
 
     // The code changes. B is a copy of A: same database, same files.
     std::fs::write(a.join("src").join("Main.sky"), changed_src()).unwrap();

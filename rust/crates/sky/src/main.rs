@@ -3313,7 +3313,14 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
     // (`setup |> Task.andThen (\_ -> App.run app)`) runs that setup too: it is
     // carried as the terminal of the same binding. Any other expression around
     // `App.run` is refused (main_run_chain_setup), never dropped.
-    let chain_setup = project::app_entry::main_run_chain_setup(src)?;
+    let run_chain = project::app_entry::main_run_chain(src)?;
+    // A binding that only runs the app (`main = start`, a named continuation
+    // `runIt _ = App.run app`) references the app value the client build
+    // moves: it goes with `main`.
+    for c in &run_chain.carriers {
+        out = remove_top_level_binding(&out, c);
+    }
+    let chain_setup = run_chain.setup;
     let chain_body = |indent: usize| -> String {
         match &chain_setup {
             Some(setup) => format!(
@@ -14896,119 +14903,136 @@ fn build_temp_db_entry_checked(
 }
 
 /// `sky db status` (file-based) — list committed `db/migrations/*.json` and mark
-/// each applied (present in the live `_sky_migrations` ledger) or pending, and
-/// flag any pending file that carries quarantined destructive ops. Exits non-zero
-/// when anything is pending — usable as a "is this DB up to date?" deploy gate.
+/// each applied, PENDING or EDITED against the live `_sky_migrations` ledger,
+/// and flag any pending file that carries quarantined destructive ops. The
+/// states come from `Migrate.inspectSchema`, the same ledger check `sky db
+/// check` reports, so the two verbs cannot disagree (an applied file edited
+/// afterwards was "applied" here and EDITED there before v0.29.2). Exits
+/// non-zero when anything is pending or edited — usable as a "is this DB up to
+/// date?" deploy gate.
 fn cmd_db_status(_args: &[String]) -> ExitCode {
-    // Temp entry prints the ledger's applied ids between markers (empty on a
-    // fresh DB with no ledger table yet).
-    let code = r#"module SkyDbStatus exposing (main)
+    let Some((_repo_root, project_dir)) = resolve(Path::new("src/Main.sky")) else {
+        return ExitCode::FAILURE;
+    };
+    let inputs = db_scratch_dir("SkyDbStatusIn");
+    if let Err(e) = std::fs::create_dir_all(&inputs) {
+        eprintln!("sky db status: cannot create scratch dir: {e}");
+        return ExitCode::FAILURE;
+    }
+    let _inputs = DbScratch(inputs.clone());
+    let migrations_path = inputs.join("migrations.json");
+    if let Err(e) = std::fs::write(&migrations_path, db_migration_files_json(&project_dir)) {
+        eprintln!("sky db status: cannot stage migrations: {e}");
+        return ExitCode::FAILURE;
+    }
+    let code = format!(
+        r#"module SkyDbStatus exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
-import Sky.Core.List as List
-import Sky.Core.Dict as Dict
+import Sky.Core.File as File
 import Std.Db as Db
+import Std.Db.Migrate as Migrate
 import Std.Log exposing (println)
 
 
 main : Task Error ()
 main =
-    Db.connect ()
-        |> Task.andThen queryApplied
-        |> Task.andThen printApplied
+    File.readFile {migrations}
+        |> Task.andThen (\migrations -> Db.connect () |> Task.andThen (\conn -> Migrate.inspectSchema conn migrations))
+        |> Task.andThen emit
 
 
-queryApplied : Db -> Task Error (List String)
-queryApplied conn =
-    Db.query conn "SELECT name FROM _sky_migrations ORDER BY name" []
-        |> Task.map (List.map (\row -> Maybe.withDefault "" (Dict.get "name" row)))
-        |> Task.onError (\_ -> Task.succeed [])
-
-
-printApplied : List String -> Task Error ()
-printApplied ids =
+emit : String -> Task Error ()
+emit report =
     let
         _ =
-            println "SKY_APPLIED_BEGIN"
+            println "SKY_INSPECT_BEGIN"
 
         _ =
-            println (String.join "\n" ids)
+            println report
 
         _ =
-            println "SKY_APPLIED_END"
+            println "SKY_INSPECT_END"
     in
     Task.succeed ()
-"#;
+"#,
+        migrations = sky_string_literal(&migrations_path),
+    );
     let Some((bin, project_dir, _scratch)) =
-        build_temp_db_entry("sky db status", "SkyDbStatus", "_skydbstatus.sky", code)
+        build_temp_db_entry("sky db status", "SkyDbStatus", "_skydbstatus.sky", &code)
     else {
         return ExitCode::FAILURE;
     };
-    let output = Command::new(&bin).current_dir(&project_dir).output();
-    let stdout = match output {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+    let output = match Command::new(&bin).current_dir(&project_dir).output() {
+        Ok(o) => o,
         Err(e) => {
             eprintln!("sky db status: run failed: {e}");
             return ExitCode::FAILURE;
         }
     };
-    let applied: std::collections::HashSet<String> =
-        extract_between(&stdout, "SKY_APPLIED_BEGIN", "SKY_APPLIED_END")
-            .unwrap_or("")
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .collect();
-
-    // List committed migration files (sorted = chronological).
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let Some(report) = extract_between(&stdout, "SKY_INSPECT_BEGIN", "SKY_INSPECT_END")
+        .and_then(|j| serde_json::from_str::<db_check::Inspect>(j.trim()).ok())
+    else {
+        eprintln!(
+            "sky db status: could not read the migration ledger:\n{}",
+            helper_error_text(&stderr, &stdout)
+        );
+        return ExitCode::FAILURE;
+    };
+    let ledger = &report.ledger;
+    let applied = ledger.count("applied") + ledger.count("restamp");
+    println!("migrations (db/migrations) — {applied} applied:");
     let migrations_dir = project_dir.join("db").join("migrations");
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&migrations_dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().map(|x| x == "json").unwrap_or(false))
-        .collect();
-    files.sort();
-
-    println!("migrations (db/migrations) — {} applied:", applied.len());
-    let mut pending = 0;
-    for p in &files {
-        let id = p
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string();
-        let has_destructive = std::fs::read_to_string(p)
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| v.get("destructive").cloned())
-            .map(|d| d.as_array().map(|a| !a.is_empty()).unwrap_or(false))
-            .unwrap_or(false);
+    let (mut pending, mut edited) = (0, 0);
+    for m in &ledger.migrations {
+        let has_destructive =
+            std::fs::read_to_string(migrations_dir.join(format!("{}.json", m.name)))
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| v.get("destructive").cloned())
+                .map(|d| d.as_array().map(|a| !a.is_empty()).unwrap_or(false))
+                .unwrap_or(false);
         let quarantine = if has_destructive {
             "  ⚠ has quarantined destructive ops"
         } else {
             ""
         };
-        if applied.contains(&id) {
-            println!("  ✓ {id}  applied{quarantine}");
-        } else {
-            pending += 1;
-            println!("  ○ {id}  PENDING{quarantine}");
+        match m.state.as_str() {
+            "applied" | "restamp" => println!("  ✓ {}  applied{quarantine}", m.name),
+            "edited" => {
+                edited += 1;
+                println!(
+                    "  ✗ {}  EDITED (applied {}, then the file changed: its checksum does not \
+                     match the ledger; restore the file and put the change in a new migration)",
+                    m.name, m.applied_at
+                );
+            }
+            _ => {
+                pending += 1;
+                println!("  ○ {}  PENDING{quarantine}", m.name);
+            }
         }
     }
-    if pending == 0 {
+    if pending == 0 && edited == 0 {
         println!("\nup to date.");
-        ExitCode::SUCCESS
-    } else {
-        println!("\n{pending} pending — run `sky db migrate`.");
-        ExitCode::from(1)
+        return ExitCode::SUCCESS;
     }
+    if edited > 0 {
+        println!(
+            "\n{edited} edited — `sky db migrate` refuses an edited applied migration; restore it."
+        );
+    }
+    if pending > 0 {
+        println!("\n{pending} pending — run `sky db migrate`.");
+    }
+    ExitCode::from(1)
 }
 
 /// The committed `db/migrations/*.json` files, sorted by name (= by time), as
-/// the one JSON array `sky db migrate` applies and `Migrate.inspect` judges.
+/// the one JSON array `sky db migrate` applies and `Migrate.inspectSchema` judges.
 fn db_migration_files_json(project_dir: &Path) -> String {
     let mut files: Vec<PathBuf> = std::fs::read_dir(project_dir.join("db").join("migrations"))
         .into_iter()
@@ -15071,7 +15095,7 @@ const DB_CHECK_USAGE: &str = "usage: sky db check [--sql [--write] | --code]\n\
 /// the project's `db : Store.Project`, read-only (`db_check.rs`).
 ///
 /// One helper binary does both halves: run once, it dumps the target schema
-/// (`Store.dumpSchema db`) and the live catalogue (`Migrate.inspect`); run
+/// (`Store.dumpSchema db`) and the live catalogue (`Migrate.inspectSchema`); run
 /// again with the safe ops in a file, it renders them for the connection's
 /// dialect (`Migrate.renderMigrations`), so `--sql` prints the SQL the
 /// migration renderer would run, not a second rendering of it.
@@ -15167,7 +15191,7 @@ run render =
 inspect : String -> Task Error ()
 inspect migrations =
     Db.connect ()
-        |> Task.andThen (\conn -> Migrate.inspect conn migrations)
+        |> Task.andThen (\conn -> Migrate.inspectSchema conn migrations)
         |> Task.andThen (\report -> emit "SKY_INSPECT_BEGIN" report "SKY_INSPECT_END")
 
 

@@ -1,6 +1,6 @@
 //! `sky db check`: compare the live database with the schema the code declares.
 //!
-//! The live side is the read-only catalogue report of `Std.Db.Migrate.inspect`
+//! The live side is the read-only catalogue report of `Std.Db.Migrate.inspectSchema`
 //! (`runtime-go/rt/db_inspect.go`). It is turned into the same
 //! [`db_migrate::Schema`] model that `sky db migrate --gen` reads from
 //! `db/schema.json`, and [`db_migrate::diff`] compares it with the target the
@@ -875,10 +875,21 @@ pub fn check(target: &Schema, live: &Inspect) -> Check {
                     .map(|c| c.sql_type.clone())
                     .unwrap_or_default();
                 let want = sql_type_of(&dialect, kind);
+                // A TEXT column under a decimal field is most often a
+                // Codec.auto Decimal / Money column (JSON text `"9.5"`,
+                // `{"amount":…}`): the conversion reads both spellings, the
+                // statement Store.migrate's refusal names (db_codec.go).
+                let using = if kind == "decimal" && fit(&dialect, "text", &live_ty) == Fit::Same {
+                    format!(
+                        "(CASE WHEN {col} LIKE '{{%' THEN {col}::json->>'amount' ELSE trim(both '\"' from {col}) END)::numeric"
+                    )
+                } else {
+                    format!("{col}::{want}")
+                };
                 let step = if pg {
                     Step::Unsafe {
                         sql: format!(
-                            "ALTER TABLE {table} ALTER COLUMN {col} TYPE {want} USING {col}::{want}"
+                            "ALTER TABLE {table} ALTER COLUMN {col} TYPE {want} USING {using}"
                         ),
                         reason: "a type change rewrites every row, and a value that does not \
                                  convert makes it fail"
@@ -1488,16 +1499,187 @@ fn sky_field_type(dialect: &str, c: &LiveColumn) -> (String, String, bool) {
     }
 }
 
+/// The names that fail unquoted on BOTH engines (a Store builder problem,
+/// `isSqlKeyword` in sky-stdlib/Std/Db/Store.sky) and on one engine only
+/// (refused by `Store.migrate` on that engine, `codecReserved*` in
+/// runtime-go/rt/db_codec.go). Kept equal by a test that reads both sources.
+pub const SQL_KEYWORDS_BOTH: &[&str] = &[
+    "all",
+    "and",
+    "as",
+    "case",
+    "cast",
+    "check",
+    "collate",
+    "constraint",
+    "create",
+    "current_date",
+    "current_time",
+    "current_timestamp",
+    "default",
+    "deferrable",
+    "distinct",
+    "else",
+    "except",
+    "foreign",
+    "from",
+    "group",
+    "having",
+    "in",
+    "intersect",
+    "into",
+    "is",
+    "isnull",
+    "join",
+    "limit",
+    "not",
+    "notnull",
+    "null",
+    "on",
+    "or",
+    "order",
+    "primary",
+    "references",
+    "returning",
+    "select",
+    "table",
+    "then",
+    "to",
+    "union",
+    "unique",
+    "using",
+    "when",
+    "where",
+];
+pub const SQL_KEYWORDS_SQLITE: &[&str] = &[
+    "add",
+    "alter",
+    "autoincrement",
+    "between",
+    "delete",
+    "drop",
+    "escape",
+    "exists",
+    "index",
+    "insert",
+    "nothing",
+    "raise",
+    "set",
+    "transaction",
+    "update",
+    "values",
+];
+pub const SQL_KEYWORDS_POSTGRES: &[&str] = &[
+    "analyse",
+    "analyze",
+    "any",
+    "array",
+    "asc",
+    "asymmetric",
+    "both",
+    "column",
+    "current_catalog",
+    "current_role",
+    "current_user",
+    "desc",
+    "do",
+    "end",
+    "false",
+    "fetch",
+    "for",
+    "grant",
+    "initially",
+    "lateral",
+    "leading",
+    "localtime",
+    "localtimestamp",
+    "offset",
+    "only",
+    "placing",
+    "session_user",
+    "some",
+    "symmetric",
+    "trailing",
+    "true",
+    "user",
+    "variadic",
+    "window",
+    "with",
+    "authorization",
+    "binary",
+    "collation",
+    "concurrently",
+    "cross",
+    "current_schema",
+    "freeze",
+    "full",
+    "ilike",
+    "inner",
+    "left",
+    "like",
+    "natural",
+    "outer",
+    "overlaps",
+    "right",
+    "similar",
+    "tablesample",
+    "verbose",
+];
+
+/// Why the Store cannot use a live table or column name, or `None`. The Store
+/// writes names unquoted: a keyword fails, and on PostgreSQL an unquoted name
+/// folds to lower case, so a name with an upper-case letter (made quoted,
+/// `"Order"`) is never reached.
+fn store_name_problem(dialect: &str, name: &str) -> Option<String> {
+    let ident = {
+        let mut cs = name.chars();
+        matches!(cs.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+            && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && name.len() <= 63
+    };
+    if !ident {
+        return Some(format!(
+            "\"{name}\" is not a plain SQL name (letters, digits and _), and the Store writes \
+             names unquoted"
+        ));
+    }
+    let lower = name.to_ascii_lowercase();
+    if SQL_KEYWORDS_BOTH.contains(&lower.as_str())
+        || (is_pg(dialect) && SQL_KEYWORDS_POSTGRES.contains(&lower.as_str()))
+        || (!is_pg(dialect) && SQL_KEYWORDS_SQLITE.contains(&lower.as_str()))
+    {
+        return Some(format!(
+            "\"{name}\" is an SQL keyword, and the Store writes names unquoted, so every \
+             statement on it would fail"
+        ));
+    }
+    if is_pg(dialect) && name.chars().any(|c| c.is_ascii_uppercase()) {
+        return Some(format!(
+            "\"{name}\" has an upper-case letter (it was made quoted), and PostgreSQL folds the \
+             Store's unquoted names to lower case, so the Store would reach \"{lower}\" instead"
+        ));
+    }
+    None
+}
+
+/// Whether a live type holds bytes (the Store reads and writes text).
+fn is_binary_type(sql_type: &str) -> bool {
+    let t = base_type(sql_type);
+    t == "bytea" || t == "blob"
+}
+
 /// A Sky record type alias, its `Codec` and its `Store` for a live table the
 /// code declares nothing for. Returns `(stub, needs Std.Decimal)`.
+///
+/// The codec is a `Codec.object` with one `Codec.field "<column>"` per
+/// column, so every field names its column as the database spells it, a
+/// NUMERIC column reads through `Codec.decimal` (never JSON text), and a
+/// field name that is a Sky keyword gets a `_`. A column the Store cannot use
+/// (binary data, a keyword, a quoted name) has no field and a comment that
+/// says why; when the row cannot be written without it (the primary key, or
+/// NOT NULL with no default), the whole stub is a comment, so it never
+/// compiles into a store that fails at its first write.
 pub fn record_stub(dialect: &str, t: &LiveTable) -> (String, bool) {
-    // `Codec.auto` maps a camelCase field to its snake_case column; when every
-    // column round-trips through that, the fields are camelCase. Otherwise
-    // `Codec.autoCamel` keeps each field name equal to its column.
-    let snake_ok = t.columns.iter().all(|c| {
-        let f = snake_to_camel(&c.name);
-        is_lower_ident(&f) && camel_to_snake(&f) == c.name
-    });
     let ty = pascal(&t.name);
     let ty = if ty.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
         ty
@@ -1510,82 +1692,110 @@ pub fn record_stub(dialect: &str, t: &LiveTable) -> (String, bool) {
             .map(|c| c.to_ascii_lowercase().to_string() + cs.as_str())
             .unwrap_or_default()
     };
-    let mut fields = Vec::new();
-    let mut blanks = Vec::new();
-    let mut skipped = Vec::new();
+    let mut head = format!("-- Table {} (the code declares no Store for it)\n", t.name);
+    // Why the stub cannot be a working Store, if it cannot.
+    let mut blocked: Vec<String> = Vec::new();
+    if let Some(p) = store_name_problem(dialect, &t.name) {
+        blocked.push(format!("the table name {p}"));
+    }
+    let mut fields: Vec<String> = Vec::new();
+    let mut codec_lines: Vec<String> = Vec::new();
+    let mut taken: Vec<String> = Vec::new();
     let mut decimal = false;
-    // A NUMERIC column reads through `Codec.decimal` (`Codec.auto` keeps a
-    // Decimal field in a JSON text column). `Codec.autoWith` overrides share
-    // one type, so when the decimal columns mix NOT NULL and nullable, every
-    // one of them is a `Maybe Decimal`.
-    let is_dec = |c: &LiveColumn| guess_kind(dialect, &c.sql_type) == "decimal";
-    let dec_maybe = t.columns.iter().any(|c| is_dec(c) && !(c.notnull || c.pk));
-    let mut overrides = Vec::new();
-    let mut notes = Vec::new();
     for c in &t.columns {
-        let fname = if snake_ok {
-            snake_to_camel(&c.name)
-        } else {
-            c.name.clone()
-        };
-        if !is_lower_ident(&fname) {
-            skipped.push(c.name.clone());
-            continue;
-        }
-        let (mut fty, mut zero, dec) = sky_field_type(dialect, c);
-        decimal |= dec;
-        if dec && snake_ok {
-            if dec_maybe {
-                if c.notnull || c.pk {
-                    notes.push(format!(
-                        "-- column {} is NOT NULL: never write Nothing to {fname}\n",
-                        c.name
-                    ));
-                }
-                fty = "Maybe Decimal".into();
-                zero = "Nothing".into();
-                overrides.push(format!("( \"{}\", Codec.maybe Codec.decimal )", c.name));
-            } else {
-                overrides.push(format!("( \"{}\", Codec.decimal )", c.name));
-            }
-        } else if dec {
-            notes.push(format!(
-                "-- column {} is NUMERIC: Codec.autoCamel keeps a Decimal as JSON text, so \
-                 map it with Codec.object and Codec.decimal\n",
+        let needed = c.pk || (c.notnull && c.default.is_none());
+        let skip = |why: String, head: &mut String, blocked: &mut Vec<String>| {
+            head.push_str(&format!(
+                "-- column {}: {why}; it has no field here\n",
                 c.name
             ));
+            if needed {
+                blocked.push(format!(
+                    "column {} has no field and the row cannot be written without it ({})",
+                    c.name,
+                    if c.pk {
+                        "the primary key"
+                    } else {
+                        "NOT NULL, no default"
+                    }
+                ));
+            }
+        };
+        if let Some(p) = store_name_problem(dialect, &c.name) {
+            skip(p, &mut head, &mut blocked);
+            continue;
         }
+        if is_binary_type(&c.sql_type) {
+            skip(
+                format!(
+                    "TODO it is {} (binary data), and a Store field reads and writes text; \
+                     read it with Db.query",
+                    c.sql_type.to_ascii_uppercase()
+                ),
+                &mut head,
+                &mut blocked,
+            );
+            continue;
+        }
+        let camel = snake_to_camel(&c.name);
+        let base = {
+            let mut cs = camel.chars();
+            cs.next()
+                .map(|f| f.to_ascii_lowercase().to_string() + cs.as_str())
+                .unwrap_or_default()
+        };
+        let mut fname = if SKY_KEYWORDS.contains(&base.as_str()) {
+            format!("{base}_")
+        } else {
+            base
+        };
+        if !is_lower_ident(&fname) && !fname.ends_with('_') {
+            fname = format!("c{fname}");
+        }
+        if taken.contains(&fname) {
+            skip(
+                format!("its field name {fname} is taken by another column"),
+                &mut head,
+                &mut blocked,
+            );
+            continue;
+        }
+        taken.push(fname.clone());
+        let (fty, _zero, dec) = sky_field_type(dialect, c);
+        decimal |= dec;
+        let base_codec = match guess_kind(dialect, &c.sql_type) {
+            "int" => "Codec.int",
+            "real" => "Codec.float",
+            "bool" => "Codec.bool",
+            "decimal" => "Codec.decimal",
+            _ => "Codec.string",
+        };
+        let codec = if fty.starts_with("Maybe ") {
+            format!("(Codec.maybe {base_codec})")
+        } else {
+            base_codec.to_string()
+        };
         fields.push(format!("{fname} : {fty}"));
-        blanks.push(format!("{fname} = {zero}"));
-    }
-    let derive = if !snake_ok {
-        "Codec.autoCamel".to_string()
-    } else if overrides.is_empty() {
-        "Codec.auto".to_string()
-    } else {
-        format!("Codec.autoWith [ {} ]", overrides.join(", "))
-    };
-    let mut s = format!("-- Table {} (the code declares no Store for it)\n", t.name);
-    for n in &notes {
-        s.push_str(n);
-    }
-    for c in &skipped {
-        s.push_str(&format!(
-            "-- column {c} is not a Sky field name: map it with Codec.object / Codec.field\n"
+        codec_lines.push(format!(
+            "        |> Codec.field \"{}\" .{fname} {codec}\n",
+            c.name
         ));
     }
     if fields.is_empty() {
-        s.push_str("-- (no column has a Sky field name)\n");
-        return (s, false);
+        blocked.push("no column can be a field".into());
     }
-    s.push_str(&format!(
+    let mut body = String::new();
+    body.push_str(&format!(
         "type alias {ty} =\n    {{ {}\n    }}\n\n\n",
         fields.join("\n    , ")
     ));
-    s.push_str(&format!(
-        "{lower}Codec : Codec {ty}\n{lower}Codec =\n    {derive} {{ {} }}\n\n\n",
-        blanks.join(", ")
+    body.push_str(&format!(
+        "{lower}Codec : Codec {ty}\n{lower}Codec =\n    Codec.object {ty}\n"
     ));
+    for l in &codec_lines {
+        body.push_str(l);
+    }
+    body.push_str("        |> Codec.buildObject\n\n\n");
     let pk = t.columns.iter().find(|c| c.pk);
     let key = match pk {
         Some(c) if c.autoinc && guess_kind(dialect, &c.sql_type) == "int" => {
@@ -1594,11 +1804,32 @@ pub fn record_stub(dialect: &str, t: &LiveTable) -> (String, bool) {
         Some(c) => format!("\n        |> Store.primaryKey \"{}\"", c.name),
         None => String::new(),
     };
-    s.push_str(&format!(
+    body.push_str(&format!(
         "{lower}Store : Store {ty}\n{lower}Store =\n    Store.fromCodec \"{}\" {lower}Codec{key}\n",
         t.name
     ));
-    (s, decimal)
+    if blocked.is_empty() {
+        head.push_str(&body);
+        return (head, decimal);
+    }
+    head.push_str(
+        "-- NOT A WORKING STORE, so it is commented out: the Store writes names unquoted \
+         and text values only, and\n",
+    );
+    for b in &blocked {
+        head.push_str(&format!("--   {b}.\n"));
+    }
+    head.push_str(
+        "-- Rename the table or column in a migration, or read the table with Db.query.\n",
+    );
+    for line in body.lines() {
+        if line.is_empty() {
+            head.push_str("--\n");
+        } else {
+            head.push_str(&format!("-- {line}\n"));
+        }
+    }
+    (head, false)
 }
 
 /// The `--code` output.
@@ -1937,6 +2168,39 @@ mod tests {
         assert!(sql.contains("integer out of range"), "{sql}");
     }
 
+    /// A Codec.decimal field over a Codec.auto Decimal column (TEXT holding
+    /// `"9.5"`) is drift, and the conversion it proposes reads the JSON
+    /// spellings (`price::NUMERIC` fails on `"9.5"`): the statement
+    /// Store.migrate's refusal names.
+    #[test]
+    fn decimal_over_legacy_text_proposes_the_json_aware_conversion() {
+        let target = Schema {
+            tables: vec![table(
+                "t",
+                "id",
+                vec![col("id", "text", false), col("price", "decimal", false)],
+            )],
+        };
+        let mut lt = LiveTable {
+            name: "t".into(),
+            columns: vec![
+                lcol("id", "text", true, None),
+                lcol("price", "text", true, None),
+            ],
+            indexes: vec![],
+        };
+        lt.columns[0].pk = true;
+        let c = check(&target, &inspect("postgres", vec![lt]));
+        let sql = render_sql(&c, &[]);
+        assert!(
+            sql.contains(
+                "ALTER TABLE t ALTER COLUMN price TYPE NUMERIC USING (CASE WHEN price LIKE '{%' \
+                 THEN price::json->>'amount' ELSE trim(both '\"' from price) END)::numeric"
+            ),
+            "{sql}"
+        );
+    }
+
     #[test]
     fn null_default_unique_findings() {
         let target = Schema {
@@ -2076,14 +2340,13 @@ mod tests {
         assert!(s.contains("type alias OrderItems ="), "{s}");
         assert!(s.contains("unitPrice : Maybe Decimal"), "{s}");
         assert!(
-            s.contains(
-                "Codec.autoWith [ ( \"unit_price\", Codec.maybe Codec.decimal ) ] \
-                 { id = 0, unitPrice = Nothing"
-            ),
+            s.contains("|> Codec.field \"unit_price\" .unitPrice (Codec.maybe Codec.decimal)"),
             "{s}"
         );
+        assert!(s.contains("|> Codec.field \"qty\" .qty Codec.int"), "{s}");
         assert!(s.contains("|> Store.serial \"id\""), "{s}");
-        // A column that does not round-trip: autoCamel keeps the column names.
+        assert!(!s.starts_with("-- NOT"), "{s}");
+        // A Sky keyword column gets a field with a `_`; the column name stays.
         let t2 = LiveTable {
             name: "x".into(),
             columns: vec![
@@ -2093,8 +2356,101 @@ mod tests {
             indexes: vec![],
         };
         let (s2, _) = record_stub("sqlite", &t2);
-        assert!(s2.contains("Codec.autoCamel"), "{s2}");
-        assert!(s2.contains("addr_2 : String"), "{s2}");
-        assert!(s2.contains("column type is not a Sky field name"), "{s2}");
+        assert!(
+            s2.contains("|> Codec.field \"addr_2\" .addr2 Codec.string"),
+            "{s2}"
+        );
+        assert!(
+            s2.contains("|> Codec.field \"type\" .type_ Codec.string"),
+            "{s2}"
+        );
+    }
+
+    /// The v0.29.2 Judge cases: each stub either works at its first write or
+    /// is a comment that says why, never a store that compiles and fails.
+    #[test]
+    fn stubs_never_compile_into_a_store_that_fails() {
+        let mut id = lcol("id", "text", true, None);
+        id.pk = true;
+        // A NUMERIC column whose name does not round-trip through snake_case
+        // (the old Codec.autoCamel path wrote `""12""`): Codec.decimal.
+        let t = LiveTable {
+            name: "prices".into(),
+            columns: vec![id.clone(), lcol("price_2", "numeric", true, None)],
+            indexes: vec![],
+        };
+        let (s, _) = record_stub("postgres", &t);
+        assert!(
+            s.contains("|> Codec.field \"price_2\" .price2 Codec.decimal"),
+            "{s}"
+        );
+        assert!(!s.contains("autoCamel"), "{s}");
+        // A reserved-word column that is NOT NULL with no default: commented.
+        let t = LiveTable {
+            name: "lines".into(),
+            columns: vec![id.clone(), lcol("order", "integer", true, None)],
+            indexes: vec![],
+        };
+        let (s, _) = record_stub("postgres", &t);
+        assert!(s.contains("NOT A WORKING STORE"), "{s}");
+        assert!(s.contains("\"order\" is an SQL keyword"), "{s}");
+        assert!(
+            s.lines().all(|l| l.starts_with("--")),
+            "a blocked stub must be all comment:\n{s}"
+        );
+        // A nullable reserved column is left out, the rest works.
+        let t = LiveTable {
+            name: "lines".into(),
+            columns: vec![id.clone(), lcol("user", "text", false, None)],
+            indexes: vec![],
+        };
+        let (s, _) = record_stub("postgres", &t);
+        assert!(!s.contains("NOT A WORKING STORE"), "{s}");
+        assert!(s.contains("-- column user:"), "{s}");
+        assert!(!s.contains(".user"), "{s}");
+        // `user` is fine on SQLite.
+        let (s, _) = record_stub("sqlite", &t);
+        assert!(s.contains("|> Codec.field \"user\" .user"), "{s}");
+        // A quoted upper-case table on PostgreSQL: commented.
+        let t = LiveTable {
+            name: "Order".into(),
+            columns: vec![id.clone()],
+            indexes: vec![],
+        };
+        let (s, _) = record_stub("postgres", &t);
+        assert!(s.contains("NOT A WORKING STORE"), "{s}");
+        assert!(s.lines().all(|l| l.starts_with("--")), "{s}");
+        // A bytea column: a TODO, never a `Maybe String` field.
+        let t = LiveTable {
+            name: "files".into(),
+            columns: vec![id.clone(), lcol("data", "bytea", false, None)],
+            indexes: vec![],
+        };
+        let (s, _) = record_stub("postgres", &t);
+        assert!(s.contains("-- column data: TODO it is BYTEA"), "{s}");
+        assert!(!s.contains(".data"), "{s}");
+        let t = LiveTable {
+            name: "files".into(),
+            columns: vec![id, lcol("data", "bytea", true, None)],
+            indexes: vec![],
+        };
+        let (s, _) = record_stub("postgres", &t);
+        assert!(s.contains("NOT A WORKING STORE"), "{s}");
+    }
+
+    /// The keyword lists here, in Std.Db.Store and in the runtime agree.
+    #[test]
+    fn sql_keyword_lists_match_store_and_runtime() {
+        let store = include_str!("../../../../sky-stdlib/Std/Db/Store.sky");
+        let go = include_str!("../../../../runtime-go/rt/db_codec.go");
+        for w in SQL_KEYWORDS_BOTH {
+            assert!(store.contains(&format!("\"{w}\"")), "Store.sky lacks {w}");
+        }
+        for w in SQL_KEYWORDS_SQLITE.iter().chain(SQL_KEYWORDS_POSTGRES) {
+            assert!(
+                go.contains(&format!("\"{w}\": true")),
+                "db_codec.go lacks {w}"
+            );
+        }
     }
 }
