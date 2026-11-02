@@ -340,10 +340,37 @@ both:
   refused before the statement, never converted or relabelled.
 - A `Codec.auto` Decimal or Money field keeps its v0.23 JSON-text column in
   v0.29 (`"12.34"`, `{"amount":"12.34","currency":"GBP"}`), so no existing
-  table changes. `Codec.decimal` reads that legacy `"12.34"` text too, so a
-  field can move to `Codec.autoWith [ ( "price", Codec.decimal ) ] blank` and
-  read its old rows (on PostgreSQL the column stays `TEXT` until you change
-  it; `migrate` never alters a column).
+  table changes.
+- **Moving such a field to `Codec.decimal` or `Codec.moneyIn`: convert the
+  column first, then switch the codec.** A JSON-text column compares as text
+  (`"10"` sorts before `"9.5"`), and new writes (`20`) would mix with the old
+  spelling (`"9.5"`). So `Store.migrate` and `Store.pushProject` refuse a
+  decimal field on such a column, naming `table.column` and the statement
+  that converts it, and change nothing (`migrate` never alters a column).
+  `sky db check` names the same column. On PostgreSQL (NULL stays NULL; drop
+  a `DEFAULT` first and set it again after):
+
+  ```sql
+  ALTER TABLE items ALTER COLUMN price TYPE NUMERIC
+    USING (CASE WHEN price LIKE '{%' THEN price::json->>'amount'
+                ELSE trim(both '"' from price) END)::numeric
+  ```
+
+  On SQLite the column stays `TEXT`; the rows are rewritten to the canonical
+  text (the refusal applies while any row still holds the quoted or object
+  spelling):
+
+  ```sql
+  UPDATE items SET price = CASE WHEN price LIKE '{%'
+      THEN json_extract(price, '$.amount')
+      ELSE substr(price, 2, length(price) - 2) END
+    WHERE price LIKE '"%"' OR price LIKE '{%'
+  ```
+
+  Put the statement in a migration file (`sky db migrate`), then change the
+  field to `Codec.autoWith [ ( "price", Codec.decimal ) ] blank`. A read
+  without `migrate` still reads a legacy `"12.34"` value, but only the
+  converted column orders and compares by value.
 
 - **A written value** (`updateFields`, `setFields`, `setValue`, `setWhen`,
   `otherwise`, `const`, a `defaultWith` result) is also checked against the
@@ -1326,7 +1353,7 @@ sky db check --sql --write   # save the safe steps as a migration file
 sky db check --code          # what the code needs to read the database safely
 ```
 
-It reads the live schema with `Std.Db.Migrate.inspect` and compares it
+It reads the live schema with `Std.Db.Migrate.inspectSchema` and compares it
 through the same diff as `sky db migrate --gen`, so the two never
 disagree about a missing table, column or index or a type change. In
 `--sql`, a step that cannot lose data is plain SQL; a type change, a

@@ -35,16 +35,24 @@ a `Result` wherever two currencies can differ (see Breaking).
   Money in another currency is refused, never relabelled), `Codec.moneyObject`
   is the `{"amount","currency"}` JSON in a JSON column, and `Codec.isoCurrency`
   is the code string. A `Codec.auto` Decimal or Money field keeps its JSON-text
-  column, so no existing table changes; `Codec.decimal` also reads that legacy
-  `"12.34"` text.
+  column, so no existing table changes. To move such a field to
+  `Codec.decimal` or `Codec.moneyIn`, convert the column first: `Store.migrate`
+  and `Store.pushProject` refuse a decimal field on a column that holds the
+  JSON text (any non-`NUMERIC` column on PostgreSQL; on SQLite, a row that
+  still holds `"9.5"` or `{"amount":…}`), naming `table.column` and the
+  statement that converts it, because a text column orders `"10"` before
+  `"9.5"` and new writes would mix two spellings (docs/skydb/overview.md,
+  "Decimal columns").
 - **`Std.Money` follows one rule.** Every operation that combines two Money
   values by arithmetic or by order returns `Result Error _`: `add`, `sub`,
   `sum`, `compare`, `lt`, `lte`, `gt` and `gte`. Two different currencies are
   an `Err` (kind `InvalidInput`) naming both, never a value and never a crash.
   `eq` / `neq` stay plain `Bool`. Exchange rates are an explicit value:
   `Money.rates [ ( USD, EUR, r ) ]`, read with `Money.rate`, used by
-  `Money.convert rates to m`. `Money.currencyFromCode : String -> Maybe
-  Currency` reads a code under the strict decoders' grammar. See the Migration
+  `Money.convert rates to m` (the `Money.Rates` type).
+  `Money.currencyFromCode : String -> Maybe Currency` reads a code under the
+  strict decoders' grammar, and `Money.eqCurrency` compares two currencies by
+  code. See the Migration
   section.
 - **`sky check` warns about an unknown Store column name.** A literal column
   name given to a Store builder (`primaryKey`, `unique`, `index`, `uniqueOn`,
@@ -66,7 +74,7 @@ a `Result` wherever two currencies can differ (see Breaking).
   `Dict String Json.Value` (`Codec.dict Codec.string Codec.value`). Under
   `Codec.auto` such a field is still an `Err` on read.
 - **`Store.noCond`**, the condition every row meets (the same as `and_ []`),
-  is exposed.
+  and **`Store.defaultDecimal`** are exposed.
 - **`sky db check`: does the live database match the code?** A read-only
   check on any DSN the app uses (a local cluster, `DATABASE_URL`,
   `<PREFIX>_DB_PATH`, a remote database), on PostgreSQL and SQLite. It
@@ -86,9 +94,18 @@ a `Result` wherever two currencies can differ (see Breaking).
     `db/migrations` (the `--gen` format and ops) and updates
     `db/schema.json`. It refuses while a migration is pending or edited.
   - `--code` lists the columns the code has no field for or reads as
-    another type, and prints a record type alias, a `Codec` and a `Store`
-    for each table the code has no Store for.
-- **`Std.Db.Migrate.inspect`**, the read-only report behind `sky db check`:
+    another type, and prints a record type alias, a `Codec.object` (one
+    `Codec.field` per column, `Codec.decimal` for `NUMERIC`) and a `Store`
+    for each table the code has no Store for. A column the Store cannot use
+    (binary data, an SQL keyword, a quoted upper-case name on PostgreSQL)
+    gets no field and a comment that says why; when a row cannot be written
+    without it, the whole stub is a comment, so it never compiles into a
+    store that fails at its first write.
+  - A decimal field over a `TEXT` column (a `Codec.auto` Decimal or Money
+    column) proposes the conversion that reads the JSON text, not
+    `USING price::NUMERIC`, which fails on `"9.5"`.
+- **`Std.Db.Migrate.inspectSchema`**, the read-only report behind `sky db check`
+  and `sky db status`:
   the live tables, columns and indexes, and each migration's state against
   the ledger, as JSON. It never creates the ledger.
 
@@ -126,8 +143,31 @@ a `Result` wherever two currencies can differ (see Breaking).
   `Task.andThen (\_ -> App.run app) setup`) lost `setup` in the generated
   backend, in silence: only a `let _ = <task>` prefix was carried. The chained
   setup now runs in the backend after the `let` prefix and before it listens.
-  Any other expression around `App.run` (for example `Task.map` over it, or a
-  `case`) fails the build and names the two forms that carry.
+  So do `main = start` with a zero-parameter `start = setup |> Task.andThen
+  (\_ -> App.run app)`, and a named continuation `main = setup |> Task.andThen
+  runIt` with `runIt _ = App.run app`: before, both failed with "Undefined
+  name: app … this is a defect in Sky". Any other expression around `App.run`
+  (for example `Task.map` over it, or a `case`), and an `App.run` reached any
+  other way, fails the build and names the forms that carry.
+- **A Store column named with an SQL keyword is refused with the reason.** The
+  Store writes names unquoted (quoting would change how PostgreSQL folds an
+  existing camelCase column), so a field named `order` failed at its first
+  statement with "syntax error at or near order". A keyword of both engines
+  (`order`, `select`, `group`, `from`, …) is now a Store builder problem, which
+  every verb and `sky verify`'s stores step report; a keyword of one engine
+  (`user` on PostgreSQL, `index` on SQLite) is refused by `Store.migrate` and
+  `Store.create` on that engine. Map the field to another column with
+  `Codec.field "sort_order" .order Codec.int`.
+- **`sky db status` reports an edited applied migration as EDITED.** It
+  compared names only, so a file changed after it ran showed as "applied" and
+  "up to date." while `sky db check` said EDITED. Both now read the ledger
+  through `Migrate.inspectSchema` (the checksum check `sky db migrate` uses),
+  and `status` exits 1 on an edited file.
+- **`[E1012]` names the right release for a v0.29 stdlib name.** A name new in
+  v0.29.x (`Codec.value`, `Money.sum`) was called "new since Sky v0.27.8" with
+  a link to docs/migration/v0.28.md. The message now names the newest release
+  that lacked the name (v0.28.1 for a v0.29 name) and links
+  docs/migration/v0.29.md; a v0.28.0 name still points at the v0.28 guide.
 
 - **A decoded currency matches its own `case` arm.** `Codec.auto` and
   `Db.Decode.money` built every named currency with the tag of `USD`, so a
@@ -178,7 +218,11 @@ a `Result` wherever two currencies can differ (see Breaking).
   it with the current time, so a Rust source looked newer than `sky-out/sky`
   and later gates failed `require_fresh_compiler`. A live run now holds a lock
   on its journal, and the replay skips a locked journal with a warning. A
-  replayed non-Rust file also gets its old mtime back.
+  replayed non-Rust file also gets its old mtime back. The lock is a separate
+  `.lock` file per target that is never renamed: a new run on a target whose
+  dead run left a journal takes that lock and replays the journal first, so it
+  never journals the dead run's mutation as the original, and no replay can
+  remove a live run's journal.
 
 ### Breaking
 
@@ -214,6 +258,14 @@ a `Result` wherever two currencies can differ (see Breaking).
   `Std.Html.Attributes` or the `JsonDec` kernel `exposing (..)` and uses a bare
   `value` gets `[E1012]`: qualify it (`Decode.value`) or narrow one
   `exposing` list.
+- **A stored Money with an empty currency no longer reads.** `Codec.auto`
+  and `Db.Decode.money` read `{"amount":"1.00","currency":""}` (and a Money
+  with no `currency`) as `CurrencyRaw ""`; it is now a decode `Err`, so a
+  `Store.toList` over such a row fails. Find the rows first, for example
+  `SELECT id FROM orders WHERE total NOT LIKE '%"currency":"%' OR total LIKE
+  '%"currency":""%'` on the JSON text column, and set their real currency
+  (`UPDATE … SET total = '{"amount":"1.00","currency":"GBP"}'`) before you
+  upgrade.
 - **`Codec.ColType` has a new constructor, `CDecimal`.** A `case` over a
   `ColType` in your own code must add the arm (the compiler names it).
 
@@ -221,6 +273,16 @@ a `Result` wherever two currencies can differ (see Breaking).
 
 - **Upgrading from v0.29.1:** every Breaking entry above is a compile error
   that names its replacement (docs/migration/v0.29.md, "Money results").
+- **Moving a `Codec.auto` Decimal or Money field to `Codec.decimal` /
+  `Codec.moneyIn`:** convert the column first, with the statement the
+  `Store.migrate` refusal names (in a migration file), then switch the codec.
+  On PostgreSQL: `ALTER TABLE t ALTER COLUMN c TYPE NUMERIC USING (CASE WHEN c
+  LIKE '{%' THEN c::json->>'amount' ELSE trim(both '"' from c) END)::numeric`.
+- **A stored Money with an empty currency:** set the real currency on those
+  rows before the upgrade (see Breaking).
+- **`Std.Db.Store` columns named with an SQL keyword:** map the field to
+  another column name (`Codec.field "sort_order" .order Codec.int`) and rename
+  the column in a migration. Such a column never worked through the Store.
 - **`Schema.createSchema` makes `BIGINT` for a new `Schema.int` column on
   PostgreSQL.** SQL that needs a 4-byte integer (`DATE '1970-01-01' + day`)
   casts: `day::int`. Existing tables do not change.

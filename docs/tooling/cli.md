@@ -1044,7 +1044,7 @@ sky db init                      # scaffold db/migrations/ + db/schema.json (onc
 sky db migrate --gen init        # first migration: CREATE TABLE for every store
 # …add a field to a record, then:
 sky db migrate --gen add_stock   # → addColumn (required cols: NOT NULL DEFAULT <declared or zero>)
-sky db status                    # ✓ applied / ○ pending per committed file vs the ledger
+sky db status                    # ✓ applied / ○ pending / ✗ EDITED per committed file vs the ledger
 sky db migrate                   # apply the committed db/migrations/*.json to the live DB
 sky db seed                      # run the entry module's seed : Db -> Task Error ()
 ```
@@ -1066,8 +1066,9 @@ re-stamped once with its ops checksum (one log line per file). See
 `docs/migration/v0.29.md`.
 
 `sky db status` compares the committed files against the live `_sky_migrations`
-ledger and **exits non-zero while anything is pending** — a ready-made "is this
-DB up to date?" deploy gate. `sky db seed` runs the `seed` binding your entry
+ledger, with the checksum check `sky db migrate` and `sky db check` use, and
+**exits non-zero while anything is pending or edited** (an applied file changed
+afterwards is EDITED) — a ready-made "is this DB up to date?" deploy gate. `sky db seed` runs the `seed` binding your entry
 module exposes (`module Main exposing (main, db, seed)`), against the live DB.
 
 ### `sky db check` — does the live database match the code?
