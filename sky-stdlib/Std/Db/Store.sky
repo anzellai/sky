@@ -3885,7 +3885,11 @@ notNull col =
     CondNull (leafOf col "" noValue [] "" False)
 
 
--- | `col IN (v1, v2, …)`. An empty list matches nothing.
+-- | `col IN (v1, v2, …)`. An empty list matches nothing. A list of any
+-- length runs: a long one (over 1,000 values) is bound as one parameter, so
+-- it is not stopped by the engine's limit on the parameters of a statement
+-- (SQLite 32,766, PostgreSQL 65,535). Its placeholder then carries a
+-- `/*sky-list:N*/` mark in `toSql`, and its N values are the parameters.
 inList : String -> List SqlValue -> Cond
 inList col vs =
     CondIn (leafOf col "" noValue vs "" False)
@@ -5957,14 +5961,31 @@ renderCond ctx c =
                                             Err e
 
                                         Ok bound ->
-                                            Ok
-                                                ( collated ctx k rSql ++ " IN ("
-                                                      ++ markedPlaceholders
-                                                             (condParam ctx col k)
-                                                             bound
-                                                      ++ ")"
-                                                , rParams ++ bound
-                                                )
+                                            if List.length bound > listParamFrom then
+                                                Ok
+                                                    ( collated ctx k rSql
+                                                          ++ listParamSql
+                                                                 ctx
+                                                                 col
+                                                                 k
+                                                                 (List.length
+                                                                     bound)
+                                                    , rParams ++ bound
+                                                    )
+
+                                            else
+                                                Ok
+                                                    ( collated ctx k rSql
+                                                          ++ " IN ("
+                                                          ++ markedPlaceholders
+                                                                 (condParam
+                                                                     ctx
+                                                                     col
+                                                                     k)
+                                                                 bound
+                                                          ++ ")"
+                                                    , rParams ++ bound
+                                                    )
 
         CondAnd cs ->
             renderGroup ctx "1 = 1" " AND " cs
@@ -6388,6 +6409,94 @@ renderConds ctx cs parts params =
 
                 Ok ( s, p ) ->
                     renderConds ctx rest (s :: parts) (params ++ p)
+
+
+-- An `inList` of more than this many values binds the whole list as ONE
+-- parameter (`listParamSql`). One parameter per value would stop at the
+-- engine's cap on the parameters of one statement (SQLite 32,766: "too many
+-- SQL variables"; PostgreSQL 65,535 on pgx's extended protocol: "extended
+-- protocol limited to 65535 parameters"; the app pool's simple protocol
+-- inlines the values and has no cap), and a condition is one statement, so
+-- it cannot be split. A list up to this size keeps `col IN (?, ?, …)`: its
+-- SQL, its `toSql` and the engine's plan stay as they were, and a statement
+-- with several such lists stays far under either cap.
+listParamFrom : Int
+listParamFrom =
+    1000
+
+
+-- The comparison of a list bound as one parameter, after the column. The
+-- placeholder is marked with the number of values it takes
+-- (`/*sky-list:N*/`), the N values are passed as N parameters as for
+-- `IN (?, …)`, and the runtime binds them as ONE before the statement runs
+-- (runtime-go/rt/db_list_param.go), from the same Go values each would have
+-- been bound as:
+--
+-- * PostgreSQL: `= ANY(?)`, bound as the text of an array literal, which the
+--   server reads as an array of the column's type. `x = ANY(array)` is how
+--   PostgreSQL itself runs `x IN (…)`: a NULL column and a value not in the
+--   list give the same rows, and under `not_` too.
+-- * SQLite: `IN (SELECT +value FROM json_each(?))`, bound as a JSON array.
+--   json_each's `value` column has NUMERIC affinity, and the unary `+` takes
+--   it away, so each value has none, as a bound parameter has none: the
+--   comparison takes the column's affinity (a TEXT or decimal column reads
+--   an Int as its text) and collation (`COLLATE sky_decimal`) as `IN (…)`
+--   does. A Float
+--   column (`reals`) reads each float as `m * pow(2, e)`, exact where SQLite's
+--   own reading of a decimal number is not (below about 1e-305), and a
+--   nullable Float or Bool column names itself so a v0.28 TEXT column gets
+--   the text v0.28 wrote, as `paramOf` does for one value.
+--
+-- The mark stays in `toSql`, so its SQL and parameters run as they are
+-- through `Db.query`.
+listParamSql : Ctx -> String -> String -> Int -> String
+listParamSql ctx col kind n =
+    case ctx.dialect of
+
+        Postgres ->
+            " = ANY(?" ++ listMarkOpen ++ String.fromInt n ++ "*/)"
+
+        Sqlite ->
+            let
+                base = kindBase kind
+                column =
+                    if ctx.having || isJsonRef col then
+                        ""
+
+                    else
+                        case condTarget ctx col of
+
+                            Just ( table, c ) ->
+                                if kindNullable kind
+                                    && (base == "real" || base == "bool")
+                                    && isIdent table
+                                    && isIdent c then
+                                    ":" ++ table ++ "|" ++ c
+
+                                else
+                                    ""
+
+                            Nothing ->
+                                ""
+            in
+                if base == "real" then
+                    " IN (SELECT CASE WHEN type = 'array' THEN json_extract(value, '$[0]') * pow(2, json_extract(value, '$[1]')) ELSE value END FROM json_each(?"
+                        ++ listMarkOpen
+                        ++ String.fromInt n
+                        ++ ":reals"
+                        ++ column
+                        ++ "*/))"
+
+                else
+                    " IN (SELECT +value FROM json_each(?" ++ listMarkOpen
+                        ++ String.fromInt n
+                        ++ column
+                        ++ "*/))"
+
+
+listMarkOpen : String
+listMarkOpen =
+    "/*sky-list:"
 
 
 -- `placeholders` with each `?` as `param` (a marked placeholder, `paramOf`).

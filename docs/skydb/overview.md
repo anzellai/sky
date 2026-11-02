@@ -487,6 +487,15 @@ kind: `Store.findBy conn notes "id" "42"` on an `Int` key). `Store.toSql conn q`
 (with `?`) and the parameters a query renders on that connection's dialect, or
 the `Err` it would fail with.
 
+`inList` takes a list of any length. Up to 1,000 values it renders
+`col IN (?, ?, …)`, one parameter per value. A longer list has one
+placeholder, marked with its count (`col = ANY(?/*sky-list:N*/)` on
+PostgreSQL, `col IN (SELECT +value FROM json_each(?/*sky-list:N*/))` on
+SQLite), and the runtime binds its N values as one parameter, so the list is
+not stopped by the engine's limit on the parameters of one statement (SQLite
+32,766, PostgreSQL 65,535). Both forms match the same rows, under `not_` too,
+and the SQL and parameters `toSql` returns run unchanged through `Db.query`.
+
 **Every name is checked before any statement runs.** A column argument is a
 codec column (the record field or its snake name) or a `jsonText` reference. A
 table, column, alias or JSON key must match `[A-Za-z_][A-Za-z0-9_]*` and be at

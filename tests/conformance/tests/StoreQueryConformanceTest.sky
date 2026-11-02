@@ -7322,6 +7322,322 @@ j4Tests db =
     ]
 
 
+-- ── inList of any length: one parameter for a long list (v0.29.2) ───────────
+-- One parameter per value stopped at SQLite's 32,766 ("too many SQL
+-- variables") and PostgreSQL's 65,535 parameters. Over 1,000 values the list
+-- is one parameter (`= ANY(?)` / `IN (SELECT … json_each(?))`), and it must
+-- match the same rows as `IN (?, ?, …)` for every column kind, NULLs,
+-- duplicates, text case, decimals, booleans and floats.
+type alias InKind =
+    { id : String
+    , n : Int
+    , r : Float
+    , b : Bool
+    , t : String
+    , d : Decimal
+    , mn : Maybe Int
+    , mr : Maybe Float
+    , mb : Maybe Bool
+    , mt : Maybe String
+    , md : Maybe Decimal
+    }
+
+
+inKindCodec : Codec InKind
+inKindCodec =
+    Codec.object InKind |> Codec.field "id" .id Codec.string
+        |> Codec.field "n" .n Codec.int
+        |> Codec.field "r" .r Codec.float
+        |> Codec.field "b" .b Codec.bool
+        |> Codec.field "t" .t Codec.string
+        |> Codec.field "d" .d Codec.decimal
+        |> Codec.field "mn" .mn (Codec.maybe Codec.int)
+        |> Codec.field "mr" .mr (Codec.maybe Codec.float)
+        |> Codec.field "mb" .mb (Codec.maybe Codec.bool)
+        |> Codec.field "mt" .mt (Codec.maybe Codec.string)
+        |> Codec.field "md" .md (Codec.maybe Codec.decimal)
+        |> Codec.buildObject
+
+
+inKinds : Store InKind
+inKinds =
+    Store.fromCodec "sqc_inlist_kinds" inKindCodec |> Store.primaryKey "id"
+
+
+-- A float near the bottom of the double range, where SQLite's own reading of
+-- a decimal number is not exact.
+tinyFloat : Float
+tinyFloat =
+    List.foldl (\_ x -> x / 10.0) 5.167133041957456 (List.range 1 308)
+
+
+inKindRows : List InKind
+inKindRows =
+    [ { id = "a", n = 1, r = 0.1, b = True, t = "Ada", d = dec "12.30", mn = Just 1, mr = Just 0.1, mb = Just True, mt = Just "Ada", md = Just (dec "12.30") }
+    , { id = "b", n = 2, r = 2.5, b = False, t = "ada", d = dec "7", mn = Nothing, mr = Nothing, mb = Nothing, mt = Nothing, md = Nothing }
+    , { id = "c", n = -3, r = tinyFloat, b = True, t = "BO", d = dec "-0.5", mn = Just -3, mr = Just tinyFloat, mb = Just False, mt = Just "bo", md = Just (dec "0") }
+    , { id = "d", n = 9007199254740993, r = 7.0, b = False, t = "", d = dec "100", mn = Just 3, mr = Just 7.0, mb = Nothing, mt = Just "", md = Nothing }
+    ]
+
+
+inKindSetup : Db -> Task Error ()
+inKindSetup db =
+    unit
+        (Task.sequence
+            [ drop db "sqc_inlist_kinds"
+            , unit (Store.migrate db inKinds)
+            , unit (Store.insertMany db inKinds inKindRows)
+            ])
+
+
+inKindIds : Db -> Store.Cond -> Task Error (List String)
+inKindIds db cond =
+    Store.toList
+        db
+        (Store.query inKinds |> Store.where_ cond |> Store.orderAsc "id")
+        |> Task.map (List.map .id)
+
+
+-- The same condition as hand-written `col IN (?, ?, …)`, one parameter per
+-- value: the SQL `inList` wrote for every list before v0.29.2.
+inKindRawIds : Db -> String -> Bool -> List SqlValue -> Task Error (List String)
+inKindRawIds db col negated vs =
+    let
+        collate =
+            if dialectName == "sqlite" && (col == "d" || col == "md") then
+                " COLLATE sky_decimal"
+
+            else
+                ""
+        inSql =
+            col ++ collate ++ " IN ("
+                ++ String.join ", " (List.map (\_ -> "?") vs)
+                ++ ")"
+        whereSql =
+            if negated then
+                "NOT (" ++ inSql ++ ")"
+
+            else
+                inSql
+    in
+        Db.query
+            db
+            ("SELECT id FROM sqc_inlist_kinds WHERE " ++ whereSql ++ " ORDER BY id")
+            vs
+            |> Task.map
+                   (List.map (\row -> Maybe.withDefault "" (Dict.get "id" row)))
+
+
+-- `inList` and `not_ (inList …)` over the values padded past 1,000 (one
+-- parameter) and over the values alone (one parameter each), against the
+-- hand-written IN of the same lists.
+inKindCompare : Db -> String -> List String -> List SqlValue -> (Int -> SqlValue) -> Test
+inKindCompare db col expected values pad =
+    let
+        long = values ++ List.map pad (List.range 1 1100)
+        both vs =
+            Task.map2
+                (\x y -> ( x, y ))
+                (inKindIds db (Store.inList col vs))
+                (inKindIds db (Store.not_ (Store.inList col vs)))
+        bothRaw vs =
+            Task.map2
+                (\x y -> ( x, y ))
+                (inKindRawIds db col False vs)
+                (inKindRawIds db col True vs)
+    in
+        Test.test
+            ("inList: a 1,100-value list on column " ++ col
+                ++ " (one parameter) matches the same rows as IN (?, …), and under not_")
+            (\_ ->
+                Test.equal
+                    (Task.run
+                        (inKindSetup db
+                            |> Task.andThen
+                                   (\_ ->
+                                       Task.map2
+                                           (\x y -> ( expected, x, y ))
+                                           (bothRaw long)
+                                           (bothRaw values))))
+                    (Task.run
+                        (Task.map2
+                            (\( x1, x2 ) y -> ( x1, ( x1, x2 ), y ))
+                            (both long)
+                            (both values))))
+
+
+bigInts : Int -> Int -> List SqlValue
+bigInts from count =
+    List.map SqlInt (List.range from (from + count - 1))
+
+
+inListTests : Db -> List Test
+inListTests db =
+    [ inKindCompare db "n" [ "a", "c", "d" ] [ SqlInt 1, SqlInt -3, SqlInt 1, SqlInt 9007199254740993 ] (\i -> SqlInt (100000 + i))
+    , inKindCompare db "r" [ "a", "c", "d" ] [ SqlFloat 0.1, SqlFloat tinyFloat, SqlInt 7 ] (\i -> SqlFloat (toFloat i + 0.25))
+    , inKindCompare db "b" [ "a", "c" ] [ SqlBool True ] (\_ -> SqlBool True)
+    , inKindCompare db "t" [ "b", "c", "d" ] [ SqlString "ada", SqlString "BO", SqlString "" ] (\i -> SqlString ("pad" ++ String.fromInt i))
+    , inKindCompare db "d" [ "a", "b", "c" ] [ SqlDecimal (dec "12.3"), SqlInt 7, SqlDecimal (dec "-0.50") ] (\i -> SqlInt (100000 + i))
+    , inKindCompare db "mn" [ "a", "c" ] [ SqlInt 1, SqlInt -3 ] (\i -> SqlInt (100000 + i))
+    , inKindCompare db "mr" [ "c", "d" ] [ SqlFloat tinyFloat, SqlFloat 7.0 ] (\i -> SqlFloat (toFloat i + 0.25))
+    , inKindCompare db "mb" [ "c" ] [ SqlBool False ] (\_ -> SqlBool False)
+    , inKindCompare db "mt" [ "a", "d" ] [ SqlString "Ada", SqlString "" ] (\i -> SqlString ("pad" ++ String.fromInt i))
+    , inKindCompare db "md" [ "a", "c" ] [ SqlInt 0, SqlDecimal (dec "12.30") ] (\i -> SqlInt (100000 + i))
+    , Test.test
+          "inList: an empty list matches nothing, and not_ of it every row (NULLs too)"
+          (\_ ->
+              Test.equal
+                  (Ok ( [], [ "a", "b", "c", "d" ] ))
+                  (Task.run
+                      (inKindSetup db
+                          |> Task.andThen
+                                 (\_ ->
+                                     Task.map2
+                                         (\x y -> ( x, y ))
+                                         (inKindIds db (Store.inList "mn" []))
+                                         (inKindIds db (Store.not_ (Store.inList "mn" [])))))))
+    , Test.test
+          "inList: 40,000 values run as one statement on both engines"
+          (\_ ->
+              Test.equal
+                  (Ok ( [ "a", "b", "c" ], [ "d" ] ))
+                  (Task.run
+                      (inKindSetup db
+                          |> Task.andThen
+                                 (\_ ->
+                                     Task.map2
+                                         (\x y -> ( x, y ))
+                                         (inKindIds db (Store.inList "n" (bigInts -3 40000)))
+                                         (inKindIds db (Store.not_ (Store.inList "n" (bigInts -3 40000))))))))
+    , Test.test
+          "inList: 70,000 values run as one statement on both engines (over PostgreSQL's 65,535 parameters)"
+          (\_ ->
+              Test.equal
+                  (Ok ( [ "a", "b", "c" ], [ "a", "c" ] ))
+                  (Task.run
+                      (inKindSetup db
+                          |> Task.andThen
+                                 (\_ ->
+                                     Task.map2
+                                         (\x y -> ( x, y ))
+                                         (inKindIds db (Store.inList "n" (bigInts -3 70000)))
+                                         (inKindIds db
+                                             (Store.and_
+                                                 [ Store.inList "mn" (bigInts -70000 70004)
+                                                 , Store.inList "t" (SqlString "Ada" :: SqlString "BO" :: List.map (\i -> SqlString ("v" ++ String.fromInt i)) (List.range 1 70000))
+                                                 ]))))))
+    , Test.test
+          "inList: toSql keeps one placeholder per value up to 1,000 values and marks one placeholder for a longer list, and its SQL and parameters run through Db.query"
+          (\_ ->
+              let
+                  shown col n =
+                      Store.toSql
+                          db
+                          (Store.query inKinds
+                              |> Store.where_ (Store.inList col (bigInts -3 n)))
+                          |> Result.map (\( sql, ps ) -> ( sql, List.length ps ))
+                  rerun =
+                      case
+                          Store.toSql
+                              db
+                              (Store.query inKinds
+                                  |> Store.where_ (Store.inList "mn" (bigInts -3 1001))
+                                  |> Store.orderAsc "id")
+                      of
+
+                          Ok ( sql, ps ) ->
+                              Task.run
+                                  (Db.query db sql ps
+                                      |> Task.map
+                                             (List.map
+                                                 (\row ->
+                                                     Maybe.withDefault
+                                                         ""
+                                                         (Dict.get "id" row))))
+
+                          Err e ->
+                              Err e
+              in
+                  Test.equal
+                      ( [ Ok
+                              ( "SELECT * FROM sqc_inlist_kinds WHERE (mn IN (?"
+                                    ++ String.repeat 999 ", ?"
+                                    ++ "))"
+                              , 1000
+                              )
+                        , Ok
+                              ( byDialect
+                                    "SELECT * FROM sqc_inlist_kinds WHERE (mn IN (SELECT +value FROM json_each(?/*sky-list:1001*/)))"
+                                    "SELECT * FROM sqc_inlist_kinds WHERE (mn = ANY(?/*sky-list:1001*/))"
+                              , 1001
+                              )
+                        , Ok
+                              ( byDialect
+                                    "SELECT * FROM sqc_inlist_kinds WHERE (mr IN (SELECT CASE WHEN type = 'array' THEN json_extract(value, '$[0]') * pow(2, json_extract(value, '$[1]')) ELSE value END FROM json_each(?/*sky-list:1001:reals:sqc_inlist_kinds|mr*/)))"
+                                    "SELECT * FROM sqc_inlist_kinds WHERE (mr = ANY(?/*sky-list:1001*/))"
+                              , 1001
+                              )
+                        ]
+                      , Ok [ "a", "c", "d" ]
+                      )
+                      ( [ shown "mn" 1000, shown "mn" 1001, shown "mr" 1001 ]
+                      , Task.run (inKindSetup db) |> Result.andThen (\_ -> rerun)
+                      )
+          )
+    , Test.test
+          "inList: a long list on a v0.28 TEXT Bool / Float column matches v0.28's text and new rows"
+          (\_ ->
+              Test.equal
+                  (Ok ( [ "a", "c" ], [ "a", "c" ] ))
+                  (Task.run
+                      (Task.sequence
+                          [ drop db "sqc_legacy_biglist"
+                          , unit
+                                (Db.exec
+                                    db
+                                    "CREATE TABLE sqc_legacy_biglist (id TEXT PRIMARY KEY NOT NULL, flag TEXT, score TEXT)"
+                                    [])
+                          , unit
+                                (Db.exec
+                                    db
+                                    "INSERT INTO sqc_legacy_biglist (id, flag, score) VALUES ('a', 'true', '7'), ('b', 'false', '2.5')"
+                                    [])
+                          , unit (Store.migrate db oldFlagsBig)
+                          , unit
+                                (Store.insert
+                                    db
+                                    oldFlagsBig
+                                    { id = "c"
+                                    , flag = Just (Just True)
+                                    , score = Just (Just 7.0)
+                                    })
+                          ]
+                          |> Task.andThen
+                                 (\_ ->
+                                     Task.map2
+                                         (\x y -> ( x, y ))
+                                         (oldFlagsBigIds db (Store.inList "flag" (List.repeat 1100 (SqlBool True))))
+                                         (oldFlagsBigIds
+                                             db
+                                             (Store.inList
+                                                 "score"
+                                                 (SqlFloat 7.0 :: List.map (\i -> SqlFloat (toFloat i + 0.25)) (List.range 1 1100))))))))
+    ]
+
+
+oldFlagsBig : Store OldFlag
+oldFlagsBig =
+    Store.fromCodec "sqc_legacy_biglist" oldFlagCodec |> Store.primaryKey "id"
+
+
+oldFlagsBigIds : Db -> Store.Cond -> Task Error (List String)
+oldFlagsBigIds db cond =
+    Store.toList
+        db
+        (Store.query oldFlagsBig |> Store.where_ cond |> Store.orderAsc "id")
+        |> Task.map (List.map .id)
+
+
 tests : List Test
 tests =
     case setup () of
@@ -7350,6 +7666,7 @@ tests =
                 ++ decimalTests db
                 ++ codecMatrixTests db
                 ++ j4Tests db
+                ++ inListTests db
 
 
 main =

@@ -124,6 +124,29 @@ a `Result` wherever two currencies can differ (see Breaking).
 
 ### Fixed
 
+- **`Store.inList` failed on a long list.** One parameter per value stopped
+  at the engine's limit on the parameters of one statement: on SQLite a list
+  over 32,766 values failed with "too many SQL variables", and on a
+  PostgreSQL connection that uses pgx's extended protocol a list over 65,535
+  failed with "extended protocol limited to 65535 parameters" (the app pool's
+  simple protocol inlines the values and had no limit). A condition is one
+  statement, so it cannot be split. A list over 1,000 values now has ONE
+  placeholder, marked with its count (`/*sky-list:N*/`), and the runtime
+  binds its N values as one parameter just before the statement runs:
+  PostgreSQL `col = ANY(?)` with the text of an array literal, which the
+  server reads as an array of the column's type; SQLite
+  `col IN (SELECT +value FROM json_each(?))` with a JSON array, where the
+  unary `+` removes json_each's NUMERIC affinity so the column's affinity
+  and its `sky_decimal` collation apply as they do to `IN (…)`. A Float
+  column on SQLite reads each value as `m * pow(2, e)`, exact where SQLite's
+  own reading of a decimal number is not (below about 1e-305), and a v0.28
+  TEXT column of a nullable Bool or Float gets the text v0.28 wrote, as one
+  value does. A list up to 1,000 values keeps `col IN (?, ?, …)`, so its SQL
+  and plan do not change. `toSql` shows the mark and the N values, and that
+  SQL runs unchanged through `Db.query`. The StoreQuery conformance suite
+  checks the long form against `IN (?, …)` on every column kind on both
+  engines (NULLs, duplicates, text case, decimals, booleans, a float near
+  1e-308, an empty list), 40,000 and 70,000 values, and `toSql`.
 - **Read-only mode could write through a SQLite `file:` DSN.** `sky db
   status` and `sky db check` open the database read-only, but a DSN such as
   `SKY_DB_PATH="file:st.db?mode=rwc"` kept its own `mode`: `sky db status`

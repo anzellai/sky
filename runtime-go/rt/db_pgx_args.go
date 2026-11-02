@@ -66,17 +66,18 @@ func pgArgs(args []any) []any {
 	return out
 }
 
-// pgArgExecutor is a dbExecutor on pgx that binds its arguments with pgArg.
+// pgArgExecutor is a dbExecutor on pgx that binds its arguments with pgArg,
+// and a marked list parameter as an array (db_list_param.go).
 type pgArgExecutor struct{ inner dbExecutor }
 
 func (e pgArgExecutor) Exec(query string, args ...any) (sql.Result, error) {
-	return e.inner.Exec(query, pgArgs(args)...)
+	return e.inner.Exec(query, pgArgs(pgListArgs(query, args))...)
 }
 
 func (e pgArgExecutor) Query(query string, args ...any) (*sql.Rows, error) {
-	return e.inner.Query(query, pgArgs(args)...)
+	return e.inner.Query(query, pgArgs(pgListArgs(query, args))...)
 }
 
 func (e pgArgExecutor) QueryRow(query string, args ...any) *sql.Row {
-	return e.inner.QueryRow(query, pgArgs(args)...)
+	return e.inner.QueryRow(query, pgArgs(pgListArgs(query, args))...)
 }
