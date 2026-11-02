@@ -12843,3 +12843,55 @@ fn spa_hold_free_table_reaches_the_client() {
     );
     let _ = std::fs::remove_dir_all(&proj);
 }
+
+/// `sky watch` on a direct Sky.Spa entry (`Spa.app`) started no backend
+/// (v0.29.2 second Judge, gap 4): it built the entry as a plain program. It
+/// now splits it as `sky run` does and runs the generated backend, which
+/// serves the wasm frontend.
+#[test]
+fn watch_on_a_spa_entry_splits_and_runs_the_backend() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(
+        clientonly_fixture_entry()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap(),
+        &proj,
+    );
+    let port = free_port();
+    let log_path = proj.join("watch.log");
+    let mut watch = ChildGroup::spawn(
+        Command::new(SKY)
+            .args(["watch", "src/Main.sky"])
+            .current_dir(&proj)
+            .env("PORT", port.to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&log_path).unwrap())
+            .stderr(std::fs::File::create(proj.join("watch.err")).unwrap()),
+    )
+    .expect("start sky watch");
+    let up = wait_for_spa_backend(&log_path, 1200);
+    let page = if up {
+        curl_body_p(port, "/").unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let _ = watch.stop();
+    let log = format!(
+        "{}\n{}",
+        std::fs::read_to_string(&log_path).unwrap_or_default(),
+        std::fs::read_to_string(proj.join("watch.err")).unwrap_or_default()
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(up, "sky watch never started the Sky.Spa backend:\n{log}");
+    assert!(
+        page.contains(".wasm") || page.contains("spa-boot"),
+        "the backend does not serve the wasm frontend:\n{page}\n{log}"
+    );
+}

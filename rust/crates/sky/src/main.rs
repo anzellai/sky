@@ -16388,6 +16388,12 @@ fn watch_build_and_spawn(
     if is_std_app_dispatched_entry(file) {
         return watch_build_and_spawn_std_app(repo_root, project_dir, file, no_run, app_envs);
     }
+    // A direct Sky.Spa entry (`Spa.app`) is split and built the way `sky run`
+    // does it, and the generated backend is the process to run (it serves the
+    // wasm frontend + /_rpc). Building the entry directly starts no backend.
+    if is_spa_app_entry(file) && !is_generated_split_project(project_dir) {
+        return watch_build_and_spawn_spa(repo_root, project_dir, file, no_run, app_envs);
+    }
     let report = build_example(&opts);
     for w in &report.warnings {
         eprintln!("[watch] warning: {w}");
@@ -16429,6 +16435,60 @@ fn watch_build_and_spawn(
         Ok(child) => Some(child),
         Err(e) => {
             eprintln!("[watch] could not launch binary: {e}");
+            None
+        }
+    }
+}
+
+/// [`watch_build_and_spawn`] for a direct Sky.Spa entry: split it into
+/// `.split/` and build both halves (as `sky run` does), then spawn the
+/// generated backend from its own folder with the watched app's environment
+/// (the embedded cluster's DSN).
+fn watch_build_and_spawn_spa(
+    repo_root: &Path,
+    project_dir: &Path,
+    file: &Path,
+    no_run: bool,
+    app_envs: &[(String, String)],
+) -> Option<std::process::Child> {
+    let out_dir = project_dir.join(".split");
+    let od = match spa_split_and_build(
+        repo_root,
+        project_dir,
+        entry_module_name(file).as_deref(),
+        &out_dir,
+        None,
+        "web",
+        false,
+        true,
+        None,
+        precompress::Level::Off,
+        None,
+        None,
+        None,
+    ) {
+        Ok(od) => od,
+        Err(_) => {
+            eprintln!("[watch] build failed (keeping previous binary)");
+            return None;
+        }
+    };
+    println!("[watch] build ok");
+    if no_run {
+        return None;
+    }
+    let backend = od.join("backend");
+    let bin = backend.join("sky-out").join("app");
+    let mut cmd = Command::new(std::fs::canonicalize(&bin).unwrap_or(bin));
+    cmd.current_dir(&backend);
+    apply_spa_data_dir(&mut cmd, project_dir);
+    for (k, v) in app_envs {
+        cmd.env(k, v);
+    }
+    match cmd.spawn() {
+        Ok(child) => Some(child),
+        Err(e) => {
+            eprintln!("[watch] could not launch the Sky.Spa backend: {e}");
             None
         }
     }
