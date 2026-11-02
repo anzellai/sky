@@ -67,13 +67,13 @@
       "rust/crates/sky/src/db_pool_sizing.rs:151 (toml_value)"
     ],
     "database.path": [
-      "rust/crates/sky/src/db_cluster.rs:1742 (sky_toml_section_key)"
+      "rust/crates/sky/src/db_cluster.rs:1807 (sky_toml_section_key)"
     ],
     "database.postgresVersion": [
       "rust/crates/sky/src/db_provision.rs:158 (sky_toml_section_key)"
     ],
     "database.url": [
-      "rust/crates/sky/src/db_cluster.rs:1746 (sky_toml_section_key)"
+      "rust/crates/sky/src/db_cluster.rs:1811 (sky_toml_section_key)"
     ],
     "dependencies": [
       "structural: rust/crates/project/src/ffi_ops.rs fn read_dependencies — reads the whole table. `sky add`/`remove`/`install`/`update` and the LSP's unfetched-dep hints all run with no binary in existence."

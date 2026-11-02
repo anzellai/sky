@@ -1163,7 +1163,13 @@ another type, and the nullable columns a required field reads. For each table
 the code declares nothing for, it prints a Sky record type alias, a `Codec`
 (one `Codec.field` per column, `Codec.decimal` for a PostgreSQL `NUMERIC`
 column) and a `Store` with a `Store.default…` builder for each column default,
-ready to copy into a module. Each field has the type `sky db check` accepts for
+a `Store.unique` for each single-column UNIQUE constraint or index, and a
+`Store.indexNamed` / `Store.uniqueOnNamed` for each other index under its live
+name (v0.29.2), ready to copy into a module. An index the Store cannot declare
+(a partial index, a unique index over a nullable column, or one over a column
+the stub has no field for) is a comment in the stub, and `sky db check` reports
+it until you declare it or drop it. A project with no tables yet
+(`db = Store.project []`) is checked as one (v0.29.2). Each field has the type `sky db check` accepts for
 its column, so an adopted stub passes the check: a date, time, UUID or JSON
 column is a `String` (on SQLite as well, where such a type has NUMERIC
 affinity), as is any PostgreSQL type that is not a number, a boolean or binary

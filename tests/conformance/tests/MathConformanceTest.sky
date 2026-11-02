@@ -50,6 +50,33 @@ beyondInf x =
     x > Math.inf
 
 
+-- v0.29.2: an integer literal stands for a `number` annotation variable, and
+-- the body keeps the variable generic when it is lowered. Before, a literal
+-- pinned it to Int: `double 2.5` gave 4 and `isPositive 0.5` gave False.
+isPositive : number -> Bool
+isPositive x =
+    x > 0
+
+
+double : number -> number
+double x =
+    x * 2
+
+
+inc : number -> number
+inc x =
+    x + 1
+
+
+sumAll : List number -> number
+sumAll xs =
+    List.foldl (\x acc -> x + acc) 0 xs
+
+
+addN a b =
+    a + b
+
+
 tests : List Test
 tests =
     [ -- ── abs (Int -> Int) ──
@@ -309,6 +336,22 @@ tests =
         (\_ -> Test.equal [ 1.0, 2.0 ] (List.map Basics.toFloat [ 1, 2 ]))
     , Test.test "Math.round (toFloat n) == n round-trips"
         (\_ -> Test.equal 41 (Math.round (toFloat 41)))
+
+      -- ── number variables with integer literals (v0.29.2) ──
+    , Test.test "isPositive : number -> Bool on 0.5, -1.5, 3 and 0"
+        (\_ -> Test.equal [ True, False, True, False ] [ isPositive 0.5, isPositive -1.5, isPositive 3, isPositive 0 ])
+    , Test.test "double : number -> number keeps a Float's fraction"
+        (\_ -> Test.equal 5.0 (double 2.5))
+    , Test.test "double : number -> number on an Int"
+        (\_ -> Test.equal 6 (double 3))
+    , Test.test "inc : number -> number on a Float and an Int"
+        (\_ -> Test.equal ( 2.5, 2 ) ( inc 1.5, inc 1 ))
+    , Test.test "sumAll : List number -> number over Floats"
+        (\_ -> Test.equal 3.75 (sumAll [ 1.5, 2.25 ]))
+    , Test.test "an unannotated + helper on Floats (number -> number -> number)"
+        (\_ -> Test.equal 3.5 (addN 1.5 2.0))
+    , Test.test "Basics.abs and negate keep a Float's fraction"
+        (\_ -> Test.equal ( 2.5, -1.5 ) ( abs -2.5, negate 1.5 ))
     ]
 
 

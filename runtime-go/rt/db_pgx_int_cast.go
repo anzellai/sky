@@ -99,11 +99,19 @@ func (c *pgIntCache) narrowIntColumns(ex dbExecutor, table string) map[string]bo
 
 func pgReadNarrowIntColumns(ex dbExecutor, table string) (map[string]bool, error) {
 	cols := map[string]bool{}
+	// A domain is followed to its base type at any depth: a domain over a
+	// domain over INTEGER is an INTEGER column (v0.29.2: one level was
+	// resolved, and an Int condition on such a column failed with SQLSTATE
+	// 22003).
 	rows, err := ex.Query(
-		`SELECT a.attname::text, `+
-			`format_type(COALESCE(NULLIF(t.typbasetype, 0), a.atttypid), NULL) `+
-			`FROM pg_attribute a JOIN pg_type t ON t.oid = a.atttypid `+
-			`WHERE a.attrelid = to_regclass($1) AND a.attnum > 0 AND NOT a.attisdropped`,
+		`WITH RECURSIVE cols(name, typ, depth) AS (`+
+			`SELECT a.attname::text, a.atttypid, 0 FROM pg_attribute a `+
+			`WHERE a.attrelid = to_regclass($1) AND a.attnum > 0 AND NOT a.attisdropped `+
+			`UNION ALL `+
+			`SELECT c.name, t.typbasetype, c.depth + 1 FROM cols c JOIN pg_type t ON t.oid = c.typ `+
+			`WHERE t.typtype = 'd' AND t.typbasetype <> 0 AND c.depth < 64) `+
+			`SELECT c.name, format_type(c.typ, NULL) FROM cols c JOIN pg_type t ON t.oid = c.typ `+
+			`WHERE t.typtype <> 'd'`,
 		table)
 	if err != nil {
 		return cols, err

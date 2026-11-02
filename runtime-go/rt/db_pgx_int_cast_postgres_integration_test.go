@@ -201,3 +201,71 @@ func TestPgIntCast_StaleEntryHealsAfterOneError(t *testing.T) {
 		t.Fatalf("after ALTER through the handle: %d, %v", n, err)
 	}
 }
+
+// A domain over a domain over INTEGER is an INTEGER column: the cast follows
+// the domain chain to its base type at any depth (Judge round 7). Before,
+// one level was resolved, and an Int condition with a value beyond 32 bits
+// failed with SQLSTATE 22003 on eq, gt and inList, short and long.
+func TestPgIntCast_NestedDomainIsFollowedToItsBaseType(t *testing.T) {
+	dsn := requirePostgresDSN(t)
+	conn, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open postgres: %v", err)
+	}
+	const table = "b292b_nested_dom"
+	for _, stmt := range []string{
+		`DROP TABLE IF EXISTS ` + table,
+		`DROP DOMAIN IF EXISTS b292b_d3`,
+		`DROP DOMAIN IF EXISTS b292b_d2`,
+		`DROP DOMAIN IF EXISTS b292b_d1`,
+		`CREATE DOMAIN b292b_d1 AS INTEGER`,
+		`CREATE DOMAIN b292b_d2 AS b292b_d1`,
+		`CREATE DOMAIN b292b_d3 AS b292b_d2`,
+		`CREATE TABLE ` + table + ` (id INTEGER PRIMARY KEY, dd b292b_d2, ddd b292b_d3)`,
+		`INSERT INTO ` + table + ` VALUES (1, 5, 5), (2, 6, 6)`,
+	} {
+		if _, err := conn.Exec(stmt); err != nil {
+			t.Fatalf("setup %q: %v", stmt, err)
+		}
+	}
+	t.Cleanup(func() {
+		conn.Exec(`DROP TABLE IF EXISTS ` + table)
+		conn.Exec(`DROP DOMAIN IF EXISTS b292b_d3`)
+		conn.Exec(`DROP DOMAIN IF EXISTS b292b_d2`)
+		conn.Exec(`DROP DOMAIN IF EXISTS b292b_d1`)
+		pgIntCacheReset(conn)
+		conn.Close()
+	})
+	mark := func(col string) string { return "?/*sky-int:" + table + "|" + col + "*/" }
+	d := &SkyDb{conn: conn, driver: "pgx"}
+	cols, err := pgReadNarrowIntColumns(conn, table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []string{"dd", "ddd"} {
+		if !cols[c] {
+			t.Errorf("%s: a domain chain over INTEGER is not read as a narrow integer: %v", c, cols)
+		}
+	}
+	for _, c := range []string{"dd", "ddd"} {
+		for _, tc := range []struct {
+			where string
+			args  []any
+			want  int
+		}{
+			{c + " = " + mark(c), []any{int64(3000000000)}, 0},
+			{c + " > " + mark(c), []any{int64(3000000000)}, 0},
+			{c + " < " + mark(c), []any{int64(3000000000)}, 2},
+			{c + " = " + mark(c), []any{int64(5)}, 1},
+		} {
+			var got int
+			if err := d.executor().QueryRow(d.rebind(`SELECT count(*) FROM `+table+` WHERE `+tc.where), tc.args...).Scan(&got); err != nil {
+				t.Errorf("%s: %v", tc.where, err)
+				continue
+			}
+			if got != tc.want {
+				t.Errorf("%s: %d rows, want %d", tc.where, got, tc.want)
+			}
+		}
+	}
+}

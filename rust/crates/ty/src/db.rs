@@ -104,6 +104,21 @@ pub fn compute_body_types_with(
         .with_self_def(Some(def))
         .with_inferred(true)
         .with_overlay(overlay);
+    // v0.29.2: a def whose annotation names a `number` variable is inferred
+    // against that annotation, the variable kept generic
+    // (`SuperType::NumVar`). Inferred without it, an integer literal pinned
+    // the variable to `Int`: `double : number -> number; double x = x * 2`
+    // lowered `x * 2` as Int arithmetic and `double 2.5` gave `4`. The
+    // checker accepts such a body only since integer literals stand for a
+    // `number` variable (v0.29.2), so no def that compiled before changes.
+    if let Some(scheme) = world.value_sigs.get(&def).filter(|s| {
+        s.vars.iter().any(|v| {
+            crate::unify::SuperType::from_var_name(v.as_str())
+                .is_some_and(|b| b.has(crate::unify::SuperType::Number))
+        })
+    }) {
+        infer = infer.with_pinned_number_vars(scheme.clone());
+    }
     // NB: `signature` is discarded here — the lowerer path only reads
     // `result`/`exprs`/`locals`. It is populated so a stray read stays consistent
     // with the tooling path, but codegen never consumes it (bug-b additivity).

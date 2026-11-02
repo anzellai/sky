@@ -39,3 +39,17 @@ func TestMathMinMaxString(t *testing.T) {
 		t.Fatalf("Math_max(apple, banana) = %v, want banana", got)
 	}
 }
+
+// Math_abs backs `Basics.abs : number -> number` too: a Float keeps its
+// fraction (v0.29.2; AsInt truncated `abs -2.5` to 2).
+func TestMathAbsKeepsAFloatsFraction(t *testing.T) {
+	if got := Math_abs(-2.5); got != 2.5 {
+		t.Errorf("Math_abs(-2.5) = %v, want 2.5", got)
+	}
+	if got := Math_abs(0.25); got != 0.25 {
+		t.Errorf("Math_abs(0.25) = %v, want 0.25", got)
+	}
+	if got := Math_abs(-7); got != 7 {
+		t.Errorf("Math_abs(-7) = %v, want 7", got)
+	}
+}

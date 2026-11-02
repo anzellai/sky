@@ -1434,6 +1434,13 @@ impl World {
             ("modBy", fun(int_(), fun(int_(), int_()))),
             ("clamp", fun(int_(), fun(int_(), fun(int_(), int_())))),
             ("compare", fun(cmp(), fun(cmp(), int_()))),
+            // v0.29.2: the arithmetic kernels need a number, as in Elm. With
+            // no scheme `negate "s"` and `abs "s"` checked and then panicked
+            // in `rt.AsInt`. (The oracle-leniency note above predates the
+            // qualified bounds and no longer applies.)
+            ("negate", fun(Ty::var("number"), Ty::var("number"))),
+            ("abs", fun(Ty::var("number"), Ty::var("number"))),
+            ("sqrt", fun(Ty::var("number"), Ty::app("Float", vec![]))),
             ("min", fun(cmp(), fun(cmp(), cmp()))),
             ("max", fun(cmp(), fun(cmp(), cmp()))),
             // v0.27.0: the unannotated `Sky.Core.Basics` bodies. With no scheme

@@ -84,10 +84,10 @@ Breaking and Migration.
 - **`Codec.value`, a codec for a raw `Json.Value`.** The JSON as it is, both
   ways, in a JSON text column, so `Codec.object` (or an `autoWith` override)
   carries a `List Json.Value` (`Codec.list Codec.value`) or a
-  `Dict String Json.Value` (`Codec.dict Codec.string Codec.value`). Under
-  `Codec.auto` such a field reads when its blank holds one JSON value
-  (`[ Json.Encode.null ]`); with no JSON value in the blank it is a builder
-  problem (see Fixed).
+  `Dict String Json.Value` (`Codec.dict Codec.string Codec.value`), whatever
+  the blank holds. Under `Codec.auto` such a field reads when the blank's list
+  or dict holds one JSON value (`items = [ Json.Encode.null ]`); with no JSON
+  value in the blank it is a builder problem (see Fixed).
 - **`Store.noCond`**, the condition every row meets (the same as `and_ []`),
   and **`Store.defaultDecimal`** are exposed.
 - **`sky db check`: does the live database match the code?** A read-only
@@ -301,8 +301,8 @@ Breaking and Migration.
   `Codec.moneyIn (CurrencyRaw "gbp")` is `Codec.moneyIn GBP` and takes a GBP
   Money. A code that is not a currency code is a `Store.fromCodec` builder
   problem naming it.
-- **The write check made `Store.insertMany` 1.8x to 4x slower** (a
-  regression in this release). Each JSON column of each row was encoded to
+- **The write check made `Store.insertMany` slower** (a regression in this
+  release). Each JSON column of each row was encoded to
   text, parsed back, and decoded inside the codec's zero record, twice. A
   codec now knows which of its fields are partial (see the first entry), and
   a write checks only those, once per row, on the encoded value in memory. A
@@ -439,6 +439,29 @@ Breaking and Migration.
 
 #### `sky db check`, `sky db status` and read-only mode
 
+- **An adopted `sky db check --code` stub failed `sky db check` on a table
+  with a UNIQUE column or an index.** The stub declared neither, so the check
+  reported each one ("the code does not declare it"). The stub now writes
+  `Store.unique` for a single-column UNIQUE constraint or index, and
+  `Store.indexNamed` / `Store.uniqueOnNamed` (new: `index` / `uniqueOn` under
+  a name you give) for every other index under its live name, so the adopted
+  stub matches. An index the Store cannot declare (a partial index, a unique
+  index over a nullable column, one over a column the stub has no field for)
+  is a comment in the stub that says so, and the check reports it.
+- **A project with no tables made `sky db check` and `sky db migrate --gen`
+  exit 2** ("the schema of `db` is not readable: invalid type: null, expected
+  a sequence"). `db = Store.project []` dumped `"tables":null`. It now dumps
+  `[]`, and every list `check` and `--gen` read takes a `null` as empty. This
+  blocked adopting an existing database before the code had a Store.
+- **The notice for a narrow PostgreSQL integer column said a SMALLINT holds
+  values up to 2147483647.** It now gives each type's range: 16-bit values
+  (at most 32767) for a SMALLINT, 32-bit values for an INTEGER, and the error
+  PostgreSQL gives (`smallint out of range`), in `sky db check` and in
+  `Store.migrate`'s notice.
+- **An Int condition on a domain over a domain over INTEGER failed "out of
+  range".** The Int cast resolved a domain one level only. It now follows the
+  domain chain to its base type at any depth.
+
 - **`sky db check` wrote beside a SQLite database in WAL mode.** `Db.connect`
   sets WAL mode, and a read-only open of a WAL database created `x.db-wal`
   and `x.db-shm`; in a directory it could not write, `sky db check` exited 2
@@ -516,6 +539,20 @@ Breaking and Migration.
 
 #### `sky run`, `sky watch`, Sky.Spa and builds
 
+- **The embedded-database conflict message printed the DSN's password.**
+  `DATABASE_URL='postgres://x:secret@host/x' sky run` on a project with
+  `[database] embedded = true` showed `secret` in clear, and v0.29.2 runs the
+  check on every `sky run` path and on `sky watch`, so into more terminal and
+  CI logs. The DSN is now shown with every password as `***` (the URL's
+  `user:password@`, a `password=` parameter, the keyword form's
+  `password=…`, quoted or not); the user, host and database stay, so you
+  can still tell which DSN it is.
+- **The `--target web:app` refusal of a `main` it cannot carry did not list
+  every form that carries.** It left out the prefix form
+  `main = Task.andThen (\_ -> App.run app) setup` (and `<| setup`), which
+  carries. The list now comes from one table that a test parses form by form,
+  so it names exactly the forms that carry.
+
 - **`sky run` passes the embedded database address to a `Std.App` app.** On a
   project with `[database] embedded = true`, `sky run` on a `Std.App` entry
   (`main = App.run app`) did not start the cluster and did not set
@@ -572,12 +609,18 @@ Breaking and Migration.
   package (`sky-app/rt`) is the largest process of every build, and Go gave
   it up to four SSA back-ends at once. Every `go build` Sky runs (the native
   app, the Sky.Spa wasm client, `sky check`, `sky test`, the cache warm-up)
-  now passes `-gcflags=sky-app/rt=-c=2`: the cold build peak drops from
-  about 990-1060 MB to about 850-890 MB, and the compiled code is the same.
+  now passes `-gcflags=sky-app/rt=-c=2`, which lowers the cold build's peak
+  memory, and the compiled code is the same.
   It is left out when your `GOFLAGS` has a `-gcflags`, because Go keeps only
   the last matching `-gcflags` pattern and would drop yours.
 
 #### Compiler messages
+
+- **The advice "write `T` instead of `a`" now names a type you can write.**
+  An unknown part was shown as `_` (`write List _ instead of a`, which does
+  not parse), and a record as `record` (so the next error read "write
+  `record` instead of `record`"). An unknown part is now a fresh variable
+  (`List x1`), and a record shows its fields (`{ r1 | count : x1 }`).
 
 - **`[E1012]` names the right release for a v0.29 stdlib name.** A name new in
   v0.29.x was called "new since Sky v0.27.8" with a link to
@@ -611,6 +654,36 @@ Breaking and Migration.
   remove a live run's journal.
 
 ### Breaking
+
+- **⚠ Breaking: a row variable in an annotation is rigid.** `{ r | name :
+  String }` stands for whatever other fields a caller's record has, but its
+  row links were dropped: `f : { r | name : String } -> { s | name : String }`
+  with `f rec = rec` checked, and `(f { name = "x" }).age` then crashed at
+  run time (`CoerceFailure: expected a record with the field "Age"`). So did
+  `rec.age` on `{ r | name : String }`, and a closed `{ name = … }` returned
+  where `{ r | name : String }` was promised. Each is now `[E2001]` naming the
+  row variable and the fix ("add `age` to the record type", "write the same
+  row variable in both record types", "keep the caller's record and change
+  it with an update"), in every shape a record can sit in (a `List`, `Maybe`,
+  `Dict`, `Result`, tuple, nested record, custom-type payload or function).
+- **⚠ Breaking: arithmetic needs a number.** `+`, `-` and `*` were typed `a
+  -> a -> a` on the check path, and `negate` and `abs` had no type there, so
+  `f : a -> a` with `f x = x + x` checked and `f "s"` crashed in `rt.AsInt`,
+  as did `add a b = a + b` with `add "s" "t"`. They now take a `number`, as in
+  Elm: the first asks for the `number` bound, and the unannotated helper is
+  `number -> number -> number`, so `add 1.5 2.0` checks and `add "s" "t"` is
+  refused. `Basics.abs` of a `Float` kept only the integer part (`abs -2.5`
+  was `2`); it is now `2.5`.
+- **An integer literal stands for a `number` variable.** v0.29.2's rigid
+  variables refused `isPositive : number -> Bool` with `isPositive x = x > 0`
+  (v0.29.1 accepted it) and advised writing `Int`, which breaks every
+  `Float` caller; `double : number -> number` with `double x = x * 2` was
+  refused in v0.29.1 too. A literal now stands for a rigid `number`
+  variable, and such a body is lowered with the variable kept generic, so
+  `double 2.5` is `5.0` (a literal pinned the variable to `Int` in the
+  lowering, which made `isPositive 0.5` `False` in v0.29.1). Everywhere else a
+  literal is still an `Int`: `1 + 2.5` is refused and a `Float` slot needs
+  `1.0`.
 
 - **⚠ Breaking: every type variable in an annotation is rigid.** The checker
   made only the variables of an annotation's RESULT rigid. A variable that
@@ -730,6 +803,13 @@ Breaking and Migration.
 
 ### Migration
 
+- **A row variable the body pins** (the rigid row check above): write the
+  same row variable on both sides (`{ r | name : String } -> { r | name :
+  String }`), list every field the body reads (`{ r | name : String, age :
+  Int }`), and change the caller's record with an update instead of building
+  a new one.
+- **Arithmetic on a variable without the `number` bound:** write `number`
+  (`twice : number -> number`), or the concrete type the code needs.
 - **An annotation whose variable the body pins to a type** (the rigid
   type-variable check above). The pattern the measurement found is a
   framework callback annotated `init : a -> ( Model, Cmd Msg )` whose body
@@ -758,7 +838,8 @@ Breaking and Migration.
   the codec does not decode). The error names the keys the record takes: use
   one of them, or remove the override.
 - **Upgrading from v0.29.1:** most Breaking entries above are compile errors
-  (docs/migration/v0.29.md). The rigid type variables, a removed `Std.Money`
+  (docs/migration/v0.29.md). The rigid type variables and row variables,
+  arithmetic on a variable without the `number` bound, a removed `Std.Money`
   name (`setRate`, `sumOf`, `parseCurrency`, ...), `Codec.value` and
   `Codec.ColType` each give an error that names the fix. A function whose
   type changed (`add`, `sub`, `compare`, `lt`, `lte`, `gt`, `gte`,
