@@ -917,12 +917,12 @@ tests =
                     , Codec.fromJson hookAuto "{\"id\":\"h2\",\"data\":null}"
                         |> Result.map (\h -> Encode.encode 0 h.data)
                     ))
-    , Test.test "auto: a List or Dict of Json.Value cannot be marked by the blank, so reading one is an Err"
+    , Test.test "auto: a List or Dict of Json.Value whose blank holds a JSON value reads each element as JSON (v0.29.2 sixth Judge; it was an Err)"
         (\_ ->
             Test.equal
-                ( True, True )
-                ( failed (Codec.fromJson hooksAuto "{\"id\":\"h1\",\"items\":[1]}")
-                , failed (Codec.fromJson hookMapAuto "{\"id\":\"h1\",\"items\":{\"a\":1}}")
+                ( Ok "{\"id\":\"h1\",\"items\":[1,\"x\",null]}", Ok "{\"id\":\"h1\",\"items\":{\"a\":1}}" )
+                ( Codec.fromJson hooksAuto "{\"id\":\"h1\",\"items\":[1,\"x\",null]}" |> Result.map (Codec.toJson hooksAuto)
+                , Codec.fromJson hookMapAuto "{\"id\":\"h1\",\"items\":{\"a\":1}}" |> Result.map (Codec.toJson hookMapAuto)
                 ))
     -- ── Codec.value: a raw Json.Value (v0.29.2) ───────────────────────────
     , Test.test "value: an object field of List Json.Value round-trips exactly"

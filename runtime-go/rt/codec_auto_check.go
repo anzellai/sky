@@ -48,6 +48,11 @@ func codecAutoTypePartial(t reflect.Type, declared string, depth int) bool {
 	case reflect.Struct:
 		if isSkyMaybeType(t) {
 			if jv, ok := t.FieldByName("JustValue"); ok {
+				// A Maybe whose value can be written as null (a Maybe, a
+				// Json.Value): its `Just` of null is refused (codecJustNull).
+				if isSkyMaybeType(jv.Type) || (jv.Type.Kind() == reflect.Interface && jv.Type.NumMethod() == 0) {
+					return true
+				}
 				return codecAutoTypePartial(jv.Type, "", depth+1)
 			}
 			return false
@@ -105,4 +110,318 @@ func Codec_enumString(namesArg any) any {
 		}
 		return Err[any, any](ErrDecode("expected String, got " + jsonValueKind(v)))
 	}}
+}
+
+// codecJustNull is what a `Maybe` codec writes for `Just x` when the inner
+// codec writes x as JSON null (v0.29.2 sixth Judge): `Just Nothing` of a
+// `Codec.maybe (Codec.maybe c)`, `Just Json.Encode.null` of a
+// `Codec.maybe Codec.value`, a `Maybe (Maybe a)` or `Maybe Json.Value`
+// Codec.auto field. JSON has one null, so the value would read back as
+// `Nothing`. It is written as `null` in JSON text (so `Codec.toJson` is
+// unchanged), but every reader refuses it in memory, so the Store write
+// check refuses the row instead of storing NULL. A stored NULL still reads
+// as `Nothing`, as it always did.
+type codecJustNull struct{}
+
+func (codecJustNull) MarshalJSON() ([]byte, error) { return []byte("null"), nil }
+
+const codecJustNullMsg = "a Just whose value is written as JSON null (Just Nothing, Just Json.Encode.null) cannot be stored: it would read back as Nothing. Store Nothing, or wrap the inner value in a record or a custom type"
+
+// Codec_justNull : Value -> Value. The value a Maybe codec writes for `Just
+// x` from the inner encoding `v`: v itself, or codecJustNull when v is null.
+func Codec_justNull(v any) any {
+	if jv, ok := v.(JsonValue); ok {
+		if jv.raw == nil {
+			return JsonValue{raw: codecJustNull{}}
+		}
+		return jv
+	}
+	if v == nil {
+		return JsonValue{raw: codecJustNull{}}
+	}
+	return v
+}
+
+// Codec_refuseJustNull : Decoder a -> Decoder a. The inner decoder of a Maybe
+// codec whose inner codec can write null: it refuses codecJustNull with
+// codecJustNullMsg and runs the inner decoder on anything else.
+func Codec_refuseJustNull(inner any) any {
+	return JsonDecoder{run: func(j any) any {
+		if _, ok := j.(codecJustNull); ok {
+			return Err[any, any](ErrDecode("Codec.maybe: " + codecJustNullMsg))
+		}
+		return runDec(inner, j)
+	}}
+}
+
+// codecAutoJust is the encoding of a Codec.auto `Just x` from x's encoding:
+// codecJustNull when x is written as null (`Just Nothing` of a
+// `Maybe (Maybe a)`, `Just Json.Encode.null` of a `Maybe Json.Value`).
+func codecAutoJust(v any, err error) (any, error) {
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return codecJustNull{}, nil
+	}
+	if jv, ok := v.(JsonValue); ok && jv.raw == nil {
+		return codecJustNull{}, nil
+	}
+	return v, nil
+}
+
+// codecAutoReadable are the declared stdlib types a Codec.auto record field
+// (or a List, Maybe or Dict of one) reads back by name: their Go type is the
+// erased rt.SkyADT, so only the declared name says what they are.
+var codecAutoReadable = map[string]bool{
+	"Std_Decimal_Decimal": true,
+	"Std_Money_Money":     true,
+	"Std_Money_Currency":  true,
+}
+
+// codecDeclaredElem is the declared type inside a declared List, Maybe or
+// Dict type (`[]X`, `rt.SkyMaybe[X]`, `rt.SkyDict[X]`, `map[K]X` → X), or "".
+func codecDeclaredElem(declared string) string {
+	if e, ok := strings.CutPrefix(declared, "[]"); ok {
+		return e
+	}
+	for _, p := range []string{"rt.SkyMaybe[", "rt.SkyDict[", "rt.SkySet["} {
+		if e, ok := strings.CutPrefix(declared, p); ok {
+			return strings.TrimSuffix(e, "]")
+		}
+	}
+	if e, ok := strings.CutPrefix(declared, "map["); ok {
+		if i := strings.IndexByte(e, ']'); i >= 0 {
+			return e[i+1:]
+		}
+	}
+	return ""
+}
+
+// codecAutoTypeProblem is why Codec.auto cannot read back a field of Go type
+// `t` (declared `declared`), or "" when it can (v0.29.2 sixth Judge). The
+// reader of a custom type's variant decodes each payload by its Go type, so
+// a payload whose Go type does not say what it holds cannot be read back:
+//
+//   - a Decimal, Money, Currency or other stdlib type inside a variant (its
+//     Go type is the erased rt.SkyADT; only a record field's declared type
+//     names it),
+//   - a type variable or a Json.Value inside a variant (Go `any`; a record
+//     field's blank says when it is JSON, a variant has no blank),
+//   - a stdlib custom type anywhere (rt.SkyADT, no Decimal, Money or
+//     Currency).
+//
+// It used to be written, and read back as another value (`BoxM (Just 3)` as
+// `BoxM (Just 0)`, `Fixed 12.5` as a broken Decimal) or not at all. The field
+// is now a builder problem (Codec.problems, refused by Store.fromCodec), and
+// the reader refuses it.
+func codecAutoTypeProblem(t reflect.Type, declared string) string {
+	return codecAutoTypeProblemAt(t, declared, false, 0, map[reflect.Type]bool{})
+}
+
+func codecAutoTypeProblemAt(t reflect.Type, declared string, inVariant bool, depth int, seen map[reflect.Type]bool) string {
+	if t == nil || depth > 64 {
+		return ""
+	}
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array, reflect.Pointer, reflect.Map:
+		return codecAutoTypeProblemAt(t.Elem(), codecDeclaredElem(declared), inVariant, depth+1, seen)
+	case reflect.Interface:
+		if t.NumMethod() == 0 {
+			if inVariant {
+				return "a variant carries a value whose type the generated code does not keep (a type variable or a Json.Value)"
+			}
+			return ""
+		}
+		return codecAutoVariantsProblem(t, depth, seen)
+	case reflect.Struct:
+		if isSkyMaybeType(t) {
+			if jv, ok := t.FieldByName("JustValue"); ok {
+				return codecAutoTypeProblemAt(jv.Type, codecDeclaredElem(declared), inVariant, depth+1, seen)
+			}
+			return ""
+		}
+		if isSkyDictType(t) {
+			vt := reflect.Zero(t).Interface().(skyDictAny).dictValueType()
+			return codecAutoTypeProblemAt(vt, codecDeclaredElem(declared), inVariant, depth+1, seen)
+		}
+		if isSkyAdtType(t) {
+			// A declared name comes from a record field's tag (a field, or a
+			// List, Maybe or Dict of one), also inside a variant's record.
+			if codecAutoReadable[declared] {
+				return ""
+			}
+			if codecHandleDeclared(declared) {
+				return "" // a runtime handle: the encoder refuses it loudly
+			}
+			name := codecAutoShortName(declared)
+			if name == "" {
+				name = "a standard-library custom type"
+			}
+			if inVariant {
+				return "a variant carries " + name + ", which the generated code does not name inside a variant"
+			}
+			return name + " is a standard-library custom type Codec.auto does not read back"
+		}
+		if t == reflect.TypeOf(JsonValue{}) || codecOpaqueStruct(t) || t == reflect.TypeOf(SkySet{}) {
+			return ""
+		}
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			if f.PkgPath != "" {
+				continue
+			}
+			if p := codecAutoTypeProblemAt(f.Type, skyTagType(f), inVariant, depth+1, seen); p != "" {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+// codecAutoVariantsProblem walks every variant of the sealed custom type t.
+func codecAutoVariantsProblem(t reflect.Type, depth int, seen map[reflect.Type]bool) string {
+	if seen[t] {
+		return ""
+	}
+	seen[t] = true
+	for _, z := range adtVariantZeros(t.String()) {
+		vt := reflect.TypeOf(z)
+		if vt == nil || vt.Kind() != reflect.Struct {
+			continue
+		}
+		for i := 0; i < vt.NumField(); i++ {
+			f := vt.Field(i)
+			if f.PkgPath != "" {
+				continue
+			}
+			if p := codecAutoTypeProblemAt(f.Type, "", true, depth+1, seen); p != "" {
+				if sv, ok := z.(SkyVariant); ok && !strings.Contains(p, "(in the variant ") {
+					return p + " (in the variant " + sv.SkyVariantName() + " of " + codecAutoShortName(t.Name()) + ")"
+				}
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+// codecAutoShortName is a Go type name in Sky terms (`Main_Box` → `Box`,
+// `Std_Decimal_Decimal` → `Decimal`), or "" for an empty name.
+func codecAutoShortName(goName string) string {
+	if goName == "" {
+		return ""
+	}
+	if i := strings.LastIndexByte(goName, '.'); i >= 0 {
+		goName = goName[i+1:]
+	}
+	if i := strings.LastIndexByte(goName, '_'); i >= 0 && i+1 < len(goName) {
+		return goName[i+1:]
+	}
+	return goName
+}
+
+// codecAutoDuplicateKey is the builder problem of two record fields that
+// become one key (`aB` and `a_b` are both `a_b` under Codec.auto), or "".
+// One would overwrite the other in the JSON and in the row (v0.29.2 sixth
+// Judge: `fromJson (toJson v)` gave `{aB = 2, a_b = 2}`).
+func codecAutoDuplicateKey(t reflect.Type, snake bool) string {
+	if t == nil || !isRecordType(t) {
+		return ""
+	}
+	seen := map[string]string{}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.PkgPath != "" {
+			continue
+		}
+		key := skyColKey(f, snake)
+		if first, ok := seen[key]; ok {
+			return "Codec.auto: the fields \"" + first + "\" and \"" + skyTagName(f) +
+				"\" both become the key \"" + key + "\", so one would overwrite the other; rename one, or use Codec.autoCamel"
+		}
+		seen[key] = skyTagName(f)
+	}
+	return ""
+}
+
+// codecWitnessElem is the first element of a List blank (its element's own
+// blank), or the zero Value. A `List Json.Value` field with the blank
+// `[ Json.Encode.null ]` reads each element as JSON from it (v0.29.2 sixth
+// Judge: every read used to fail with "cannot decode kind interface").
+func codecWitnessElem(w reflect.Value) reflect.Value {
+	for w.IsValid() && w.Kind() == reflect.Interface && !w.IsNil() {
+		w = w.Elem()
+	}
+	if !w.IsValid() || (w.Kind() != reflect.Slice && w.Kind() != reflect.Array) || w.Len() == 0 {
+		return reflect.Value{}
+	}
+	return w.Index(0)
+}
+
+// currencyFromCodeStrict is the Currency of a code read under the strict
+// grammar (currencyCodeStrict), as Money.currencyFromCode reads it.
+func currencyFromCodeStrict(code string) (SkyADT, error) {
+	c, err := currencyCodeStrict(code)
+	if err != nil {
+		return SkyADT{}, err
+	}
+	return sqlCodeToCurrency(c), nil
+}
+
+// Codec_plainNull : Value -> Value. `v` with every codecJustNull in it made a
+// plain null: a blank's `Just Json.Encode.null` fills the other columns of a
+// write check (Codec.witnessZeros), and must read there.
+func Codec_plainNull(v any) any {
+	jv, ok := v.(JsonValue)
+	if !ok {
+		return v
+	}
+	return JsonValue{raw: codecPlainNull(jv.raw)}
+}
+
+func codecPlainNull(raw any) any {
+	switch x := raw.(type) {
+	case codecJustNull:
+		return nil
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = codecPlainNull(e)
+		}
+		return out
+	case jsonOrderedObject:
+		vals := make([]any, len(x.vals))
+		for i, e := range x.vals {
+			vals[i] = codecPlainNull(e)
+		}
+		return jsonOrderedObject{keys: x.keys, vals: vals}
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, e := range x {
+			out[k] = codecPlainNull(e)
+		}
+		return out
+	}
+	return raw
+}
+
+// codecWitnessDictValue is one value of a Dict blank, or the zero Value.
+func codecWitnessDictValue(w reflect.Value) reflect.Value {
+	for w.IsValid() && w.Kind() == reflect.Interface && !w.IsNil() {
+		w = w.Elem()
+	}
+	if !w.IsValid() || !w.CanInterface() {
+		return reflect.Value{}
+	}
+	d, ok := w.Interface().(skyDictAny)
+	if !ok {
+		return reflect.Value{}
+	}
+	var out reflect.Value
+	d.dictRangeAny(func(_ string, v any) bool {
+		out = reflect.ValueOf(v)
+		return false
+	})
+	return out
 }

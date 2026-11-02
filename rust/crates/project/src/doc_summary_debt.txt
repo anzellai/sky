@@ -312,7 +312,6 @@ sky-stdlib/Std/Decimal.sky: addPercent
 sky-stdlib/Std/Decimal.sky: ceil
 sky-stdlib/Std/Decimal.sky: compare
 sky-stdlib/Std/Decimal.sky: div
-sky-stdlib/Std/Decimal.sky: eq
 sky-stdlib/Std/Decimal.sky: floor
 sky-stdlib/Std/Decimal.sky: fromInt
 sky-stdlib/Std/Decimal.sky: gt
@@ -334,9 +333,6 @@ sky-stdlib/Std/Decimal.sky: percentOf
 sky-stdlib/Std/Decimal.sky: roundHalfUp
 sky-stdlib/Std/Decimal.sky: sub
 sky-stdlib/Std/Decimal.sky: subPercent
-sky-stdlib/Std/Decimal.sky: toFloat
-sky-stdlib/Std/Decimal.sky: toInt
-sky-stdlib/Std/Decimal.sky: toMinor
 sky-stdlib/Std/Decimal.sky: toString
 sky-stdlib/Std/Decimal.sky: toStringFixed
 sky-stdlib/Std/Decimal.sky: truncate
@@ -499,7 +495,6 @@ sky-stdlib/Std/Money.sky: abs
 sky-stdlib/Std/Money.sky: addPercent
 sky-stdlib/Std/Money.sky: amount
 sky-stdlib/Std/Money.sky: currency
-sky-stdlib/Std/Money.sky: currencyCode
 sky-stdlib/Std/Money.sky: currencyName
 sky-stdlib/Std/Money.sky: fromMajor
 sky-stdlib/Std/Money.sky: fromMinor

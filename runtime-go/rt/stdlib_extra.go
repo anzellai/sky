@@ -709,6 +709,11 @@ func jsonDecodeTreeOf(v any) (any, error) {
 		return jsonDecodeTreeOf(x.raw)
 	case nil, string, bool, float64, json.Number:
 		return x, nil
+	case codecJustNull:
+		// A Maybe codec's `Just` of null (codec_auto_check.go) stays itself
+		// in memory, so the write check sees it and refuses the row; its
+		// JSON text is null.
+		return x, nil
 	case int:
 		return json.Number(strconv.Itoa(x)), nil
 	case int64:

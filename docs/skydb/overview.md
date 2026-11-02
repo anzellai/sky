@@ -74,9 +74,15 @@ users =
 
 **`Codec.auto blank`** reflection-derives the codec from a zero-value witness:
 scalars → typed columns, `Maybe` → nullable, list / nested-record → JSON TEXT
-blob, nullary enum → readable name. A data-carrying custom type is not
-derivable: reading it is an `Err`. Give that field a `taggedUnion` codec through
-`Codec.autoWith [ ( "shape", shapeCodec ) ] blank`. Columns + JSON keys are
+blob, nullary enum → readable name, a custom type with data → a tagged object
+(`{"tag":"Circle","v0":2.5}`, read back by each variant's payload types, v0.29.2).
+A variant carrying a `Decimal`, `Money`, `Currency`, `Json.Value` or a type
+variable cannot be read back: the field is a builder problem and
+`Store.fromCodec` refuses the store. Give that field a `taggedUnion` codec
+through `Codec.autoWith [ ( "shape", shapeCodec ) ] blank`. Two fields that
+become one column (`aB` and `a_b`) are a builder problem too, and a `Just`
+written as null (`Just Nothing` of a `Maybe (Maybe a)`, `Just Json.Encode.null`)
+is refused by a write: it would read back as `Nothing`. Columns + JSON keys are
 **snake_case** by default (`priceMinor` → `price_minor`); **`Codec.autoCamel`**
 keeps camelCase; **`Codec.autoWith [ ("active", intBool) ] blank`** overrides one
 field's codec (a Bool stored 0/1, a custom enum) while auto-deriving the rest
@@ -417,7 +423,9 @@ both:
 
   ```sql
   UPDATE items SET cost = CASE WHEN cost LIKE '{%'
-      THEN json_extract(cost, '$.amount')
+      THEN (CASE json_type(cost, '$.amount')
+              WHEN 'text' THEN json_extract(cost, '$.amount')
+              ELSE cost -> '$.amount' END)
       ELSE substr(cost, 2, length(cost) - 2) END
     WHERE cost LIKE '"%"'
        OR (cost LIKE '{%' AND upper(json_extract(cost, '$.currency')) = 'GBP')
@@ -427,6 +435,11 @@ both:
   drop each row's currency, so the refusal gives none. Read it with
   `Codec.moneyIn <Currency>` (every row in one currency) or
   `Codec.moneyObject` (a JSON column that keeps each row's currency).
+
+  A JSON-number amount (`{"amount":0.12345678901234567891,...}`) is copied as
+  its JSON text, so it keeps every digit (v0.29.2; `json_extract` alone gives a
+  REAL, which rounds it). A value the store does not read as a decimal (a REAL,
+  `1e3`) makes `Store.migrate` refuse the column, naming the values.
 
   Put the statement in a migration file (`sky db migrate`), then change the
   field to `Codec.autoWith [ ( "price", Codec.decimal ) ] blank`. A read
@@ -584,7 +597,7 @@ Store.query invoices
 | `countAs "field"` | `COUNT(*)` | `Int` |
 | `countIfAs "field" cond` | rows of the group that match `cond` (0 when none) | `Int` |
 | `countDistinctAs "field" "col"` | `COUNT(DISTINCT col)` | `Int` |
-| `sumAs "field" "col"` | the sum of an `Int` / `Float` column, 0 when empty | the column's kind |
+| `sumAs "field" "col"` | the sum of an `Int` / `Float` column, or of a decimal column (`Codec.decimal`, `Codec.moneyIn`) exactly on both engines; 0 when empty | the column's kind |
 | `minAs` / `maxAs "field" "col"` | the smallest / largest value (not a `Bool` column) | the column's kind; `Maybe` when the column is nullable or there is no `groupBy` |
 
 `having` and the order terms after `aggregate` name result fields. Without

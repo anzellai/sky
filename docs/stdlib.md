@@ -636,7 +636,7 @@ For money, billing, tax, invoices — anything where exact fractional value matt
 | `min` / `max` | `Decimal -> Decimal -> Decimal` |
 | `isZero` / `isPositive` / `isNegative` | `Decimal -> Bool` |
 | `percentOf` / `addPercent` / `subPercent` | `Decimal -> Decimal -> Decimal` (pct as Decimal: `Dec.fromInt 10` = 10%) |
-| `toString` / `toStringFixed n` / `toFloat` / `toInt` / `toMinor n` | `Decimal -> String` (etc.) |
+| `toString` / `toStringFixed n` / `toFloat` / `toInt` / `toMinor n` | `Decimal -> String` (etc.). `toInt` and `toMinor` past the 64-bit Int range, and `toFloat` past the Float range, fail as the classified `NumericOverflow` (v0.29.2), never a wrapped number or an infinite Float |
 | `formatWith` | `{thousands, decimal, places} -> Decimal -> String` (US/EU/FR conventions) |
 | `sum` | `List Decimal -> Decimal` |
 
@@ -667,7 +667,7 @@ ISO 4217 minor-unit awareness (JPY=0dp, USD=2dp, BHD=3dp). `Currency` is a typed
 | `isZero` / `isPositive` / `isNegative` | `Money -> Bool` |
 | `percentOf` / `addPercent` / `subPercent` | `Decimal -> Money -> Money` |
 | `format` / `formatWithCode` | `Money -> String` (`"$108.88"` / `"108.88 USD"`) |
-| `toMinor` | `Money -> Int` |
+| `toMinor` | `Money -> Int` (minor units past the 64-bit Int range, such as 9.22 ETH and up, fail as the classified `NumericOverflow`; store such amounts with `Codec.moneyIn`) |
 | `minorUnits` / `symbol` / `currencyName` | `Currency -> ...` |
 | `currencyFromCode` | `String -> Maybe Currency` (3 to 10 ASCII letters or digits, read in upper case; `CurrencyRaw` for a code Sky does not name; `Nothing` for anything else) |
 | `Rates` / `rates triples` | an explicit exchange-rate table: `List ( Currency, Currency, Decimal ) -> Rates` (a rate at or below zero is left out) |
@@ -1385,14 +1385,17 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
 
 - **`Std.Codec`** — `Codec.auto blank` reflection-derives from a zero-value witness
   (scalars → columns, `Maybe` → nullable, list/nested record → JSON blob, nullary
-  enum → readable name); a data-carrying custom type is not derivable (reading it is
-  an `Err`), so give that field a `taggedUnion` codec through `Codec.autoWith`; **snake_case** columns/keys by default (`Codec.autoCamel` keeps
-  camelCase). A `Json.Value` field carries any JSON when the blank gives it a JSON
-  value (`data = Json.Encode.null`; `Just Json.Encode.null` for a `Maybe Json.Value`).
-  The blank cannot mark the elements of a `List Json.Value` or a
-  `Dict String Json.Value` field, so reading one is a loud `Err`. Give the field
-  its codec (`Codec.autoWith [ ( "items", Codec.list Codec.value ) ] blank`,
-  v0.29.2), or make it one `Json.Value` that holds the whole array or object.
+  enum → readable name, custom type with data → `{"tag":…,"v0":…}` read back by
+  each variant's payload types, v0.29.2); a variant carrying a `Decimal`, `Money`,
+  `Currency`, `Json.Value` or a type variable cannot be read back, so the field is
+  a builder problem (`Codec.problems`, refused by `Store.fromCodec`): give it a
+  `taggedUnion` codec through `Codec.autoWith`; **snake_case** columns/keys by default (`Codec.autoCamel` keeps
+  camelCase; two fields that become one key are a builder problem). A `Json.Value` field carries any JSON when the blank gives it a JSON
+  value (`data = Json.Encode.null`; `Just Json.Encode.null` for a `Maybe Json.Value`;
+  a first element for a `List Json.Value` or `Dict String Json.Value`, v0.29.2),
+  or give the field its codec (`Codec.autoWith [ ( "items", Codec.list Codec.value ) ] blank`).
+  A `Just` written as null (`Just Nothing`, `Just Json.Encode.null`) is refused by a
+  `Std.Db.Store` write: it would read back as `Nothing`.
   **`Codec.autoWith [ ("active", intBool) ] blank`** overrides specific
   fields' codecs while auto-deriving the rest (a Bool stored 0/1, a custom enum
   format) — no full hand-written codec for a one-field tweak. A key is the

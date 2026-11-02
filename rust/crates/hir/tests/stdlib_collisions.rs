@@ -775,9 +775,10 @@ fn e1012_between_two_old_exports_does_not_claim_a_new_name() {
 
 #[test]
 fn e1012_points_a_v0_29_name_at_the_v0_29_guide() {
-    // v0.29.2: `Std.Codec.value` is new since v0.28.1 (the last v0.28
-    // release), while `Std.Html.Attributes.value` is old. The message names
-    // v0.28.1 and links docs/migration/v0.29.md, not the v0.28 guide.
+    // v0.29.2: `Std.Codec.value` is new since v0.29.1 (the newest release
+    // that lacked it), while `Std.Html.Attributes.value` is old. The message
+    // names v0.29.1 and links docs/migration/v0.29.md, not the v0.28 guide.
+    // It said v0.28.1 until the v0.29.1 snapshot was added (sixth Judge).
     let attrs = "module Std.Html.Attributes exposing (..)\nvalue x =\n    x\n";
     let codec = "module Std.Codec exposing (..)\nvalue =\n    1\n";
     let main = "module Main exposing (main)\n\
@@ -792,7 +793,7 @@ fn e1012_points_a_v0_29_name_at_the_v0_29_guide() {
     let msgs = e1012(&r);
     assert_eq!(msgs.len(), 1, "{:?}", r.diagnostics);
     assert!(
-        msgs[0].contains("`Std.Codec.value` is new since Sky v0.28.1"),
+        msgs[0].contains("`Std.Codec.value` is new since Sky v0.29.1"),
         "{}",
         msgs[0]
     );
@@ -802,4 +803,18 @@ fn e1012_points_a_v0_29_name_at_the_v0_29_guide() {
         "{}",
         msgs[0]
     );
+}
+
+#[test]
+fn e1012_names_the_newest_release_that_lacked_a_v0_29_2_name() {
+    // `Money.sum` and `Codec.value` are new in v0.29.2: the newest release
+    // that lacked them is v0.29.1, not v0.28.1 (v0.29.2 sixth Judge). A
+    // v0.29.0 name (`Sky.Core.Regex.findMatch`) still names v0.28.1.
+    for (module, name) in [("Std.Money", "sum"), ("Std.Codec", "value")] {
+        let snap = hir::stdlib_history::new_since(module, name).expect("a v0.29.2 name");
+        assert_eq!(snap.release, "v0.29.1", "{module}.{name}");
+    }
+    let snap =
+        hir::stdlib_history::new_since("Sky.Core.Regex", "findMatch").expect("a v0.29.0 name");
+    assert_eq!(snap.release, "v0.28.1");
 }

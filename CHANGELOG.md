@@ -128,6 +128,56 @@ a `Result` wherever two currencies can differ (see Breaking).
 
 ### Fixed
 
+- **A `Codec.auto` field of a custom type with data reads back exactly, or is
+  refused.** `BoxM (Just 3)` read back as `BoxM (Just 0)`, `Fixed 12.5` as a
+  broken Decimal, and a variant with a `List`, `Dict`, `Money` or enum payload
+  wrote rows no read took back. The reader now decodes each variant's payload
+  by its own type, strictly. A payload whose type the generated code does not
+  keep inside a variant (a `Decimal`, `Money`, `Currency`, `Json.Value`, a type
+  variable, or a nested anonymous record holding one of them) is a builder
+  problem naming the field and the variant (`Codec.problems`; `Store.fromCodec`
+  refuses the store), and its read is an `Err` (see Breaking).
+- **A `Codec.auto` `Currency` field never read back.** It was written as a
+  tagged object no reader rebuilt. It is now its code (`"GBP"`), as
+  `Codec.isoCurrency` writes it; the old tagged form reads too.
+- **An annotated `Codec.auto` with an empty `[]` or `Dict.empty` witness
+  stored rows it could not read.** `cA : Codec RList` with `cA = Codec.auto {
+  id = "", v = [] }` passed `[E2009]` but lowered the witness to `[]any`, so
+  every read failed with "cannot decode kind interface". The witness now takes
+  the annotation's types in the generated code. A `List Json.Value` or `Dict
+  String Json.Value` field reads when its blank holds a JSON value (`[
+  Json.Encode.null ]`); it was an `Err`.
+- **Two `Codec.auto` fields that become one key** (`aB` and `a_b` are both
+  `a_b`) overwrote each other with no error. It is a builder problem and a
+  decode `Err`.
+- **A `Just` written as null was stored as `Nothing`.** `Just Nothing` of a
+  `Codec.maybe (Codec.maybe c)` or a `Maybe (Maybe a)` auto field, and `Just
+  Json.Encode.null` of a `Codec.maybe Codec.value` or a `Maybe Json.Value`
+  auto field, stored NULL and read back as `Nothing`. A `Std.Db.Store` write
+  now refuses the row, naming the column. `Codec.toJson` still writes `null`,
+  and a stored NULL still reads as `Nothing`, so existing data reads as before.
+- **`Store.updateFields`, `setFields` and `updateSet` with a `SqlDecimal` over
+  1000 characters made the table unreadable.** The write check of a decimal
+  column now applies the bound the column's reader applies, on both engines.
+- **The SQLite conversion of a legacy Money column rounded a JSON-number
+  amount.** `json_extract` returns a REAL, so `0.12345678901234567891` became
+  `0.12345678901234568` and `12345678901234567890123` became
+  `1.2345678901234568e+22`. The statement `Store.migrate` names now copies the
+  number's JSON text, so the amount is exact. `Store.migrate` also refuses a
+  SQLite decimal column that holds a value its reader refuses (a REAL, `1e3`),
+  naming the values, instead of accepting a column every read then fails on.
+- **`Decimal.toInt`, `Decimal.toMinor` and `Money.toMinor` wrapped round past
+  the 64-bit Int range** (`Money.toMinor` of 10 ETH gave
+  -8446744073709551616), and `Decimal.toFloat` of `1e400` gave an infinite
+  Float. Each now fails as the classified `NumericOverflow` (see Breaking).
+  `Std.Ai` no longer converts a cost through `toMinor` where it does not need
+  an Int, and bounds the seconds a budget buys.
+- **An `Err` from `Provider.cost` named `Money.add`.** It names
+  `Provider.cost` and both currencies of the price book.
+- **`[E1012]` named v0.28.1 for a name new in v0.29.2** (`Money.sum`,
+  `Codec.value`). A v0.29.1 snapshot is added, so the message names the newest
+  release that lacked the name.
+
 - **No codec writes a value it cannot read back, and a Store write never makes
   a table unreadable.** A codec could write a value its own reader refused,
   and one such row made every later read of the table fail. Earlier fixes
@@ -469,6 +519,38 @@ a `Result` wherever two currencies can differ (see Breaking).
 
 ### Breaking
 
+- **⚠ Breaking: `==` on a `Decimal` and on a `Json.Value` compares the value.**
+  `Decimal "1.10" == Decimal "1.1"` and `Decimal.mul 1.5 2 == Decimal 3` are
+  now `True` (they compared the representation), and so is a Money of equal
+  amounts in one currency. Two `Json.Value`s are equal when they are the same
+  JSON: numbers by value (`5` and `5.0`), objects in any key order. So a
+  Decimal, Money or `Json.Value` read back from a codec or a Store is `==` to
+  the value written. Code that relied on `==` telling `1.10` from `1.1` should
+  compare `Decimal.toString` instead.
+- **⚠ Breaking: a currency code is read in upper case by `Std.Money` too.**
+  `Money.currencyCode (CurrencyRaw "gbp")` is `"GBP"`, and `eqCurrency`,
+  `add`, `compare`, `rates` and `convert` take `CurrencyRaw "gbp"` as GBP, as
+  every codec already read it. `Money.add (Money.Money 1 (CurrencyRaw "gbp"))
+  (Money.fromMajor GBP 1)` was an `Err`. `==` still tells the two apart (it
+  compares how the currency was written): compare Money with `Money.eq`.
+- **⚠ Breaking: `Decimal.toInt`, `Decimal.toMinor`, `Money.toMinor` and
+  `Decimal.toFloat` fail loudly out of range.** A result outside the 64-bit Int
+  range (or the Float range) is the classified `NumericOverflow` panic, never
+  a wrapped number: a server answers that request with a 500, a CLI exits 1
+  with a structured log. `Money.toMinor` of an ETH amount (18 minor units)
+  reaches it from 9.22 ETH. Store such amounts with `Codec.moneyIn` or
+  `Codec.moneyObject`, or compare with the bound before converting.
+- **⚠ Breaking: `Codec.auto` refuses a field it cannot read back.** A field
+  whose custom type has a variant carrying a `Decimal`, `Money`, `Currency`,
+  `Json.Value` or a type variable, a field of a stdlib custom type other than
+  `Decimal`, `Money` and `Currency`, a nested anonymous record holding a
+  `Decimal` or `Money`, and two fields that become one key are builder
+  problems: `Store.fromCodec` refuses the store. Each of them wrote rows that
+  read back as another value or not at all.
+- **⚠ Breaking: a `Std.Db.Store` write refuses a `Just` written as null**
+  (`Just Nothing`, `Just Json.Encode.null`), which used to be stored as NULL
+  and read back as `Nothing`.
+
 - **⚠ Breaking: the `Std.Money` API is redesigned** (docs/migration/v0.29.md,
   "Money results"). `Money.add` of two currencies returned the left operand in
   silence, and `compare`, `lt`, `lte`, `gt`, `gte` and `sumOf` ignored the
@@ -494,8 +576,11 @@ a `Result` wherever two currencies can differ (see Breaking).
     `Task.fromResult` before `Trace.record`). A price book in two currencies,
     or a `Synthetic` budget in another currency than its book, is refused
     before the first call (`InvalidSetting`); an `Eval` cost budget in another
-    currency than the suite's costs fails `Eval.check` with that reason. Each
-    used to crash the process.
+    currency than the suite's costs fails `Eval.check` with that reason. In
+    v0.29.1 none of these failed: `Money.add` of two currencies returned the
+    left operand and `gt` / `gte` ignored the currency, so the cost, the
+    budget check and the gate were silently wrong. An `Err` from
+    `Provider.cost` names `Provider.cost`, not the `Money.add` inside it.
 - **⚠ Breaking: `Std.Codec` exposes `value`** (`Codec.value`). A program that
   imports `Std.Codec exposing (..)` together with `Json.Decode`,
   `Std.Html.Attributes` or the `JsonDec` kernel `exposing (..)` and uses a bare
@@ -523,12 +608,34 @@ a `Result` wherever two currencies can differ (see Breaking).
 
 ### Migration
 
+- **A `Codec.auto` field the store now refuses** (the `Store.fromCodec` error
+  names the field and the variant): give that field its own codec,
+  `Codec.autoWith [ ( "price", priceCodec ) ] blank` with `priceCodec` built
+  by `Codec.taggedUnion`, or use a named record alias instead of a nested
+  anonymous record. For two fields that become one key, rename one or use
+  `Codec.autoCamel`.
+- **A `Just Nothing` the Store now refuses:** store `Nothing`, or wrap the
+  inner value in a record or a custom type, so the two cases have their own
+  JSON.
+- **Money minor units past the Int range:** keep the amount as a Decimal
+  (`Codec.moneyIn`, `Codec.moneyObject`) instead of `Money.toMinor`.
+
 - **A `Codec.autoWith` key that names no column and no record field** was
   ignored before, and is now an error (`Store.fromCodec` refuses the store and
   the codec does not decode). The error names the keys the record takes: use
   one of them, or remove the override.
-- **Upgrading from v0.29.1:** every Breaking entry above is a compile error
-  that names its replacement (docs/migration/v0.29.md, "Money results").
+- **Upgrading from v0.29.1:** most Breaking entries above are compile errors
+  (docs/migration/v0.29.md, "Money results"). A removed `Std.Money` name
+  (`setRate`, `sumOf`, `parseCurrency`, ...) names its replacement. A function
+  whose type changed (`add`, `sub`, `compare`, `lt`, `lte`, `gt`, `gte`,
+  `convert`, `Provider.cost`, `Trace.forResponse`) is a plain type mismatch
+  `[E2001]` at the call (`Money` vs `Result Error Money`, `Rates` vs
+  `Currency`), which does not name the change: handle the `Result` (`case`,
+  `Result.map`, `Task.fromResult`) and pass `Money.rates [ ... ]` as
+  `convert`'s first argument. Two entries fail at run time, not at compile
+  time: a stored Money with an empty currency (its read is an `Err`), and
+  `sky db status` without `db/migrations` (it runs the app read-only, so a
+  write before `Db.migrate` fails).
 - **Moving a `Codec.auto` Decimal or Money field to `Codec.decimal` /
   `Codec.moneyIn`:** convert the column first, with the statement the
   `Store.migrate` refusal names (in a migration file), then switch the codec.

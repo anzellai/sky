@@ -107,7 +107,81 @@ pub fn compute_body_types_with(
     // NB: `signature` is discarded here — the lowerer path only reads
     // `result`/`exprs`/`locals`. It is populated so a stray read stays consistent
     // with the tooling path, but codegen never consumes it (bug-b additivity).
-    BodyTypes::from_tables(infer.infer_def_tables(body))
+    let bt = BodyTypes::from_tables(infer.infer_def_tables(body));
+    pin_witness_types(world, overlay, db, def, body, bt)
+}
+
+/// The types of a `Codec.auto` witness, pinned by the def's annotation
+/// (v0.29.2 sixth Judge).
+///
+/// The lowering view infers a def WITHOUT its annotation (so codegen stays
+/// byte-identical to the oracle). For `cA : Codec RList` with
+/// `cA = Codec.auto { id = "", v = [] }` that leaves the empty list's element a
+/// variable: the witness lowered to `struct{ Id string; V []any }`, and
+/// every read failed with `Codec.auto: cannot decode kind interface`, though
+/// the checker (which uses the annotation) passed `[E2009]` on it. Here, and
+/// only for a witness whose lowering type holds a variable element, the
+/// witness subtree takes the types the annotated inference gives, when those
+/// have no variable element. Every other expression keeps its type, so no
+/// other emitted Go changes.
+fn pin_witness_types(
+    world: &World,
+    overlay: Option<&RecordOverlay>,
+    db: &dyn SkyDb,
+    def: DefId,
+    body: &hir::Body,
+    bt: BodyTypes,
+) -> BodyTypes {
+    use crate::codec_elem::{has_var_elem, witness_exprs};
+    let Some(scheme) = world.value_sigs.get(&def) else {
+        return bt;
+    };
+    let open: Vec<hir::ExprId> = witness_exprs(body, db)
+        .into_iter()
+        .filter(|w| bt.expr(*w).is_some_and(|t| has_var_elem(&t)))
+        .collect();
+    if open.is_empty() {
+        return bt;
+    }
+    let mut infer = Infer::new(world, db)
+        .with_self_def(Some(def))
+        .with_overlay(overlay)
+        .with_record_exprs(true);
+    infer.infer_def_against(body, scheme);
+    let (recorded, table) = infer.recorded_expr_table();
+    let annotated: std::collections::HashMap<hir::ExprId, crate::Ty> = recorded
+        .into_iter()
+        .map(|(e, r)| (e, table.get(r)))
+        .collect();
+    let mut exprs: std::collections::HashMap<hir::ExprId, crate::Ty> = bt.exprs().collect();
+    let mut changed = false;
+    for w in open {
+        if !annotated.get(&w).is_some_and(|t| !has_var_elem(t)) {
+            continue;
+        }
+        let Some(ws) = body.expr_span(w) else {
+            continue;
+        };
+        for (e, _) in body.exprs.iter() {
+            let inside = body.expr_span(e).is_some_and(|s| {
+                s.file == ws.file && s.range.0 >= ws.range.0 && s.range.1 <= ws.range.1
+            });
+            if !inside {
+                continue;
+            }
+            if let Some(t) = annotated.get(&e) {
+                if exprs.get(&e) != Some(t) {
+                    exprs.insert(e, t.clone());
+                    changed = true;
+                }
+            }
+        }
+    }
+    if !changed {
+        return bt;
+    }
+    let locals = bt.locals().collect();
+    BodyTypes::new(bt.result.clone(), bt.signature.clone(), exprs, locals)
 }
 
 /// Eager backend. `SourceDb` has no incremental store, so every call recomputes —

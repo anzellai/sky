@@ -2,8 +2,10 @@
 //
 // Reads the `sky:"name,type"` field tags (emitted by codegen S3) to recover
 // field names and drive encode/decode. Handles scalars, Maybe (↔null), nested
-// records, lists, and nullary enums (as their ordinal int). Data-carrying ADTs
-// error clearly — they need an explicit `taggedUnion` codec.
+// records, lists, and nullary enums (as their ordinal int). A custom type with
+// data is a tagged object read back by each variant's payload types
+// (codecAutoDecodeVariant); one whose payload type is erased is a builder
+// problem (codecAutoTypeProblem) and needs an explicit `taggedUnion` codec.
 package rt
 
 import (
@@ -150,7 +152,7 @@ func codecAutoEncodeVal(rv reflect.Value, snake bool) (any, error) {
 			if rv.FieldByName("Tag").Int() != 0 { // Nothing
 				return nil, nil
 			}
-			return codecAutoEncodeVal(rv.FieldByName("JustValue"), snake)
+			return codecAutoJust(codecAutoEncodeVal(rv.FieldByName("JustValue"), snake))
 		}
 		// Dict k v → JSON object, keyed by the runtime's encoded keys exactly
 		// as the Go map it replaced was (sorted for determinism).
@@ -461,6 +463,13 @@ func codecAutoEncodeStruct(rv reflect.Value, snake bool) (any, error) {
 // field tag): a registered enum → its readable name; Maybe[T]/[]T unwrap the
 // inner type; everything else falls back to value-based encoding.
 func codecAutoEncodeTyped(rv reflect.Value, declaredType string, snake bool) (any, error) {
+	// A Currency is its code (`"GBP"`), as Codec.isoCurrency writes it
+	// (v0.29.2 sixth Judge: the tagged object it was written as never read).
+	if declaredType == "Std_Money_Currency" && rv.IsValid() && rv.CanInterface() {
+		if _, _, _, ok := unwrapADTShape(rv.Interface()); ok {
+			return currencyCodeOf(rv.Interface()), nil
+		}
+	}
 	if declaredType != "" {
 		if isRegisteredEnum(declaredType) {
 			switch rv.Kind() {
@@ -474,7 +483,7 @@ func codecAutoEncodeTyped(rv reflect.Value, declaredType string, snake bool) (an
 			if rv.FieldByName("Tag").Int() != 0 {
 				return nil, nil
 			}
-			return codecAutoEncodeTyped(rv.FieldByName("JustValue"), strings.TrimSuffix(inner, "]"), snake)
+			return codecAutoJust(codecAutoEncodeTyped(rv.FieldByName("JustValue"), strings.TrimSuffix(inner, "]"), snake))
 		}
 		if elem, ok := strings.CutPrefix(declaredType, "[]"); ok && rv.Kind() == reflect.Slice {
 			out := make([]any, rv.Len())
@@ -492,12 +501,13 @@ func codecAutoEncodeTyped(rv reflect.Value, declaredType string, snake bool) (an
 }
 
 // currencyCodeOf renders a `Std.Money.Currency` value as its code string: a
-// nullary arm (`USD`) → its name; a `CurrencyRaw "XYZ"` → the raw string.
+// nullary arm (`USD`) → its name; a `CurrencyRaw "XYZ"` → the raw string
+// in upper case, as Money.currencyCode gives it (v0.29.2 sixth Judge).
 func currencyCodeOf(cur any) string {
 	name, _, fields, _ := unwrapADTShape(cur)
 	if len(fields) > 0 {
 		if s, ok := fields[0].(string); ok {
-			return s
+			return strings.ToUpper(s)
 		}
 	}
 	return name
@@ -636,6 +646,9 @@ func codecAutoDecodeValW(rt reflect.Type, raw any, snake bool, w reflect.Value) 
 			out.Set(reflect.ValueOf(JsonValue{raw: raw}))
 			return out, nil
 		}
+		if rt.NumMethod() > 0 {
+			return codecAutoDecodeVariant(rt, raw, snake)
+		}
 		return reflect.Value{}, fmt.Errorf("Codec.auto: cannot decode kind %s", rt.Kind())
 	case reflect.String:
 		s, ok := raw.(string)
@@ -674,7 +687,7 @@ func codecAutoDecodeValW(rt reflect.Type, raw any, snake bool, w reflect.Value) 
 		}
 		out := reflect.MakeSlice(rt, len(items), len(items))
 		for i, it := range items {
-			ev, err := codecAutoDecodeVal(rt.Elem(), it, snake)
+			ev, err := codecAutoDecodeValW(rt.Elem(), it, snake, codecWitnessElem(w))
 			if err != nil {
 				return reflect.Value{}, err
 			}
@@ -704,13 +717,16 @@ func codecAutoDecodeValW(rt reflect.Type, raw any, snake bool, w reflect.Value) 
 		return out, nil
 	case reflect.Struct:
 		if isSkyDictType(rt) {
-			return codecAutoDecodeDict(rt, "", raw, snake)
+			return codecAutoDecodeDict(rt, "", raw, snake, w)
 		}
 		if isSkyMaybeType(rt) {
 			out := reflect.New(rt).Elem()
 			if raw == nil {
 				out.FieldByName("Tag").SetInt(1) // Nothing
 				return out, nil
+			}
+			if _, ok := raw.(codecJustNull); ok {
+				return reflect.Value{}, fmt.Errorf("Codec.auto: %s", codecJustNullMsg)
 			}
 			out.FieldByName("Tag").SetInt(0) // Just
 			inner, err := codecAutoDecodeValW(out.FieldByName("JustValue").Type(), raw, snake, codecWitnessJust(w))
@@ -805,6 +821,9 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 				out.FieldByName("Tag").SetInt(1)
 				return out, nil
 			}
+			if _, ok := raw.(codecJustNull); ok {
+				return reflect.Value{}, fmt.Errorf("Codec.auto: %s", codecJustNullMsg)
+			}
 			out.FieldByName("Tag").SetInt(0)
 			iv, err := codecAutoDecodeTypedW(out.FieldByName("JustValue").Type(), strings.TrimSuffix(inner, "]"), raw, snake, codecWitnessJust(w))
 			if err != nil {
@@ -820,7 +839,7 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 			}
 			out := reflect.MakeSlice(gt, len(items), len(items))
 			for i, it := range items {
-				ev, err := codecAutoDecodeTyped(gt.Elem(), elem, it, snake)
+				ev, err := codecAutoDecodeTypedW(gt.Elem(), elem, it, snake, codecWitnessElem(w))
 				if err != nil {
 					return reflect.Value{}, err
 				}
@@ -838,7 +857,7 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 		// so it errored "cannot derive data-carrying ADT". List/Maybe already
 		// threaded their element type; Dict was the gap.
 		if inner, ok := strings.CutPrefix(declaredType, "rt.SkyDict["); ok && isSkyDictType(gt) {
-			return codecAutoDecodeDict(gt, strings.TrimSuffix(inner, "]"), raw, snake)
+			return codecAutoDecodeDict(gt, strings.TrimSuffix(inner, "]"), raw, snake, w)
 		}
 		if inner, ok := strings.CutPrefix(declaredType, "map["); ok && gt.Kind() == reflect.Map {
 			close := strings.IndexByte(inner, ']')
@@ -888,66 +907,106 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 			}
 			return reflect.ValueOf(money).Convert(gt), nil
 		}
-		// A user payload ADT — the tagged `{"tag":<name>,"v0":…}` the encoder
-		// emits — reconstructed via the same wire factory the runtime trusts.
-		// GUARD: only when the TARGET type is genuinely an ADT (a SkyADT-backed
-		// struct or a sealed-variant interface). A plain RECORD may legitimately
-		// carry a field NAMED `tag` (e.g. `Inner = { tag : String, n : Int }`),
-		// and it must decode field-by-field, never be mistaken for an ADT wire
-		// and fed to BuildAdtFromWire — the CodecConformanceTest `Inner = {tag,n}`
-		// nested-record round-trip exists to pin exactly this (it was the silent
-		// string→ADT confusion the test's docstring warns about).
-		if isSkyAdtType(gt) || gt.Kind() == reflect.Interface {
-			if obj, ok := raw.(map[string]any); ok {
-				if tag, hasTag := obj["tag"].(string); hasTag {
-					var rawArgs []json.RawMessage
-					for i := 0; ; i++ {
-						v, present := obj[fmt.Sprintf("v%d", i)]
-						if !present {
-							break
-						}
-						b, mErr := json.Marshal(v)
-						if mErr != nil {
-							return reflect.Value{}, fmt.Errorf("Codec.auto: ADT arg marshal: %v", mErr)
-						}
-						rawArgs = append(rawArgs, b)
-					}
-					// The variant registry is keyed by the PACKAGE-QUALIFIED name
-					// (`main.Main_Role`), which `reflect.Type.String()` yields — the
-					// bare `declaredType` (`Main_Role`) is deliberately NOT a key
-					// (adt_variant_factory.go:103). Fall back to the bare name for a
-					// legacy SkyADT-tag registration.
-					adtName := gt.String()
-					val, built := BuildAdtFromWire(adtName, tag, rawArgs, -1)
-					if !built {
-						val, built = BuildAdtFromWire(declaredType, tag, rawArgs, -1)
-					}
-					if built && codecIsHandleADT(val) {
-						return reflect.Value{}, codecUndecodableError("the runtime handle " + tag)
-					}
-					if built {
-						// The field's Go type may be a SEALED INTERFACE (sealed-variant
-						// ADT — `Convert` can't target an interface) or a concrete
-						// `SkyADT`-backed type. Assign directly when the built variant
-						// implements the field type; else convert.
-						rvVal := reflect.ValueOf(val)
-						out := reflect.New(gt).Elem()
-						switch {
-						case rvVal.Type().AssignableTo(gt):
-							out.Set(rvVal)
-						case rvVal.Type().ConvertibleTo(gt):
-							out.Set(rvVal.Convert(gt))
-						default:
-							return reflect.Value{}, fmt.Errorf("Codec.auto: rebuilt %s value is not assignable to the field type %s", declaredType, gt)
-						}
-						return out, nil
-					}
-					return reflect.Value{}, fmt.Errorf("Codec.auto: cannot rebuild ADT %s variant %q", declaredType, tag)
+		// Std.Money.Currency — its code, `"USD"` (`Codec.isoCurrency`'s
+		// form, read under `Money.currencyFromCode`'s grammar). Before
+		// v0.29.2 (sixth Judge) it was written as a tagged object
+		// (`{"tag":"USD"}`) that no read rebuilt; that form is read too, so
+		// a row stored then reads.
+		if declaredType == "Std_Money_Currency" {
+			code, ok := raw.(string)
+			if obj, isObj := jsonObjectMap(raw); isObj {
+				tag, _ := obj["tag"].(string)
+				code, ok = tag, tag != ""
+				if tag == "CurrencyRaw" {
+					code, ok = obj["v0"].(string)
 				}
 			}
+			if !ok {
+				return reflect.Value{}, fmt.Errorf("Codec.auto: expected a currency code, got %s", jsonValueKind(raw))
+			}
+			cur, err := currencyFromCodeStrict(code)
+			if err != nil {
+				return reflect.Value{}, fmt.Errorf("Codec.auto: %v", err)
+			}
+			return reflect.ValueOf(cur).Convert(gt), nil
 		}
 	}
+	// A custom type's value — the tagged `{"tag":<name>,"v0":…}` the encoder
+	// writes. GUARD: only when the TARGET type is genuinely a custom type (a
+	// sealed-variant interface, or the stdlib's SkyADT). A plain RECORD may
+	// carry a field NAMED `tag` (`Inner = { tag : String, n : Int }`) and must
+	// decode field by field (CodecConformanceTest pins this).
+	if gt.Kind() == reflect.Interface && gt.NumMethod() > 0 {
+		return codecAutoDecodeVariant(gt, raw, snake)
+	}
+	if isSkyAdtType(gt) && !codecAutoReadable[declaredType] {
+		// A stdlib custom type other than Decimal, Money and Currency: its
+		// payload types are erased, so it is a builder problem
+		// (codecAutoTypeProblem) and never read as a guess.
+		return reflect.Value{}, fmt.Errorf("Codec.auto: %s is a standard-library custom type Codec.auto does not read back", codecAutoNameOr(declaredType, "this field"))
+	}
 	return codecAutoDecodeValW(gt, raw, snake, w)
+}
+
+func codecAutoNameOr(declared, fallback string) string {
+	if n := codecAutoShortName(declared); n != "" {
+		return n
+	}
+	return fallback
+}
+
+// codecAutoDecodeVariant reads the tagged object of a custom type `gt` (a
+// sealed-variant interface): the tag picks the variant, and each payload
+// `v<i>` is decoded by the variant struct's own field type, strictly (a wrong
+// kind is an error, never a zero value). The wire factory it replaces
+// unmarshalled each payload with Go's json and dropped the error, so a
+// `Maybe Int` payload read as `Just 0` and a Decimal as a broken value
+// (v0.29.2 sixth Judge). A payload whose Go type does not say what it holds
+// (a Decimal, a type variable) is refused by codecAutoDecodeValW, and is a
+// builder problem of the field (codecAutoTypeProblem).
+func codecAutoDecodeVariant(gt reflect.Type, raw any, snake bool) (reflect.Value, error) {
+	obj, ok := jsonObjectMap(raw)
+	if !ok {
+		return reflect.Value{}, fmt.Errorf("Codec.auto: expected a tagged object for %s, got %s", codecAutoShortName(gt.Name()), jsonValueKind(raw))
+	}
+	tag, ok := obj["tag"].(string)
+	if !ok {
+		return reflect.Value{}, fmt.Errorf("Codec.auto: the object for %s has no \"tag\"", codecAutoShortName(gt.Name()))
+	}
+	factory, found := LookupAdtVariant(gt.String(), tag)
+	if !found {
+		return reflect.Value{}, fmt.Errorf("Codec.auto: %s has no variant %q", codecAutoShortName(gt.Name()), tag)
+	}
+	zero := factory(nil)
+	if codecIsHandleADT(zero) {
+		return reflect.Value{}, codecUndecodableError("the runtime handle " + tag)
+	}
+	vt := reflect.TypeOf(zero)
+	out := reflect.New(vt).Elem()
+	if vt.Kind() == reflect.Struct {
+		for i := 0; i < vt.NumField(); i++ {
+			f := vt.Field(i)
+			if f.PkgPath != "" {
+				continue
+			}
+			key := fmt.Sprintf("v%d", i)
+			v, present := obj[key]
+			if !present && !isSkyMaybeType(f.Type) {
+				return reflect.Value{}, fmt.Errorf("Codec.auto: the variant %s has no %q", tag, key)
+			}
+			fv, err := codecAutoDecodeValW(f.Type, v, snake, reflect.Value{})
+			if err != nil {
+				return reflect.Value{}, fmt.Errorf("%v (in the variant %s)", err, tag)
+			}
+			out.Field(i).Set(fv)
+		}
+	}
+	res := reflect.New(gt).Elem()
+	if !vt.AssignableTo(gt) {
+		return reflect.Value{}, fmt.Errorf("Codec.auto: the variant %s is not a %s", tag, codecAutoShortName(gt.Name()))
+	}
+	res.Set(out)
+	return res, nil
 }
 
 // Codec_autoDecoder : a -> Decoder a. A JSON decoder that reflection-builds the
@@ -969,6 +1028,9 @@ func Codec_autoDecoder(snakeArg, witness any) any {
 	}
 	wt := reflect.TypeOf(witness)
 	wv := reflect.ValueOf(witness)
+	if dup := codecAutoDuplicateKey(wt, AsBool(snakeArg)); dup != "" {
+		return JsonDecoder{run: func(any) any { return Err[any, any](ErrDecode(dup)) }}
+	}
 	return JsonDecoder{run: func(raw any) any {
 		v, err := codecAutoDecodeValW(wt, raw, AsBool(snakeArg), wv)
 		if err != nil {
@@ -988,6 +1050,7 @@ func Codec_autoCols(snakeArg, witness any) any {
 		return []any{}
 	}
 	out := []any{}
+	keys := map[string]string{}
 	for i := 0; i < wt.NumField(); i++ {
 		f := wt.Field(i)
 		if f.PkgPath != "" {
@@ -1003,7 +1066,21 @@ func Codec_autoCols(snakeArg, witness any) any {
 			// knows, so the column type is unchanged.
 			kind += "|check"
 		}
-		out = append(out, T2[any, any]{V0: skyColKey(f, snake), V1: kind})
+		// Builder problems (v0.29.2 sixth Judge), read by Codec.problems from
+		// a `|problem=` flag: a field whose type the codec cannot read back,
+		// and a second field that becomes the same key.
+		if p := codecAutoTypeProblem(f.Type, skyTagType(f)); p != "" {
+			kind += "|problem=Codec.auto: the field \"" + skyTagName(f) + "\" cannot be read back: " +
+				strings.ReplaceAll(p, "|", "/") +
+				". Give the field its own codec with Codec.autoWith (a Codec.taggedUnion, Codec.decimal, ...)"
+		}
+		key := skyColKey(f, snake)
+		if first, dup := keys[key]; dup {
+			kind += "|problem=Codec.auto: the fields \"" + first + "\" and \"" + skyTagName(f) +
+				"\" both become the key \"" + key + "\", so one would overwrite the other; rename one, or use Codec.autoCamel"
+		}
+		keys[key] = skyTagName(f)
+		out = append(out, T2[any, any]{V0: key, V1: kind})
 	}
 	return out
 }
@@ -1253,7 +1330,11 @@ func codecAutoEncodeDict(d skyDictAny, snake bool) (any, error) {
 // codecAutoDecodeDict reads a JSON object into the Dict type gt. valType is
 // the declared value type when the caller has one ("" decodes by the Go
 // value type alone).
-func codecAutoDecodeDict(gt reflect.Type, valType string, raw any, snake bool) (reflect.Value, error) {
+func codecAutoDecodeDict(gt reflect.Type, valType string, raw any, snake bool, w reflect.Value) (reflect.Value, error) {
+	// A value of the blank Dict is each value's blank: a `Dict String
+	// Json.Value` with a JSON blank value reads its values as JSON (v0.29.2
+	// sixth Judge).
+	wElem := codecWitnessDictValue(w)
 	m, ok := raw.(map[string]any)
 	if !ok {
 		return reflect.Value{}, fmt.Errorf("Codec.auto: expected object for Dict, got %s", jsonValueKind(raw))
@@ -1266,9 +1347,9 @@ func codecAutoDecodeDict(gt reflect.Type, valType string, raw any, snake bool) (
 		var vv reflect.Value
 		var err error
 		if valType != "" {
-			vv, err = codecAutoDecodeTyped(vt, valType, v, snake)
+			vv, err = codecAutoDecodeTypedW(vt, valType, v, snake, wElem)
 		} else {
-			vv, err = codecAutoDecodeVal(vt, v, snake)
+			vv, err = codecAutoDecodeValW(vt, v, snake, wElem)
 		}
 		if err != nil {
 			return reflect.Value{}, err

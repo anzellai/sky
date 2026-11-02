@@ -291,7 +291,9 @@ both, since `query`/`migrate` overlap; qualified is the intended usage.
 
 `Codec.auto blank` derives the codec from a **zero-value witness** record:
 scalars → columns, `Maybe` → nullable, `List`/nested-record → JSON blob, nullary
-enums → readable names. **Data-carrying ADTs** need an explicit codec — build one
+enums → readable names, a custom type with plain payloads → a tagged object.
+A variant carrying a `Decimal`, `Money`, `Json.Value` or a type variable is a
+builder problem (`Codec.problems`): such a field needs an explicit codec — build one
 with `Codec.object`/`Codec.field`/`Codec.buildObject` (records; `Codec.inline
 .part partFields` writes an embedded record's fields flat, beside the outer
 record's own, with no nested object) or `Codec.taggedUnion`/`Codec.var0..3`

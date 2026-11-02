@@ -29,11 +29,13 @@ silently.** A well-typed `10.0 / 0.0` has no answer Sky can represent (there is
 no `Inf`/`NaN` shape), so it raises a *classified* `DivisionByZero` — recovered
 per-request to a 500 in a server, or exit(1) + a structured log in a CLI — and
 is caught by the whole-app panic net (`docs/architecture/sky-stdlib-correctness.md`
-§2.9; `classifyPanic` in `runtime-go/rt/panic_recover.go` names the ten panic
+§2.9; `classifyPanic` in `runtime-go/rt/panic_recover.go` names the eleven panic
 classes). It is never a silent wrong value (integer `//`/`%` by zero *are* total
 and return 0, matching Elm). `Json.Encode.encode` of a NaN or infinite `Float`
 fails the same way, as a classified `JsonEncodeFailure`, never an empty
-string. Code that divides by a value it does not control should zero-guard the
+string, and `Decimal.toInt` / `toMinor` / `Money.toMinor` past the 64-bit Int
+range (or `Decimal.toFloat` past the Float range) fails as a classified
+`NumericOverflow`, never a wrapped number. Code that divides by a value it does not control should zero-guard the
 divisor; a fallible `Maybe`-returning division is an offered convenience, not a
 soundness requirement. "No runtime panic" therefore means *no UNCLASSIFIED panic and no
 silent corruption* — the property a service actually needs.

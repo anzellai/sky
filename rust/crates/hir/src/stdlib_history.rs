@@ -50,6 +50,14 @@ pub const SNAPSHOTS: &[Snapshot] = &[
         tsv: include_str!("../data/stdlib-exports-v0.28.1.tsv"),
         migration: "docs/migration/v0.29.md#new-stdlib-names",
     },
+    // v0.29.2 adds names (`Money.sum`, `Codec.value`, ...): without this
+    // snapshot `[E1012]` said they were "new since v0.28.1" (v0.29.2 sixth
+    // Judge). The newest release before a name's own is named.
+    Snapshot {
+        release: "v0.29.1",
+        tsv: include_str!("../data/stdlib-exports-v0.29.1.tsv"),
+        migration: "docs/migration/v0.29.md#new-stdlib-names",
+    },
 ];
 
 /// One parsed snapshot line.

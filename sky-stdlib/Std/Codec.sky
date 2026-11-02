@@ -1019,8 +1019,8 @@ isoCurrencyDecoder =
 
 
 -- | Codec for a raw `Json.Value` (v0.29.2): the JSON as it is, both ways, so
--- a field of `List Json.Value` or `Dict String Json.Value` (which
--- `Codec.auto` cannot read) has a codec: `Codec.list Codec.value`,
+-- a field of `List Json.Value` or `Dict String Json.Value` has a codec
+-- without a blank to mark it: `Codec.list Codec.value`,
 -- `Codec.dict Codec.string Codec.value`, or an `autoWith` override. Any JSON
 -- reads; the value written is the value read. Database: a JSON TEXT column.
 -- Its JSON Schema is the open `{}` (not exact). Its zero is `null`.
@@ -1049,8 +1049,12 @@ value =
 -- of a `buildObject` codec must be present in the JSON object even when it is
 -- a `maybe` (`null` for `Nothing`). A `Maybe scalar` stays a (nullable) scalar column;
 -- anything deeper becomes a nullable blob column, so `Nothing` stores as NULL.
--- A `Maybe (Maybe a)` is the same one nullable column as `Maybe a`: JSON has
--- one `null`, so `Just Nothing` reads back as `Nothing`.
+-- A `Maybe (Maybe a)` is the same one nullable column as `Maybe a`. JSON has
+-- one `null`, so `Just Nothing` (and `Just Json.Encode.null` of a
+-- `maybe value`) has no JSON of its own: `toJson` writes it as `null`, which
+-- reads back as `Nothing`, and a `Std.Db.Store` write refuses the row (since
+-- v0.29.2) rather than store a value that reads back as another. A stored
+-- NULL reads as `Nothing`, as before.
 maybe : Codec a -> Codec (Maybe a)
 maybe c =
     maybeWith False c
@@ -1060,41 +1064,69 @@ maybe c =
 -- there, and only there, a value the inner codec does not read is `Nothing`.
 maybeWith : Bool -> Codec a -> Codec (Maybe a)
 maybeWith lenient (Codec c) =
-    Codec
-        { enc =
-            \m ->
-                case m of
+    let
+        -- The inner codec can write JSON null (a `maybe`, `value`), so
+        -- `Just x` can be written as the null `Nothing` is (v0.29.2 sixth
+        -- Judge): such a `Just` is written as a value every reader refuses
+        -- (`justNullK`, JSON text `null`), and the Store write check refuses
+        -- the row. Any other inner codec keeps the plain path.
+        nul =
+            case c.sch of
 
-                    Just x ->
-                        c.enc x
+                SnNullable _ ->
+                    True
 
-                    Nothing ->
-                        E.null
-        , dec =
-            if lenient then
-                D.oneOf [ D.nullable c.dec, D.succeed Nothing ]
-
-            else
-                D.nullable c.dec
-        , shp =
-            case c.shp of
-
-                SScalar (CNull t) ->
-                    SScalar (CNull t)
-
-                SScalar t ->
-                    SScalar (CNull t)
+                SnOpen ->
+                    True
 
                 _ ->
-                    SScalar (CNull CBlob)
-        , sch = SnNullable c.sch
-        , zro = \_ -> Just E.null
-        , fzr = \_ -> []
-        , fck = \_ -> []
-        , vck = checkIf (hasCheck c.vck) (D.nullable c.dec)
-        , vcs = []
-        , prb = c.prb
-        }
+                    False
+        inner =
+            if nul then
+                refuseJustNullK c.dec
+
+            else
+                c.dec
+    in
+        Codec
+            { enc =
+                \m ->
+                    case m of
+
+                        Just x ->
+                            if nul then
+                                justNullK (c.enc x)
+
+                            else
+                                c.enc x
+
+                        Nothing ->
+                            E.null
+            , dec =
+                if lenient then
+                    D.oneOf [ D.nullable inner, D.succeed Nothing ]
+
+                else
+                    D.nullable inner
+            , shp =
+                case c.shp of
+
+                    SScalar (CNull t) ->
+                        SScalar (CNull t)
+
+                    SScalar t ->
+                        SScalar (CNull t)
+
+                    _ ->
+                        SScalar (CNull CBlob)
+            , sch = SnNullable c.sch
+            , zro = \_ -> Just E.null
+            , fzr = \_ -> []
+            , fck = \_ -> []
+            , vck = checkIf (nul || hasCheck c.vck) (D.nullable inner)
+            , vcs = []
+            , prb = c.prb
+            }
 
 
 -- | Codec for a `List a` given a codec for `a` — JSON array; stored as a JSON
@@ -1583,7 +1615,10 @@ witnessZeros cols witness =
             case D.decodeValue (D.field name D.value) witness of
 
                 Ok v ->
-                    ( name, v ) :: witnessZeros rest witness
+                    -- A blank's `Just Json.Encode.null` (a natural `Maybe
+                    -- Json.Value` blank) is a plain null here: the zeros fill
+                    -- the other columns of a write check, and must read.
+                    ( name, plainNullK v ) :: witnessZeros rest witness
 
                 Err _ ->
                     witnessZeros rest witness
@@ -1648,17 +1683,27 @@ keyCount key cols n =
 -- | Derive a codec from a record type by reflection — no field-by-field
 -- pipeline. The argument is a zero-value witness (a `blank` record) that hands
 -- the runtime the type. Handles scalars, `Maybe` (↔ null), nested records,
--- lists, and nullary enums (stored as their readable name). Data-carrying ADTs
--- are NOT derivable: reading one is an `Err`. Give that field an explicit
--- `taggedUnion` codec through `autoWith [ ( "shape", shapeCodec ) ] blank`.
+-- lists, and nullary enums (stored as their readable name).
+--
+-- A custom type with data is written as `{"tag":"Circle","v0":2.5}` and read
+-- back by each variant's own payload types (v0.29.2): a `String`, `Int`,
+-- `Float`, `Bool`, `Char`, an enum, a record, another such custom type, or a
+-- `Maybe`, `List` or `Dict` of them. A payload whose type the generated code
+-- does not keep inside a variant (a `Decimal`, `Money` or `Currency`, a
+-- `Json.Value`, a type variable) cannot be read back: the field is a builder
+-- problem (`problems`; `Std.Db.Store.fromCodec` refuses the store) and its
+-- read is an `Err`. Give such a field an explicit `taggedUnion` codec through
+-- `autoWith [ ( "shape", shapeCodec ) ] blank`. Two fields that become one
+-- key (`aB` and `a_b` are both `a_b`) are a builder problem too.
 --
 -- A `Json.Value` field carries any JSON. The blank marks it: give the field a
 -- JSON value (`data = Json.Encode.null`), and a `Maybe Json.Value` field a
 -- `Just` one (`more = Just Json.Encode.null`). A field the blank does not
--- mark this way does not decode. The blank cannot mark the elements of a
--- `List Json.Value` or a `Dict String Json.Value` field, so reading one is a
--- loud `Err`: make the field one `Json.Value` that holds the whole array or
--- object, and read its parts with `Json.Decode`.
+-- mark this way does not decode. A `List Json.Value` or `Dict String
+-- Json.Value` field is marked by its first element (`items = [
+-- Json.Encode.null ]`, v0.29.2). A `Just` written as null (`Just Nothing` of a
+-- `Maybe (Maybe a)`, `Just Json.Encode.null`) has no JSON of its own: a
+-- `Std.Db.Store` write refuses it.
 --
 -- Columns / JSON keys are **snake_case** (the DB convention): a record field
 -- `priceMinor` maps to column `price_minor` with no hand-written codec. For a
@@ -1711,7 +1756,7 @@ autoBase snake witness =
                     _ ->
                         [ valueCheck dec ]
             , vcs = checks
-            , prb = []
+            , prb = colProblems cols
             }
 
 
@@ -1782,6 +1827,7 @@ autoWith overrides witness =
             List.concatMap (\( _, c ) -> c.prb) known
                 ++ List.map (unknownOverrideKey names) unknown
                 ++ repeated
+                ++ colProblems cols
         encs = List.map (\( col, c ) -> ( col, c.enc )) known
         decs = List.map (\( col, c ) -> ( col, c.dec )) known
         shps = List.map (\( col, c ) -> ( col, c.shp )) known
@@ -1827,6 +1873,39 @@ autoWith overrides witness =
             , vcs = checks
             , prb = problems
             }
+
+
+-- The builder problems the runtime found in an auto record's columns (a
+-- flag `|problem=<sentence>` on a column's kind, `Codec_autoCols`): a field
+-- whose type the codec cannot read back (a variant carrying a Decimal), two
+-- fields named by one column (`aB` and `a_b`). An overridden column has its
+-- override's kind, so its problem is gone with it.
+colProblems : List ( String, String ) -> List String
+colProblems cols =
+    -- Typed recursion, so no kernel result is narrowed (doc 14).
+    case cols of
+
+        [] ->
+            []
+
+        ( _, kind ) :: rest ->
+            flagProblems (List.drop 1 (String.split "|" kind))
+                ++ colProblems rest
+
+
+flagProblems : List String -> List String
+flagProblems flags =
+    case flags of
+
+        [] ->
+            []
+
+        flag :: rest ->
+            if String.startsWith "problem=" flag then
+                String.dropLeft 8 flag :: flagProblems rest
+
+            else
+                flagProblems rest
 
 
 -- The first two keys of `keyed` (each ( key, column )) that name one column,
@@ -2381,6 +2460,25 @@ nameCount name names n =
 enumNotListedK : v -> Value
 enumNotListedK =
     Ffi.kernel "Codec_enumNotListed"
+
+
+-- The value a Maybe codec writes for `Just x` whose inner encoding `v` is
+-- JSON null: one every reader refuses (written as `null` in JSON text).
+justNullK : Value -> Value
+justNullK =
+    Ffi.kernel "Codec_justNull"
+
+
+-- `dec`, refusing the value `justNullK` writes.
+refuseJustNullK : Decoder a -> Decoder a
+refuseJustNullK =
+    Ffi.kernel "Codec_refuseJustNull"
+
+
+-- `v` with every value `justNullK` wrote made a plain null again.
+plainNullK : Value -> Value
+plainNullK =
+    Ffi.kernel "Codec_plainNull"
 
 
 enumNameFor : v -> List ( v, String ) -> Maybe String

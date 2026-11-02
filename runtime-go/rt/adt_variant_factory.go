@@ -72,7 +72,11 @@ type AdtCtorKey struct {
 }
 
 var (
-	adtVariantRegistry   = make(map[AdtCtorKey]AdtVariantFactory)
+	adtVariantRegistry = make(map[AdtCtorKey]AdtVariantFactory)
+	// adtVariantCtors lists each ADT's registered constructors in
+	// registration (declaration) order, so Codec.auto can read every
+	// variant's payload types.
+	adtVariantCtors      = make(map[string][]string)
 	adtVariantRegistryMu sync.RWMutex
 )
 
@@ -95,6 +99,7 @@ func RegisterAdtVariant(adtName, ctorName string, factory AdtVariantFactory) {
 	adtVariantRegistryMu.Lock()
 	if _, exists := adtVariantRegistry[key]; !exists {
 		adtVariantRegistry[key] = factory
+		adtVariantCtors[adtName] = append(adtVariantCtors[adtName], ctorName)
 	}
 	adtVariantRegistryMu.Unlock()
 }
@@ -108,6 +113,22 @@ func LookupAdtVariant(adtName, ctorName string) (AdtVariantFactory, bool) {
 	f, ok := adtVariantRegistry[AdtCtorKey{Adt: adtName, Ctor: ctorName}]
 	adtVariantRegistryMu.RUnlock()
 	return f, ok
+}
+
+// adtVariantZeros is one zero value of each registered variant of the ADT
+// named adtName (its Go type name, `main.Main_Box`), in declaration order:
+// the variant structs whose exported fields are the payload types.
+func adtVariantZeros(adtName string) []any {
+	adtVariantRegistryMu.RLock()
+	ctors := append([]string(nil), adtVariantCtors[adtName]...)
+	adtVariantRegistryMu.RUnlock()
+	out := make([]any, 0, len(ctors))
+	for _, c := range ctors {
+		if f, ok := LookupAdtVariant(adtName, c); ok {
+			out = append(out, f(nil))
+		}
+	}
+	return out
 }
 
 // BuildAdtFromWire is the unified entry point for __sky_send

@@ -8127,8 +8127,11 @@ g5Valid s u =
         ( GMaybe x, UMaybe m ) ->
             case m of
 
+                -- A `Just` of a value written as null (`Just Nothing`,
+                -- `Just Json.Encode.null`) has no JSON of its own: the write
+                -- check refuses it (v0.29.2 sixth Judge).
                 Just v ->
-                    g5Valid x v
+                    g5Valid x v && not (g5EncNull x v)
 
                 Nothing ->
                     True
@@ -8213,8 +8216,9 @@ g5Finite s u =
 
 
 -- Whether the value encodes as JSON null. JSON has one null, so a `Just`
--- of such a value reads back as `Nothing` (documented for `Codec.maybe`):
--- the comparison treats the two as one.
+-- of such a value would read back as `Nothing`: it is not valid (`g5Valid`,
+-- the write check refuses it), and the JSON comparison treats the two as one
+-- (`Codec.toJson` still writes it as null).
 g5EncNull : G5Spec -> G5U -> Bool
 g5EncNull s u =
     case ( s, u ) of
@@ -8398,6 +8402,13 @@ g5JsonCase s c checks v =
 
                     else if g5Valid s v then
                         Just (label ++ ": reads back as another value")
+
+                    else if refused && g5Eq s v w then
+                        -- A `Just` of a value written as null: `toJson` writes
+                        -- null (it reads back as `Nothing`, which `g5Eq` takes as
+                        -- equal), and the write check refuses it (v0.29.2 sixth
+                        -- Judge).
+                        Nothing
 
                     else
                         Just (label ++ ": a value the codec cannot write reads back")
@@ -8594,7 +8605,6 @@ type alias J5Auto =
     , ds : List Decimal
     , md : Maybe Decimal
     , m : Money
-    , nest : { inner : List Money }
     , f : Float
     , n : Int
     }
@@ -8607,7 +8617,6 @@ j5AutoBlank =
     , ds = []
     , md = Nothing
     , m = Money.zero Money.GBP
-    , nest = { inner = [] }
     , f = 0.0
     , n = 0
     }
@@ -8771,7 +8780,7 @@ j5Tests db =
                       ( ( True, True ), ( True, True ), ( True, True ), ( "ok", True ) )
                       ( says r1, says r2, says r3, r4 ))
     , Test.test
-          "fifth Judge: Codec.auto refuses a Decimal or Money field it cannot read back (a field, a list, a Maybe, a nested record) and a NaN Float; writeChecks lists only those fields"
+          "fifth Judge: Codec.auto refuses a Decimal or Money field it cannot read back (a field, a list, a Maybe) and a NaN Float; writeChecks lists only those fields"
           (\_ ->
               let
                   setup = Store.migrate db j5AutoStore
@@ -8784,15 +8793,14 @@ j5Tests db =
                       )
               in
                   Test.equal
-                      ( [ ( True, True ), ( True, True ), ( True, True ), ( True, True ), ( True, True ), ( True, True ) ]
+                      ( [ ( True, True ), ( True, True ), ( True, True ), ( True, True ), ( True, True ) ]
                       , ( "ok", True )
-                      , [ "d", "ds", "m", "md", "nest" ]
+                      , [ "d", "ds", "m", "md" ]
                       )
                       ( [ refusedAt "d" (write { base | d = j5Long })
                         , refusedAt "ds" (write { base | ds = [ j5Long ] })
                         , refusedAt "md" (write { base | md = Just j5Long })
                         , refusedAt "m" (write { base | m = Money.Money j5Long Money.GBP })
-                        , refusedAt "nest" (write { base | nest = { inner = [ Money.Money j5Long Money.EUR ] } })
                         , refusedAt "f" (write { base | f = j5Nan })
                         ]
                       , write { base | d = dec "12.5", ds = [ dec (String.repeat 1000 "9") ], m = gbp "3" }
@@ -8881,6 +8889,306 @@ j5Tests db =
     ]
 
 
+
+
+-- ── The sixth Judge (v0.29.2) ──────────────────────────────────────────────
+-- A custom type in a Codec.auto record round-trips exactly or is a builder
+-- problem; an annotated empty witness reads; two fields naming one key are a
+-- problem; Decimal and Json.Value `==` compare the value; a `Just` written
+-- as null is refused; a long decimal through updateFields is refused; a
+-- currency code is read in upper case by Money too; a SQLite decimal column
+-- holding a REAL is refused by migrate.
+
+
+type alias J6Inner =
+    { label : String, n : Int }
+
+
+type J6Box
+    = J6BoxM (Maybe Int)
+    | J6BoxL (List Int)
+    | J6BoxR J6Inner
+    | J6BoxS J5Status
+    | J6BoxN
+
+
+type J6Price
+    = J6Fixed Decimal
+    | J6Free
+
+
+type alias J6BoxRow =
+    { id : String, box : J6Box }
+
+
+j6BoxStore : Store J6BoxRow
+j6BoxStore =
+    Store.fromCodec "sqc_j6_box" (Codec.auto { id = "", box = J6BoxN }) |> Store.primaryKey "id"
+
+
+type alias J6Nest =
+    { id : String, nest : { inner : List Money } }
+
+
+j6NestBlank : J6Nest
+j6NestBlank =
+    { id = "", nest = { inner = [] } }
+
+
+type alias J6Priced =
+    { id : String, price : J6Price }
+
+
+j6PriceCodec : Codec J6Priced
+j6PriceCodec =
+    Codec.auto { id = "", price = J6Free }
+
+
+type alias J6List =
+    { id : String, v : List Int }
+
+
+j6ListCodec : Codec J6List
+j6ListCodec =
+    Codec.auto { id = "", v = [] }
+
+
+type alias J6Dict =
+    { id : String, v : Dict.Dict String Int }
+
+
+j6DictCodec : Codec J6Dict
+j6DictCodec =
+    Codec.auto { id = "", v = Dict.empty }
+
+
+type alias J6Vals =
+    { id : String, vs : List JE.Value }
+
+
+j6ValsCodec : Codec J6Vals
+j6ValsCodec =
+    Codec.auto { id = "", vs = [ JE.null ] }
+
+
+type alias J6Nested =
+    { id : String, mm : Maybe (Maybe Int), mv : Maybe JE.Value }
+
+
+j6NestedStore : Store J6Nested
+j6NestedStore =
+    Store.fromCodec
+        "sqc_j6_nested"
+        (Codec.object J6Nested
+            |> Codec.field "id" .id Codec.string
+            |> Codec.field "mm" .mm (Codec.maybe (Codec.maybe Codec.int))
+            |> Codec.field "mv" .mv (Codec.maybe Codec.value)
+            |> Codec.buildObject)
+        |> Store.primaryKey "id"
+
+
+j6NestedAutoStore : Store J6Nested
+j6NestedAutoStore =
+    Store.fromCodec "sqc_j6_nested_auto" (Codec.auto { id = "", mm = Just Nothing, mv = Just JE.null }) |> Store.primaryKey "id"
+
+
+type alias J6Cur =
+    { id : String, cur : Money.Currency }
+
+
+j6CurStore : Store J6Cur
+j6CurStore =
+    Store.fromCodec "sqc_j6_cur" (Codec.auto { id = "", cur = Money.GBP }) |> Store.primaryKey "id"
+
+
+-- Write `v` to a fresh table, read every row back: the error text (or "ok")
+-- and whether the rows read are `[ v ]` (`==`).
+j6Same : Db -> String -> Store a -> a -> ( String, Bool )
+j6Same db table store v =
+    case
+        Task.run
+            (drop db table
+                |> Task.andThen (\_ -> unit (Store.migrate db store))
+                |> Task.andThen (\_ -> Store.insert db store v)
+                |> Task.andThen (\_ -> Store.all db store)
+                |> Task.map (\rs -> ( "ok", rs == [ v ] ))
+                |> Task.onError (\e -> Task.succeed ( Error.toString e, False )))
+    of
+
+        Ok r ->
+            r
+
+        Err e ->
+            ( Error.toString e, False )
+
+
+j6Tests : Db -> List Test
+j6Tests db =
+    [ Test.test
+          "sixth Judge: a Codec.auto custom type field round-trips each variant exactly (Maybe, List, record, enum, nullary payloads)"
+          (\_ ->
+              Test.equal
+                  [ ( "ok", True ), ( "ok", True ), ( "ok", True ), ( "ok", True ), ( "ok", True ), ( "ok", True ) ]
+                  (List.map
+                      (\b -> j6Same db "sqc_j6_box" j6BoxStore { id = "a", box = b })
+                      [ J6BoxM (Just 3), J6BoxM Nothing, J6BoxL [ 9007199254740993, -1 ], J6BoxR { label = "x", n = 7 }, J6BoxS J5Suspended, J6BoxN ]))
+    , Test.test
+          "sixth Judge: a Codec.auto field whose variant carries a Decimal (or a nested anonymous record holding a Money) is a builder problem naming the field and the variant; the store is refused; the reader refuses it"
+          (\_ ->
+              let
+                  store = Store.fromCodec "sqc_j6_price" j6PriceCodec |> Store.primaryKey "id"
+                  probs = Codec.problems j6PriceCodec
+              in
+                  Test.equal
+                      ( True, True, True, True )
+                      ( List.any (\p -> String.contains "\"price\"" p && String.contains "J6Fixed" p) probs
+                      , List.any (String.contains "\"nest\"") (Codec.problems (Codec.auto j6NestBlank))
+                      , isErr (Task.run (Store.migrate db store))
+                      , isErr (Codec.fromJson j6PriceCodec "{\"id\":\"a\",\"price\":{\"tag\":\"J6Fixed\",\"v0\":\"12.5\"}}")
+                      ))
+    , Test.test
+          "sixth Judge: an annotated Codec.auto with an empty List or Dict witness reads its elements; a List Json.Value witness reads"
+          (\_ ->
+              Test.equal
+                  ( Ok [ 1, 2 ], Ok [ ( "k", 1 ) ], Ok True )
+                  ( Codec.fromJson j6ListCodec "{\"id\":\"a\",\"v\":[1,2]}" |> Result.map .v
+                  , Codec.fromJson j6DictCodec "{\"id\":\"a\",\"v\":{\"k\":1}}" |> Result.map (\r -> Dict.toList r.v)
+                  , Codec.fromJson j6ValsCodec "{\"id\":\"a\",\"vs\":[5,\"x\",null]}"
+                      |> Result.map (\r -> r.vs == [ JE.int 5, JE.string "x", JE.null ])
+                  ))
+    , Test.test
+          "sixth Judge: two Codec.auto fields that become one key (aB and a_b) are a builder problem and a decode Err"
+          (\_ ->
+              let
+                  codec = Codec.auto { id = "", aB = 0, a_b = 0 }
+              in
+                  Test.equal
+                      ( True, True )
+                      ( List.any (String.contains "\"aB\" and \"a_b\"") (Codec.problems codec)
+                      , isErr (Codec.fromJson codec "{\"id\":\"1\",\"a_b\":1}")
+                      ))
+    , Test.test
+          "sixth Judge: == on Decimal compares the value (1.10 == 1.1, a product, a decimal column read back) and on Json.Value compares the JSON"
+          (\_ ->
+              let
+                  store =
+                      Store.fromCodec
+                          "sqc_j6_deceq"
+                          (Codec.object (\i d -> { id = i, d = d })
+                              |> Codec.field "id" .id Codec.string
+                              |> Codec.field "d" .d Codec.decimal
+                              |> Codec.buildObject)
+                          |> Store.primaryKey "id"
+              in
+                  Test.equal
+                      ( ( True, True, False ), ( True, True ), ( "ok", True ) )
+                      ( ( dec "1.10" == dec "1.1", Decimal.mul (dec "1.5") (dec "2") == dec "3", dec "1.1" == dec "1.11" )
+                      , ( Codec.fromJson Codec.value (Codec.toJson Codec.value (JE.int 5)) == Ok (JE.int 5)
+                        , Codec.fromJson Codec.value "{\"b\":[1.0,null],\"a\":\"x\"}" == Ok (JE.object [ ( "a", JE.string "x" ), ( "b", JE.list identity [ JE.int 1, JE.null ] ) ])
+                        )
+                      , j6Same db "sqc_j6_deceq" store { id = "a", d = dec "12.30" }
+                      ))
+    , Test.test
+          "sixth Judge: a Just written as null (Just Nothing, Just Json.Encode.null) is refused by a Store write, by Codec.maybe and by Codec.auto; Nothing and Just values write; the table reads"
+          (\_ ->
+              let
+                  row = { id = "a", mm = Nothing, mv = Nothing }
+                  w store table r = j5Write db table (Store.migrate db store) (Store.insert db store r) (Store.all db store)
+                  refused ( msg, readable ) = ( String.contains "Just" msg && String.contains "Nothing" msg, readable )
+              in
+                  Test.equal
+                      ( [ ( True, True ), ( True, True ), ( True, True ), ( True, True ) ]
+                      , [ ( "ok", True ), ( "ok", True ) ]
+                      )
+                      ( [ refused (w j6NestedStore "sqc_j6_nested" { row | mm = Just Nothing })
+                        , refused (w j6NestedStore "sqc_j6_nested" { row | mv = Just JE.null })
+                        , refused (w j6NestedAutoStore "sqc_j6_nested_auto" { row | mm = Just Nothing })
+                        , refused (w j6NestedAutoStore "sqc_j6_nested_auto" { row | mv = Just JE.null })
+                        ]
+                      , [ j6Same db "sqc_j6_nested" j6NestedStore { row | mm = Just (Just 3), mv = Just (JE.int 1) }
+                        , j6Same db "sqc_j6_nested_auto" j6NestedAutoStore { row | mm = Just (Just 3), mv = Just (JE.string "x") }
+                        ]
+                      ))
+    , Test.test
+          "sixth Judge: updateFields and setFields refuse a computed Decimal over 1000 characters on a decimal column; the table reads"
+          (\_ ->
+              let
+                  setup =
+                      Store.migrate db j5DecStore
+                          |> Task.andThen (\_ -> Store.insert db j5DecStore { id = "a", d = Decimal.zero, ds = [], m = gbp "1" })
+                  readAll = Store.toList db (Store.query j5DecStore)
+                  says ( msg, readable ) = ( String.contains "at most 1000" msg, readable )
+              in
+                  Test.equal
+                      ( ( True, True ), ( True, True ), ( "ok", True ) )
+                      ( says (j5Write db "sqc_j5_dec" setup (Store.updateFields db j5DecStore (Store.eq "id" (SqlString "a")) [ ( "d", SqlDecimal j5Long ) ]) readAll)
+                      , says (j5Write db "sqc_j5_dec" setup (Store.setFields db j5DecStore (SqlString "a") [ ( "d", SqlDecimal j5Long ) ]) readAll)
+                      , j5Write db "sqc_j5_dec" setup (Store.updateFields db j5DecStore (Store.eq "id" (SqlString "a")) [ ( "d", SqlDecimal (dec "12.5") ) ]) readAll
+                      ))
+    , Test.test
+          "sixth Judge: Money reads a currency code in upper case, as every codec does: CurrencyRaw \"gbp\" is GBP to add, eq, eqCurrency, rates and a moneyObject round trip"
+          (\_ ->
+              let
+                  lower = Money.Money (dec "1") (Money.CurrencyRaw "gbp")
+                  back = Codec.fromJson Codec.moneyObject (Codec.toJson Codec.moneyObject lower)
+              in
+                  Test.equal
+                      ( Ok "2", True, Ok True, Ok "2" )
+                      ( Money.add lower (gbp "1") |> Result.map (\m -> Decimal.toString (Money.amount m))
+                      , Money.eqCurrency (Money.CurrencyRaw "gbp") Money.GBP
+                      , Result.map (Money.eq lower) back
+                      , Money.convert (Money.rates [ ( Money.CurrencyRaw "usd", Money.EUR, dec "2" ) ]) Money.EUR (Money.Money (dec "1") Money.USD)
+                          |> Result.map (\m -> Decimal.toString (Money.amount m))
+                      ))
+    , Test.test
+          "sixth Judge: a Codec.auto Currency field round-trips through a Store (it used to write a tagged object no read rebuilt)"
+          (\_ ->
+              Test.equal
+                  [ ( "ok", True ), ( "ok", True ), ( "ok", True ) ]
+                  (List.map
+                      (\c -> j6Same db "sqc_j6_cur" j6CurStore { id = "a", cur = c })
+                      [ Money.USD, Money.USDT, Money.CurrencyRaw "XYZ" ]))
+    , Test.test
+          "sixth Judge: on SQLite, migrate refuses a decimal column holding a REAL or exponent text it would not read, naming the values"
+          (\_ ->
+              let
+                  store =
+                      Store.fromCodec
+                          "sqc_j6_real"
+                          (Codec.object (\i d -> { id = i, d = d })
+                              |> Codec.field "id" .id Codec.string
+                              |> Codec.field "d" .d Codec.decimal
+                              |> Codec.buildObject)
+                          |> Store.primaryKey "id"
+                  result =
+                      Task.run
+                          (drop db "sqc_j6_real"
+                              |> Task.andThen (\_ -> unit (Db.exec db "CREATE TABLE sqc_j6_real (id TEXT PRIMARY KEY, d TEXT NOT NULL)" []))
+                              |> Task.andThen (\_ -> unit (Db.exec db "INSERT INTO sqc_j6_real VALUES ('a', 1.2345678901234568e22), ('b', '1e3'), ('c', '12.5')" []))
+                              |> Task.andThen (\_ -> Store.migrate db store))
+              in
+                  if dsn == "" then
+                      Test.equal
+                          ( True, True )
+                          ( case result of
+                              Err e ->
+                                  String.contains "does not read as a decimal" (Error.toString e)
+
+                              Ok _ ->
+                                  False
+                          , case result of
+                              Err e ->
+                                  String.contains "1e3" (Error.toString e)
+
+                              Ok _ ->
+                                  False
+                          )
+
+                  else
+                      Test.equal True (isErr result))
+    ]
+
+
 tests : List Test
 tests =
     case setup () of
@@ -8912,6 +9220,7 @@ tests =
                 ++ inListTests db
                 ++ g5Tests db
                 ++ j5Tests db
+                ++ j6Tests db
 
 
 main =

@@ -4544,8 +4544,14 @@ cloudEstimate job cs parameters =
             case Decimal.div (Money.amount cs.budget) (Money.amount cs.perHour) of
 
                 Ok hours ->
+                    -- At most 100 years: `Decimal.toInt` has no Int past 64
+                    -- bits and fails loudly there (v0.29.2), and a budget that
+                    -- large is no bound.
                     Decimal.toInt
-                        (Decimal.floor (Decimal.mul hours (Decimal.fromInt 3600)))
+                        (Decimal.min
+                            (Decimal.floor
+                                (Decimal.mul hours (Decimal.fromInt 3600)))
+                            (Decimal.fromInt 3155760000))
 
                 Err _ ->
                     -- A free machine: only the ceiling bounds it.
@@ -5626,8 +5632,11 @@ affordableSeconds cs spentMinor =
         case Decimal.div (Money.amount left) (Money.amount cs.perHour) of
 
             Ok hours ->
+                -- At most 100 years, as in the estimate above.
                 Decimal.toInt
-                    (Decimal.floor (Decimal.mul hours (Decimal.fromInt 3600)))
+                    (Decimal.min
+                        (Decimal.floor (Decimal.mul hours (Decimal.fromInt 3600)))
+                        (Decimal.fromInt 3155760000))
 
             Err _ ->
                 86400

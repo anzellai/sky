@@ -140,16 +140,28 @@ toStringFixed places d =
     Ffi.callPure "Decimal_toStringFixed" [ Ffi.toAny places, Ffi.toAny d ]
 
 
+-- | The Float nearest the decimal, for display (lossy). A decimal past the
+-- Float range (`1e400`) has no Float: it fails as the classified
+-- `NumericOverflow` (v0.29.2), never an infinite Float.
 toFloat : Decimal -> Float
 toFloat d =
     Ffi.callPure "Decimal_toFloat" [ d ]
 
 
+-- | The whole part (`toInt 3.9` is 3, `toInt -3.9` is -3). A whole part
+-- outside the 64-bit Int range has no Int: it fails as the classified
+-- `NumericOverflow` (v0.29.2), never a wrapped number. Compare with the bound
+-- first when the decimal is not under your control.
 toInt : Decimal -> Int
 toInt d =
     Ffi.callPure "Decimal_toInt" [ d ]
 
 
+-- | `toMinor 2 3.14` is 314, the inverse of `fromMinor`; the fraction past
+-- `places` is dropped. A result outside the 64-bit Int range fails as the
+-- classified `NumericOverflow` (v0.29.2), never a wrapped number: with 18
+-- places that is from 9.22 up. Keep such amounts as a Decimal
+-- (`Codec.decimal`).
 toMinor : Int -> Decimal -> Int
 toMinor places d =
     Ffi.callPure "Decimal_toMinor" [ Ffi.toAny places, Ffi.toAny d ]
@@ -224,6 +236,8 @@ compare a b =
     Ffi.callPure "Decimal_compare" [ a, b ]
 
 
+-- | Equal values (`eq 1.10 1.1` is True). Since v0.29.2 Sky `==` on two
+-- Decimals compares the value too.
 eq : Decimal -> Decimal -> Bool
 eq a b =
     Ffi.callPure "Decimal_eq" [ a, b ]

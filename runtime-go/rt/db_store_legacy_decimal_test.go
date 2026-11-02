@@ -92,7 +92,7 @@ func TestStoreMigrateRefusesADecimalFieldOnALegacyJsonColumnSqlite(t *testing.T)
 	const table = "legacy_dec"
 	assertLegacyDecimalColumnRefused(t, d, table,
 		`UPDATE legacy_dec SET price = substr(price, 2, length(price) - 2) WHERE price LIKE '"%"'`,
-		`UPDATE legacy_dec SET cost = CASE WHEN cost LIKE '{%' THEN json_extract(cost, '$.amount') ELSE substr(cost, 2, length(cost) - 2) END WHERE cost LIKE '"%"' OR (cost LIKE '{%' AND upper(json_extract(cost, '$.currency')) = 'GBP')`,
+		`UPDATE legacy_dec SET cost = CASE WHEN cost LIKE '{%' THEN (CASE json_type(cost, '$.amount') WHEN 'text' THEN json_extract(cost, '$.amount') ELSE cost -> '$.amount' END) ELSE substr(cost, 2, length(cost) - 2) END WHERE cost LIKE '"%"' OR (cost LIKE '{%' AND upper(json_extract(cost, '$.currency')) = 'GBP')`,
 		"price IS NULL, price COLLATE sky_decimal")
 }
 

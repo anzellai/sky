@@ -4217,8 +4217,10 @@ countDistinctAs field col =
     Agg { kind = "countDistinct", field = field, col = col, cond = noCond }
 
 
--- | The sum of an `Int` or `Float` column into a field of the same kind (0 for
--- an empty group).
+-- | The sum of an `Int`, `Float` or decimal column (`Codec.decimal`,
+-- `Codec.moneyIn`) into a field of the same kind (0 for an empty group). A
+-- decimal column sums exactly on both engines (on SQLite through the
+-- `sky_decimal_sum` aggregate).
 sumAs : String -> String -> Agg
 sumAs field col =
     Agg { kind = "sum", field = field, col = col, cond = noCond }
@@ -7423,8 +7425,36 @@ writeValueError nodes col kind v =
                 else if tag == "SqlString" then
                     textContentError nodes col kind text
 
+                else if tag == "SqlDecimal" then
+                    decimalWriteError col v
+
                 else
                     Nothing
+
+
+-- A `SqlDecimal` written into a decimal column must be one the column's
+-- strict reader takes back: at most 1000 characters written out (v0.29.2
+-- sixth Judge). `Decimal.fromString` applies that bound, so it is the check;
+-- a computed decimal (`Decimal.mul` of two long ones) can pass it, and every
+-- later read of the table would fail on the row.
+decimalWriteError : String -> SqlValue -> Maybe String
+decimalWriteError col v =
+    case v of
+
+        SqlDecimal d ->
+            case Dec.fromString (Dec.toString d) of
+
+                Ok _ ->
+                    Nothing
+
+                Err e ->
+                    Just
+                        ("column \"" ++ col
+                            ++ "\" is a decimal column, and the value cannot be read back from it: "
+                            ++ Error.toString e)
+
+        _ ->
+            Nothing
 
 
 -- The text of a `SqlString` written into a text or JSON column, checked

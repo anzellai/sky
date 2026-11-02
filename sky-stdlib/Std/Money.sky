@@ -16,7 +16,8 @@
 -- `isPositive` and `isNegative`.
 --
 -- 50+ ISO-4217 codes baked in (USD, EUR, GBP, JPY, AUD, …) plus
--- crypto (BTC, ETH), and `CurrencyRaw String` for any other code.
+-- crypto (BTC, ETH), and `CurrencyRaw String` for any other code. A code is
+-- read in upper case: `CurrencyRaw "gbp"` is GBP to every operation and codec.
 -- `allocate` splits amounts fairly so rounding residue lands
 -- deterministically on the first allocator (handles the classic "split
 -- $1.00 three ways" problem without losing or inventing cents).
@@ -203,6 +204,7 @@ currency (Money _ c) =
     c
 
 
+-- | The code of a currency, in upper case (`CurrencyRaw "gbp"` is `"GBP"`).
 currencyCode : Currency -> String
 currencyCode c =
     case c of
@@ -382,7 +384,10 @@ currencyCode c =
             "USDC"
 
         CurrencyRaw s ->
-            s
+            -- A code is read in upper case everywhere (v0.29.2 sixth Judge):
+            -- `CurrencyRaw "gbp"` is GBP to `eqCurrency`, `add`, `rates` and
+            -- every codec, which read `"gbp"` as GBP.
+            String.toUpper s
 
 
 -- ─── Currency property lookups ────────────────────────────────────
@@ -780,7 +785,10 @@ gte a b =
         Err (mismatch "gte" a b)
 
 
--- | Two currencies are the same when their codes are.
+-- | Two currencies are the same when their codes are, in upper case:
+-- `CurrencyRaw "gbp"` is `GBP` (as `currencyFromCode "gbp"` is, and as every
+-- codec reads it). Compare Money with `eq`, not `==`: `==` also compares how
+-- the currency was written (`CurrencyRaw "gbp"` is not the variant `GBP`).
 eqCurrency : Currency -> Currency -> Bool
 eqCurrency a b =
     currencyCode a == currencyCode b
@@ -835,7 +843,11 @@ formatWithCode m =
         [ Ffi.toAny (currencyCode (currency m)), Ffi.toAny (amount m) ]
 
 
--- | Integer-cents representation, for DB persistence.
+-- | The amount in minor units (cents for USD). An amount whose minor units
+-- do not fit a 64-bit Int fails as the classified `NumericOverflow`
+-- (v0.29.2), never a wrapped number: ETH has 18 minor units, so that is from
+-- 9.22 ETH up. To store any amount exactly, use `Codec.moneyIn` or
+-- `Codec.moneyObject` rather than the minor units.
 toMinor : Money -> Int
 toMinor m =
     Dec.toMinor (minorUnits (currency m)) (amount m)

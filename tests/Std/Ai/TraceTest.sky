@@ -530,7 +530,15 @@ tests =
                        usage of
 
                   Err e ->
-                      if String.contains "USD and EUR" (Error.toString e) then
+                      -- It names Provider.cost, never the Money.add inside it
+                      -- (v0.29.2 sixth Judge).
+                      if String.startsWith
+                          "InvalidInput: Provider.cost: "
+                          (Error.toString e)
+                          && String.contains "USD" (Error.toString e)
+                          && String.contains "EUR" (Error.toString e)
+                          && not
+                                 (String.contains "Money.add" (Error.toString e)) then
                           Test.pass
 
                       else

@@ -268,3 +268,53 @@ func TestDecimalFromFloatOfNaNIsAClassifiedPanic(t *testing.T) {
 		t.Errorf("Decimal.fromFloat 1.5 = %s", got)
 	}
 }
+
+// Decimal.toInt, Decimal.toMinor (and so Money.toMinor) wrapped round past the
+// 64-bit Int range: `Money.toMinor (Money.fromMajor ETH 10)` gave
+// -8446744073709551616 and `Decimal.toInt 1e30` gave 5076944270305263616.
+// Decimal.toFloat of 1e400 gave +Inf. Each is now the classified
+// NumericOverflow; the bounds themselves still convert exactly (v0.29.2 sixth
+// Judge).
+func TestDecimalToIntPastInt64IsAClassifiedPanic(t *testing.T) {
+	dec := func(s string) any { return decimalBox(decimal.RequireFromString(s)) }
+	fails := []struct {
+		name string
+		args []any
+	}{
+		{"Decimal_toInt", []any{dec("1e30")}},
+		{"Decimal_toInt", []any{dec("-9223372036854775809")}},
+		{"Decimal_toInt", []any{dec("9223372036854775808.5")}},
+		{"Decimal_toMinor", []any{18, dec("10")}},
+		{"Decimal_toMinor", []any{8, dec("1000000000000")}},
+		{"Decimal_toFloat", []any{dec("1e400")}},
+		{"Decimal_toFloat", []any{dec("-1e400")}},
+	}
+	for _, c := range fails {
+		func() {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Errorf("%s %v did not fail", c.name, c.args)
+					return
+				}
+				if kind, _ := classifyPanic(fmt.Sprint(r)); kind != "NumericOverflow" {
+					t.Errorf("%s: panic %q is class %q, want NumericOverflow", c.name, r, kind)
+				}
+			}()
+			got := invokeDecimal(t, c.name, c.args...)
+			t.Errorf("%s %v = %v, want a NumericOverflow", c.name, c.args, got)
+		}()
+	}
+	if got := invokeDecimal(t, "Decimal_toInt", dec("9223372036854775807.9")); got != 9223372036854775807 {
+		t.Errorf("Decimal.toInt at the bound = %v", got)
+	}
+	if got := invokeDecimal(t, "Decimal_toInt", dec("-9223372036854775808")); got != -9223372036854775808 {
+		t.Errorf("Decimal.toInt at the lower bound = %v", got)
+	}
+	if got := invokeDecimal(t, "Decimal_toMinor", 18, dec("9.2")); got != 9200000000000000000 {
+		t.Errorf("Decimal.toMinor 18 9.2 = %v", got)
+	}
+	if got := invokeDecimal(t, "Decimal_toFloat", dec("1e-400")); got != 0.0 {
+		t.Errorf("Decimal.toFloat 1e-400 = %v", got)
+	}
+}

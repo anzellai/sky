@@ -144,21 +144,29 @@ func init() {
 		return decimalUnbox(args[1]).StringFixed(int32(AsInt(args[0])))
 	})
 
-	// toFloat : Decimal -> Float (LOSSY — display only)
+	// toFloat : Decimal -> Float (LOSSY — display only). A decimal past the
+	// Float range (1e400) has no Float: it fails as the classified
+	// NumericOverflow, never an Infinity (Sky has no Infinity shape).
 	RegisterPure("Decimal_toFloat", func(args []any) any {
 		if len(args) < 1 {
 			return 0.0
 		}
-		v, _ := decimalUnbox(args[0]).Float64()
+		d := decimalUnbox(args[0])
+		v, _ := d.Float64()
+		if math.IsInf(v, 0) {
+			panic("rt.Decimal.toFloat: " + decimalShort(d) + " is outside the Float range")
+		}
 		return v
 	})
 
-	// toInt : Decimal -> Int — truncates fractional part.
+	// toInt : Decimal -> Int — truncates fractional part. A whole part past
+	// the Int range (64 bits) fails as the classified NumericOverflow; it
+	// used to wrap round (1e30 gave 5076944270305263616).
 	RegisterPure("Decimal_toInt", func(args []any) any {
 		if len(args) < 1 {
 			return 0
 		}
-		return int(decimalUnbox(args[0]).IntPart())
+		return decimalIntOrPanic("Decimal.toInt", decimalUnbox(args[0]))
 	})
 
 	// toMinor : Int -> Decimal -> Int — `toMinor 2 (3.14)` = 314.
@@ -169,7 +177,7 @@ func init() {
 		}
 		places := int32(AsInt(args[0]))
 		shifted := decimalUnbox(args[1]).Shift(places)
-		return int(shifted.IntPart())
+		return decimalIntOrPanic("Decimal.toMinor", shifted)
 	})
 
 	// ── Arithmetic ──────────────────────────────────────────────
@@ -448,4 +456,26 @@ func init() {
 		}
 		return out
 	})
+}
+
+// decimalIntOrPanic is the whole part of d as an Int. A whole part outside
+// the 64-bit Int range has no Int: it fails as the classified
+// NumericOverflow, naming the operation and the value, never a wrapped
+// number (v0.29.2 sixth Judge: `Money.toMinor` of 10 ETH gave
+// -8446744073709551616).
+func decimalIntOrPanic(op string, d decimal.Decimal) int {
+	whole := d.Truncate(0).BigInt()
+	if !whole.IsInt64() {
+		panic("rt." + op + ": " + decimalShort(d) + " is outside the Int range (-9223372036854775808 to 9223372036854775807)")
+	}
+	return int(whole.Int64())
+}
+
+// decimalShort is d's text for a message, cut to 60 characters.
+func decimalShort(d decimal.Decimal) string {
+	s := d.String()
+	if len(s) > 60 {
+		return s[:57] + "..."
+	}
+	return s
 }

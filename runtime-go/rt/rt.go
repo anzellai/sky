@@ -3031,6 +3031,9 @@ func deepEq(a, b any) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
+	if eq, handled := eqValueType(a, b); handled {
+		return eq
+	}
 	if x, ok := a.(SkyArray); ok {
 		if y, ok := b.(SkyArray); ok {
 			return arraysEqual(x.t, y.t)

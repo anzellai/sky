@@ -1947,8 +1947,12 @@ func codecLegacyDecimalFix(driver, table, col, currency string) string {
 		return "UPDATE " + table + " SET " + col + " = substr(" + col + ", 2, length(" + col + ") - 2) WHERE " +
 			col + " LIKE '\"%\"'"
 	}
-	return "UPDATE " + table + " SET " + col + " = CASE WHEN " + col + " LIKE '{%' THEN json_extract(" + col +
-		", '$.amount') ELSE substr(" + col + ", 2, length(" + col + ") - 2) END WHERE " + col +
+	// The amount is read as text: a JSON string through json_extract, a JSON
+	// number as its own JSON text (`->`), never json_extract's REAL, which
+	// rounds 0.12345678901234567891 and writes 1.2345678901234568e+22
+	// (v0.29.2 sixth Judge).
+	return "UPDATE " + table + " SET " + col + " = CASE WHEN " + col + " LIKE '{%' THEN (CASE json_type(" + col +
+		", '$.amount') WHEN 'text' THEN json_extract(" + col + ", '$.amount') ELSE " + col + " -> '$.amount' END) ELSE substr(" + col + ", 2, length(" + col + ") - 2) END WHERE " + col +
 		" LIKE '\"%\"' OR (" + col + " LIKE '{%' AND upper(json_extract(" + col + ", '$.currency')) = '" + currency + "')"
 }
 
@@ -2171,6 +2175,13 @@ func codecLegacyDecimalColumnError(d *SkyDb, table string, colspecArg any, types
 			return fmt.Errorf("could not read column %s.%s to check that it holds decimals", table, name)
 		}
 		if len(AsList(r.OkValue)) == 0 {
+			// No JSON text. A value stored another way that the store does
+			// not read as a decimal (a REAL, `1.2e22`) would make every read
+			// of the table fail, so it is refused here too, naming the
+			// values (v0.29.2 sixth Judge).
+			if err := codecSqliteUnreadableDecimals(d, table, name, field); err != nil {
+				return err
+			}
 			continue
 		}
 		hasMoney, currencies, err := codecLegacyMoneyCurrencies(d, table, name)
@@ -2223,4 +2234,35 @@ func codecWarnOnce(msg string) {
 	if _, seen := codecNoticeSeen.LoadOrStore(msg, true); !seen {
 		rtWarn(msg)
 	}
+}
+
+// codecSqliteUnreadableDecimals refuses a SQLite decimal column that holds a
+// value the store's decimal reader refuses: a REAL (`1.2345678901234568e+22`,
+// what json_extract made of a large JSON number) or text that is not plain
+// decimal digits (`1e3`). It lists up to three of them.
+func codecSqliteUnreadableDecimals(d *SkyDb, table, col, field string) error {
+	q := "SELECT CAST(" + col + " AS TEXT) AS v FROM " + table + " WHERE " + col + " IS NOT NULL AND (typeof(" + col +
+		") NOT IN ('text', 'integer') OR CAST(" + col + " AS TEXT) GLOB '*[^0-9.-]*' OR CAST(" + col + " AS TEXT) = '') LIMIT 3"
+	resp := AnyTaskRun(dbQueryRows(d, q, []any{}))
+	r, ok := resp.(SkyResult[any, any])
+	if !ok || r.Tag != 0 {
+		return fmt.Errorf("could not read column %s.%s to check that it holds decimals", table, col)
+	}
+	rows := AsList(r.OkValue)
+	if len(rows) == 0 {
+		return nil
+	}
+	var vals []string
+	for _, row := range rows {
+		if m, ok := dbRowAsMap(row); ok {
+			if s, present := dbCellText(m["v"]); present {
+				vals = append(vals, strictShortText(s))
+			}
+		}
+	}
+	return codecColumnRefusal{table: table, col: col, msg: fmt.Sprintf(
+		"column %s.%s holds values the store does not read as a decimal (%s): %s. "+
+			"Every read of the table would fail on them, so the store is refused and the column is not changed. "+
+			"Set each to its decimal text (digits, an optional '-' and '.', no exponent), then migrate again",
+		table, col, field, strings.Join(vals, ", "))}
 }
