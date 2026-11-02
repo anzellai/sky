@@ -8,8 +8,8 @@
 //! `Std.Ai.Provider`, both exposed, make a bare `embed` ambiguous.) The error is loud and the fix is one line, but the user did not
 //! change anything, so the message must say why it appeared.
 //!
-//! The snapshot is a committed, generated file:
-//! `rust/crates/hir/data/stdlib-exports-v0.27.8.tsv`. Regenerate it with
+//! The snapshots are committed, generated files:
+//! `rust/crates/hir/data/stdlib-exports-<tag>.tsv` (see [`SNAPSHOTS`]). Regenerate it with
 //! `rust/crates/hir/tests/regen-stdlib-exports-snapshot.sh <tag>`. Its lines are
 //! `<kind>\t<module>\t<name>`, where `kind` is `module` (the module existed,
 //! `name` is empty), `value`, `type` or `ctor`. A kernel pseudo-module (the
@@ -19,11 +19,38 @@
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
-/// The release the snapshot was taken from, as the message prints it.
+/// The release the oldest snapshot was taken from. The collision gate
+/// (`hir/tests/stdlib_collisions.rs`) lists every collision since it.
 pub const PREVIOUS_RELEASE: &str = "v0.27.8";
 
-/// The committed snapshot text.
+/// The oldest committed snapshot text (the collision gate's baseline).
 pub const PREVIOUS_EXPORTS_TSV: &str = include_str!("../data/stdlib-exports-v0.27.8.tsv");
+
+/// One committed snapshot: the release it was taken from, its text, and the
+/// migration page that lists the names new since it.
+pub struct Snapshot {
+    pub release: &'static str,
+    pub tsv: &'static str,
+    pub migration: &'static str,
+}
+
+/// Every snapshot, oldest first. A name absent from a snapshot whose module
+/// it had is new since that release; the NEWEST such snapshot is named, so a
+/// name added in v0.29.x points at docs/migration/v0.29.md and a v0.28.0 name
+/// still points at docs/migration/v0.28.md. Add the last release of each minor
+/// line here when the next minor starts.
+pub const SNAPSHOTS: &[Snapshot] = &[
+    Snapshot {
+        release: "v0.27.8",
+        tsv: PREVIOUS_EXPORTS_TSV,
+        migration: "docs/migration/v0.28.md#new-stdlib-names",
+    },
+    Snapshot {
+        release: "v0.28.1",
+        tsv: include_str!("../data/stdlib-exports-v0.28.1.tsv"),
+        migration: "docs/migration/v0.29.md#new-stdlib-names",
+    },
+];
 
 /// One parsed snapshot line.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -47,49 +74,69 @@ pub fn parse_export_rows(text: &str) -> Vec<ExportRow> {
         .collect()
 }
 
-struct Previous {
+struct Parsed {
     modules: HashSet<String>,
     names: HashSet<(String, String)>,
 }
 
-fn previous() -> &'static Previous {
-    static P: OnceLock<Previous> = OnceLock::new();
+fn parsed() -> &'static Vec<Parsed> {
+    static P: OnceLock<Vec<Parsed>> = OnceLock::new();
     P.get_or_init(|| {
-        let rows = parse_export_rows(PREVIOUS_EXPORTS_TSV);
-        let mut modules = HashSet::new();
-        let mut names = HashSet::new();
-        for r in rows {
-            if r.kind == "module" {
-                modules.insert(r.module);
-            } else {
-                names.insert((r.module, r.name));
-            }
-        }
-        Previous { modules, names }
+        SNAPSHOTS
+            .iter()
+            .map(|snap| {
+                let mut modules = HashSet::new();
+                let mut names = HashSet::new();
+                for r in parse_export_rows(snap.tsv) {
+                    if r.kind == "module" {
+                        modules.insert(r.module);
+                    } else {
+                        names.insert((r.module, r.name));
+                    }
+                }
+                Parsed { modules, names }
+            })
+            .collect()
     })
 }
 
-/// True when `module` (a stdlib module path, or a kernel pseudo-module name)
-/// existed in the previous release but did not export `name` there. A module
-/// the previous release did not have at all is not "new names in an old
-/// module": no program written for that release could import it.
-pub fn is_new_since_previous(module: &str, name: &str) -> bool {
-    let p = previous();
-    p.modules.contains(module) && !p.names.contains(&(module.to_string(), name.to_string()))
+/// The newest snapshot whose `module` (a stdlib module path, or a kernel
+/// pseudo-module name) existed but did not export `name`. `None` when every
+/// snapshot that has the module exports the name, or none has the module (no
+/// program written for those releases could import it).
+pub fn new_since(module: &str, name: &str) -> Option<&'static Snapshot> {
+    let key = (module.to_string(), name.to_string());
+    parsed()
+        .iter()
+        .zip(SNAPSHOTS.iter())
+        .rev()
+        .find(|(p, _)| p.modules.contains(module) && !p.names.contains(&key))
+        .map(|(_, s)| s)
 }
 
-/// [`is_new_since_previous`] for an import path as written. A path with no
-/// `.sky` module of its own (`import Auth`, `import Std.System`) reaches a
-/// kernel pseudo-module, which the snapshot tracks under the pseudo-module's
-/// name (`KERNEL_MODULES`).
-pub fn is_new_import_member(path: &str, name: &str) -> bool {
-    if previous().modules.contains(path) {
-        return is_new_since_previous(path, name);
+/// True when `module` existed in some snapshot release but did not export
+/// `name` there (see [`new_since`]).
+pub fn is_new_since_previous(module: &str, name: &str) -> bool {
+    new_since(module, name).is_some()
+}
+
+/// [`new_since`] for an import path as written. A path with no `.sky` module
+/// of its own (`import Auth`, `import Std.System`) reaches a kernel
+/// pseudo-module, which the snapshots track under the pseudo-module's name
+/// (`KERNEL_MODULES`).
+pub fn import_member_new_since(path: &str, name: &str) -> Option<&'static Snapshot> {
+    if parsed().iter().any(|p| p.modules.contains(path)) {
+        return new_since(path, name);
     }
     crate::kernel::KERNEL_MODULES
         .iter()
         .find(|(p, _)| *p == path)
-        .is_some_and(|(_, k)| is_new_since_previous(&format!("kernel:{k}"), name))
+        .and_then(|(_, k)| new_since(&format!("kernel:{k}"), name))
+}
+
+/// [`import_member_new_since`] as a yes / no.
+pub fn is_new_import_member(path: &str, name: &str) -> bool {
+    import_member_new_since(path, name).is_some()
 }
 
 /// Stdlib values a release removed, with what to write instead:

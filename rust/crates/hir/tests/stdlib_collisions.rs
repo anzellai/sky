@@ -772,3 +772,34 @@ fn e1012_between_two_old_exports_does_not_claim_a_new_name() {
     assert!(!msgs[0].contains("new since"), "{}", msgs[0]);
     assert!(!msgs[0].contains("docs/migration"), "{}", msgs[0]);
 }
+
+#[test]
+fn e1012_points_a_v0_29_name_at_the_v0_29_guide() {
+    // v0.29.2: `Std.Codec.value` is new since v0.28.1 (the last v0.28
+    // release), while `Std.Html.Attributes.value` is old. The message names
+    // v0.28.1 and links docs/migration/v0.29.md, not the v0.28 guide.
+    let attrs = "module Std.Html.Attributes exposing (..)\nvalue x =\n    x\n";
+    let codec = "module Std.Codec exposing (..)\nvalue =\n    1\n";
+    let main = "module Main exposing (main)\n\
+                import Std.Html.Attributes exposing (..)\n\
+                import Std.Codec exposing (..)\n\n\
+                main =\n    value\n";
+    let r = resolve_main(&[
+        ("Std.Html.Attributes", attrs),
+        ("Std.Codec", codec),
+        ("Main", main),
+    ]);
+    let msgs = e1012(&r);
+    assert_eq!(msgs.len(), 1, "{:?}", r.diagnostics);
+    assert!(
+        msgs[0].contains("`Std.Codec.value` is new since Sky v0.28.1"),
+        "{}",
+        msgs[0]
+    );
+    assert!(!msgs[0].contains("v0.27.8"), "{}", msgs[0]);
+    assert!(
+        msgs[0].ends_with("See docs/migration/v0.29.md#new-stdlib-names"),
+        "{}",
+        msgs[0]
+    );
+}

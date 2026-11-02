@@ -1214,11 +1214,25 @@ impl<'a> Resolver<'a> {
         let why_new = if new_cands.is_empty() {
             String::new()
         } else {
-            let prev = crate::stdlib_history::PREVIOUS_RELEASE;
-            let new_in: Vec<String> = new_cands
-                .iter()
-                .map(|(m, _)| format!("`{m}.{name}`"))
-                .collect();
+            // Group the new exports by the release they are new since (the
+            // newest snapshot that lacked them), oldest first.
+            let mut groups: Vec<(&'static crate::stdlib_history::Snapshot, Vec<String>)> =
+                Vec::new();
+            for (m, _) in &new_cands {
+                let Some(snap) = crate::stdlib_history::import_member_new_since(m, name) else {
+                    continue;
+                };
+                let text = format!("`{m}.{name}`");
+                match groups.iter_mut().find(|(s, _)| s.release == snap.release) {
+                    Some((_, v)) => v.push(text),
+                    None => groups.push((snap, vec![text])),
+                }
+            }
+            groups.sort_by_key(|(s, _)| {
+                crate::stdlib_history::SNAPSHOTS
+                    .iter()
+                    .position(|x| x.release == s.release)
+            });
             // The one-line fixes that keep the meaning the name had before the
             // upgrade: qualify it, or import it by name from the module that
             // already exported it (an `exposing (name)` import outranks an
@@ -1236,17 +1250,34 @@ impl<'a> Resolver<'a> {
                 }
                 _ => String::new(),
             };
-            format!(
-                " {} {} new since Sky {prev}, so a program that compiled with {prev} can meet \
-                 this error with no change of its own.{keep}",
-                join_and(&new_in),
-                if new_in.len() == 1 { "is" } else { "are" },
-            )
+            let said: Vec<String> = groups
+                .iter()
+                .map(|(snap, new_in)| {
+                    let prev = snap.release;
+                    format!(
+                        " {} {} new since Sky {prev}, so a program that compiled with {prev} can \
+                         meet this error with no change of its own.",
+                        join_and(new_in),
+                        if new_in.len() == 1 { "is" } else { "are" },
+                    )
+                })
+                .collect();
+            format!("{}{keep}", said.concat())
         };
-        let see = if new_cands.is_empty() {
-            String::new()
-        } else {
-            " See docs/migration/v0.28.md#new-stdlib-names".to_string()
+        let see = {
+            let mut links: Vec<&str> = Vec::new();
+            for (m, _) in &new_cands {
+                if let Some(s) = crate::stdlib_history::import_member_new_since(m, name) {
+                    if !links.contains(&s.migration) {
+                        links.push(s.migration);
+                    }
+                }
+            }
+            if links.is_empty() {
+                String::new()
+            } else {
+                format!(" See {}", links.join(" and "))
+            }
         };
         let mut diag = Diagnostic::error(
             "E1012",
