@@ -14964,7 +14964,14 @@ emit report =
     else {
         return ExitCode::FAILURE;
     };
-    let output = match Command::new(&bin).current_dir(&project_dir).output() {
+    // Read-only: a SQLite file is opened with mode=ro (a missing one is not
+    // created), a PostgreSQL session refuses writes, and no telemetry table
+    // is written (rt.dbReadOnly).
+    let output = match Command::new(&bin)
+        .current_dir(&project_dir)
+        .env("SKY_DB_READ_ONLY", "1")
+        .output()
+    {
         Ok(o) => o,
         Err(e) => {
             eprintln!("sky db status: run failed: {e}");
@@ -15230,7 +15237,15 @@ emit begin body end =
     // One run of the helper: (succeeded, stdout, stderr). A spawn failure is
     // reported here and is `None`.
     let run = || -> Option<(bool, String, String)> {
-        match Command::new(&bin).current_dir(&project_dir).output() {
+        // `sky db check` writes nothing: SKY_DB_READ_ONLY opens a SQLite
+        // file mode=ro (a missing one is refused, not created), makes every
+        // PostgreSQL transaction read-only, and turns telemetry persistence
+        // off (rt.dbReadOnly).
+        match Command::new(&bin)
+            .current_dir(&project_dir)
+            .env("SKY_DB_READ_ONLY", "1")
+            .output()
+        {
             Ok(o) => Some((
                 o.status.success(),
                 String::from_utf8_lossy(&o.stdout).into_owned(),
@@ -16059,7 +16074,13 @@ fn cmd_db(args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
     let out_dir = project_dir.join(&out_dir_name);
-    match run_app(&out_dir, &[("SKY_DB_OP".to_string(), op.to_string())]) {
+    // `status` writes nothing: the app runs with its databases read-only
+    // and no telemetry persisted (rt.dbReadOnly), as `sky db check` does.
+    let mut env = vec![("SKY_DB_OP".to_string(), op.to_string())];
+    if op == "status" {
+        env.push(("SKY_DB_READ_ONLY".to_string(), "1".to_string()));
+    }
+    match run_app(&out_dir, &env) {
         Ok(status) => ExitCode::from(status.code().unwrap_or(1) as u8),
         Err(e) => {
             eprintln!("sky db: could not launch binary: {e}");

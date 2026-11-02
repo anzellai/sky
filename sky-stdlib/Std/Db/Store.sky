@@ -7737,6 +7737,19 @@ kindNullable k =
     String.contains "?" (beforeFlags k)
 
 
+-- | Mark a column kind nullable: the `?` goes before any `|flag`
+-- (`decimal|money=GBP` is `decimal?|money=GBP`).
+nullableKind : String -> String
+nullableKind k =
+    case String.split "|" k of
+
+        b :: flags ->
+            String.join "|" ((b ++ "?") :: flags)
+
+        [] ->
+            k ++ "?"
+
+
 beforeFlags : String -> String
 beforeFlags k =
     case String.split "|" k of
@@ -7904,8 +7917,11 @@ colTypeStr ct =
         CDecimal ->
             "decimal"
 
+        CMoneyIn code ->
+            "decimal|money=" ++ code
+
         CNull inner ->
-            colTypeStr inner ++ "?"
+            nullableKind (colTypeStr inner)
 
 
 dbCreateCols : Db -> String -> List ( String, String ) -> String -> List IndexSpec -> Task Error ()

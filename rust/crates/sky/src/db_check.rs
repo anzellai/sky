@@ -602,6 +602,7 @@ pub fn live_schema(target: &Schema, live: &Inspect) -> Schema {
                 default: None,
                 zero: None,
                 external: tc.is_some_and(|c| c.external),
+                currency: None,
             });
         }
         let unique_cols: Vec<&str> = tt
@@ -721,6 +722,74 @@ impl Check {
 
 fn op_str<'a>(op: &'a Value, key: &str) -> &'a str {
     op.get(key).and_then(Value::as_str).unwrap_or("")
+}
+
+fn is_currency_code(c: &str) -> bool {
+    c.len() == 3 && c.bytes().all(|b| b.is_ascii_uppercase())
+}
+
+/// The PostgreSQL conversion of a TEXT column a Codec.auto Decimal or Money
+/// field made (`"9.5"`, `{"amount":"9.5","currency":"GBP"}`) into the NUMERIC
+/// column a decimal field reads. The same SQL as the runtime's
+/// `codecLegacyDecimalFix` (db_codec.go). A Money object is converted only
+/// for a `Codec.moneyIn` field and only in its currency: any other row makes
+/// the statement fail, so USD 5.00 is never relabelled GBP 5.00. For
+/// `Codec.decimal` no Money object converts, because the currency would be
+/// dropped.
+pub fn legacy_decimal_fix_pg(table: &str, col: &str, currency: Option<&str>) -> String {
+    let obj = match currency {
+        Some(c) => format!(
+            "(CASE WHEN upper({col}::json->>'currency') = '{c}' THEN {col}::json->>'amount' \
+             ELSE 'a Money object that is not in {c}: ' || {col}::text END)"
+        ),
+        None => format!("('a Money object is not a decimal: ' || {col}::text)"),
+    };
+    format!(
+        "ALTER TABLE {table} ALTER COLUMN {col} TYPE NUMERIC USING (CASE WHEN {col}::text LIKE '{{%' \
+         THEN {obj} ELSE trim(both '\"' from {col}::text) END)::numeric"
+    )
+}
+
+/// The query that lists the rows a conversion to a `Codec.moneyIn currency`
+/// column must not take (db_codec.go `codecLegacyMoneyCheck`).
+pub fn legacy_money_check_pg(table: &str, col: &str, currency: &str) -> String {
+    format!(
+        "SELECT {col} FROM {table} WHERE {col}::text LIKE '{{%' AND upper({col}::json->>'currency') \
+         IS DISTINCT FROM '{currency}'"
+    )
+}
+
+fn legacy_decimal_steps(table: &str, col: &str, currency: Option<&str>) -> Vec<Step> {
+    match currency {
+        Some(c) => vec![
+            Step::Unsafe {
+                sql: legacy_money_check_pg(table, col, c),
+                reason: format!(
+                    "run this first: it lists each Money in another currency than {c} \
+                     (the field is Codec.moneyIn {c}). It must return no rows: such a row is \
+                     never relabelled as {c}, so change or move it before the conversion"
+                ),
+            },
+            Step::Unsafe {
+                sql: legacy_decimal_fix_pg(table, col, Some(c)),
+                reason: format!(
+                    "a type change rewrites every row. A quoted or bare decimal and a Money \
+                     in {c} become the amount, NULL stays NULL, and a Money in another \
+                     currency makes it fail. Drop a DEFAULT first and set it again after"
+                ),
+            },
+        ],
+        None => vec![Step::Unsafe {
+            sql: legacy_decimal_fix_pg(table, col, None),
+            reason:
+                "a type change rewrites every row. A quoted or bare decimal becomes the \
+                     number and NULL stays NULL. A Money object makes it fail: Codec.decimal \
+                     would drop its currency, so a column of Money objects has no conversion to \
+                     Codec.decimal. Read it with Codec.moneyIn <Currency> (one currency) or \
+                     Codec.moneyObject (a JSON column). Drop a DEFAULT first and set it again after"
+                    .into(),
+        }],
+    }
 }
 
 fn rebuild_reason(what: &str) -> String {
@@ -877,29 +946,33 @@ pub fn check(target: &Schema, live: &Inspect) -> Check {
                 let want = sql_type_of(&dialect, kind);
                 // A TEXT column under a decimal field is most often a
                 // Codec.auto Decimal / Money column (JSON text `"9.5"`,
-                // `{"amount":…}`): the conversion reads both spellings, the
-                // statement Store.migrate's refusal names (db_codec.go).
-                let using = if kind == "decimal" && fit(&dialect, "text", &live_ty) == Fit::Same {
-                    format!(
-                        "(CASE WHEN {col} LIKE '{{%' THEN {col}::json->>'amount' ELSE trim(both '\"' from {col}) END)::numeric"
-                    )
+                // `{"amount":…}`): the conversion reads both spellings and
+                // never drops a currency, the statement Store.migrate's
+                // refusal names (db_codec.go codecLegacyDecimalFix).
+                let legacy = kind == "decimal" && fit(&dialect, "text", &live_ty) == Fit::Same;
+                let currency = target
+                    .tables
+                    .iter()
+                    .find(|t| t.name == table)
+                    .and_then(|t| t.columns.iter().find(|c| c.name == col))
+                    .and_then(|c| c.currency.clone())
+                    .filter(|c| is_currency_code(c));
+                let steps = if !pg {
+                    vec![Step::Unsafe {
+                        sql: String::new(),
+                        reason: rebuild_reason("change a column's type"),
+                    }]
+                } else if legacy {
+                    legacy_decimal_steps(&table, col, currency.as_deref())
                 } else {
-                    format!("{col}::{want}")
-                };
-                let step = if pg {
-                    Step::Unsafe {
+                    vec![Step::Unsafe {
                         sql: format!(
-                            "ALTER TABLE {table} ALTER COLUMN {col} TYPE {want} USING {using}"
+                            "ALTER TABLE {table} ALTER COLUMN {col} TYPE {want} USING {col}::{want}"
                         ),
                         reason: "a type change rewrites every row, and a value that does not \
                                  convert makes it fail"
                             .into(),
-                    }
-                } else {
-                    Step::Unsafe {
-                        sql: String::new(),
-                        reason: rebuild_reason("change a column's type"),
-                    }
+                    }]
                 };
                 findings.push(Finding {
                     text: format!(
@@ -911,7 +984,7 @@ pub fn check(target: &Schema, live: &Inspect) -> Check {
                          the column, or change the column"
                     )),
                     table,
-                    steps: vec![step],
+                    steps,
                 });
             }
             "dropColumn" => {
@@ -1894,6 +1967,7 @@ mod tests {
             default: None,
             zero: None,
             external: false,
+            currency: None,
         }
     }
 
@@ -2171,34 +2245,67 @@ mod tests {
     /// A Codec.decimal field over a Codec.auto Decimal column (TEXT holding
     /// `"9.5"`) is drift, and the conversion it proposes reads the JSON
     /// spellings (`price::NUMERIC` fails on `"9.5"`): the statement
-    /// Store.migrate's refusal names.
+    /// Store.migrate's refusal names. It never drops a Money's currency: a
+    /// Codec.decimal field converts no Money object, and a Codec.moneyIn GBP
+    /// field converts only GBP, after a check query (v0.29.2 second Judge,
+    /// gap 1: `->>'amount'` relabelled USD 5.00 as GBP 5.00).
     #[test]
     fn decimal_over_legacy_text_proposes_the_json_aware_conversion() {
         let target = Schema {
             tables: vec![table(
-                "t",
+                "legacy_dec_pg",
                 "id",
-                vec![col("id", "text", false), col("price", "decimal", false)],
+                vec![
+                    col("id", "text", false),
+                    col("price", "decimal", false),
+                    SchemaColumn {
+                        currency: Some("GBP".into()),
+                        ..col("cost", "decimal", false)
+                    },
+                ],
             )],
         };
         let mut lt = LiveTable {
-            name: "t".into(),
+            name: "legacy_dec_pg".into(),
             columns: vec![
                 lcol("id", "text", true, None),
                 lcol("price", "text", true, None),
+                lcol("cost", "text", true, None),
             ],
             indexes: vec![],
         };
         lt.columns[0].pk = true;
         let c = check(&target, &inspect("postgres", vec![lt]));
         let sql = render_sql(&c, &[]);
-        assert!(
-            sql.contains(
-                "ALTER TABLE t ALTER COLUMN price TYPE NUMERIC USING (CASE WHEN price LIKE '{%' \
-                 THEN price::json->>'amount' ELSE trim(both '\"' from price) END)::numeric"
-            ),
-            "{sql}"
+        // The same statements runtime-go/rt/db_store_query_integration_test.go
+        // runs against PostgreSQL (TestStoreQueryPostgresLegacyDecimalColumnRefused)
+        // and db_codec_legacy_sql_test.go pins for the runtime's copy.
+        let price = "ALTER TABLE legacy_dec_pg ALTER COLUMN price TYPE NUMERIC USING (CASE WHEN \
+                     price::text LIKE '{%' THEN ('a Money object is not a decimal: ' || \
+                     price::text) ELSE trim(both '\"' from price::text) END)::numeric";
+        let cost = "ALTER TABLE legacy_dec_pg ALTER COLUMN cost TYPE NUMERIC USING (CASE WHEN \
+                    cost::text LIKE '{%' THEN (CASE WHEN upper(cost::json->>'currency') = 'GBP' \
+                    THEN cost::json->>'amount' ELSE 'a Money object that is not in GBP: ' || \
+                    cost::text END) ELSE trim(both '\"' from cost::text) END)::numeric";
+        let check_q = "SELECT cost FROM legacy_dec_pg WHERE cost::text LIKE '{%' AND \
+                       upper(cost::json->>'currency') IS DISTINCT FROM 'GBP'";
+        assert_eq!(legacy_decimal_fix_pg("legacy_dec_pg", "price", None), price);
+        assert_eq!(
+            legacy_decimal_fix_pg("legacy_dec_pg", "cost", Some("GBP")),
+            cost
         );
+        assert_eq!(
+            legacy_money_check_pg("legacy_dec_pg", "cost", "GBP"),
+            check_q
+        );
+        for want in [price, cost, check_q] {
+            assert!(sql.contains(want), "{want}\n--- not in ---\n{sql}");
+        }
+        // The check comes before the conversion it guards.
+        assert!(sql.find(check_q) < sql.find(cost), "{sql}");
+        assert!(sql.contains("Codec.moneyObject"), "{sql}");
+        // The old conversion read `->>'amount'` for every Money object.
+        assert!(!sql.contains("THEN price::json->>'amount'"), "{sql}");
     }
 
     #[test]

@@ -1728,6 +1728,9 @@ colText c =
         Codec.CDecimal ->
             "decimal"
 
+        Codec.CMoneyIn _ ->
+            "decimal"
+
         Codec.CNull inner ->
             colText inner ++ "?"
 

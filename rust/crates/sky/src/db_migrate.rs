@@ -39,6 +39,12 @@ pub struct SchemaColumn {
     /// writes an op for it. A Std.Db.Schema table or a migration owns it.
     #[serde(default, skip_serializing_if = "is_false")]
     pub external: bool,
+    /// The ISO code of a `Codec.moneyIn` column (the dump's `"currency"`),
+    /// else `None`. `sky db check` reads it to convert a legacy JSON column
+    /// without relabelling a Money in another currency. It is never written
+    /// to `db/schema.json`: it changes no statement.
+    #[serde(default, skip_serializing)]
+    pub currency: Option<String>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -623,6 +629,7 @@ mod tests {
                 default: None,
                 zero: None,
                 external: false,
+                currency: None,
             }],
         };
         let target = Schema {
@@ -655,6 +662,7 @@ mod tests {
             default: None,
             zero: None,
             external: false,
+            currency: None,
         }
     }
 
@@ -675,6 +683,7 @@ mod tests {
             default,
             zero: None,
             external: false,
+            currency: None,
         }
     }
 

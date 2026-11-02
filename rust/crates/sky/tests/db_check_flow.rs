@@ -808,3 +808,190 @@ fn an_unreachable_database_is_named_as_the_cause() {
     assert!(!err.contains("was refused"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The tables of the test's own schema (`current_schema()`).
+fn pg_tables(pg: &Pg) -> String {
+    pg.psql(
+        "SELECT COALESCE(string_agg(table_name, ',' ORDER BY table_name), '') \
+         FROM information_schema.tables WHERE table_schema = current_schema()",
+        true,
+    )
+}
+
+/// `sky db check` and `sky db status` write nothing to the database (v0.29.2
+/// second Judge, gap 2): on PostgreSQL the helper's runtime created
+/// `telemetry_log` / `telemetry_metric` / `telemetry_span` in the user's
+/// database. An empty database stays empty after check, `--code`, `--sql` and
+/// status.
+#[test]
+fn postgres_check_and_status_leave_an_empty_database_empty() {
+    if !required(Need::Go, tool_on_path("go")) {
+        return;
+    }
+    let pg = Pg::new();
+    if !required(Need::Postgres, pg.is_some()) {
+        return;
+    }
+    let pg = pg.unwrap();
+    let dir = project("sky-dbcheck-pg-empty", "", &base_src());
+    let env = [("DATABASE_URL", pg.dsn.as_str())];
+    assert_eq!(pg_tables(&pg), "", "the schema is not empty to start with");
+    for args in [
+        &["db", "check"][..],
+        &["db", "check", "--code"][..],
+        &["db", "check", "--sql"][..],
+        &["db", "status"][..],
+    ] {
+        let (code, out, err) = sky(&dir, args, &env);
+        assert!(
+            code == 0 || code == 1,
+            "sky {args:?} exited {code}:\n{out}\n{err}"
+        );
+        assert_eq!(
+            pg_tables(&pg),
+            "",
+            "sky {args:?} wrote to the database:\n{out}\n{err}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A missing SQLite file is refused, not created: `sky db check` exits 2
+/// naming the file, and neither it nor `sky db status` leaves `app.db`,
+/// `app.db-wal` or `app.db-shm` behind (v0.29.2 second Judge, gap 2).
+#[test]
+fn sqlite_check_and_status_do_not_create_a_missing_database() {
+    if !required(Need::Go, tool_on_path("go")) {
+        return;
+    }
+    let dir = project(
+        "sky-dbcheck-nofile",
+        "driver = \"sqlite\"\npath = \"app.db\"",
+        &base_src(),
+    );
+    let (code, out, err) = sky(&dir, &["db", "check"], &[]);
+    assert_eq!(code, 2, "{out}\n{err}");
+    assert!(
+        err.contains("app.db does not exist"),
+        "the missing file is not named:\n{err}"
+    );
+    // Without db/migrations, `sky db status` runs the app with SKY_DB_OP;
+    // with them, the ledger helper. Neither creates the file.
+    let _ = sky(&dir, &["db", "status"], &[]);
+    std::fs::create_dir_all(dir.join("db").join("migrations")).unwrap();
+    let (code, out, err) = sky(&dir, &["db", "status"], &[]);
+    assert_ne!(code, 0, "{out}\n{err}");
+    assert!(err.contains("app.db does not exist"), "{out}\n{err}");
+    for f in ["app.db", "app.db-wal", "app.db-shm"] {
+        assert!(!dir.join(f).exists(), "{f} was created");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A Codec.moneyIn GBP field on a Codec.auto Money column (TEXT holding
+/// `{"amount":…,"currency":…}`): `--sql` gives the check query for rows in
+/// another currency, then the conversion that fails on such a row, and the
+/// conversion run on PostgreSQL refuses a USD row instead of relabelling it
+/// GBP (v0.29.2 second Judge, gap 1).
+#[test]
+fn postgres_money_column_conversion_never_relabels_a_currency() {
+    if !required(Need::Go, tool_on_path("go")) {
+        return;
+    }
+    let pg = Pg::new();
+    if !required(Need::Postgres, pg.is_some()) {
+        return;
+    }
+    let pg = pg.unwrap();
+    let src = r#"module Main exposing (main, db)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Db.Store as Store
+import Std.Codec as Codec
+import Std.Money as Money exposing (Money)
+
+
+type alias Price =
+    { id : String
+    , cost : Money
+    }
+
+
+prices : Store.Store Price
+prices =
+    Store.fromCodec "prices"
+        (Codec.object Price
+            |> Codec.field "id" .id Codec.string
+            |> Codec.field "cost" .cost (Codec.moneyIn Money.GBP)
+            |> Codec.buildObject
+        )
+        |> Store.primaryKey "id"
+
+
+db : Store.Project
+db =
+    Store.project [ Store.toTable prices ]
+
+
+main : Task Error ()
+main =
+    Task.succeed ()
+"#;
+    let dir = project("sky-dbcheck-money", "", src);
+    let env = [("DATABASE_URL", pg.dsn.as_str())];
+    pg.psql(
+        "CREATE TABLE prices (id TEXT PRIMARY KEY NOT NULL, cost TEXT NOT NULL);\
+         INSERT INTO prices VALUES ('a', '{\"amount\":\"1.50\",\"currency\":\"GBP\"}'),\
+         ('b', '{\"amount\":\"5.00\",\"currency\":\"USD\"}'), ('c', '\"3\"'), ('d', '4')",
+        true,
+    );
+    let (code, sql, err) = sky(&dir, &["db", "check", "--sql"], &env);
+    assert_eq!(code, 1, "{sql}\n{err}");
+    let check = "SELECT cost FROM prices WHERE cost::text LIKE '{%' AND \
+                 upper(cost::json->>'currency') IS DISTINCT FROM 'GBP'";
+    assert!(sql.contains(check), "no check query in:\n{sql}");
+    let alter = sql
+        .lines()
+        .find(|l| l.contains("ALTER TABLE prices ALTER COLUMN cost TYPE NUMERIC"))
+        .unwrap_or_else(|| panic!("no conversion in:\n{sql}"))
+        .trim_start_matches("-- ")
+        .trim_end_matches(';')
+        .to_string();
+    assert!(sql.find(check) < sql.find(&alter), "{sql}");
+    assert_eq!(
+        pg.psql(check, true),
+        "{\"amount\":\"5.00\",\"currency\":\"USD\"}"
+    );
+    // The conversion fails on the USD row and changes nothing.
+    let dsn = match pg.dsn.split_once("search_path=") {
+        Some((head, schema)) => format!("{head}options=-csearch_path%3D{schema}"),
+        None => pg.dsn.clone(),
+    };
+    let out = Command::new(&pg.psql)
+        .arg(&dsn)
+        .args(["-v", "ON_ERROR_STOP=1", "-tAc", &alter])
+        .output()
+        .expect("spawn psql");
+    assert!(!out.status.success(), "the conversion took a USD row");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("not in GBP"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        pg.psql("SELECT cost FROM prices WHERE id = 'b'", true),
+        "{\"amount\":\"5.00\",\"currency\":\"USD\"}"
+    );
+    // Once the USD row is moved out, the conversion runs.
+    pg.psql("DELETE FROM prices WHERE id = 'b'", true);
+    pg.psql(&alter, true);
+    assert_eq!(
+        pg.psql(
+            "SELECT string_agg(id || '=' || cost::text, ' ' ORDER BY id) FROM prices",
+            true
+        ),
+        "a=1.50 c=3 d=4"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

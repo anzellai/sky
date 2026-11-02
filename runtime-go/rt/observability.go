@@ -103,6 +103,11 @@ func init() {
 // exported) so the later embed handoff — which also supplies the cluster data
 // dir — is the creator. Failure is warn-level; observability never blocks boot.
 func EnableConsolePersistence() {
+	if dbReadOnly() {
+		// `sky db check` / `sky db status` helpers (SKY_DB_READ_ONLY=1)
+		// write nothing to a database, telemetry tables included.
+		return
+	}
 	if err := telemetry.Default().EnablePersistenceFromEnv(); err != nil {
 		telemetry.Default().AppendLog(telemetry.LogEntry{
 			Level:   "warn",

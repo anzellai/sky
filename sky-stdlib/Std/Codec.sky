@@ -89,7 +89,9 @@ import Std.Money as Mon exposing (Money(..), Currency)
 
 -- | The column type a codec maps to on the DB side. `CDecimal` (v0.29.2) is
 -- an exact decimal column: `NUMERIC` on PostgreSQL, `TEXT` holding the
--- canonical decimal on SQLite (see `decimal`).
+-- canonical decimal on SQLite (see `decimal`). `CMoneyIn code` (v0.29.2) is
+-- the same column holding the amounts of one currency (`moneyIn`), named by
+-- its ISO code, so a conversion of an older column can check the currency.
 type ColType
     = CText
     | CInt
@@ -97,6 +99,7 @@ type ColType
     | CBool
     | CBlob
     | CDecimal
+    | CMoneyIn String
     | CNull ColType
 
 -- | The structural shape of a codec — a record maps to columns, a scalar to one
@@ -739,7 +742,7 @@ moneyIn cur =
                     else
                         moneyObjectValue m
             , dec = moneyInDecoder cur code
-            , shp = SScalar CDecimal
+            , shp = SScalar (CMoneyIn code)
             , sch = SnDecimal
             , zro = \_ -> Just (E.string "0")
             , fzr = \_ -> []
@@ -1564,8 +1567,23 @@ colTypeKind ct =
         CDecimal ->
             "decimal"
 
+        CMoneyIn code ->
+            "decimal|money=" ++ code
+
         CNull inner ->
-            colTypeKind inner ++ "?"
+            nullKind (colTypeKind inner)
+
+
+-- | Mark a column kind nullable: the `?` goes before any `|flag`.
+nullKind : String -> String
+nullKind k =
+    case String.split "|" k of
+
+        b :: flags ->
+            String.join "|" ((b ++ "?") :: flags)
+
+        [] ->
+            k ++ "?"
 
 
 autoEncK : Bool -> a -> Value

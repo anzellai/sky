@@ -135,9 +135,16 @@ func TestStoreQueryPostgresJoinGroups_StripsPrefixesAndNullsTheMissingSide(t *te
 func TestStoreQueryPostgresLegacyDecimalColumnRefused(t *testing.T) {
 	d := openStoreQueryPostgres(t, "")
 	assertLegacyDecimalColumnRefused(t, d, "legacy_dec_pg",
-		`ALTER TABLE legacy_dec_pg ALTER COLUMN price TYPE NUMERIC USING (CASE WHEN price LIKE '{%' THEN price::json->>'amount' ELSE trim(both '"' from price) END)::numeric`,
-		`ALTER TABLE legacy_dec_pg ALTER COLUMN cost TYPE NUMERIC USING (CASE WHEN cost LIKE '{%' THEN cost::json->>'amount' ELSE trim(both '"' from cost) END)::numeric`,
+		`ALTER TABLE legacy_dec_pg ALTER COLUMN price TYPE NUMERIC USING (CASE WHEN price::text LIKE '{%' THEN ('a Money object is not a decimal: ' || price::text) ELSE trim(both '"' from price::text) END)::numeric`,
+		`ALTER TABLE legacy_dec_pg ALTER COLUMN cost TYPE NUMERIC USING (CASE WHEN cost::text LIKE '{%' THEN (CASE WHEN upper(cost::json->>'currency') = 'GBP' THEN cost::json->>'amount' ELSE 'a Money object that is not in GBP: ' || cost::text END) ELSE trim(both '"' from cost::text) END)::numeric`,
 		"price IS NULL, price")
+}
+
+// A Codec.moneyIn GBP field on a Codec.auto Money column holding a USD row:
+// the conversion fails on that row instead of relabelling it GBP (v0.29.2
+// second Judge, gap 1).
+func TestStoreQueryPostgresLegacyMoneyColumnKeepsItsCurrency(t *testing.T) {
+	assertLegacyMoneyKeepsCurrency(t, openStoreQueryPostgres(t, ""), "legacy_money_pg")
 }
 
 // `user` is reserved on PostgreSQL: migrate refuses it with the reason

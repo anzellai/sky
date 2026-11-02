@@ -1219,6 +1219,9 @@ colDecoder col =
         Codec.CDecimal ->
             colDecoder Codec.CText
 
+        Codec.CMoneyIn _ ->
+            colDecoder Codec.CText
+
         Codec.CNull inner ->
             JsonD.oneOf [ jsonNull, colDecoder inner ]
 

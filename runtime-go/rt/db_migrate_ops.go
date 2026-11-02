@@ -97,6 +97,10 @@ type migColumn struct {
 	// flag, Store.defaultWith & co.): the table must have it, and nothing
 	// creates, adds or drops it. Never in a migration file.
 	External bool `json:"-"`
+	// Currency is the ISO code of a Codec.moneyIn column (the `money=` flag,
+	// Codec.CMoneyIn), "" for any other column. Only the conversion of a
+	// legacy JSON column reads it; it never changes a statement.
+	Currency string `json:"-"`
 }
 
 // migOp is one op of a migration file. A `"v"` key, which an earlier v0.29
@@ -202,6 +206,7 @@ func codecColspecMigColumn(name, rawKind, pk string) migColumn {
 		Autoinc: codecColIsAutoInc(rawKind), Unique: unique,
 		Default: migDefaultOf(defKind, defVal), Zero: codecColZero(rawKind),
 		External: codecColIsExternal(rawKind),
+		Currency: codecColCurrency(rawKind),
 	}
 }
 

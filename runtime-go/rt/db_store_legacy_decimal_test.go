@@ -33,7 +33,7 @@ func assertLegacyDecimalColumnRefused(t *testing.T, d *SkyDb, table, fixPrice, f
 	cs := []any{
 		T2[any, any]{V0: "id", V1: "text"},
 		T2[any, any]{V0: "price", V1: "decimal?"},
-		T2[any, any]{V0: "cost", V1: "decimal?"},
+		T2[any, any]{V0: "cost", V1: "decimal?|money=GBP"},
 	}
 	migrate := func() SkyResult[any, any] {
 		res, ok := AnyTaskRun(Db_autoMigrate(d, table, cs, "id", []any{})).(SkyResult[any, any])
@@ -91,8 +91,8 @@ func TestStoreMigrateRefusesADecimalFieldOnALegacyJsonColumnSqlite(t *testing.T)
 	d := openStoreQueryDb(t)
 	const table = "legacy_dec"
 	assertLegacyDecimalColumnRefused(t, d, table,
-		`UPDATE legacy_dec SET price = CASE WHEN price LIKE '{%' THEN json_extract(price, '$.amount') ELSE substr(price, 2, length(price) - 2) END WHERE price LIKE '"%"' OR price LIKE '{%'`,
-		`UPDATE legacy_dec SET cost = CASE WHEN cost LIKE '{%' THEN json_extract(cost, '$.amount') ELSE substr(cost, 2, length(cost) - 2) END WHERE cost LIKE '"%"' OR cost LIKE '{%'`,
+		`UPDATE legacy_dec SET price = substr(price, 2, length(price) - 2) WHERE price LIKE '"%"'`,
+		`UPDATE legacy_dec SET cost = CASE WHEN cost LIKE '{%' THEN json_extract(cost, '$.amount') ELSE substr(cost, 2, length(cost) - 2) END WHERE cost LIKE '"%"' OR (cost LIKE '{%' AND upper(json_extract(cost, '$.currency')) = 'GBP')`,
 		"price IS NULL, price COLLATE sky_decimal")
 }
 

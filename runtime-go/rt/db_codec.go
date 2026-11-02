@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1366,6 +1367,9 @@ type jcol struct {
 	// External marks a column the table has and the codec does not carry
 	// (Store.defaultWith & co.): `--gen` never adds or drops it.
 	External bool `json:"external,omitempty"`
+	// Currency is the ISO code of a Codec.moneyIn column: `sky db check`
+	// names it in the conversion of a legacy JSON column.
+	Currency string `json:"currency,omitempty"`
 }
 
 // codecDumpColumn is the schema-dump form of one colspec entry.
@@ -1374,7 +1378,7 @@ func codecDumpColumn(name, rawKind string) jcol {
 	return jcol{
 		Name: mc.Name, Kind: mc.Type, Nullable: mc.Nullable,
 		Autoinc: mc.Autoinc, Unique: mc.Unique, Default: mc.Default, Zero: mc.Zero,
-		External: mc.External,
+		External: mc.External, Currency: mc.Currency,
 	}
 }
 
@@ -1779,17 +1783,134 @@ func codecIsNumericType(typ string) bool {
 	return t == "numeric" || t == "decimal"
 }
 
+// codecColCurrency is the currency of a Codec.moneyIn column (the
+// `money=GBP` flag Codec.CMoneyIn writes), or "" for any other column. Only a
+// three-letter upper-case code is read: it is written into SQL text.
+func codecColCurrency(kind string) string {
+	for _, f := range codecColFlags(kind) {
+		if c, ok := strings.CutPrefix(f, "money="); ok && codecIsCurrencyCode(c) {
+			return c
+		}
+	}
+	return ""
+}
+
+func codecIsCurrencyCode(c string) bool {
+	if len(c) != 3 {
+		return false
+	}
+	for _, r := range c {
+		if r < 'A' || r > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
+// codecLegacyMoneyCheck is the query that lists the rows a conversion to a
+// Codec.moneyIn `currency` column must not take: a Money object in another
+// currency (or with no currency). It is run first; it must return no rows.
+func codecLegacyMoneyCheck(driver, table, col, currency string) string {
+	if driver == "pgx" {
+		return "SELECT " + col + " FROM " + table + " WHERE " + col + "::text LIKE '{%' AND upper(" + col +
+			"::json->>'currency') IS DISTINCT FROM '" + currency + "'"
+	}
+	return "SELECT " + col + " FROM " + table + " WHERE " + col + " LIKE '{%' AND upper(json_extract(" + col +
+		", '$.currency')) IS NOT '" + currency + "'"
+}
+
 // codecLegacyDecimalFix is the conversion of a column a Codec.auto Decimal or
 // Money field made (JSON text: `"9.5"`, `{"amount":"9.5","currency":"GBP"}`)
-// into the column a decimal field reads. NULL stays NULL.
-func codecLegacyDecimalFix(driver, table, col string) string {
+// into the column a decimal field reads. NULL stays NULL, and a bare number
+// is kept.
+//
+// The currency is never dropped. With `currency` set (a Codec.moneyIn
+// field), only a Money object in that currency becomes its amount: on
+// PostgreSQL any other Money object makes the statement fail (its USING
+// value is text that is not a number, naming the currency), and on SQLite
+// the UPDATE leaves it as it is, so the store refuses the column again. With
+// `currency` empty (Codec.decimal), no Money object is converted at all: on
+// PostgreSQL one makes the statement fail, on SQLite it is left.
+func codecLegacyDecimalFix(driver, table, col, currency string) string {
 	if driver == "pgx" {
+		obj := "('a Money object is not a decimal: ' || " + col + "::text)"
+		if currency != "" {
+			obj = "(CASE WHEN upper(" + col + "::json->>'currency') = '" + currency + "' THEN " + col +
+				"::json->>'amount' ELSE 'a Money object that is not in " + currency + ": ' || " + col + "::text END)"
+		}
 		return "ALTER TABLE " + table + " ALTER COLUMN " + col + " TYPE NUMERIC USING (CASE WHEN " + col +
-			" LIKE '{%' THEN " + col + "::json->>'amount' ELSE trim(both '\"' from " + col + ") END)::numeric"
+			"::text LIKE '{%' THEN " + obj + " ELSE trim(both '\"' from " + col + "::text) END)::numeric"
+	}
+	if currency == "" {
+		return "UPDATE " + table + " SET " + col + " = substr(" + col + ", 2, length(" + col + ") - 2) WHERE " +
+			col + " LIKE '\"%\"'"
 	}
 	return "UPDATE " + table + " SET " + col + " = CASE WHEN " + col + " LIKE '{%' THEN json_extract(" + col +
 		", '$.amount') ELSE substr(" + col + ", 2, length(" + col + ") - 2) END WHERE " + col +
-		" LIKE '\"%\"' OR " + col + " LIKE '{%'"
+		" LIKE '\"%\"' OR (" + col + " LIKE '{%' AND upper(json_extract(" + col + ", '$.currency')) = '" + currency + "')"
+}
+
+// codecLegacyDecimalAdvice is the refusal's last sentence: what to run, or
+// why there is nothing to run. `currencies` lists the currencies of the Money
+// objects the column holds (sorted; "?" for an object with none), and
+// `hasMoney` says whether it holds any.
+func codecLegacyDecimalAdvice(driver, table, col, currency string, hasMoney bool, currencies []string) string {
+	if currency == "" {
+		if hasMoney {
+			return fmt.Sprintf("The column holds Money objects (%s), and a Codec.decimal field reads only the amount: "+
+				"converting it would drop each row's currency, so no conversion is given. "+
+				"Read the column with Codec.moneyIn <Currency> when every row is in one currency, "+
+				"or with Codec.moneyObject (a JSON column) to keep the currency of each row",
+				strings.Join(currencies, ", "))
+		}
+		return "Convert it once (NULL stays NULL; a Money object makes it fail, because Codec.decimal would drop its currency): " +
+			codecLegacyDecimalFix(driver, table, col, "")
+	}
+	var foreign []string
+	for _, c := range currencies {
+		if c != currency {
+			foreign = append(foreign, c)
+		}
+	}
+	lead := ""
+	if len(foreign) > 0 {
+		lead = fmt.Sprintf("The column holds Money in %s, and the field is Codec.moneyIn %s: those rows are never relabelled as %s. "+
+			"Change or move them first. ", strings.Join(foreign, ", "), currency, currency)
+	}
+	return lead + "First check that this query returns no rows (a Money object in another currency than " + currency + "): " +
+		codecLegacyMoneyCheck(driver, table, col, currency) +
+		". Then convert it once (NULL stays NULL; a Money object in another currency makes it fail): " +
+		codecLegacyDecimalFix(driver, table, col, currency)
+}
+
+// codecLegacyMoneyCurrencies lists the currencies of the Money objects a
+// legacy column holds (upper case, sorted; "?" for an object with no
+// currency), and whether it holds any.
+func codecLegacyMoneyCurrencies(d *SkyDb, table, col string) (bool, []string, error) {
+	q := "SELECT DISTINCT upper(json_extract(" + col + ", '$.currency')) AS cur FROM " + table + " WHERE " + col + " LIKE '{%'"
+	if d.driver == "pgx" {
+		q = "SELECT DISTINCT upper(" + col + "::json->>'currency') AS cur FROM " + table + " WHERE " + col + "::text LIKE '{%'"
+	}
+	resp := AnyTaskRun(dbQueryRows(d, q, []any{}))
+	r, ok := resp.(SkyResult[any, any])
+	if !ok || r.Tag != 0 {
+		return false, nil, fmt.Errorf("could not read column %s.%s to check the currencies it holds", table, col)
+	}
+	rows := AsList(r.OkValue)
+	var out []string
+	for _, row := range rows {
+		c := "?"
+		if m, ok := dbRowAsMap(row); ok {
+			if v, present := m["cur"]; present && v != nil {
+				if s := dbRawToString(v); s != "" {
+					c = s
+				}
+			}
+		}
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return len(rows) > 0, out, nil
 }
 
 // codecLegacyDecimalColumnError refuses a decimal field (Codec.decimal,
@@ -1815,15 +1936,25 @@ func codecLegacyDecimalColumnError(d *SkyDb, table string, colspecArg any, types
 		if typ == "" {
 			continue // a missing column: migrate adds it as NUMERIC / TEXT
 		}
+		currency := codecColCurrency(kind)
+		field := "Codec.decimal"
+		if currency != "" {
+			field = "Codec.moneyIn " + currency
+		}
 		if d.driver == "pgx" {
 			if codecIsNumericType(typ) {
 				continue
 			}
-			return fmt.Errorf("column %s.%s is %s, and the store reads it as a decimal (Codec.decimal or Codec.moneyIn). "+
+			hasMoney, currencies, err := codecLegacyMoneyCurrencies(d, table, name)
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("column %s.%s is %s, and the store reads it as a decimal (%s). "+
 				"A %s column compares as text (\"10\" before \"9.5\"), so orderAsc, gt and the other comparisons would give wrong rows, "+
 				"and new values would be written in another spelling than the old ones. The store is refused and the column is not changed. "+
-				"Convert it once (NULL stays NULL; drop a DEFAULT first and set it again after): %s",
-				table, name, strings.ToUpper(typ), strings.ToUpper(typ), codecLegacyDecimalFix(d.driver, table, name))
+				"Drop a DEFAULT before a conversion and set it again after. %s",
+				table, name, strings.ToUpper(typ), field, strings.ToUpper(typ),
+				codecLegacyDecimalAdvice(d.driver, table, name, currency, hasMoney, currencies))
 		}
 		if !sqliteTextAffinity(typ) {
 			continue
@@ -1837,11 +1968,14 @@ func codecLegacyDecimalColumnError(d *SkyDb, table string, colspecArg any, types
 		if len(AsList(r.OkValue)) == 0 {
 			continue
 		}
+		hasMoney, currencies, err := codecLegacyMoneyCurrencies(d, table, name)
+		if err != nil {
+			return err
+		}
 		return fmt.Errorf("column %s.%s holds the JSON text a Codec.auto Decimal or Money field writes (\"9.5\", {\"amount\":...}), "+
-			"and the store reads it as a decimal (Codec.decimal or Codec.moneyIn), which writes 9.5. "+
-			"The two spellings would mix in one column, so the store is refused and the column is not changed. "+
-			"Convert the rows once (NULL stays NULL): %s",
-			table, name, codecLegacyDecimalFix(d.driver, table, name))
+			"and the store reads it as a decimal (%s), which writes 9.5. "+
+			"The two spellings would mix in one column, so the store is refused and the column is not changed. %s",
+			table, name, field, codecLegacyDecimalAdvice(d.driver, table, name, currency, hasMoney, currencies))
 	}
 	return nil
 }

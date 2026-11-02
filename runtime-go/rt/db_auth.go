@@ -277,6 +277,14 @@ func Db_connect(path any) any {
 			return Ok[any, any](existing)
 		}
 		driver, dsn := detectDriver(p)
+		readOnly := dbReadOnly()
+		if readOnly && driver == "sqlite" {
+			roDsn, roMsg := dbSqliteReadOnlyDSN(dsn)
+			if roMsg != "" {
+				return Err[any, any](ErrInvalidInput(roMsg))
+			}
+			dsn = roDsn
+		}
 		if driver == "pgx" {
 			// Use pgx's SIMPLE protocol for the app DB so string-bound params
 			// inline as unknown-type literals that Postgres casts per column —
@@ -287,6 +295,11 @@ func Db_connect(path any) any {
 			// they keep the extended protocol + prepared statements.)
 			if cfg, cfgErr := pgx.ParseConfig(dsn); cfgErr == nil {
 				cfg.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+				if readOnly {
+					// Every transaction of the session is read-only: a
+					// write fails in PostgreSQL itself.
+					cfg.RuntimeParams["default_transaction_read_only"] = "on"
+				}
 				dsn = stdlib.RegisterConnConfig(cfg)
 			}
 		}
@@ -355,7 +368,7 @@ func Db_connect(path any) any {
 		// (see db_pool.go) and the SQLite branch below keeps only what is
 		// genuinely SQLite-specific: the PRAGMAs.
 		resolveDbPoolConfig(driver).applyTo(conn)
-		if driver == "sqlite" {
+		if driver == "sqlite" && !readOnly {
 			for _, pragma := range []string{
 				"PRAGMA journal_mode=WAL",
 				"PRAGMA busy_timeout=5000",
@@ -383,6 +396,41 @@ func Db_connect(path any) any {
 		})
 		return Ok[any, any](db)
 	}
+}
+
+// dbReadOnly reports whether this process opens every app database
+// read-only: SKY_DB_READ_ONLY=1, which `sky db check` and `sky db status` set
+// for their helper (v0.29.2). A SQLite file is opened with mode=ro (a missing
+// file is an Err, not a new empty database), a PostgreSQL session has
+// default_transaction_read_only=on, and no telemetry is persisted
+// (EnableConsolePersistence).
+func dbReadOnly() bool {
+	return strings.TrimSpace(procenv.Getenv("SKY_DB_READ_ONLY")) == "1"
+}
+
+// dbSqliteReadOnlyDSN is the read-only form of a SQLite path: a `file:` URI
+// with mode=ro. A missing file is refused here, because SQLite would report
+// only "unable to open database file".
+func dbSqliteReadOnlyDSN(dsn string) (string, string) {
+	if dsn == ":memory:" || strings.HasPrefix(dsn, "file:") {
+		if strings.HasPrefix(dsn, "file:") && !strings.Contains(dsn, "mode=") {
+			if strings.Contains(dsn, "?") {
+				return dsn + "&mode=ro", ""
+			}
+			return dsn + "?mode=ro", ""
+		}
+		return dsn, ""
+	}
+	if _, err := os.Stat(dsn); err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Sprintf("db.connect: the SQLite database %s does not exist, "+
+				"and this process opens databases read-only (SKY_DB_READ_ONLY=1), so it is not created. "+
+				"Check the path, or create the database first (sky db migrate)", dsn)
+		}
+		return "", "db.connect: " + err.Error()
+	}
+	esc := strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23").Replace(dsn)
+	return "file:" + esc + "?mode=ro", ""
 }
 
 // detectDriver returns the (driverName, dsn) pair for a connection string.
@@ -1738,6 +1786,41 @@ func migEnsureLedger(d *SkyDb) error {
 // Ai_migrate) passes "" and a fail that returns the error, so its migrations
 // land in the same ledger and never end the process.
 func dbMigrateCore(d *SkyDb, entries []migEntry, op string, fail func(msg string, e any) any) any {
+	// status writes nothing (v0.29.2): it neither creates the ledger nor
+	// adds its `kind` column, it reads what is there.
+	if op == "status" {
+		applied := map[string]appliedMigration{}
+		if dbTableExists(d, "_sky_migrations") {
+			rows, err := d.conn.Query(`SELECT name, checksum, applied_at, kind FROM _sky_migrations`)
+			withKind := err == nil
+			if !withKind {
+				rows, err = d.conn.Query(`SELECT name, checksum, applied_at FROM _sky_migrations`)
+			}
+			if err != nil {
+				return fail("read _sky_migrations: "+err.Error(),
+					Err[any, any](ErrIo("db.migrate: read _sky_migrations: "+err.Error())))
+			}
+			for rows.Next() {
+				var n, c, at string
+				var kind sql.NullString
+				var scanErr error
+				if withKind {
+					scanErr = rows.Scan(&n, &c, &at, &kind)
+				} else {
+					scanErr = rows.Scan(&n, &c, &at)
+				}
+				if scanErr != nil {
+					rows.Close()
+					return fail("scan _sky_migrations: "+scanErr.Error(),
+						Err[any, any](ErrIo("db.migrate: scan _sky_migrations: "+scanErr.Error())))
+				}
+				applied[n] = appliedMigration{checksum: c, appliedAt: at, kind: kind.String}
+			}
+			rows.Close()
+		}
+		dbPrintMigrationStatus(applied, entries)
+		ExitProcess(0)
+	}
 	if err := migEnsureLedger(d); err != nil {
 		return fail(err.Error(), Err[any, any](ErrIo("db.migrate: "+err.Error())))
 	}
@@ -1759,12 +1842,6 @@ func dbMigrateCore(d *SkyDb, entries []migEntry, op string, fail func(msg string
 		applied[n] = appliedMigration{checksum: c, appliedAt: at, kind: kind.String}
 	}
 	rows.Close()
-
-	// status — read-only report, then exit.
-	if op == "status" {
-		dbPrintMigrationStatus(applied, entries)
-		ExitProcess(0)
-	}
 
 	out := []any{}
 	for _, e := range entries {
