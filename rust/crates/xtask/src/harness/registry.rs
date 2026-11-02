@@ -907,8 +907,8 @@ pub static GATES: &[Gate] = &[
                           directory again, and the copy recompiles every package",
             kind: MutationKind::ReplaceOnce {
                 path: "rust/crates/project/src/go_cmd.rs",
-                from: "cmd.current_dir(self.dir).args(self.args(trimpath()));",
-                to: "cmd.current_dir(self.dir).args(self.args(false));",
+                from: ".args(self.args_for(trimpath(), goflags));",
+                to: ".args(self.args_for(false, goflags));",
             },
         }]),
         body: bodies::build_new_dir_compiles_nothing,

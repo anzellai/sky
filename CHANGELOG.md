@@ -159,6 +159,14 @@ a `Result` wherever two currencies can differ (see Breaking).
   are skipped, and `busy_timeout` went with them, so a check against a
   database another process was writing failed at once with "database is
   locked". It is now set on every read-only connection.
+- **A cold build uses less memory at its peak.** The compile of the runtime
+  package (`sky-app/rt`) is the largest process of every build, and Go gave
+  it up to four SSA back-ends at once. Every `go build` Sky runs (the native
+  app, the Sky.Spa wasm client, `sky check`, `sky test`, the cache warm-up)
+  now passes `-gcflags=sky-app/rt=-c=2`: the cold build peak drops from
+  about 990-1060 MB to about 850-890 MB, and the compiled code is the same.
+  It is left out when your `GOFLAGS` has a `-gcflags`, because Go keeps only
+  the last matching `-gcflags` pattern and would drop yours.
 - **`TestDictHashKeepsTheTrieShallow` failed about one run in 50 with
   nothing wrong.** Measured over 10,000 seeds per key family on
   linux/amd64, the Dict hash matches a uniform hash (depth 11 for 100,000

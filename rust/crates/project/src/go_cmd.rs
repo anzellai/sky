@@ -111,15 +111,46 @@ pub fn goflags_readonly_from(existing: &str) -> String {
     flags.join(" ")
 }
 
+/// The runtime package's compile runs at most two SSA backends at once.
+///
+/// `sky-app/rt` is the largest process of a build: every app compiles all of
+/// it, and its compile is the build's peak RSS (the app50 cold build,
+/// darwin/arm64 and linux/amd64, go1.26). Go gives each compile
+/// `-c=min(4, GOMAXPROCS)` backend workers, each holding one function's SSA;
+/// at `-c=2` the runtime's compile peaks lower and takes slightly longer,
+/// while the other packages of a cold build use the CPUs it gives up. `-c`
+/// does not change the compiled code.
+///
+/// Left out when the user's `GOFLAGS` carries a `-gcflags`: Go applies only
+/// the last `-gcflags` pattern that matches a package, so one added here
+/// would drop the user's own flags (`-N -l` for a debugger) for the runtime.
+pub const RT_BACKEND_GCFLAGS: &str = "-gcflags=sky-app/rt=-c=2";
+
+/// Whether [`RT_BACKEND_GCFLAGS`] goes on a build run with this `GOFLAGS`.
+pub fn rt_backend_cap_for(goflags: &str) -> bool {
+    !goflags
+        .split_whitespace()
+        .any(|f| f.starts_with("-gcflags") || f.starts_with("--gcflags"))
+}
+
 impl GoBuild<'_> {
-    /// The argv after `go`, for a given `-trimpath` setting. Pure.
+    /// The argv after `go`, for a given `-trimpath` setting, with no
+    /// `-gcflags` in `GOFLAGS`. Pure.
     pub fn args(&self, trimpath: bool) -> Vec<OsString> {
+        self.args_for(trimpath, "")
+    }
+
+    /// [`Self::args`] for a build run with `goflags` as its `GOFLAGS`. Pure.
+    pub fn args_for(&self, trimpath: bool, goflags: &str) -> Vec<OsString> {
         let mut a: Vec<OsString> = vec!["build".into()];
         if let Some(j) = self.jobs {
             a.push(j.into());
         }
         if trimpath {
             a.push("-trimpath".into());
+        }
+        if rt_backend_cap_for(goflags) {
+            a.push(RT_BACKEND_GCFLAGS.into());
         }
         a.extend(self.extra.iter().map(OsString::from));
         if let Some(out) = self.output {
@@ -167,7 +198,8 @@ impl GoBuild<'_> {
 
     fn command_with_goflags(&self, goflags: &str) -> Command {
         let mut cmd = Command::new("go");
-        cmd.current_dir(self.dir).args(self.args(trimpath()));
+        cmd.current_dir(self.dir)
+            .args(self.args_for(trimpath(), goflags));
         for (k, v) in self.env(goflags) {
             cmd.env(k, v);
         }
@@ -196,9 +228,20 @@ mod tests {
         };
         assert_eq!(
             strs(&b.args(true)),
-            ["build", "-p=2", "-trimpath", "-o", "app", "."]
+            [
+                "build",
+                "-p=2",
+                "-trimpath",
+                RT_BACKEND_GCFLAGS,
+                "-o",
+                "app",
+                "."
+            ]
         );
-        assert_eq!(strs(&b.args(false)), ["build", "-p=2", "-o", "app", "."]);
+        assert_eq!(
+            strs(&b.args(false)),
+            ["build", "-p=2", RT_BACKEND_GCFLAGS, "-o", "app", "."]
+        );
         assert_eq!(
             b.env("-mod=mod -buildvcs=false"),
             vec![
@@ -228,6 +271,7 @@ mod tests {
             [
                 "build",
                 "-trimpath",
+                RT_BACKEND_GCFLAGS,
                 "-ldflags=-s -w",
                 "-o",
                 "main.wasm",
@@ -253,8 +297,47 @@ mod tests {
                 packages: &["./rt/..."],
                 extra: &[],
             };
-            assert_eq!(strs(&b.args(true)), ["build", "-trimpath", "./rt/..."]);
+            assert_eq!(
+                strs(&b.args(true)),
+                ["build", "-trimpath", RT_BACKEND_GCFLAGS, "./rt/..."]
+            );
         }
+    }
+
+    /// The runtime's compile is capped at two backends (its peak is the
+    /// build's peak RSS), unless the user's GOFLAGS carries its own
+    /// `-gcflags`, which a later matching pattern would replace for `rt`.
+    #[test]
+    fn the_runtime_compile_is_capped_unless_goflags_has_gcflags() {
+        let b = GoBuild {
+            dir: Path::new("/x"),
+            target: Target::Native { cgo: false },
+            jobs: None,
+            output: Some(OsStr::new("app")),
+            packages: &["."],
+            extra: &[],
+        };
+        assert_eq!(RT_BACKEND_GCFLAGS, "-gcflags=sky-app/rt=-c=2");
+        for g in ["", "-mod=mod -buildvcs=false", "-tags=x -ldflags=-s"] {
+            assert!(rt_backend_cap_for(g), "{g}");
+            assert!(strs(&b.args_for(true, g)).contains(&RT_BACKEND_GCFLAGS.to_string()));
+        }
+        for g in ["-gcflags=all=-N -l", "-mod=mod -gcflags=-m", "--gcflags=x"] {
+            assert!(!rt_backend_cap_for(g), "{g}");
+            assert_eq!(
+                strs(&b.args_for(true, g)),
+                ["build", "-trimpath", "-o", "app", "."]
+            );
+        }
+        let flags = b
+            .command_with_goflags("-gcflags=all=-N")
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(
+            !flags.iter().any(|a| a.starts_with("-gcflags")),
+            "{flags:?}"
+        );
     }
 
     #[test]

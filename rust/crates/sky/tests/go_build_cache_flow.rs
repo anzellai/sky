@@ -199,7 +199,9 @@ fn every_go_build_trims_paths() {
     assert!(builds.iter().any(|b| b.contains("GOOS=js")), "{builds:?}");
     for b in &builds {
         assert!(
-            b.ends_with("| build -trimpath ./rt/..."),
+            // The runtime's compile is capped at two back-ends on every
+            // build (go_cmd.rs RT_BACKEND_GCFLAGS), the warm-up included.
+            b.ends_with("| build -trimpath -gcflags=sky-app/rt=-c=2 ./rt/..."),
             "the warm-up must use the project build's flags: {b}"
         );
     }
