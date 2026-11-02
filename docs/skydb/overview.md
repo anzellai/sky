@@ -347,7 +347,11 @@ both:
   spelling (`"9.5"`). So `Store.migrate` and `Store.pushProject` refuse a
   decimal field on such a column, naming `table.column` and the statement
   that converts it, and change nothing (`migrate` never alters a column).
-  `sky db check` names the same column. The conversion never drops a
+  `sky db check` runs the same check (`Store.checkProjectData`, v0.29.2), so
+  it reports the same column as drift with the same text, on SQLite too, where
+  the column type alone fits. A write never stores a JSON value its codec does
+  not read back (a `Codec.list (Codec.moneyIn GBP)` holding a USD Money is
+  refused). The conversion never drops a
   currency: for `Codec.moneyIn GBP` only a Money in GBP becomes its amount,
   and for `Codec.decimal` no Money object converts.
 
@@ -363,8 +367,8 @@ both:
   ```
 
   A `Codec.moneyIn GBP` field: first check that this query returns no rows
-  (each row it returns is a Money in another currency; change or move it,
-  it is never relabelled GBP):
+  (each row it returns is a Money in another currency, or with no currency;
+  change or move it, it is never relabelled GBP):
 
   ```sql
   SELECT cost FROM items
@@ -372,7 +376,8 @@ both:
       AND upper(cost::json->>'currency') IS DISTINCT FROM 'GBP'
   ```
 
-  then convert (a Money in another currency makes it fail):
+  then convert (a Money in another currency, or with no currency, makes it
+  fail):
 
   ```sql
   ALTER TABLE items ALTER COLUMN cost TYPE NUMERIC

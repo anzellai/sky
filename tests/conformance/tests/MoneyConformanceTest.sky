@@ -259,6 +259,20 @@ tests =
                     (Money.convert fx Money.EUR (Money.fromMajor Money.USD 100)
                         |> Result.andThen (Money.convert fx Money.USD)
                         |> Result.map Money.formatWithCode))
+    , Test.test "convert through the inverse rate divides by it: 3 EUR -> 1 USD @ USD->EUR 3 (exact), 1 EUR -> 0.3333333333333333 USD (16 places)"
+        (\_ ->
+            let
+                fx = Money.rates [ ( Money.USD, Money.EUR, dec "3" ) ]
+
+                amountOf r =
+                    Result.map (\m -> Dec.toString (Money.amount m) ++ " " ++ Money.currencyCode (Money.currency m)) r
+            in
+                Test.equal
+                    [ Ok "1 USD", Ok "0.3333333333333333 USD", Ok "2 USD" ]
+                    [ amountOf (Money.convert fx Money.USD (Money.Money (dec "3") Money.EUR))
+                    , amountOf (Money.convert fx Money.USD (Money.Money (dec "1") Money.EUR))
+                    , amountOf (Money.convert (Money.rates [ ( Money.USD, Money.EUR, dec "7" ) ]) Money.USD (Money.Money (dec "14") Money.EUR))
+                    ])
     , Test.test "rate reads the inverse: EUR->USD == 0.5"
         (\_ -> Test.equal (Just "0.5") (Money.rate Money.EUR Money.USD (Money.rates [ ( Money.USD, Money.EUR, dec "2" ) ]) |> Maybe.map Dec.toString))
     , Test.test "a zero or negative rate is left out: no rate"

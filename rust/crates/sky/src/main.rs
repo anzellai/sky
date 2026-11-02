@@ -15198,8 +15198,7 @@ run render =
 inspect : String -> Task Error ()
 inspect migrations =
     Db.connect ()
-        |> Task.andThen (\conn -> Migrate.inspectSchema conn migrations)
-        |> Task.andThen (\report -> emit "SKY_INSPECT_BEGIN" report "SKY_INSPECT_END")
+        |> Task.andThen (\conn -> Migrate.inspectSchema conn migrations |> Task.andThen (\report -> emit "SKY_INSPECT_BEGIN" report "SKY_INSPECT_END") |> Task.andThen (\_ -> Store.checkProjectData conn db) |> Task.andThen (\data -> emit "SKY_DATA_BEGIN" data "SKY_DATA_END"))
 
 
 printRendered : List ( String, String ) -> Task Error ()
@@ -15300,7 +15299,29 @@ emit begin body end =
                 return ExitCode::from(2);
             }
         };
-    let report = db_check::check(&target, &live);
+    // The refusals the app's Store.migrate would give for the data the
+    // tables hold, from the runtime's own check (Store.checkProjectData):
+    // a column type can fit while its rows do not (v0.29.2).
+    let data: Vec<db_check::DataRefusal> =
+        match extract_between(&stdout, "SKY_DATA_BEGIN", "SKY_DATA_END")
+            .map(|j| serde_json::from_str(j.trim()))
+        {
+            Some(Ok(d)) => d,
+            Some(Err(e)) => {
+                eprintln!("sky db check: bad data report: {e}");
+                return ExitCode::from(2);
+            }
+            None => {
+                eprintln!(
+                    "sky db check: could not check the data the tables hold (the check the \
+                     app's Store.migrate runs):\n{}",
+                    helper_error_text(&stderr, &stdout)
+                );
+                return ExitCode::from(2);
+            }
+        };
+    let mut report = db_check::check(&target, &live);
+    db_check::apply_data(&mut report, &data);
     let drift = if report.drift() {
         ExitCode::from(1)
     } else {

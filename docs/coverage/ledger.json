@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 2141,
+      "expected_assertions": 2180,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -816,7 +816,7 @@
       "tier": "T1"
     },
     "store-query-postgres": {
-      "expected_assertions": 294,
+      "expected_assertions": 330,
       "falsifier_mutation": "store-query-postgres.drop-rows-err",
       "falsifier_proven": true,
       "summary": "Std.Db.Store query path (aggregates, select, latestPer, text match, jsonText) on PostgreSQL",
@@ -1010,7 +1010,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3240,
+    "stdlib_entries": 3241,
     "stdlib_modules": 135,
     "surfaces_covered": 193,
     "surfaces_covered_pct": 95.1,
@@ -19661,9 +19661,8 @@
           ]
         },
         "Std.Codec": {
-          "count": 3,
+          "count": 2,
           "symbols": [
-            "ColType",
             "JsonSchema",
             "Variant"
           ]
@@ -19825,7 +19824,7 @@
           ]
         },
         "Std.Db.Store": {
-          "count": 8,
+          "count": 9,
           "symbols": [
             "Agg",
             "Correlate",
@@ -19833,6 +19832,7 @@
             "JoinOn",
             "Otherwise",
             "SetExpr",
+            "checkProjectData",
             "countDistinctAs",
             "orderRightDesc"
           ]
@@ -21126,9 +21126,8 @@
           ]
         },
         "Std.Codec": {
-          "count": 3,
+          "count": 2,
           "symbols": [
-            "ColType",
             "JsonSchema",
             "Variant"
           ]
@@ -21300,7 +21299,7 @@
           ]
         },
         "Std.Db.Store": {
-          "count": 8,
+          "count": 9,
           "symbols": [
             "Agg",
             "Correlate",
@@ -21308,6 +21307,7 @@
             "JoinOn",
             "Otherwise",
             "SetExpr",
+            "checkProjectData",
             "countDistinctAs",
             "orderRightDesc"
           ]
@@ -23971,8 +23971,8 @@
       "id": "tests/conformance",
       "modules_imported": 67,
       "path": "tests/conformance",
-      "refs_generous": 1043,
-      "refs_qualified": 1016,
+      "refs_generous": 1044,
+      "refs_qualified": 1017,
       "role": "Conformance",
       "sky_files": 59,
       "sky_toml_sections": []

@@ -888,6 +888,161 @@ fn sqlite_check_and_status_do_not_create_a_missing_database() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+const MONEY_IN_SRC: &str = r#"module Main exposing (main, db)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Db as Db
+import Std.Db.Store as Store
+import Std.Codec as Codec
+import Std.Money as Money exposing (Money)
+
+
+type alias Price =
+    { id : String
+    , cost : Money
+    }
+
+
+prices : Store.Store Price
+prices =
+    Store.fromCodec "prices"
+        (Codec.object Price
+            |> Codec.field "id" .id Codec.string
+            |> Codec.field "cost" .cost (Codec.moneyIn Money.GBP)
+            |> Codec.buildObject
+        )
+        |> Store.primaryKey "id"
+
+
+db : Store.Project
+db =
+    Store.project [ Store.toTable prices ]
+
+
+main : Task Error ()
+main =
+    Db.connect ()
+        |> Task.andThen (\conn -> Store.migrate conn prices)
+        |> Task.map (\_ -> ())
+"#;
+
+/// A SQLite TEXT column holding the Codec.auto Money JSON, read by a
+/// Codec.moneyIn GBP field. Its type fits, so `sky db check` said "up to
+/// date" (exit 0) while the app's Store.migrate refused the database
+/// (v0.29.2 third Judge, gap 2). The check now runs the runtime's own data
+/// check: drift, with Store.migrate's text and its conversion, and after
+/// the conversion both agree.
+#[test]
+fn sqlite_data_the_app_refuses_is_drift_with_the_runtime_text() {
+    if !required(Need::Go, tool_on_path("go")) {
+        return;
+    }
+    if !required(Need::Sqlite3, tool_on_path("sqlite3")) {
+        return;
+    }
+    let dir = project(
+        "sky-dbcheck-data",
+        "driver = \"sqlite\"\npath = \"app.db\"",
+        MONEY_IN_SRC,
+    );
+    let db = dir.join("app.db");
+    sqlite3(
+        &db,
+        "CREATE TABLE prices (id TEXT PRIMARY KEY NOT NULL, cost TEXT NOT NULL);\
+         INSERT INTO prices VALUES ('a', '{\"amount\":\"10.00\",\"currency\":\"GBP\"}');",
+    );
+    // The app refuses the database.
+    let (code, out, err) = sky(&dir, &["run", "src/Main.sky"], &[]);
+    assert_ne!(code, 0, "the app accepted the column:\n{out}\n{err}");
+    let refusal =
+        "column prices.cost holds the JSON text a Codec.auto Decimal or Money field writes";
+    assert!(format!("{out}{err}").contains(refusal), "{out}\n{err}");
+    // So does `sky db check`, with the same text.
+    let (code, report, err) = sky(&dir, &["db", "check"], &[]);
+    assert_eq!(
+        code, 1,
+        "sky db check did not report drift:\n{report}\n{err}"
+    );
+    assert!(
+        report.contains(&format!("Store.migrate: {refusal}")),
+        "{report}"
+    );
+    assert!(!report.contains("up to date."), "{report}");
+    let (code, sql, err) = sky(&dir, &["db", "check", "--sql"], &[]);
+    assert_eq!(code, 1, "{sql}\n{err}");
+    let update = sql
+        .lines()
+        .find(|l| l.starts_with("-- UPDATE prices SET cost = "))
+        .unwrap_or_else(|| panic!("no conversion in:\n{sql}"))
+        .trim_start_matches("-- ")
+        .to_string();
+    sqlite3(&db, &update);
+    let (code, report, err) = sky(&dir, &["db", "check"], &[]);
+    assert_eq!(code, 0, "after the conversion:\n{report}\n{err}");
+    let (code, out, err) = sky(&dir, &["run", "src/Main.sky"], &[]);
+    assert_eq!(
+        code, 0,
+        "the app refuses the converted column:\n{out}\n{err}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `sky db status` with no db/migrations runs the app's main read-only. An
+/// app that writes before Db.migrate fails there; the error names the
+/// read-only mode and what to do (v0.29.2 third Judge, gap 3).
+#[test]
+fn sqlite_status_names_read_only_mode_when_main_writes_before_migrate() {
+    if !required(Need::Go, tool_on_path("go")) {
+        return;
+    }
+    let src = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Db as Db
+import Std.Log exposing (println)
+
+
+migrations : List Db.Migration
+migrations =
+    [ Db.defaultMigration "0001_items" |> Db.withSql "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)" ]
+
+
+boot : Db.Db -> Task Error ()
+boot conn =
+    Db.execRaw conn "CREATE TABLE IF NOT EXISTS boot_log (at TEXT)"
+        |> Task.andThen (\_ -> Db.execRaw conn "INSERT INTO boot_log VALUES (datetime('now'))")
+        |> Task.andThen (\_ -> Db.migrate conn migrations)
+        |> Task.andThen (\_ -> println "ready")
+
+
+main : Task Error ()
+main =
+    Db.connect () |> Task.andThen boot
+"#;
+    let dir = project(
+        "sky-dbstatus-ro",
+        "driver = \"sqlite\"\npath = \"app.db\"",
+        src,
+    );
+    ok(&dir, &["run", "src/Main.sky"], &[]);
+    let (_code, out, err) = sky(&dir, &["db", "status"], &[]);
+    let all = format!("{out}{err}");
+    for want in [
+        "attempt to write a readonly database",
+        "SKY_READ_ONLY_DB=1",
+        "Move that write after Db.migrate",
+        "file migrations",
+    ] {
+        assert!(
+            all.contains(want),
+            "`sky db status` does not say {want:?}:\n{all}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A Codec.moneyIn GBP field on a Codec.auto Money column (TEXT holding
 /// `{"amount":…,"currency":…}`): `--sql` gives the check query for rows in
 /// another currency, then the conversion that fails on such a row, and the
@@ -946,6 +1101,22 @@ main =
          ('b', '{\"amount\":\"5.00\",\"currency\":\"USD\"}'), ('c', '\"3\"'), ('d', '4')",
         true,
     );
+    // The report is the runtime's refusal, once (the type finding for the
+    // column is replaced by it, v0.29.2 third Judge).
+    let (code, report, err) = sky(&dir, &["db", "check"], &env);
+    assert_eq!(code, 1, "{report}\n{err}");
+    assert!(
+        report.contains("Store.migrate: column prices.cost is TEXT"),
+        "{report}"
+    );
+    assert_eq!(
+        report
+            .lines()
+            .filter(|l| l.starts_with("  - ") && l.contains("prices.cost"))
+            .count(),
+        1,
+        "{report}"
+    );
     let (code, sql, err) = sky(&dir, &["db", "check", "--sql"], &env);
     assert_eq!(code, 1, "{sql}\n{err}");
     let check = "SELECT cost FROM prices WHERE cost::text LIKE '{%' AND \
@@ -953,7 +1124,7 @@ main =
     assert!(sql.contains(check), "no check query in:\n{sql}");
     let alter = sql
         .lines()
-        .find(|l| l.contains("ALTER TABLE prices ALTER COLUMN cost TYPE NUMERIC"))
+        .find(|l| l.starts_with("-- ALTER TABLE prices ALTER COLUMN cost TYPE NUMERIC"))
         .unwrap_or_else(|| panic!("no conversion in:\n{sql}"))
         .trim_start_matches("-- ")
         .trim_end_matches(';')

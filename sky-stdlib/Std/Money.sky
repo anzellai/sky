@@ -869,7 +869,9 @@ rates triples =
 
 -- | The rate from one currency to another: `Just 1` for the same currency,
 -- the rate given for the pair, else the inverse of the rate given for the
--- other direction (`1 / r`), else `Nothing`.
+-- other direction (`1 / r`, rounded to 16 decimal places when it does not
+-- end sooner), else `Nothing`. `convert` does not multiply by this rounded
+-- inverse: it divides by `r`.
 rate : Currency -> Currency -> Rates -> Maybe Decimal
 rate from to (Rates table) =
     let
@@ -911,23 +913,45 @@ findRate f t table =
                 findRate f t rest
 
 
--- | Convert Money to `to` with a rate from `fx` (see `rate`). The same
--- currency is returned unchanged; a pair with no rate is an `Err` naming both
--- currencies.
+-- | Convert Money to `to` with a rate from `fx`. The same currency is
+-- returned unchanged; a pair with no rate is an `Err` naming both currencies.
+--
+-- The rate given for the pair multiplies the amount, which is exact. With
+-- only the rate for the other direction, the amount is DIVIDED by that rate
+-- (never multiplied by a rounded `1 / r`): 3 EUR at USD->EUR 3 is exactly
+-- 1 USD. A quotient with more than 16 decimal places is rounded to 16, half
+-- away from zero (1 EUR at USD->EUR 3 is 0.3333333333333333 USD). Round to
+-- the currency's minor unit yourself when you store or show it.
 convert : Rates -> Currency -> Money -> Result Error Money
-convert fx to m =
-    case rate (currency m) to fx of
+convert (Rates table) to m =
+    let
+        f = currencyCode (currency m)
+        t = currencyCode to
+    in
+        if f == t then
+            Ok m
 
-        Just r ->
-            if eqCurrency (currency m) to then
-                Ok m
+        else
+            case findRate f t table of
 
-            else
-                Ok (Money (Dec.mul r (amount m)) to)
+                Just r ->
+                    Ok (Money (Dec.mul r (amount m)) to)
 
-        Nothing ->
-            Err
-                (Error.invalidInput
-                    ("Money.convert: no rate from " ++ currencyCode (currency m)
-                        ++ " to "
-                        ++ currencyCode to))
+                Nothing ->
+                    case findRate t f table of
+
+                        Just r ->
+                            case Dec.div (amount m) r of
+
+                                Ok q ->
+                                    Ok (Money q to)
+
+                                Err e ->
+                                    Err e
+
+                        Nothing ->
+                            Err
+                                (Error.invalidInput
+                                    ("Money.convert: no rate from " ++ f
+                                        ++ " to "
+                                        ++ t))

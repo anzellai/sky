@@ -1305,6 +1305,67 @@ pub fn check(target: &Schema, live: &Inspect) -> Check {
 // ---- rendering ---------------------------------------------------------------
 
 /// The plain-words report.
+/// One refusal `Store.migrate` would give for the data a table holds, as the
+/// runtime's `Store.checkProjectData` reports it (`Db_checkProjectData`,
+/// db_codec.go): the same function `Store.migrate` calls, so `check` and the
+/// app cannot disagree on a database.
+#[derive(Debug, Deserialize, Clone)]
+pub struct DataRefusal {
+    pub table: String,
+    #[serde(default)]
+    pub column: String,
+    pub message: String,
+    /// A query that must return no rows before the conversion.
+    #[serde(default)]
+    pub check: String,
+    /// The conversion the message names ("" when there is none to give).
+    #[serde(default)]
+    pub sql: String,
+}
+
+/// Add the runtime's data refusals to a check. Each is drift: the app's
+/// `Store.migrate` refuses that table, whatever the column types say (a
+/// SQLite TEXT column holding `Codec.auto` Money JSON has the type a decimal
+/// field wants). The runtime's text and SQL are used as they are. A type
+/// finding for the same column (PostgreSQL TEXT under a decimal field) is
+/// replaced by it, so the column is reported once, with the runtime's
+/// conversion.
+pub fn apply_data(c: &mut Check, data: &[DataRefusal]) {
+    for d in data {
+        if !d.column.is_empty() {
+            let prefix = format!("column {}.{} is ", d.table, d.column);
+            c.findings
+                .retain(|f| !(f.table == d.table && f.text.starts_with(&prefix)));
+        }
+        let mut steps = Vec::new();
+        if !d.check.is_empty() {
+            steps.push(Step::Unsafe {
+                sql: d.check.clone(),
+                reason: "run this first: it must return no rows. A row it lists is never \
+                         relabelled; change or move it before the conversion"
+                    .into(),
+            });
+        }
+        steps.push(Step::Unsafe {
+            sql: d.sql.clone(),
+            reason: if d.sql.is_empty() {
+                "there is no conversion to give: the message above says why and what to do".into()
+            } else {
+                "the conversion Store.migrate names: it rewrites the column's rows".into()
+            },
+        });
+        c.findings.push(Finding {
+            table: d.table.clone(),
+            text: d.message.clone(),
+            code: Some(format!(
+                "the app's Store.migrate refuses table {}: {}",
+                d.table, d.message
+            )),
+            steps,
+        });
+    }
+}
+
 pub fn render_report(c: &Check, target_tables: usize) -> String {
     let mut s = String::new();
     let db = if is_pg(&c.dialect) {
@@ -2256,6 +2317,57 @@ mod tests {
     /// Codec.decimal field converts no Money object, and a Codec.moneyIn GBP
     /// field converts only GBP, after a check query (v0.29.2 second Judge,
     /// gap 1: `->>'amount'` relabelled USD 5.00 as GBP 5.00).
+    #[test]
+    fn a_data_refusal_is_drift_and_replaces_the_type_finding_for_its_column() {
+        let target = Schema {
+            tables: vec![table(
+                "prices",
+                "id",
+                vec![col("id", "text", false), col("cost", "decimal", false)],
+            )],
+        };
+        let lt = LiveTable {
+            name: "prices".into(),
+            columns: vec![
+                lcol("id", "TEXT", true, None),
+                lcol("cost", "TEXT", true, None),
+            ],
+            indexes: vec![],
+        };
+        // SQLite: the TEXT column fits a decimal field, so the types alone
+        // say "up to date" while Store.migrate refuses the data.
+        let mut c = check(&target, &inspect("sqlite", vec![lt.clone()]));
+        assert!(!c.drift(), "{:?}", c.findings);
+        let refusal = DataRefusal {
+            table: "prices".into(),
+            column: "cost".into(),
+            message: "Store.migrate: column prices.cost holds the JSON text ...".into(),
+            check: "SELECT cost FROM prices WHERE 1".into(),
+            sql: "UPDATE prices SET cost = 1".into(),
+        };
+        apply_data(&mut c, std::slice::from_ref(&refusal));
+        assert!(c.drift());
+        assert_eq!(c.findings.len(), 1);
+        assert_eq!(c.findings[0].text, refusal.message);
+        let sql = render_sql(&c, &[]);
+        assert!(sql.contains("-- SELECT cost FROM prices WHERE 1;"), "{sql}");
+        assert!(sql.contains("-- UPDATE prices SET cost = 1;"), "{sql}");
+        // PostgreSQL: the type finding for the column is replaced, not doubled.
+        let mut pgc = check(&target, &inspect("postgres", vec![lt]));
+        assert!(pgc
+            .findings
+            .iter()
+            .any(|f| f.text.starts_with("column prices.cost is ")));
+        apply_data(&mut pgc, &[refusal]);
+        assert_eq!(
+            pgc.findings
+                .iter()
+                .filter(|f| f.text.contains("prices.cost"))
+                .count(),
+            1
+        );
+    }
+
     #[test]
     fn decimal_over_legacy_text_proposes_the_json_aware_conversion() {
         let target = Schema {

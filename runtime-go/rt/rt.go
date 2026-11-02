@@ -4698,7 +4698,7 @@ func makeErrorT(kindTag int, kindName, msg string) skyErrorAdt {
 
 // Public Sky-shaped error builders. Used by the FFI runtime to
 // produce structured Error values instead of raw strings.
-func ErrIo(msg string) any      { return makeError(0, "Io", msg) }
+func ErrIo(msg string) any      { return makeError(0, "Io", withReadOnlyDbHint(msg)) }
 func ErrNetwork(msg string) any { return makeError(1, "Network", msg) }
 func ErrFfi(msg string) any     { return makeError(2, "Ffi", msg) }
 func ErrDecode(msg string) any  { return makeError(3, "Decode", msg) }

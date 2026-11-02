@@ -398,26 +398,27 @@ func Db_connect(path any) any {
 	}
 }
 
-// dbReadOnly reports whether this process opens every app database
-// read-only: SKY_READ_ONLY_DB=1, which `sky db check` and `sky db status` set
-// for their helper (v0.29.2). A SQLite file is opened with mode=ro (a missing
-// file is an Err, not a new empty database), a PostgreSQL session has
-// default_transaction_read_only=on, and no telemetry is persisted
-// (EnableConsolePersistence).
-func dbReadOnly() bool {
-	return strings.TrimSpace(procenv.Getenv("SKY_READ_ONLY_DB")) == "1"
-}
-
 // dbSqliteReadOnlyDSN is the read-only form of a SQLite path: a `file:` URI
 // with mode=ro. A missing file is refused here, because SQLite would report
 // only "unable to open database file".
+//
+// The write PRAGMAs Db.connect runs (journal_mode=WAL, synchronous) are
+// skipped in read-only mode, but busy_timeout is kept: it changes nothing on
+// disk, and without it a read while another process writes fails at once
+// with "database is locked" instead of waiting (v0.29.2). It is set in the
+// URI (`_pragma`), so every connection of the pool has it.
 func dbSqliteReadOnlyDSN(dsn string) (string, string) {
+	const busy = "_pragma=busy_timeout(5000)"
 	if dsn == ":memory:" || strings.HasPrefix(dsn, "file:") {
-		if strings.HasPrefix(dsn, "file:") && !strings.Contains(dsn, "mode=") {
-			if strings.Contains(dsn, "?") {
-				return dsn + "&mode=ro", ""
+		if strings.HasPrefix(dsn, "file:") {
+			add := busy
+			if !strings.Contains(dsn, "mode=") {
+				add = "mode=ro&" + busy
 			}
-			return dsn + "?mode=ro", ""
+			if strings.Contains(dsn, "?") {
+				return dsn + "&" + add, ""
+			}
+			return dsn + "?" + add, ""
 		}
 		return dsn, ""
 	}
@@ -430,7 +431,7 @@ func dbSqliteReadOnlyDSN(dsn string) (string, string) {
 		return "", "db.connect: " + err.Error()
 	}
 	esc := strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23").Replace(dsn)
-	return "file:" + esc + "?mode=ro", ""
+	return "file:" + esc + "?mode=ro&" + busy, ""
 }
 
 // detectDriver returns the (driverName, dsn) pair for a connection string.

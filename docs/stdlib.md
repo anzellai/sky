@@ -672,7 +672,7 @@ ISO 4217 minor-unit awareness (JPY=0dp, USD=2dp, BHD=3dp). `Currency` is a typed
 | `currencyFromCode` | `String -> Maybe Currency` (3 to 10 ASCII letters or digits, read in upper case; `CurrencyRaw` for a code Sky does not name; `Nothing` for anything else) |
 | `Rates` / `rates triples` | an explicit exchange-rate table: `List ( Currency, Currency, Decimal ) -> Rates` (a rate at or below zero is left out) |
 | `rate from to fx` | `Currency -> Currency -> Rates -> Maybe Decimal` (`Just 1` for one currency; the inverse of the other direction when only that is given) |
-| `convert fx to m` | `Rates -> Currency -> Money -> Result Error Money` (`Err` naming both currencies when there is no rate) |
+| `convert fx to m` | `Rates -> Currency -> Money -> Result Error Money` (`Err` naming both currencies when there is no rate). The pair's own rate multiplies the amount; with only the other direction's rate `r`, the amount is divided by `r` (3 EUR at USD->EUR 3 is exactly 1 USD), rounded to 16 decimal places only when the quotient does not end sooner, half away from zero |
 
 There is no global rate table: build `Rates` where the rates come from (config, a feed) and pass it where you convert. A Sky.Spa client and the server see the same value.
 

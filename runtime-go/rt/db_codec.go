@@ -683,18 +683,16 @@ func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 		}
 		// A JSON column the table has as binary (Schema.blob through
 		// Schema.createSchema) would be misread: refused, naming the fix.
+		// A decimal field (Codec.decimal, Codec.moneyIn) on a column a
+		// Codec.auto field made (JSON text) would compare as text and mix
+		// two spellings: refused, naming the conversion. `sky db check`
+		// runs the same function (Db_checkProjectData).
 		if typesErr == nil {
-			if err := codecBinaryColumnError(d.driver, table, colspecArg, types); err != nil {
+			if err := codecStoreDataRefusal(d, table, colspecArg, types); err != nil {
 				return Err[any, any](ErrInvalidInput("Store.migrate: " + err.Error()))
 			}
 			for _, n := range codecBinaryColumnNotices(d.driver, table, colspecArg, types) {
 				codecWarnOnce(n)
-			}
-			// A decimal field (Codec.decimal, Codec.moneyIn) on a column a
-			// Codec.auto field made (JSON text) would compare as text and
-			// mix two spellings: refused, naming the conversion.
-			if err := codecLegacyDecimalColumnError(d, table, colspecArg, types); err != nil {
-				return Err[any, any](ErrInvalidInput("Store.migrate: " + err.Error()))
 			}
 		}
 		// existing → add any missing columns
@@ -1869,17 +1867,21 @@ func codecLegacyDecimalFix(driver, table, col, currency string) string {
 // why there is nothing to run. `currencies` lists the currencies of the Money
 // objects the column holds (sorted; "?" for an object with none), and
 // `hasMoney` says whether it holds any.
-func codecLegacyDecimalAdvice(driver, table, col, currency string, hasMoney bool, currencies []string) string {
+func codecLegacyDecimalAdvice(driver, table, col, currency string, hasMoney bool, currencies []string) (advice, check, fix string) {
 	if currency == "" {
 		if hasMoney {
 			return fmt.Sprintf("The column holds Money objects (%s), and a Codec.decimal field reads only the amount: "+
 				"converting it would drop each row's currency, so no conversion is given. "+
 				"Read the column with Codec.moneyIn <Currency> when every row is in one currency, "+
 				"or with Codec.moneyObject (a JSON column) to keep the currency of each row",
-				strings.Join(currencies, ", "))
+				strings.Join(currencies, ", ")), "", ""
 		}
-		return "Convert it once (NULL stays NULL; a Money object makes it fail, because Codec.decimal would drop its currency): " +
-			codecLegacyDecimalFix(driver, table, col, "")
+		left := "a Money object makes it fail, because Codec.decimal would drop its currency"
+		if driver != "pgx" {
+			left = "a Money object is left as it is, because Codec.decimal would drop its currency, and the store refuses the column again"
+		}
+		fix = codecLegacyDecimalFix(driver, table, col, "")
+		return "Convert it once (NULL stays NULL; " + left + "): " + fix, "", fix
 	}
 	var foreign []string
 	for _, c := range currencies {
@@ -1892,10 +1894,18 @@ func codecLegacyDecimalAdvice(driver, table, col, currency string, hasMoney bool
 		lead = fmt.Sprintf("The column holds Money in %s, and the field is Codec.moneyIn %s: those rows are never relabelled as %s. "+
 			"Change or move them first. ", strings.Join(foreign, ", "), currency, currency)
 	}
-	return lead + "First check that this query returns no rows (a Money object in another currency than " + currency + "): " +
-		codecLegacyMoneyCheck(driver, table, col, currency) +
-		". Then convert it once (NULL stays NULL; a Money object in another currency makes it fail): " +
-		codecLegacyDecimalFix(driver, table, col, currency)
+	// What the conversion does with a Money object it must not take: the
+	// PostgreSQL ALTER fails on it (its USING value is not a number), the
+	// SQLite UPDATE skips it (its WHERE takes only this currency), so the
+	// row stays and the next migrate refuses the column again.
+	other := "a Money object in another currency, or with no currency, makes it fail"
+	if driver != "pgx" {
+		other = "a Money object in another currency, or with no currency, is left as it is, and the store refuses the column again"
+	}
+	check = codecLegacyMoneyCheck(driver, table, col, currency)
+	fix = codecLegacyDecimalFix(driver, table, col, currency)
+	return lead + "First check that this query returns no rows (a Money object in another currency than " + currency + ", or with no currency): " +
+		check + ". Then convert it once (NULL stays NULL; " + other + "): " + fix, check, fix
 }
 
 // codecLegacyMoneyCurrencies lists the currencies of the Money objects a
@@ -1916,16 +1926,106 @@ func codecLegacyMoneyCurrencies(d *SkyDb, table, col string) (bool, []string, er
 	for _, row := range rows {
 		c := "?"
 		if m, ok := dbRowAsMap(row); ok {
-			if v, present := m["cur"]; present && v != nil {
-				if s := dbRawToString(v); s != "" {
-					c = s
-				}
+			if s, present := dbCellText(m["cur"]); present && s != "" {
+				c = s
 			}
 		}
 		out = append(out, c)
 	}
 	sort.Strings(out)
 	return len(rows) > 0, out, nil
+}
+
+// codecColumnRefusal is a column Store.migrate refuses for the data it
+// holds, with the SQL its message names: `check` lists the rows a
+// conversion must not take, `fix` converts the column ("" when there is no
+// conversion to give).
+type codecColumnRefusal struct {
+	table, col, msg, check, fix string
+}
+
+func (e codecColumnRefusal) Error() string { return e.msg }
+
+// codecStoreDataRefusal is every check Store.migrate makes on the columns a
+// table already has before it changes anything: a JSON field on a binary
+// column, and a decimal field on a column holding Codec.auto JSON text. It
+// only reads. Db_autoMigrate and Db_checkProjectData (`sky db check`) both
+// call it, so the two cannot disagree on a database.
+func codecStoreDataRefusal(d *SkyDb, table string, colspecArg any, types map[string]string) error {
+	if err := codecBinaryColumnError(d.driver, table, colspecArg, types); err != nil {
+		return err
+	}
+	return codecLegacyDecimalColumnError(d, table, colspecArg, types)
+}
+
+// Db_checkProjectData : Db -> List Table -> Task Error String. For each
+// table of a Store.Project that exists, the refusal Store.migrate would give
+// for the data its columns hold (codecStoreDataRefusal), as a JSON array of
+// {table, column, message, check, sql}. Read-only: `sky db check` runs it
+// with SKY_READ_ONLY_DB=1.
+func Db_checkProjectData(connArg, tablesArg any) any {
+	return func() any {
+		d, ok := connArg.(*SkyDb)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("Store.checkProjectData: not a Db"))
+		}
+		type finding struct {
+			Table   string `json:"table"`
+			Column  string `json:"column"`
+			Message string `json:"message"`
+			Check   string `json:"check,omitempty"`
+			SQL     string `json:"sql,omitempty"`
+		}
+		out := []finding{}
+		for _, t := range AsList(tablesArg) {
+			table := fmt.Sprintf("%v", fieldOrNil(t, "Name"))
+			if !codecValidIdent(table) {
+				continue
+			}
+			types, err := codecTableColumnTypes(d, table)
+			if err != nil {
+				return Err[any, any](ErrIo("Store.checkProjectData: " + err.Error()))
+			}
+			if len(types) == 0 {
+				continue // a missing table: migrate creates it
+			}
+			err = codecStoreDataRefusal(d, table, fieldOrNil(t, "Cols"), types)
+			if err == nil {
+				continue
+			}
+			f := finding{Table: table, Message: "Store.migrate: " + err.Error()}
+			if r, ok := err.(codecColumnRefusal); ok {
+				f.Column, f.Check, f.SQL = r.col, r.check, r.fix
+			}
+			out = append(out, f)
+		}
+		b, err := json.Marshal(out)
+		if err != nil {
+			return Err[any, any](ErrIo("Store.checkProjectData: " + err.Error()))
+		}
+		return Ok[any, any](string(b))
+	}
+}
+
+// dbCellText is the text of a query cell, and false for SQL NULL: nil, or
+// the Nothing a query row holds for NULL (printed with %v it read
+// `{1 <nil>}`, which a refusal once showed as a currency).
+func dbCellText(v any) (string, bool) {
+	switch m := v.(type) {
+	case nil:
+		return "", false
+	case SkyMaybe[any]:
+		if m.Tag != 0 {
+			return "", false
+		}
+		return dbCellText(m.JustValue)
+	case SkyMaybe[string]:
+		if m.Tag != 0 {
+			return "", false
+		}
+		return m.JustValue, true
+	}
+	return dbRawToString(v), true
 }
 
 // codecLegacyDecimalColumnError refuses a decimal field (Codec.decimal,
@@ -1964,12 +2064,13 @@ func codecLegacyDecimalColumnError(d *SkyDb, table string, colspecArg any, types
 			if err != nil {
 				return err
 			}
-			return fmt.Errorf("column %s.%s is %s, and the store reads it as a decimal (%s). "+
-				"A %s column compares as text (\"10\" before \"9.5\"), so orderAsc, gt and the other comparisons would give wrong rows, "+
-				"and new values would be written in another spelling than the old ones. The store is refused and the column is not changed. "+
-				"Drop a DEFAULT before a conversion and set it again after. %s",
-				table, name, strings.ToUpper(typ), field, strings.ToUpper(typ),
-				codecLegacyDecimalAdvice(d.driver, table, name, currency, hasMoney, currencies))
+			advice, check, fix := codecLegacyDecimalAdvice(d.driver, table, name, currency, hasMoney, currencies)
+			return codecColumnRefusal{table: table, col: name, check: check, fix: fix, msg: fmt.Sprintf(
+				"column %s.%s is %s, and the store reads it as a decimal (%s). "+
+					"A %s column compares as text (\"10\" before \"9.5\"), so orderAsc, gt and the other comparisons would give wrong rows, "+
+					"and new values would be written in another spelling than the old ones. The store is refused and the column is not changed. "+
+					"Drop a DEFAULT before a conversion and set it again after. %s",
+				table, name, strings.ToUpper(typ), field, strings.ToUpper(typ), advice)}
 		}
 		if !sqliteTextAffinity(typ) {
 			continue
@@ -1987,10 +2088,12 @@ func codecLegacyDecimalColumnError(d *SkyDb, table string, colspecArg any, types
 		if err != nil {
 			return err
 		}
-		return fmt.Errorf("column %s.%s holds the JSON text a Codec.auto Decimal or Money field writes (\"9.5\", {\"amount\":...}), "+
-			"and the store reads it as a decimal (%s), which writes 9.5. "+
-			"The two spellings would mix in one column, so the store is refused and the column is not changed. %s",
-			table, name, field, codecLegacyDecimalAdvice(d.driver, table, name, currency, hasMoney, currencies))
+		advice, check, fix := codecLegacyDecimalAdvice(d.driver, table, name, currency, hasMoney, currencies)
+		return codecColumnRefusal{table: table, col: name, check: check, fix: fix, msg: fmt.Sprintf(
+			"column %s.%s holds the JSON text a Codec.auto Decimal or Money field writes (\"9.5\", {\"amount\":...}), "+
+				"and the store reads it as a decimal (%s), which writes 9.5. "+
+				"The two spellings would mix in one column, so the store is refused and the column is not changed. %s",
+			table, name, field, advice)}
 	}
 	return nil
 }

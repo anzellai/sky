@@ -217,3 +217,7 @@ func TestStoreQueryPostgresKeywordListIsMeasured(t *testing.T) {
 		t.Fatalf("the PostgreSQL keyword list does not match the server:\n%s", strings.Join(problems, "\n"))
 	}
 }
+
+func TestStoreQueryPostgresCheckProjectDataMatchesMigrate(t *testing.T) {
+	assertCheckProjectDataMatchesMigrate(t, openStoreQueryPostgres(t, ""), "check_data_pg")
+}

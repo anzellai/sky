@@ -93,6 +93,9 @@ func assertLegacyMoneyKeepsCurrency(t *testing.T, d *SkyDb, table string) {
 		"INSERT INTO "+table+` VALUES ('d', NULL, '{"amount":"2","currency":"gbp"}')`,
 		"INSERT INTO "+table+` VALUES ('e', '20', '4')`,
 		"INSERT INTO "+table+` VALUES ('n', NULL, NULL)`,
+		// A Money object with no currency: named "?", never `{1 <nil>}`
+		// (v0.29.2 third Judge).
+		"INSERT INTO "+table+` VALUES ('f', NULL, '{"amount":"7"}')`,
 	)
 	cs := []any{
 		T2[any, any]{V0: "id", V1: "text"},
@@ -111,18 +114,31 @@ func assertLegacyMoneyKeepsCurrency(t *testing.T, d *SkyDb, table string) {
 	}
 	moneyExec(t, d, legacyConversion(t, msg))
 
-	// 2. The Codec.moneyIn GBP column holds one USD row.
+	// 2. The Codec.moneyIn GBP column holds one USD row and one with no
+	// currency.
 	res = legacyMigrate(t, d, table, cs)
 	if res.Tag == 0 {
 		t.Fatalf("the Money column was accepted")
 	}
 	msg = errorMessage(res.ErrValue)
-	for _, want := range []string{table + ".cost", "Codec.moneyIn GBP", "USD"} {
+	for _, want := range []string{table + ".cost", "Codec.moneyIn GBP", "Money in ?, USD"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("the Err does not name %q: %s", want, msg)
 		}
 	}
-	check := legacySQLAfter(t, msg, "(a Money object in another currency than GBP): ")
+	if strings.Contains(msg, "<nil>") {
+		t.Fatalf("the Err prints a NULL currency as a Go value: %s", msg)
+	}
+	// What the conversion does with the rows it must not take, as each
+	// engine does it: the PostgreSQL ALTER fails, the SQLite UPDATE skips.
+	effect := "is left as it is, and the store refuses the column again"
+	if pg {
+		effect = "makes it fail"
+	}
+	if !strings.Contains(msg, "a Money object in another currency, or with no currency, "+effect) {
+		t.Fatalf("the Err does not say what the %s conversion does with another currency: %s", d.driver, msg)
+	}
+	check := legacySQLAfter(t, msg, "(a Money object in another currency than GBP, or with no currency): ")
 	rows, err := d.conn.Query(check)
 	if err != nil {
 		t.Fatalf("the check query fails: %s: %v", check, err)
@@ -136,8 +152,8 @@ func assertLegacyMoneyKeepsCurrency(t *testing.T, d *SkyDb, table string) {
 		found = append(found, v)
 	}
 	rows.Close()
-	if len(found) != 1 || !strings.Contains(found[0], "USD") {
-		t.Fatalf("the check query found %v, want the one USD row", found)
+	if len(found) != 2 || !strings.Contains(strings.Join(found, " "), "USD") || !strings.Contains(strings.Join(found, " "), `"7"`) {
+		t.Fatalf("the check query found %v, want the USD row and the row with no currency", found)
 	}
 	fix := legacyConversion(t, msg)
 	_, err = d.conn.Exec(fix)
@@ -154,8 +170,9 @@ func assertLegacyMoneyKeepsCurrency(t *testing.T, d *SkyDb, table string) {
 		t.Fatalf("the USD row is not refused after the conversion: %v", res)
 	}
 
-	// 3. The user moves the USD row out; the conversion then runs.
-	moneyExec(t, d, "DELETE FROM "+table+" WHERE id = 'b'", fix)
+	// 3. The user moves the USD row and the row with no currency out; the
+	// conversion then runs.
+	moneyExec(t, d, "DELETE FROM "+table+" WHERE id IN ('b', 'f')", fix)
 	if res = legacyMigrate(t, d, table, cs); res.Tag != 0 {
 		t.Fatalf("migrate refused the converted table: %v", errorMessage(res.ErrValue))
 	}

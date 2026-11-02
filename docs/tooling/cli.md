@@ -1026,6 +1026,17 @@ usable directly in a deploy pipeline: `SKY_DB_OP=migrate ./sky-out/app`.
 
 - `sky db status` exits **non-zero on drift** (an applied migration
   whose SQL was edited) — use it as a CI schema-drift gate.
+- `sky db status` runs the app with its databases **read-only**
+  (`SKY_READ_ONLY_DB=1`, v0.29.2), so it writes nothing. The app's `main`
+  runs up to `Db.migrate`, which prints the report and exits. A write
+  *before* `Db.migrate` (a boot log row, a `CREATE TABLE IF NOT EXISTS`)
+  therefore fails with "attempt to write a readonly database" (SQLite) or
+  "cannot execute … in a read-only transaction" (PostgreSQL), and the error
+  says so and names this mode. Move that write after `Db.migrate`, or use
+  file migrations (`sky db init`): with `db/migrations`, `sky db status`
+  reads the files and the ledger and does not run `main`. A read-only
+  SQLite connection keeps `busy_timeout`, so it waits for a writer instead
+  of failing with "database is locked".
 - `sky db migrate` exits non-zero if a migration fails — run it as a
   pre-cutover deploy step so a bad migration blocks the rollout.
 - There is no `migrate <singlefile>`: migrations are an ordered,
@@ -1101,7 +1112,16 @@ into the same model as `db/schema.json`, so `check` and `--gen` find the same
 missing tables, columns and indexes and the same type changes. `check` also sees
 what only a live database holds (`NOT NULL`, defaults, `UNIQUE`, the serial
 key). The tables the Sky runtime keeps (`sky_*`, `_sky_*`, `analytics_events`,
-`telemetry_*`) are not the app's, and are never reported. An `Int` column that
+`telemetry_*`) are not the app's, and are never reported.
+
+`check` also runs the data check the app's `Store.migrate` runs before it
+changes a table (`Store.checkProjectData`, the same runtime function), so the
+two never disagree. A column type can fit while its rows do not: a SQLite
+`TEXT` column that holds the JSON a `Codec.auto` Money field wrote fits a
+`Codec.moneyIn GBP` field by type, and `Store.migrate` refuses it. `check`
+reports such a table as drift with `Store.migrate`'s own text, and `--sql`
+gives the check query and the conversion it names, commented out. On
+PostgreSQL the refusal replaces the type finding for that column. An `Int` column that
 PostgreSQL holds as `INTEGER` (an older `Schema.createSchema` made it) is
 accepted, with a notice: a Sky Int is 64-bit, and a value above 2147483647 fails
 there.

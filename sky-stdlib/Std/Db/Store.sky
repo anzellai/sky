@@ -119,6 +119,7 @@ module Std.Db.Store exposing
     , Project
     , project
     , dumpSchema
+    , checkProjectData
     , pushProject
     , projectTableCount
     , resetProject
@@ -1326,14 +1327,20 @@ insert conn store record =
                         Task.fail e
 
                     Ok computed ->
-                        dbExecObjectWith
-                            conn
-                            s.name
-                            (insertColsOf s)
-                            (Codec.toValue s.codec record)
-                            computed
-                            s.pk
-                            (kindOf s.pk s.cols)
+                        case encodeRow "insert" s record of
+
+                            Err e ->
+                                Task.fail e
+
+                            Ok row ->
+                                dbExecObjectWith
+                                    conn
+                                    s.name
+                                    (insertColsOf s)
+                                    row
+                                    computed
+                                    s.pk
+                                    (kindOf s.pk s.cols)
 
 
 computedValues : List ( String, () -> SqlValue ) -> List ( String, SqlValue )
@@ -1370,12 +1377,98 @@ insertMany conn store records =
                         Task.fail e
 
                     Ok computed ->
-                        dbExecObjectMany
-                            conn
-                            s.name
-                            (insertColsOf s)
-                            (List.map (Codec.toValue s.codec) records)
-                            computed
+                        case encodeRows "insertMany" s records of
+
+                            Err e ->
+                                Task.fail e
+
+                            Ok rows ->
+                                dbExecObjectMany
+                                    conn
+                                    s.name
+                                    (insertColsOf s)
+                                    rows
+                                    computed
+
+
+-- The record as a write takes it: an `Err` when a JSON (blob) column would
+-- hold a value the store's own codec does not read back, so no row is
+-- written that every later read of the table refuses. The case it closes:
+-- a `Codec.list (Codec.moneyIn GBP)` field holding a USD Money (the moneyIn
+-- encoder writes another currency as a Money object, and its decoder refuses
+-- it). A scalar column is checked by the runtime (a decimal column refuses a
+-- Money object). A store with no JSON column pays nothing.
+encodeRow : String -> StoreRec a -> a -> Result Error Value
+encodeRow verb s record =
+    let
+        row = Codec.toValue s.codec record
+    in
+        case jsonParts s.cols row of
+
+            [] ->
+                Ok row
+
+            parts ->
+                case Codec.fieldReadError
+                         s.codec
+                         (JE.encode 0 (JE.object parts)) of
+
+                    Nothing ->
+                        Ok row
+
+                    Just ( col, why ) ->
+                        Err
+                            (Error.invalidInput
+                                ("Store." ++ verb ++ ": column \""
+                                    ++ qualifiedCol s.name col
+                                    ++ "\" would hold a value its field's codec does not read ("
+                                    ++ why
+                                    ++ "), so the row is not written"))
+
+
+encodeRows : String -> StoreRec a -> List a -> Result Error (List Value)
+encodeRows verb s records =
+    case records of
+
+        [] ->
+            Ok []
+
+        r :: rest ->
+            case encodeRow verb s r of
+
+                Err e ->
+                    Err e
+
+                Ok row ->
+                    case encodeRows verb s rest of
+
+                        Err e ->
+                            Err e
+
+                        Ok more ->
+                            Ok (row :: more)
+
+
+-- The JSON (blob) columns of an encoded row, as ( column, value ).
+jsonParts : List ( String, String ) -> Value -> List ( String, Value )
+jsonParts cols row =
+    case cols of
+
+        [] ->
+            []
+
+        ( col, kind ) :: rest ->
+            if kindBase kind == "blob" then
+                case JD.decodeValue (JD.field col JD.value) row of
+
+                    Ok part ->
+                        ( col, part ) :: jsonParts rest row
+
+                    Err _ ->
+                        jsonParts rest row
+
+            else
+                jsonParts rest row
 
 
 -- The `defaultWith` values of each record of `insertMany`, computed per row.
@@ -1430,14 +1523,20 @@ upsert conn store record =
                         Task.fail e
 
                     Ok computed ->
-                        dbUpsertObject
-                            conn
-                            s.name
-                            (insertColsOf s)
-                            s.pk
-                            (Codec.toValue s.codec record)
-                            (kindOf s.pk s.cols)
-                            computed
+                        case encodeRow "upsert" s record of
+
+                            Err e ->
+                                Task.fail e
+
+                            Ok row ->
+                                dbUpsertObject
+                                    conn
+                                    s.name
+                                    (insertColsOf s)
+                                    s.pk
+                                    row
+                                    (kindOf s.pk s.cols)
+                                    computed
 
 
 -- | Update the row identified by the record's PRIMARY KEY, setting every column
@@ -1454,13 +1553,19 @@ update conn store record =
                 Task.fail e
 
             Nothing ->
-                dbUpdateByPk
-                    conn
-                    s.name
-                    (setColsOf s)
-                    s.pk
-                    (kindOf s.pk s.cols)
-                    (Codec.toValue s.codec record)
+                case encodeRow "update" s record of
+
+                    Err e ->
+                        Task.fail e
+
+                    Ok row ->
+                        dbUpdateByPk
+                            conn
+                            s.name
+                            (setColsOf s)
+                            s.pk
+                            (kindOf s.pk s.cols)
+                            row
 
 
 -- | Update every row matching a `Cond` to the record's column values (PK +
@@ -1477,13 +1582,19 @@ updateWhere conn store cond record =
                 Task.fail e
 
             Ok ( whereSql, whereParams ) ->
-                dbUpdateWhere
-                    conn
-                    s.name
-                    (setColsOf s)
-                    (Codec.toValue s.codec record)
-                    whereSql
-                    whereParams
+                case encodeRow "updateWhere" s record of
+
+                    Err e ->
+                        Task.fail e
+
+                    Ok row ->
+                        dbUpdateWhere
+                            conn
+                            s.name
+                            (setColsOf s)
+                            row
+                            whereSql
+                            whereParams
 
 
 -- | PARTIAL-column update by `Cond`: `SET` only the named columns and leave the
@@ -2080,20 +2191,26 @@ insertHeadOf d s record computed =
                 Err <| storeErr ("\"" ++ s.name ++ "\": no column to insert")
 
             _ ->
-                case dbObjectSqlValues plain (Codec.toValue s.codec record) of
+                case encodeRow "insert" s record of
 
                     Err e ->
                         Err e
 
-                    Ok values ->
-                        Ok
-                            ( "INSERT INTO " ++ s.name ++ " ("
-                                  ++ String.join ", " cols
-                                  ++ ") VALUES ("
-                                  ++ String.join ", " marks
-                                  ++ ")"
-                            , values ++ pairValues computed
-                            )
+                    Ok row ->
+                        case dbObjectSqlValues plain row of
+
+                            Err e ->
+                                Err e
+
+                            Ok values ->
+                                Ok
+                                    ( "INSERT INTO " ++ s.name ++ " ("
+                                          ++ String.join ", " cols
+                                          ++ ") VALUES ("
+                                          ++ String.join ", " marks
+                                          ++ ")"
+                                    , values ++ pairValues computed
+                                    )
 
 
 repeatText : Int -> String -> List String
@@ -3048,6 +3165,23 @@ tablesError tables =
 
                 Nothing ->
                     tablesError rest
+
+
+-- | For each table of the project that the database has, the refusal
+-- `migrate` would give for the data its columns hold: a decimal field
+-- (`Codec.decimal`, `Codec.moneyIn`) on a column of `Codec.auto` JSON text,
+-- or a JSON field on a binary column. A JSON array of `{table, column,
+-- message, check, sql}`, `[]` when `migrate` would refuse nothing. It only
+-- reads, and it runs the same check as `migrate`, so the two cannot
+-- disagree. `sky db check` reports each one as drift (v0.29.2).
+checkProjectData : Db -> Project -> Task Error String
+checkProjectData conn (Project tables) =
+    dbCheckProjectData conn tables
+
+
+dbCheckProjectData : Db -> List Table -> Task Error String
+dbCheckProjectData =
+    Ffi.kernel "Db_checkProjectData"
 
 
 dbDumpProject : List Table -> Task Error ()

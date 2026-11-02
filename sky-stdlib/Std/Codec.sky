@@ -1583,13 +1583,30 @@ autoSchemaK =
     Ffi.kernel "Codec_autoSchema"
 
 
+-- The column type of a colspec kind: the inverse of `colTypeKind`, so a
+-- shape that goes through its kind (an `autoWith` override) comes back as the
+-- same `ColType`. The kind is `base`, `base?` (CNull) and `|flag`s after it:
+-- `decimal|money=GBP` is `CMoneyIn "GBP"`, `decimal?|money=GBP` is
+-- `CNull (CMoneyIn "GBP")`. Before v0.29.2 only a bare kind was read, and a
+-- Money override fell to a JSON text column (`CBlob`).
 kindToColType : String -> ColType
 kindToColType k =
-    if String.endsWith "?" k then
-        CNull (kindToColType (String.dropRight 1 k))
+    case String.split "|" k of
+
+        base :: flags ->
+            kindBaseColType base flags
+
+        [] ->
+            CBlob
+
+
+kindBaseColType : String -> List String -> ColType
+kindBaseColType base flags =
+    if String.endsWith "?" base then
+        CNull (kindBaseColType (String.dropRight 1 base) flags)
 
     else
-        case k of
+        case base of
 
             "text" ->
                 CText
@@ -1604,10 +1621,32 @@ kindToColType k =
                 CBool
 
             "decimal" ->
-                CDecimal
+                case moneyFlag flags of
+
+                    Just code ->
+                        CMoneyIn code
+
+                    Nothing ->
+                        CDecimal
 
             _ ->
                 CBlob
+
+
+-- The currency of a `money=GBP` flag.
+moneyFlag : List String -> Maybe String
+moneyFlag flags =
+    case flags of
+
+        [] ->
+            Nothing
+
+        f :: rest ->
+            if String.startsWith "money=" f then
+                Just (String.dropLeft 6 f)
+
+            else
+                moneyFlag rest
 
 -- ── ADTs / custom types (tagged unions) ─────────────────────────────────────
 -- | A decode arm for one variant of a custom type.

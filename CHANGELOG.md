@@ -118,6 +118,55 @@ a `Result` wherever two currencies can differ (see Breaking).
 
 ### Fixed
 
+- **`Codec.autoWith` with a `Codec.moneyIn` override made a JSON text
+  column** (a regression in this release). An override's column type goes
+  through its kind (`decimal|money=GBP`, `decimal?|money=GBP`) and back, and
+  only a bare `decimal` was read back, so the documented
+  `Codec.autoWith [ ( "cost", Codec.moneyIn GBP ) ] blank` gave `CBlob`:
+  `orderAsc "cost"` ordered `"10"` before `"9.5"`, a USD Money was written
+  into the GBP column, and a `Maybe` override made a `NOT NULL` column. Every
+  kind now maps back to the same `ColType`, a `Maybe` of each included. A
+  conformance matrix covers each new codec (`decimal`, `moneyIn`,
+  `moneyObject`, `isoCurrency`, `value`) as an object field, an `autoWith`
+  override, a `Maybe` of each and a `Codec.list` of each, on SQLite and
+  PostgreSQL: shape, column type, round trip, order and the refusal of
+  another currency.
+- **A `Std.Db.Store` write never stores a JSON value its codec does not read
+  back.** A `Codec.list (Codec.moneyIn GBP)` field holding a USD Money was
+  written, and then every read of the table failed on that row. `insert`,
+  `insertMany`, `upsert`, `upsertWith`, `insertReturning`, `update` and
+  `updateWhere` now read each JSON column of the row with the codec first,
+  and refuse the write with the column and the reason.
+- **`sky db check` runs the data check the app's `Store.migrate` runs.** On
+  SQLite it said "up to date" (exit 0) for a `TEXT` column of `Codec.auto`
+  Money JSON read by `Codec.moneyIn GBP`, which the app refused: only the
+  column type was compared. It now calls the runtime's check
+  (`Store.checkProjectData`) and reports each refusal as drift, with the
+  runtime's text and its conversion SQL, on both engines.
+- **`Money.convert` through the inverse rate divides by it.** It multiplied
+  by `1 / r` rounded to 16 places, so `Money.rates [ ( USD, EUR, 3 ) ]` made
+  3 EUR into 0.9999999999999999 USD. It now divides by `r`: exact when the
+  quotient ends within 16 decimal places, else rounded to 16, half away from
+  zero.
+- **The legacy Money refusal says what each engine does.** A Money object
+  with no currency was named `{1 <nil>}`; it is `?`. The SQLite conversion
+  leaves a Money object in another currency (or with none) as it is, and the
+  store refuses the column again; the text said it "makes it fail", which is
+  what the PostgreSQL conversion does. The text now says each, and the check
+  query is named as listing rows with no currency too.
+- **A read-only SQLite connection keeps `busy_timeout`.** With
+  `SKY_READ_ONLY_DB=1` (`sky db check`, `sky db status`) the write PRAGMAs
+  are skipped, and `busy_timeout` went with them, so a check against a
+  database another process was writing failed at once with "database is
+  locked". It is now set on every read-only connection.
+- **`TestDictHashKeepsTheTrieShallow` failed about one run in 50 with
+  nothing wrong.** Measured over 10,000 seeds per key family on
+  linux/amd64, the Dict hash matches a uniform hash (depth 11 for 100,000
+  keys in 0.2 to 0.5% of seeds), so the bound of 10 was inside its normal
+  tail. The bound is 12, set from that distribution, and a new test counts
+  the key pairs that share the first 7 trie levels (about 19 for a uniform
+  hash; a weak mix gives thousands).
+
 - **`sky run` passes the embedded database address to a `Std.App` app.** On a
   project with `[database] embedded = true`, `sky run` on a `Std.App` entry
   (`main = App.run app`) did not start the cluster and did not set
@@ -292,6 +341,13 @@ a `Result` wherever two currencies can differ (see Breaking).
   '%"currency":""%'` on the JSON text column, and set their real currency
   (`UPDATE … SET total = '{"amount":"1.00","currency":"GBP"}'`) before you
   upgrade.
+- **`sky db status` (without `db/migrations`) runs the app read-only.** It
+  runs the app's `main` with `SKY_READ_ONLY_DB=1` up to `Db.migrate`, so an
+  app that writes before `Db.migrate` (a boot log row, a `CREATE TABLE IF NOT
+  EXISTS`) now fails there with "attempt to write a readonly database"
+  (SQLite) or "cannot execute … in a read-only transaction" (PostgreSQL),
+  where before v0.29.2 `status` wrote those rows. The error names the
+  read-only mode and what to do (see Migration).
 - **`Codec.ColType` has two new constructors, `CDecimal` and `CMoneyIn`.** A
   `case` over a `ColType` in your own code must add the arms (the compiler
   names them). `CMoneyIn code` is the column `Codec.moneyIn` makes: a
@@ -317,6 +373,11 @@ a `Result` wherever two currencies can differ (see Breaking).
   `Codec.moneyObject`.
 - **A stored Money with an empty currency:** set the real currency on those
   rows before the upgrade (see Breaking).
+- **An app whose `main` writes before `Db.migrate`, checked with `sky db
+  status`:** move the write after `Db.migrate` (in status mode `Db.migrate`
+  prints the report and exits, so nothing after it runs), or move to file
+  migrations with `sky db init`; `sky db status` then reads `db/migrations`
+  and the ledger and does not run `main`.
 - **`Std.Db.Store` columns named with an SQL keyword:** map the field to
   another column name (`Codec.field "sort_order" .order Codec.int`) and rename
   the column in a migration. Such a column never worked through the Store.
