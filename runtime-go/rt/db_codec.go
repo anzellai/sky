@@ -13,6 +13,7 @@
 package rt
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -1096,10 +1097,79 @@ func Db_execObjectMany(connArg, tableArg, colspecArg, objsArg, extrasArg any) an
 		if len(cols) == 0 {
 			return Ok[any, any](0)
 		}
-		sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s",
-			AsString(tableArg), strings.Join(cols, ", "), strings.Join(rowPh, ", "))
-		return AnyTaskRun(Db_exec(connArg, sql, params))
+		head := fmt.Sprintf("INSERT INTO %s (%s) VALUES ", AsString(tableArg), strings.Join(cols, ", "))
+		perStmt := dbRowsPerStatement(driver, len(cols))
+		if len(rowPh) <= perStmt {
+			return AnyTaskRun(Db_exec(connArg, head+strings.Join(rowPh, ", "), params))
+		}
+		// More bound parameters than the engine takes in one statement
+		// (SQLite 32766, PostgreSQL 65535): one INSERT per chunk, all in one
+		// transaction, so the insert stays all-or-nothing (v0.29.2 fourth
+		// Judge, gap 4: 10,000 rows of 4 columns failed with "too many SQL
+		// variables").
+		return dbInTransaction(connArg, "Store.insertMany", func(ex any) any {
+			total := 0
+			for from := 0; from < len(rowPh); from += perStmt {
+				to := min(from+perStmt, len(rowPh))
+				res := AnyTaskRun(Db_exec(ex, head+strings.Join(rowPh[from:to], ", "),
+					params[from*len(cols):to*len(cols)]))
+				r, ok := res.(SkyResult[any, any])
+				if !ok || r.Tag != 0 {
+					return res
+				}
+				total += AsInt(r.OkValue)
+			}
+			return Ok[any, any](total)
+		})
 	}
+}
+
+// dbMaxBoundParams is the most bound parameters one statement takes: SQLite's
+// SQLITE_MAX_VARIABLE_NUMBER (32766 since SQLite 3.32) and PostgreSQL's wire
+// limit (a 16-bit count, 65535).
+func dbMaxBoundParams(driver string) int {
+	if driver == "pgx" {
+		return 65535
+	}
+	return 32766
+}
+
+// dbRowsPerStatement is how many rows of `cols` bound columns one multi-row
+// statement holds within dbMaxBoundParams (at least one).
+func dbRowsPerStatement(driver string, cols int) int {
+	if cols <= 0 {
+		return 1
+	}
+	return max(1, dbMaxBoundParams(driver)/cols)
+}
+
+// dbInTransaction runs `body` with a Db whose statements share one
+// transaction: the caller's own (inside Db.withTransaction, whose commit or
+// rollback decides), else a new one, committed when `body` is Ok and rolled
+// back otherwise.
+func dbInTransaction(connArg any, verb string, body func(ex any) any) any {
+	d, ok := connArg.(*SkyDb)
+	if !ok {
+		return Err[any, any](ErrInvalidInput(verb + ": not a Db"))
+	}
+	if d.tx != nil {
+		return body(d)
+	}
+	tx, err := d.conn.BeginTx(context.Background(), d.txCfg.Opts)
+	if err != nil {
+		return Err[any, any](ErrIo(verb + ": tx begin: " + err.Error()))
+	}
+	txDb := &SkyDb{conn: d.conn, name: d.name, driver: d.driver, tx: tx}
+	res := body(txDb)
+	if r, ok := res.(SkyResult[any, any]); !ok || r.Tag != 0 {
+		_ = tx.Rollback()
+		sqliteDeclCacheReset(d.conn)
+		return res
+	}
+	if err := tx.Commit(); err != nil {
+		return Err[any, any](ErrIo(verb + ": tx commit: " + err.Error()))
+	}
+	return res
 }
 
 // codecInsertColumns lists the INSERT columns and values of one record. A
@@ -1797,8 +1867,12 @@ func codecIsNumericType(typ string) bool {
 }
 
 // codecColCurrency is the currency of a Codec.moneyIn column (the
-// `money=GBP` flag Codec.CMoneyIn writes), or "" for any other column. Only a
-// three-letter upper-case code is read: it is written into SQL text.
+// `money=GBP` flag Codec.CMoneyIn writes), or "" for any other column. The
+// code grammar is Money.currencyFromCode's, read in upper case: 3 to 10
+// ASCII letters or digits (GBP, USDT, USDC, a CurrencyRaw code). Nothing else
+// is read, because the code is written into SQL text. It once read only
+// [A-Z]{3}, so a USDT column was taken for a Codec.decimal one and lost its
+// currency (v0.29.2 fourth Judge).
 func codecColCurrency(kind string) string {
 	for _, f := range codecColFlags(kind) {
 		if c, ok := strings.CutPrefix(f, "money="); ok && codecIsCurrencyCode(c) {
@@ -1809,11 +1883,11 @@ func codecColCurrency(kind string) string {
 }
 
 func codecIsCurrencyCode(c string) bool {
-	if len(c) != 3 {
+	if len(c) < 3 || len(c) > 10 {
 		return false
 	}
 	for _, r := range c {
-		if r < 'A' || r > 'Z' {
+		if (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
 			return false
 		}
 	}

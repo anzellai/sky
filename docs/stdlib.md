@@ -1395,7 +1395,10 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   v0.29.2), or make it one `Json.Value` that holds the whole array or object.
   **`Codec.autoWith [ ("active", intBool) ] blank`** overrides specific
   fields' codecs while auto-deriving the rest (a Bool stored 0/1, a custom enum
-  format) — no full hand-written codec for a one-field tweak. **Decimal and
+  format) — no full hand-written codec for a one-field tweak. A key is the
+  column or the record field (`"price_list"` or `"priceList"`, v0.29.2); a key
+  that is neither is listed by `Codec.problems`, fails the decoder and makes
+  `Store.fromCodec` refuse the store. **Decimal and
   Money (v0.29.2):** `Codec.decimal` (the canonical string `"12.5"`, a strict
   grammar with no exponent and at most 1000 characters) and `Codec.moneyIn GBP`
   (one currency, the amount as a decimal string) map to an exact decimal column
@@ -1435,6 +1438,11 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   JSON object that its field's codec does not read, with the reason (the
   field's own decoder, or, for `Codec.auto`, the blank record with that
   value in the field); the Store uses it to name the column a row fails on.
+  `Codec.writeChecks codec` (v0.29.2) lists the fields of a record codec that
+  can refuse a value they wrote (a `Codec.moneyIn` given another currency, at
+  any depth), with the in-memory check the Store runs on each write; a
+  `Codec.auto` codec has none. `Codec.problems codec` lists what is wrong with
+  the codec as built.
   `Codec.maybe c` reads only JSON `null` as `Nothing` (v0.29): any other
   value must decode as `c`, at any depth, so a `"x"` in a `Maybe Int` field
   or a bad element of a `List (Maybe a)` is an `Err` naming where it failed,

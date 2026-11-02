@@ -291,7 +291,9 @@ fromCodec name codec =
                         ]
 
                     _ ->
-                        []
+                        List.map
+                            (\p -> "Store.fromCodec \"" ++ name ++ "\": " ++ p)
+                            (Codec.problems codec)
             }
 
 
@@ -1397,21 +1399,31 @@ insertMany conn store records =
 -- a `Codec.list (Codec.moneyIn GBP)` field holding a USD Money (the moneyIn
 -- encoder writes another currency as a Money object, and its decoder refuses
 -- it). A scalar column is checked by the runtime (a decimal column refuses a
--- Money object). A store with no JSON column pays nothing.
+-- Money object).
+--
+-- Only the columns whose codec can refuse a value it wrote are checked
+-- (`Codec.writeChecks`), each on the encoded `Value` in memory: no JSON text
+-- is written or parsed, and no zero record is decoded. A store with no such
+-- column (`Codec.auto`, plain fields, lists of plain values) pays one empty
+-- list per write (v0.29.2 fourth Judge: the per-field text round trip made
+-- insertMany 1.8x to 4x slower).
 encodeRow : String -> StoreRec a -> a -> Result Error Value
 encodeRow verb s record =
+    encodeRowWith verb s (blobChecks s.cols (Codec.writeChecks s.codec)) record
+
+
+encodeRowWith : String -> StoreRec a -> List ( String, Value -> Maybe String ) -> a -> Result Error Value
+encodeRowWith verb s checks record =
     let
         row = Codec.toValue s.codec record
     in
-        case jsonParts s.cols row of
+        case checks of
 
             [] ->
                 Ok row
 
-            parts ->
-                case Codec.fieldReadError
-                         s.codec
-                         (JE.encode 0 (JE.object parts)) of
+            _ ->
+                case firstRefusal checks row of
 
                     Nothing ->
                         Ok row
@@ -1426,49 +1438,91 @@ encodeRow verb s record =
                                     ++ "), so the row is not written"))
 
 
+-- The checks of the JSON (blob) columns among `checks`: a scalar column is
+-- checked by the runtime.
+blobChecks : List ( String, String ) -> List ( String, Value -> Maybe String ) -> List ( String, Value -> Maybe String )
+blobChecks cols checks =
+    case checks of
+
+        [] ->
+            []
+
+        ( col, check ) :: rest ->
+            if isBlobCol col cols then
+                ( col, check ) :: blobChecks cols rest
+
+            else
+                blobChecks cols rest
+
+
+isBlobCol : String -> List ( String, String ) -> Bool
+isBlobCol col cols =
+    case cols of
+
+        [] ->
+            False
+
+        ( c, kind ) :: rest ->
+            (c == col && kindBase kind == "blob") || isBlobCol col rest
+
+
+-- The first column of `row` whose check refuses its value.
+firstRefusal : List ( String, Value -> Maybe String ) -> Value -> Maybe ( String, String )
+firstRefusal checks row =
+    case checks of
+
+        [] ->
+            Nothing
+
+        ( col, check ) :: rest ->
+            case JD.decodeValue (JD.field col JD.value) row of
+
+                Ok part ->
+                    case check part of
+
+                        Just why ->
+                            Just ( col, why )
+
+                        Nothing ->
+                            firstRefusal rest row
+
+                Err _ ->
+                    firstRefusal rest row
+
+
 encodeRows : String -> StoreRec a -> List a -> Result Error (List Value)
 encodeRows verb s records =
+    case blobChecks s.cols (Codec.writeChecks s.codec) of
+
+        [] ->
+            -- No column can refuse: the encoding alone, as v0.29.1 did.
+            Ok (List.map (Codec.toValue s.codec) records)
+
+        checks ->
+            encodeCheckedRows verb s checks records
+
+
+encodeCheckedRows : String -> StoreRec a -> List ( String, Value -> Maybe String ) -> List a -> Result Error (List Value)
+encodeCheckedRows verb s checks records =
     case records of
 
         [] ->
             Ok []
 
         r :: rest ->
-            case encodeRow verb s r of
+            case encodeRowWith verb s checks r of
 
                 Err e ->
                     Err e
 
                 Ok row ->
-                    case encodeRows verb s rest of
+                    case encodeCheckedRows verb s checks rest of
 
                         Err e ->
                             Err e
 
                         Ok more ->
                             Ok (row :: more)
-
-
--- The JSON (blob) columns of an encoded row, as ( column, value ).
-jsonParts : List ( String, String ) -> Value -> List ( String, Value )
-jsonParts cols row =
-    case cols of
-
-        [] ->
-            []
-
-        ( col, kind ) :: rest ->
-            if kindBase kind == "blob" then
-                case JD.decodeValue (JD.field col JD.value) row of
-
-                    Ok part ->
-                        ( col, part ) :: jsonParts rest row
-
-                    Err _ ->
-                        jsonParts rest row
-
-            else
-                jsonParts rest row
 
 
 -- The `defaultWith` values of each record of `insertMany`, computed per row.
@@ -1907,7 +1961,11 @@ insertOrIgnore : Db -> Store a -> a -> Task Error Int
 insertOrIgnore conn store record =
     runExec
         conn
-        (case insertHead (dialectOf conn) (storeRec store) record of
+        (case insertHead
+                 "insertOrIgnore"
+                 (dialectOf conn)
+                 (storeRec store)
+                 record of
 
             Err e ->
                 Err e
@@ -1928,7 +1986,7 @@ insertOrIgnoreOn names conn store record =
     in
         runExec
             conn
-            (case insertHead (dialectOf conn) s record of
+            (case insertHead "insertOrIgnoreOn" (dialectOf conn) s record of
 
                 Err e ->
                     Err e
@@ -1975,7 +2033,7 @@ upsertWith conn store record rule =
     in
         runExec
             conn
-            (case insertHead d s record of
+            (case insertHead "upsertWith" d s record of
 
                 Err e ->
                     Err e
@@ -2018,7 +2076,7 @@ insertReturning conn store record =
             s.name
             s.codec
             s.cols
-            (insertHead (dialectOf conn) s record)
+            (insertHead "insertReturning" (dialectOf conn) s record)
             |> Task.andThen
                    (\rows ->
                        case rows of
@@ -2148,8 +2206,8 @@ copyIntoOrIgnore conn store q mapping =
 -- column its computed value, and a `defaultNow` column takes `datetime('now')`
 -- on SQLite (the same text as the app clock `insert` binds) and the
 -- database default on PostgreSQL.
-insertHead : Dialect -> StoreRec a -> a -> Result Error ( String, List SqlValue )
-insertHead d s record =
+insertHead : String -> Dialect -> StoreRec a -> a -> Result Error ( String, List SqlValue )
+insertHead verb d s record =
     case storeError s.name s.pk s.cols s.problems of
 
         Just e ->
@@ -2162,11 +2220,11 @@ insertHead d s record =
                     Err e
 
                 Ok computed ->
-                    insertHeadOf d s record computed
+                    insertHeadOf verb d s record computed
 
 
-insertHeadOf : Dialect -> StoreRec a -> a -> List ( String, SqlValue ) -> Result Error ( String, List SqlValue )
-insertHeadOf d s record computed =
+insertHeadOf : String -> Dialect -> StoreRec a -> a -> List ( String, SqlValue ) -> Result Error ( String, List SqlValue )
+insertHeadOf verb d s record computed =
     let
         plain = colsExcluding s.generated s.cols
         nowCols =
@@ -2191,7 +2249,7 @@ insertHeadOf d s record computed =
                 Err <| storeErr ("\"" ++ s.name ++ "\": no column to insert")
 
             _ ->
-                case encodeRow "insert" s record of
+                case encodeRow verb s record of
 
                     Err e ->
                         Err e

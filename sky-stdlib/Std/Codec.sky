@@ -34,6 +34,8 @@ module Std.Codec exposing
     , zeroJson
     , fieldZeros
     , fieldReadError
+    , writeChecks
+    , problems
     , JsonSchema
     , schemaFitError
     , schemaValueError
@@ -117,6 +119,15 @@ type Shape
 type Codec a
     = Codec (CodecPayload a)
 
+-- `vck` is the check of a value this codec wrote itself, for a codec that can
+-- refuse one (a `moneyIn` given a Money in another currency, or a container,
+-- record or union holding such a codec), and `[]` for a codec that reads every
+-- value it writes. It reads the `Value` in memory. `vcs` is, for a record
+-- codec, the `vck` of each field that has one, by JSON key: `Std.Db.Store`
+-- runs only these on a write (`writeChecks`). `prb` lists what is wrong with
+-- the codec as built (an `autoWith` key that names no field, a `moneyIn` code
+-- that is not a currency code); `Std.Db.Store.fromCodec` refuses a store
+-- whose codec has one (`problems`).
 type alias CodecPayload a =
     { enc : a -> Value
     , dec : Decoder a
@@ -125,6 +136,9 @@ type alias CodecPayload a =
     , zro : () -> Maybe Value
     , fzr : () -> List ( String, Value )
     , fck : () -> List ( String, Value -> Maybe String )
+    , vck : List (Value -> Maybe String)
+    , vcs : List ( String, Value -> Maybe String )
+    , prb : List String
     }
 
 -- | The JSON Schema of the JSON a codec reads and writes. `exact` is `True`
@@ -498,6 +512,67 @@ swapFields dec text zeros keys =
                             swapFields dec text zeros rest
 
 
+-- | The write checks of a record codec (v0.29.2): each field whose codec can
+-- refuse a value it wrote itself, by JSON key (the column), with the check of
+-- that value. A field whose codec reads every value it writes has none, so a
+-- record of plain fields, `Codec.auto` included, gives `[]`. Today the codec
+-- that can refuse is `moneyIn` given a Money in another currency, alone or
+-- inside a `maybe`, `list`, `dict`, `result`, record or union. Each check
+-- reads the `Value` in memory. `Std.Db.Store` runs them on every write, so a
+-- row its own codec would not read back is not written.
+writeChecks : Codec a -> List ( String, Value -> Maybe String )
+writeChecks codec =
+    (payloadOf codec).vcs
+
+
+-- | What is wrong with the codec as built (v0.29.2), `[]` for a sound one: an
+-- `autoWith` key that names no field of the record, or a `moneyIn` currency
+-- code that is not a code (see `Money.currencyFromCode`). Each is a sentence
+-- naming the problem. `Std.Db.Store.fromCodec` refuses a store whose codec
+-- has one, and an `autoWith` codec with an unknown key does not decode.
+problems : Codec a -> List String
+problems codec =
+    (payloadOf codec).prb
+
+
+-- The reason a decoder does not read a value already in memory, or
+-- `Nothing`. No text is written or parsed (`D.decodeValue`). One site, so
+-- the kernel's result is narrowed once (doc 14, R5).
+valueCheck : Decoder f -> Value -> Maybe String
+valueCheck dec v =
+    case D.decodeValue dec v of
+
+        Ok _ ->
+            Nothing
+
+        Err e ->
+            Just (Error.toString e)
+
+
+-- A container's own check: its decoder run on the value in memory, when an
+-- inner codec can refuse a value it wrote (`inner`); none otherwise. It takes
+-- a Bool, not the inner checks, so no list of functions is rebuilt (doc 14:
+-- a mapped list of functions is an adapter site).
+hasCheck : List (Value -> Maybe String) -> Bool
+hasCheck checks =
+    case checks of
+
+        [] ->
+            False
+
+        _ ->
+            True
+
+
+checkIf : Bool -> Decoder f -> List (Value -> Maybe String)
+checkIf inner dec =
+    if inner then
+        [ valueCheck dec ]
+
+    else
+        []
+
+
 -- The reason a decoder does not read a value, or `Nothing`.
 decodeCheck : Decoder f -> Value -> Maybe String
 decodeCheck dec v =
@@ -616,6 +691,9 @@ string =
         , zro = \_ -> Just (E.string "")
         , fzr = \_ -> []
         , fck = \_ -> []
+        , vck = []
+        , vcs = []
+        , prb = []
         }
 
 
@@ -630,6 +708,9 @@ int =
         , zro = \_ -> Just (E.int 0)
         , fzr = \_ -> []
         , fck = \_ -> []
+        , vck = []
+        , vcs = []
+        , prb = []
         }
 
 
@@ -644,6 +725,9 @@ float =
         , zro = \_ -> Just (E.float 0.0)
         , fzr = \_ -> []
         , fck = \_ -> []
+        , vck = []
+        , vcs = []
+        , prb = []
         }
 
 
@@ -659,6 +743,9 @@ bool =
         , zro = \_ -> Just (E.bool False)
         , fzr = \_ -> []
         , fck = \_ -> []
+        , vck = []
+        , vcs = []
+        , prb = []
         }
 
 
@@ -685,6 +772,9 @@ decimal =
         , zro = \_ -> Just (E.string "0")
         , fzr = \_ -> []
         , fck = \_ -> []
+        , vck = []
+        , vcs = []
+        , prb = []
         }
 
 
@@ -731,22 +821,48 @@ decimalDecoder =
 moneyIn : Currency -> Codec Money
 moneyIn cur =
     let
-        code = Mon.currencyCode cur
+        -- The code is read as `Money.currencyFromCode` reads it: in upper
+        -- case, and a code Sky names is its variant, so `CurrencyRaw "gbp"`
+        -- is `GBP` and `CurrencyRaw "USDT"` is `USDT` (v0.29.2 fourth Judge).
+        given = Mon.currencyCode cur
+        canonical = Mon.currencyFromCode given
+        code =
+            case canonical of
+
+                Just c ->
+                    Mon.currencyCode c
+
+                Nothing ->
+                    given
+        held = Maybe.withDefault cur canonical
+        dec = moneyInDecoder held code
     in
         Codec
             { enc =
                 \m ->
-                    if Mon.currencyCode (Mon.currency m) == code then
+                    if String.toUpper (Mon.currencyCode (Mon.currency m)) == code then
                         E.string (Dec.toString (Mon.amount m))
 
                     else
                         moneyObjectValue m
-            , dec = moneyInDecoder cur code
+            , dec = dec
             , shp = SScalar (CMoneyIn code)
             , sch = SnDecimal
             , zro = \_ -> Just (E.string "0")
             , fzr = \_ -> []
             , fck = \_ -> []
+            , vck = [ valueCheck dec ]
+            , vcs = []
+            , prb =
+                case canonical of
+
+                    Just _ ->
+                        []
+
+                    Nothing ->
+                        [ "Codec.moneyIn: \"" ++ given
+                              ++ "\" is not a currency code (3 to 10 ASCII letters or digits, as Money.currencyFromCode reads one)"
+                        ]
             }
 
 
@@ -761,7 +877,9 @@ moneyInDecoder cur code =
                            case moneyFromJsonK v of
 
                                Ok m ->
-                                   if Mon.currencyCode (Mon.currency m) == code then
+                                   if String.toUpper
+                                       (Mon.currencyCode (Mon.currency m))
+                                       == code then
                                        D.succeed m
 
                                    else
@@ -821,6 +939,9 @@ moneyObject =
         , zro = \_ -> Nothing
         , fzr = \_ -> []
         , fck = \_ -> []
+        , vck = []
+        , vcs = []
+        , prb = []
         }
 
 
@@ -854,6 +975,9 @@ isoCurrency =
         , zro = \_ -> Nothing
         , fzr = \_ -> []
         , fck = \_ -> []
+        , vck = []
+        , vcs = []
+        , prb = []
         }
 
 
@@ -873,6 +997,9 @@ value =
         , zro = \_ -> Just E.null
         , fzr = \_ -> []
         , fck = \_ -> []
+        , vck = []
+        , vcs = []
+        , prb = []
         }
 
 
@@ -927,6 +1054,9 @@ maybeWith lenient (Codec c) =
         , zro = \_ -> Just E.null
         , fzr = \_ -> []
         , fck = \_ -> []
+        , vck = checkIf (hasCheck c.vck) (D.nullable c.dec)
+        , vcs = []
+        , prb = c.prb
         }
 
 
@@ -942,6 +1072,9 @@ list (Codec c) =
         , zro = \_ -> Just (E.list identity [])
         , fzr = \_ -> []
         , fck = \_ -> []
+        , vck = checkIf (hasCheck c.vck) (D.list c.dec)
+        , vcs = []
+        , prb = c.prb
         }
 
 
@@ -952,17 +1085,8 @@ list (Codec c) =
 -- cross a wire with no hand-written codec.
 result : Codec e -> Codec a -> Codec (Result e a)
 result (Codec ce) (Codec ca) =
-    Codec
-        { enc =
-            \r ->
-                case r of
-
-                    Ok a ->
-                        E.list identity [ E.string "Ok", ca.enc a ]
-
-                    Err e ->
-                        E.list identity [ E.string "Err", ce.enc e ]
-        , dec =
+    let
+        dec =
             D.andThen
                 (\tag ->
                     if tag == "Ok" then
@@ -971,12 +1095,27 @@ result (Codec ce) (Codec ca) =
                     else
                         D.map Err (D.index 1 ce.dec))
                 (D.index 0 D.string)
-        , shp = SBlob
-        , sch = SnResult ce.sch ca.sch
-        , zro = \_ -> Nothing
-        , fzr = \_ -> []
-        , fck = \_ -> []
-        }
+    in
+        Codec
+            { enc =
+                \r ->
+                    case r of
+
+                        Ok a ->
+                            E.list identity [ E.string "Ok", ca.enc a ]
+
+                        Err e ->
+                            E.list identity [ E.string "Err", ce.enc e ]
+            , dec = dec
+            , shp = SBlob
+            , sch = SnResult ce.sch ca.sch
+            , zro = \_ -> Nothing
+            , fzr = \_ -> []
+            , fck = \_ -> []
+            , vck = checkIf (hasCheck ce.vck || hasCheck ca.vck) dec
+            , vcs = []
+            , prb = ce.prb ++ ca.prb
+            }
 
 
 -- | Codec for a `Dict k v` given codecs for the key and the value. Encodes as a
@@ -1005,6 +1144,13 @@ dict (Codec ck) (Codec cv) =
         , zro = \_ -> Just (E.list identity [])
         , fzr = \_ -> []
         , fck = \_ -> []
+        , vck =
+            checkIf
+                (hasCheck ck.vck || hasCheck cv.vck)
+                (D.list
+                    (D.map2 (\_ _ -> ()) (D.index 0 ck.dec) (D.index 1 cv.dec)))
+        , vcs = []
+        , prb = ck.prb ++ cv.prb
         }
 
 
@@ -1169,6 +1315,9 @@ domainFailureCodec =
         , zro = \_ -> Nothing
         , fzr = \_ -> []
         , fck = \_ -> []
+        , vck = []
+        , vcs = []
+        , prb = []
         }
 
 
@@ -1200,6 +1349,9 @@ map to from (Codec c) =
         , zro = c.zro
         , fzr = c.fzr
         , fck = c.fck
+        , vck = c.vck
+        , vcs = c.vcs
+        , prb = c.prb
         }
 
 -- ── Records (object builder) ─────────────────────────────────────────────────
@@ -1219,7 +1371,22 @@ type alias ObjectPayload a b =
     , schs : List ( String, SchemaNode )
     , zros : List ( String, () -> Maybe Value )
     , fcks : List ( String, Value -> Maybe String )
+    , vcks : List ( String, Value -> Maybe String )
+    , oprb : List String
     }
+
+
+-- Each check paired with the field name, by typed recursion (no lambda over
+-- a list of functions, which would be narrowed per element, doc 14).
+namedChecks : String -> List (Value -> Maybe String) -> List ( String, Value -> Maybe String )
+namedChecks name checks =
+    case checks of
+
+        [] ->
+            []
+
+        chk :: rest ->
+            ( name, chk ) :: namedChecks name rest
 
 
 -- | Start a record codec from its constructor.
@@ -1232,6 +1399,8 @@ object ctor =
         , schs = []
         , zros = []
         , fcks = []
+        , vcks = []
+        , oprb = []
         }
 
 
@@ -1246,6 +1415,8 @@ field name getter (Codec fc) (ObjectCodec o) =
         , schs = o.schs ++ [ ( name, fc.sch ) ]
         , zros = o.zros ++ [ ( name, fc.zro ) ]
         , fcks = o.fcks ++ [ ( name, decodeCheck fc.dec ) ]
+        , vcks = o.vcks ++ namedChecks name fc.vck
+        , oprb = o.oprb ++ fc.prb
         }
 
 
@@ -1278,6 +1449,8 @@ inline getter (ObjectCodec inner) (ObjectCodec o) =
         , schs = o.schs ++ inner.schs
         , zros = o.zros ++ inner.zros
         , fcks = o.fcks ++ inner.fcks
+        , vcks = o.vcks ++ inner.vcks
+        , oprb = o.oprb ++ inner.oprb
         }
 
 
@@ -1297,6 +1470,16 @@ buildObject (ObjectCodec o) =
         , zro = \_ -> Maybe.map E.object (allZeros o.zros)
         , fzr = \_ -> presentZeros o.zros
         , fck = \_ -> o.fcks
+        , vck =
+            case o.vcks of
+
+                [] ->
+                    []
+
+                _ ->
+                    [ valueCheck (objectDecoder o.cols o.decValue) ]
+        , vcs = o.vcks
+        , prb = o.oprb
         }
 
 
@@ -1464,6 +1647,9 @@ autoBase snake witness =
             , zro = \_ -> Just (autoEncK snake witness)
             , fzr = \_ -> witnessZeros cols (autoEncK snake witness)
             , fck = \_ -> []
+            , vck = []
+            , vcs = []
+            , prb = []
             }
 
 
@@ -1476,29 +1662,114 @@ autoBase snake witness =
 --     productCodec = Codec.autoWith [ ( "active", intBool ) ] productBlank
 --
 -- The overrides share one type (`Codec b`); mixed-type overrides need an explicit
--- `Codec.object`. Column names are snake_case (as `auto`).
+-- `Codec.object`. Column names are snake_case (as `auto`). A key is the
+-- column (`"price_list"`) or the record field (`"priceList"`), v0.29.2. A key
+-- that is neither is never ignored: the codec's decoder fails naming the keys
+-- it takes, and `Std.Db.Store.fromCodec` refuses the store (`problems`).
 autoWith : List ( String, Codec b ) -> a -> Codec a
 autoWith overrides witness =
     let
-        encs = List.map (\( col, Codec c ) -> ( col, c.enc )) overrides
-        decs = List.map (\( col, Codec c ) -> ( col, c.dec )) overrides
-        shps = List.map (\( col, Codec c ) -> ( col, c.shp )) overrides
+        -- ( record field, column ) of each field, in field order.
+        names =
+            List.map2
+                (\( field, _ ) ( col, _ ) -> ( field, col ))
+                (autoColsK False witness)
+                (autoColsK True witness)
+        known =
+            List.filterMap
+                (\( key, Codec c ) ->
+                    Maybe.map (\col -> ( col, c )) (overrideColumn names key))
+                overrides
+        unknown =
+            List.filterMap
+                (\( key, _ ) ->
+                    case overrideColumn names key of
+
+                        Just _ ->
+                            Nothing
+
+                        Nothing ->
+                            Just key)
+                overrides
+        problems =
+            List.concatMap (\( _, c ) -> c.prb) known
+                ++ List.map (unknownOverrideKey names) unknown
+        encs = List.map (\( col, c ) -> ( col, c.enc )) known
+        decs = List.map (\( col, c ) -> ( col, c.dec )) known
+        shps = List.map (\( col, c ) -> ( col, c.shp )) known
         cols = autoColsWith True shps witness
+        checks =
+            List.concatMap
+                (\( col, c ) -> List.map (\chk -> ( col, chk )) c.vck)
+                known
+        dec =
+            case unknown of
+
+                [] ->
+                    autoDecoderOverridesK True decs witness
+
+                _ ->
+                    D.fail (String.join "; " problems)
     in
         Codec
             { enc = \r -> autoEncOverridesK True encs r
-            , dec = autoDecoderOverridesK True decs witness
+            , dec = dec
             , shp =
                 SRecord (List.map (\( n, k ) -> ( n, kindToColType k )) cols)
             , sch =
                 SnAuto
                     (\_ -> autoSchemaK True witness)
-                    (List.map (\( col, Codec c ) -> ( col, c.sch )) overrides)
+                    (List.map (\( col, c ) -> ( col, c.sch )) known)
             , zro = \_ -> Just (autoEncOverridesK True encs witness)
             , fzr =
                 \_ -> witnessZeros cols (autoEncOverridesK True encs witness)
             , fck = \_ -> []
+            , vck =
+                case checks of
+
+                    [] ->
+                        []
+
+                    _ ->
+                        [ valueCheck dec ]
+            , vcs = checks
+            , prb = problems
             }
+
+
+-- The column an `autoWith` key names: a column first, then a record field
+-- (`names` holds each ( field, column )).
+overrideColumn : List ( String, String ) -> String -> Maybe String
+overrideColumn names key =
+    if List.any (\( _, col ) -> col == key) names then
+        Just key
+
+    else
+        List.head
+            (List.filterMap
+                (\( field, col ) ->
+                    if field == key then
+                        Just col
+
+                    else
+                        Nothing)
+                names)
+
+
+unknownOverrideKey : List ( String, String ) -> String -> String
+unknownOverrideKey names key =
+    "Codec.autoWith: the key \"" ++ key
+        ++ "\" names no field of the record, so its codec would be ignored. A key is a column or a record field: "
+        ++ String.join
+               ", "
+               (List.map
+                   (\( field, col ) ->
+                       if field == col then
+                           col
+
+                       else
+                           col ++ " (" ++ field ++ ")")
+                   names)
 
 
 -- | Auto columns with each override column's kind replaced from its codec's shape.
@@ -1662,20 +1933,28 @@ type alias VariantPayload v =
     { tag : String
     , args : List SchemaNode
     , dec : Decoder v
+    , chk : Bool
+    , vprb : List String
     }
 
 
 -- | A variant with no arguments.
 var0 : String -> v -> Variant v
 var0 name ctor =
-    Variant { tag = name, args = [], dec = D.succeed ctor }
+    Variant
+        { tag = name, args = [], dec = D.succeed ctor, chk = False, vprb = [] }
 
 
 -- | A variant with one argument.
 var1 : String -> (a -> v) -> Codec a -> Variant v
 var1 name ctor (Codec c1) =
     Variant
-        { tag = name, args = [ c1.sch ], dec = D.map ctor (D.index 1 c1.dec) }
+        { tag = name
+        , args = [ c1.sch ]
+        , dec = D.map ctor (D.index 1 c1.dec)
+        , chk = hasCheck c1.vck
+        , vprb = c1.prb
+        }
 
 
 -- | A variant with two arguments.
@@ -1685,6 +1964,8 @@ var2 name ctor (Codec c1) (Codec c2) =
         { tag = name
         , args = [ c1.sch, c2.sch ]
         , dec = D.map2 ctor (D.index 1 c1.dec) (D.index 2 c2.dec)
+        , chk = hasCheck c1.vck || hasCheck c2.vck
+        , vprb = c1.prb ++ c2.prb
         }
 
 
@@ -1696,6 +1977,8 @@ var3 name ctor (Codec c1) (Codec c2) (Codec c3) =
         , args = [ c1.sch, c2.sch, c3.sch ]
         , dec =
             D.map3 ctor (D.index 1 c1.dec) (D.index 2 c2.dec) (D.index 3 c3.dec)
+        , chk = hasCheck c1.vck || hasCheck c2.vck || hasCheck c3.vck
+        , vprb = c1.prb ++ c2.prb ++ c3.prb
         }
 
 
@@ -1718,6 +2001,7 @@ taggedUnion : (v -> ( String, List Value )) -> List (Variant v) -> Codec v
 taggedUnion toTagged variants =
     let
         arms = variantPayloads variants
+        dec = D.andThen (\tag -> pickVariant tag arms) (D.index 0 D.string)
     in
         Codec
             { enc =
@@ -1726,14 +2010,45 @@ taggedUnion toTagged variants =
                         ( tag, args ) = toTagged v
                     in
                         E.list identity (E.string tag :: args)
-            , dec =
-                D.andThen (\tag -> pickVariant tag arms) (D.index 0 D.string)
+            , dec = dec
             , shp = SBlob
             , sch = SnUnion (variantSchemas arms)
             , zro = \_ -> Nothing
             , fzr = \_ -> []
             , fck = \_ -> []
+            , vck =
+                if armsChecked arms then
+                    [ valueCheck dec ]
+
+                else
+                    []
+            , vcs = []
+            , prb = armsProblems arms
             }
+
+
+-- Whether a variant holds a codec that can refuse a value it wrote. Typed
+-- recursion, not List.any over a lambda, so no value is narrowed (doc 14).
+armsChecked : List (VariantPayload v) -> Bool
+armsChecked arms =
+    case arms of
+
+        [] ->
+            False
+
+        p :: rest ->
+            p.chk || armsChecked rest
+
+
+armsProblems : List (VariantPayload v) -> List String
+armsProblems arms =
+    case arms of
+
+        [] ->
+            []
+
+        p :: rest ->
+            p.vprb ++ armsProblems rest
 
 
 -- The variants' payloads, unwrapped once when the codec is built: the
@@ -1800,6 +2115,9 @@ enum pairs =
                         Nothing
         , fzr = \_ -> []
         , fck = \_ -> []
+        , vck = []
+        , vcs = []
+        , prb = []
         }
 
 

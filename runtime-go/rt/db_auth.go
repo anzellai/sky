@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"reflect"
 	"sky-app/rt/procenv"
@@ -321,6 +322,12 @@ func Db_connect(path any) any {
 			rtWarn(redactSecretsInDSN(fmt.Sprintf("db.connect: %s not reachable at boot (%v); connection pool "+
 				"is live and will (re)connect on demand once the database is available", driver, err)))
 		}
+		if readOnly && driver == "pgx" {
+			if msg := dbPgReadOnlyCheck(conn); msg != "" {
+				_ = conn.Close()
+				return Err[any, any](ErrInvalidInput(msg))
+			}
+		}
 		// v0.17.10 — SQLite concurrency defaults. Without these, any
 		// Sky.Live app whose update() loop runs multiple Cmd.perform
 		// Task goroutines against the same DB hits SQLITE_BUSY under
@@ -398,9 +405,17 @@ func Db_connect(path any) any {
 	}
 }
 
-// dbSqliteReadOnlyDSN is the read-only form of a SQLite path: a `file:` URI
-// with mode=ro. A missing file is refused here, because SQLite would report
-// only "unable to open database file".
+// dbSqliteReadOnlyDSN is the read-only form of a SQLite DSN: a `file:` URI
+// with mode=ro and the query_only PRAGMA, so a write fails in SQLite itself
+// twice over. A missing file is refused here, for every spelling (a plain
+// path, a `file:` URI with or without parameters), because SQLite would
+// report only "unable to open database file".
+//
+// The DSN's own `mode` is replaced, never kept: `file:app.db?mode=rwc` used
+// to keep its rwc, so `sky db status` and `sky db check` created the file and
+// wrote to it (v0.29.2 fourth Judge). An in-memory database (`:memory:`,
+// `file::memory:`, `mode=memory`) has no file to protect; it keeps its mode
+// and gets query_only.
 //
 // The write PRAGMAs Db.connect runs (journal_mode=WAL, synchronous) are
 // skipped in read-only mode, but busy_timeout is kept: it changes nothing on
@@ -408,30 +423,83 @@ func Db_connect(path any) any {
 // with "database is locked" instead of waiting (v0.29.2). It is set in the
 // URI (`_pragma`), so every connection of the pool has it.
 func dbSqliteReadOnlyDSN(dsn string) (string, string) {
-	const busy = "_pragma=busy_timeout(5000)"
-	if dsn == ":memory:" || strings.HasPrefix(dsn, "file:") {
-		if strings.HasPrefix(dsn, "file:") {
-			add := busy
-			if !strings.Contains(dsn, "mode=") {
-				add = "mode=ro&" + busy
-			}
-			if strings.Contains(dsn, "?") {
-				return dsn + "&" + add, ""
-			}
-			return dsn + "?" + add, ""
-		}
-		return dsn, ""
+	const guards = "_pragma=query_only(1)&_pragma=busy_timeout(5000)"
+	if dsn == ":memory:" {
+		return "file::memory:?" + guards, ""
 	}
-	if _, err := os.Stat(dsn); err != nil {
+	if !strings.HasPrefix(dsn, "file:") {
+		if msg := dbSqliteMustExist(dsn, dsn); msg != "" {
+			return "", msg
+		}
+		esc := strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23").Replace(dsn)
+		return "file:" + esc + "?mode=ro&" + guards, ""
+	}
+	rest := strings.TrimPrefix(dsn, "file:")
+	// A fragment is ignored by SQLite and not read by the driver: dropped.
+	if i := strings.IndexByte(rest, '#'); i >= 0 {
+		rest = rest[:i]
+	}
+	path, query, _ := strings.Cut(rest, "?")
+	params := []string{}
+	memory := path == ":memory:"
+	for _, p := range strings.Split(query, "&") {
+		if p == "" {
+			continue
+		}
+		k, v, _ := strings.Cut(p, "=")
+		if strings.EqualFold(k, "mode") {
+			if strings.EqualFold(v, "memory") {
+				memory = true
+				params = append(params, p)
+			}
+			continue
+		}
+		params = append(params, p)
+	}
+	if !memory {
+		if msg := dbSqliteMustExist(dbSqliteURIPath(path), dsn); msg != "" {
+			return "", msg
+		}
+		params = append(params, "mode=ro")
+	}
+	params = append(params, guards)
+	return "file:" + path + "?" + strings.Join(params, "&"), ""
+}
+
+// dbSqliteURIPath is the file a `file:` URI's path part names: the authority
+// of `file://host/path` dropped (SQLite accepts only an empty one or
+// localhost), and %XX escapes decoded.
+func dbSqliteURIPath(path string) string {
+	if strings.HasPrefix(path, "//") {
+		rest := path[2:]
+		if i := strings.IndexByte(rest, '/'); i >= 0 {
+			path = rest[i:]
+		} else {
+			path = ""
+		}
+	}
+	if dec, err := url.PathUnescape(path); err == nil {
+		return dec
+	}
+	return path
+}
+
+// dbSqliteMustExist refuses a SQLite database file that does not exist: a
+// read-only process never creates one.
+func dbSqliteMustExist(file, dsn string) string {
+	if file == "" {
+		return fmt.Sprintf("db.connect: the SQLite DSN %s names no file, "+
+			"and this process opens databases read-only (SKY_READ_ONLY_DB=1), so no database is created", dsn)
+	}
+	if _, err := os.Stat(file); err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Sprintf("db.connect: the SQLite database %s does not exist, "+
+			return fmt.Sprintf("db.connect: the SQLite database %s does not exist, "+
 				"and this process opens databases read-only (SKY_READ_ONLY_DB=1), so it is not created. "+
-				"Check the path, or create the database first (sky db migrate)", dsn)
+				"Check the path, or create the database first (sky db migrate)", file)
 		}
-		return "", "db.connect: " + err.Error()
+		return "db.connect: " + err.Error()
 	}
-	esc := strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23").Replace(dsn)
-	return "file:" + esc + "?mode=ro&" + busy, ""
+	return ""
 }
 
 // detectDriver returns the (driverName, dsn) pair for a connection string.
@@ -2701,4 +2769,25 @@ func dbRowOfDict(row any) any {
 		return dictToMapAny(d)
 	}
 	return row
+}
+
+// dbPgReadOnlyCheck reads back the setting read-only mode gave the session.
+// The startup parameter default_transaction_read_only=on is applied after the
+// DSN's `options=-c ...` switches, so a DSN cannot turn it off (v0.29.2 fourth
+// Judge, measured by TestReadOnlyPostgresDsnCannotTurnTheGuardOff). This
+// check keeps that true if a server or pooler ever orders them otherwise: a
+// session that is not read-only is refused, never used. An unreachable
+// server is not refused here (Db.connect keeps its pool, see above).
+func dbPgReadOnlyCheck(conn *sql.DB) string {
+	var v string
+	if err := conn.QueryRow("SHOW default_transaction_read_only").Scan(&v); err != nil {
+		return ""
+	}
+	if !strings.EqualFold(strings.TrimSpace(v), "on") {
+		return "db.connect: this process opens databases read-only (SKY_READ_ONLY_DB=1), " +
+			"and the PostgreSQL session has default_transaction_read_only=" + v +
+			" (set by the DSN, the role or a pooler), so the connection is refused. " +
+			"Remove the setting from the DSN"
+	}
+	return ""
 }

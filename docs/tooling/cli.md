@@ -1095,7 +1095,9 @@ sky db check --code          # what the code needs to read the database safely
 the app does (`DATABASE_URL`, `<PREFIX>_DB_PATH`, `SKY_DB_PATH` or `sky.toml
 [database]`), so it works on a local cluster, a CI database or a remote one, on
 PostgreSQL and SQLite. Its helper runs with `SKY_READ_ONLY_DB=1`: a SQLite file
-is opened read-only (a missing file is refused with exit 2, never created),
+is opened read-only, whatever `mode` its DSN gives (`mode=ro` and the
+`query_only` PRAGMA replace it; a missing file is refused with exit 2, never
+created, for a plain path and a `file:` URI alike),
 every PostgreSQL transaction is read-only, and no telemetry table is written.
 `sky db status` runs the same way. It compares every table of the project's `db :
 Store.Project` (the `Std.Db.Store` stores, and the `Std.Db.Schema` tables that

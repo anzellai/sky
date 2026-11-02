@@ -79,7 +79,9 @@ derivable: reading it is an `Err`. Give that field a `taggedUnion` codec through
 `Codec.autoWith [ ( "shape", shapeCodec ) ] blank`. Columns + JSON keys are
 **snake_case** by default (`priceMinor` → `price_minor`); **`Codec.autoCamel`**
 keeps camelCase; **`Codec.autoWith [ ("active", intBool) ] blank`** overrides one
-field's codec (a Bool stored 0/1, a custom enum) while auto-deriving the rest; a
+field's codec (a Bool stored 0/1, a custom enum) while auto-deriving the rest
+(a key is the column, `"price_list"`, or the record field, `"priceList"`; a key
+that is neither makes `Store.fromCodec` refuse the store, naming the keys); a
 fully custom mapping uses `Codec.object`/`Codec.field "col" .field`.
 
 ### Schema / DDL builders
@@ -197,7 +199,9 @@ they warn only for a name that is a codec column spelled with another case or
 
 ### Writes
 
-`insert` · **`insertMany`** (one multi-row INSERT — bulk / time-series) · `update`
+`insert` · **`insertMany`** (multi-row INSERTs in one transaction, split at the
+engine's bound-parameter limit, so any number of rows is all-or-nothing — bulk /
+time-series) · `update`
 (by PK, whole record) · `updateWhere` (by `Cond`, whole record) · **`setFields`**
 (PATCH by PK — `SET` only the named columns) · **`updateFields`** (PATCH by
 `Cond`) · **`adjust`** (atomic `SET col = col + delta` for counters/stock) ·
@@ -337,7 +341,12 @@ both:
 - `adjust`, `addExcluded`, `keepMin` / `keepMax` and the text matches (`like`,
   `contains`) refuse a decimal column before any statement.
 - `Codec.moneyIn GBP` stores one currency. A Money in another currency is
-  refused before the statement, never converted or relabelled.
+  refused before the statement, never converted or relabelled. The code is
+  read as `Money.currencyFromCode` reads it (v0.29.2): 3 to 10 ASCII letters
+  or digits in upper case, so `Codec.moneyIn USDT`, `USDC`, `BTC` and a
+  `CurrencyRaw` code keep their currency, and `Codec.moneyIn (CurrencyRaw
+  "gbp")` is `Codec.moneyIn GBP`. A code that is not a currency code is a
+  `Store.fromCodec` builder problem.
 - A `Codec.auto` Decimal or Money field keeps its v0.23 JSON-text column in
   v0.29 (`"12.34"`, `{"amount":"12.34","currency":"GBP"}`), so no existing
   table changes.
@@ -351,7 +360,9 @@ both:
   it reports the same column as drift with the same text, on SQLite too, where
   the column type alone fits. A write never stores a JSON value its codec does
   not read back (a `Codec.list (Codec.moneyIn GBP)` holding a USD Money is
-  refused). The conversion never drops a
+  refused, by every write verb, naming the verb). Only the fields that can
+  refuse a value they wrote are checked (`Codec.writeChecks`), on the encoded
+  value in memory, so a `Codec.auto` store pays nothing for the check. The conversion never drops a
   currency: for `Codec.moneyIn GBP` only a Money in GBP becomes its amount,
   and for `Codec.decimal` no Money object converts.
 

@@ -6955,6 +6955,373 @@ codecMatrixTests db =
     ]
 
 
+-- ── v0.29.2 fourth Judge ────────────────────────────────────────────────────
+-- A record with a Codec.list (Codec.moneyIn GBP) JSON column, a Maybe nested
+-- record, a Codec.value list and a plain list: the write check runs on the
+-- one column that can refuse, for every write verb, and names the verb
+-- (gap 6); the other columns are never refused (gap 3).
+type alias J4Row =
+    { id : String
+    , prices : List Money
+    , nest : Maybe { a : Int, b : List String }
+    , vals : List JE.Value
+    , big : List String
+    }
+
+
+j4Codec : Codec J4Row
+j4Codec =
+    Codec.object J4Row
+        |> Codec.field "id" .id Codec.string
+        |> Codec.field "prices" .prices (Codec.list (Codec.moneyIn Money.GBP))
+        |> Codec.field
+               "nest"
+               .nest
+               (Codec.maybe
+                   (Codec.object (\a b -> { a = a, b = b })
+                       |> Codec.field "a" .a Codec.int
+                       |> Codec.field "b" .b (Codec.list Codec.string)
+                       |> Codec.buildObject))
+        |> Codec.field "vals" .vals (Codec.list Codec.value)
+        |> Codec.field "big" .big (Codec.list Codec.string)
+        |> Codec.buildObject
+
+
+j4Store : Store J4Row
+j4Store =
+    Store.fromCodec "sqc_j4_rows" j4Codec |> Store.primaryKey "id"
+
+
+j4Plain : String -> J4Row
+j4Plain id =
+    { id = id, prices = [ gbp "1" ], nest = Nothing, vals = [], big = [] }
+
+
+j4Usd : String -> J4Row
+j4Usd id =
+    { id = id
+    , prices = [ gbp "2", Money.Money (dec "1") Money.USD ]
+    , nest = Nothing
+    , vals = []
+    , big = []
+    }
+
+
+-- A fresh table holding row "a"; then `write`; then the error text (or "ok")
+-- and the ids the table holds.
+j4Write : Db -> (Db -> Task Error x) -> Result Error ( String, List String )
+j4Write db write =
+    Task.run
+        (drop db "sqc_j4_rows"
+            |> Task.andThen (\_ -> unit (Store.migrate db j4Store))
+            |> Task.andThen (\_ -> unit (Store.insert db j4Store (j4Plain "a")))
+            |> Task.andThen
+                   (\_ ->
+                       write db
+                           |> Task.map (\_ -> "ok")
+                           |> Task.onError (\e -> Task.succeed (Error.toString e)))
+            |> Task.andThen
+                   (\msg ->
+                       Store.toList db (Store.query j4Store |> Store.orderAsc "id")
+                           |> Task.map (\rows -> ( msg, List.map .id rows ))))
+
+
+-- The refusal of `verb`: it names the verb and the column, and the table
+-- still holds only row "a".
+j4Refused : Db -> String -> (Db -> Task Error x) -> Test
+j4Refused db verb write =
+    Test.test
+        ("fourth Judge: Store." ++ verb ++ " refuses a USD Money in a Codec.list (Codec.moneyIn GBP) column, naming the verb")
+        (\_ ->
+            case j4Write db write of
+
+                Ok ( msg, ids ) ->
+                    Test.equal
+                        ( True, True, [ "a" ] )
+                        ( String.contains ("Store." ++ verb ++ ": column \"sqc_j4_rows.prices\"") msg
+                        , String.contains "this codec holds GBP" msg
+                        , ids
+                        )
+
+                Err e ->
+                    Test.fail (Error.toString e))
+
+
+type alias J4Price =
+    { id : String
+    , unitPrice : Money
+    }
+
+
+j4PriceBy : String -> Money.Currency -> Codec J4Price
+j4PriceBy key cur =
+    Codec.autoWith [ ( key, Codec.moneyIn cur ) ] { id = "", unitPrice = Money.zero cur }
+
+
+-- Migrate, insert `rows`, read them back as "id=amount code", and the column
+-- shape the codec gives.
+j4RoundTrip : Db -> String -> Codec J4Price -> List J4Price -> Result Error ( String, List String )
+j4RoundTrip db table codec rows =
+    let
+        store = Store.fromCodec table codec |> Store.primaryKey "id"
+    in
+        Task.run
+            (drop db table
+                |> Task.andThen (\_ -> unit (Store.migrate db store))
+                |> Task.andThen (\_ -> unit (Store.insertMany db store rows))
+                |> Task.andThen
+                       (\_ ->
+                           Store.toList db (Store.query store |> Store.orderAsc "unit_price")
+                               |> Task.map
+                                      (\got ->
+                                          ( j4Shape codec
+                                          , List.map
+                                                (\r ->
+                                                    r.id ++ "="
+                                                        ++ Decimal.toString (Money.amount r.unitPrice)
+                                                        ++ " "
+                                                        ++ Money.currencyCode (Money.currency r.unitPrice))
+                                                got
+                                          ))))
+
+
+j4Shape : Codec a -> String
+j4Shape codec =
+    case Codec.shape codec of
+
+        Codec.SRecord cols ->
+            List.filter (\( n, _ ) -> n == "unit_price") cols
+                |> List.map (\( _, c ) -> mxCt c)
+                |> String.join ","
+
+        _ ->
+            "not a record"
+
+
+j4Price : String -> String -> Money.Currency -> J4Price
+j4Price id amount cur =
+    { id = id, unitPrice = Money.Money (dec amount) cur }
+
+
+-- The Err of a store's first verb, as text ("ok" when it ran).
+j4FirstVerb : Db -> String -> Codec J4Price -> String
+j4FirstVerb db table codec =
+    case
+        Task.run
+            (drop db table
+                |> Task.andThen
+                       (\_ ->
+                           Store.migrate db (Store.fromCodec table codec |> Store.primaryKey "id")))
+    of
+
+        Ok _ ->
+            "ok"
+
+        Err e ->
+            Error.toString e
+
+
+j4Tests : Db -> List Test
+j4Tests db =
+    [ j4Refused db "insert" (\d -> Store.insert d j4Store (j4Usd "x"))
+    , j4Refused db "insertMany" (\d -> Store.insertMany d j4Store [ j4Plain "m1", j4Usd "m2" ])
+    , j4Refused db "upsert" (\d -> Store.upsert d j4Store (j4Usd "a"))
+    , j4Refused db "upsertWith" (\d -> Store.upsertWith d j4Store (j4Usd "x") { conflictOn = [ "id" ], onConflict = [] })
+    , j4Refused db "insertReturning" (\d -> Store.insertReturning d j4Store (j4Usd "x"))
+    , j4Refused db "insertOrIgnore" (\d -> Store.insertOrIgnore d j4Store (j4Usd "x"))
+    , j4Refused db "insertOrIgnoreOn" (\d -> Store.insertOrIgnoreOn [ "id" ] d j4Store (j4Usd "x"))
+    , j4Refused db "update" (\d -> Store.update d j4Store (j4Usd "a"))
+    , j4Refused db "updateWhere" (\d -> Store.updateWhere d j4Store Store.noCond (j4Usd "a"))
+    , Test.test
+          "fourth Judge: no false refusal: Nothing, a nested record, Json.Value, a 20,000-element list, through insert and insertMany"
+          (\_ ->
+              Test.equal
+                  (Ok ( "ok", [ "a", "b", "c", "d" ] ))
+                  (j4Write
+                      db
+                      (\d ->
+                          Store.insert
+                              d
+                              j4Store
+                              { id = "b"
+                              , prices = []
+                              , nest = Just { a = 1, b = [ "q" ] }
+                              , vals = [ JE.null, JE.object [ ( "k", JE.list JE.int [ 1, 2 ] ) ], JE.string "s" ]
+                              , big = List.map String.fromInt (List.range 1 20000)
+                              }
+                              |> Task.andThen
+                                     (\_ ->
+                                         Store.insertMany
+                                             d
+                                             j4Store
+                                             [ { id = "c", prices = [ gbp "3", gbp "4" ], nest = Nothing, vals = [ JE.int 1 ], big = [] }
+                                             , { id = "d"
+                                               , prices = List.map (\i -> gbp (String.fromInt i)) (List.range 1 2000)
+                                               , nest = Just { a = 2, b = [] }
+                                               , vals = []
+                                               , big = [ "z" ]
+                                               }
+                                             ]))))
+    , Test.test
+          "fourth Judge: Codec.writeChecks holds only the fields that can refuse; Codec.auto has none"
+          (\_ ->
+              Test.equal
+                  ( [ "prices" ], [], [ "unit_price" ] )
+                  ( List.map (\( k, _ ) -> k) (Codec.writeChecks j4Codec)
+                  , List.map (\( k, _ ) -> k) (Codec.writeChecks (Codec.auto (j4Plain "z")))
+                  , List.map (\( k, _ ) -> k) (Codec.writeChecks (j4PriceBy "unitPrice" Money.GBP))
+                  ))
+
+    -- Gap 2: the currency of Codec.moneyIn follows Money.currencyFromCode.
+    , Test.test
+          "fourth Judge: Codec.moneyIn USDT keeps its currency: a decimal column, values read back, a USDC Money refused"
+          (\_ ->
+              Test.equal
+                  ( Ok ( "CMoneyIn USDT", [ "b=2 USDT", "a=10.5 USDT" ] ), True )
+                  ( j4RoundTrip db "sqc_j4_usdt" (j4PriceBy "unit_price" Money.USDT) [ j4Price "a" "10.5" Money.USDT, j4Price "b" "2" Money.USDT ]
+                  , isErr
+                        (Task.run
+                            (Store.insert
+                                db
+                                (Store.fromCodec "sqc_j4_usdt" (j4PriceBy "unit_price" Money.USDT) |> Store.primaryKey "id")
+                                (j4Price "c" "1" Money.USDC)))
+                  ))
+    , Test.test
+          "fourth Judge: Codec.moneyIn USDC and BTC keep their currency"
+          (\_ ->
+              Test.equal
+                  ( Ok ( "CMoneyIn USDC", [ "a=1 USDC" ] ), Ok ( "CMoneyIn BTC", [ "a=0.5 BTC" ] ) )
+                  ( j4RoundTrip db "sqc_j4_usdc" (j4PriceBy "unit_price" Money.USDC) [ j4Price "a" "1" Money.USDC ]
+                  , j4RoundTrip db "sqc_j4_btc" (j4PriceBy "unit_price" Money.BTC) [ j4Price "a" "0.5" Money.BTC ]
+                  ))
+    , Test.test
+          "fourth Judge: Codec.moneyIn (CurrencyRaw \"gbp\") is Codec.moneyIn GBP, and a GBP Money is written and read"
+          (\_ ->
+              Test.equal
+                  (Ok ( "CMoneyIn GBP", [ "a=7 GBP" ] ))
+                  (j4RoundTrip db "sqc_j4_rawgbp" (j4PriceBy "unit_price" (Money.CurrencyRaw "gbp")) [ j4Price "a" "7" Money.GBP ]))
+    , Test.test
+          "fourth Judge: Codec.moneyIn of a code that is not a currency code is a Store builder problem"
+          (\_ ->
+              let
+                  msg = j4FirstVerb db "sqc_j4_badcode" (j4PriceBy "unit_price" (Money.CurrencyRaw "G P"))
+              in
+                  Test.equal
+                      ( True, True, [ "Codec.moneyIn: \"G P\" is not a currency code (3 to 10 ASCII letters or digits, as Money.currencyFromCode reads one)" ] )
+                      ( String.contains "Store.fromCodec \"sqc_j4_badcode\"" msg
+                      , String.contains "\"G P\" is not a currency code" msg
+                      , Codec.problems (Codec.moneyIn (Money.CurrencyRaw "G P"))
+                      ))
+    , Test.test
+          "fourth Judge: Store.migrate on Codec.auto USDT Money text names Codec.moneyIn USDT and its check query"
+          (\_ ->
+              let
+                  autoStore =
+                      Store.fromCodec "sqc_j4_legacy" (Codec.auto { id = "", unitPrice = Money.zero Money.USDT })
+                          |> Store.primaryKey "id"
+                  msg =
+                      case
+                          Task.run
+                              (drop db "sqc_j4_legacy"
+                                  |> Task.andThen (\_ -> unit (Store.migrate db autoStore))
+                                  |> Task.andThen (\_ -> unit (Store.insert db autoStore (j4Price "a" "5" Money.USDT)))
+                                  |> Task.andThen
+                                         (\_ ->
+                                             Store.migrate
+                                                 db
+                                                 (Store.fromCodec "sqc_j4_legacy" (j4PriceBy "unit_price" Money.USDT)
+                                                     |> Store.primaryKey "id")))
+                      of
+
+                          Ok _ ->
+                              "ok"
+
+                          Err e ->
+                              Error.toString e
+              in
+                  Test.equal
+                      ( True, False, True )
+                      ( String.contains "(Codec.moneyIn USDT)" msg
+                      , String.contains "Codec.decimal" msg
+                      , String.contains "'USDT'" msg
+                      ))
+
+    -- Gap 5: an autoWith key is the column or the record field.
+    , Test.test
+          "fourth Judge: codec matrix, camelCase key: autoWith [ ( \"priceList\", Codec.list (Codec.moneyIn GBP) ) ] is column price_list and refuses a USD Money"
+          (\_ ->
+              let
+                  codec =
+                      Codec.autoWith
+                          [ ( "priceList", Codec.list (Codec.moneyIn Money.GBP) ) ]
+                          { id = "", priceList = [] }
+                  store = Store.fromCodec "sqc_j4_camel_list" codec |> Store.primaryKey "id"
+                  shape =
+                      case Codec.shape codec of
+
+                          Codec.SRecord cols ->
+                              List.map (\( n, c ) -> n ++ ":" ++ mxCt c) cols
+
+                          _ ->
+                              []
+              in
+                  Test.equal
+                      ( [ "id:CText", "price_list:CBlob" ], [ "price_list" ], ( True, Ok [ "a" ] ) )
+                      ( shape
+                      , List.map (\( k, _ ) -> k) (Codec.writeChecks codec)
+                      , ( isErr
+                              (Task.run
+                                  (drop db "sqc_j4_camel_list"
+                                      |> Task.andThen (\_ -> unit (Store.migrate db store))
+                                      |> Task.andThen (\_ -> unit (Store.insert db store { id = "a", priceList = [ gbp "1" ] }))
+                                      |> Task.andThen (\_ -> Store.insert db store { id = "b", priceList = [ Money.Money (dec "1") Money.USD ] })))
+                        , Task.run (Store.toList db (Store.query store) |> Task.map (List.map .id))
+                        )
+                      ))
+    , Test.test
+          "fourth Judge: codec matrix, camelCase key: autoWith [ ( \"unitPrice\", Codec.decimal ) ] is a decimal column"
+          (\_ ->
+              Test.equal
+                  [ "id:CText", "unit_price:CDecimal" ]
+                  (case Codec.shape (Codec.autoWith [ ( "unitPrice", Codec.decimal ) ] { id = "", unitPrice = Decimal.zero }) of
+
+                      Codec.SRecord cols ->
+                          List.map (\( n, c ) -> n ++ ":" ++ mxCt c) cols
+
+                      _ ->
+                          []))
+    , Test.test
+          "fourth Judge: autoWith keyed by the record field (unitPrice) is the column unit_price"
+          (\_ ->
+              Test.equal
+                  ( Ok ( "CMoneyIn GBP", [ "b=2 GBP", "a=10 GBP" ] ), [] )
+                  ( j4RoundTrip db "sqc_j4_camel" (j4PriceBy "unitPrice" Money.GBP) [ j4Price "a" "10" Money.GBP, j4Price "b" "2" Money.GBP ]
+                  , Codec.problems (j4PriceBy "unitPrice" Money.GBP)
+                  ))
+    , Test.test
+          "fourth Judge: an autoWith key that names no field is a Store builder problem and a decode Err naming the keys"
+          (\_ ->
+              let
+                  bad = j4PriceBy "unitPrise" Money.GBP
+                  msg = j4FirstVerb db "sqc_j4_badkey" bad
+                  decoded =
+                      case Codec.fromJson bad "{\"id\":\"a\",\"unit_price\":\"1\"}" of
+
+                          Ok _ ->
+                              "ok"
+
+                          Err e ->
+                              Error.toString e
+              in
+                  Test.equal
+                      ( True, True, True )
+                      ( String.contains "Codec.autoWith: the key \"unitPrise\" names no field of the record" msg
+                      , String.contains "id, unit_price (unitPrice)" msg
+                      , String.contains "\"unitPrise\" names no field" decoded
+                      ))
+    ]
+
+
 tests : List Test
 tests =
     case setup () of
@@ -6982,6 +7349,7 @@ tests =
                 ++ timeTests db
                 ++ decimalTests db
                 ++ codecMatrixTests db
+                ++ j4Tests db
 
 
 main =

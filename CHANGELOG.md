@@ -21,6 +21,12 @@ a `Result` wherever two currencies can differ (see Breaking).
 
 ### Added
 
+- **`Codec.writeChecks` and `Codec.problems`.** `writeChecks` lists the fields of a
+  record codec that can refuse a value they wrote (a `Codec.moneyIn` given
+  another currency, at any depth), with the check `Std.Db.Store` runs on a
+  write. `problems` lists what is wrong with a codec as built (an `autoWith`
+  key that names no field, a `moneyIn` code that is not a currency code);
+  `Store.fromCodec` refuses a store whose codec has one.
 - **Exact decimal columns: `Codec.decimal` and `Codec.moneyIn`.** A new column
   kind, `CDecimal`: plain `NUMERIC` on PostgreSQL, `TEXT` holding the canonical
   decimal on SQLite. `Std.Db.Store` compares, orders, sums (`sumAs`) and takes
@@ -118,6 +124,53 @@ a `Result` wherever two currencies can differ (see Breaking).
 
 ### Fixed
 
+- **Read-only mode could write through a SQLite `file:` DSN.** `sky db
+  status` and `sky db check` open the database read-only, but a DSN such as
+  `SKY_DB_PATH="file:st.db?mode=rwc"` kept its own `mode`: `sky db status`
+  created the file and ran writes, and `sky db check` created an empty
+  database and exited 1. Read-only mode now replaces any `mode` with `ro` and
+  adds `_pragma=query_only(1)`, so a write fails in SQLite twice over. A
+  missing file is refused with exit 2 for every spelling (a plain path, a
+  `file:` URI with or without parameters, `file://`). On PostgreSQL a DSN
+  option such as `options=-c default_transaction_read_only=off` cannot turn
+  the guard off (measured), and the connection now reads the setting back and
+  refuses a session that is not read-only.
+- **`Codec.moneyIn` lost its currency for `USDT`, `USDC` and any
+  `CurrencyRaw` code** (a regression in this release). The runtime read only
+  a three-letter `[A-Z]{3}` code from the column, so a `Codec.moneyIn USDT`
+  column was taken for a `Codec.decimal` one, and `Store.migrate`'s refusal
+  told the user to use the `Codec.moneyIn` they already used. The runtime and
+  `sky db check` now read the grammar `Money.currencyFromCode` reads: 3 to 10
+  ASCII letters or digits. `Codec.moneyIn` reads its own code the same way, so
+  `Codec.moneyIn (CurrencyRaw "gbp")` is `Codec.moneyIn GBP` and takes a GBP
+  Money. A code that is not a currency code is a `Store.fromCodec` builder
+  problem naming it.
+- **The write check made `Store.insertMany` 1.8x to 4x slower** (a
+  regression in this release). Each JSON column of each row was encoded to
+  text, parsed back, and decoded inside the codec's zero record, twice. A
+  codec now knows which of its fields can refuse a value it wrote itself (a
+  `Codec.moneyIn`, alone or inside a `maybe`, `list`, `dict`, `result`,
+  record or custom type), and a write checks only those, once per row, on the
+  encoded value in memory. A `Codec.auto` store, or any store without such a
+  field, does no check at all. Measured on 5,000 rows of a `Codec.auto`
+  record (3 runs each, SQLite): 0.20-0.28 s in v0.29.1, 0.41-0.50 s in the
+  release candidate, 0.20-0.23 s now; with 200-element lists 0.37-0.40 s,
+  1.07-1.16 s and 0.36-0.40 s. Every refusal stays (insert, insertMany,
+  upsert, upsertWith, insertReturning, insertOrIgnore, update, updateWhere).
+- **`Store.insertMany` failed above the engine's bound-parameter limit.**
+  It wrote every row in one `INSERT`, so 10,000 rows of 4 columns failed on
+  SQLite with "too many SQL variables" (its limit is 32,766) and 20,000 rows
+  of 5 columns on PostgreSQL (65,535). The insert is now split by the limit
+  into several statements in one transaction (the caller's own inside
+  `Db.withTransaction`), so it stays all-or-nothing.
+- **`Codec.autoWith` ignored a key that named the record field.**
+  `Codec.autoWith [ ( "priceList", … ) ] blank` matched no column (the column
+  is `price_list`), so the override was dropped with no error. A key is now
+  the column or the record field, and a key that names neither is an error
+  naming the keys it takes: the codec's decoder fails, and `Store.fromCodec`
+  refuses the store.
+- **Refusals from `upsertWith`, `insertReturning`, `insertOrIgnore` and
+  `insertOrIgnoreOn` said `Store.insert:`.** Each now names its own verb.
 - **`Codec.autoWith` with a `Codec.moneyIn` override made a JSON text
   column** (a regression in this release). An override's column type goes
   through its kind (`decimal|money=GBP`, `decimal?|money=GBP`) and back, and
@@ -363,6 +416,10 @@ a `Result` wherever two currencies can differ (see Breaking).
 
 ### Migration
 
+- **A `Codec.autoWith` key that names no column and no record field** was
+  ignored before, and is now an error (`Store.fromCodec` refuses the store and
+  the codec does not decode). The error names the keys the record takes: use
+  one of them, or remove the override.
 - **Upgrading from v0.29.1:** every Breaking entry above is a compile error
   that names its replacement (docs/migration/v0.29.md, "Money results").
 - **Moving a `Codec.auto` Decimal or Money field to `Codec.decimal` /

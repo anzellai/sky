@@ -888,6 +888,46 @@ fn sqlite_check_and_status_do_not_create_a_missing_database() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Every spelling of a SQLite DSN is opened read-only: a `file:` URI with
+/// `mode=rwc` / `mode=rw` used to keep its mode, so `sky db status` created
+/// the file and `sky db check` created an empty database and exited 1
+/// (v0.29.2 fourth Judge, gap 1). A missing file is refused with exit 2 for
+/// each spelling, and no file is left behind.
+#[test]
+fn sqlite_every_dsn_spelling_is_read_only_and_a_missing_file_exits_2() {
+    if !required(Need::Go, tool_on_path("go")) {
+        return;
+    }
+    let dir = project("sky-dbcheck-dsn", "", &base_src());
+    // With db/migrations, `sky db status` reads the ledger through Db.connect
+    // (without them it runs main, which here opens no database).
+    std::fs::create_dir_all(dir.join("db").join("migrations")).unwrap();
+    for dsn in [
+        "st.db",
+        "file:st.db",
+        "file:st.db?mode=rwc",
+        "file:st.db?mode=rw",
+        "file:st.db?cache=shared&mode=rwc",
+    ] {
+        let env = [("SKY_DB_PATH", dsn)];
+        let (code, out, err) = sky(&dir, &["db", "check"], &env);
+        assert_eq!(code, 2, "{dsn}: sky db check exited {code}:\n{out}\n{err}");
+        assert!(
+            err.contains("st.db does not exist"),
+            "{dsn}: the missing file is not named:\n{err}"
+        );
+        let (code, out, err) = sky(&dir, &["db", "status"], &env);
+        assert_ne!(
+            code, 0,
+            "{dsn}: sky db status accepted a missing file:\n{out}\n{err}"
+        );
+        for f in ["st.db", "st.db-wal", "st.db-shm", "st.db-journal"] {
+            assert!(!dir.join(f).exists(), "{dsn}: {f} was created");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 const MONEY_IN_SRC: &str = r#"module Main exposing (main, db)
 
 import Sky.Core.Prelude exposing (..)

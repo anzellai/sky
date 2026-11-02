@@ -21,7 +21,10 @@ func TestLegacyDecimalConversionMatchesDbCheck(t *testing.T) {
 			t.Errorf("got  %s\nwant %s", c.got, c.want)
 		}
 	}
-	if codecColCurrency("decimal?|money=GBP|u") != "GBP" || codecColCurrency("decimal|money=G'P") != "" {
+	if codecColCurrency("decimal?|money=GBP|u") != "GBP" || codecColCurrency("decimal|money=G'P") != "" ||
+		codecColCurrency("decimal|money=USDT") != "USDT" || codecColCurrency("decimal|money=USDC") != "USDC" ||
+		codecColCurrency("decimal|money=BTC") != "BTC" || codecColCurrency("decimal|money=gbp") != "" ||
+		codecColCurrency("decimal|money=ABCDEFGHIJK") != "" {
 		t.Fatalf("codecColCurrency reads the wrong flag")
 	}
 }

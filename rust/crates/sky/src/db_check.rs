@@ -724,8 +724,14 @@ fn op_str<'a>(op: &'a Value, key: &str) -> &'a str {
     op.get(key).and_then(Value::as_str).unwrap_or("")
 }
 
+/// A Codec.moneyIn currency code as the runtime reads it (db_codec.go
+/// `codecIsCurrencyCode`, the grammar of `Money.currencyFromCode` in upper
+/// case): 3 to 10 ASCII upper-case letters or digits. It once took only
+/// `[A-Z]{3}`, so a USDT column lost its currency (v0.29.2 fourth Judge).
 fn is_currency_code(c: &str) -> bool {
-    c.len() == 3 && c.bytes().all(|b| b.is_ascii_uppercase())
+    (3..=10).contains(&c.len())
+        && c.bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
 }
 
 /// The PostgreSQL conversion of a TEXT column a Codec.auto Decimal or Money
@@ -2728,5 +2734,16 @@ mod tests {
         assert!(store_name_problem("sqlite", "commit", false).is_some());
         assert!(store_name_problem("postgres", "system_user", false).is_some());
         assert!(store_name_problem("postgres", "commit", false).is_none());
+    }
+
+    /// v0.29.2 fourth Judge, gap 2: the currency grammar is the runtime's.
+    #[test]
+    fn currency_codes_follow_the_runtime_grammar() {
+        for ok in ["GBP", "USDT", "USDC", "BTC", "ABC1234567"] {
+            assert!(is_currency_code(ok), "{ok}");
+        }
+        for bad in ["", "GB", "gbp", "G'P", "ABCDEFGHIJK", "US DT"] {
+            assert!(!is_currency_code(bad), "{bad}");
+        }
     }
 }
