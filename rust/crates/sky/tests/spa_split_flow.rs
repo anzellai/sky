@@ -8306,6 +8306,33 @@ main =
     );
 }
 
+/// The two forms together (v0.29.2 second Judge, gap 3): `main = start`
+/// with `start = setup |> Task.andThen runIt` and `runIt _ = App.run app` was
+/// refused, although the refusal lists `main = start` over either form.
+#[test]
+fn web_app_main_through_a_binding_with_a_named_continuation_carries_its_setup() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    assert_web_app_carries_setup(
+        "boot-start-runit",
+        r#"setup =
+    println "BOOT-START-RUNIT-RAN"
+
+
+start =
+    setup |> Task.andThen runIt
+
+
+runIt _ =
+    App.run app
+
+
+main =
+    start
+"#,
+        "BOOT-START-RUNIT-RAN",
+    );
+}
+
 /// An `App.run` reached any other way (here a helper that `main` does not
 /// use as a continuation) is refused with the forms that carry, never the
 /// internal "defect in Sky" error.

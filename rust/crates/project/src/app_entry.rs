@@ -1572,7 +1572,7 @@ fn chain_in(
         if name == "main" || carriers.contains(&name) {
             return None;
         }
-        run_call_in(file, v, refs).map(|_| (name, v.clone()))
+        reaches_run(file, decls, refs, &name, &mut Vec::new()).then(|| (name, v.clone()))
     };
     if run_call.is_none() {
         if let Some((name, v)) = top_ref(&body) {
@@ -1689,6 +1689,37 @@ fn chain_in(
         None if run_call.is_none() => Ok(None),
         None => Err(refused()),
     }
+}
+
+/// True when the top-level binding `name` runs the app: its body holds the
+/// `App.run` call, or names a top-level binding that does (`start = setup
+/// |> Task.andThen runIt` with `runIt _ = App.run app`). `seen` stops a cycle.
+fn reaches_run(
+    file: &ast::SourceFile,
+    decls: &HashMap<String, ast::ValueDecl>,
+    refs: &[RunRef],
+    name: &str,
+    seen: &mut Vec<String>,
+) -> bool {
+    if seen.iter().any(|s| s == name) {
+        return false;
+    }
+    seen.push(name.to_string());
+    let Some(v) = decls.get(name) else {
+        return false;
+    };
+    if run_call_in(file, v, refs).is_some() {
+        return true;
+    }
+    let Some(body) = v.body() else {
+        return false;
+    };
+    let text = body.syntax().text().to_string();
+    let mut names: Vec<&String> = decls.keys().filter(|n| n.as_str() != "main").collect();
+    names.sort();
+    names
+        .into_iter()
+        .any(|n| references_ident(&text, n) && reaches_run(file, decls, refs, n, seen))
 }
 
 /// True when `ident` occurs in `hay` as a whole identifier.
@@ -1881,6 +1912,23 @@ mod tests {
 
     fn all(_: &str) -> bool {
         true
+    }
+
+    /// `main = start`, `start = setup |> Task.andThen runIt`, `runIt _ =
+    /// App.run app` carries `setup` and drops both bindings (v0.29.2 second
+    /// Judge, gap 3).
+    #[test]
+    fn main_run_chain_follows_a_binding_into_a_named_continuation() {
+        let src = "module Main exposing (main)\n\nimport Std.App as App\nimport Sky.Core.Task as Task\n\n\
+                   setup =\n    Task.succeed ()\n\n\
+                   start =\n    setup |> Task.andThen runIt\n\n\
+                   runIt _ =\n    App.run app\n\n\
+                   main =\n    start\n";
+        let chain = main_run_chain(src).expect("the chain is carried");
+        assert_eq!(chain.setup.map(|s| s.text).as_deref(), Some("setup"));
+        let mut carriers = chain.carriers.clone();
+        carriers.sort();
+        assert_eq!(carriers, vec!["runIt".to_string(), "start".to_string()]);
     }
 
     #[test]
