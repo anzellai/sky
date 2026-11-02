@@ -17,6 +17,7 @@ package rt
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/shopspring/decimal"
@@ -90,7 +91,16 @@ func init() {
 		if len(args) < 1 {
 			return decimalBox(decimal.Zero)
 		}
-		return decimalBox(decimal.NewFromFloat(AsFloat(args[0])))
+		f := AsFloat(args[0])
+		// A NaN or an infinite Float (Math.sqrt -1, Math.pow 10 400) has no
+		// decimal value. shopspring panics with an unclassified message; Sky
+		// has no NaN or Infinity shape, so this fails as the classified
+		// DivisionByZero class a Float division with no answer fails as
+		// (v0.29.2 fifth Judge audit), never a silent zero.
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			panic(fmt.Sprintf("rt.Decimal.fromFloat: %v has no decimal value", f))
+		}
+		return decimalBox(decimal.NewFromFloat(f))
 	})
 
 	// fromMinor : Int -> Int -> Decimal — `fromMinor 2 12345` = 123.45

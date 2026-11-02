@@ -997,6 +997,12 @@ func Codec_autoCols(snakeArg, witness any) any {
 		if isSkyMaybeType(f.Type) { // Maybe field → nullable column (marked with `?`)
 			kind += "?"
 		}
+		if codecAutoTypePartial(f.Type, skyTagType(f), 0) {
+			// A partial field (codec_auto_check.go): Std.Codec checks it on a
+			// write. The flag is read by Codec.kindToColType as no flag it
+			// knows, so the column type is unchanged.
+			kind += "|check"
+		}
 		out = append(out, T2[any, any]{V0: skyColKey(f, snake), V1: kind})
 	}
 	return out

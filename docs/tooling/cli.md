@@ -1027,7 +1027,7 @@ usable directly in a deploy pipeline: `SKY_DB_OP=migrate ./sky-out/app`.
 - `sky db status` exits **non-zero on drift** (an applied migration
   whose SQL was edited) — use it as a CI schema-drift gate.
 - `sky db status` runs the app with its databases **read-only**
-  (`SKY_READ_ONLY_DB=1`, v0.29.2), so it writes nothing. The app's `main`
+  (`SKY_READ_ONLY_DB=status`, v0.29.2), so it writes nothing. The app's `main`
   runs up to `Db.migrate`, which prints the report and exits. A write
   *before* `Db.migrate` (a boot log row, a `CREATE TABLE IF NOT EXISTS`)
   therefore fails with "attempt to write a readonly database" (SQLite) or
@@ -1094,11 +1094,18 @@ sky db check --code          # what the code needs to read the database safely
 `sky db check` reads the live database and changes nothing. It connects the way
 the app does (`DATABASE_URL`, `<PREFIX>_DB_PATH`, `SKY_DB_PATH` or `sky.toml
 [database]`), so it works on a local cluster, a CI database or a remote one, on
-PostgreSQL and SQLite. Its helper runs with `SKY_READ_ONLY_DB=1`: a SQLite file
+PostgreSQL and SQLite. Its helper runs with `SKY_READ_ONLY_DB=check`: a SQLite file
 is opened read-only, whatever `mode` its DSN gives (`mode=ro` and the
 `query_only` PRAGMA replace it; a missing file is refused with exit 2, never
-created, for a plain path and a `file:` URI alike),
-every PostgreSQL transaction is read-only, and no telemetry table is written.
+created, for a plain path and a `file:` URI alike; a plain path keeps its own
+`?` parameters, as the app opens it). A database in WAL mode (the mode
+`Db.connect` sets) creates no `-wal` or `-shm` file: with no `-wal` file beside
+it, no process has it open and every committed page is in the main file, so it
+is read with `immutable=1`; with one, a live process holds pages the main file
+does not have yet, and the check reads through the `-wal` and `-shm` that are
+there. So the check works in a directory it cannot write, and sees a running
+app's committed rows. Every PostgreSQL transaction is read-only, and no
+telemetry table is written.
 `sky db status` runs the same way. It compares every table of the project's `db :
 Store.Project` (the `Std.Db.Store` stores, and the `Std.Db.Schema` tables that
 `Schema.toProject` adds) with the database: tables, columns, types, `NOT NULL`,

@@ -428,11 +428,20 @@ func dbSqliteReadOnlyDSN(dsn string) (string, string) {
 		return "file::memory:?" + guards, ""
 	}
 	if !strings.HasPrefix(dsn, "file:") {
-		if msg := dbSqliteMustExist(dsn, dsn); msg != "" {
+		// A plain path takes its parameters after the first `?`, as the
+		// driver reads it (modernc.org/sqlite newConn): `w/x.db?_pragma=…`
+		// opens `w/x.db`. The whole string used to be stat'ed as the file
+		// name, so a DSN the app opens was refused here (v0.29.2 fifth Judge).
+		path, query := dsn, ""
+		if i := strings.IndexByte(dsn, '?'); i >= 1 {
+			path, query = dsn[:i], dsn[i+1:]
+		}
+		if msg := dbSqliteMustExist(path, dsn); msg != "" {
 			return "", msg
 		}
-		esc := strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23").Replace(dsn)
-		return "file:" + esc + "?mode=ro&" + guards, ""
+		params := dbSqliteReadOnlyParams(query, path)
+		esc := strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23").Replace(path)
+		return "file:" + esc + "?" + strings.Join(append(params, guards), "&"), ""
 	}
 	rest := strings.TrimPrefix(dsn, "file:")
 	// A fragment is ignored by SQLite and not read by the driver: dropped.
@@ -440,30 +449,91 @@ func dbSqliteReadOnlyDSN(dsn string) (string, string) {
 		rest = rest[:i]
 	}
 	path, query, _ := strings.Cut(rest, "?")
-	params := []string{}
 	memory := path == ":memory:"
+	for _, p := range strings.Split(query, "&") {
+		k, v, _ := strings.Cut(p, "=")
+		if strings.EqualFold(k, "mode") && strings.EqualFold(v, "memory") {
+			memory = true
+		}
+	}
+	if memory {
+		params := []string{}
+		for _, p := range strings.Split(query, "&") {
+			if p != "" {
+				params = append(params, p)
+			}
+		}
+		return "file:" + path + "?" + strings.Join(append(params, guards), "&"), ""
+	}
+	file := dbSqliteURIPath(path)
+	if msg := dbSqliteMustExist(file, dsn); msg != "" {
+		return "", msg
+	}
+	params := dbSqliteReadOnlyParams(query, file)
+	return "file:" + path + "?" + strings.Join(append(params, guards), "&"), ""
+}
+
+// dbSqliteReadOnlyParams is the query of a read-only open of the database
+// `file`: the DSN's own parameters with any `mode` or `immutable` dropped,
+// then `mode=ro`, and `immutable=1` when the database is in WAL mode with no
+// `-wal` file beside it (v0.29.2 fifth Judge).
+//
+// Why: a read-only connection to a WAL database needs the `-shm` index, and
+// SQLite creates `-wal` and `-shm` when they are missing (sqlite.org/wal.html,
+// "Read-Only Databases"). `Db.connect` puts every Sky database in WAL mode, so
+// `sky db check` and `sky db status` created both files beside the database,
+// and in a read-only directory failed with "attempt to write a readonly
+// database (1544)". The `-wal` file is there while any connection has the
+// database open, and the last connection to close checkpoints it into the
+// main file and deletes it. So:
+//
+//   - no `-wal` file: every committed page is in the main file, and no other
+//     process is using the database. `immutable=1` reads that file alone, with
+//     no locks and no `-shm`, and creates nothing. If a writer opens the
+//     database during the read, it writes its own `-wal` first and changes the
+//     main file only at a checkpoint, so the one-shot read of a check sees the
+//     database as it was when it started.
+//   - a `-wal` file: a live process (or one that did not close cleanly) holds
+//     pages the main file does not have yet, so `immutable` would read stale
+//     data. `mode=ro` reads through the `-wal` and the `-shm` that are already
+//     there, takes shared locks like any reader, and creates nothing.
+//   - not WAL (rollback journal): `mode=ro`, which never creates a file for a
+//     read.
+func dbSqliteReadOnlyParams(query, file string) []string {
+	params := []string{}
 	for _, p := range strings.Split(query, "&") {
 		if p == "" {
 			continue
 		}
-		k, v, _ := strings.Cut(p, "=")
-		if strings.EqualFold(k, "mode") {
-			if strings.EqualFold(v, "memory") {
-				memory = true
-				params = append(params, p)
-			}
+		k, _, _ := strings.Cut(p, "=")
+		if strings.EqualFold(k, "mode") || strings.EqualFold(k, "immutable") {
 			continue
 		}
 		params = append(params, p)
 	}
-	if !memory {
-		if msg := dbSqliteMustExist(dbSqliteURIPath(path), dsn); msg != "" {
-			return "", msg
+	params = append(params, "mode=ro")
+	if dbSqliteIsWAL(file) {
+		if _, err := os.Stat(file + "-wal"); os.IsNotExist(err) {
+			params = append(params, "immutable=1")
 		}
-		params = append(params, "mode=ro")
 	}
-	params = append(params, guards)
-	return "file:" + path + "?" + strings.Join(params, "&"), ""
+	return params
+}
+
+// dbSqliteIsWAL reports whether the SQLite database `file` is in WAL mode:
+// bytes 18 and 19 of its header (the file format read and write versions) are
+// 2 for WAL and 1 for a rollback journal (sqlite.org/fileformat.html, 1.3.3).
+func dbSqliteIsWAL(file string) bool {
+	f, err := os.Open(file)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var head [20]byte
+	if n, err := f.Read(head[:]); err != nil || n < 20 {
+		return false
+	}
+	return string(head[:16]) == "SQLite format 3\x00" && head[18] == 2 && head[19] == 2
 }
 
 // dbSqliteURIPath is the file a `file:` URI's path part names: the authority
@@ -489,12 +559,12 @@ func dbSqliteURIPath(path string) string {
 func dbSqliteMustExist(file, dsn string) string {
 	if file == "" {
 		return fmt.Sprintf("db.connect: the SQLite DSN %s names no file, "+
-			"and this process opens databases read-only (SKY_READ_ONLY_DB=1), so no database is created", dsn)
+			"and this process opens databases read-only (SKY_READ_ONLY_DB is set), so no database is created", dsn)
 	}
 	if _, err := os.Stat(file); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Sprintf("db.connect: the SQLite database %s does not exist, "+
-				"and this process opens databases read-only (SKY_READ_ONLY_DB=1), so it is not created. "+
+				"and this process opens databases read-only (SKY_READ_ONLY_DB is set), so it is not created. "+
 				"Check the path, or create the database first (sky db migrate)", file)
 		}
 		return "db.connect: " + err.Error()
@@ -2784,7 +2854,7 @@ func dbPgReadOnlyCheck(conn *sql.DB) string {
 		return ""
 	}
 	if !strings.EqualFold(strings.TrimSpace(v), "on") {
-		return "db.connect: this process opens databases read-only (SKY_READ_ONLY_DB=1), " +
+		return "db.connect: this process opens databases read-only (SKY_READ_ONLY_DB is set), " +
 			"and the PostgreSQL session has default_transaction_read_only=" + v +
 			" (set by the DSN, the role or a pooler), so the connection is refused. " +
 			"Remove the setting from the DSN"

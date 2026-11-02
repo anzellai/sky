@@ -49,7 +49,11 @@ const decimalMaxExponent = 10000
 
 // decimalParseBounded reads `s` under the lenient grammar of Decimal.fromString
 // (an optional exponent), at most decimalStrictMaxLen bytes and an exponent
-// within decimalMaxExponent either way.
+// within decimalMaxExponent either way. Its canonical text (the one every
+// writer stores) is at most decimalStrictMaxLen characters too (v0.29.2 fifth
+// Judge): `"1e1500"` is six characters of input and 1501 of output, and a
+// decimal column, `Codec.decimal` and `Codec.auto` refuse to read it back, so
+// a value built from such text could be written and never read.
 func decimalParseBounded(s string) (decimal.Decimal, error) {
 	if len(s) > decimalStrictMaxLen {
 		return decimal.Zero, fmt.Errorf("a decimal has at most %d characters, and this one has %d", decimalStrictMaxLen, len(s))
@@ -61,7 +65,23 @@ func decimalParseBounded(s string) (decimal.Decimal, error) {
 	if e := int64(d.Exponent()); e > decimalMaxExponent || e < -decimalMaxExponent {
 		return decimal.Zero, fmt.Errorf("%q has an exponent past %d either way, too large to compute with", strictShortText(s), decimalMaxExponent)
 	}
+	if err := decimalCanonicalFits(d); err != nil {
+		return decimal.Zero, fmt.Errorf("%q: %v", strictShortText(s), err)
+	}
 	return d, nil
+}
+
+// decimalCanonicalFits is the one bound on a decimal's canonical text: at most
+// decimalStrictMaxLen characters, the most a strict reader takes. The parse of
+// Decimal.fromString applies it; a computed decimal (Decimal.mul of two long
+// ones) can still pass it, and the write check of Codec.decimal, moneyIn,
+// moneyObject and an auto Decimal or Money field refuses that value, because
+// it runs the same strict reader (decimalParseStrict).
+func decimalCanonicalFits(d decimal.Decimal) error {
+	if n := len(decimalCanonical(d)); n > decimalStrictMaxLen {
+		return fmt.Errorf("written out it has %d characters, and a decimal has at most %d", n, decimalStrictMaxLen)
+	}
+	return nil
 }
 
 // decimalStrictText reports whether `s` matches `-?[0-9]+(\.[0-9]+)?`.

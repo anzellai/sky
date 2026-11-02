@@ -624,7 +624,7 @@ For money, billing, tax, invoices — anything where exact fractional value matt
 
 | Surface | Signature |
 |---|---|
-| `fromString` / `fromInt` / `fromFloat` | `... -> Result Error Decimal` / `Int -> Decimal` / `Float -> Decimal` (`fromString` takes an exponent, `"1.5e3"`, within 10000 either way and 1000 characters; past that it is an `Err`) |
+| `fromString` / `fromInt` / `fromFloat` | `... -> Result Error Decimal` / `Int -> Decimal` / `Float -> Decimal` (`fromString` takes an exponent, `"1.5e3"`; text over 1000 characters, or a decimal over 1000 characters written out (`"1e1500"`), is an `Err`, the bound a decimal column and `Codec.decimal` read back; `fromFloat` of a NaN or an infinite Float fails as the classified `DivisionByZero`) |
 | `fromMinor places minor` | `Int -> Int -> Decimal` (cents → dollars: `fromMinor 2 12345` → `123.45`) |
 | `zero` / `one` / `oneHundred` | `Decimal` constants |
 | `add` / `sub` / `mul` | `Decimal -> Decimal -> Decimal` |
@@ -1439,10 +1439,21 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   field's own decoder, or, for `Codec.auto`, the blank record with that
   value in the field); the Store uses it to name the column a row fails on.
   `Codec.writeChecks codec` (v0.29.2) lists the fields of a record codec that
-  can refuse a value they wrote (a `Codec.moneyIn` given another currency, at
-  any depth), with the in-memory check the Store runs on each write; a
-  `Codec.auto` codec has none. `Codec.problems codec` lists what is wrong with
-  the codec as built.
+  are partial (their encoder can write a value their own reader refuses), with
+  the in-memory check the Store runs on each write: that field's own reader.
+  Partiality is derived from the codec tree, so a container of a partial codec
+  is partial at any depth. The partial leaves are `Codec.decimal`,
+  `Codec.moneyIn` and `Codec.moneyObject` (a computed Decimal written out
+  longer than the 1000 characters a reader takes; another currency for
+  `moneyIn`), `Codec.isoCurrency` (a `CurrencyRaw` code a reader refuses),
+  `Codec.enum` (a value not in its pairs), `Codec.taggedUnion` (its encoder is
+  your function) and a `Codec.auto` field whose type holds a Decimal or a
+  Money. A record of plain fields has none. An enum value not in its pairs is
+  written by `toJson` as `{"notInEnum": "<Constructor>"}`, which every reader
+  refuses, never as `""`. `Codec.problems codec` lists what is wrong with the
+  codec as built (an `autoWith` key that names no field, two keys naming one
+  column, one enum name for two values, one union tag for two variants, one
+  object key for two fields, a `moneyIn` code that is not a code).
   `Codec.maybe c` reads only JSON `null` as `Nothing` (v0.29): any other
   value must decode as `c`, at any depth, so a `"x"` in a `Maybe Int` field
   or a bad element of a `List (Maybe a)` is an `Err` naming where it failed,

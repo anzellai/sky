@@ -359,10 +359,12 @@ both:
   `sky db check` runs the same check (`Store.checkProjectData`, v0.29.2), so
   it reports the same column as drift with the same text, on SQLite too, where
   the column type alone fits. A write never stores a JSON value its codec does
-  not read back (a `Codec.list (Codec.moneyIn GBP)` holding a USD Money is
-  refused, by every write verb, naming the verb). Only the fields that can
-  refuse a value they wrote are checked (`Codec.writeChecks`), on the encoded
-  value in memory, so a `Codec.auto` store pays nothing for the check. The conversion never drops a
+  not read back, in a JSON column or a scalar one (a `Codec.list (Codec.moneyIn
+  GBP)` holding a USD Money, a `Codec.enum` value not in its pairs, a computed
+  Decimal over 1000 characters, a NaN or infinite Float are refused, by every
+  write verb, naming the verb and the column). Only the partial fields are
+  checked (`Codec.writeChecks`, derived from the codec tree), on the encoded
+  value in memory, so a store of plain fields pays nothing for the check. The conversion never drops a
   currency: for `Codec.moneyIn GBP` only a Money in GBP becomes its amount,
   and for `Codec.decimal` no Money object converts.
 
@@ -495,6 +497,11 @@ SQLite), and the runtime binds its N values as one parameter, so the list is
 not stopped by the engine's limit on the parameters of one statement (SQLite
 32,766, PostgreSQL 65,535). Both forms match the same rows, under `not_` too,
 and the SQL and parameters `toSql` returns run unchanged through `Db.query`.
+On PostgreSQL an `Int` compared with an `Int` column is a `BIGINT`
+(`CAST(? AS BIGINT)`, and `CAST(? AS BIGINT[])` for a long list, v0.29.2): on
+a foreign `INTEGER` or `SMALLINT` column a value outside the column's range
+matches nothing, as SQL compares an integer with a wider one, instead of
+failing with "out of range".
 
 **Every name is checked before any statement runs.** A column argument is a
 codec column (the record field or its snake name) or a `jsonText` reference. A

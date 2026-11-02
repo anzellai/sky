@@ -109,9 +109,10 @@ func classifyPanic(msg string) (kind, hint string) {
 	switch {
 	case strings.Contains(msg, "rt.IntDiv: integer division by zero"),
 		strings.Contains(msg, "rt.Rem: modulo by zero"),
-		strings.Contains(msg, "rt.Div: division by zero"):
+		strings.Contains(msg, "rt.Div: division by zero"),
+		strings.Contains(msg, "rt.Decimal.fromFloat: "):
 		return "DivisionByZero",
-			"Integer or float division by zero. Guard the divisor with `if d == 0 then Err … else Ok (n // d)` before the operation."
+			"Integer or float division by zero, or a Float with no value (NaN or Infinity) given to Decimal.fromFloat. Guard the divisor with `if d == 0 then Err … else Ok (n // d)` before the operation."
 	case strings.Contains(msg, "rt.AsInt: expected numeric"),
 		strings.Contains(msg, "rt.AsFloat: expected numeric"),
 		strings.Contains(msg, "rt.AsBool: expected bool"),

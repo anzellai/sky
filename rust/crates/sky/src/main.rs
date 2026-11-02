@@ -14969,7 +14969,7 @@ emit report =
     // is written (rt.dbReadOnly).
     let output = match Command::new(&bin)
         .current_dir(&project_dir)
-        .env("SKY_READ_ONLY_DB", "1")
+        .env("SKY_READ_ONLY_DB", "status")
         .output()
     {
         Ok(o) => o,
@@ -15242,7 +15242,7 @@ emit begin body end =
         // off (rt.dbReadOnly).
         match Command::new(&bin)
             .current_dir(&project_dir)
-            .env("SKY_READ_ONLY_DB", "1")
+            .env("SKY_READ_ONLY_DB", "check")
             .output()
         {
             Ok(o) => Some((
@@ -16099,7 +16099,7 @@ fn cmd_db(args: &[String]) -> ExitCode {
     // and no telemetry persisted (rt.dbReadOnly), as `sky db check` does.
     let mut env = vec![("SKY_DB_OP".to_string(), op.to_string())];
     if op == "status" {
-        env.push(("SKY_READ_ONLY_DB".to_string(), "1".to_string()));
+        env.push(("SKY_READ_ONLY_DB".to_string(), "status".to_string()));
     }
     match run_app(&out_dir, &env) {
         Ok(status) => ExitCode::from(status.code().unwrap_or(1) as u8),

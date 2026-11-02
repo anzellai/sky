@@ -21,6 +21,7 @@ import Std.Decimal as Decimal exposing (Decimal)
 import Std.Money as Money exposing (Money)
 import Sky.Core.Json.Encode as JE
 import Sky.Core.Dict as Dict
+import Sky.Core.Math as Math
 import Sky.Core.Error as Error
 import Sky.Test as Test exposing (Test)
 
@@ -470,6 +471,13 @@ sqlOnly r =
     Result.map (\( sql, _ ) -> sql) r
 
 
+-- The placeholder of an Int compared with an Int column: a BIGINT on
+-- PostgreSQL (v0.29.2 fifth Judge, `condParam`).
+intParam : String
+intParam =
+    byDialect "?" "CAST(? AS BIGINT)"
+
+
 byDialect : String -> String -> String
 byDialect sqlite postgres =
     if dsn == "" then
@@ -670,7 +678,7 @@ aggregateTests db =
           (\_ ->
               Test.equal
                   (Ok
-                      ( "SELECT customer_id AS \"customer_id\", COUNT(*) AS \"sent\", CAST(COALESCE(SUM(CASE WHEN opened_at > ? THEN 1 ELSE 0 END), 0) AS BIGINT) AS \"opened\", MAX(sent_at) AS \"last_sent_at\" FROM sqc_invoices WHERE (sent_at > ?) GROUP BY customer_id HAVING (COUNT(*) >= ?) ORDER BY \"sent\" DESC"
+                      ( "SELECT customer_id AS \"customer_id\", COUNT(*) AS \"sent\", CAST(COALESCE(SUM(CASE WHEN opened_at > " ++ intParam ++ " THEN 1 ELSE 0 END), 0) AS BIGINT) AS \"opened\", MAX(sent_at) AS \"last_sent_at\" FROM sqc_invoices WHERE (sent_at > " ++ intParam ++ ") GROUP BY customer_id HAVING (COUNT(*) >= ?) ORDER BY \"sent\" DESC"
                       , [ SqlInt 0, SqlInt 0, SqlInt 2 ]
                       ))
                   (Store.toSql
@@ -2015,7 +2023,7 @@ subqueryTests db =
           (\_ ->
               Test.equal
                   (Ok
-                      "SELECT * FROM sqc_import_rows WHERE (batch_id IN (SELECT sq1.id FROM sqc_batches sq1 WHERE (sq1.created_at < ?) AND sq1.id IS NOT NULL))")
+                      ("SELECT * FROM sqc_import_rows WHERE (batch_id IN (SELECT sq1.id FROM sqc_batches sq1 WHERE (sq1.created_at < " ++ intParam ++ ") AND sq1.id IS NOT NULL))"))
                   (sqlOnly
                       (Store.toSql
                           db
@@ -2142,7 +2150,7 @@ subqueryTests db =
           (\_ ->
               Test.equal
                   (Ok
-                      "SELECT * FROM sqc_clients WHERE (NOT EXISTS (SELECT 1 FROM sqc_bills sq1 WHERE sq1.client_id = sqc_clients.id AND (sq1.sent_at > ?)))")
+                      ("SELECT * FROM sqc_clients WHERE (NOT EXISTS (SELECT 1 FROM sqc_bills sq1 WHERE sq1.client_id = sqc_clients.id AND (sq1.sent_at > " ++ intParam ++ ")))"))
                   (sqlOnly
                       (Store.toSql
                           db
@@ -2245,7 +2253,7 @@ subqueryTests db =
           (\_ ->
               Test.equal
                   (Ok
-                      "SELECT * FROM sqc_batches WHERE (id IN (SELECT sq1.batch_id FROM sqc_import_rows sq1 WHERE (EXISTS (SELECT 1 FROM sqc_batches sq2 WHERE sq2.id = sq1.batch_id AND (sq2.created_at > ?))) AND sq1.batch_id IS NOT NULL))")
+                      ("SELECT * FROM sqc_batches WHERE (id IN (SELECT sq1.batch_id FROM sqc_import_rows sq1 WHERE (EXISTS (SELECT 1 FROM sqc_batches sq2 WHERE sq2.id = sq1.batch_id AND (sq2.created_at > " ++ intParam ++ "))) AND sq1.batch_id IS NOT NULL))"))
                   (sqlOnly
                       (Store.toSql
                           db
@@ -7163,10 +7171,10 @@ j4Tests db =
                                                }
                                              ]))))
     , Test.test
-          "fourth Judge: Codec.writeChecks holds only the fields that can refuse; Codec.auto has none"
+          "fourth Judge: Codec.writeChecks holds only the fields that can refuse; a Codec.auto List Money field is one (fifth Judge)"
           (\_ ->
               Test.equal
-                  ( [ "prices" ], [], [ "unit_price" ] )
+                  ( [ "prices" ], [ "prices" ], [ "unit_price" ] )
                   ( List.map (\( k, _ ) -> k) (Codec.writeChecks j4Codec)
                   , List.map (\( k, _ ) -> k) (Codec.writeChecks (Codec.auto (j4Plain "z")))
                   , List.map (\( k, _ ) -> k) (Codec.writeChecks (j4PriceBy "unitPrice" Money.GBP))
@@ -7560,15 +7568,15 @@ inListTests db =
               in
                   Test.equal
                       ( [ Ok
-                              ( "SELECT * FROM sqc_inlist_kinds WHERE (mn IN (?"
-                                    ++ String.repeat 999 ", ?"
-                                    ++ "))"
+                              ( byDialect
+                                    ("SELECT * FROM sqc_inlist_kinds WHERE (mn IN (?" ++ String.repeat 999 ", ?" ++ "))")
+                                    ("SELECT * FROM sqc_inlist_kinds WHERE (mn IN (CAST(? AS BIGINT)" ++ String.repeat 999 ", CAST(? AS BIGINT)" ++ "))")
                               , 1000
                               )
                         , Ok
                               ( byDialect
                                     "SELECT * FROM sqc_inlist_kinds WHERE (mn IN (SELECT +value FROM json_each(?/*sky-list:1001*/)))"
-                                    "SELECT * FROM sqc_inlist_kinds WHERE (mn = ANY(?/*sky-list:1001*/))"
+                                    "SELECT * FROM sqc_inlist_kinds WHERE (mn = ANY(CAST(?/*sky-list:1001*/ AS BIGINT[])))"
                               , 1001
                               )
                         , Ok
@@ -7638,6 +7646,1241 @@ oldFlagsBigIds db cond =
         |> Task.map (List.map .id)
 
 
+-- ── Fifth Judge: no codec writes what it cannot read (v0.29.2) ──────────────
+-- The class: a codec can write a value its own reader refuses, and a Store
+-- write then makes the whole table unreadable (a `Codec.enum` value not in
+-- its pairs wrote "", a computed Decimal longer than the 1000 characters a
+-- reader takes, a NaN Float). The principle, for every codec `c` and every
+-- `v` its encoder takes: `decode c (encode c v) == v`, or the Store write
+-- refuses `v` loudly. The generative cases below build every codec
+-- constructor and every combination up to depth 3 over one universal value
+-- type, generate edge values for each, and check the principle through JSON
+-- and through a real Store on this engine.
+type G5Spec
+    = GStr
+    | GInt
+    | GFlt
+    | GBool
+    | GDec
+    | GMoneyIn
+    | GMoneyObj
+    | GIso
+    | GVal
+    | GEnum
+    | GMaybe G5Spec
+    | GList G5Spec
+    | GDict G5Spec
+    | GRes G5Spec
+    | GObj G5Spec
+    | GUnion G5Spec
+    | GMap G5Spec
+
+
+type G5U
+    = UStr String
+    | UInt Int
+    | UFlt Float
+    | UBool Bool
+    | UDec Decimal
+    | UMoney Money
+    | UCur Money.Currency
+    | UVal JE.Value
+    | UEnum Int
+    | UMaybe (Maybe G5U)
+    | UList (List G5U)
+    | UDict (Dict.Dict String G5U)
+    | URes (Result G5U G5U)
+    | UPair G5U G5U
+    | UTag Int (List G5U)
+
+
+g5Leaves : List G5Spec
+g5Leaves =
+    [ GStr, GInt, GFlt, GBool, GDec, GMoneyIn, GMoneyObj, GIso, GVal, GEnum ]
+
+
+g5Wrap : G5Spec -> List G5Spec
+g5Wrap s =
+    [ GMaybe s, GList s, GDict s, GRes s, GObj s, GUnion s, GMap s ]
+
+
+g5Depth : Int -> List G5Spec
+g5Depth n =
+    if n <= 1 then
+        g5Leaves
+
+    else
+        List.concatMap g5Wrap (g5Depth (n - 1))
+
+
+g5Show : G5Spec -> String
+g5Show s =
+    case s of
+
+        GStr ->
+            "string"
+
+        GInt ->
+            "int"
+
+        GFlt ->
+            "float"
+
+        GBool ->
+            "bool"
+
+        GDec ->
+            "decimal"
+
+        GMoneyIn ->
+            "moneyIn GBP"
+
+        GMoneyObj ->
+            "moneyObject"
+
+        GIso ->
+            "isoCurrency"
+
+        GVal ->
+            "value"
+
+        GEnum ->
+            "enum"
+
+        GMaybe x ->
+            "maybe (" ++ g5Show x ++ ")"
+
+        GList x ->
+            "list (" ++ g5Show x ++ ")"
+
+        GDict x ->
+            "dict string (" ++ g5Show x ++ ")"
+
+        GRes x ->
+            "result (" ++ g5Show x ++ ")"
+
+        GObj x ->
+            "object (" ++ g5Show x ++ ")"
+
+        GUnion x ->
+            "taggedUnion (" ++ g5Show x ++ ")"
+
+        GMap x ->
+            "map (" ++ g5Show x ++ ")"
+
+
+g5Str : G5U -> String
+g5Str u =
+    case u of
+
+        UStr s ->
+            s
+
+        _ ->
+            ""
+
+
+g5Int : G5U -> Int
+g5Int u =
+    case u of
+
+        UInt i ->
+            i
+
+        _ ->
+            0
+
+
+g5Flt : G5U -> Float
+g5Flt u =
+    case u of
+
+        UFlt f ->
+            f
+
+        _ ->
+            0.0
+
+
+g5Bool : G5U -> Bool
+g5Bool u =
+    case u of
+
+        UBool b ->
+            b
+
+        _ ->
+            False
+
+
+g5Dec : G5U -> Decimal
+g5Dec u =
+    case u of
+
+        UDec d ->
+            d
+
+        _ ->
+            Decimal.zero
+
+
+g5Money : G5U -> Money
+g5Money u =
+    case u of
+
+        UMoney m ->
+            m
+
+        _ ->
+            Money.zero Money.GBP
+
+
+g5Cur : G5U -> Money.Currency
+g5Cur u =
+    case u of
+
+        UCur c ->
+            c
+
+        _ ->
+            Money.GBP
+
+
+g5Val : G5U -> JE.Value
+g5Val u =
+    case u of
+
+        UVal v ->
+            v
+
+        _ ->
+            JE.null
+
+
+g5MaybeOf : G5U -> Maybe G5U
+g5MaybeOf u =
+    case u of
+
+        UMaybe m ->
+            m
+
+        _ ->
+            Nothing
+
+
+g5ListOf : G5U -> List G5U
+g5ListOf u =
+    case u of
+
+        UList xs ->
+            xs
+
+        _ ->
+            []
+
+
+g5DictOf : G5U -> Dict.Dict String G5U
+g5DictOf u =
+    case u of
+
+        UDict d ->
+            d
+
+        _ ->
+            Dict.empty
+
+
+g5ResOf : G5U -> Result G5U G5U
+g5ResOf u =
+    case u of
+
+        URes r ->
+            r
+
+        _ ->
+            Ok (UInt 0)
+
+
+g5Fst : G5U -> G5U
+g5Fst u =
+    case u of
+
+        UPair a _ ->
+            a
+
+        _ ->
+            UInt 0
+
+
+g5Snd : G5U -> G5U
+g5Snd u =
+    case u of
+
+        UPair _ b ->
+            b
+
+        _ ->
+            UInt 0
+
+
+g5Codec : G5Spec -> Codec G5U
+g5Codec s =
+    case s of
+
+        GStr ->
+            Codec.map UStr g5Str Codec.string
+
+        GInt ->
+            Codec.map UInt g5Int Codec.int
+
+        GFlt ->
+            Codec.map UFlt g5Flt Codec.float
+
+        GBool ->
+            Codec.map UBool g5Bool Codec.bool
+
+        GDec ->
+            Codec.map UDec g5Dec Codec.decimal
+
+        GMoneyIn ->
+            Codec.map UMoney g5Money (Codec.moneyIn Money.GBP)
+
+        GMoneyObj ->
+            Codec.map UMoney g5Money Codec.moneyObject
+
+        GIso ->
+            Codec.map UCur g5Cur Codec.isoCurrency
+
+        GVal ->
+            Codec.map UVal g5Val Codec.value
+
+        GEnum ->
+            Codec.enum [ ( UEnum 0, "zero" ), ( UEnum 1, "one" ) ]
+
+        GMaybe x ->
+            Codec.map UMaybe g5MaybeOf (Codec.maybe (g5Codec x))
+
+        GList x ->
+            Codec.map UList g5ListOf (Codec.list (g5Codec x))
+
+        GDict x ->
+            Codec.map UDict g5DictOf (Codec.dict Codec.string (g5Codec x))
+
+        GRes x ->
+            Codec.map URes g5ResOf (Codec.result (g5Codec x) (g5Codec x))
+
+        GObj x ->
+            Codec.object UPair
+                |> Codec.field "a" g5Fst (g5Codec x)
+                |> Codec.field "b" g5Snd (g5Codec x)
+                |> Codec.buildObject
+
+        GUnion x ->
+            g5UnionCodec (g5Codec x)
+
+        GMap x ->
+            Codec.map identity identity (g5Codec x)
+
+
+-- A union whose encoder writes the tag "Unlisted" for `UTag 2`, a tag no
+-- variant reads: the caller's encoder is partial, so the codec is.
+g5UnionCodec : Codec G5U -> Codec G5U
+g5UnionCodec c =
+    Codec.taggedUnion
+        (\u ->
+            case u of
+
+                UTag i xs ->
+                    if i == 0 then
+                        ( "Zero", [] )
+
+                    else if i == 1 then
+                        ( "One", List.map (Codec.toValue c) (List.take 1 xs) )
+
+                    else
+                        ( "Unlisted", [] )
+
+                _ ->
+                    ( "Unlisted", [] ))
+        [ Codec.var0 "Zero" (UTag 0 []), Codec.var1 "One" (\x -> UTag 1 [ x ]) c ]
+
+
+g5Nan : Float
+g5Nan =
+    Math.sqrt -1.0
+
+
+g5Inf : Float
+g5Inf =
+    Math.pow 10.0 400.0
+
+
+-- 600 sevens: within the bound, and its square (1200 digits) is not.
+g5Big : Decimal
+g5Big =
+    dec ("1" ++ String.repeat 599 "7")
+
+
+g5Long : Decimal
+g5Long =
+    Decimal.mul g5Big g5Big
+
+
+g5Values : G5Spec -> List G5U
+g5Values s =
+    case s of
+
+        GStr ->
+            List.map UStr [ "", "Ada", "ünï 😀 \"q\" \\ line\nbreak", String.repeat 5000 "x" ]
+
+        GInt ->
+            List.map UInt [ 0, -1, 9007199254740993, 9223372036854775807, -9223372036854775807 - 1 ]
+
+        GFlt ->
+            List.map UFlt [ 0.0, -0.5, 1.0e308, 5.0e-324, g5Nan, g5Inf ]
+
+        GBool ->
+            [ UBool True, UBool False ]
+
+        GDec ->
+            List.map UDec [ dec "0", dec "-12.50", dec "123456789012345678901234567890.000000001", dec (String.repeat 1000 "9"), g5Long ]
+
+        GMoneyIn ->
+            List.map UMoney [ gbp "1.5", Money.Money (dec "2") Money.USD, Money.Money g5Long Money.GBP, Money.Money (dec "3") (Money.CurrencyRaw "gbp") ]
+
+        GMoneyObj ->
+            List.map UMoney [ gbp "1", Money.Money (dec "0.5") Money.USDT, Money.Money (dec "7") (Money.CurrencyRaw "zz"), Money.Money g5Long Money.EUR ]
+
+        GIso ->
+            List.map UCur [ Money.GBP, Money.USDT, Money.CurrencyRaw "gbp", Money.CurrencyRaw "a b" ]
+
+        GVal ->
+            List.map UVal [ JE.object [ ( "k", JE.list JE.string [ "a", "ü" ] ) ], JE.int 1, JE.null, JE.string "" ]
+
+        GEnum ->
+            [ UEnum 0, UEnum 1, UEnum 2 ]
+
+        GMaybe x ->
+            UMaybe Nothing :: List.map (\v -> UMaybe (Just v)) (g5Values x)
+
+        GList x ->
+            let
+                vs = g5Values x
+            in
+                UList [] :: List.map (\v -> UList [ v ]) vs ++ [ UList vs ]
+
+        GDict x ->
+            let
+                vs = g5Values x
+            in
+                UDict Dict.empty
+                    :: List.map (\v -> UDict (Dict.fromList [ ( "kü😀", v ) ])) vs
+                    ++ [ UDict (Dict.fromList (List.indexedMap (\i v -> ( "k" ++ String.fromInt i, v )) vs)) ]
+
+        GRes x ->
+            let
+                vs = g5Values x
+            in
+                List.map (\v -> URes (Ok v)) vs ++ List.map (\v -> URes (Err v)) vs
+
+        GObj x ->
+            let
+                vs = g5Values x
+                first = Maybe.withDefault (UInt 0) (List.head vs)
+            in
+                List.map (\v -> UPair v first) vs ++ List.map (\v -> UPair first v) vs
+
+        GUnion x ->
+            UTag 0 [] :: List.map (\v -> UTag 1 [ v ]) (g5Values x) ++ [ UTag 2 [] ]
+
+        GMap x ->
+            g5Values x
+
+
+-- Whether the value is one its codec must write and read back: no enum value
+-- outside the pairs, no Decimal past 1000 characters written out, no Money in
+-- another currency for moneyIn, no currency code a reader refuses, no union
+-- tag no variant reads, and no NaN or infinite Float.
+g5Valid : G5Spec -> G5U -> Bool
+g5Valid s u =
+    case ( s, u ) of
+
+        ( GFlt, UFlt f ) ->
+            g5FiniteF f
+
+        ( GDec, UDec d ) ->
+            g5DecOk d
+
+        ( GMoneyIn, UMoney m ) ->
+            g5DecOk (Money.amount m) && g5CurEq (Money.currency m) Money.GBP
+
+        ( GMoneyObj, UMoney m ) ->
+            g5DecOk (Money.amount m)
+                && Money.currencyFromCode (Money.currencyCode (Money.currency m)) /= Nothing
+
+        ( GIso, UCur c ) ->
+            Money.currencyFromCode (Money.currencyCode c) /= Nothing
+
+        ( GEnum, UEnum i ) ->
+            i < 2
+
+        ( GMaybe x, UMaybe m ) ->
+            case m of
+
+                Just v ->
+                    g5Valid x v
+
+                Nothing ->
+                    True
+
+        ( GList x, UList vs ) ->
+            List.all (g5Valid x) vs
+
+        ( GDict x, UDict d ) ->
+            List.all (\( _, v ) -> g5Valid x v) (Dict.toList d)
+
+        ( GRes x, URes r ) ->
+            case r of
+
+                Ok v ->
+                    g5Valid x v
+
+                Err v ->
+                    g5Valid x v
+
+        ( GObj x, UPair a b ) ->
+            g5Valid x a && g5Valid x b
+
+        ( GUnion x, UTag i vs ) ->
+            i == 0 || i == 1 && List.all (g5Valid x) vs
+
+        ( GMap x, _ ) ->
+            g5Valid x u
+
+        _ ->
+            True
+
+
+g5DecOk : Decimal -> Bool
+g5DecOk d =
+    String.length (Decimal.toString d) <= 1000
+
+
+g5FiniteF : Float -> Bool
+g5FiniteF f =
+    f == f && f /= g5Inf && f /= (0.0 - g5Inf)
+
+
+-- Whether JSON can hold the value at all (no NaN or infinite Float): only
+-- then is the JSON round trip run, because `Codec.toJson` of such a value is
+-- the classified JsonEncodeFailure, by design.
+g5Finite : G5Spec -> G5U -> Bool
+g5Finite s u =
+    case ( s, u ) of
+
+        ( GFlt, UFlt f ) ->
+            g5FiniteF f
+
+        ( GMaybe x, UMaybe (Just v) ) ->
+            g5Finite x v
+
+        ( GList x, UList vs ) ->
+            List.all (g5Finite x) vs
+
+        ( GDict x, UDict d ) ->
+            List.all (\( _, v ) -> g5Finite x v) (Dict.toList d)
+
+        ( GRes x, URes r ) ->
+            case r of
+
+                Ok v ->
+                    g5Finite x v
+
+                Err v ->
+                    g5Finite x v
+
+        ( GObj x, UPair a b ) ->
+            g5Finite x a && g5Finite x b
+
+        ( GUnion x, UTag _ vs ) ->
+            List.all (g5Finite x) vs
+
+        ( GMap x, _ ) ->
+            g5Finite x u
+
+        _ ->
+            True
+
+
+-- Whether the value encodes as JSON null. JSON has one null, so a `Just`
+-- of such a value reads back as `Nothing` (documented for `Codec.maybe`):
+-- the comparison treats the two as one.
+g5EncNull : G5Spec -> G5U -> Bool
+g5EncNull s u =
+    case ( s, u ) of
+
+        ( GVal, UVal v ) ->
+            JE.encode 0 v == "null"
+
+        ( GMaybe _, UMaybe Nothing ) ->
+            True
+
+        ( GMaybe x, UMaybe (Just v) ) ->
+            g5EncNull x v
+
+        ( GMap x, _ ) ->
+            g5EncNull x u
+
+        _ ->
+            False
+
+
+g5NormMaybe : G5Spec -> Maybe G5U -> Maybe G5U
+g5NormMaybe x m =
+    case m of
+
+        Just v ->
+            if g5EncNull x v then
+                Nothing
+
+            else
+                Just v
+
+        Nothing ->
+            Nothing
+
+
+g5Eq : G5Spec -> G5U -> G5U -> Bool
+g5Eq s a b =
+    case ( s, a, b ) of
+
+        ( GStr, UStr x, UStr y ) ->
+            x == y
+
+        ( GInt, UInt x, UInt y ) ->
+            x == y
+
+        ( GFlt, UFlt x, UFlt y ) ->
+            x == y
+
+        ( GBool, UBool x, UBool y ) ->
+            x == y
+
+        ( GDec, UDec x, UDec y ) ->
+            Decimal.eq x y
+
+        ( GMoneyIn, UMoney x, UMoney y ) ->
+            g5MoneyEq x y
+
+        ( GMoneyObj, UMoney x, UMoney y ) ->
+            g5MoneyEq x y
+
+        ( GIso, UCur x, UCur y ) ->
+            g5CurEq x y
+
+        ( GVal, UVal x, UVal y ) ->
+            JE.encode 0 x == JE.encode 0 y
+
+        ( GEnum, UEnum x, UEnum y ) ->
+            x == y
+
+        ( GMaybe x, UMaybe p, UMaybe q ) ->
+            case ( g5NormMaybe x p, g5NormMaybe x q ) of
+
+                ( Nothing, Nothing ) ->
+                    True
+
+                ( Just v, Just w ) ->
+                    g5Eq x v w
+
+                _ ->
+                    False
+
+        ( GList x, UList p, UList q ) ->
+            g5ListEq x p q
+
+        ( GDict x, UDict p, UDict q ) ->
+            List.map (\( k, _ ) -> k) (Dict.toList p)
+                == List.map (\( k, _ ) -> k) (Dict.toList q)
+                && g5ListEq x (List.map (\( _, v ) -> v) (Dict.toList p)) (List.map (\( _, v ) -> v) (Dict.toList q))
+
+        ( GRes x, URes p, URes q ) ->
+            case ( p, q ) of
+
+                ( Ok v, Ok w ) ->
+                    g5Eq x v w
+
+                ( Err v, Err w ) ->
+                    g5Eq x v w
+
+                _ ->
+                    False
+
+        ( GObj x, UPair p1 p2, UPair q1 q2 ) ->
+            g5Eq x p1 q1 && g5Eq x p2 q2
+
+        ( GUnion x, UTag i p, UTag j q ) ->
+            i == j && g5ListEq x p q
+
+        ( GMap x, _, _ ) ->
+            g5Eq x a b
+
+        _ ->
+            False
+
+
+g5ListEq : G5Spec -> List G5U -> List G5U -> Bool
+g5ListEq x p q =
+    case ( p, q ) of
+
+        ( [], [] ) ->
+            True
+
+        ( v :: vs, w :: ws ) ->
+            g5Eq x v w && g5ListEq x vs ws
+
+        _ ->
+            False
+
+
+g5MoneyEq : Money -> Money -> Bool
+g5MoneyEq x y =
+    Decimal.eq (Money.amount x) (Money.amount y)
+        && g5CurEq (Money.currency x) (Money.currency y)
+
+
+-- Two currencies are one when a reader takes their codes as one
+-- (`CurrencyRaw "gbp"` is `GBP`, as `Money.currencyFromCode` reads it).
+g5CurEq : Money.Currency -> Money.Currency -> Bool
+g5CurEq x y =
+    case ( Money.currencyFromCode (Money.currencyCode x), Money.currencyFromCode (Money.currencyCode y) ) of
+
+        ( Just a, Just b ) ->
+            Money.currencyCode a == Money.currencyCode b
+
+        _ ->
+            False
+
+
+type alias G5Row =
+    { id : String, f : G5U }
+
+
+g5RowCodec : G5Spec -> Codec G5Row
+g5RowCodec s =
+    Codec.object G5Row
+        |> Codec.field "id" .id Codec.string
+        |> Codec.field "f" .f (g5Codec s)
+        |> Codec.buildObject
+
+
+-- The JSON leg for one value: a valid value reads back equal and no write
+-- check of its column refuses it; any other value does not decode, and a
+-- write check of its column refuses it. `Nothing` when it holds.
+g5JsonCase : G5Spec -> Codec G5U -> List ( String, JE.Value -> Maybe String ) -> G5U -> Maybe String
+g5JsonCase s c checks v =
+    if not (g5Finite s v) then
+        Nothing
+
+    else
+        let
+            refused = List.any (\( _, chk ) -> chk (Codec.toValue c v) /= Nothing) checks
+            label = g5Show s ++ " " ++ String.left 120 (Codec.toJson c v)
+        in
+            case Codec.fromJson c (Codec.toJson c v) of
+
+                Ok w ->
+                    if g5Valid s v && g5Eq s v w && not refused then
+                        Nothing
+
+                    else if g5Valid s v && refused then
+                        Just (label ++ ": a valid value is refused by its write check")
+
+                    else if g5Valid s v then
+                        Just (label ++ ": reads back as another value")
+
+                    else
+                        Just (label ++ ": a value the codec cannot write reads back")
+
+                Err e ->
+                    if g5Valid s v then
+                        Just (label ++ ": a valid value does not read back: " ++ String.left 200 (Error.toString e))
+
+                    else if not refused then
+                        Just (label ++ ": written, not read, and no write check refuses it")
+
+                    else
+                        Nothing
+
+
+g5JsonFailures : List G5Spec -> List String
+g5JsonFailures specs =
+    List.concatMap
+        (\s ->
+            let
+                c = g5Codec s
+                checks =
+                    List.filter (\( k, _ ) -> k == "f") (Codec.writeChecks (g5RowCodec s))
+            in
+                List.filterMap (g5JsonCase s c checks) (g5Values s))
+        specs
+
+
+-- Whether a Store keeps the value: valid, and not a JSON null in a column
+-- that is NOT NULL (only a `maybe` makes a nullable column; a `Codec.value`
+-- holding null in a required column is refused by the NOT NULL constraint,
+-- loudly).
+g5StoreValid : G5Spec -> G5U -> Bool
+g5StoreValid s v =
+    g5Valid s v && not (g5EncNull s v && not (g5TopNullable s))
+
+
+g5TopNullable : G5Spec -> Bool
+g5TopNullable s =
+    case s of
+
+        GMaybe _ ->
+            True
+
+        GMap x ->
+            g5TopNullable x
+
+        _ ->
+            False
+
+
+-- The Store leg for one spec, on a fresh table: each value is inserted, a
+-- valid one is written and every other one refused with an `Err`; then the
+-- whole table reads, and each written row reads back equal.
+g5StoreCase : Db -> Int -> G5Spec -> List String
+g5StoreCase db i s =
+    let
+        table = "sqc_g5_" ++ String.fromInt i
+        store = Store.fromCodec table (g5RowCodec s) |> Store.primaryKey "id"
+        values = g5Values s
+        rows = List.indexedMap (\j v -> { id = "v" ++ String.fromInt (1000 + j), f = v }) values
+        label = g5Show s
+        run =
+            drop db table
+                |> Task.andThen (\_ -> unit (Store.migrate db store))
+                |> Task.andThen
+                       (\_ ->
+                           Task.sequence
+                               (List.map
+                                   (\r ->
+                                       Store.insert db store r
+                                           |> Task.map (\_ -> ( r, "" ))
+                                           |> Task.onError (\e -> Task.succeed ( r, Error.toString e )))
+                                   rows))
+                |> Task.andThen
+                       (\results ->
+                           Store.toList db (Store.query store |> Store.orderAsc "id")
+                               |> Task.map (\got -> ( results, got )))
+    in
+        case Task.run run of
+
+            Err e ->
+                [ label ++ ": the table does not read after the writes: " ++ String.left 300 (Error.toString e) ]
+
+            Ok ( results, got ) ->
+                List.filterMap
+                    (\( r, err ) ->
+                        let
+                            stored = List.filter (\g -> g.id == r.id) got
+                            what = label ++ " " ++ r.id
+                        in
+                            if g5StoreValid s r.f then
+                                case stored of
+
+                                    [ g ] ->
+                                        if g5Eq s r.f g.f then
+                                            Nothing
+
+                                        else
+                                            Just (what ++ ": reads back as another value")
+
+                                    _ ->
+                                        Just (what ++ ": a valid value was not written: " ++ String.left 200 err)
+
+                            else if err == "" || stored /= [] then
+                                Just (what ++ ": a value its codec cannot read back was written")
+
+                            else
+                                Nothing)
+                    results
+                    ++ (if List.length got == List.length (List.filter (\r -> g5StoreValid s r.f) rows) then
+                            []
+
+                        else
+                            [ label ++ ": the table holds another number of rows" ]
+                       )
+
+
+g5StoreFailures : Db -> Int -> List G5Spec -> List String
+g5StoreFailures db base specs =
+    List.concat (List.indexedMap (\i s -> g5StoreCase db (base + i) s) specs)
+
+
+g5Tests : Db -> List Test
+g5Tests db =
+    [ Test.test
+          "fifth Judge generative: every codec constructor, JSON round trip or write-check refusal, depth 1"
+          (\_ -> Test.equal [] (g5JsonFailures (g5Depth 1)))
+    , Test.test
+          "fifth Judge generative: every codec combination, JSON round trip or write-check refusal, depth 2"
+          (\_ -> Test.equal [] (g5JsonFailures (g5Depth 2)))
+    , Test.test
+          "fifth Judge generative: every codec combination, JSON round trip or write-check refusal, depth 3"
+          (\_ -> Test.equal [] (g5JsonFailures (g5Depth 3)))
+    , Test.test
+          "fifth Judge generative: every codec constructor through a Store: written and read back, or refused; the table always reads, depth 1"
+          (\_ -> Test.equal [] (g5StoreFailures db 0 (g5Depth 1)))
+    , Test.test
+          "fifth Judge generative: every codec combination through a Store, depth 2"
+          (\_ -> Test.equal [] (g5StoreFailures db 100 (g5Depth 2)))
+    , Test.test
+          "fifth Judge generative: every codec combination through a Store, depth 3"
+          (\_ -> Test.equal [] (g5StoreFailures db 1000 (g5Depth 3)))
+    ]
+
+
+-- ── Fifth Judge: the named cases ────────────────────────────────────────────
+type J5Status
+    = J5Active
+    | J5Suspended
+
+
+j5StatusCodec : Codec J5Status
+j5StatusCodec =
+    Codec.enum [ ( J5Active, "active" ) ]
+
+
+type alias J5Enum =
+    { id : String, status : J5Status, history : List J5Status }
+
+
+j5EnumStore : Store J5Enum
+j5EnumStore =
+    Store.fromCodec
+        "sqc_j5_enum"
+        (Codec.object J5Enum
+            |> Codec.field "id" .id Codec.string
+            |> Codec.field "status" .status j5StatusCodec
+            |> Codec.field "history" .history (Codec.list j5StatusCodec)
+            |> Codec.buildObject)
+        |> Store.primaryKey "id"
+
+
+type alias J5Dec =
+    { id : String, d : Decimal, ds : List Decimal, m : Money }
+
+
+j5DecStore : Store J5Dec
+j5DecStore =
+    Store.fromCodec
+        "sqc_j5_dec"
+        (Codec.object J5Dec
+            |> Codec.field "id" .id Codec.string
+            |> Codec.field "d" .d Codec.decimal
+            |> Codec.field "ds" .ds (Codec.list Codec.decimal)
+            |> Codec.field "m" .m (Codec.moneyIn Money.GBP)
+            |> Codec.buildObject)
+        |> Store.primaryKey "id"
+
+
+type alias J5Auto =
+    { id : String
+    , d : Decimal
+    , ds : List Decimal
+    , md : Maybe Decimal
+    , m : Money
+    , nest : { inner : List Money }
+    , f : Float
+    , n : Int
+    }
+
+
+j5AutoBlank : J5Auto
+j5AutoBlank =
+    { id = ""
+    , d = Decimal.zero
+    , ds = []
+    , md = Nothing
+    , m = Money.zero Money.GBP
+    , nest = { inner = [] }
+    , f = 0.0
+    , n = 0
+    }
+
+
+j5AutoStore : Store J5Auto
+j5AutoStore =
+    Store.fromCodec "sqc_j5_auto" (Codec.auto j5AutoBlank) |> Store.primaryKey "id"
+
+
+-- A fresh `table` from `setup`, then `write`; the error text (or "ok") and
+-- whether the whole table still reads.
+j5Write : Db -> String -> Task Error x -> Task Error y -> Task Error z -> ( String, Bool )
+j5Write db table setup write readAll =
+    case
+        Task.run
+            (drop db table
+                |> Task.andThen (\_ -> unit setup)
+                |> Task.andThen
+                       (\_ ->
+                           write
+                               |> Task.map (\_ -> "ok")
+                               |> Task.onError (\e -> Task.succeed (Error.toString e)))
+                |> Task.andThen
+                       (\msg ->
+                           readAll
+                               |> Task.map (\_ -> ( msg, True ))
+                               |> Task.onError (\_ -> Task.succeed ( msg, False ))))
+    of
+
+        Ok r ->
+            r
+
+        Err e ->
+            ( "setup: " ++ Error.toString e, False )
+
+
+j5Long : Decimal
+j5Long =
+    Decimal.mul (dec ("1" ++ String.repeat 599 "7")) (dec ("1" ++ String.repeat 599 "7"))
+
+
+j5Nan : Float
+j5Nan =
+    Math.sqrt -1.0
+
+
+type alias J5Narrow =
+    { id : String, i : Int, s : Int }
+
+
+j5NarrowStore : Store J5Narrow
+j5NarrowStore =
+    Store.fromCodec "sqc_j5_narrow" (Codec.auto { id = "", i = 0, s = 0 }) |> Store.primaryKey "id"
+
+
+j5NarrowIds : Db -> Store.Cond -> Task Error (List String)
+j5NarrowIds db cond =
+    Store.toList db (Store.query j5NarrowStore |> Store.where_ cond |> Store.orderAsc "id")
+        |> Task.map (List.map .id)
+
+
+j5NarrowCase : Db -> String -> List String -> Test
+j5NarrowCase db col expected =
+    let
+        -- Outside INTEGER (3,000,000,000) and SMALLINT (70,000, and every pad).
+        values = [ 1, 3000000000, 70000, 2000000000, 30000, -9223372036854775807 ]
+        long = values ++ List.map (\i -> 100000 + i) (List.range 1 1100)
+    in
+        Test.test
+            ("fifth Judge: inList over 1,000 values on a foreign "
+                ++ (if col == "i" then "INTEGER" else "SMALLINT")
+                ++ " column with values outside its range gives the rows the short IN (…) gives, and eq of an out-of-range value matches nothing, never an out-of-range error")
+            (\_ ->
+                Test.equal
+                    (Ok ( expected, expected, expected ))
+                    (Task.run
+                        (drop db "sqc_j5_narrow"
+                            |> Task.andThen
+                                   (\_ ->
+                                       Db.exec
+                                           db
+                                           "CREATE TABLE sqc_j5_narrow (id TEXT PRIMARY KEY, i INTEGER NOT NULL, s SMALLINT NOT NULL)"
+                                           [])
+                            |> Task.andThen
+                                   (\_ ->
+                                       Db.exec
+                                           db
+                                           "INSERT INTO sqc_j5_narrow (id, i, s) VALUES ('a', 1, 1), ('b', 2000000000, 30000), ('c', 5, 5)"
+                                           [])
+                            |> Task.andThen
+                                   (\_ ->
+                                       Task.map3
+                                           (\x y z -> ( x, y, z ))
+                                           (j5NarrowIds db (Store.not_ (Store.not_ (Store.eq col (SqlInt 3000000000)))) |> Task.map (\none -> if none == [] then expected else none))
+                                           (j5NarrowIds db (Store.inList col (List.map SqlInt long)))
+                                           (j5NarrowIds db (Store.inList col (List.map SqlInt values)))))))
+
+
+j5Tests : Db -> List Test
+j5Tests db =
+    [ Test.test
+          "fifth Judge: a Codec.enum value not in its pairs is refused by a Store write naming the column and the constructor, as a field and inside a list; the table reads"
+          (\_ ->
+              let
+                  setup = Store.migrate db j5EnumStore
+                  readAll = Store.toList db (Store.query j5EnumStore)
+                  ( scalar, ok1 ) =
+                      j5Write db "sqc_j5_enum" setup (Store.insert db j5EnumStore { id = "c", status = J5Suspended, history = [] }) readAll
+                  ( inList, ok2 ) =
+                      j5Write db "sqc_j5_enum" setup (Store.insert db j5EnumStore { id = "b", status = J5Active, history = [ J5Active, J5Suspended ] }) readAll
+              in
+                  Test.equal
+                      ( ( True, True, True ), ( True, True ), [ "status", "history" ] )
+                      ( ( String.contains "column \"sqc_j5_enum.status\"" scalar
+                        , String.contains "the value J5Suspended is not one of the enum's values (active)" scalar
+                        , ok1 && ok2
+                        )
+                      , ( String.contains "column \"sqc_j5_enum.history\"" inList
+                        , String.contains "J5Suspended" inList
+                        )
+                      , List.map (\( k, _ ) -> k) (Codec.writeChecks (Codec.object J5Enum |> Codec.field "id" .id Codec.string |> Codec.field "status" .status j5StatusCodec |> Codec.field "history" .history (Codec.list j5StatusCodec) |> Codec.buildObject))
+                      ))
+    , Test.test
+          "fifth Judge: Codec.toJson of an unlisted enum value writes {\"notInEnum\": <constructor>}, never \"\", and fromJson refuses it naming the constructor"
+          (\_ ->
+              Test.equal
+                  ( "{\"notInEnum\":\"J5Suspended\"}", True, "\"active\"" )
+                  ( Codec.toJson j5StatusCodec J5Suspended
+                  , case Codec.fromJson j5StatusCodec (Codec.toJson j5StatusCodec J5Suspended) of
+
+                        Err e ->
+                            String.contains "J5Suspended" (Error.toString e)
+
+                        Ok _ ->
+                            False
+                  , Codec.toJson j5StatusCodec J5Active
+                  ))
+    , Test.test
+          "fifth Judge: Decimal.fromString refuses text whose decimal is over 1000 characters written out (1e1500), and takes exactly 1000"
+          (\_ ->
+              Test.equal
+                  ( True, Ok 1000 )
+                  ( isErr (Decimal.fromString "1e1500")
+                  , Decimal.fromString "1e999" |> Result.map (\d -> String.length (Decimal.toString d))
+                  ))
+    , Test.test
+          "fifth Judge: a computed Decimal over 1000 characters is refused by Codec.decimal, a list of it and Codec.moneyIn; the table reads"
+          (\_ ->
+              let
+                  setup = Store.migrate db j5DecStore
+                  readAll = Store.toList db (Store.query j5DecStore)
+                  row = { id = "a", d = Decimal.zero, ds = [], m = gbp "1" }
+                  r1 = j5Write db "sqc_j5_dec" setup (Store.insert db j5DecStore { row | d = j5Long }) readAll
+                  r2 = j5Write db "sqc_j5_dec" setup (Store.insert db j5DecStore { row | ds = [ Decimal.one, j5Long ] }) readAll
+                  r3 = j5Write db "sqc_j5_dec" setup (Store.insert db j5DecStore { row | m = Money.Money j5Long Money.GBP }) readAll
+                  r4 = j5Write db "sqc_j5_dec" setup (Store.insert db j5DecStore row) readAll
+                  says ( msg, readable ) = ( String.contains "at most 1000" msg, readable )
+              in
+                  Test.equal
+                      ( ( True, True ), ( True, True ), ( True, True ), ( "ok", True ) )
+                      ( says r1, says r2, says r3, r4 ))
+    , Test.test
+          "fifth Judge: Codec.auto refuses a Decimal or Money field it cannot read back (a field, a list, a Maybe, a nested record) and a NaN Float; writeChecks lists only those fields"
+          (\_ ->
+              let
+                  setup = Store.migrate db j5AutoStore
+                  readAll = Store.toList db (Store.query j5AutoStore)
+                  base = { j5AutoBlank | id = "a" }
+                  write r = j5Write db "sqc_j5_auto" setup (Store.insert db j5AutoStore r) readAll
+                  refusedAt col ( msg, readable ) =
+                      ( String.contains ("\"sqc_j5_auto." ++ col ++ "\"") msg || String.contains ("column \"" ++ col ++ "\"") msg
+                      , readable
+                      )
+              in
+                  Test.equal
+                      ( [ ( True, True ), ( True, True ), ( True, True ), ( True, True ), ( True, True ), ( True, True ) ]
+                      , ( "ok", True )
+                      , [ "d", "ds", "m", "md", "nest" ]
+                      )
+                      ( [ refusedAt "d" (write { base | d = j5Long })
+                        , refusedAt "ds" (write { base | ds = [ j5Long ] })
+                        , refusedAt "md" (write { base | md = Just j5Long })
+                        , refusedAt "m" (write { base | m = Money.Money j5Long Money.GBP })
+                        , refusedAt "nest" (write { base | nest = { inner = [ Money.Money j5Long Money.EUR ] } })
+                        , refusedAt "f" (write { base | f = j5Nan })
+                        ]
+                      , write { base | d = dec "12.5", ds = [ dec (String.repeat 1000 "9") ], m = gbp "3" }
+                      , List.sort (List.map (\( k, _ ) -> k) (Codec.writeChecks (Codec.auto j5AutoBlank)))
+                      ))
+    , Test.test
+          "fifth Judge: a NaN or infinite Float is refused by a Store write on a Codec.auto Float column; the table reads"
+          (\_ ->
+              let
+                  store = Store.fromCodec "sqc_j5_float" (Codec.auto { id = "", f = 0.0 }) |> Store.primaryKey "id"
+                  setup = Store.migrate db store
+                  readAll = Store.toList db (Store.query store)
+              in
+                  Test.equal
+                      [ True, True, True ]
+                      (List.map
+                          (\f ->
+                              let
+                                  ( msg, readable ) = j5Write db "sqc_j5_float" setup (Store.insert db store { id = "a", f = f }) readAll
+                              in
+                                  String.contains "is a Float" msg && readable)
+                          [ j5Nan, Math.pow 10.0 400.0, 0.0 - Math.pow 10.0 400.0 ]))
+    , Test.test
+          "fifth Judge: Codec.autoWith with two keys naming one column is a builder problem naming both keys, and a decode Err"
+          (\_ ->
+              let
+                  codec =
+                      Codec.autoWith
+                          [ ( "price_list", Codec.list Codec.int ), ( "priceList", Codec.list Codec.int ) ]
+                          { id = "", priceList = [ 0 ] }
+                  twice =
+                      Codec.autoWith [ ( "tags", Codec.list Codec.int ), ( "tags", Codec.list Codec.int ) ] { id = "", tags = [ 0 ] }
+              in
+                  Test.equal
+                      ( [ "Codec.autoWith: the keys \"price_list\" and \"priceList\" both name the column \"price_list\", so one override would be dropped; give each field one override" ]
+                      , True
+                      , True
+                      )
+                      ( Codec.problems codec
+                      , isErr (Codec.fromJson codec "{\"id\":\"a\",\"price_list\":[1]}")
+                      , List.any (String.contains "the keys \"tags\" and \"tags\"") (Codec.problems twice)
+                      ))
+    , Test.test
+          "fifth Judge: one enum name for two values, one union tag for two variants and one object key for two fields are builder problems"
+          (\_ ->
+              Test.equal
+                  ( 1, 1, 1 )
+                  ( List.length (Codec.problems (Codec.enum [ ( J5Active, "a" ), ( J5Suspended, "a" ) ]))
+                  , List.length
+                        (Codec.problems
+                            (Codec.taggedUnion
+                                (\s ->
+                                    case s of
+
+                                        J5Active ->
+                                            ( "X", [] )
+
+                                        J5Suspended ->
+                                            ( "X", [] ))
+                                [ Codec.var0 "X" J5Active, Codec.var0 "X" J5Suspended ]))
+                  , List.length
+                        (Codec.problems
+                            (Codec.object (\a b -> { a = a, b = b })
+                                |> Codec.field "k" .a Codec.int
+                                |> Codec.field "k" .b Codec.int
+                                |> Codec.buildObject))
+                  ))
+    , Test.test
+          "fifth Judge: setFields, updateFieldsReturning and copyIntoOrIgnore refusals name the verb called"
+          (\_ ->
+              let
+                  setup = Store.migrate db j5EnumStore
+                  readAll = Store.toList db (Store.query j5EnumStore)
+                  ( set, _ ) = j5Write db "sqc_j5_enum" setup (Store.setFields db j5EnumStore (SqlString "a") [ ( "status", SqlInt 1 ) ]) readAll
+                  ( ret, _ ) = j5Write db "sqc_j5_enum" setup (Store.updateFieldsReturning db j5EnumStore Store.noCond [ ( "status", SqlString "gone" ) ]) readAll
+                  ( copy, _ ) = j5Write db "sqc_j5_enum" setup (Store.copyIntoOrIgnore db j5EnumStore (Store.query j5EnumStore) []) readAll
+              in
+                  Test.equal
+                      ( True, True, True )
+                      ( String.contains "setFields" set && not (String.contains "updateFields" set)
+                      , String.contains "updateFieldsReturning:" ret
+                      , String.contains "copyIntoOrIgnore: no columns to copy" copy
+                      ))
+    , j5NarrowCase db "i" [ "a", "b" ]
+    , j5NarrowCase db "s" [ "a", "b" ]
+    ]
+
+
 tests : List Test
 tests =
     case setup () of
@@ -7667,6 +8910,8 @@ tests =
                 ++ codecMatrixTests db
                 ++ j4Tests db
                 ++ inListTests db
+                ++ g5Tests db
+                ++ j5Tests db
 
 
 main =

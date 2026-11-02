@@ -314,7 +314,6 @@ sky-stdlib/Std/Decimal.sky: compare
 sky-stdlib/Std/Decimal.sky: div
 sky-stdlib/Std/Decimal.sky: eq
 sky-stdlib/Std/Decimal.sky: floor
-sky-stdlib/Std/Decimal.sky: fromFloat
 sky-stdlib/Std/Decimal.sky: fromInt
 sky-stdlib/Std/Decimal.sky: gt
 sky-stdlib/Std/Decimal.sky: gte

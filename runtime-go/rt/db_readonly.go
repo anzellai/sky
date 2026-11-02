@@ -11,13 +11,25 @@ import (
 // database is opened and the mode is never on.
 
 // dbReadOnly reports whether this process opens every app database
-// read-only: SKY_READ_ONLY_DB=1, which `sky db check` and `sky db status` set
-// for their helper (v0.29.2). A SQLite file is opened with mode=ro (a missing
+// read-only: SKY_READ_ONLY_DB set, which `sky db check` and `sky db status`
+// do for their helper (v0.29.2). The value names the command, `check` or
+// `status` (`1` is the same mode with no command named), so an error can say
+// what that command does. A SQLite file is opened with mode=ro (a missing
 // file is an Err, not a new empty database), a PostgreSQL session has
 // default_transaction_read_only=on, and no telemetry is persisted
 // (EnableConsolePersistence).
 func dbReadOnly() bool {
-	return strings.TrimSpace(procenv.Getenv("SKY_READ_ONLY_DB")) == "1"
+	switch dbReadOnlyCommand() {
+	case "1", "check", "status":
+		return true
+	}
+	return false
+}
+
+// dbReadOnlyCommand is the value of SKY_READ_ONLY_DB: "check", "status", "1"
+// or "" (off).
+func dbReadOnlyCommand() string {
+	return strings.TrimSpace(procenv.Getenv("SKY_READ_ONLY_DB"))
 }
 
 // withReadOnlyDbHint adds what to do to an I/O error that is a write refused
@@ -32,11 +44,27 @@ func withReadOnlyDbHint(msg string) string {
 	if !dbIsReadOnlyRefusal(msg) || strings.Contains(msg, "SKY_READ_ONLY_DB") || !dbReadOnly() {
 		return msg
 	}
-	return msg + ". This process opens its databases read-only (SKY_READ_ONLY_DB=1): " +
-		"`sky db status` and `sky db check` run it this way so that they write nothing, " +
-		"and `sky db status` runs the app's main up to Db.migrate. A write before Db.migrate fails here. " +
-		"Move that write after Db.migrate, or use file migrations " +
-		"(`sky db init`; `sky db status` then reads db/migrations and does not run main)"
+	return msg + readOnlyDbHint(dbReadOnlyCommand())
+}
+
+// readOnlyDbHint is the advice for a write refused in read-only mode, for the
+// command that set the mode. The text for `sky db status` (an app write before
+// Db.migrate) was appended to `sky db check` errors too, where it is wrong:
+// the check runs no app code (v0.29.2 fifth Judge).
+func readOnlyDbHint(command string) string {
+	switch command {
+	case "check":
+		return ". `sky db check` opens the database read-only (SKY_READ_ONLY_DB=check) and writes nothing, " +
+			"and the database refused a read that needed a write. On SQLite in WAL mode, check that the " +
+			"database file and its -wal and -shm files (when they exist) are readable by this user"
+	case "status":
+		return ". This process opens its databases read-only (SKY_READ_ONLY_DB=status): " +
+			"`sky db status` runs the app's main up to Db.migrate so that it writes nothing. A write before Db.migrate fails here. " +
+			"Move that write after Db.migrate, or use file migrations " +
+			"(`sky db init`; `sky db status` then reads db/migrations and does not run main)"
+	}
+	return ". This process opens its databases read-only (SKY_READ_ONLY_DB=1), so a write fails. " +
+		"`sky db status` and `sky db check` run it this way so that they write nothing"
 }
 
 // dbIsReadOnlyRefusal reports whether a driver error is a write the database

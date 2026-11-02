@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -800,6 +801,15 @@ func rawToSqlArg(raw any, kind, col string) (any, error) {
 			return float64(n), nil
 		}
 		if f, ok := jsonDecodeFloat(raw); ok {
+			// A NaN or an infinite Float (Math.sqrt -1, Math.pow 10 400) is
+			// refused, never written: SQLite stores NaN as NULL (a NOT NULL
+			// error, or a NULL a required field cannot read) and keeps an
+			// Infinity, PostgreSQL keeps both, and every later read of the
+			// table then failed (JSON has no such number). A JSON column
+			// refuses one already (v0.29.2 fifth Judge).
+			if math.IsNaN(f) || math.IsInf(f, 0) {
+				return nil, fmt.Errorf("column %q is a Float, and the value is %v, which no read of the column takes back (Sky has no NaN or Infinity)", col, f)
+			}
 			return f, nil
 		}
 		return refuse()
@@ -1259,8 +1269,13 @@ func rowValToJsonRaw(raw any, present bool, kind, col string) (any, error) {
 			return false, nil
 		}
 	case "blob":
-		var v any
-		if json.Unmarshal([]byte(s), &v) == nil {
+		// Parsed as a decoder reads JSON text (numbers kept as their exact
+		// text, json.Number): json.Unmarshal made every number a float64, so
+		// an Int past 2^53 in a JSON column read back as another Int, and
+		// 9223372036854775807 as a float out of Int range, which made the
+		// whole table unreadable (v0.29.2 fifth Judge, found by the
+		// generative codec test).
+		if v, err := jsonParseDocument(s); err == nil {
 			return v, nil
 		}
 	case "decimal":

@@ -6,6 +6,8 @@ package rt
 // with at least one test case here.
 
 import (
+	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -216,8 +218,18 @@ func TestDecimalFromStringBoundsTheExponent(t *testing.T) {
 	if sr, ok := invokeDecimal(t, "Decimal_fromString", long).(SkyResult[any, any]); !ok || sr.Tag == 0 {
 		t.Errorf("Decimal.fromString of 1001 characters is Ok, want an Err")
 	}
-	// The grammar stays: an exponent inside the bound reads, both ways.
-	for s, want := range map[string]string{"1.5e3": "1500", "25e-2": "0.25", "1e10000": "1" + strings.Repeat("0", 10000)} {
+	// v0.29.2 fifth Judge: the canonical text is bounded too. "1e1500" is six
+	// characters of input and 1501 written out, which no strict reader (a
+	// decimal column, Codec.decimal, Codec.auto) takes back, so it is an Err
+	// at the parse: the same bound (decimalCanonicalFits) in one place.
+	for _, s := range []string{"1e1500", "1e1000", "-1e999", "1e-999", "1e10000"} {
+		if sr, ok := invokeDecimal(t, "Decimal_fromString", s).(SkyResult[any, any]); !ok || sr.Tag == 0 {
+			t.Errorf("Decimal.fromString %q is Ok, want an Err (canonical text over %d characters)", s, decimalStrictMaxLen)
+		}
+	}
+	// The grammar stays: an exponent inside the bound reads, both ways, up to
+	// exactly decimalStrictMaxLen characters written out.
+	for s, want := range map[string]string{"1.5e3": "1500", "25e-2": "0.25", "1e999": "1" + strings.Repeat("0", 999), "1e-998": "0." + strings.Repeat("0", 997) + "1"} {
 		d := unwrapOk(t, invokeDecimal(t, "Decimal_fromString", s))
 		if got := decimalUnbox(d).String(); got != want {
 			t.Errorf("Decimal.fromString %q = %.40s, want %.40s", s, got, want)
@@ -229,5 +241,30 @@ func TestDecimalFromStringBoundsTheExponent(t *testing.T) {
 	}
 	if time.Now().After(deadline) {
 		t.Fatalf("the bounded parse took over 5 s")
+	}
+}
+
+// Decimal.fromFloat of a NaN or an infinite Float (Math.sqrt -1 makes one)
+// panicked with shopspring's unclassified "Cannot create a Decimal from NaN".
+// It is now the classified DivisionByZero class, as a Float division with no
+// answer is: loud, never a silent zero (v0.29.2 fifth Judge audit).
+func TestDecimalFromFloatOfNaNIsAClassifiedPanic(t *testing.T) {
+	for _, f := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		func() {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Errorf("Decimal.fromFloat %v did not fail", f)
+					return
+				}
+				if kind, _ := classifyPanic(fmt.Sprint(r)); kind != "DivisionByZero" {
+					t.Errorf("Decimal.fromFloat %v: panic %q is class %q, want DivisionByZero", f, r, kind)
+				}
+			}()
+			invokeDecimal(t, "Decimal_fromFloat", f)
+		}()
+	}
+	if got := decimalUnbox(invokeDecimal(t, "Decimal_fromFloat", 1.5)).String(); got != "1.5" {
+		t.Errorf("Decimal.fromFloat 1.5 = %s", got)
 	}
 }

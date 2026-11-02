@@ -22,11 +22,15 @@ a `Result` wherever two currencies can differ (see Breaking).
 ### Added
 
 - **`Codec.writeChecks` and `Codec.problems`.** `writeChecks` lists the fields of a
-  record codec that can refuse a value they wrote (a `Codec.moneyIn` given
-  another currency, at any depth), with the check `Std.Db.Store` runs on a
-  write. `problems` lists what is wrong with a codec as built (an `autoWith`
-  key that names no field, a `moneyIn` code that is not a currency code);
-  `Store.fromCodec` refuses a store whose codec has one.
+  record codec that are partial (their encoder can write a value their own
+  reader refuses), with the check `Std.Db.Store` runs on a write. It is
+  derived from the codec tree: `Codec.decimal`, `moneyIn`, `moneyObject`,
+  `isoCurrency`, `enum`, `taggedUnion` and a `Codec.auto` Decimal or Money
+  field, at any depth (see Fixed). `problems` lists what is wrong with a codec
+  as built (an `autoWith` key that names no field or two keys naming one
+  column, a `moneyIn` code that is not a currency code, one enum name, union
+  tag or object key used twice); `Store.fromCodec` refuses a store whose codec
+  has one.
 - **Exact decimal columns: `Codec.decimal` and `Codec.moneyIn`.** A new column
   kind, `CDecimal`: plain `NUMERIC` on PostgreSQL, `TEXT` holding the canonical
   decimal on SQLite. `Std.Db.Store` compares, orders, sums (`sumAs`) and takes
@@ -124,6 +128,87 @@ a `Result` wherever two currencies can differ (see Breaking).
 
 ### Fixed
 
+- **No codec writes a value it cannot read back, and a Store write never makes
+  a table unreadable.** A codec could write a value its own reader refused,
+  and one such row made every later read of the table fail. Earlier fixes
+  closed one codec at a time (`Codec.moneyIn`); this closes the class. Each
+  codec now states whether it is partial (its encoder can write a value its
+  reader refuses), and a container (`maybe`, `list`, `dict`, `result`, `map`,
+  a record, a union) is partial exactly when a codec inside it is, so a new
+  partial codec is covered at every depth with no other change.
+  `Std.Db.Store` runs each partial field's own reader on every write, in a
+  scalar column as well as a JSON one, and refuses the row with the column
+  and the reason. The partial codecs found by an audit of every codec, and
+  what changed for each:
+  - `Codec.enum` with a value not in its pairs wrote `""` (or another value's
+    name, when `""` was one). It now writes `{"notInEnum": "<Constructor>"}`,
+    which every reader refuses with the constructor named, and a Store write
+    refuses it: `column "t.status" would hold a value its field's codec does
+    not read (Codec.enum: the value Suspended is not one of the enum's values
+    (active) …)`. Two values given one name are a builder problem.
+  - A Decimal written out over 1000 characters: `Decimal.fromString "1e1500"`
+    was `Ok`, and no decimal column, `Codec.decimal` or `Codec.auto` field
+    read it back. `Decimal.fromString` now refuses a decimal whose canonical
+    text is over 1000 characters (one bound, `decimalStrictMaxLen`, for the
+    parse and every reader), and a computed one (`Decimal.mul` of two long
+    ones) is refused by the write check of `Codec.decimal`, `Codec.moneyIn`,
+    `Codec.moneyObject` and a `Codec.auto` Decimal or Money field, at any
+    depth.
+  - `Codec.moneyObject` with a currency code a reader refuses
+    (`CurrencyRaw "zz"`) and `Codec.isoCurrency` with one (`CurrencyRaw "a
+    b"`) were written and not read. Both are refused on a write.
+  - `Codec.taggedUnion` is partial, since its encoder is your function (a
+    tag no variant reads): each write runs its reader. Two variants given one
+    tag are a builder problem, and so is one JSON key used by two fields of a
+    `buildObject` record (its decoder already failed on every read).
+  - A `Codec.auto` (or `autoWith`) field whose type holds a Decimal or a
+    Money, in a field, a `List`, a `Maybe`, a `Dict` or a nested record, is
+    checked with the auto reader of that field. A record without one does no
+    check, so a plain `Codec.auto` store costs what it did.
+  - A NaN or infinite `Float` (`Math.sqrt -1`) in a Float column was written:
+    SQLite stores NaN as NULL and keeps an Infinity, PostgreSQL keeps both,
+    and every later read of the table failed. The write now refuses it,
+    naming the column (a JSON column refused it already).
+  - Found by the new generative test: a JSON column read its numbers as
+    float64, so an Int past 2^53 inside a `Codec.list Codec.int` read back as
+    another Int, and `9223372036854775807` made the table unreadable. The
+    column is now read as a decoder reads JSON text, with each number exact.
+  The test that keeps the class closed builds every codec constructor and
+  every combination up to depth 3, generates edge values for each (empty,
+  `Nothing`, Unicode, 5000-character strings, the Int extremes, unlisted
+  enum values, long decimals, each currency form, NaN), and checks through
+  JSON and a real Store on SQLite and PostgreSQL that each value reads back
+  equal or is refused, and that the table always reads.
+- **`Decimal.fromFloat` of a NaN or an infinite Float panicked unclassified**
+  (shopspring's "Cannot create a Decimal from NaN"). It is now the classified
+  `DivisionByZero`, as a Float division with no answer is.
+- **`sky db check` wrote beside a SQLite database in WAL mode.** `Db.connect`
+  sets WAL mode, and a read-only open of a WAL database created `x.db-wal`
+  and `x.db-shm`; in a directory it could not write, `sky db check` exited 2
+  with "attempt to write a readonly database (1544)" and the advice of `sky
+  db status`. With no `-wal` file beside it (no process has the database
+  open, and every committed page is in the main file) the database is now
+  read with `immutable=1`, which creates nothing; with one (a live process),
+  through the `-wal` and `-shm` already there, so the check sees the running
+  app's committed rows. The hint after a read-only refusal names the command
+  that ran (`SKY_READ_ONLY_DB=check` or `=status`).
+- **Read-only mode refused a plain SQLite path with parameters**
+  (`w/x.db?_pragma=foreign_keys(1)`) that the app opens: it looked for a file
+  named with the parameters. The path now ends at the first `?`, as the
+  driver reads it, and the parameters are kept.
+- **`Codec.autoWith` with two keys naming one column** (`"price_list"` and
+  `"priceList"`, or one key twice) kept one override and dropped the other.
+  It is a builder problem naming both keys, and the codec does not decode.
+- **`Store.setFields` refusals said `updateFields`,** `updateFieldsReturning`
+  refusals said `updateFields`, and `copyIntoOrIgnore` refusals said
+  `copyInto`. Each names the verb called.
+- **On PostgreSQL an `Int` condition on a foreign `INTEGER` or `SMALLINT`
+  column failed with "out of range"** for a value outside the column's range
+  (`eq`, `inList` of any length): the value was read as the column's type.
+  It is now a `BIGINT` (`CAST(? AS BIGINT)`, `CAST(? AS BIGINT[])` for a long
+  list), so it matches nothing, as SQL compares an integer with a wider one.
+  On a `BIGINT` column, the Store's own, nothing changes.
+
 - **`Store.inList` failed on a long list.** One parameter per value stopped
   at the engine's limit on the parameters of one statement: on SQLite a list
   over 32,766 values failed with "too many SQL variables", and on a
@@ -171,11 +256,10 @@ a `Result` wherever two currencies can differ (see Breaking).
 - **The write check made `Store.insertMany` 1.8x to 4x slower** (a
   regression in this release). Each JSON column of each row was encoded to
   text, parsed back, and decoded inside the codec's zero record, twice. A
-  codec now knows which of its fields can refuse a value it wrote itself (a
-  `Codec.moneyIn`, alone or inside a `maybe`, `list`, `dict`, `result`,
-  record or custom type), and a write checks only those, once per row, on the
-  encoded value in memory. A `Codec.auto` store, or any store without such a
-  field, does no check at all. Measured on 5,000 rows of a `Codec.auto`
+  codec now knows which of its fields are partial (see the first entry), and
+  a write checks only those, once per row, on the encoded value in memory. A
+  store without such a field (a `Codec.auto` record of plain fields included)
+  does no check at all. Measured on 5,000 rows of a `Codec.auto`
   record (3 runs each, SQLite): 0.20-0.28 s in v0.29.1, 0.41-0.50 s in the
   release candidate, 0.20-0.23 s now; with 200-element lists 0.37-0.40 s,
   1.07-1.16 s and 0.36-0.40 s. Every refusal stays (insert, insertMany,

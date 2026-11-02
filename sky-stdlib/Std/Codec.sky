@@ -119,10 +119,16 @@ type Shape
 type Codec a
     = Codec (CodecPayload a)
 
--- `vck` is the check of a value this codec wrote itself, for a codec that can
--- refuse one (a `moneyIn` given a Money in another currency, or a container,
--- record or union holding such a codec), and `[]` for a codec that reads every
--- value it writes. It reads the `Value` in memory. `vcs` is, for a record
+-- `vck` is the check of a value this codec wrote itself, for a PARTIAL codec
+-- (one whose encoder can write a value its own decoder refuses), and `[]` for
+-- a total codec (one that reads every value it writes). Partiality is derived
+-- from the codec tree, never listed by hand: each leaf states its own (the
+-- partial leaves are `decimal`, `moneyIn`, `moneyObject`, `isoCurrency`,
+-- `enum`, a `taggedUnion`, whose encoder is the caller's function, and a
+-- `Codec.auto` / `autoWith` field of a type that holds a Decimal or a Money),
+-- and every container (`maybe`, `list`, `dict`, `result`, `map`, a record, a
+-- union variant) is partial exactly when a child is, so a new partial leaf is
+-- covered at every depth with no other change. It reads the `Value` in memory. `vcs` is, for a record
 -- codec, the `vck` of each field that has one, by JSON key: `Std.Db.Store`
 -- runs only these on a write (`writeChecks`). `prb` lists what is wrong with
 -- the codec as built (an `autoWith` key that names no field, a `moneyIn` code
@@ -512,24 +518,45 @@ swapFields dec text zeros keys =
                             swapFields dec text zeros rest
 
 
--- | The write checks of a record codec (v0.29.2): each field whose codec can
--- refuse a value it wrote itself, by JSON key (the column), with the check of
--- that value. A field whose codec reads every value it writes has none, so a
--- record of plain fields, `Codec.auto` included, gives `[]`. Today the codec
--- that can refuse is `moneyIn` given a Money in another currency, alone or
--- inside a `maybe`, `list`, `dict`, `result`, record or union. Each check
--- reads the `Value` in memory. `Std.Db.Store` runs them on every write, so a
--- row its own codec would not read back is not written.
+-- | The write checks of a record codec (v0.29.2): each field whose codec is
+-- partial (its encoder can write a value its own decoder refuses), by JSON key
+-- (the column), with the check of that value: the field's own reader, run on
+-- the encoded `Value` in memory. A field whose codec reads every value it
+-- writes has none, so a record of plain fields (`String`, `Int`, `Float`,
+-- `Bool`, `Codec.value`, and lists, maybes, dicts and records of them, under
+-- `Codec.object` or `Codec.auto`) gives `[]`.
+--
+-- Partiality is derived from the codec tree: a field is partial when any codec
+-- inside it is. The partial leaves are `decimal`, `moneyIn` and `moneyObject`
+-- (a computed Decimal written out longer than the 1000 characters a reader
+-- takes; a Money in another currency for `moneyIn`), `isoCurrency` (a
+-- `CurrencyRaw` code that is not 3 to 10 letters or digits), `enum` (a value
+-- not in its pairs), `taggedUnion` (its encoder is the caller's function) and
+-- a `Codec.auto` / `autoWith` field whose type holds a `Decimal` or a `Money`.
+-- `Std.Db.Store` runs these checks on every write, so a row its own codec
+-- would not read back is never written: the write is an `Err` naming the
+-- column and the reason. A `Float` that is NaN or infinite is refused by the
+-- Store's column binding (JSON has no such number).
+--
+--     Codec.writeChecks
+--         (Codec.object Item
+--             |> Codec.field "id" .id Codec.string
+--             |> Codec.field "status" .status statusEnum
+--             |> Codec.buildObject)
+--     -- [ ( "status", <check> ) ]
 writeChecks : Codec a -> List ( String, Value -> Maybe String )
 writeChecks codec =
     (payloadOf codec).vcs
 
 
 -- | What is wrong with the codec as built (v0.29.2), `[]` for a sound one: an
--- `autoWith` key that names no field of the record, or a `moneyIn` currency
--- code that is not a code (see `Money.currencyFromCode`). Each is a sentence
--- naming the problem. `Std.Db.Store.fromCodec` refuses a store whose codec
--- has one, and an `autoWith` codec with an unknown key does not decode.
+-- `autoWith` key that names no field of the record, two `autoWith` keys that
+-- name one column, a `moneyIn` currency code that is not a code (see
+-- `Money.currencyFromCode`), one JSON key used by two fields of a
+-- `buildObject` record, one name given to two values of an `enum`, or one tag
+-- given to two variants of a `taggedUnion`. Each is a sentence naming the
+-- problem, at any depth. `Std.Db.Store.fromCodec` refuses a store whose codec
+-- has one, and an `autoWith` codec with such a key does not decode.
 problems : Codec a -> List String
 problems codec =
     (payloadOf codec).prb
@@ -772,7 +799,7 @@ decimal =
         , zro = \_ -> Just (E.string "0")
         , fzr = \_ -> []
         , fck = \_ -> []
-        , vck = []
+        , vck = [ valueCheck decimalDecoder ]
         , vcs = []
         , prb = []
         }
@@ -921,17 +948,7 @@ moneyObject : Codec Money
 moneyObject =
     Codec
         { enc = moneyObjectValue
-        , dec =
-            D.value
-                |> D.andThen
-                       (\v ->
-                           case moneyFromJsonK v of
-
-                               Ok m ->
-                                   D.succeed m
-
-                               Err e ->
-                                   D.fail (Error.toString e))
+        , dec = moneyObjectDecoder
         , shp = SBlob
         , sch =
             SnObject
@@ -939,7 +956,7 @@ moneyObject =
         , zro = \_ -> Nothing
         , fzr = \_ -> []
         , fck = \_ -> []
-        , vck = []
+        , vck = [ valueCheck moneyObjectDecoder ]
         , vcs = []
         , prb = []
         }
@@ -952,33 +969,53 @@ isoCurrency : Codec Currency
 isoCurrency =
     Codec
         { enc = \c -> E.string (Mon.currencyCode c)
-        , dec =
-            D.string
-                |> D.andThen
-                       (\s ->
-                           case currencyCodeK s of
-
-                               Ok code ->
-                                   case Mon.currencyFromCode code of
-
-                                       Just c ->
-                                           D.succeed c
-
-                                       Nothing ->
-                                           D.fail
-                                               ("not a currency code: " ++ code)
-
-                               Err e ->
-                                   D.fail (Error.toString e))
+        , dec = isoCurrencyDecoder
         , shp = SScalar CText
         , sch = SnType "string"
         , zro = \_ -> Nothing
         , fzr = \_ -> []
         , fck = \_ -> []
-        , vck = []
+        , vck = [ valueCheck isoCurrencyDecoder ]
         , vcs = []
         , prb = []
         }
+
+
+-- The reader of `moneyObject`: one decode site for the codec and its write
+-- check.
+moneyObjectDecoder : Decoder Money
+moneyObjectDecoder =
+    D.value
+        |> D.andThen
+               (\v ->
+                   case moneyFromJsonK v of
+
+                       Ok m ->
+                           D.succeed m
+
+                       Err e ->
+                           D.fail (Error.toString e))
+
+
+-- The reader of `isoCurrency`, shared by the codec and its write check.
+isoCurrencyDecoder : Decoder Currency
+isoCurrencyDecoder =
+    D.string
+        |> D.andThen
+               (\s ->
+                   case currencyCodeK s of
+
+                       Ok code ->
+                           case Mon.currencyFromCode code of
+
+                               Just c ->
+                                   D.succeed c
+
+                               Nothing ->
+                                   D.fail ("not a currency code: " ++ code)
+
+                       Err e ->
+                           D.fail (Error.toString e))
 
 
 -- | Codec for a raw `Json.Value` (v0.29.2): the JSON as it is, both ways, so
@@ -1459,7 +1496,9 @@ inline getter (ObjectCodec inner) (ObjectCodec o) =
 -- Each field needs its own JSON key. When two fields (or an inlined record and
 -- the record around it) share a key, decoding cannot tell them apart, so the
 -- codec's decoder fails with an `Err` naming the key rather than read one
--- value into both fields. Encoding is unchanged: it writes both pairs.
+-- value into both fields. Encoding is unchanged: it writes both pairs. It is
+-- also a builder problem (`problems`), so `Std.Db.Store.fromCodec` refuses the
+-- store.
 buildObject : ObjectCodec a a -> Codec a
 buildObject (ObjectCodec o) =
     Codec
@@ -1479,7 +1518,17 @@ buildObject (ObjectCodec o) =
                 _ ->
                     [ valueCheck (objectDecoder o.cols o.decValue) ]
         , vcs = o.vcks
-        , prb = o.oprb
+        , prb =
+            o.oprb
+                ++ (case repeatedKey o.cols o.cols of
+
+                       Just key ->
+                           [ "Codec.buildObject: the JSON key \"" ++ key
+                                 ++ "\" is used by two fields of one record codec, so it never decodes; give each field its own key"
+                           ]
+
+                       Nothing ->
+                           [])
         }
 
 
@@ -1637,18 +1686,31 @@ autoBase snake witness =
         -- Read once: `shp` and `fzr` share the witness's columns, so the
         -- kernel's result is narrowed at one site.
         cols = autoColsK snake witness
+        dec = autoDecoderK snake witness
+        -- The columns whose field type holds a Decimal or a Money, marked
+        -- `|check` in their kind by the runtime: the partial ones (v0.29.2
+        -- fifth Judge). `[]` for most records, which then pay no check on a
+        -- write.
+        checks = autoChecks dec (\_ -> autoEncK snake witness) cols
     in
         Codec
             { enc = \r -> autoEncK snake r
-            , dec = autoDecoderK snake witness
+            , dec = dec
             , shp =
                 SRecord (List.map (\( n, k ) -> ( n, kindToColType k )) cols)
             , sch = SnAuto (\_ -> autoSchemaK snake witness) []
             , zro = \_ -> Just (autoEncK snake witness)
             , fzr = \_ -> witnessZeros cols (autoEncK snake witness)
             , fck = \_ -> []
-            , vck = []
-            , vcs = []
+            , vck =
+                case checks of
+
+                    [] ->
+                        []
+
+                    _ ->
+                        [ valueCheck dec ]
+            , vcs = checks
             , prb = []
             }
 
@@ -1665,7 +1727,10 @@ autoBase snake witness =
 -- `Codec.object`. Column names are snake_case (as `auto`). A key is the
 -- column (`"price_list"`) or the record field (`"priceList"`), v0.29.2. A key
 -- that is neither is never ignored: the codec's decoder fails naming the keys
--- it takes, and `Std.Db.Store.fromCodec` refuses the store (`problems`).
+-- it takes, and `Std.Db.Store.fromCodec` refuses the store (`problems`). Two
+-- keys that name one column (`"price_list"` and `"priceList"`, or one key
+-- given twice) are the same kind of error, naming both keys: one override
+-- would otherwise be dropped with no sign.
 autoWith : List ( String, Codec b ) -> a -> Codec a
 autoWith overrides witness =
     let
@@ -1691,25 +1756,52 @@ autoWith overrides witness =
                         Nothing ->
                             Just key)
                 overrides
+        -- ( key, column ) of each key that names a column.
+        keyed =
+            List.filterMap
+                (\( key, _ ) ->
+                    Maybe.map (\col -> ( key, col )) (overrideColumn names key))
+                overrides
+        -- Two keys naming one column ("price_list" and "priceList", or one
+        -- key twice) kept one override and dropped the other with no error
+        -- (v0.29.2 fifth Judge). It is a builder problem naming both keys.
+        repeated =
+            case repeatedOverride keyed of
+
+                Just ( first, second, col ) ->
+                    [ "Codec.autoWith: the keys \"" ++ first ++ "\" and \""
+                          ++ second
+                          ++ "\" both name the column \""
+                          ++ col
+                          ++ "\", so one override would be dropped; give each field one override"
+                    ]
+
+                Nothing ->
+                    []
         problems =
             List.concatMap (\( _, c ) -> c.prb) known
                 ++ List.map (unknownOverrideKey names) unknown
+                ++ repeated
         encs = List.map (\( col, c ) -> ( col, c.enc )) known
         decs = List.map (\( col, c ) -> ( col, c.dec )) known
         shps = List.map (\( col, c ) -> ( col, c.shp )) known
         cols = autoColsWith True shps witness
+        -- The override columns' own checks, then the auto columns that are
+        -- partial and not overridden (`autoBase`).
         checks =
             List.concatMap
                 (\( col, c ) -> List.map (\chk -> ( col, chk )) c.vck)
                 known
+                ++ autoChecks
+                       dec
+                       (\_ -> autoEncOverridesK True encs witness)
+                       cols
         dec =
-            case unknown of
+            if List.isEmpty unknown && List.isEmpty repeated then
+                autoDecoderOverridesK True decs witness
 
-                [] ->
-                    autoDecoderOverridesK True decs witness
-
-                _ ->
-                    D.fail (String.join "; " problems)
+            else
+                D.fail (String.join "; " problems)
     in
         Codec
             { enc = \r -> autoEncOverridesK True encs r
@@ -1735,6 +1827,76 @@ autoWith overrides witness =
             , vcs = checks
             , prb = problems
             }
+
+
+-- The first two keys of `keyed` (each ( key, column )) that name one column,
+-- with the column.
+repeatedOverride : List ( String, String ) -> Maybe ( String, String, String )
+repeatedOverride keyed =
+    case keyed of
+
+        [] ->
+            Nothing
+
+        ( key, col ) :: rest ->
+            case List.head (List.filter (\( _, c ) -> c == col) rest) of
+
+                Just ( other, _ ) ->
+                    Just ( key, other, col )
+
+                Nothing ->
+                    repeatedOverride rest
+
+
+-- The write checks of an auto codec's partial columns (a kind the runtime
+-- marked `|check`, `Codec_autoCols`), by column: the codec's own reader of
+-- its blank record with the written value in that column. An overridden
+-- column has its override's kind, so it is checked by the override's own
+-- codec instead. Typed recursion, so no list of functions is mapped, and no
+-- kernel is called (doc 14).
+autoChecks : Decoder a -> (() -> Value) -> List ( String, String ) -> List ( String, Value -> Maybe String )
+autoChecks dec blank cols =
+    -- The blank is encoded only when a column is partial: an `autoWith`
+    -- blank of another type than its override (`{ f = 0 }` with a
+    -- `Codec.decimal` override) does not encode, and must not fail a codec
+    -- that has nothing to check.
+    if anyChecked cols then
+        autoChecksWith dec (witnessZeros cols (blank ())) cols
+
+    else
+        []
+
+
+anyChecked : List ( String, String ) -> Bool
+anyChecked cols =
+    case cols of
+
+        [] ->
+            False
+
+        ( _, kind ) :: rest ->
+            String.contains "|check" kind || anyChecked rest
+
+
+autoChecksWith : Decoder a -> List ( String, Value ) -> List ( String, String ) -> List ( String, Value -> Maybe String )
+autoChecksWith dec zeros cols =
+    case cols of
+
+        [] ->
+            []
+
+        ( col, kind ) :: rest ->
+            if String.contains "|check" kind then
+                ( col, autoSwapCheck dec zeros col )
+                    :: autoChecksWith dec zeros rest
+
+            else
+                autoChecksWith dec zeros rest
+
+
+autoSwapCheck : Decoder a -> List ( String, Value ) -> String -> Value -> Maybe String
+autoSwapCheck dec zeros col v =
+    valueCheck dec (E.object (swapKey col v zeros))
 
 
 -- The column an `autoWith` key names: a column first, then a record field
@@ -1933,7 +2095,6 @@ type alias VariantPayload v =
     { tag : String
     , args : List SchemaNode
     , dec : Decoder v
-    , chk : Bool
     , vprb : List String
     }
 
@@ -1941,8 +2102,7 @@ type alias VariantPayload v =
 -- | A variant with no arguments.
 var0 : String -> v -> Variant v
 var0 name ctor =
-    Variant
-        { tag = name, args = [], dec = D.succeed ctor, chk = False, vprb = [] }
+    Variant { tag = name, args = [], dec = D.succeed ctor, vprb = [] }
 
 
 -- | A variant with one argument.
@@ -1952,7 +2112,6 @@ var1 name ctor (Codec c1) =
         { tag = name
         , args = [ c1.sch ]
         , dec = D.map ctor (D.index 1 c1.dec)
-        , chk = hasCheck c1.vck
         , vprb = c1.prb
         }
 
@@ -1964,7 +2123,6 @@ var2 name ctor (Codec c1) (Codec c2) =
         { tag = name
         , args = [ c1.sch, c2.sch ]
         , dec = D.map2 ctor (D.index 1 c1.dec) (D.index 2 c2.dec)
-        , chk = hasCheck c1.vck || hasCheck c2.vck
         , vprb = c1.prb ++ c2.prb
         }
 
@@ -1977,7 +2135,6 @@ var3 name ctor (Codec c1) (Codec c2) (Codec c3) =
         , args = [ c1.sch, c2.sch, c3.sch ]
         , dec =
             D.map3 ctor (D.index 1 c1.dec) (D.index 2 c2.dec) (D.index 3 c3.dec)
-        , chk = hasCheck c1.vck || hasCheck c2.vck || hasCheck c3.vck
         , vprb = c1.prb ++ c2.prb ++ c3.prb
         }
 
@@ -2016,28 +2173,36 @@ taggedUnion toTagged variants =
             , zro = \_ -> Nothing
             , fzr = \_ -> []
             , fck = \_ -> []
-            , vck =
-                if armsChecked arms then
-                    [ valueCheck dec ]
-
-                else
-                    []
+            -- Always partial: the encoder is the caller's function, which can
+            -- write a tag no variant reads or the wrong number of arguments
+            -- (v0.29.2 fifth Judge). Its own reader is the check.
+            , vck = [ valueCheck dec ]
             , vcs = []
-            , prb = armsProblems arms
+            , prb =
+                armsProblems arms
+                    ++ (case repeatedName (armTags arms) (armTags arms) of
+
+                           Just tag ->
+                               [ "Codec.taggedUnion: the tag \"" ++ tag
+                                     ++ "\" is given to two variants, so the second would read back as the first; give each variant its own tag"
+                               ]
+
+                           Nothing ->
+                               [])
             }
 
 
--- Whether a variant holds a codec that can refuse a value it wrote. Typed
--- recursion, not List.any over a lambda, so no value is narrowed (doc 14).
-armsChecked : List (VariantPayload v) -> Bool
-armsChecked arms =
+-- Each variant's tag, in order. Typed recursion, not List.map over a lambda,
+-- so no value is narrowed (doc 14).
+armTags : List (VariantPayload v) -> List String
+armTags arms =
     case arms of
 
         [] ->
-            False
+            []
 
         p :: rest ->
-            p.chk || armsChecked rest
+            p.tag :: armTags rest
 
 
 armsProblems : List (VariantPayload v) -> List String
@@ -2097,11 +2262,20 @@ variantSchemas arms =
 -- `enum [ ( Stickers, "stickers" ), ( Bookmarks, "bookmarks" ) ]`. Unlike
 -- `taggedUnion`, an enum maps to a queryable scalar column (not a blob). For
 -- data-carrying variants use `taggedUnion` / `varN`.
+--
+-- A value that is not in `pairs` has no name, so the codec is partial
+-- (v0.29.2 fifth Judge). It is never written as `""` or as another value's
+-- name: `toJson` and `toValue` (which cannot fail) write the JSON object
+-- `{"notInEnum": "Suspended"}` naming its constructor, which this codec and
+-- every other reader refuses, and a `Std.Db.Store` write refuses the row with
+-- the column and the constructor before any statement. Two values given one
+-- name are a builder problem (`problems`), and `Store.fromCodec` refuses the
+-- store: the second value would read back as the first.
 enum : List ( v, String ) -> Codec v
 enum pairs =
     Codec
-        { enc = \v -> E.string (enumNameFor v pairs)
-        , dec = D.andThen (\name -> enumValueFor name pairs) D.string
+        { enc = \v -> enumEncode v pairs
+        , dec = enumDecoder pairs
         , shp = SScalar CText
         , sch = SnEnum (\_ -> List.map (\( _, n ) -> n) pairs)
         , zro =
@@ -2115,22 +2289,110 @@ enum pairs =
                         Nothing
         , fzr = \_ -> []
         , fck = \_ -> []
-        , vck = []
+        , vck = [ valueCheck (enumDecoder pairs) ]
         , vcs = []
-        , prb = []
+        , prb =
+            case repeatedName (enumNames pairs) (enumNames pairs) of
+
+                Just name ->
+                    [ "Codec.enum: the name \"" ++ name
+                          ++ "\" is given to two values, so the second would read back as the first; give each value its own name"
+                    ]
+
+                Nothing ->
+                    []
         }
 
 
-enumNameFor : v -> List ( v, String ) -> String
+enumEncode : v -> List ( v, String ) -> Value
+enumEncode v pairs =
+    case enumNameFor v pairs of
+
+        Just name ->
+            E.string name
+
+        Nothing ->
+            enumNotListedK v
+
+
+-- The reader of `enum`. A name reads as its value. The object
+-- `{"notInEnum": …}` that `enumEncode` writes for a value with no name is an
+-- `Err` naming its constructor, at any depth (an element of a `Codec.list`
+-- names it too). Anything else fails as `D.string` does.
+enumDecoder : List ( v, String ) -> Decoder v
+enumDecoder pairs =
+    D.andThen (\name -> enumValueFor name pairs) (enumStringK (enumNames pairs))
+
+
+-- `D.string`, and the `{"notInEnum": …}` object an `Err` naming the value
+-- and the names. A decoder needs no runtime narrowing.
+enumStringK : List String -> Decoder String
+enumStringK =
+    Ffi.kernel "Codec_enumString"
+
+
+enumNames : List ( v, String ) -> List String
+enumNames pairs =
+    case pairs of
+
+        [] ->
+            []
+
+        ( _, name ) :: rest ->
+            name :: enumNames rest
+
+
+-- The first name in `names` (read in order) that an earlier one already used.
+-- `all` is the whole list and `names` a suffix of it, as in `repeatedKey`.
+repeatedName : List String -> List String -> Maybe String
+repeatedName all names =
+    case names of
+
+        [] ->
+            Nothing
+
+        name :: rest ->
+            if nameCount name all 0 > nameCount name names 0 then
+                Just name
+
+            else
+                repeatedName all rest
+
+
+nameCount : String -> List String -> Int -> Int
+nameCount name names n =
+    case names of
+
+        [] ->
+            n
+
+        k :: rest ->
+            if k == name then
+                nameCount name rest (n + 1)
+
+            else
+                nameCount name rest n
+
+
+-- `{"notInEnum": "<the value in Sky syntax>"}` (`Suspended`, `Circle 1.5`):
+-- what `enum` writes for a value with no name. Built by the runtime, so the
+-- value is shown by the printer `Debug.toString` uses, and the result is a
+-- `Value`, which needs no runtime narrowing.
+enumNotListedK : v -> Value
+enumNotListedK =
+    Ffi.kernel "Codec_enumNotListed"
+
+
+enumNameFor : v -> List ( v, String ) -> Maybe String
 enumNameFor v pairs =
     case pairs of
 
         [] ->
-            ""
+            Nothing
 
         ( val, name ) :: rest ->
             if val == v then
-                name
+                Just name
 
             else
                 enumNameFor v rest

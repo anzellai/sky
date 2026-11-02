@@ -83,10 +83,12 @@ type Decimal
 
 -- ─── Construction ──────────────────────────────────────────────────
 -- | Read a decimal from text: `"12.34"`, `"-0.5"`, or with an exponent,
--- `"1.5e3"` (1500). Text over 1000 characters, or an exponent past 10000
--- either way (`"1e20000"`), is an `Err`: a decimal with exponent e has about
--- |e| digits, so a larger one would take minutes to print or add. The strict
--- decoders (`Codec.decimal`, a decimal column) take no exponent at all.
+-- `"1.5e3"` (1500). Text over 1000 characters, or a decimal over 1000
+-- characters written out (`"1e1500"`, `"1e-1000"`), is an `Err` (v0.29.2):
+-- that is the most a decimal column, `Codec.decimal` and `Codec.auto` read
+-- back, so a value from this function can always be stored. The strict
+-- decoders take no exponent at all. A computed decimal (`mul` of two long
+-- ones) can still pass the bound; a Store write refuses it.
 fromString : String -> Result Error Decimal
 fromString s =
     Ffi.callPure "Decimal_fromString" [ s ]
@@ -97,6 +99,9 @@ fromInt n =
     Ffi.callPure "Decimal_fromInt" [ n ]
 
 
+-- | The decimal of a Float, its shortest exact text (`0.1` is `0.1`). A NaN or
+-- an infinite Float (`Math.sqrt -1`) has none: it fails as the classified
+-- `DivisionByZero`, as a Float division with no answer does (v0.29.2).
 fromFloat : Float -> Decimal
 fromFloat f =
     Ffi.callPure "Decimal_fromFloat" [ f ]

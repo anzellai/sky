@@ -89,7 +89,7 @@ func TestReadOnlyWriteErrorNamesStatusModeAndTheFix(t *testing.T) {
 	}
 	w.Close()
 
-	t.Setenv("SKY_READ_ONLY_DB", "1")
+	t.Setenv("SKY_READ_ONLY_DB", "status")
 	db := unwrapDbConnect(t, dbPath)
 	defer func() {
 		_ = db.conn.Close()
@@ -105,7 +105,7 @@ func TestReadOnlyWriteErrorNamesStatusModeAndTheFix(t *testing.T) {
 	msg := errorMessage(r.ErrValue)
 	for _, want := range []string{
 		"attempt to write a readonly database",
-		"SKY_READ_ONLY_DB=1",
+		"SKY_READ_ONLY_DB=status",
 		"`sky db status`",
 		"Move that write after Db.migrate",
 		"file migrations",
@@ -113,6 +113,15 @@ func TestReadOnlyWriteErrorNamesStatusModeAndTheFix(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("the Err does not say %q: %s", want, msg)
 		}
+	}
+
+	// `sky db check` runs no app code: its hint says what the check does,
+	// never the status advice about a write before Db.migrate (v0.29.2
+	// fifth Judge).
+	t.Setenv("SKY_READ_ONLY_DB", "check")
+	chk := withReadOnlyDbHint("db.query: attempt to write a readonly database (1544)")
+	if !strings.Contains(chk, "`sky db check`") || !strings.Contains(chk, "-wal") || strings.Contains(chk, "Db.migrate") {
+		t.Fatalf("the check hint is wrong: %s", chk)
 	}
 
 	// Outside read-only mode the text of an I/O error is unchanged.
