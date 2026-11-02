@@ -101,6 +101,9 @@ fn internal_runtime_bases(module: &str) -> &'static [&'static str] {
         // and is a real member — promoted to KERNEL_FUNCTIONS[Db] + Db.sky.)
         "Db" => &[
             "autoMigrate",
+            // v0.29.2: Std.Db.Store.checkProjectData, the read-only data check
+            // Store.migrate runs, which `sky db check` calls.
+            "checkProjectData",
             "createCols",
             // v0.29.0: `Std.Db.Store` reads the dialect once per verb to render
             // dialect-correct SQL (the prepare path's closed `Dialect` union).
