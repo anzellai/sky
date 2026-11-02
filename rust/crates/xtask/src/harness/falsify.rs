@@ -104,10 +104,11 @@ pub fn restore_orphans(root: &Path) -> Vec<String> {
         if entry.extension().and_then(|e| e.to_str()) != Some("journal") {
             continue;
         }
-        // The run that wrote a journal holds an exclusive lock on it for as long
-        // as its mutation is applied; the kernel drops the lock when that
-        // process dies, however it dies. So a journal we can lock is an orphan,
-        // and one we cannot is a LIVE run's, which reverts the file itself.
+        // The run that wrote a journal holds an exclusive lock on its target's
+        // lock file (and on the journal itself) for as long as its mutation is
+        // applied; the kernel drops the locks when that process dies, however
+        // it dies. So a journal whose target lock we can take is an orphan, and
+        // one we cannot is a LIVE run's, which reverts the file itself.
         //
         // Replaying a live journal is the bug this lock closes: a second
         // `xtask harness` started beside `--verify-falsifiers` wrote the
@@ -117,12 +118,14 @@ pub fn restore_orphans(root: &Path) -> Vec<String> {
         // (`spa_partition.rs`, spa-diff-fuzz's mutation) looked newer than
         // `sky-out/sky` and every later `require_fresh_compiler` gate refused
         // a verdict.
-        let Ok(mut f) = std::fs::OpenOptions::new().read(true).open(&entry) else {
-            continue;
-        };
-        match f.try_lock() {
-            Ok(()) => {}
-            Err(std::fs::TryLockError::WouldBlock) => {
+        //
+        // The target lock is a separate file that is never renamed or removed:
+        // a lock on the journal alone left a window where a new run renamed
+        // its journal over the one a replay held, and the replay then removed
+        // the new run's journal (v0.29.2 Judge finding).
+        let _target_lock = match lock_target(&entry) {
+            Ok(l) => l,
+            Err(LockBusy) => {
                 eprintln!(
                     "xtask harness: WARNING — a falsifier run in progress in this tree \
                      holds {}; its mutation is applied, so this run may measure it. \
@@ -131,42 +134,77 @@ pub fn restore_orphans(root: &Path) -> Vec<String> {
                 );
                 continue;
             }
-            // A filesystem with no locks: replay, as before locks existed.
-            Err(std::fs::TryLockError::Error(_)) => {}
-        }
-        let mut blob = String::new();
-        if std::io::Read::read_to_string(&mut f, &mut blob).is_err() {
-            continue;
-        }
-        // Format: a header line, a newline, then the original bytes. The header
-        // is the relative path, optionally followed by a tab and `mtime_ns=`
-        // (a journal written before v0.29.2 has the bare path only, and is
-        // replayed as before).
-        let Some((header, original)) = blob.split_once('\n') else {
-            let _ = std::fs::remove_file(&entry);
-            continue;
         };
-        let head = JournalHeader::parse(header);
-        let target = root.join(head.rel);
-        if std::fs::write(&target, original).is_ok() {
-            // Put the freshness clock back for a non-Rust input, whose content
-            // is restored byte for byte (an embed root is also checked by its
-            // baked fingerprint). A Rust source keeps "now" on purpose: the
-            // dead run may have compiled the mutation into `xtask` or a
-            // `rust/target` `sky`, and only a source newer than those
-            // artefacts makes cargo rebuild them. The cost is a loud
-            // `require_fresh_compiler` asking for `scripts/build.sh`, never a
-            // stale binary passing.
-            if !head.rel.ends_with(".rs") {
-                if let Some(mt) = head.mtime {
-                    set_mtime(&target, mt);
-                }
-            }
-            restored.push(head.rel.to_string());
+        if let Some(rel) = replay_journal(root, &entry) {
+            restored.push(rel);
         }
-        let _ = std::fs::remove_file(&entry);
     }
     restored
+}
+
+/// The target lock file is held by a live run.
+struct LockBusy;
+
+/// Take the exclusive lock of a journal's target (`<journal>.lock`, created on
+/// first use, never removed). A filesystem with no locks gives a handle with no
+/// lock, as before locks existed.
+fn lock_target(journal: &Path) -> Result<Option<std::fs::File>, LockBusy> {
+    let Ok(f) = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(journal.with_extension("lock"))
+    else {
+        return Ok(None);
+    };
+    match f.try_lock() {
+        Ok(()) => Ok(Some(f)),
+        Err(std::fs::TryLockError::WouldBlock) => Err(LockBusy),
+        Err(std::fs::TryLockError::Error(_)) => Ok(Some(f)),
+    }
+}
+
+/// Replay one orphan journal (the caller holds its target lock): write the
+/// original back, put a non-Rust input's mtime back, remove the journal.
+/// Returns the restored path. A journal still locked by a pre-v0.29.2 run (it
+/// locked the journal only) is left alone.
+fn replay_journal(root: &Path, entry: &Path) -> Option<String> {
+    let mut f = std::fs::OpenOptions::new().read(true).open(entry).ok()?;
+    match f.try_lock() {
+        Ok(()) | Err(std::fs::TryLockError::Error(_)) => {}
+        Err(std::fs::TryLockError::WouldBlock) => return None,
+    }
+    let mut blob = String::new();
+    std::io::Read::read_to_string(&mut f, &mut blob).ok()?;
+    // Format: a header line, a newline, then the original bytes. The header
+    // is the relative path, optionally followed by a tab and `mtime_ns=`
+    // (a journal written before v0.29.2 has the bare path only, and is
+    // replayed as before).
+    let Some((header, original)) = blob.split_once('\n') else {
+        let _ = std::fs::remove_file(entry);
+        return None;
+    };
+    let head = JournalHeader::parse(header);
+    let target = root.join(head.rel);
+    let mut out = None;
+    if std::fs::write(&target, original).is_ok() {
+        // Put the freshness clock back for a non-Rust input, whose content
+        // is restored byte for byte (an embed root is also checked by its
+        // baked fingerprint). A Rust source keeps "now" on purpose: the
+        // dead run may have compiled the mutation into `xtask` or a
+        // `rust/target` `sky`, and only a source newer than those
+        // artefacts makes cargo rebuild them. The cost is a loud
+        // `require_fresh_compiler` asking for `scripts/build.sh`, never a
+        // stale binary passing.
+        if !head.rel.ends_with(".rs") {
+            if let Some(mt) = head.mtime {
+                set_mtime(&target, mt);
+            }
+        }
+        out = Some(head.rel.to_string());
+    }
+    let _ = std::fs::remove_file(entry);
+    out
 }
 
 /// The first line of a mutation journal.
@@ -246,6 +284,9 @@ struct Patch {
     /// is applied: it is how [`restore_orphans`] in another process tells this
     /// live run's journal from a dead run's (see [`write_locked_journal`]).
     journal_lock: Option<std::fs::File>,
+    /// The exclusive lock of the target's `.lock` file, held from before the
+    /// journal is written until after it is removed (see [`lock_target`]).
+    target_lock: Option<std::fs::File>,
 }
 
 impl Patch {
@@ -257,6 +298,27 @@ impl Patch {
     /// test).
     fn apply(root: &Path, rel: &str, from: &str, to: &str) -> Result<Patch, String> {
         let path = root.join(rel);
+        // Lock the target BEFORE reading it. A live run holds the lock (refuse:
+        // two falsifier runs never mutate one file). An orphan journal left by
+        // a dead run is replayed first, under the lock, so this run journals the
+        // true original and never the dead run's mutation, and no replay in
+        // another process can remove the journal written below.
+        let jdir = root.join(JOURNAL_DIR);
+        let _ = std::fs::create_dir_all(&jdir);
+        let jpath = jdir.join(format!("{}.journal", rel.replace(['/', '\\'], "_")));
+        let target_lock = match lock_target(&jpath) {
+            Ok(l) => l,
+            Err(LockBusy) => {
+                return Err(format!(
+                    "another falsifier run holds mutation target {rel}; refusing to mutate it"
+                ))
+            }
+        };
+        if jpath.exists() {
+            if let Some(r) = replay_journal(root, &jpath) {
+                eprintln!("xtask harness: restored {r} from a dead run's mutation journal");
+            }
+        }
         let original = std::fs::read_to_string(&path)
             .map_err(|e| format!("cannot read mutation target {rel}: {e}"))?;
         // Captured before the write so the revert can put the freshness clock
@@ -274,9 +336,6 @@ impl Patch {
 
         // Journal BEFORE touching the file — a crash between the write and the
         // journal would be exactly the hole this closes.
-        let jdir = root.join(JOURNAL_DIR);
-        let _ = std::fs::create_dir_all(&jdir);
-        let jpath = jdir.join(format!("{}.journal", rel.replace(['/', '\\'], "_")));
         let header = JournalHeader::render(rel, original_mtime);
         let (journal, journal_lock) =
             match write_locked_journal(&jpath, &format!("{header}\n{original}")) {
@@ -304,6 +363,7 @@ impl Patch {
             applied: true,
             journal,
             journal_lock,
+            target_lock,
         })
     }
 
@@ -342,8 +402,9 @@ impl Patch {
         if let Some(j) = self.journal.take() {
             let _ = std::fs::remove_file(j);
         }
-        // The lock goes last: until the journal is gone, it marks this run live.
+        // The locks go last: until the journal is gone, they mark this run live.
         self.journal_lock = None;
+        self.target_lock = None;
     }
 }
 
@@ -1062,10 +1123,63 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// The v0.29.2 Judge race: a new run on a target whose dead run left an
+    /// orphan journal read the still-mutated file as its "original" and
+    /// renamed its journal over the orphan a replay in another process held;
+    /// the replay then removed the new run's journal. A new run now takes the
+    /// target lock and replays the orphan first, so it journals and restores
+    /// the true original.
+    #[test]
+    fn a_new_run_replays_an_orphan_on_its_target_before_mutating() {
+        let root = tmp("orphan-new");
+        let f = root.join("f.txt");
+        std::fs::write(&f, "hello world").unwrap();
+        let dead = Patch::apply(&root, "f.txt", "world", "mutant").unwrap();
+        kill(dead);
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "hello mutant");
+        {
+            let p = Patch::apply(&root, "f.txt", "hello", "howdy").unwrap();
+            assert_eq!(
+                p.original, "hello world",
+                "the new run journalled the mutation"
+            );
+            assert_eq!(std::fs::read_to_string(&f).unwrap(), "howdy world");
+        }
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "hello world");
+        assert!(restore_orphans(&root).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// While a run holds a target, neither a replay nor a second run touches
+    /// it, even when the journal file itself could be locked (the window the
+    /// rename opened): the target lock is a file of its own.
+    #[test]
+    fn a_held_target_lock_keeps_replays_and_second_runs_out() {
+        let root = tmp("target-lock");
+        let f = root.join("f.txt");
+        std::fs::write(&f, "hello world").unwrap();
+        let mut p = Patch::apply(&root, "f.txt", "world", "mutant").unwrap();
+        // Drop the journal lock alone: only the target lock marks the run live.
+        p.journal_lock = None;
+        assert!(
+            restore_orphans(&root).is_empty(),
+            "a replay took a live run's journal"
+        );
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "hello mutant");
+        assert!(
+            Patch::apply(&root, "f.txt", "hello", "howdy").is_err(),
+            "a second run mutated a held target"
+        );
+        drop(p);
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "hello world");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// Model a signal kill: the kernel releases the journal lock when the
     /// process dies, and no `Drop` runs.
     fn kill(mut p: Patch) {
         p.journal_lock = None;
+        p.target_lock = None;
         std::mem::forget(p);
     }
 
