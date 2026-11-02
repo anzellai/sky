@@ -67,6 +67,25 @@ mismatchNames a b r =
             Test.fail "expected an Err for two currencies"
 
 
+-- The Err names the operation the caller called (`Money.sum: …`, never the
+-- `Money.add` it is built on), v0.29.2 second Judge gap 7. The pair is the
+-- operation and whether its Err names it and no other operation.
+namesOp : String -> Result Error a -> ( String, Bool )
+namesOp op r =
+    case r of
+
+        Err e ->
+            ( op
+            , String.contains ("Money." ++ op ++ ": ") (Error.toString e)
+                && List.all
+                       (\o -> o == op || not (String.contains ("Money." ++ o ++ ":") (Error.toString e)))
+                       [ "add", "sub", "sum", "compare", "lt", "lte", "gt", "gte", "convert", "fromString" ]
+            )
+
+        Ok _ ->
+            ( op, False )
+
+
 isErr : Result e a -> Bool
 isErr r =
     case r of
@@ -199,6 +218,27 @@ tests =
                     [ Money.lt, Money.lte, Money.gt, Money.gte ]))
     , Test.test "sum with a value in another currency -> Err"
         (\_ -> mismatchNames "USD" "EUR" (Money.sum Money.USD [ Money.fromMajor Money.USD 1, Money.fromMajor Money.EUR 2 ]))
+    , Test.test "every Money Err names the operation called"
+        (\_ ->
+            let
+                u = Money.fromMajor Money.USD 1
+
+                e = Money.fromMajor Money.EUR 2
+            in
+            Test.equal
+                [ ( "add", True ), ( "sub", True ), ( "sum", True ), ( "sum", True ), ( "compare", True ), ( "lt", True ), ( "lte", True ), ( "gt", True ), ( "gte", True ), ( "convert", True ), ( "fromString", True ) ]
+                [ namesOp "add" (Money.add u e)
+                , namesOp "sub" (Money.sub u e)
+                , namesOp "sum" (Money.sum Money.USD [ u, e ])
+                , namesOp "sum" (Money.sum Money.USD [ e ])
+                , namesOp "compare" (Money.compare u e)
+                , namesOp "lt" (Money.lt u e)
+                , namesOp "lte" (Money.lte u e)
+                , namesOp "gt" (Money.gt u e)
+                , namesOp "gte" (Money.gte u e)
+                , namesOp "convert" (Money.convert (Money.rates []) Money.EUR u)
+                , namesOp "fromString" (Money.fromString Money.USD "1.2.3")
+                ])
     , Test.test "eq is currency-aware and total: $100 /= €100"
         (\_ -> Test.equal ( False, True ) ( Money.eq (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 100), Money.neq (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 100) ))
     , Test.test "eq same currency + amount -> True"

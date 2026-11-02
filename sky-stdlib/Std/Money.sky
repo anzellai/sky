@@ -179,8 +179,19 @@ fromString c s =
         Ok d ->
             Ok (Money d c)
 
-        Err e ->
-            Err e
+        Err (Error.Error kind info) ->
+            -- Name the call the user made, not the Decimal parse under it.
+            Err
+                (Error.Error
+                    kind
+                    { info
+                        | message =
+                            "Money.fromString: "
+                                ++ String.replace
+                                       "Decimal.fromString: "
+                                       ""
+                                       info.message
+                    })
 
 
 zero : Currency -> Money
@@ -655,13 +666,13 @@ sumHelp xs acc =
             Ok acc
 
         first :: rest ->
-            case add acc first of
+            if eqCurrency (currency acc) (currency first) then
+                sumHelp
+                    rest
+                    (Money (Dec.add (amount acc) (amount first)) (currency acc))
 
-                Ok next ->
-                    sumHelp rest next
-
-                Err e ->
-                    Err e
+            else
+                Err (mismatch "sum" acc first)
 
 
 -- Two currencies in one operation: the `InvalidInput` Err every combining
