@@ -1545,45 +1545,12 @@ shapeKind shp =
             "blob"
 
 
+-- The colspec kind of a column type: `text`, `decimal|money=GBP`, `int?`.
+-- Read by the runtime (`rt.Codec_colTypeKind`), so a build pays no runtime
+-- narrowing per `ColType` payload.
 colTypeKind : ColType -> String
-colTypeKind ct =
-    case ct of
-
-        CText ->
-            "text"
-
-        CInt ->
-            "int"
-
-        CReal ->
-            "real"
-
-        CBool ->
-            "bool"
-
-        CBlob ->
-            "blob"
-
-        CDecimal ->
-            "decimal"
-
-        CMoneyIn code ->
-            "decimal|money=" ++ code
-
-        CNull inner ->
-            nullKind (colTypeKind inner)
-
-
--- | Mark a column kind nullable: the `?` goes before any `|flag`.
-nullKind : String -> String
-nullKind k =
-    case String.split "|" k of
-
-        b :: flags ->
-            String.join "|" ((b ++ "?") :: flags)
-
-        [] ->
-            k ++ "?"
+colTypeKind =
+    Ffi.kernel "Codec_colTypeKind"
 
 
 autoEncK : Bool -> a -> Value

@@ -25,3 +25,26 @@ func TestLegacyDecimalConversionMatchesDbCheck(t *testing.T) {
 		t.Fatalf("codecColCurrency reads the wrong flag")
 	}
 }
+
+// Codec.moneyIn's column carries its currency into the colspec kind, with a
+// nullable `?` before the flag (Std.Codec / Std.Db.Store colTypeKind).
+func TestCodecColTypeKindCarriesTheCurrency(t *testing.T) {
+	money := SkyADT{SkyName: "CMoneyIn", Fields: []any{"GBP"}}
+	for _, c := range []struct {
+		ct   any
+		want string
+	}{
+		{SkyADT{SkyName: "CText"}, "text"},
+		{SkyADT{SkyName: "CDecimal"}, "decimal"},
+		{money, "decimal|money=GBP"},
+		{SkyADT{SkyName: "CNull", Fields: []any{money}}, "decimal?|money=GBP"},
+		{SkyADT{SkyName: "CNull", Fields: []any{SkyADT{SkyName: "CInt"}}}, "int?"},
+	} {
+		if got := codecColTypeKind(c.ct); got != c.want {
+			t.Errorf("codecColTypeKind(%v) = %q, want %q", c.ct, got, c.want)
+		}
+	}
+	if base, nullable := codecSplitKind("decimal?|money=GBP"); base != "decimal" || !nullable {
+		t.Fatalf("codecSplitKind = %q %v", base, nullable)
+	}
+}

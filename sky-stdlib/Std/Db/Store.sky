@@ -7737,19 +7737,6 @@ kindNullable k =
     String.contains "?" (beforeFlags k)
 
 
--- | Mark a column kind nullable: the `?` goes before any `|flag`
--- (`decimal|money=GBP` is `decimal?|money=GBP`).
-nullableKind : String -> String
-nullableKind k =
-    case String.split "|" k of
-
-        b :: flags ->
-            String.join "|" ((b ++ "?") :: flags)
-
-        [] ->
-            k ++ "?"
-
-
 beforeFlags : String -> String
 beforeFlags k =
     case String.split "|" k of
@@ -7895,33 +7882,11 @@ colTypeStrs cols =
             ( n, colTypeStr ct ) :: colTypeStrs rest
 
 
+-- The colspec kind of a column type (`decimal|money=GBP`, `int?`), read by
+-- the runtime (see `Codec.colTypeKind`).
 colTypeStr : ColType -> String
-colTypeStr ct =
-    case ct of
-
-        CText ->
-            "text"
-
-        CInt ->
-            "int"
-
-        CReal ->
-            "real"
-
-        CBool ->
-            "bool"
-
-        CBlob ->
-            "blob"
-
-        CDecimal ->
-            "decimal"
-
-        CMoneyIn code ->
-            "decimal|money=" ++ code
-
-        CNull inner ->
-            nullableKind (colTypeStr inner)
+colTypeStr =
+    Ffi.kernel "Codec_colTypeKind"
 
 
 dbCreateCols : Db -> String -> List ( String, String ) -> String -> List IndexSpec -> Task Error ()

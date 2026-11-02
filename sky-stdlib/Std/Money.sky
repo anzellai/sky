@@ -179,19 +179,12 @@ fromString c s =
         Ok d ->
             Ok (Money d c)
 
-        Err (Error.Error kind info) ->
+        Err _ ->
             -- Name the call the user made, not the Decimal parse under it.
             Err
-                (Error.Error
-                    kind
-                    { info
-                        | message =
-                            "Money.fromString: "
-                                ++ String.replace
-                                       "Decimal.fromString: "
-                                       ""
-                                       info.message
-                    })
+                (Error.decode
+                    ("Money.fromString: \"" ++ String.left 64 s
+                        ++ "\" is not a decimal amount (see Decimal.fromString)"))
 
 
 zero : Currency -> Money
