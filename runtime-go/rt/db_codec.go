@@ -1173,7 +1173,7 @@ func dbInTransaction(connArg any, verb string, body func(ex any) any) any {
 	res := body(txDb)
 	if r, ok := res.(SkyResult[any, any]); !ok || r.Tag != 0 {
 		_ = tx.Rollback()
-		sqliteDeclCacheReset(d.conn)
+		dbColumnCacheReset(d.conn)
 		return res
 	}
 	if err := tx.Commit(); err != nil {

@@ -497,11 +497,15 @@ SQLite), and the runtime binds its N values as one parameter, so the list is
 not stopped by the engine's limit on the parameters of one statement (SQLite
 32,766, PostgreSQL 65,535). Both forms match the same rows, under `not_` too,
 and the SQL and parameters `toSql` returns run unchanged through `Db.query`.
-On PostgreSQL an `Int` compared with an `Int` column is a `BIGINT`
-(`CAST(? AS BIGINT)`, and `CAST(? AS BIGINT[])` for a long list, v0.29.2): on
-a foreign `INTEGER` or `SMALLINT` column a value outside the column's range
-matches nothing, as SQL compares an integer with a wider one, instead of
-failing with "out of range".
+On PostgreSQL an `Int` compared with a column names it in its placeholder
+(`?/*sky-int:table|col*/`, and `?/*sky-list:N:int:table|col*/` for a long
+list, v0.29.2). The runtime reads the column's type from the catalogue (once
+per pool and table) and casts the value to `BIGINT` on an `INTEGER` or
+`SMALLINT` column, so a value outside the column's range matches nothing, as
+SQL compares an integer with a wider one, instead of failing with "out of
+range"; the column's index is still used. Every other column (the Store's own
+`BIGINT`, a `NUMERIC`, a `TEXT` column an `Int` field reads) compares the
+value uncast, as before.
 
 **Every name is checked before any statement runs.** A column argument is a
 codec column (the record field or its snake name) or a `jsonText` reference. A

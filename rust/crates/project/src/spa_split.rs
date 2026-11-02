@@ -10310,15 +10310,14 @@ fn gen_backend(
     } else {
         format!("{route_block}\n        ]")
     };
-    // Force the captured boot setup BEFORE `Server.listen` when the synthesis
+    // The captured boot setup runs BEFORE `Server.listen` when the synthesis
     // emitted a `spaBootSetup_` binding AND it reached the backend body (a
     // static-only backend copies no decls — line above — so it has no
     // `spaBootSetup_` to reference, and it does no server work that would need
-    // the setup). `_ = spaBootSetup_` auto-forces the `Task Error ()`, running
-    // the boot effects once at startup, exactly as the original `main`'s
-    // `_ = <task>` prefix did.
+    // the setup). It is the first task of the boot sequence below, so its Err
+    // stops start-up as the original `main`'s chain did.
     //
-    // The console gate is registered the same way: `_ = Server.setConsoleAuth
+    // The console gate is registered with a `_ =` let forcing: `_ = Server.setConsoleAuth
     // spaConsoleGate_` stores the app's check before the listener mounts
     // `/_sky/console`. A console-auth backend is never static-only (see
     // `static_only_backend`), so its binding is always in the body.
@@ -10341,9 +10340,6 @@ fn gen_backend(
         );
     }
     let mut startup: Vec<&str> = Vec::new();
-    if has_synth_boot_setup && !static_only_backend {
-        startup.push("spaBootSetup_");
-    }
     if has_synth_console_auth {
         startup.push("Server.setConsoleAuth spaConsoleGate_");
     }
@@ -10354,7 +10350,17 @@ fn gen_backend(
     // `[live] store` is not used, and the log says so rather than leaving the
     // inline console's own memory store as the only store line).
     let mut boot: Vec<String> = Vec::new();
-    // The app's code configuration first: a boot TASK in the sequence (a
+    // The app's carried setup first, as on `--target web` (it runs before
+    // `App.run`): a boot TASK, so a failed setup (a schema step, a seed, the
+    // chained form `setup |> Task.andThen (\_ -> App.run app)`) stops start-up
+    // with its error and the backend never listens. A `_ = spaBootSetup_`
+    // let forcing dropped that Err, and the backend served on a broken
+    // database (v0.29.2 sixth Judge). The `let _ =` prefix INSIDE the
+    // binding still ignores its own Errs, exactly as it does on `web`.
+    if has_synth_boot_setup && !static_only_backend {
+        boot.push("spaBootSetup_".to_string());
+    }
+    // The app's code configuration next: a boot TASK in the sequence (a
     // `_ =` let only evaluates it), so the store, TTL, log and database are in
     // place before the session store opens and the server listens.
     // A static-only backend carries none of the entry's bindings (it serves

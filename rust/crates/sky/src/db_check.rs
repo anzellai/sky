@@ -148,6 +148,17 @@ fn sqlite_affinity(t: &str) -> &'static str {
     }
 }
 
+/// A SQLite declared type with NUMERIC affinity whose values are text in
+/// practice: a date or time (`DATE`, `DATETIME`, `TIMESTAMP`, `TIME`), a
+/// `UUID` or `JSON`. SQLite keeps such a value as TEXT (it does not look like
+/// a number), so a `String` field reads and writes it, where a `Float` field
+/// fails at the first row (`'2026-11-02 10:00:00'` does not read as a Float).
+fn sqlite_texty_numeric(sql_type: &str) -> bool {
+    let t = sql_type.to_ascii_uppercase();
+    sqlite_affinity(sql_type) == "numeric"
+        && (t.contains("DATE") || t.contains("TIME") || t.contains("UUID") || t.contains("JSON"))
+}
+
 /// Whether a live column of `sql_type` holds a codec kind's values. The
 /// types the code creates are `schemaTypeName` (runtime-go/rt/schema_kernel.go)
 /// over `codecColKindToSchema` (a blob is TEXT): int BIGINT / INTEGER, real
@@ -169,10 +180,13 @@ pub fn fit(dialect: &str, kind: &str, sql_type: &str) -> Fit {
             ),
             "bool" => t == "boolean" || t == "bool",
             "decimal" => t == "numeric" || t == "decimal",
-            "text" => matches!(
-                t.as_str(),
-                "text" | "character varying" | "varchar" | "character" | "char" | "citext"
-            ),
+            // A `String` field reads any value as its text and writes text,
+            // which PostgreSQL casts to the column's type: every type that is
+            // not a number, a boolean or binary (`timestamptz`, `uuid`,
+            // `jsonb`, `date`, `interval`, an array, an enum) is read as text,
+            // so it fits. It is also the kind `--code` gives such a column
+            // ([`guess_kind`]), so an adopted stub fits (v0.29.2 sixth Judge).
+            "text" => guess_kind(dialect, sql_type) == "text",
             "blob" => matches!(t.as_str(), "text" | "bytea" | "json" | "jsonb"),
             _ => false,
         };
@@ -184,10 +198,13 @@ pub fn fit(dialect: &str, kind: &str, sql_type: &str) -> Fit {
         // A boolean spelling (`BOOLEAN`, `BOOL`) has NUMERIC affinity, and
         // SQLite stores TRUE / FALSE in it as 1 / 0, which a Bool reads.
         "bool" => aff == "integer" || sql_type.to_ascii_uppercase().contains("BOOL"),
-        "real" => aff == "real",
+        // NUMERIC affinity keeps a number as INTEGER or REAL, which a Float
+        // reads; a date, time, UUID or JSON type is text instead.
+        "real" => aff == "real" || (aff == "numeric" && !sqlite_texty_numeric(sql_type)),
         // A decimal is TEXT on SQLite: NUMERIC affinity would turn '0.1' into
         // a REAL.
-        "text" | "decimal" => aff == "text",
+        "decimal" => aff == "text",
+        "text" => aff == "text" || sqlite_texty_numeric(sql_type),
         "blob" => aff == "text" || aff == "blob",
         _ => false,
     };
@@ -228,6 +245,9 @@ pub fn guess_kind(dialect: &str, sql_type: &str) -> &'static str {
     }
     if t.contains("bool") {
         return "bool";
+    }
+    if sqlite_texty_numeric(sql_type) {
+        return "text";
     }
     match sqlite_affinity(sql_type) {
         "integer" => "int",
@@ -1847,6 +1867,7 @@ pub fn record_stub(dialect: &str, t: &LiveTable) -> (String, bool) {
     }
     let mut fields: Vec<String> = Vec::new();
     let mut codec_lines: Vec<String> = Vec::new();
+    let mut default_lines: Vec<String> = Vec::new();
     let mut taken: Vec<String> = Vec::new();
     let mut decimal = false;
     for c in &t.columns {
@@ -1927,6 +1948,14 @@ pub fn record_stub(dialect: &str, t: &LiveTable) -> (String, bool) {
             "        |> Codec.field \"{}\" .{fname} {codec}\n",
             c.name
         ));
+        let is_serial_key = c.pk && c.autoinc;
+        if !is_serial_key {
+            match stub_default(guess_kind(dialect, &c.sql_type), c) {
+                Ok(Some(line)) => default_lines.push(line),
+                Ok(None) => {}
+                Err(why) => head.push_str(&format!("-- column {}: {why}\n", c.name)),
+            }
+        }
     }
     if fields.is_empty() {
         blocked.push("no column can be a field".into());
@@ -1952,8 +1981,9 @@ pub fn record_stub(dialect: &str, t: &LiveTable) -> (String, bool) {
         None => String::new(),
     };
     body.push_str(&format!(
-        "{lower}Store : Store {ty}\n{lower}Store =\n    Store.fromCodec \"{}\" {lower}Codec{key}\n",
-        t.name
+        "{lower}Store : Store {ty}\n{lower}Store =\n    Store.fromCodec \"{}\" {lower}Codec{key}{}\n",
+        t.name,
+        default_lines.concat()
     ));
     if blocked.is_empty() {
         head.push_str(&body);
@@ -1977,6 +2007,94 @@ pub fn record_stub(dialect: &str, t: &LiveTable) -> (String, bool) {
         }
     }
     (head, false)
+}
+
+/// The Store builder that declares a live column's DEFAULT, for a stub field
+/// of `kind`: `Ok(None)` for no default, `Err` with the reason when no Store
+/// builder declares it (an expression such as `gen_random_uuid()`). The
+/// builder gives the default `check` compares ([`canon_code_default`]) the
+/// same canonical text as the live one ([`canon_live_default`]), so an adopted
+/// stub has no default difference (v0.29.2 sixth Judge: `DEFAULT 'x'` was
+/// left out, and `check` then reported it).
+fn stub_default(kind: &str, c: &LiveColumn) -> Result<Option<String>, String> {
+    let Some(canon) = canon_live_default(kind, c.default.as_deref()) else {
+        return Ok(None);
+    };
+    let col = &c.name;
+    let raw = c.default.as_deref().unwrap_or("").trim();
+    let none = || {
+        Err(format!(
+            "its DEFAULT {raw} is not a value a Store builder declares, so `sky db check` \
+             reports it as a default difference; keep it with Db.query, or drop it in a migration"
+        ))
+    };
+    let neg = |n: &str| {
+        if n.starts_with('-') {
+            format!("({n})")
+        } else {
+            n.to_string()
+        }
+    };
+    let line = |b: String| Ok(Some(format!("\n        |> Store.{b}")));
+    if canon == "now" {
+        return if kind == "text" {
+            line(format!("defaultNow \"{col}\""))
+        } else {
+            none()
+        };
+    }
+    let text = canon.strip_prefix('\'');
+    match (kind, text) {
+        ("int" | "bigint", None) if canon.parse::<i64>().is_ok() => {
+            line(format!("defaultInt \"{col}\" {}", neg(&canon)))
+        }
+        ("real", None) => {
+            let lit = if canon.contains('.') {
+                canon.clone()
+            } else {
+                format!("{canon}.0")
+            };
+            line(format!("defaultFloat \"{col}\" {}", neg(&lit)))
+        }
+        ("bool", None) if canon == "true" || canon == "false" => line(format!(
+            "defaultBool \"{col}\" {}",
+            if canon == "true" { "True" } else { "False" }
+        )),
+        ("decimal", Some(d)) => match decimal_minor(d) {
+            Some((places, minor)) => line(format!(
+                "defaultDecimal \"{col}\" (Decimal.fromMinor {places} {})",
+                neg(&minor.to_string())
+            )),
+            None => none(),
+        },
+        ("text" | "blob", Some(t)) => line(format!("defaultText \"{col}\" {}", sky_string(t))),
+        _ => none(),
+    }
+}
+
+/// A canonical decimal text (`-12.30`) as `(places, minor)` for
+/// `Decimal.fromMinor`, when the digits fit an Int.
+fn decimal_minor(d: &str) -> Option<(usize, i64)> {
+    let (int, frac) = d.split_once('.').unwrap_or((d, ""));
+    let minor: i64 = format!("{int}{frac}").parse().ok()?;
+    Some((frac.len(), minor))
+}
+
+/// A Sky string literal of `s`.
+fn sky_string(s: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// The `--code` output.
@@ -2596,6 +2714,159 @@ mod tests {
             s2.contains("|> Codec.field \"type\" .type_ Codec.string"),
             "{s2}"
         );
+    }
+
+    /// The kind `--code` gives a live column always fits that column, so an
+    /// adopted stub never shows as type drift in `sky db check` (v0.29.2
+    /// sixth Judge: a SQLite `TIMESTAMP` / `DATE` / `UUID` / `JSON` /
+    /// `NUMERIC` column got a `Float` field that `check` called drift and
+    /// that failed on its first text value; a PostgreSQL `timestamptz` /
+    /// `uuid` / `jsonb` / `date` / `interval` / `int[]` column got a `String`
+    /// field that `check` called drift).
+    #[test]
+    fn a_stub_kind_always_fits_its_column() {
+        let sqlite = [
+            "INTEGER",
+            "INT",
+            "BIGINT",
+            "TEXT",
+            "VARCHAR(20)",
+            "CLOB",
+            "REAL",
+            "DOUBLE",
+            "FLOAT",
+            "NUMERIC",
+            "DECIMAL(10,2)",
+            "BOOLEAN",
+            "BOOL",
+            "TIMESTAMP",
+            "DATETIME",
+            "DATE",
+            "TIME",
+            "UUID",
+            "JSON",
+            "MONEY",
+            "",
+            "BLOB",
+        ];
+        for t in sqlite {
+            let k = guess_kind("sqlite", t);
+            assert_eq!(fit("sqlite", k, t), Fit::Same, "sqlite {t:?} -> {k}");
+        }
+        let pg = [
+            "bigint",
+            "integer",
+            "smallint",
+            "double precision",
+            "real",
+            "boolean",
+            "numeric",
+            "numeric(10,2)",
+            "text",
+            "character varying(30)",
+            "citext",
+            "timestamp with time zone",
+            "timestamptz",
+            "timestamp without time zone",
+            "date",
+            "time",
+            "interval",
+            "uuid",
+            "json",
+            "jsonb",
+            "integer[]",
+            "ARRAY",
+            "inet",
+            "USER-DEFINED",
+            "xml",
+            "money",
+        ];
+        for t in pg {
+            let k = guess_kind("postgres", t);
+            let f = fit("postgres", k, t);
+            assert!(f != Fit::Differs, "postgres {t:?} -> {k}: {f:?}");
+        }
+        // A date column is never read as a Float on SQLite.
+        assert_eq!(guess_kind("sqlite", "TIMESTAMP"), "text");
+        assert_eq!(fit("sqlite", "real", "TIMESTAMP"), Fit::Differs);
+        // A String field still differs from a number column.
+        assert_eq!(fit("postgres", "text", "bigint"), Fit::Differs);
+        assert_eq!(fit("sqlite", "text", "NUMERIC"), Fit::Differs);
+    }
+
+    /// A stub declares each live DEFAULT a Store builder can, and the default
+    /// it declares compares equal in `check`; one it cannot is a comment.
+    #[test]
+    fn a_stub_declares_the_live_defaults() {
+        let t = LiveTable {
+            name: "ext".into(),
+            columns: vec![
+                {
+                    let mut id = lcol("id", "integer", true, None);
+                    id.pk = true;
+                    id
+                },
+                lcol("note", "text", false, Some("'x'::text")),
+                lcol("quote", "text", true, Some("'say \"hi\"'::text")),
+                lcol("n", "integer", true, Some("5")),
+                lcol("m", "integer", true, Some("'-7'::integer")),
+                lcol("r", "double precision", false, Some("2")),
+                lcol("ok", "boolean", true, Some("true")),
+                lcol("price", "numeric", false, Some("12.30")),
+                lcol("at", "timestamp with time zone", false, Some("now()")),
+                lcol("u", "uuid", false, Some("gen_random_uuid()")),
+            ],
+            indexes: vec![],
+        };
+        let (s, _) = record_stub("postgres", &t);
+        for want in [
+            "|> Store.defaultText \"note\" \"x\"",
+            "|> Store.defaultText \"quote\" \"say \\\"hi\\\"\"",
+            "|> Store.defaultInt \"n\" 5",
+            "|> Store.defaultInt \"m\" (-7)",
+            "|> Store.defaultFloat \"r\" 2.0",
+            "|> Store.defaultBool \"ok\" True",
+            "|> Store.defaultDecimal \"price\" (Decimal.fromMinor 1 123)",
+            "|> Store.defaultNow \"at\"",
+            "-- column u: its DEFAULT gen_random_uuid() is not a value a Store builder declares",
+        ] {
+            assert!(s.contains(want), "missing {want:?} in:\n{s}");
+        }
+        assert!(!s.contains("NOT A WORKING STORE"), "{s}");
+        // The declared defaults compare equal to the live ones.
+        for (kind, raw, code) in [
+            ("text", "'x'::text", json!({ "text": "x" })),
+            ("int", "'-7'::integer", json!({ "int": -7 })),
+            ("real", "2", json!({ "float": 2.0 })),
+            ("bool", "true", json!({ "bool": true })),
+            ("decimal", "12.30", json!({ "text": "12.3" })),
+            ("text", "now()", json!({ "now": true })),
+        ] {
+            assert_eq!(
+                canon_live_default(kind, Some(raw)),
+                canon_code_default(kind, &code),
+                "{kind} {raw}"
+            );
+        }
+        // SQLite spellings.
+        let t = LiveTable {
+            name: "ext".into(),
+            columns: vec![
+                lcol("created", "TIMESTAMP", false, Some("CURRENT_TIMESTAMP")),
+                lcol("flag", "BOOLEAN", true, Some("1")),
+                lcol("label", "TEXT", true, Some("'a''b'")),
+            ],
+            indexes: vec![],
+        };
+        let (s, _) = record_stub("sqlite", &t);
+        for want in [
+            "created : Maybe String",
+            "|> Store.defaultNow \"created\"",
+            "|> Store.defaultBool \"flag\" True",
+            "|> Store.defaultText \"label\" \"a'b\"",
+        ] {
+            assert!(s.contains(want), "missing {want:?} in:\n{s}");
+        }
     }
 
     /// The v0.29.2 Judge cases: each stub either works at its first write or

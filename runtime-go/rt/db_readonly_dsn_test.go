@@ -268,3 +268,98 @@ func TestReadOnlySqliteWalDatabaseCreatesNoFilesAndReadsInAReadOnlyDir(t *testin
 		t.Fatalf("live writer: count = %d, want 2 (the row in the -wal)", n)
 	}
 }
+
+// A WAL database copied with its -wal file but without its -shm (backup tools
+// often leave the -shm out): mode=ro needs the -shm and creates it, so `sky db
+// check` wrote a 32 KB file beside the database, and in a read-only directory
+// failed with "unable to open database file (14)" and no hint (v0.29.2 sixth
+// Judge). A read-only open must create no file: it refuses, in a writable and
+// in a read-only directory, naming the missing -shm and the fix. The fix it
+// names then lets the check read every row, the -wal's included.
+func TestReadOnlySqliteWalWithoutShmIsRefusedWithTheFixAndCreatesNothing(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "src")
+	if err := os.Mkdir(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	srcPath := filepath.Join(src, "x.db")
+	w, err := sql.Open("sqlite", srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.SetMaxOpenConns(1)
+	for _, s := range []string{"PRAGMA journal_mode=WAL", "CREATE TABLE t (id TEXT)", "INSERT INTO t VALUES ('a')",
+		"PRAGMA wal_checkpoint(TRUNCATE)", "PRAGMA wal_autocheckpoint=0", "INSERT INTO t VALUES ('b')"} {
+		if _, err := w.Exec(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Copy the main file and the -wal (holding row 'b') while the writer is
+	// open, as a backup would, and leave the -shm out.
+	dir := filepath.Join(t.TempDir(), "copy")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(dir, "x.db")
+	for _, suffix := range []string{"", "-wal"} {
+		b, err := os.ReadFile(srcPath + suffix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dbPath+suffix, b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.Close()
+	names := func() []string {
+		es, _ := os.ReadDir(dir)
+		out := []string{}
+		for _, e := range es {
+			out = append(out, e.Name())
+		}
+		return out
+	}
+	t.Setenv("SKY_READ_ONLY_DB", "check")
+	for _, ro := range []bool{false, true} {
+		if ro {
+			if err := os.Chmod(dir, 0o555); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, dsn := range []string{dbPath, "file:" + dbPath, dbPath + "?_pragma=foreign_keys(1)"} {
+			msg := readOnlyConnectErr(t, dsn)
+			for _, want := range []string{"-wal file but no -shm file", "PRAGMA wal_checkpoint(TRUNCATE)", "SKY_READ_ONLY_DB"} {
+				if !strings.Contains(msg, want) {
+					t.Fatalf("read-only dir %v, %s: the refusal does not say %q: %s", ro, dsn, want, msg)
+				}
+			}
+		}
+		if got := names(); len(got) != 2 {
+			t.Fatalf("read-only dir %v: a read-only open created files: %v", ro, got)
+		}
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The fix the message names: fold the -wal in, then the check reads both rows.
+	t.Setenv("SKY_READ_ONLY_DB", "")
+	f, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	t.Setenv("SKY_READ_ONLY_DB", "check")
+	db := unwrapDbConnect(t, dbPath)
+	defer func() {
+		_ = db.conn.Close()
+		dbRegistryMu.Lock()
+		delete(dbRegistry, dbPath)
+		dbRegistryMu.Unlock()
+	}()
+	var n int
+	if err := db.conn.QueryRow("SELECT count(*) FROM t").Scan(&n); err != nil || n != 2 {
+		t.Fatalf("after the fix: count = %d, %v", n, err)
+	}
+}

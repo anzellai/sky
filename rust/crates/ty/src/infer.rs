@@ -546,63 +546,38 @@ impl<'a> Infer<'a> {
             .iter()
             .map(|&p| self.infer_pat_fresh(body, p))
             .collect();
-        // SKOLEMIZE the scheme's RESULT-position quantifiers to RIGID vars; leave
-        // argument-only quantifiers (and `any`) as fresh-per-occurrence flex.
+        // SKOLEMIZE every quantifier of the scheme (except the `any` wildcard,
+        // fresh per occurrence) to a RIGID var.
         //
         // A rigid var BINDS a plain flex (so the body may keep the quantifier
         // genuinely polymorphic — `identity : a -> a`) but CLASHES with a
         // concrete Structure or a different rigid (so a body that PINS the
-        // quantifier to a concrete type is rejected). That closes the exploitable
-        // soundness hole — an over-general RESULT type (audit #5/#6): `f : a ->
-        // a; f n = n + 1` returns `Int` while promising `a`, so a caller relying
-        // on the polymorphic return (`f "hi" : String`) gets an `Int` and panics.
+        // quantifier to a concrete type, or makes two quantifiers one type, is
+        // rejected). Against a bounded flex it is checked by the bound its name
+        // spells (`comparable` against `<`); a missing `Encodable` is inferred
+        // (`rigid_needs`). Together that is the check that the inferred type is
+        // at least as general as the annotation.
         //
-        // We deliberately DO NOT skolemize a quantifier that appears ONLY in
-        // ARGUMENT position. An over-general argument (`init : a -> (Model, Cmd
-        // Msg)` whose body uses `req` as a `Dict`) is a DIFFERENT, milder class:
-        // the full-HM oracle also accepts it (shared leniency) and this checker
-        // historically instantiated every quantifier flexibly — so keeping
-        // argument-only quantifiers flex is exact accept-parity (13-skyshop `init`
-        // is framework-called; the runtime always supplies a real request). The
-        // distinction is principled, not name-keyed: RESULT over-generality is
-        // observable to any caller who trusts the declared return type; ARGUMENT
-        // over-generality only misfires if a caller passes an incompatible
-        // value, which the oracle itself does not reject. We add rejections only
-        // in the result-position class — never a new accept.
-        let result_ty = {
-            let mut cur = &scheme.ty;
-            for _ in 0..param_vars.len() {
-                match cur {
-                    Ty::Fun(_, b) => cur = b,
-                    _ => break,
-                }
-            }
-            cur
-        };
-        let result_vars: std::collections::HashSet<String> = result_ty
-            .free_vars()
-            .into_iter()
-            .map(|n| n.as_str().to_string())
-            .collect();
+        // Before v0.29.2 a quantifier that appeared only in ARGUMENT position
+        // stayed flexible ("accept-parity" with the oracle), so the body could
+        // pin it or merge it, and `coerce : a -> b; coerce x = x` turned a
+        // `String` into an `Int` that `n + 1` then panicked on at run time, and
+        // `show : a -> String; show v = "<" ++ v` printed `<1>` for
+        // `show (Just 1)`. Top-level definitions have no enclosing scope, so no
+        // escape check is needed. Let annotations are checked after the group
+        // is inferred (`check_let_anno_generality`), where a variable joined
+        // to an enclosing annotation's variable of the same name is Elm's
+        // scoped type variable, sound now that the outer one is rigid.
+        // Kernel and FFI signatures have no body and are instantiated fresh at
+        // each call site, so they are not affected.
+        self.uf.rigid_missing.clear();
         let mut sub: HashMap<String, TyVarId> = HashMap::new();
         for name in &scheme.vars {
             if name.as_str() != "any" {
-                let fresh = if result_vars.contains(name.as_str()) {
-                    self.uf.fresh(Content::Rigid(Name::new(name.as_str())))
-                } else {
-                    // An argument-only quantifier stays flexible, carrying the
-                    // bound its name spells (`comparable`), if any.
-                    self.fresh_for_name(name.as_str())
-                };
+                let fresh = self.uf.fresh(Content::Rigid(Name::new(name.as_str())));
                 sub.insert(name.as_str().to_string(), fresh);
             }
         }
-        let arg_only: Vec<(String, TyVarId)> = scheme
-            .vars
-            .iter()
-            .filter(|n| n.as_str() != "any" && !result_vars.contains(n.as_str()))
-            .filter_map(|n| sub.get(n.as_str()).map(|v| (n.as_str().to_string(), *v)))
-            .collect();
         // Peel one arrow per top-level param, seeding EVERY param's declared type
         // (including record-typed params) CLOSED via `ty_to_var` — a param `model
         // : Model` is exactly the closed record the user wrote. Real TEA record
@@ -700,8 +675,28 @@ impl<'a> Infer<'a> {
         // v0.27.0 qualified bounds: decide the deferred obligations, then
         // check that every annotation variable the body bounded says so.
         self.discharge_bounds(true);
+        // One "the annotation is too general" error per variable: a body that
+        // pins `a` meets it at every later use too (`"<" ++ v ++ ">"` unifies
+        // `a` with `String` twice), and the repeats say nothing new.
+        let mut seen_rigid: Vec<String> = Vec::new();
+        let mut i = errs_before;
+        while i < self.errors.len() {
+            let m = &self.errors[i].message;
+            if m.starts_with("the type annotation says `") {
+                if seen_rigid.contains(m) {
+                    self.errors.remove(i);
+                    continue;
+                }
+                seen_rigid.push(m.clone());
+            }
+            i += 1;
+        }
         if self.errors.len() == errs_before {
-            self.check_annotation_bounds(body, root, &arg_only);
+            self.check_annotation_bounds(body, root);
+        } else {
+            // A clearer error came first: the deferred bound refusals of this
+            // definition are dropped with it.
+            self.uf.rigid_missing.clear();
         }
         // C-2: the relaxed value restriction for a top-level CAF, checked
         // against the type callers see (the annotation, its `any` holes filled
@@ -1717,17 +1712,12 @@ impl<'a> Infer<'a> {
             let r = self.uf.find(v);
             let message = match self.uf.content(r) {
                 Content::Error => continue,
-                Content::Structure(_) => Some(format!(
-                    "rigid type variable `{}` cannot be unified with a concrete type",
-                    n.as_str()
-                )),
-                Content::Rigid(other) => (other.as_str() != n.as_str()).then(|| {
-                    format!(
-                        "rigid type variable `{}` cannot unify with `{}`",
-                        n.as_str(),
-                        other.as_str()
-                    )
-                }),
+                Content::Structure(_) => {
+                    let shown = self.uf.describe(r);
+                    Some(crate::unify::rigid_concrete_message(n.as_str(), &shown))
+                }
+                Content::Rigid(other) => (other.as_str() != n.as_str())
+                    .then(|| crate::unify::rigid_pair_message(n.as_str(), other.as_str())),
                 Content::FlexSuper(s) => {
                     let have = SuperType::from_var_name(n.as_str()).unwrap_or_default();
                     let missing = s
@@ -1741,12 +1731,8 @@ impl<'a> Infer<'a> {
                 Content::Flex => None,
             };
             let message = message.or_else(|| {
-                seen.insert(r, n.as_str()).map(|first| {
-                    format!(
-                        "rigid type variable `{first}` cannot unify with `{}`",
-                        n.as_str()
-                    )
-                })
+                seen.insert(r, n.as_str())
+                    .map(|first| crate::unify::rigid_pair_message(first, n.as_str()))
             });
             if let Some(message) = message {
                 self.errors.push(TypeError {

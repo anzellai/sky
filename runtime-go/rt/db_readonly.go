@@ -58,10 +58,16 @@ func readOnlyDbHint(command string) string {
 			"and the database refused a read that needed a write. On SQLite in WAL mode, check that the " +
 			"database file and its -wal and -shm files (when they exist) are readable by this user"
 	case "status":
+		// Two causes, and the advice differs (v0.29.2 sixth Judge: the text
+		// named only the first, and an app with no Db.migrate got "move that
+		// write after Db.migrate").
 		return ". This process opens its databases read-only (SKY_READ_ONLY_DB=status): " +
-			"`sky db status` runs the app's main up to Db.migrate so that it writes nothing. A write before Db.migrate fails here. " +
-			"Move that write after Db.migrate, or use file migrations " +
-			"(`sky db init`; `sky db status` then reads db/migrations and does not run main)"
+			"`sky db status` runs the app's main until Db.migrate, which prints the status and exits, so that it writes nothing. " +
+			"This write came first. If the app calls Db.migrate, move the write after it. " +
+			"If the app has no Db.migrate (it migrates with Store.migrate, which creates and alters tables, " +
+			"or writes data), `sky db status` has no migration status to report: use `sky db check`, " +
+			"which compares the database with the code's Store.project and runs no app code. " +
+			"Or use file migrations (`sky db init`; `sky db status` then reads db/migrations and does not run main)"
 	}
 	return ". This process opens its databases read-only (SKY_READ_ONLY_DB=1), so a write fails. " +
 		"`sky db status` and `sky db check` run it this way so that they write nothing"

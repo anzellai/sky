@@ -63,11 +63,12 @@ const listMarkOpen = "/*sky-list:"
 type listMark struct {
 	n          int
 	reals      bool
+	int        bool // PostgreSQL: an Int list naming its column (db_pgx_int_cast.go)
 	table, col string
 }
 
-// parseListMark reads the body of a list mark: `N`, then optionally `reals`,
-// then optionally `table|col`, separated by `:`.
+// parseListMark reads the body of a list mark: `N`, then optionally `reals`
+// or `int`, then optionally `table|col`, separated by `:`.
 func parseListMark(body string) (listMark, bool) {
 	parts := strings.Split(body, ":")
 	n, err := strconv.Atoi(parts[0])
@@ -78,6 +79,9 @@ func parseListMark(body string) (listMark, bool) {
 	rest := parts[1:]
 	if len(rest) > 0 && rest[0] == "reals" {
 		m.reals = true
+		rest = rest[1:]
+	} else if len(rest) > 0 && rest[0] == "int" {
+		m.int = true
 		rest = rest[1:]
 	}
 	if len(rest) > 0 {

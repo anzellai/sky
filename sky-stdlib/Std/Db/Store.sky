@@ -6452,17 +6452,19 @@ listParamSql ctx col kind n =
     case ctx.dialect of
 
         Postgres ->
-            -- An Int list is cast to BIGINT[]: a bound Int is a BIGINT in
-            -- `IN (?, …)`, so a foreign INTEGER or SMALLINT column compares
-            -- with it across types and a value outside its range matches
-            -- nothing. Read as the column's own array type, that value was
-            -- an "out of range" error (v0.29.2 fifth Judge).
-            if kindBase kind == "int" then
-                " = ANY(CAST(?" ++ listMarkOpen ++ String.fromInt n
-                    ++ "*/ AS BIGINT[]))"
+            -- An Int list on a plain column names it (`N:int:table|col`), as
+            -- one Int value does (`condParam`): the runtime casts the array to
+            -- BIGINT[] only when that column is an INTEGER or SMALLINT
+            -- (db_pgx_int_cast.go).
+            case intTarget ctx col kind of
 
-            else
-                " = ANY(?" ++ listMarkOpen ++ String.fromInt n ++ "*/)"
+                Just target ->
+                    " = ANY(?" ++ listMarkOpen ++ String.fromInt n ++ ":int:"
+                        ++ target
+                        ++ "*/)"
+
+                Nothing ->
+                    " = ANY(?" ++ listMarkOpen ++ String.fromInt n ++ "*/)"
 
         Sqlite ->
             let
@@ -6523,13 +6525,18 @@ markedPlaceholders param vs =
 
 
 -- The placeholder of a value compared with column `name` in `ctx`: marked
--- (`paramOf`) when `name` is a plain column of a table, else `?`. On
--- PostgreSQL an Int compared with an Int column is a BIGINT
--- (`CAST(? AS BIGINT)`), as a long `inList` is (`listParamSql`): the value
--- is bound as text, which the server read as the column's own type, so on a
--- foreign INTEGER or SMALLINT column a value outside its range was an "out of
--- range" error instead of no match (v0.29.2 fifth Judge). On a BIGINT column
--- the cast changes nothing.
+-- (`paramOf`) when `name` is a plain column of a table, else `?`.
+--
+-- On PostgreSQL an Int compared with a plain column is marked with the column
+-- (`?/*sky-int:table|col*/`, `intMarkOpen`). The value is bound as text, which
+-- the server reads as the column's own type, so on a foreign INTEGER or
+-- SMALLINT column a value outside its range was an "out of range" error
+-- instead of no match. The runtime reads the column's type from the catalogue
+-- and casts the value to BIGINT on an INTEGER or SMALLINT column only
+-- (db_pgx_int_cast.go). Every other column keeps the uncast value: a TEXT
+-- column read by an Int field (`text = bigint` has no operator), a NUMERIC
+-- one and the Store's own BIGINT one compare as in v0.29.1 (v0.29.2 sixth
+-- Judge: an unconditional `CAST(? AS BIGINT)` broke a TEXT column).
 condParam : Ctx -> String -> String -> String
 condParam ctx name kind =
     if ctx.having || isJsonRef name then
@@ -6542,17 +6549,47 @@ condParam ctx name kind =
                 case ctx.dialect of
 
                     Postgres ->
-                        if kindBase kind == "int" then
-                            "CAST(? AS BIGINT)"
+                        case intTarget ctx name kind of
 
-                        else
-                            paramOf ctx.dialect table col kind
+                            Just target ->
+                                "?" ++ intMarkOpen ++ target ++ "*/"
+
+                            Nothing ->
+                                paramOf ctx.dialect table col kind
 
                     Sqlite ->
                         paramOf ctx.dialect table col kind
 
             Nothing ->
                 "?"
+
+
+-- `table|col` of an Int compared with a plain column `name` on PostgreSQL,
+-- the body of its mark (`condParam`, `listParamSql`); `Nothing` for another
+-- kind, a JSON reference, a HAVING condition or a name that is not a plain
+-- column of a table.
+intTarget : Ctx -> String -> String -> Maybe String
+intTarget ctx name kind =
+    if kindBase kind /= "int" || ctx.having || isJsonRef name then
+        Nothing
+
+    else
+        case condTarget ctx name of
+
+            Just ( table, col ) ->
+                if isIdent table && isIdent col then
+                    Just (table ++ "|" ++ col)
+
+                else
+                    Nothing
+
+            Nothing ->
+                Nothing
+
+
+intMarkOpen : String
+intMarkOpen =
+    "/*sky-int:"
 
 
 -- The table and column a resolved condition name reads (`colRef` has

@@ -376,33 +376,25 @@ impl Infer<'_> {
         });
     }
 
-    /// After the annotation gate: every ARGUMENT-only annotation variable
-    /// (kept flexible) that the body bounded must spell the bound. A missing
-    /// `Comparable`/`Number`/`Appendable` is Elm's "too general" error; a
-    /// missing `Encodable` is recorded in `inferred_bounds` (B-1), together
-    /// with the ones rigid variables picked up (`UnionFind::rigid_needs`).
-    pub(crate) fn check_annotation_bounds(
-        &mut self,
-        body: &hir::Body,
-        root: hir::ExprId,
-        arg_only: &[(String, TyVarId)],
-    ) {
-        for (name, v) in arg_only {
-            let r = self.uf.find(*v);
-            let Content::FlexSuper(b) = self.uf.content(r) else {
-                continue;
-            };
-            let have = SuperType::from_var_name(name).unwrap_or_default().closure();
-            let missing = b.closure().minus(have);
-            if missing.minus(SuperType::Encodable).is_empty() {
-                if missing.has(SuperType::Encodable) {
-                    self.inferred_bounds
-                        .push((Name::new(name), SuperType::Encodable));
-                }
-                continue;
+    /// After the annotation gate, when the body raised no other error: refuse
+    /// each bound a rigid annotation variable needs and does not spell
+    /// (`UnionFind::rigid_missing`: a missing `Comparable`/`Number`/
+    /// `Appendable`, Elm's "too general" error), and record the bounds the
+    /// checker infers instead (`UnionFind::rigid_needs`, only `Encodable`,
+    /// B-1) in `inferred_bounds`.
+    pub(crate) fn check_annotation_bounds(&mut self, body: &hir::Body, root: hir::ExprId) {
+        // The deferred refusals (`UnionFind::rigid_missing`): one per
+        // variable, its missing bounds joined.
+        let mut missing: Vec<(Name, SuperType)> = Vec::new();
+        for (n, b) in std::mem::take(&mut self.uf.rigid_missing) {
+            match missing.iter_mut().find(|(m, _)| *m == n) {
+                Some((_, have)) => *have = have.union(b),
+                None => missing.push((n, b)),
             }
+        }
+        for (n, b) in missing {
             self.errors.push(TypeError {
-                message: unify::rigid_bound_message(name, missing),
+                message: unify::rigid_bound_message(n.as_str(), b),
                 span: body.expr_span(root),
                 code: "E2001",
             });

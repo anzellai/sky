@@ -17,7 +17,10 @@ A patch release for v0.29.1. `sky run` and `sky watch` now start the embedded
 PostgreSQL cluster and pass its address to a `Std.App` app and a Sky.Spa app,
 as they already did for a plain app. `sky db check` compares a live database
 with the code, `Std.Codec` gets exact decimal columns, and `Std.Money` returns
-a `Result` wherever two currencies can differ (see Breaking).
+a `Result` wherever two currencies can differ. Every type variable in an
+annotation is now checked: a body that pins one to a type, which turned a
+`String` into an `Int` and crashed at run time, is a compile error. See
+Breaking and Migration.
 
 ### Added
 
@@ -106,7 +109,8 @@ a `Result` wherever two currencies can differ (see Breaking).
   - `--code` lists the columns the code has no field for or reads as
     another type, and prints a record type alias, a `Codec.object` (one
     `Codec.field` per column, `Codec.decimal` for `NUMERIC`) and a `Store`
-    for each table the code has no Store for. A column the Store cannot use
+    (with a `Store.default…` builder for each column default) for each table
+    the code has no Store for. An adopted stub passes `sky db check`. A column the Store cannot use
     (binary data, an SQL keyword, a quoted upper-case name on PostgreSQL)
     gets no field and a comment that says why; when a row cannot be written
     without it, the whole stub is a comment, so it never compiles into a
@@ -127,6 +131,8 @@ a `Result` wherever two currencies can differ (see Breaking).
   the ledger, as JSON. It never creates the ledger.
 
 ### Fixed
+
+#### Data: codecs, `Std.Db.Store`, Decimal and Money
 
 - **No codec writes a value it cannot read back, and a Store write never makes
   a table unreadable.** A codec could write a value its own reader refused,
@@ -179,70 +185,34 @@ a `Result` wherever two currencies can differ (see Breaking).
   enum values, long decimals, each currency form, NaN), and checks through
   JSON and a real Store on SQLite and PostgreSQL that each value reads back
   equal or is refused, and that the table always reads.
-- **`Decimal.fromFloat` of a NaN or an infinite Float panicked unclassified**
-  (shopspring's "Cannot create a Decimal from NaN"). It is now the classified
-  `DivisionByZero`, as a Float division with no answer is.
-- **`sky db check` wrote beside a SQLite database in WAL mode.** `Db.connect`
-  sets WAL mode, and a read-only open of a WAL database created `x.db-wal`
-  and `x.db-shm`; in a directory it could not write, `sky db check` exited 2
-  with "attempt to write a readonly database (1544)" and the advice of `sky
-  db status`. With no `-wal` file beside it (no process has the database
-  open, and every committed page is in the main file) the database is now
-  read with `immutable=1`, which creates nothing; with one (a live process),
-  through the `-wal` and `-shm` already there, so the check sees the running
-  app's committed rows. The hint after a read-only refusal names the command
-  that ran (`SKY_READ_ONLY_DB=check` or `=status`).
-- **Read-only mode refused a plain SQLite path with parameters**
-  (`w/x.db?_pragma=foreign_keys(1)`) that the app opens: it looked for a file
-  named with the parameters. The path now ends at the first `?`, as the
-  driver reads it, and the parameters are kept.
+- **A `Std.Db.Store` write never stores a JSON value its codec does not read
+  back.** A `Codec.list (Codec.moneyIn GBP)` field holding a USD Money was
+  written, and then every read of the table failed on that row. `insert`,
+  `insertMany`, `upsert`, `upsertWith`, `insertReturning`, `update` and
+  `updateWhere` now read each JSON column of the row with the codec first,
+  and refuse the write with the column and the reason.
 - **`Codec.autoWith` with two keys naming one column** (`"price_list"` and
   `"priceList"`, or one key twice) kept one override and dropped the other.
   It is a builder problem naming both keys, and the codec does not decode.
-- **`Store.setFields` refusals said `updateFields`,** `updateFieldsReturning`
-  refusals said `updateFields`, and `copyIntoOrIgnore` refusals said
-  `copyInto`. Each names the verb called.
-- **On PostgreSQL an `Int` condition on a foreign `INTEGER` or `SMALLINT`
-  column failed with "out of range"** for a value outside the column's range
-  (`eq`, `inList` of any length): the value was read as the column's type.
-  It is now a `BIGINT` (`CAST(? AS BIGINT)`, `CAST(? AS BIGINT[])` for a long
-  list), so it matches nothing, as SQL compares an integer with a wider one.
-  On a `BIGINT` column, the Store's own, nothing changes.
-
-- **`Store.inList` failed on a long list.** One parameter per value stopped
-  at the engine's limit on the parameters of one statement: on SQLite a list
-  over 32,766 values failed with "too many SQL variables", and on a
-  PostgreSQL connection that uses pgx's extended protocol a list over 65,535
-  failed with "extended protocol limited to 65535 parameters" (the app pool's
-  simple protocol inlines the values and had no limit). A condition is one
-  statement, so it cannot be split. A list over 1,000 values now has ONE
-  placeholder, marked with its count (`/*sky-list:N*/`), and the runtime
-  binds its N values as one parameter just before the statement runs:
-  PostgreSQL `col = ANY(?)` with the text of an array literal, which the
-  server reads as an array of the column's type; SQLite
-  `col IN (SELECT +value FROM json_each(?))` with a JSON array, where the
-  unary `+` removes json_each's NUMERIC affinity so the column's affinity
-  and its `sky_decimal` collation apply as they do to `IN (…)`. A Float
-  column on SQLite reads each value as `m * pow(2, e)`, exact where SQLite's
-  own reading of a decimal number is not (below about 1e-305), and a v0.28
-  TEXT column of a nullable Bool or Float gets the text v0.28 wrote, as one
-  value does. A list up to 1,000 values keeps `col IN (?, ?, …)`, so its SQL
-  and plan do not change. `toSql` shows the mark and the N values, and that
-  SQL runs unchanged through `Db.query`. The StoreQuery conformance suite
-  checks the long form against `IN (?, …)` on every column kind on both
-  engines (NULLs, duplicates, text case, decimals, booleans, a float near
-  1e-308, an empty list), 40,000 and 70,000 values, and `toSql`.
-- **Read-only mode could write through a SQLite `file:` DSN.** `sky db
-  status` and `sky db check` open the database read-only, but a DSN such as
-  `SKY_DB_PATH="file:st.db?mode=rwc"` kept its own `mode`: `sky db status`
-  created the file and ran writes, and `sky db check` created an empty
-  database and exited 1. Read-only mode now replaces any `mode` with `ro` and
-  adds `_pragma=query_only(1)`, so a write fails in SQLite twice over. A
-  missing file is refused with exit 2 for every spelling (a plain path, a
-  `file:` URI with or without parameters, `file://`). On PostgreSQL a DSN
-  option such as `options=-c default_transaction_read_only=off` cannot turn
-  the guard off (measured), and the connection now reads the setting back and
-  refuses a session that is not read-only.
+- **`Codec.autoWith` ignored a key that named the record field.**
+  `Codec.autoWith [ ( "priceList", … ) ] blank` matched no column (the column
+  is `price_list`), so the override was dropped with no error. A key is now
+  the column or the record field, and a key that names neither is an error
+  naming the keys it takes: the codec's decoder fails, and `Store.fromCodec`
+  refuses the store.
+- **`Codec.autoWith` with a `Codec.moneyIn` override made a JSON text
+  column** (a regression in this release). An override's column type goes
+  through its kind (`decimal|money=GBP`, `decimal?|money=GBP`) and back, and
+  only a bare `decimal` was read back, so the documented
+  `Codec.autoWith [ ( "cost", Codec.moneyIn GBP ) ] blank` gave `CBlob`:
+  `orderAsc "cost"` ordered `"10"` before `"9.5"`, a USD Money was written
+  into the GBP column, and a `Maybe` override made a `NOT NULL` column. Every
+  kind now maps back to the same `ColType`, a `Maybe` of each included. A
+  conformance matrix covers each new codec (`decimal`, `moneyIn`,
+  `moneyObject`, `isoCurrency`, `value`) as an object field, an `autoWith`
+  override, a `Maybe` of each and a `Codec.list` of each, on SQLite and
+  PostgreSQL: shape, column type, round trip, order and the refusal of
+  another currency.
 - **`Codec.moneyIn` lost its currency for `USDT`, `USDC` and any
   `CurrencyRaw` code** (a regression in this release). The runtime read only
   a three-letter `[A-Z]{3}` code from the column, so a `Codec.moneyIn USDT`
@@ -270,39 +240,108 @@ a `Result` wherever two currencies can differ (see Breaking).
   of 5 columns on PostgreSQL (65,535). The insert is now split by the limit
   into several statements in one transaction (the caller's own inside
   `Db.withTransaction`), so it stays all-or-nothing.
-- **`Codec.autoWith` ignored a key that named the record field.**
-  `Codec.autoWith [ ( "priceList", … ) ] blank` matched no column (the column
-  is `price_list`), so the override was dropped with no error. A key is now
-  the column or the record field, and a key that names neither is an error
-  naming the keys it takes: the codec's decoder fails, and `Store.fromCodec`
-  refuses the store.
+- **`Store.inList` failed on a long list.** One parameter per value stopped
+  at the engine's limit on the parameters of one statement: on SQLite a list
+  over 32,766 values failed with "too many SQL variables", and on a
+  PostgreSQL connection that uses pgx's extended protocol a list over 65,535
+  failed with "extended protocol limited to 65535 parameters" (the app pool's
+  simple protocol inlines the values and had no limit). A condition is one
+  statement, so it cannot be split. A list over 1,000 values now has ONE
+  placeholder, marked with its count (`/*sky-list:N*/`), and the runtime
+  binds its N values as one parameter just before the statement runs:
+  PostgreSQL `col = ANY(?)` with the text of an array literal, which the
+  server reads as an array of the column's type; SQLite
+  `col IN (SELECT +value FROM json_each(?))` with a JSON array, where the
+  unary `+` removes json_each's NUMERIC affinity so the column's affinity
+  and its `sky_decimal` collation apply as they do to `IN (…)`. A Float
+  column on SQLite reads each value as `m * pow(2, e)`, exact where SQLite's
+  own reading of a decimal number is not (below about 1e-305), and a v0.28
+  TEXT column of a nullable Bool or Float gets the text v0.28 wrote, as one
+  value does. A list up to 1,000 values keeps `col IN (?, ?, …)`, so its SQL
+  and plan do not change. `toSql` shows the mark and the N values, and that
+  SQL runs unchanged through `Db.query`. The StoreQuery conformance suite
+  checks the long form against `IN (?, …)` on every column kind on both
+  engines (NULLs, duplicates, text case, decimals, booleans, a float near
+  1e-308, an empty list), 40,000 and 70,000 values, and `toSql`.
+- **On PostgreSQL an `Int` condition on a foreign `INTEGER` or `SMALLINT`
+  column failed with "out of range"** for a value outside the column's range
+  (`eq`, `lt`, `inList` of any length, `findBy`): the value is bound as text,
+  which the server reads as the column's type. Each Int placeholder compared
+  with a plain column now names it (`?/*sky-int:table|col*/`, and
+  `?/*sky-list:N:int:table|col*/` for a long list), and the runtime reads the
+  column's type from the catalogue (once per pool and table, cleared after a
+  schema change) and casts the value to `BIGINT` on an `INTEGER` or
+  `SMALLINT` column only, so an out-of-range value matches nothing, as SQL
+  compares an integer with a wider one, and the column's index is still used.
+  Every other column keeps the value as v0.29.1 bound it. An earlier
+  candidate of this release cast every Int to `BIGINT`, which broke an `Int`
+  field on a `TEXT` column ("operator does not exist: text = bigint", where
+  v0.29.1 answered); the StoreQuery conformance suite and a PostgreSQL test
+  now cover `TEXT`, `NUMERIC`, `INTEGER`, `SMALLINT`, `BIGINT` and a domain,
+  short and long, on both protocols, with `EXPLAIN`. `toSql` shows the mark,
+  and its SQL runs unchanged through `Db.query`.
+- **`Store.setFields` refusals said `updateFields`,** `updateFieldsReturning`
+  refusals said `updateFields`, and `copyIntoOrIgnore` refusals said
+  `copyInto`. Each names the verb called.
 - **Refusals from `upsertWith`, `insertReturning`, `insertOrIgnore` and
   `insertOrIgnoreOn` said `Store.insert:`.** Each now names its own verb.
-- **`Codec.autoWith` with a `Codec.moneyIn` override made a JSON text
-  column** (a regression in this release). An override's column type goes
-  through its kind (`decimal|money=GBP`, `decimal?|money=GBP`) and back, and
-  only a bare `decimal` was read back, so the documented
-  `Codec.autoWith [ ( "cost", Codec.moneyIn GBP ) ] blank` gave `CBlob`:
-  `orderAsc "cost"` ordered `"10"` before `"9.5"`, a USD Money was written
-  into the GBP column, and a `Maybe` override made a `NOT NULL` column. Every
-  kind now maps back to the same `ColType`, a `Maybe` of each included. A
-  conformance matrix covers each new codec (`decimal`, `moneyIn`,
-  `moneyObject`, `isoCurrency`, `value`) as an object field, an `autoWith`
-  override, a `Maybe` of each and a `Codec.list` of each, on SQLite and
-  PostgreSQL: shape, column type, round trip, order and the refusal of
-  another currency.
-- **A `Std.Db.Store` write never stores a JSON value its codec does not read
-  back.** A `Codec.list (Codec.moneyIn GBP)` field holding a USD Money was
-  written, and then every read of the table failed on that row. `insert`,
-  `insertMany`, `upsert`, `upsertWith`, `insertReturning`, `update` and
-  `updateWhere` now read each JSON column of the row with the codec first,
-  and refuse the write with the column and the reason.
-- **`sky db check` runs the data check the app's `Store.migrate` runs.** On
-  SQLite it said "up to date" (exit 0) for a `TEXT` column of `Codec.auto`
-  Money JSON read by `Codec.moneyIn GBP`, which the app refused: only the
-  column type was compared. It now calls the runtime's check
-  (`Store.checkProjectData`) and reports each refusal as drift, with the
-  runtime's text and its conversion SQL, on both engines.
+- **A Store column named with an SQL keyword is refused with the reason.** The
+  Store writes names unquoted (quoting would change how PostgreSQL folds an
+  existing camelCase column), so a field named `order` failed at its first
+  statement with "syntax error at or near order". A keyword of both engines
+  (`order`, `select`, `group`, `from`, …) is now a Store builder problem, which
+  every verb and `sky verify`'s stores step report; a keyword of one engine
+  (`user` and `system_user` on PostgreSQL, `index` and `commit` on SQLite) is
+  refused by `Store.migrate` and `Store.create` on that engine. On SQLite a
+  name that fails in one position only is refused there only: `if` as a
+  table name, `raise` as a column name. The lists are measured: tests run the
+  Store's statements with every SQLite keyword and every PostgreSQL reserved
+  keyword (`pg_get_keywords()`) in both positions. Map the field to another
+  column with `Codec.field "sort_order" .order Codec.int`.
+- **A Store JSON field on a binary column is refused, not misread.**
+  `Schema.blob` makes `BYTEA` (`BLOB` on SQLite) through
+  `Schema.createSchema`, and a `Std.Db.Store` reads and writes a JSON field
+  (a list, a record, a custom type, a `Json.Value`) as text. A Store over such
+  a table misread every row. `Store.migrate` and `Store.pushProject` now
+  refuse it with an `Err` naming `table.column` and the fix. Both types stay:
+  a `Schema.blob` column that `sky db push` makes `TEXT` is named once at
+  WARN, and `sky verify`'s stores step names every `Schema.blob` column
+  (docs/skydb/overview.md).
+- **`Schema.int` is one column type on both creation paths.** On PostgreSQL
+  `Schema.createSchema` made a 4-byte `INTEGER` and `Store.pushProject
+  (Schema.toProject …)` (and `sky db push`) a `BIGINT`, so a fresh database
+  differed with the path that made it. Both now make `BIGINT`, the size of a
+  Sky `Int`: an `INTEGER` column fails with "integer out of range" above
+  2,147,483,647. Neither path alters a column that exists, and `sky db migrate
+  --gen` proposes no change: a table an older `createSchema` made keeps
+  `INTEGER`. `Store.migrate` and `pushProject` treat it as a match and log a
+  one-time WARN naming the column, with the `ALTER TABLE … ALTER COLUMN … TYPE
+  BIGINT` that widens it. Widening stays your choice.
+- **`Decimal.fromFloat` of a NaN or an infinite Float panicked unclassified**
+  (shopspring's "Cannot create a Decimal from NaN"). It is now the classified
+  `DivisionByZero`, as a Float division with no answer is.
+- **A decoded currency matches its own `case` arm.** `Codec.auto` and
+  `Db.Decode.money` built every named currency with the tag of `USD`, so a
+  decoded `GBP` matched the `USD` arm of a `case` and printed as USD. Each
+  currency now carries its own constructor.
+- **`Codec.auto` Decimal and Money decode strictly.** A Decimal (and a Money
+  amount) is read under `-?[0-9]+(\.[0-9]+)?`, at most 1000 characters. An
+  exponent used to reach the decimal library, and `"1e2000000000"` in a request
+  body made the process write out billions of digits (the test of it ran for
+  five minutes). A Money with no `currency` was `CurrencyRaw ""` and is now an
+  `Err`; `"gbp"` reads as GBP; an exact JSON number amount reads.
+- **`Decimal.fromString` bounds its exponent.** It keeps the exponent grammar
+  (`"1.5e3"` is 1500), but `"1e2000000000"` parsed at once and then took
+  minutes to print or add (a decimal with exponent e has about |e| digits).
+  Text over 1000 characters, or an exponent past 10000 either way, is now an
+  `Err`. `Money.fromString` and a Decimal that reaches the runtime as text go
+  through the same bound.
+- **The JSON Schema of a `Codec.auto` Decimal or Money field is exact.** It was
+  the open `{}`, so `Codec.toXml` wrote the JSON text `"12.34"` into the
+  element. It is now a string with the decimal pattern, and the Money object.
+- **`Db.Decode.money` reads both Money text forms strictly.** It reads
+  `"USD 12.34"` (`SqlMoney`) and `"12.34 USD"` (`Money.formatWithCode`), the
+  code in upper case, the amount under the strict grammar.
 - **`Money.convert` through the inverse rate divides by it.** It multiplied
   by `1 / r` rounded to 16 places, so `Money.rates [ ( USD, EUR, 3 ) ]` made
   3 EUR into 0.9999999999999999 USD. It now divides by `r`: exact when the
@@ -314,26 +353,93 @@ a `Result` wherever two currencies can differ (see Breaking).
   store refuses the column again; the text said it "makes it fail", which is
   what the PostgreSQL conversion does. The text now says each, and the check
   query is named as listing rows with no currency too.
+- **Every `Std.Money` `Err` names the operation called.** `Money.sum` over two
+  currencies said "Money.add: …", and `Money.fromString` said
+  "Decimal.fromString: …". They now say `Money.sum:` and
+  `Money.fromString:`.
+- **A removed `Std.Money` name used bare names its replacement.** After
+  `import Std.Money exposing (..)`, a bare `setRate` or `sumOf` gave only
+  "Undefined name"; it now names the replacement, as `Money.setRate` and
+  `exposing (setRate)` do.
+
+#### `sky db check`, `sky db status` and read-only mode
+
+- **`sky db check` wrote beside a SQLite database in WAL mode.** `Db.connect`
+  sets WAL mode, and a read-only open of a WAL database created `x.db-wal`
+  and `x.db-shm`; in a directory it could not write, `sky db check` exited 2
+  with "attempt to write a readonly database (1544)" and the advice of `sky
+  db status`. With no `-wal` file beside it (no process has the database
+  open, and every committed page is in the main file) the database is now
+  read with `immutable=1`, which creates nothing; with one (a live process),
+  through the `-wal` and `-shm` already there, so the check sees the running
+  app's committed rows. A `-wal` file with no `-shm` file (a backup that
+  copied the database and its `-wal` only) is refused with exit 2 and the
+  fix: SQLite reads a `-wal` only through the `-shm` index, so a read-only
+  open created `x.db-shm` (32 KB) beside the database, and in a read-only
+  directory failed with "unable to open database file (14)" and no hint. The
+  message names `sqlite3 x.db 'PRAGMA wal_checkpoint(TRUNCATE)'` (with no app
+  running), or copying the `-shm` with it. The hint after a read-only refusal
+  names the command that ran (`SKY_READ_ONLY_DB=check` or `=status`).
+- **Read-only mode refused a plain SQLite path with parameters**
+  (`w/x.db?_pragma=foreign_keys(1)`) that the app opens: it looked for a file
+  named with the parameters. The path now ends at the first `?`, as the
+  driver reads it, and the parameters are kept.
+- **Read-only mode could write through a SQLite `file:` DSN.** `sky db
+  status` and `sky db check` open the database read-only, but a DSN such as
+  `SKY_DB_PATH="file:st.db?mode=rwc"` kept its own `mode`: `sky db status`
+  created the file and ran writes, and `sky db check` created an empty
+  database and exited 1. Read-only mode now replaces any `mode` with `ro` and
+  adds `_pragma=query_only(1)`, so a write fails in SQLite twice over. A
+  missing file is refused with exit 2 for every spelling (a plain path, a
+  `file:` URI with or without parameters, `file://`). On PostgreSQL a DSN
+  option such as `options=-c default_transaction_read_only=off` cannot turn
+  the guard off (measured), and the connection now reads the setting back and
+  refuses a session that is not read-only.
 - **A read-only SQLite connection keeps `busy_timeout`.** With
   `SKY_READ_ONLY_DB=1` (`sky db check`, `sky db status`) the write PRAGMAs
   are skipped, and `busy_timeout` went with them, so a check against a
   database another process was writing failed at once with "database is
   locked". It is now set on every read-only connection.
-- **A cold build uses less memory at its peak.** The compile of the runtime
-  package (`sky-app/rt`) is the largest process of every build, and Go gave
-  it up to four SSA back-ends at once. Every `go build` Sky runs (the native
-  app, the Sky.Spa wasm client, `sky check`, `sky test`, the cache warm-up)
-  now passes `-gcflags=sky-app/rt=-c=2`: the cold build peak drops from
-  about 990-1060 MB to about 850-890 MB, and the compiled code is the same.
-  It is left out when your `GOFLAGS` has a `-gcflags`, because Go keeps only
-  the last matching `-gcflags` pattern and would drop yours.
-- **`TestDictHashKeepsTheTrieShallow` failed about one run in 50 with
-  nothing wrong.** Measured over 10,000 seeds per key family on
-  linux/amd64, the Dict hash matches a uniform hash (depth 11 for 100,000
-  keys in 0.2 to 0.5% of seeds), so the bound of 10 was inside its normal
-  tail. The bound is 12, set from that distribution, and a new test counts
-  the key pairs that share the first 7 trie levels (about 19 for a uniform
-  hash; a weak mix gives thousands).
+- **`sky db check` runs the data check the app's `Store.migrate` runs.** On
+  SQLite it said "up to date" (exit 0) for a `TEXT` column of `Codec.auto`
+  Money JSON read by `Codec.moneyIn GBP`, which the app refused: only the
+  column type was compared. It now calls the runtime's check
+  (`Store.checkProjectData`) and reports each refusal as drift, with the
+  runtime's text and its conversion SQL, on both engines.
+- **An adopted `sky db check --code` stub passes `sky db check`.** The stub
+  and the check read column types two ways. On SQLite a `TIMESTAMP`,
+  `DATETIME`, `DATE`, `UUID`, `JSON` or `NUMERIC` column got a `Maybe Float`
+  field: the stub failed on its first row stored as text ("is a Float, and
+  the database holds \"2026-11-02 10:00:00\""), and the check reported the
+  stub's own fields as type drift. On PostgreSQL a `timestamptz`,
+  `timestamp`, `uuid`, `jsonb`, `date`, `interval` or array column got a
+  `Maybe String` field that the check reported as drift, and a `DEFAULT 'x'`
+  was left out and then reported. A date, time, UUID or JSON column is now a
+  `String` field on SQLite (a `NUMERIC` one stays a `Float`), the check
+  accepts a `String` field on any PostgreSQL column that is not a number, a
+  boolean or binary data (the Store reads it as text, and the server casts
+  the text it writes), and the stub declares each live default with
+  `Store.defaultText` / `defaultInt` / `defaultFloat` / `defaultBool` /
+  `defaultDecimal` / `defaultNow`. A default no builder can declare (an
+  expression such as `gen_random_uuid()`) is a comment in the stub. A test
+  builds every stub kind against its column, and the SQLite and PostgreSQL
+  flow tests adopt a stub and check that `sky db check` exits 0.
+- **`sky db status` reports an edited applied migration as EDITED.** It
+  compared names only, so a file changed after it ran showed as "applied" and
+  "up to date." while `sky db check` said EDITED. Both now read the ledger
+  through `Migrate.inspectSchema` (the checksum check `sky db migrate` uses),
+  and `status` exits 1 on an edited file. In a project without
+  `db/migrations` (`SKY_DB_OP=status`), `status` no longer creates the
+  `_sky_migrations` ledger.
+- **The `sky db status` hint was wrong for an app that has no `Db.migrate`.**
+  A write refused in read-only mode said "Move that write after
+  `Db.migrate`", but an app that migrates with `Store.migrate` has no
+  `Db.migrate`: its `CREATE TABLE`, or any write after it, fails there. The
+  hint now gives both cases: move the write after `Db.migrate`, or, with no
+  `Db.migrate`, compare the database with `sky db check`, which reads the
+  code's `Store.project` and runs no app code.
+
+#### `sky run`, `sky watch`, Sky.Spa and builds
 
 - **`sky run` passes the embedded database address to a `Std.App` app.** On a
   project with `[database] embedded = true`, `sky run` on a `Std.App` entry
@@ -346,7 +452,11 @@ a `Result` wherever two currencies can differ (see Breaking).
     `embedded = true` is refused on every path),
   - the cluster and its DSN after the build,
   - the `--profile` variables and the `--db-push` / `--db-migrate` /
-    `--db-seed` steps, which the `Std.App` and Sky.Spa paths ignored,
+    `--db-seed` steps, which the `Std.App` and Sky.Spa paths ignored. The
+    profile directory is an absolute path (`<project>/profile`, or
+    `--profile-dir` read against the directory you ran `sky` in): a Sky.Spa
+    backend runs in `.split/backend`, and a relative directory put its
+    profiles in that build folder, which the next build deleted,
   - `--open` on a `Std.App` entry.
 
   `sky run --embed` on a `Std.App` or Sky.Spa entry starts no supervised
@@ -378,81 +488,39 @@ a `Result` wherever two currencies can differ (see Breaking).
   "Undefined name: app … this is a defect in Sky". Any other expression around `App.run`
   (for example `Task.map` over it, or a `case`), and an `App.run` reached any
   other way, fails the build and names the forms that carry.
-- **A Store column named with an SQL keyword is refused with the reason.** The
-  Store writes names unquoted (quoting would change how PostgreSQL folds an
-  existing camelCase column), so a field named `order` failed at its first
-  statement with "syntax error at or near order". A keyword of both engines
-  (`order`, `select`, `group`, `from`, …) is now a Store builder problem, which
-  every verb and `sky verify`'s stores step report; a keyword of one engine
-  (`user` and `system_user` on PostgreSQL, `index` and `commit` on SQLite) is
-  refused by `Store.migrate` and `Store.create` on that engine. On SQLite a
-  name that fails in one position only is refused there only: `if` as a
-  table name, `raise` as a column name. The lists are measured: tests run the
-  Store's statements with every SQLite keyword and every PostgreSQL reserved
-  keyword (`pg_get_keywords()`) in both positions. Map the field to another
-  column with `Codec.field "sort_order" .order Codec.int`.
-- **`sky db status` reports an edited applied migration as EDITED.** It
-  compared names only, so a file changed after it ran showed as "applied" and
-  "up to date." while `sky db check` said EDITED. Both now read the ledger
-  through `Migrate.inspectSchema` (the checksum check `sky db migrate` uses),
-  and `status` exits 1 on an edited file. In a project without
-  `db/migrations` (`SKY_DB_OP=status`), `status` no longer creates the
-  `_sky_migrations` ledger.
-- **A removed `Std.Money` name used bare names its replacement.** After
-  `import Std.Money exposing (..)`, a bare `setRate` or `sumOf` gave only
-  "Undefined name"; it now names the replacement, as `Money.setRate` and
-  `exposing (setRate)` do.
-- **Every `Std.Money` `Err` names the operation called.** `Money.sum` over two
-  currencies said "Money.add: …", and `Money.fromString` said
-  "Decimal.fromString: …". They now say `Money.sum:` and
-  `Money.fromString:`.
-- **`[E1012]` names the right release for a v0.29 stdlib name.** A name new in
-  v0.29.x (`Codec.value`, `Money.sum`) was called "new since Sky v0.27.8" with
-  a link to docs/migration/v0.28.md. The message now names the newest release
-  that lacked the name (v0.28.1 for a v0.29 name) and links
-  docs/migration/v0.29.md; a v0.28.0 name still points at the v0.28 guide.
+  The carried setup is the first task of the backend's boot sequence, so a
+  setup that fails stops the backend with its error and a non-zero exit, as
+  on `--target web`; it never listens. An earlier candidate of this release
+  forced it with `let _ =`, which drops an `Err`: the backend logged nothing,
+  listened and served on a database whose schema step had failed.
+- **A cold build uses less memory at its peak.** The compile of the runtime
+  package (`sky-app/rt`) is the largest process of every build, and Go gave
+  it up to four SSA back-ends at once. Every `go build` Sky runs (the native
+  app, the Sky.Spa wasm client, `sky check`, `sky test`, the cache warm-up)
+  now passes `-gcflags=sky-app/rt=-c=2`: the cold build peak drops from
+  about 990-1060 MB to about 850-890 MB, and the compiled code is the same.
+  It is left out when your `GOFLAGS` has a `-gcflags`, because Go keeps only
+  the last matching `-gcflags` pattern and would drop yours.
 
-- **A decoded currency matches its own `case` arm.** `Codec.auto` and
-  `Db.Decode.money` built every named currency with the tag of `USD`, so a
-  decoded `GBP` matched the `USD` arm of a `case` and printed as USD. Each
-  currency now carries its own constructor.
-- **`Codec.auto` Decimal and Money decode strictly.** A Decimal (and a Money
-  amount) is read under `-?[0-9]+(\.[0-9]+)?`, at most 1000 characters. An
-  exponent used to reach the decimal library, and `"1e2000000000"` in a request
-  body made the process write out billions of digits (the test of it ran for
-  five minutes). A Money with no `currency` was `CurrencyRaw ""` and is now an
-  `Err`; `"gbp"` reads as GBP; an exact JSON number amount reads.
-- **`Decimal.fromString` bounds its exponent.** It keeps the exponent grammar
-  (`"1.5e3"` is 1500), but `"1e2000000000"` parsed at once and then took
-  minutes to print or add (a decimal with exponent e has about |e| digits).
-  Text over 1000 characters, or an exponent past 10000 either way, is now an
-  `Err`. `Money.fromString` and a Decimal that reaches the runtime as text go
-  through the same bound.
-- **The JSON Schema of a `Codec.auto` Decimal or Money field is exact.** It was
-  the open `{}`, so `Codec.toXml` wrote the JSON text `"12.34"` into the
-  element. It is now a string with the decimal pattern, and the Money object.
-- **`Db.Decode.money` reads both Money text forms strictly.** It reads
-  `"USD 12.34"` (`SqlMoney`) and `"12.34 USD"` (`Money.formatWithCode`), the
-  code in upper case, the amount under the strict grammar.
-- **A Store JSON field on a binary column is refused, not misread.**
-  `Schema.blob` makes `BYTEA` (`BLOB` on SQLite) through
-  `Schema.createSchema`, and a `Std.Db.Store` reads and writes a JSON field
-  (a list, a record, a custom type, a `Json.Value`) as text. A Store over such
-  a table misread every row. `Store.migrate` and `Store.pushProject` now
-  refuse it with an `Err` naming `table.column` and the fix. Both types stay:
-  a `Schema.blob` column that `sky db push` makes `TEXT` is named once at
-  WARN, and `sky verify`'s stores step names every `Schema.blob` column
-  (docs/skydb/overview.md).
-- **`Schema.int` is one column type on both creation paths.** On PostgreSQL
-  `Schema.createSchema` made a 4-byte `INTEGER` and `Store.pushProject
-  (Schema.toProject …)` (and `sky db push`) a `BIGINT`, so a fresh database
-  differed with the path that made it. Both now make `BIGINT`, the size of a
-  Sky `Int`: an `INTEGER` column fails with "integer out of range" above
-  2,147,483,647. Neither path alters a column that exists, and `sky db migrate
-  --gen` proposes no change: a table an older `createSchema` made keeps
-  `INTEGER`. `Store.migrate` and `pushProject` treat it as a match and log a
-  one-time WARN naming the column, with the `ALTER TABLE … ALTER COLUMN … TYPE
-  BIGINT` that widens it. Widening stays your choice.
+#### Compiler messages
+
+- **`[E1012]` names the right release for a v0.29 stdlib name.** A name new in
+  v0.29.x was called "new since Sky v0.27.8" with a link to
+  docs/migration/v0.28.md. The message now names the newest release that
+  lacked the name, which is the release users upgrade from: v0.29.1 for a
+  name new in v0.29.2 (`Codec.value`, `Money.sum`), v0.28.1 for one new in
+  v0.29.0, each with a link to docs/migration/v0.29.md. A v0.28.0 name still
+  points at the v0.28 guide.
+
+#### Contributors
+
+- **`TestDictHashKeepsTheTrieShallow` failed about one run in 50 with
+  nothing wrong.** Measured over 10,000 seeds per key family on
+  linux/amd64, the Dict hash matches a uniform hash (depth 11 for 100,000
+  keys in 0.2 to 0.5% of seeds), so the bound of 10 was inside its normal
+  tail. The bound is 12, set from that distribution, and a new test counts
+  the key pairs that share the first 7 trie levels (about 19 for a uniform
+  hash; a weak mix gives thousands).
 - **Contributors: a gate run beside `xtask harness --verify-falsifiers` no
   longer undoes its mutation.** Every `xtask harness` run replays the mutation
   journals at start, to recover from a killed falsifier run. It could not tell
@@ -469,6 +537,30 @@ a `Result` wherever two currencies can differ (see Breaking).
 
 ### Breaking
 
+- **⚠ Breaking: every type variable in an annotation is rigid.** The checker
+  made only the variables of an annotation's RESULT rigid. A variable that
+  appears only in argument position stayed flexible, so the body could pin
+  it to a type, or make two variables one type, and the annotation still
+  checked: `show : a -> String` with `show v = "<" ++ v ++ ">"` printed
+  `<1>` for `show (Just 1)`, and `coerce : a -> b` with `coerce x = x` turned
+  a `String` into an `Int` that `n + 1` then crashed on at run time (a panic
+  from well-typed code). Each variable now stands for every type a caller may
+  choose, as in Elm: the body may keep it polymorphic, but a body that uses
+  it as a type, or as another variable, is `[E2001]` with the fix:
+
+  ```
+  [show] the type annotation says `a` can be any type, but this code uses it
+  as `String`. … Fix: write `String` instead of `a` in the type annotation,
+  or change the code so it does not depend on the type
+  ```
+
+  A bound the body needs and the name does not spell (`a` ordered with `<`)
+  asks for `comparable` / `number` / `appendable`, as before. A `let`
+  annotation may name the enclosing annotation's variable (scoped type
+  variables), and kernel and FFI signatures are unchanged. Measured over the
+  stdlib, every test, `apps/*`, 76 examples and 19 user projects, it rejects
+  3 definitions in 2 projects, and each was wrong: `examples/13-skyshop` is
+  fixed in this release (see Migration).
 - **⚠ Breaking: the `Std.Money` API is redesigned** (docs/migration/v0.29.md,
   "Money results"). `Money.add` of two currencies returned the left operand in
   silence, and `compare`, `lt`, `lte`, `gt`, `gte` and `sumOf` ignored the
@@ -510,12 +602,13 @@ a `Result` wherever two currencies can differ (see Breaking).
   (`UPDATE … SET total = '{"amount":"1.00","currency":"GBP"}'`) before you
   upgrade.
 - **`sky db status` (without `db/migrations`) runs the app read-only.** It
-  runs the app's `main` with `SKY_READ_ONLY_DB=1` up to `Db.migrate`, so an
-  app that writes before `Db.migrate` (a boot log row, a `CREATE TABLE IF NOT
-  EXISTS`) now fails there with "attempt to write a readonly database"
-  (SQLite) or "cannot execute … in a read-only transaction" (PostgreSQL),
-  where before v0.29.2 `status` wrote those rows. The error names the
-  read-only mode and what to do (see Migration).
+  runs the app's `main` with `SKY_READ_ONLY_DB=status` up to `Db.migrate`, so
+  an app that writes before `Db.migrate` (a boot log row, a `CREATE TABLE IF
+  NOT EXISTS`), or that has no `Db.migrate` and migrates with `Store.migrate`,
+  now fails there with "attempt to write a readonly database" (SQLite) or
+  "cannot execute … in a read-only transaction" (PostgreSQL), where before
+  v0.29.2 `status` wrote those rows. The error names the read-only mode and
+  what to do (see Migration).
 - **`Codec.ColType` has two new constructors, `CDecimal` and `CMoneyIn`.** A
   `case` over a `ColType` in your own code must add the arms (the compiler
   names them). `CMoneyIn code` is the column `Codec.moneyIn` makes: a
@@ -523,12 +616,27 @@ a `Result` wherever two currencies can differ (see Breaking).
 
 ### Migration
 
+- **An annotation whose variable the body pins to a type** (the rigid
+  type-variable check above). The pattern the measurement found is a
+  framework callback annotated `init : a -> ( Model, Cmd Msg )` whose body
+  reads its argument as a request (`Dict.get "cookies" req`). Write the type
+  the body uses, as the error says: `init : Dict String String -> …`. A
+  `Std.App` `init` takes `()`, so its argument holds no request: write
+  `init : () -> …`, and read the request with `App.withRequest`
+  (`examples/13-skyshop`'s old `init` read a cookie from `()` and so never
+  pre-loaded a user; that dead code is removed). Likewise `viewAddToCart : Model ->
+  a -> …` with `Db.getField "id" product` in the body is `Model -> Dict
+  String String -> …`. A definition that is truly polymorphic needs no
+  change.
 - **A `Codec.autoWith` key that names no column and no record field** was
   ignored before, and is now an error (`Store.fromCodec` refuses the store and
   the codec does not decode). The error names the keys the record takes: use
   one of them, or remove the override.
-- **Upgrading from v0.29.1:** every Breaking entry above is a compile error
-  that names its replacement (docs/migration/v0.29.md, "Money results").
+- **Upgrading from v0.29.1:** each Breaking change to an API above (the
+  rigid type variables, `Std.Money`, `Codec.value`, `Codec.ColType`) is a
+  compile error that names the fix (docs/migration/v0.29.md). The other two
+  (a stored Money with an empty currency, `sky db status` read-only) show at
+  run time, with the steps below.
 - **Moving a `Codec.auto` Decimal or Money field to `Codec.decimal` /
   `Codec.moneyIn`:** convert the column first, with the statement the
   `Store.migrate` refusal names (in a migration file), then switch the codec.
@@ -549,7 +657,9 @@ a `Result` wherever two currencies can differ (see Breaking).
   status`:** move the write after `Db.migrate` (in status mode `Db.migrate`
   prints the report and exits, so nothing after it runs), or move to file
   migrations with `sky db init`; `sky db status` then reads `db/migrations`
-  and the ledger and does not run `main`.
+  and the ledger and does not run `main`. An app with no `Db.migrate` (it
+  uses `Store.migrate`) has no migration status to report: check it with
+  `sky db check`, which runs no app code.
 - **`Std.Db.Store` columns named with an SQL keyword:** map the field to
   another column name (`Codec.field "sort_order" .order Codec.int`) and rename
   the column in a migration. Such a column never worked through the Store.

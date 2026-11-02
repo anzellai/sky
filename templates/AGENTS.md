@@ -9,7 +9,9 @@ surface at check time. No runtime panics from well-typed code, no nil leakage,
 no silent numeric coercion.
 
 Type annotations are load-bearing: `f : String -> Int -> Result Error Profile`
-rejects a body that would infer wider. Inline records aren't allowed in
+rejects a body that would infer wider. A type variable in an annotation means
+"any type the caller picks": `show : a -> String` whose body uses its argument
+as a `String` is refused, so write the concrete type the body needs. Inline records aren't allowed in
 signatures — give any record in a signature a `type alias`.
 
 ## The full API lives in `sky doc` — not here

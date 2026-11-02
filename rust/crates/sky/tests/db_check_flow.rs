@@ -261,6 +261,140 @@ fn stubs_compile(dir: &Path, code_out: &str, store: &str, env: &[(&str, &str)]) 
     );
 }
 
+/// Adopt the `--code` stubs into the BASE project (whose own tables are
+/// migrated, so `sky db check` is clean before the stubs): a `Stubs` module
+/// whose `stores` join `db`. The code must compile.
+fn adopt_stubs(dir: &Path, code_out: &str, stores: &[&str], env: &[(&str, &str)]) {
+    std::fs::write(
+        dir.join("src").join("Stubs.sky"),
+        format!("module Stubs exposing (..)\n\n{}", stub_block(code_out)),
+    )
+    .unwrap();
+    let tables: String = stores
+        .iter()
+        .map(|s| format!(", Store.toTable Stubs.{s}"))
+        .collect();
+    std::fs::write(
+        dir.join("src").join("Main.sky"),
+        main_src("", "", "", "import Stubs", &tables),
+    )
+    .unwrap();
+    let (code, out, err) = sky(dir, &["check"], env);
+    assert_eq!(
+        code,
+        0,
+        "the --code stubs do not compile:\n{}\n{out}\n{err}",
+        std::fs::read_to_string(dir.join("src").join("Stubs.sky")).unwrap()
+    );
+}
+
+/// An adopted `--code` stub passes `sky db check` (v0.29.2 sixth Judge). On
+/// SQLite a `TIMESTAMP` / `DATETIME` / `DATE` / `UUID` / `JSON` / `NUMERIC`
+/// column got a `Maybe Float` field: the stub could not read a row another
+/// writer stored as text, and `check` reported its own six fields as type
+/// drift. A `DEFAULT 'x'` was left out and then reported. The adopted stub
+/// now reads every row, and `check` exits 0.
+#[test]
+fn sqlite_an_adopted_code_stub_passes_check() {
+    if !required(Need::Go, tool_on_path("go")) || !required(Need::Sqlite3, tool_on_path("sqlite3"))
+    {
+        return;
+    }
+    let dir = project("sky-dbcheck-stub-sq", "", &base_src());
+    let dbf = dir.join("stub.db");
+    let path = dbf.to_string_lossy().into_owned();
+    let env = [("SKY_DB_PATH", path.as_str())];
+    ok(&dir, &["db", "init"], &env);
+    ok(&dir, &["db", "migrate", "--gen", "init"], &env);
+    ok(&dir, &["db", "migrate"], &env);
+    sqlite3(
+        &dbf,
+        "CREATE TABLE ext (id INTEGER PRIMARY KEY, created TIMESTAMP, ts DATETIME, dt DATE, \
+         u UUID, js JSON, price NUMERIC, note TEXT NOT NULL DEFAULT 'x', n INTEGER DEFAULT 5, \
+         flag BOOLEAN DEFAULT 1, stamped DATETIME DEFAULT CURRENT_TIMESTAMP);\
+         INSERT INTO ext (id, created, ts, dt, u, js, price) VALUES \
+         (1, '2026-11-02 10:00:00', '2026-11-02T10:00:00Z', '2026-11-02', \
+         '0b7f3c2e-1a2b-4c3d-8e9f-0a1b2c3d4e5f', '{\"a\":1}', 12.5);",
+    );
+    let (code, code_out, _) = sky(&dir, &["db", "check", "--code"], &env);
+    assert_eq!(
+        code, 1,
+        "the extra table is drift before adoption:\n{code_out}"
+    );
+    for want in [
+        "created : Maybe String",
+        "dt : Maybe String",
+        "u : Maybe String",
+        "js : Maybe String",
+        "price : Maybe Float",
+        "|> Store.defaultText \"note\" \"x\"",
+        "|> Store.defaultInt \"n\" 5",
+        "|> Store.defaultBool \"flag\" True",
+        "|> Store.defaultNow \"stamped\"",
+    ] {
+        assert!(
+            code_out.contains(want),
+            "missing {want:?} in --code:\n{code_out}"
+        );
+    }
+    adopt_stubs(&dir, &code_out, &["extStore"], &env);
+    let (code, out, err) = sky(&dir, &["db", "check"], &env);
+    assert_eq!(code, 0, "an adopted stub must pass check:\n{out}\n{err}");
+    assert!(!out.contains("ext."), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The PostgreSQL arm: `timestamptz`, `timestamp`, `uuid`, `jsonb`, `date`,
+/// `interval` and `int[]` columns got `Maybe String` fields that `check`
+/// reported as type drift, and a `DEFAULT 'x'` was left out.
+#[test]
+fn postgres_an_adopted_code_stub_passes_check() {
+    if !required(Need::Go, tool_on_path("go")) {
+        return;
+    }
+    let pg = Pg::new();
+    if !required(Need::Postgres, pg.is_some()) {
+        return;
+    }
+    let pg = pg.unwrap();
+    let dir = project("sky-dbcheck-stub-pg", "", &base_src());
+    let env = [("DATABASE_URL", pg.dsn.as_str())];
+    ok(&dir, &["db", "init"], &env);
+    ok(&dir, &["db", "migrate", "--gen", "init"], &env);
+    ok(&dir, &["db", "migrate"], &env);
+    pg.psql(
+        "CREATE TABLE ext (id BIGSERIAL PRIMARY KEY, at TIMESTAMPTZ DEFAULT now(), \
+         t TIMESTAMP, u UUID, j JSONB, d DATE, iv INTERVAL, ns INTEGER[], \
+         note TEXT NOT NULL DEFAULT 'x', price NUMERIC DEFAULT 12.30);\
+         INSERT INTO ext (t, u, j, d, iv, ns) VALUES ('2026-11-02 10:00:00', \
+         '0b7f3c2e-1a2b-4c3d-8e9f-0a1b2c3d4e5f', '{\"a\":1}', '2026-11-02', '1 day', '{1,2}')",
+        true,
+    );
+    let (code, code_out, _) = sky(&dir, &["db", "check", "--code"], &env);
+    assert_eq!(
+        code, 1,
+        "the extra table is drift before adoption:\n{code_out}"
+    );
+    for want in [
+        "at : Maybe String",
+        "u : Maybe String",
+        "ns : Maybe String",
+        "|> Store.defaultNow \"at\"",
+        "|> Store.defaultText \"note\" \"x\"",
+        "|> Store.defaultDecimal \"price\" (Decimal.fromMinor 1 123)",
+    ] {
+        assert!(
+            code_out.contains(want),
+            "missing {want:?} in --code:\n{code_out}"
+        );
+    }
+    adopt_stubs(&dir, &code_out, &["extStore"], &env);
+    let (code, out, err) = sky(&dir, &["db", "check"], &env);
+    assert_eq!(code, 0, "an adopted stub must pass check:\n{out}\n{err}");
+    assert!(!out.contains("ext."), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Clean → 0; edited → 1; pending → 1 and `--write` refused; `--write` on a
 /// copy writes the SAME ops `--gen` writes; after migrate → 0.
 #[test]
@@ -1140,7 +1274,8 @@ main =
     for want in [
         "attempt to write a readonly database",
         "SKY_READ_ONLY_DB=status",
-        "Move that write after Db.migrate",
+        "move the write after it",
+        "If the app has no Db.migrate",
         "file migrations",
     ] {
         assert!(

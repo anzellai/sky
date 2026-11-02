@@ -571,7 +571,11 @@ The client build generates the backend's own `main`, so it carries the work
 your `main` does before the app into that backend, where it runs before the
 server listens: a `let _ = <task>` prefix, and a setup chained in front of
 `App.run` (`main = setup |> Task.andThen (\_ -> App.run app)`, or
-`Task.andThen (\_ -> App.run app) setup`). Any other expression around
+`Task.andThen (\_ -> App.run app) setup`). The chained setup is the first
+task of the backend's boot sequence, so a setup that fails (a schema step, a
+seed) stops the backend with its error and a non-zero exit, as the `web`
+build does; the backend never listens. A `let _ = <task>` prefix ignores its
+task's `Err` on every target. Any other expression around
 `App.run` (a `Task.map` over it, a `case`, `Task.spawn`) fails the build and
 names these forms, because the build cannot tell what must run on the server.
 

@@ -443,7 +443,7 @@ writes a `profile/` directory next to your project on stop:
 
 Options:
 
-- `--profile-dir <dir>` — where to write (default `profile/`, relative to the project root).
+- `--profile-dir <dir>` — where to write (default `profile/` in the project root; a relative `<dir>` is read against the directory you ran `sky` in). The app gets an absolute path, so a Sky.Spa backend (which runs in its build folder) and a `Std.App` entry write there too.
 - `--profile-timeout <dur>` — if the app hasn't exited after `<dur>` (e.g. `30s`, `2m`), dump profiles with a hang verdict and exit. **Opt-in** — leave it off for a server (which "hangs" by design); it still profiles until you Ctrl-C it.
 
 ```sh
@@ -1034,7 +1034,11 @@ usable directly in a deploy pipeline: `SKY_DB_OP=migrate ./sky-out/app`.
   "cannot execute … in a read-only transaction" (PostgreSQL), and the error
   says so and names this mode. Move that write after `Db.migrate`, or use
   file migrations (`sky db init`): with `db/migrations`, `sky db status`
-  reads the files and the ledger and does not run `main`. A read-only
+  reads the files and the ledger and does not run `main`. An app with no
+  `Db.migrate` (one that migrates with `Store.migrate`, which creates and
+  alters tables) has no migration status to report, and its first write
+  fails the same way: compare it with `sky db check`, which reads the
+  code's `Store.project` and runs no app code. A read-only
   SQLite connection keeps `busy_timeout`, so it waits for a writer instead
   of failing with "database is locked".
 - `sky db migrate` exits non-zero if a migration fails — run it as a
@@ -1104,7 +1108,12 @@ it, no process has it open and every committed page is in the main file, so it
 is read with `immutable=1`; with one, a live process holds pages the main file
 does not have yet, and the check reads through the `-wal` and `-shm` that are
 there. So the check works in a directory it cannot write, and sees a running
-app's committed rows. Every PostgreSQL transaction is read-only, and no
+app's committed rows. A `-wal` file with no `-shm` file beside it (a backup
+that copied the database and its `-wal` only) is refused with exit 2: SQLite
+reads a `-wal` only through the `-shm` index, which a read-only open would
+have to create. The message names the fix: fold the `-wal` into the database
+once (`sqlite3 x.db 'PRAGMA wal_checkpoint(TRUNCATE)'`, with no app running),
+or copy the `-shm` file with it. Every PostgreSQL transaction is read-only, and no
 telemetry table is written.
 `sky db status` runs the same way. It compares every table of the project's `db :
 Store.Project` (the `Std.Db.Store` stores, and the `Std.Db.Schema` tables that
@@ -1152,9 +1161,16 @@ while a migration is pending or edited, and in a project with no
 field for (and whether an insert then fails), the columns a field reads as
 another type, and the nullable columns a required field reads. For each table
 the code declares nothing for, it prints a Sky record type alias, a `Codec`
-(`Codec.auto`, with `Codec.decimal` for a `NUMERIC` column) and a `Store`, ready
-to copy into a module. `sky db check` never edits your code, never runs SQL, and
-never writes a file without `--write`.
+(one `Codec.field` per column, `Codec.decimal` for a PostgreSQL `NUMERIC`
+column) and a `Store` with a `Store.default…` builder for each column default,
+ready to copy into a module. Each field has the type `sky db check` accepts for
+its column, so an adopted stub passes the check: a date, time, UUID or JSON
+column is a `String` (on SQLite as well, where such a type has NUMERIC
+affinity), as is any PostgreSQL type that is not a number, a boolean or binary
+data (`timestamptz`, `uuid`, `jsonb`, `interval`, an array). A default no Store
+builder declares (an expression such as `gen_random_uuid()`) is a comment in
+the stub. `sky db check` never edits your code, never runs SQL, and never
+writes a file without `--write`.
 
 ### `sky db push` — no-migration-files dev sync
 

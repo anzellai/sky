@@ -69,7 +69,7 @@ func (d *SkyDb) executor() dbExecutor {
 	ex := d.rawExecutor()
 	if d.driver == "pgx" {
 		// An int, float or bool also binds into a TEXT column (db_pgx_args.go).
-		return pgArgExecutor{inner: ex}
+		return pgArgExecutor{inner: ex, pool: d.conn}
 	}
 	// A nullable Float or Bool written into a v0.28 TEXT column binds the
 	// text v0.28 wrote (db_sqlite_legacy.go).
@@ -439,6 +439,9 @@ func dbSqliteReadOnlyDSN(dsn string) (string, string) {
 		if msg := dbSqliteMustExist(path, dsn); msg != "" {
 			return "", msg
 		}
+		if msg := dbSqliteWalWithoutShm(path); msg != "" {
+			return "", msg
+		}
 		params := dbSqliteReadOnlyParams(query, path)
 		esc := strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23").Replace(path)
 		return "file:" + esc + "?" + strings.Join(append(params, guards), "&"), ""
@@ -467,6 +470,9 @@ func dbSqliteReadOnlyDSN(dsn string) (string, string) {
 	}
 	file := dbSqliteURIPath(path)
 	if msg := dbSqliteMustExist(file, dsn); msg != "" {
+		return "", msg
+	}
+	if msg := dbSqliteWalWithoutShm(file); msg != "" {
 		return "", msg
 	}
 	params := dbSqliteReadOnlyParams(query, file)
@@ -518,6 +524,35 @@ func dbSqliteReadOnlyParams(query, file string) []string {
 		}
 	}
 	return params
+}
+
+// dbSqliteWalWithoutShm refuses a WAL database that has a `-wal` file but no
+// `-shm` file, as a backup tool leaves it when it copies the database and
+// its `-wal` only (v0.29.2 sixth Judge). The `-wal` holds committed
+// transactions the main file does not have yet, and SQLite reads a `-wal`
+// only through the `-shm` index: `mode=ro` creates the `-shm` (a 32 KB file
+// written beside the database, or "unable to open database file" in a
+// read-only directory), `immutable=1` would ignore the `-wal` and read stale
+// data, and an exclusive-lock read without the index is refused by a
+// read-only open. No live process holds the database (a live connection
+// keeps the `-shm`), so the fix the message names is safe: fold the `-wal`
+// into the database once, or copy the `-shm` with it.
+func dbSqliteWalWithoutShm(file string) string {
+	if !dbSqliteIsWAL(file) {
+		return ""
+	}
+	if _, err := os.Stat(file + "-wal"); err != nil {
+		return ""
+	}
+	if _, err := os.Stat(file + "-shm"); !os.IsNotExist(err) {
+		return ""
+	}
+	return fmt.Sprintf("db.connect: %s has a -wal file but no -shm file, and this process opens databases "+
+		"read-only (SKY_READ_ONLY_DB is set), so it writes no file. The -wal holds committed transactions "+
+		"the database file does not have yet, and SQLite reads it only through the -shm index, which a "+
+		"read-only open would have to create. Fold the -wal into the database once "+
+		"(`sqlite3 %s 'PRAGMA wal_checkpoint(TRUNCATE)'`, with no app running), or copy the -shm file "+
+		"with the database and its -wal, then run this again", file, file)
 }
 
 // dbSqliteIsWAL reports whether the SQLite database `file` is in WAL mode:
@@ -1728,7 +1763,7 @@ func dbTransactionAttempt(d *SkyDb, capBody any) (any, bool) {
 		tx.Rollback()
 		// The body may have read a column type its own schema change made:
 		// forget what it read (db_sqlite_legacy.go).
-		sqliteDeclCacheReset(d.conn)
+		dbColumnCacheReset(d.conn)
 		// A panic is never retried: it is a defect in the body, not a
 		// conflict, and replaying it just panics again.
 		return result, !panicked && txDb.sawRetryableTxError()
@@ -2048,7 +2083,7 @@ func dbMigrateCore(d *SkyDb, entries []migEntry, op string, fail func(msg string
 			for _, op := range e.partial {
 				if err := sqliteIndexPredicateLegacyErr(tx, op.Table, op.Name, op.Where); err != nil {
 					tx.Rollback()
-					sqliteDeclCacheReset(d.conn)
+					dbColumnCacheReset(d.conn)
 					msg := "migration '" + name + "': " + err.Error()
 					if _, refused := err.(sqliteLegacyIndexError); refused {
 						return fail(msg, Err[any, any](ErrInvalidInput("db.migrate: "+msg)))
@@ -2070,7 +2105,7 @@ func dbMigrateCore(d *SkyDb, entries []migEntry, op string, fail func(msg string
 			return fail("commit '"+name+"': "+err.Error(),
 				Err[any, any](ErrIo("db.migrate: commit '"+name+"': "+err.Error())))
 		}
-		sqliteDeclCacheReset(d.conn)
+		dbColumnCacheReset(d.conn)
 		out = append(out, name)
 	}
 

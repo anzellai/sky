@@ -147,7 +147,9 @@ and silent. Among them: `Sky.Core.Regex` takes a compiled `Regex`
 (`Regex.fromString` is the only constructor, a literal pattern is checked at
 compile time, `[E2014]`), a new stdlib name that two `exposing (..)` imports
 both export is `[E1012]` (qualify it), a value defined in terms of itself is
-refused, `Std.Image` refuses images over its decode limits, and a Sky.Live
+refused, every type variable in an annotation is rigid (v0.29.2: `init : a ->
+…` whose body reads its argument as a `Dict` is `[E2001]`; write the type the
+body uses), `Std.Image` refuses images over its decode limits, and a Sky.Live
 session in a persistent store whose model holds a `Dict` starts fresh once
 after the upgrade.
 
