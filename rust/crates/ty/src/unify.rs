@@ -17,7 +17,7 @@
 
 use crate::TyVarId;
 use base::Name;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// The bounds a type variable can carry: Elm's four built-in super-vars
 /// (`Type.hs:62`) plus `Encodable` (v0.27.0, B-1). NOT typeclasses (doc 03
@@ -54,6 +54,25 @@ impl SuperType {
     /// non-empty interface parameter (`goi@…`) takes. A Sky value never
     /// implements a Go interface (`[E2013]`, v0.27.0).
     pub const GoValue: SuperType = SuperType(16);
+    /// An integer LITERAL on the check path (v0.29.2). It is an `Int`,
+    /// except that it may stand for a RIGID annotation variable that carries
+    /// the `number` bound: `isPositive : number -> Bool; isPositive x = x > 0`
+    /// (Elm's rule: a literal is a `number`). Anything else it meets turns it
+    /// into `Int` first ([`UnionFind::default_int_literal`]), so every other
+    /// program types exactly as when a literal was a concrete `Int` (`1 + 2.5`
+    /// is still refused; a `Float` slot still needs `1.0`). One that nothing
+    /// resolves reads back as `Int`.
+    pub const IntLit: SuperType = SuperType(32);
+    /// A `number` variable of a def's OWN annotation, on the LOWERING path
+    /// only (v0.29.2). The lowering view infers a body without its
+    /// annotation, so in `double : number -> number; double x = x * 2` the
+    /// literal pinned `x` to `Int` and `double 2.5` truncated to `4`. When an
+    /// annotation names a `number` variable, the body is inferred against it
+    /// with this variable: it absorbs an `Int` (in a checked program only an
+    /// integer literal can meet it, the checker refuses anything else), binds
+    /// like a plain variable to any other type, and reads back as the type
+    /// variable `number`, so the arithmetic lowers to the generic `rt.Mul`.
+    pub const NumVar: SuperType = SuperType(64);
 
     pub fn is_empty(self) -> bool {
         self.0 == 0
@@ -70,9 +89,12 @@ impl SuperType {
     pub fn minus(self, o: SuperType) -> SuperType {
         SuperType(self.0 & !o.0)
     }
-    /// Close the set upwards: `Number ⇒ Comparable ⇒ Encodable`.
+    /// Close the set upwards: `IntLit ⇒ Number ⇒ Comparable ⇒ Encodable`.
     pub fn closure(self) -> SuperType {
         let mut b = self.0;
+        if b & 32 != 0 {
+            b |= 1;
+        }
         if b & 1 != 0 {
             b |= 2;
         }
@@ -231,6 +253,9 @@ pub struct UnionFind {
     /// `++` (an appendable) and then `">"` (a `String`), and the right advice
     /// is "write `String`", not "write `appendable`" (v0.29.2).
     pub(crate) rigid_missing: Vec<(Name, SuperType)>,
+    /// Every integer-literal variable made since the last
+    /// [`UnionFind::default_all_int_literals`] (`SuperType::IntLit`).
+    int_literals: Vec<TyVarId>,
     /// Reused buffers of the occurs check (no type state: see
     /// [`OccursScratch`]).
     occurs_scratch: OccursScratch,
@@ -289,6 +314,9 @@ impl UnionFind {
     /// the id is the next dense index, drawn in constraint-generation order.
     pub fn fresh(&mut self, content: Content) -> TyVarId {
         let id = TyVarId(self.slots.len() as u32);
+        if matches!(&content, Content::FlexSuper(s) if s.has(SuperType::IntLit)) {
+            self.int_literals.push(id);
+        }
         self.slots.push(Slot::Root { content, rank: 0 });
         id
     }
@@ -544,6 +572,15 @@ impl UnionFind {
             (Content::Rigid(n), Content::FlexSuper(s))
             | (Content::FlexSuper(s), Content::Rigid(n)) => {
                 let have = SuperType::from_var_name(n.as_str()).unwrap_or_default();
+                // An integer literal stands for a `number` variable (Elm's
+                // rule). Against any other variable it is the `Int` it always
+                // was, so the refusal names `Int`.
+                if s.has(SuperType::IntLit) && !have.has(SuperType::Number) {
+                    self.default_int_literal(ra);
+                    self.default_int_literal(rb);
+                    return self.unify_vars(ra, rb);
+                }
+                let s = s.minus(SuperType::IntLit);
                 // A type variable given to a Go interface slot is left to the
                 // wrapper's run-time assertion (`ffi_iface`): not a bound the
                 // annotation must name.
@@ -578,7 +615,7 @@ impl UnionFind {
                 } else {
                     ra
                 };
-                let shown = self.describe_var(other, 0);
+                let shown = self.describe_advice(other);
                 Err(Mismatch::new(rigid_concrete_message(n.as_str(), &shown)))
             }
             (Content::FlexSuper(s1), Content::FlexSuper(s2)) => {
@@ -586,6 +623,12 @@ impl UnionFind {
                 if s.is_satisfiable() {
                     self.union(ra, rb, Content::FlexSuper(s));
                     Ok(())
+                } else if s.has(SuperType::IntLit) {
+                    // A literal meets a bound no number has: it is the `Int`
+                    // it always was, and the refusal names `Int`.
+                    self.default_int_literal(ra);
+                    self.default_int_literal(rb);
+                    self.unify_vars(ra, rb)
                 } else if s.has(SuperType::GoValue) {
                     Err(Mismatch::new(go_value_failure(
                         "a value that must be a number, appendable or comparable",
@@ -596,6 +639,31 @@ impl UnionFind {
                          arithmetic needs an `Int` or a `Float`)",
                     ))
                 }
+            }
+            // Lowering only: an annotation's `number` variable absorbs the
+            // `Int` of a literal and binds like a plain variable otherwise.
+            (Content::FlexSuper(s), Content::Structure(ft))
+            | (Content::Structure(ft), Content::FlexSuper(s))
+                if s.has(SuperType::NumVar) =>
+            {
+                let is_int =
+                    matches!(&ft, FlatTy::App(n, a) if n.as_str() == "Int" && a.is_empty());
+                if is_int {
+                    self.union(ra, rb, Content::FlexSuper(s));
+                } else {
+                    self.union(ra, rb, Content::Structure(ft));
+                }
+                Ok(())
+            }
+            // A literal meets a concrete type: it is an `Int`, and the
+            // structural unify words any clash exactly as it always did.
+            (Content::FlexSuper(s), Content::Structure(_))
+            | (Content::Structure(_), Content::FlexSuper(s))
+                if s.has(SuperType::IntLit) =>
+            {
+                self.default_int_literal(ra);
+                self.default_int_literal(rb);
+                self.unify_vars(ra, rb)
             }
             (Content::FlexSuper(s), Content::Structure(ft))
             | (Content::Structure(ft), Content::FlexSuper(s)) => self.satisfy(ra, rb, s, ft),
@@ -729,6 +797,144 @@ impl UnionFind {
             }
         }
         Ok(())
+    }
+
+    /// Turn an integer-literal variable ([`SuperType::IntLit`]) into the
+    /// `Int` it is. A no-op on any other root. Its other bounds (`Number`,
+    /// `Comparable`, `Encodable`) all hold for `Int`; a bound `Int` does not
+    /// meet (`Appendable`, a Go value) fails the satisfiability check first,
+    /// and the caller then refuses it against `Int`.
+    pub(crate) fn default_int_literal(&mut self, v: TyVarId) {
+        let r = self.find(v);
+        let is_lit = matches!(
+            &self.slots[r.0 as usize],
+            Slot::Root { content: Content::FlexSuper(s), .. } if s.has(SuperType::IntLit)
+        );
+        if is_lit {
+            self.set_content(
+                r,
+                Content::Structure(FlatTy::App(Name::new("Int"), Vec::new())),
+            );
+        }
+    }
+
+    /// Default every integer literal that no rigid `number` variable
+    /// absorbed to `Int`. Run at the end of a definition, before its types
+    /// are read back.
+    pub(crate) fn default_all_int_literals(&mut self) {
+        for v in std::mem::take(&mut self.int_literals) {
+            self.default_int_literal(v);
+        }
+    }
+
+    /// Render `v` as a type the user can WRITE in an annotation (v0.29.2), for
+    /// the "write `T` instead of `a`" advice. An unresolved variable gets a
+    /// name of its own (`List x1`, not `List _`, which does not parse), a
+    /// bounded one its bound (`number`), and a record its fields
+    /// (`{ r1 | count : x1 }`, not `record`).
+    pub(crate) fn describe_advice(&mut self, v: TyVarId) -> String {
+        let mut names: HashMap<TyVarId, String> = HashMap::new();
+        let mut counters = (0u32, 0u32);
+        self.advice_var(v, 0, &mut names, &mut counters)
+    }
+
+    fn advice_var(
+        &mut self,
+        v: TyVarId,
+        depth: u32,
+        names: &mut HashMap<TyVarId, String>,
+        counters: &mut (u32, u32),
+    ) -> String {
+        if depth > 8 {
+            return "x0".to_string();
+        }
+        let r = self.find(v);
+        match self.content(r) {
+            Content::Rigid(n) => n.as_str().to_string(),
+            Content::FlexSuper(s) if s.has(SuperType::IntLit) => "Int".to_string(),
+            Content::FlexSuper(s) => names
+                .entry(r)
+                .or_insert_with(|| {
+                    counters.0 += 1;
+                    format!("{}{}", s.label(), counters.0)
+                })
+                .clone(),
+            Content::Flex | Content::Error => names
+                .entry(r)
+                .or_insert_with(|| {
+                    counters.0 += 1;
+                    format!("x{}", counters.0)
+                })
+                .clone(),
+            Content::Structure(ft) => {
+                let paren = |s: String| {
+                    if s.contains(' ') && !s.starts_with('{') && !s.starts_with('(') {
+                        format!("({s})")
+                    } else {
+                        s
+                    }
+                };
+                match ft {
+                    FlatTy::App(n, args) => {
+                        let head = crate::nominal::strip(n.as_str()).to_string();
+                        let mut out = head;
+                        for a in args {
+                            let s = self.advice_var(a, depth + 1, names, counters);
+                            out.push(' ');
+                            out.push_str(&paren(s));
+                        }
+                        out
+                    }
+                    FlatTy::Fun(a, b) => {
+                        let sa = self.advice_var(a, depth + 1, names, counters);
+                        let sb = self.advice_var(b, depth + 1, names, counters);
+                        let sa = if sa.contains("->") && !sa.starts_with('{') {
+                            format!("({sa})")
+                        } else {
+                            sa
+                        };
+                        format!("{sa} -> {sb}")
+                    }
+                    FlatTy::Tuple(xs) => {
+                        let parts: Vec<String> = xs
+                            .into_iter()
+                            .map(|x| self.advice_var(x, depth + 1, names, counters))
+                            .collect();
+                        format!("( {} )", parts.join(", "))
+                    }
+                    FlatTy::Unit => "()".to_string(),
+                    FlatTy::Record(fs, ext) => {
+                        let (fs, ext) = self.normalize_record(fs, ext);
+                        let fields: Vec<String> = fs
+                            .into_iter()
+                            .map(|(k, t)| {
+                                let s = self.advice_var(t, depth + 1, names, counters);
+                                format!("{} : {s}", k.as_str())
+                            })
+                            .collect();
+                        let row = ext.map(|e| {
+                            let re = self.find(e);
+                            match self.content(re) {
+                                Content::Rigid(n) => n.as_str().to_string(),
+                                _ => names
+                                    .entry(re)
+                                    .or_insert_with(|| {
+                                        counters.1 += 1;
+                                        format!("r{}", counters.1)
+                                    })
+                                    .clone(),
+                            }
+                        });
+                        match (row, fields.is_empty()) {
+                            (None, true) => "{}".to_string(),
+                            (None, false) => format!("{{ {} }}", fields.join(", ")),
+                            (Some(r), true) => format!("{{ {r} | }}"),
+                            (Some(r), false) => format!("{{ {r} | {} }}", fields.join(", ")),
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Describe a variable for a bound diagnostic (`describe_var`, public to
@@ -1205,9 +1411,27 @@ impl UnionFind {
             (None, _) | (_, None) => None,
             (Some(_), Some(_)) => Some(self.fresh_flex()),
         };
+        let rigid1 = e1.and_then(|e| self.rigid_name(e));
+        let rigid2 = e2.and_then(|e| self.rigid_name(e));
+        let field_names: Vec<Name> = all.keys().cloned().collect();
         self.union(ra, rb, Content::Structure(FlatTy::Record(all, ext)));
         for (a, b) in shared {
             self.unify(a, b)?;
+        }
+        // A RIGID row (an annotation's `{ r | name : String }`, v0.29.2)
+        // stands for whatever other fields a caller's record has, so it is
+        // unified like any other rigid variable: each open side's row must
+        // be exactly the other side's extra fields plus the shared rest, and a
+        // closed side pins the row to nothing. A rigid row may not take a
+        // field (`rec.age` on `{ r | name : String }`), become empty (a
+        // closed record returned where `{ r | … }` is promised), or become a
+        // different rigid row (`{ r | … } -> { s | … }` returning its
+        // argument). Before v0.29.2 those links were dropped, and each such
+        // program compiled and then failed at run time.
+        if rigid1.is_some() || rigid2.is_some() {
+            let rigid = (rigid1, rigid2);
+            self.link_rigid_row(e1, &only2, ext, &rigid, &field_names)?;
+            return self.link_rigid_row(e2, &only1, ext, &rigid, &field_names);
         }
         // connect an open side's row var to the extras it must absorb
         if let Some(row1) = e1 {
@@ -1224,6 +1448,110 @@ impl UnionFind {
         }
         Ok(())
     }
+
+    /// The name of `v`'s root when it is a rigid (annotation) variable.
+    fn rigid_name(&mut self, v: TyVarId) -> Option<Name> {
+        let r = self.find(v);
+        match &self.slots[r.0 as usize] {
+            Slot::Root {
+                content: Content::Rigid(n),
+                ..
+            } => Some(n.clone()),
+            _ => None,
+        }
+    }
+
+    /// Link one open side's row to what it must hold when a rigid row takes
+    /// part (see [`Self::unify_records`]): the other side's `extras` over the
+    /// shared rest `ext`, or the empty closed row when the merged record is
+    /// closed. A refusal is worded for the rigid row.
+    fn link_rigid_row(
+        &mut self,
+        row: Option<TyVarId>,
+        extras: &BTreeMap<Name, TyVarId>,
+        ext: Option<TyVarId>,
+        rigid: &(Option<Name>, Option<Name>),
+        fields: &[Name],
+    ) -> Result<(), Mismatch> {
+        let Some(row) = row else {
+            // A closed side: the presence check above already compared its
+            // fields with the other side's.
+            return Ok(());
+        };
+        let target = match (extras.is_empty(), ext) {
+            (true, Some(e)) => e,
+            _ => self.fresh(Content::Structure(FlatTy::Record(extras.clone(), ext))),
+        };
+        if self.unify(row, target).is_ok() {
+            return Ok(());
+        }
+        let names = |ns: &[&Name]| {
+            ns.iter()
+                .map(|n| format!("`{}`", n.as_str()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let msg = match (rigid, ext) {
+            // The merged record is closed: the rigid row would be nothing.
+            ((Some(r), _), None) | ((None, Some(r)), None) => {
+                let fs: Vec<&Name> = fields.iter().collect();
+                rigid_row_closed_message(r.as_str(), &names(&fs))
+            }
+            // Two different rigid rows made one.
+            ((Some(r1), Some(r2)), Some(_)) if r1 != r2 && extras.is_empty() => {
+                rigid_row_pair_message(r1.as_str(), r2.as_str())
+            }
+            ((Some(r), _), Some(_)) | ((None, Some(r)), Some(_)) => {
+                if extras.is_empty() {
+                    // The row met another rigid row through a flexible one.
+                    let other = match rigid {
+                        (Some(a), Some(b)) if a == r => b.as_str().to_string(),
+                        (Some(a), _) => a.as_str().to_string(),
+                        (None, Some(b)) => b.as_str().to_string(),
+                        _ => "another row".to_string(),
+                    };
+                    rigid_row_pair_message(r.as_str(), &other)
+                } else {
+                    let fs: Vec<&Name> = extras.keys().collect();
+                    rigid_row_fields_message(r.as_str(), &names(&fs))
+                }
+            }
+            ((None, None), _) => unreachable!("called only when a row is rigid"),
+        };
+        Err(Mismatch::new(msg))
+    }
+}
+
+/// A rigid row variable was given fields its annotation does not list.
+pub(crate) fn rigid_row_fields_message(row: &str, fields: &str) -> String {
+    format!(
+        "the type annotation says `{row}` stands for any other fields a record may have, but this \
+         code needs the record to have {fields}, which the annotation does not list. A record type \
+         `{{ {row} | … }}` promises only the fields it names: a caller may pass a record without \
+         {fields}. Fix: add {fields} to the record type in the type annotation"
+    )
+}
+
+/// A rigid row variable was made empty: a closed record where the
+/// annotation promised `{ r | … }`.
+pub(crate) fn rigid_row_closed_message(row: &str, fields: &str) -> String {
+    format!(
+        "the type annotation says `{row}` stands for any other fields a record may have, but this \
+         code uses a record with exactly the fields {fields} there, so the other fields a caller's \
+         record has would be lost. Fix: keep the caller's record and change it with an update \
+         (`{{ rec | name = … }}`), or write a closed record type (no `{row} |`) in the type \
+         annotation"
+    )
+}
+
+/// Two different rigid row variables were made one set of fields.
+pub(crate) fn rigid_row_pair_message(a: &str, b: &str) -> String {
+    format!(
+        "the type annotation says `{a}` and `{b}` can be different sets of record fields, but this \
+         code makes them the same. Fix: write the same row variable in both record types of the \
+         type annotation (for example `{{ {a} | … }}` twice), or change the code so it does not \
+         pass one record where the other is promised"
+    )
 }
 
 pub(crate) fn flat_children(ft: &FlatTy) -> Vec<TyVarId> {

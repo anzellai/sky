@@ -3,6 +3,8 @@
 package rt
 
 import (
+	"io"
+	"os"
 	"strings"
 	"testing"
 )
@@ -41,9 +43,47 @@ func TestNarrowIntColumnNotice(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("notices = %q, want one for orders.day", got)
 	}
-	for _, want := range []string{"orders.day", "INTEGER", "32-bit", "ALTER TABLE orders ALTER COLUMN day TYPE BIGINT"} {
+	for _, want := range []string{"orders.day", "INTEGER", "32-bit", "at most 2147483647", "integer out of range", "ALTER TABLE orders ALTER COLUMN day TYPE BIGINT"} {
 		if !strings.Contains(got[0], want) {
 			t.Errorf("notice %q lacks %q", got[0], want)
 		}
+	}
+}
+
+// A SMALLINT holds 16-bit values: its notice says so (Judge round 7: it said
+// "at most 2147483647", the INTEGER range).
+func TestNarrowIntColumnNoticeSmallint(t *testing.T) {
+	got := codecNarrowIntNotices("orders", cspec("small", "int"), map[string]string{"small": "smallint"})
+	if len(got) != 1 {
+		t.Fatalf("notices = %q, want one for orders.small", got)
+	}
+	for _, want := range []string{"SMALLINT", "16-bit values (at most 32767)", "smallint out of range"} {
+		if !strings.Contains(got[0], want) {
+			t.Errorf("notice %q lacks %q", got[0], want)
+		}
+	}
+	if strings.Contains(got[0], "2147483647") {
+		t.Errorf("a SMALLINT notice states the INTEGER range: %q", got[0])
+	}
+}
+
+// A project with no tables dumps `"tables":[]`, never `null` (Judge round 7:
+// `sky db check` and `migrate --gen` could not read `null`).
+func TestDumpProjectWithNoTablesIsAnEmptyList(t *testing.T) {
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stdout
+	os.Stdout = write
+	res := Db_dumpProject([]any{}).(func() any)()
+	os.Stdout = saved
+	write.Close()
+	out, _ := io.ReadAll(read)
+	if r, ok := res.(SkyResult[any, any]); !ok || r.Tag != 0 {
+		t.Fatalf("dumpProject [] = %#v", res)
+	}
+	if !strings.Contains(string(out), `{"tables":[]}`) {
+		t.Errorf("an empty project dumps %q, want {\"tables\":[]}", out)
 	}
 }

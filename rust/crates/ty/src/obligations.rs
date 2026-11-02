@@ -214,6 +214,11 @@ impl Infer<'_> {
             self.obligations.clear();
             return;
         }
+        // The end of a def: an integer literal that no rigid `number`
+        // variable absorbed is the `Int` it always was (`SuperType::IntLit`).
+        if fin {
+            self.uf.default_all_int_literals();
+        }
         let saved = self.cur_span;
         let mut kept = Vec::new();
         loop {

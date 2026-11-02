@@ -1480,9 +1480,11 @@ func Db_dumpProject(tablesArg any) any {
 			Columns []jcol       `json:"columns"`
 			Indexes []storeIndex `json:"indexes,omitempty"`
 		}
+		// An empty slice, never nil: a project with no tables (`Store.project
+		// []`) dumps `"tables":[]`, not `null` (v0.29.2).
 		out := struct {
 			Tables []jtable `json:"tables"`
-		}{}
+		}{Tables: []jtable{}}
 		for _, t := range AsList(tablesArg) {
 			jt := jtable{
 				Name: fmt.Sprintf("%v", fieldOrNil(t, "Name")),
@@ -1718,11 +1720,17 @@ func codecNarrowIntNotices(table string, colspecArg any, types map[string]string
 		if typ != "integer" && typ != "smallint" {
 			continue
 		}
+		// A SMALLINT holds 16-bit values, an INTEGER 32-bit ones (v0.29.2:
+		// the notice said "at most 2147483647" for a SMALLINT too).
+		holds, kind := "32-bit values (at most 2147483647)", "integer"
+		if typ == "smallint" {
+			holds, kind = "16-bit values (at most 32767)", "smallint"
+		}
 		out = append(out, fmt.Sprintf(
-			"Std.Db.Store: column %s.%s is %s on PostgreSQL and holds only 32-bit values (at most 2147483647), "+
-				"while a Sky Int is 64-bit and a new column is BIGINT; a larger value fails with \"integer out of range\". "+
+			"Std.Db.Store: column %s.%s is %s on PostgreSQL and holds only %s, "+
+				"while a Sky Int is 64-bit and a new column is BIGINT; a larger value fails with \"%s out of range\". "+
 				"It is not changed. To widen it: ALTER TABLE %s ALTER COLUMN %s TYPE BIGINT",
-			table, name, strings.ToUpper(typ), table, name))
+			table, name, strings.ToUpper(typ), holds, kind, table, name))
 	}
 	return out
 }

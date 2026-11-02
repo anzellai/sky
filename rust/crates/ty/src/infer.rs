@@ -116,6 +116,9 @@ pub struct Infer<'a> {
     /// param reflects `f : Int -> Int`, not the body-inferred `number`). Not
     /// set on the M3 accept-parity path, whose behaviour is unchanged.
     expected: Option<Scheme>,
+    /// Lowering only: seed the `expected` annotation's `number` variables as
+    /// `SuperType::NumVar` (see `db::pin_number_vars`).
+    pin_number: bool,
     /// Span of the expression currently under inference — maintained as a stack
     /// discipline by the `infer_expr` wrapper (save on entry, restore on exit).
     /// A unify clash reads this to anchor its `TypeError` at the offending
@@ -205,6 +208,7 @@ impl<'a> Infer<'a> {
             self_def: None,
             use_inferred: false,
             expected: None,
+            pin_number: false,
             cur_span: None,
             ffi_schemes: HashMap::new(),
             poly_locals: HashMap::new(),
@@ -232,6 +236,14 @@ impl<'a> Infer<'a> {
     /// from the annotation (tooling/hover path — see [`Infer::expected`]).
     pub fn with_expected(mut self, scheme: Option<Scheme>) -> Self {
         self.expected = scheme;
+        self
+    }
+
+    /// Lowering only: infer against the `expected` annotation with its
+    /// `number` variables kept generic (`SuperType::NumVar`).
+    pub(crate) fn with_pinned_number_vars(mut self, scheme: Scheme) -> Self {
+        self.expected = Some(scheme);
+        self.pin_number = true;
         self
     }
 
@@ -495,7 +507,13 @@ impl<'a> Infer<'a> {
             let mut sub: HashMap<String, TyVarId> = HashMap::new();
             for name in &scheme.vars {
                 if name.as_str() != "any" {
-                    let fresh = self.fresh_for_name(name.as_str());
+                    let number = SuperType::from_var_name(name.as_str())
+                        .is_some_and(|b| b.has(SuperType::Number));
+                    let fresh = if self.use_inferred && self.pin_number && number {
+                        self.uf.fresh(Content::FlexSuper(SuperType::NumVar))
+                    } else {
+                        self.fresh_for_name(name.as_str())
+                    };
                     sub.insert(name.as_str().to_string(), fresh);
                 }
             }
@@ -740,6 +758,15 @@ impl<'a> Infer<'a> {
             .into_iter()
             .rev()
             .fold(rv, |acc, pv| self.fun(pv, acc));
+        // v0.29.2: a FUNCTION keeps an unresolved `number` as a bounded
+        // quantifier (`add a b = a + b` exports `number -> number -> number`,
+        // so `add 1.0 2.0` checks and `add "s" "t"` is refused). Reading it
+        // back as `Int` made a Float caller a false rejection once `+` carried
+        // the bound. An expansive CAF still reads `Int` (the value
+        // restriction keeps one type). An integer literal is an `Int` either
+        // way (`SuperType::IntLit`).
+        let concretize_super =
+            concretize_super && body.params.is_empty() && !is_syntactic_value(body, root);
         let ty = self.read_back_scheme(full, concretize_super);
         Some(Scheme::generalize(ty))
     }
@@ -1280,7 +1307,20 @@ impl<'a> Infer<'a> {
             // into a CROSS-MODULE external Float param, e.g. `Css.pct 100` where
             // `pct : Float`). That convenience does not scale; Sky separates the
             // two types uniformly. Float literals are already concrete (below).
-            Expr::Int(_) => self.con("Int", vec![]),
+            //
+            // v0.29.2: on the CHECK path a literal is an `Int` that may also
+            // stand for a rigid `number` annotation variable
+            // (`isPositive : number -> Bool; isPositive x = x > 0`, Elm's
+            // rule). It is `Int` against everything else, so the separation
+            // above holds (`SuperType::IntLit`). The lowering path keeps the
+            // concrete `Int`, so emitted Go does not change.
+            Expr::Int(_) => {
+                if self.use_inferred {
+                    self.con("Int", vec![])
+                } else {
+                    self.uf.fresh(Content::FlexSuper(SuperType::IntLit))
+                }
+            }
             Expr::Float(_) => self.con("Float", vec![]),
             Expr::Str(_) => self.con("String", vec![]),
             Expr::Chr(_) => self.con("Char", vec![]),
@@ -1713,20 +1753,27 @@ impl<'a> Infer<'a> {
             let message = match self.uf.content(r) {
                 Content::Error => continue,
                 Content::Structure(_) => {
-                    let shown = self.uf.describe(r);
+                    let shown = self.uf.describe_advice(r);
                     Some(crate::unify::rigid_concrete_message(n.as_str(), &shown))
                 }
                 Content::Rigid(other) => (other.as_str() != n.as_str())
                     .then(|| crate::unify::rigid_pair_message(n.as_str(), other.as_str())),
                 Content::FlexSuper(s) => {
                     let have = SuperType::from_var_name(n.as_str()).unwrap_or_default();
-                    let missing = s
-                        .closure()
-                        .minus(have.closure())
-                        .minus(SuperType::GoValue)
-                        .minus(SuperType::Encodable);
-                    (!missing.is_empty())
-                        .then(|| crate::unify::rigid_bound_message(n.as_str(), missing))
+                    if s.has(SuperType::IntLit) && !have.has(SuperType::Number) {
+                        // An integer literal is an `Int` unless it stands for
+                        // a `number` variable.
+                        Some(crate::unify::rigid_concrete_message(n.as_str(), "Int"))
+                    } else {
+                        let missing = s
+                            .minus(SuperType::IntLit)
+                            .closure()
+                            .minus(have.closure())
+                            .minus(SuperType::GoValue)
+                            .minus(SuperType::Encodable);
+                        (!missing.is_empty())
+                            .then(|| crate::unify::rigid_bound_message(n.as_str(), missing))
+                    }
                 }
                 Content::Flex => None,
             };
@@ -2208,9 +2255,24 @@ impl<'a> Infer<'a> {
             // (lower.rs `both_prim` gate), so an unannotated `add a b = a + b`
             // builds and runs at Int AND Float — closing the false-reject class
             // (`add 1.0 2.0`) the old `FlexSuper(Number)`+concretize model caused.
+            //
+            // v0.29.2: on the CHECK path the operands must be numbers, as in
+            // Elm (`number -> number -> number`). A rigid `a` is refused
+            // ("add the `number` bound"), so `f : a -> a; f x = x + x` no
+            // longer compiles and then panics on `f "s"`; an unannotated
+            // `add a b = a + b` exports `number -> number -> number`, so
+            // `add 1.0 2.0` checks and `add "s" "t"` is refused. The lowering
+            // path keeps the unconstrained form, so emitted Go does not change.
             "+" | "-" | "*" => {
-                self.unify(tl, tr);
-                tl
+                if self.use_inferred {
+                    self.unify(tl, tr);
+                    tl
+                } else {
+                    let n = self.uf.fresh(Content::FlexSuper(SuperType::Number));
+                    self.unify(tl, n);
+                    self.unify(tr, n);
+                    n
+                }
             }
             // division is Float-only (`Float -> Float -> Float`): the oracle
             // rejects integer division via `/` (use `//`). Concrete-Int literals
@@ -2649,6 +2711,11 @@ impl<'a> Infer<'a> {
             // back as concrete `Int` (Solve.hs:1457) on the concretize channel.
             // `Int` (not `App("number")`) so a `Number` bound still admits valid
             // `Int` uses at call sites.
+            // An integer literal nothing resolved is an `Int` (v0.29.2).
+            Content::FlexSuper(b) if b.has(SuperType::IntLit) => Ty::app("Int", vec![]),
+            // An annotation's `number` variable on the lowering path stays the
+            // generic type variable it is (`SuperType::NumVar`).
+            Content::FlexSuper(b) if b.has(SuperType::NumVar) => Ty::var("number"),
             Content::FlexSuper(b) if scheme && concretize_super && b.has(SuperType::Number) => {
                 Ty::app("Int", vec![])
             }
@@ -2779,6 +2846,11 @@ impl<'a> Infer<'a> {
         let node = match self.uf.content(r) {
             Content::Flex => TyNode::Var(Name::new(&format!("t{}", r.0))),
             Content::Rigid(n) => TyNode::Var(n),
+            // An integer literal nothing resolved is an `Int` (v0.29.2).
+            Content::FlexSuper(b) if b.has(SuperType::IntLit) => {
+                TyNode::App(Name::new("Int"), Box::new([]))
+            }
+            Content::FlexSuper(b) if b.has(SuperType::NumVar) => TyNode::Var(Name::new("number")),
             Content::FlexSuper(b) if b.has(SuperType::Number) => {
                 TyNode::App(Name::new("number"), Box::new([]))
             }

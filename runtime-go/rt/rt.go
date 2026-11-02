@@ -6125,7 +6125,13 @@ func Dict_union(a any, b any) any {
 // Math operations
 // ═══════════════════════════════════════════════════════════
 
+// Math_abs backs both `Math.abs : Int -> Int` and `Basics.abs : number ->
+// number`. A Float keeps its fraction: `abs -2.5` is 2.5, never the 2 that
+// AsInt's truncation gave before v0.29.2.
 func Math_abs(n any) any {
+	if isFloatish(n) {
+		return math.Abs(AsFloat(n))
+	}
 	x := AsInt(n)
 	if x < 0 {
 		return -x

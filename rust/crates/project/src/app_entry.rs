@@ -1383,6 +1383,19 @@ pub struct RunChain {
     pub carriers: Vec<String>,
 }
 
+/// Every form of `main` a client (Sky.Spa) build carries, as the refusal
+/// lists them (`main = <form>`). A test parses each one, so the list names
+/// exactly the forms that carry (v0.29.2 seventh Judge: the prefix
+/// `Task.andThen (\_ -> App.run app) setup` carried but was not listed).
+pub const CARRIED_FORMS: &[&str] = &[
+    "setup |> Task.andThen (\\_ -> App.run app)",
+    "Task.andThen (\\_ -> App.run app) setup",
+    "Task.andThen (\\_ -> App.run app) <| setup",
+    "setup |> Task.andThen runIt   (with runIt _ = App.run app)",
+    "start                         (with start = one of the forms above)",
+    "let _ = setup in App.run app   (a failed setup does not stop the app)",
+];
+
 /// The setup Task a `main` runs BEFORE `App.run app` when it chains the two:
 ///
 /// ```text
@@ -1419,15 +1432,15 @@ pub fn main_run_chain(src: &str) -> Result<RunChain, String> {
     };
     let refs = run_refs(src);
     let refused = || -> String {
+        let forms: String = CARRIED_FORMS
+            .iter()
+            .map(|f| format!("\n    main = {}", f.replace("App.", &format!("{q}."))))
+            .collect();
         format!(
             "`main` runs `{q}.run` inside an expression a client (Sky.Spa) build cannot \
              carry: the build generates the backend's own `main`, so the work `main` does \
              around the app would never run on the server. Run the setup first and the app \
-             last, in one of these forms:\n    \
-             main = setup |> Task.andThen (\\_ -> {q}.run app)\n    \
-             main = setup |> Task.andThen runIt   (with runIt _ = {q}.run app)\n    \
-             main = start                         (with start = one of the forms above)\n    \
-             main = let _ = setup in {q}.run app"
+             last, in one of these forms:{forms}"
         )
     };
     let mut carriers: Vec<String> = Vec::new();
@@ -1929,6 +1942,50 @@ mod tests {
         let mut carriers = chain.carriers.clone();
         carriers.sort();
         assert_eq!(carriers, vec!["runIt".to_string(), "start".to_string()]);
+    }
+
+    /// Every form the refusal lists is carried, and a form outside the list
+    /// is refused with the list (Judge round 7: the prefix form carried but
+    /// the refusal did not name it).
+    #[test]
+    fn every_form_the_refusal_lists_is_carried() {
+        let pre = "module Main exposing (main)\n\nimport Std.App as App\nimport Sky.Core.Task as Task\n\n\
+                   setup =\n    Task.succeed ()\n\n";
+        for form in CARRIED_FORMS {
+            let (body, extra) = match form.split_once("(with ") {
+                Some((b, w)) => (b.trim(), w.trim_end_matches(')').trim()),
+                None => (form.split("   (").next().unwrap().trim(), ""),
+            };
+            let src = if body == "start" {
+                format!(
+                    "{pre}start =\n    setup |> Task.andThen (\\_ -> App.run app)\n\nmain =\n    start\n"
+                )
+            } else if extra.starts_with("runIt") {
+                format!("{pre}runIt _ =\n    App.run app\n\nmain =\n    {body}\n")
+            } else if body.starts_with("let _") {
+                format!("{pre}main =\n    let\n        _ =\n            setup\n    in\n    App.run app\n")
+            } else {
+                format!("{pre}main =\n    {body}\n")
+            };
+            let chain = main_run_chain(&src)
+                .unwrap_or_else(|e| panic!("the listed form `{form}` is refused:\n{src}\n{e}"));
+            if !body.starts_with("let _") {
+                assert_eq!(
+                    chain.setup.map(|s| s.text).as_deref(),
+                    Some("setup"),
+                    "the listed form `{form}` does not carry its setup:\n{src}"
+                );
+            }
+        }
+        let bad = "module Main exposing (main)\n\nimport Std.App as App\nimport Sky.Core.Task as Task\n\n\
+                   main =\n    App.run app |> Task.map identity\n";
+        let e = main_run_chain(bad).expect_err("Task.map around App.run must be refused");
+        for form in CARRIED_FORMS {
+            assert!(
+                e.contains(&format!("main = {form}")),
+                "`{form}` not listed:\n{e}"
+            );
+        }
     }
 
     #[test]

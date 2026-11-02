@@ -56,7 +56,7 @@ fn is_false(b: &bool) -> bool {
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct SchemaIndex {
     pub name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::db_migrate::null_as_empty")]
     pub columns: Vec<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub unique: bool,
@@ -70,15 +70,31 @@ pub struct SchemaTable {
     pub name: String,
     #[serde(default)]
     pub pk: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::db_migrate::null_as_empty")]
     pub columns: Vec<SchemaColumn>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "crate::db_migrate::null_as_empty"
+    )]
     pub indexes: Vec<SchemaIndex>,
+}
+
+/// A list a dump wrote as JSON `null` (a Go nil slice: `Store.project []`)
+/// reads as empty. Before v0.29.2 `sky db check` and `sky db migrate --gen` on a
+/// project with no tables stopped with "invalid type: null, expected a
+/// sequence". Every list of the dump and of the live inspection reads this way.
+pub fn null_as_empty<'de, D, T>(d: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(d)?.unwrap_or_default())
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct Schema {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::db_migrate::null_as_empty")]
     pub tables: Vec<SchemaTable>,
 }
 

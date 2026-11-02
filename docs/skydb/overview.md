@@ -106,6 +106,7 @@ column (a typo fails fast with the column list):
 | `Store.index [ "customer_id", "created_at" ]` | `CREATE INDEX` named `ix_<table>_<h>` |
 | `Store.uniqueOn [ "customer_id", "code" ]` | a unique index, `ux_<table>_<h>`; every column must be required (NULLs never conflict) |
 | `Store.uniqueWhere [ "slug" ] (Store.neq "slug" (SqlString ""))` | a partial unique index; the condition is written as constants (`eq`/`neq`/`gt`/…, `isNull`/`notNull`, `inList`, `eqCol`…, `and_`/`or_`/`not_`) |
+| `Store.indexNamed "orders_customer" [ "customer_id" ]` / `Store.uniqueOnNamed "acct_code" [ "tenant_id", "code" ]` | `index` / `uniqueOn` under a name you give: for a table whose index already exists under its own name (`sky db check --code` writes them when it adopts a table, v0.29.2) |
 | `Store.defaultWith "id" (\_ -> SqlValue)` | **app-side** computed default at insert (e.g. a UUID PK via the unit-arg `Task.run` idiom) |
 | `Store.generated [ "id", "created_at" ]` | columns `insert`/`update` OMIT so the DB fills them, added to the ones `serial` and the other builders marked |
 
@@ -530,9 +531,14 @@ it is logged at ERROR level once per table and problem, shown in the Sky
 Console, and counted in the metric `sky_store_problems_total{table}`. An
 unknown column in a query condition, an order, a set or a conflict rule is an
 `Err` that is loud the same way. `findBy` and `delete` follow the same rule. A negative `limit` or `offset`
-is an `Err`; `offset` without `limit` works on both dialects. There is no
-reserved-word list: a column named `order` or `user` stays a driver error on the
-dialect that refuses it. **Never build a column argument from user input:** a
+is an `Err`; `offset` without `limit` works on both dialects. A column or
+table named by an SQL keyword is refused (v0.29.2): the Store writes names
+unquoted, so a name reserved on both engines (`order`) is a builder problem
+(`Store.migrate` and every verb are an `Err` naming the column, before any
+statement), and a name reserved on one engine only (`user` on PostgreSQL,
+`index` on SQLite) is refused by `migrate` on that engine. Give the column
+another name (`Codec.field "sort_order" .order Codec.int` in a `Codec.object`,
+or rename the field). **Never build a column argument from user input:** a
 `jsonText` reference can read any key of a JSON column.
 
 **Text matching.** `like` uses its pattern as given: `%` and `_` are wildcards,
