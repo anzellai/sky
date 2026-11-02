@@ -1629,6 +1629,7 @@ pub const SQL_KEYWORDS_SQLITE: &[&str] = &[
     "alter",
     "autoincrement",
     "between",
+    "commit",
     "delete",
     "drop",
     "escape",
@@ -1636,12 +1637,15 @@ pub const SQL_KEYWORDS_SQLITE: &[&str] = &[
     "index",
     "insert",
     "nothing",
-    "raise",
     "set",
     "transaction",
     "update",
     "values",
 ];
+/// Fails on SQLite as a column name only (a table may have it).
+pub const SQL_KEYWORDS_SQLITE_COLUMN: &[&str] = &["raise"];
+/// Fails on SQLite as a table name only (a column may have it).
+pub const SQL_KEYWORDS_SQLITE_TABLE: &[&str] = &["if"];
 pub const SQL_KEYWORDS_POSTGRES: &[&str] = &[
     "analyse",
     "analyze",
@@ -1672,6 +1676,7 @@ pub const SQL_KEYWORDS_POSTGRES: &[&str] = &[
     "session_user",
     "some",
     "symmetric",
+    "system_user",
     "trailing",
     "true",
     "user",
@@ -1703,7 +1708,7 @@ pub const SQL_KEYWORDS_POSTGRES: &[&str] = &[
 /// writes names unquoted: a keyword fails, and on PostgreSQL an unquoted name
 /// folds to lower case, so a name with an upper-case letter (made quoted,
 /// `"Order"`) is never reached.
-fn store_name_problem(dialect: &str, name: &str) -> Option<String> {
+fn store_name_problem(dialect: &str, name: &str, table: bool) -> Option<String> {
     let ident = {
         let mut cs = name.chars();
         matches!(cs.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
@@ -1720,6 +1725,8 @@ fn store_name_problem(dialect: &str, name: &str) -> Option<String> {
     if SQL_KEYWORDS_BOTH.contains(&lower.as_str())
         || (is_pg(dialect) && SQL_KEYWORDS_POSTGRES.contains(&lower.as_str()))
         || (!is_pg(dialect) && SQL_KEYWORDS_SQLITE.contains(&lower.as_str()))
+        || (!is_pg(dialect) && table && SQL_KEYWORDS_SQLITE_TABLE.contains(&lower.as_str()))
+        || (!is_pg(dialect) && !table && SQL_KEYWORDS_SQLITE_COLUMN.contains(&lower.as_str()))
     {
         return Some(format!(
             "\"{name}\" is an SQL keyword, and the Store writes names unquoted, so every \
@@ -1768,7 +1775,7 @@ pub fn record_stub(dialect: &str, t: &LiveTable) -> (String, bool) {
     let mut head = format!("-- Table {} (the code declares no Store for it)\n", t.name);
     // Why the stub cannot be a working Store, if it cannot.
     let mut blocked: Vec<String> = Vec::new();
-    if let Some(p) = store_name_problem(dialect, &t.name) {
+    if let Some(p) = store_name_problem(dialect, &t.name, true) {
         blocked.push(format!("the table name {p}"));
     }
     let mut fields: Vec<String> = Vec::new();
@@ -1794,7 +1801,7 @@ pub fn record_stub(dialect: &str, t: &LiveTable) -> (String, bool) {
                 ));
             }
         };
-        if let Some(p) = store_name_problem(dialect, &c.name) {
+        if let Some(p) = store_name_problem(dialect, &c.name, false) {
             skip(p, &mut head, &mut blocked);
             continue;
         }
@@ -2545,19 +2552,69 @@ mod tests {
         assert!(s.contains("NOT A WORKING STORE"), "{s}");
     }
 
-    /// The keyword lists here, in Std.Db.Store and in the runtime agree.
+    /// The keyword lists here, in Std.Db.Store and in the runtime are the
+    /// same sets: each list is parsed from its source and compared exactly
+    /// (the runtime's lists are measured against both engines by
+    /// runtime-go/rt/db_codec_keywords_test.go).
     #[test]
     fn sql_keyword_lists_match_store_and_runtime() {
+        use std::collections::BTreeSet;
         let store = include_str!("../../../../sky-stdlib/Std/Db/Store.sky");
         let go = include_str!("../../../../runtime-go/rt/db_codec.go");
-        for w in SQL_KEYWORDS_BOTH {
-            assert!(store.contains(&format!("\"{w}\"")), "Store.sky lacks {w}");
-        }
-        for w in SQL_KEYWORDS_SQLITE.iter().chain(SQL_KEYWORDS_POSTGRES) {
-            assert!(
-                go.contains(&format!("\"{w}\": true")),
-                "db_codec.go lacks {w}"
-            );
-        }
+        let words = |text: &str, pat: &str| -> BTreeSet<String> {
+            let mut out = BTreeSet::new();
+            let mut rest = text;
+            while let Some(i) = rest.find(pat) {
+                rest = &rest[i + pat.len()..];
+                if let Some(j) = rest.find('"') {
+                    out.insert(rest[..j].to_string());
+                }
+            }
+            out
+        };
+        // `var <name> = map[string]bool{ "a": true, … }` in db_codec.go.
+        let go_map = |name: &str| -> BTreeSet<String> {
+            let start = go
+                .find(&format!("var {name} = map[string]bool{{"))
+                .unwrap_or_else(|| panic!("db_codec.go has no {name}"));
+            let body = &go[start..];
+            let body = &body[..body.find('}').unwrap()];
+            words(body, "\"")
+                .into_iter()
+                .filter(|w| !w.contains(' ') && !w.contains(':'))
+                .collect()
+        };
+        let set = |l: &[&str]| -> BTreeSet<String> { l.iter().map(|w| w.to_string()).collect() };
+        // `sqlKeywords = [ "all", … ]` in Store.sky.
+        let sky_list = {
+            let start = store
+                .find("\nsqlKeywords =")
+                .expect("Store.sky has no sqlKeywords");
+            let body = &store[start..];
+            let body = &body[..body.find(']').unwrap()];
+            words(body, "\"")
+                .into_iter()
+                .filter(|w| !w.contains(' '))
+                .collect::<BTreeSet<_>>()
+        };
+        assert_eq!(sky_list, set(SQL_KEYWORDS_BOTH), "Store.sky sqlKeywords");
+        assert_eq!(go_map("codecReservedSqlite"), set(SQL_KEYWORDS_SQLITE));
+        assert_eq!(
+            go_map("codecReservedSqliteColumn"),
+            set(SQL_KEYWORDS_SQLITE_COLUMN)
+        );
+        assert_eq!(
+            go_map("codecReservedSqliteTable"),
+            set(SQL_KEYWORDS_SQLITE_TABLE)
+        );
+        assert_eq!(go_map("codecReservedPostgres"), set(SQL_KEYWORDS_POSTGRES));
+        // Per position on SQLite: `if` names a column, `raise` a table.
+        assert!(store_name_problem("sqlite", "if", true).is_some());
+        assert!(store_name_problem("sqlite", "if", false).is_none());
+        assert!(store_name_problem("sqlite", "raise", false).is_some());
+        assert!(store_name_problem("sqlite", "raise", true).is_none());
+        assert!(store_name_problem("sqlite", "commit", false).is_some());
+        assert!(store_name_problem("postgres", "system_user", false).is_some());
+        assert!(store_name_problem("postgres", "commit", false).is_none());
     }
 }

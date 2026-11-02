@@ -1716,12 +1716,24 @@ func codecBinaryColumnError(driver, table string, colspecArg any, types map[stri
 // builder problem (Std.Db.Store isSqlKeyword); these are refused by migrate
 // and create on the engine that rejects them, with the reason, instead of a
 // syntax error at the first statement.
+//
+// The lists are measured, not copied: db_codec_keywords_test.go runs the
+// Store's statements with every SQLite keyword as a column and as a table name
+// (and, in the integration test, every PostgreSQL R/T keyword of
+// pg_get_keywords()), and fails when a name that fails is missing or a listed
+// name works. rust/crates/sky/src/db_check.rs holds the same lists.
 var codecReservedSqlite = map[string]bool{
-	"add": true, "alter": true, "autoincrement": true, "between": true, "delete": true,
-	"drop": true, "escape": true, "exists": true, "index": true, "insert": true,
-	"nothing": true, "raise": true, "set": true, "transaction": true, "update": true,
+	"add": true, "alter": true, "autoincrement": true, "between": true, "commit": true,
+	"delete": true, "drop": true, "escape": true, "exists": true, "index": true,
+	"insert": true, "nothing": true, "set": true, "transaction": true, "update": true,
 	"values": true,
 }
+
+// codecReservedSqliteColumn fails on SQLite as a column name only (a table
+// may have it); codecReservedSqliteTable as a table name only.
+var codecReservedSqliteColumn = map[string]bool{"raise": true}
+
+var codecReservedSqliteTable = map[string]bool{"if": true}
 
 var codecReservedPostgres = map[string]bool{
 	"analyse": true, "analyze": true, "any": true, "array": true, "asc": true,
@@ -1730,22 +1742,25 @@ var codecReservedPostgres = map[string]bool{
 	"false": true, "fetch": true, "for": true, "grant": true, "initially": true,
 	"lateral": true, "leading": true, "localtime": true, "localtimestamp": true,
 	"offset": true, "only": true, "placing": true, "session_user": true, "some": true,
-	"symmetric": true, "trailing": true, "true": true, "user": true, "variadic": true,
-	"window": true, "with": true, "authorization": true, "binary": true, "collation": true,
-	"concurrently": true, "cross": true, "current_schema": true, "freeze": true,
-	"full": true, "ilike": true, "inner": true, "left": true, "like": true,
+	"symmetric": true, "system_user": true, "trailing": true, "true": true, "user": true,
+	"variadic": true, "window": true, "with": true, "authorization": true, "binary": true,
+	"collation": true, "concurrently": true, "cross": true, "current_schema": true,
+	"freeze": true, "full": true, "ilike": true, "inner": true, "left": true, "like": true,
 	"natural": true, "outer": true, "overlaps": true, "right": true, "similar": true,
 	"tablesample": true, "verbose": true,
 }
 
 // codecReservedName reports whether `name` fails unquoted on the driver's
-// engine only.
-func codecReservedName(driver, name string) bool {
+// engine only, as a table name (`table`) or as a column name.
+func codecReservedName(driver, name string, table bool) bool {
 	n := strings.ToLower(name)
 	if driver == "pgx" {
 		return codecReservedPostgres[n]
 	}
-	return codecReservedSqlite[n]
+	if table {
+		return codecReservedSqlite[n] || codecReservedSqliteTable[n]
+	}
+	return codecReservedSqlite[n] || codecReservedSqliteColumn[n]
 }
 
 func codecEngineName(driver string) string {
@@ -1759,13 +1774,13 @@ func codecEngineName(driver string) string {
 func codecReservedNameError(driver, table string, cols any) error {
 	advice := "The Store writes names unquoted (quoting would change how PostgreSQL folds an existing camelCase column), " +
 		"so give it another column name: Codec.field \"sort_order\" .order Codec.int in a Codec.object, or rename the field"
-	if codecReservedName(driver, table) {
+	if codecReservedName(driver, table, true) {
 		return fmt.Errorf("table name %q is an SQL keyword on %s, so every statement on it fails. %s",
 			table, codecEngineName(driver), advice)
 	}
 	for _, cs := range AsList(cols) {
 		name := AsString(AsTuple2(cs).V0)
-		if codecReservedName(driver, name) {
+		if codecReservedName(driver, name, false) {
 			return fmt.Errorf("column %s.%s is an SQL keyword on %s, so every statement on it fails. %s",
 				table, name, codecEngineName(driver), advice)
 		}
