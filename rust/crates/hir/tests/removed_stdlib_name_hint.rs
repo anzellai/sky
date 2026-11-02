@@ -62,3 +62,33 @@ fn another_unknown_member_keeps_the_plain_message() {
     assert!(m.contains("[E1001]"), "{m}");
     assert!(!m.contains("migration"), "{m}");
 }
+
+/// v0.29.2 second Judge, gap 6: a removed name used bare after
+/// `import Std.Money exposing (..)` gave only `Undefined name`.
+#[test]
+fn a_bare_removed_name_under_exposing_all_names_its_replacement() {
+    for (name, want) in [
+        ("setRate", "Money.rates"),
+        ("sumOf", "Money.sum : Currency -> List Money"),
+    ] {
+        let r = resolve_main(&format!(
+            "module Main exposing (main)\nimport Std.Money exposing (..)\n\nmain =\n    {name}\n"
+        ));
+        let m = messages(&r);
+        assert!(m.contains("[E1001]"), "{m}");
+        assert!(m.contains(want), "{name}: {m}");
+        assert!(m.contains(ANCHOR), "{name}: {m}");
+    }
+}
+
+/// Without an `exposing (..)` import of the module, a bare unknown name keeps
+/// the plain message: `setRate` may be any program's own typo.
+#[test]
+fn a_bare_unknown_name_without_exposing_all_keeps_the_plain_message() {
+    let r = resolve_main(
+        "module Main exposing (main)\nimport Std.Money as Money\n\nmain =\n    setRate\n",
+    );
+    let m = messages(&r);
+    assert!(m.contains("[E1001]"), "{m}");
+    assert!(!m.contains("migration"), "{m}");
+}

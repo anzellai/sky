@@ -558,6 +558,9 @@ struct Resolver<'a> {
     /// A Go FFI package imported with `exposing (..)` — bare unresolved names
     /// are attributed to it (class-b), not a resolver gap.
     foreign_open: Option<String>,
+    /// Modules imported with `exposing (..)`: a bare name a release removed
+    /// from one of them names its replacement (`removed_name_hint`).
+    open_modules: Vec<String>,
 
     /// Provenance for every unqualified binding, parallel to `vars` / `ctors`
     /// (doc 05 §6b). Written by `bind_var` / `bind_ctor`, consumed once by
@@ -625,6 +628,7 @@ impl<'a> Resolver<'a> {
             qual_types: HashMap::new(),
             import_aliases: HashMap::new(),
             kernel_open: Vec::new(),
+            open_modules: Vec::new(),
             foreign_open: None,
             var_origins: HashMap::new(),
             ctor_origins: HashMap::new(),
@@ -1801,6 +1805,9 @@ impl<'a> Resolver<'a> {
         span: Option<Span>,
     ) {
         if c.all {
+            if !self.open_modules.iter().any(|m| m == module_name) {
+                self.open_modules.push(module_name.to_string());
+            }
             let values: Vec<(String, DefId)> = exports
                 .values
                 .iter()
@@ -3638,7 +3645,14 @@ impl<'a> Resolver<'a> {
                 name: Name::new(name),
             };
         }
-        self.track_class_a(None, name, RefKind::Value, "undefined name", span);
+        // A name a release removed from a module imported `exposing (..)`
+        // (`import Std.Money exposing (..)` then `setRate`): name the
+        // replacement, as the qualified and explicit forms do.
+        let removed = self.open_modules.iter().find_map(|m| {
+            crate::stdlib_history::removed_name_hint(m, name)
+                .map(|h| format!("name was removed from `{m}`: {h}"))
+        });
+        self.track_class_a_detail(None, name, RefKind::Value, "undefined name", span, removed);
         Res::Error
     }
 
