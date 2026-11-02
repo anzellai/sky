@@ -78,7 +78,7 @@ const FIXED_NAME_READS: &[(&str, &str)] = &[
     // `skyGetenv("CSRF")` (csrf_middleware.go), so it is prefix-aware and no
     // longer a raw read. The stale-entry check below is what noticed.
     (
-        "SKY_DB_READ_ONLY",
+        "SKY_READ_ONLY_DB",
         "tool switch set by `sky db check` / `sky db status` for their helper, not an app setting",
     ),
     (

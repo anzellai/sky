@@ -399,13 +399,13 @@ func Db_connect(path any) any {
 }
 
 // dbReadOnly reports whether this process opens every app database
-// read-only: SKY_DB_READ_ONLY=1, which `sky db check` and `sky db status` set
+// read-only: SKY_READ_ONLY_DB=1, which `sky db check` and `sky db status` set
 // for their helper (v0.29.2). A SQLite file is opened with mode=ro (a missing
 // file is an Err, not a new empty database), a PostgreSQL session has
 // default_transaction_read_only=on, and no telemetry is persisted
 // (EnableConsolePersistence).
 func dbReadOnly() bool {
-	return strings.TrimSpace(procenv.Getenv("SKY_DB_READ_ONLY")) == "1"
+	return strings.TrimSpace(procenv.Getenv("SKY_READ_ONLY_DB")) == "1"
 }
 
 // dbSqliteReadOnlyDSN is the read-only form of a SQLite path: a `file:` URI
@@ -424,7 +424,7 @@ func dbSqliteReadOnlyDSN(dsn string) (string, string) {
 	if _, err := os.Stat(dsn); err != nil {
 		if os.IsNotExist(err) {
 			return "", fmt.Sprintf("db.connect: the SQLite database %s does not exist, "+
-				"and this process opens databases read-only (SKY_DB_READ_ONLY=1), so it is not created. "+
+				"and this process opens databases read-only (SKY_READ_ONLY_DB=1), so it is not created. "+
 				"Check the path, or create the database first (sky db migrate)", dsn)
 		}
 		return "", "db.connect: " + err.Error()
