@@ -7847,16 +7847,18 @@ fn web_app_boot_setup_runs_in_backend_main_not_frontend() {
         back.contains("setupThing"),
         "backend must carry the boot-setup effect `setupThing`:\n{back}"
     );
-    // The backend `main` forces `spaBootSetup_`, and it appears BEFORE the
-    // `Server.listen` call (so setup runs first).
-    let boot_at = back.find("_ =\n            spaBootSetup_");
+    // The backend `main` runs `spaBootSetup_` as its first boot task, and it
+    // appears BEFORE the `Server.listen` call (so setup runs first). It is a
+    // task in the boot sequence, not a `_ =` let forcing, so a failed setup
+    // stops start-up (v0.29.2 sixth Judge).
+    let boot_at = back.find("Task.sequence [ spaBootSetup_,");
     // v0.27.0: `main` listens through `spaListen_` after its boot tasks.
     let listen_at = back
         .find("main =")
         .and_then(|m| back[m..].find("spaListen_").map(|i| m + i));
     assert!(
         boot_at.is_some(),
-        "backend `main` must force `spaBootSetup_` in a `let … in Server.listen`:\n{back}"
+        "backend `main` must run `spaBootSetup_` first in its boot sequence:\n{back}"
     );
     match (boot_at, listen_at) {
         (Some(b), Some(l)) => assert!(
@@ -7982,13 +7984,15 @@ main =
         back.contains("spaBootSetup_ =") && back.contains("BOOT-SETUP-RAN"),
         "a client-local app's backend must carry the boot setup:\n{back}"
     );
-    let boot_at = back.find("_ =\n            spaBootSetup_");
+    // The first boot task, so a failed setup stops start-up (v0.29.2 sixth
+    // Judge).
+    let boot_at = back.find("Task.sequence [ spaBootSetup_,");
     let listen_at = back
         .find("main =")
         .and_then(|m| back[m..].find("spaListen_").map(|i| m + i));
     match (boot_at, listen_at) {
         (Some(b), Some(l)) => assert!(b < l, "boot setup must run before listen:\n{back}"),
-        _ => panic!("backend `main` must force `spaBootSetup_`, then listen:\n{back}"),
+        _ => panic!("backend `main` must run `spaBootSetup_` first, then listen:\n{back}"),
     }
     let front = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
         .expect("generated frontend entry must exist");
@@ -8186,6 +8190,126 @@ fn web_app_chained_main_setup_runs_in_backend() {
         );
     }
     let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A FAILED chained setup stops the `web:app` backend (v0.29.2 sixth Judge).
+/// `main = setup |> Task.andThen (\_ -> App.run app)` with a setup that fails
+/// exits 1 with the error on `--target web` and never listens. Under
+/// `--target web:app` the backend forced the carried setup with
+/// `let _ = spaBootSetup_`, which drops an `Err`: it logged nothing, listened
+/// and served `GET /` 200 on a database whose schema step had failed. The
+/// carried setup now runs first in the backend's boot sequence, where an Err
+/// stops start-up: the backend exits non-zero, logs the error and never
+/// prints its `listening` line.
+#[test]
+fn web_app_failed_chained_setup_stops_the_backend() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let src = chained_main_app(
+        r#"main =
+    println "BOOT-SETUP-RAN"
+        |> Task.andThen (\_ -> Task.fail (Error.io "BOOT-SETUP-FAILED"))
+        |> Task.andThen (\_ -> App.run app)
+"#,
+    )
+    .replace(
+        "import Sky.Core.Task as Task\n",
+        "import Sky.Core.Task as Task\nimport Sky.Core.Error as Error\n",
+    );
+    let proj = scratch_std_app("boot-chain-fails", &src);
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let back = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .unwrap_or_else(|e| panic!("generated backend entry must exist ({e}):\n{log}"));
+    // The setup is a boot TASK (whose Err stops start-up), never a `_ =` let
+    // forcing (which drops it).
+    assert!(
+        !back.contains("_ =\n            spaBootSetup_"),
+        "the backend must not force the setup with `let _ =`, which drops its Err:\n{back}"
+    );
+    assert!(
+        back.contains("Task.sequence [ spaBootSetup_,"),
+        "the setup must run first in the boot sequence:\n{back}"
+    );
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "the app must build under web:app:\n{log}"
+    );
+    let backend = proj.join(".skyapp/web-app/.split/backend");
+    let mut child = Command::new(backend.join("sky-out/app"))
+        .current_dir(&backend)
+        .env("PORT", "0")
+        .env("SKY_LIVE_PORT", "0")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("start the backend");
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut out = child.stdout.take().unwrap();
+    let mut err = child.stderr.take().unwrap();
+    let tx2 = tx.clone();
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let mut s = String::new();
+        let _ = out.read_to_string(&mut s);
+        let _ = tx.send(s);
+    });
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let mut s = String::new();
+        let _ = err.read_to_string(&mut s);
+        let _ = tx2.send(s);
+    });
+    // The backend must EXIT by itself. A backend that listens never closes
+    // its pipes, so the deadline is the failure.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let status = loop {
+        if let Some(s) = child.try_wait().expect("poll the backend") {
+            break Some(s);
+        }
+        if std::time::Instant::now() > deadline {
+            break None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    if status.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let mut seen = String::new();
+    for _ in 0..2 {
+        seen.push_str(
+            &rx.recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap_or_default(),
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+    let status = status.unwrap_or_else(|| {
+        panic!("the backend kept running after its setup failed (it must exit):\n{seen}")
+    });
+    assert!(
+        !status.success(),
+        "a failed setup must stop the backend with a non-zero exit:\n{seen}"
+    );
+    assert!(
+        seen.contains("BOOT-SETUP-RAN") && seen.contains("BOOT-SETUP-FAILED"),
+        "the backend must run the setup and log its error:\n{seen}"
+    );
+    assert!(
+        !seen.contains("listening"),
+        "the backend must never listen after a failed setup:\n{seen}"
+    );
 }
 
 /// Build `main_src` under `--target web:app`, assert the backend carries the

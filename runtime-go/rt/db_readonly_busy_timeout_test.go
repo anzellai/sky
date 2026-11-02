@@ -107,7 +107,10 @@ func TestReadOnlyWriteErrorNamesStatusModeAndTheFix(t *testing.T) {
 		"attempt to write a readonly database",
 		"SKY_READ_ONLY_DB=status",
 		"`sky db status`",
-		"Move that write after Db.migrate",
+		"move the write after it",
+		"If the app has no Db.migrate",
+		"Store.migrate",
+		"`sky db check`",
 		"file migrations",
 	} {
 		if !strings.Contains(msg, want) {

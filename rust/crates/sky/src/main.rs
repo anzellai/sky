@@ -11580,9 +11580,9 @@ impl RunSetup {
             None
         };
         if let Some(p) = &self.profile {
-            // A relative dir resolves against the app's cwd → profiles land in
-            // `<project>/profile/` by default on the plain path.
-            let dir = p.dir.clone().unwrap_or_else(|| "profile".to_string());
+            let dir = profile_dir_for(&self.project_dir, p.dir.as_deref())
+                .display()
+                .to_string();
             envs.push(("SKY_PROFILE_DIR".to_string(), dir.clone()));
             if let Some(t) = &p.timeout {
                 envs.push(("SKY_PROFILE_TIMEOUT".to_string(), t.clone()));
@@ -11625,6 +11625,29 @@ impl RunSetup {
             envs,
             _cluster: cluster,
         })
+    }
+}
+
+/// The ABSOLUTE directory `sky run --profile` writes to. The default is
+/// `<project root>/profile`; an explicit relative `--profile-dir` is read
+/// against the directory `sky` was started in, as a shell path is. It must be
+/// absolute because the app process does not always run in the project root:
+/// a Sky.Spa backend (`--target web:app`, a direct `Spa.app` entry) runs in
+/// its generated `.split/backend` folder, which the next build deletes, and a
+/// dispatched `Std.App` entry runs in the caller's directory. A relative
+/// `SKY_PROFILE_DIR=profile` put the profiles there (v0.29.2 sixth Judge).
+fn profile_dir_for(project_dir: &Path, explicit: Option<&str>) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let absolute = |p: &Path| {
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            cwd.join(p)
+        }
+    };
+    match explicit {
+        Some(d) => absolute(Path::new(d)),
+        None => absolute(project_dir).join("profile"),
     }
 }
 
@@ -20739,6 +20762,27 @@ echo key > "$ks"
         let p2 = p2.unwrap();
         assert_eq!(p2.dir.as_deref(), Some("/tmp/q"));
         assert_eq!(p2.timeout.as_deref(), Some("5s"));
+    }
+
+    /// `sky run --profile` hands the app an ABSOLUTE `SKY_PROFILE_DIR`, so a
+    /// Sky.Spa backend (run in `.split/backend`) and a `Std.App` entry (run in
+    /// the caller's directory) write to the project's `profile/`, not into a
+    /// build folder the next build deletes (v0.29.2 sixth Judge).
+    #[test]
+    fn profile_dir_is_absolute_and_defaults_to_the_project_root() {
+        let cwd = std::env::current_dir().unwrap();
+        let proj = cwd.join("some-project");
+        assert_eq!(profile_dir_for(&proj, None), proj.join("profile"));
+        assert_eq!(
+            profile_dir_for(Path::new("rel-proj"), None),
+            cwd.join("rel-proj").join("profile")
+        );
+        assert!(profile_dir_for(Path::new("."), None).is_absolute());
+        assert_eq!(profile_dir_for(&proj, Some("out")), cwd.join("out"));
+        assert_eq!(
+            profile_dir_for(&proj, Some("/abs/prof")),
+            PathBuf::from("/abs/prof")
+        );
     }
 
     #[test]

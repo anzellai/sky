@@ -37,39 +37,19 @@ import Sky.Config as Config exposing (Sessions(..))
 -- ══════════════════════════════════════════════════════
 -- INIT
 -- ══════════════════════════════════════════════════════
-init : a -> ( Model, Cmd Msg )
-init req =
+-- `Std.App.web` calls `init` with `()`. Until v0.29.2 it was annotated
+-- `a -> …` and read a `sky_user` cookie from that argument, which never held
+-- a request, so no user was ever pre-loaded here; the rigid annotation check
+-- found it. A user signs in through the auth pages.
+init : () -> ( Model, Cmd Msg )
+init _ =
     let
         -- Set checkout info on the ORDER (not the cart)
         _ = Db.initDb ()
         _ = println "[APP] SkyShop initialised"
         products = Products.listProducts
-        -- Check for sky_user cookie to pre-load user (instant auth on page load)
-        cookies =
-            case Dict.get "cookies" req of
-
-                Just c ->
-                    c
-
-                Nothing ->
-                    Dict.empty
-        userUid =
-            case Dict.get "sky_user" cookies of
-
-                Just uid ->
-                    uid
-
-                Nothing ->
-                    ""
-        user =
-            if userUid == "" then
-                Nothing
-
-            else
-                Auth.getSessionUser userUid
-        base = refreshCart { emptyModel | products = products, user = user }
     in
-        ( base, Cmd.none )
+        ( refreshCart { emptyModel | products = products }, Cmd.none )
 
 
 -- ══════════════════════════════════════════════════════

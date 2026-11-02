@@ -471,11 +471,12 @@ sqlOnly r =
     Result.map (\( sql, _ ) -> sql) r
 
 
--- The placeholder of an Int compared with an Int column: a BIGINT on
--- PostgreSQL (v0.29.2 fifth Judge, `condParam`).
-intParam : String
-intParam =
-    byDialect "?" "CAST(? AS BIGINT)"
+-- The placeholder of an Int compared with column `col` of `table`: marked
+-- with the column on PostgreSQL, so the runtime casts it to BIGINT on an
+-- INTEGER or SMALLINT column only (v0.29.2 sixth Judge, `condParam`).
+intParam : String -> String -> String
+intParam table col =
+    byDialect "?" ("?/*sky-int:" ++ table ++ "|" ++ col ++ "*/")
 
 
 byDialect : String -> String -> String
@@ -678,7 +679,7 @@ aggregateTests db =
           (\_ ->
               Test.equal
                   (Ok
-                      ( "SELECT customer_id AS \"customer_id\", COUNT(*) AS \"sent\", CAST(COALESCE(SUM(CASE WHEN opened_at > " ++ intParam ++ " THEN 1 ELSE 0 END), 0) AS BIGINT) AS \"opened\", MAX(sent_at) AS \"last_sent_at\" FROM sqc_invoices WHERE (sent_at > " ++ intParam ++ ") GROUP BY customer_id HAVING (COUNT(*) >= ?) ORDER BY \"sent\" DESC"
+                      ( "SELECT customer_id AS \"customer_id\", COUNT(*) AS \"sent\", CAST(COALESCE(SUM(CASE WHEN opened_at > " ++ intParam "sqc_invoices" "opened_at" ++ " THEN 1 ELSE 0 END), 0) AS BIGINT) AS \"opened\", MAX(sent_at) AS \"last_sent_at\" FROM sqc_invoices WHERE (sent_at > " ++ intParam "sqc_invoices" "sent_at" ++ ") GROUP BY customer_id HAVING (COUNT(*) >= ?) ORDER BY \"sent\" DESC"
                       , [ SqlInt 0, SqlInt 0, SqlInt 2 ]
                       ))
                   (Store.toSql
@@ -2023,7 +2024,7 @@ subqueryTests db =
           (\_ ->
               Test.equal
                   (Ok
-                      ("SELECT * FROM sqc_import_rows WHERE (batch_id IN (SELECT sq1.id FROM sqc_batches sq1 WHERE (sq1.created_at < " ++ intParam ++ ") AND sq1.id IS NOT NULL))"))
+                      ("SELECT * FROM sqc_import_rows WHERE (batch_id IN (SELECT sq1.id FROM sqc_batches sq1 WHERE (sq1.created_at < " ++ intParam "sqc_batches" "created_at" ++ ") AND sq1.id IS NOT NULL))"))
                   (sqlOnly
                       (Store.toSql
                           db
@@ -2150,7 +2151,7 @@ subqueryTests db =
           (\_ ->
               Test.equal
                   (Ok
-                      ("SELECT * FROM sqc_clients WHERE (NOT EXISTS (SELECT 1 FROM sqc_bills sq1 WHERE sq1.client_id = sqc_clients.id AND (sq1.sent_at > " ++ intParam ++ ")))"))
+                      ("SELECT * FROM sqc_clients WHERE (NOT EXISTS (SELECT 1 FROM sqc_bills sq1 WHERE sq1.client_id = sqc_clients.id AND (sq1.sent_at > " ++ intParam "sqc_bills" "sent_at" ++ ")))"))
                   (sqlOnly
                       (Store.toSql
                           db
@@ -2253,7 +2254,7 @@ subqueryTests db =
           (\_ ->
               Test.equal
                   (Ok
-                      ("SELECT * FROM sqc_batches WHERE (id IN (SELECT sq1.batch_id FROM sqc_import_rows sq1 WHERE (EXISTS (SELECT 1 FROM sqc_batches sq2 WHERE sq2.id = sq1.batch_id AND (sq2.created_at > " ++ intParam ++ "))) AND sq1.batch_id IS NOT NULL))"))
+                      ("SELECT * FROM sqc_batches WHERE (id IN (SELECT sq1.batch_id FROM sqc_import_rows sq1 WHERE (EXISTS (SELECT 1 FROM sqc_batches sq2 WHERE sq2.id = sq1.batch_id AND (sq2.created_at > " ++ intParam "sqc_batches" "created_at" ++ "))) AND sq1.batch_id IS NOT NULL))"))
                   (sqlOnly
                       (Store.toSql
                           db
@@ -7570,13 +7571,13 @@ inListTests db =
                       ( [ Ok
                               ( byDialect
                                     ("SELECT * FROM sqc_inlist_kinds WHERE (mn IN (?" ++ String.repeat 999 ", ?" ++ "))")
-                                    ("SELECT * FROM sqc_inlist_kinds WHERE (mn IN (CAST(? AS BIGINT)" ++ String.repeat 999 ", CAST(? AS BIGINT)" ++ "))")
+                                    ("SELECT * FROM sqc_inlist_kinds WHERE (mn IN (?/*sky-int:sqc_inlist_kinds|mn*/" ++ String.repeat 999 ", ?/*sky-int:sqc_inlist_kinds|mn*/" ++ "))")
                               , 1000
                               )
                         , Ok
                               ( byDialect
                                     "SELECT * FROM sqc_inlist_kinds WHERE (mn IN (SELECT +value FROM json_each(?/*sky-list:1001*/)))"
-                                    "SELECT * FROM sqc_inlist_kinds WHERE (mn = ANY(CAST(?/*sky-list:1001*/ AS BIGINT[])))"
+                                    "SELECT * FROM sqc_inlist_kinds WHERE (mn = ANY(?/*sky-list:1001:int:sqc_inlist_kinds|mn*/))"
                               , 1001
                               )
                         , Ok
@@ -8716,6 +8717,96 @@ j5NarrowCase db col expected =
                                            (j5NarrowIds db (Store.inList col (List.map SqlInt values)))))))
 
 
+type alias J6Foreign =
+    { id : Int, t : Int, nu : Int }
+
+
+j6ForeignStore : Store J6Foreign
+j6ForeignStore =
+    Store.fromCodec "sqc_j6_foreign" (Codec.auto { id = 0, t = 0, nu = 0 }) |> Store.primaryKey "id"
+
+
+-- An Int field on a foreign TEXT or NUMERIC column, which v0.29.1 compared
+-- and the fifth Judge's unconditional `CAST(? AS BIGINT)` broke on TEXT
+-- ("operator does not exist: text = bigint"). Each condition gives the rows
+-- SQL's own comparison gives, on both engines; toSql names the column.
+j6ForeignCase : Db -> String -> Test
+j6ForeignCase db col =
+    let
+        long = List.map SqlInt (List.range 1000 2000) ++ [ SqlInt 5, SqlInt 99999999999 ]
+        count cond = Store.count db (Store.query j6ForeignStore |> Store.where_ cond)
+    in
+        Test.test
+            ("sixth Judge: an Int condition on a foreign "
+                ++ (if col == "t" then "TEXT" else "NUMERIC")
+                ++ " column answers as in v0.29.1 (eq, lt, a short and a long inList, findBy) and toSql names the column")
+            (\_ ->
+                Test.equal
+                    (Ok ( ( 1, 0, 3 ), ( 1, 2, True ) ))
+                    (Task.run
+                        (drop db "sqc_j6_foreign"
+                            |> Task.andThen
+                                   (\_ ->
+                                       Db.exec
+                                           db
+                                           "CREATE TABLE sqc_j6_foreign (id INTEGER PRIMARY KEY, t TEXT NOT NULL, nu NUMERIC NOT NULL)"
+                                           [])
+                            |> Task.andThen
+                                   (\_ ->
+                                       Db.exec
+                                           db
+                                           "INSERT INTO sqc_j6_foreign (id, t, nu) VALUES (1, '5', 5), (2, '6', 6), (3, '1500', 1500)"
+                                           [])
+                            |> Task.andThen
+                                   (\_ ->
+                                       Task.map3
+                                           (\a b c -> ( a, b, c ))
+                                           (count (Store.eq col (SqlInt 5)))
+                                           (count (Store.eq col (SqlInt 99999999999)))
+                                           (count (Store.lt col (SqlInt 99999999999))))
+                            |> Task.andThen
+                                   (\first ->
+                                       Task.map3
+                                           (\a b c -> ( first, ( a, b, c ) ))
+                                           (count (Store.inList col [ SqlInt 5, SqlInt 99999999999 ]))
+                                           (count (Store.inList col long))
+                                           (Store.findBy db j6ForeignStore col "5" |> Task.map (\m -> m /= Nothing))))))
+
+
+j6ForeignTests : Db -> List Test
+j6ForeignTests db =
+    [ j6ForeignCase db "t"
+    , j6ForeignCase db "nu"
+    , Test.test
+          "sixth Judge: toSql of an Int condition on PostgreSQL marks the column, short and long, and the runtime keeps a TEXT column uncast"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      ( byDialect
+                            "SELECT * FROM sqc_j6_foreign WHERE (t = ?)"
+                            "SELECT * FROM sqc_j6_foreign WHERE (t = ?/*sky-int:sqc_j6_foreign|t*/)"
+                      , byDialect
+                            "SELECT * FROM sqc_j6_foreign WHERE (t IN (SELECT +value FROM json_each(?/*sky-list:1001*/)))"
+                            "SELECT * FROM sqc_j6_foreign WHERE (t = ANY(?/*sky-list:1001:int:sqc_j6_foreign|t*/))"
+                      , 1
+                      )
+                  )
+                  (Result.map3
+                      (\( a, _ ) ( b, _ ) rows -> ( a, b, rows ))
+                      (Store.toSql db (Store.query j6ForeignStore |> Store.where_ (Store.eq "t" (SqlInt 5))))
+                      (Store.toSql db (Store.query j6ForeignStore |> Store.where_ (Store.inList "t" (List.map SqlInt (List.range 1 1001)))))
+                      (case Store.toSql db (Store.query j6ForeignStore |> Store.where_ (Store.eq "t" (SqlInt 5))) of
+
+                          Ok ( sql, ps ) ->
+                              Task.run (Db.query db sql ps |> Task.map List.length)
+
+                          Err e ->
+                              Err e
+                      ))
+          )
+    ]
+
+
 j5Tests : Db -> List Test
 j5Tests db =
     [ Test.test
@@ -9221,6 +9312,7 @@ tests =
                 ++ g5Tests db
                 ++ j5Tests db
                 ++ j6Tests db
+                ++ j6ForeignTests db
 
 
 main =

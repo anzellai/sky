@@ -774,11 +774,33 @@ fn e1012_between_two_old_exports_does_not_claim_a_new_name() {
 }
 
 #[test]
+fn e1012_names_v0_28_1_for_a_name_new_in_v0_29_0() {
+    // `Sky.Core.Http.header` is new in v0.29.0: the v0.29.1 snapshot has it,
+    // so the newest release that lacked it is still v0.28.1.
+    let html = "module Std.Html exposing (..)\nheader x =\n    x\n";
+    let http = "module Sky.Core.Http exposing (..)\nheader x =\n    x\n";
+    let main = "module Main exposing (main)\n\
+                import Std.Html exposing (..)\n\
+                import Sky.Core.Http exposing (..)\n\n\
+                main =\n    header\n";
+    let r = resolve_main(&[("Std.Html", html), ("Sky.Core.Http", http), ("Main", main)]);
+    let msgs = e1012(&r);
+    assert_eq!(msgs.len(), 1, "{:?}", r.diagnostics);
+    assert!(
+        msgs[0].contains("`Sky.Core.Http.header` is new since Sky v0.28.1"),
+        "{}",
+        msgs[0]
+    );
+    assert!(!msgs[0].contains("v0.29.1"), "{}", msgs[0]);
+}
+
+#[test]
 fn e1012_points_a_v0_29_name_at_the_v0_29_guide() {
-    // v0.29.2: `Std.Codec.value` is new since v0.29.1 (the newest release
-    // that lacked it), while `Std.Html.Attributes.value` is old. The message
-    // names v0.29.1 and links docs/migration/v0.29.md, not the v0.28 guide.
-    // It said v0.28.1 until the v0.29.1 snapshot was added (sixth Judge).
+    // v0.29.2: `Std.Codec.value` is new in v0.29.2, so it is new since
+    // v0.29.1 (the newest release that lacked it, and the one users upgrade
+    // from), while `Std.Html.Attributes.value` is old. The message names
+    // v0.29.1 and links docs/migration/v0.29.md, not the v0.28 guide (sixth
+    // Judge: it said v0.28.1, though v0.29.0 and v0.29.1 also lacked it).
     let attrs = "module Std.Html.Attributes exposing (..)\nvalue x =\n    x\n";
     let codec = "module Std.Codec exposing (..)\nvalue =\n    1\n";
     let main = "module Main exposing (main)\n\
@@ -798,6 +820,7 @@ fn e1012_points_a_v0_29_name_at_the_v0_29_guide() {
         msgs[0]
     );
     assert!(!msgs[0].contains("v0.27.8"), "{}", msgs[0]);
+    assert!(!msgs[0].contains("v0.28.1"), "{}", msgs[0]);
     assert!(
         msgs[0].ends_with("See docs/migration/v0.29.md#new-stdlib-names"),
         "{}",

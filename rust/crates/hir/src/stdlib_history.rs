@@ -38,7 +38,9 @@ pub struct Snapshot {
 /// it had is new since that release; the NEWEST such snapshot is named, so a
 /// name added in v0.29.x points at docs/migration/v0.29.md and a v0.28.0 name
 /// still points at docs/migration/v0.28.md. Add the last release of each minor
-/// line here when the next minor starts.
+/// line here when the next minor starts, and the newest release of the
+/// current line when a patch adds a stdlib name, so the message names the
+/// release users upgrade from.
 pub const SNAPSHOTS: &[Snapshot] = &[
     Snapshot {
         release: "v0.27.8",
@@ -50,9 +52,9 @@ pub const SNAPSHOTS: &[Snapshot] = &[
         tsv: include_str!("../data/stdlib-exports-v0.28.1.tsv"),
         migration: "docs/migration/v0.29.md#new-stdlib-names",
     },
-    // v0.29.2 adds names (`Money.sum`, `Codec.value`, ...): without this
-    // snapshot `[E1012]` said they were "new since v0.28.1" (v0.29.2 sixth
-    // Judge). The newest release before a name's own is named.
+    // A patch release adds names too (`Codec.value` and `Money.sum` are new
+    // in v0.29.2): without the v0.29.1 snapshot they were "new since v0.28.1",
+    // though v0.29.0 and v0.29.1 also lacked them (v0.29.2 sixth Judge).
     Snapshot {
         release: "v0.29.1",
         tsv: include_str!("../data/stdlib-exports-v0.29.1.tsv"),

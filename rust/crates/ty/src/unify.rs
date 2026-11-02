@@ -223,6 +223,14 @@ pub struct UnionFind {
     /// callers. A missing `Comparable`/`Number`/`Appendable` is refused
     /// (Elm's rule).
     pub(crate) rigid_needs: Vec<(Name, SuperType)>,
+    /// Bounds a RIGID variable was asked for that its name does not carry and
+    /// that the checker refuses (`Comparable`/`Number`/`Appendable`). The
+    /// refusal is DEFERRED to the end of the definition
+    /// (`Infer::check_annotation_bounds`) and made only when the body raised
+    /// no other error: `show : a -> String; show v = v ++ ">"` first meets
+    /// `++` (an appendable) and then `">"` (a `String`), and the right advice
+    /// is "write `String`", not "write `appendable`" (v0.29.2).
+    pub(crate) rigid_missing: Vec<(Name, SuperType)>,
     /// Reused buffers of the occurs check (no type state: see
     /// [`OccursScratch`]).
     occurs_scratch: OccursScratch,
@@ -516,22 +524,15 @@ impl UnionFind {
             }
             // Two skolems unify only when they are the SAME quantifier
             // (`identity : a -> a` — the body's `x` and the declared result are
-            // the same rigid `a`). Distinct skolems clash. (Note: the def-level
-            // gate only skolemizes RESULT-position quantifiers; an argument-only
-            // quantifier stays flex and BINDS a result rigid via the `(Flex,
-            // other)` arm above — accept-parity with the flexible-instantiation
-            // oracle. This arm therefore fires only when two *distinct
-            // result-position* skolems are forced together by the body.)
+            // the same rigid `a`). Distinct skolems clash: the body makes two
+            // variables one type (`coerce : a -> b; coerce x = x`). Every
+            // quantifier of a top-level annotation is a skolem (v0.29.2).
             (Content::Rigid(n1), Content::Rigid(n2)) => {
                 if n1 == n2 {
                     self.union(ra, rb, Content::Rigid(n1));
                     Ok(())
                 } else {
-                    Err(Mismatch::new(format!(
-                        "rigid type variable `{}` cannot unify with `{}`",
-                        n1.as_str(),
-                        n2.as_str()
-                    )))
+                    Err(Mismatch::new(rigid_pair_message(n1.as_str(), n2.as_str())))
                 }
             }
             // A skolem vs a BOUNDED flex (v0.27.0 qualified bounds): legal when
@@ -555,7 +556,15 @@ impl UnionFind {
                     self.union(ra, rb, Content::Rigid(n));
                     Ok(())
                 } else {
-                    Err(Mismatch::new(rigid_bound_message(n.as_str(), missing)))
+                    // Refused at the end of the definition, unless a clearer
+                    // error (the body pins the variable to a type) comes first.
+                    if missing.has(SuperType::Encodable) {
+                        self.rigid_needs.push((n.clone(), SuperType::Encodable));
+                    }
+                    self.rigid_missing
+                        .push((n.clone(), missing.minus(SuperType::Encodable)));
+                    self.union(ra, rb, Content::Rigid(n));
+                    Ok(())
                 }
             }
             // A skolem vs ANYTHING concrete (Structure / FlexSuper) is a clash:
@@ -563,10 +572,15 @@ impl UnionFind {
             // annotation is strictly more general than the body (audit #5/#6).
             // NOTE: this sits AFTER the Flex arms so a rigid still BINDS a plain
             // flex (the body may keep the quantifier polymorphic).
-            (Content::Rigid(n), _) | (_, Content::Rigid(n)) => Err(Mismatch::new(format!(
-                "rigid type variable `{}` cannot be unified with a concrete type",
-                n.as_str()
-            ))),
+            (Content::Rigid(n), _) | (_, Content::Rigid(n)) => {
+                let other = if matches!(self.content(ra), Content::Rigid(_)) {
+                    rb
+                } else {
+                    ra
+                };
+                let shown = self.describe_var(other, 0);
+                Err(Mismatch::new(rigid_concrete_message(n.as_str(), &shown)))
+            }
             (Content::FlexSuper(s1), Content::FlexSuper(s2)) => {
                 let s = s1.union(s2).closure();
                 if s.is_satisfiable() {
@@ -1304,6 +1318,29 @@ pub(crate) fn encodable_failure(shown: &str) -> String {
     )
 }
 
+/// The annotation is too general: its variable `var` stands for any type,
+/// and the body uses it as the concrete type `shown` (v0.29.2: every variable
+/// of a top-level annotation is rigid, argument-only ones included).
+pub(crate) fn rigid_concrete_message(var: &str, shown: &str) -> String {
+    format!(
+        "the type annotation says `{var}` can be any type, but this code uses it as `{shown}`. \
+         A type variable in an annotation stands for every type a caller may choose, so the \
+         code must work for all of them. Fix: write `{shown}` instead of `{var}` in the type \
+         annotation, or change the code so it does not depend on the type"
+    )
+}
+
+/// The annotation is too general: two of its variables can be different
+/// types, and the body makes them one type (`coerce : a -> b; coerce x = x`).
+pub(crate) fn rigid_pair_message(a: &str, b: &str) -> String {
+    format!(
+        "the type annotation says `{a}` and `{b}` can be two different types, but this code \
+         uses them as one type. A caller could choose two different types, and the value would \
+         not be the type the annotation promises. Fix: write one variable for both (`{a}` in \
+         place of `{b}`), or change the code so the two stay apart"
+    )
+}
+
 /// Elm's "the annotation is too general" error for a rigid variable that the
 /// body needs to be bounded (`largest : List a -> Maybe a` using `List.sort`).
 pub(crate) fn rigid_bound_message(var: &str, missing: SuperType) -> String {
@@ -1483,12 +1520,22 @@ mod tests {
         let int = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
         assert!(uf.unify(rigid, int).is_err());
 
-        // A skolem CLASHES with a super-constrained flex (`x = 5` forces Number
-        // — audit #6).
+        // A skolem against a super-constrained flex whose bound its name does
+        // not spell (`x = 5` forces Number — audit #6): the refusal is
+        // DEFERRED to the end of the definition (`rigid_missing`), so a later,
+        // clearer clash with a type can be reported instead (v0.29.2).
         let mut uf = UnionFind::new();
         let rigid = uf.fresh(Content::Rigid(Name::new("a")));
         let num = uf.fresh(Content::FlexSuper(SuperType::Number));
-        assert!(uf.unify(rigid, num).is_err());
+        assert!(uf.unify(rigid, num).is_ok());
+        assert_eq!(uf.rigid_missing.len(), 1);
+        assert!(uf.rigid_missing[0].1.has(SuperType::Number));
+        // A skolem whose name spells the bound needs nothing.
+        let mut uf = UnionFind::new();
+        let rigid = uf.fresh(Content::Rigid(Name::new("number")));
+        let num = uf.fresh(Content::FlexSuper(SuperType::Number));
+        assert!(uf.unify(rigid, num).is_ok());
+        assert!(uf.rigid_missing.is_empty());
     }
 
     #[test]
