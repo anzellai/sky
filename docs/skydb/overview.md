@@ -347,25 +347,68 @@ both:
   spelling (`"9.5"`). So `Store.migrate` and `Store.pushProject` refuse a
   decimal field on such a column, naming `table.column` and the statement
   that converts it, and change nothing (`migrate` never alters a column).
-  `sky db check` names the same column. On PostgreSQL (NULL stays NULL; drop
-  a `DEFAULT` first and set it again after):
+  `sky db check` names the same column. The conversion never drops a
+  currency: for `Codec.moneyIn GBP` only a Money in GBP becomes its amount,
+  and for `Codec.decimal` no Money object converts.
+
+  On PostgreSQL (NULL stays NULL; drop a `DEFAULT` first and set it again
+  after), a `Codec.decimal` field (a quoted or bare decimal converts, a Money
+  object makes the statement fail):
 
   ```sql
   ALTER TABLE items ALTER COLUMN price TYPE NUMERIC
-    USING (CASE WHEN price LIKE '{%' THEN price::json->>'amount'
-                ELSE trim(both '"' from price) END)::numeric
+    USING (CASE WHEN price::text LIKE '{%'
+                THEN ('a Money object is not a decimal: ' || price::text)
+                ELSE trim(both '"' from price::text) END)::numeric
+  ```
+
+  A `Codec.moneyIn GBP` field: first check that this query returns no rows
+  (each row it returns is a Money in another currency; change or move it,
+  it is never relabelled GBP):
+
+  ```sql
+  SELECT cost FROM items
+    WHERE cost::text LIKE '{%'
+      AND upper(cost::json->>'currency') IS DISTINCT FROM 'GBP'
+  ```
+
+  then convert (a Money in another currency makes it fail):
+
+  ```sql
+  ALTER TABLE items ALTER COLUMN cost TYPE NUMERIC
+    USING (CASE WHEN cost::text LIKE '{%'
+                THEN (CASE WHEN upper(cost::json->>'currency') = 'GBP'
+                           THEN cost::json->>'amount'
+                           ELSE 'a Money object that is not in GBP: ' || cost::text END)
+                ELSE trim(both '"' from cost::text) END)::numeric
   ```
 
   On SQLite the column stays `TEXT`; the rows are rewritten to the canonical
   text (the refusal applies while any row still holds the quoted or object
-  spelling):
+  spelling). A `Codec.decimal` field:
 
   ```sql
-  UPDATE items SET price = CASE WHEN price LIKE '{%'
-      THEN json_extract(price, '$.amount')
-      ELSE substr(price, 2, length(price) - 2) END
-    WHERE price LIKE '"%"' OR price LIKE '{%'
+  UPDATE items SET price = substr(price, 2, length(price) - 2)
+    WHERE price LIKE '"%"'
   ```
+
+  A `Codec.moneyIn GBP` field, after the same check (`SELECT cost FROM items
+  WHERE cost LIKE '{%' AND upper(json_extract(cost, '$.currency')) IS NOT
+  'GBP'`); a row in another currency is left as it is, and the store refuses
+  the column again until it is gone:
+
+  ```sql
+  UPDATE items SET cost = CASE WHEN cost LIKE '{%'
+      THEN json_extract(cost, '$.amount')
+      ELSE substr(cost, 2, length(cost) - 2) END
+    WHERE cost LIKE '"%"'
+       OR (cost LIKE '{%' AND upper(json_extract(cost, '$.currency')) = 'GBP')
+  ```
+
+  A column of Money objects has no conversion to `Codec.decimal`: it would
+  drop each row's currency, so the refusal gives none. Read it with
+  `Codec.moneyIn <Currency>` (every row in one currency) or
+  `Codec.moneyObject` (a JSON column that keeps each row's currency).
 
   Put the statement in a migration file (`sky db migrate`), then change the
   field to `Codec.autoWith [ ( "price", Codec.decimal ) ] blank`. A read
@@ -1343,8 +1386,9 @@ Store.Project` (stores, and the `Std.Db.Schema` tables `Schema.toProject`
 adds) against the live tables, columns, types, `NOT NULL`, defaults,
 `UNIQUE`, serial keys and indexes (partial and unique ones included). It
 also reports each `db/migrations` file as applied, pending or edited. It
-reads only, on any DSN the app would use, PostgreSQL or SQLite, and it
-exits 1 on drift:
+reads only, on any DSN the app would use, PostgreSQL or SQLite (it opens
+the database read-only and writes no telemetry; a missing SQLite file is
+refused, not created), and it exits 1 on drift:
 
 ```bash
 sky db check                 # plain-words report; exit 1 on drift

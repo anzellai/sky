@@ -103,7 +103,14 @@ a `Result` wherever two currencies can differ (see Breaking).
     store that fails at its first write.
   - A decimal field over a `TEXT` column (a `Codec.auto` Decimal or Money
     column) proposes the conversion that reads the JSON text, not
-    `USING price::NUMERIC`, which fails on `"9.5"`.
+    `USING price::NUMERIC`, which fails on `"9.5"`. It never drops a
+    currency: for a `Codec.moneyIn GBP` field it gives a check query that
+    lists the rows in another currency first, and the conversion fails on
+    such a row. A `Codec.decimal` field converts no Money object.
+  - It writes nothing: the helper opens a SQLite file read-only (a missing
+    file is refused with exit 2, not created), every PostgreSQL transaction
+    is read-only, and no telemetry table is written. `sky db status` runs
+    the same way.
 - **`Std.Db.Migrate.inspectSchema`**, the read-only report behind `sky db check`
   and `sky db status`:
   the live tables, columns and indexes, and each migration's state against
@@ -133,6 +140,10 @@ a `Result` wherever two currencies can differ (see Breaking).
   `web`), as `sky run` does, and the spawned app gets the cluster's DSN on
   every restart. The staged copies under `.skyapp/` and `.split/` no longer
   trigger a rebuild.
+- **`sky watch` on a Sky.Spa entry (`Spa.app`) runs its backend.** It built
+  the entry as a plain program, so no backend started. It now splits the
+  entry into `.split/` as `sky run` does and runs the generated backend (with
+  the cluster's DSN), which serves the wasm frontend.
 - **`--target web:app` runs the boot setup of a fully client-local app.** When
   `update` had no server branch, the generated backend only served static
   assets and dropped the `let _ = <task>` prefix of `main` in silence, so a
@@ -144,9 +155,10 @@ a `Result` wherever two currencies can differ (see Breaking).
   backend, in silence: only a `let _ = <task>` prefix was carried. The chained
   setup now runs in the backend after the `let` prefix and before it listens.
   So do `main = start` with a zero-parameter `start = setup |> Task.andThen
-  (\_ -> App.run app)`, and a named continuation `main = setup |> Task.andThen
-  runIt` with `runIt _ = App.run app`: before, both failed with "Undefined
-  name: app … this is a defect in Sky". Any other expression around `App.run`
+  (\_ -> App.run app)`, a named continuation `main = setup |> Task.andThen
+  runIt` with `runIt _ = App.run app`, and the two together (`main = start`
+  with `start = setup |> Task.andThen runIt`): before, they failed with
+  "Undefined name: app … this is a defect in Sky". Any other expression around `App.run`
   (for example `Task.map` over it, or a `case`), and an `App.run` reached any
   other way, fails the build and names the forms that carry.
 - **A Store column named with an SQL keyword is refused with the reason.** The
@@ -155,14 +167,28 @@ a `Result` wherever two currencies can differ (see Breaking).
   statement with "syntax error at or near order". A keyword of both engines
   (`order`, `select`, `group`, `from`, …) is now a Store builder problem, which
   every verb and `sky verify`'s stores step report; a keyword of one engine
-  (`user` on PostgreSQL, `index` on SQLite) is refused by `Store.migrate` and
-  `Store.create` on that engine. Map the field to another column with
-  `Codec.field "sort_order" .order Codec.int`.
+  (`user` and `system_user` on PostgreSQL, `index` and `commit` on SQLite) is
+  refused by `Store.migrate` and `Store.create` on that engine. On SQLite a
+  name that fails in one position only is refused there only: `if` as a
+  table name, `raise` as a column name. The lists are measured: tests run the
+  Store's statements with every SQLite keyword and every PostgreSQL reserved
+  keyword (`pg_get_keywords()`) in both positions. Map the field to another
+  column with `Codec.field "sort_order" .order Codec.int`.
 - **`sky db status` reports an edited applied migration as EDITED.** It
   compared names only, so a file changed after it ran showed as "applied" and
   "up to date." while `sky db check` said EDITED. Both now read the ledger
   through `Migrate.inspectSchema` (the checksum check `sky db migrate` uses),
-  and `status` exits 1 on an edited file.
+  and `status` exits 1 on an edited file. In a project without
+  `db/migrations` (`SKY_DB_OP=status`), `status` no longer creates the
+  `_sky_migrations` ledger.
+- **A removed `Std.Money` name used bare names its replacement.** After
+  `import Std.Money exposing (..)`, a bare `setRate` or `sumOf` gave only
+  "Undefined name"; it now names the replacement, as `Money.setRate` and
+  `exposing (setRate)` do.
+- **Every `Std.Money` `Err` names the operation called.** `Money.sum` over two
+  currencies said "Money.add: …", and `Money.fromString` said
+  "Decimal.fromString: …". They now say `Money.sum:` and
+  `Money.fromString:`.
 - **`[E1012]` names the right release for a v0.29 stdlib name.** A name new in
   v0.29.x (`Codec.value`, `Money.sum`) was called "new since Sky v0.27.8" with
   a link to docs/migration/v0.28.md. The message now names the newest release
@@ -266,8 +292,10 @@ a `Result` wherever two currencies can differ (see Breaking).
   '%"currency":""%'` on the JSON text column, and set their real currency
   (`UPDATE … SET total = '{"amount":"1.00","currency":"GBP"}'`) before you
   upgrade.
-- **`Codec.ColType` has a new constructor, `CDecimal`.** A `case` over a
-  `ColType` in your own code must add the arm (the compiler names it).
+- **`Codec.ColType` has two new constructors, `CDecimal` and `CMoneyIn`.** A
+  `case` over a `ColType` in your own code must add the arms (the compiler
+  names them). `CMoneyIn code` is the column `Codec.moneyIn` makes: a
+  decimal column whose currency is `code`.
 
 ### Migration
 
@@ -276,8 +304,17 @@ a `Result` wherever two currencies can differ (see Breaking).
 - **Moving a `Codec.auto` Decimal or Money field to `Codec.decimal` /
   `Codec.moneyIn`:** convert the column first, with the statement the
   `Store.migrate` refusal names (in a migration file), then switch the codec.
-  On PostgreSQL: `ALTER TABLE t ALTER COLUMN c TYPE NUMERIC USING (CASE WHEN c
-  LIKE '{%' THEN c::json->>'amount' ELSE trim(both '"' from c) END)::numeric`.
+  The refusal never drops a currency (docs/skydb/overview.md, "Decimal
+  columns"). For `Codec.moneyIn GBP` on PostgreSQL, first check that
+  `SELECT c FROM t WHERE c::text LIKE '{%' AND upper(c::json->>'currency') IS
+  DISTINCT FROM 'GBP'` returns no rows, then run `ALTER TABLE t ALTER COLUMN c
+  TYPE NUMERIC USING (CASE WHEN c::text LIKE '{%' THEN (CASE WHEN
+  upper(c::json->>'currency') = 'GBP' THEN c::json->>'amount' ELSE 'a Money
+  object that is not in GBP: ' || c::text END) ELSE trim(both '"' from
+  c::text) END)::numeric`; a row in another currency makes it fail. A column
+  of Money objects has no conversion to `Codec.decimal`, because the
+  currency would be dropped: use `Codec.moneyIn` (one currency) or
+  `Codec.moneyObject`.
 - **A stored Money with an empty currency:** set the real currency on those
   rows before the upgrade (see Breaking).
 - **`Std.Db.Store` columns named with an SQL keyword:** map the field to
