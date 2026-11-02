@@ -1370,64 +1370,148 @@ pub fn read_app_value(src: &str, needs_args: &dyn Fn(&str) -> bool) -> Result<Ap
 
 // ---- the setup a Task-chained `main` runs before the app -------------------
 
+/// How a `main` reaches `App.run app`, for a client (Sky.Spa) build that
+/// drops `main` and generates the backend's own.
+#[derive(Debug, Clone, Default)]
+pub struct RunChain {
+    /// The setup Task `main` runs before the app (see [`main_run_chain`]).
+    pub setup: Option<ArgText>,
+    /// Top-level bindings that exist only to run the app (`start = setup |>
+    /// Task.andThen (\_ -> App.run app)` reached as `main = start`, or the
+    /// named continuation `runIt _ = App.run app`). The build drops them with
+    /// `main`: they reference the app value, which the client build moves.
+    pub carriers: Vec<String>,
+}
+
 /// The setup Task a `main` runs BEFORE `App.run app` when it chains the two:
 ///
 /// ```text
 /// main = setup |> Task.andThen (\_ -> App.run app)
 /// main = Task.andThen (\_ -> App.run app) setup
 /// main = Task.andThen (\_ -> App.run app) <| setup
+/// main = setup |> Task.andThen runIt        -- runIt _ = App.run app
+/// main = start                              -- start = <one of the above>
 /// ```
 ///
-/// (each optionally under a `let … in`, whose bindings the caller carries
-/// itself). A client (Sky.Spa) build drops `main` and generates the backend's
-/// own, so a setup it did not carry would never run on the server.
+/// (each optionally under a `let … in` in `main`, whose bindings the caller
+/// carries itself). A client (Sky.Spa) build drops `main` and generates the
+/// backend's own, so a setup it did not carry would never run on the server.
 ///
-/// `Ok(None)` when `main`'s body (after any `let`) IS the `App.run` call, or
-/// when `main` does not call `App.run` itself. `Ok(Some(setup))` for a chain
-/// above, with the setup expression's verbatim text. `Err` for any other
-/// expression around `App.run` (a `case`, an `if`, `Task.map`, a named
-/// continuation): the build cannot tell what runs before the app, and it never
-/// drops it silently.
-pub fn main_run_chain_setup(src: &str) -> Result<Option<ArgText>, String> {
+/// `setup` is `None` when the body (after any `let`) IS the `App.run` call, or
+/// when no `App.run` is reached from `main`. `Err` for any other expression
+/// around `App.run` (a `case`, an `if`, `Task.map`), and for an `App.run`
+/// reached any other way: the build cannot tell what runs before the app, and
+/// it never drops it silently.
+pub fn main_run_chain(src: &str) -> Result<RunChain, String> {
     let file = parse(src);
     let imp = app_import(src);
     let q = imp.qualifier_or_default();
-    let Some(main) = file.decls().find_map(|d| match d {
-        ast::Decl::Value(v) if v.name().map(|n| n.text() == "main").unwrap_or(false) => Some(v),
-        _ => None,
-    }) else {
-        return Ok(None);
-    };
-    let Some(mut body) = main.body() else {
-        return Ok(None);
-    };
-    let range = main.syntax().text_range();
-    let Some(r) = run_refs(src).into_iter().find(|r| {
-        let at = syntax::TextSize::from(r.start as u32);
-        range.contains(at)
-    }) else {
-        return Ok(None);
-    };
-    body = strip_parens(body);
-    if let Expr::Let(l) = &body {
-        match l.body() {
-            Some(b) => body = strip_parens(b),
-            None => return Ok(None),
+    let mut decls: HashMap<String, ast::ValueDecl> = HashMap::new();
+    for d in file.decls() {
+        if let ast::Decl::Value(v) = d {
+            if let Some(n) = v.name() {
+                decls.entry(n.text().to_string()).or_insert(v);
+            }
         }
     }
-    // The `App.run …` call node: the reference, its parentheses, then the
-    // application (`App.run x`, `x |> App.run`, `App.run <| x`).
+    let Some(main) = decls.get("main").cloned() else {
+        return Ok(RunChain::default());
+    };
+    let refs = run_refs(src);
+    let refused = || -> String {
+        format!(
+            "`main` runs `{q}.run` inside an expression a client (Sky.Spa) build cannot \
+             carry: the build generates the backend's own `main`, so the work `main` does \
+             around the app would never run on the server. Run the setup first and the app \
+             last, in one of these forms:\n    \
+             main = setup |> Task.andThen (\\_ -> {q}.run app)\n    \
+             main = setup |> Task.andThen runIt   (with runIt _ = {q}.run app)\n    \
+             main = start                         (with start = one of the forms above)\n    \
+             main = let _ = setup in {q}.run app"
+        )
+    };
+    let mut carriers: Vec<String> = Vec::new();
+    let setup = chain_in(
+        &file,
+        src,
+        &q,
+        &decls,
+        &main,
+        &refs,
+        &mut carriers,
+        true,
+        &refused,
+    )?;
+    // Every `App.run` must sit in `main` or a carrier; a carrier must be used
+    // by `main` (or another carrier) only, since the build drops it.
+    let owner = |pos: usize| -> Option<String> {
+        decls
+            .iter()
+            .find(|(_, v)| {
+                let r = v.syntax().text_range();
+                usize::from(r.start()) <= pos && pos < usize::from(r.end())
+            })
+            .map(|(n, _)| n.clone())
+    };
+    for r in &refs {
+        match owner(r.start) {
+            Some(n) if n == "main" || carriers.contains(&n) => {}
+            Some(_) => return Err(refused()),
+            None => {}
+        }
+    }
+    for c in &carriers {
+        for (n, v) in &decls {
+            if n == "main" || carriers.contains(n) {
+                continue;
+            }
+            if references_ident(&v.syntax().text().to_string(), c) {
+                return Err(format!(
+                    "`{c}` runs `{q}.run`, and `{n}` uses it too. A client (Sky.Spa) build \
+                     drops `main` and the bindings that only run the app, so `{n}` would \
+                     reference a name that is gone. Use `{c}` from `main` only."
+                ));
+            }
+        }
+    }
+    Ok(RunChain {
+        setup: match setup {
+            Some(e) => {
+                let off = content_start(e.syntax());
+                let end = usize::from(e.syntax().text_range().end());
+                let line_start = src[..off].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                Some(ArgText {
+                    text: src[off..end].trim_end().to_string(),
+                    col: off - line_start,
+                })
+            }
+            None => None,
+        },
+        carriers,
+    })
+}
+
+/// [`main_run_chain`]'s setup alone.
+pub fn main_run_chain_setup(src: &str) -> Result<Option<ArgText>, String> {
+    Ok(main_run_chain(src)?.setup)
+}
+
+/// The `App.run …` call inside `decl` (the reference, its parentheses, then
+/// the application `App.run x`, `x |> App.run`, `App.run <| x`), parentheses
+/// stripped. `None` when `decl` has no such call.
+fn run_call_in(file: &ast::SourceFile, decl: &ast::ValueDecl, refs: &[RunRef]) -> Option<Expr> {
+    let range = decl.syntax().text_range();
+    let r = refs
+        .iter()
+        .find(|r| range.contains(syntax::TextSize::from(r.start as u32)))?;
     let root = file.syntax().clone();
-    let Some(node) = root
+    let node = root
         .token_at_offset(syntax::TextSize::from(r.start as u32))
         .right_biased()
         .and_then(|t| {
             t.parent_ancestors()
                 .find(|n| matches!(n.kind(), SyntaxKind::QualRefExpr | SyntaxKind::RefExpr))
-        })
-    else {
-        return Ok(None);
-    };
+        })?;
     let mut cur = node;
     while let Some(p) = cur.parent() {
         if p.kind() == SyntaxKind::ParenExpr {
@@ -1438,14 +1522,65 @@ pub fn main_run_chain_setup(src: &str) -> Result<Option<ArgText>, String> {
     }
     let call = match cur.parent() {
         Some(p) if matches!(p.kind(), SyntaxKind::CallExpr | SyntaxKind::BinExpr) => p,
-        _ => return Ok(None),
+        _ => return None,
     };
-    let Some(call_expr) = Expr::cast(call) else {
+    Expr::cast(call).map(strip_parens)
+}
+
+/// The setup `decl`'s body chains before the app (see [`main_run_chain`]).
+/// `is_main` allows the `let … in` prefix the caller carries; a carrier
+/// binding found on the way is pushed to `carriers`.
+#[allow(clippy::too_many_arguments)]
+fn chain_in(
+    file: &ast::SourceFile,
+    src: &str,
+    q: &str,
+    decls: &HashMap<String, ast::ValueDecl>,
+    decl: &ast::ValueDecl,
+    refs: &[RunRef],
+    carriers: &mut Vec<String>,
+    is_main: bool,
+    refused: &dyn Fn() -> String,
+) -> Result<Option<Expr>, String> {
+    let _ = src;
+    let Some(body) = decl.body() else {
         return Ok(None);
     };
-    let call_inner = strip_parens(call_expr);
-    if body.syntax() == call_inner.syntax() {
-        return Ok(None);
+    let mut body = strip_parens(body);
+    if let Expr::Let(l) = &body {
+        if !is_main {
+            return Err(refused());
+        }
+        match l.body() {
+            Some(b) => body = strip_parens(b),
+            None => return Ok(None),
+        }
+    }
+    let run_call = run_call_in(file, decl, refs);
+    if let Some(rc) = &run_call {
+        if body.syntax() == rc.syntax() {
+            return Ok(None);
+        }
+    }
+    // A zero-parameter top-level binding that runs the app: `main = start`.
+    let top_ref = |e: &Expr| -> Option<(String, ast::ValueDecl)> {
+        let Expr::Ref(_) = strip_parens(e.clone()) else {
+            return None;
+        };
+        let name = qual_text(&strip_parens(e.clone()));
+        let v = decls.get(&name)?;
+        if name == "main" || carriers.contains(&name) {
+            return None;
+        }
+        run_call_in(file, v, refs).map(|_| (name, v.clone()))
+    };
+    if run_call.is_none() {
+        if let Some((name, v)) = top_ref(&body) {
+            if v.params().map(|p| p.params().count()).unwrap_or(0) == 0 {
+                carriers.push(name);
+                return chain_in(file, src, q, decls, &v, refs, carriers, false, refused);
+            }
+        }
     }
     // The `Sky.Core.Task` qualifiers in scope, and whether `andThen` is bare.
     let mut task_quals: Vec<String> = Vec::new();
@@ -1472,75 +1607,88 @@ pub fn main_run_chain_setup(src: &str) -> Result<Option<ArgText>, String> {
             None => t == "andThen" && bare_and_then,
         }
     };
-    // `\_ -> App.run app` (a `_`, `()` or unused parameter) whose body is the
-    // run call.
-    let is_run_continuation = |e: &Expr| -> bool {
-        let Expr::Lambda(l) = strip_parens(e.clone()) else {
-            return false;
-        };
-        let Some(b) = l.body() else {
-            return false;
-        };
-        if strip_parens(b).syntax() != call_inner.syntax() {
-            return false;
-        }
-        let Some(pl) = l.params() else {
+    // A one-parameter function whose body is the run call `call`, and whose
+    // parameter (a `_`, `()` or unused name) the call does not use.
+    let ignores_param = |params: Option<ast::ParamList>, call: &Expr| -> bool {
+        let Some(pl) = params else {
             return false;
         };
         let params: Vec<ast::Pattern> = pl.params().collect();
         if params.len() != 1 {
             return false;
         }
-        let run_text = call_inner.syntax().text().to_string();
+        let run_text = call.syntax().text().to_string();
         params[0]
             .syntax()
             .descendants()
             .all(|d| d.kind() != SyntaxKind::PatVar || !references_ident(&run_text, &node_text(&d)))
     };
-    // `Task.andThen (\_ -> App.run app)`, as a partial application.
-    let is_and_then_run = |e: &Expr| -> bool {
+    // The continuation: `\_ -> App.run app` here, or a named top-level
+    // `runIt _ = App.run app`. Returns the carrier name for the latter.
+    let continuation = |e: &Expr| -> Option<Option<String>> {
+        match strip_parens(e.clone()) {
+            Expr::Lambda(l) => {
+                let rc = run_call.as_ref()?;
+                let b = l.body()?;
+                (strip_parens(b).syntax() == rc.syntax() && ignores_param(l.params(), rc))
+                    .then_some(None)
+            }
+            Expr::Ref(_) => {
+                let name = qual_text(&strip_parens(e.clone()));
+                if name == "main" || carriers.contains(&name) {
+                    return None;
+                }
+                let v = decls.get(&name)?;
+                let rc = run_call_in(file, v, refs)?;
+                let b = strip_parens(v.body()?);
+                (b.syntax() == rc.syntax() && ignores_param(v.params(), &rc)).then_some(Some(name))
+            }
+            _ => None,
+        }
+    };
+    // `Task.andThen k`, as a partial application.
+    let and_then_k = |e: &Expr| -> Option<Option<String>> {
         let Expr::Call(c) = strip_parens(e.clone()) else {
-            return false;
+            return None;
         };
         let parts = c.parts();
-        parts.len() == 2 && is_and_then(&parts[0]) && is_run_continuation(&parts[1])
+        if parts.len() == 2 && is_and_then(&parts[0]) {
+            continuation(&parts[1])
+        } else {
+            None
+        }
     };
-    let setup: Option<Expr> = match &body {
+    let found: Option<(Expr, Option<String>)> = match &body {
         Expr::Bin(b) => {
             let op = b.op().map(|t| t.text().to_string()).unwrap_or_default();
             match (op.as_str(), b.lhs(), b.rhs()) {
-                ("|>", Some(l), Some(rr)) if is_and_then_run(&rr) => Some(l),
-                ("<|", Some(l), Some(rr)) if is_and_then_run(&l) => Some(rr),
+                ("|>", Some(l), Some(rr)) => and_then_k(&rr).map(|k| (l, k)),
+                ("<|", Some(l), Some(rr)) => and_then_k(&l).map(|k| (rr, k)),
                 _ => None,
             }
         }
         Expr::Call(c) => {
             let parts = c.parts();
-            if parts.len() == 3 && is_and_then(&parts[0]) && is_run_continuation(&parts[1]) {
-                Some(parts[2].clone())
+            if parts.len() == 3 && is_and_then(&parts[0]) {
+                continuation(&parts[1]).map(|k| (parts[2].clone(), k))
             } else {
                 None
             }
         }
         _ => None,
     };
-    let Some(setup) = setup else {
-        return Err(format!(
-            "`main` runs `{q}.run` inside an expression a client (Sky.Spa) build cannot \
-             carry: the build generates the backend's own `main`, so the work `main` does \
-             around the app would never run on the server. Run the setup first and the app \
-             last, in one of these forms:\n    \
-             main = setup |> Task.andThen (\\_ -> {q}.run app)\n    \
-             main = let _ = setup in {q}.run app"
-        ));
-    };
-    let off = content_start(setup.syntax());
-    let end = usize::from(setup.syntax().text_range().end());
-    let line_start = src[..off].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    Ok(Some(ArgText {
-        text: src[off..end].trim_end().to_string(),
-        col: off - line_start,
-    }))
+    match found {
+        Some((setup, carrier)) => {
+            if let Some(c) = carrier {
+                carriers.push(c);
+            }
+            Ok(Some(setup))
+        }
+        // `main` reaches no `App.run` at all: nothing to carry (the caller's
+        // check of every `App.run` reference refuses one found elsewhere).
+        None if run_call.is_none() => Ok(None),
+        None => Err(refused()),
+    }
 }
 
 /// True when `ident` occurs in `hay` as a whole identifier.

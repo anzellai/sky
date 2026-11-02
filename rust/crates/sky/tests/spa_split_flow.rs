@@ -8188,6 +8188,160 @@ fn web_app_chained_main_setup_runs_in_backend() {
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+/// Build `main_src` under `--target web:app`, assert the backend carries the
+/// setup `marker` and the frontend does not, and (with Go) that the built
+/// backend prints `marker` when it starts.
+fn assert_web_app_carries_setup(name: &str, main_src: &str, marker: &str) {
+    let proj = scratch_std_app(name, &chained_main_app(main_src));
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !log.contains("defect in Sky") && !log.contains("Undefined name"),
+        "the build must not fail with an internal error:\n{log}"
+    );
+    let back = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .unwrap_or_else(|e| panic!("generated backend entry must exist ({e}):\n{log}"));
+    assert!(
+        back.contains(marker),
+        "the backend must carry the setup:\n{back}"
+    );
+    let front = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .expect("generated frontend entry must exist");
+    assert!(
+        !front.contains(marker),
+        "the setup must stay out of the wasm frontend:\n{front}"
+    );
+    if required(Need::Go, have_go()) {
+        assert!(
+            output.status.success(),
+            "the app must build under web:app:\n{log}"
+        );
+        let backend = proj.join(".skyapp/web-app/.split/backend");
+        let mut child = Command::new(backend.join("sky-out/app"))
+            .current_dir(&backend)
+            .env("PORT", "0")
+            .env("SKY_LIVE_PORT", "0")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start the backend");
+        let mut out = child.stdout.take().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let want = marker.to_string();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = [0u8; 4096];
+            let mut seen = String::new();
+            while let Ok(n) = out.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                seen.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if seen.contains(&want) {
+                    break;
+                }
+            }
+            let _ = tx.send(seen);
+        });
+        let seen = rx
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .unwrap_or_default();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(
+            seen.contains(marker),
+            "the backend never ran the setup:\n{seen}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// `App.run` reached outside `main` (v0.29.2 Judge gap): `main = start` with
+/// `start = setup |> Task.andThen (\_ -> App.run app)` failed with "Undefined
+/// name: app … this is a defect in Sky". The zero-parameter binding is now
+/// followed, its setup carried, and the binding dropped with `main`.
+#[test]
+fn web_app_main_through_a_zero_arg_binding_carries_its_setup() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    assert_web_app_carries_setup(
+        "boot-start",
+        r#"setup =
+    println "BOOT-START-RAN"
+
+
+main =
+    start
+
+
+start =
+    setup |> Task.andThen (\_ -> App.run app)
+"#,
+        "BOOT-START-RAN",
+    );
+}
+
+/// The named continuation: `main = setup |> Task.andThen runIt` with
+/// `runIt _ = App.run app` failed the same way. It now carries `setup`.
+#[test]
+fn web_app_main_with_a_named_continuation_carries_its_setup() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    assert_web_app_carries_setup(
+        "boot-runit",
+        r#"runIt _ =
+    App.run app
+
+
+main =
+    println "BOOT-RUNIT-RAN" |> Task.andThen runIt
+"#,
+        "BOOT-RUNIT-RAN",
+    );
+}
+
+/// An `App.run` reached any other way (here a helper that `main` does not
+/// use as a continuation) is refused with the forms that carry, never the
+/// internal "defect in Sky" error.
+#[test]
+fn web_app_run_outside_a_carried_form_is_refused_clearly() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch_std_app(
+        "boot-other",
+        &chained_main_app(
+            r#"runIt n =
+    App.run app |> Task.map (\_ -> n)
+
+
+main =
+    println "X" |> Task.andThen (\_ -> runIt 1)
+"#,
+        ),
+    );
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.status.success(), "the build must fail:\n{log}");
+    assert!(
+        !log.contains("defect in Sky") && log.contains("Task.andThen runIt"),
+        "the refusal must name the forms that carry:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 /// A `main` whose `App.run` sits inside an expression the build cannot split
 /// (here a `Task.map` around it) is REFUSED under `--target web:app`, naming
 /// the forms that carry, never built with the surrounding work dropped.
