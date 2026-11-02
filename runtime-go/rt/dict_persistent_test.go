@@ -462,25 +462,71 @@ func dictDepth[V any](d SkyDict[V]) int {
 	return walk(&r, 1)
 }
 
-// The short-key hash spreads the keys real Dicts hold (sequential Ints,
-// numbered Strings) evenly. For a uniform hash the deepest of n leaves in a
-// 16-way trie sits near log16(n²/2), 8.1 for 100,000 keys; a weak mix on
-// these regular keys would go far deeper.
+// The Dict hash spreads the keys real Dicts hold (sequential Ints, numbered
+// Strings, long keys) evenly. The seed is random per process (an adversary
+// must not predict collisions), so the depth is a random variable even for
+// a perfect hash, and the bound must come from its distribution.
+//
+// For a uniform hash the trie is d+1 deep when the closest pair of the n
+// keys shares d leading nibbles: P(depth > D) = 1 - exp(-C(n,2) / 16^D).
+// For n = 100,000 that is 6% for D = 9, 0.45% for D = 10, 0.028% for D = 11
+// and 0.0018% for D = 12. Measured over 10,000 seeds per key family on
+// linux/amd64 (the CI host), every family matches it (depth 11 in 0.2-0.5%
+// of seeds, 12 in 0.04%), as a SHA-256 reference does. So the old bound of
+// 10 failed about one run in 50 across the four families with nothing wrong
+// (CI, "a-much-longer-key-name-…", depth 11). The bound is 12: a false
+// failure in about one run in 14,000. A weak mix still fails it, and the
+// pair count below fails a weak mix with near certainty.
 func TestDictHashKeepsTheTrieShallow(t *testing.T) {
-	for _, mk := range []func(int) string{
-		func(i int) string { return encodeDictKey(i) },
-		func(i int) string { return "user-" + fmt.Sprint(i) },
-		func(i int) string { return encodeDictKey(i * 1024) },
-		func(i int) string { return fmt.Sprintf("a-much-longer-key-name-%08d", i) },
-	} {
+	for _, mk := range dictHashKeyFamilies {
 		keys := make([]string, 100000)
 		vals := make([]int, len(keys))
 		for i := range keys {
 			keys[i] = mk(i)
 		}
 		d := dictBuild(keys, vals, false)
-		if got := dictDepth(d); got > 10 {
+		if got := dictDepth(d); got > 12 {
 			t.Fatalf("keys like %q: trie depth %d for 100,000 keys", keys[1], got)
+		}
+	}
+}
+
+var dictHashKeyFamilies = []func(int) string{
+	func(i int) string { return encodeDictKey(i) },
+	func(i int) string { return "user-" + fmt.Sprint(i) },
+	func(i int) string { return encodeDictKey(i * 1024) },
+	func(i int) string { return fmt.Sprintf("a-much-longer-key-name-%08d", i) },
+}
+
+// The number of key pairs that share their first 7 trie nibbles (28 bits).
+// For a uniform hash it is Poisson with mean C(100000, 2) / 2^28 = 18.6; it
+// exceeds 60 with probability below 1e-12, while a mix that maps regular
+// keys to related hashes gives thousands. This is the sharp test of the mix
+// quality; the depth test above is its tail.
+func TestDictHashSpreadsTheTrieLevelsEvenly(t *testing.T) {
+	for _, mk := range dictHashKeyFamilies {
+		const n = 100000
+		prefixes := make([]uint64, n)
+		for i := range prefixes {
+			h := dictHash(mk(i))
+			var p uint64
+			for l := 0; l < 7; l++ { // the trie reads the low nibble first
+				p = p<<dictBits | (h>>(dictBits*l))&dictMask
+			}
+			prefixes[i] = p
+		}
+		sort.Slice(prefixes, func(i, j int) bool { return prefixes[i] < prefixes[j] })
+		pairs := 0
+		for i, run := 1, 1; i <= n; i++ {
+			if i < n && prefixes[i] == prefixes[i-1] {
+				run++
+				continue
+			}
+			pairs += run * (run - 1) / 2
+			run = 1
+		}
+		if pairs > 60 {
+			t.Fatalf("keys like %q: %d pairs share the first 7 trie levels, want about 19", mk(1), pairs)
 		}
 	}
 }
