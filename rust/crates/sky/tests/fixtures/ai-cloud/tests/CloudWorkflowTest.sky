@@ -247,6 +247,45 @@ spender w =
         |> Train.withBudget (Money.fromMinor Money.USD 15)
 
 
+-- v0.29.2 seventh Judge: the spend was kept in minor units as an Int, and
+-- `Money.toMinor` of an ETH spend from 9.22 ETH up has no 64-bit Int (ETH has
+-- 18 minor units). A run priced in ETH whose spend passes that crashed the
+-- process. The spend is now a Decimal count of minor units: a 50 ETH budget
+-- at 100 ETH an hour is stopped with BudgetExceeded, its spend exact.
+ethSpender : Fixture.World -> Train.Job
+ethSpender w =
+    Fixture.job "ethspender" w |> Train.withMaxSteps 200 |> Train.fakeStepMs 50
+        |> Train.withMachinePrices
+               (Train.machinePrices
+                   Money.ETH
+                   "test"
+                   [ { machine = "n2-standard-4"
+                     , region = "us-central1"
+                     , perHour = "100"
+                     }
+                   ])
+        |> Train.withBudget (Money.fromMajor Money.ETH 50)
+
+
+ethStopped : Result Error Train.Adapter
+ethStopped =
+    fresh "ethstopped"
+        |> Task.andThen
+               (\w ->
+                   Fixture.control "clockscale?x=100000"
+                       |> Task.andThen
+                              (\_ ->
+                                  Train.drive w.db (ethSpender w) |> Task.map Ok
+                                      |> Task.onError
+                                             (\e -> Task.succeed (Err e)))
+                       |> Task.andThen
+                              (\outcome ->
+                                  Fixture.control "clockscale?x=1"
+                                      |> Task.map (\_ -> outcome)))
+        |> Task.run
+        |> Result.andThen identity
+
+
 -- The run's outcome, then its rows in Std.Ai.Trace and its last measured
 -- spend: a run stopped by its budget still records what it spent.
 stoppedRun : Result Error ( Result Error Train.Adapter, List Trace.Row, Maybe Money.Money )
@@ -571,6 +610,23 @@ tests =
 
                   _ ->
                       Test.fail ("not BudgetExceeded: " ++ codeOf stopped))
+    , Test.test
+          "a run priced in ETH whose spend passes 9.22 ETH (no 64-bit Int of wei) is stopped with BudgetExceeded, not a crash"
+          (\_ ->
+              case failureOf ethStopped of
+
+                  Just (BudgetExceeded b) ->
+                      Test.equal
+                          ( Decimal.toString (Money.amount b.budget)
+                          , Decimal.gte
+                                (Money.amount b.estimate)
+                                (Decimal.fromInt 50)
+                          , Money.currency b.estimate == Money.ETH
+                          )
+                          ( "50", True, True )
+
+                  _ ->
+                      Test.fail ("not BudgetExceeded: " ++ codeOf ethStopped))
     , Test.test
           "a Vertex run records its steps and its measured spend in Std.Ai.Trace"
           (\_ ->

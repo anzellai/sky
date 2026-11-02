@@ -145,6 +145,36 @@ tests =
     , Test.test "allocate 3 of -$100.00 sums EXACTLY to -$100.00 (doc: exact sum)"
         (\_ -> Test.equal True (sumsTo Money.USD (Money.allocate 3 (Money.neg (Money.fromMajor Money.USD 100))) (Money.neg (Money.fromMajor Money.USD 100))))
 
+      -- ── seventh Judge (v0.29.2): allocate of an amount below the minor unit ──
+      --    1.005 USD (from Money.mul, percentOf or convert) split 3 ways gave
+      --    [0.34, 0.33, 0.33], which sums to 1.00. The digits below the minor
+      --    unit now go to the first part, so the parts sum to the input.
+    , Test.test "allocate 3 of 1.005 USD sums EXACTLY to 1.005 and gives [0.345, 0.33, 0.33]"
+        (\_ ->
+            let
+                m = Money.Money (dec "1.005") Money.USD
+                parts = Money.allocate 3 m
+            in
+                Test.equal
+                    ( True, [ "0.345", "0.33", "0.33" ] )
+                    ( sumsTo Money.USD parts m, List.map (\p -> Dec.toString (Money.amount p)) parts ))
+    , Test.test "allocate of sub-minor amounts (mul, percentOf, negative, 0-dp JPY, 18-dp ETH) sums EXACTLY for 1 to 7 parts"
+        (\_ ->
+            let
+                amounts =
+                    [ Money.mul (dec "0.3333333") (Money.fromMajor Money.USD 10)
+                    , Money.percentOf (dec "12.5") (Money.Money (dec "0.07") Money.USD)
+                    , Money.Money (dec "-7.0049") Money.GBP
+                    , Money.Money (dec "100.5") Money.JPY
+                    , Money.Money (dec "0.0000000000000000015") Money.ETH
+                    ]
+                exact m = List.all (\n -> sumsTo (Money.currency m) (Money.allocate n m) m) (List.range 1 7)
+            in
+                Test.equal [ True, True, True, True, True ] (List.map exact amounts))
+    , Test.test "toMinor of 9 ETH is 9000000000000000000 (in the 64-bit Int range)"
+        (\_ -> Test.equal 9000000000000000000 (Money.toMinor (Money.fromMajor Money.ETH 9)))
+
+
       -- ── Minor-unit correctness across currency decimal places ──
     , Test.test "minorUnits USD == 2"
         (\_ -> Test.equal 2 (Money.minorUnits Money.USD))

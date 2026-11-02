@@ -1747,10 +1747,14 @@ func dbTransactionAttempt(d *SkyDb, capBody any) (any, bool) {
 	// body (e.g. a bad Coerce) must roll back too, so we recover.
 	var result any
 	panicked := false
+	var loud any
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
 				panicked = true
+				if isLoudByDesignPanic(r) {
+					loud = r
+				}
 				result = Err[any, any](ErrUnexpected(fmt.Sprintf("withTransaction: body panicked: %v", r)))
 			}
 		}()
@@ -1764,6 +1768,12 @@ func dbTransactionAttempt(d *SkyDb, capBody any) (any, bool) {
 		// The body may have read a column type its own schema change made:
 		// forget what it read (db_sqlite_legacy.go).
 		dbColumnCacheReset(d.conn)
+		// A classified loud panic (NumericOverflow, DivisionByZero, …) rolls
+		// back and then goes on to the panic net (a 500, or exit 1): it is
+		// never an `Err` (see isLoudByDesignPanic).
+		if loud != nil {
+			panic(loud)
+		}
 		// A panic is never retried: it is a defect in the body, not a
 		// conflict, and replaying it just panics again.
 		return result, !panicked && txDb.sawRetryableTxError()

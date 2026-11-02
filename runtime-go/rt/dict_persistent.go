@@ -670,13 +670,11 @@ func asSkyDict(v any) skyDictAny {
 	if rv.Kind() == reflect.Pointer && !rv.IsNil() {
 		return asSkyDict(rv.Elem().Interface())
 	}
-	if isSkyContainer(v) {
-		if u := unwrapAny(v); u != nil {
-			if d, ok := u.(skyDictAny); ok {
-				return d
-			}
-			return asSkyDict(u)
+	if u, ok := unwrapSkyContainer(v); ok {
+		if d, ok := u.(skyDictAny); ok {
+			return d
 		}
+		return asSkyDict(u)
 	}
 	return SkyDict[any]{}
 }

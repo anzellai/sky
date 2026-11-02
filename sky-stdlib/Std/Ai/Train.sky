@@ -5025,7 +5025,7 @@ type alias CloudWatch =
     , valLoss : Float
     , peft : String
     , resumedFrom : Int
-    , spentMinor : Int
+    , spentMinor : Decimal.Decimal
     , errorCode : Int
     , errorMessage : String
     , relaunches : Int
@@ -5063,7 +5063,7 @@ cloudWatchCodec =
         |> Codec.field "valLoss" .valLoss Codec.float
         |> Codec.field "peft" .peft Codec.string
         |> Codec.field "resumedFrom" .resumedFrom Codec.int
-        |> Codec.field "spentMinor" .spentMinor Codec.int
+        |> Codec.field "spentMinor" .spentMinor Codec.decimal
         |> Codec.field "errorCode" .errorCode Codec.int
         |> Codec.field "errorMessage" .errorMessage Codec.string
         |> Codec.field "relaunches" .relaunches Codec.int
@@ -5077,7 +5077,7 @@ type alias CloudOrigin =
     , job : String
     , live : Bool
     , finished : Bool
-    , spentMinor : Int
+    , spentMinor : Decimal.Decimal
     }
 
 
@@ -5090,7 +5090,7 @@ cloudOriginCodec =
         |> Codec.field "job" .job Codec.string
         |> Codec.field "live" .live Codec.bool
         |> Codec.field "finished" .finished Codec.bool
-        |> Codec.field "spentMinor" .spentMinor Codec.int
+        |> Codec.field "spentMinor" .spentMinor Codec.decimal
         |> Codec.buildObject
 
 -- The cloud.json a watch writes in the run directory.
@@ -5100,7 +5100,7 @@ type alias CloudFile =
     , attempt : Int
     , staging : String
     , runKey : String
-    , spentMinor : Int
+    , spentMinor : Decimal.Decimal
     , runningSinceMs : Int
     }
 
@@ -5128,7 +5128,8 @@ readCloudFile dir =
                                                       , attempt = a
                                                       , staging = st
                                                       , runKey = k
-                                                      , spentMinor = sm
+                                                      , spentMinor =
+                                                          minorCountOf sm
                                                       , runningSinceMs = rs
                                                       })
                                                   (JsonD.map3
@@ -5151,8 +5152,8 @@ readCloudFile dir =
                                                   (JsonD.oneOf
                                                       [ JsonD.field
                                                             "spentMinor"
-                                                            JsonD.int
-                                                      , JsonD.succeed 0
+                                                            JsonD.value
+                                                      , JsonD.succeed JsonE.null
                                                       ])
                                                   (JsonD.oneOf
                                                       [ JsonD.field
@@ -5167,7 +5168,7 @@ readCloudFile dir =
 -- `runningSinceMs`: when a watch first saw the job RUNNING (0 before), the
 -- start of the time Vertex bills; spend counts from there, not from the
 -- job's start time, which Vertex sets when the job begins PENDING.
-writeCloudFile : String -> CloudSettings -> String -> String -> String -> Int -> Int -> Int -> Task Error ()
+writeCloudFile : String -> CloudSettings -> String -> String -> String -> Int -> Decimal.Decimal -> Int -> Task Error ()
 writeCloudFile dir cs key jobName state attempt spentMinor runningSinceMs =
     Time.unixMillis ()
         |> Task.andThen
@@ -5191,11 +5192,13 @@ writeCloudFile dir cs key jobName state attempt spentMinor runningSinceMs =
                                , ( "spent"
                                  , JsonE.string
                                        (moneyText
-                                           (Money.fromMinor
+                                           (minorMoney
                                                (Money.currency cs.budget)
                                                spentMinor))
                                  )
-                               , ( "spentMinor", JsonE.int spentMinor )
+                               , ( "spentMinor"
+                                 , JsonE.string (Decimal.toString spentMinor)
+                                 )
                                , ( "staging", JsonE.string cs.staging )
                                , ( "state", JsonE.string state )
                                , ( "updatedMs", JsonE.int now )
@@ -5484,13 +5487,13 @@ cloudOrigin dir =
                                               , job = ""
                                               , live = False
                                               , finished = False
-                                              , spentMinor = 0
+                                              , spentMinor = Decimal.zero
                                               }))
 
 
 -- Launch attempt `attempt` (from the newest verified checkpoint for a
 -- relaunch) and watch it.
-cloudRelaunch : Durable.Ctx -> Job -> CloudSettings -> CloudPlan -> Store -> String -> Int -> Int -> Int -> Task Error CloudWatch
+cloudRelaunch : Durable.Ctx -> Job -> CloudSettings -> CloudPlan -> Store -> String -> Int -> Int -> Decimal.Decimal -> Task Error CloudWatch
 cloudRelaunch ctx job cs p store key attempt relaunched spentMinor =
     let
         tag = String.fromInt attempt
@@ -5619,14 +5622,53 @@ spendExceeds spent more budget =
             True
 
 
+-- The spend so far is a whole number of the budget currency's minor units,
+-- kept as a Decimal (the `spentMinor` field, written as a decimal string; an
+-- older file's JSON number still reads). An Int has no room for it: ETH has 18
+-- minor units, so 9.22 ETH is past the 64-bit Int range, where `Money.toMinor`
+-- fails as the classified NumericOverflow (v0.29.2). `minorCount` drops the
+-- fraction past the minor unit, as `Money.toMinor` does.
+minorCount : Money -> Decimal.Decimal
+minorCount m =
+    -- A spend is never negative (a price is 0 or more, a running time too),
+    -- so the floor is `Money.toMinor`'s truncation.
+    Decimal.floor (Decimal.mul (Money.amount m) (minorScale (Money.currency m)))
+
+
+-- The Money that a count of the currency's minor units is.
+minorMoney : Money.Currency -> Decimal.Decimal -> Money
+minorMoney cur count =
+    Money.Money
+        (Decimal.mul count (Decimal.fromMinor (Money.minorUnits cur) 1))
+        cur
+
+
+-- 10 to the power of the currency's minor units, as a Decimal (no Int bound).
+minorScale : Money.Currency -> Decimal.Decimal
+minorScale cur =
+    List.foldl
+        (\_ acc -> Decimal.mul acc (Decimal.fromInt 10))
+        (Decimal.fromInt 1)
+        (List.range 1 (Money.minorUnits cur))
+
+
+-- `spentMinor` in cloud.json: a decimal string, or the JSON number an older
+-- run wrote. Read through Codec.decimal, which takes both, from the raw JSON
+-- value (no decoder callback, so no runtime narrowing); anything else is 0.
+minorCountOf : JsonD.Value -> Decimal.Decimal
+minorCountOf v =
+    Codec.fromJson Codec.decimal (JsonE.encode 0 v)
+        |> Result.withDefault Decimal.zero
+
+
 -- The seconds of machine time the rest of the budget buys.
-affordableSeconds : CloudSettings -> Int -> Int
+affordableSeconds : CloudSettings -> Decimal.Decimal -> Int
 affordableSeconds cs spentMinor =
     let
         left =
             Money.sub
                 cs.budget
-                (Money.fromMinor (Money.currency cs.budget) spentMinor)
+                (minorMoney (Money.currency cs.budget) spentMinor)
                 |> orMoney (Money.zero (Money.currency cs.budget))
     in
         case Decimal.div (Money.amount left) (Money.amount cs.perHour) of
@@ -5645,10 +5687,10 @@ affordableSeconds cs spentMinor =
 -- A relaunch needs at least its provisioning allowance (15 minutes) of
 -- budget left; else the run ends BudgetExceeded instead of paying for an
 -- attempt that cannot finish.
-budgetLeft : Job -> CloudSettings -> Int -> Int -> Task Error ()
+budgetLeft : Job -> CloudSettings -> Int -> Decimal.Decimal -> Task Error ()
 budgetLeft job cs attempt spentMinor =
     let
-        spent = Money.fromMinor (Money.currency cs.budget) spentMinor
+        spent = minorMoney (Money.currency cs.budget) spentMinor
         more = perMinutes cs.perHour 15
         next = orMoney spent (Money.add spent more)
     in
@@ -5685,7 +5727,7 @@ newestCheckpoint store key =
 -- the job; anyone who finds it there (another worker, or this workflow
 -- resumed after a crash between the create and its journal row) attaches to
 -- the job its labels name instead. A create is never made twice.
-launchOnce : Job -> CloudSettings -> CloudPlan -> Store -> String -> Int -> Int -> Int -> Task Error String
+launchOnce : Job -> CloudSettings -> CloudPlan -> Store -> String -> Int -> Int -> Decimal.Decimal -> Task Error String
 launchOnce job cs p store key attempt from spentMinor =
     let
         intentKey =
@@ -5862,7 +5904,7 @@ helloJob cs text =
                     Nothing
 
 
-cloudWatchLoop : Durable.Ctx -> Job -> CloudSettings -> CloudPlan -> Store -> String -> Int -> String -> Int -> String -> Int -> Int -> Task Error CloudWatch
+cloudWatchLoop : Durable.Ctx -> Job -> CloudSettings -> CloudPlan -> Store -> String -> Int -> String -> Int -> String -> Int -> Decimal.Decimal -> Task Error CloudWatch
 cloudWatchLoop ctx job cs p store key attempt name n segment relaunched spentBefore =
     let
         s = settings job
@@ -5880,7 +5922,7 @@ cloudWatchLoop ctx job cs p store key attempt name n segment relaunched spentBef
                    (\w ->
                        let
                            spent =
-                               Money.fromMinor
+                               minorMoney
                                    (Money.currency cs.budget)
                                    w.spentMinor
                            job0 =
@@ -6029,7 +6071,7 @@ cloudWatchLoop ctx job cs p store key attempt name n segment relaunched spentBef
                                    if orTrue (Money.gte spent cs.budget) then
                                        Durable.step
                                            ctx
-                                           Codec.int
+                                           Codec.decimal
                                            ("budget-stop-" ++ tag)
                                            (Store.putAt
                                                store
@@ -6074,7 +6116,7 @@ cloudWatchLoop ctx job cs p store key attempt name n segment relaunched spentBef
 -- watch (mirrored into the run directory), what they say, and the spend so
 -- far (earlier attempts plus this one's running time, from its start, or
 -- from its creation while it waits).
-watchCloud : Job -> CloudSettings -> Store -> String -> Int -> String -> String -> Int -> Task Error CloudWatch
+watchCloud : Job -> CloudSettings -> Store -> String -> Int -> String -> String -> Decimal.Decimal -> Task Error CloudWatch
 watchCloud job cs store key attempt name after spentBefore =
     let
         dir = runDir job
@@ -6214,11 +6256,12 @@ watchCloud job cs store key attempt name after spentBefore =
                                                                                            else
                                                                                                0
                                                                                        spentMinor =
-                                                                                           spentBefore
-                                                                                               + Money.toMinor
-                                                                                                     (perMillis
-                                                                                                         cs.perHour
-                                                                                                         ran)
+                                                                                           Decimal.add
+                                                                                               spentBefore
+                                                                                               (minorCount
+                                                                                                   (perMillis
+                                                                                                       cs.perHour
+                                                                                                       ran))
                                                                                        lines =
                                                                                            List.concatMap
                                                                                                (\t ->

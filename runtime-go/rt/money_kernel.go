@@ -145,7 +145,9 @@ func init() {
 	// Distributes the amount across N portions, ROUNDED to
 	// minor-units precision, with any remainder spread one-cent-
 	// each to the front of the list. Classic "$1.00 split 3 ways
-	// = [0.34, 0.33, 0.33]" pattern.
+	// = [0.34, 0.33, 0.33]" pattern. Digits of the amount below the
+	// minor unit go to the first part, so the parts always sum to the
+	// amount exactly (1.005 USD → [0.345, 0.33, 0.33]).
 	//
 	// Arg order: places parts amount  (target precision first so
 	// the most common shape `Money.allocate cents N total` reads
@@ -162,6 +164,11 @@ func init() {
 		}
 		// Work in minor units (integer) to avoid rounding drift.
 		totalMinor := amount.Shift(places).Truncate(0)
+		// The part of the amount below the minor unit (1.005 USD has 0.005;
+		// Money.mul, percentOf and convert make such amounts). It goes to the
+		// FIRST part, so the parts still sum exactly to the input: the old
+		// code truncated it away (1.005 split 3 ways summed to 1.00).
+		subMinor := amount.Sub(totalMinor.Shift(-places))
 		partsDec := decimal.NewFromInt(int64(parts))
 		// base = trunc(totalMinor / parts) (toward zero), so the residue
 		// carries the SAME SIGN as the total and |residue| < parts.
@@ -189,7 +196,11 @@ func init() {
 				share = base.Add(decimal.NewFromInt(sign))
 			}
 			// Shift back to "major" units.
-			out[i] = decimalBox(share.Shift(-places))
+			major := share.Shift(-places)
+			if i == 0 {
+				major = major.Add(subMinor)
+			}
+			out[i] = decimalBox(major)
 		}
 		return out
 	})

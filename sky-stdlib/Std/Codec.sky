@@ -1694,16 +1694,21 @@ keyCount key cols n =
 -- problem (`problems`; `Std.Db.Store.fromCodec` refuses the store) and its
 -- read is an `Err`. Give such a field an explicit `taggedUnion` codec through
 -- `autoWith [ ( "shape", shapeCodec ) ] blank`. Two fields that become one
--- key (`aB` and `a_b` are both `a_b`) are a builder problem too.
+-- key (`aB` and `a_b` are both `a_b`) are a builder problem too, in the record
+-- and in any record it holds (a nested record, a `List`, `Maybe` or `Dict` of
+-- records, a variant's payload).
 --
 -- A `Json.Value` field carries any JSON. The blank marks it: give the field a
 -- JSON value (`data = Json.Encode.null`), and a `Maybe Json.Value` field a
--- `Just` one (`more = Just Json.Encode.null`). A field the blank does not
--- mark this way does not decode. A `List Json.Value` or `Dict String
--- Json.Value` field is marked by its first element (`items = [
--- Json.Encode.null ]`, v0.29.2). A `Just` written as null (`Just Nothing` of a
--- `Maybe (Maybe a)`, `Just Json.Encode.null`) has no JSON of its own: a
--- `Std.Db.Store` write refuses it.
+-- `Just` one (`more = Just Json.Encode.null`). A `List Json.Value` or `Dict
+-- String Json.Value` field is marked by its first element (`items = [
+-- Json.Encode.null ]`, v0.29.2). A field the blank does not mark this way, at
+-- any depth (`items = []`, `Dict.empty`, `more = Nothing`), is a builder
+-- problem (`problems`; `Std.Db.Store.fromCodec` refuses the store): a value
+-- written there could not be read back. A `Just` written as null (`Just
+-- Nothing` of a `Maybe (Maybe a)`, `Just Json.Encode.null`) has no JSON of its
+-- own: a `Std.Db.Store` write refuses it, wherever the `Maybe` is (a `List`, a
+-- record, a `Dict` value, a variant's payload).
 --
 -- Columns / JSON keys are **snake_case** (the DB convention): a record field
 -- `priceMinor` maps to column `price_minor` with no hand-written codec. For a

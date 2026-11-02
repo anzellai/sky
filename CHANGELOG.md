@@ -85,7 +85,9 @@ Breaking and Migration.
   ways, in a JSON text column, so `Codec.object` (or an `autoWith` override)
   carries a `List Json.Value` (`Codec.list Codec.value`) or a
   `Dict String Json.Value` (`Codec.dict Codec.string Codec.value`). Under
-  `Codec.auto` such a field is still an `Err` on read.
+  `Codec.auto` such a field reads when its blank holds one JSON value
+  (`[ Json.Encode.null ]`); with no JSON value in the blank it is a builder
+  problem (see Fixed).
 - **`Store.noCond`**, the condition every row meets (the same as `and_ []`),
   and **`Store.defaultDecimal`** are exposed.
 - **`sky db check`: does the live database match the code?** A read-only
@@ -152,15 +154,26 @@ Breaking and Migration.
   every read failed with "cannot decode kind interface". The witness now takes
   the annotation's types in the generated code. A `List Json.Value` or `Dict
   String Json.Value` field reads when its blank holds a JSON value (`[
-  Json.Encode.null ]`); it was an `Err`.
+  Json.Encode.null ]`); it was an `Err`. With no JSON value in the blank
+  (`[]`, `Dict.empty`, a `Nothing` blank of a `Maybe Json.Value`, at any
+  depth: a nested record, a tuple, a List of Lists), the field is a builder
+  problem (`Codec.problems`; `Store.fromCodec` refuses the store). Before,
+  `Codec.problems` was empty, the write was taken, and one row made every
+  read of the table fail with "cannot decode kind interface" (seventh Judge).
 - **Two `Codec.auto` fields that become one key** (`aB` and `a_b` are both
   `a_b`) overwrote each other with no error. It is a builder problem and a
-  decode `Err`.
+  decode `Err`, in the record and in every record it holds: a nested record,
+  a `List`, `Maybe` or `Dict` of records, a tuple and a variant's payload
+  (the seventh Judge found `n = { aB, a_b }` written as `{"a_b":1,"a_b":2}`
+  and read back as `2/2`). Under `Codec.autoCamel` the keys differ.
 - **A `Just` written as null was stored as `Nothing`.** `Just Nothing` of a
   `Codec.maybe (Codec.maybe c)` or a `Maybe (Maybe a)` auto field, and `Just
   Json.Encode.null` of a `Codec.maybe Codec.value` or a `Maybe Json.Value`
   auto field, stored NULL and read back as `Nothing`. A `Std.Db.Store` write
-  now refuses the row, naming the column. `Codec.toJson` still writes `null`,
+  now refuses the row, naming the column, wherever the `Maybe` is: a `List`, a
+  nested record, a tuple, a `Dict` value, a variant's payload or a `Maybe` of
+  a variant (a `Dict` value and a variant's payload were not checked; the
+  seventh Judge stored `Just Nothing` there and read back `Nothing`). `Codec.toJson` still writes `null`,
   and a stored NULL still reads as `Nothing`, so existing data reads as before.
 - **`Store.updateFields`, `setFields` and `updateSet` with a `SqlDecimal` over
   1000 characters made the table unreadable.** The write check of a decimal
@@ -176,6 +189,25 @@ Breaking and Migration.
   the 64-bit Int range** (`Money.toMinor` of 10 ETH gave
   -8446744073709551616), and `Decimal.toFloat` of `1e400` gave an infinite
   Float. Each now fails as the classified `NumericOverflow` (see Breaking).
+  The release candidate turned that into an unrecoverable `fatal error: stack
+  overflow` (exit 2) that ended a server with every session: the kernel runs
+  through `Ffi.callPure`, whose recover made the panic an `Err`, and
+  `rt.AsInt` / `rt.AsFloat` then recursed on the `Err` without end. An Ffi
+  boundary, and `Db.withTransaction` after its rollback, now re-raise a
+  loud-by-design panic (`DivisionByZero`, `NumericOverflow`,
+  `JsonEncodeFailure`), and no runtime narrowing (`AsInt`, `AsFloat`,
+  `AsBool`, `AsList`, `AsMapT`, …) recurses on an `Err` or a `Nothing`.
+  `Std.Ai.Train` keeps a cloud run's spend as a Decimal count of minor units,
+  so a run priced in ETH is stopped by its budget past 9.22 ETH instead of
+  failing; `cloud.json` writes `spentMinor` as a decimal string and still
+  reads the number an older run wrote.
+- **`Money.allocate` lost the part of an amount below the minor unit.**
+  `Money.allocate 3 (1.005 USD)` gave `[0.34, 0.33, 0.33]`, which sums to
+  1.00. Such amounts come from `Money.mul`, `percentOf` and `convert`. Every
+  part is still a whole number of minor units, as even as possible, and the
+  digits below the minor unit now go to the first part: `[0.345, 0.33,
+  0.33]`. The parts always sum exactly to the amount. The defect was in
+  v0.29.1 too.
   `Std.Ai` no longer converts a cost through `toMinor` where it does not need
   an Int, and bounds the seconds a budget buys.
 - **An `Err` from `Provider.cost` named `Money.add`.** It names
@@ -275,10 +307,7 @@ Breaking and Migration.
   codec now knows which of its fields are partial (see the first entry), and
   a write checks only those, once per row, on the encoded value in memory. A
   store without such a field (a `Codec.auto` record of plain fields included)
-  does no check at all. Measured on 5,000 rows of a `Codec.auto`
-  record (3 runs each, SQLite): 0.20-0.28 s in v0.29.1, 0.41-0.50 s in the
-  release candidate, 0.20-0.23 s now; with 200-element lists 0.37-0.40 s,
-  1.07-1.16 s and 0.36-0.40 s. Every refusal stays (insert, insertMany,
+  does no check at all. Every refusal stays (insert, insertMany,
   upsert, upsertWith, insertReturning, insertOrIgnore, update, updateWhere).
 - **`Store.insertMany` failed above the engine's bound-parameter limit.**
   It wrote every row in one `INSERT`, so 10,000 rows of 4 columns failed on
@@ -632,8 +661,13 @@ Breaking and Migration.
   whose custom type has a variant carrying a `Decimal`, `Money`, `Currency`,
   `Json.Value` or a type variable, a field of a stdlib custom type other than
   `Decimal`, `Money` and `Currency`, a nested anonymous record holding a
-  `Decimal` or `Money`, and two fields that become one key are builder
-  problems: `Store.fromCodec` refuses the store. Each of them wrote rows that
+  `Decimal` or `Money`, two fields that become one key (in the record or in
+  a record it holds), and a `Json.Value` slot whose blank holds no JSON value
+  (`items = []` for a `List Json.Value`, `more = Nothing` for a `Maybe
+  Json.Value`) are builder problems: `Store.fromCodec` refuses the store. Put
+  one JSON value in the blank (`[ Json.Encode.null ]`, `Just
+  Json.Encode.null`), or give the field `Codec.value` through
+  `Codec.autoWith`. Each of them wrote rows that
   read back as another value or not at all.
 - **⚠ Breaking: a `Std.Db.Store` write refuses a `Just` written as null**
   (`Just Nothing`, `Just Json.Encode.null`), which used to be stored as NULL

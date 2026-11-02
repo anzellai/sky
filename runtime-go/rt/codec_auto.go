@@ -1012,6 +1012,11 @@ func codecAutoDecodeVariant(gt reflect.Type, raw any, snake bool) (reflect.Value
 // Codec_autoDecoder : a -> Decoder a. A JSON decoder that reflection-builds the
 // witness's type.
 func Codec_autoDecoder(snakeArg, witness any) any {
+	// Two fields that become one key, in the record or in any record nested in
+	// it (or carried by a variant of a custom-type blank): no value reads back.
+	if dup := codecAutoDuplicateKey(reflect.TypeOf(witness), AsBool(snakeArg)); dup != "" {
+		return JsonDecoder{run: func(any) any { return Err[any, any](ErrDecode(dup)) }}
+	}
 	// C-3: a union blank (`Codec.auto Red`) is a sealed VARIANT value. Its
 	// reflect type is that one variant's struct, so decoding against it
 	// turned every object into the blank's variant. Decode against the
@@ -1028,9 +1033,6 @@ func Codec_autoDecoder(snakeArg, witness any) any {
 	}
 	wt := reflect.TypeOf(witness)
 	wv := reflect.ValueOf(witness)
-	if dup := codecAutoDuplicateKey(wt, AsBool(snakeArg)); dup != "" {
-		return JsonDecoder{run: func(any) any { return Err[any, any](ErrDecode(dup)) }}
-	}
 	return JsonDecoder{run: func(raw any) any {
 		v, err := codecAutoDecodeValW(wt, raw, AsBool(snakeArg), wv)
 		if err != nil {
@@ -1049,6 +1051,7 @@ func Codec_autoCols(snakeArg, witness any) any {
 	if wt == nil || !isRecordType(wt) {
 		return []any{}
 	}
+	wv := reflect.ValueOf(witness)
 	out := []any{}
 	keys := map[string]string{}
 	for i := 0; i < wt.NumField(); i++ {
@@ -1073,6 +1076,12 @@ func Codec_autoCols(snakeArg, witness any) any {
 			kind += "|problem=Codec.auto: the field \"" + skyTagName(f) + "\" cannot be read back: " +
 				strings.ReplaceAll(p, "|", "/") +
 				". Give the field its own codec with Codec.autoWith (a Codec.taggedUnion, Codec.decimal, ...)"
+		}
+		if p := codecAutoNestedDuplicateKey(f.Type, snake, 0, map[reflect.Type]bool{}); p != "" {
+			kind += "|problem=" + strings.ReplaceAll(p, "|", "/") + " (in the field \"" + skyTagName(f) + "\")"
+		}
+		if p := codecAutoBlankProblem(f.Type, wv.Field(i), 0); p != "" {
+			kind += "|problem=Codec.auto: the field \"" + skyTagName(f) + "\" cannot be read back: " + strings.ReplaceAll(p, "|", "/")
 		}
 		key := skyColKey(f, snake)
 		if first, dup := keys[key]; dup {

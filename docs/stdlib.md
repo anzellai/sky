@@ -663,7 +663,7 @@ ISO 4217 minor-unit awareness (JPY=0dp, USD=2dp, BHD=3dp). `Currency` is a typed
 | `eqCurrency` | `Currency -> Currency -> Bool` |
 | `mul scalar m` | `Decimal -> Money -> Money` |
 | `neg` / `abs` | `Money -> Money` |
-| `allocate parts m` | `Int -> Money -> List Money` (fair split — `$100/3 → [$33.34, $33.33, $33.33]`, sum-preserving) |
+| `allocate parts m` | `Int -> Money -> List Money` (fair split — `$100/3 → [$33.34, $33.33, $33.33]`, sum-preserving: every part is whole minor units except that the digits below the minor unit go to the first part, `1.005 USD / 3 → [0.345, 0.33, 0.33]`) |
 | `isZero` / `isPositive` / `isNegative` | `Money -> Bool` |
 | `percentOf` / `addPercent` / `subPercent` | `Decimal -> Money -> Money` |
 | `format` / `formatWithCode` | `Money -> String` (`"$108.88"` / `"108.88 USD"`) |
@@ -1390,12 +1390,15 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   `Currency`, `Json.Value` or a type variable cannot be read back, so the field is
   a builder problem (`Codec.problems`, refused by `Store.fromCodec`): give it a
   `taggedUnion` codec through `Codec.autoWith`; **snake_case** columns/keys by default (`Codec.autoCamel` keeps
-  camelCase; two fields that become one key are a builder problem). A `Json.Value` field carries any JSON when the blank gives it a JSON
+  camelCase; two fields that become one key, in the record or in any record it holds, are a builder problem). A `Json.Value` field carries any JSON when the blank gives it a JSON
   value (`data = Json.Encode.null`; `Just Json.Encode.null` for a `Maybe Json.Value`;
   a first element for a `List Json.Value` or `Dict String Json.Value`, v0.29.2),
   or give the field its codec (`Codec.autoWith [ ( "items", Codec.list Codec.value ) ] blank`).
+  A `Json.Value` slot the blank gives no JSON value (`items = []`, `Dict.empty`, `more = Nothing`,
+  at any depth) is a builder problem: a value written there could not be read back.
   A `Just` written as null (`Just Nothing`, `Just Json.Encode.null`) is refused by a
-  `Std.Db.Store` write: it would read back as `Nothing`.
+  `Std.Db.Store` write, wherever the `Maybe` is (a List, a record, a Dict value, a
+  variant's payload): it would read back as `Nothing`.
   **`Codec.autoWith [ ("active", intBool) ] blank`** overrides specific
   fields' codecs while auto-deriving the rest (a Bool stored 0/1, a custom enum
   format) — no full hand-written codec for a one-field tweak. A key is the
@@ -1466,7 +1469,7 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   `[key, value]` pairs, so any comparable key round-trips. `Codec.value`
   (v0.29.2) is a raw `Json.Value`, as it is both ways (a JSON text column, the
   open schema `{}`): `Codec.list Codec.value` carries a `List Json.Value`
-  field, which `Codec.auto` cannot read. `Codec.fromJson`
+  field, which `Codec.auto` reads only when its blank holds a JSON value. `Codec.fromJson`
   reads exactly one JSON document: text after it is an `Err` (v0.27). A type
   that holds a function, a `Secret`, a key or a runtime handle has no codec and
   is refused at compile time. Pure Sky.

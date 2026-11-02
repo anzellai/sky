@@ -80,9 +80,15 @@ A variant carrying a `Decimal`, `Money`, `Currency`, `Json.Value` or a type
 variable cannot be read back: the field is a builder problem and
 `Store.fromCodec` refuses the store. Give that field a `taggedUnion` codec
 through `Codec.autoWith [ ( "shape", shapeCodec ) ] blank`. Two fields that
-become one column (`aB` and `a_b`) are a builder problem too, and a `Just`
-written as null (`Just Nothing` of a `Maybe (Maybe a)`, `Just Json.Encode.null`)
-is refused by a write: it would read back as `Nothing`. Columns + JSON keys are
+become one column or key (`aB` and `a_b`), at the top or in any record the field
+holds (a nested record, a List, Maybe or Dict of records, a variant's payload),
+are a builder problem too. So is a `Json.Value` slot whose blank holds no JSON
+value (`items = []` for a `List Json.Value`, `more = Nothing` for a `Maybe
+Json.Value`): put one in (`[ Json.Encode.null ]`, `Just Json.Encode.null`) or
+give the field `Codec.value` through `Codec.autoWith`. A `Just` written as null
+(`Just Nothing` of a `Maybe (Maybe a)`, `Just Json.Encode.null`) is refused by a
+write wherever the `Maybe` is (a List, a record, a Dict value, a variant's
+payload): it would read back as `Nothing`. Columns + JSON keys are
 **snake_case** by default (`priceMinor` → `price_minor`); **`Codec.autoCamel`**
 keeps camelCase; **`Codec.autoWith [ ("active", intBool) ] blank`** overrides one
 field's codec (a Bool stored 0/1, a custom enum) while auto-deriving the rest
@@ -530,9 +536,13 @@ it is logged at ERROR level once per table and problem, shown in the Sky
 Console, and counted in the metric `sky_store_problems_total{table}`. An
 unknown column in a query condition, an order, a set or a conflict rule is an
 `Err` that is loud the same way. `findBy` and `delete` follow the same rule. A negative `limit` or `offset`
-is an `Err`; `offset` without `limit` works on both dialects. There is no
-reserved-word list: a column named `order` or `user` stays a driver error on the
-dialect that refuses it. **Never build a column argument from user input:** a
+is an `Err`; `offset` without `limit` works on both dialects. A table or column
+name that is an SQL keyword on both SQLite and PostgreSQL (`order`, `select`)
+is a builder problem (v0.29.2): `Store.fromCodec` refuses the store. A name only
+one engine reserves (`user` on PostgreSQL) is refused by `Store.create` and
+`Store.migrate` on that engine, naming the column; nothing is created. The Store
+writes names unquoted, so give such a field another column name
+(`Codec.field "sort_order" .order Codec.int`). **Never build a column argument from user input:** a
 `jsonText` reference can read any key of a JSON column.
 
 **Text matching.** `like` uses its pattern as given: `%` and `_` are wildcards,

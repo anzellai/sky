@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 2245,
+      "expected_assertions": 2251,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -816,7 +816,7 @@
       "tier": "T1"
     },
     "store-query-postgres": {
-      "expected_assertions": 395,
+      "expected_assertions": 398,
       "falsifier_mutation": "store-query-postgres.drop-rows-err",
       "falsifier_proven": true,
       "summary": "Std.Db.Store query path (aggregates, select, latestPer, text match, jsonText) on PostgreSQL",
@@ -19857,12 +19857,11 @@
           ]
         },
         "Std.Decimal": {
-          "count": 11,
+          "count": 10,
           "symbols": [
             "formatWith",
             "fromFloat",
             "gt",
-            "gte",
             "lt",
             "lte",
             "max",
@@ -20424,8 +20423,8 @@
           ]
         }
       },
-      "count": 868,
-      "pct_of_denominator": 26.8
+      "count": 867,
+      "pct_of_denominator": 26.7
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -21331,12 +21330,11 @@
           ]
         },
         "Std.Decimal": {
-          "count": 11,
+          "count": 10,
           "symbols": [
             "formatWith",
             "fromFloat",
             "gt",
-            "gte",
             "lt",
             "lte",
             "max",
@@ -21973,7 +21971,7 @@
           ]
         }
       },
-      "count": 983,
+      "count": 982,
       "pct_of_denominator": 30.3
     }
   },
@@ -23381,8 +23379,8 @@
       "id": "flow:ai_cloud_train_flow",
       "modules_imported": 22,
       "path": "rust/crates/sky/tests/ai_cloud_train_flow.rs",
-      "refs_generous": 110,
-      "refs_qualified": 105,
+      "refs_generous": 113,
+      "refs_qualified": 108,
       "role": "FlowTest",
       "sky_files": 3,
       "sky_toml_sections": []
@@ -23465,8 +23463,8 @@
       "id": "flow:ai_serve_flow",
       "modules_imported": 27,
       "path": "rust/crates/sky/tests/ai_serve_flow.rs",
-      "refs_generous": 131,
-      "refs_qualified": 123,
+      "refs_generous": 134,
+      "refs_qualified": 126,
       "role": "FlowTest",
       "sky_files": 4,
       "sky_toml_sections": []
@@ -23969,8 +23967,8 @@
       "id": "tests/conformance",
       "modules_imported": 67,
       "path": "tests/conformance",
-      "refs_generous": 1049,
-      "refs_qualified": 1022,
+      "refs_generous": 1050,
+      "refs_qualified": 1023,
       "role": "Conformance",
       "sky_files": 59,
       "sky_toml_sections": []

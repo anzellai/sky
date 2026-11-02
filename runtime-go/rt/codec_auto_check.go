@@ -27,14 +27,23 @@ import (
 var codecAutoPartialNames = []string{"Std_Decimal_Decimal", "Std_Money_Money"}
 
 // codecAutoTypePartial reports whether a field of Go type `t`, declared as
-// `declared` (the `sky:"name,type"` tag), holds a partial leaf at any depth.
+// `declared` (the `sky:"name,type"` tag), holds a partial leaf at any depth:
+// through a List, an Array, a Maybe, a Dict (the Sky SkyDict and a Go map), a
+// record or a tuple, and through the payload of every variant of a custom
+// type (v0.29.2 seventh Judge: a `Maybe (Maybe Int)` as a Dict value or a
+// variant payload got no `|check`, so `Just Nothing` was stored and read
+// back as `Nothing`).
 func codecAutoTypePartial(t reflect.Type, declared string, depth int) bool {
+	return codecAutoTypePartialAt(t, declared, depth, map[reflect.Type]bool{})
+}
+
+func codecAutoTypePartialAt(t reflect.Type, declared string, depth int, seen map[reflect.Type]bool) bool {
 	for _, n := range codecAutoPartialNames {
 		if strings.Contains(declared, n) {
 			return true
 		}
 	}
-	if t == nil || depth > 32 {
+	if t == nil || depth > 64 {
 		return false
 	}
 	for _, n := range codecAutoPartialNames {
@@ -44,7 +53,32 @@ func codecAutoTypePartial(t reflect.Type, declared string, depth int) bool {
 	}
 	switch t.Kind() {
 	case reflect.Slice, reflect.Array, reflect.Pointer, reflect.Map:
-		return codecAutoTypePartial(t.Elem(), "", depth+1)
+		return codecAutoTypePartialAt(t.Elem(), codecDeclaredElem(declared), depth+1, seen)
+	case reflect.Interface:
+		if t.NumMethod() == 0 {
+			return false
+		}
+		// A custom type: every variant's payload.
+		if seen[t] {
+			return false
+		}
+		seen[t] = true
+		for _, z := range adtVariantZeros(t.String()) {
+			vt := reflect.TypeOf(z)
+			if vt == nil || vt.Kind() != reflect.Struct {
+				continue
+			}
+			for i := 0; i < vt.NumField(); i++ {
+				f := vt.Field(i)
+				if f.PkgPath != "" {
+					continue
+				}
+				if codecAutoTypePartialAt(f.Type, skyTagType(f), depth+1, seen) {
+					return true
+				}
+			}
+		}
+		return false
 	case reflect.Struct:
 		if isSkyMaybeType(t) {
 			if jv, ok := t.FieldByName("JustValue"); ok {
@@ -53,11 +87,15 @@ func codecAutoTypePartial(t reflect.Type, declared string, depth int) bool {
 				if isSkyMaybeType(jv.Type) || (jv.Type.Kind() == reflect.Interface && jv.Type.NumMethod() == 0) {
 					return true
 				}
-				return codecAutoTypePartial(jv.Type, "", depth+1)
+				return codecAutoTypePartialAt(jv.Type, codecDeclaredElem(declared), depth+1, seen)
 			}
 			return false
 		}
-		if !isRecordType(t) {
+		if isSkyDictType(t) {
+			vt := reflect.Zero(t).Interface().(skyDictAny).dictValueType()
+			return codecAutoTypePartialAt(vt, codecDeclaredElem(declared), depth+1, seen)
+		}
+		if !isRecordType(t) || t == reflect.TypeOf(JsonValue{}) || codecOpaqueStruct(t) {
 			return false
 		}
 		for i := 0; i < t.NumField(); i++ {
@@ -65,7 +103,7 @@ func codecAutoTypePartial(t reflect.Type, declared string, depth int) bool {
 			if f.PkgPath != "" {
 				continue
 			}
-			if codecAutoTypePartial(f.Type, skyTagType(f), depth+1) {
+			if codecAutoTypePartialAt(f.Type, skyTagType(f), depth+1, seen) {
 				return true
 			}
 		}
@@ -324,11 +362,35 @@ func codecAutoShortName(goName string) string {
 // codecAutoDuplicateKey is the builder problem of two record fields that
 // become one key (`aB` and `a_b` are both `a_b` under Codec.auto), or "".
 // One would overwrite the other in the JSON and in the row (v0.29.2 sixth
-// Judge: `fromJson (toJson v)` gave `{aB = 2, a_b = 2}`).
+// Judge: `fromJson (toJson v)` gave `{aB = 2, a_b = 2}`). It checks the
+// record's own fields and then every record nested in a field at any depth
+// (codecAutoNestedDuplicateKey): the seventh Judge found `n = { aB, a_b }`
+// and `List { aB, a_b }` written as `{"a_b":1,"a_b":2}` with no problem.
 func codecAutoDuplicateKey(t reflect.Type, snake bool) string {
-	if t == nil || !isRecordType(t) {
+	if t == nil {
 		return ""
 	}
+	if !isRecordType(t) {
+		// A custom-type blank (`Codec.auto Red`): the records its variants carry.
+		return codecAutoNestedDuplicateKey(t, snake, 0, map[reflect.Type]bool{})
+	}
+	if p := codecAutoRecordDuplicateKey(t, snake); p != "" {
+		return p
+	}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.PkgPath != "" {
+			continue
+		}
+		if p := codecAutoNestedDuplicateKey(f.Type, snake, 0, map[reflect.Type]bool{}); p != "" {
+			return p + " (in the field \"" + skyTagName(f) + "\")"
+		}
+	}
+	return ""
+}
+
+// codecAutoRecordDuplicateKey checks the fields of the record type t only.
+func codecAutoRecordDuplicateKey(t reflect.Type, snake bool) string {
 	seen := map[string]string{}
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
@@ -341,6 +403,120 @@ func codecAutoDuplicateKey(t reflect.Type, snake bool) string {
 				"\" both become the key \"" + key + "\", so one would overwrite the other; rename one, or use Codec.autoCamel"
 		}
 		seen[key] = skyTagName(f)
+	}
+	return ""
+}
+
+// codecAutoNestedDuplicateKey walks a field's type through every shape the
+// encoder writes as a JSON object with keys (a record, also inside a List,
+// an Array, a Maybe, a Dict, a tuple and a variant's payload) and returns the
+// first duplicate key, or "".
+func codecAutoNestedDuplicateKey(t reflect.Type, snake bool, depth int, seen map[reflect.Type]bool) string {
+	if t == nil || depth > 64 {
+		return ""
+	}
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array, reflect.Pointer, reflect.Map:
+		return codecAutoNestedDuplicateKey(t.Elem(), snake, depth+1, seen)
+	case reflect.Interface:
+		if t.NumMethod() == 0 || seen[t] {
+			return ""
+		}
+		seen[t] = true
+		for _, z := range adtVariantZeros(t.String()) {
+			vt := reflect.TypeOf(z)
+			if vt == nil || vt.Kind() != reflect.Struct {
+				continue
+			}
+			for i := 0; i < vt.NumField(); i++ {
+				f := vt.Field(i)
+				if f.PkgPath != "" {
+					continue
+				}
+				if p := codecAutoNestedDuplicateKey(f.Type, snake, depth+1, seen); p != "" {
+					return p
+				}
+			}
+		}
+		return ""
+	case reflect.Struct:
+		if isSkyMaybeType(t) {
+			if jv, ok := t.FieldByName("JustValue"); ok {
+				return codecAutoNestedDuplicateKey(jv.Type, snake, depth+1, seen)
+			}
+			return ""
+		}
+		if isSkyDictType(t) {
+			vt := reflect.Zero(t).Interface().(skyDictAny).dictValueType()
+			return codecAutoNestedDuplicateKey(vt, snake, depth+1, seen)
+		}
+		if !isRecordType(t) || t == reflect.TypeOf(JsonValue{}) || codecOpaqueStruct(t) || t == reflect.TypeOf(SkySet{}) {
+			return ""
+		}
+		if p := codecAutoRecordDuplicateKey(t, snake); p != "" {
+			return p
+		}
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			if f.PkgPath != "" {
+				continue
+			}
+			if p := codecAutoNestedDuplicateKey(f.Type, snake, depth+1, seen); p != "" {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+// codecAutoBlankProblem is the builder problem of a field whose blank does
+// not show what an erased slot holds, or "" (v0.29.2 seventh Judge). A
+// `Json.Value` lowers to Go `any`, and the reader builds an `any` slot only
+// from a blank that holds a JSON value there (codecWitnessIsJSON). With the
+// blank `items = []` (a `List Json.Value`), `Dict.empty` (a `Dict String
+// Json.Value`) or `Nothing` (a `Maybe Json.Value`) there is no element to show
+// it, so the first non-empty value written made every read of the table fail
+// with "cannot decode kind interface". The walk follows the blank through a
+// List, an Array, a Maybe, a Dict, a record and a tuple; a variant has its own
+// problem (codecAutoTypeProblem).
+func codecAutoBlankProblem(t reflect.Type, w reflect.Value, depth int) string {
+	if t == nil || depth > 64 {
+		return ""
+	}
+	switch t.Kind() {
+	case reflect.Interface:
+		if t.NumMethod() == 0 && !codecWitnessIsJSON(w) {
+			return "its blank has no JSON value where the field holds a Json.Value (or a type variable), so a value written there cannot be read back. " +
+				"Put one JSON value in the blank (`[ Json.Encode.null ]`, `Just Json.Encode.null`, `Dict.singleton \"k\" Json.Encode.null`), or give the field Codec.value through Codec.autoWith"
+		}
+		return ""
+	case reflect.Slice, reflect.Array:
+		return codecAutoBlankProblem(t.Elem(), codecWitnessElem(w), depth+1)
+	case reflect.Map, reflect.Pointer:
+		return codecAutoBlankProblem(t.Elem(), reflect.Value{}, depth+1)
+	case reflect.Struct:
+		if isSkyMaybeType(t) {
+			if jv, ok := t.FieldByName("JustValue"); ok {
+				return codecAutoBlankProblem(jv.Type, codecWitnessJust(w), depth+1)
+			}
+			return ""
+		}
+		if isSkyDictType(t) {
+			vt := reflect.Zero(t).Interface().(skyDictAny).dictValueType()
+			return codecAutoBlankProblem(vt, codecWitnessDictValue(w), depth+1)
+		}
+		if !isRecordType(t) || t == reflect.TypeOf(JsonValue{}) || codecOpaqueStruct(t) || t == reflect.TypeOf(SkySet{}) {
+			return ""
+		}
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			if f.PkgPath != "" {
+				continue
+			}
+			if p := codecAutoBlankProblem(f.Type, codecWitnessField(w, t, i), depth+1); p != "" {
+				return p
+			}
+		}
 	}
 	return ""
 }

@@ -9280,6 +9280,119 @@ j6Tests db =
     ]
 
 
+-- ── The seventh Judge (v0.29.2) ────────────────────────────────────────────
+-- The Codec.auto checks walk every shape: a Just written as null in a Dict
+-- value or a variant payload is refused by a Store write; two fields naming
+-- one key in a nested record (a List, a Maybe, a variant payload) are a
+-- builder problem; a Json.Value slot whose blank shows no JSON value is a
+-- builder problem.
+
+
+type J7Box
+    = J7BoxMm (Maybe (Maybe Int))
+    | J7BoxR { aB : Int, c : Int }
+    | J7BoxE
+
+
+type alias J7Row =
+    { id : String
+    , d : Dict.Dict String (Maybe (Maybe Int))
+    , b : J7Box
+    , mb : Maybe J7Box
+    }
+
+
+j7Blank : J7Row
+j7Blank =
+    { id = "a", d = Dict.empty, b = J7BoxE, mb = Nothing }
+
+
+j7Store : Store J7Row
+j7Store =
+    Store.fromCodec "sqc_j7_jnull" (Codec.auto { j7Blank | id = "" }) |> Store.primaryKey "id"
+
+
+type J7DupBox
+    = J7DupR { aB : Int, a_b : Int }
+    | J7DupN
+
+
+type alias J7Vals =
+    { id : String, vs : List JE.Value, dv : Dict.Dict String JE.Value, mv : Maybe JE.Value, nv : { inner : List JE.Value } }
+
+
+j7EmptyCodec : Codec J7Vals
+j7EmptyCodec =
+    Codec.auto { id = "", vs = [], dv = Dict.empty, mv = Nothing, nv = { inner = [] } }
+
+
+j7MarkedCodec : Codec J7Vals
+j7MarkedCodec =
+    Codec.auto { id = "", vs = [ JE.null ], dv = Dict.fromList [ ( "k", JE.null ) ], mv = Just JE.null, nv = { inner = [ JE.null ] } }
+
+
+j7Tests : Db -> List Test
+j7Tests db =
+    [ Test.test
+          "seventh Judge: a Codec.auto Just written as null in a Dict value, a variant payload or a Maybe of a variant is refused by a Store write; Just values there round-trip; the table reads"
+          (\_ ->
+              let
+                  w r = j5Write db "sqc_j7_jnull" (Store.migrate db j7Store) (Store.insert db j7Store r) (Store.all db j7Store)
+                  refused ( msg, readable ) = ( String.contains "Just" msg && String.contains "Nothing" msg, readable )
+              in
+                  Test.equal
+                      ( [ ( True, True ), ( True, True ), ( True, True ) ]
+                      , [ ( "ok", True ), ( "ok", True ), ( "ok", True ) ]
+                      )
+                      ( [ refused (w { j7Blank | d = Dict.fromList [ ( "k", Just Nothing ) ] })
+                        , refused (w { j7Blank | b = J7BoxMm (Just Nothing) })
+                        , refused (w { j7Blank | mb = Just (J7BoxMm (Just Nothing)) })
+                        ]
+                      , [ j6Same db "sqc_j7_jnull" j7Store { j7Blank | d = Dict.fromList [ ( "k", Just (Just 3) ), ( "z", Nothing ) ] }
+                        , j6Same db "sqc_j7_jnull" j7Store { j7Blank | b = J7BoxMm (Just (Just 4)), mb = Just (J7BoxMm Nothing) }
+                        , j6Same db "sqc_j7_jnull" j7Store { j7Blank | b = J7BoxR { aB = 1, c = 2 } }
+                        ]
+                      ))
+    , Test.test
+          "seventh Judge: two fields that become one key in a nested record, a List or Maybe of records or a variant payload are a builder problem naming the field, and a decode Err; under autoCamel they are not"
+          (\_ ->
+              let
+                  dupIn codec = List.any (\p -> String.contains "\"aB\" and \"a_b\"" p) (Codec.problems codec)
+                  nested = Codec.auto { id = "", n = { aB = 0, a_b = 0 } }
+                  listed = Codec.auto { id = "", l = [ { aB = 0, a_b = 0 } ] }
+                  maybed = Codec.auto { id = "", m = Just { aB = 0, a_b = 0 } }
+                  variant = Codec.auto { id = "", v = J7DupN }
+              in
+                  Test.equal
+                      ( ( True, True, True, True ), ( True, True ), ( False, True ) )
+                      ( ( dupIn nested, dupIn listed, dupIn maybed, dupIn variant )
+                      , ( List.any (String.contains "(in the field \"n\")") (Codec.problems nested)
+                        , isErr (Codec.fromJson nested "{\"id\":\"1\",\"n\":{\"a_b\":1}}")
+                        )
+                      , ( dupIn (Codec.autoCamel { id = "", n = { aB = 0, a_b = 0 } })
+                        , isErr (Task.run (Store.migrate db (Store.fromCodec "sqc_j7_dup" nested |> Store.primaryKey "id")))
+                        )
+                      ))
+    , Test.test
+          "seventh Judge: a Json.Value in a List, a Dict, a Maybe or a nested record whose blank shows no JSON value is a builder problem and the store is refused; a blank with one JSON value reads and round-trips"
+          (\_ ->
+              let
+                  empty = j7EmptyCodec
+                  marked = j7MarkedCodec
+                  says field = List.any (\p -> String.contains ("\"" ++ field ++ "\"") p && String.contains "no JSON value" p) (Codec.problems empty)
+                  row = { id = "a", vs = [ JE.int 1, JE.string "x" ], dv = Dict.fromList [ ( "k", JE.bool True ) ], mv = Just (JE.int 5), nv = { inner = [ JE.null, JE.int 2 ] } }
+                  store = Store.fromCodec "sqc_j7_vals" marked |> Store.primaryKey "id"
+              in
+                  Test.equal
+                      ( ( True, True, True, True ), True, ( [], ( "ok", True ) ) )
+                      ( ( says "vs", says "dv", says "mv", says "nv" )
+                      , isErr (Task.run (Store.migrate db (Store.fromCodec "sqc_j7_vals_empty" empty |> Store.primaryKey "id")))
+                      , ( Codec.problems marked, j6Same db "sqc_j7_vals" store row )
+                      ))
+    ]
+
+
+
 tests : List Test
 tests =
     case setup () of
@@ -9313,6 +9426,7 @@ tests =
                 ++ j5Tests db
                 ++ j6Tests db
                 ++ j6ForeignTests db
+                ++ j7Tests db
 
 
 main =
