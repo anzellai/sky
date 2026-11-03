@@ -652,6 +652,13 @@ func migEquivalentUniqueConstraint(tx *sql.Tx, driver string, op migOp) (bool, e
 	if !op.SkipEquivalentConstraint || op.Kind != "addIndex" || !op.Unique || strings.TrimSpace(op.Where) != "" {
 		return false, nil
 	}
+	return migOrdinaryUniqueness(tx, driver, op, true)
+}
+
+// Check the actual post-operation catalogue as well as the pre-operation
+// constraint. IF NOT EXISTS must not report success when another table or an
+// incompatible index occupies an adoption repair's name on fresh replay.
+func migOrdinaryUniqueness(tx *sql.Tx, driver string, op migOp, constraintsOnly bool) (bool, error) {
 	var tables []inspectTable
 	var err error
 	if driver == "pgx" {
@@ -676,7 +683,7 @@ func migEquivalentUniqueConstraint(tx *sql.Tx, driver string, op migOp) (bool, e
 		want := append([]string(nil), op.IndexColumns...)
 		sort.Strings(want)
 		for _, index := range table.Indexes {
-			if !index.Constraint || !index.Unique || index.Inexact != "" || strings.TrimSpace(index.Where) != "" {
+			if (constraintsOnly && !index.Constraint) || !index.Unique || index.Inexact != "" || strings.TrimSpace(index.Where) != "" {
 				continue
 			}
 			got := append([]string(nil), index.Columns...)
@@ -718,6 +725,15 @@ func migExecuteEntry(tx *sql.Tx, driver string, entry migEntry, run string, at t
 		}
 		if _, err = tx.Exec(migApplyTextAt(statement, at)); err != nil {
 			return err
+		}
+		if op.SkipEquivalentConstraint && op.Kind == "addIndex" && op.Unique && strings.TrimSpace(op.Where) == "" {
+			established, err := migOrdinaryUniqueness(tx, driver, op, false)
+			if err != nil {
+				return err
+			}
+			if !established {
+				return fmt.Errorf("adoption index %q did not establish ordinary uniqueness on table %q; its name may already be occupied", op.Name, op.Table)
+			}
 		}
 	}
 	return nil

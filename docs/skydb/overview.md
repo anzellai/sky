@@ -1479,7 +1479,9 @@ UNIQUE constraint. Partial indexes, expression indexes and special index
 semantics are not equivalent. Explicitly authored named index operations keep
 their normal behaviour. This adoption check belongs to migration application;
 executing the rendered `CREATE INDEX IF NOT EXISTS` SQL alone only checks the
-index name.
+index name. The written migration also verifies the resulting uniqueness
+inside its transaction. An occupied name on fresh replay returns an error and
+rolls back rather than recording a migration that failed to enforce uniqueness.
 
 ## See also
 

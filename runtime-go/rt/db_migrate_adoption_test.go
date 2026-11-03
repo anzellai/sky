@@ -113,3 +113,29 @@ func TestMigrateOpsAdoptionFlagChangesChecksum(t *testing.T) {
 		t.Error("adoption semantics omitted from migration ledger checksum")
 	}
 }
+
+func TestMigrateOpsAdoptionRefusesOccupiedNameOnFreshReplay(t *testing.T) {
+	d := inspectTestDb(t)
+	if _, err := d.conn.Exec(`CREATE TABLE other (id TEXT); CREATE INDEX ux_items_ab ON other (id)`); err != nil {
+		t.Fatal(err)
+	}
+	files := []migFile{{Id: "collision", Ops: []migOp{
+		{Kind: "createTable", Table: "items", Columns: []migColumn{{Name: "a", Type: "text"}, {Name: "b", Type: "text"}}},
+		{Kind: "addIndex", Table: "items", Name: "ux_items_ab", IndexColumns: []string{"a", "b"}, Unique: true, SkipEquivalentConstraint: true},
+	}}}
+	raw, err := json.Marshal(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := AnyTaskRun(Db_migrateOps(d, string(raw))).(SkyResult[any, any])
+	if result.Tag == 0 {
+		t.Fatal("occupied name silently skipped the required uniqueness")
+	}
+	var tables int
+	if err := d.conn.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='items'`).Scan(&tables); err != nil {
+		t.Fatal(err)
+	}
+	if tables != 0 {
+		t.Error("failed adoption did not roll back the new table")
+	}
+}

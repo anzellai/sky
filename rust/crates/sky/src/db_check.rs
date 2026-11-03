@@ -952,6 +952,23 @@ pub fn write_ops(
                     .filter_map(Value::as_str)
                     .map(str::to_string)
                     .collect();
+                // The live constraint may let this op skip today, but a fresh
+                // replay can lack it. Retained snapshot names must be checked
+                // independently of the live equivalence shortcut.
+                for owner in &snapshot.tables {
+                    let dropped = drops.iter().any(|(t, n)| t == &owner.name && n == name);
+                    if !dropped
+                        && owner.indexes.iter().any(|ix| {
+                            ix.name == name
+                                && (owner.name != table
+                                    || ix.columns != columns
+                                    || ix.unique != op["unique"].as_bool().unwrap_or(false)
+                                    || ix.predicate != op_str(&op, "where"))
+                        })
+                    {
+                        refused.push(format!("index {name} is occupied on {} in the committed snapshot: a fresh replay cannot establish the declared index under that name",owner.name));
+                    }
+                }
                 let equivalent = op["skipEquivalentConstraint"].as_bool() == Some(true)
                     && op["unique"].as_bool() == Some(true)
                     && op_str(&op, "where").trim().is_empty()
@@ -4107,6 +4124,44 @@ mod tests {
         let kinds: Vec<_> = ops.iter().map(|o| op_str(o, "kind")).collect();
         assert_eq!(kinds, vec!["dropIndex", "addIndex"], "{ops:?}");
         assert!(ops.iter().all(|o| op_str(o, "name") == name));
+    }
+
+    #[test]
+    fn live_constraint_cannot_hide_a_fresh_replay_name_collision() {
+        let old = table(
+            "t",
+            "id",
+            vec![col("id", "int", false), col("label", "text", false)],
+        );
+        let mut wanted = old.clone();
+        wanted.columns[1].unique = true;
+        let name = db_migrate::index_name("t", &["label".into()], true, "");
+        let mut other = table("other", "id", vec![col("id", "int", false)]);
+        other.indexes.push(SchemaIndex {
+            name,
+            columns: vec!["id".into()],
+            unique: false,
+            predicate: String::new(),
+        });
+        let snapshot = Schema {
+            tables: vec![old, other.clone()],
+        };
+        let mut lt = built("pgx", &wanted);
+        lt.columns[1].unique = true;
+        let live = inspect("pgx", vec![lt, built("pgx", &other)]);
+        // An extra table is inert destructive metadata, so its index remains
+        // present when replay applies the active ops.
+        let target = Schema {
+            tables: vec![wanted],
+        };
+        let c = check(&target, &live);
+        let err = write_ops(&c, &target, &snapshot, &live)
+            .expect_err("fresh replay cannot establish uniqueness under this name");
+        assert!(
+            err.iter()
+                .any(|e| e.contains("snapshot") && e.contains("other")),
+            "{err:?}"
+        );
     }
 
     #[test]

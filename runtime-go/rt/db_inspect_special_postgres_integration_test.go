@@ -169,3 +169,44 @@ func TestPostgresInspectDeferrableAndInvalidUniqueness(t *testing.T) {
 		t.Errorf("got %d indexes, want three deferrable constraints, one invalid index and one INCLUDE key", seen)
 	}
 }
+
+func TestPostgresInspectMigrationAdoptionOccupiedName(t *testing.T) {
+	conn, err := sql.Open("pgx", requirePostgresDSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetMaxOpenConns(1)
+	for _, stmt := range []string{
+		`DROP SCHEMA IF EXISTS sky_review_occupied CASCADE`,
+		`CREATE SCHEMA sky_review_occupied`,
+		`SET search_path TO sky_review_occupied`,
+		`CREATE TABLE other (id BIGINT)`,
+		`CREATE INDEX ux_items_ab ON other (id)`,
+	} {
+		if _, err := conn.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer conn.Exec(`DROP SCHEMA sky_review_occupied CASCADE`)
+	d := &SkyDb{conn: conn, driver: "pgx"}
+	files := []migFile{{Id: "collision", Ops: []migOp{
+		{Kind: "createTable", Table: "items", Columns: []migColumn{{Name: "a", Type: "text"}, {Name: "b", Type: "text"}}},
+		{Kind: "addIndex", Table: "items", Name: "ux_items_ab", IndexColumns: []string{"a", "b"}, Unique: true, SkipEquivalentConstraint: true},
+	}}}
+	raw, err := json.Marshal(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := AnyTaskRun(Db_migrateOps(d, string(raw))).(SkyResult[any, any])
+	if result.Tag == 0 {
+		t.Fatal("occupied name silently skipped required uniqueness")
+	}
+	var tables int
+	if err := conn.QueryRow(`SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='items'`).Scan(&tables); err != nil {
+		t.Fatal(err)
+	}
+	if tables != 0 {
+		t.Error("failed migration did not roll back CREATE TABLE")
+	}
+}
