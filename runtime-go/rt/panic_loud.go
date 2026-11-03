@@ -17,14 +17,16 @@ func loudPanicClass(msg string) (kind, hint string) {
 	case strings.Contains(msg, "rt.IntDiv: integer division by zero"),
 		strings.Contains(msg, "rt.Rem: modulo by zero"),
 		strings.Contains(msg, "rt.Div: division by zero"),
-		strings.Contains(msg, "rt.Decimal.fromFloat: "):
+		strings.Contains(msg, "rt.Decimal.fromFloat: "),
+		strings.Contains(msg, "rt.Money.allocate: "):
 		return "DivisionByZero",
-			"Integer or float division by zero, or a Float with no value (NaN or Infinity) given to Decimal.fromFloat. Guard the divisor with `if d == 0 then Err … else Ok (n // d)` before the operation."
+			"Integer or float division by zero, a Float with no value (NaN or Infinity) given to Decimal.fromFloat, or Money.allocate into fewer than one part. Guard the divisor with `if d == 0 then Err … else Ok (n // d)` before the operation."
 	case strings.Contains(msg, "rt.Decimal.toInt: "),
 		strings.Contains(msg, "rt.Decimal.toMinor: "),
-		strings.Contains(msg, "rt.Decimal.toFloat: "):
+		strings.Contains(msg, "rt.Decimal.toFloat: "),
+		strings.Contains(msg, "rt.Decimal.range: "):
 		return "NumericOverflow",
-			"A Decimal too large for an Int (64 bits) or a Float was given to Decimal.toInt, Decimal.toMinor, Money.toMinor or Decimal.toFloat. There is no Int or Float with that value. Compare the Decimal with the bound first, or keep it as a Decimal (store it with Codec.decimal or Codec.moneyIn)."
+			"A Decimal too large for an Int (64 bits) or a Float was given to Decimal.toInt, Decimal.toMinor, Money.toMinor or Decimal.toFloat, or a Decimal operation left the Decimal range: a `places` argument outside -100000 to 100000, a result whose exponent is outside that range, or a Money.allocate into more than 10000000 parts. There is no value of the result type. Compare the Decimal with the bound first, or keep it as a Decimal (store it with Codec.decimal or Codec.moneyIn)."
 	case strings.Contains(msg, "Codec.auto: cannot encode"):
 		return "JsonEncodeFailure",
 			"Codec.auto was given a value with no JSON form: a function, a Secret, a key, a crypto state or a runtime handle (Process, WebSocket, Cache, ...). Keep it out of records you save or send, or write the field's codec by hand."

@@ -126,16 +126,11 @@ tests =
         (\_ -> Test.equal "0.334 BHD" (headFmt (Money.allocate 3 (Money.fromMajor Money.BHD 1))))
     , Test.test "allocate 1 of $100 returns the whole [100.00]"
         (\_ -> Test.equal "100.00 USD" (headFmt (Money.allocate 1 (Money.fromMajor Money.USD 100))))
-    , Test.test "allocate 0 of $100 returns the empty list (no parts)"
-        (\_ ->
-            case List.head (Money.allocate 0 (Money.fromMajor Money.USD 100)) of
-
-                Nothing ->
-                    Test.pass
-
-                Just _ ->
-                    Test.fail "expected empty allocation for 0 parts"
-        )
+    -- `allocate 0` (or fewer parts) used to answer [], so the amount was lost
+    -- without an error (v0.29.2 eighth Judge). It now fails loudly as the
+    -- classified DivisionByZero, which a Sky.Test case cannot catch; the
+    -- runtime test TestMoneyAllocatePartCount (runtime-go/rt/
+    -- decimal_range_test.go) pins it.
 
       -- ── SUSPECTED REAL BUG — allocate of a NEGATIVE amount ──
       --    Doc: "The sum of returned parts equals the input exactly." The

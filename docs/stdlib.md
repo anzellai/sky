@@ -663,7 +663,7 @@ ISO 4217 minor-unit awareness (JPY=0dp, USD=2dp, BHD=3dp). `Currency` is a typed
 | `eqCurrency` | `Currency -> Currency -> Bool` |
 | `mul scalar m` | `Decimal -> Money -> Money` |
 | `neg` / `abs` | `Money -> Money` |
-| `allocate parts m` | `Int -> Money -> List Money` (fair split — `$100/3 → [$33.34, $33.33, $33.33]`, sum-preserving: every part is whole minor units except that the digits below the minor unit go to the first part, `1.005 USD / 3 → [0.345, 0.33, 0.33]`) |
+| `allocate parts m` | `Int -> Money -> List Money` (fair split — `$100/3 → [$33.34, $33.33, $33.33]`, sum-preserving: every part is whole minor units except that the digits below the minor unit go to the first part, `1.005 USD / 3 → [0.345, 0.33, 0.33]`). Parts below 1 fail as `DivisionByZero`, and above 10000000 as `NumericOverflow` |
 | `isZero` / `isPositive` / `isNegative` | `Money -> Bool` |
 | `percentOf` / `addPercent` / `subPercent` | `Decimal -> Money -> Money` |
 | `format` / `formatWithCode` | `Money -> String` (`"$108.88"` / `"108.88 USD"`) |

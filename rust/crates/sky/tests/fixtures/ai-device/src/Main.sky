@@ -19,6 +19,7 @@ import Std.Sub as Sub
 import Std.Ui as Ui exposing (Element)
 import Std.Ai.Provider as Provider
 import Std.Ai.Device as Device
+import Std.Codec as Codec exposing (Codec)
 import Assist
 
 
@@ -42,6 +43,11 @@ type Msg
     | Got (Result Error Provider.StreamStep)
     | Report (Result Error String)
     | Reported (Result Error ())
+
+
+statusCodec : Codec Device.Status
+statusCodec =
+    Codec.auto (Device.ServerSide Device.OperatorChoice)
 
 
 describe : Device.Status -> String

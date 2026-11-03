@@ -1966,20 +1966,9 @@ fn record_ctor_scheme(record: &Ty) -> Scheme {
 }
 
 fn substitute(ty: &Ty, sub: &HashMap<String, Ty>) -> Ty {
-    // One level per level of the tree it walks: grow the stack on demand.
-    base::ensure_stack(|| match ty {
-        Ty::Var(n) => sub.get(n.as_str()).cloned().unwrap_or_else(|| ty.clone()),
-        Ty::Fun(a, b) => Ty::Fun(Box::new(substitute(a, sub)), Box::new(substitute(b, sub))),
-        Ty::App(n, args) => Ty::App(n.clone(), args.iter().map(|a| substitute(a, sub)).collect()),
-        Ty::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| substitute(x, sub)).collect()),
-        Ty::Record(fs, ext) => Ty::Record(
-            fs.iter()
-                .map(|(n, t)| (n.clone(), substitute(t, sub)))
-                .collect(),
-            ext.clone(),
-        ),
-        other => other.clone(),
-    })
+    // The shared substitution: it binds a record's row variable too
+    // (`Named { count : Int }` keeps `count`).
+    ty.subst_vars(&|n: &str| sub.get(n).cloned())
 }
 
 fn intern_value(db: &dyn SkyDb, m: ModuleId, name: &str) -> DefId {

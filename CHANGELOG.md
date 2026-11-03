@@ -95,7 +95,10 @@ Breaking and Migration.
   `<PREFIX>_DB_PATH`, a remote database), on PostgreSQL and SQLite. It
   compares every table of `db : Store.Project` (stores and `Std.Db.Schema`
   tables) with the database: tables, columns, types, `NOT NULL`, defaults,
-  `UNIQUE`, the serial key, and indexes (partial and unique ones included).
+  `UNIQUE` (column and multi-column constraints), the primary key, the serial
+  key, and indexes (partial and unique ones included). An index a Store
+  cannot declare (an expression, a collation, INCLUDE columns, …) is a
+  notice.
   It reports each `db/migrations` file as applied, pending or edited. It
   prints a plain-words report and exits 1 on drift, for CI and pre-deploy
   gates. The live schema is read into the model `sky db migrate --gen`
@@ -107,7 +110,10 @@ Breaking and Migration.
     a notice and a commented `ALTER … TYPE BIGINT`.
   - `--sql --write` saves the safe steps as a migration file in
     `db/migrations` (the `--gen` format and ops) and updates
-    `db/schema.json`. It refuses while a migration is pending or edited.
+    `db/schema.json`. When the database is ahead of `db/schema.json` (an
+    adopted table), the file also carries the `--gen` steps a fresh database
+    needs, which change nothing on this one. It refuses while a migration is
+    pending or edited.
   - `--code` lists the columns the code has no field for or reads as
     another type, and prints a record type alias, a `Codec.object` (one
     `Codec.field` per column, `Codec.decimal` for `NUMERIC`) and a `Store`
@@ -136,6 +142,18 @@ Breaking and Migration.
 
 #### Data: codecs, `Std.Db.Store`, Decimal and Money
 
+- **Every stdlib leaf read by `Codec.auto` gets its write check.** This includes
+  `Currency` inside containers and tuples. An invalid currency code is refused
+  before a write, so it cannot make later reads fail. A tuple containing a
+  Decimal, Money or Currency now round-trips by its declared element types.
+- **Arithmetic writes keep Int columns readable.** `Store.adjust` and
+  `Store.addExcluded` refuse an overflowing sum on SQLite, as PostgreSQL does,
+  and leave the original rows unchanged.
+- **Decimal places never wrap to a smaller value.** Places and computed
+  exponents outside -100000 to 100000 fail as `NumericOverflow`. This also
+  bounds exponent-driven output allocation. `Money.allocate` below one part
+  fails as `DivisionByZero`, and above 10000000 parts as `NumericOverflow`.
+  See Migration for these newly loud failures.
 - **A `Codec.auto` field of a custom type with data reads back exactly, or is
   refused.** `BoxM (Just 3)` read back as `BoxM (Just 0)`, `Fixed 12.5` as a
   broken Decimal, and a variant with a `List`, `Dict`, `Money` or enum payload
@@ -214,10 +232,10 @@ Breaking and Migration.
   container's own fields as the tuple.
 - **`Money.allocate` lost the part of an amount below the minor unit.**
   `Money.allocate 3 (1.005 USD)` gave `[0.34, 0.33, 0.33]`, which sums to
-  1.00. Such amounts come from `Money.mul`, `percentOf` and `convert`. Every
-  part is still a whole number of minor units, as even as possible, and the
+  1.00. Such amounts come from `Money.mul`, `percentOf` and `convert`. The
   digits below the minor unit now go to the first part: `[0.345, 0.33,
-  0.33]`. The parts always sum exactly to the amount. The defect was in
+  0.33]`. Every other part is still a whole number of minor units, as even as
+  possible. The parts always sum exactly to the amount. The defect was in
   v0.29.1 too.
   `Std.Ai` no longer converts a cost through `toMinor` where it does not need
   an Int, and bounds the seconds a budget buys.
@@ -450,6 +468,44 @@ Breaking and Migration.
 
 #### `sky db check`, `sky db status` and read-only mode
 
+- **`sky db check` did not see a multi-column UNIQUE constraint.**
+  `UNIQUE (tenant, name)` in a CREATE TABLE was skipped by the schema reader
+  on SQLite and PostgreSQL, so the check said "matches" for code that left
+  it out, reported "unique index ux_… is missing" for code that declared
+  `Store.uniqueOn [ "tenant", "name" ]`, and `--sql --write` saved a
+  second unique index. A UNIQUE constraint is now read as the index it is
+  and matched to a declared `uniqueOn` by its columns; one the code leaves
+  out is a difference that names the constraint (never a `DROP INDEX`), and
+  the `--code` stub declares it with `Store.uniqueOn`.
+- **`sky db check` did not compare the primary key.** A composite key read
+  as its first column, so `PRIMARY KEY (a, b)` gave the stub
+  `Store.primaryKey "a"` and the check passed, and a code key on another
+  column than the database's was not reported either. On such a table a
+  `Store.update` or `Store.delete` by `a` reaches every row with that `a`.
+  The key is now compared (a composite key, a key on another column, no
+  key), and the `--code` stub of a composite-key table is a comment that
+  says why it is not a Store.
+- **`sky db check` read an index its column list does not describe as a
+  plain one.** On PostgreSQL an expression column was dropped from the list
+  (`(lower(name), tenant)` became `(tenant)`, a stricter constraint) and an
+  INCLUDE column added to it (a weaker one); on SQLite an expression column
+  had an empty name and `UNIQUE (email COLLATE NOCASE)` became
+  `Store.unique "email"`, which is case-sensitive. Each then "matched". The
+  reader now says why such an index is not a column list (an expression, a
+  collation or operator class of its own, DESC, INCLUDE columns, another
+  index method, an exclusion constraint). A Store cannot declare it, so the
+  check gives a notice for it and the stub a comment; under a name the code
+  also declares, it is a difference. A foreign key on another table no
+  longer makes PostgreSQL's plain unique index read as a constraint.
+- **`sky db check --sql --write` on an adopted table wrote a migration
+  chain that could not build a fresh database.** The file held only the
+  steps the live database needed, while `db/schema.json` recorded the whole
+  code, so `sky db migrate` on a fresh database failed ("no such table") and
+  `--gen` never wrote the CREATE TABLE. The file now also carries the steps
+  `--gen` writes against `db/schema.json` (CREATE TABLE and CREATE INDEX,
+  which are `IF NOT EXISTS` and change nothing on the live database), so
+  both databases reach the code. A column the live database has and no
+  migration adds is refused with the reason, and nothing is written.
 - **An adopted `sky db check --code` stub failed `sky db check` on a table
   with a UNIQUE column or an index.** The stub declared neither, so the check
   reported each one ("the code does not declare it"). The stub now writes
@@ -550,6 +606,13 @@ Breaking and Migration.
 
 #### `sky run`, `sky watch`, Sky.Spa and builds
 
+- **A U+FEFF inside a string builds as valid Go.** All generated Go string
+  literals share one escaping rule. Controls and the byte order mark are
+  escaped, and ordinary Unicode text keeps its value.
+- **The Sky.Spa Todos headless acceptance runs the current client driver.**
+  Its DOM shim supports URL marker queries, history replacement and scrolling.
+  The full round trip still checks the real wasm client against the real
+  SQLite backend.
 - **The embedded-database conflict message printed the DSN's password.**
   `DATABASE_URL='postgres://x:secret@host/x' sky run` on a project with
   `[database] embedded = true` showed `secret` in clear, and v0.29.2 runs the
@@ -643,6 +706,10 @@ Breaking and Migration.
 
 #### Contributors
 
+- **The Nix dev shell supplies Python 3.** Gate helpers no longer fall through
+  to the macOS SDK stub, whose `xcrun` lookup can recurse inside the shell.
+  Both Nix shell entry points verify that Python runs and that no environment
+  dump is written.
 - **`TestDictHashKeepsTheTrieShallow` failed about one run in 50 with
   nothing wrong.** Measured over 10,000 seeds per key family on
   linux/amd64, the Dict hash matches a uniform hash (depth 11 for 100,000
@@ -695,6 +762,33 @@ Breaking and Migration.
   lowering, which made `isPositive 0.5` `False` in v0.29.1). Everywhere else a
   literal is still an `Int`: `1 + 2.5` is refused and a `Float` slot needs
   `1.0`.
+  - An integer literal in a `number` slot reaches the program as an `Int`
+    value even when the caller chose `Float` (`zero : number -> number`
+    with `zero _ = 0`, `f xs = 1 :: xs`, the `[] -> 0` case of a recursive
+    sum), and `==` compared the two: `zero 2.5 == 0.0`, `List.member 1.0
+    (f [ 2.5 ])` and `pairUp 1.5 == ( 1.5, 0.0 )` were `False`. `==`, `/=`
+    and `List.member` now compare an `Int` and a `Float` by value, at the
+    top level and inside a `Maybe`, a tuple, a record or a `List`.
+  - Unary minus on a `number` lowered as `Int`: `neg2 x = -x` truncated its
+    argument (`neg2 2.5` was `-2`, `diff a b = a + -b` gave `diff 1.5 0.25`
+    = `1`), and `neg : number -> number` with `neg x = -x` failed `go build`
+    ("mismatched types untyped int and any"). Unary minus, and `^`, now
+    keep the variable generic, as `+` does, and lower to `rt.Negate` /
+    `rt.Pow` when the operand is not a Go `int` or `float64`.
+- **An extensible-record alias with a record argument dropped the
+  argument's fields.** `type alias Named r = { r | name : String }` with
+  `type alias Model = Named { count : Int }` expanded to `{ r | name :
+  String }`, so `init : Model` with `init = { name = "a", count = 2 }` was
+  refused under v0.29.2's rigid rows ("add `count` to the record type",
+  which it already was). v0.29.1 accepted it. The row variable is now
+  replaced like any other alias parameter, by a record (its fields join the
+  alias's), or by a variable (`both : Named a -> Named b -> String` keeps
+  two rows, so `both { name = "a", age = 3 } { name = "b" }` checks). One
+  substitution serves alias expansion, constructor payloads and the Sky.Spa
+  split, which each had a copy with the same flaw.
+- **The LSP inlay hint and hover disagreed on an unannotated function.**
+  Hover showed `add x y = x + y` as `number -> number -> number`; the hint
+  showed `a -> a -> a`. Both now show the checker's type.
 
 - **⚠ Breaking: every type variable in an annotation is rigid.** The checker
   made only the variables of an annotation's RESULT rigid. A variable that

@@ -290,3 +290,7 @@ An inline drop-down list holds 255 characters at most; put longer lists in
 cells and use `ListFromRange`. A `Docx` link must be http, https, mailto or an
 internal `#anchor`. Bound a read of an upload with `readWith` and `Limits`
 that fit the files you expect.
+
+Decimal places and computed exponents range from -100000 to 100000. Values
+outside this range fail as `NumericOverflow`. `Money.allocate` takes 1 to
+10000000 parts. Fewer parts fail as `DivisionByZero`, more as `NumericOverflow`.

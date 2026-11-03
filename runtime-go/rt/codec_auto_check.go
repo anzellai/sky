@@ -6,11 +6,17 @@ package rt
 // (Codec.writeChecks), so no row is stored that every later read of the table
 // fails on. For a hand-built codec Std.Codec derives partiality from the codec
 // tree. For an auto codec the tree is the record's Go type, so it is derived
-// here, from that type: a field is partial when its type holds a Decimal or a
-// Money at any depth (a field, a List, a Maybe, a Dict, a nested record). The
-// encoder writes a Decimal as its canonical text, and a computed Decimal
+// here, from that type: a field is partial when its type holds, at any depth
+// (a field, a List, a Maybe, a Dict, a nested record, a tuple), a stdlib type
+// Codec.auto reads by name (codecAutoReadable). Each of them has a strict
+// reader that refuses a value its writer can write: a computed Decimal
 // (Decimal.mul of two long ones) can be longer than the decimalStrictMaxLen
-// characters the strict reader takes back. Every other field type is total.
+// characters the strict reader takes back, a Money carries both, and a
+// `CurrencyRaw "zz"` is written as a code `Money.currencyFromCode` refuses.
+// The partial leaves are therefore DERIVED from codecAutoReadable, never kept
+// as a second list: v0.29.2's eighth Judge found Currency in the readable list
+// and missing from a hand-kept partial one, so a `CurrencyRaw "zz"` field was
+// stored and every later read of the table failed.
 //
 // Codec_autoCols marks such a column's kind with the flag `|check`. Std.Codec
 // then checks it on a write with the codec's own reader (its blank record with
@@ -22,9 +28,23 @@ import (
 	"strings"
 )
 
-// codecAutoPartialNames are the Go names of the leaf types an auto field can
-// hold that its reader can refuse after its writer wrote them.
-var codecAutoPartialNames = []string{"Std_Decimal_Decimal", "Std_Money_Money"}
+// codecAutoPartialLeaf reports whether the declared Go type name `name` is a
+// leaf whose reader can refuse what its writer wrote: every stdlib type
+// Codec.auto reads by name (codecAutoReadable).
+func codecAutoPartialLeaf(name string) bool {
+	return codecAutoReadable[name]
+}
+
+// codecAutoDeclaresPartial reports whether a declared type names a partial
+// leaf anywhere in it (`[]rt.SkyMaybe[Std_Money_Currency]`).
+func codecAutoDeclaresPartial(declared string) bool {
+	for n := range codecAutoReadable {
+		if strings.Contains(declared, n) {
+			return true
+		}
+	}
+	return false
+}
 
 // codecAutoTypePartial reports whether a field of Go type `t`, declared as
 // `declared` (the `sky:"name,type"` tag), holds a partial leaf at any depth:
@@ -38,18 +58,14 @@ func codecAutoTypePartial(t reflect.Type, declared string, depth int) bool {
 }
 
 func codecAutoTypePartialAt(t reflect.Type, declared string, depth int, seen map[reflect.Type]bool) bool {
-	for _, n := range codecAutoPartialNames {
-		if strings.Contains(declared, n) {
-			return true
-		}
+	if codecAutoDeclaresPartial(declared) {
+		return true
 	}
 	if t == nil || depth > 64 {
 		return false
 	}
-	for _, n := range codecAutoPartialNames {
-		if t.Name() == n {
-			return true
-		}
+	if codecAutoPartialLeaf(t.Name()) {
+		return true
 	}
 	switch t.Kind() {
 	case reflect.Slice, reflect.Array, reflect.Pointer, reflect.Map:
@@ -103,7 +119,7 @@ func codecAutoTypePartialAt(t reflect.Type, declared string, depth int, seen map
 			if f.PkgPath != "" {
 				continue
 			}
-			if codecAutoTypePartialAt(f.Type, skyTagType(f), depth+1, seen) {
+			if codecAutoTypePartialAt(f.Type, codecTupleFieldDeclared(t, i, declared), depth+1, seen) {
 				return true
 			}
 		}
@@ -293,11 +309,16 @@ func codecAutoTypeProblemAt(t reflect.Type, declared string, inVariant bool, dep
 				return "" // a runtime handle: the encoder refuses it loudly
 			}
 			name := codecAutoShortName(declared)
-			if name == "" {
-				name = "a standard-library custom type"
-			}
 			if inVariant {
+				if name == "" {
+					name = "a standard-library type (such as a Decimal, a Money or a Currency)"
+				}
 				return "a variant carries " + name + ", which the generated code does not name inside a variant"
+			}
+			if name == "" {
+				// No declared name reaches this slot: a nested anonymous
+				// record's field (its Go fields carry no tag).
+				return "a standard-library type (such as a Decimal, a Money or a Currency) sits where the generated code does not name its type (a field of a nested anonymous record); give the record a type alias, or the field Codec.decimal, Codec.money or Codec.isoCurrency through Codec.autoWith"
 			}
 			return name + " is a standard-library custom type Codec.auto does not read back"
 		}
@@ -309,7 +330,7 @@ func codecAutoTypeProblemAt(t reflect.Type, declared string, inVariant bool, dep
 			if f.PkgPath != "" {
 				continue
 			}
-			if p := codecAutoTypeProblemAt(f.Type, skyTagType(f), inVariant, depth+1, seen); p != "" {
+			if p := codecAutoTypeProblemAt(f.Type, codecTupleFieldDeclared(t, i, declared), inVariant, depth+1, seen); p != "" {
 				return p
 			}
 		}
@@ -487,7 +508,7 @@ func codecAutoBlankProblem(t reflect.Type, w reflect.Value, depth int) string {
 	case reflect.Interface:
 		if t.NumMethod() == 0 && !codecWitnessIsJSON(w) {
 			return "its blank has no JSON value where the field holds a Json.Value (or a type variable), so a value written there cannot be read back. " +
-				"Put one JSON value in the blank (`[ Json.Encode.null ]`, `Just Json.Encode.null`, `Dict.singleton \"k\" Json.Encode.null`), or give the field Codec.value through Codec.autoWith"
+				"Put one JSON value in the blank (`[ Json.Encode.null ]`, `Just Json.Encode.null`, `Dict.fromList [ ( \"k\", Json.Encode.null ) ]`), or give the field Codec.value through Codec.autoWith"
 		}
 		return ""
 	case reflect.Slice, reflect.Array:

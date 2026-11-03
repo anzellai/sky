@@ -45,6 +45,11 @@ Haskell compiler, once its byte-for-byte differential oracle, was removed from
 the tree in v0.29.0 (`docs/history/legacy-compilers.md`; tag `v0.28.1` is the
 last that has it). Current line: **v0.29.x**.
 
+Decimal places and computed exponents are bounded to -100000 through 100000.
+Outside this range they fail as `NumericOverflow`. `Money.allocate` requires
+1 to 10000000 parts. A smaller count fails as `DivisionByZero`, a larger one
+as `NumericOverflow`. Validate external counts before the operation.
+
 ## Language essentials
 
 Sky's surface is Elm. If your training on Elm is thin, read this section

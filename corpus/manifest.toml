@@ -3473,7 +3473,7 @@ witness    = "value"
 axes       = { edge = "empty", surface = "money" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "$0.00|0|0"
+stdout     = "$0.00"
 
 [[case]]
 id         = "stdlib_edge/boundary-money"

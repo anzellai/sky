@@ -909,3 +909,7 @@ sign-in) if you run more than one replica. Key per-session data by
 
 When a signature or module is unclear, run `sky doc <Module>` — it is complete
 and current. This file is not.
+
+Decimal places and computed exponents range from -100000 to 100000. Values
+outside this range fail as `NumericOverflow`. `Money.allocate` takes 1 to
+10000000 parts. Fewer parts fail as `DivisionByZero`, more as `NumericOverflow`.

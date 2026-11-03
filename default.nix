@@ -191,6 +191,7 @@ let
       rust-analyzer,
       go_1_26,
       nodejs_22,
+      python3,
       pkg-config,
       gnumake,
       curl,
@@ -217,6 +218,9 @@ let
         # Node 22 runs the Playwright e2e verifiers (scripts/*-e2e.sh), the
         # same major as .github/actions/playwright-setup.
         nodejs_22
+        # Gate and test helpers need Python. On macOS the SDK's python3 stub
+        # can otherwise call its own xcrun wrapper recursively.
+        python3
         pkg-config
         gnumake
         curl

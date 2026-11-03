@@ -5920,10 +5920,6 @@ fn money_battery(edge: &str) -> Vec<Check> {
         ],
         "empty" => vec![
             rs(&["Money.sum"], "Result.map Money.format (Money.sum USD emptyMoneys)", Some("$0.00")),
-            // `allocate` with a non-positive part count is the empty list, not
-            // a divide-by-zero.
-            ln(&["Money.allocate"], "Money.allocate 0 (Money.fromMinor USD 100)", 0),
-            ln(&["Money.allocate"], "Money.allocate -1 (Money.fromMinor USD 100)", 0),
         ],
         "failure" => vec![
             rs(&["Money.fromString"], "Result.map Money.format (Money.fromString USD \"abc\")", None),

@@ -35,7 +35,18 @@ use child_group::ChildGroup;
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 const LIMIT: Duration = Duration::from_secs(420);
-const CASES: [&str; 4] = ["toint", "tominor", "money", "tofloat"];
+const CASES: &[(&str, &str)] = &[
+    ("toint", "NumericOverflow"),
+    ("tominor", "NumericOverflow"),
+    ("money", "NumericOverflow"),
+    ("tofloat", "NumericOverflow"),
+    ("places", "NumericOverflow"),
+    ("fromminor", "NumericOverflow"),
+    ("fixed", "NumericOverflow"),
+    ("exponent", "NumericOverflow"),
+    ("parts", "NumericOverflow"),
+    ("noparts", "DivisionByZero"),
+];
 
 fn have_go() -> bool {
     Command::new("go")
@@ -179,7 +190,7 @@ fn a_numeric_overflow_is_exit_1_in_a_cli_and_a_500_in_a_server() {
 
     // CLI: each case exits 1 with the classified NumericOverflow, never the
     // `fatal error: stack overflow` (exit 2) or a wrapped number.
-    for case in CASES {
+    for &(case, kind) in CASES {
         let out = run_bounded(
             Command::new(&app)
                 .current_dir(&project)
@@ -195,8 +206,8 @@ fn a_numeric_overflow_is_exit_1_in_a_cli_and_a_500_in_a_server() {
             "{case}: want exit 1 for the classified panic:\n{text}"
         );
         assert!(
-            text.contains("NumericOverflow"),
-            "{case}: the panic was not classified NumericOverflow:\n{text}"
+            text.contains(kind),
+            "{case}: the panic was not classified {kind}:\n{text}"
         );
         assert!(
             !text.contains("stack overflow"),
@@ -252,7 +263,7 @@ fn a_numeric_overflow_is_exit_1_in_a_cli_and_a_500_in_a_server() {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    for case in CASES.iter().chain(CASES.iter()) {
+    for &(case, _) in CASES.iter().chain(CASES.iter()) {
         let path = format!("/{case}");
         let got = get_status(port, &path);
         assert_eq!(

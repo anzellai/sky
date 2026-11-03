@@ -1446,7 +1446,9 @@ one, in order."
 check` compares the database itself with the code: every table of `db :
 Store.Project` (stores, and the `Std.Db.Schema` tables `Schema.toProject`
 adds) against the live tables, columns, types, `NOT NULL`, defaults,
-`UNIQUE`, serial keys and indexes (partial and unique ones included). It
+`UNIQUE` (column and multi-column constraints), primary keys, serial keys
+and indexes (partial and unique ones included; an index a Store cannot
+declare, such as an expression index, is a notice). It
 also reports each `db/migrations` file as applied, pending or edited. It
 reads only, on any DSN the app would use, PostgreSQL or SQLite (it opens
 the database read-only and writes no telemetry; a missing SQLite file is

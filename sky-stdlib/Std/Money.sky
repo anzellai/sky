@@ -705,6 +705,9 @@ abs m =
 -- whole number of minor units, except that digits of the amount below the
 -- minor unit (1.005 USD, from `mul`, `percentOf` or `convert`) go to the
 -- first part: `allocate 3` of 1.005 USD is [0.345, 0.33, 0.33] (v0.29.2).
+-- There is no split into no part: `parts` below 1 fails as the classified
+-- `DivisionByZero`, and more than 10000000 parts as `NumericOverflow`
+-- (v0.29.2; `allocate 0` used to answer [], losing the amount).
 --
 --   allocate 3 ($100.00)  → [$33.34, $33.33, $33.33]
 allocate : Int -> Money -> List Money

@@ -3174,7 +3174,8 @@ impl<'a> Ctx<'a> {
         for (slot, go) in &self.device_regs {
             stmts.push(GoStmt::Expr(GoExpr::new(
                 GoExprKind::Ident(format!(
-                    "rt.AiDeviceRegister({slot:?}, func() any {{ return {go}() }})"
+                    "rt.AiDeviceRegister({}, func() any {{ return {go}() }})",
+                    base::go_string_literal(slot)
                 )),
                 GoTy::Unit,
             )));
@@ -4049,6 +4050,15 @@ impl<'a> Ctx<'a> {
             Expr::Negate(inner) => {
                 let x = self.lower_expr(*inner, actual);
                 let ty = x.ty.clone();
+                // A `number` operand that is not a Go `int`/`float64` (an
+                // annotation's `number`, an unconstrained helper param) is a Go
+                // `any`: `0 - x` does not build on it ("mismatched types untyped
+                // int and any", v0.29.2). `rt.Negate` dispatches on the value,
+                // as `negate x` does; the use site narrows the `any` result.
+                if !matches!(ty, GoTy::Bare(Prim::Int) | GoTy::Bare(Prim::Float)) {
+                    let w = self.widen(x);
+                    return call_rt("rt.Negate", vec![w], GoTy::Any);
+                }
                 GoExpr::new(
                     GoExprKind::Binary(
                         GoBin::Sub,

@@ -1984,7 +1984,7 @@ fn the_nix_dev_shell_writes_no_environment_to_disk() {
         .expect("read scripts/ci/nix-dev-shell-env-check.sh");
     for needle in [
         "nix-shell -A shell",
-        "develop -c true",
+        "develop -c python3 -c",
         "env-vars",
         "SKY_DUMMY_SECRET=",
     ] {

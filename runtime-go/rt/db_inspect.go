@@ -28,19 +28,36 @@ type inspectColumn struct {
 	NotNull bool    `json:"notnull"`
 	Default *string `json:"default"`
 	Pk      bool    `json:"pk"`
-	Autoinc bool    `json:"autoinc"`
+	// PkPos is the column's 1-based place in the primary key (0: not in
+	// it), so a composite key keeps its column order.
+	PkPos   int  `json:"pkPos"`
+	Autoinc bool `json:"autoinc"`
 	// Unique is a single-column UNIQUE constraint (a column-level UNIQUE,
 	// which the database backs with an index of its own).
 	Unique bool `json:"unique"`
 }
 
-// inspectIndex is one index a CREATE INDEX made. An index that backs a
-// primary key or a UNIQUE constraint is not listed: it is the constraint.
+// inspectIndex is one index: one a CREATE INDEX made, or one that backs a
+// UNIQUE (or exclusion) constraint (`Constraint`; its name is the
+// database's own). The index that backs the primary key is not listed (the
+// columns carry `pkPos`), nor is an exact single-column UNIQUE constraint
+// (the column carries `unique`).
+//
+// `Inexact` says why the column list does not describe the index (an
+// expression column, a non-default collation or operator class, a DESC
+// column, INCLUDE columns, an exclusion constraint), "" when it does. A
+// Store declares only plain column lists, so `sky db check` never treats an
+// inexact index as one the code declares (v0.29.2: an expression column was
+// dropped from the list, an INCLUDE column added to it, `COLLATE NOCASE`
+// lost, and the check then said "matches").
 type inspectIndex struct {
-	Name    string   `json:"name"`
-	Columns []string `json:"columns"`
-	Unique  bool     `json:"unique"`
-	Where   string   `json:"where"`
+	Name       string   `json:"name"`
+	Columns    []string `json:"columns"`
+	Unique     bool     `json:"unique"`
+	Where      string   `json:"where"`
+	Constraint bool     `json:"constraint,omitempty"`
+	Inexact    string   `json:"inexact,omitempty"`
+	Definition string   `json:"definition,omitempty"`
 }
 
 type inspectTable struct {
@@ -222,7 +239,7 @@ func sqliteInspectTables(conn *sql.DB) ([]inspectTable, error) {
 				crows.Close()
 				return nil, err
 			}
-			c := inspectColumn{Name: name, Type: typ, NotNull: notnull != 0 || pk != 0, Pk: pk != 0}
+			c := inspectColumn{Name: name, Type: typ, NotNull: notnull != 0 || pk != 0, Pk: pk != 0, PkPos: pk}
 			if dflt.Valid {
 				v := dflt.String
 				c.Default = &v
@@ -264,20 +281,23 @@ func sqliteInspectTables(conn *sql.DB) ([]inspectTable, error) {
 		}
 		irows.Close()
 		sort.Slice(ixs, func(i, j int) bool { return ixs[i].name < ixs[j].name })
+		colls := sqliteColumnCollations(t.sql)
 		for _, ix := range ixs {
-			cols, err := sqliteIndexColumns(conn, ix.name)
+			if ix.origin == "pk" {
+				continue
+			}
+			cols, inexact, err := sqliteIndexParts(conn, ix.name, colls)
 			if err != nil {
 				return nil, err
 			}
-			switch ix.origin {
-			case "pk":
-				continue
-			case "u":
-				if len(cols) == 1 {
-					for i := range it.Columns {
-						if it.Columns[i].Name == cols[0] {
-							it.Columns[i].Unique = true
-						}
+			// An exact one-column UNIQUE constraint is the column's UNIQUE.
+			// Every other UNIQUE constraint is listed as the index it is: a
+			// multi-column one is what Store.uniqueOn declares (v0.29.2: it
+			// was skipped, so the check said "matches" without it).
+			if ix.origin == "u" && len(cols) == 1 && inexact == "" {
+				for i := range it.Columns {
+					if it.Columns[i].Name == cols[0] {
+						it.Columns[i].Unique = true
 					}
 				}
 				continue
@@ -289,6 +309,7 @@ func sqliteInspectTables(conn *sql.DB) ([]inspectTable, error) {
 			}
 			it.Indexes = append(it.Indexes, inspectIndex{
 				Name: ix.name, Columns: cols, Unique: ix.unique, Where: indexPredicateOf(ddl.String),
+				Constraint: ix.origin == "u", Inexact: inexact, Definition: ddl.String,
 			})
 		}
 		out = append(out, it)
@@ -307,10 +328,17 @@ func inspectText(v any) string {
 	}
 }
 
-func sqliteIndexColumns(conn *sql.DB, index string) ([]string, error) {
-	rows, err := conn.Query(`PRAGMA index_info(` + sqliteQuoteIdent(index) + `)`)
+// sqliteIndexParts reads an index's key columns from PRAGMA index_xinfo, and
+// says why the list does not describe the index ("" when it does): an
+// expression column (cid -2), a DESC column, or a collation other than the
+// default (`UNIQUE (email COLLATE NOCASE)` is case-insensitive, a Store
+// `unique "email"` is not). An inherited column collation has the same effect.
+// The decimal collation is the one collation a Store declares itself.
+// An expression column is listed as `<expression>`.
+func sqliteIndexParts(conn *sql.DB, index string, colls map[string]string) ([]string, string, error) {
+	rows, err := conn.Query(`PRAGMA index_xinfo(` + sqliteQuoteIdent(index) + `)`)
 	if err != nil {
-		return nil, fmt.Errorf("columns of index %s: %v", index, err)
+		return nil, "", fmt.Errorf("columns of index %s: %v", index, err)
 	}
 	defer rows.Close()
 	type part struct {
@@ -318,20 +346,169 @@ func sqliteIndexColumns(conn *sql.DB, index string) ([]string, error) {
 		name string
 	}
 	var parts []part
+	var why []string
 	for rows.Next() {
-		var seq, cid int
-		var name sql.NullString
-		if err := rows.Scan(&seq, &cid, &name); err != nil {
-			return nil, err
+		// seqno, cid, name, desc, coll, key
+		var seq, cid, desc, key int
+		var name, coll sql.NullString
+		if err := rows.Scan(&seq, &cid, &name, &desc, &coll, &key); err != nil {
+			return nil, "", err
 		}
-		parts = append(parts, part{seq, name.String})
+		if key == 0 {
+			continue // the rowid an index carries for its own use
+		}
+		n := name.String
+		switch {
+		case cid == -2 || !name.Valid:
+			n = "<expression>"
+			why = append(why, "an expression column")
+		case desc != 0:
+			why = append(why, "column "+n+" is DESC")
+		}
+		if name.Valid && cid >= 0 && desc == 0 {
+			own := colls[strings.ToLower(n)]
+			if own != "SKY_DECIMAL" {
+				own = "BINARY"
+			}
+			if c := strings.ToUpper(coll.String); c != "" && c != own {
+				why = append(why, "column "+n+" has COLLATE "+c)
+			}
+		}
+		parts = append(parts, part{seq, n})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
 	}
 	sort.Slice(parts, func(i, j int) bool { return parts[i].seq < parts[j].seq })
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
 		out = append(out, p.name)
 	}
-	return out, nil
+	return out, strings.Join(why, ", "), nil
+}
+
+// sqliteColumnCollations reads each column's declared collation (`name TEXT
+// COLLATE NOCASE`) from a CREATE TABLE statement, upper-cased, by lower-cased
+// column name. A column with no COLLATE clause is absent (BINARY). An index
+// on such a column takes its collation by default, so only a collation that
+// differs from the column's makes an index inexact.
+func sqliteColumnCollations(ddl string) map[string]string {
+	out := map[string]string{}
+	open := strings.Index(ddl, "(")
+	if open < 0 {
+		return out
+	}
+	for _, def := range sqliteSplitTopLevel(ddl[open+1:]) {
+		toks := sqliteTokens(def)
+		if len(toks) == 0 {
+			continue
+		}
+		switch strings.ToUpper(toks[0]) {
+		case "CONSTRAINT", "PRIMARY", "UNIQUE", "CHECK", "FOREIGN":
+			continue // a table constraint, not a column
+		}
+		col := strings.ToLower(sqliteUnquote(toks[0]))
+		for i := 1; i+1 < len(toks); i++ {
+			if strings.EqualFold(toks[i], "COLLATE") {
+				out[col] = strings.ToUpper(sqliteUnquote(toks[i+1]))
+			}
+		}
+	}
+	return out
+}
+
+// sqliteSplitTopLevel splits a column-definition list at its top-level commas
+// and stops at the list's closing parenthesis.
+func sqliteSplitTopLevel(s string) []string {
+	var out []string
+	depth, start := 0, 0
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		switch {
+		case quote != 0:
+			if ch == quote {
+				quote = 0
+			}
+		case ch == '\'' || ch == '"' || ch == '`':
+			quote = ch
+		case ch == '[':
+			quote = ']'
+		case ch == '(':
+			depth++
+		case ch == ')':
+			if depth == 0 {
+				return append(out, s[start:i])
+			}
+			depth--
+		case ch == ',' && depth == 0:
+			out = append(out, s[start:i])
+			start = i + 1
+		}
+	}
+	return append(out, s[start:])
+}
+
+// sqliteTokens splits one definition into words, a quoted name staying one
+// word and a parenthesised group being skipped.
+func sqliteTokens(s string) []string {
+	var out []string
+	i := 0
+	for i < len(s) {
+		ch := s[i]
+		switch {
+		case ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r':
+			i++
+		case ch == '(':
+			depth := 0
+			for i < len(s) {
+				if s[i] == '(' {
+					depth++
+				} else if s[i] == ')' {
+					depth--
+					if depth == 0 {
+						i++
+						break
+					}
+				}
+				i++
+			}
+		case ch == '\'' || ch == '"' || ch == '`' || ch == '[':
+			end := ch
+			if ch == '[' {
+				end = ']'
+			}
+			j := i + 1
+			for j < len(s) && s[j] != end {
+				j++
+			}
+			if j < len(s) {
+				j++
+			}
+			out = append(out, s[i:j])
+			i = j
+		default:
+			j := i
+			for j < len(s) && !strings.ContainsRune(" \t\n\r('\"`[", rune(s[j])) {
+				j++
+			}
+			out = append(out, s[i:j])
+			i = j
+		}
+	}
+	return out
+}
+
+func sqliteUnquote(s string) string {
+	if len(s) >= 2 {
+		switch s[0] {
+		case '"', '\'', '`':
+			return strings.ReplaceAll(s[1:len(s)-1], string(s[0])+string(s[0]), string(s[0]))
+		case '[':
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
 }
 
 // indexPredicateOf returns the WHERE predicate of a CREATE INDEX statement:
@@ -394,21 +571,25 @@ func pgInspectTables(conn *sql.DB) ([]inspectTable, error) {
 	const rel = `to_regclass(quote_ident(current_schema()) || '.' || quote_ident($1))`
 	for _, name := range names {
 		it := inspectTable{Name: name, Columns: []inspectColumn{}, Indexes: []inspectIndex{}}
-		pks := map[string]bool{}
+		// Each primary-key column with its 1-based place in the key, so a
+		// composite key keeps its order (v0.29.2).
+		pks := map[string]int{}
 		prows, err := conn.Query(
-			`SELECT a.attname FROM pg_index i
-			 JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+			`SELECT a.attname, k.ord FROM pg_index i
+			 CROSS JOIN LATERAL unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
+			 JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
 			 WHERE i.indrelid = `+rel+` AND i.indisprimary`, name)
 		if err != nil {
 			return nil, fmt.Errorf("primary key of %s: %v", name, err)
 		}
 		for prows.Next() {
 			var a string
-			if err := prows.Scan(&a); err != nil {
+			var ord int
+			if err := prows.Scan(&a, &ord); err != nil {
 				prows.Close()
 				return nil, err
 			}
-			pks[a] = true
+			pks[a] = ord
 		}
 		prows.Close()
 		crows, err := conn.Query(
@@ -425,7 +606,7 @@ func pgInspectTables(conn *sql.DB) ([]inspectTable, error) {
 				crows.Close()
 				return nil, err
 			}
-			c := inspectColumn{Name: cname, Type: typ, NotNull: nullable == "NO", Pk: pks[cname]}
+			c := inspectColumn{Name: cname, Type: typ, NotNull: nullable == "NO", Pk: pks[cname] > 0, PkPos: pks[cname]}
 			if dflt.Valid {
 				v := dflt.String
 				c.Default = &v
@@ -434,47 +615,108 @@ func pgInspectTables(conn *sql.DB) ([]inspectTable, error) {
 			it.Columns = append(it.Columns, c)
 		}
 		crows.Close()
+		// The key columns only (`indnkeyatts`: INCLUDE columns are not part
+		// of the key), an expression column by its text, and why the list
+		// does not describe the index. The constraint is the table's own
+		// UNIQUE / PRIMARY KEY / EXCLUDE (`conrelid`): a foreign key on
+		// another table names this index in `conindid` too.
 		irows, err := conn.Query(
 			`SELECT c.relname, i.indisunique, i.indisprimary,
 			        COALESCE(pg_get_expr(i.indpred, i.indrelid), ''),
-			        COALESCE(array_to_string(ARRAY(
-			            SELECT a.attname FROM unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
-			            JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
-			            ORDER BY k.ord), ','), ''),
-			        EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = i.indexrelid)
-			 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+			        array_to_json(ARRAY(
+			            SELECT COALESCE(a.attname::text, pg_get_indexdef(i.indexrelid, k.ord::int, true))
+			            FROM unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
+			            LEFT JOIN pg_attribute a
+			              ON a.attrelid = i.indrelid AND a.attnum = k.attnum AND k.attnum > 0
+			            WHERE k.ord <= i.indnkeyatts
+			            ORDER BY k.ord))::text,
+			        COALESCE((SELECT con.contype::text FROM pg_constraint con
+			                  WHERE con.conindid = i.indexrelid AND con.conrelid = i.indrelid
+			                    AND con.contype IN ('u', 'p', 'x') LIMIT 1), ''),
+			        i.indexprs IS NOT NULL,
+			        i.indnatts > i.indnkeyatts,
+			        EXISTS (SELECT 1 FROM unnest(i.indoption::int2[]) AS o(opt) WHERE o.opt <> 0),
+			        EXISTS (SELECT 1 FROM unnest(i.indkey::int2[], i.indcollation::oid[]) AS kc(attnum, coll)
+			                JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = kc.attnum
+			                WHERE kc.attnum > 0 AND kc.coll IS NOT NULL AND kc.coll <> 0
+			                  AND kc.coll <> a.attcollation),
+			        EXISTS (SELECT 1 FROM unnest(i.indclass::oid[]) AS cl(opc)
+			                JOIN pg_opclass oc ON oc.oid = cl.opc WHERE NOT oc.opcdefault),
+			        am.amname,
+			        pg_get_indexdef(i.indexrelid)
+			 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_am am ON am.oid = c.relam
 			 WHERE i.indrelid = `+rel+` ORDER BY c.relname`, name)
 		if err != nil {
 			return nil, fmt.Errorf("indexes of %s: %v", name, err)
 		}
 		for irows.Next() {
-			var iname, pred, cols string
-			var uniq, primary, constraint bool
-			if err := irows.Scan(&iname, &uniq, &primary, &pred, &cols, &constraint); err != nil {
+			var iname, pred, colsJSON, contype, am, def string
+			var uniq, primary, exprs, include, desc, coll, opclass bool
+			if err := irows.Scan(&iname, &uniq, &primary, &pred, &colsJSON, &contype,
+				&exprs, &include, &desc, &coll, &opclass, &am, &def); err != nil {
 				irows.Close()
 				return nil, err
-			}
-			colList := []string{}
-			if cols != "" {
-				colList = strings.Split(cols, ",")
 			}
 			if primary {
 				continue
 			}
-			if constraint {
-				if uniq && len(colList) == 1 {
-					for i := range it.Columns {
-						if it.Columns[i].Name == colList[0] {
-							it.Columns[i].Unique = true
-						}
+			colList := []string{}
+			if err := json.Unmarshal([]byte(colsJSON), &colList); err != nil {
+				irows.Close()
+				return nil, fmt.Errorf("columns of index %s: %v", iname, err)
+			}
+			inexact := pgIndexInexact(exprs, include, desc, coll, opclass, am, contype)
+			// An exact one-column UNIQUE constraint is the column's UNIQUE.
+			// Every other constraint index is listed: a multi-column UNIQUE
+			// constraint is what Store.uniqueOn declares (v0.29.2: skipped).
+			if contype == "u" && uniq && len(colList) == 1 && inexact == "" && pred == "" {
+				for i := range it.Columns {
+					if it.Columns[i].Name == colList[0] {
+						it.Columns[i].Unique = true
 					}
 				}
 				continue
 			}
-			it.Indexes = append(it.Indexes, inspectIndex{Name: iname, Columns: colList, Unique: uniq, Where: pred})
+			it.Indexes = append(it.Indexes, inspectIndex{
+				Name: iname, Columns: colList, Unique: uniq, Where: pred,
+				Constraint: contype != "", Inexact: inexact, Definition: def,
+			})
+		}
+		if err := irows.Err(); err != nil {
+			irows.Close()
+			return nil, err
 		}
 		irows.Close()
 		out = append(out, it)
 	}
 	return out, nil
+}
+
+// pgIndexInexact says why an index's key-column list does not describe it,
+// or "" when it does. A Store declares a plain B-tree index over columns
+// with their own collation and default operator class, ascending.
+func pgIndexInexact(exprs, include, desc, coll, opclass bool, am, contype string) string {
+	var why []string
+	if exprs {
+		why = append(why, "an expression column")
+	}
+	if include {
+		why = append(why, "INCLUDE columns")
+	}
+	if desc {
+		why = append(why, "a DESC or NULLS FIRST column")
+	}
+	if coll {
+		why = append(why, "a column with a COLLATE of its own")
+	}
+	if opclass {
+		why = append(why, "an operator class that is not the default")
+	}
+	if am != "" && am != "btree" {
+		why = append(why, "the "+am+" index method")
+	}
+	if contype == "x" {
+		why = append(why, "an exclusion constraint")
+	}
+	return strings.Join(why, ", ")
 }

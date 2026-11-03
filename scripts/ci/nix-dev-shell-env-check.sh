@@ -104,13 +104,13 @@ run_clean() {
 }
 
 new_scratch
-run_clean "$SCRATCH" nix-shell -A shell --run true >/dev/null ||
-  fail "nix-shell -A shell did not start"
+run_clean "$SCRATCH" nix-shell -A shell --run 'python3 -c "import sys; assert sys.version_info >= (3, 9)"' >/dev/null ||
+  fail "nix-shell -A shell did not start with a working Python 3"
 assert_no_dump "nix-shell -A shell" "$SCRATCH"
 
 new_scratch
-run_clean "$SCRATCH" nix --extra-experimental-features 'nix-command flakes' develop -c true >/dev/null ||
-  fail "nix develop did not start"
+run_clean "$SCRATCH" nix --extra-experimental-features 'nix-command flakes' develop -c python3 -c 'import sys; assert sys.version_info >= (3, 9)' >/dev/null ||
+  fail "nix develop did not start with a working Python 3"
 assert_no_dump "nix develop" "$SCRATCH"
 
 if [ "$WITH_BUILD_CHECK" = 1 ]; then

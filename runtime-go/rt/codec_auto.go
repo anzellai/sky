@@ -485,6 +485,9 @@ func codecAutoEncodeTyped(rv reflect.Value, declaredType string, snake bool) (an
 			}
 			return codecAutoJust(codecAutoEncodeTyped(rv.FieldByName("JustValue"), strings.TrimSuffix(inner, "]"), snake))
 		}
+		if args := codecDeclaredTupleArgs(declaredType); args != nil && rv.Kind() == reflect.Struct && rv.NumField() == len(args) {
+			return codecAutoEncodeTuple(rv, args, snake)
+		}
 		if elem, ok := strings.CutPrefix(declaredType, "[]"); ok && rv.Kind() == reflect.Slice {
 			out := make([]any, rv.Len())
 			for i := 0; i < rv.Len(); i++ {
@@ -884,6 +887,9 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 			}
 			return out, nil
 		}
+		if args := codecDeclaredTupleArgs(declaredType); args != nil && gt.Kind() == reflect.Struct && gt.NumField() == len(args) {
+			return codecAutoDecodeTuple(gt, args, raw, snake, w)
+		}
 		// Std.Decimal — a JSON string; rebuild via decimalBox (round-trips the
 		// canonical `Decimal.String()` the encoder emitted).
 		if declaredType == "Std_Decimal_Decimal" {
@@ -946,6 +952,113 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 		return reflect.Value{}, fmt.Errorf("Codec.auto: %s is a standard-library custom type Codec.auto does not read back", codecAutoNameOr(declaredType, "this field"))
 	}
 	return codecAutoDecodeValW(gt, raw, snake, w)
+}
+
+// codecDeclaredTupleArgs is the declared element types of a declared tuple
+// type (`rt.T2[Std_Decimal_Decimal, int]` → `Std_Decimal_Decimal`, `int`),
+// or nil when `declared` is not one. A tuple's Go fields (V0, V1, …) carry no
+// tag, so a Decimal, Money or Currency in a tuple is the erased rt.SkyADT and
+// only the field's declared type names it (v0.29.2 eighth Judge: a
+// `( Decimal, Int )` field was refused with a garbled message).
+func codecDeclaredTupleArgs(declared string) []string {
+	rest, ok := strings.CutPrefix(declared, "rt.T")
+	if !ok || !strings.HasSuffix(rest, "]") {
+		return nil
+	}
+	open := strings.IndexByte(rest, '[')
+	if open < 1 {
+		return nil
+	}
+	n, err := strconv.Atoi(rest[:open])
+	if err != nil || n < 2 {
+		return nil
+	}
+	args := codecSplitTopLevel(rest[open+1 : len(rest)-1])
+	if len(args) != n {
+		return nil
+	}
+	return args
+}
+
+// codecSplitTopLevel splits a Go type-argument list on the commas outside
+// brackets, braces and parentheses, trimming each part.
+func codecSplitTopLevel(s string) []string {
+	var out []string
+	depth, start := 0, 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '[', '{', '(':
+			depth++
+		case ']', '}', ')':
+			depth--
+		case ',':
+			if depth == 0 {
+				out = append(out, strings.TrimSpace(s[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	return append(out, strings.TrimSpace(s[start:]))
+}
+
+// codecTupleFieldDeclared is the declared type of field i of the struct t:
+// its tag's type, or, for a tuple field (no tag), the i-th element type of
+// the tuple's declared type `declared`.
+func codecTupleFieldDeclared(t reflect.Type, i int, declared string) string {
+	if d := skyTagType(t.Field(i)); d != "" {
+		return d
+	}
+	if args := codecDeclaredTupleArgs(declared); args != nil && t.NumField() == len(args) {
+		return args[i]
+	}
+	return ""
+}
+
+// codecAutoEncodeTuple writes a tuple as the object the value encoder writes
+// (`{"v0":…,"v1":…}`), each element by its declared type.
+func codecAutoEncodeTuple(rv reflect.Value, args []string, snake bool) (any, error) {
+	t := rv.Type()
+	obj := jsonOrderedObject{}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.PkgPath != "" {
+			continue
+		}
+		raw, err := codecAutoEncodeTyped(rv.Field(i), args[i], snake)
+		if err != nil {
+			return nil, err
+		}
+		obj.keys = append(obj.keys, skyColKey(f, snake))
+		obj.vals = append(obj.vals, raw)
+	}
+	return obj, nil
+}
+
+// codecAutoDecodeTuple reads what codecAutoEncodeTuple writes, each element by
+// its declared type.
+func codecAutoDecodeTuple(gt reflect.Type, args []string, raw any, snake bool, w reflect.Value) (reflect.Value, error) {
+	m, ok := jsonObjectMap(raw)
+	if !ok {
+		return reflect.Value{}, fmt.Errorf("Codec.auto: expected object for a tuple, got %s", jsonValueKind(raw))
+	}
+	out := reflect.New(gt).Elem()
+	for i := 0; i < gt.NumField(); i++ {
+		f := gt.Field(i)
+		if f.PkgPath != "" {
+			continue
+		}
+		key := skyColKey(f, snake)
+		val, present := m[key]
+		if !present && !codecFieldOptional(f) {
+			return reflect.Value{}, fmt.Errorf("Codec.auto: missing tuple element %q", key)
+		}
+		fv, err := codecAutoDecodeTypedW(f.Type, args[i], val, snake, codecWitnessField(w, gt, i))
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		out.Field(i).Set(fv)
+	}
+	return out, nil
 }
 
 func codecAutoNameOr(declared, fallback string) string {

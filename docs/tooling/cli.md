@@ -1132,6 +1132,19 @@ what only a live database holds (`NOT NULL`, defaults, `UNIQUE`, the serial
 key). The tables the Sky runtime keeps (`sky_*`, `_sky_*`, `analytics_events`,
 `telemetry_*`) are not the app's, and are never reported.
 
+`check` compares the primary key too: a composite key, a key on another column
+than the Store's, or no key is a difference, with what it means for
+`Store.update`, `Store.upsert` and `Store.delete` (v0.29.2). A UNIQUE
+constraint over several columns (`UNIQUE (tenant, name)`) is the index it is,
+matched to a declared `Store.uniqueOn` by its columns whatever the database
+named it; one the code does not declare is a difference that names the
+constraint. An index whose column list does not describe it (an expression
+column, a collation or operator class of its own, a DESC column, INCLUDE
+columns, another index method such as `hash`, an exclusion constraint) is
+something no Store declares: `check` gives a notice for it, leaves it as it is,
+and says so in the report ("matches what the code declares; N notice(s)"). Under
+a name the code also declares, it is a difference.
+
 `check` also runs the data check the app's `Store.migrate` runs before it
 changes a table (`Store.checkProjectData`, the same runtime function), so the
 two never disagree. A column type can fit while its rows do not: a SQLite
@@ -1153,7 +1166,13 @@ any change that needs a table rebuild. The `INTEGER` → `BIGINT` widening is a
 commented step with its notice. `--write` saves the safe steps as a normal
 migration file (`db/migrations/<time>_db_check.json`, the same format and the
 same ops `--gen` writes), puts a dropped column or table in its inert
-`destructive` array, and updates `db/schema.json` as `--gen` does. It refuses
+`destructive` array, and updates `db/schema.json` as `--gen` does. Because
+`db/schema.json` then records the code as what the migrations build, the file
+also carries the steps `--gen` writes against the old `db/schema.json` when the
+database is ahead of it (a table adopted from `--code`): its CREATE TABLE and
+CREATE INDEX are `IF NOT EXISTS`, change nothing on this database, and build
+the table on a fresh one. A column the database has and no migration adds is
+refused (an ADD COLUMN would fail here), and nothing is written. It refuses
 while a migration is pending or edited, and in a project with no
 `db/migrations` (run `sky db init` first).
 
@@ -1163,12 +1182,16 @@ another type, and the nullable columns a required field reads. For each table
 the code declares nothing for, it prints a Sky record type alias, a `Codec`
 (one `Codec.field` per column, `Codec.decimal` for a PostgreSQL `NUMERIC`
 column) and a `Store` with a `Store.default…` builder for each column default,
-a `Store.unique` for each single-column UNIQUE constraint or index, and a
+a `Store.unique` for each single-column UNIQUE constraint or index, a
+`Store.uniqueOn` for each multi-column UNIQUE constraint, and a
 `Store.indexNamed` / `Store.uniqueOnNamed` for each other index under its live
 name (v0.29.2), ready to copy into a module. An index the Store cannot declare
 (a partial index, a unique index over a nullable column, or one over a column
 the stub has no field for) is a comment in the stub, and `sky db check` reports
-it until you declare it or drop it. A project with no tables yet
+it until you declare it or drop it. An index whose column list does not
+describe it (an expression, a collation, …) is a comment too, and `check` gives
+a notice for it. A table with a composite primary key gets a stub that is all
+comment: a Store's key is one column. A project with no tables yet
 (`db = Store.project []`) is checked as one (v0.29.2). Each field has the type `sky db check` accepts for
 its column, so an adopted stub passes the check: a date, time, UUID or JSON
 column is a `String` (on SQLite as well, where such a type has NUMERIC

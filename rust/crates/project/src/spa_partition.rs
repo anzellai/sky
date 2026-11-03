@@ -1436,20 +1436,8 @@ fn ctor_head_text(src: &str, start: usize, first_arg: usize) -> Option<String> {
 
 /// Replace each type variable of `t` by its binding in `sub`.
 fn subst_ty(t: &ty::Ty, sub: &HashMap<String, ty::Ty>) -> ty::Ty {
-    // One level per level of the tree it walks: grow the stack on demand.
-    base::ensure_stack(|| match t {
-        ty::Ty::Var(n) => sub.get(n.as_str()).cloned().unwrap_or_else(|| t.clone()),
-        ty::Ty::Fun(a, b) => ty::Ty::Fun(Box::new(subst_ty(a, sub)), Box::new(subst_ty(b, sub))),
-        ty::Ty::App(n, xs) => ty::Ty::App(n.clone(), xs.iter().map(|x| subst_ty(x, sub)).collect()),
-        ty::Ty::Record(fs, ext) => ty::Ty::Record(
-            fs.iter()
-                .map(|(n, x)| (n.clone(), subst_ty(x, sub)))
-                .collect(),
-            ext.clone(),
-        ),
-        ty::Ty::Tuple(xs) => ty::Ty::Tuple(xs.iter().map(|x| subst_ty(x, sub)).collect()),
-        ty::Ty::Unit | ty::Ty::Error => t.clone(),
-    })
+    // The shared substitution: it binds a record's row variable too.
+    t.subst_vars(&|n: &str| sub.get(n).cloned())
 }
 
 /// The declared argument types of the constructor `ctor`, instantiated at the

@@ -192,6 +192,60 @@ impl Ty {
         Ty::Var(Name::new(name))
     }
 
+    /// Replace each type variable by its binding in `sub`, the row variable of
+    /// an extensible record included. This is the ONE substitution every
+    /// alias / constructor instantiation goes through.
+    ///
+    /// A record's row variable is a type variable like any other: in
+    /// `type alias Named r = { r | name : String }`, `Named { age : Int }` is
+    /// `{ name : String, age : Int }`. When the row variable is bound to
+    /// - a record, its fields are appended after the record's own (a field the
+    ///   record already names keeps the record's type) and its own row variable
+    ///   (if any) becomes the result's,
+    /// - a type variable, that variable becomes the row variable,
+    /// - anything else (an unexpanded name, an error), the row is left as it was.
+    ///
+    /// The earlier per-site copies kept `ext` unchanged, so the argument's
+    /// fields were dropped (`Named { count : Int }` lost `count`).
+    pub fn subst_vars<F>(&self, sub: &F) -> Ty
+    where
+        F: Fn(&str) -> Option<Ty>,
+    {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match self {
+            Ty::Var(n) => sub(n.as_str()).unwrap_or_else(|| self.clone()),
+            Ty::Fun(a, b) => Ty::Fun(Box::new(a.subst_vars(sub)), Box::new(b.subst_vars(sub))),
+            Ty::App(n, xs) => Ty::App(n.clone(), xs.iter().map(|x| x.subst_vars(sub)).collect()),
+            Ty::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| x.subst_vars(sub)).collect()),
+            Ty::Record(fs, ext) => {
+                let mut fields: Vec<(Name, Ty)> = fs
+                    .iter()
+                    .map(|(n, t)| (n.clone(), t.subst_vars(sub)))
+                    .collect();
+                let ext = match ext {
+                    None => None,
+                    Some(e) => match sub(e.as_str()) {
+                        None => Some(e.clone()),
+                        Some(bound) => match &bound {
+                            Ty::Var(v) => Some(v.clone()),
+                            Ty::Record(more, more_ext) => {
+                                for (n, t) in more {
+                                    if !fields.iter().any(|(m, _)| m == n) {
+                                        fields.push((n.clone(), t.clone()));
+                                    }
+                                }
+                                more_ext.clone()
+                            }
+                            _ => Some(e.clone()),
+                        },
+                    },
+                };
+                Ty::Record(fields, ext)
+            }
+            Ty::Unit | Ty::Error => self.clone(),
+        })
+    }
+
     /// Free type-variable names, in first-seen order (deterministic, L4).
     pub fn free_vars(&self) -> Vec<Name> {
         let mut out = Vec::new();

@@ -48,6 +48,30 @@ caseText which =
         "tofloat" ->
             String.fromFloat (Decimal.toFloat (d "1e400"))
 
+        "places" ->
+            String.fromInt (Decimal.toMinor 4294967298 Decimal.one)
+
+        "fromminor" ->
+            Decimal.toString (Decimal.fromMinor 4294967298 12345)
+
+        "fixed" ->
+            Decimal.toStringFixed 2000000000 Decimal.one
+
+        "exponent" ->
+            let
+                tiny = Decimal.fromMinor 100000 1
+            in
+                Decimal.toString (Decimal.mul tiny tiny)
+
+        "parts" ->
+            String.fromInt
+                (List.length
+                    (Money.allocate 9223372036854775807 (Money.fromMajor USD 1)))
+
+        "noparts" ->
+            String.fromInt
+                (List.length (Money.allocate 0 (Money.fromMajor USD 1)))
+
         "kernelpanic" ->
             Decimal.toString (d "1.5")
 
@@ -68,7 +92,20 @@ main =
         "" ->
             Server.listen
                 port
-                (List.map route [ "ok", "toint", "tominor", "money", "tofloat" ])
+                (List.map
+                    route
+                    [ "ok"
+                    , "toint"
+                    , "tominor"
+                    , "money"
+                    , "tofloat"
+                    , "places"
+                    , "fromminor"
+                    , "fixed"
+                    , "exponent"
+                    , "parts"
+                    , "noparts"
+                    ])
 
         which ->
             println (which ++ ": " ++ caseText which)

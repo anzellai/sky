@@ -1447,8 +1447,15 @@ impl<'a> Infer<'a> {
             Expr::Var(res) => self.infer_res(res.clone()),
             Expr::Negate(inner) => {
                 let ti = self.infer_expr(body, *inner);
-                let num = self.uf.fresh(Content::FlexSuper(SuperType::Number));
-                self.unify(ti, num);
+                // Like `+ - *`: the `number` bound is check-only. On the
+                // lowering path an unannotated `neg x = -x` used to concretise
+                // the bound to `Int` and lowered `Main_neg(v_0 int) int`, so
+                // `neg 2.5` truncated its argument to `-2` (v0.29.2). The
+                // unconstrained operand lowers to `rt.Negate` (lower.rs).
+                if !self.use_inferred {
+                    let num = self.uf.fresh(Content::FlexSuper(SuperType::Number));
+                    self.unify(ti, num);
+                }
                 ti
             }
             Expr::Lambda { params, body: lb } => {
@@ -2284,15 +2291,21 @@ impl<'a> Infer<'a> {
                 self.unify(tr, f);
                 self.con("Float", vec![])
             }
-            // power `^` kept on the Number super (UNCHANGED) — out of scope for the
-            // literal-model fix. Its codegen (`rt.Pow`, lower.rs) is a separate
-            // pending gap: `rt.Pow` is undefined in the runtime, so `^` fails
-            // `go build` regardless of inference (pre-existing; tracked separately).
+            // power `^`: `number -> number -> number`, the bound check-only like
+            // `+ - *`. On the lowering path a `number` bound concretised to
+            // `Int` for an unannotated `pw b e = b ^ e`, which then lowered with
+            // `int` params and truncated a Float argument (v0.29.2). The
+            // unconstrained operands lower to `rt.Pow`.
             "^" => {
-                let n = self.uf.fresh(Content::FlexSuper(SuperType::Number));
-                self.unify(tl, n);
-                self.unify(tr, n);
-                n
+                if self.use_inferred {
+                    self.unify(tl, tr);
+                    tl
+                } else {
+                    let n = self.uf.fresh(Content::FlexSuper(SuperType::Number));
+                    self.unify(tl, n);
+                    self.unify(tr, n);
+                    n
+                }
             }
             "//" | "%" => {
                 let int = self.con("Int", vec![]);

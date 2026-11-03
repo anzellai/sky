@@ -918,9 +918,10 @@ fn an_explicit_dsn_alongside_embedded_refuses_to_run() {
     let msg = stderr(&out);
     assert!(msg.contains("sky.toml [database] url"), "{msg}");
     assert!(
-        msg.contains("postgres://user:pw@example.invalid/app"),
+        msg.contains("postgres://user:***@example.invalid/app"),
         "{msg}"
     );
+    assert!(!msg.contains("user:pw@"), "the password must be redacted");
     assert!(msg.contains("remove `embedded = true`"), "{msg}");
     // Refused BEFORE the build: no compiler output, no `sky-out`.
     assert!(

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -136,3 +137,129 @@ func TestIndexPredicateOf(t *testing.T) {
 }
 
 func ptrInt64(n int64) *int64 { return &n }
+
+// inspectShapeCase is one live table shape and what the report must say.
+type inspectShapeCase struct {
+	name    string
+	ddl     []string
+	table   string
+	pk      []string // primary-key columns in key order
+	unique  []string // columns the report marks UNIQUE
+	indexes []inspectIndex
+}
+
+// The index and key shapes a Store cannot see in a column list, each read as
+// what it is (v0.29.2 Judge: a multi-column UNIQUE constraint was skipped, a
+// composite key kept its first column only, an expression column was dropped
+// and `COLLATE NOCASE` lost, and `sky db check` then said "matches").
+var inspectShapeCases = []inspectShapeCase{
+	{name: "multi-column UNIQUE constraint",
+		ddl:   []string{`CREATE TABLE ext2 (code TEXT PRIMARY KEY, name TEXT NOT NULL, tenant INTEGER NOT NULL, UNIQUE (tenant, name))`},
+		table: "ext2", pk: []string{"code"},
+		indexes: []inspectIndex{{Name: "sqlite_autoindex_ext2_2", Columns: []string{"tenant", "name"}, Unique: true, Constraint: true}}},
+	{name: "single-column UNIQUE constraint is the column's",
+		ddl:   []string{`CREATE TABLE u1 (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE)`},
+		table: "u1", pk: []string{"id"}, unique: []string{"email"}},
+	{name: "UNIQUE constraint with COLLATE NOCASE",
+		ddl:   []string{`CREATE TABLE u2 (id INTEGER PRIMARY KEY, email TEXT NOT NULL, UNIQUE (email COLLATE NOCASE))`},
+		table: "u2", pk: []string{"id"},
+		indexes: []inspectIndex{{Name: "sqlite_autoindex_u2_1", Columns: []string{"email"}, Unique: true, Constraint: true, Inexact: "column email has COLLATE NOCASE"}}},
+	{name: "an inherited NOCASE collation still cannot be declared by a Store",
+		ddl:   []string{`CREATE TABLE u3 (id INTEGER PRIMARY KEY, email TEXT COLLATE NOCASE NOT NULL)`, `CREATE UNIQUE INDEX ux_u3 ON u3 (email)`},
+		table: "u3", pk: []string{"id"},
+		indexes: []inspectIndex{{Name: "ux_u3", Columns: []string{"email"}, Unique: true, Inexact: "column email has COLLATE NOCASE"}}},
+	{name: "an inherited NOCASE UNIQUE constraint cannot become a plain unique column",
+		ddl:   []string{`CREATE TABLE u6 (id INTEGER PRIMARY KEY, email TEXT COLLATE NOCASE NOT NULL UNIQUE)`},
+		table: "u6", pk: []string{"id"},
+		indexes: []inspectIndex{{Name: "sqlite_autoindex_u6_1", Columns: []string{"email"}, Unique: true, Constraint: true, Inexact: "column email has COLLATE NOCASE"}}},
+	{name: "unique index with COLLATE NOCASE",
+		ddl:   []string{`CREATE TABLE u4 (id INTEGER PRIMARY KEY, email TEXT NOT NULL)`, `CREATE UNIQUE INDEX ux_u4 ON u4 (email COLLATE NOCASE)`},
+		table: "u4", pk: []string{"id"},
+		indexes: []inspectIndex{{Name: "ux_u4", Columns: []string{"email"}, Unique: true, Inexact: "column email has COLLATE NOCASE"}}},
+	{name: "expression index",
+		ddl:   []string{`CREATE TABLE ext5 (id INTEGER PRIMARY KEY, name TEXT NOT NULL, tenant INTEGER NOT NULL)`, `CREATE UNIQUE INDEX u5 ON ext5 (lower(name), tenant)`},
+		table: "ext5", pk: []string{"id"},
+		indexes: []inspectIndex{{Name: "u5", Columns: []string{"<expression>", "tenant"}, Unique: true, Inexact: "an expression column"}}},
+	{name: "DESC index",
+		ddl:   []string{`CREATE TABLE d1 (id INTEGER PRIMARY KEY, at INTEGER NOT NULL)`, `CREATE INDEX ix_d1 ON d1 (at DESC)`},
+		table: "d1", pk: []string{"id"},
+		indexes: []inspectIndex{{Name: "ix_d1", Columns: []string{"at"}, Inexact: "column at is DESC"}}},
+	{name: "composite primary key",
+		ddl:   []string{`CREATE TABLE ext4 (a INTEGER NOT NULL, b INTEGER NOT NULL, v TEXT, PRIMARY KEY (b, a))`},
+		table: "ext4", pk: []string{"b", "a"}},
+	{name: "plain multi-column unique index",
+		ddl:   []string{`CREATE TABLE p1 (id INTEGER PRIMARY KEY, x INTEGER NOT NULL, y INTEGER NOT NULL)`, `CREATE UNIQUE INDEX ux_p1 ON p1 (x, y)`},
+		table: "p1", pk: []string{"id"},
+		indexes: []inspectIndex{{Name: "ux_p1", Columns: []string{"x", "y"}, Unique: true}}},
+}
+
+func TestInspectSqliteIndexAndKeyShapes(t *testing.T) {
+	for _, c := range inspectShapeCases {
+		t.Run(c.name, func(t *testing.T) {
+			d := inspectTestDb(t)
+			for _, s := range c.ddl {
+				if _, err := d.conn.Exec(s); err != nil {
+					t.Fatalf("%s: %v", s, err)
+				}
+			}
+			rep := runInspect(t, d, "[]")
+			checkInspectShape(t, rep, c, false)
+		})
+	}
+}
+
+// checkInspectShape compares a report with a case. `pg` compares the index
+// columns and flags only: PostgreSQL names constraint indexes its own way.
+func checkInspectShape(t *testing.T, rep inspectReport, c inspectShapeCase, pg bool) {
+	t.Helper()
+	var tbl *inspectTable
+	for i := range rep.Tables {
+		if rep.Tables[i].Name == c.table {
+			tbl = &rep.Tables[i]
+		}
+	}
+	if tbl == nil {
+		t.Fatalf("table %s not reported: %+v", c.table, rep.Tables)
+	}
+	pk := make([]string, len(tbl.Columns))
+	n := 0
+	var unique []string
+	for _, col := range tbl.Columns {
+		if col.Pk != (col.PkPos > 0) {
+			t.Errorf("column %s: pk %v but pkPos %d", col.Name, col.Pk, col.PkPos)
+		}
+		if col.PkPos > 0 && col.PkPos <= len(pk) {
+			pk[col.PkPos-1] = col.Name
+			n++
+		}
+		if col.Unique {
+			unique = append(unique, col.Name)
+		}
+	}
+	if got := strings.Join(pk[:n], ","); got != strings.Join(c.pk, ",") {
+		t.Errorf("primary key = (%s), want (%s)", got, strings.Join(c.pk, ","))
+	}
+	if strings.Join(unique, ",") != strings.Join(c.unique, ",") {
+		t.Errorf("unique columns = %v, want %v", unique, c.unique)
+	}
+	if len(tbl.Indexes) != len(c.indexes) {
+		t.Fatalf("indexes = %+v, want %+v", tbl.Indexes, c.indexes)
+	}
+	for i, want := range c.indexes {
+		got := tbl.Indexes[i]
+		if (!pg && got.Name != want.Name) || got.Unique != want.Unique ||
+			got.Constraint != want.Constraint || (got.Inexact == "") != (want.Inexact == "") ||
+			(!pg && got.Inexact != want.Inexact) ||
+			(!pg || want.Inexact == "") && strings.Join(got.Columns, ",") != strings.Join(want.Columns, ",") {
+			t.Errorf("index %d = %+v, want %+v", i, got, want)
+		}
+	}
+}
+
+func TestSqliteColumnCollations(t *testing.T) {
+	got := sqliteColumnCollations(`CREATE TABLE "t" ("Email" TEXT COLLATE nocase NOT NULL, name TEXT, ` +
+		"`n2` TEXT DEFAULT 'a,(b' COLLATE RTRIM, CONSTRAINT c UNIQUE (name COLLATE NOCASE))")
+	if got["email"] != "NOCASE" || got["n2"] != "RTRIM" || got["name"] != "" || len(got) != 2 {
+		t.Errorf("collations = %v", got)
+	}
+}

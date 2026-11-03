@@ -9,6 +9,13 @@
 --
 -- For currency-typed amounts, prefer `Std.Money` (built on Decimal)
 -- so the ISO-4217 currency code rides alongside the magnitude.
+--
+-- The range (v0.29.2): a `places` argument (`fromMinor`, `toStringFixed`,
+-- `toMinor`, `round`, `roundHalfUp`, `truncate`, `formatWith`,
+-- `Money.allocate`) is from -100000 to 100000, and a Decimal's exponent
+-- stays in that range too (`mul` of two very small values can leave it).
+-- Outside it the operation fails as the classified `NumericOverflow`; it
+-- used to cut `places` to 32 bits and answer a wrong value.
 module Std.Decimal exposing
     ( Decimal
     , fromString

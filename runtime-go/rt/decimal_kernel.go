@@ -31,8 +31,42 @@ type SkyDecimal = decimal.Decimal
 // (single-constructor `Decimal__Internal Float`). Fields[0] holds
 // the actual decimal — the Float in the Sky source is purely a
 // phantom type-shape so the constructor has a slot.
+//
+// Every Sky Decimal is made here, so this is where the Decimal range is kept
+// (v0.29.2 eighth Judge): a Decimal whose exponent is outside
+// ±decimalExponentMax fails as the classified NumericOverflow. Without the
+// bound `Decimal.mul` of two values with exponent -2000000000 overflowed
+// shopspring's int32 exponent (an unclassified panic reported as a compiler
+// bug), and `Decimal.toString` of `fromMinor 2000000000 1` built a
+// two-billion-character string.
 func decimalBox(d decimal.Decimal) SkyADT {
+	if e := d.Exponent(); e > decimalExponentMax || e < -decimalExponentMax {
+		if d.IsZero() {
+			d = decimal.Zero
+		} else {
+			panic(fmt.Sprintf("rt.Decimal.range: a Decimal with exponent %d is outside the Decimal range (exponent -%d to %d)", e, decimalExponentMax, decimalExponentMax))
+		}
+	}
 	return SkyADT{Tag: 0, SkyName: "Decimal__Internal", Fields: []any{d}}
+}
+
+// decimalExponentMax bounds the exponent of every Decimal (decimalBox) and
+// every `places` argument (decimalPlaces). A Decimal inside the bound has a
+// text of at most about 100,000 digits plus its coefficient, and the sum of
+// two exponents (Decimal.mul) stays far inside shopspring's int32 exponent.
+const decimalExponentMax = 100_000
+
+// decimalPlaces is the `places` argument v of the Decimal or Money operation
+// op as the int32 shopspring takes. A value outside ±decimalExponentMax fails
+// as the classified NumericOverflow (v0.29.2 eighth Judge): it used to be cut
+// to int32, so `Decimal.toMinor 4294967298 Decimal.one` gave 100 and
+// `Decimal.round 4294967296 1.23456` gave 1, a silent wrong answer.
+func decimalPlaces(op string, v any) int32 {
+	n := AsInt(v)
+	if n > decimalExponentMax || n < -decimalExponentMax {
+		panic(fmt.Sprintf("rt.Decimal.range: %s: %d decimal places is outside the range -%d to %d", op, n, decimalExponentMax, decimalExponentMax))
+	}
+	return int32(n)
 }
 
 // decimalUnbox extracts the decimal.Decimal from a Sky `Decimal`
@@ -110,7 +144,7 @@ func init() {
 			return decimalBox(decimal.Zero)
 		}
 		minor := int64(AsInt(args[1]))
-		places := int32(AsInt(args[0]))
+		places := decimalPlaces("Decimal.fromMinor", args[0])
 		return decimalBox(decimal.New(minor, -places))
 	})
 
@@ -141,7 +175,7 @@ func init() {
 		if len(args) < 2 {
 			return ""
 		}
-		return decimalUnbox(args[1]).StringFixed(int32(AsInt(args[0])))
+		return decimalUnbox(args[1]).StringFixed(decimalPlaces("Decimal.toStringFixed", args[0]))
 	})
 
 	// toFloat : Decimal -> Float (LOSSY — display only). A decimal past the
@@ -175,7 +209,7 @@ func init() {
 		if len(args) < 2 {
 			return 0
 		}
-		places := int32(AsInt(args[0]))
+		places := decimalPlaces("Decimal.toMinor", args[0])
 		shifted := decimalUnbox(args[1]).Shift(places)
 		return decimalIntOrPanic("Decimal.toMinor", shifted)
 	})
@@ -249,7 +283,7 @@ func init() {
 		if len(args) < 2 {
 			return decimalBox(decimal.Zero)
 		}
-		return decimalBox(decimalUnbox(args[1]).RoundBank(int32(AsInt(args[0]))))
+		return decimalBox(decimalUnbox(args[1]).RoundBank(decimalPlaces("Decimal.round", args[0])))
 	})
 
 	// roundHalfUp : Int -> Decimal -> Decimal (4/5 round-up — schools rounding)
@@ -257,7 +291,7 @@ func init() {
 		if len(args) < 2 {
 			return decimalBox(decimal.Zero)
 		}
-		return decimalBox(decimalUnbox(args[1]).Round(int32(AsInt(args[0]))))
+		return decimalBox(decimalUnbox(args[1]).Round(decimalPlaces("Decimal.roundHalfUp", args[0])))
 	})
 
 	// truncate : Int -> Decimal -> Decimal — toward zero
@@ -265,7 +299,7 @@ func init() {
 		if len(args) < 2 {
 			return decimalBox(decimal.Zero)
 		}
-		return decimalBox(decimalUnbox(args[1]).Truncate(int32(AsInt(args[0]))))
+		return decimalBox(decimalUnbox(args[1]).Truncate(decimalPlaces("Decimal.truncate", args[0])))
 	})
 
 	// floor : Decimal -> Decimal — toward -∞
@@ -423,7 +457,7 @@ func init() {
 		}
 		thousandsSep := fmt.Sprintf("%v", args[0])
 		decimalSep := fmt.Sprintf("%v", args[1])
-		places := int32(AsInt(args[2]))
+		places := decimalPlaces("Decimal.formatWith", args[2])
 		d := decimalUnbox(args[3])
 		fixed := d.StringFixed(places)
 		// Split into integer + fractional parts on the literal "."

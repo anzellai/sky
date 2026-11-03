@@ -122,16 +122,6 @@ fn payload(scheme: &Scheme, args: &[Ty]) -> Vec<Ty> {
 }
 
 fn subst(t: &Ty, map: &HashMap<Name, Ty>) -> Ty {
-    // One level per level of the tree it walks: grow the stack on demand.
-    base::ensure_stack(|| match t {
-        Ty::Var(v) => map.get(v).cloned().unwrap_or_else(|| t.clone()),
-        Ty::Fun(a, b) => Ty::Fun(Box::new(subst(a, map)), Box::new(subst(b, map))),
-        Ty::App(n, xs) => Ty::App(n.clone(), xs.iter().map(|x| subst(x, map)).collect()),
-        Ty::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| subst(x, map)).collect()),
-        Ty::Record(fs, e) => Ty::Record(
-            fs.iter().map(|(n, x)| (n.clone(), subst(x, map))).collect(),
-            e.clone(),
-        ),
-        Ty::Unit | Ty::Error => t.clone(),
-    })
+    // The shared substitution: it binds a record's row variable too.
+    t.subst_vars(&|n: &str| map.get(&Name::new(n)).cloned())
 }

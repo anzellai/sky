@@ -9393,6 +9393,80 @@ j7Tests db =
 
 
 
+-- An arithmetic write must fail atomically when the sum leaves Int's range.
+j8Arithmetic : Db -> Bool -> ( Int, Int ) -> Bool
+j8Arithmetic db upsert (initial, delta) =
+    let
+        store = Store.fromCodec "sqc_j8_arithmetic" (Codec.auto { id = "", n = 0 }) |> Store.primaryKey "id"
+        row = { id = "a", n = initial }
+        prepare = Task.run (Task.sequence [ drop db "sqc_j8_arithmetic", unit (Store.migrate db store), unit (Store.insert db store row) ])
+    in
+        case prepare of
+            Err _ ->
+                False
+
+            Ok _ ->
+                let
+                    written =
+                        if upsert then
+                            Task.run (Store.upsertWith db store { id = "a", n = delta } { conflictOn = [ "id" ], onConflict = [ Store.addExcluded "n" ] })
+
+                        else
+                            Task.run (Store.adjust db store (Store.eq "id" (SqlString "a")) [ ( "n", delta ) ])
+                in
+                    isErr written && Task.run (Store.all db store) == Ok [ row ]
+
+
+type alias J8Values =
+    { id : String
+    , cur : Money.Currency
+    , curs : List Money.Currency
+    , mc : Maybe Money.Currency
+    , pair : ( Decimal, Int )
+    , mixed : ( Money, Money.Currency )
+    }
+
+
+j8Values : J8Values
+j8Values =
+    { id = "a", cur = Money.GBP, curs = [ Money.JPY ], mc = Just Money.EUR
+    , pair = ( dec "12.50", 3 ), mixed = ( gbp "4", Money.CHF )
+    }
+
+
+j8ValueStore : Store J8Values
+j8ValueStore =
+    Store.fromCodec "sqc_j8_values" (Codec.auto j8Values) |> Store.primaryKey "id"
+
+
+j8RefusedCurrency : Db -> J8Values -> Bool
+j8RefusedCurrency db row =
+    let
+        ( msg, readable ) = j5Write db "sqc_j8_values" (Store.migrate db j8ValueStore) (Store.insert db j8ValueStore row) (Store.all db j8ValueStore)
+    in
+        String.contains "column" msg && readable
+
+
+j8Tests : Db -> List Test
+j8Tests db =
+    [ Test.test "Int adjust overflow is refused and the original row stays readable on both dialects"
+          (\_ -> Test.equal True (List.all (j8Arithmetic db False) [ ( 9223372036854775807, 1 ), ( -9223372036854775807 - 1, -1 ) ]))
+    , Test.test "Int addExcluded overflow is refused and the original row stays readable on both dialects"
+          (\_ -> Test.equal True (List.all (j8Arithmetic db True) [ ( 9223372036854775807, 1 ), ( -9223372036854775807 - 1, -1 ) ]))
+    , Test.test "Codec.auto round-trips compiled tuple fields holding Decimal, Money and Currency"
+          (\_ -> Test.equal ( "ok", True ) (j6Same db "sqc_j8_values" j8ValueStore j8Values))
+    , Test.test "Codec.auto refuses invalid currencies in every container before a write and keeps the table readable"
+          (\_ ->
+              Test.equal True
+                  (List.all (j8RefusedCurrency db)
+                      [ { j8Values | cur = Money.CurrencyRaw "zz" }
+                      , { j8Values | curs = [ Money.CurrencyRaw "zz" ] }
+                      , { j8Values | mc = Just (Money.CurrencyRaw "zz") }
+                      , { j8Values | mixed = ( gbp "4", Money.CurrencyRaw "zz" ) }
+                      ]))
+    ]
+
+
 tests : List Test
 tests =
     case setup () of
@@ -9427,6 +9501,7 @@ tests =
                 ++ j6Tests db
                 ++ j6ForeignTests db
                 ++ j7Tests db
+                ++ j8Tests db
 
 
 main =

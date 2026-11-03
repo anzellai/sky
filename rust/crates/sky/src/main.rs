@@ -15403,6 +15403,34 @@ emit begin body end =
             );
             return ExitCode::from(2);
         }
+        // The file takes the live database AND a fresh one the committed
+        // migrations build to the code (`db_check::write_ops`): the snapshot
+        // it rewrites says so.
+        let snapshot_path = project_dir.join("db").join("schema.json");
+        let snapshot: db_migrate::Schema = std::fs::read_to_string(&snapshot_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let file_ops = match db_check::write_ops(&report, &target, &snapshot, &live) {
+            Ok(o) => o,
+            Err(refused) => {
+                eprintln!(
+                    "\nsky db check --write: nothing written. The database is ahead of the \
+                     committed migrations in a way one migration file cannot record for both \
+                     this database and a fresh one:"
+                );
+                for r in &refused {
+                    eprintln!("  - {r}");
+                }
+                eprintln!(
+                    "Add the column in a migration that a fresh database applies (and mark it \
+                     applied here), or remove it from this database, then run the check again."
+                );
+                return ExitCode::from(2);
+            }
+        };
+        let fresh_only = file_ops.len().saturating_sub(ops.len());
+        let ops = file_ops;
         if ops.is_empty() && report.diff.destructive.is_empty() {
             println!("\n-- sky db check --write: no safe step to save.");
             return drift;
@@ -15424,9 +15452,8 @@ emit begin body end =
         }
         // The snapshot follows the file, as `--gen` does, so a later `--gen`
         // does not write the same steps again.
-        let snapshot = project_dir.join("db").join("schema.json");
         if let Err(e) = std::fs::write(
-            &snapshot,
+            &snapshot_path,
             serde_json::to_string_pretty(&target).unwrap_or_default(),
         ) {
             eprintln!("sky db check --write: cannot write db/schema.json: {e}");
@@ -15439,8 +15466,16 @@ emit begin body end =
             .map(|f| f.text.as_str())
             .collect();
         println!(
-            "\n-- sky db check --write: wrote db/migrations/{id}.json ({} safe step(s){}) and updated db/schema.json. `sky db migrate` applies it.",
+            "\n-- sky db check --write: wrote db/migrations/{id}.json ({} safe step(s){}{}) and updated db/schema.json. `sky db migrate` applies it.",
             d.ops.len(),
+            if fresh_only > 0 {
+                format!(
+                    ", {fresh_only} of them for a database built from db/migrations (a table or \
+                     index this database already has: IF NOT EXISTS, so they change nothing here)"
+                )
+            } else {
+                String::new()
+            },
             if d.destructive.is_empty() {
                 String::new()
             } else {

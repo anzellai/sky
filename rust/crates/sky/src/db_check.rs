@@ -40,7 +40,7 @@ pub struct LiveTable {
     pub indexes: Vec<LiveIndex>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 pub struct LiveColumn {
     pub name: String,
     #[serde(rename = "type", default)]
@@ -51,13 +51,17 @@ pub struct LiveColumn {
     pub default: Option<String>,
     #[serde(default)]
     pub pk: bool,
+    /// The column's 1-based place in the primary key (0: not in it, or an
+    /// older report), so a composite key keeps its order (v0.29.2).
+    #[serde(rename = "pkPos", default)]
+    pub pk_pos: usize,
     #[serde(default)]
     pub autoinc: bool,
     #[serde(default)]
     pub unique: bool,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 pub struct LiveIndex {
     pub name: String,
     #[serde(default, deserialize_with = "crate::db_migrate::null_as_empty")]
@@ -66,6 +70,44 @@ pub struct LiveIndex {
     pub unique: bool,
     #[serde(rename = "where", default)]
     pub predicate: String,
+    /// The index backs a UNIQUE (or exclusion) constraint. Its name is the
+    /// database's own, so the check matches it to a declared index by its
+    /// columns, not its name (v0.29.2).
+    #[serde(default)]
+    pub constraint: bool,
+    /// Why the column list does not describe the index (an expression or a
+    /// DESC column, a collation, an operator class, INCLUDE columns, …), ""
+    /// when it does. A Store declares plain column lists only (v0.29.2).
+    #[serde(default)]
+    pub inexact: String,
+    /// The database's own definition of the index, for a notice.
+    #[serde(default)]
+    pub definition: String,
+}
+
+/// A live table's primary-key columns in key order (`pkPos`; a report
+/// without it lists the key columns in table order).
+pub fn live_pk(t: &LiveTable) -> Vec<String> {
+    let mut cols: Vec<(usize, usize, &str)> = t
+        .columns
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.pk)
+        .map(|(i, c)| (c.pk_pos, i, c.name.as_str()))
+        .collect();
+    cols.sort();
+    cols.into_iter().map(|(_, _, n)| n.to_string()).collect()
+}
+
+/// Whether a declared index is the one a live UNIQUE constraint backs: the
+/// same columns (in any order: a UNIQUE constraint on (a, b) is one on
+/// (b, a)), unique, not partial.
+fn constraint_matches(li: &LiveIndex, ix: &SchemaIndex) -> bool {
+    let mut a = li.columns.clone();
+    let mut b = ix.columns.clone();
+    a.sort();
+    b.sort();
+    li.unique && ix.unique && ix.predicate.is_empty() && li.predicate.is_empty() && a == b
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -636,6 +678,36 @@ pub fn live_schema(target: &Schema, live: &Inspect) -> Schema {
             .unwrap_or_default();
         let mut indexes = Vec::new();
         for li in &lt.indexes {
+            let declared_same_name =
+                tt.and_then(|t| t.indexes.iter().find(|ix| ix.name == li.name));
+            // An index a Store cannot declare (an expression column, a
+            // collation, …). Under a name the code also declares it is that
+            // index, and it differs (the marker predicate never equals a
+            // declared one, so the diff drops and re-adds it); under any
+            // other name it is left out here and `check` gives a notice.
+            if !li.inexact.is_empty() {
+                if declared_same_name.is_some() {
+                    indexes.push(SchemaIndex {
+                        name: li.name.clone(),
+                        columns: li.columns.clone(),
+                        unique: li.unique,
+                        predicate: format!("<{}>", li.inexact),
+                    });
+                }
+                continue;
+            }
+            // A UNIQUE constraint's index carries the database's own name
+            // (`sqlite_autoindex_t_1`, `t_a_b_key`): it is the index the code
+            // declares over the same columns, whatever that one is called
+            // (v0.29.2: a multi-column UNIQUE constraint was invisible).
+            if li.constraint && declared_same_name.is_none() {
+                if let Some(ix) =
+                    tt.and_then(|t| t.indexes.iter().find(|ix| constraint_matches(li, ix)))
+                {
+                    indexes.push(ix.clone());
+                    continue;
+                }
+            }
             if li.unique
                 && li.predicate.is_empty()
                 && li.columns.len() == 1
@@ -662,12 +734,9 @@ pub fn live_schema(target: &Schema, live: &Inspect) -> Schema {
                 predicate,
             });
         }
-        let pk = lt
-            .columns
-            .iter()
-            .find(|c| c.pk)
-            .map(|c| c.name.clone())
-            .unwrap_or_default();
+        // A composite key is spelt as its columns joined, so it never equals
+        // a Store's one-column key (`check` reports the key, v0.29.2).
+        let pk = live_pk(lt).join(",");
         tables.push(SchemaTable {
             name: lt.name.clone(),
             pk,
@@ -738,6 +807,83 @@ impl Check {
             })
             .collect()
     }
+}
+
+/// What one op changes, to tell two ops that do the same thing apart from
+/// two that do not: its kind, table and index or column name.
+fn op_key(op: &Value) -> (String, String, String) {
+    let what = match op_str(op, "kind") {
+        "addIndex" | "dropIndex" => op_str(op, "name"),
+        "createTable" => "",
+        _ => op_str(op, "column"),
+    };
+    (
+        op_str(op, "kind").to_string(),
+        op_str(op, "table").to_string(),
+        what.to_string(),
+    )
+}
+
+/// The ops `sky db check --sql --write` saves: a file that makes BOTH the
+/// live database and a fresh database the committed migrations build match
+/// the code, since `db/schema.json` then records the code as what the
+/// migrations build.
+///
+/// The check's safe ops take the LIVE database to the code. When the live
+/// database is ahead of `db/schema.json` (a table made outside the migrations
+/// and adopted as a Store), those ops alone leave a fresh database without
+/// the table, and `--gen` never writes it: the snapshot already has it
+/// (v0.29.2 Judge). So the file also carries the ops `--gen` writes against
+/// the snapshot, first and in `--gen`'s order, as far as they are no-ops on
+/// the live database: `createTable` and `addIndex` render `IF NOT EXISTS`,
+/// `dropIndex` `IF EXISTS`. An `addColumn` for a column the live database
+/// already has would fail there, so it is refused (the `Err` names each one)
+/// and nothing is written.
+pub fn write_ops(
+    c: &Check,
+    target: &Schema,
+    snapshot: &Schema,
+    live: &Inspect,
+) -> Result<Vec<Value>, Vec<String>> {
+    let gen = db_migrate::diff(target, snapshot);
+    let check_ops = c.safe_ops();
+    let check_keys: Vec<(String, String, String)> = check_ops.iter().map(op_key).collect();
+    let live_has_column = |t: &str, col: &str| {
+        live.tables
+            .iter()
+            .any(|lt| lt.name == t && lt.columns.iter().any(|c| c.name == col))
+    };
+    let mut out: Vec<Value> = Vec::new();
+    let mut refused = Vec::new();
+    for op in &gen.ops {
+        let key = op_key(op);
+        if let Some(i) = check_keys.iter().position(|k| *k == key) {
+            // The live database needs it too: the check's own op.
+            out.push(check_ops[i].clone());
+            continue;
+        }
+        match op_str(op, "kind") {
+            "createTable" | "addIndex" | "dropIndex" => out.push(op.clone()),
+            "addColumn" if live_has_column(op_str(op, "table"), op_str(op, "column")) => refused
+                .push(format!(
+                    "column {}.{} is in the database, and no committed migration adds it \
+                     (db/schema.json does not have it): an ADD COLUMN would fail on this \
+                     database, and without one a database built from db/migrations lacks it",
+                    op_str(op, "table"),
+                    op_str(op, "column")
+                )),
+            _ => out.push(op.clone()),
+        }
+    }
+    if !refused.is_empty() {
+        return Err(refused);
+    }
+    for (op, key) in check_ops.iter().zip(&check_keys) {
+        if !out.iter().any(|o| op_key(o) == *key) {
+            out.push(op.clone());
+        }
+    }
+    Ok(out)
 }
 
 fn op_str<'a>(op: &'a Value, key: &str) -> &'a str {
@@ -933,6 +1079,38 @@ pub fn check(target: &Schema, live: &Inspect) -> Check {
             }
             "dropIndex" => {
                 let name = op_str(op, "name").to_string();
+                let live_ix =
+                    live_table(&table).and_then(|t| t.indexes.iter().find(|ix| ix.name == name));
+                // A UNIQUE constraint's index is not dropped with DROP INDEX
+                // (both databases refuse): the constraint is.
+                if let Some(li) = live_ix.filter(|li| li.constraint) {
+                    let cols = li.columns.join(", ");
+                    findings.push(Finding {
+                        text: format!(
+                            "UNIQUE constraint {name} on {table} ({cols}) is in the database, and \
+                             the code does not declare it (Store.uniqueOn [ … ])"
+                        ),
+                        code: Some(format!(
+                            "table {table} has a UNIQUE constraint on ({cols}): an insert of a \
+                             value another row holds there fails. Declare it with Store.uniqueOn"
+                        )),
+                        steps: vec![Step::Unsafe {
+                            sql: if pg {
+                                format!("ALTER TABLE {table} DROP CONSTRAINT {name}")
+                            } else {
+                                String::new()
+                            },
+                            reason: if pg {
+                                "drop the constraint only if two rows may hold the same values"
+                                    .into()
+                            } else {
+                                rebuild_reason("drop a UNIQUE constraint")
+                            },
+                        }],
+                        table,
+                    });
+                    continue;
+                }
                 if readded.iter().any(|(t, n)| *t == table && *n == name) {
                     findings.push(Finding {
                         text: format!("index {name} on {table} differs"),
@@ -1077,6 +1255,81 @@ pub fn check(target: &Schema, live: &Inspect) -> Check {
         let Some(lt) = live_table(&tt.name) else {
             continue;
         };
+        // The primary key. A Store finds a row by its one key column
+        // (Store.update / upsert / delete); the --gen model has no place for
+        // a key other than that column, so the diff never compared it
+        // (v0.29.2: a composite key read as its first column, and a key on
+        // another column, both "matched").
+        let lpk = live_pk(lt);
+        if !tt.pk.is_empty() && lpk != [tt.pk.clone()] {
+            let pk_unique = lt.columns.iter().any(|c| c.name == tt.pk && c.unique)
+                || lt.indexes.iter().any(|ix| {
+                    ix.unique
+                        && ix.inexact.is_empty()
+                        && ix.predicate.is_empty()
+                        && ix.columns == [tt.pk.clone()]
+                });
+            let live_text = if lpk.is_empty() {
+                "has no primary key".to_string()
+            } else {
+                format!("has the primary key ({})", lpk.join(", "))
+            };
+            let effect = if pk_unique {
+                format!("{} is UNIQUE, so the code still finds one row by it", tt.pk)
+            } else {
+                format!(
+                    "{pk} is not unique there: Store.update and Store.delete by {pk} reach every \
+                     row with that value, and Store.upsert fails (no UNIQUE or PRIMARY KEY on {pk})",
+                    pk = tt.pk
+                )
+            };
+            findings.push(Finding {
+                table: tt.name.clone(),
+                text: format!(
+                    "table {} {live_text} in the database; the code's key is {}",
+                    tt.name, tt.pk
+                ),
+                code: Some(format!("table {} {live_text}: {effect}", tt.name)),
+                steps: vec![Step::Unsafe {
+                    sql: String::new(),
+                    reason: if pg {
+                        "change the key (ALTER TABLE … DROP CONSTRAINT <the key>, ADD PRIMARY KEY \
+                         (…)) once no two rows share a value, or change the Store's key"
+                            .into()
+                    } else {
+                        rebuild_reason("change a table's primary key")
+                    },
+                }],
+            });
+        }
+        // Indexes a Store cannot declare, under a name the code does not
+        // use: compared by nothing, so said out loud rather than "matches".
+        for li in lt.indexes.iter().filter(|li| !li.inexact.is_empty()) {
+            if tt.indexes.iter().any(|ix| ix.name == li.name) {
+                continue; // `live_schema` made it a difference
+            }
+            notices.push(Notice {
+                text: format!(
+                    "{}index {} on {} ({}) has {}: a Store cannot declare it, so the check does \
+                     not compare it, and it stays as it is{}",
+                    if li.unique { "unique " } else { "" },
+                    li.name,
+                    tt.name,
+                    li.columns.join(", "),
+                    li.inexact,
+                    if li.unique {
+                        ". An insert it refuses fails"
+                    } else {
+                        ""
+                    }
+                ),
+                sql: if li.definition.is_empty() {
+                    format!("index {}", li.name)
+                } else {
+                    li.definition.clone()
+                },
+            });
+        }
         for tc in &tt.columns {
             let lc = lt.columns.iter().find(|c| c.name == tc.name);
             let Some(lc) = lc else {
@@ -1408,8 +1661,13 @@ pub fn render_report(c: &Check, target_tables: usize) -> String {
     s.push_str(&format!(
         "sky db check: {db} database against {target_tables} table(s) the code declares\n\n"
     ));
-    if c.findings.is_empty() {
+    if c.findings.is_empty() && c.notices.is_empty() {
         s.push_str("schema: the database matches the code.\n");
+    } else if c.findings.is_empty() {
+        s.push_str(&format!(
+            "schema: the database matches what the code declares; {} notice(s) below\n",
+            c.notices.len()
+        ));
     } else {
         s.push_str(&format!("schema: {} difference(s)\n", c.findings.len()));
         for f in &c.findings {
@@ -1605,23 +1863,6 @@ fn is_lower_ident(s: &str) -> bool {
     matches!(cs.next(), Some(c) if c.is_ascii_lowercase())
         && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
         && !SKY_KEYWORDS.contains(&s)
-}
-
-/// `camelToSnake` (runtime-go/rt/codec_auto.go): the column `Codec.auto`
-/// derives from a field name.
-pub fn camel_to_snake(s: &str) -> String {
-    let mut out = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_ascii_uppercase() {
-            if i > 0 {
-                out.push('_');
-            }
-            out.push(c.to_ascii_lowercase());
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 fn snake_to_camel(s: &str) -> String {
@@ -1987,7 +2228,18 @@ pub fn record_stub(dialect: &str, t: &LiveTable) -> (String, bool) {
         body.push_str(l);
     }
     body.push_str("        |> Codec.buildObject\n\n\n");
-    let pk = t.columns.iter().find(|c| c.pk);
+    // A Store has a one-column key. A composite key is not its first column:
+    // a Store keyed on it would update and delete every row that shares the
+    // value (v0.29.2: the stub said `Store.primaryKey "a"` for (a, b)).
+    let lpk = live_pk(t);
+    if lpk.len() > 1 {
+        blocked.push(format!(
+            "the primary key is ({}), and a Store's key is one column (Store.update, \
+             Store.upsert and Store.delete find a row by it)",
+            lpk.join(", ")
+        ));
+    }
+    let pk = t.columns.iter().find(|c| c.pk).filter(|_| lpk.len() == 1);
     let key = match pk {
         Some(c) if c.autoinc && guess_kind(dialect, &c.sql_type) == "int" => {
             format!("\n        |> Store.serial \"{}\"", c.name)
@@ -2068,6 +2320,16 @@ fn stub_index_lines(
             .map(|c| format!("\"{c}\""))
             .collect::<Vec<_>>()
             .join(", ");
+        if !ix.inexact.is_empty() {
+            head.push_str(&format!(
+                "-- index {} ({}) has {}: a Store cannot declare it. It stays in the \
+                 database as it is, and `sky db check` gives a notice for it\n",
+                ix.name,
+                ix.columns.join(", "),
+                ix.inexact
+            ));
+            continue;
+        }
         if let Some(missing) = ix.columns.iter().find(|c| !kept.contains(c)) {
             head.push_str(&format!(
                 "-- index {}: column {missing} has no field, so the Store cannot declare it; \
@@ -2084,7 +2346,7 @@ fn stub_index_lines(
             ));
             continue;
         }
-        if store_name_problem(dialect, &ix.name, false).is_some() {
+        if store_name_problem(dialect, &ix.name, false).is_some() && !ix.constraint {
             head.push_str(&format!(
                 "-- index {}: its name is not a plain SQL name, so the Store cannot declare it\n",
                 ix.name
@@ -2112,10 +2374,17 @@ fn stub_index_lines(
                 ));
                 continue;
             }
-            out.push(format!(
-                "\n        |> Store.uniqueOnNamed \"{}\" [ {list} ]",
-                ix.name
-            ));
+            // A UNIQUE constraint's index has the database's own name, which a
+            // fresh database would refuse (`sqlite_` is reserved): declare it
+            // by its columns; `check` matches a constraint by its columns.
+            if ix.constraint {
+                out.push(format!("\n        |> Store.uniqueOn [ {list} ]"));
+            } else {
+                out.push(format!(
+                    "\n        |> Store.uniqueOnNamed \"{}\" [ {list} ]",
+                    ix.name
+                ));
+            }
         } else {
             out.push(format!(
                 "\n        |> Store.indexNamed \"{}\" [ {list} ]",
@@ -2287,6 +2556,7 @@ mod tests {
             notnull,
             default: default.map(str::to_string),
             pk: false,
+            pk_pos: 0,
             autoinc: false,
             unique: false,
         }
@@ -2331,6 +2601,7 @@ mod tests {
                     notnull: !c.nullable || c.name == t.pk,
                     default: c.default.as_ref().map(|d| default_sql(dialect, &c.kind, d)),
                     pk: c.name == t.pk,
+                    pk_pos: usize::from(c.name == t.pk),
                     autoinc: c.autoinc,
                     unique: c.unique,
                 })
@@ -2347,6 +2618,7 @@ mod tests {
                     } else {
                         ix.predicate.clone()
                     },
+                    ..LiveIndex::default()
                 })
                 .collect(),
         }
@@ -2567,12 +2839,12 @@ mod tests {
                 vec![col("id", "text", false), col("cost", "decimal", false)],
             )],
         };
+        let mut key = lcol("id", "TEXT", true, None);
+        key.pk = true;
+        key.pk_pos = 1;
         let lt = LiveTable {
             name: "prices".into(),
-            columns: vec![
-                lcol("id", "TEXT", true, None),
-                lcol("cost", "TEXT", true, None),
-            ],
+            columns: vec![key, lcol("cost", "TEXT", true, None)],
             indexes: vec![],
         };
         // SQLite: the TEXT column fits a decimal field, so the types alone
@@ -3073,6 +3345,7 @@ mod tests {
             columns: cols.iter().map(|c| c.to_string()).collect(),
             unique,
             predicate: predicate.into(),
+            ..LiveIndex::default()
         };
         let t = LiveTable {
             name: "acct".into(),
@@ -3219,5 +3492,334 @@ mod tests {
         for bad in ["", "GB", "gbp", "G'P", "ABCDEFGHIJK", "US DT"] {
             assert!(!is_currency_code(bad), "{bad}");
         }
+    }
+
+    // ---- v0.29.2 eighth Judge: keys, constraints, inexact indexes, --write ----
+
+    fn sidx(name: &str, cols: &[&str], unique: bool) -> SchemaIndex {
+        SchemaIndex {
+            name: name.into(),
+            columns: cols.iter().map(|c| c.to_string()).collect(),
+            unique,
+            predicate: String::new(),
+        }
+    }
+
+    fn lidx(name: &str, cols: &[&str], unique: bool) -> LiveIndex {
+        LiveIndex {
+            name: name.into(),
+            columns: cols.iter().map(|c| c.to_string()).collect(),
+            unique,
+            ..Default::default()
+        }
+    }
+
+    /// `ext2 (code PK, name, tenant, UNIQUE (tenant, name))` as the code
+    /// declares it, with or without `Store.uniqueOn [ "tenant", "name" ]`.
+    fn ext2_target(with_unique: bool) -> Schema {
+        let mut t = table(
+            "ext2",
+            "code",
+            vec![
+                col("code", "text", false),
+                col("name", "text", false),
+                col("tenant", "int", false),
+            ],
+        );
+        if with_unique {
+            let cols = vec!["tenant".to_string(), "name".to_string()];
+            t.indexes = vec![SchemaIndex {
+                name: db_migrate::index_name("ext2", &cols, true, ""),
+                columns: cols,
+                unique: true,
+                predicate: String::new(),
+            }];
+        }
+        Schema { tables: vec![t] }
+    }
+
+    fn ext2_live(dialect: &str) -> Inspect {
+        let mut code = lcol("code", "TEXT", true, None);
+        code.pk = true;
+        code.pk_pos = 1;
+        let mut ix = lidx(
+            if is_pg(dialect) {
+                "ext2_tenant_name_key"
+            } else {
+                "sqlite_autoindex_ext2_2"
+            },
+            &["tenant", "name"],
+            true,
+        );
+        ix.constraint = true;
+        inspect(
+            dialect,
+            vec![LiveTable {
+                name: "ext2".into(),
+                columns: vec![
+                    code,
+                    lcol("name", "TEXT", true, None),
+                    lcol("tenant", "INTEGER", true, None),
+                ],
+                indexes: vec![ix],
+            }],
+        )
+    }
+
+    /// A multi-column UNIQUE constraint: the code that declares it (under
+    /// the Store's own index name) matches; the code that leaves it out does
+    /// not, and the finding names the constraint, never a DROP INDEX.
+    #[test]
+    fn a_multi_column_unique_constraint_is_compared() {
+        for dialect in ["sqlite", "postgres"] {
+            let c = check(&ext2_target(true), &ext2_live(dialect));
+            assert!(
+                c.findings.is_empty() && c.safe_ops().is_empty(),
+                "{dialect}: declared constraint must match: {:?}",
+                c.findings.iter().map(|f| &f.text).collect::<Vec<_>>()
+            );
+            let c = check(&ext2_target(false), &ext2_live(dialect));
+            assert_eq!(
+                c.findings.len(),
+                1,
+                "{dialect}: {:?}",
+                c.findings.iter().map(|f| &f.text).collect::<Vec<_>>()
+            );
+            let f = &c.findings[0];
+            assert!(
+                f.text.contains("UNIQUE constraint") && f.text.contains("(tenant, name)"),
+                "{}",
+                f.text
+            );
+            assert!(f.code.is_some(), "the code must hear about it");
+            assert!(c.drift());
+            for s in &f.steps {
+                if let Step::Unsafe { sql, .. } = s {
+                    assert!(!sql.contains("DROP INDEX"), "{sql}");
+                } else {
+                    panic!("{dialect}: an undeclared constraint has no safe step: {s:?}");
+                }
+            }
+        }
+    }
+
+    /// The --code stub of a table with a multi-column UNIQUE constraint
+    /// declares it by its columns, and the adopted stub matches.
+    #[test]
+    fn the_stub_declares_a_unique_constraint_by_its_columns() {
+        let live = ext2_live("sqlite");
+        let (s, _) = record_stub("sqlite", &live.tables[0]);
+        assert!(
+            s.contains("|> Store.uniqueOn [ \"tenant\", \"name\" ]"),
+            "{s}"
+        );
+        assert!(!s.contains("sqlite_autoindex"), "{s}");
+    }
+
+    fn ext4_live(pk: &[&str]) -> LiveTable {
+        let mut cols = vec![
+            lcol("a", "INTEGER", true, None),
+            lcol("b", "INTEGER", true, None),
+            lcol("v", "TEXT", false, None),
+        ];
+        for (i, k) in pk.iter().enumerate() {
+            let c = cols.iter_mut().find(|c| c.name == *k).unwrap();
+            c.pk = true;
+            c.pk_pos = i + 1;
+        }
+        LiveTable {
+            name: "ext4".into(),
+            columns: cols,
+            indexes: vec![],
+        }
+    }
+
+    fn ext4_target(pk: &str) -> Schema {
+        Schema {
+            tables: vec![table(
+                "ext4",
+                pk,
+                vec![
+                    col("a", "int", false),
+                    col("b", "int", false),
+                    col("v", "text", true),
+                ],
+            )],
+        }
+    }
+
+    /// The primary key is compared: a composite key, a key on another
+    /// column and no key at all each differ from a Store keyed on `a`; only
+    /// the same one-column key matches. The stub of a composite-key table is
+    /// not a working Store.
+    #[test]
+    fn the_primary_key_is_compared() {
+        for dialect in ["sqlite", "postgres"] {
+            for (live_pk, want_finding) in [
+                (&["a"][..], false),
+                (&["a", "b"][..], true),
+                (&["b", "a"][..], true),
+                (&["b"][..], true),
+                (&[][..], true),
+            ] {
+                let c = check(
+                    &ext4_target("a"),
+                    &inspect(dialect, vec![ext4_live(live_pk)]),
+                );
+                let pk_findings: Vec<&Finding> = c
+                    .findings
+                    .iter()
+                    .filter(|f| f.text.contains("primary key") || f.text.contains("the code's key"))
+                    .collect();
+                assert_eq!(
+                    !pk_findings.is_empty(),
+                    want_finding,
+                    "{dialect} live key {live_pk:?}: {:?}",
+                    c.findings.iter().map(|f| &f.text).collect::<Vec<_>>()
+                );
+                if want_finding {
+                    assert!(c.drift());
+                    assert!(pk_findings[0]
+                        .code
+                        .as_deref()
+                        .is_some_and(|t| t.contains("not unique")));
+                }
+            }
+        }
+        let (s, _) = record_stub("sqlite", &ext4_live(&["a", "b"]));
+        assert!(
+            s.contains("NOT A WORKING STORE") && s.contains("the primary key is (a, b)"),
+            "{s}"
+        );
+        assert!(
+            !s.lines()
+                .any(|l| l.trim_start().starts_with("|> Store.primaryKey")),
+            "{s}"
+        );
+        let (s, _) = record_stub("sqlite", &ext4_live(&["a"]));
+        assert!(s.contains("\n        |> Store.primaryKey \"a\""), "{s}");
+    }
+
+    /// An index whose column list does not describe it (an expression, a
+    /// collation, INCLUDE columns, DESC, …) is never what the code declares:
+    /// a same-named declared index differs, an undeclared one is a notice
+    /// (never "matches" in silence), and the stub comments it out.
+    #[test]
+    fn an_inexact_index_is_never_a_declared_one() {
+        for dialect in ["sqlite", "postgres"] {
+            for (cols, why) in [
+                (&["<expression>", "tenant"][..], "an expression column"),
+                (&["email"][..], "column email has COLLATE NOCASE"),
+                (&["a"][..], "INCLUDE columns"),
+            ] {
+                let int = if is_pg(dialect) { "bigint" } else { "INTEGER" };
+                let mut id = lcol("id", int, true, None);
+                id.pk = true;
+                id.pk_pos = 1;
+                let mut ix = lidx("u", cols, true);
+                ix.inexact = why.into();
+                ix.definition = "CREATE UNIQUE INDEX u ON t (...)".into();
+                let lt = LiveTable {
+                    name: "t".into(),
+                    columns: vec![
+                        id,
+                        lcol("tenant", int, true, None),
+                        lcol("email", "TEXT", true, None),
+                        lcol("a", "TEXT", true, None),
+                    ],
+                    indexes: vec![ix],
+                };
+                let mut tt = table(
+                    "t",
+                    "id",
+                    vec![
+                        col("id", "int", false),
+                        col("tenant", "int", false),
+                        col("email", "text", false),
+                        col("a", "text", false),
+                    ],
+                );
+                let plain: Vec<&str> = cols
+                    .iter()
+                    .copied()
+                    .filter(|c| !c.starts_with('<'))
+                    .collect();
+                // Declared under the same name: a difference.
+                tt.indexes = vec![sidx("u", &plain, true)];
+                let c = check(
+                    &Schema {
+                        tables: vec![tt.clone()],
+                    },
+                    &inspect(dialect, vec![lt.clone()]),
+                );
+                assert!(
+                    c.findings
+                        .iter()
+                        .any(|f| f.text.contains("index u on t differs")),
+                    "{dialect} {why}: {:?}",
+                    c.findings.iter().map(|f| &f.text).collect::<Vec<_>>()
+                );
+                // Not declared: a notice, no finding, and the report says so.
+                tt.indexes = vec![];
+                let c = check(
+                    &Schema { tables: vec![tt] },
+                    &inspect(dialect, vec![lt.clone()]),
+                );
+                assert!(
+                    c.findings.is_empty(),
+                    "{dialect} {why}: {:?}",
+                    c.findings.iter().map(|f| &f.text).collect::<Vec<_>>()
+                );
+                assert!(
+                    c.notices.iter().any(|n| n.text.contains(why)),
+                    "{dialect} {why}"
+                );
+                let r = render_report(&c, 1);
+                assert!(!r.contains("the database matches the code."), "{r}");
+                assert!(r.contains("1 notice(s)"), "{r}");
+                // The stub declares no builder for it.
+                let (s, _) = record_stub(dialect, &lt);
+                assert!(!s.contains("\"u\""), "{s}");
+                assert!(
+                    s.contains(&format!("-- index u ({}) has {why}", cols.join(", "))),
+                    "{s}"
+                );
+            }
+        }
+    }
+
+    /// `--write` on a database ahead of db/schema.json (a table made outside
+    /// the migrations, adopted as a Store): the file carries the CREATE TABLE
+    /// and the indexes a fresh database needs, before the check's own steps,
+    /// each once. A column the live table has and no migration adds is
+    /// refused (an ADD COLUMN would fail on the live database).
+    #[test]
+    fn write_ops_build_a_fresh_database_too() {
+        let target = ext2_target(true);
+        let live = ext2_live("sqlite");
+        let c = check(&target, &live);
+        let ops = write_ops(&c, &target, &Schema::default(), &live).expect("ops");
+        let kinds: Vec<&str> = ops.iter().map(|o| op_str(o, "kind")).collect();
+        assert_eq!(kinds, ["createTable", "addIndex"], "{ops:?}");
+        // Nothing to do when the snapshot already has the table.
+        assert!(write_ops(&c, &target, &target, &live)
+            .expect("ops")
+            .is_empty());
+
+        // A check step and the --gen step for one index appear once.
+        let mut live2 = ext2_live("sqlite");
+        live2.tables[0].indexes.clear();
+        let c2 = check(&target, &live2);
+        assert_eq!(c2.safe_ops().len(), 1);
+        let ops = write_ops(&c2, &target, &Schema::default(), &live2).expect("ops");
+        let kinds: Vec<&str> = ops.iter().map(|o| op_str(o, "kind")).collect();
+        assert_eq!(kinds, ["createTable", "addIndex"], "{ops:?}");
+
+        // The snapshot has the table without `tenant`; the live table has it.
+        let mut snap = ext2_target(true);
+        snap.tables[0].columns.retain(|c| c.name != "tenant");
+        snap.tables[0].indexes.clear();
+        let err = write_ops(&c, &target, &snap, &live).expect_err("refused");
+        assert!(err[0].contains("ext2.tenant"), "{err:?}");
     }
 }

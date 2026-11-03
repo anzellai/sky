@@ -3070,6 +3070,15 @@ func deepEq(a, b any) bool {
 	}
 	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
 	if ra.Kind() != rb.Kind() {
+		// Cross-kind numbers: a Go int meets a Go float64 only through a
+		// `number` value, and both are the same Sky number. An integer literal
+		// in a `number` slot is emitted as a Go `int` (the function body
+		// cannot know the caller's instantiation), so `zero : number ->
+		// number; zero _ = 0` returns `int(0)` to a Float caller. Comparing
+		// the two Go values answered False for `zero 2.5 == 0.0` (v0.29.2).
+		if eq, ok := numEqCrossKind(ra, rb); ok {
+			return eq
+		}
 		// Cross-kind: when one side is a string and the other is a
 		// numeric/bool, stringify the non-string side. DB drivers
 		// return int64 for SQLite integers but Sky code compares

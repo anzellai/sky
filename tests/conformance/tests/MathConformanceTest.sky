@@ -77,6 +77,52 @@ addN a b =
     a + b
 
 
+-- v0.29.2 (Judge round 8): an integer literal in a `number` slot is an Int
+-- value even for a Float caller, and `==` compared the Go int with the Go
+-- float64 (`zero 2.5 == 0.0` was False). Unary minus lowered as Int, so
+-- `neg2 2.5` truncated to -2, and `negN` failed `go build`.
+zero : number -> number
+zero _ =
+    0
+
+
+consOne : List number -> List number
+consOne xs =
+    1 :: xs
+
+
+pairUp : number -> ( number, number )
+pairUp x =
+    ( x, 0 )
+
+
+sumRec : List number -> number
+sumRec xs =
+    case xs of
+        [] ->
+            0
+
+        y :: rest ->
+            y + sumRec rest
+
+
+neg2 x =
+    -x
+
+
+negN : number -> number
+negN x =
+    -x
+
+
+diffN a b =
+    a + -b
+
+
+powN b e =
+    b ^ e
+
+
 tests : List Test
 tests =
     [ -- ── abs (Int -> Int) ──
@@ -352,6 +398,28 @@ tests =
         (\_ -> Test.equal 3.5 (addN 1.5 2.0))
     , Test.test "Basics.abs and negate keep a Float's fraction"
         (\_ -> Test.equal ( 2.5, -1.5 ) ( abs -2.5, negate 1.5 ))
+
+      -- ── an Int literal in a number slot equals the Float (v0.29.2) ──
+    , Test.test "zero : number -> number; zero 2.5 == 0.0 and not /= 0.0"
+        (\_ -> Test.equal ( True, False ) ( zero 2.5 == 0.0, zero 2.5 /= 0.0 ))
+    , Test.test "1 :: xs at Float: List.member 1.0 and List.head == Just 1.0"
+        (\_ -> Test.equal ( True, True ) ( List.member 1.0 (consOne [ 2.5 ]), List.head (consOne [ 2.5 ]) == Just 1.0 ))
+    , Test.test "( x, 0 ) at Float equals ( 1.5, 0.0 )"
+        (\_ -> Test.equal True (pairUp 1.5 == ( 1.5, 0.0 )))
+    , Test.test "the [] -> 0 case of a recursive sum equals 0.0"
+        (\_ -> Test.equal ( True, 0.75 ) ( sumRec [] == 0.0, sumRec [ 0.5, 0.25 ] ))
+    , Test.test "an Int literal never equals a Float with a fraction"
+        (\_ -> Test.equal False (zero 2.5 == 0.5))
+
+      -- ── unary minus and ^ on a number (v0.29.2) ──
+    , Test.test "neg2 x = -x keeps a Float's fraction, and an Int"
+        (\_ -> Test.equal ( -2.5, -3 ) ( neg2 2.5, neg2 3 ))
+    , Test.test "negN : number -> number; negN x = -x builds and runs"
+        (\_ -> Test.equal ( -2.5, 4 ) ( negN 2.5, negN -4 ))
+    , Test.test "diffN a b = a + -b on Floats"
+        (\_ -> Test.equal 1.25 (diffN 1.5 0.25))
+    , Test.test "powN b e = b ^ e on Floats and Ints"
+        (\_ -> Test.equal ( 2.25, 8 ) ( powN 1.5 2.0, powN 2 3 ))
     ]
 
 

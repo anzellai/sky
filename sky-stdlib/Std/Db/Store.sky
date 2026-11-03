@@ -1743,7 +1743,9 @@ setFields conn store pkValue sets =
 -- change without reading first. Negative deltas subtract:
 -- `Store.adjust conn products (eq "id" (SqlString pid)) [ ( "stock", -qty ) ]`.
 -- (For a clamped decrement like `max 0 (stock - qty)`, that's app logic — stay
--- with raw `Db.exec` inside a `Store.transaction`.)
+-- with raw `Db.exec` inside a `Store.transaction`.) A sum outside the
+-- column's range (an Int past 9223372036854775807) is an `Err` and changes no
+-- row, on both dialects (v0.29.2).
 adjust : Db -> Store a -> Cond -> List ( String, Int ) -> Task Error Int
 adjust conn store cond deltas =
     case deltas of
@@ -1861,6 +1863,7 @@ type OnConflict
 
 -- | Add the new row's value to the stored one: `count = t.count + excluded.count`.
 -- A required `Int` or `Float` column only (a NULL would make the sum NULL).
+-- A sum outside the column's range is an `Err` and writes nothing (v0.29.2).
 addExcluded : String -> OnConflict
 addExcluded col =
     OnConflict "add" col
@@ -2090,7 +2093,7 @@ upsertWith conn store record rule =
                             Err e
 
                         Ok target ->
-                            case conflictItems s target rule.onConflict [] [] of
+                            case conflictItems d s target rule.onConflict [] [] of
 
                                 Err e ->
                                     Err e
@@ -2472,8 +2475,8 @@ allIn names within =
 
 
 -- The DO UPDATE SET items of `upsertWith`, one per rule.
-conflictItems : StoreRec a -> List String -> List OnConflict -> List String -> List String -> Result Error (List String)
-conflictItems s target rules seen items =
+conflictItems : Dialect -> StoreRec a -> List String -> List OnConflict -> List String -> List String -> Result Error (List String)
+conflictItems d s target rules seen items =
     case rules of
 
         [] ->
@@ -2496,11 +2499,18 @@ conflictItems s target rules seen items =
 
                             Nothing ->
                                 conflictItems
+                                    d
                                     s
                                     target
                                     rest
                                     (col :: seen)
-                                    (conflictRuleSql kind s.name col :: items)
+                                    (conflictRuleSql
+                                        d
+                                        (kindBase k)
+                                        kind
+                                        s.name
+                                        col
+                                        :: items)
 
 
 conflictRuleError : String -> String -> String -> StoreRec a -> List String -> List String -> Maybe String
@@ -2540,14 +2550,14 @@ conflictRuleError kind col k s target seen =
             Nothing
 
 
-conflictRuleSql : String -> String -> String -> String
-conflictRuleSql kind table col =
+conflictRuleSql : Dialect -> String -> String -> String -> String -> String
+conflictRuleSql d base kind table col =
     let
         old = table ++ "." ++ col
         new = "excluded." ++ col
     in
         if kind == "add" then
-            col ++ " = " ++ old ++ " + " ++ new
+            col ++ " = " ++ checkedSum d base old new
 
         else if kind == "min" then
             col ++ " = " ++ keepCase old new "<"
@@ -7036,8 +7046,10 @@ setItems verb d table cols check relative sets items params =
                                 check
                                 relative
                                 rest
-                                ((col ++ " = " ++ col ++ " + ?") :: items)
-                                (v :: params)
+                                ((col ++ " = "
+                                    ++ checkedSum d (kindBase k) col "?")
+                                    :: items)
+                                (adjustParams d v params)
 
                         else
                             setItems
@@ -7799,6 +7811,56 @@ nodeOf ctx name =
 -- `adjust` adds to a required Int or Float column: a NULL plus a delta is
 -- NULL, so a nullable column would stay NULL with the row counted as changed.
 -- A decimal column is refused: its SQLite TEXT would be added as a REAL.
+-- `a + b` for a required Int or Float column (`adjust`, `addExcluded`), so
+-- a sum with no value of the column's kind is refused by the database and no
+-- row is changed (v0.29.2 eighth Judge). PostgreSQL refuses a BIGINT or
+-- DOUBLE PRECISION overflow itself ("bigint out of range"). SQLite turns an
+-- INTEGER overflow into a REAL and a REAL overflow into Infinity and stores it,
+-- and every later read of the table then failed on the column. There the
+-- statement checks the sum, and an overflow evaluates `abs` of the least
+-- Int, which SQLite refuses with "integer overflow". (The operand `0 *
+-- length(a)` keeps that expression tied to the row, so it is never evaluated
+-- once up front as a constant.)
+checkedSum : Dialect -> String -> String -> String -> String
+checkedSum d base a b =
+    let
+        sum = a ++ " + " ++ b
+        overflow = "abs(-9223372036854775807 - 1 + 0 * length(" ++ a ++ "))"
+    in
+        case d of
+
+            Postgres ->
+                sum
+
+            Sqlite ->
+                if base == "int" then
+                    "CASE WHEN typeof(" ++ sum ++ ") = 'integer' THEN " ++ sum
+                        ++ " ELSE "
+                        ++ overflow
+                        ++ " END"
+
+                else
+                    "CASE WHEN abs(" ++ sum
+                        ++ ") <= 1.7976931348623157e308 THEN "
+                        ++ sum
+                        ++ " ELSE "
+                        ++ overflow
+                        ++ " END"
+
+
+-- The parameters of one `adjust` item: SQLite's checked sum names the delta
+-- twice (`checkedSum`), PostgreSQL's once. `params` is in reverse order.
+adjustParams : Dialect -> SqlValue -> List SqlValue -> List SqlValue
+adjustParams d v params =
+    case d of
+
+        Postgres ->
+            v :: params
+
+        Sqlite ->
+            v :: v :: params
+
+
 adjustError : String -> String -> Maybe String
 adjustError col kind =
     if kindBase kind == "decimal" then

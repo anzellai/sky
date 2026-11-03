@@ -156,11 +156,19 @@ func init() {
 		if len(args) < 3 {
 			return []any{}
 		}
-		places := int32(AsInt(args[0]))
+		places := decimalPlaces("Money.allocate", args[0])
 		parts := AsInt(args[1])
 		amount := decimalUnbox(args[2])
+		// No part to put the amount in: the sum cannot equal the amount.
+		// It used to answer [], so the amount was lost without an error
+		// (v0.29.2 eighth Judge). Like a division by zero, it fails loudly.
 		if parts <= 0 {
-			return []any{}
+			panic(fmt.Sprintf("rt.Money.allocate: %d parts: an amount is split into one part or more", parts))
+		}
+		// A list of that many parts cannot be built (`make` panicked with an
+		// unclassified "len out of range", reported as a compiler bug).
+		if parts > moneyAllocateMaxParts {
+			panic(fmt.Sprintf("rt.Decimal.range: Money.allocate: %d parts is more than the %d parts a split can have", parts, moneyAllocateMaxParts))
 		}
 		// Work in minor units (integer) to avoid rounding drift.
 		totalMinor := amount.Shift(places).Truncate(0)
@@ -239,3 +247,7 @@ func init() {
 		return d.StringFixed(int32(info.Minor)) + " " + code
 	})
 }
+
+// moneyAllocateMaxParts bounds the part count of Money.allocate: ten million
+// parts is a list of about a gigabyte.
+const moneyAllocateMaxParts = 10_000_000

@@ -166,7 +166,7 @@
       "tier": "T1"
     },
     "ai-train-exactly-once": {
-      "expected_assertions": 17,
+      "expected_assertions": 18,
       "falsifier_mutation": "ai-train-exactly-once.ignore-the-intent",
       "falsifier_proven": true,
       "summary": "a Vertex launch whose journal row was lost attaches to its job: one create, never two",
@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 2258,
+      "expected_assertions": 2271,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -816,7 +816,7 @@
       "tier": "T1"
     },
     "store-query-postgres": {
-      "expected_assertions": 398,
+      "expected_assertions": 402,
       "falsifier_mutation": "store-query-postgres.drop-rows-err",
       "falsifier_proven": true,
       "summary": "Std.Db.Store query path (aggregates, select, latestPer, text match, jsonText) on PostgreSQL",
@@ -12760,6 +12760,11 @@
             "strength": 4
           },
           {
+            "by": "e2e:scripts/ai-device-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/tui-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -12841,6 +12846,16 @@
           },
           {
             "by": "examples/75-ai-everywhere (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:ai_device_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:ai_device_native_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -19898,7 +19913,7 @@
           ]
         },
         "Std.Decimal": {
-          "count": 10,
+          "count": 9,
           "symbols": [
             "formatWith",
             "fromFloat",
@@ -19908,8 +19923,7 @@
             "max",
             "min",
             "neq",
-            "oneHundred",
-            "toStringFixed"
+            "oneHundred"
           ]
         },
         "Std.Durable": {
@@ -20464,7 +20478,7 @@
           ]
         }
       },
-      "count": 868,
+      "count": 867,
       "pct_of_denominator": 26.7
     },
     "symbols_unreferenced_strict": {
@@ -21372,7 +21386,7 @@
           ]
         },
         "Std.Decimal": {
-          "count": 10,
+          "count": 9,
           "symbols": [
             "formatWith",
             "fromFloat",
@@ -21382,8 +21396,7 @@
             "max",
             "min",
             "neq",
-            "oneHundred",
-            "toStringFixed"
+            "oneHundred"
           ]
         },
         "Std.Durable": {
@@ -22013,7 +22026,7 @@
           ]
         }
       },
-      "count": 983,
+      "count": 982,
       "pct_of_denominator": 30.3
     }
   },
@@ -22153,10 +22166,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "e2e:scripts/ai-device-e2e.sh",
-      "modules_imported": 13,
+      "modules_imported": 14,
       "path": "scripts/ai-device-e2e.sh",
-      "refs_generous": 46,
-      "refs_qualified": 41,
+      "refs_generous": 48,
+      "refs_qualified": 42,
       "role": "FlowTest",
       "sky_files": 2,
       "sky_toml_sections": []
@@ -23431,10 +23444,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "flow:ai_device_flow",
-      "modules_imported": 13,
+      "modules_imported": 14,
       "path": "rust/crates/sky/tests/ai_device_flow.rs",
-      "refs_generous": 46,
-      "refs_qualified": 41,
+      "refs_generous": 48,
+      "refs_qualified": 42,
       "role": "FlowTest",
       "sky_files": 2,
       "sky_toml_sections": []
@@ -23443,10 +23456,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "flow:ai_device_native_flow",
-      "modules_imported": 13,
+      "modules_imported": 14,
       "path": "rust/crates/sky/tests/ai_device_native_flow.rs",
-      "refs_generous": 46,
-      "refs_qualified": 41,
+      "refs_generous": 48,
+      "refs_qualified": 42,
       "role": "FlowTest",
       "sky_files": 2,
       "sky_toml_sections": []
@@ -23805,8 +23818,8 @@
       "id": "flow:numeric_overflow_flow",
       "modules_imported": 8,
       "path": "rust/crates/sky/tests/numeric_overflow_flow.rs",
-      "refs_generous": 22,
-      "refs_qualified": 19,
+      "refs_generous": 27,
+      "refs_qualified": 24,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []
