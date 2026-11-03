@@ -642,7 +642,8 @@ func pgInspectTables(conn *sql.DB) ([]inspectTable, error) {
 			        EXISTS (SELECT 1 FROM unnest(i.indkey::int2[], i.indcollation::oid[]) AS kc(attnum, coll)
 			                JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = kc.attnum
 			                WHERE kc.attnum > 0 AND kc.coll IS NOT NULL AND kc.coll <> 0
-			                  AND kc.coll <> a.attcollation),
+			                  AND (kc.coll <> a.attcollation
+			                       OR a.attcollation <> 'pg_catalog."default"'::regcollation)),
 			        EXISTS (SELECT 1 FROM unnest(i.indclass::oid[]) AS cl(opc)
 			                JOIN pg_opclass oc ON oc.oid = cl.opc WHERE NOT oc.opcdefault),
 			        COALESCE((to_jsonb(i)->>'indnullsnotdistinct')::boolean, false),
@@ -708,7 +709,7 @@ type pgIndexFeatures struct {
 
 // pgIndexInexact says why an index's key-column list does not describe it,
 // or "" when it does. A Store declares a plain B-tree index over columns
-// with their own collation and default operator class, ascending.
+// with the database's default collation and operator class, ascending.
 func pgIndexInexact(f pgIndexFeatures, am, contype string) string {
 	var why []string
 	if f.exprs {

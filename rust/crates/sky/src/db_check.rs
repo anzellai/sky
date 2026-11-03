@@ -3710,6 +3710,7 @@ mod tests {
             for (cols, why) in [
                 (&["<expression>", "tenant"][..], "an expression column"),
                 (&["email"][..], "column email has COLLATE NOCASE"),
+                (&["email"][..], "a column with a COLLATE of its own"),
                 (&["a"][..], "INCLUDE columns"),
                 (&["email"][..], "NULLS NOT DISTINCT"),
                 (&["email"][..], "a deferrable constraint"),

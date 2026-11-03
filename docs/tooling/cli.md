@@ -1146,6 +1146,8 @@ is not valid, ready and live) is
 something no Store declares: `check` gives a notice for it, leaves it as it is,
 and says so in the report ("matches what the code declares; N notice(s)"). Under
 a name the code also declares, it is a difference.
+An inherited non-default column collation is also unsupported, on both
+SQLite and PostgreSQL. It does not become plain uniqueness in an adoption stub.
 
 `check` also runs the data check the app's `Store.migrate` runs before it
 changes a table (`Store.checkProjectData`, the same runtime function), so the

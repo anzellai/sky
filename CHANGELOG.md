@@ -500,6 +500,8 @@ Breaking and Migration.
   Deferrable constraints and indexes that are not valid, ready and live
   also retain a notice, including an unsupported primary-key index.
   INCLUDE columns on a primary-key index are not reported as key columns.
+  A PostgreSQL index that inherits a non-default column collation also
+  retains its notice, including UNIQUE constraints and primary-key indexes.
   A Store cannot declare it, so the
   check gives a notice for it and the stub a comment; under a name the code
   also declares, it is a difference. A foreign key on another table no
