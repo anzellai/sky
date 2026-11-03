@@ -129,12 +129,25 @@ Annotations are load-bearing:
 - A ROW variable is rigid the same way (v0.29.2): `{ r | name : String }` stands for whatever other fields a caller's record has. The body may read `.name`, update it (`{ rec | name = … }`) and return the record, but it may not read a field the annotation does not list (`rec.age`), return a record with only the listed fields where `{ r | … }` is promised (that would lose the caller's other fields), pass the record to a function that takes a closed record, or make two row variables one (`f : { r | name : String } -> { s | name : String }` with `f rec = rec`). Each is `[E2001]` naming the row variable and the fix. Before v0.29.2 each of these compiled and then failed at run time with a `CoerceFailure`.
 - Arithmetic needs a number, as in Elm: `+`, `-`, `*`, `negate` and `abs` take an `Int` or a `Float` (`number -> number -> number`), so `f : a -> a` with `f x = x + x` asks for the `number` bound, and an unannotated `add a b = a + b` is `number -> number -> number`: `add 1.5 2.0` checks and `add "s" "t"` is refused (since v0.29.2; before, both compiled and the String call crashed at run time).
 - An integer literal stands for a `number` variable (since v0.29.2): `isPositive : number -> Bool` with `isPositive x = x > 0`, and `double : number -> number` with `double x = x * 2`, check and give the right answer for a `Float` (`double 2.5` is `5.0`). Everywhere else a literal is an `Int`: a `Float` slot still needs `1.0`, and `1 + 2.5` is refused.
+- Each numeric instantiation selects its representation before the body runs.
+  For `delta : number -> number` with `delta _ = (9007199254740993 + 1) - 9007199254740993`,
+  an `Int` call returns `1`, while a `Float` call returns `0.0` because the
+  literals and operations use Float precision. This also holds through local
+  functions, containers, partial application and recursion. A numeric top-level
+  value is memoised separately for each numeric instantiation.
+- An unannotated recursive function uses one type within its own definition.
+  Its finished type may then generalise for separate callers. An explicit
+  annotation can support polymorphic recursive calls that each satisfy it.
+- Applying one function stage evaluates that stage before returning its next
+  function. A partial application evaluates supplied arguments once, when the
+  partial value is made. Captured values keep their values when a tail-recursive
+  caller advances to its next iteration.
 - The fix the error suggests is a type you can write: an unknown part is a fresh variable (`List x1`, not `List _`), and a record shows its fields (`{ r1 | count : x1 }`).
 - A `let` binding's annotation is checked too (since v0.27.14), as a top-level one is: `n : Int` above `n = "x"` is `[E2001]`. Its type variables are rigid in the definition, so the body must be as general as the annotation (`f : a -> a` with `f x = x + 1` is refused). A `let` annotation may name a variable of the enclosing annotation (`wrap : a -> List a` with `one : a` in its `let`): it is the same variable (scoped type variables, as in Elm). In the `let` body the binder has the annotated type, generalised under the same value restriction.
 
 ## Generics
 
-Polymorphic HM-inferred functions lower to Go generics:
+Polymorphic Sky functions erase their type variables to Go `any`:
 
 ```elm
 identity : a -> a
@@ -142,10 +155,14 @@ identity x = x
 ```
 
 ```go
-func Identity[T1 any](x T1) T1 { return x }
+func Identity(x any) any { return x }
 ```
 
-`solvedTypeToGo TVar` falls back to `any` at expression positions (Go's type parameters can't appear outside enclosing function signatures). This is by design, not an escape hatch.
+The checker proves each instantiation. The lowerer inserts typed adapters at
+concrete boundaries. A quantified `number` also passes hidden Int or Float
+evidence, so its literals and arithmetic run in the caller's domain.
+Unknown function values preserve one application stage per arrow. A direct
+call to a known function can use its source parameter group as one Go call.
 
 **Parametric record aliases** (v0.15+) lower to Go-generic structs with one type parameter per HM type variable:
 

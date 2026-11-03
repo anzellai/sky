@@ -13,6 +13,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## v0.29.2 — `sky run` hands every app its embedded database (2026-11-01)
 
+- Numeric polymorphism now selects Int or Float representation before literals
+  and arithmetic run, including local functions, recursive calls, higher-order
+  calls and memoised values. This fixes precision errors that result conversion
+  could not repair.
+- Partial application evaluates supplied arguments once. Functions that return
+  functions preserve each application stage, and closures keep captured values
+  when their caller proceeds through a tail-recursive loop.
+
 A patch release for v0.29.1. `sky run` and `sky watch` now start the embedded
 PostgreSQL cluster and pass its address to a `Std.App` app and a Sky.Spa app,
 as they already did for a plain app. `sky db check` compares a live database

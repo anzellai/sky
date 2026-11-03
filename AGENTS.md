@@ -87,6 +87,9 @@ Core syntax you must get right:
   A let-bound function is polymorphic, like a top-level one (let-generalisation
   under the value restriction, `docs/language/types.md`). Local functions of one
   `let` may call each other (mutual recursion), in any source order.
+  Numeric polymorphism selects Int or Float before arithmetic runs. Partial
+  application evaluates supplied arguments once. Captured values stay fixed
+  across a caller's tail-recursive iterations.
 - **Field access**: `model.user.name`; `Shape.origin.x` is field `x` of the
   qualified value `Shape.origin`.
 - **Record update**: `{ user | age = 41 }` (keeps every other field).

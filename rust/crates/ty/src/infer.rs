@@ -31,6 +31,8 @@ use hir::{Body, Expr, ExprId, LocalId, PatId, Pattern, Res, SkyDb};
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 
+mod numeric;
+
 /// A recorded type error (an unify clash). A value, not an exception (L7).
 pub struct TypeError {
     pub message: String,
@@ -86,6 +88,8 @@ fn relax_unit_arg_spine(s: &Scheme) -> Scheme {
 }
 
 pub struct Infer<'a> {
+    numeric: Option<numeric::RawNumeric>,
+    recursive_type: Option<TyVarId>,
     pub(crate) world: &'a World,
     pub(crate) db: &'a dyn SkyDb,
     pub uf: UnionFind,
@@ -197,6 +201,8 @@ pub struct RecordOverlay {
 impl<'a> Infer<'a> {
     pub fn new(world: &'a World, db: &'a dyn SkyDb) -> Self {
         Infer {
+            numeric: None,
+            recursive_type: None,
             world,
             db,
             uf: UnionFind::new(),
@@ -325,12 +331,52 @@ impl<'a> Infer<'a> {
         out
     }
 
+    // An unannotated self-call shares the definition's current parameter and
+    // result variables. Fresh variables per reference lose those constraints,
+    // accepting e.g. a Float recursive argument for an Int parameter.
+    fn needs_shared_recursion(&self, body: &Body) -> bool {
+        !self.use_inferred
+            && self.self_def.is_some_and(|def| {
+                !self.world.value_sigs.contains_key(&def)
+                    && body
+                        .exprs
+                        .iter()
+                        .any(|(_, e)| matches!(e,Expr::Var(Res::Def(d)) if *d==def))
+            })
+    }
+
+    fn seed_shared_recursion(&mut self, body: &Body, params: &[TyVarId]) -> Option<TyVarId> {
+        if !self.needs_shared_recursion(body) {
+            return None;
+        }
+        let result = self.uf.fresh_flex();
+        self.recursive_type = Some(
+            params
+                .iter()
+                .rev()
+                .fold(result, |rest, p| self.fun(*p, rest)),
+        );
+        Some(result)
+    }
+
     /// Infer a top-level def body, returning its read-back type (the result
     /// type — params are stripped in the resolved HIR). `None` for bodyless
     /// defs (annotation-only / type decls).
     pub fn infer_def(&mut self, body: &Body) -> Option<Ty> {
         let root = body.root?;
+        let params = if self.needs_shared_recursion(body) {
+            body.params
+                .iter()
+                .map(|p| self.infer_pat_fresh(body, *p))
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let recursive_result = self.seed_shared_recursion(body, &params);
         let v = self.infer_expr(body, root);
+        if let Some(result) = recursive_result {
+            self.unify(v, result);
+        }
         self.discharge_bounds(true);
         self.collapse_let_poly();
         // C-2: the relaxed value restriction for an UNANNOTATED top-level CAF.
@@ -533,7 +579,11 @@ impl<'a> Infer<'a> {
             }
             expected_result = Some(self.ty_to_var(&cur, &mut sub));
         }
+        let recursive_result = self.seed_shared_recursion(body, &param_vars);
         let v = self.infer_expr(body, root);
+        if let Some(result) = recursive_result {
+            self.unify(v, result);
+        }
         if let Some(ev) = expected_result {
             self.unify(v, ev);
         }
@@ -595,6 +645,15 @@ impl<'a> Infer<'a> {
                 let fresh = self.uf.fresh(Content::Rigid(Name::new(name.as_str())));
                 sub.insert(name.as_str().to_string(), fresh);
             }
+        }
+        if let Some(raw) = &mut self.numeric {
+            raw.params = param_vars.clone();
+            raw.top_roots = scheme
+                .vars
+                .iter()
+                .filter(|n| crate::numeric::numeric_name(n.as_str()))
+                .filter_map(|n| sub.get(n.as_str()).copied())
+                .collect();
         }
         // Peel one arrow per top-level param, seeding EVERY param's declared type
         // (including record-typed params) CLOSED via `ty_to_var` — a param `model
@@ -664,8 +723,12 @@ impl<'a> Infer<'a> {
         // Body inference stays STRICT (record-presence clashes inside the body —
         // e.g. a call passing a record that lacks a required field — must still
         // reject; that is exactly `record_missing_field` at its call site).
+        let recursive_result = self.seed_shared_recursion(body, &param_vars);
         let errs_before = self.errors.len();
         let v = self.infer_expr(body, root);
+        if let Some(result) = recursive_result {
+            self.unify(v, result);
+        }
         // Body-vs-annotation unification — ONLY when the body itself type-checked
         // cleanly (T2.4). A body that already clashed internally has a poisoned
         // result var; unifying it against the annotation emits a DUPLICATE error
@@ -751,7 +814,11 @@ impl<'a> Infer<'a> {
             .iter()
             .map(|&p| self.infer_pat_fresh(body, p))
             .collect();
+        let recursive_result = self.seed_shared_recursion(body, &param_vars);
         let rv = self.infer_expr(body, root);
+        if let Some(result) = recursive_result {
+            self.unify(rv, result);
+        }
         self.discharge_bounds(true);
         self.collapse_let_poly();
         let full = param_vars
@@ -1288,7 +1355,23 @@ impl<'a> Infer<'a> {
         // keeps a parent's span when this node has no recorded range.
         let prev = self.cur_span;
         self.cur_span = body.expr_span(e).or(prev);
+        let prev_reference = if let Some(raw) = &mut self.numeric {
+            raw.expr_owners.insert(e, raw.owner);
+            let prev = raw.reference;
+            raw.reference = if let Expr::Var(res) = &body.exprs[e] {
+                raw.resolutions.insert(e, res.clone());
+                Some(e)
+            } else {
+                None
+            };
+            prev
+        } else {
+            None
+        };
         let tv = base::ensure_stack(|| self.infer_expr_inner(body, e));
+        if let Some(raw) = &mut self.numeric {
+            raw.reference = prev_reference;
+        }
         self.cur_span = prev;
         if self.record_exprs {
             self.expr_vars.push((e, tv));
@@ -1647,6 +1730,13 @@ impl<'a> Infer<'a> {
             annotated.push(inst);
         }
         for (i, &d) in defs.iter().enumerate() {
+            let previous_owner = self.numeric.as_ref().and_then(|raw| raw.owner);
+            if let Some(raw) = &mut self.numeric {
+                if let Some((_, binder)) = d.binders.first() {
+                    raw.parents.insert(*binder, raw.owner);
+                    raw.owner = Some(*binder);
+                }
+            }
             let errs_before = self.errors.len();
             // parameters (function let-binding) get fresh vars, then body.
             let param_vars: Vec<TyVarId> = d
@@ -1701,9 +1791,12 @@ impl<'a> Infer<'a> {
                     // `record_exprs`, so the check/build path (which never
                     // sets it) is byte-for-byte unchanged.
                     if self.record_exprs {
-                        self.local_vars.push((*lid, placeholder));
+                        self.record_local_type(*lid, placeholder);
                     }
                 }
+            }
+            if let Some(raw) = &mut self.numeric {
+                raw.owner = previous_owner;
             }
         }
         // Decide the deferred bounds, then check each annotation's variables
@@ -1794,6 +1887,9 @@ impl<'a> Infer<'a> {
                     span,
                     code: "E2001",
                 });
+            } else if SuperType::from_var_name(n.as_str()).is_some_and(|b| b.has(SuperType::Number))
+            {
+                self.uf.generalise_annotated_number_literal(v);
             }
         }
     }
@@ -1875,6 +1971,10 @@ impl<'a> Infer<'a> {
         for (b, v, fv) in candidates {
             let quantified: Vec<TyVarId> = fv.into_iter().filter(|r| !env.contains(r)).collect();
             if !quantified.is_empty() {
+                if self.numeric.is_some() {
+                    let roots=quantified.iter().copied().filter(|q|matches!(self.uf.content(*q),Content::FlexSuper(s) if s.has(SuperType::Number) && !s.has(SuperType::IntLit))).collect();
+                    self.numeric.as_mut().unwrap().local_roots.insert(b, roots);
+                }
                 self.poly_locals.insert(b, (v, quantified));
             }
         }
@@ -1919,6 +2019,22 @@ impl<'a> Infer<'a> {
                 _ => self.uf.fresh_flex(),
             };
             memo.insert(r, fresh);
+        }
+        if self.numeric.is_some() {
+            let mut args = Vec::new();
+            for &q in quantified {
+                let root = self.uf.find(q);
+                if matches!(self.uf.content(root),Content::FlexSuper(s) if s.has(SuperType::Number) && !s.has(SuperType::IntLit))
+                {
+                    args.push(memo[&root]);
+                }
+            }
+            if !args.is_empty() {
+                let raw = self.numeric.as_mut().unwrap();
+                if let Some(e) = raw.reference {
+                    raw.arguments.insert(e, args);
+                }
+            }
         }
         self.copy_generic(generic, &mut memo)
     }
@@ -1989,6 +2105,9 @@ impl<'a> Infer<'a> {
     /// no type in the enclosing scope changes. Repeated to a fixpoint, because
     /// collapsing an outer binder can make an inner binder's instances equal.
     fn collapse_let_poly(&mut self) {
+        if self.numeric.is_some() {
+            return;
+        }
         loop {
             let mut progressed = false;
             let mut by_local: Vec<(LocalId, Vec<TyVarId>)> = Vec::new();
@@ -2146,7 +2265,7 @@ impl<'a> Infer<'a> {
                     return self.instantiate(&s);
                 }
                 if self.self_def == Some(def) {
-                    return self.uf.fresh_flex();
+                    return self.recursive_type.unwrap_or_else(|| self.uf.fresh_flex());
                 }
                 if let Some(s) = self.world.inferred_sigs.get(&def) {
                     if self.use_inferred {
@@ -2412,7 +2531,7 @@ impl<'a> Infer<'a> {
                 let id = *id;
                 self.locals.insert(id, expected);
                 if self.record_exprs {
-                    self.local_vars.push((id, expected));
+                    self.record_local_type(id, expected);
                 }
             }
             Pattern::Unit => {
@@ -2446,7 +2565,7 @@ impl<'a> Infer<'a> {
                     let fv = self.uf.fresh_flex();
                     self.locals.insert(*id, fv);
                     if self.record_exprs {
-                        self.local_vars.push((*id, fv));
+                        self.record_local_type(*id, fv);
                     }
                     map.insert(n.clone(), fv);
                 }
@@ -2461,7 +2580,7 @@ impl<'a> Infer<'a> {
                 let id = *id;
                 self.locals.insert(id, expected);
                 if self.record_exprs {
-                    self.local_vars.push((id, expected));
+                    self.record_local_type(id, expected);
                 }
                 self.infer_pat_against(body, inner, expected);
             }
@@ -2585,6 +2704,19 @@ impl<'a> Infer<'a> {
             }
             let fresh = self.fresh_for_name(v.as_str());
             sub.insert(v.as_str().to_string(), fresh);
+        }
+        if let Some(raw) = &mut self.numeric {
+            if let Some(e) = raw.reference {
+                let args = s
+                    .vars
+                    .iter()
+                    .filter(|n| crate::numeric::numeric_name(n.as_str()))
+                    .filter_map(|n| sub.get(n.as_str()).copied())
+                    .collect::<Vec<_>>();
+                if !args.is_empty() {
+                    raw.arguments.insert(e, args);
+                }
+            }
         }
         self.ty_to_var(&s.ty, &mut sub)
     }

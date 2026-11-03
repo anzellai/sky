@@ -25,6 +25,7 @@ pub mod ffi_sig;
 pub mod form_submit;
 mod infer;
 pub mod nominal;
+pub mod numeric;
 mod obligations;
 pub mod pubsub_topic;
 pub mod re2_syntax;

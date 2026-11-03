@@ -13,6 +13,8 @@
 > change, old code and new code, as loud, loud at run time or silent:
 > https://github.com/anzellai/sky/tree/main/docs/migration (`v0.27.md`,
 > `v0.28.md`, `v0.29.md`).
+> Numeric instantiation and function application follow the rules in
+> https://github.com/anzellai/sky/blob/main/docs/language/types.md.
 
 ## Response style (INVIOLABLE)
 

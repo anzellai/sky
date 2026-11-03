@@ -189,19 +189,10 @@ fn sky_ty_ref_to_go_guarded(
             env,
             cur_mod,
         ),
-        TyView::Fun(a, b) => {
-            // Collapse the curried spine into an N-ary Go func (`go_ty_uncached`).
-            let mut ps = vec![sky_ty_ref_to_go_in(table, a, env, cur_mod, memo)];
-            let mut ret = b;
-            while let TyView::Fun(x, y) = table.view(ret) {
-                ps.push(sky_ty_ref_to_go_in(table, x, env, cur_mod, memo));
-                ret = y;
-            }
-            GoTy::Func(
-                ps,
-                Box::new(sky_ty_ref_to_go_in(table, ret, env, cur_mod, memo)),
-            )
-        }
+        TyView::Fun(a, b) => GoTy::Func(
+            vec![sky_ty_ref_to_go_in(table, a, env, cur_mod, memo)],
+            Box::new(sky_ty_ref_to_go_in(table, b, env, cur_mod, memo)),
+        ),
         TyView::Tuple(xs) => GoTy::Tuple(
             xs.iter()
                 .map(|x| sky_ty_ref_to_go_in(table, *x, env, cur_mod, memo))
@@ -309,16 +300,12 @@ fn go_ty_uncached(
 ) -> GoTy {
     match t {
         Ty::App(name, args) => app_to_go(name.as_str(), args, env, cur_mod, params),
-        Ty::Fun(a, b) => {
-            // Collapse the curried spine into an N-ary Go func.
-            let mut ps = vec![go_ty(a, env, cur_mod, params)];
-            let mut ret = b.as_ref();
-            while let Ty::Fun(x, y) = ret {
-                ps.push(go_ty(x, env, cur_mod, params));
-                ret = y;
-            }
-            GoTy::Func(ps, Box::new(go_ty(ret, env, cur_mod, params)))
-        }
+        // Unknown Sky function values preserve one strict application stage
+        // per arrow. Direct declarations still use their source binder group.
+        Ty::Fun(a, b) => GoTy::Func(
+            vec![go_ty(a, env, cur_mod, params)],
+            Box::new(go_ty(b, env, cur_mod, params)),
+        ),
         // Tuple element types are kept for TYPING (pattern binds) AND for
         // typed-tuple codegen: `render_goty` / codegen
         // `render_ty` now render each element to its concrete Go type, so a

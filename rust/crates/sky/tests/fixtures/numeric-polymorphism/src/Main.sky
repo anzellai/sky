@@ -1,0 +1,563 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Std.Sync as Sync
+import Sky.Test as Test
+
+
+big : number -> number
+big _ =
+    9007199254740993
+
+
+delta : number -> number
+delta _ =
+    (9007199254740993 + 1) - 9007199254740993
+
+
+consBig : List number -> List number
+consBig xs =
+    9007199254740993 :: xs
+
+
+numericCaf : number
+numericCaf =
+    9007199254740993
+
+
+apply : (a -> b) -> a -> b
+apply f x =
+    f x
+
+
+withPrefix : Int -> number -> number
+withPrefix prefix _ =
+    if prefix == 0 then
+        9007199254740993
+
+    else
+        9007199254740995
+
+
+independent : number1 -> number2 -> ( number1, number2 )
+independent x y =
+    ( delta x, delta y )
+
+
+captured : number -> number
+captured x =
+    let
+        step _ = delta x
+    in
+        step ()
+
+
+loop : Int -> number -> number
+loop n x =
+    if n <= 0 then
+        delta x
+
+    else
+        loop (n - 1) x
+
+
+switchDomain : Int -> number -> Bool
+switchDomain n x =
+    if n <= 0 then
+        delta x == 0
+
+    else
+        switchDomain (n - 1) 1.0
+
+
+localBoth : () -> ( Int, Float )
+localBoth _ =
+    let
+        localDelta : number -> number
+        localDelta _ = (9007199254740993 + 1) - 9007199254740993
+    in
+        ( localDelta 1, localDelta 1.0 )
+
+
+negative : number -> number
+negative _ =
+    -9007199254740993
+
+
+power : number -> number
+power _ =
+    9007199254740993 ^ 1
+
+type alias Packet a =
+    { value : a
+    , history : List a
+    }
+
+
+packet : number -> Packet number
+packet _ =
+    { value = 9007199254740993, history = [ 9007199254740993 ] }
+
+
+forward x =
+    delta x
+
+
+evenDelta : Int -> number -> number
+evenDelta n x =
+    if n <= 0 then
+        delta x
+
+    else
+        oddDelta (n - 1) x
+
+
+oddDelta : Int -> number -> number
+oddDelta n x =
+    if n <= 0 then
+        delta x
+
+    else
+        evenDelta (n - 1) x
+
+
+fractionalLocal _ =
+    let
+        twice : number -> number
+        twice x = x * 2
+    in
+        ( twice 3, twice 2.25 )
+
+
+localRecursive _ =
+    let
+        recurse : Int -> number -> number
+        recurse n x =
+            if n <= 0 then
+                delta x
+
+            else
+                recurse (n - 1) x
+    in
+        recurse 20 1.0
+
+
+localMutual _ =
+    let
+        even : Int -> number -> number
+        even n x =
+            if n <= 0 then
+                delta x
+
+            else
+                odd (n - 1) x
+        odd : Int -> number -> number
+        odd n x =
+            if n <= 0 then
+                delta x
+
+            else
+                even (n - 1) x
+    in
+        even 20 1.0
+
+
+localConstant _ =
+    let
+        value : number
+        value = 9007199254740993
+    in
+        ( value == 9007199254740993, value == 9.007199254740992e15 )
+
+
+numericFunction : number -> number
+numericFunction =
+    \_ -> 9007199254740993
+
+
+numberPair : ( number1, number2 )
+numberPair =
+    ( 9007199254740993, 9007199254740993 )
+
+
+collectKinds : Int -> number -> List (() -> Bool) -> List (() -> Bool)
+collectKinds n witness acc =
+    if n <= 0 then
+        acc
+
+    else
+        let
+            snap = \_ -> delta witness == 0
+        in
+            collectKinds (n - 1) 1.0 (snap :: acc)
+
+
+collectKindsNamed : Int -> number -> List (() -> Bool) -> List (() -> Bool)
+collectKindsNamed n witness acc =
+    if n <= 0 then
+        acc
+
+    else
+        let
+            snap _ = delta witness == 0
+        in
+            collectKindsNamed (n - 1) 1.0 (snap :: acc)
+
+
+unannotatedLoop n x =
+    if n <= 0 then
+        delta x
+
+    else
+        unannotatedLoop (n - 1) x
+
+
+numericIsZero : number -> Bool
+numericIsZero x =
+    delta x == 0
+
+
+unannotatedSwitch n x =
+    if n <= 0 then
+        numericIsZero x
+
+    else
+        unannotatedSwitch (n - 1) 1.0
+
+
+collectInputs : Int -> number -> List (() -> Bool) -> List (() -> Bool)
+collectInputs n x acc =
+    if n <= 0 then
+        acc
+
+    else
+        let
+            snap = \_ -> x * 2 == 2
+        in
+            collectInputs (n - 1) 2.5 (snap :: acc)
+
+
+collectInputsNamed : Int -> number -> List (() -> Bool) -> List (() -> Bool)
+collectInputsNamed n x acc =
+    if n <= 0 then
+        acc
+
+    else
+        let
+            snap _ = x * 2 == 2
+        in
+            collectInputsNamed (n - 1) 2.5 (snap :: acc)
+
+
+collectPlain : Int -> List (() -> Int) -> List (() -> Int)
+collectPlain n acc =
+    if n <= 0 then
+        acc
+
+    else
+        let
+            snap = \_ -> n
+        in
+            collectPlain (n - 1) (snap :: acc)
+
+
+keep : Int -> () -> Int
+keep value _ =
+    value
+
+
+collectPartial : Int -> List (() -> Int) -> List (() -> Int)
+collectPartial n acc =
+    if n <= 0 then
+        acc
+
+    else
+        let
+            snap = keep n
+        in
+            collectPartial (n - 1) (snap :: acc)
+
+
+collectKernelPartial : Int -> List (String -> String) -> List (String -> String)
+collectKernelPartial n acc =
+    if n <= 0 then
+        acc
+
+    else
+        let
+            snap = String.repeat n
+        in
+            collectKernelPartial (n - 1) (snap :: acc)
+
+type Saved
+    = Saved Int ()
+
+
+strictPartial : ((() -> Int) -> () -> Int) -> Task Error ( Int, ( Int, Int ), Int )
+strictPartial make =
+    Sync.newRef 0
+        |> Task.andThen
+               (\ref ->
+                   let
+                       next _ =
+                           Result.withDefault
+                               (-1)
+                               (Task.run (Sync.update (\n -> n + 1) ref))
+                   in
+                       observePartial ref (make next))
+
+
+observePartial : Sync.Ref Int -> (() -> Int) -> Task Error ( Int, ( Int, Int ), Int )
+observePartial ref partial =
+    Sync.get ref
+        |> Task.andThen
+               (\before ->
+                   let
+                       first = partial ()
+                       second = partial ()
+                   in
+                       Sync.get ref
+                           |> Task.map
+                                  (\after -> ( before, ( first, second ), after )))
+
+
+kernelPartial next =
+    let
+        repeated = String.repeat (next ())
+    in
+        \_ -> String.length (repeated "x")
+
+
+constructorPartial next =
+    let
+        saved = Saved (next ())
+    in
+        \_ ->
+            case saved () of
+
+                Saved n _ ->
+                    n
+
+
+functionField : (() -> Int) -> { callback : () -> Int }
+functionField next =
+    let
+        _ = next ()
+    in
+        { callback = \_ -> 1 }
+
+
+selectorPartial next =
+    apply ((functionField next).callback)
+
+
+collectFunctionRefs : Int -> (Int -> Int) -> List (Int -> Int) -> List (Int -> Int)
+collectFunctionRefs n f acc =
+    if n <= 0 then
+        acc
+
+    else
+        collectFunctionRefs (n - 1) (\x -> x + 10) ((apply f) :: acc)
+
+
+inferredLocalBoth _ =
+    let
+        localDelta x = x + x
+    in
+        ( localDelta 1, localDelta 2.25 )
+
+
+main =
+    Test.runMain
+        [ Test.test
+              "inferred local numeric function instantiates independently"
+              (\_ -> Test.equal ( 2, 4.5 ) (inferredLocalBoth ()))
+        , Test.test
+              "Float literal representation is chosen before list construction"
+              (\_ ->
+                  Test.equal
+                      True
+                      (List.member 9.007199254740992e15 (consBig [ 1.0 ])))
+        , Test.test
+              "Float result compares in its instantiated representation"
+              (\_ -> Test.equal True (big 1.0 == 9.007199254740992e15))
+        , Test.test
+              "Float arithmetic runs before result coercion"
+              (\_ -> Test.equal 0.0 (delta 1.0))
+        , Test.test
+              "Int arithmetic retains exact precision"
+              (\_ -> Test.equal 1 (delta 1))
+        , Test.test
+              "numeric CAF Float representation"
+              (\_ -> Test.equal True (numericCaf == 9.007199254740992e15))
+        , Test.test
+              "numeric CAF Int representation remains independent"
+              (\_ -> Test.equal True (numericCaf == 9007199254740993))
+        , Test.test
+              "higher-order numeric reference carries its instantiation"
+              (\_ -> Test.equal True (apply big 1.0 == 9.007199254740992e15))
+        , Test.test
+              "partial numeric application carries its instantiation"
+              (\_ ->
+                  Test.equal
+                      True
+                      (apply (withPrefix 0) 1.0 == 9.007199254740992e15))
+        , Test.test
+              "independent numeric variables use independent representations"
+              (\_ -> Test.equal ( 1, 0.0 ) (independent 1 1.0))
+        , Test.test
+              "independent numeric variables work in reverse order"
+              (\_ -> Test.equal ( 0.0, 1 ) (independent 1.0 1))
+        , Test.test
+              "local continuation captures numeric evidence"
+              (\_ -> Test.equal 0.0 (captured 1.0))
+        , Test.test
+              "generalised local numeric function instantiates twice"
+              (\_ -> Test.equal ( 1, 0.0 ) (localBoth ()))
+        , Test.test
+              "tail recursion retains numeric evidence"
+              (\_ -> Test.equal 0.0 (loop 1000000 1.0))
+        , Test.test
+              "numeric unary minus uses Float representation"
+              (\_ -> Test.equal True (negative 1.0 == -9.007199254740992e15))
+        , Test.test
+              "numeric power uses Float representation"
+              (\_ -> Test.equal True (power 1.0 == 9.007199254740992e15))
+        , Test.test
+              "tail recursion updates numeric instantiation"
+              (\_ -> Test.equal True (switchDomain 1 1))
+        , Test.test
+              "local Float results retain their fractional part"
+              (\_ -> Test.equal ( 6, 4.5 ) (fractionalLocal ()))
+        , Test.test
+              "nested numeric record leaves choose representation"
+              (\_ ->
+                  let
+                      p = packet 1.0
+                  in
+                      Test.equal
+                          True
+                          (p.value == 9.007199254740992e15
+                              && List.member 9.007199254740992e15 p.history))
+        , Test.test
+              "unannotated forwarder retains numeric evidence"
+              (\_ -> Test.equal 0.0 (forward 1.0))
+        , Test.test
+              "top-level mutual recursion forwards numeric evidence"
+              (\_ -> Test.equal 0.0 (evenDelta 20 1.0))
+        , Test.test
+              "local mutual recursion forwards numeric evidence"
+              (\_ -> Test.equal 0.0 (localMutual ()))
+        , Test.test
+              "local self recursion forwards numeric evidence"
+              (\_ -> Test.equal 0.0 (localRecursive ()))
+        , Test.test
+              "local numeric constant instantiates independently"
+              (\_ -> Test.equal ( True, True ) (localConstant ()))
+        , Test.test
+              "function-valued numeric CAF captures its instantiation"
+              (\_ ->
+                  Test.equal True (numericFunction 1.0 == 9.007199254740992e15))
+        , Test.test
+              "numeric CAF keeps ordered Float Int selectors"
+              (\_ ->
+                  Test.equal
+                      ( 9.007199254740992e15, 9007199254740993 )
+                      numberPair)
+        , Test.test
+              "numeric CAF keeps ordered Int Float selectors"
+              (\_ ->
+                  Test.equal
+                      ( 9007199254740993, 9.007199254740992e15 )
+                      numberPair)
+        , Test.test
+              "numeric HOF callbacks instantiate before mapping"
+              (\_ ->
+                  Test.equal
+                      [ 9.007199254740992e15, 9.007199254740992e15 ]
+                      (List.map big [ 1.0, 2.0 ]))
+        , Test.test
+              "lambda freezes its selector before a tail jump"
+              (\_ ->
+                  Test.equal
+                      [ True, False ]
+                      (List.map (\f -> f ()) (collectKinds 2 1 [])))
+        , Test.test
+              "named local freezes its selector before a tail jump"
+              (\_ ->
+                  Test.equal
+                      [ True, False ]
+                      (List.map (\f -> f ()) (collectKindsNamed 2 1 [])))
+        , Test.test
+              "inferred recursive numeric function forwards evidence"
+              (\_ -> Test.equal 0.0 (unannotatedLoop 1000000 1.0))
+        , Test.test
+              "inferred recursive call retains its inferred Float domain"
+              (\_ -> Test.equal True (unannotatedSwitch 1 1.0))
+        , Test.test
+              "numeric lambda freezes its input before a tail jump"
+              (\_ ->
+                  Test.equal
+                      [ False, True ]
+                      (List.map (\f -> f ()) (collectInputs 2 1 [])))
+        , Test.test
+              "numeric local freezes its input before a tail jump"
+              (\_ ->
+                  Test.equal
+                      [ False, True ]
+                      (List.map (\f -> f ()) (collectInputsNamed 2 1 [])))
+        , Test.test
+              "plain lambda freezes a tail-call parameter"
+              (\_ ->
+                  Test.equal
+                      [ 1, 2 ]
+                      (List.map (\f -> f ()) (collectPlain 2 [])))
+        , Test.test
+              "partial application freezes a tail-call parameter"
+              (\_ ->
+                  Test.equal
+                      [ 1, 2 ]
+                      (List.map (\f -> f ()) (collectPartial 2 [])))
+        , Test.test
+              "kernel partial freezes a tail-call parameter"
+              (\_ ->
+                  Test.equal
+                      [ "x", "xx" ]
+                      (List.map (\f -> f "x") (collectKernelPartial 2 [])))
+        , Test.test
+              "Sky partial evaluates its supplied argument once"
+              (\_ ->
+                  Test.equal
+                      (Ok ( 1, ( 1, 1 ), 1 ))
+                      (Task.run (strictPartial (\next -> keep (next ())))))
+        , Test.test
+              "kernel partial evaluates its supplied argument once"
+              (\_ ->
+                  Test.equal
+                      (Ok ( 1, ( 1, 1 ), 1 ))
+                      (Task.run (strictPartial kernelPartial)))
+        , Test.test
+              "constructor partial evaluates its supplied argument once"
+              (\_ ->
+                  Test.equal
+                      (Ok ( 1, ( 1, 1 ), 1 ))
+                      (Task.run (strictPartial constructorPartial)))
+        , Test.test
+              "function field adapter evaluates its source once"
+              (\_ ->
+                  Test.equal
+                      (Ok ( 1, ( 1, 1 ), 1 ))
+                      (Task.run (strictPartial selectorPartial)))
+        , Test.test
+              "function adapter freezes a tail-call parameter"
+              (\_ ->
+                  Test.equal
+                      [ 10, 1 ]
+                      (List.map
+                          (\f -> f 0)
+                          (collectFunctionRefs 2 (\x -> x + 1) [])))
+        ]

@@ -565,6 +565,11 @@ main = println (String.fromInt (update Increment 0))
 polymorphic (`twice x = ( x, x )` works at two types in one body), and
 `Module.value.field` reads a field of another module's value.
 
+Numeric polymorphism selects Int or Float before arithmetic runs. Partial
+application evaluates supplied arguments once. Captured values stay fixed
+across a caller's tail-recursive iterations. See `docs/language/types.md` in
+the compiler repository for the type and application rules.
+
 **Collection costs.** Every `List` / `Dict` / `Set` / `Array` / `String`
 function states its cost in `sky doc` (a `Cost:` line). `x :: xs` is amortised
 O(1): cons onto an accumulator and `List.reverse` once. To build a string, cons
