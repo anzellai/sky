@@ -1139,6 +1139,8 @@ jobs:
           shared-key: sky-linux
           save-if: 'false'
       - run: cargo build --workspace --locked
+      - name: Reclaim runner disk before corpus build
+        run: bash scripts/ci/reclaim-runner-disk.sh
       - name: Gate — build-run shard 0/3 (emit + go build; FFI skipped)
         run: cargo run -q -p xtask -- build-run --all --shard=0/3
       # The runtime gates live HERE, with `build-run --all`, and that placement
@@ -1211,6 +1213,8 @@ jobs:
           shared-key: sky-linux
           save-if: 'false'
       - run: cargo build --workspace --locked
+      - name: Reclaim runner disk before corpus build
+        run: bash scripts/ci/reclaim-runner-disk.sh
       - name: Gate — build-run shard 1/3 (emit + go build; FFI skipped)
         run: cargo run -q -p xtask -- build-run --all --shard=1/3
       - name: Gate — golden (runtime-correctness, CLI subset), shard 1/3
@@ -1262,6 +1266,8 @@ jobs:
           shared-key: sky-linux
           save-if: 'false'
       - run: cargo build --workspace --locked
+      - name: Reclaim runner disk before corpus build
+        run: bash scripts/ci/reclaim-runner-disk.sh
       - name: Gate — build-run shard 2/3 (emit + go build; FFI skipped)
         run: cargo run -q -p xtask -- build-run --all --shard=2/3
       - name: Gate — golden (runtime-correctness, CLI subset), shard 2/3
