@@ -277,15 +277,15 @@
       "proven_at_unix": 1793683157
     },
     "build-new-dir-compiles-nothing": {
-      "inputs_files": 556,
-      "inputs_hash": "deefc8208f32a2515b85183955e4cd94c20dfde2",
+      "inputs_files": 557,
+      "inputs_hash": "30f661bf2cd09dfc6c7db26616515275527d716f",
       "mutation": "build-new-dir.no-trimpath",
       "mutations": [
         "build-new-dir.no-trimpath"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793679048
+      "proven_at_unix": 1793687007
     },
     "canary": {
       "inputs_files": 2,
@@ -296,7 +296,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1793683906
+      "proven_at_unix": 1793687160
     },
     "cli-verbs": {
       "inputs_files": 3,
