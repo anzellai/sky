@@ -1231,7 +1231,11 @@ pub fn check_modules_with_world(
                 }
                 None => infer.infer_def(body),
             };
-            for err in &infer.errors {
+            for err in infer
+                .errors
+                .iter()
+                .chain(world.app_group_errors.get(def).into_iter().flatten())
+            {
                 out.type_errors += 1;
                 out.diagnostics.push(Diagnostic {
                     severity: Severity::Error,

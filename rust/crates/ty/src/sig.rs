@@ -56,6 +56,7 @@ pub struct World {
     /// elaboration must see the same scheme, including numeric quantifiers.
     /// The ordinary lowering type world does not consume this channel.
     pub app_check_sigs: HashMap<DefId, Scheme>,
+    pub(crate) app_group_errors: HashMap<DefId, Vec<crate::infer::TypeError>>,
     /// CHECK-ONLY override of an ANNOTATED def's scheme, as callers see it
     /// (v0.27.0). Two writers:
     /// * pass 6 (D-ANY): the signature with every `any` filled from the body
@@ -747,6 +748,7 @@ impl World {
             check_sigs: HashMap::new(),
             check_kernel_sigs: HashMap::new(),
             app_check_sigs: HashMap::new(),
+            app_group_errors: HashMap::new(),
             any_result_check_sigs: HashMap::new(),
             weak_vars: HashMap::new(),
             bound_check_sigs: HashMap::new(),
@@ -999,68 +1001,51 @@ impl World {
                 .iter()
                 .map(|td| (td.def, td.name.as_str().to_string()))
                 .collect();
-            for (def, body) in &resolved.bodies {
-                // Respect annotations: never shadow a declared signature.
-                if self.value_sigs.contains_key(def) {
-                    continue;
-                }
-                if !names.contains_key(def) {
-                    continue;
-                }
-                let mut infer = Infer::new(self, db).with_self_def(Some(*def));
-                // Checker channel: concretize an unresolved `Number` super to
-                // `Int` (oracle-faithful) so a numeric helper infers a
-                // MONOMORPHIC sig and stays subject to the F1c monomorphism
-                // filter rather than escaping via a spurious `∀a. a -> …`.
-                let Some(scheme) = infer.infer_def_scheme(body, true) else {
-                    continue;
-                };
-                // Keep Unit spines too: excluding them made e.g.
-                // `through () x = delta x` lose delta's numeric quantifier at
-                // its call sites, selecting Int arithmetic for Float callers.
-                self.app_check_sigs.entry(*def).or_insert(scheme);
-            }
-            // C-2 (v0.27.0): re-infer this module's unannotated CAFs with an
-            // EXPANSIVE body (zero parameters, not a syntactic value) until
-            // their schemes stop changing. The loop above infers defs in
-            // source order, so a CAF that uses a LATER sibling saw it as a
-            // fresh variable and its scheme came out over-general. For a
-            // function that only loosens caller checks; for an expansive CAF
-            // it would export a variable the value restriction must see, since
-            // the checker applies the restriction to exactly this scheme (the
-            // type every caller instantiates). Bounded: each round only
-            // narrows.
-            let cafs: Vec<DefId> = resolved
+            let defs: Vec<DefId> = resolved
                 .bodies
-                .iter()
-                .filter(|(def, body)| {
-                    names.contains_key(*def)
-                        && !self.value_sigs.contains_key(*def)
-                        && self.app_check_sigs.contains_key(*def)
-                        && body.params.is_empty()
-                        && body
-                            .root
-                            .is_some_and(|r| !crate::infer::is_syntactic_value(body, r))
-                })
-                .map(|(def, _)| *def)
+                .keys()
+                .copied()
+                .filter(|d| names.contains_key(d) && !self.value_sigs.contains_key(d))
                 .collect();
-            for _round in 0..4 {
-                let mut changed = false;
-                for def in &cafs {
-                    let Some(body) = resolved.bodies.get(def) else {
-                        continue;
-                    };
-                    let mut infer = Infer::new(self, db).with_self_def(Some(*def));
-                    let Some(scheme) = infer.infer_def_scheme(body, true) else {
-                        continue;
-                    };
-                    if self.app_check_sigs.get(def) != Some(&scheme) {
-                        self.app_check_sigs.insert(*def, scheme);
-                        changed = true;
+            let indices: HashMap<_, _> = defs.iter().enumerate().map(|(i, d)| (*d, i)).collect();
+            let edges: Vec<Vec<usize>> = defs
+                .iter()
+                .map(|d| {
+                    let mut deps: Vec<_> = resolved.bodies[d]
+                        .exprs
+                        .iter()
+                        .filter_map(|(_, e)| {
+                            if let hir::Expr::Var(hir::Res::Def(callee)) = e {
+                                indices.get(callee).copied()
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    deps.sort_unstable();
+                    deps.dedup();
+                    deps
+                })
+                .collect();
+            for group in crate::infer::dependency_groups(&edges) {
+                if group.len() == 1 {
+                    let def = defs[group[0]];
+                    let mut infer = Infer::new(self, db).with_self_def(Some(def));
+                    if let Some(scheme) = infer.infer_def_scheme(&resolved.bodies[&def], true) {
+                        self.app_check_sigs.insert(def, scheme);
                     }
-                }
-                if !changed {
-                    break;
+                } else {
+                    let members: Vec<_> = group
+                        .iter()
+                        .map(|&i| (defs[i], &resolved.bodies[&defs[i]]))
+                        .collect();
+                    let inferred = Infer::infer_definition_group(self, db, &members);
+                    for (def, scheme, errors) in inferred {
+                        self.app_check_sigs.insert(def, scheme);
+                        if !errors.is_empty() {
+                            self.app_group_errors.insert(def, errors);
+                        }
+                    }
                 }
             }
         }

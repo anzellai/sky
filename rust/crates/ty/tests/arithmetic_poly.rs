@@ -275,3 +275,24 @@ fn unit_parameter_numeric_function_instantiates_for_int_and_float() {
     let src = format!("{HDR}through () x = x + x\n\nb = (through () 1, through () 1.25)\n");
     assert_eq!(type_errors(&repo_root(), &src), 0);
 }
+
+#[test]
+fn mutually_recursive_arguments_cannot_form_an_infinite_list_type() {
+    let src = format!("{HDR}first x = second [ x ]\n\nsecond y = first [ y ]\n\nb = first 1\n");
+    assert!(
+        type_errors(&repo_root(), &src) > 0,
+        "unannotated recursive peers must share monomorphic argument variables"
+    );
+}
+
+#[test]
+fn local_helper_cannot_generalise_a_recursive_peers_argument() {
+    let src = format!("{HDR}first x =\n    let\n        call y = second y\n    in\n    (call 1, call \"invalid\")\n\nsecond y =\n    let\n        _ = first y\n    in\n    y\n\nb = first 0\n");
+    assert!(type_errors(&repo_root(), &src) > 0);
+}
+
+#[test]
+fn independent_local_helper_in_a_recursive_group_still_generalises() {
+    let src = format!("{HDR}first n x =\n    let\n        copy y = y\n        _ = copy \"ok\"\n        _ = copy 1\n    in\n    if n <= 0 then x else second (n - 1) x\n\nsecond n x =\n    if n <= 0 then x + x else first (n - 1) x\n\nb = (first 2 1.25, second 2 1)\n");
+    assert_eq!(type_errors(&repo_root(), &src), 0);
+}

@@ -34,6 +34,7 @@ use std::collections::HashMap;
 mod numeric;
 
 /// A recorded type error (an unify clash). A value, not an exception (L7).
+#[derive(Clone, PartialEq, Eq)]
 pub struct TypeError {
     pub message: String,
     /// Source span of the sub-expression whose unification clashed, if known.
@@ -90,6 +91,7 @@ fn relax_unit_arg_spine(s: &Scheme) -> Scheme {
 pub struct Infer<'a> {
     numeric: Option<numeric::RawNumeric>,
     recursive_type: Option<TyVarId>,
+    provisional_defs: std::rc::Rc<HashMap<DefId, TyVarId>>,
     pub(crate) world: &'a World,
     pub(crate) db: &'a dyn SkyDb,
     pub uf: UnionFind,
@@ -203,6 +205,7 @@ impl<'a> Infer<'a> {
         Infer {
             numeric: None,
             recursive_type: None,
+            provisional_defs: Default::default(),
             world,
             db,
             uf: UnionFind::new(),
@@ -346,6 +349,18 @@ impl<'a> Infer<'a> {
     }
 
     fn seed_shared_recursion(&mut self, body: &Body, params: &[TyVarId]) -> Option<TyVarId> {
+        if let Some(group_type) = self
+            .self_def
+            .and_then(|d| self.provisional_defs.get(&d).copied())
+        {
+            let result = self.uf.fresh_flex();
+            let full = params
+                .iter()
+                .rev()
+                .fold(result, |rest, p| self.fun(*p, rest));
+            self.unify(group_type, full);
+            return Some(result);
+        }
         if !self.needs_shared_recursion(body) {
             return None;
         }
@@ -587,7 +602,7 @@ impl<'a> Infer<'a> {
         if let Some(ev) = expected_result {
             self.unify(v, ev);
         }
-        self.discharge_bounds(true);
+        self.discharge_bounds(self.provisional_defs.is_empty());
         self.collapse_let_poly();
         Some((v, param_vars))
     }
@@ -839,6 +854,70 @@ impl<'a> Infer<'a> {
             concretize_super && body.params.is_empty() && !is_syntactic_value(body, root);
         let ty = self.read_back_scheme(full, concretize_super);
         Some(Scheme::generalize(ty))
+    }
+
+    /// Infer a recursive component monomorphically before publishing any
+    /// member's scheme. Local IDs and expression IDs belong to each body;
+    /// only the solver, provisional types and pending obligations are shared.
+    pub(crate) fn infer_definition_group(
+        world: &'a World,
+        db: &'a dyn SkyDb,
+        members: &[(DefId, &Body)],
+    ) -> Vec<(DefId, Scheme, Vec<TypeError>)> {
+        let mut solver = UnionFind::new();
+        let provisional: std::rc::Rc<HashMap<_, _>> = std::rc::Rc::new(
+            members
+                .iter()
+                .map(|(d, _)| (*d, solver.fresh_flex()))
+                .collect(),
+        );
+        let mut pending = Vec::new();
+        let mut errors = HashMap::new();
+        for &(def, body) in members {
+            let mut infer = Infer::new(world, db).with_self_def(Some(def));
+            std::mem::swap(&mut infer.uf, &mut solver);
+            infer.provisional_defs = provisional.clone();
+            infer.obligations = std::mem::take(&mut pending);
+            infer.cur_span = body.root.and_then(|r| body.expr_span(r));
+            infer.infer_def_vars(body);
+            pending = std::mem::take(&mut infer.obligations);
+            errors.insert(def, std::mem::take(&mut infer.errors));
+            std::mem::swap(&mut infer.uf, &mut solver);
+        }
+        let mut finish = Infer::new(world, db);
+        std::mem::swap(&mut finish.uf, &mut solver);
+        finish.obligations = pending;
+        finish.discharge_bounds(true);
+        for error in finish.errors.drain(..) {
+            let owner = error
+                .span
+                .and_then(|span| {
+                    members.iter().find_map(|(def, body)| {
+                        let root = body.root.and_then(|r| body.expr_span(r))?;
+                        (root.file == span.file
+                            && root.range.0 <= span.range.0
+                            && root.range.1 >= span.range.1)
+                            .then_some(*def)
+                    })
+                })
+                .or_else(|| members.last().map(|(d, _)| *d));
+            if let Some(def) = owner {
+                errors.entry(def).or_default().push(error);
+            }
+        }
+        members
+            .iter()
+            .map(|&(def, body)| {
+                let expansive = body.params.is_empty()
+                    && body.root.is_some_and(|r| !is_syntactic_value(body, r));
+                let ty = finish.read_back_scheme(provisional[&def], expansive);
+                (
+                    def,
+                    Scheme::generalize(ty),
+                    errors.remove(&def).unwrap_or_default(),
+                )
+            })
+            .collect()
     }
 
     /// D-ANY (v0.27.0): `any` in a USER annotation is a partial-signature hole.
@@ -1970,6 +2049,11 @@ impl<'a> Infer<'a> {
                 self.collect_flex(v, &mut env_fv, &mut env_seen);
             }
         }
+        // A recursive top-level peer belongs to the enclosing monomorphic
+        // environment, even when referenced only inside this local helper.
+        for v in self.provisional_defs.values().copied().collect::<Vec<_>>() {
+            self.collect_flex(v, &mut env_fv, &mut env_seen);
+        }
         let env: std::collections::HashSet<TyVarId> = env_fv.into_iter().collect();
         for (b, v, fv) in candidates {
             let quantified: Vec<TyVarId> = fv.into_iter().filter(|r| !env.contains(r)).collect();
@@ -2229,6 +2313,10 @@ impl<'a> Infer<'a> {
                     .or_insert_with(|| self.uf.fresh_flex())
             }
             Res::Def(def) => {
+                if let Some(&shared) = self.provisional_defs.get(&def) {
+                    return shared;
+                }
+
                 // v0.27.0 qualified bounds — CHECK-ONLY. A def whose scheme
                 // gained a bound it does not spell (a stdlib API that encodes
                 // by reflection, `Codec.auto : encodable -> Codec encodable`;
@@ -3323,6 +3411,11 @@ fn let_def_groups(body: &Body, defs: &[hir::LocalDef]) -> Vec<Vec<usize>> {
             out
         })
         .collect();
+    dependency_groups(&edges)
+}
+
+/// Callees-first SCCs of an index graph. Members keep their input order.
+pub(crate) fn dependency_groups(edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
     struct Tarjan<'e> {
         edges: &'e [Vec<usize>],
         index: Vec<Option<usize>>,
@@ -3367,9 +3460,9 @@ fn let_def_groups(body: &Body, defs: &[hir::LocalDef]) -> Vec<Vec<usize>> {
             })
         }
     }
-    let n = defs.len();
+    let n = edges.len();
     let mut t = Tarjan {
-        edges: &edges,
+        edges,
         index: vec![None; n],
         low: vec![0; n],
         on_stack: vec![false; n],

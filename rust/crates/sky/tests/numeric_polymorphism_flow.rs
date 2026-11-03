@@ -60,7 +60,7 @@ fn numeric_polymorphism_preserves_each_instantiation() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{stdout}\n{stderr}");
-    assert!(stdout.contains("44 passed"), "{stdout}");
+    assert!(stdout.contains("48 passed"), "{stdout}");
 }
 
 #[test]

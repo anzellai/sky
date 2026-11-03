@@ -383,9 +383,93 @@ unitNumericThrough () x =
     delta x
 
 
+unitForwardReference () x =
+    twiceForwardReference x
+
+
+twiceForwardReference x =
+    x + x
+
+
+mutualNumericFirst n x =
+    if n <= 0 then
+        mutualNumericSecond 0 x
+
+    else
+        mutualNumericSecond (n - 1) x
+
+
+mutualNumericSecond n x =
+    if n <= 0 then
+        x + x
+
+    else
+        mutualNumericFirst (n - 1) x
+
+
+reverseNumericSecond n x =
+    if n <= 0 then
+        x + x
+
+    else
+        reverseNumericFirst (n - 1) x
+
+
+reverseNumericFirst n x =
+    if n <= 0 then
+        reverseNumericSecond 0 x
+
+    else
+        reverseNumericSecond (n - 1) x
+
+
+numericForward0 () x =
+    numericForward1 () x
+
+
+numericForward1 () x =
+    numericForward2 () x
+
+
+numericForward2 () x =
+    numericForward3 () x
+
+
+numericForward3 () x =
+    numericForward4 () x
+
+
+numericForward4 () x =
+    numericForward5 () x
+
+
+numericForward5 () x =
+    numericForward6 () x
+
+
+numericForward6 () x =
+    numericForward7 () x
+
+
+numericForward7 () x =
+    x + x
+
+
 main =
     Test.runMain
         [ Test.test
+              "numeric evidence crosses more than six forward helpers"
+              (\_ -> Test.equal 2.5 (numericForward0 () 1.25))
+        , Test.test
+              "unannotated mutual group shares numeric constraint"
+              (\_ -> Test.equal 2.5 (mutualNumericFirst 4 1.25))
+        , Test.test
+              "unannotated mutual group is source-order independent"
+              (\_ -> Test.equal 2.5 (reverseNumericFirst 4 1.25))
+        , Test.test
+              "forward unannotated numeric function keeps its final scheme"
+              (\_ -> Test.equal 2.5 (unitForwardReference () 1.25))
+        , Test.test
               "unit pattern function forwards numeric evidence"
               (\_ -> Test.equal 0.0 (unitNumericThrough () 1.0))
         , Test.test

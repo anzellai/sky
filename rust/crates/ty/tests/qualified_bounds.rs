@@ -385,6 +385,26 @@ fn nested_annotated_helpers_carry_the_bound() {
     );
 }
 
+#[test]
+fn annotated_bounds_cross_more_than_six_forward_helpers() {
+    let helpers = (0..12)
+        .map(|i| {
+            let body = if i == 11 {
+                "Codec.auto x".to_string()
+            } else {
+                format!("helper{} x", i + 1)
+            };
+            format!("helper{i} : a -> Codec a\nhelper{i} x =\n    {body}\n\n")
+        })
+        .collect::<String>();
+    assert_rejects(&format!(
+        "{helpers}bad : Codec {{ f : Int -> Int }}\nbad = helper0 {{ f = \\x -> x }}"
+    ));
+    assert_accepts(&format!(
+        "{helpers}good : Codec {{ n : Int }}\ngood = helper0 {{ n = 0 }}"
+    ));
+}
+
 /// `Std.Db.Table.table` over a record with a `Secret`.
 #[test]
 fn table_over_a_secret_is_rejected() {

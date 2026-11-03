@@ -92,6 +92,8 @@ Core syntax you must get right:
   across a caller's tail-recursive iterations.
   A `()` parameter preserves inferred numeric bounds. Discarded arguments
   are evaluated too, including in a tail call.
+  Unannotated recursive peers share monomorphic types before generalisation.
+  Forward references preserve inferred bounds through the full helper chain.
 - **Field access**: `model.user.name`; `Shape.origin.x` is field `x` of the
   qualified value `Shape.origin`.
 - **Record update**: `{ user | age = 41 }` (keeps every other field).

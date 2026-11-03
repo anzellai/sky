@@ -138,6 +138,11 @@ Annotations are load-bearing:
 - An unannotated recursive function uses one type within its own definition.
   Its finished type may then generalise for separate callers. An explicit
   annotation can support polymorphic recursive calls that each satisfy it.
+  Mutually recursive unannotated functions share monomorphic types until the
+  whole group is solved. Infinite recursive type equations are rejected.
+  Function dependencies determine inference order, so a forward reference has
+  the same inferred bounds as a backward reference. Bounds propagate through
+  every helper in the chain.
   A `()` parameter preserves the same inferred types and numeric bounds as
   any other parameter. It does not hide the rest of a function's signature.
 - Applying one function stage evaluates that stage before returning its next

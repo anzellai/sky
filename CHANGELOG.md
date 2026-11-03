@@ -20,6 +20,9 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 - Partial application evaluates supplied arguments once. Functions that return
   functions preserve each application stage, and closures keep captured values
   when their caller proceeds through a tail-recursive loop.
+- Inferred bounds follow forward function references through the full helper
+  chain. Mutually recursive unannotated functions share their types before
+  generalisation, so invalid infinite recursive types are rejected.
 
 A patch release for v0.29.1. `sky run` and `sky watch` now start the embedded
 PostgreSQL cluster and pass its address to a `Std.App` app and a Sky.Spa app,

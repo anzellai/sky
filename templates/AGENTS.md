@@ -571,6 +571,8 @@ across a caller's tail-recursive iterations. See `docs/language/types.md` in
 the compiler repository for the type and application rules.
 A `()` parameter preserves inferred numeric bounds. Discarded arguments are
 evaluated too, including in a tail call.
+Unannotated recursive peers share monomorphic types before generalisation.
+Forward references preserve inferred bounds through the full helper chain.
 
 **Collection costs.** Every `List` / `Dict` / `Set` / `Array` / `String`
 function states its cost in `sky doc` (a `Cost:` line). `x :: xs` is amortised
