@@ -113,11 +113,11 @@ func TestConsoleStore_ReadsHostTelemetryUnderTokenAuth(t *testing.T) {
 	}
 
 	all := State_Scope_R{Range: "all"}
-	logs := rt.Task_run(model.Store.ReadLogs(all, State_emptyLogFilter()))
+	logs := rt.Task_run(model.Store.ReadLogs(all)(State_emptyLogFilter()))
 	if logs.Tag != 0 || len(logs.OkValue) == 0 {
 		t.Errorf("logs read: tag=%d n=%d err=%+v, want the synthetic log line", logs.Tag, len(logs.OkValue), logs.ErrValue)
 	}
-	traces := rt.Task_run(model.Store.ReadTraces(all, ""))
+	traces := rt.Task_run(model.Store.ReadTraces(all)(""))
 	if traces.Tag != 0 || len(traces.OkValue) == 0 {
 		t.Errorf("traces read: tag=%d n=%d err=%+v, want the synthetic span", traces.Tag, len(traces.OkValue), traces.ErrValue)
 	}
