@@ -1657,5 +1657,42 @@ main = Task.succeed ()
         db.psql("INSERT INTO items (id,a) VALUES (1,'same'); DO $$ BEGIN BEGIN INSERT INTO items (id,a) VALUES (2,'same'); RAISE EXCEPTION 'uniqueness missing'; EXCEPTION WHEN unique_violation THEN NULL; END; END $$",true);
         assert_eq!(db.psql("SELECT count(*) FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=current_schema() AND t.relname='items' AND i.indisunique AND i.indisvalid",true),"2");
     }
+    // A folded UNIQUE constraint on another table occupies the generated
+    // repair name. It must not turn a supposedly safe IF NOT EXISTS into a
+    // no-op when this table loses its unique index.
+    let repair_name = file_ops(&migration_files(&dir).pop().unwrap())
+        .0
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|op| op["kind"] == "addIndex" && op["indexColumns"] == serde_json::json!(["a"]))
+        .unwrap()["name"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(repair_name
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_'));
+    pg.psql(&format!("DROP INDEX {repair_name}; CREATE TABLE other (id BIGINT PRIMARY KEY, label TEXT CONSTRAINT {repair_name} UNIQUE)"),true);
+    let before = migration_files(&dir).len();
+    let (code, out, err) = sky(&dir, &["db", "check", "--sql", "--write"], &live_env);
+    assert_eq!(code, 1, "{out}\n{err}");
+    assert!(out.contains("backs a constraint on other"), "{out}\n{err}");
+    assert!(
+        !out.contains(&format!(
+            "\nCREATE UNIQUE INDEX IF NOT EXISTS {repair_name}"
+        )),
+        "ineffective repair is presented as safe: {out}"
+    );
+    // The extra table can produce inert destructive metadata. No active
+    // operation may pretend to repair uniqueness under the occupied name.
+    for path in migration_files(&dir).iter().skip(before) {
+        assert_eq!(
+            file_ops(path).0,
+            serde_json::json!([]),
+            "unsafe collision wrote active operations"
+        );
+    }
+    assert_eq!(pg.psql("SELECT count(*) FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=current_schema() AND t.relname='items' AND i.indisunique",true),"1");
     let _ = std::fs::remove_dir_all(dir);
 }

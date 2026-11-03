@@ -905,39 +905,6 @@ pub fn write_ops(
                     && op_str(o, "table") == table.name
                     && op_str(o, "name") == name
             }) {
-                // A snapshot-only repair must not bypass a live check that
-                // refused this name. IF NOT EXISTS would silently keep the
-                // incompatible index and may lose uniqueness on replay.
-                for owner in &live.tables {
-                    let has_constraint = owner.name == table.name
-                        && (owner
-                            .columns
-                            .iter()
-                            .any(|c| c.name == column.name && c.unique)
-                            || owner.indexes.iter().any(|ix| {
-                                ix.constraint
-                                    && ix.unique
-                                    && ix.inexact.is_empty()
-                                    && ix.predicate.is_empty()
-                                    && ix.columns == columns
-                            }));
-                    let blocked = owner.indexes.iter().any(|ix| {
-                        ix.name == name
-                            && (owner.name != table.name
-                                || !ix.unique
-                                || !ix.inexact.is_empty()
-                                || !ix.predicate.is_empty()
-                                || ix.columns != columns)
-                    }) || owner.protected_indexes.contains(&name);
-                    let dropped = ops.iter().any(|op| {
-                        op_str(op, "kind") == "dropIndex"
-                            && op_str(op, "table") == owner.name
-                            && op_str(op, "name") == name
-                    });
-                    if blocked && !dropped && !has_constraint {
-                        return Err(vec![format!("index {name} is occupied on {}: the snapshot UNIQUE repair cannot safely reuse that name",owner.name)]);
-                    }
-                }
                 ops.push(json!({"kind":"addIndex","table":table.name,"name":name,"indexColumns":columns,"unique":true,"skipEquivalentConstraint":true}));
             }
             for op in &mut ops {
@@ -959,12 +926,70 @@ pub fn write_ops(
         .filter(|op| op_str(op, "kind") == "createTable")
         .map(|op| op_str(op, "table").to_string())
         .collect();
+    let drops: Vec<_> = ops
+        .iter()
+        .filter(|o| op_str(o, "kind") == "dropIndex")
+        .map(|o| {
+            (
+                op_str(o, "table").to_string(),
+                op_str(o, "name").to_string(),
+            )
+        })
+        .collect();
     let mut refused = Vec::new();
     let mut additions = Vec::new();
     let mut out = Vec::new();
     for op in ops {
         let table = op_str(&op, "table");
         match op_str(&op, "kind") {
+            "addIndex" => {
+                let name = op_str(&op, "name");
+                let columns: Vec<String> = op
+                    .get("indexColumns")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect();
+                let equivalent = op["skipEquivalentConstraint"].as_bool() == Some(true)
+                    && op["unique"].as_bool() == Some(true)
+                    && op_str(&op, "where").trim().is_empty()
+                    && live.tables.iter().any(|t| {
+                        t.name == table
+                            && ((columns.len() == 1
+                                && t.columns.iter().any(|c| c.name == columns[0] && c.unique))
+                                || t.indexes.iter().any(|ix| {
+                                    let mut got = ix.columns.clone();
+                                    got.sort();
+                                    let mut want = columns.clone();
+                                    want.sort();
+                                    ix.constraint
+                                        && ix.unique
+                                        && ix.inexact.is_empty()
+                                        && ix.predicate.is_empty()
+                                        && got == want
+                                }))
+                    });
+                if !equivalent {
+                    for owner in &live.tables {
+                        let protected = owner.protected_indexes.iter().any(|n| n == name);
+                        let collision = owner.indexes.iter().find(|ix| ix.name == name);
+                        let dropped = drops.iter().any(|(t, n)| t == &owner.name && n == name);
+                        let incompatible = collision.is_some_and(|ix| {
+                            !dropped
+                                && (owner.name != table
+                                    || !ix.inexact.is_empty()
+                                    || ix.unique != op["unique"].as_bool().unwrap_or(false)
+                                    || ix.columns != columns
+                                    || ix.predicate != op_str(&op, "where"))
+                        });
+                        if protected || incompatible {
+                            refused.push(format!("index {name} is occupied on {}: ADD INDEX cannot safely establish the declared index",owner.name));
+                        }
+                    }
+                }
+            }
             "dropIndex" => {
                 let name = op_str(&op, "name");
                 let protected = live.tables.iter().find(|t| {
@@ -1686,7 +1711,17 @@ pub fn check(target: &Schema, live: &Inspect) -> Check {
                         .find(|ix| ix.name == name)
                         .map(|ix| (table, ix))
                 });
-                let steps=match collision {
+                let protected_owner = live
+                    .tables
+                    .iter()
+                    .find(|table| table.protected_indexes.contains(&name));
+                let steps = if let Some(owner) = protected_owner {
+                    vec![Step::Unsafe {
+                        sql:String::new(),
+                        reason:format!("the repair index name {name} backs a constraint on {}; resolve that name before adding ordinary uniqueness",owner.name),
+                    }]
+                } else {
+                    match collision {
                     Some((owner,ix)) if owner.name==tt.name && !ix.constraint && !owner.protected_indexes.contains(&name) => vec![
                         Step::Op(json!({"kind":"dropIndex","table":tt.name,"name":name})),Step::Op(add),
                     ],
@@ -1695,6 +1730,7 @@ pub fn check(target: &Schema, live: &Inspect) -> Check {
                         reason:format!("the repair index name {name} is occupied on {} by an index that cannot safely be replaced; resolve that name before adding ordinary uniqueness",owner.name),
                     }],
                     None => vec![Step::Op(add)],
+                }
                 };
                 findings.push(Finding {
                     table: tt.name.clone(),
@@ -4071,6 +4107,39 @@ mod tests {
         let kinds: Vec<_> = ops.iter().map(|o| op_str(o, "kind")).collect();
         assert_eq!(kinds, vec!["dropIndex", "addIndex"], "{ops:?}");
         assert!(ops.iter().all(|o| op_str(o, "name") == name));
+    }
+
+    #[test]
+    fn folded_constraint_name_blocks_uniqueness_repair_across_tables() {
+        let mut t = table(
+            "t",
+            "id",
+            vec![col("id", "int", false), col("label", "text", false)],
+        );
+        let lt = built("pgx", &t);
+        t.columns[1].unique = true;
+        let target = Schema { tables: vec![t] };
+        let name = db_migrate::index_name("t", &["label".into()], true, "");
+        let mut other = built("pgx", &table("other", "id", vec![col("id", "int", false)]));
+        other.protected_indexes.push(name);
+        assert!(other.indexes.is_empty());
+        let live = inspect("pgx", vec![lt, other]);
+        let c = check(&target, &live);
+        let f = c
+            .findings
+            .iter()
+            .find(|f| f.text.contains("column t.label is not UNIQUE"))
+            .expect("missing uniqueness");
+        assert!(
+            f.steps.iter().all(|s| matches!(s, Step::Unsafe { .. })),
+            "{f:?}"
+        );
+        assert!(!c.safe_ops().iter().any(|o| op_str(o, "kind") == "addIndex"));
+        // A pre-existing unsafe check op must not bypass the final guard,
+        // regardless of whether the snapshot needs a synthetic transition.
+        let mut forced = c;
+        forced.findings.push(Finding{table:"t".into(),text:"stale repair".into(),code:None,steps:vec![Step::Op(json!({"kind":"addIndex","table":"t","name":db_migrate::index_name("t",&["label".into()],true,""),"indexColumns":["label"],"unique":true}))]});
+        assert!(write_ops(&forced, &target, &target, &live).is_err());
     }
 
     #[test]
