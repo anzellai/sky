@@ -760,6 +760,13 @@ const GO_SKIPS_ALLOWED: &[(&str, &str, &str)] = &[
         "a Go-version-dependent failure path; nothing to install fixes it",
     ),
     (
+        "db_inspect_special_postgres_integration_test.go",
+        "NULLS NOT DISTINCT requires PostgreSQL 15 or later",
+        "a server-version feature boundary: a connected PostgreSQL before 15 has no \
+         NULLS NOT DISTINCT syntax. Missing PostgreSQL still fails through \
+         requirePostgresDSN; the other catalogue tests run on that older server",
+    ),
+    (
         "register_sky_gob_types_test.go",
         "this gob version encoded",
         "a Go-version-dependent gap; nothing to install fixes it",
