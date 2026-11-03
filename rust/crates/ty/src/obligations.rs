@@ -609,6 +609,9 @@ impl World {
         while let Some(i) = queue.pop_front() {
             queued[i] = false;
             let t = &targets[i];
+            if self.app_group_errors.contains_key(&t.def) {
+                continue;
+            }
             let mut changed = false;
             if t.annotated {
                 let Some(anno) = self.value_sigs.get(&t.def).cloned() else {
@@ -631,10 +634,22 @@ impl World {
                     changed = true;
                 }
             } else {
-                let mut infer = Infer::new(self, db).with_self_def(Some(t.def));
-                let Some(scheme) = infer.infer_def_scheme(&t.body, true) else {
+                let Some(previous) = self.app_check_sigs.get(&t.def).cloned() else {
                     continue;
                 };
+                let mut infer = Infer::new(self, db).with_self_def(Some(t.def));
+                let Some(scheme) = infer.refine_def_scheme(&t.body, &previous) else {
+                    continue;
+                };
+                if !infer.errors.is_empty() {
+                    let errors = std::mem::take(&mut infer.errors);
+                    drop(infer);
+                    self.app_group_errors
+                        .entry(t.def)
+                        .or_default()
+                        .extend(errors);
+                    continue;
+                }
                 if self.app_check_sigs.get(&t.def) != Some(&scheme) {
                     self.app_check_sigs.insert(t.def, scheme);
                     changed = true;

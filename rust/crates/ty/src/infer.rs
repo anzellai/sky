@@ -856,6 +856,22 @@ impl<'a> Infer<'a> {
         Some(Scheme::generalize(ty))
     }
 
+    /// Refine an already solved signature without reopening its structural
+    /// constraints. Quantifiers are instantiated flexibly once across the
+    /// parameters and result, so bounds may grow but sharing cannot loosen.
+    pub(crate) fn refine_def_scheme(&mut self, body: &Body, previous: &Scheme) -> Option<Scheme> {
+        self.expected = Some(previous.clone());
+        self.cur_span = body.root.and_then(|r| body.expr_span(r));
+        let (result, params) = self.infer_def_vars(body)?;
+        let full = params
+            .into_iter()
+            .rev()
+            .fold(result, |rest, p| self.fun(p, rest));
+        let expansive =
+            body.params.is_empty() && body.root.is_some_and(|r| !is_syntactic_value(body, r));
+        Some(Scheme::generalize(self.read_back_scheme(full, expansive)))
+    }
+
     /// Infer a recursive component monomorphically before publishing any
     /// member's scheme. Local IDs and expression IDs belong to each body;
     /// only the solver, provisional types and pending obligations are shared.

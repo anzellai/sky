@@ -296,3 +296,20 @@ fn independent_local_helper_in_a_recursive_group_still_generalises() {
     let src = format!("{HDR}first n x =\n    let\n        copy y = y\n        _ = copy \"ok\"\n        _ = copy 1\n    in\n    if n <= 0 then x else second (n - 1) x\n\nsecond n x =\n    if n <= 0 then x + x else first (n - 1) x\n\nb = (first 2 1.25, second 2 1)\n");
     assert_eq!(type_errors(&repo_root(), &src), 0);
 }
+
+#[test]
+fn bound_propagation_preserves_recursive_group_sharing() {
+    let defs = format!("{HDR}first stop x y =\n    (second stop x, second stop y)\n\nsecond stop z =\n    if stop then z + z else Tuple.first (first True z z)\n\n");
+    assert!(
+        type_errors(&repo_root(), &format!("{defs}b = first True 1 1.0\n")) > 0,
+        "a bounds worklist must not independently generalise recursive peers"
+    );
+    assert_eq!(
+        type_errors(
+            &repo_root(),
+            &format!("{defs}b = (first True 1 2, first True 1.0 2.0)\n")
+        ),
+        0,
+        "finished recursive schemes still instantiate separately for independent callers"
+    );
+}
