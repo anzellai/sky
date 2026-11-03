@@ -266,15 +266,15 @@
       "proven_at_unix": 1793676969
     },
     "build-growth-linear": {
-      "inputs_files": 556,
-      "inputs_hash": "bb01fd65717154727626f15b66bd8ebc25f56e03",
+      "inputs_files": 557,
+      "inputs_hash": "ee4d3d8fa61a289fdc996a44b55f3c6aed6fff30",
       "mutation": "build-growth.one-model-wire-per-arm",
       "mutations": [
         "build-growth.one-model-wire-per-arm"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793676969
+      "proven_at_unix": 1793683157
     },
     "build-new-dir-compiles-nothing": {
       "inputs_files": 556,
@@ -296,7 +296,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1793681847
+      "proven_at_unix": 1793683246
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -310,15 +310,15 @@
       "proven_at_unix": 1793597529
     },
     "config-matrix": {
-      "inputs_files": 1739,
-      "inputs_hash": "76a2d59c50500f246efebce166d757cb34cad480",
+      "inputs_files": 1743,
+      "inputs_hash": "6cae4fd5b05f9d8c4c9a66979bc17be67b74c5bc",
       "mutation": "config-matrix.invert-operator-env-provenance",
       "mutations": [
         "config-matrix.invert-operator-env-provenance"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793676969
+      "proven_at_unix": 1793683157
     },
     "config-migrate": {
       "inputs_files": 5,
@@ -483,15 +483,15 @@
       "proven_at_unix": 1793681801
     },
     "coverage-ledger": {
-      "inputs_files": 4865,
-      "inputs_hash": "5ba9520eb0e2f54794396b36ae275020bd38ec10",
+      "inputs_files": 4870,
+      "inputs_hash": "2fd08e87cc6094fb3aa82e3e72dd26accd49ae20",
       "mutation": "coverage-ledger.drop-a-sole-owner-import",
       "mutations": [
         "coverage-ledger.drop-a-sole-owner-import"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793681847
+      "proven_at_unix": 1793683246
     },
     "erasure-path-uses-an-index": {
       "inputs_files": 1052,
