@@ -1603,3 +1603,59 @@ main =
     assert!(out.contains("2 passed"), "{out}");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// A missing live table must not make CREATE's inline constraints collide
+/// with a snapshot index that the same migration removes. The replacement
+/// uniqueness must also be present when replay starts from the old snapshot.
+#[test]
+fn postgres_write_unique_conversion_replays() {
+    if !required(Need::Go, tool_on_path("go")) {
+        return;
+    }
+    let pg = Pg::new();
+    if !required(Need::Postgres, pg.is_some()) {
+        return;
+    }
+    let pg = pg.unwrap();
+    let old = r#"module Main exposing (main, db)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Db.Store as Store
+import Std.Codec as Codec
+items =
+    Store.fromCodec "items" (Codec.auto { id = 0, a = "" })
+        |> Store.primaryKey "id"
+        |> Store.uniqueOnNamed "items_a_key" [ "a" ]
+db = Store.project [ Store.toTable items ]
+main = Task.succeed ()
+"#;
+    let dir = project("sky-pg-unique-replay", "", old);
+    let live_env = [("DATABASE_URL", pg.dsn.as_str())];
+    ok(&dir, &["db", "init"], &live_env);
+    ok(&dir, &["db", "migrate", "--gen", "initial"], &live_env);
+    ok(&dir, &["db", "migrate"], &live_env);
+    pg.psql("DROP TABLE items", true);
+    std::fs::write(
+        dir.join("src/Main.sky"),
+        old.replace(
+            "Store.uniqueOnNamed \"items_a_key\" [ \"a\" ]",
+            "Store.unique \"a\"",
+        ),
+    )
+    .unwrap();
+    let (code, out, err) = sky(&dir, &["db", "check", "--sql", "--write"], &live_env);
+    assert!(code == 0 || code == 1, "{out}\n{err}");
+    assert!(
+        out.contains("-- sky db check --write: wrote"),
+        "{out}\n{err}"
+    );
+    let replay = Pg::new().expect("fresh replay schema");
+    for db in [&pg, &replay] {
+        let db_env = [("DATABASE_URL", db.dsn.as_str())];
+        ok(&dir, &["db", "migrate"], &db_env);
+        ok(&dir, &["db", "check"], &db_env);
+        db.psql("INSERT INTO items (id,a) VALUES (1,'same'); DO $$ BEGIN BEGIN INSERT INTO items (id,a) VALUES (2,'same'); RAISE EXCEPTION 'uniqueness missing'; EXCEPTION WHEN unique_violation THEN NULL; END; END $$",true);
+        assert_eq!(db.psql("SELECT count(*) FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=current_schema() AND t.relname='items' AND i.indisunique AND i.indisvalid",true),"2");
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
