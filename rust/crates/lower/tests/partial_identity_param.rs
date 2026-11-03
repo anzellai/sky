@@ -50,3 +50,27 @@ fn a_partial_into_a_typed_hof_slot_narrows_nothing() {
         "an identity narrowing of the partial's param: {f}"
     );
 }
+
+#[test]
+fn a_partial_with_two_remaining_stages_keeps_both_parameter_types() {
+    let code = func_debug(
+        r#"module Main exposing (main)
+
+add : Int -> Int -> Int -> Int
+add prefix x y = prefix + x + y
+
+apply : (Int -> Int -> Int) -> Int -> Int -> Int
+apply f x y = f x y
+
+run : Int -> Int -> Int
+run x y = apply (add 1) x y
+
+main = run 2 3
+"#,
+        "Main_run",
+    );
+    assert!(
+        !code.contains("Coerce"),
+        "partial parameters must stay typed: {code}"
+    );
+}

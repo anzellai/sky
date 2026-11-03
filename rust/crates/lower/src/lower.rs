@@ -6182,7 +6182,7 @@ impl<'a> Ctx<'a> {
     /// type inside the wrapped call.
     ///
     /// Except where the SLOT already names the callee's param type: when `slot`
-    /// is a func of the same arity whose param `i` is the callee's own concrete
+    /// has a proven remaining arrow spine whose param `i` is the callee's own concrete
     /// Go param type, that param is declared at that type and passed straight
     /// through. Both shapes are known at emit time and EQUAL (doc 14 §1), so
     /// declaring it `any` only to `rt.Coerce` it back was an identity narrowing
@@ -6229,10 +6229,7 @@ impl<'a> Ctx<'a> {
     ) -> GoExpr {
         let n_given = given.len();
         let n_rest = arity - n_given;
-        let slot_ps: Option<Vec<GoTy>> = match slot {
-            GoTy::Func(ps, _) if ps.len() == n_rest => Some(ps.clone()),
-            _ => None,
-        };
+        let slot_ps = closure::split_function_type(slot, n_rest).map(|(ps, _)| ps);
         let mut rest_params = Vec::new();
         let mut rest_tys = Vec::new();
         let mut call_args = given;
